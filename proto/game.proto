@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package game;
+
+message Player {
+  string name = 1;
+  int32 id = 2;
+  float score = 3;
+}

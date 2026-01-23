@@ -1,0 +1,12 @@
+# Build directory
+build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary/Generated files
+imgui.ini
+*.DS_Store
