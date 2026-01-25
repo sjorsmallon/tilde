@@ -8,6 +8,8 @@
 #include <iostream>
 #include <thread>
 
+cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
+
 int main(int argc, char *argv[]) {
   console::SpawnNew();
   timed_function();

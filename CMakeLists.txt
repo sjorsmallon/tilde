@@ -35,7 +35,7 @@ set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     protobuf
     GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
-    GIT_TAG v25.1
+    GIT_TAG v26.0
 )
 FetchContent_MakeAvailable(protobuf)
 
@@ -74,6 +74,11 @@ add_library(game_shared STATIC
     src/shared/cvar.hpp
     src/shared/timed_function.hpp
     src/shared/detached_console.hpp
+    src/shared/replay_system.hpp
+    src/shared/ecs.hpp
+    src/shared/snapshot_system.hpp
+    src/shared/task_system.hpp
+    src/shared/task_system.cpp
 )
 
 # Protobuf Generation
@@ -110,6 +115,7 @@ target_link_libraries(game_shared PUBLIC libprotobuf)
 # Contains Rendering (SDL/Vulkan), Input
 add_library(game_client SHARED
     src/client/client_impl.cpp
+    src/client/console.cpp
 )
 target_include_directories(game_client PUBLIC src/client)
 target_link_libraries(game_client PUBLIC 
@@ -153,4 +159,21 @@ target_link_libraries(MyGame PRIVATE game_client game_server game_shared)
 add_executable(MyGame_Server src/launcher/main_dedicated.cpp)
 target_include_directories(MyGame_Server PRIVATE src)
 target_link_libraries(MyGame_Server PRIVATE game_server game_shared)
+
+
+# 6. Task System Test
+add_executable(task_system_test src/test/task_system_test.cpp)
+target_include_directories(task_system_test PRIVATE src)
+# Needs game_shared for the task system implementation
+target_link_libraries(task_system_test PRIVATE game_shared)
+
+# 7. Log Test
+add_executable(log_test src/test/log_test.cpp)
+target_include_directories(log_test PRIVATE src)
+target_link_libraries(log_test PRIVATE game_shared)
+
+# 8. ECS Test
+add_executable(ecs_test src/test/ecs_test.cpp)
+target_include_directories(ecs_test PRIVATE src)
+target_link_libraries(ecs_test PRIVATE game_shared)
 

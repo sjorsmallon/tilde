@@ -7,3 +7,45 @@ message Player {
   int32 id = 2;
   float score = 3;
 }
+
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message CmdSpawn {
+  int32 entity_id = 1;
+  int32 type_id = 2;
+  Vec3 position = 3;
+}
+
+message CmdMove {
+  int32 entity_id = 1;
+  Vec3 target_position = 2;
+}
+
+message GameTick {
+  uint32 tick_id = 1;
+  repeated CmdSpawn spawns = 2;
+  repeated CmdMove moves = 3;
+}
+
+message Replay {
+  string server_name = 1;
+  int64 timestamp = 2;
+  repeated GameTick ticks = 3;
+}
+
+message EntityState {
+  uint64 entity_id = 1;
+  Vec3 position = 2;
+  Vec3 velocity = 3;
+  // Add other components here as optional fields
+}
+
+message Snapshot {
+  uint32 tick_id = 1;
+  uint32 delta_from_tick_id = 2; // 0 = Full Snapshot
+  repeated EntityState entities = 3;
+}

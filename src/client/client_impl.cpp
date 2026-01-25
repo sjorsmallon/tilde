@@ -1,4 +1,5 @@
 #include "client_api.hpp"
+#include "console.hpp"
 
 #include <iostream>
 #include <optional>
@@ -600,6 +601,17 @@ bool Tick() {
   ImGui::NewFrame();
 
   // UI Definition
+  static bool console_open = false;
+
+  // Toggle console with Tilde/Grave
+  if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+    console_open = !console_open;
+  }
+
+  if (console_open) {
+    client::Console::Get().Draw("Console", &console_open);
+  }
+
   ImGui::ShowDemoWindow();
 
   // Render

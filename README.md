@@ -14,27 +14,45 @@ A cross-platform C++23 project template.
 
 ### Build Instructions
 
-**Quick Start**:
-*   **macOS**: Run `./bootstrap_mac.sh`
-*   **Windows**: Run `bootstrap_windows.bat`
+You can build this project using either **Meson** or **CMake**.
 
-**Manual Build**:
-1.  **Configure**:
-    ```bash
-    cmake -S . -B build
-    ```
-    *First run may take a while as it downloads SDL2 and Protobuf.*
+#### 1. Meson (Recommended)
+This requires `meson` and `ninja` to be installed.
 
-2.  **Build**:
-    ```bash
-    cmake --build build
-    ```
+**Configure**:
+```bash
+meson setup meson_build
+```
 
-3.  **Run**:
-    ```bash
-    ./build/MyGame
-    ```
-    (On Windows: `.\build\Debug\MyGame.exe` or similar)
+**Build**:
+```bash
+meson compile -C meson_build
+```
+
+**Run**:
+```bash
+./meson_build/MyGame
+```
+(On Windows: `.\meson_build\MyGame.exe` or `.\meson_build\MyGame_Server.exe`)
+
+#### 2. CMake (Alternative)
+
+**Configure**:
+```bash
+cmake -S . -B cmake_build
+```
+*First run may take a while as it downloads SDL2 and Protobuf.*
+
+**Build**:
+```bash
+cmake --build cmake_build
+```
+
+**Run**:
+```bash
+./cmake_build/MyGame
+```
+(On Windows: `.\cmake_build\Debug\MyGame.exe`)
 
 ## Troubleshooting
 
