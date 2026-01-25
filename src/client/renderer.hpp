@@ -3,8 +3,36 @@
 #include <SDL.h>
 #include <vulkan/vulkan.h>
 
+#include "camera.hpp"
+#include "ecs.hpp"
+
 namespace client {
 namespace renderer {
+
+struct viewport_t {
+  float x = 0.0f;
+  float y = 0.0f;
+  float w = 1.0f;
+  float h = 1.0f;
+};
+
+struct render_view_t {
+  viewport_t viewport;
+  camera_t camera;
+};
+
+// Draw a wireframe AABB with barycentric edge darkening
+// min/max in world space
+void DrawAABB(VkCommandBuffer cmd, float minX, float minY, float minZ,
+              float maxX, float maxY, float maxZ, uint32_t color);
+
+// Apply the viewport to the command buffer (calculating pixel rect from
+// normalized)
+void set_viewport(VkCommandBuffer cmd, const viewport_t &vp);
+
+// The main draw function for a specific view
+void render_view(VkCommandBuffer cmd, const render_view_t &view,
+                 const ecs::Registry &registry);
 
 // Initialize the renderer (Vulkan + ImGui)
 bool Init(SDL_Window *window);

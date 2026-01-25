@@ -1,4 +1,5 @@
 #include "editor_state.hpp"
+#include "../renderer.hpp" // Added for render_view
 #include "../state_manager.hpp"
 #include "imgui.h"
 #include "input.hpp"
@@ -220,7 +221,26 @@ void EditorState::render_ui() {
   }
 }
 
-void EditorState::render_3d(VkCommandBuffer cmd) { (void)cmd; }
+void EditorState::render_3d(VkCommandBuffer cmd) {
+  // Example: Viewport 1 (Left Half)
+  renderer::viewport_t vp1 = {0.0f, 0.0f, 0.5f, 1.0f};
+  renderer::render_view_t view1 = {vp1, camera};
+
+  // Dummy registry for now
+  ecs::Registry reg;
+  renderer::render_view(cmd, view1, reg);
+
+  // Debug: Draw AABB in View 1 (Red Box at 3,0,0)
+  renderer::DrawAABB(cmd, 3.0f, -0.5f, -0.5f, 4.0f, 0.5f, 0.5f, 0xFF0000FF);
+
+  // Example: Viewport 2 (Right Half)
+  renderer::viewport_t vp2 = {0.5f, 0.0f, 0.5f, 1.0f};
+  renderer::render_view_t view2 = {vp2, camera}; // reusing camera
+  renderer::render_view(cmd, view2, reg);
+
+  // Debug: Draw AABB in View 2 (Blue Box at 3,2,0)
+  renderer::DrawAABB(cmd, 3.0f, 1.5f, -0.5f, 4.0f, 2.5f, 0.5f, 0xFFFF0000);
+}
 
 void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color) {
   ImDrawList *dl = ImGui::GetBackgroundDrawList();

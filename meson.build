@@ -138,15 +138,41 @@ game_shared_dep = declare_dependency(
 # 2. Game Client
 game_client_src = [
   'src/client/client_impl.cpp',
-  'src/client/console.cpp'
+  'src/client/console.cpp',
+  'src/client/state_manager.cpp',
+  'src/client/states/play_state.cpp',
+  'src/client/states/editor_state.cpp',
+  'src/client/input.cpp',
+  'src/client/renderer.cpp'
 ]
 
 game_client_inc = include_directories('src/client')
 
+# Shaders
+glslc = find_program('glslc', required : false)
+shader_targets = []
+if glslc.found()
+  shaders = [
+    'src/client/shaders/aabb.vert',
+    'src/client/shaders/aabb.frag'
+  ]
+  
+  foreach s : shaders
+    name = s.split('/')[-1]
+    shader_targets += custom_target(
+      name + '_spv',
+      input : s,
+      output : name + '.spv.h',
+      command : [glslc, '@INPUT@', '-o', '@OUTPUT@', '--target-env=vulkan1.0', '-mfmt=c']
+    )
+  endforeach
+endif
+
 game_client_lib = shared_library('game_client',
   game_client_src,
   include_directories : [game_client_inc],
-  dependencies : [game_shared_dep, vulkan_dep, sdl2_dep, imgui_dep]
+  dependencies : [game_shared_dep, vulkan_dep, sdl2_dep, imgui_dep],
+  sources : shader_targets # Add shader headers dependency
 )
 
 game_client_dep = declare_dependency(
@@ -203,6 +229,12 @@ executable('log_test',
 
 executable('ecs_test',
   'src/test/ecs_test.cpp',
+  dependencies : [game_shared_dep],
+  include_directories : include_directories('src')
+)
+
+executable('camera_test',
+  'src/test/camera_test.cpp',
   dependencies : [game_shared_dep],
   include_directories : include_directories('src')
 )

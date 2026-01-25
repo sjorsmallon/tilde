@@ -113,6 +113,31 @@ target_link_libraries(game_shared PUBLIC libprotobuf)
 
 # 2. Game Client (Shared Library / DLL)
 # Contains Rendering (SDL/Vulkan), Input
+
+# Shaders
+find_program(GLSLC_EXECUTABLE glslc REQUIRED)
+set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/client/shaders)
+set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
+file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
+
+set(SHADER_SOURCES
+    ${SHADER_SRC_DIR}/aabb.vert
+    ${SHADER_SRC_DIR}/aabb.frag
+)
+set(SHADER_HEADERS "")
+
+foreach(SHADER ${SHADER_SOURCES})
+    get_filename_component(SHADER_NAME ${SHADER} NAME)
+    set(HEADER_OUT ${SHADER_OUT_DIR}/${SHADER_NAME}.spv.h)
+    list(APPEND SHADER_HEADERS ${HEADER_OUT})
+    
+    add_custom_command(
+        OUTPUT ${HEADER_OUT}
+        COMMAND ${GLSLC_EXECUTABLE} ${SHADER} -o ${HEADER_OUT} --target-env=vulkan1.0 -mfmt=c
+        DEPENDS ${SHADER}
+        COMMENT "Compiling shader ${SHADER_NAME} to C header..."
+    )
+endforeach()
 add_library(game_client SHARED
     src/client/client_impl.cpp
     src/client/console.cpp
@@ -121,8 +146,12 @@ add_library(game_client SHARED
     src/client/states/editor_state.cpp
     src/client/input.cpp
     src/client/renderer.cpp
+    ${SHADER_HEADERS}
 )
-target_include_directories(game_client PUBLIC src/client)
+target_include_directories(game_client PUBLIC 
+    src/client
+    ${SHADER_OUT_DIR}
+)
 target_link_libraries(game_client PUBLIC 
     game_shared 
     Vulkan::Vulkan 
