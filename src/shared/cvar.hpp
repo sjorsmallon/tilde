@@ -53,10 +53,20 @@ private:
   std::mutex mutex_;
 };
 
+namespace flags {
+enum : uint64_t {
+  None = 0,
+  Admin = 1 << 0,
+  Client = 1 << 1,
+  Cheat = 1 << 2,
+};
+}
+
 // Type-erased base interface for all CVars
 struct ICVar {
-  ICVar(const std::string &name, const std::string &desc)
-      : name_(name), description_(desc) {
+  ICVar(const std::string &name, const std::string &desc,
+        uint64_t flags = flags::None)
+      : name_(name), description_(desc), flags_(flags) {
     CVarSystem::Get().Register(name, this);
   }
   virtual ~ICVar() = default;
@@ -66,10 +76,12 @@ struct ICVar {
 
   const std::string &GetName() const { return name_; }
   const std::string &GetDescription() const { return description_; }
+  uint64_t GetFlags() const { return flags_; }
 
 protected:
   std::string name_;
   std::string description_;
+  uint64_t flags_;
 };
 
 // Typed implementation
@@ -78,8 +90,8 @@ public:
   using OnChangeCallback = std::function<void(const T &newValue)>;
 
   CVar(const std::string &name, T defaultValue, const std::string &desc = "",
-       OnChangeCallback cb = nullptr)
-      : ICVar(name, desc), value_(defaultValue), callback_(cb) {}
+       uint64_t flags = flags::None, OnChangeCallback cb = nullptr)
+      : ICVar(name, desc, flags), value_(defaultValue), callback_(cb) {}
 
   // Direct access for C++ code (High performance)
   const T &Get() const {

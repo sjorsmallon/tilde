@@ -1,0 +1,38 @@
+#include "play_state.hpp"
+#include "../console.hpp"
+#include "../state_manager.hpp"
+#include "main_menu_state.hpp"
+
+namespace client {
+
+void PlayState::on_enter() {
+  // console::log("Entered Play State");
+}
+
+void PlayState::update(float dt) {
+  // Game logic here
+}
+
+void PlayState::render_ui() {
+  // Console is now global in client_impl.cpp
+
+  ImGui::ShowDemoWindow();
+
+  // Simple overlay to show we are in PlayState
+  ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+  if (ImGui::Begin("Game State", nullptr,
+                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                       ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::Text("Current State: PLAY");
+    if (ImGui::Button("Back to Menu")) {
+      state_manager::set_state(std::make_unique<MainMenuState>());
+    }
+  }
+  ImGui::End();
+}
+
+void PlayState::render_3d(VkCommandBuffer cmd) {
+  // 3D rendering calls would go here
+}
+
+} // namespace client

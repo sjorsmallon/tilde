@@ -35,6 +35,7 @@ message Replay {
   string server_name = 1;
   int64 timestamp = 2;
   repeated GameTick ticks = 3;
+  uint64 seed = 4;
 }
 
 message EntityState {
@@ -48,4 +49,14 @@ message Snapshot {
   uint32 tick_id = 1;
   uint32 delta_from_tick_id = 2; // 0 = Full Snapshot
   repeated EntityState entities = 3;
+  uint64 rng_state = 4;
+}
+
+message AABB {
+  Vec3 center = 1;
+  Vec3 half_extents = 2;
+}
+
+message MapSource {
+  repeated AABB aabbs = 1;
 }

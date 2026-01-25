@@ -68,7 +68,17 @@ void Console::ExecuteCommand(const char *command_line) {
       cvar->SetFromString(value_str);
       Print("Set %s to %s", cmd.c_str(), value_str.c_str());
     } else {
-      Print("%s is %s", cmd.c_str(), cvar->GetString().c_str());
+      std::string flags_str;
+      uint64_t flags = cvar->GetFlags();
+      if (flags & cvar::flags::Admin)
+        flags_str += "[ADMIN] ";
+      if (flags & cvar::flags::Client)
+        flags_str += "[CLIENT] ";
+      if (flags & cvar::flags::Cheat)
+        flags_str += "[CHEAT] ";
+
+      Print("%s is %s %s", cmd.c_str(), cvar->GetString().c_str(),
+            flags_str.c_str());
       Print("  %s", cvar->GetDescription().c_str());
     }
     return;

@@ -116,6 +116,11 @@ target_link_libraries(game_shared PUBLIC libprotobuf)
 add_library(game_client SHARED
     src/client/client_impl.cpp
     src/client/console.cpp
+    src/client/state_manager.cpp
+    src/client/states/play_state.cpp
+    src/client/states/editor_state.cpp
+    src/client/input.cpp
+    src/client/renderer.cpp
 )
 target_include_directories(game_client PUBLIC src/client)
 target_link_libraries(game_client PUBLIC 
@@ -176,4 +181,9 @@ target_link_libraries(log_test PRIVATE game_shared)
 add_executable(ecs_test src/test/ecs_test.cpp)
 target_include_directories(ecs_test PRIVATE src)
 target_link_libraries(ecs_test PRIVATE game_shared)
+# 9. Camera Test
+add_executable(camera_test src/test/camera_test.cpp)
+target_include_directories(camera_test PRIVATE src)
+# No link deps mostly, but game_client might be needed if camera.cpp exists later, 
+# for now camera.hpp is header only.
 
