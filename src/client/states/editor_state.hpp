@@ -24,6 +24,10 @@ private:
   // UI state
   bool show_demo_window = false;
   bool exit_requested = false;
+
+  // Editor modes
+  bool place_mode = false;
+  float selected_tile[3] = {0.0f, 0.0f, 0.0f};
 };
 
 } // namespace client

@@ -97,6 +97,152 @@ void EditorState::update(float dt) {
 
   ImGuiIO &io = ImGui::GetIO();
 
+  // Toggle Place Mode
+  if (client::input::is_key_pressed(SDL_SCANCODE_P)) {
+    place_mode = !place_mode;
+  }
+
+  // Raycast for Place Mode
+  if (place_mode && !io.WantCaptureMouse) {
+    float mouse_x = io.MousePos.x;
+    float mouse_y = io.MousePos.y;
+    float width = io.DisplaySize.x;
+    float height = io.DisplaySize.y;
+
+    if (width > 0 && height > 0) {
+      // NDC
+      float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
+      float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+
+      // View Space Ray Dir
+      float fov = 90.0f;
+      float tanHalf = tan(fov * 0.5f * 0.0174532925f);
+      float aspect = width / height;
+
+      float vx = x_ndc * aspect * tanHalf;
+      float vy = y_ndc * tanHalf;
+      float vz = -1.0f;
+
+      // Calculate Camera Basis Vectors
+      // Forward
+      float radYaw = camera.yaw * 0.0174532925f;
+      float radPitch = camera.pitch * 0.0174532925f;
+
+      float cY = cos(radYaw);
+      float sY = sin(radYaw);
+      float cP = cos(radPitch);
+      float sP = sin(radPitch);
+
+      float fx = cY * cP;
+      float fy = sP;
+      float fz = sY * cP; // Normalized Forward
+
+      // Right (Cross Forward, WorldUp(0,1,0))
+      // F = (fx, fy, fz), UP = (0, 1, 0)
+      // R = (fz*1 - fy*0, fx*0 - fz*0, fx*1 - fy*0) -> (fz, 0, -fx)? No
+      // Rx = fy*Uz - fz*Uy = sP*0 - (sYcP)*1 = -sYcP
+      // Ry = fz*Ux - fx*Uz = 0
+      // Rz = fx*Uy - fy*Ux = cYcP
+      // Wait, simple Right vector for Yaw:
+      // Yaw 0 = +X (Right is -Z?) No.
+      // Let's use standard Right calculation:
+      // R = Normalize(Cross(F, (0,1,0)))
+      float rx = -sY; // Derived: (fx,fy,fz) x (0,1,0) -> (-fz, 0, fx) ??
+      // Let's re-verify cross product:
+      // i   j   k
+      // fx  fy  fz
+      // 0   1   0
+      // x: fy*0 - fz*1 = -fz
+      // y: fz*0 - fx*0 = 0
+      // z: fx*1 - fy*0 = fx
+      // So Right = (-fz, 0, fx).
+      // normalize? fx,fz depends on cP. if cP=1, len=1.
+      // But we want "Flat" right vector usually?
+      // Renderer lookat uses: X = Normalize(Cross(Up, Z)). Z=-F.
+      // Z = -F. X = Cross((0,1,0), -F) = Cross(F, (0,1,0)).
+      // So Right is indeed (-fz, 0, fx) normalized.
+      // My previous code used: rx = -sY, rz = cY.
+      // Let's check: fz = sY*cP. fx = cY*cP.
+      // Right = (-sY*cP, 0, cY*cP).
+      // length = cP.
+      // So valid Right Vector (Orthonormal) must include cP factor OR we just
+      // assume "Flat Right" for movement vs "Camera Right" for ray. For
+      // Raycasting we need CAMERA Right (Orthonormal). So use Cross Product
+      // result normalized.
+
+      // But simpler:
+      // View Ray is (vx, vy, -1).
+      // RayWorld = CamMatrix * ViewRay.
+      // CamMatrix Rotation Columns: [Right, Up, -Forward]. (Since View looks
+      // down -Z). So RayWorld = Right * vx + Up * vy + (-Forward) * (-1).
+      // RayWorld = Right * vx + Up * vy + Forward.
+
+      // Let's Compute exact orthonormal basis:
+      // Forward (F)
+      float Fx = cY * cP;
+      float Fy = sP;
+      float Fz = sY * cP;
+
+      // World Up
+      float Wx = 0, Wy = 1, Wz = 0;
+
+      // Right (R) = Cross(F, W) normalized? No, usually Cross(F, WorldUp).
+      // But if looking straight up/down, this fails.
+      // Assuming standard non-vertical:
+      float Rx = Fy * Wz - Fz * Wy; // sP*0 - sYcP*1 = -sYcP
+      float Ry = Fz * Wx - Fx * Wz; // 0 - 0 = 0
+      float Rz = Fx * Wy - Fy * Wx; // cYcP*1 - 0 = cYcP
+      // Normalize R
+      float lenR = sqrt(Rx * Rx + Ry * Ry + Rz * Rz);
+      if (lenR < 0.001f) {
+        Rx = 1;
+        Ry = 0;
+        Rz = 0;
+      } // Degenerate case fix
+      else {
+        Rx /= lenR;
+        Ry /= lenR;
+        Rz /= lenR;
+      }
+
+      // Up (U) = Cross(R, F)
+      float Ux = Ry * Fz - Rz * Fy;
+      float Uy = Rz * Fx - Rx * Fz;
+      float Uz = Rx * Fy - Ry * Fx;
+
+      // Ray Direction in World
+      // Ray = R * vx + U * vy + F * 1.0 (Since view direction is -Z, but
+      // unproject puts us at z=-1 plane??) Wait, View Space Ray: (ndc_x *
+      // aspect * tan, ndc_y * tan, -1). Yes. This vector points from (0,0,0) to
+      // the screen plane at z=-1. So Ray Dir = Normalize( R * vx + U * vy + F *
+      // (-(-1)) ) = R*vx + U*vy + F.
+
+      float r_dx = Rx * vx + Ux * vy + Fx;
+      float r_dy = Ry * vx + Uy * vy + Fy;
+      float r_dz = Rz * vx + Uz * vy + Fz;
+
+      // Intersect Y=0 plane
+      // O.y + t * D.y = 0  => t = -O.y / D.y
+      bool hit = false;
+      if (std::abs(r_dy) > 1e-6) {
+        float t = -camera.y / r_dy;
+        if (t > 0) {
+          float ix = camera.x + t * r_dx;
+          float iz = camera.z + t * r_dz;
+
+          selected_tile[0] = std::floor(ix);
+          selected_tile[1] = 0.0f; // On Grid
+          selected_tile[2] = std::floor(iz);
+          hit = true;
+        }
+      }
+
+      if (!hit) {
+        selected_tile[1] = -10000.0f; // Invalid
+      }
+    }
+  }
+
   // process input if we are holding right mouse OR if UI doesn't want mouse
   if (!io.WantCaptureMouse || client::input::is_mouse_down(SDL_BUTTON_RIGHT)) {
     float speed = 10.0f * dt;
@@ -240,6 +386,13 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
 
   // Debug: Draw AABB in View 2 (Blue Box at 3,2,0)
   renderer::DrawAABB(cmd, 3.0f, 1.5f, -0.5f, 4.0f, 2.5f, 0.5f, 0xFFFF0000);
+
+  if (place_mode && selected_tile[1] > -5000.0f) {
+    float x = selected_tile[0];
+    float y = selected_tile[1];
+    float z = selected_tile[2];
+    renderer::DrawAABB(cmd, x, y, z, x + 1.0f, y + 1.0f, z + 1.0f, 0xFFFFFFFF);
+  }
 }
 
 void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color) {
