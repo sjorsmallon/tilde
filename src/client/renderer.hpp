@@ -5,15 +5,15 @@
 
 #include "camera.hpp"
 #include "ecs.hpp"
+#include "linalg.hpp"
 
 namespace client {
 namespace renderer {
 
 struct viewport_t {
-  float x = 0.0f;
-  float y = 0.0f;
-  float w = 1.0f;
-  float h = 1.0f;
+  // normalized
+  linalg::vec2 start;
+  linalg::vec2 dimensions;
 };
 
 struct render_view_t {

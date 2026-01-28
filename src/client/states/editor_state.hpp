@@ -2,6 +2,7 @@
 
 #include "../camera.hpp"
 #include "../game_state.hpp"
+#include "../shared/linalg.hpp"
 #include "game.pb.h"
 #include <vector>
 
@@ -19,6 +20,7 @@ private:
   camera_t camera;
 
   void draw_grid();
+  void draw_gimbal();
   void draw_aabb_wireframe(const game::AABB &aabb, uint32_t color);
 
   // UI state
@@ -28,6 +30,13 @@ private:
   // Editor modes
   bool place_mode = false;
   float selected_tile[3] = {0.0f, 0.0f, 0.0f};
+
+  struct DebugLine {
+    linalg::vec3 start;
+    linalg::vec3 end;
+    uint32_t color;
+  };
+  std::vector<DebugLine> debug_lines;
 };
 
 } // namespace client

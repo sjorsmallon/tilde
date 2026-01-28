@@ -219,3 +219,8 @@ target_include_directories(camera_test PRIVATE src)
 # No link deps mostly, but game_client might be needed if camera.cpp exists later, 
 # for now camera.hpp is header only.
 
+# 10. Linalg Test
+add_executable(linalg_test src/test/linalg_test.cpp)
+target_include_directories(linalg_test PRIVATE src)
+ target_link_libraries(linalg_test PRIVATE game_shared)
+

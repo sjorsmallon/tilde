@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "../shared/linalg.hpp"
+
 namespace client {
 
 struct camera_t {
@@ -38,5 +40,24 @@ struct camera_t {
     return cam;
   }
 };
+
+inline void look_at(camera_t &cam, const linalg::vec3 &target) {
+  float dx = target.x - cam.x;
+  float dy = target.y - cam.y;
+  float dz = target.z - cam.z;
+
+  // Normalize
+  float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+  if (len > 1e-6f) {
+    dx /= len;
+    dy /= len;
+    dz /= len;
+  } else {
+    return; // maintain current look if target is same as eye
+  }
+
+  cam.pitch = std::asin(dy) * 57.2957795f;
+  cam.yaw = std::atan2(dz, dx) * 57.2957795f;
+}
 
 } // namespace client

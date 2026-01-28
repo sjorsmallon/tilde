@@ -771,10 +771,10 @@ void DrawAABB(VkCommandBuffer cmd, float minX, float minY, float minZ,
 }
 
 void set_viewport(VkCommandBuffer cmd, const viewport_t &vp) {
-  float x = vp.x * g_swapchain_extent.width;
-  float y = vp.y * g_swapchain_extent.height;
-  float w = vp.w * g_swapchain_extent.width;
-  float h = vp.h * g_swapchain_extent.height;
+  float x = vp.start.x * g_swapchain_extent.width;
+  float y = vp.start.y * g_swapchain_extent.height;
+  float w = vp.dimensions.x * g_swapchain_extent.width;
+  float h = vp.dimensions.y * g_swapchain_extent.height;
 
   VkViewport v{};
   v.x = x;
@@ -798,9 +798,9 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
   set_viewport(cmd, view.viewport);
 
   // Calculate VP Matrix
-  float aspect = view.viewport.w * g_swapchain_extent.width /
-                 (view.viewport.h * g_swapchain_extent.height);
-  if (view.viewport.h == 0)
+  float aspect = view.viewport.dimensions.x * g_swapchain_extent.width /
+                 (view.viewport.dimensions.y * g_swapchain_extent.height);
+  if (view.viewport.dimensions.y == 0)
     aspect = 1.0f;
 
   mat4_t proj =
