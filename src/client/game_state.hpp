@@ -4,6 +4,8 @@
 
 namespace client {
 
+enum class GameStateKind { MainMenu, Play, Editor };
+
 class IGameState {
 public:
   virtual ~IGameState() = default;

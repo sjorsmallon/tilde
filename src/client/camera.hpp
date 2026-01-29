@@ -10,6 +10,8 @@ struct camera_t {
   float x = 0.0f, y = 0.0f, z = 0.0f;
   float yaw = 0.0f;
   float pitch = 0.0f;
+  bool orthographic = false;
+  float ortho_height = 10.0f; // Scale/Zoom factor for ortho
 
   // Default constructor
   camera_t() = default;

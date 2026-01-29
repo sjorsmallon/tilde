@@ -23,8 +23,8 @@ struct render_view_t {
 
 // Draw a wireframe AABB with barycentric edge darkening
 // min/max in world space
-void DrawAABB(VkCommandBuffer cmd, float minX, float minY, float minZ,
-              float maxX, float maxY, float maxZ, uint32_t color);
+void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
+              const linalg::vec3 &max, uint32_t color);
 
 // Apply the viewport to the command buffer (calculating pixel rect from
 // normalized)
@@ -58,7 +58,11 @@ void ProcessEvent(const SDL_Event *event);
 // This is a bit "leaky" regarding RenderPass state.
 // A cleaner way for this simple app:
 // BeginRenderPass(cmd) starts the main pass.
+// Begin the main render pass.
 void BeginRenderPass(VkCommandBuffer cmd);
+
+// Draw a temporary announcement text at the top of the screen
+void draw_announcement(const char *text);
 
 // End the frame. Renders ImGui, ends render pass, submits to queue, presents.
 void EndFrame(VkCommandBuffer cmd);

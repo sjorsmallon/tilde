@@ -8,11 +8,14 @@ namespace client {
 // Global state management functions
 namespace state_manager {
 
-// Shutdown and cleanup current state
+// Shutdown and cleanup all states
 void shutdown();
 
-// Switch to a new state. Exits current state, Enters new state.
-void set_state(std::unique_ptr<IGameState> new_state);
+// Initialize all states
+void init();
+
+// Switch to a new state by Enum
+void switch_to(GameStateKind kind);
 
 // Get the current state (unsafe, can be null)
 IGameState *get_current_state();

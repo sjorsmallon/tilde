@@ -2,7 +2,6 @@
 #include "console.hpp"
 #include "renderer.hpp"
 #include "state_manager.hpp"
-#include "states/main_menu_state.hpp"
 
 #include <iostream>
 #include <string>
@@ -45,7 +44,8 @@ bool Init() {
   }
 
   // Set initial state
-  state_manager::set_state(std::make_unique<MainMenuState>());
+  state_manager::init();
+  state_manager::switch_to(GameStateKind::MainMenu);
 
   return true;
 }

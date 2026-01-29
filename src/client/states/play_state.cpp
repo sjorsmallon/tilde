@@ -1,7 +1,6 @@
 #include "play_state.hpp"
 #include "../console.hpp"
 #include "../state_manager.hpp"
-#include "main_menu_state.hpp"
 
 namespace client {
 
@@ -25,7 +24,7 @@ void PlayState::render_ui() {
                        ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::Text("Current State: PLAY");
     if (ImGui::Button("Back to Menu")) {
-      state_manager::set_state(std::make_unique<MainMenuState>());
+      state_manager::switch_to(GameStateKind::MainMenu);
     }
   }
   ImGui::End();

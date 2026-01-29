@@ -1,47 +1,56 @@
 #include "state_manager.hpp"
 #include "log.hpp"
+#include "states/editor_state.hpp"
+#include "states/main_menu_state.hpp"
+#include "states/play_state.hpp"
+#include <unordered_map>
 #include <utility>
 
 namespace client {
 namespace state_manager {
 
-static std::unique_ptr<IGameState> g_current_state = nullptr;
+static IGameState *g_active_state = nullptr;
 static bool g_should_exit = false;
 
+static std::unordered_map<GameStateKind, std::unique_ptr<IGameState>> g_states;
+
 void shutdown() {
-  if (g_current_state) {
-    g_current_state->on_exit();
-    g_current_state = nullptr;
+  if (g_active_state) {
+    g_active_state->on_exit();
+    g_active_state = nullptr;
+  }
+  g_states.clear();
+}
+
+void init() {
+  g_states[GameStateKind::MainMenu] = std::make_unique<MainMenuState>();
+  g_states[GameStateKind::Play] = std::make_unique<PlayState>();
+  g_states[GameStateKind::Editor] = std::make_unique<EditorState>();
+}
+
+void switch_to(GameStateKind kind) {
+  IGameState *next_state = g_states[kind].get();
+  if (g_active_state) {
+    g_active_state->on_exit();
+  }
+
+  g_active_state = next_state;
+
+  if (g_active_state) {
+    g_active_state->on_enter();
   }
 }
 
-void set_state(std::unique_ptr<IGameState> new_state) {
-  // We defer state changes to the beginning of update usually,
-  // but for simplicity let's do it immediately if safe,
-  // or handle "pending" if we are in the middle of a frame.
-  // For now: Immediate switching (simplest).
-  // Warning: Don't change state inside a state's render function if that causes
-  // issues.
+// set_state removed.
 
-  if (g_current_state) {
-    g_current_state->on_exit();
-  }
-
-  g_current_state = std::move(new_state);
-
-  if (g_current_state) {
-    g_current_state->on_enter();
-  }
-}
-
-IGameState *get_current_state() { return g_current_state.get(); }
+IGameState *get_current_state() { return g_active_state; }
 
 bool update(float dt) {
   if (g_should_exit) {
     return false;
   }
-  if (g_current_state) {
-    g_current_state->update(dt);
+  if (g_active_state) {
+    g_active_state->update(dt);
   }
   return !g_should_exit;
 }
@@ -49,14 +58,14 @@ bool update(float dt) {
 void request_exit() { g_should_exit = true; }
 
 void render_ui() {
-  if (g_current_state) {
-    g_current_state->render_ui();
+  if (g_active_state) {
+    g_active_state->render_ui();
   }
 }
 
 void render_3d(VkCommandBuffer cmd) {
-  if (g_current_state) {
-    g_current_state->render_3d(cmd);
+  if (g_active_state) {
+    g_active_state->render_3d(cmd);
   }
 }
 

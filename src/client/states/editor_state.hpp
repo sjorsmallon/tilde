@@ -26,10 +26,20 @@ private:
   // UI state
   bool show_demo_window = false;
   bool exit_requested = false;
+  bool show_save_popup = false;
+  bool show_name_popup = false;
 
   // Editor modes
   bool place_mode = false;
   float selected_tile[3] = {0.0f, 0.0f, 0.0f};
+
+  // Dragging state
+  bool dragging_placement = false;
+  linalg::vec3 drag_start{0.0f, 0.0f, 0.0f};
+
+  // Selection state
+  int selected_aabb_index = -1;
+  float selection_timer = 0.0f;
 
   struct DebugLine {
     linalg::vec3 start;

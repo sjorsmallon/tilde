@@ -46,6 +46,9 @@ if not vulkan_dep.found()
   endif
 
   cc = meson.get_compiler('cpp')
+  if cc.get_id() == 'clang'
+    add_project_arguments('-ftime-trace', language : 'cpp')
+  endif
   vulkan_lib = cc.find_library('vulkan', dirs : vulkan_search_dirs, required : true)
   
   vulkan_inc = []
@@ -233,8 +236,15 @@ executable('ecs_test',
   include_directories : include_directories('src')
 )
 
+
 executable('camera_test',
   'src/test/camera_test.cpp',
+  dependencies : [game_shared_dep],
+  include_directories : include_directories('src')
+)
+
+executable('linalg_test',
+  'src/test/linalg_test.cpp',
   dependencies : [game_shared_dep],
   include_directories : include_directories('src')
 )
