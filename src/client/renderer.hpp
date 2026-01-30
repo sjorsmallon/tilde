@@ -26,6 +26,10 @@ struct render_view_t {
 void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
               const linalg::vec3 &max, uint32_t color);
 
+// Draw a simple 3D line
+void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
+              const linalg::vec3 &end, uint32_t color);
+
 // Apply the viewport to the command buffer (calculating pixel rect from
 // normalized)
 void set_viewport(VkCommandBuffer cmd, const viewport_t &vp);

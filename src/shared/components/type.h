@@ -1,6 +1,6 @@
 #pragma once
 
-#include "proto/game.pb.h"
+#include "game.pb.h"
 
 namespace components {
 

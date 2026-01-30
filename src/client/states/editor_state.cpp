@@ -103,6 +103,32 @@ static vec2 ViewToScreen(const vec3 &p, const ImGuiIO &io, bool ortho,
   }
 }
 
+static bool IntersectAABBAABB(const game::AABB &a, const game::AABB &b) {
+  // A
+  float ax = a.center().x();
+  float ay = a.center().y();
+  float az = a.center().z();
+  float ahx = a.half_extents().x();
+  float ahy = a.half_extents().y();
+  float ahz = a.half_extents().z();
+  vec3 minA = {ax - ahx, ay - ahy, az - ahz};
+  vec3 maxA = {ax + ahx, ay + ahy, az + ahz};
+
+  // B
+  float bx = b.center().x();
+  float by = b.center().y();
+  float bz = b.center().z();
+  float bhx = b.half_extents().x();
+  float bhy = b.half_extents().y();
+  float bhz = b.half_extents().z();
+  vec3 minB = {bx - bhx, by - bhy, bz - bhz};
+  vec3 maxB = {bx + bhx, by + bhy, bz + bhz};
+
+  return (minA.x <= maxB.x && maxA.x >= minB.x) &&
+         (minA.y <= maxB.y && maxA.y >= minB.y) &&
+         (minA.z <= maxB.z && maxA.z >= minB.z);
+}
+
 static bool ClipLine(vec3 &p1, vec3 &p2) {
   float nearZ = -0.1f;
 
@@ -147,22 +173,55 @@ void EditorState::update(float dt) {
   selection_timer += dt;
 
   // Deletion Logic
+  // Deletion Logic
   if (client::input::is_key_pressed(SDL_SCANCODE_BACKSPACE)) {
-    if (selected_aabb_index != -1 &&
-        selected_aabb_index < map_source.aabbs_size()) {
-      auto *aabbs = map_source.mutable_aabbs();
-      aabbs->DeleteSubrange(selected_aabb_index, 1);
-      selected_aabb_index = -1; // Clear selection
+    // Collect all indices to delete for AABBs
+    std::vector<int> aabbs_to_delete(selected_aabb_indices.begin(),
+                                     selected_aabb_indices.end());
+    // Sort descending to delete from end first
+    std::sort(aabbs_to_delete.rbegin(), aabbs_to_delete.rend());
+
+    auto *aabbs = map_source.mutable_aabbs();
+    for (int idx : aabbs_to_delete) {
+      if (idx >= 0 && idx < map_source.aabbs_size()) {
+        aabbs->DeleteSubrange(idx, 1);
+      }
     }
+    selected_aabb_indices.clear();
+
+    // Collect all indices to delete for Entities
+    std::vector<int> entities_to_delete(selected_entity_indices.begin(),
+                                        selected_entity_indices.end());
+    std::sort(entities_to_delete.rbegin(), entities_to_delete.rend());
+
+    auto *entities = map_source.mutable_entities();
+    for (int idx : entities_to_delete) {
+      if (idx >= 0 && idx < map_source.entities_size()) {
+        entities->DeleteSubrange(idx, 1);
+      }
+    }
+    selected_entity_indices.clear();
   }
 
   // Toggle Place Mode
   if (client::input::is_key_pressed(SDL_SCANCODE_P)) {
     place_mode = !place_mode;
     if (place_mode) {
+      entity_mode = false; // Disable entity mode
       client::renderer::draw_announcement("Place Mode Active");
     } else {
       client::renderer::draw_announcement("Place Mode Inactive");
+    }
+  }
+
+  // Toggle Entity Mode
+  if (client::input::is_key_pressed(SDL_SCANCODE_E)) {
+    entity_mode = !entity_mode;
+    if (entity_mode) {
+      place_mode = false; // Disable place mode
+      client::renderer::draw_announcement("Entity Placement Mode Active");
+    } else {
+      client::renderer::draw_announcement("Entity Placement Mode Inactive");
     }
   }
 
@@ -354,8 +413,90 @@ void EditorState::update(float dt) {
         debug_lines.push_back({start, end, 0xFF00FFFF}); // Magenta
       }
     }
-  } else if (!place_mode && !io.WantCaptureMouse) {
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+  } else if (!place_mode && !entity_mode && !io.WantCaptureMouse) {
+
+    // Rotation Toggle Logic
+    if (client::input::is_key_pressed(SDL_SCANCODE_R)) {
+      if (selected_entity_indices.size() == 1) {
+        rotation_mode = !rotation_mode;
+        if (rotation_mode) {
+          rotate_entity_index = *selected_entity_indices.begin();
+        } else {
+          rotate_entity_index = -1;
+        }
+      }
+    }
+
+    // Rotation Active Logic
+    if (rotation_mode && rotate_entity_index != -1 &&
+        rotate_entity_index < map_source.entities_size()) {
+      auto *ent = map_source.mutable_entities(rotate_entity_index);
+
+      // Raycast to Ground Plane to find current mouse position
+      float mouse_x = io.MousePos.x;
+      float mouse_y = io.MousePos.y;
+      float width = io.DisplaySize.x;
+      float height = io.DisplaySize.y;
+      // NDC
+      float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
+      float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+
+      // Re-calculate Ray
+      float fov = 90.0f;
+      float tanHalf = tan(to_radians(fov) * 0.5f);
+      float aspect = width / height;
+      float vx = x_ndc * aspect * tanHalf;
+      float vy = y_ndc * tanHalf;
+      float radYaw = to_radians(camera.yaw);
+      float radPitch = to_radians(camera.pitch);
+      float cY = cos(radYaw);
+      float sY = sin(radYaw);
+      float cP = cos(radPitch);
+      float sP = sin(radPitch);
+      vec3 F = {cY * cP, sP, sY * cP};
+      vec3 W = {0, 1, 0};
+      vec3 R = linalg::cross(F, W);
+      float lenR = linalg::length(R);
+      R = (lenR < 0.001f) ? vec3{1, 0, 0} : R * (1.0f / lenR);
+      vec3 U = linalg::cross(R, F);
+
+      vec3 ray_dir;
+      vec3 ray_origin;
+
+      if (camera.orthographic) {
+        ray_dir = F;
+        float h = camera.ortho_height;
+        float w = h * aspect;
+        float ox = x_ndc * (w * 0.5f);
+        float oy = y_ndc * (h * 0.5f);
+        ray_origin = {camera.x, camera.y, camera.z};
+        ray_origin = ray_origin - ray_dir * 1000.0f;
+        ray_origin = ray_origin + R * ox + U * oy;
+      } else {
+        ray_dir = R * vx + U * vy + F;
+        ray_origin = {camera.x, camera.y, camera.z};
+      }
+
+      // Intersect with Plane at Entity Y
+      float plane_y = ent->position().y();
+      if (std::abs(ray_dir.y) > 1e-6) {
+        float t = (plane_y - ray_origin.y) / ray_dir.y;
+        if (t > 0 || camera.orthographic) {
+          vec3 hit_point = ray_origin + ray_dir * t;
+          // Store debug point
+          rotate_debug_point = hit_point;
+
+          // Vector from Entity Center to Hit Point
+          float dx = hit_point.x - ent->position().x();
+          float dz = hit_point.z - ent->position().z();
+
+          float angle = atan2(dz, dx);
+          ent->set_yaw(lround(angle * 180.0f / 3.14159f));
+        }
+      }
+    }
+
+    else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
       float mouse_x = io.MousePos.x;
       float mouse_y = io.MousePos.y;
       float width = io.DisplaySize.x;
@@ -412,8 +553,13 @@ void EditorState::update(float dt) {
         }
 
         // Raycast against all AABBs
-        int closest_index = -1;
-        float min_dist_to_center = 1e9f;
+        struct HitCandidate {
+          int index;
+          float t;
+          float volume;
+          game::AABB aabb;
+        };
+        std::vector<HitCandidate> candidates;
 
         for (int i = 0; i < map_source.aabbs_size(); ++i) {
           const auto &aabb = map_source.aabbs(i);
@@ -426,16 +572,215 @@ void EditorState::update(float dt) {
 
           float t = 0;
           if (IntersectRayAABB(ray_origin, ray_dir, min, max, t)) {
+            if (t < 0.0f)
+              continue; // Ignore intersections behind the camera
+            float volume = (max.x - min.x) * (max.y - min.y) * (max.z - min.z);
+            candidates.push_back({i, t, volume, aabb});
+          }
+        }
+
+        int closest_aabb_index = -1;
+        float min_dist = 1e9f;
+
+        if (!candidates.empty()) {
+          // Sort by distance (closest first)
+          std::sort(candidates.begin(), candidates.end(),
+                    [](const HitCandidate &a, const HitCandidate &b) {
+                      return a.t < b.t;
+                    });
+
+          // Smart Selection:
+          // Start with the closest candidate.
+          // Look for subsequent candidates that physically overlap the current
+          // best. If a subsequent candidate overlaps AND is smaller, pick it.
+
+          HitCandidate best = candidates[0];
+
+          for (size_t i = 1; i < candidates.size(); ++i) {
+            const auto &next = candidates[i];
+
+            // Check if next physically overlaps best
+            // Since candidates are sorted by t along the ray, next is "further"
+            // or same distance. But it might be inside best.
+            if (IntersectAABBAABB(best.aabb, next.aabb)) {
+              if (next.volume < best.volume) {
+                // We found a smaller object inside the current best selection.
+                // Prioritize the smaller nested object.
+                best = next;
+              }
+            }
+          }
+
+          closest_aabb_index = best.index;
+          // Calculate hit point for distance check against entities
+          vec3 hit_point = ray_origin + ray_dir * best.t;
+          min_dist = linalg::length(hit_point - ray_origin);
+        }
+
+        // Raycast against Entities (using approximated AABB)
+        int closest_ent_index = -1;
+        for (int i = 0; i < map_source.entities_size(); ++i) {
+          const auto &ent = map_source.entities(i);
+          vec3 pos = {ent.position().x(), ent.position().y(),
+                      ent.position().z()};
+          float s = 0.5f; // Size of pyramid
+          vec3 min = {pos.x - s / 2, pos.y, pos.z - s / 2};
+          vec3 max = {pos.x + s / 2, pos.y + 1.0f, pos.z + s / 2};
+
+          float t = 0;
+          if (IntersectRayAABB(ray_origin, ray_dir, min, max, t)) {
+            if (t < 0.0f)
+              continue; // Ignore intersections behind the camera
             vec3 hit_point = ray_origin + ray_dir * t;
-            float dist = linalg::length(hit_point - center);
-            if (dist < min_dist_to_center) {
-              min_dist_to_center = dist;
-              closest_index = i;
+            float dist = linalg::length(hit_point - ray_origin);
+            if (dist < min_dist) {
+              min_dist = dist;
+              closest_aabb_index = -1; // Deselect AABB if entity is closer
+              closest_ent_index = i;
             }
           }
         }
 
-        selected_aabb_index = closest_index;
+        bool ctrl_held = client::input::is_key_down(SDL_SCANCODE_LCTRL) ||
+                         client::input::is_key_down(SDL_SCANCODE_RCTRL);
+
+        if (!ctrl_held) {
+          // Let's go simple: No CTRL -> Clear all, then select the new one (if
+          // any).
+          selected_aabb_indices.clear();
+          selected_entity_indices.clear();
+        }
+
+        if (closest_ent_index != -1) {
+          // Priority to Entities
+          if (ctrl_held) {
+            if (selected_entity_indices.count(closest_ent_index)) {
+              selected_entity_indices.erase(closest_ent_index);
+            } else {
+              selected_entity_indices.insert(closest_ent_index);
+            }
+          } else {
+            // Check if we clicked an already selected entity
+            if (selected_entity_indices.count(closest_ent_index)) {
+              // Already selected. Do nothing since drag is removed.
+            } else {
+              selected_entity_indices.clear();
+              selected_entity_indices.insert(closest_ent_index);
+            }
+          }
+
+        } else if (closest_aabb_index != -1) {
+          // Fallback to AABB
+          if (ctrl_held) {
+            if (selected_aabb_indices.count(closest_aabb_index)) {
+              selected_aabb_indices.erase(closest_aabb_index);
+            } else {
+              selected_aabb_indices.insert(closest_aabb_index);
+            }
+          } else {
+            selected_aabb_indices.insert(closest_aabb_index);
+          }
+        }
+      }
+    }
+  }
+
+  // Entity Placement Raycast
+  if (entity_mode && !io.WantCaptureMouse) {
+    float mouse_x = io.MousePos.x;
+    float mouse_y = io.MousePos.y;
+    float width = io.DisplaySize.x;
+    float height = io.DisplaySize.y;
+
+    if (width > 0 && height > 0) {
+      // NDC
+      float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
+      float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+      float aspect = width / height;
+
+      vec3 ray_origin;
+      vec3 ray_dir;
+
+      // ... Reusing ray calculation logic or extracting it would be better ...
+      // For now, I'll copy the perspective/ortho logic briefly to be safe
+      float fov = 90.0f;
+      float tanHalf = tan(to_radians(fov) * 0.5f);
+      float vx = x_ndc * aspect * tanHalf;
+      float vy = y_ndc * tanHalf;
+
+      float radYaw = to_radians(camera.yaw);
+      float radPitch = to_radians(camera.pitch);
+      float cY = cos(radYaw);
+      float sY = sin(radYaw);
+      float cP = cos(radPitch);
+      float sP = sin(radPitch);
+      vec3 F = {cY * cP, sP, sY * cP};
+      vec3 W = {0, 1, 0};
+      vec3 R = linalg::cross(F, W);
+      float lenR = linalg::length(R);
+      R = (lenR < 0.001f) ? vec3{1, 0, 0} : R * (1.0f / lenR);
+      vec3 U = linalg::cross(R, F);
+
+      if (camera.orthographic) {
+        ray_dir = F;
+        float h = camera.ortho_height;
+        float w = h * aspect;
+        float ox = x_ndc * (w * 0.5f);
+        float oy = y_ndc * (h * 0.5f);
+        ray_origin = {camera.x, camera.y, camera.z};
+        ray_origin = ray_origin - ray_dir * 1000.0f;
+        ray_origin = ray_origin + R * ox + U * oy;
+      } else {
+        ray_dir = R * vx + U * vy + F;
+        ray_origin = {camera.x, camera.y, camera.z};
+      }
+
+      entity_cursor_valid = false;
+      float min_t = 1e9f;
+
+      for (int i = 0; i < map_source.aabbs_size(); ++i) {
+        const auto &aabb = map_source.aabbs(i);
+        vec3 center = {aabb.center().x(), aabb.center().y(), aabb.center().z()};
+        vec3 half = {aabb.half_extents().x(), aabb.half_extents().y(),
+                     aabb.half_extents().z()};
+        vec3 min = center - half;
+        vec3 max = center + half;
+
+        float t = 0;
+        if (IntersectRayAABB(ray_origin, ray_dir, min, max, t)) {
+          if (t < min_t) {
+            min_t = t;
+            // Calculate hit point
+            vec3 hit_point = ray_origin + ray_dir * t;
+            // Snap to top
+            // Check if hit point is close to top face
+            if (std::abs(hit_point.y - max.y) < 0.1f) {
+              // It is potentially on top.
+              // We want to place it centered on the grid cell of the AABB top.
+
+              float cell_x = std::floor(hit_point.x) + 0.5f;
+              float cell_z = std::floor(hit_point.z) + 0.5f;
+
+              // Check if this cell is within AABB top face bounds (xz)
+              // Relax check slightly for float precision
+              if (cell_x >= min.x - 0.01f && cell_x <= max.x + 0.01f &&
+                  cell_z >= min.z - 0.01f && cell_z <= max.z + 0.01f) {
+                entity_cursor_pos = {cell_x, max.y, cell_z}; // Top surface
+                entity_cursor_valid = true;
+
+                // Handle Placement Click
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                  auto *ent = map_source.add_entities();
+                  ent->set_type(game::EntityType::PLAYER);
+                  ent->mutable_position()->set_x(entity_cursor_pos.x);
+                  ent->mutable_position()->set_y(entity_cursor_pos.y);
+                  ent->mutable_position()->set_z(entity_cursor_pos.z);
+                  renderer::draw_announcement("Player Placed");
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -519,10 +864,11 @@ void EditorState::update(float dt) {
       camera.x -= R.x * speed;
       camera.z -= R.z * speed;
     }
-    if (client::input::is_key_down(SDL_SCANCODE_E)) {
+    // E used for mode toggle now
+    /*if (client::input::is_key_down(SDL_SCANCODE_E)) {
       if (!camera.orthographic)
         camera.y += speed;
-    }
+    }*/
     if (client::input::is_key_down(SDL_SCANCODE_Q)) {
       if (!camera.orthographic)
         camera.y -= speed;
@@ -664,10 +1010,28 @@ void EditorState::render_ui() {
   ImGuiIO &io = ImGui::GetIO();
   float aspect = io.DisplaySize.x / io.DisplaySize.y;
 
+  // Detect overlaps
+  std::unordered_set<int> overlapping_indices;
+  {
+    for (int i = 0; i < map_source.aabbs_size(); ++i) {
+      for (int j = i + 1; j < map_source.aabbs_size(); ++j) {
+        if (IntersectAABBAABB(map_source.aabbs(i), map_source.aabbs(j))) {
+          overlapping_indices.insert(i);
+          overlapping_indices.insert(j);
+        }
+      }
+    }
+  }
+
   int idx = 0;
   for (const auto &aabb : map_source.aabbs()) {
     uint32_t col = 0xFF00FF00; // Default Green
-    if (idx == selected_aabb_index) {
+
+    if (overlapping_indices.count(idx)) {
+      col = 0xFF0000FF; // Red for overlap
+    }
+
+    if (selected_aabb_indices.count(idx)) {
       // Oscillate between Magenta (0xFF00FFFF) and White (0xFFFFFFFF)
       // ABGR
       float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f; // 0 to 1
@@ -729,6 +1093,120 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
       // Box: {y - 1.0f} to {y + 0.0f} -> Center -0.5. Range [-1, 0].
       renderer::DrawAABB(cmd, {x, y - 1.0f, z}, {x + 1.0f, y + 0.0f, z + 1.0f},
                          0xFFFFFFFF);
+    }
+  }
+
+  if (entity_mode && entity_cursor_valid) {
+    // Draw Pyramid
+    vec3 p = entity_cursor_pos;
+    float s = 0.5f;            // Size
+    uint32_t col = 0xFF00FFFF; // Magenta
+
+    // Pyramid Points: Tip and 4 base corners
+    vec3 tip = {p.x, p.y + s, p.z};
+    vec3 b1 = {p.x - s / 2, p.y, p.z - s / 2};
+    vec3 b2 = {p.x + s / 2, p.y, p.z - s / 2};
+    vec3 b3 = {p.x + s / 2, p.y, p.z + s / 2};
+    vec3 b4 = {p.x - s / 2, p.y, p.z + s / 2};
+
+    // Draw Lines
+    auto drawLine = [&](vec3 start, vec3 end) {
+      renderer::DrawLine(cmd, start, end, col);
+    };
+
+    // Base
+    drawLine(b1, b2);
+    drawLine(b2, b3);
+    drawLine(b3, b4);
+    drawLine(b4, b1);
+    // Sides
+    drawLine(b1, tip);
+    drawLine(b2, tip);
+    drawLine(b3, tip);
+    drawLine(b4, tip);
+  }
+
+  // Draw Placed Entities
+  for (int i = 0; i < map_source.entities_size(); ++i) {
+    const auto &ent = map_source.entities(i);
+    // Draw Pyramid for Entity
+    vec3 p = {ent.position().x(), ent.position().y(), ent.position().z()};
+    float s = 0.5f;            // Size
+    uint32_t col = 0x00FFFFFF; // Cyan (Default)
+
+    if (selected_entity_indices.count(i)) {
+      // Blinking
+      float t = sin(selection_timer * 10.0f) * 0.5f + 0.5f;
+      uint32_t channel = (uint32_t)(t * 255.0f);
+      col = 0xFF00FFFF; // Base Magenta
+      if (t > 0.5f)
+        col = 0xFFFFFFFF; // Blink to white
+    }
+
+    // Pyramid Points: Tip and 4 base corners
+    // Rotation
+    float radYaw = to_radians(ent.yaw());
+    float cY = cos(radYaw);
+    float sY = sin(radYaw);
+
+    auto rotate = [&](float x, float z) -> vec3 {
+      // Rotation around Y axis:
+      // x' = x*cos - z*sin
+      // z' = x*sin + z*cos
+      return {p.x + (x * cY - z * sY), p.y, p.z + (x * sY + z * cY)};
+    };
+
+    // Pyramid Points: Tip and 4 base corners
+    vec3 tip = rotate(0, 0);
+    tip.y += s;
+
+    vec3 b1 = rotate(-s / 2, -s / 2);
+    vec3 b2 = rotate(s / 2, -s / 2);
+    vec3 b3 = rotate(s / 2, s / 2);
+    vec3 b4 = rotate(-s / 2, s / 2);
+
+    // Draw Lines
+    auto drawLine = [&](vec3 start, vec3 end) {
+      renderer::DrawLine(cmd, start, end, col);
+    };
+
+    // Base
+    drawLine(b1, b2);
+    drawLine(b2, b3);
+    drawLine(b3, b4);
+    drawLine(b4, b1);
+    // Sides
+    drawLine(b1, tip);
+    drawLine(b2, tip);
+    drawLine(b3, tip);
+    drawLine(b4, tip);
+
+    // Rotation Visualization
+    if (selected_entity_indices.count(i)) {
+      // Draw Circle at base
+      float radius = 1.5f;
+      int segments = 32;
+      for (int j = 0; j < segments; ++j) {
+        float angle1 = (float)j / segments * 2.0f * 3.14159f;
+        float angle2 = (float)(j + 1) / segments * 2.0f * 3.14159f;
+        vec3 p1 = {p.x + cos(angle1) * radius, p.y, p.z + sin(angle1) * radius};
+        vec3 p2 = {p.x + cos(angle2) * radius, p.y, p.z + sin(angle2) * radius};
+        renderer::DrawLine(cmd, p1, p2, 0xFF00A5FF); // Orange
+      }
+
+      // Debug: Draw line to projected mouse position
+      if (rotation_mode && rotate_entity_index == i) {
+        renderer::DrawLine(cmd, p, rotate_debug_point,
+                           0xFF00FF00); // Green Debug Line
+      }
+
+      // Draw Forward Vector
+      float radYaw = to_radians(ent.yaw());
+      // Matches Drag logic: angle = atan2(dz, dx) -> x=cos, z=sin
+      vec3 forward = {cos(radYaw), 0.0f, sin(radYaw)};
+
+      vec3 line_end = p + forward * radius;
+      renderer::DrawLine(cmd, p, line_end, 0xFF0000FF); // Red Direction
     }
   }
 }

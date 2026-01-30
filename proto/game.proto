@@ -63,7 +63,14 @@ message AABB {
   Vec3 half_extents = 2;
 }
 
+message EntitySpawn {
+  EntityType type = 1;
+  Vec3 position = 2;
+  float yaw = 3;
+}
+
 message MapSource {
   repeated AABB aabbs = 1;
   string name = 2;
+  repeated EntitySpawn entities = 3;
 }

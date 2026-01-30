@@ -1,6 +1,6 @@
 #pragma once
 
-#include "proto/game.pb.h"
+#include "game.pb.h"
 #include "shared/components/transform.h"
 #include "shared/components/type.h"
 #include "shared/ecs.hpp"

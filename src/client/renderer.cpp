@@ -628,6 +628,295 @@ static void create_aabb_pipeline() {
   vkDestroyShaderModule(g_device, vertShaderModule, nullptr);
 }
 
+// --- Line Pipeline Globals ---
+static VkPipeline g_line_pipeline = VK_NULL_HANDLE;
+static VkBuffer g_line_vertex_buffer = VK_NULL_HANDLE;
+static VkDeviceMemory g_line_vertex_memory = VK_NULL_HANDLE;
+static VkBuffer g_line_index_buffer = VK_NULL_HANDLE;
+static VkDeviceMemory g_line_index_memory = VK_NULL_HANDLE;
+
+static void create_line_pipeline() {
+  // Reuse AABB shaders/layout, just change topology
+  VkGraphicsPipelineCreateInfo pipelineInfo{};
+  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+
+  // Recreate shader stages (destroyed in create_aabb_pipeline)
+  VkShaderModule vert, frag;
+  VkShaderModuleCreateInfo vertInfo{
+      VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  vertInfo.codeSize = sizeof(aabb_vert_spv);
+  vertInfo.pCode = aabb_vert_spv;
+  vkCreateShaderModule(g_device, &vertInfo, nullptr, &vert);
+
+  VkShaderModuleCreateInfo fragInfo{
+      VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  fragInfo.codeSize = sizeof(aabb_frag_spv);
+  fragInfo.pCode = aabb_frag_spv;
+  vkCreateShaderModule(g_device, &fragInfo, nullptr, &frag);
+
+  VkPipelineShaderStageCreateInfo shaderStages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_VERTEX_BIT, vert, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag, "main", nullptr}};
+
+  // Reuse Vertex Input from AABB
+  VkVertexInputBindingDescription bindingDescription{};
+  bindingDescription.binding = 0;
+  bindingDescription.stride = sizeof(Vertex);
+  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attributeDescriptions[3]{};
+  attributeDescriptions[0].binding = 0;
+  attributeDescriptions[0].location = 0;
+  attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributeDescriptions[0].offset = offsetof(Vertex, pos);
+  attributeDescriptions[1].binding = 0;
+  attributeDescriptions[1].location = 1;
+  attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributeDescriptions[1].offset = offsetof(Vertex, color);
+  attributeDescriptions[2].binding = 0;
+  attributeDescriptions[2].location = 2;
+  attributeDescriptions[2].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributeDescriptions[2].offset = offsetof(Vertex, bary);
+
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+  vertexInputInfo.vertexAttributeDescriptionCount = 3;
+  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; // KEY CHANGE
+  inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+  VkPipelineViewportStateCreateInfo viewportState{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewportState.viewportCount = 1;
+  viewportState.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode = VK_POLYGON_MODE_LINE; // FILL works too for lines
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_NONE;
+  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depthStencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+  depthStencil.depthTestEnable = VK_FALSE;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+  colorBlendAttachment.colorWriteMask = 0xF;
+  colorBlendAttachment.blendEnable = VK_TRUE;
+  colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+  colorBlendAttachment.dstColorBlendFactor =
+      VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+
+  VkPipelineColorBlendStateCreateInfo colorBlending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments = &colorBlendAttachment;
+
+  VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                    VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamicState{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
+
+  pipelineInfo.stageCount = 2;
+  pipelineInfo.pStages = shaderStages;
+  pipelineInfo.pVertexInputState = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisampling;
+  pipelineInfo.pDepthStencilState = &depthStencil;
+  pipelineInfo.pColorBlendState = &colorBlending;
+  pipelineInfo.pDynamicState = &dynamicState;
+  pipelineInfo.layout = g_aabb_pipeline_layout; // Reuse layout
+  pipelineInfo.renderPass = g_render_pass;
+  pipelineInfo.subpass = 0;
+
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                nullptr, &g_line_pipeline) != VK_SUCCESS) {
+    log_error("Failed to create line pipeline!");
+  }
+
+  vkDestroyShaderModule(g_device, vert, nullptr);
+  vkDestroyShaderModule(g_device, frag, nullptr);
+}
+
+static void create_line_mesh() {
+  // Unit Line along +Z (0,0,0) to (0,0,1) matches lookAt Z forward
+  // Or X? Let's use Forward Z to simplify lookAt usage.
+  // Vertices:
+  std::vector<Vertex> vertices = {{{0, 0, 0}, {1, 1, 1}, {0, 0, 0}},
+                                  {{0, 0, 1}, {1, 1, 1}, {0, 0, 0}}};
+  std::vector<uint16_t> indices = {0, 1};
+
+  // Vertex Buffer
+  VkDeviceSize vSize = sizeof(Vertex) * vertices.size();
+  VkBuffer vStaging;
+  VkDeviceMemory vStagingMem;
+  create_buffer(vSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                vStaging, vStagingMem);
+  void *data;
+  vkMapMemory(g_device, vStagingMem, 0, vSize, 0, &data);
+  memcpy(data, vertices.data(), (size_t)vSize);
+  vkUnmapMemory(g_device, vStagingMem);
+  create_buffer(vSize,
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, g_line_vertex_buffer,
+                g_line_vertex_memory);
+
+  // Index Buffer
+  VkDeviceSize iSize = sizeof(uint16_t) * indices.size();
+  VkBuffer iStaging;
+  VkDeviceMemory iStagingMem;
+  create_buffer(iSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                iStaging, iStagingMem);
+  vkMapMemory(g_device, iStagingMem, 0, iSize, 0, &data);
+  memcpy(data, indices.data(), (size_t)iSize);
+  vkUnmapMemory(g_device, iStagingMem);
+  create_buffer(iSize,
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, g_line_index_buffer,
+                g_line_index_memory);
+
+  // Copy
+  VkCommandBufferAllocateInfo allocInfo{
+      VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandPool = g_command_pool;
+  allocInfo.commandBufferCount = 1;
+  VkCommandBuffer cmd;
+  vkAllocateCommandBuffers(g_device, &allocInfo, &cmd);
+  VkCommandBufferBeginInfo beginInfo{
+      VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cmd, &beginInfo);
+  VkBufferCopy vCopy{};
+  vCopy.size = vSize;
+  vkCmdCopyBuffer(cmd, vStaging, g_line_vertex_buffer, 1, &vCopy);
+  VkBufferCopy iCopy{};
+  iCopy.size = iSize;
+  vkCmdCopyBuffer(cmd, iStaging, g_line_index_buffer, 1, &iCopy);
+  vkEndCommandBuffer(cmd);
+  VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &cmd;
+  vkQueueSubmit(g_graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+  vkQueueWaitIdle(g_graphics_queue);
+  vkFreeCommandBuffers(g_device, g_command_pool, 1, &cmd);
+  vkDestroyBuffer(g_device, vStaging, nullptr);
+  vkFreeMemory(g_device, vStagingMem, nullptr);
+  vkDestroyBuffer(g_device, iStaging, nullptr);
+  vkFreeMemory(g_device, iStagingMem, nullptr);
+}
+
+void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
+              const linalg::vec3 &end, uint32_t color) {
+  if (g_line_pipeline == VK_NULL_HANDLE)
+    return;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_line_pipeline);
+  VkBuffer vertexBuffers[] = {g_line_vertex_buffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+  vkCmdBindIndexBuffer(cmd, g_line_index_buffer, 0, VK_INDEX_TYPE_UINT16);
+
+  // Calc Model Matrix
+  // Unit line is (0,0,0) -> (0,0,1) (+Z)
+  // Target is start -> end
+  float dx = end.x - start.x;
+  float dy = end.y - start.y;
+  float dz = end.z - start.z;
+  float len = sqrt(dx * dx + dy * dy + dz * dz);
+  if (len < 0.0001f)
+    return;
+
+  // We need rotation to align +Z to dir
+  float dx_n = dx / len;
+  float dy_n = dy / len;
+  float dz_n = dz / len;
+
+  // LookAt constructs logic where Z is Forward.
+  // If we use LookAt(0,0,0, dir, ...) we get View Matrix (Inverse Rotation).
+  // We want Rotation Matrix. Model = Rotation * Scale * Translate? No,
+  // Translate * Rotation * Scale
+
+  // Custom Rotation Matrix aligning (0,0,1) to (dx_n, dy_n, dz_n)
+  // Up can be generic, e.g. Y, unless dir is Y
+  float ux = 0, uy = 1, uz = 0;
+  if (fabs(dx_n) < 0.001f && fabs(dz_n) < 0.001f) {
+    ux = 1;
+    uy = 0;
+    uz = 0; // If dir is vertical, use X as Up
+  }
+
+  // Forward = Dir
+  float fx = dx_n, fy = dy_n, fz = dz_n;
+  // Right = Up x Forward
+  float rx = uy * fz - uz * fy;
+  float ry = uz * fx - ux * fz;
+  float rz = ux * fy - uy * fx;
+  float rlen = 1.0f / sqrt(rx * rx + ry * ry + rz * rz);
+  rx *= rlen;
+  ry *= rlen;
+  rz *= rlen;
+  // Real Up = Forward x Right
+  ux = fy * rz - fz * ry;
+  uy = fz * rx - fx * rz;
+  uz = fx * ry - fy * rx;
+
+  mat4_t rot_scale = mat4_t::identity();
+  // Columns: Right, Up, Forward (since we map Z to Forward)
+  rot_scale.m[0] = rx /** 1 (X scale unused)*/;
+  rot_scale.m[4] = ux /** 1*/;
+  rot_scale.m[8] = fx * len; // Z is scaled by len
+  rot_scale.m[1] = ry;
+  rot_scale.m[5] = uy;
+  rot_scale.m[9] = fy * len;
+  rot_scale.m[2] = rz;
+  rot_scale.m[6] = uz;
+  rot_scale.m[10] = fz * len;
+
+  // Translate
+  rot_scale.m[12] = start.x;
+  rot_scale.m[13] = start.y;
+  rot_scale.m[14] = start.z;
+
+  mat4_t mvp = mat4_t::mult(g_current_view_proj, rot_scale);
+
+  PushConstants pc{}; // Need to match strict layout
+  // Copy matrix
+  for (int i = 0; i < 16; ++i)
+    pc.mvp[i] = mvp.m[i];
+  // Color
+  pc.color[0] = (float)(color & 0xFF) / 255.0f;
+  pc.color[1] = (float)((color >> 8) & 0xFF) / 255.0f;
+  pc.color[2] = (float)((color >> 16) & 0xFF) / 255.0f;
+  pc.color[3] = (float)((color >> 24) & 0xFF) / 255.0f;
+
+  vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                     sizeof(PushConstants), &pc);
+  vkCmdDrawIndexed(cmd, 2, 1, 0, 0, 0);
+}
+
 static void create_aabb_mesh() {
   // Unit Cube [-0.5, 0.5]
   // 24 vertices (4 per face), 36 indices
@@ -1086,6 +1375,8 @@ bool Init(SDL_Window *window) {
 
   create_aabb_pipeline();
   create_aabb_mesh();
+  create_line_pipeline();
+  create_line_mesh();
 
   g_command_buffers.resize(MAX_FRAMES_IN_FLIGHT);
   VkCommandBufferAllocateInfo alloc_info{};
@@ -1212,6 +1503,12 @@ void Shutdown() {
   vkFreeMemory(g_device, g_aabb_vertex_memory, nullptr);
   vkDestroyBuffer(g_device, g_aabb_index_buffer, nullptr);
   vkFreeMemory(g_device, g_aabb_index_memory, nullptr);
+
+  vkDestroyPipeline(g_device, g_line_pipeline, nullptr);
+  vkDestroyBuffer(g_device, g_line_vertex_buffer, nullptr);
+  vkFreeMemory(g_device, g_line_vertex_memory, nullptr);
+  vkDestroyBuffer(g_device, g_line_index_buffer, nullptr);
+  vkFreeMemory(g_device, g_line_index_memory, nullptr);
 
   vkDestroyRenderPass(g_device, g_render_pass, nullptr);
   vkDestroyDevice(g_device, nullptr);

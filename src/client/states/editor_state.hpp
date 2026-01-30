@@ -4,6 +4,7 @@
 #include "../game_state.hpp"
 #include "../shared/linalg.hpp"
 #include "game.pb.h"
+#include <unordered_set>
 #include <vector>
 
 namespace client {
@@ -33,12 +34,24 @@ private:
   bool place_mode = false;
   float selected_tile[3] = {0.0f, 0.0f, 0.0f};
 
+  // Entity Placement Mode
+  bool entity_mode = false;
+  linalg::vec3 entity_cursor_pos{0, 0, 0};
+  bool entity_cursor_valid = false;
+
   // Dragging state
   bool dragging_placement = false;
   linalg::vec3 drag_start{0.0f, 0.0f, 0.0f};
 
+  // Rotation state
+  bool rotation_mode = false;
+  int rotate_entity_index = -1;
+  linalg::vec3 rotate_debug_point{0, 0, 0};
+
   // Selection state
-  int selected_aabb_index = -1;
+  // Selection state
+  std::unordered_set<int> selected_aabb_indices;
+  std::unordered_set<int> selected_entity_indices;
   float selection_timer = 0.0f;
 
   struct DebugLine {
