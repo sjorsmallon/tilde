@@ -3,13 +3,16 @@
 #include "../camera.hpp"
 #include "../game_state.hpp"
 #include "../shared/linalg.hpp"
+#include "../undo_stack.hpp"
 #include "game.pb.h"
 #include <unordered_set>
 #include <vector>
 
-namespace client {
+namespace client
+{
 
-class EditorState : public IGameState {
+class EditorState : public IGameState
+{
 public:
   void on_enter() override;
   void update(float dt) override;
@@ -43,6 +46,10 @@ private:
   bool dragging_placement = false;
   linalg::vec3 drag_start{0.0f, 0.0f, 0.0f};
 
+  // Selection Drag State
+  bool dragging_selection = false;
+  linalg::vec2 selection_start{0.0f, 0.0f};
+
   // Rotation state
   bool rotation_mode = false;
   int rotate_entity_index = -1;
@@ -54,12 +61,15 @@ private:
   std::unordered_set<int> selected_entity_indices;
   float selection_timer = 0.0f;
 
-  struct DebugLine {
+  struct DebugLine
+  {
     linalg::vec3 start;
     linalg::vec3 end;
     uint32_t color;
   };
   std::vector<DebugLine> debug_lines;
+
+  Undo_Stack undo_stack;
 };
 
 } // namespace client

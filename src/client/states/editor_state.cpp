@@ -11,14 +11,20 @@
 #include <fstream>
 #include <iostream>
 
-namespace client {
+#include "../undo_stack.hpp"
+
+constexpr const int INVALID_IDX = -1;
+
+namespace client
+{
 
 using linalg::to_radians;
 using linalg::vec2;
 using linalg::vec3;
 
 // Helper to separate View from Projection for 3D clipping
-static vec3 WorldToView(const vec3 &p, const camera_t &cam) {
+static vec3 WorldToView(const vec3 &p, const camera_t &cam)
+{
   float x = p.x - cam.x;
   float y = p.y - cam.y;
   float z = p.z - cam.z;
@@ -50,7 +56,8 @@ static vec3 WorldToView(const vec3 &p, const camera_t &cam) {
 
 // Ray-AABB Intersection (Slab Method)
 static bool IntersectRayAABB(vec3 ray_origin, vec3 ray_dir, vec3 aabb_min,
-                             vec3 aabb_max, float &t_min) {
+                             vec3 aabb_max, float &t_min)
+{
   float tx1 = (aabb_min.x - ray_origin.x) / ray_dir.x;
   float tx2 = (aabb_max.x - ray_origin.x) / ray_dir.x;
 
@@ -69,7 +76,8 @@ static bool IntersectRayAABB(vec3 ray_origin, vec3 ray_dir, vec3 aabb_min,
   tmin = std::max(tmin, std::min(tz1, tz2));
   tmax = std::min(tmax, std::max(tz1, tz2));
 
-  if (tmax >= tmin && tmax >= 0.0f) {
+  if (tmax >= tmin && tmax >= 0.0f)
+  {
     t_min = tmin;
     return true;
   }
@@ -77,8 +85,10 @@ static bool IntersectRayAABB(vec3 ray_origin, vec3 ray_dir, vec3 aabb_min,
 }
 
 static vec2 ViewToScreen(const vec3 &p, const ImGuiIO &io, bool ortho,
-                         float ortho_h) {
-  if (ortho) {
+                         float ortho_h)
+{
+  if (ortho)
+  {
     float aspect = io.DisplaySize.x / io.DisplaySize.y;
     float h = ortho_h;
     float w = h * aspect;
@@ -89,7 +99,9 @@ static vec2 ViewToScreen(const vec3 &p, const ImGuiIO &io, bool ortho,
 
     return {(x_ndc * 0.5f + 0.5f) * io.DisplaySize.x,
             (1.0f - (y_ndc * 0.5f + 0.5f)) * io.DisplaySize.y};
-  } else {
+  }
+  else
+  {
     float aspect = io.DisplaySize.x / io.DisplaySize.y;
     float fov = 90.0f;
     float tanHalf = tan(to_radians(fov) * 0.5f);
@@ -103,7 +115,8 @@ static vec2 ViewToScreen(const vec3 &p, const ImGuiIO &io, bool ortho,
   }
 }
 
-static bool IntersectAABBAABB(const game::AABB &a, const game::AABB &b) {
+static bool IntersectAABBAABB(const game::AABB &a, const game::AABB &b)
+{
   // A
   float ax = a.center().x();
   float ay = a.center().y();
@@ -129,17 +142,21 @@ static bool IntersectAABBAABB(const game::AABB &a, const game::AABB &b) {
          (minA.z <= maxB.z && maxA.z >= minB.z);
 }
 
-static bool ClipLine(vec3 &p1, vec3 &p2) {
+static bool ClipLine(vec3 &p1, vec3 &p2)
+{
   float nearZ = -0.1f;
 
   if (p1.z > nearZ && p2.z > nearZ)
     return false;
 
-  if (p1.z > nearZ) {
+  if (p1.z > nearZ)
+  {
     float t = (nearZ - p1.z) / (p2.z - p1.z);
     p1 = linalg::mix(p1, p2, t);
     p1.z = nearZ; // ensure precision
-  } else if (p2.z > nearZ) {
+  }
+  else if (p2.z > nearZ)
+  {
     float t = (nearZ - p2.z) / (p1.z - p2.z);
     p2 = linalg::mix(p2, p1, t);
     p2.z = nearZ;
@@ -147,8 +164,10 @@ static bool ClipLine(vec3 &p1, vec3 &p2) {
   return true;
 }
 
-void EditorState::on_enter() {
-  if (map_source.name().empty()) {
+void EditorState::on_enter()
+{
+  if (map_source.name().empty())
+  {
     map_source.set_name("New Default Map");
     // Add a default floor
     auto *aabb = map_source.add_aabbs();
@@ -161,8 +180,10 @@ void EditorState::on_enter() {
   }
 }
 
-void EditorState::update(float dt) {
-  if (exit_requested) {
+void EditorState::update(float dt)
+{
+  if (exit_requested)
+  {
     exit_requested = false;
     state_manager::switch_to(GameStateKind::MainMenu);
     return;
@@ -174,74 +195,212 @@ void EditorState::update(float dt) {
 
   // Deletion Logic
   // Deletion Logic
-  if (client::input::is_key_pressed(SDL_SCANCODE_BACKSPACE)) {
+
+  // Undo/Redo
+  bool ctrl_down = client::input::is_key_down(SDL_SCANCODE_LCTRL) ||
+                   client::input::is_key_down(SDL_SCANCODE_RCTRL);
+  // Z is usually undo
+  if (ctrl_down && client::input::is_key_pressed(SDL_SCANCODE_Z))
+  {
+    if (undo_stack.can_undo())
+    {
+      undo_stack.undo();
+      client::renderer::draw_announcement("Undo");
+    }
+  }
+  // Y is usually redo
+  if (ctrl_down && client::input::is_key_pressed(SDL_SCANCODE_Y))
+  {
+    if (undo_stack.can_redo())
+    {
+      undo_stack.redo();
+      client::renderer::draw_announcement("Redo");
+    }
+  }
+
+  if (client::input::is_key_pressed(SDL_SCANCODE_BACKSPACE))
+  {
     // Collect all indices to delete for AABBs
     std::vector<int> aabbs_to_delete(selected_aabb_indices.begin(),
                                      selected_aabb_indices.end());
     // Sort descending to delete from end first
     std::sort(aabbs_to_delete.rbegin(), aabbs_to_delete.rend());
 
-    auto *aabbs = map_source.mutable_aabbs();
-    for (int idx : aabbs_to_delete) {
-      if (idx >= 0 && idx < map_source.aabbs_size()) {
-        aabbs->DeleteSubrange(idx, 1);
-      }
-    }
-    selected_aabb_indices.clear();
-
     // Collect all indices to delete for Entities
     std::vector<int> entities_to_delete(selected_entity_indices.begin(),
                                         selected_entity_indices.end());
     std::sort(entities_to_delete.rbegin(), entities_to_delete.rend());
 
-    auto *entities = map_source.mutable_entities();
-    for (int idx : entities_to_delete) {
-      if (idx >= 0 && idx < map_source.entities_size()) {
-        entities->DeleteSubrange(idx, 1);
+    if (!aabbs_to_delete.empty() || !entities_to_delete.empty())
+    {
+      // Capture deleted data for undo
+      std::vector<game::AABB> deleted_aabbs;
+      for (int idx : aabbs_to_delete)
+      {
+        if (idx >= 0 && idx < map_source.aabbs_size())
+        {
+          deleted_aabbs.push_back(map_source.aabbs(idx));
+        }
       }
+
+      std::vector<game::EntitySpawn> deleted_entities;
+      for (int idx : entities_to_delete)
+      {
+        if (idx >= 0 && idx < map_source.entities_size())
+        {
+          deleted_entities.push_back(map_source.entities(idx));
+        }
+      }
+
+      // Perform deletion
+      auto *aabbs = map_source.mutable_aabbs();
+      for (int idx : aabbs_to_delete)
+      {
+        if (idx >= 0 && idx < map_source.aabbs_size())
+        {
+          aabbs->DeleteSubrange(idx, 1);
+        }
+      }
+
+      auto *entities = map_source.mutable_entities();
+      for (int idx : entities_to_delete)
+      {
+        if (idx >= 0 && idx < map_source.entities_size())
+        {
+          entities->DeleteSubrange(idx, 1);
+        }
+      }
+
+      // Clear selection
+      selected_aabb_indices.clear();
+      selected_entity_indices.clear();
+
+      // Push Undo Action
+      undo_stack.push(
+          [this, deleted_aabbs, deleted_entities]()
+          {
+            // UNDO: Restore deleted items
+            auto *aabbs = map_source.mutable_aabbs();
+            for (const auto &box : deleted_aabbs)
+            {
+              *aabbs->Add() = box;
+            }
+            auto *ents = map_source.mutable_entities();
+            for (const auto &ent : deleted_entities)
+            {
+              *ents->Add() = ent;
+            }
+          },
+          [this, deleted_aabbs, deleted_entities]()
+          {
+            // REDO: Delete the items we just restored.
+            // Since we restored them to the end, we can delete from the end.
+            int da_count = (int)deleted_aabbs.size();
+            auto *aabbs = map_source.mutable_aabbs();
+            if (aabbs->size() >= da_count)
+            {
+              aabbs->DeleteSubrange(aabbs->size() - da_count, da_count);
+            }
+
+            int de_count = (int)deleted_entities.size();
+            auto *ents = map_source.mutable_entities();
+            if (ents->size() >= de_count)
+            {
+              ents->DeleteSubrange(ents->size() - de_count, de_count);
+            }
+          });
+
+      // Push Undo Action
+      undo_stack.push(
+          [this, deleted_aabbs, deleted_entities]()
+          {
+            // UNDO: Restore deleted items
+            auto *aabbs = map_source.mutable_aabbs();
+            for (const auto &box : deleted_aabbs)
+            {
+              *aabbs->Add() = box;
+            }
+            auto *ents = map_source.mutable_entities();
+            for (const auto &ent : deleted_entities)
+            {
+              *ents->Add() = ent;
+            }
+          },
+          [this, deleted_aabbs_count = deleted_aabbs.size(),
+           deleted_entities_count = deleted_entities.size()]()
+          {
+            // REDO: Delete the items we just restored (which are now at the end
+            // of the list) Note: This assumes no other changes happened that
+            // shifted indices, which is a risk with index-based logic. But
+            // since we are appending on restore, we can just pop back.
+            auto *aabbs = map_source.mutable_aabbs();
+            if (aabbs->size() >= (int)deleted_aabbs_count)
+            {
+              aabbs->DeleteSubrange(aabbs->size() - deleted_aabbs_count,
+                                    deleted_aabbs_count);
+            }
+
+            auto *ents = map_source.mutable_entities();
+            if (ents->size() >= (int)deleted_entities_count)
+            {
+              ents->DeleteSubrange(ents->size() - deleted_entities_count,
+                                   deleted_entities_count);
+            }
+          });
     }
-    selected_entity_indices.clear();
   }
 
   // Toggle Place Mode
-  if (client::input::is_key_pressed(SDL_SCANCODE_P)) {
+  if (client::input::is_key_pressed(SDL_SCANCODE_P))
+  {
     place_mode = !place_mode;
-    if (place_mode) {
+    if (place_mode)
+    {
       entity_mode = false; // Disable entity mode
       client::renderer::draw_announcement("Place Mode Active");
-    } else {
+    }
+    else
+    {
       client::renderer::draw_announcement("Place Mode Inactive");
     }
   }
 
   // Toggle Entity Mode
-  if (client::input::is_key_pressed(SDL_SCANCODE_E)) {
+  if (client::input::is_key_pressed(SDL_SCANCODE_E))
+  {
     entity_mode = !entity_mode;
-    if (entity_mode) {
+    if (entity_mode)
+    {
       place_mode = false; // Disable place mode
       client::renderer::draw_announcement("Entity Placement Mode Active");
-    } else {
+    }
+    else
+    {
       client::renderer::draw_announcement("Entity Placement Mode Inactive");
     }
   }
 
   // Isometric Snap
-  if (client::input::is_key_pressed(SDL_SCANCODE_I)) {
+  if (client::input::is_key_pressed(SDL_SCANCODE_I))
+  {
     camera.orthographic = !camera.orthographic; // Toggle
-    if (camera.orthographic) {
+    if (camera.orthographic)
+    {
       camera.yaw = 315.0f;     // Rotated 90 degrees CCW (or -45)
       camera.pitch = -35.264f; // Standard Isometric
     }
   }
 
   // Raycast for Place Mode
-  if (place_mode && !io.WantCaptureMouse) {
+  if (place_mode && !io.WantCaptureMouse)
+  {
     float mouse_x = io.MousePos.x;
     float mouse_y = io.MousePos.y;
     float width = io.DisplaySize.x;
     float height = io.DisplaySize.y;
 
-    if (width > 0 && height > 0) {
+    if (width > 0 && height > 0)
+    {
       // NDC
       float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
       float y_ndc = 1.0f - 2.0f * (mouse_y / height);
@@ -274,9 +433,12 @@ void EditorState::update(float dt) {
       vec3 R = linalg::cross(F, W);
       // Normalize R
       float lenR = linalg::length(R);
-      if (lenR < 0.001f) {
+      if (lenR < 0.001f)
+      {
         R = {1, 0, 0};
-      } else {
+      }
+      else
+      {
         R = R * (1.0f / lenR);
       }
 
@@ -287,7 +449,8 @@ void EditorState::update(float dt) {
       vec3 ray_dir;
       vec3 ray_origin;
 
-      if (camera.orthographic) {
+      if (camera.orthographic)
+      {
         // Orthographic Raycasting
         // Direction is always Forward vector
         ray_dir = F;
@@ -305,7 +468,9 @@ void EditorState::update(float dt) {
         ray_origin = {camera.x, camera.y, camera.z};
         ray_origin = ray_origin - ray_dir * 1000.0f;
         ray_origin = ray_origin + R * ox + U * oy;
-      } else {
+      }
+      else
+      {
         // Perspective Raycasting
         // Ray = R * vx + U * vy + F * 1.0
         ray_dir = R * vx + U * vy + F;
@@ -315,16 +480,16 @@ void EditorState::update(float dt) {
       // Intersect Y=0 plane
       // O.y + t * D.y = 0  => t = -O.y / D.y
       bool hit = false;
-      if (std::abs(ray_dir.y) > 1e-6) {
+      if (std::abs(ray_dir.y) > 1e-6)
+      {
         float t = -ray_origin.y / ray_dir.y;
-        if (t > 0 ||
-            camera
-                .orthographic) { // Allow negative t for ortho if camera is
-                                 // below plane (unlikely) or behind? actually t
-                                 // should be distance along ray. For ortho,
-                                 // camera might be "far away" but we act as if
-                                 // plane is at z=0. Actually with t>0 check, we
-                                 // ensure we only click in front of camera.
+        if (t > 0 || camera.orthographic)
+        { // Allow negative t for ortho if camera is
+          // below plane (unlikely) or behind? actually t
+          // should be distance along ray. For ortho,
+          // camera might be "far away" but we act as if
+          // plane is at z=0. Actually with t>0 check, we
+          // ensure we only click in front of camera.
           float ix = ray_origin.x + t * ray_dir.x;
           float iz = ray_origin.z + t * ray_dir.z;
 
@@ -335,7 +500,8 @@ void EditorState::update(float dt) {
         }
       }
 
-      if (!hit) {
+      if (!hit)
+      {
         selected_tile[1] = -10000.0f; // Invalid
       }
 
@@ -346,12 +512,15 @@ void EditorState::update(float dt) {
       bool lmb_released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
 
       // Handle Drag Logic
-      if (place_mode && hit) {
+      if (place_mode && hit)
+      {
         vec3 current_pos = {selected_tile[0], selected_tile[1],
                             selected_tile[2]};
 
-        if (dragging_placement) {
-          if (lmb_released) {
+        if (dragging_placement)
+        {
+          if (lmb_released)
+          {
             // Finalize placement
             dragging_placement = false;
             auto *aabb = map_source.add_aabbs();
@@ -376,35 +545,81 @@ void EditorState::update(float dt) {
             aabb->mutable_half_extents()->set_x(width * 0.5f);
             aabb->mutable_half_extents()->set_y(height * 0.5f);
             aabb->mutable_half_extents()->set_z(depth * 0.5f);
+
+            // Capture for undo
+            game::AABB new_aabb = *aabb;
+            undo_stack.push(
+                [this]()
+                {
+                  // UNDO
+                  auto *aabbs = map_source.mutable_aabbs();
+                  if (!aabbs->empty())
+                  {
+                    aabbs->RemoveLast();
+                  }
+                },
+                [this, new_aabb]()
+                {
+                  // REDO
+                  *map_source.add_aabbs() = new_aabb;
+                });
           }
-        } else {
+        }
+        else
+        {
           // Not dragging yet
-          if (lmb_clicked && shift_down) {
+          if (lmb_clicked && shift_down)
+          {
             // Start Drag
             dragging_placement = true;
             drag_start = current_pos;
-          } else if (lmb_clicked) {
+          }
+          else if (lmb_clicked)
+          {
             // Normal single click place (1x1)
             auto *aabb = map_source.add_aabbs();
-            aabb->mutable_center()->set_x(current_pos.x + 0.5f);
-            aabb->mutable_center()->set_y(-0.5f); // Center at -0.5
-            aabb->mutable_center()->set_z(current_pos.z + 0.5f);
-            aabb->mutable_half_extents()->set_x(0.5f);
-            aabb->mutable_half_extents()->set_y(0.5f);
-            aabb->mutable_half_extents()->set_z(0.5f);
+            game::AABB new_aabb;
+            new_aabb.mutable_center()->set_x(current_pos.x + 0.5f);
+            new_aabb.mutable_center()->set_y(-0.5f); // Center at -0.5
+            new_aabb.mutable_center()->set_z(current_pos.z + 0.5f);
+            new_aabb.mutable_half_extents()->set_x(0.5f);
+            new_aabb.mutable_half_extents()->set_y(0.5f);
+            new_aabb.mutable_half_extents()->set_z(0.5f);
+            *aabb = new_aabb;
+
+            undo_stack.push(
+                [this]()
+                {
+                  // UNDO: Remove the last added AABB
+                  // Optimization: Check if it matches? For now just pop back.
+                  auto *aabbs = map_source.mutable_aabbs();
+                  if (!aabbs->empty())
+                  {
+                    aabbs->RemoveLast();
+                  }
+                },
+                [this, new_aabb]()
+                {
+                  // REDO: Add it back
+                  *map_source.add_aabbs() = new_aabb;
+                });
           }
         }
-      } else {
+      }
+      else
+      {
         // If we mouse off the plane while dragging, what happens?
         // For now, let's just keep dragging_placement true but maybe not update
         // destination if invalid? Or cancel? Let's just cancel if release
         // happens off grid
-        if (dragging_placement && lmb_released) {
+        if (dragging_placement && lmb_released)
+        {
           dragging_placement = false;
         }
       }
 
-      if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+      if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
+      {
         vec3 start = {camera.x, camera.y, camera.z};
         // If it hit the plane, use intersection. If not, use far point on ray
         vec3 end =
@@ -413,15 +628,21 @@ void EditorState::update(float dt) {
         debug_lines.push_back({start, end, 0xFF00FFFF}); // Magenta
       }
     }
-  } else if (!place_mode && !entity_mode && !io.WantCaptureMouse) {
-
+  }
+  else if (!place_mode && !entity_mode && !io.WantCaptureMouse)
+  {
     // Rotation Toggle Logic
-    if (client::input::is_key_pressed(SDL_SCANCODE_R)) {
-      if (selected_entity_indices.size() == 1) {
+    if (client::input::is_key_pressed(SDL_SCANCODE_R))
+    {
+      if (selected_entity_indices.size() == 1)
+      {
         rotation_mode = !rotation_mode;
-        if (rotation_mode) {
+        if (rotation_mode)
+        {
           rotate_entity_index = *selected_entity_indices.begin();
-        } else {
+        }
+        else
+        {
           rotate_entity_index = -1;
         }
       }
@@ -429,7 +650,8 @@ void EditorState::update(float dt) {
 
     // Rotation Active Logic
     if (rotation_mode && rotate_entity_index != -1 &&
-        rotate_entity_index < map_source.entities_size()) {
+        rotate_entity_index < map_source.entities_size())
+    {
       auto *ent = map_source.mutable_entities(rotate_entity_index);
 
       // Raycast to Ground Plane to find current mouse position
@@ -463,7 +685,8 @@ void EditorState::update(float dt) {
       vec3 ray_dir;
       vec3 ray_origin;
 
-      if (camera.orthographic) {
+      if (camera.orthographic)
+      {
         ray_dir = F;
         float h = camera.ortho_height;
         float w = h * aspect;
@@ -472,16 +695,20 @@ void EditorState::update(float dt) {
         ray_origin = {camera.x, camera.y, camera.z};
         ray_origin = ray_origin - ray_dir * 1000.0f;
         ray_origin = ray_origin + R * ox + U * oy;
-      } else {
+      }
+      else
+      {
         ray_dir = R * vx + U * vy + F;
         ray_origin = {camera.x, camera.y, camera.z};
       }
 
       // Intersect with Plane at Entity Y
       float plane_y = ent->position().y();
-      if (std::abs(ray_dir.y) > 1e-6) {
+      if (std::abs(ray_dir.y) > 1e-6)
+      {
         float t = (plane_y - ray_origin.y) / ray_dir.y;
-        if (t > 0 || camera.orthographic) {
+        if (t > 0 || camera.orthographic)
+        {
           vec3 hit_point = ray_origin + ray_dir * t;
           // Store debug point
           rotate_debug_point = hit_point;
@@ -496,189 +723,292 @@ void EditorState::update(float dt) {
       }
     }
 
-    else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-      float mouse_x = io.MousePos.x;
-      float mouse_y = io.MousePos.y;
-      float width = io.DisplaySize.x;
-      float height = io.DisplaySize.y;
+    else
+    {
+      // Selection Logic (Click or Drag)
+      if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+      {
+        selection_start = {io.MousePos.x, io.MousePos.y};
+        dragging_selection = false;
+      }
 
-      if (width > 0 && height > 0) {
-        // NDC
-        float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
-        float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+      if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+      {
+        dragging_selection = true;
+      }
 
-        // View Space Ray Dir
-        float fov = 90.0f;
-        float tanHalf = tan(to_radians(fov) * 0.5f);
-        float aspect = width / height;
+      if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+      {
+        if (dragging_selection)
+        {
+          // RECT SELECTION
+          float x1 = std::min(selection_start.x, io.MousePos.x);
+          float x2 = std::max(selection_start.x, io.MousePos.x);
+          float y1 = std::min(selection_start.y, io.MousePos.y);
+          float y2 = std::max(selection_start.y, io.MousePos.y);
 
-        float vx = x_ndc * aspect * tanHalf;
-        float vy = y_ndc * tanHalf;
+          bool shift_held = client::input::is_key_down(SDL_SCANCODE_LSHIFT);
+          bool ctrl_held = client::input::is_key_down(SDL_SCANCODE_LCTRL) ||
+                           client::input::is_key_down(SDL_SCANCODE_RCTRL);
 
-        // Calculate Camera Basis Vectors
-        float radYaw = to_radians(camera.yaw);
-        float radPitch = to_radians(camera.pitch);
-
-        float cY = cos(radYaw);
-        float sY = sin(radYaw);
-        float cP = cos(radPitch);
-        float sP = sin(radPitch);
-
-        vec3 F = {cY * cP, sP, sY * cP};
-        vec3 W = {0, 1, 0};
-        vec3 R = linalg::cross(F, W);
-        float lenR = linalg::length(R);
-        if (lenR < 0.001f) {
-          R = {1, 0, 0};
-        } else {
-          R = R * (1.0f / lenR);
-        }
-        vec3 U = linalg::cross(R, F);
-
-        vec3 ray_dir;
-        vec3 ray_origin;
-
-        if (camera.orthographic) {
-          ray_dir = F;
-          float h = camera.ortho_height;
-          float w = h * aspect;
-          float ox = x_ndc * (w * 0.5f);
-          float oy = y_ndc * (h * 0.5f);
-          ray_origin = {camera.x, camera.y, camera.z};
-          ray_origin = ray_origin - ray_dir * 1000.0f;
-          ray_origin = ray_origin + R * ox + U * oy;
-        } else {
-          ray_dir = R * vx + U * vy + F;
-          ray_origin = {camera.x, camera.y, camera.z};
-        }
-
-        // Raycast against all AABBs
-        struct HitCandidate {
-          int index;
-          float t;
-          float volume;
-          game::AABB aabb;
-        };
-        std::vector<HitCandidate> candidates;
-
-        for (int i = 0; i < map_source.aabbs_size(); ++i) {
-          const auto &aabb = map_source.aabbs(i);
-          vec3 center = {aabb.center().x(), aabb.center().y(),
-                         aabb.center().z()};
-          vec3 half = {aabb.half_extents().x(), aabb.half_extents().y(),
-                       aabb.half_extents().z()};
-          vec3 min = center - half;
-          vec3 max = center + half;
-
-          float t = 0;
-          if (IntersectRayAABB(ray_origin, ray_dir, min, max, t)) {
-            if (t < 0.0f)
-              continue; // Ignore intersections behind the camera
-            float volume = (max.x - min.x) * (max.y - min.y) * (max.z - min.z);
-            candidates.push_back({i, t, volume, aabb});
+          if (!shift_held && !ctrl_held)
+          {
+            selected_aabb_indices.clear();
+            selected_entity_indices.clear();
           }
+
+          // Select AABBs
+          for (int i = 0; i < map_source.aabbs_size(); ++i)
+          {
+            const auto &aabb = map_source.aabbs(i);
+            vec3 center = {aabb.center().x(), aabb.center().y(),
+                           aabb.center().z()};
+            // Ideally check projected 8 corners for bounds overlap, but center
+            // is a good start for "RTS style" unit selection. Let's check
+            // center first.
+            vec3 p = WorldToView(center, camera);
+            // Simple clip check
+            if (p.z < 0 && !camera.orthographic)
+              continue;
+
+            vec2 s =
+                ViewToScreen(p, io, camera.orthographic, camera.ortho_height);
+
+            if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2)
+            {
+              selected_aabb_indices.insert(i);
+            }
+          }
+
+          // Select Entities
+          for (int i = 0; i < map_source.entities_size(); ++i)
+          {
+            const auto &ent = map_source.entities(i);
+            vec3 pos = {ent.position().x(), ent.position().y(),
+                        ent.position().z()};
+
+            vec3 p = WorldToView(pos, camera);
+            if (p.z < 0 && !camera.orthographic)
+              continue;
+
+            vec2 s =
+                ViewToScreen(p, io, camera.orthographic, camera.ortho_height);
+
+            if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2)
+            {
+              selected_entity_indices.insert(i);
+            }
+          }
+
+          dragging_selection = false;
         }
+        else
+        {
+          // SINGLE CLICK SELECTION (Raycast)
+          float mouse_x = io.MousePos.x;
+          float mouse_y = io.MousePos.y;
+          float width = io.DisplaySize.x;
+          float height = io.DisplaySize.y;
 
-        int closest_aabb_index = -1;
-        float min_dist = 1e9f;
+          if (width > 0 && height > 0)
+          {
+            // NDC
+            float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
+            float y_ndc = 1.0f - 2.0f * (mouse_y / height);
 
-        if (!candidates.empty()) {
-          // Sort by distance (closest first)
-          std::sort(candidates.begin(), candidates.end(),
-                    [](const HitCandidate &a, const HitCandidate &b) {
-                      return a.t < b.t;
-                    });
+            // View Space Ray Dir
+            float fov = 90.0f;
+            float tanHalf = tan(to_radians(fov) * 0.5f);
+            float aspect = width / height;
 
-          // Smart Selection:
-          // Start with the closest candidate.
-          // Look for subsequent candidates that physically overlap the current
-          // best. If a subsequent candidate overlaps AND is smaller, pick it.
+            float vx = x_ndc * aspect * tanHalf;
+            float vy = y_ndc * tanHalf;
 
-          HitCandidate best = candidates[0];
+            // Calculate Camera Basis Vectors
+            float radYaw = to_radians(camera.yaw);
+            float radPitch = to_radians(camera.pitch);
 
-          for (size_t i = 1; i < candidates.size(); ++i) {
-            const auto &next = candidates[i];
+            float cY = cos(radYaw);
+            float sY = sin(radYaw);
+            float cP = cos(radPitch);
+            float sP = sin(radPitch);
 
-            // Check if next physically overlaps best
-            // Since candidates are sorted by t along the ray, next is "further"
-            // or same distance. But it might be inside best.
-            if (IntersectAABBAABB(best.aabb, next.aabb)) {
-              if (next.volume < best.volume) {
-                // We found a smaller object inside the current best selection.
-                // Prioritize the smaller nested object.
-                best = next;
+            vec3 F = {cY * cP, sP, sY * cP};
+            vec3 W = {0, 1, 0};
+            vec3 R = linalg::cross(F, W);
+            float lenR = linalg::length(R);
+            if (lenR < 0.001f)
+            {
+              R = {1, 0, 0};
+            }
+            else
+            {
+              R = R * (1.0f / lenR);
+            }
+            vec3 U = linalg::cross(R, F);
+
+            vec3 ray_dir;
+            vec3 ray_origin;
+
+            if (camera.orthographic)
+            {
+              ray_dir = F;
+              float h = camera.ortho_height;
+              float w = h * aspect;
+              float ox = x_ndc * (w * 0.5f);
+              float oy = y_ndc * (h * 0.5f);
+              ray_origin = {camera.x, camera.y, camera.z};
+              ray_origin = ray_origin - ray_dir * 1000.0f;
+              ray_origin = ray_origin + R * ox + U * oy;
+            }
+            else
+            {
+              ray_dir = R * vx + U * vy + F;
+              ray_origin = {camera.x, camera.y, camera.z};
+            }
+
+            // Raycast against all AABBs
+            struct HitCandidate
+            {
+              int index;
+              float t;
+              float volume;
+              game::AABB aabb;
+            };
+            std::vector<HitCandidate> candidates;
+
+            for (int i = 0; i < map_source.aabbs_size(); ++i)
+            {
+              const auto &aabb = map_source.aabbs(i);
+              vec3 center = {aabb.center().x(), aabb.center().y(),
+                             aabb.center().z()};
+              vec3 half = {aabb.half_extents().x(), aabb.half_extents().y(),
+                           aabb.half_extents().z()};
+              vec3 min = center - half;
+              vec3 max = center + half;
+
+              float t = 0;
+              if (IntersectRayAABB(ray_origin, ray_dir, min, max, t))
+              {
+                if (t < 0.0f)
+                  continue; // Ignore intersections behind the camera
+                float volume =
+                    (max.x - min.x) * (max.y - min.y) * (max.z - min.z);
+                candidates.push_back({i, t, volume, aabb});
               }
             }
-          }
 
-          closest_aabb_index = best.index;
-          // Calculate hit point for distance check against entities
-          vec3 hit_point = ray_origin + ray_dir * best.t;
-          min_dist = linalg::length(hit_point - ray_origin);
-        }
+            int closest_aabb_index = -1;
+            float min_dist = 1e9f;
 
-        // Raycast against Entities (using approximated AABB)
-        int closest_ent_index = -1;
-        for (int i = 0; i < map_source.entities_size(); ++i) {
-          const auto &ent = map_source.entities(i);
-          vec3 pos = {ent.position().x(), ent.position().y(),
-                      ent.position().z()};
-          float s = 0.5f; // Size of pyramid
-          vec3 min = {pos.x - s / 2, pos.y, pos.z - s / 2};
-          vec3 max = {pos.x + s / 2, pos.y + 1.0f, pos.z + s / 2};
+            if (!candidates.empty())
+            {
+              // Sort by distance (closest first)
+              std::sort(candidates.begin(), candidates.end(),
+                        [](const HitCandidate &a, const HitCandidate &b)
+                        { return a.t < b.t; });
 
-          float t = 0;
-          if (IntersectRayAABB(ray_origin, ray_dir, min, max, t)) {
-            if (t < 0.0f)
-              continue; // Ignore intersections behind the camera
-            vec3 hit_point = ray_origin + ray_dir * t;
-            float dist = linalg::length(hit_point - ray_origin);
-            if (dist < min_dist) {
-              min_dist = dist;
-              closest_aabb_index = -1; // Deselect AABB if entity is closer
-              closest_ent_index = i;
+              HitCandidate best = candidates[0];
+
+              for (size_t i = 1; i < candidates.size(); ++i)
+              {
+                const auto &next = candidates[i];
+                if (IntersectAABBAABB(best.aabb, next.aabb))
+                {
+                  if (next.volume < best.volume)
+                  {
+                    best = next;
+                  }
+                }
+              }
+
+              closest_aabb_index = best.index;
+              vec3 hit_point = ray_origin + ray_dir * best.t;
+              min_dist = linalg::length(hit_point - ray_origin);
             }
-          }
-        }
 
-        bool ctrl_held = client::input::is_key_down(SDL_SCANCODE_LCTRL) ||
-                         client::input::is_key_down(SDL_SCANCODE_RCTRL);
+            // Raycast against Entities (using approximated AABB)
+            int closest_ent_index = -1;
+            for (int i = 0; i < map_source.entities_size(); ++i)
+            {
+              const auto &ent = map_source.entities(i);
+              vec3 pos = {ent.position().x(), ent.position().y(),
+                          ent.position().z()};
+              float s = 0.5f; // Size of pyramid
+              vec3 min = {pos.x - s / 2, pos.y, pos.z - s / 2};
+              vec3 max = {pos.x + s / 2, pos.y + 1.0f, pos.z + s / 2};
 
-        if (!ctrl_held) {
-          // Let's go simple: No CTRL -> Clear all, then select the new one (if
-          // any).
-          selected_aabb_indices.clear();
-          selected_entity_indices.clear();
-        }
-
-        if (closest_ent_index != -1) {
-          // Priority to Entities
-          if (ctrl_held) {
-            if (selected_entity_indices.count(closest_ent_index)) {
-              selected_entity_indices.erase(closest_ent_index);
-            } else {
-              selected_entity_indices.insert(closest_ent_index);
+              float t = 0;
+              if (IntersectRayAABB(ray_origin, ray_dir, min, max, t))
+              {
+                if (t < 0.0f)
+                  continue; // Ignore intersections behind the camera
+                vec3 hit_point = ray_origin + ray_dir * t;
+                float dist = linalg::length(hit_point - ray_origin);
+                if (dist < min_dist)
+                {
+                  min_dist = dist;
+                  closest_aabb_index = -1; // Deselect AABB if entity is closer
+                  closest_ent_index = i;
+                }
+              }
             }
-          } else {
-            // Check if we clicked an already selected entity
-            if (selected_entity_indices.count(closest_ent_index)) {
-              // Already selected. Do nothing since drag is removed.
-            } else {
+
+            bool ctrl_held = client::input::is_key_down(SDL_SCANCODE_LCTRL) ||
+                             client::input::is_key_down(SDL_SCANCODE_RCTRL);
+
+            if (!ctrl_held)
+            {
+              selected_aabb_indices.clear();
               selected_entity_indices.clear();
-              selected_entity_indices.insert(closest_ent_index);
             }
-          }
 
-        } else if (closest_aabb_index != -1) {
-          // Fallback to AABB
-          if (ctrl_held) {
-            if (selected_aabb_indices.count(closest_aabb_index)) {
-              selected_aabb_indices.erase(closest_aabb_index);
-            } else {
-              selected_aabb_indices.insert(closest_aabb_index);
+            if (closest_ent_index != -1)
+            {
+              // Priority to Entities
+              if (ctrl_held)
+              {
+                if (selected_entity_indices.count(closest_ent_index))
+                {
+                  selected_entity_indices.erase(closest_ent_index);
+                }
+                else
+                {
+                  selected_entity_indices.insert(closest_ent_index);
+                }
+              }
+              else
+              {
+                if (selected_entity_indices.count(closest_ent_index))
+                {
+                  // Already selected. Do nothing since drag is removed.
+                }
+                else
+                {
+                  selected_entity_indices.clear();
+                  selected_entity_indices.insert(closest_ent_index);
+                }
+              }
             }
-          } else {
-            selected_aabb_indices.insert(closest_aabb_index);
+            else if (closest_aabb_index != -1)
+            {
+              // Fallback to AABB
+              if (ctrl_held)
+              {
+                if (selected_aabb_indices.count(closest_aabb_index))
+                {
+                  selected_aabb_indices.erase(closest_aabb_index);
+                }
+                else
+                {
+                  selected_aabb_indices.insert(closest_aabb_index);
+                }
+              }
+              else
+              {
+                selected_aabb_indices.insert(closest_aabb_index);
+              }
+            }
           }
         }
       }
@@ -686,13 +1016,15 @@ void EditorState::update(float dt) {
   }
 
   // Entity Placement Raycast
-  if (entity_mode && !io.WantCaptureMouse) {
+  if (entity_mode && !io.WantCaptureMouse)
+  {
     float mouse_x = io.MousePos.x;
     float mouse_y = io.MousePos.y;
     float width = io.DisplaySize.x;
     float height = io.DisplaySize.y;
 
-    if (width > 0 && height > 0) {
+    if (width > 0 && height > 0)
+    {
       // NDC
       float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
       float y_ndc = 1.0f - 2.0f * (mouse_y / height);
@@ -721,7 +1053,8 @@ void EditorState::update(float dt) {
       R = (lenR < 0.001f) ? vec3{1, 0, 0} : R * (1.0f / lenR);
       vec3 U = linalg::cross(R, F);
 
-      if (camera.orthographic) {
+      if (camera.orthographic)
+      {
         ray_dir = F;
         float h = camera.ortho_height;
         float w = h * aspect;
@@ -730,7 +1063,9 @@ void EditorState::update(float dt) {
         ray_origin = {camera.x, camera.y, camera.z};
         ray_origin = ray_origin - ray_dir * 1000.0f;
         ray_origin = ray_origin + R * ox + U * oy;
-      } else {
+      }
+      else
+      {
         ray_dir = R * vx + U * vy + F;
         ray_origin = {camera.x, camera.y, camera.z};
       }
@@ -738,7 +1073,8 @@ void EditorState::update(float dt) {
       entity_cursor_valid = false;
       float min_t = 1e9f;
 
-      for (int i = 0; i < map_source.aabbs_size(); ++i) {
+      for (int i = 0; i < map_source.aabbs_size(); ++i)
+      {
         const auto &aabb = map_source.aabbs(i);
         vec3 center = {aabb.center().x(), aabb.center().y(), aabb.center().z()};
         vec3 half = {aabb.half_extents().x(), aabb.half_extents().y(),
@@ -747,14 +1083,17 @@ void EditorState::update(float dt) {
         vec3 max = center + half;
 
         float t = 0;
-        if (IntersectRayAABB(ray_origin, ray_dir, min, max, t)) {
-          if (t < min_t) {
+        if (IntersectRayAABB(ray_origin, ray_dir, min, max, t))
+        {
+          if (t < min_t)
+          {
             min_t = t;
             // Calculate hit point
             vec3 hit_point = ray_origin + ray_dir * t;
             // Snap to top
             // Check if hit point is close to top face
-            if (std::abs(hit_point.y - max.y) < 0.1f) {
+            if (std::abs(hit_point.y - max.y) < 0.1f)
+            {
               // It is potentially on top.
               // We want to place it centered on the grid cell of the AABB top.
 
@@ -764,12 +1103,14 @@ void EditorState::update(float dt) {
               // Check if this cell is within AABB top face bounds (xz)
               // Relax check slightly for float precision
               if (cell_x >= min.x - 0.01f && cell_x <= max.x + 0.01f &&
-                  cell_z >= min.z - 0.01f && cell_z <= max.z + 0.01f) {
+                  cell_z >= min.z - 0.01f && cell_z <= max.z + 0.01f)
+              {
                 entity_cursor_pos = {cell_x, max.y, cell_z}; // Top surface
                 entity_cursor_valid = true;
 
                 // Handle Placement Click
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
                   auto *ent = map_source.add_entities();
                   ent->set_type(game::EntityType::PLAYER);
                   ent->mutable_position()->set_x(entity_cursor_pos.x);
@@ -786,7 +1127,8 @@ void EditorState::update(float dt) {
   }
 
   // process input if we are holding right mouse OR if UI doesn't want mouse
-  if (!io.WantCaptureMouse || client::input::is_mouse_down(SDL_BUTTON_RIGHT)) {
+  if (!io.WantCaptureMouse || client::input::is_mouse_down(SDL_BUTTON_RIGHT))
+  {
     float speed = 10.0f * dt;
     if (client::input::is_key_down(SDL_SCANCODE_LSHIFT))
       speed *= 2.0f;
@@ -814,53 +1156,71 @@ void EditorState::update(float dt) {
     // F).
     vec3 U = linalg::cross(R, F);
 
-    if (client::input::is_key_down(SDL_SCANCODE_W)) {
-      if (camera.orthographic) {
+    if (client::input::is_key_down(SDL_SCANCODE_W))
+    {
+      if (camera.orthographic)
+      {
         // Pan Up
         // User reported inverted controls, so we flip U direction for W/S
         camera.x -= U.x * speed;
         camera.y -= U.y * speed;
         camera.z -= U.z * speed;
-      } else {
+      }
+      else
+      {
         camera.x += F.x * speed;
         camera.y += F.y * speed;
         camera.z += F.z * speed;
       }
     }
-    if (client::input::is_key_down(SDL_SCANCODE_SPACE)) {
-      if (camera.orthographic) {
+    if (client::input::is_key_down(SDL_SCANCODE_SPACE))
+    {
+      if (camera.orthographic)
+      {
         camera.ortho_height += speed; // Zoom Out (Increase FOV/Height)
-      } else {
+      }
+      else
+      {
         camera.y += speed;
       }
     }
-    if (client::input::is_key_down(SDL_SCANCODE_LCTRL)) {
-      if (camera.orthographic) {
+    if (client::input::is_key_down(SDL_SCANCODE_LCTRL))
+    {
+      if (camera.orthographic)
+      {
         camera.ortho_height -= speed;
         if (camera.ortho_height < 1.0f)
           camera.ortho_height = 1.0f;
-      } else {
+      }
+      else
+      {
         camera.y -= speed;
       }
     }
 
-    if (client::input::is_key_down(SDL_SCANCODE_S)) {
-      if (camera.orthographic) {
+    if (client::input::is_key_down(SDL_SCANCODE_S))
+    {
+      if (camera.orthographic)
+      {
         // Pan Down
         camera.x += U.x * speed;
         camera.y += U.y * speed;
         camera.z += U.z * speed;
-      } else {
+      }
+      else
+      {
         camera.x -= F.x * speed;
         camera.y -= F.y * speed;
         camera.z -= F.z * speed;
       }
     }
-    if (client::input::is_key_down(SDL_SCANCODE_D)) {
+    if (client::input::is_key_down(SDL_SCANCODE_D))
+    {
       camera.x += R.x * speed;
       camera.z += R.z * speed;
     }
-    if (client::input::is_key_down(SDL_SCANCODE_A)) {
+    if (client::input::is_key_down(SDL_SCANCODE_A))
+    {
       camera.x -= R.x * speed;
       camera.z -= R.z * speed;
     }
@@ -869,12 +1229,14 @@ void EditorState::update(float dt) {
       if (!camera.orthographic)
         camera.y += speed;
     }*/
-    if (client::input::is_key_down(SDL_SCANCODE_Q)) {
+    if (client::input::is_key_down(SDL_SCANCODE_Q))
+    {
       if (!camera.orthographic)
         camera.y -= speed;
     }
 
-    if (client::input::is_mouse_down(SDL_BUTTON_RIGHT)) {
+    if (client::input::is_mouse_down(SDL_BUTTON_RIGHT))
+    {
       int dx, dy;
       client::input::get_mouse_delta(&dx, &dy);
       camera.yaw += dx * 0.1f;
@@ -888,33 +1250,44 @@ void EditorState::update(float dt) {
   }
 }
 
-void EditorState::render_ui() {
-  if (ImGui::BeginMainMenuBar()) {
-    if (ImGui::BeginMenu("File")) {
-      if (ImGui::MenuItem("Save Map")) {
+void EditorState::render_ui()
+{
+  if (ImGui::BeginMainMenuBar())
+  {
+    if (ImGui::BeginMenu("File"))
+    {
+      if (ImGui::MenuItem("Save Map"))
+      {
         show_save_popup = true;
       }
 
-      if (ImGui::MenuItem("Load Map")) {
+      if (ImGui::MenuItem("Load Map"))
+      {
         std::ifstream in("map.source", std::ios::binary);
-        if (in.is_open()) {
-          if (!map_source.ParseFromIstream(&in)) {
+        if (in.is_open())
+        {
+          if (!map_source.ParseFromIstream(&in))
+          {
             std::cerr << "Failed to load map!" << std::endl;
           }
           in.close();
         }
       }
-      if (ImGui::MenuItem("Set Map Name")) {
+      if (ImGui::MenuItem("Set Map Name"))
+      {
         show_name_popup = true;
       }
 
-      if (ImGui::MenuItem("Exit Editor")) {
+      if (ImGui::MenuItem("Exit Editor"))
+      {
         exit_requested = true;
       }
       ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Edit")) {
-      if (ImGui::MenuItem("Add AABB")) {
+    if (ImGui::BeginMenu("Edit"))
+    {
+      if (ImGui::MenuItem("Add AABB"))
+      {
         auto *aabb = map_source.add_aabbs();
         float dist = 5.0f;
         float radYaw = to_radians(camera.yaw);
@@ -945,25 +1318,31 @@ void EditorState::render_ui() {
   }
 
   // Handle Popups outside MainMenuBar
-  if (show_save_popup) {
+  if (show_save_popup)
+  {
     ImGui::OpenPopup("Save Map As");
     show_save_popup = false;
   }
-  if (show_name_popup) {
+  if (show_name_popup)
+  {
     ImGui::OpenPopup("Set Map Name");
     show_name_popup = false;
   }
 
   // Popup for Save Map
   if (ImGui::BeginPopupModal("Save Map As", NULL,
-                             ImGuiWindowFlags_AlwaysAutoResize)) {
+                             ImGuiWindowFlags_AlwaysAutoResize))
+  {
     static char filename_buf[128] = "map.source";
     ImGui::InputText("Filename", filename_buf, sizeof(filename_buf));
 
-    if (ImGui::Button("Save", ImVec2(120, 0))) {
+    if (ImGui::Button("Save", ImVec2(120, 0)))
+    {
       std::ofstream out(filename_buf, std::ios::binary);
-      if (out.is_open()) {
-        if (!map_source.SerializeToOstream(&out)) {
+      if (out.is_open())
+      {
+        if (!map_source.SerializeToOstream(&out))
+        {
           std::cerr << "Failed to save map!" << std::endl;
         }
         out.close();
@@ -971,7 +1350,8 @@ void EditorState::render_ui() {
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+    if (ImGui::Button("Cancel", ImVec2(120, 0)))
+    {
       ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
@@ -979,13 +1359,18 @@ void EditorState::render_ui() {
 
   // Popup for Map Name
   if (ImGui::BeginPopupModal("Set Map Name", NULL,
-                             ImGuiWindowFlags_AlwaysAutoResize)) {
+                             ImGuiWindowFlags_AlwaysAutoResize))
+  {
     static char buf[128] = "";
-    if (ImGui::IsWindowAppearing()) {
+    if (ImGui::IsWindowAppearing())
+    {
       std::string current_name = map_source.name();
-      if (current_name.length() < sizeof(buf)) {
+      if (current_name.length() < sizeof(buf))
+      {
         strcpy(buf, current_name.c_str());
-      } else {
+      }
+      else
+      {
         strncpy(buf, current_name.c_str(), sizeof(buf) - 1);
         buf[sizeof(buf) - 1] = '\0';
       }
@@ -993,12 +1378,14 @@ void EditorState::render_ui() {
 
     ImGui::InputText("Name", buf, sizeof(buf));
 
-    if (ImGui::Button("Save", ImVec2(120, 0))) {
+    if (ImGui::Button("Save", ImVec2(120, 0)))
+    {
       map_source.set_name(buf);
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+    if (ImGui::Button("Cancel", ImVec2(120, 0)))
+    {
       ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
@@ -1013,9 +1400,12 @@ void EditorState::render_ui() {
   // Detect overlaps
   std::unordered_set<int> overlapping_indices;
   {
-    for (int i = 0; i < map_source.aabbs_size(); ++i) {
-      for (int j = i + 1; j < map_source.aabbs_size(); ++j) {
-        if (IntersectAABBAABB(map_source.aabbs(i), map_source.aabbs(j))) {
+    for (int i = 0; i < map_source.aabbs_size(); ++i)
+    {
+      for (int j = i + 1; j < map_source.aabbs_size(); ++j)
+      {
+        if (IntersectAABBAABB(map_source.aabbs(i), map_source.aabbs(j)))
+        {
           overlapping_indices.insert(i);
           overlapping_indices.insert(j);
         }
@@ -1024,14 +1414,17 @@ void EditorState::render_ui() {
   }
 
   int idx = 0;
-  for (const auto &aabb : map_source.aabbs()) {
+  for (const auto &aabb : map_source.aabbs())
+  {
     uint32_t col = 0xFF00FF00; // Default Green
 
-    if (overlapping_indices.count(idx)) {
+    if (overlapping_indices.count(idx))
+    {
       col = 0xFF0000FF; // Red for overlap
     }
 
-    if (selected_aabb_indices.count(idx)) {
+    if (selected_aabb_indices.count(idx))
+    {
       // Oscillate between Magenta (0xFF00FFFF) and White (0xFFFFFFFF)
       // ABGR
       float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f; // 0 to 1
@@ -1044,10 +1437,32 @@ void EditorState::render_ui() {
     idx++;
   }
 
+  if (dragging_selection)
+  {
+    ImDrawList *dl = ImGui::GetBackgroundDrawList();
+    // Note: BackgroundDrawList is behind windows, Foreground is front.
+    // We want it on top of 3D, but maybe behind UI?
+    // standard drag select usually goes over everything or just over the view.
+    // Let's us GetForegroundDrawList for visibility.
+    dl = ImGui::GetForegroundDrawList();
+
+    ImVec2 mouse_pos = ImGui::GetMousePos();
+    ImVec2 p1 = {std::min(selection_start.x, mouse_pos.x),
+                 std::min(selection_start.y, mouse_pos.y)};
+    ImVec2 p2 = {std::max(selection_start.x, mouse_pos.x),
+                 std::max(selection_start.y, mouse_pos.y)};
+
+    // Fill - Green with transparency
+    dl->AddRectFilled(p1, p2, 0x3300FF00);
+    // Border - Opaque Green
+    dl->AddRect(p1, p2, 0xFF00FF00);
+  }
+
   draw_gimbal();
 }
 
-void EditorState::render_3d(VkCommandBuffer cmd) {
+void EditorState::render_3d(VkCommandBuffer cmd)
+{
   // Full Screen Viewport
   renderer::viewport_t vp = {.start = {0.0f, 0.0f}, .dimensions = {1.0f, 1.0f}};
   renderer::render_view_t view = {.viewport = vp, .camera = camera};
@@ -1059,8 +1474,10 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
   // Debug: Draw AABB (Red Box at 3,0,0)
   renderer::DrawAABB(cmd, {3.0f, -0.5f, -0.5f}, {4.0f, 0.5f, 0.5f}, 0xFF0000FF);
 
-  if (place_mode && selected_tile[1] > -5000.0f) {
-    if (dragging_placement) {
+  if (place_mode && selected_tile[1] > -5000.0f)
+  {
+    if (dragging_placement)
+    {
       vec3 end_pos = {selected_tile[0], selected_tile[1], selected_tile[2]};
 
       // Math inline
@@ -1084,7 +1501,9 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
 
       renderer::DrawAABB(cmd, {cx - hx, cy - hy, cz - hz},
                          {cx + hx, cy + hy, cz + hz}, 0xFF00FFFF);
-    } else {
+    }
+    else
+    {
       float x = selected_tile[0];
       float y = selected_tile[1];
       float z = selected_tile[2];
@@ -1096,7 +1515,8 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
     }
   }
 
-  if (entity_mode && entity_cursor_valid) {
+  if (entity_mode && entity_cursor_valid)
+  {
     // Draw Pyramid
     vec3 p = entity_cursor_pos;
     float s = 0.5f;            // Size
@@ -1110,9 +1530,8 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
     vec3 b4 = {p.x - s / 2, p.y, p.z + s / 2};
 
     // Draw Lines
-    auto drawLine = [&](vec3 start, vec3 end) {
-      renderer::DrawLine(cmd, start, end, col);
-    };
+    auto drawLine = [&](vec3 start, vec3 end)
+    { renderer::DrawLine(cmd, start, end, col); };
 
     // Base
     drawLine(b1, b2);
@@ -1127,14 +1546,16 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
   }
 
   // Draw Placed Entities
-  for (int i = 0; i < map_source.entities_size(); ++i) {
+  for (int i = 0; i < map_source.entities_size(); ++i)
+  {
     const auto &ent = map_source.entities(i);
     // Draw Pyramid for Entity
     vec3 p = {ent.position().x(), ent.position().y(), ent.position().z()};
     float s = 0.5f;            // Size
     uint32_t col = 0x00FFFFFF; // Cyan (Default)
 
-    if (selected_entity_indices.count(i)) {
+    if (selected_entity_indices.count(i))
+    {
       // Blinking
       float t = sin(selection_timer * 10.0f) * 0.5f + 0.5f;
       uint32_t channel = (uint32_t)(t * 255.0f);
@@ -1149,7 +1570,8 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
     float cY = cos(radYaw);
     float sY = sin(radYaw);
 
-    auto rotate = [&](float x, float z) -> vec3 {
+    auto rotate = [&](float x, float z) -> vec3
+    {
       // Rotation around Y axis:
       // x' = x*cos - z*sin
       // z' = x*sin + z*cos
@@ -1166,9 +1588,8 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
     vec3 b4 = rotate(-s / 2, s / 2);
 
     // Draw Lines
-    auto drawLine = [&](vec3 start, vec3 end) {
-      renderer::DrawLine(cmd, start, end, col);
-    };
+    auto drawLine = [&](vec3 start, vec3 end)
+    { renderer::DrawLine(cmd, start, end, col); };
 
     // Base
     drawLine(b1, b2);
@@ -1182,11 +1603,13 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
     drawLine(b4, tip);
 
     // Rotation Visualization
-    if (selected_entity_indices.count(i)) {
+    if (selected_entity_indices.count(i))
+    {
       // Draw Circle at base
       float radius = 1.5f;
       int segments = 32;
-      for (int j = 0; j < segments; ++j) {
+      for (int j = 0; j < segments; ++j)
+      {
         float angle1 = (float)j / segments * 2.0f * 3.14159f;
         float angle2 = (float)(j + 1) / segments * 2.0f * 3.14159f;
         vec3 p1 = {p.x + cos(angle1) * radius, p.y, p.z + sin(angle1) * radius};
@@ -1195,7 +1618,8 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
       }
 
       // Debug: Draw line to projected mouse position
-      if (rotation_mode && rotate_entity_index == i) {
+      if (rotation_mode && rotate_entity_index == i)
+      {
         renderer::DrawLine(cmd, p, rotate_debug_point,
                            0xFF00FF00); // Green Debug Line
       }
@@ -1211,7 +1635,8 @@ void EditorState::render_3d(VkCommandBuffer cmd) {
   }
 }
 
-void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color) {
+void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color)
+{
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
 
@@ -1227,11 +1652,13 @@ void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color) {
                      {cx - hx, cy - hy, cz + hz}, {cx + hx, cy - hy, cz + hz},
                      {cx + hx, cy + hy, cz + hz}, {cx - hx, cy + hy, cz + hz}};
 
-  auto drawLine = [&](int i, int j) {
+  auto drawLine = [&](int i, int j)
+  {
     vec3 p1 = WorldToView(corners[i], camera);
     vec3 p2 = WorldToView(corners[j], camera);
 
-    if (camera.orthographic || ClipLine(p1, p2)) {
+    if (camera.orthographic || ClipLine(p1, p2))
+    {
       vec2 s1 = ViewToScreen(p1, io, camera.orthographic, camera.ortho_height);
       vec2 s2 = ViewToScreen(p2, io, camera.orthographic, camera.ortho_height);
       dl->AddLine({s1.x, s1.y}, {s2.x, s2.y}, color);
@@ -1255,7 +1682,8 @@ void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color) {
   drawLine(3, 7);
 }
 
-void EditorState::draw_grid() {
+void EditorState::draw_grid()
+{
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
 
@@ -1265,18 +1693,21 @@ void EditorState::draw_grid() {
   uint32_t axis_color_x = 0xFF0000FF; // Red (ABGR) -> Red
   uint32_t axis_color_z = 0xFFFF0000; // Blue (ABGR) -> Blue
 
-  auto drawLine = [&](vec3 start, vec3 end, uint32_t col) {
+  auto drawLine = [&](vec3 start, vec3 end, uint32_t col)
+  {
     vec3 p1 = WorldToView(start, camera);
     vec3 p2 = WorldToView(end, camera);
 
-    if (camera.orthographic || ClipLine(p1, p2)) {
+    if (camera.orthographic || ClipLine(p1, p2))
+    {
       vec2 s1 = ViewToScreen(p1, io, camera.orthographic, camera.ortho_height);
       vec2 s2 = ViewToScreen(p2, io, camera.orthographic, camera.ortho_height);
       dl->AddLine({s1.x, s1.y}, {s2.x, s2.y}, col);
     }
   };
 
-  for (int i = -grid_size; i <= grid_size; ++i) {
+  for (int i = -grid_size; i <= grid_size; ++i)
+  {
     float pos = i * step;
     // Lines parallel to Z axis (varying X)
     uint32_t col = (i == 0) ? axis_color_z : color;
@@ -1290,7 +1721,8 @@ void EditorState::draw_grid() {
   }
 
   // Highlight selected tile
-  if (place_mode && selected_tile[1] > -5000.0f) {
+  if (place_mode && selected_tile[1] > -5000.0f)
+  {
     float x = selected_tile[0];
     float z = selected_tile[2];
     uint32_t highlight_col = 0xFFFFFFFF; // Bright white
@@ -1302,7 +1734,8 @@ void EditorState::draw_grid() {
   }
 }
 
-void EditorState::draw_gimbal() {
+void EditorState::draw_gimbal()
+{
   ImDrawList *dl = ImGui::GetForegroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
 
@@ -1314,7 +1747,8 @@ void EditorState::draw_gimbal() {
   uint32_t colors[3] = {0xFF0000FF, 0xFF00FF00, 0xFFFF0000};
   const char *labels[3] = {"X", "Y", "Z"};
 
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < 3; ++i)
+  {
     vec3 p = axes[i];
 
     // Manual Rotation Logic matching WorldToView

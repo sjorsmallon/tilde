@@ -24,26 +24,23 @@ const uint32_t aabb_frag_spv[] =
 #include "aabb.frag.spv.h"
     ;
 
-const uint32_t text_vert_spv[] =
-#include "text.vert.spv.h"
-    ;
-
-const uint32_t text_frag_spv[] =
-#include "text.frag.spv.h"
-    ;
-
-namespace client {
-namespace renderer {
+namespace client
+{
+namespace renderer
+{
 
 // --- Internal Math ---
-struct mat4_t {
+struct mat4_t
+{
   float m[16];
 
-  static mat4_t identity() {
+  static mat4_t identity()
+  {
     return {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
   }
 
-  static mat4_t perspective(float fovy, float aspect, float n, float f) {
+  static mat4_t perspective(float fovy, float aspect, float n, float f)
+  {
     float tanHalfFovy = tan(fovy / 2.0f);
     mat4_t res = {};
     res.m[0] = 1.0f / (aspect * tanHalfFovy);
@@ -65,7 +62,8 @@ struct mat4_t {
     return res;
   }
 
-  static mat4_t ortho(float l, float r, float b, float t, float n, float f) {
+  static mat4_t ortho(float l, float r, float b, float t, float n, float f)
+  {
     mat4_t res = identity();
     res.m[0] = 2.0f / (r - l);
     res.m[5] = 2.0f / (b - t); // Y Down
@@ -78,7 +76,8 @@ struct mat4_t {
 
   static mat4_t lookat(float eyex, float eyey, float eyez, float centerx,
                        float centery, float centerz, float upx, float upy,
-                       float upz) {
+                       float upz)
+  {
     // Z axis (Forward)
     float fx = centerx - eyex;
     float fy = centery - eyey;
@@ -118,12 +117,16 @@ struct mat4_t {
     return res;
   }
 
-  static mat4_t mult(const mat4_t &a, const mat4_t &b) {
+  static mat4_t mult(const mat4_t &a, const mat4_t &b)
+  {
     mat4_t res = {};
-    for (int c = 0; c < 4; ++c) {
-      for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c)
+    {
+      for (int r = 0; r < 4; ++r)
+      {
         res.m[c * 4 + r] = 0;
-        for (int k = 0; k < 4; ++k) {
+        for (int k = 0; k < 4; ++k)
+        {
           res.m[c * 4 + r] += a.m[k * 4 + r] * b.m[c * 4 + k];
         }
       }
@@ -142,13 +145,15 @@ static VkDeviceMemory g_aabb_vertex_memory = VK_NULL_HANDLE;
 static VkBuffer g_aabb_index_buffer = VK_NULL_HANDLE;
 static VkDeviceMemory g_aabb_index_memory = VK_NULL_HANDLE;
 
-struct Vertex {
+struct Vertex
+{
   float pos[3];
   float color[3];
   float bary[3];
 };
 
-struct PushConstants {
+struct PushConstants
+{
   float mvp[16];
   float color[4];
 };
@@ -156,7 +161,8 @@ struct PushConstants {
 // --- Globals (Internal) ---
 
 // Font State
-struct FontState {
+struct FontState
+{
   stbtt_fontinfo info;
   unsigned char *ttf_buffer;
   unsigned char *bitmap;
@@ -209,7 +215,8 @@ static uint32_t g_image_index = 0; // Stored between BeginFrame and EndFrame
 
 // --- Helper Functions ---
 
-static void check_vk_result(VkResult err) {
+static void check_vk_result(VkResult err)
+{
   if (err == 0)
     return;
   log_error("[vulkan] Error: VkResult = {}", (int)err);
@@ -217,16 +224,19 @@ static void check_vk_result(VkResult err) {
     abort();
 }
 
-struct QueueFamilyIndices {
+struct QueueFamilyIndices
+{
   std::optional<uint32_t> graphics_family;
   std::optional<uint32_t> present_family;
 
-  bool is_complete() {
+  bool is_complete()
+  {
     return graphics_family.has_value() && present_family.has_value();
   }
 };
 
-static QueueFamilyIndices find_queue_families(VkPhysicalDevice device) {
+static QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
+{
   QueueFamilyIndices indices;
   uint32_t queue_family_count = 0;
   vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count,
@@ -236,14 +246,17 @@ static QueueFamilyIndices find_queue_families(VkPhysicalDevice device) {
                                            queue_families.data());
 
   int i = 0;
-  for (const auto &queue_family : queue_families) {
-    if (queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+  for (const auto &queue_family : queue_families)
+  {
+    if (queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+    {
       indices.graphics_family = i;
     }
     VkBool32 present_support = false;
     vkGetPhysicalDeviceSurfaceSupportKHR(device, i, g_surface,
                                          &present_support);
-    if (present_support) {
+    if (present_support)
+    {
       indices.present_family = i;
     }
     if (indices.is_complete())
@@ -253,17 +266,21 @@ static QueueFamilyIndices find_queue_families(VkPhysicalDevice device) {
   return indices;
 }
 
-static void cleanup_swapchain() {
-  for (auto framebuffer : g_swapchain_framebuffers) {
+static void cleanup_swapchain()
+{
+  for (auto framebuffer : g_swapchain_framebuffers)
+  {
     vkDestroyFramebuffer(g_device, framebuffer, nullptr);
   }
-  for (auto imageView : g_swapchain_image_views) {
+  for (auto imageView : g_swapchain_image_views)
+  {
     vkDestroyImageView(g_device, imageView, nullptr);
   }
   vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
 }
 
-static void create_swapchain() {
+static void create_swapchain()
+{
   VkSurfaceCapabilitiesKHR capabilities;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_physical_device, g_surface,
                                             &capabilities);
@@ -283,9 +300,11 @@ static void create_swapchain() {
       g_physical_device, g_surface, &present_mode_count, present_modes.data());
 
   VkSurfaceFormatKHR surface_format = formats[0];
-  for (const auto &available_format : formats) {
+  for (const auto &available_format : formats)
+  {
     if (available_format.format == VK_FORMAT_B8G8R8A8_SRGB &&
-        available_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+        available_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+    {
       surface_format = available_format;
       break;
     }
@@ -293,9 +312,12 @@ static void create_swapchain() {
 
   VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
   VkExtent2D extent;
-  if (capabilities.currentExtent.width != UINT32_MAX) {
+  if (capabilities.currentExtent.width != UINT32_MAX)
+  {
     extent = capabilities.currentExtent;
-  } else {
+  }
+  else
+  {
     int width, height;
     SDL_Vulkan_GetDrawableSize(g_window, &width, &height);
     extent = {(uint32_t)width, (uint32_t)height};
@@ -303,7 +325,8 @@ static void create_swapchain() {
 
   uint32_t image_count = capabilities.minImageCount + 1;
   if (capabilities.maxImageCount > 0 &&
-      image_count > capabilities.maxImageCount) {
+      image_count > capabilities.maxImageCount)
+  {
     image_count = capabilities.maxImageCount;
   }
 
@@ -321,11 +344,14 @@ static void create_swapchain() {
   uint32_t queue_family_indices[] = {indices.graphics_family.value(),
                                      indices.present_family.value()};
 
-  if (indices.graphics_family != indices.present_family) {
+  if (indices.graphics_family != indices.present_family)
+  {
     create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
     create_info.queueFamilyIndexCount = 2;
     create_info.pQueueFamilyIndices = queue_family_indices;
-  } else {
+  }
+  else
+  {
     create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
   }
 
@@ -336,7 +362,8 @@ static void create_swapchain() {
   create_info.oldSwapchain = VK_NULL_HANDLE;
 
   if (vkCreateSwapchainKHR(g_device, &create_info, nullptr, &g_swapchain) !=
-      VK_SUCCESS) {
+      VK_SUCCESS)
+  {
     log_error("Failed to create swapchain!");
     return;
   }
@@ -350,7 +377,8 @@ static void create_swapchain() {
   g_swapchain_extent = extent;
 
   g_swapchain_image_views.resize(g_swapchain_images.size());
-  for (size_t i = 0; i < g_swapchain_images.size(); i++) {
+  for (size_t i = 0; i < g_swapchain_images.size(); i++)
+  {
     VkImageViewCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     create_info.image = g_swapchain_images[i];
@@ -367,15 +395,18 @@ static void create_swapchain() {
     create_info.subresourceRange.layerCount = 1;
 
     if (vkCreateImageView(g_device, &create_info, nullptr,
-                          &g_swapchain_image_views[i]) != VK_SUCCESS) {
+                          &g_swapchain_image_views[i]) != VK_SUCCESS)
+    {
       log_error("Failed to create image views!");
     }
   }
 }
 
-static void create_framebuffers() {
+static void create_framebuffers()
+{
   g_swapchain_framebuffers.resize(g_swapchain_image_views.size());
-  for (size_t i = 0; i < g_swapchain_image_views.size(); i++) {
+  for (size_t i = 0; i < g_swapchain_image_views.size(); i++)
+  {
     VkImageView attachments[] = {g_swapchain_image_views[i]};
 
     VkFramebufferCreateInfo framebuffer_info{};
@@ -388,13 +419,15 @@ static void create_framebuffers() {
     framebuffer_info.layers = 1;
 
     if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr,
-                            &g_swapchain_framebuffers[i]) != VK_SUCCESS) {
+                            &g_swapchain_framebuffers[i]) != VK_SUCCESS)
+    {
       log_error("Failed to create framebuffer!");
     }
   }
 }
 
-static void rebuild_swapchain() {
+static void rebuild_swapchain()
+{
   int width = 0, height = 0;
   SDL_Vulkan_GetDrawableSize(g_window, &width, &height);
   if (width == 0 || height == 0)
@@ -409,13 +442,16 @@ static void rebuild_swapchain() {
 // --- Internal AABB Functions ---
 
 static uint32_t find_memory_type(uint32_t typeFilter,
-                                 VkMemoryPropertyFlags properties) {
+                                 VkMemoryPropertyFlags properties)
+{
   VkPhysicalDeviceMemoryProperties memProperties;
   vkGetPhysicalDeviceMemoryProperties(g_physical_device, &memProperties);
 
-  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-    if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags &
-                                    properties) == properties) {
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+  {
+    if ((typeFilter & (1 << i)) &&
+        (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+    {
       return i;
     }
   }
@@ -425,14 +461,16 @@ static uint32_t find_memory_type(uint32_t typeFilter,
 
 static void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
                           VkMemoryPropertyFlags properties, VkBuffer &buffer,
-                          VkDeviceMemory &bufferMemory) {
+                          VkDeviceMemory &bufferMemory)
+{
   VkBufferCreateInfo bufferInfo{};
   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bufferInfo.size = size;
   bufferInfo.usage = usage;
   bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateBuffer(g_device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+  if (vkCreateBuffer(g_device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
+  {
     log_error("failed to create buffer!");
     return;
   }
@@ -447,7 +485,8 @@ static void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
       find_memory_type(memRequirements.memoryTypeBits, properties);
 
   if (vkAllocateMemory(g_device, &allocInfo, nullptr, &bufferMemory) !=
-      VK_SUCCESS) {
+      VK_SUCCESS)
+  {
     log_error("failed to allocate buffer memory!");
     return;
   }
@@ -455,7 +494,8 @@ static void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage,
   vkBindBufferMemory(g_device, buffer, bufferMemory, 0);
 }
 
-static void create_aabb_pipeline() {
+static void create_aabb_pipeline()
+{
   VkShaderModule vertShaderModule;
   VkShaderModule fragShaderModule;
 
@@ -465,7 +505,8 @@ static void create_aabb_pipeline() {
   vertInfo.codeSize = sizeof(aabb_vert_spv);
   vertInfo.pCode = aabb_vert_spv;
   if (vkCreateShaderModule(g_device, &vertInfo, nullptr, &vertShaderModule) !=
-      VK_SUCCESS) {
+      VK_SUCCESS)
+  {
     log_error("Failed to create vert shader module");
     return;
   }
@@ -476,7 +517,8 @@ static void create_aabb_pipeline() {
   fragInfo.codeSize = sizeof(aabb_frag_spv);
   fragInfo.pCode = aabb_frag_spv;
   if (vkCreateShaderModule(g_device, &fragInfo, nullptr, &fragShaderModule) !=
-      VK_SUCCESS) {
+      VK_SUCCESS)
+  {
     log_error("Failed to create frag shader module");
     return;
   }
@@ -598,7 +640,8 @@ static void create_aabb_pipeline() {
   pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
   if (vkCreatePipelineLayout(g_device, &pipelineLayoutInfo, nullptr,
-                             &g_aabb_pipeline_layout) != VK_SUCCESS) {
+                             &g_aabb_pipeline_layout) != VK_SUCCESS)
+  {
     log_error("Failed to create pipeline layout!");
     return;
   }
@@ -620,7 +663,8 @@ static void create_aabb_pipeline() {
   pipelineInfo.subpass = 0;
 
   if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
-                                nullptr, &g_aabb_pipeline) != VK_SUCCESS) {
+                                nullptr, &g_aabb_pipeline) != VK_SUCCESS)
+  {
     log_error("Failed to create graphics pipeline!");
   }
 
@@ -635,7 +679,8 @@ static VkDeviceMemory g_line_vertex_memory = VK_NULL_HANDLE;
 static VkBuffer g_line_index_buffer = VK_NULL_HANDLE;
 static VkDeviceMemory g_line_index_memory = VK_NULL_HANDLE;
 
-static void create_line_pipeline() {
+static void create_line_pipeline()
+{
   // Reuse AABB shaders/layout, just change topology
   VkGraphicsPipelineCreateInfo pipelineInfo{};
   pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -746,7 +791,8 @@ static void create_line_pipeline() {
   pipelineInfo.subpass = 0;
 
   if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
-                                nullptr, &g_line_pipeline) != VK_SUCCESS) {
+                                nullptr, &g_line_pipeline) != VK_SUCCESS)
+  {
     log_error("Failed to create line pipeline!");
   }
 
@@ -754,7 +800,8 @@ static void create_line_pipeline() {
   vkDestroyShaderModule(g_device, frag, nullptr);
 }
 
-static void create_line_mesh() {
+static void create_line_mesh()
+{
   // Unit Line along +Z (0,0,0) to (0,0,1) matches lookAt Z forward
   // Or X? Let's use Forward Z to simplify lookAt usage.
   // Vertices:
@@ -829,7 +876,8 @@ static void create_line_mesh() {
 }
 
 void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
-              const linalg::vec3 &end, uint32_t color) {
+              const linalg::vec3 &end, uint32_t color)
+{
   if (g_line_pipeline == VK_NULL_HANDLE)
     return;
 
@@ -862,7 +910,8 @@ void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
   // Custom Rotation Matrix aligning (0,0,1) to (dx_n, dy_n, dz_n)
   // Up can be generic, e.g. Y, unless dir is Y
   float ux = 0, uy = 1, uz = 0;
-  if (fabs(dx_n) < 0.001f && fabs(dz_n) < 0.001f) {
+  if (fabs(dx_n) < 0.001f && fabs(dz_n) < 0.001f)
+  {
     ux = 1;
     uy = 0;
     uz = 0; // If dir is vertical, use X as Up
@@ -917,7 +966,8 @@ void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
   vkCmdDrawIndexed(cmd, 2, 1, 0, 0, 0);
 }
 
-static void create_aabb_mesh() {
+static void create_aabb_mesh()
+{
   // Unit Cube [-0.5, 0.5]
   // 24 vertices (4 per face), 36 indices
   float l = -0.5f;
@@ -1045,13 +1095,15 @@ static void create_aabb_mesh() {
   vkFreeMemory(g_device, iStagingMem, nullptr);
 }
 
-static void init_font() {
+static void init_font()
+{
   // No-op
 }
 // --- Public API ---
 
 void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
-              const linalg::vec3 &max, uint32_t color) {
+              const linalg::vec3 &max, uint32_t color)
+{
   if (g_aabb_pipeline == VK_NULL_HANDLE)
     return;
 
@@ -1108,12 +1160,14 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
   vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
 }
 
-void draw_announcement(const char *text) {
+void draw_announcement(const char *text)
+{
   g_announcement_text = text;
   g_announcement_end_time = SDL_GetTicks64() + 3000;
 }
 
-void set_viewport(VkCommandBuffer cmd, const viewport_t &vp) {
+void set_viewport(VkCommandBuffer cmd, const viewport_t &vp)
+{
   float x = vp.start.x * g_swapchain_extent.width;
   float y = vp.start.y * g_swapchain_extent.height;
   float w = vp.dimensions.x * g_swapchain_extent.width;
@@ -1137,7 +1191,8 @@ void set_viewport(VkCommandBuffer cmd, const viewport_t &vp) {
 }
 
 void render_view(VkCommandBuffer cmd, const render_view_t &view,
-                 const ecs::Registry &registry) {
+                 const ecs::Registry &registry)
+{
   set_viewport(cmd, view.viewport);
 
   // Calculate VP Matrix
@@ -1147,7 +1202,8 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
     aspect = 1.0f;
 
   mat4_t proj;
-  if (view.camera.orthographic) {
+  if (view.camera.orthographic)
+  {
     float h = view.camera.ortho_height;
     float w = h * aspect;
     // Centered ortho (Left, Right, Bottom, Top, Near, Far)
@@ -1161,7 +1217,9 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
     // Top=+h/2.
     proj = mat4_t::ortho(-w * 0.5f, w * 0.5f, -h * 0.5f, h * 0.5f, -1000.0f,
                          1000.0f);
-  } else {
+  }
+  else
+  {
     proj = mat4_t::perspective(1.5708f, aspect, 0.1f, 1000.0f); // 90 deg fov
   }
 
@@ -1193,16 +1251,19 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
   (void)registry; // unused for now
 }
 
-void ProcessEvent(const SDL_Event *event) {
+void ProcessEvent(const SDL_Event *event)
+{
   ImGui_ImplSDL2_ProcessEvent(event);
   if (event->type == SDL_WINDOWEVENT &&
       event->window.event == SDL_WINDOWEVENT_RESIZED &&
-      event->window.windowID == SDL_GetWindowID(g_window)) {
+      event->window.windowID == SDL_GetWindowID(g_window))
+  {
     g_swapchain_rebuild = true;
   }
 }
 
-bool Init(SDL_Window *window) {
+bool Init(SDL_Window *window)
+{
   g_window = window;
 
   // Vulkan Init
@@ -1234,13 +1295,15 @@ bool Init(SDL_Window *window) {
   instance_info.ppEnabledExtensionNames = extensions.data();
 #endif
 
-  if (vkCreateInstance(&instance_info, nullptr, &g_instance) != VK_SUCCESS) {
+  if (vkCreateInstance(&instance_info, nullptr, &g_instance) != VK_SUCCESS)
+  {
     log_error("Failed to create Vulkan instance!");
     return false;
   }
   log_terminal("Vulkan Instance created.");
 
-  if (!SDL_Vulkan_CreateSurface(g_window, g_instance, &g_surface)) {
+  if (!SDL_Vulkan_CreateSurface(g_window, g_instance, &g_surface))
+  {
     log_error("Failed to create Vulkan surface: {}", SDL_GetError());
     return false;
   }
@@ -1248,7 +1311,8 @@ bool Init(SDL_Window *window) {
   // Physical Device
   uint32_t device_count = 0;
   vkEnumeratePhysicalDevices(g_instance, &device_count, nullptr);
-  if (device_count == 0) {
+  if (device_count == 0)
+  {
     log_error("Failed to find GPUs with Vulkan support!");
     return false;
   }
@@ -1263,7 +1327,8 @@ bool Init(SDL_Window *window) {
                                               indices.present_family.value()};
 
   float queue_priority = 1.0f;
-  for (uint32_t queue_family : unique_queue_families) {
+  for (uint32_t queue_family : unique_queue_families)
+  {
     VkDeviceQueueCreateInfo queue_create_info{};
     queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     queue_create_info.queueFamilyIndex = queue_family;
@@ -1293,7 +1358,8 @@ bool Init(SDL_Window *window) {
 #endif
 
   if (vkCreateDevice(g_physical_device, &device_info, nullptr, &g_device) !=
-      VK_SUCCESS) {
+      VK_SUCCESS)
+  {
     log_error("Failed to create logical device!");
     return false;
   }
@@ -1355,7 +1421,8 @@ bool Init(SDL_Window *window) {
   render_pass_info.pDependencies = &dependency;
 
   if (vkCreateRenderPass(g_device, &render_pass_info, nullptr,
-                         &g_render_pass) != VK_SUCCESS) {
+                         &g_render_pass) != VK_SUCCESS)
+  {
     log_error("Failed to create render pass!");
     return false;
   }
@@ -1368,7 +1435,8 @@ bool Init(SDL_Window *window) {
   command_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
   command_pool_info.queueFamilyIndex = indices.graphics_family.value();
   if (vkCreateCommandPool(g_device, &command_pool_info, nullptr,
-                          &g_command_pool) != VK_SUCCESS) {
+                          &g_command_pool) != VK_SUCCESS)
+  {
     log_error("Failed to create command pool!");
     return false;
   }
@@ -1386,7 +1454,8 @@ bool Init(SDL_Window *window) {
   alloc_info.commandBufferCount = (uint32_t)g_command_buffers.size();
 
   if (vkAllocateCommandBuffers(g_device, &alloc_info,
-                               g_command_buffers.data()) != VK_SUCCESS) {
+                               g_command_buffers.data()) != VK_SUCCESS)
+  {
     log_error("Failed to allocate command buffers!");
     return false;
   }
@@ -1402,13 +1471,15 @@ bool Init(SDL_Window *window) {
   fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
   fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+  {
     if (vkCreateSemaphore(g_device, &semaphore_info, nullptr,
                           &g_image_available_semaphores[i]) != VK_SUCCESS ||
         vkCreateSemaphore(g_device, &semaphore_info, nullptr,
                           &g_render_finished_semaphores[i]) != VK_SUCCESS ||
         vkCreateFence(g_device, &fence_info, nullptr, &g_in_flight_fences[i]) !=
-            VK_SUCCESS) {
+            VK_SUCCESS)
+    {
       log_error("Failed to create sync objects!");
       return false;
     }
@@ -1467,7 +1538,8 @@ bool Init(SDL_Window *window) {
   return true;
 }
 
-void Shutdown() {
+void Shutdown()
+{
   vkDeviceWaitIdle(g_device);
 
   ImGui_ImplVulkan_Shutdown();
@@ -1490,7 +1562,8 @@ void Shutdown() {
   free(g_font_state.ttf_buffer);
   free(g_font_state.bitmap);
 
-  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+  {
     vkDestroySemaphore(g_device, g_render_finished_semaphores[i], nullptr);
     vkDestroySemaphore(g_device, g_image_available_semaphores[i], nullptr);
     vkDestroyFence(g_device, g_in_flight_fences[i], nullptr);
@@ -1513,18 +1586,22 @@ void Shutdown() {
   vkDestroyRenderPass(g_device, g_render_pass, nullptr);
   vkDestroyDevice(g_device, nullptr);
 
-  if (g_surface) {
+  if (g_surface)
+  {
     vkDestroySurfaceKHR(g_instance, g_surface, nullptr);
   }
-  if (g_instance) {
+  if (g_instance)
+  {
     vkDestroyInstance(g_instance, nullptr);
   }
   // Window is destroyed by client_impl (or passed in) but client_impl owns it?
   // Our Init took SDL_Window*, so we don't own it.
 }
 
-VkCommandBuffer BeginFrame() {
-  if (g_swapchain_rebuild) {
+VkCommandBuffer BeginFrame()
+{
+  if (g_swapchain_rebuild)
+  {
     rebuild_swapchain();
     g_swapchain_rebuild = false;
   }
@@ -1537,10 +1614,13 @@ VkCommandBuffer BeginFrame() {
                             g_image_available_semaphores[g_current_frame],
                             VK_NULL_HANDLE, &g_image_index);
 
-  if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+  if (result == VK_ERROR_OUT_OF_DATE_KHR)
+  {
     g_swapchain_rebuild = true;
     return VK_NULL_HANDLE;
-  } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+  }
+  else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+  {
     log_error("Failed to acquire swap chain image!");
     return VK_NULL_HANDLE;
   }
@@ -1552,7 +1632,8 @@ VkCommandBuffer BeginFrame() {
 
   VkCommandBufferBeginInfo begin_info{};
   begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-  if (vkBeginCommandBuffer(cmdbuf, &begin_info) != VK_SUCCESS) {
+  if (vkBeginCommandBuffer(cmdbuf, &begin_info) != VK_SUCCESS)
+  {
     log_error("Failed to begin command buffer!");
     return VK_NULL_HANDLE;
   }
@@ -1564,7 +1645,8 @@ VkCommandBuffer BeginFrame() {
   return cmdbuf;
 }
 
-void BeginRenderPass(VkCommandBuffer cmd) {
+void BeginRenderPass(VkCommandBuffer cmd)
+{
   VkRenderPassBeginInfo render_pass_info{};
   render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
   render_pass_info.renderPass = g_render_pass;
@@ -1579,8 +1661,10 @@ void BeginRenderPass(VkCommandBuffer cmd) {
   vkCmdBeginRenderPass(cmd, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 }
 
-static void render_announcement(VkCommandBuffer cmd) {
-  if (g_font_state.pipeline == VK_NULL_HANDLE) {
+static void render_announcement(VkCommandBuffer cmd)
+{
+  if (g_font_state.pipeline == VK_NULL_HANDLE)
+  {
     // Fallback or just ignore check if we use ImGui
   }
   if (SDL_GetTicks64() >= g_announcement_end_time ||
@@ -1601,14 +1685,16 @@ static void render_announcement(VkCommandBuffer cmd) {
                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                        ImGuiWindowFlags_NoSavedSettings |
                        ImGuiWindowFlags_NoInputs |
-                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                       ImGuiWindowFlags_AlwaysAutoResize))
+  {
     ImGui::SetWindowFontScale(2.0f); // Make text larger
     ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", g_announcement_text.c_str());
   }
   ImGui::End();
 }
 
-void EndFrame(VkCommandBuffer cmd) {
+void EndFrame(VkCommandBuffer cmd)
+{
   render_announcement(cmd);
 
   ImGui::Render();
@@ -1617,7 +1703,8 @@ void EndFrame(VkCommandBuffer cmd) {
   ImGui_ImplVulkan_RenderDrawData(draw_data, cmd);
   vkCmdEndRenderPass(cmd);
 
-  if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+  if (vkEndCommandBuffer(cmd) != VK_SUCCESS)
+  {
     log_error("Failed to record command buffer!");
     return;
   }
@@ -1642,7 +1729,8 @@ void EndFrame(VkCommandBuffer cmd) {
   submit_info.pSignalSemaphores = signal_semaphores;
 
   if (vkQueueSubmit(g_graphics_queue, 1, &submit_info,
-                    g_in_flight_fences[g_current_frame]) != VK_SUCCESS) {
+                    g_in_flight_fences[g_current_frame]) != VK_SUCCESS)
+  {
     log_error("Failed to submit draw command buffer!");
     return;
   }
@@ -1659,9 +1747,12 @@ void EndFrame(VkCommandBuffer cmd) {
 
   VkResult result = vkQueuePresentKHR(g_present_queue, &present_info);
 
-  if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+  if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+  {
     g_swapchain_rebuild = true;
-  } else if (result != VK_SUCCESS) {
+  }
+  else if (result != VK_SUCCESS)
+  {
     log_error("Failed to present swap chain image!");
   }
 
