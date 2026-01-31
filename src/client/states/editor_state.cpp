@@ -13,7 +13,37 @@
 
 #include "../undo_stack.hpp"
 
-constexpr const int INVALID_IDX = -1;
+constexpr const int invalid_idx = -1;
+constexpr const float pi_half = 1.57079632679f;
+constexpr const float fov_default = 90.0f;
+constexpr const float iso_yaw = 315.0f;
+constexpr const float iso_pitch = -35.264f;
+constexpr const float ray_far_dist = 1000.0f;
+constexpr const float ray_epsilon = 1e-6f;
+constexpr const float near_z_clip = -0.1f;
+constexpr const float pi = 3.14159265f;
+constexpr const float default_entity_size = 0.5f;
+constexpr const float default_aabb_half_size = 0.5f;
+
+constexpr const float invalid_tile_val = -10000.0f;
+
+// Map Defaults
+constexpr const float default_floor_y = -2.0f;
+constexpr const float default_floor_extent = 10.0f;
+constexpr const float default_floor_half_height = 0.5f;
+
+// Colors (ABGR format as used in renderer mostly, or RGBA? verify usage.
+// 0xFF00FFFF is Magenta in typical ABGR if R is low byte? Wait. Line 628:
+// 0xFF00FFFF // Magenta. If it's 0xAABBGGRR, then R=FF, B=FF -> Magenta. Line
+// 1423: 0xFF0000FF // Red. R=FF. ImGui usually uses 0xAABBGGRR. SDL colors
+// might differ. Renderer seems to use 0xAABBGGRR (Alpha high).
+constexpr const uint32_t color_magenta = 0xFF00FFFF;
+constexpr const uint32_t color_green = 0xFF00FF00;
+constexpr const uint32_t color_red = 0xFF0000FF;
+constexpr const uint32_t color_white = 0xFFFFFFFF;
+constexpr const uint32_t color_cyan = 0x00FFFFFF;
+constexpr const uint32_t color_selection_fill = 0x3300FF00;
+constexpr const uint32_t color_selection_border = 0xFF00FF00;
 
 namespace client
 {
@@ -33,7 +63,7 @@ static vec3 WorldToView(const vec3 &p, const camera_t &cam)
   float camPitch = to_radians(cam.pitch);
 
   // Yaw Rotation (align +X to -Z)
-  float vYaw = camYaw + 1.57079632679f;
+  float vYaw = camYaw + pi_half;
   float cY = cos(-vYaw);
   float sY = sin(-vYaw);
 
@@ -103,7 +133,7 @@ static vec2 ViewToScreen(const vec3 &p, const ImGuiIO &io, bool ortho,
   else
   {
     float aspect = io.DisplaySize.x / io.DisplaySize.y;
-    float fov = 90.0f;
+    float fov = fov_default;
     float tanHalf = tan(to_radians(fov) * 0.5f);
 
     // Looking down -Z.
@@ -144,7 +174,7 @@ static bool IntersectAABBAABB(const game::AABB &a, const game::AABB &b)
 
 static bool ClipLine(vec3 &p1, vec3 &p2)
 {
-  float nearZ = -0.1f;
+  float nearZ = near_z_clip;
 
   if (p1.z > nearZ && p2.z > nearZ)
     return false;
@@ -172,11 +202,11 @@ void EditorState::on_enter()
     // Add a default floor
     auto *aabb = map_source.add_aabbs();
     aabb->mutable_center()->set_x(0);
-    aabb->mutable_center()->set_y(-2);
+    aabb->mutable_center()->set_y(default_floor_y);
     aabb->mutable_center()->set_z(0);
-    aabb->mutable_half_extents()->set_x(10);
-    aabb->mutable_half_extents()->set_y(0.5);
-    aabb->mutable_half_extents()->set_z(10);
+    aabb->mutable_half_extents()->set_x(default_floor_extent);
+    aabb->mutable_half_extents()->set_y(default_floor_half_height);
+    aabb->mutable_half_extents()->set_z(default_floor_extent);
   }
 }
 
@@ -386,8 +416,8 @@ void EditorState::update(float dt)
     camera.orthographic = !camera.orthographic; // Toggle
     if (camera.orthographic)
     {
-      camera.yaw = 315.0f;     // Rotated 90 degrees CCW (or -45)
-      camera.pitch = -35.264f; // Standard Isometric
+      camera.yaw = iso_yaw;     // Rotated 90 degrees CCW (or -45)
+      camera.pitch = iso_pitch; // Standard Isometric
     }
   }
 
@@ -406,7 +436,7 @@ void EditorState::update(float dt)
       float y_ndc = 1.0f - 2.0f * (mouse_y / height);
 
       // View Space Ray Dir
-      float fov = 90.0f;
+      float fov = fov_default;
       float tanHalf = tan(to_radians(fov) * 0.5f);
       float aspect = width / height;
 
@@ -466,7 +496,7 @@ void EditorState::update(float dt)
         // World = CameraPos + ox * Right + oy * Up
         // Move origin back by 1000 to catch things behind camera plane
         ray_origin = {camera.x, camera.y, camera.z};
-        ray_origin = ray_origin - ray_dir * 1000.0f;
+        ray_origin = ray_origin - ray_dir * ray_far_dist;
         ray_origin = ray_origin + R * ox + U * oy;
       }
       else
@@ -480,7 +510,7 @@ void EditorState::update(float dt)
       // Intersect Y=0 plane
       // O.y + t * D.y = 0  => t = -O.y / D.y
       bool hit = false;
-      if (std::abs(ray_dir.y) > 1e-6)
+      if (std::abs(ray_dir.y) > ray_epsilon)
       {
         float t = -ray_origin.y / ray_dir.y;
         if (t > 0 || camera.orthographic)
@@ -502,7 +532,7 @@ void EditorState::update(float dt)
 
       if (!hit)
       {
-        selected_tile[1] = -10000.0f; // Invalid
+        selected_tile[1] = invalid_tile_val; // Invalid
       }
 
       // Debug: Click to add line
@@ -582,9 +612,9 @@ void EditorState::update(float dt)
             new_aabb.mutable_center()->set_x(current_pos.x + 0.5f);
             new_aabb.mutable_center()->set_y(-0.5f); // Center at -0.5
             new_aabb.mutable_center()->set_z(current_pos.z + 0.5f);
-            new_aabb.mutable_half_extents()->set_x(0.5f);
-            new_aabb.mutable_half_extents()->set_y(0.5f);
-            new_aabb.mutable_half_extents()->set_z(0.5f);
+            new_aabb.mutable_half_extents()->set_x(default_aabb_half_size);
+            new_aabb.mutable_half_extents()->set_y(default_aabb_half_size);
+            new_aabb.mutable_half_extents()->set_z(default_aabb_half_size);
             *aabb = new_aabb;
 
             undo_stack.push(
@@ -624,8 +654,8 @@ void EditorState::update(float dt)
         // If it hit the plane, use intersection. If not, use far point on ray
         vec3 end =
             hit ? vec3{selected_tile[0], selected_tile[1], selected_tile[2]}
-                : (start + ray_dir * 1000.0f);
-        debug_lines.push_back({start, end, 0xFF00FFFF}); // Magenta
+                : (start + ray_dir * ray_far_dist);
+        debug_lines.push_back({start, end, color_magenta}); // Magenta
       }
     }
   }
@@ -643,13 +673,13 @@ void EditorState::update(float dt)
         }
         else
         {
-          rotate_entity_index = -1;
+          rotate_entity_index = invalid_idx;
         }
       }
     }
 
     // Rotation Active Logic
-    if (rotation_mode && rotate_entity_index != -1 &&
+    if (rotation_mode && rotate_entity_index != invalid_idx &&
         rotate_entity_index < map_source.entities_size())
     {
       auto *ent = map_source.mutable_entities(rotate_entity_index);
@@ -693,7 +723,7 @@ void EditorState::update(float dt)
         float ox = x_ndc * (w * 0.5f);
         float oy = y_ndc * (h * 0.5f);
         ray_origin = {camera.x, camera.y, camera.z};
-        ray_origin = ray_origin - ray_dir * 1000.0f;
+        ray_origin = ray_origin - ray_dir * ray_far_dist;
         ray_origin = ray_origin + R * ox + U * oy;
       }
       else
@@ -704,7 +734,7 @@ void EditorState::update(float dt)
 
       // Intersect with Plane at Entity Y
       float plane_y = ent->position().y();
-      if (std::abs(ray_dir.y) > 1e-6)
+      if (std::abs(ray_dir.y) > ray_epsilon)
       {
         float t = (plane_y - ray_origin.y) / ray_dir.y;
         if (t > 0 || camera.orthographic)
@@ -718,7 +748,7 @@ void EditorState::update(float dt)
           float dz = hit_point.z - ent->position().z();
 
           float angle = atan2(dz, dx);
-          ent->set_yaw(lround(angle * 180.0f / 3.14159f));
+          ent->set_yaw(lround(angle * 180.0f / pi));
         }
       }
     }
@@ -817,7 +847,7 @@ void EditorState::update(float dt)
             float y_ndc = 1.0f - 2.0f * (mouse_y / height);
 
             // View Space Ray Dir
-            float fov = 90.0f;
+            float fov = fov_default;
             float tanHalf = tan(to_radians(fov) * 0.5f);
             float aspect = width / height;
 
@@ -858,7 +888,7 @@ void EditorState::update(float dt)
               float ox = x_ndc * (w * 0.5f);
               float oy = y_ndc * (h * 0.5f);
               ray_origin = {camera.x, camera.y, camera.z};
-              ray_origin = ray_origin - ray_dir * 1000.0f;
+              ray_origin = ray_origin - ray_dir * ray_far_dist;
               ray_origin = ray_origin + R * ox + U * oy;
             }
             else
@@ -898,7 +928,7 @@ void EditorState::update(float dt)
               }
             }
 
-            int closest_aabb_index = -1;
+            int closest_aabb_index = invalid_idx;
             float min_dist = 1e9f;
 
             if (!candidates.empty())
@@ -928,13 +958,13 @@ void EditorState::update(float dt)
             }
 
             // Raycast against Entities (using approximated AABB)
-            int closest_ent_index = -1;
+            int closest_ent_index = invalid_idx;
             for (int i = 0; i < map_source.entities_size(); ++i)
             {
               const auto &ent = map_source.entities(i);
               vec3 pos = {ent.position().x(), ent.position().y(),
                           ent.position().z()};
-              float s = 0.5f; // Size of pyramid
+              float s = default_entity_size; // Size of pyramid
               vec3 min = {pos.x - s / 2, pos.y, pos.z - s / 2};
               vec3 max = {pos.x + s / 2, pos.y + 1.0f, pos.z + s / 2};
 
@@ -948,7 +978,8 @@ void EditorState::update(float dt)
                 if (dist < min_dist)
                 {
                   min_dist = dist;
-                  closest_aabb_index = -1; // Deselect AABB if entity is closer
+                  closest_aabb_index =
+                      invalid_idx; // Deselect AABB if entity is closer
                   closest_ent_index = i;
                 }
               }
@@ -963,7 +994,7 @@ void EditorState::update(float dt)
               selected_entity_indices.clear();
             }
 
-            if (closest_ent_index != -1)
+            if (closest_ent_index != invalid_idx)
             {
               // Priority to Entities
               if (ctrl_held)
@@ -990,7 +1021,7 @@ void EditorState::update(float dt)
                 }
               }
             }
-            else if (closest_aabb_index != -1)
+            else if (closest_aabb_index != invalid_idx)
             {
               // Fallback to AABB
               if (ctrl_held)
@@ -1035,7 +1066,7 @@ void EditorState::update(float dt)
 
       // ... Reusing ray calculation logic or extracting it would be better ...
       // For now, I'll copy the perspective/ortho logic briefly to be safe
-      float fov = 90.0f;
+      float fov = fov_default;
       float tanHalf = tan(to_radians(fov) * 0.5f);
       float vx = x_ndc * aspect * tanHalf;
       float vy = y_ndc * tanHalf;
@@ -1061,7 +1092,7 @@ void EditorState::update(float dt)
         float ox = x_ndc * (w * 0.5f);
         float oy = y_ndc * (h * 0.5f);
         ray_origin = {camera.x, camera.y, camera.z};
-        ray_origin = ray_origin - ray_dir * 1000.0f;
+        ray_origin = ray_origin - ray_dir * ray_far_dist;
         ray_origin = ray_origin + R * ox + U * oy;
       }
       else
@@ -1416,11 +1447,11 @@ void EditorState::render_ui()
   int idx = 0;
   for (const auto &aabb : map_source.aabbs())
   {
-    uint32_t col = 0xFF00FF00; // Default Green
+    uint32_t col = color_green; // Default Green
 
     if (overlapping_indices.count(idx))
     {
-      col = 0xFF0000FF; // Red for overlap
+      col = color_red; // Red for overlap
     }
 
     if (selected_aabb_indices.count(idx))
@@ -1431,7 +1462,7 @@ void EditorState::render_ui()
       // Lerp Green component? No, Magenta is R:255 G:0 B:255. White is R:255
       // G:255 B:255. So we just lerp Green channel from 0 to 255.
       uint8_t g = (uint8_t)(t * 255.0f);
-      col = 0xFF0000FF | (g << 8) | 0x00FF0000;
+      col = color_red | (g << 8) | 0x00FF0000;
     }
     draw_aabb_wireframe(aabb, col);
     idx++;
@@ -1453,9 +1484,9 @@ void EditorState::render_ui()
                  std::max(selection_start.y, mouse_pos.y)};
 
     // Fill - Green with transparency
-    dl->AddRectFilled(p1, p2, 0x3300FF00);
+    dl->AddRectFilled(p1, p2, color_selection_fill);
     // Border - Opaque Green
-    dl->AddRect(p1, p2, 0xFF00FF00);
+    dl->AddRect(p1, p2, color_selection_border);
   }
 
   draw_gimbal();
@@ -1472,9 +1503,11 @@ void EditorState::render_3d(VkCommandBuffer cmd)
   renderer::render_view(cmd, view, reg);
 
   // Debug: Draw AABB (Red Box at 3,0,0)
-  renderer::DrawAABB(cmd, {3.0f, -0.5f, -0.5f}, {4.0f, 0.5f, 0.5f}, 0xFF0000FF);
+  renderer::DrawAABB(
+      cmd, {3.0f, -default_aabb_half_size, -default_aabb_half_size},
+      {4.0f, default_aabb_half_size, default_aabb_half_size}, color_red);
 
-  if (place_mode && selected_tile[1] > -5000.0f)
+  if (place_mode && selected_tile[1] > invalid_tile_val + 100.0f)
   {
     if (dragging_placement)
     {
@@ -1500,7 +1533,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       float hz = depth * 0.5f;
 
       renderer::DrawAABB(cmd, {cx - hx, cy - hy, cz - hz},
-                         {cx + hx, cy + hy, cz + hz}, 0xFF00FFFF);
+                         {cx + hx, cy + hy, cz + hz}, color_magenta);
     }
     else
     {
@@ -1511,7 +1544,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       // Adjusted to -0.5 center.
       // Box: {y - 1.0f} to {y + 0.0f} -> Center -0.5. Range [-1, 0].
       renderer::DrawAABB(cmd, {x, y - 1.0f, z}, {x + 1.0f, y + 0.0f, z + 1.0f},
-                         0xFFFFFFFF);
+                         color_white);
     }
   }
 
@@ -1519,8 +1552,8 @@ void EditorState::render_3d(VkCommandBuffer cmd)
   {
     // Draw Pyramid
     vec3 p = entity_cursor_pos;
-    float s = 0.5f;            // Size
-    uint32_t col = 0xFF00FFFF; // Magenta
+    float s = default_entity_size; // Size
+    uint32_t col = color_magenta;  // Magenta
 
     // Pyramid Points: Tip and 4 base corners
     vec3 tip = {p.x, p.y + s, p.z};
@@ -1551,17 +1584,17 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     const auto &ent = map_source.entities(i);
     // Draw Pyramid for Entity
     vec3 p = {ent.position().x(), ent.position().y(), ent.position().z()};
-    float s = 0.5f;            // Size
-    uint32_t col = 0x00FFFFFF; // Cyan (Default)
+    float s = default_entity_size; // Size
+    uint32_t col = color_cyan;     // Cyan (Default)
 
     if (selected_entity_indices.count(i))
     {
       // Blinking
       float t = sin(selection_timer * 10.0f) * 0.5f + 0.5f;
       uint32_t channel = (uint32_t)(t * 255.0f);
-      col = 0xFF00FFFF; // Base Magenta
+      col = color_magenta; // Base Magenta
       if (t > 0.5f)
-        col = 0xFFFFFFFF; // Blink to white
+        col = color_white; // Blink to white
     }
 
     // Pyramid Points: Tip and 4 base corners
@@ -1610,8 +1643,8 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       int segments = 32;
       for (int j = 0; j < segments; ++j)
       {
-        float angle1 = (float)j / segments * 2.0f * 3.14159f;
-        float angle2 = (float)(j + 1) / segments * 2.0f * 3.14159f;
+        float angle1 = (float)j / segments * 2.0f * pi;
+        float angle2 = (float)(j + 1) / segments * 2.0f * pi;
         vec3 p1 = {p.x + cos(angle1) * radius, p.y, p.z + sin(angle1) * radius};
         vec3 p2 = {p.x + cos(angle2) * radius, p.y, p.z + sin(angle2) * radius};
         renderer::DrawLine(cmd, p1, p2, 0xFF00A5FF); // Orange
