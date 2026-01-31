@@ -1763,3 +1763,101 @@ VkDevice GetDevice() { return g_device; }
 
 } // namespace renderer
 } // namespace client
+
+namespace client
+{
+namespace renderer
+{
+
+void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
+                const linalg::vec3 &end, uint32_t color)
+{
+  using namespace linalg;
+
+  vec3 dir = end - start;
+  float len = length(dir);
+  if (len < 0.0001f)
+    return;
+
+  vec3 w = dir * (1.0f / len);
+
+  // Find arbitrary up vector
+  vec3 up = {{0, 1, 0}};
+  if (std::abs(dot(w, up)) > 0.99f)
+  {
+    up = {{1, 0, 0}};
+  }
+
+  vec3 u = normalize(cross(up, w));
+  vec3 v = cross(w, u);
+
+  float head_len = 0.5f;
+  float head_width = 0.2f;
+  float shaft_width = 0.05f;
+
+  if (len < head_len)
+  {
+    head_len = len; // Arrow is just head if too short
+  }
+
+  vec3 shaft_end = start + w * (len - head_len);
+
+  // -- Draw Shaft (AABB-like Box) --
+  // If we really want an "AABB" as the user asked ("from an AABB"),
+  // we align it with the arrow frame. It's an OBB really.
+  if (len > head_len)
+  {
+    float sw = shaft_width * 0.5f;
+    vec3 c1 = start - u * sw - v * sw;
+    vec3 c2 = start + u * sw - v * sw;
+    vec3 c3 = start + u * sw + v * sw;
+    vec3 c4 = start - u * sw + v * sw;
+
+    vec3 c5 = shaft_end - u * sw - v * sw;
+    vec3 c6 = shaft_end + u * sw - v * sw;
+    vec3 c7 = shaft_end + u * sw + v * sw;
+    vec3 c8 = shaft_end - u * sw + v * sw;
+
+    // Base
+    DrawLine(cmd, c1, c2, color);
+    DrawLine(cmd, c2, c3, color);
+    DrawLine(cmd, c3, c4, color);
+    DrawLine(cmd, c4, c1, color);
+
+    // Top
+    DrawLine(cmd, c5, c6, color);
+    DrawLine(cmd, c6, c7, color);
+    DrawLine(cmd, c7, c8, color);
+    DrawLine(cmd, c8, c5, color);
+
+    // Sides
+    DrawLine(cmd, c1, c5, color);
+    DrawLine(cmd, c2, c6, color);
+    DrawLine(cmd, c3, c7, color);
+    DrawLine(cmd, c4, c8, color);
+  }
+
+  // -- Draw Head (Pyramid) --
+  {
+    float hw = head_width * 0.5f;
+    vec3 b1 = shaft_end - u * hw - v * hw;
+    vec3 b2 = shaft_end + u * hw - v * hw;
+    vec3 b3 = shaft_end + u * hw + v * hw;
+    vec3 b4 = shaft_end - u * hw + v * hw;
+
+    // Base
+    DrawLine(cmd, b1, b2, color);
+    DrawLine(cmd, b2, b3, color);
+    DrawLine(cmd, b3, b4, color);
+    DrawLine(cmd, b4, b1, color);
+
+    // Tip
+    DrawLine(cmd, b1, end, color);
+    DrawLine(cmd, b2, end, color);
+    DrawLine(cmd, b3, end, color);
+    DrawLine(cmd, b4, end, color);
+  }
+}
+
+} // namespace renderer
+} // namespace client

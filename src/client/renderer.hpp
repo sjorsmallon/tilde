@@ -7,16 +7,20 @@
 #include "ecs.hpp"
 #include "linalg.hpp"
 
-namespace client {
-namespace renderer {
+namespace client
+{
+namespace renderer
+{
 
-struct viewport_t {
+struct viewport_t
+{
   // normalized
   linalg::vec2 start;
   linalg::vec2 dimensions;
 };
 
-struct render_view_t {
+struct render_view_t
+{
   viewport_t viewport;
   camera_t camera;
 };
@@ -29,6 +33,10 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 // Draw a simple 3D line
 void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
               const linalg::vec3 &end, uint32_t color);
+
+// Draw an arrow (shaft = AABB, head = Pyramid)
+void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
+                const linalg::vec3 &end, uint32_t color);
 
 // Apply the viewport to the command buffer (calculating pixel rect from
 // normalized)

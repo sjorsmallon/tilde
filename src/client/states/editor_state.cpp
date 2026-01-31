@@ -13,14 +13,12 @@
 
 #include "../undo_stack.hpp"
 
-constexpr const int invalid_idx = -1;
-constexpr const float pi_half = 1.57079632679f;
+constexpr const float invalid_idx = -1;
 constexpr const float fov_default = 90.0f;
 constexpr const float iso_yaw = 315.0f;
 constexpr const float iso_pitch = -35.264f;
 constexpr const float ray_far_dist = 1000.0f;
 constexpr const float ray_epsilon = 1e-6f;
-constexpr const float near_z_clip = -0.1f;
 constexpr const float pi = 3.14159265f;
 constexpr const float default_entity_size = 0.5f;
 constexpr const float default_aabb_half_size = 0.5f;
@@ -52,146 +50,25 @@ using linalg::to_radians;
 using linalg::vec2;
 using linalg::vec3;
 
-// Helper to separate View from Projection for 3D clipping
-static vec3 WorldToView(const vec3 &p, const camera_t &cam)
-{
-  float x = p.x - cam.x;
-  float y = p.y - cam.y;
-  float z = p.z - cam.z;
-
-  float camYaw = to_radians(cam.yaw);
-  float camPitch = to_radians(cam.pitch);
-
-  // Yaw Rotation (align +X to -Z)
-  float vYaw = camYaw + pi_half;
-  float cY = cos(-vYaw);
-  float sY = sin(-vYaw);
-
-  float rx = x * cY - z * sY;
-  float rz = x * sY + z * cY;
-  x = rx;
-  z = rz;
-
-  // Pitch Rotation
-  float cP = cos(-camPitch);
-  float sP = sin(-camPitch);
-
-  float ry = y * cP - z * sP;
-  rz = y * sP + z * cP;
-  y = ry;
-  z = rz;
-
-  return {x, y, z};
-}
-
-// Ray-AABB Intersection (Slab Method)
-static bool IntersectRayAABB(vec3 ray_origin, vec3 ray_dir, vec3 aabb_min,
-                             vec3 aabb_max, float &t_min)
-{
-  float tx1 = (aabb_min.x - ray_origin.x) / ray_dir.x;
-  float tx2 = (aabb_max.x - ray_origin.x) / ray_dir.x;
-
-  float tmin = std::min(tx1, tx2);
-  float tmax = std::max(tx1, tx2);
-
-  float ty1 = (aabb_min.y - ray_origin.y) / ray_dir.y;
-  float ty2 = (aabb_max.y - ray_origin.y) / ray_dir.y;
-
-  tmin = std::max(tmin, std::min(ty1, ty2));
-  tmax = std::min(tmax, std::max(ty1, ty2));
-
-  float tz1 = (aabb_min.z - ray_origin.z) / ray_dir.z;
-  float tz2 = (aabb_max.z - ray_origin.z) / ray_dir.z;
-
-  tmin = std::max(tmin, std::min(tz1, tz2));
-  tmax = std::min(tmax, std::max(tz1, tz2));
-
-  if (tmax >= tmin && tmax >= 0.0f)
-  {
-    t_min = tmin;
-    return true;
-  }
-  return false;
-}
-
-static vec2 ViewToScreen(const vec3 &p, const ImGuiIO &io, bool ortho,
-                         float ortho_h)
-{
-  if (ortho)
-  {
-    float aspect = io.DisplaySize.x / io.DisplaySize.y;
-    float h = ortho_h;
-    float w = h * aspect;
-
-    // Map p.x, p.y to [-1, 1] based on ortho rect
-    float x_ndc = p.x / (w * 0.5f);
-    float y_ndc = p.y / (h * 0.5f);
-
-    return {(x_ndc * 0.5f + 0.5f) * io.DisplaySize.x,
-            (1.0f - (y_ndc * 0.5f + 0.5f)) * io.DisplaySize.y};
-  }
-  else
-  {
-    float aspect = io.DisplaySize.x / io.DisplaySize.y;
-    float fov = fov_default;
-    float tanHalf = tan(to_radians(fov) * 0.5f);
-
-    // Looking down -Z.
-    float x_ndc = p.x / (-p.z * tanHalf * aspect);
-    float y_ndc = p.y / (-p.z * tanHalf);
-
-    return {(x_ndc * 0.5f + 0.5f) * io.DisplaySize.x,
-            (1.0f - (y_ndc * 0.5f + 0.5f)) * io.DisplaySize.y};
-  }
-}
-
 static bool IntersectAABBAABB(const game::AABB &a, const game::AABB &b)
 {
   // A
-  float ax = a.center().x();
-  float ay = a.center().y();
-  float az = a.center().z();
-  float ahx = a.half_extents().x();
-  float ahy = a.half_extents().y();
-  float ahz = a.half_extents().z();
-  vec3 minA = {ax - ahx, ay - ahy, az - ahz};
-  vec3 maxA = {ax + ahx, ay + ahy, az + ahz};
+  vec3 minA = {a.center().x() - a.half_extents().x(),
+               a.center().y() - a.half_extents().y(),
+               a.center().z() - a.half_extents().z()};
+  vec3 maxA = {a.center().x() + a.half_extents().x(),
+               a.center().y() + a.half_extents().y(),
+               a.center().z() + a.half_extents().z()};
 
   // B
-  float bx = b.center().x();
-  float by = b.center().y();
-  float bz = b.center().z();
-  float bhx = b.half_extents().x();
-  float bhy = b.half_extents().y();
-  float bhz = b.half_extents().z();
-  vec3 minB = {bx - bhx, by - bhy, bz - bhz};
-  vec3 maxB = {bx + bhx, by + bhy, bz + bhz};
+  vec3 minB = {b.center().x() - b.half_extents().x(),
+               b.center().y() - b.half_extents().y(),
+               b.center().z() - b.half_extents().z()};
+  vec3 maxB = {b.center().x() + b.half_extents().x(),
+               b.center().y() + b.half_extents().y(),
+               b.center().z() + b.half_extents().z()};
 
-  return (minA.x <= maxB.x && maxA.x >= minB.x) &&
-         (minA.y <= maxB.y && maxA.y >= minB.y) &&
-         (minA.z <= maxB.z && maxA.z >= minB.z);
-}
-
-static bool ClipLine(vec3 &p1, vec3 &p2)
-{
-  float nearZ = near_z_clip;
-
-  if (p1.z > nearZ && p2.z > nearZ)
-    return false;
-
-  if (p1.z > nearZ)
-  {
-    float t = (nearZ - p1.z) / (p2.z - p1.z);
-    p1 = linalg::mix(p1, p2, t);
-    p1.z = nearZ; // ensure precision
-  }
-  else if (p2.z > nearZ)
-  {
-    float t = (nearZ - p2.z) / (p1.z - p2.z);
-    p2 = linalg::mix(p2, p1, t);
-    p2.z = nearZ;
-  }
-  return true;
+  return linalg::intersect_aabb_aabb(minA, maxA, minB, maxB);
 }
 
 void EditorState::on_enter()
@@ -796,13 +673,16 @@ void EditorState::update(float dt)
             // Ideally check projected 8 corners for bounds overlap, but center
             // is a good start for "RTS style" unit selection. Let's check
             // center first.
-            vec3 p = WorldToView(center, camera);
+            vec3 p =
+                linalg::world_to_view(center, {camera.x, camera.y, camera.z},
+                                      camera.yaw, camera.pitch);
             // Simple clip check
             if (p.z < 0 && !camera.orthographic)
               continue;
 
-            vec2 s =
-                ViewToScreen(p, io, camera.orthographic, camera.ortho_height);
+            vec2 s = linalg::view_to_screen(
+                p, {io.DisplaySize.x, io.DisplaySize.y}, camera.orthographic,
+                camera.ortho_height, fov_default);
 
             if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2)
             {
@@ -817,12 +697,14 @@ void EditorState::update(float dt)
             vec3 pos = {ent.position().x(), ent.position().y(),
                         ent.position().z()};
 
-            vec3 p = WorldToView(pos, camera);
+            vec3 p = linalg::world_to_view(pos, {camera.x, camera.y, camera.z},
+                                           camera.yaw, camera.pitch);
             if (p.z < 0 && !camera.orthographic)
               continue;
 
-            vec2 s =
-                ViewToScreen(p, io, camera.orthographic, camera.ortho_height);
+            vec2 s = linalg::view_to_screen(
+                p, {io.DisplaySize.x, io.DisplaySize.y}, camera.orthographic,
+                camera.ortho_height, fov_default);
 
             if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2)
             {
@@ -918,7 +800,7 @@ void EditorState::update(float dt)
               vec3 max = center + half;
 
               float t = 0;
-              if (IntersectRayAABB(ray_origin, ray_dir, min, max, t))
+              if (linalg::intersect_ray_aabb(ray_origin, ray_dir, min, max, t))
               {
                 if (t < 0.0f)
                   continue; // Ignore intersections behind the camera
@@ -969,7 +851,7 @@ void EditorState::update(float dt)
               vec3 max = {pos.x + s / 2, pos.y + 1.0f, pos.z + s / 2};
 
               float t = 0;
-              if (IntersectRayAABB(ray_origin, ray_dir, min, max, t))
+              if (linalg::intersect_ray_aabb(ray_origin, ray_dir, min, max, t))
               {
                 if (t < 0.0f)
                   continue; // Ignore intersections behind the camera
@@ -1114,7 +996,7 @@ void EditorState::update(float dt)
         vec3 max = center + half;
 
         float t = 0;
-        if (IntersectRayAABB(ray_origin, ray_dir, min, max, t))
+        if (linalg::intersect_ray_aabb(ray_origin, ray_dir, min, max, t))
         {
           if (t < min_t)
           {
@@ -1687,13 +1569,19 @@ void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color)
 
   auto drawLine = [&](int i, int j)
   {
-    vec3 p1 = WorldToView(corners[i], camera);
-    vec3 p2 = WorldToView(corners[j], camera);
+    vec3 p1 = linalg::world_to_view(corners[i], {camera.x, camera.y, camera.z},
+                                    camera.yaw, camera.pitch);
+    vec3 p2 = linalg::world_to_view(corners[j], {camera.x, camera.y, camera.z},
+                                    camera.yaw, camera.pitch);
 
-    if (camera.orthographic || ClipLine(p1, p2))
+    if (camera.orthographic || linalg::clip_line(p1, p2))
     {
-      vec2 s1 = ViewToScreen(p1, io, camera.orthographic, camera.ortho_height);
-      vec2 s2 = ViewToScreen(p2, io, camera.orthographic, camera.ortho_height);
+      vec2 s1 = linalg::view_to_screen(p1, {io.DisplaySize.x, io.DisplaySize.y},
+                                       camera.orthographic, camera.ortho_height,
+                                       fov_default);
+      vec2 s2 = linalg::view_to_screen(p2, {io.DisplaySize.x, io.DisplaySize.y},
+                                       camera.orthographic, camera.ortho_height,
+                                       fov_default);
       dl->AddLine({s1.x, s1.y}, {s2.x, s2.y}, color);
     }
   };
@@ -1728,13 +1616,19 @@ void EditorState::draw_grid()
 
   auto drawLine = [&](vec3 start, vec3 end, uint32_t col)
   {
-    vec3 p1 = WorldToView(start, camera);
-    vec3 p2 = WorldToView(end, camera);
+    vec3 p1 = linalg::world_to_view(start, {camera.x, camera.y, camera.z},
+                                    camera.yaw, camera.pitch);
+    vec3 p2 = linalg::world_to_view(end, {camera.x, camera.y, camera.z},
+                                    camera.yaw, camera.pitch);
 
-    if (camera.orthographic || ClipLine(p1, p2))
+    if (camera.orthographic || linalg::clip_line(p1, p2))
     {
-      vec2 s1 = ViewToScreen(p1, io, camera.orthographic, camera.ortho_height);
-      vec2 s2 = ViewToScreen(p2, io, camera.orthographic, camera.ortho_height);
+      vec2 s1 = linalg::view_to_screen(p1, {io.DisplaySize.x, io.DisplaySize.y},
+                                       camera.orthographic, camera.ortho_height,
+                                       fov_default);
+      vec2 s2 = linalg::view_to_screen(p2, {io.DisplaySize.x, io.DisplaySize.y},
+                                       camera.orthographic, camera.ortho_height,
+                                       fov_default);
       dl->AddLine({s1.x, s1.y}, {s2.x, s2.y}, col);
     }
   };
