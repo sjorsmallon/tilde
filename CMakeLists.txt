@@ -73,6 +73,8 @@ target_link_libraries(imgui PUBLIC
 # 1. Game Shared (Static Library)
 # Contains logging, cvars, protos, common math
 add_library(game_shared STATIC
+    src/shared/file_watcher.hpp
+    src/shared/file_watcher.cpp
     src/shared/log.hpp
     src/shared/cvar.hpp
     src/shared/timed_function.hpp
@@ -147,6 +149,7 @@ add_library(game_client SHARED
     src/client/state_manager.cpp
     src/client/states/play_state.cpp
     src/client/states/editor_state.cpp
+    src/client/states/editor_state_draw.cpp
     src/client/input.cpp
     src/client/renderer.cpp
     ${SHADER_HEADERS}
@@ -223,4 +226,9 @@ target_include_directories(camera_test PRIVATE src)
 add_executable(linalg_test src/test/linalg_test.cpp)
 target_include_directories(linalg_test PRIVATE src)
  target_link_libraries(linalg_test PRIVATE game_shared)
+
+# 11. File Watcher Test
+add_executable(file_watcher_test src/test/file_watcher_test.cpp)
+target_include_directories(file_watcher_test PRIVATE src)
+target_link_libraries(file_watcher_test PRIVATE game_shared)
 

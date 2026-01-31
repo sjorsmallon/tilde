@@ -8,6 +8,17 @@
 #include <unordered_set>
 #include <vector>
 
+// Colors
+constexpr const uint32_t color_magenta = 0xFF00FFFF;
+constexpr const uint32_t color_green = 0xFF00FF00;
+constexpr const uint32_t color_red = 0xFF0000FF;
+constexpr const uint32_t color_white = 0xFFFFFFFF;
+constexpr const uint32_t color_cyan = 0x00FFFFFF;
+constexpr const uint32_t color_selection_fill = 0x3300FF00;
+constexpr const uint32_t color_selection_border = 0xFF00FF00;
+
+constexpr const float invalid_tile_val = -10000.0f;
+
 namespace client
 {
 

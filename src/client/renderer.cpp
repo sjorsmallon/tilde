@@ -986,7 +986,7 @@ static void create_aabb_mesh()
     vertices.push_back({{x1, y1, z1}, {1, 1, 1}, {1, 0, 0}}); // 0: Red
     vertices.push_back({{x2, y2, z2}, {1, 1, 1}, {0, 1, 0}}); // 1: Green
     vertices.push_back({{x3, y3, z3}, {1, 1, 1}, {0, 0, 1}}); // 2: Blue
-    vertices.push_back({{x4, y4, z4}, {1, 1, 1}, {1, 0, 0}}); // 3: Red (Wrap)
+    vertices.push_back({{x4, y4, z4}, {1, 1, 1}, {0, 1, 0}}); // 3: Red (Wrap)
 
     // Tri 1: 0-1-2
     indices.push_back(baseIndex + 0);
