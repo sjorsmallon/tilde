@@ -55,6 +55,14 @@ private:
   int rotate_entity_index = -1;
   linalg::vec3 rotate_debug_point{0, 0, 0};
 
+  // AABB Handle Interaction
+  int hovered_handle_index = -1; // 0..5, or -1
+  bool dragging_handle = false;
+  int dragging_handle_index = -1;
+  game::AABB dragging_original_aabb;
+  linalg::vec3 drag_start_point{0.0f, 0.0f, 0.0f};
+  const float handle_length = 1.0f;
+
   // Selection state
   // Selection state
   std::unordered_set<int> selected_aabb_indices;
