@@ -316,6 +316,17 @@ inline bool intersect_aabb_aabb(const vec3 &min_a, const vec3 &max_a,
          (min_a.z <= max_b.z && max_a.z >= min_b.z);
 }
 
+inline bool intersect_AABB_AABB_from_center_and_half_extents(
+    const vec3 &center_a, const vec3 &half_extents_a, const vec3 &center_b,
+    const vec3 &half_extents_b)
+{
+  vec3 min_a = center_a - half_extents_a;
+  vec3 max_a = center_a + half_extents_a;
+  vec3 min_b = center_b - half_extents_b;
+  vec3 max_b = center_b + half_extents_b;
+  return intersect_aabb_aabb(min_a, max_a, min_b, max_b);
+}
+
 // Line Clipping against Near Z Plane (default -0.1f)
 inline bool clip_line(vec3 &p1, vec3 &p2, float near_z = -0.1f)
 {

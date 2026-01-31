@@ -50,27 +50,6 @@ using linalg::to_radians;
 using linalg::vec2;
 using linalg::vec3;
 
-static bool IntersectAABBAABB(const game::AABB &a, const game::AABB &b)
-{
-  // A
-  vec3 minA = {a.center().x() - a.half_extents().x(),
-               a.center().y() - a.half_extents().y(),
-               a.center().z() - a.half_extents().z()};
-  vec3 maxA = {a.center().x() + a.half_extents().x(),
-               a.center().y() + a.half_extents().y(),
-               a.center().z() + a.half_extents().z()};
-
-  // B
-  vec3 minB = {b.center().x() - b.half_extents().x(),
-               b.center().y() - b.half_extents().y(),
-               b.center().z() - b.half_extents().z()};
-  vec3 maxB = {b.center().x() + b.half_extents().x(),
-               b.center().y() + b.half_extents().y(),
-               b.center().z() + b.half_extents().z()};
-
-  return linalg::intersect_aabb_aabb(minA, maxA, minB, maxB);
-}
-
 void EditorState::on_enter()
 {
   if (map_source.name().empty())
@@ -306,234 +285,203 @@ void EditorState::update(float dt)
     float width = io.DisplaySize.x;
     float height = io.DisplaySize.y;
 
-    if (width > 0 && height > 0)
+    // NDC
+    float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
+    float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+
+    // View Space Ray Dir
+    float fov = fov_default;
+    float tanHalf = tan(to_radians(fov) * 0.5f);
+    float aspect = width / height;
+
+    float vx = x_ndc * aspect * tanHalf;
+    float vy = y_ndc * tanHalf;
+    // float vz = -1.0f;
+
+    // Calculate Camera Basis Vectors
+    // Forward
+    auto [F, R, U] = get_orientation_vectors(camera);
+
+    // Ray Direction in World
+    vec3 ray_dir;
+    vec3 ray_origin;
+
+    if (camera.orthographic)
     {
-      // NDC
-      float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
-      float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+      // Orthographic Raycasting
+      // Direction is always Forward vector
+      ray_dir = F;
 
-      // View Space Ray Dir
-      float fov = fov_default;
-      float tanHalf = tan(to_radians(fov) * 0.5f);
-      float aspect = width / height;
+      // Origin is offset from camera position on the view plane
+      float h = camera.ortho_height;
+      float w = h * aspect;
 
-      float vx = x_ndc * aspect * tanHalf;
-      float vy = y_ndc * tanHalf;
-      // float vz = -1.0f;
+      float ox = x_ndc * (w * 0.5f);
+      float oy = y_ndc * (h * 0.5f); // Positive Y (Up)
 
-      // Calculate Camera Basis Vectors
-      // Forward
-      float radYaw = to_radians(camera.yaw);
-      float radPitch = to_radians(camera.pitch);
+      // Transform (ox, oy, 0) in View Space to World Space
+      // World = CameraPos + ox * Right + oy * Up
+      // Move origin back by 1000 to catch things behind camera plane
+      ray_origin = {camera.x, camera.y, camera.z};
+      ray_origin = ray_origin - ray_dir * ray_far_dist;
+      ray_origin = ray_origin + R * ox + U * oy;
+    }
+    else
+    {
+      // Perspective Raycasting
+      // Ray = R * vx + U * vy + F * 1.0
+      ray_dir = R * vx + U * vy + F;
+      ray_origin = {camera.x, camera.y, camera.z};
+    }
 
-      float cY = cos(radYaw);
-      float sY = sin(radYaw);
-      float cP = cos(radPitch);
-      float sP = sin(radPitch);
+    // Intersect Y=0 plane
+    // O.y + t * D.y = 0  => t = -O.y / D.y
+    bool hit = false;
+    if (std::abs(ray_dir.y) > ray_epsilon)
+    {
+      float t = -ray_origin.y / ray_dir.y;
+      if (t > 0 || camera.orthographic)
+      { // Allow negative t for ortho if camera is
+        // below plane (unlikely) or behind? actually t
+        // should be distance along ray. For ortho,
+        // camera might be "far away" but we act as if
+        // plane is at z=0. Actually with t>0 check, we
+        // ensure we only click in front of camera.
+        float ix = ray_origin.x + t * ray_dir.x;
+        float iz = ray_origin.z + t * ray_dir.z;
 
-      vec3 F = {cY * cP, sP, sY * cP};
-
-      // World Up
-      vec3 W = {0, 1, 0};
-
-      // Right (R)
-      vec3 R = linalg::cross(F, W);
-      // Normalize R
-      float lenR = linalg::length(R);
-      if (lenR < 0.001f)
-      {
-        R = {1, 0, 0};
+        selected_tile[0] = std::floor(ix);
+        selected_tile[1] = 0.0f; // On Grid
+        selected_tile[2] = std::floor(iz);
+        hit = true;
       }
-      else
+    }
+
+    if (!hit)
+    {
+      selected_tile[1] = invalid_tile_val; // Invalid
+    }
+
+    // Debug: Click to add line
+    bool shift_down = client::input::is_key_down(SDL_SCANCODE_LSHIFT);
+    bool lmb_down = io.MouseDown[0];
+    bool lmb_clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    bool lmb_released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+
+    // Handle Drag Logic
+    if (place_mode && hit)
+    {
+      vec3 current_pos = {selected_tile[0], selected_tile[1], selected_tile[2]};
+
+      if (dragging_placement)
       {
-        R = R * (1.0f / lenR);
-      }
-
-      // Up (U)
-      vec3 U = linalg::cross(R, F);
-
-      // Ray Direction in World
-      vec3 ray_dir;
-      vec3 ray_origin;
-
-      if (camera.orthographic)
-      {
-        // Orthographic Raycasting
-        // Direction is always Forward vector
-        ray_dir = F;
-
-        // Origin is offset from camera position on the view plane
-        float h = camera.ortho_height;
-        float w = h * aspect;
-
-        float ox = x_ndc * (w * 0.5f);
-        float oy = y_ndc * (h * 0.5f); // Positive Y (Up)
-
-        // Transform (ox, oy, 0) in View Space to World Space
-        // World = CameraPos + ox * Right + oy * Up
-        // Move origin back by 1000 to catch things behind camera plane
-        ray_origin = {camera.x, camera.y, camera.z};
-        ray_origin = ray_origin - ray_dir * ray_far_dist;
-        ray_origin = ray_origin + R * ox + U * oy;
-      }
-      else
-      {
-        // Perspective Raycasting
-        // Ray = R * vx + U * vy + F * 1.0
-        ray_dir = R * vx + U * vy + F;
-        ray_origin = {camera.x, camera.y, camera.z};
-      }
-
-      // Intersect Y=0 plane
-      // O.y + t * D.y = 0  => t = -O.y / D.y
-      bool hit = false;
-      if (std::abs(ray_dir.y) > ray_epsilon)
-      {
-        float t = -ray_origin.y / ray_dir.y;
-        if (t > 0 || camera.orthographic)
-        { // Allow negative t for ortho if camera is
-          // below plane (unlikely) or behind? actually t
-          // should be distance along ray. For ortho,
-          // camera might be "far away" but we act as if
-          // plane is at z=0. Actually with t>0 check, we
-          // ensure we only click in front of camera.
-          float ix = ray_origin.x + t * ray_dir.x;
-          float iz = ray_origin.z + t * ray_dir.z;
-
-          selected_tile[0] = std::floor(ix);
-          selected_tile[1] = 0.0f; // On Grid
-          selected_tile[2] = std::floor(iz);
-          hit = true;
-        }
-      }
-
-      if (!hit)
-      {
-        selected_tile[1] = invalid_tile_val; // Invalid
-      }
-
-      // Debug: Click to add line
-      bool shift_down = client::input::is_key_down(SDL_SCANCODE_LSHIFT);
-      bool lmb_down = io.MouseDown[0];
-      bool lmb_clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-      bool lmb_released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
-
-      // Handle Drag Logic
-      if (place_mode && hit)
-      {
-        vec3 current_pos = {selected_tile[0], selected_tile[1],
-                            selected_tile[2]};
-
-        if (dragging_placement)
+        if (lmb_released)
         {
-          if (lmb_released)
-          {
-            // Finalize placement
-            dragging_placement = false;
-            auto *aabb = map_source.add_aabbs();
-
-            float min_x = std::min(drag_start.x, current_pos.x);
-            float max_x = std::max(drag_start.x, current_pos.x);
-            float min_z = std::min(drag_start.z, current_pos.z);
-            float max_z = std::max(drag_start.z, current_pos.z);
-            float sx = std::floor(min_x);
-            float ex = std::floor(max_x) + 1.0f;
-            float sz = std::floor(min_z);
-            float ez = std::floor(max_z) + 1.0f;
-            float width = ex - sx;
-            float depth = ez - sz;
-            float height = 1.0f;
-            float cx = sx + width * 0.5f;
-            float cz = sz + depth * 0.5f;
-
-            aabb->mutable_center()->set_x(cx);
-            aabb->mutable_center()->set_y(-0.5f); // Center at -0.5
-            aabb->mutable_center()->set_z(cz);
-            aabb->mutable_half_extents()->set_x(width * 0.5f);
-            aabb->mutable_half_extents()->set_y(height * 0.5f);
-            aabb->mutable_half_extents()->set_z(depth * 0.5f);
-
-            // Capture for undo
-            game::AABB new_aabb = *aabb;
-            undo_stack.push(
-                [this]()
-                {
-                  // UNDO
-                  auto *aabbs = map_source.mutable_aabbs();
-                  if (!aabbs->empty())
-                  {
-                    aabbs->RemoveLast();
-                  }
-                },
-                [this, new_aabb]()
-                {
-                  // REDO
-                  *map_source.add_aabbs() = new_aabb;
-                });
-          }
-        }
-        else
-        {
-          // Not dragging yet
-          if (lmb_clicked && shift_down)
-          {
-            // Start Drag
-            dragging_placement = true;
-            drag_start = current_pos;
-          }
-          else if (lmb_clicked)
-          {
-            // Normal single click place (1x1)
-            auto *aabb = map_source.add_aabbs();
-            game::AABB new_aabb;
-            new_aabb.mutable_center()->set_x(current_pos.x + 0.5f);
-            new_aabb.mutable_center()->set_y(-0.5f); // Center at -0.5
-            new_aabb.mutable_center()->set_z(current_pos.z + 0.5f);
-            new_aabb.mutable_half_extents()->set_x(default_aabb_half_size);
-            new_aabb.mutable_half_extents()->set_y(default_aabb_half_size);
-            new_aabb.mutable_half_extents()->set_z(default_aabb_half_size);
-            *aabb = new_aabb;
-
-            undo_stack.push(
-                [this]()
-                {
-                  // UNDO: Remove the last added AABB
-                  // Optimization: Check if it matches? For now just pop back.
-                  auto *aabbs = map_source.mutable_aabbs();
-                  if (!aabbs->empty())
-                  {
-                    aabbs->RemoveLast();
-                  }
-                },
-                [this, new_aabb]()
-                {
-                  // REDO: Add it back
-                  *map_source.add_aabbs() = new_aabb;
-                });
-          }
-        }
-      }
-      else
-      {
-        // If we mouse off the plane while dragging, what happens?
-        // For now, let's just keep dragging_placement true but maybe not update
-        // destination if invalid? Or cancel? Let's just cancel if release
-        // happens off grid
-        if (dragging_placement && lmb_released)
-        {
+          // Finalize placement
           dragging_placement = false;
+          auto *aabb = map_source.add_aabbs();
+
+          float min_x = std::min(drag_start.x, current_pos.x);
+          float max_x = std::max(drag_start.x, current_pos.x);
+          float min_z = std::min(drag_start.z, current_pos.z);
+          float max_z = std::max(drag_start.z, current_pos.z);
+          float sx = std::floor(min_x);
+          float ex = std::floor(max_x) + 1.0f;
+          float sz = std::floor(min_z);
+          float ez = std::floor(max_z) + 1.0f;
+          float width = ex - sx;
+          float depth = ez - sz;
+          float height = 1.0f;
+          float cx = sx + width * 0.5f;
+          float cz = sz + depth * 0.5f;
+
+          aabb->mutable_center()->set_x(cx);
+          aabb->mutable_center()->set_y(-0.5f); // Center at -0.5
+          aabb->mutable_center()->set_z(cz);
+          aabb->mutable_half_extents()->set_x(width * 0.5f);
+          aabb->mutable_half_extents()->set_y(height * 0.5f);
+          aabb->mutable_half_extents()->set_z(depth * 0.5f);
+
+          // Capture for undo
+          game::AABB new_aabb = *aabb;
+          undo_stack.push(
+              [this]()
+              {
+                // UNDO
+                auto *aabbs = map_source.mutable_aabbs();
+                if (!aabbs->empty())
+                {
+                  aabbs->RemoveLast();
+                }
+              },
+              [this, new_aabb]()
+              {
+                // REDO
+                *map_source.add_aabbs() = new_aabb;
+              });
         }
       }
-
-      if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
+      else
       {
-        vec3 start = {camera.x, camera.y, camera.z};
-        // If it hit the plane, use intersection. If not, use far point on ray
-        vec3 end =
-            hit ? vec3{selected_tile[0], selected_tile[1], selected_tile[2]}
-                : (start + ray_dir * ray_far_dist);
-        debug_lines.push_back({start, end, color_magenta}); // Magenta
+        // Not dragging yet
+        if (lmb_clicked && shift_down)
+        {
+          // Start Drag
+          dragging_placement = true;
+          drag_start = current_pos;
+        }
+        else if (lmb_clicked)
+        {
+          // Normal single click place (1x1)
+          auto *aabb = map_source.add_aabbs();
+          game::AABB new_aabb;
+          new_aabb.mutable_center()->set_x(current_pos.x + 0.5f);
+          new_aabb.mutable_center()->set_y(-0.5f); // Center at -0.5
+          new_aabb.mutable_center()->set_z(current_pos.z + 0.5f);
+          new_aabb.mutable_half_extents()->set_x(default_aabb_half_size);
+          new_aabb.mutable_half_extents()->set_y(default_aabb_half_size);
+          new_aabb.mutable_half_extents()->set_z(default_aabb_half_size);
+          *aabb = new_aabb;
+
+          undo_stack.push(
+              [this]()
+              {
+                // UNDO: Remove the last added AABB
+                // Optimization: Check if it matches? For now just pop back.
+                auto *aabbs = map_source.mutable_aabbs();
+                if (!aabbs->empty())
+                {
+                  aabbs->RemoveLast();
+                }
+              },
+              [this, new_aabb]()
+              {
+                // REDO: Add it back
+                *map_source.add_aabbs() = new_aabb;
+              });
+        }
       }
+    }
+    else
+    {
+      // If we mouse off the plane while dragging, what happens?
+      // For now, let's just keep dragging_placement true but maybe not update
+      // destination if invalid? Or cancel? Let's just cancel if release
+      // happens off grid
+      if (dragging_placement && lmb_released)
+      {
+        dragging_placement = false;
+      }
+    }
+
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
+    {
+      vec3 start = {camera.x, camera.y, camera.z};
+      // If it hit the plane, use intersection. If not, use far point on ray
+      vec3 end =
+          hit ? vec3{selected_tile[0], selected_tile[1], selected_tile[2]}
+              : (start + ray_dir * ray_far_dist);
+      debug_lines.push_back({start, end, color_magenta}); // Magenta
     }
   }
   else if (!place_mode && !entity_mode && !io.WantCaptureMouse)
@@ -570,18 +518,7 @@ void EditorState::update(float dt)
           float fov = fov_default;
           float tanHalf = tan(to_radians(fov) * 0.5f);
 
-          float radYaw = to_radians(camera.yaw);
-          float radPitch = to_radians(camera.pitch);
-          float cY = cos(radYaw);
-          float sY = sin(radYaw);
-          float cP = cos(radPitch);
-          float sP = sin(radPitch);
-          vec3 F = {cY * cP, sP, sY * cP};
-          vec3 W = {0, 1, 0};
-          vec3 R = linalg::cross(F, W);
-          float lenR = linalg::length(R);
-          R = (lenR < 0.001f) ? vec3{1, 0, 0} : R * (1.0f / lenR);
-          vec3 U = linalg::cross(R, F);
+          auto [F, R, U] = get_orientation_vectors(camera);
 
           if (camera.orthographic)
           {
@@ -812,18 +749,7 @@ void EditorState::update(float dt)
         float aspect = width / height;
         float vx = x_ndc * aspect * tanHalf;
         float vy = y_ndc * tanHalf;
-        float radYaw = to_radians(camera.yaw);
-        float radPitch = to_radians(camera.pitch);
-        float cY = cos(radYaw);
-        float sY = sin(radYaw);
-        float cP = cos(radPitch);
-        float sP = sin(radPitch);
-        vec3 F = {cY * cP, sP, sY * cP};
-        vec3 W = {0, 1, 0};
-        vec3 R = linalg::cross(F, W);
-        float lenR = linalg::length(R);
-        R = (lenR < 0.001f) ? vec3{1, 0, 0} : R * (1.0f / lenR);
-        vec3 U = linalg::cross(R, F);
+        auto [F, R, U] = get_orientation_vectors(camera);
 
         vec3 ray_dir;
         vec3 ray_origin;
@@ -1063,7 +989,15 @@ void EditorState::update(float dt)
                 for (size_t i = 1; i < candidates.size(); ++i)
                 {
                   const auto &next = candidates[i];
-                  if (IntersectAABBAABB(best.aabb, next.aabb))
+                  const auto &a = best.aabb;
+                  const auto &b = next.aabb;
+                  if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
+                          {a.center().x(), a.center().y(), a.center().z()},
+                          {a.half_extents().x(), a.half_extents().y(),
+                           a.half_extents().z()},
+                          {b.center().x(), b.center().y(), b.center().z()},
+                          {b.half_extents().x(), b.half_extents().y(),
+                           b.half_extents().z()}))
                   {
                     if (next.volume < best.volume)
                     {
@@ -1559,7 +1493,15 @@ void EditorState::render_ui()
     {
       for (int j = i + 1; j < map_source.aabbs_size(); ++j)
       {
-        if (IntersectAABBAABB(map_source.aabbs(i), map_source.aabbs(j)))
+        const auto &a = map_source.aabbs(i);
+        const auto &b = map_source.aabbs(j);
+        if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
+                {a.center().x(), a.center().y(), a.center().z()},
+                {a.half_extents().x(), a.half_extents().y(),
+                 a.half_extents().z()},
+                {b.center().x(), b.center().y(), b.center().z()},
+                {b.half_extents().x(), b.half_extents().y(),
+                 b.half_extents().z()}))
         {
           overlapping_indices.insert(i);
           overlapping_indices.insert(j);
