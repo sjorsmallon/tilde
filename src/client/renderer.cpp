@@ -805,8 +805,8 @@ static void create_line_mesh()
   // Unit Line along +Z (0,0,0) to (0,0,1) matches lookAt Z forward
   // Or X? Let's use Forward Z to simplify lookAt usage.
   // Vertices:
-  std::vector<Vertex> vertices = {{{0, 0, 0}, {1, 1, 1}, {0, 0, 0}},
-                                  {{0, 0, 1}, {1, 1, 1}, {0, 0, 0}}};
+  std::vector<Vertex> vertices = {{{0, 0, 0}, {1, 1, 1}, {1, 1, 1}},
+                                  {{0, 0, 1}, {1, 1, 1}, {1, 1, 1}}};
   std::vector<uint16_t> indices = {0, 1};
 
   // Vertex Buffer

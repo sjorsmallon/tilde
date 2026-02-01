@@ -6,21 +6,28 @@
 #include <iostream>
 #include <sstream>
 
-namespace client {
+namespace client
+{
 
-Console::Console() {
+Console::Console()
+{
   memset(InputBuf, 0, sizeof(InputBuf));
   HistoryPos = -1;
   ScrollToBottom = false;
+  is_folded_open = true;
+  should_draw = false;
+
   Print("Console Initialized.");
 }
 
-Console &Console::Get() {
+Console &Console::Get()
+{
   static Console instance;
   return instance;
 }
 
-void Console::Print(const char *fmt, ...) {
+void Console::Print(const char *fmt, ...)
+{
   char buf[1024];
   va_list args;
   va_start(args, fmt);
@@ -31,13 +38,16 @@ void Console::Print(const char *fmt, ...) {
   ScrollToBottom = true;
 }
 
-void Console::ExecuteCommand(const char *command_line) {
+void Console::ExecuteCommand(const char *command_line)
+{
   Print("# %s", command_line);
 
   // Insert into history (if new)
   HistoryPos = -1;
-  for (int i = (int)History.size() - 1; i >= 0; i--) {
-    if (History[i] == command_line) {
+  for (int i = (int)History.size() - 1; i >= 0; i--)
+  {
+    if (History[i] == command_line)
+    {
       History.erase(History.begin() + i);
       break;
     }
@@ -55,7 +65,8 @@ void Console::ExecuteCommand(const char *command_line) {
 
   // Check CVar
   auto *cvar = cvar::CVarSystem::Get().Find(cmd);
-  if (cvar) {
+  if (cvar)
+  {
     std::string val;
     // Remaining part of string is value?
     // simple parsing: skip whitespace after cmd
@@ -63,11 +74,14 @@ void Console::ExecuteCommand(const char *command_line) {
     while (cmd_end < line.length() && std::isspace(line[cmd_end]))
       cmd_end++;
 
-    if (cmd_end < line.length()) {
+    if (cmd_end < line.length())
+    {
       std::string value_str = line.substr(cmd_end);
       cvar->SetFromString(value_str);
       Print("Set %s to %s", cmd.c_str(), value_str.c_str());
-    } else {
+    }
+    else
+    {
       std::string flags_str;
       uint64_t flags = cvar->GetFlags();
       if (flags & cvar::flags::Admin)
@@ -87,16 +101,20 @@ void Console::ExecuteCommand(const char *command_line) {
   Print("Unknown command: %s", cmd.c_str());
 }
 
-int Console::TextEditCallbackStub(ImGuiInputTextCallbackData *data) {
+int Console::TextEditCallbackStub(ImGuiInputTextCallbackData *data)
+{
   return Console::Get().TextEditCallback(data);
 }
 
-int Console::TextEditCallback(ImGuiInputTextCallbackData *data) {
-  if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
+int Console::TextEditCallback(ImGuiInputTextCallbackData *data)
+{
+  if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion)
+  {
     // Locate beginning of current word
     const char *word_end = data->Buf + data->CursorPos;
     const char *word_start = word_end;
-    while (word_start > data->Buf) {
+    while (word_start > data->Buf)
+    {
       const char c = word_start[-1];
       if (c == ' ' || c == '\t' || c == ',' || c == ';')
         break;
@@ -107,27 +125,35 @@ int Console::TextEditCallback(ImGuiInputTextCallbackData *data) {
     std::string prefix(word_start, word_end - word_start);
 
     cvar::CVarSystem::Get().VisitAll(
-        [&](const std::string &name, cvar::ICVar *) {
+        [&](const std::string &name, cvar::ICVar *)
+        {
           if (name.compare(0, prefix.size(), prefix) == 0)
             Candidates.push_back(name);
         });
 
-    if (Candidates.empty()) {
+    if (Candidates.empty())
+    {
       Print("No match for \"%.*s\"!", (int)(word_end - word_start), word_start);
-    } else if (Candidates.size() == 1) {
+    }
+    else if (Candidates.size() == 1)
+    {
       // Single match. Delete the beginning of the word and replace it entirely
       // so we've got nice casing
       data->DeleteChars((int)(word_start - data->Buf),
                         (int)(word_end - word_start));
       data->InsertChars(data->CursorPos, Candidates[0].c_str());
       data->InsertChars(data->CursorPos, " ");
-    } else {
+    }
+    else
+    {
       // Multiple matches. Complete as much as possible.
       int match_len = (int)prefix.size();
-      for (;;) {
+      for (;;)
+      {
         int c = 0;
         bool all_candidates_matches = true;
-        for (int i = 0; i < Candidates.size() && all_candidates_matches; i++) {
+        for (int i = 0; i < Candidates.size() && all_candidates_matches; i++)
+        {
           if (i == 0)
             c = toupper(Candidates[i][match_len]);
           else if (c == 0 || c != toupper(Candidates[i][match_len]))
@@ -138,7 +164,8 @@ int Console::TextEditCallback(ImGuiInputTextCallbackData *data) {
         match_len++;
       }
 
-      if (match_len > 0) {
+      if (match_len > 0)
+      {
         data->DeleteChars((int)(word_start - data->Buf),
                           (int)(word_end - word_start));
         data->InsertChars(data->CursorPos, Candidates[0].c_str(),
@@ -154,9 +181,14 @@ int Console::TextEditCallback(ImGuiInputTextCallbackData *data) {
   return 0;
 }
 
-void Console::Draw(const char *title, bool *p_open) {
+void Console::Draw()
+{
+  if (!should_draw)
+    return;
+
   ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin(title, p_open)) {
+  if (!ImGui::Begin("Console", &is_folded_open))
+  {
     ImGui::End();
     return;
   }
@@ -165,11 +197,13 @@ void Console::Draw(const char *title, bool *p_open) {
   const float footer_height_to_reserve =
       ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
   if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve),
-                        false, ImGuiWindowFlags_HorizontalScrollbar)) {
+                        false, ImGuiWindowFlags_HorizontalScrollbar))
+  {
     // Display items
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
                         ImVec2(4, 1)); // Tighten spacing
-    for (const char *item : Items) {
+    for (const char *item : Items)
+    {
       ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
       if (strncmp(item, "[error]", 7) == 0)
         color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
@@ -202,7 +236,8 @@ void Console::Draw(const char *title, bool *p_open) {
     ImGui::SetKeyboardFocusHere();
 
   if (ImGui::InputText("Input", InputBuf, IM_ARRAYSIZE(InputBuf),
-                       input_text_flags, &TextEditCallbackStub, (void *)this)) {
+                       input_text_flags, &TextEditCallbackStub, (void *)this))
+  {
     char *s = InputBuf;
     // Skip leading whitespace & check empty
     while (*s && isspace(*s))

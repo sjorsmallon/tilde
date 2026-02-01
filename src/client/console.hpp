@@ -4,19 +4,27 @@
 #include <string>
 #include <vector>
 
-namespace client {
+namespace client
+{
 
-class Console {
+class Console
+{
 public:
   static Console &Get();
 
-  void Draw(const char *title, bool *p_open);
+  void Draw();
   void Print(const char *fmt, ...);
   void ExecuteCommand(const char *command_line);
+
+  bool IsOpen() const { return should_draw; }
+  void Toggle() { should_draw = !should_draw; }
 
 private:
   Console();
   ~Console() = default;
+
+  bool should_draw;
+  bool is_folded_open;
 
   // Autocomplete
   int TextEditCallback(ImGuiInputTextCallbackData *data);

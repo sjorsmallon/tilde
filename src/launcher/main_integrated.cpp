@@ -8,19 +8,25 @@
 #include <iostream>
 
 cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
+cvar::CVar<std::string> map("map", "dm_aabb", "Map to load", cvar::flags::None,
+                            [](const std::string &val)
+                            { log_terminal("Map changed to: {}", val); });
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
   console::SpawnNew();
   timed_function();
 
   log_terminal("=== Starting MyGame (Integrated) ===");
 
-  if (!server::Init()) {
+  if (!server::Init())
+  {
     log_error("Server Init Failed");
     return 1;
   }
 
-  if (!client::Init()) {
+  if (!client::Init())
+  {
     log_error("Client Init Failed");
     server::Shutdown(); // Cleanup
     return 1;
@@ -29,10 +35,12 @@ int main(int argc, char *argv[]) {
   log_terminal("=== Initialization Complete, Entering Loop ===");
 
   bool running = true;
-  while (running) {
+  while (running)
+  {
     // Run Client Frame (Input/Render)
     // If client wants to quit (window closed), we stop.
-    if (!client::Tick()) {
+    if (!client::Tick())
+    {
       running = false;
     }
 

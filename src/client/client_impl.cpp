@@ -13,16 +13,18 @@
 #include "log.hpp"
 #include "timed_function.hpp"
 
-namespace client {
+namespace client
+{
 
 static SDL_Window *g_window = nullptr;
 
-bool Init() {
+bool Init()
+{
   timed_function();
   log_terminal("--- Initializing Client (SDL + Vulkan) ---");
 
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) !=
-      0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
+  {
     log_error("SDL_Init Error: {}", SDL_GetError());
     return false;
   }
@@ -33,12 +35,14 @@ bool Init() {
                        SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN |
                            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 
-  if (!g_window) {
+  if (!g_window)
+  {
     log_error("SDL_CreateWindow Error: {}", SDL_GetError());
     return false;
   }
 
-  if (!renderer::Init(g_window)) {
+  if (!renderer::Init(g_window))
+  {
     log_error("Renderer Init Failed");
     return false;
   }
@@ -50,16 +54,19 @@ bool Init() {
   return true;
 }
 
-bool Tick() {
+bool Tick()
+{
   timed_function();
 
   client::input::new_frame();
 
   SDL_Event event;
-  while (SDL_PollEvent(&event)) {
+  while (SDL_PollEvent(&event))
+  {
     renderer::ProcessEvent(&event);
 
-    if (event.type == SDL_QUIT) {
+    if (event.type == SDL_QUIT)
+    {
       return false;
     }
     // Resize handling is done inside renderer::BeginFrame via queries usually,
@@ -91,26 +98,26 @@ bool Tick() {
   }
 
   // Update state
-  if (!state_manager::update(0.016f)) {
+  if (!state_manager::update(0.016f))
+  {
     return false;
   }
 
   // Render
   VkCommandBuffer cmd = renderer::BeginFrame();
-  if (cmd == VK_NULL_HANDLE) {
+  if (cmd == VK_NULL_HANDLE)
+  {
     return true; // Skip frame
   }
 
   state_manager::render_ui();
 
   // Global Console Overlay
-  static bool console_open = false;
-  if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false)) {
-    console_open = !console_open;
+  if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false))
+  {
+    client::Console::Get().Toggle();
   }
-  if (console_open) {
-    client::Console::Get().Draw("Console", &console_open);
-  }
+  client::Console::Get().Draw();
 
   renderer::BeginRenderPass(cmd);
   state_manager::render_3d(cmd);
@@ -119,14 +126,16 @@ bool Tick() {
   return true;
 }
 
-void Shutdown() {
+void Shutdown()
+{
   timed_function();
   log_terminal("--- Shutting down Client ---");
 
   state_manager::shutdown();
   renderer::Shutdown();
 
-  if (g_window) {
+  if (g_window)
+  {
     SDL_DestroyWindow(g_window);
   }
   SDL_Quit();

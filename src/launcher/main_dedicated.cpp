@@ -10,13 +10,15 @@
 
 cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
   console::SpawnNew();
   timed_function();
 
   log_terminal("=== Starting MyGame SERVER (Dedicated) ===");
 
-  if (!server::Init()) {
+  if (!server::Init())
+  {
     log_error("Server Init Failed");
     return 1;
   }
@@ -25,7 +27,8 @@ int main(int argc, char *argv[]) {
 
   // Simple loop for dedicated server
   bool running = true;
-  while (running) {
+  while (running)
+  {
     // Run Server Logic
     server::Tick();
 

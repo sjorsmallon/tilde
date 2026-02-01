@@ -32,6 +32,8 @@ public:
 
 private:
   game::MapSource map_source;
+  std::string current_filename;
+
   camera_t camera;
 
   void draw_grid();
@@ -56,6 +58,9 @@ private:
   // Dragging state
   bool dragging_placement = false;
   linalg::vec3 drag_start{0.0f, 0.0f, 0.0f};
+
+  // Wireframe Toggle
+  bool wireframe_mode = true;
 
   // Selection Drag State
   bool dragging_selection = false;

@@ -1,20 +1,13 @@
 #include "../renderer.hpp" // Added for render_view
-#include "../state_manager.hpp"
 #include "editor_state.hpp"
 #include "imgui.h"
-#include "input.hpp"
 #include "linalg.hpp"
 #include <SDL.h> // For Key/Button constants
 #include <algorithm>
 #include <cmath>
 #include <fstream>
 
-constexpr const float invalid_idx = -1;
 constexpr const float fov_default = 90.0f;
-constexpr const float iso_yaw = 315.0f;
-constexpr const float iso_pitch = -35.264f;
-constexpr const float ray_far_dist = 1000.0f;
-constexpr const float ray_epsilon = 1e-6f;
 constexpr const float pi = 3.14159265f;
 constexpr const float default_entity_size = 0.5f;
 constexpr const float default_aabb_half_size = 0.5f;
@@ -39,9 +32,14 @@ void EditorState::render_ui()
         std::ifstream in("map.source", std::ios::binary);
         if (in.is_open())
         {
+          map_source.Clear();
           if (!map_source.ParseFromIstream(&in))
           {
             std::cerr << "Failed to load map!" << std::endl;
+          }
+          else
+          {
+            current_filename = "map.source";
           }
           in.close();
         }
@@ -107,6 +105,17 @@ void EditorState::render_ui()
                              ImGuiWindowFlags_AlwaysAutoResize))
   {
     static char filename_buf[128] = "map.source";
+
+    if (ImGui::IsWindowAppearing())
+    {
+      if (!current_filename.empty())
+      {
+        strncpy(filename_buf, current_filename.c_str(),
+                sizeof(filename_buf) - 1);
+        filename_buf[sizeof(filename_buf) - 1] = '\0';
+      }
+    }
+
     ImGui::InputText("Filename", filename_buf, sizeof(filename_buf));
 
     if (ImGui::Button("Save", ImVec2(120, 0)))
@@ -118,7 +127,19 @@ void EditorState::render_ui()
         {
           std::cerr << "Failed to save map!" << std::endl;
         }
+        else
+        {
+          current_filename = filename_buf;
+          map_source.set_name(current_filename);
+        }
         out.close();
+
+        std::ofstream last_map("last_map.txt");
+        if (last_map.is_open())
+        {
+          last_map << filename_buf;
+          last_map.close();
+        }
       }
       ImGui::CloseCurrentPopup();
     }
@@ -168,7 +189,6 @@ void EditorState::render_ui()
 
   // Draw AABBs
   ImGuiIO &io = ImGui::GetIO();
-  float aspect = io.DisplaySize.x / io.DisplaySize.y;
 
   // Detect overlaps
   std::unordered_set<int> overlapping_indices;
@@ -180,12 +200,14 @@ void EditorState::render_ui()
         const auto &a = map_source.aabbs(i);
         const auto &b = map_source.aabbs(j);
         if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                {a.center().x(), a.center().y(), a.center().z()},
-                {a.half_extents().x(), a.half_extents().y(),
-                 a.half_extents().z()},
-                {b.center().x(), b.center().y(), b.center().z()},
-                {b.half_extents().x(), b.half_extents().y(),
-                 b.half_extents().z()}))
+                {.x = a.center().x(), .y = a.center().y(), .z = a.center().z()},
+                {.x = a.half_extents().x(),
+                 .y = a.half_extents().y(),
+                 .z = a.half_extents().z()},
+                {.x = b.center().x(), .y = b.center().y(), .z = b.center().z()},
+                {.x = b.half_extents().x(),
+                 .y = b.half_extents().y(),
+                 .z = b.half_extents().z()}))
         {
           overlapping_indices.insert(i);
           overlapping_indices.insert(j);
@@ -194,28 +216,29 @@ void EditorState::render_ui()
     }
   }
 
-  int idx = 0;
-  for (const auto &aabb : map_source.aabbs())
+  if (wireframe_mode)
   {
-    uint32_t col = color_green; // Default Green
-
-    if (overlapping_indices.count(idx))
+    int idx = 0;
+    for (const auto &aabb : map_source.aabbs())
     {
-      col = color_red; // Red for overlap
-    }
+      uint32_t col = color_green; // Default Green
 
-    if (selected_aabb_indices.count(idx))
-    {
-      // Oscillate between Magenta (0xFF00FFFF) and White (0xFFFFFFFF)
-      // ABGR
-      float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f; // 0 to 1
-      // Lerp Green component? No, Magenta is R:255 G:0 B:255. White is R:255
-      // G:255 B:255. So we just lerp Green channel from 0 to 255.
-      uint8_t g = (uint8_t)(t * 255.0f);
-      col = color_red | (g << 8) | 0x00FF0000;
+      if (overlapping_indices.count(idx))
+      {
+        col = color_red; // Red for overlap
+      }
+
+      if (selected_aabb_indices.count(idx))
+      {
+        // Oscillate between Magenta (0xFF00FFFF) and White (0xFFFFFFFF)
+        // ABGR
+        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f; // 0 to 1
+        uint8_t g = (uint8_t)(t * 255.0f);
+        col = color_red | (g << 8) | 0x00FF0000;
+      }
+      draw_aabb_wireframe(aabb, col);
+      idx++;
     }
-    draw_aabb_wireframe(aabb, col);
-    idx++;
   }
 
   if (dragging_selection)
@@ -245,7 +268,8 @@ void EditorState::render_ui()
 void EditorState::render_3d(VkCommandBuffer cmd)
 {
   // Full Screen Viewport
-  renderer::viewport_t vp = {.start = {0.0f, 0.0f}, .dimensions = {1.0f, 1.0f}};
+  renderer::viewport_t vp = {.start = {.x = 0.0f, 0.0f},
+                             .dimensions = {.x = 1.0f, 1.0f}};
   renderer::render_view_t view = {.viewport = vp, .camera = camera};
 
   // Dummy registry for now
@@ -254,14 +278,81 @@ void EditorState::render_3d(VkCommandBuffer cmd)
 
   // Debug: Draw AABB (Red Box at 3,0,0)
   renderer::DrawAABB(
-      cmd, {3.0f, -default_aabb_half_size, -default_aabb_half_size},
-      {4.0f, default_aabb_half_size, default_aabb_half_size}, color_red);
+      cmd,
+      {.x = 3.0f, .y = -default_aabb_half_size, .z = -default_aabb_half_size},
+      {.x = 4.0f, .y = default_aabb_half_size, .z = default_aabb_half_size},
+      color_red);
+
+  if (!wireframe_mode)
+  {
+    // Detect overlaps
+    std::unordered_set<int> overlapping_indices;
+    {
+      for (int i = 0; i < map_source.aabbs_size(); ++i)
+      {
+        for (int j = i + 1; j < map_source.aabbs_size(); ++j)
+        {
+          const auto &a = map_source.aabbs(i);
+          const auto &b = map_source.aabbs(j);
+          if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
+                  {.x = a.center().x(),
+                   .y = a.center().y(),
+                   .z = a.center().z()},
+                  {.x = a.half_extents().x(),
+                   .y = a.half_extents().y(),
+                   .z = a.half_extents().z()},
+                  {.x = b.center().x(),
+                   .y = b.center().y(),
+                   .z = b.center().z()},
+                  {.x = b.half_extents().x(),
+                   .y = b.half_extents().y(),
+                   .z = b.half_extents().z()}))
+          {
+            overlapping_indices.insert(i);
+            overlapping_indices.insert(j);
+          }
+        }
+      }
+    }
+
+    int idx = 0;
+    for (const auto &aabb : map_source.aabbs())
+    {
+      uint32_t col = color_green; // Default Green
+
+      if (overlapping_indices.count(idx))
+      {
+        col = color_red; // Red for overlap
+      }
+
+      if (selected_aabb_indices.count(idx))
+      {
+        // Oscillate between Magenta and White
+        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f;
+        uint8_t g = (uint8_t)(t * 255.0f);
+        col = color_red | (g << 8) | 0x00FF0000;
+      }
+
+      vec3 center = {.x = aabb.center().x(),
+                     .y = aabb.center().y(),
+                     .z = aabb.center().z()};
+      vec3 half = {.x = aabb.half_extents().x(),
+                   .y = aabb.half_extents().y(),
+                   .z = aabb.half_extents().z()};
+      vec3 min = center - half;
+      vec3 max = center + half;
+
+      renderer::DrawAABB(cmd, min, max, col);
+      idx++;
+    }
+  }
 
   if (place_mode && selected_tile[1] > invalid_tile_val + 100.0f)
   {
     if (dragging_placement)
     {
-      vec3 end_pos = {selected_tile[0], selected_tile[1], selected_tile[2]};
+      vec3 end_pos = {
+          .x = selected_tile[0], .y = selected_tile[1], .z = selected_tile[2]};
 
       // Math inline
       float min_x = std::min(drag_start.x, end_pos.x);
@@ -282,10 +373,14 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       float half_y = height * 0.5f;
       float half_z = depth * 0.5f;
 
-      renderer::DrawAABB(
-          cmd, {center_x - half_x, center_y - half_y, center_z - half_z},
-          {center_x + half_x, center_y + half_y, center_z + half_z},
-          color_magenta);
+      renderer::DrawAABB(cmd,
+                         {.x = center_x - half_x,
+                          .y = center_y - half_y,
+                          .z = center_z - half_z},
+                         {.x = center_x + half_x,
+                          .y = center_y + half_y,
+                          .z = center_z + half_z},
+                         color_magenta);
     }
     else
     {
@@ -295,7 +390,8 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       // User requested subtraction of half-height.
       // Adjusted to -0.5 center.
       // Box: {y - 1.0f} to {y + 0.0f} -> Center -0.5. Range [-1, 0].
-      renderer::DrawAABB(cmd, {x, y - 1.0f, z}, {x + 1.0f, y + 0.0f, z + 1.0f},
+      renderer::DrawAABB(cmd, {.x = x, .y = y - 1.0f, .z = z},
+                         {.x = x + 1.0f, .y = y + 0.0f, .z = z + 1.0f},
                          color_white);
     }
   }
@@ -308,11 +404,11 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     uint32_t col = color_magenta;  // Magenta
 
     // Pyramid Points: Tip and 4 base corners
-    vec3 tip = {p.x, p.y + s, p.z};
-    vec3 b1 = {p.x - s / 2, p.y, p.z - s / 2};
-    vec3 b2 = {p.x + s / 2, p.y, p.z - s / 2};
-    vec3 b3 = {p.x + s / 2, p.y, p.z + s / 2};
-    vec3 b4 = {p.x - s / 2, p.y, p.z + s / 2};
+    vec3 tip = {.x = p.x, .y = p.y + s, .z = p.z};
+    vec3 b1 = {.x = p.x - s / 2, .y = p.y, .z = p.z - s / 2};
+    vec3 b2 = {.x = p.x + s / 2, .y = p.y, .z = p.z - s / 2};
+    vec3 b3 = {.x = p.x + s / 2, .y = p.y, .z = p.z + s / 2};
+    vec3 b4 = {.x = p.x - s / 2, .y = p.y, .z = p.z + s / 2};
 
     // Draw Lines
     auto drawLine = [&](vec3 start, vec3 end)
@@ -337,11 +433,16 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     if (idx >= 0 && idx < map_source.aabbs_size())
     {
       const auto &aabb = map_source.aabbs(idx);
-      vec3 center = {aabb.center().x(), aabb.center().y(), aabb.center().z()};
-      vec3 half = {aabb.half_extents().x(), aabb.half_extents().y(),
-                   aabb.half_extents().z()};
-      vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
-                              {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+      vec3 center = {.x = aabb.center().x(),
+                     .y = aabb.center().y(),
+                     .z = aabb.center().z()};
+      vec3 half = {.x = aabb.half_extents().x(),
+                   .y = aabb.half_extents().y(),
+                   .z = aabb.half_extents().z()};
+      vec3 face_normals[6] = {
+          {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
+          {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
+          {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
       // Explicitly map half extents to axes
       float half_vals[3] = {half.x, half.y, half.z};
 
@@ -370,13 +471,12 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     // Draw Pyramid for Entity
     vec3 p = {ent.position().x(), ent.position().y(), ent.position().z()};
     float s = default_entity_size; // Size
-    uint32_t col = color_cyan;     // Cyan (Default)
+    uint32_t col = color_green;    // Green (Default)
 
     if (selected_entity_indices.count(i))
     {
       // Blinking
       float t = sin(selection_timer * 10.0f) * 0.5f + 0.5f;
-      uint32_t channel = (uint32_t)(t * 255.0f);
       col = color_magenta; // Base Magenta
       if (t > 0.5f)
         col = color_white; // Blink to white
@@ -393,7 +493,8 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       // Rotation around Y axis:
       // x' = x*cos - z*sin
       // z' = x*sin + z*cos
-      return {p.x + (x * cY - z * sY), p.y, p.z + (x * sY + z * cY)};
+      return {
+          .x = p.x + (x * cY - z * sY), .y = p.y, .z = p.z + (x * sY + z * cY)};
     };
 
     // Pyramid Points: Tip and 4 base corners
@@ -430,8 +531,12 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       {
         float angle1 = (float)j / segments * 2.0f * pi;
         float angle2 = (float)(j + 1) / segments * 2.0f * pi;
-        vec3 p1 = {p.x + cos(angle1) * radius, p.y, p.z + sin(angle1) * radius};
-        vec3 p2 = {p.x + cos(angle2) * radius, p.y, p.z + sin(angle2) * radius};
+        vec3 p1 = {.x = p.x + cos(angle1) * radius,
+                   .y = p.y,
+                   .z = p.z + sin(angle1) * radius};
+        vec3 p2 = {.x = p.x + cos(angle2) * radius,
+                   .y = p.y,
+                   .z = p.z + sin(angle2) * radius};
         renderer::DrawLine(cmd, p1, p2, 0xFF00A5FF); // Orange
       }
 
@@ -445,7 +550,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       // Draw Forward Vector
       float radYaw = to_radians(ent.yaw());
       // Matches Drag logic: angle = atan2(dz, dx) -> x=cos, z=sin
-      vec3 forward = {cos(radYaw), 0.0f, sin(radYaw)};
+      vec3 forward = {.x = cos(radYaw), .y = 0.0f, .z = sin(radYaw)};
 
       vec3 line_end = p + forward * radius;
       renderer::DrawLine(cmd, p, line_end, 0xFF0000FF); // Red Direction
@@ -465,26 +570,32 @@ void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color)
   float hy = aabb.half_extents().y();
   float hz = aabb.half_extents().z();
 
-  vec3 corners[8] = {{cx - hx, cy - hy, cz - hz}, {cx + hx, cy - hy, cz - hz},
-                     {cx + hx, cy + hy, cz - hz}, {cx - hx, cy + hy, cz - hz},
-                     {cx - hx, cy - hy, cz + hz}, {cx + hx, cy - hy, cz + hz},
-                     {cx + hx, cy + hy, cz + hz}, {cx - hx, cy + hy, cz + hz}};
+  vec3 corners[8] = {{.x = cx - hx, .y = cy - hy, .z = cz - hz},
+                     {.x = cx + hx, .y = cy - hy, .z = cz - hz},
+                     {.x = cx + hx, .y = cy + hy, .z = cz - hz},
+                     {.x = cx - hx, .y = cy + hy, .z = cz - hz},
+                     {.x = cx - hx, .y = cy - hy, .z = cz + hz},
+                     {.x = cx + hx, .y = cy - hy, .z = cz + hz},
+                     {.x = cx + hx, .y = cy + hy, .z = cz + hz},
+                     {.x = cx - hx, .y = cy + hy, .z = cz + hz}};
 
   auto drawLine = [&](int i, int j)
   {
-    vec3 p1 = linalg::world_to_view(corners[i], {camera.x, camera.y, camera.z},
-                                    camera.yaw, camera.pitch);
-    vec3 p2 = linalg::world_to_view(corners[j], {camera.x, camera.y, camera.z},
-                                    camera.yaw, camera.pitch);
+    vec3 p1 = linalg::world_to_view(
+        corners[i], {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw,
+        camera.pitch);
+    vec3 p2 = linalg::world_to_view(
+        corners[j], {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw,
+        camera.pitch);
 
     if (camera.orthographic || linalg::clip_line(p1, p2))
     {
-      vec2 s1 = linalg::view_to_screen(p1, {io.DisplaySize.x, io.DisplaySize.y},
-                                       camera.orthographic, camera.ortho_height,
-                                       fov_default);
-      vec2 s2 = linalg::view_to_screen(p2, {io.DisplaySize.x, io.DisplaySize.y},
-                                       camera.orthographic, camera.ortho_height,
-                                       fov_default);
+      vec2 s1 = linalg::view_to_screen(
+          p1, {.x = io.DisplaySize.x, .y = io.DisplaySize.y},
+          camera.orthographic, camera.ortho_height, fov_default);
+      vec2 s2 = linalg::view_to_screen(
+          p2, {.x = io.DisplaySize.x, .y = io.DisplaySize.y},
+          camera.orthographic, camera.ortho_height, fov_default);
       dl->AddLine({s1.x, s1.y}, {s2.x, s2.y}, color);
     }
   };
@@ -526,12 +637,12 @@ void EditorState::draw_grid()
 
     if (camera.orthographic || linalg::clip_line(p1, p2))
     {
-      vec2 s1 = linalg::view_to_screen(p1, {io.DisplaySize.x, io.DisplaySize.y},
-                                       camera.orthographic, camera.ortho_height,
-                                       fov_default);
-      vec2 s2 = linalg::view_to_screen(p2, {io.DisplaySize.x, io.DisplaySize.y},
-                                       camera.orthographic, camera.ortho_height,
-                                       fov_default);
+      vec2 s1 = linalg::view_to_screen(
+          p1, {.x = io.DisplaySize.x, .y = io.DisplaySize.y},
+          camera.orthographic, camera.ortho_height, fov_default);
+      vec2 s2 = linalg::view_to_screen(
+          p2, {.x = io.DisplaySize.x, .y = io.DisplaySize.y},
+          camera.orthographic, camera.ortho_height, fov_default);
       dl->AddLine({s1.x, s1.y}, {s2.x, s2.y}, col);
     }
   };
@@ -541,13 +652,13 @@ void EditorState::draw_grid()
     float pos = i * step;
     // Lines parallel to Z axis (varying X)
     uint32_t col = (i == 0) ? axis_color_z : color;
-    drawLine({pos, 0.0f, (float)-grid_size * step},
-             {pos, 0.0f, (float)grid_size * step}, col);
+    drawLine({.x = pos, .y = 0.0f, .z = (float)-grid_size * step},
+             {.x = pos, .y = 0.0f, .z = (float)grid_size * step}, col);
 
     // Lines parallel to X axis (varying Z)
     col = (i == 0) ? axis_color_x : color;
-    drawLine({(float)-grid_size * step, 0.0f, pos},
-             {(float)grid_size * step, 0.0f, pos}, col);
+    drawLine({.x = (float)-grid_size * step, .y = 0.0f, .z = pos},
+             {.x = (float)grid_size * step, .y = 0.0f, .z = pos}, col);
   }
 
   // Highlight selected tile
@@ -557,10 +668,14 @@ void EditorState::draw_grid()
     float z = selected_tile[2];
     uint32_t highlight_col = 0xFFFFFFFF; // Bright white
 
-    drawLine({x, 0.0f, z}, {x + 1.0f, 0.0f, z}, highlight_col);
-    drawLine({x + 1.0f, 0.0f, z}, {x + 1.0f, 0.0f, z + 1.0f}, highlight_col);
-    drawLine({x + 1.0f, 0.0f, z + 1.0f}, {x, 0.0f, z + 1.0f}, highlight_col);
-    drawLine({x, 0.0f, z + 1.0f}, {x, 0.0f, z}, highlight_col);
+    drawLine({.x = x, .y = 0.0f, .z = z}, {.x = x + 1.0f, .y = 0.0f, .z = z},
+             highlight_col);
+    drawLine({.x = x + 1.0f, .y = 0.0f, .z = z},
+             {.x = x + 1.0f, .y = 0.0f, .z = z + 1.0f}, highlight_col);
+    drawLine({.x = x + 1.0f, .y = 0.0f, .z = z + 1.0f},
+             {.x = x, .y = 0.0f, .z = z + 1.0f}, highlight_col);
+    drawLine({.x = x, .y = 0.0f, .z = z + 1.0f}, {.x = x, .y = 0.0f, .z = z},
+             highlight_col);
   }
 }
 
@@ -569,11 +684,13 @@ void EditorState::draw_gimbal()
   ImDrawList *dl = ImGui::GetForegroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
 
-  vec2 center = {io.DisplaySize.x - 50.0f, 50.0f};
+  vec2 center = {.x = io.DisplaySize.x - 50.0f, .y = 50.0f};
   float axis_len = 30.0f;
 
   // X (Red), Y (Green), Z (Blue)
-  vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+  vec3 axes[3] = {{.x = 1, .y = 0, .z = 0},
+                  {.x = 0, .y = 1, .z = 0},
+                  {.x = 0, .y = 0, .z = 1}};
   uint32_t colors[3] = {0xFF0000FF, 0xFF00FF00, 0xFFFF0000};
   const char *labels[3] = {"X", "Y", "Z"};
 
@@ -607,7 +724,7 @@ void EditorState::draw_gimbal()
     // Project to screen (Orthographic)
     // View X is Right, View Y is Up
     // Screen X is Right, Screen Y is Down
-    vec2 end = {center.x + p.x * axis_len, center.y - p.y * axis_len};
+    vec2 end = {.x = center.x + p.x * axis_len, center.y - p.y * axis_len};
 
     dl->AddLine({center.x, center.y}, {end.x, end.y}, colors[i], 2.0f);
     dl->AddText({end.x, end.y}, colors[i], labels[i]);

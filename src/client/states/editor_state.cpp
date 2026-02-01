@@ -1,6 +1,8 @@
 #include "editor_state.hpp"
+#include "../console.hpp"
 #include "../renderer.hpp" // Added for render_view
 #include "../state_manager.hpp"
+#include "../undo_stack.hpp"
 #include "imgui.h"
 #include "input.hpp"
 #include "linalg.hpp"
@@ -9,9 +11,6 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
-#include <iostream>
-
-#include "../undo_stack.hpp"
 
 constexpr const float invalid_idx = -1;
 constexpr const float fov_default = 90.0f;
@@ -43,7 +42,41 @@ using linalg::vec3;
 
 void EditorState::on_enter()
 {
-  if (map_source.name().empty())
+  bool loaded_last_map = false;
+  // Try to load last map
+  std::ifstream last_map_file("last_map.txt");
+  if (last_map_file.is_open())
+  {
+    camera.orthographic = true;
+    camera.yaw = iso_yaw;
+    camera.pitch = iso_pitch;
+    std::string last_map_name;
+    std::getline(last_map_file, last_map_name);
+    last_map_file.close();
+
+    if (!last_map_name.empty())
+    {
+      std::ifstream in(last_map_name, std::ios::binary);
+      if (in.is_open())
+      {
+        map_source.Clear();
+        if (map_source.ParseFromIstream(&in))
+        {
+          loaded_last_map = true;
+          current_filename = last_map_name;
+          // map_source name might be inside the proto or we just deduce it from
+          // filename if needed? The proto has a name field.
+          if (map_source.name().empty())
+          {
+            map_source.set_name(last_map_name);
+          }
+        }
+        in.close();
+      }
+    }
+  }
+
+  if (!loaded_last_map && map_source.name().empty())
   {
     camera.orthographic = true;
     camera.yaw = iso_yaw;
@@ -63,6 +96,9 @@ void EditorState::on_enter()
 
 void EditorState::update(float dt)
 {
+  if (client::Console::Get().IsOpen())
+    return;
+
   if (exit_requested)
   {
     exit_requested = false;
@@ -269,6 +305,20 @@ void EditorState::update(float dt)
     }
   }
 
+  // Toggle Wireframe Mode
+  if (client::input::is_key_pressed(SDL_SCANCODE_T))
+  {
+    wireframe_mode = !wireframe_mode;
+    if (wireframe_mode)
+    {
+      client::renderer::draw_announcement("Wireframe Mode");
+    }
+    else
+    {
+      client::renderer::draw_announcement("Filled Mode");
+    }
+  }
+
   // Raycast for Place Mode
   if (place_mode && !io.WantCaptureMouse)
   {
@@ -314,7 +364,7 @@ void EditorState::update(float dt)
       // Transform (ox, oy, 0) in View Space to World Space
       // World = CameraPos + ox * Right + oy * Up
       // Move origin back by 1000 to catch things behind camera plane
-      ray_origin = {camera.x, camera.y, camera.z};
+      ray_origin = {.x = camera.x, .y = camera.y, .z = camera.z};
       ray_origin = ray_origin - ray_dir * ray_far_dist;
       ray_origin = ray_origin + R * ox + U * oy;
     }
@@ -323,7 +373,7 @@ void EditorState::update(float dt)
       // Perspective Raycasting
       // Ray = R * vx + U * vy + F * 1.0
       ray_dir = R * vx + U * vy + F;
-      ray_origin = {camera.x, camera.y, camera.z};
+      ray_origin = {.x = camera.x, .y = camera.y, .z = camera.z};
     }
 
     // Intersect Y=0 plane
@@ -355,14 +405,14 @@ void EditorState::update(float dt)
     }
 
     bool shift_down = client::input::is_key_down(SDL_SCANCODE_LSHIFT);
-    bool lmb_down = io.MouseDown[0];
     bool lmb_clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     bool lmb_released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
 
     // Handle Drag Logic
     if (place_mode && hit)
     {
-      vec3 current_pos = {selected_tile[0], selected_tile[1], selected_tile[2]};
+      vec3 current_pos = {
+          .x = selected_tile[0], .y = selected_tile[1], .z = selected_tile[2]};
 
       if (dragging_placement)
       {
@@ -467,11 +517,12 @@ void EditorState::update(float dt)
 
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
     {
-      vec3 start = {camera.x, camera.y, camera.z};
+      vec3 start = {.x = camera.x, .y = camera.y, .z = camera.z};
       // If it hit the plane, use intersection. If not, use far point on ray
-      vec3 end =
-          hit ? vec3{selected_tile[0], selected_tile[1], selected_tile[2]}
-              : (start + ray_dir * ray_far_dist);
+      vec3 end = hit ? vec3{.x = selected_tile[0],
+                            .y = selected_tile[1],
+                            .z = selected_tile[2]}
+                     : (start + ray_dir * ray_far_dist);
       debug_lines.push_back({start, end, color_magenta}); // Magenta
     }
   }
@@ -485,12 +536,16 @@ void EditorState::update(float dt)
       if (idx >= 0 && idx < map_source.aabbs_size())
       {
         auto *aabb = map_source.mutable_aabbs(idx);
-        vec3 center =
-            vec3{aabb->center().x(), aabb->center().y(), aabb->center().z()};
-        vec3 half = vec3{aabb->half_extents().x(), aabb->half_extents().y(),
-                         aabb->half_extents().z()};
-        vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
-                                {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+        vec3 center = vec3{.x = aabb->center().x(),
+                           .y = aabb->center().y(),
+                           .z = aabb->center().z()};
+        vec3 half = vec3{.x = aabb->half_extents().x(),
+                         .y = aabb->half_extents().y(),
+                         .z = aabb->half_extents().z()};
+        vec3 face_normals[6] = {
+            {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
+            {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
+            {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
         float half_vals[3] = {half.x, half.y, half.z};
 
         // Recalculate Ray (Needed here for precedence)
@@ -518,7 +573,7 @@ void EditorState::update(float dt)
             float w = h * aspect;
             float ox = x_ndc * (w * 0.5f);
             float oy = y_ndc * (h * 0.5f);
-            ray_origin = {camera.x, camera.y, camera.z};
+            ray_origin = {.x = camera.x, .y = camera.y, .z = camera.z};
             ray_origin = ray_origin - ray_dir * ray_far_dist;
             ray_origin = ray_origin + R * ox + U * oy;
           }
@@ -527,7 +582,7 @@ void EditorState::update(float dt)
             float vx = x_ndc * aspect * tanHalf;
             float vy = y_ndc * tanHalf;
             ray_dir = R * vx + U * vy + F;
-            ray_origin = {camera.x, camera.y, camera.z};
+            ray_origin = {.x = camera.x, .y = camera.y, .z = camera.z};
           }
           valid_ray = true;
         }
@@ -621,18 +676,18 @@ void EditorState::update(float dt)
               float delta = t;
 
               // Apply Delta
-              vec3 old_min = {dragging_original_aabb.center().x() -
-                                  dragging_original_aabb.half_extents().x(),
-                              dragging_original_aabb.center().y() -
-                                  dragging_original_aabb.half_extents().y(),
-                              dragging_original_aabb.center().z() -
-                                  dragging_original_aabb.half_extents().z()};
-              vec3 old_max = {dragging_original_aabb.center().x() +
-                                  dragging_original_aabb.half_extents().x(),
-                              dragging_original_aabb.center().y() +
-                                  dragging_original_aabb.half_extents().y(),
-                              dragging_original_aabb.center().z() +
-                                  dragging_original_aabb.half_extents().z()};
+              vec3 old_min = {.x = dragging_original_aabb.center().x() -
+                                   dragging_original_aabb.half_extents().x(),
+                              .y = dragging_original_aabb.center().y() -
+                                   dragging_original_aabb.half_extents().y(),
+                              .z = dragging_original_aabb.center().z() -
+                                   dragging_original_aabb.half_extents().z()};
+              vec3 old_max = {.x = dragging_original_aabb.center().x() +
+                                   dragging_original_aabb.half_extents().x(),
+                              .y = dragging_original_aabb.center().y() +
+                                   dragging_original_aabb.half_extents().y(),
+                              .z = dragging_original_aabb.center().z() +
+                                   dragging_original_aabb.half_extents().z()};
 
               float new_min_val = old_min[axis];
               float new_max_val = old_max[axis];
@@ -756,14 +811,14 @@ void EditorState::update(float dt)
           float w = h * aspect;
           float ox = x_ndc * (w * 0.5f);
           float oy = y_ndc * (h * 0.5f);
-          ray_origin = {camera.x, camera.y, camera.z};
+          ray_origin = vec3{.x = camera.x, .y = camera.y, .z = camera.z};
           ray_origin = ray_origin - ray_dir * ray_far_dist;
           ray_origin = ray_origin + R * ox + U * oy;
         }
         else
         {
           ray_dir = R * vx + U * vy + F;
-          ray_origin = {camera.x, camera.y, camera.z};
+          ray_origin = {.x = camera.x, .y = camera.y, .z = camera.z};
         }
 
         // Intersect with Plane at Entity Y
@@ -792,7 +847,7 @@ void EditorState::update(float dt)
         // Selection Logic (Click or Drag)
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
-          selection_start = {io.MousePos.x, io.MousePos.y};
+          selection_start = {.x = io.MousePos.x, .y = io.MousePos.y};
           dragging_selection = false;
         }
 
@@ -825,21 +880,22 @@ void EditorState::update(float dt)
             for (int i = 0; i < map_source.aabbs_size(); ++i)
             {
               const auto &aabb = map_source.aabbs(i);
-              vec3 center = {aabb.center().x(), aabb.center().y(),
-                             aabb.center().z()};
+              vec3 center = {.x = aabb.center().x(),
+                             .y = aabb.center().y(),
+                             .z = aabb.center().z()};
               // Ideally check projected 8 corners for bounds overlap, but
               // center is a good start for "RTS style" unit selection. Let's
               // check center first.
-              vec3 p =
-                  linalg::world_to_view(center, {camera.x, camera.y, camera.z},
-                                        camera.yaw, camera.pitch);
+              vec3 p = linalg::world_to_view(
+                  center, {.x = camera.x, camera.y, camera.z}, camera.yaw,
+                  camera.pitch);
               // Simple clip check
               if (p.z < 0 && !camera.orthographic)
                 continue;
 
               vec2 s = linalg::view_to_screen(
-                  p, {io.DisplaySize.x, io.DisplaySize.y}, camera.orthographic,
-                  camera.ortho_height, fov_default);
+                  p, vec2{.x = io.DisplaySize.x, .y = io.DisplaySize.y},
+                  camera.orthographic, camera.ortho_height, fov_default);
 
               if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2)
               {
@@ -851,18 +907,19 @@ void EditorState::update(float dt)
             for (int i = 0; i < map_source.entities_size(); ++i)
             {
               const auto &ent = map_source.entities(i);
-              vec3 pos = {ent.position().x(), ent.position().y(),
-                          ent.position().z()};
+              vec3 pos = {.x = ent.position().x(),
+                          .y = ent.position().y(),
+                          .z = ent.position().z()};
 
-              vec3 p =
-                  linalg::world_to_view(pos, {camera.x, camera.y, camera.z},
-                                        camera.yaw, camera.pitch);
+              vec3 p = linalg::world_to_view(
+                  pos, vec3{.x = camera.x, camera.y, camera.z}, camera.yaw,
+                  camera.pitch);
               if (p.z < 0 && !camera.orthographic)
                 continue;
 
               vec2 s = linalg::view_to_screen(
-                  p, {io.DisplaySize.x, io.DisplaySize.y}, camera.orthographic,
-                  camera.ortho_height, fov_default);
+                  p, vec2{.x = io.DisplaySize.x, io.DisplaySize.y},
+                  camera.orthographic, camera.ortho_height, fov_default);
 
               if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2)
               {
@@ -896,14 +953,14 @@ void EditorState::update(float dt)
 
               auto [F, R, U] = client::get_orientation_vectors(camera);
 
-              float lenR = linalg::length(R);
-              if (lenR < 0.001f)
+              float R_length = linalg::length(R);
+              if (R_length < 0.001f)
               {
-                R = {1, 0, 0};
+                R = {.x = 1, .y = 0, .z = 0};
               }
               else
               {
-                R = R * (1.0f / lenR);
+                R = linalg::normalize(R);
               }
 
               vec3 ray_dir;
@@ -916,14 +973,14 @@ void EditorState::update(float dt)
                 float w = h * aspect;
                 float ox = x_ndc * (w * 0.5f);
                 float oy = y_ndc * (h * 0.5f);
-                ray_origin = {camera.x, camera.y, camera.z};
+                ray_origin = {.x = camera.x, .y = camera.y, .z = camera.z};
                 ray_origin = ray_origin - ray_dir * ray_far_dist;
                 ray_origin = ray_origin + R * ox + U * oy;
               }
               else
               {
                 ray_dir = R * vx + U * vy + F;
-                ray_origin = {camera.x, camera.y, camera.z};
+                ray_origin = {.x = camera.x, .y = camera.y, .z = camera.z};
               }
 
               // Raycast against all AABBs
@@ -939,9 +996,11 @@ void EditorState::update(float dt)
               for (int i = 0; i < map_source.aabbs_size(); ++i)
               {
                 const auto &aabb = map_source.aabbs(i);
-                vec3 center = {aabb.center().x(), aabb.center().y(),
+                vec3 center = {.x = aabb.center().x(),
+                               aabb.center().y(),
                                aabb.center().z()};
-                vec3 half = {aabb.half_extents().x(), aabb.half_extents().y(),
+                vec3 half = {.x = aabb.half_extents().x(),
+                             aabb.half_extents().y(),
                              aabb.half_extents().z()};
                 vec3 min = center - half;
                 vec3 max = center + half;
@@ -976,12 +1035,18 @@ void EditorState::update(float dt)
                   const auto &a = best.aabb;
                   const auto &b = next.aabb;
                   if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                          {a.center().x(), a.center().y(), a.center().z()},
-                          {a.half_extents().x(), a.half_extents().y(),
-                           a.half_extents().z()},
-                          {b.center().x(), b.center().y(), b.center().z()},
-                          {b.half_extents().x(), b.half_extents().y(),
-                           b.half_extents().z()}))
+                          vec3{.x = a.center().x(),
+                               .y = a.center().y(),
+                               .z = a.center().z()},
+                          vec3{.x = a.half_extents().x(),
+                               .y = a.half_extents().y(),
+                               .z = a.half_extents().z()},
+                          vec3{.x = b.center().x(),
+                               .y = b.center().y(),
+                               .z = b.center().z()},
+                          vec3{.x = b.half_extents().x(),
+                               .y = b.half_extents().y(),
+                               .z = b.half_extents().z()}))
                   {
                     if (next.volume < best.volume)
                     {
@@ -1000,11 +1065,13 @@ void EditorState::update(float dt)
               for (int i = 0; i < map_source.entities_size(); ++i)
               {
                 const auto &ent = map_source.entities(i);
-                vec3 pos = {ent.position().x(), ent.position().y(),
-                            ent.position().z()};
+                vec3 pos = {.x = ent.position().x(),
+                            .y = ent.position().y(),
+                            .z = ent.position().z()};
                 float s = default_entity_size; // Size of pyramid
-                vec3 min = {pos.x - s / 2, pos.y, pos.z - s / 2};
-                vec3 max = {pos.x + s / 2, pos.y + 1.0f, pos.z + s / 2};
+                vec3 min = {.x = pos.x - s / 2, .y = pos.y, .z = pos.z - s / 2};
+                vec3 max = {
+                    .x = pos.x + s / 2, .y = pos.y + 1.0f, .z = pos.z + s / 2};
 
                 float t = 0;
                 if (linalg::intersect_ray_aabb(ray_origin, ray_dir, min, max,
@@ -1272,7 +1339,8 @@ void EditorState::update(float dt)
               if (cell_x >= min.x - 0.01f && cell_x <= max.x + 0.01f &&
                   cell_z >= min.z - 0.01f && cell_z <= max.z + 0.01f)
               {
-                entity_cursor_pos = {cell_x, max.y, cell_z}; // Top surface
+                entity_cursor_pos =
+                    vec3{.x = cell_x, max.y, cell_z}; // Top surface
                 entity_cursor_valid = true;
 
                 // Handle Placement Click
