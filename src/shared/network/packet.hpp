@@ -1,0 +1,85 @@
+#pragma once
+
+#include "network_types.hpp"
+#include <cmath>
+#include <cstring>
+#include <vector>
+
+namespace network
+{
+
+enum class Message_Type : uint8
+{
+  C2S_PlayerMoveCommand,
+  S2C_EntityPackage,
+};
+
+struct Packet_Header
+{
+  uint64 timestamp;     //  when was this sent?
+  uint8 sequence_id;    // is this part of a sequence of packets?
+  uint8 sequence_count; // how many packets in this sequence?
+  uint8 sequence_idx;   // w  hich packet is this in the sequence?
+  uint8 message_type;   // what type of message is this? (enum )
+  uint16 payload_size;  // how big is the payload?
+};
+
+// Alignment and sizing
+// 1452 is a common MTU size (Ethernet 1500 - IP 20 - UDP 8 - potential PPPoE 8)
+// User requested: constexpr size_t MAX_BUFFER_SIZE_IN_BYTES = 1452 -
+// sizeof(Packet_Header);
+constexpr size_t MAX_PACKET_SIZE = 1200;
+constexpr size_t MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - sizeof(Packet_Header) -
+                                    sizeof(int); // Adjusting for padding
+
+struct Packet
+{
+  Packet_Header header;
+  int padding_for_alignment; // User requested padding
+  uint8 buffer[MAX_PAYLOAD_SIZE];
+};
+
+// Helper: Chunk a large buffer into serialized packets
+inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
+                                              uint8 message_type = 0)
+{
+  std::vector<Packet> packets;
+  size_t total_size = data.size();
+
+  // Calculate how many packets we need
+  size_t packet_count = (total_size + MAX_PAYLOAD_SIZE - 1) / MAX_PAYLOAD_SIZE;
+
+  if (packet_count > 255)
+  {
+    // Warning: sequence_count is uint8. This simplistic function only supports
+    // 255 fragments. In production, we'd need a larger sequence or flow
+    // control. For now, capping.
+    packet_count = 255;
+  }
+
+  packets.reserve(packet_count);
+
+  for (size_t i = 0; i < packet_count; ++i)
+  {
+    Packet packet = {};
+    packet.header.message_type = message_type;
+    packet.header.sequence_id = 0; // Needs to be set by caller (session logic)
+    packet.header.sequence_count = static_cast<uint8>(packet_count);
+    packet.header.sequence_idx = static_cast<uint8>(i);
+    // Timestamp should be set by sender just before sending
+
+    size_t offset = i * MAX_PAYLOAD_SIZE;
+    size_t remaining = total_size - offset;
+    size_t chunk_size =
+        (remaining > MAX_PAYLOAD_SIZE) ? MAX_PAYLOAD_SIZE : remaining;
+
+    packet.header.payload_size = static_cast<uint16>(chunk_size);
+    std::memcpy(packet.buffer, data.data() + offset, chunk_size);
+
+    packets.push_back(packet);
+  }
+
+  return packets;
+}
+
+} // namespace network

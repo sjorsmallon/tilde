@@ -86,6 +86,7 @@ add_library(game_shared STATIC
     src/shared/task_system.hpp
     src/shared/task_system.cpp
     src/shared/network/entities/player_entity.cpp
+    src/shared/network/udp_socket.cpp
 )
 
 # Protobuf Generation
@@ -238,4 +239,9 @@ target_link_libraries(file_watcher_test PRIVATE game_shared)
 add_executable(network_test src/test/test_network_serialization.cpp)
 target_include_directories(network_test PRIVATE src)
 target_link_libraries(network_test PRIVATE game_shared)
+
+# 13. UDP Socket Test
+add_executable(udp_socket_test src/test/test_udp_socket.cpp)
+target_include_directories(udp_socket_test PRIVATE src)
+target_link_libraries(udp_socket_test PRIVATE game_shared)
 

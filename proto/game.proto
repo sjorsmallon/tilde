@@ -26,6 +26,37 @@ message CmdSpawn {
   Vec3 position = 3;
 }
 
+message ViewAngle {
+  float pitch = 1;
+  float yaw = 2;
+  float roll = 3;
+}
+
+message C2S_PlayerMoveCommand {
+  optional int32 command_number = 1; // this is just for sequencing!
+  optional int32 tick_count = 2;
+  
+  // View Angles (High precision)
+  optional ViewAngle viewangles = 3; 
+
+  // Movement (Forward/Side/Up)
+  optional float forwardmove = 4;
+  optional float sidemove = 5;
+  optional float upmove = 6;
+
+  // The "Buttons" Bitfield
+  optional uint64 buttons_bitfield = 7; 
+}
+
+// s2c is server to client.
+message S2C_PacketEntities {
+    optional int32 expected_max_entities = 1;
+    optional bool is_delta = 2;
+    optional int32 update_baseline = 3;
+    optional bytes entity_data = 4;
+} 
+
+
 message CmdMove {
   int32 entity_id = 1;
   Vec3 target_position = 2;
