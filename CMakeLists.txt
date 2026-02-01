@@ -83,7 +83,9 @@ add_library(game_shared STATIC
     src/shared/ecs.hpp
     src/shared/snapshot_system.hpp
     src/shared/task_system.hpp
+    src/shared/task_system.hpp
     src/shared/task_system.cpp
+    src/shared/network/entities/player_entity.cpp
 )
 
 # Protobuf Generation
@@ -231,4 +233,9 @@ target_include_directories(linalg_test PRIVATE src)
 add_executable(file_watcher_test src/test/file_watcher_test.cpp)
 target_include_directories(file_watcher_test PRIVATE src)
 target_link_libraries(file_watcher_test PRIVATE game_shared)
+
+# 12. Network Serialization Test
+add_executable(network_test src/test/test_network_serialization.cpp)
+target_include_directories(network_test PRIVATE src)
+target_link_libraries(network_test PRIVATE game_shared)
 
