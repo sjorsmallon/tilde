@@ -1,15 +1,28 @@
 #pragma once
 
-#include "bitstream.hpp"
-#include "schema.hpp"
+#include "network/bitstream.hpp"
+#include "network/network_types.hpp"
+#include "network/schema.hpp"
 #include <cstring>
 
 namespace network
 {
 
+struct Entity_Id
+{
+  uint32 index;
+  uint32 generation;
+
+  bool operator==(const Entity_Id &) const = default;
+};
+
+inline constexpr Entity_Id null_entity_id = {0, 0};
+
 class Entity
 {
 public:
+  Entity_Id id = null_entity_id;
+
   virtual ~Entity() = default;
 
   // Macro required in every derived class to register schema

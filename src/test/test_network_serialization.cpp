@@ -1,4 +1,4 @@
-#include "../shared/network/entity.hpp"
+#include "../shared/entity.hpp"
 #include <cassert>
 #include <iostream>
 

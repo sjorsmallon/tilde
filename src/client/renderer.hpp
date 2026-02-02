@@ -4,8 +4,8 @@
 #include <vulkan/vulkan.h>
 
 #include "camera.hpp"
-#include "ecs.hpp"
 #include "linalg.hpp"
+#include "old_ideas/ecs.hpp"
 
 namespace client
 {

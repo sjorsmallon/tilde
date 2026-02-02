@@ -1,19 +1,22 @@
-#include "shared/ecs.hpp"
+#include "shared/old_ideas/ecs.hpp"
 #include <cassert>
 #include <iostream>
 
-struct Position {
+struct Position
+{
   float x, y;
 };
 
-struct ComplexComp {
+struct ComplexComp
+{
   int a;
   float b;
   bool c;
   ComplexComp(int _a, float _b, bool _c) : a(_a), b(_b), c(_c) {}
 };
 
-int main() {
+int main()
+{
   ecs::Registry registry;
   auto entity = registry.create_entity();
 

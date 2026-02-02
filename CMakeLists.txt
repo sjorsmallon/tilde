@@ -80,13 +80,14 @@ add_library(game_shared STATIC
     src/shared/timed_function.hpp
     src/shared/detached_console.hpp
     src/shared/replay_system.hpp
-    src/shared/ecs.hpp
+    src/shared/old_ideas/ecs.hpp
     src/shared/snapshot_system.hpp
     src/shared/task_system.hpp
     src/shared/task_system.hpp
     src/shared/task_system.cpp
-    src/shared/network/entities/player_entity.cpp
+    src/shared/entities/player_entity.cpp
     src/shared/network/udp_socket.cpp
+    src/shared/collision_detection.cpp
 )
 
 # Protobuf Generation

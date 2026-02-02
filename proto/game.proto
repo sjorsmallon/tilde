@@ -33,7 +33,7 @@ message S2C_EntityPackage {
     optional bytes entity_data = 4; // this is the reflective snapshot data
 } 
 
-// --------------------------------------------- things we thought about
+// --------------------------------------------- things that are uncertain
 
 
 message Player {

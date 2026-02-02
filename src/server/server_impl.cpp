@@ -4,9 +4,9 @@
 #include <string>
 
 #include "cvar.hpp"
-#include "ecs.hpp"
 #include "game.pb.h" // Keep this for replay system protobuf messages
 #include "log.hpp"
+#include "old_ideas/ecs.hpp"
 #include "replay_system.hpp"
 #include "snapshot_system.hpp"
 

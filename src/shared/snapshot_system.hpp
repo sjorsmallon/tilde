@@ -1,21 +1,25 @@
 #pragma once
 
-#include "ecs.hpp"
 #include "game.pb.h"
 #include "log.hpp"
+#include "old_ideas/ecs.hpp"
 
-namespace game {
+namespace game
+{
 
 // --- ECS Component Helpers ---
 // Ideally these would be in a component_registry.hpp or similar
-struct Position {
+struct Position
+{
   float x, y;
 };
-struct Velocity {
+struct Velocity
+{
   float dx, dy;
 };
 
-inline Snapshot create_snapshot(ecs::Registry &registry, uint32_t tick_id) {
+inline Snapshot create_snapshot(ecs::Registry &registry, uint32_t tick_id)
+{
   Snapshot snapshot;
   snapshot.set_tick_id(tick_id);
   snapshot.set_delta_from_tick_id(0); // Full snapshot for now
@@ -36,7 +40,8 @@ inline Snapshot create_snapshot(ecs::Registry &registry, uint32_t tick_id) {
 
   // Iterate the dense vector of the pool (if we want speed) OR index_to_entity
   // map
-  for (auto const &[index, entity] : pos_pool.index_to_entity) {
+  for (auto const &[index, entity] : pos_pool.index_to_entity)
+  {
     EntityState *state = snapshot.add_entities();
     state->set_entity_id(entity);
 
@@ -47,7 +52,8 @@ inline Snapshot create_snapshot(ecs::Registry &registry, uint32_t tick_id) {
     state->mutable_position()->set_z(0.0f); // 2D for now
 
     // Velocity (Optional)
-    if (registry.has_component<Velocity>(entity)) {
+    if (registry.has_component<Velocity>(entity))
+    {
       const auto &vel = registry.get_component<Velocity>(entity);
       state->mutable_velocity()->set_x(vel.dx);
       state->mutable_velocity()->set_y(vel.dy);
@@ -58,7 +64,8 @@ inline Snapshot create_snapshot(ecs::Registry &registry, uint32_t tick_id) {
   return snapshot;
 }
 
-inline void apply_snapshot(ecs::Registry &registry, const Snapshot &snapshot) {
+inline void apply_snapshot(ecs::Registry &registry, const Snapshot &snapshot)
+{
   // Naive Approach:
   // 1. Iterate snapshot entities.
   // 2. If entity exists locally, update it.
@@ -66,7 +73,8 @@ inline void apply_snapshot(ecs::Registry &registry, const Snapshot &snapshot) {
   // 4. (Hard part) Remove entities not in snapshot?
   //    For a FULL snapshot, yes, we should sync completely.
 
-  if (snapshot.delta_from_tick_id() != 0) {
+  if (snapshot.delta_from_tick_id() != 0)
+  {
     log_error("Delta snapshots not yet supported!");
     return;
   }
@@ -81,7 +89,8 @@ inline void apply_snapshot(ecs::Registry &registry, const Snapshot &snapshot) {
   // ecs::Registry::create_entity uses a counter. We might need
   // `create_entity_with_id(id)`.
 
-  for (const auto &entity_state : snapshot.entities()) {
+  for (const auto &entity_state : snapshot.entities())
+  {
     ecs::Entity id = entity_state.entity_id();
 
     // Ensure entity technically "exists" or components are just added
@@ -91,7 +100,8 @@ inline void apply_snapshot(ecs::Registry &registry, const Snapshot &snapshot) {
     // just add components.
 
     // Position
-    if (entity_state.has_position()) {
+    if (entity_state.has_position())
+    {
       game::Position pos;
       pos.x = entity_state.position().x();
       pos.y = entity_state.position().y();
@@ -99,7 +109,8 @@ inline void apply_snapshot(ecs::Registry &registry, const Snapshot &snapshot) {
     }
 
     // Velocity
-    if (entity_state.has_velocity()) {
+    if (entity_state.has_velocity())
+    {
       game::Velocity vel;
       vel.dx = entity_state.velocity().x();
       vel.dy = entity_state.velocity().y();
