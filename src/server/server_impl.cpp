@@ -13,17 +13,30 @@
 // Entities and Components are now defined in snapshot_system.hpp (or eventually
 // a sharedcomponents.hpp) avoiding redefinition here. namespace game { ... }
 // block removed.
+#include "network/server_connection_state.hpp"
 #include "timed_function.hpp"
 
-namespace server {
+namespace server
+{
 
 std::unique_ptr<ecs::Registry> g_registry;
 
 cvar::CVar<float> sv_tickrate("sv_tickrate", 60.0f, "Server tick rate in Hz");
 
-bool Init() {
+network::Server_Connection_State g_server_state;
+network::Udp_Socket g_socket;
+
+bool Init()
+{
   timed_function();
   log_terminal("--- Initializing Server ---");
+
+  if (!g_socket.open(network::server_port_number))
+  {
+    log_terminal("Failed to open server socket on port {}",
+                 network::server_port_number);
+    return false;
+  }
 
   // Replay System Demo
   log_terminal("server: Running Replay System Demo...");
@@ -64,17 +77,21 @@ bool Init() {
 
   // 3. Load
   game::Replay loaded_replay;
-  if (game::load_replay(replay_path, loaded_replay)) {
+  if (game::load_replay(replay_path, loaded_replay))
+  {
     // 4. Playback
     log_terminal("server: Playing back replay...");
-    for (const auto &tick : loaded_replay.ticks()) {
+    for (const auto &tick : loaded_replay.ticks())
+    {
       log_terminal("Tick {}:", tick.tick_id());
-      for (const auto &spawn : tick.spawns()) {
+      for (const auto &spawn : tick.spawns())
+      {
         log_terminal("  [SPAWN] ID: {} at ({}, {}, {})", spawn.entity_id(),
                      spawn.position().x(), spawn.position().y(),
                      spawn.position().z());
       }
-      for (const auto &move : tick.moves()) {
+      for (const auto &move : tick.moves())
+      {
         log_terminal("  [MOVE]  ID: {} to ({}, {}, {})", move.entity_id(),
                      move.target_position().x(), move.target_position().y(),
                      move.target_position().z());
@@ -91,7 +108,8 @@ bool Init() {
   server::g_registry->add_component<game::Position>(e1, {100.0f, 200.0f});
   server::g_registry->add_component<game::Velocity>(e1, {1.0f, 1.0f});
 
-  if (server::g_registry->has_component<game::Position>(e1)) {
+  if (server::g_registry->has_component<game::Position>(e1))
+  {
     auto &pos = server::g_registry->get_component<game::Position>(e1);
     log_terminal("ECS Entity {} Position: {}, {}", e1, pos.x, pos.y);
   }
@@ -106,7 +124,8 @@ bool Init() {
   ecs::Registry client_registry;
   game::apply_snapshot(client_registry, snap);
 
-  if (client_registry.has_component<game::Position>(e1)) {
+  if (client_registry.has_component<game::Position>(e1))
+  {
     auto &pos = client_registry.get_component<game::Position>(e1);
     log_terminal("Client Replica Entity {} Position: {}, {}", e1, pos.x, pos.y);
   }
@@ -114,14 +133,38 @@ bool Init() {
   return true;
 }
 
-bool Tick() {
+bool Tick()
+{
   timed_function();
   // Server logic simulation
   // In a real server, we'd sleep to maintain sv_tickrate
+
+  network::ServerInbox inbox;
+  network::poll_network(g_server_state, g_socket, 0.005,
+                        inbox); // 5ms receive window
+
+  // Sort by timestamp
+  std::sort(inbox.moves.begin(), inbox.moves.end(),
+            [](const auto &a, const auto &b)
+            { return a.second.timestamp < b.second.timestamp; });
+
+  // Process moves
+  for (const auto &[player_idx, tm] : inbox.moves)
+  {
+    // Apply move logic here
+    // std::cout << "Player " << player_idx << " move to " << ...
+    (void)player_idx;
+    (void)tm;
+  }
+
+  // Propagate state (Placeholder)
+  // network::propagate_state(g_server_state, g_socket);
+
   return true;
 }
 
-void Shutdown() {
+void Shutdown()
+{
   timed_function();
   log_terminal("--- Shutting down Server ---");
 }

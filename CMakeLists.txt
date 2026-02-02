@@ -245,3 +245,9 @@ add_executable(udp_socket_test src/test/test_udp_socket.cpp)
 target_include_directories(udp_socket_test PRIVATE src)
 target_link_libraries(udp_socket_test PRIVATE game_shared)
 
+# 14. Server Loop Test
+add_executable(server_loop_test src/test/server_loop_test.cpp)
+target_include_directories(server_loop_test PRIVATE src)
+target_link_libraries(server_loop_test PRIVATE game_shared)
+
+

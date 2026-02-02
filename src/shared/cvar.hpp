@@ -71,8 +71,10 @@ enum : uint64_t
 {
   None = 0,
   Admin = 1 << 0,
-  Client = 1 << 1,
+  Client = 1 << 1, // ONLY the client knows. e.g. cl_drawhud.
   Cheat = 1 << 2,
+  Replicated = 1 << 3, // server owns, we replicate to clients (sv_cheats)
+  Server = 1 << 4,     // ONLY the server knows. e.g. sv_tickrate.
 };
 }
 

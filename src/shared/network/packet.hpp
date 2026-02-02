@@ -8,6 +8,7 @@
 namespace network
 {
 
+// these map linearly to the protobuf message types.
 enum class Message_Type : uint8
 {
   C2S_PlayerMoveCommand,
