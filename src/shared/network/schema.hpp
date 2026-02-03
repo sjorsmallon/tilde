@@ -29,6 +29,9 @@ struct Field_Prop
   Field_Type type;
 };
 
+bool parse_string_to_field(const std::string &value, Field_Type type,
+                           void *out_ptr);
+
 struct Class_Schema
 {
   std::string class_name;

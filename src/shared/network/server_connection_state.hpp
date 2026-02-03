@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../entity_system.hpp" // Added for EntitySystem
 #include "game.pb.h"
 #include "network_types.hpp"
 #include "udp_socket.hpp"
@@ -46,6 +47,9 @@ struct Server_Connection_State
   // Packet reassembly only
   std::array<std::map<uint8, std::vector<Packet>>, sv_max_player_count>
       partial_packets{};
+
+  // Entities
+  shared::EntitySystem entities;
 };
 
 inline void disconnect_player(Server_Connection_State &server_connection_state,

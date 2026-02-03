@@ -4,6 +4,7 @@
 #include "network/network_types.hpp"
 #include "network/schema.hpp"
 #include <cstring>
+#include <map>
 
 namespace network
 {
@@ -27,6 +28,26 @@ public:
 
   // Macro required in every derived class to register schema
   virtual const Class_Schema *get_schema() const = 0;
+
+  virtual void init_from_map(const std::map<std::string, std::string> &props)
+  {
+    const Class_Schema *schema = get_schema();
+    if (!schema)
+      return;
+
+    uint8 *current_base = reinterpret_cast<uint8 *>(this);
+
+    for (const auto &[key, value] : props)
+    {
+      for (const auto &field : schema->fields)
+      {
+        if (field.name == key)
+        {
+          parse_string_to_field(value, field.type, current_base + field.offset);
+        }
+      }
+    }
+  }
 
   // Writes the entity state to the stream.
   // If baseline is provided, it only writes changes relative to baseline.

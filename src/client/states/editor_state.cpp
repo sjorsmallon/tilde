@@ -1,6 +1,7 @@
 #include "editor_state.hpp"
 #include "../console.hpp"
 #include "../renderer.hpp" // Added for render_view
+#include "../shared/map.hpp"
 #include "../state_manager.hpp"
 #include "../undo_stack.hpp"
 #include "imgui.h"
@@ -56,41 +57,34 @@ void EditorState::on_enter()
 
     if (!last_map_name.empty())
     {
-      std::ifstream in(last_map_name, std::ios::binary);
-      if (in.is_open())
+      map_source = {}; // Clear
+      if (shared::load_map(last_map_name, map_source))
       {
-        map_source.Clear();
-        if (map_source.ParseFromIstream(&in))
+        loaded_last_map = true;
+        current_filename = last_map_name;
+        if (map_source.name.empty())
         {
-          loaded_last_map = true;
-          current_filename = last_map_name;
-          // map_source name might be inside the proto or we just deduce it from
-          // filename if needed? The proto has a name field.
-          if (map_source.name().empty())
-          {
-            map_source.set_name(last_map_name);
-          }
+          map_source.name = last_map_name;
         }
-        in.close();
       }
     }
   }
 
-  if (!loaded_last_map && map_source.name().empty())
+  if (!loaded_last_map && map_source.name.empty())
   {
     camera.orthographic = true;
     camera.yaw = iso_yaw;
     camera.pitch = iso_pitch;
 
-    map_source.set_name("New Default Map");
+    map_source.name = "New Default Map";
     // Add a default floor
-    auto *aabb = map_source.add_aabbs();
-    aabb->mutable_center()->set_x(0);
-    aabb->mutable_center()->set_y(default_floor_y);
-    aabb->mutable_center()->set_z(0);
-    aabb->mutable_half_extents()->set_x(default_floor_extent);
-    aabb->mutable_half_extents()->set_y(default_floor_half_height);
-    aabb->mutable_half_extents()->set_z(default_floor_extent);
+    auto &aabb = map_source.aabbs.emplace_back();
+    aabb.center.x = 0;
+    aabb.center.y = default_floor_y;
+    aabb.center.z = 0;
+    aabb.half_extents.x = default_floor_extent;
+    aabb.half_extents.y = default_floor_half_height;
+    aabb.half_extents.z = default_floor_extent;
   }
 }
 
@@ -148,40 +142,38 @@ void EditorState::update(float dt)
     if (!aabbs_to_delete.empty() || !entities_to_delete.empty())
     {
       // Capture deleted data for undo
-      std::vector<game::AABB> deleted_aabbs;
+      std::vector<shared::aabb_t> deleted_aabbs;
       for (int idx : aabbs_to_delete)
       {
-        if (idx >= 0 && idx < map_source.aabbs_size())
+        if (idx >= 0 && idx < (int)map_source.aabbs.size())
         {
-          deleted_aabbs.push_back(map_source.aabbs(idx));
+          deleted_aabbs.push_back(map_source.aabbs[idx]);
         }
       }
 
-      std::vector<game::EntitySpawn> deleted_entities;
+      std::vector<shared::entity_spawn_t> deleted_entities;
       for (int idx : entities_to_delete)
       {
-        if (idx >= 0 && idx < map_source.entities_size())
+        if (idx >= 0 && idx < (int)map_source.entities.size())
         {
-          deleted_entities.push_back(map_source.entities(idx));
+          deleted_entities.push_back(map_source.entities[idx]);
         }
       }
 
       // Perform deletion
-      auto *aabbs = map_source.mutable_aabbs();
       for (int idx : aabbs_to_delete)
       {
-        if (idx >= 0 && idx < map_source.aabbs_size())
+        if (idx >= 0 && idx < (int)map_source.aabbs.size())
         {
-          aabbs->DeleteSubrange(idx, 1);
+          map_source.aabbs.erase(map_source.aabbs.begin() + idx);
         }
       }
 
-      auto *entities = map_source.mutable_entities();
       for (int idx : entities_to_delete)
       {
-        if (idx >= 0 && idx < map_source.entities_size())
+        if (idx >= 0 && idx < (int)map_source.entities.size())
         {
-          entities->DeleteSubrange(idx, 1);
+          map_source.entities.erase(map_source.entities.begin() + idx);
         }
       }
 
@@ -194,15 +186,13 @@ void EditorState::update(float dt)
           [this, deleted_aabbs, deleted_entities]()
           {
             // UNDO: Restore deleted items
-            auto *aabbs = map_source.mutable_aabbs();
             for (const auto &box : deleted_aabbs)
             {
-              *aabbs->Add() = box;
+              map_source.aabbs.push_back(box);
             }
-            auto *ents = map_source.mutable_entities();
             for (const auto &ent : deleted_entities)
             {
-              *ents->Add() = ent;
+              map_source.entities.push_back(ent);
             }
           },
           [this, deleted_aabbs, deleted_entities]()
@@ -210,57 +200,28 @@ void EditorState::update(float dt)
             // REDO: Delete the items we just restored.
             // Since we restored them to the end, we can delete from the end.
             int da_count = (int)deleted_aabbs.size();
-            auto *aabbs = map_source.mutable_aabbs();
-            if (aabbs->size() >= da_count)
+            if (map_source.aabbs.size() >= da_count)
             {
-              aabbs->DeleteSubrange(aabbs->size() - da_count, da_count);
+              map_source.aabbs.erase(map_source.aabbs.end() - da_count,
+                                     map_source.aabbs.end());
             }
 
             int de_count = (int)deleted_entities.size();
-            auto *ents = map_source.mutable_entities();
-            if (ents->size() >= de_count)
+            if (map_source.entities.size() >= de_count)
             {
-              ents->DeleteSubrange(ents->size() - de_count, de_count);
+              map_source.entities.erase(map_source.entities.end() - de_count,
+                                        map_source.entities.end());
             }
           });
 
-      // Push Undo Action
-      undo_stack.push(
-          [this, deleted_aabbs, deleted_entities]()
-          {
-            // UNDO: Restore deleted items
-            auto *aabbs = map_source.mutable_aabbs();
-            for (const auto &box : deleted_aabbs)
-            {
-              *aabbs->Add() = box;
-            }
-            auto *ents = map_source.mutable_entities();
-            for (const auto &ent : deleted_entities)
-            {
-              *ents->Add() = ent;
-            }
-          },
-          [this, deleted_aabbs_count = deleted_aabbs.size(),
-           deleted_entities_count = deleted_entities.size()]()
-          {
-            // REDO: Delete the items we just restored (which are now at the end
-            // of the list) Note: This assumes no other changes happened that
-            // shifted indices, which is a risk with index-based logic. But
-            // since we are appending on restore, we can just pop back.
-            auto *aabbs = map_source.mutable_aabbs();
-            if (aabbs->size() >= (int)deleted_aabbs_count)
-            {
-              aabbs->DeleteSubrange(aabbs->size() - deleted_aabbs_count,
-                                    deleted_aabbs_count);
-            }
-
-            auto *ents = map_source.mutable_entities();
-            if (ents->size() >= (int)deleted_entities_count)
-            {
-              ents->DeleteSubrange(ents->size() - deleted_entities_count,
-                                   deleted_entities_count);
-            }
-          });
+      // Push Undo Action (Repeated block logic in original code? Wait, the
+      // original code had TWO undo_stack.push calls? Lines 193 and 228 in
+      // original snippet look identical/redundant. I will assume it was a paste
+      // error in original or intent was distinct. Looking at original snippet:
+      // 193 and 228 are separate. Wait, the original snippet seems to have
+      // duplicates. I'll just keep ONE undo action for now as it covers both
+      // aabbs and entities. The second block (228) used `deleted_aabbs.size()`
+      // captures. I will only include ONE push here to be safe and clean.
     }
   }
 
@@ -420,7 +381,7 @@ void EditorState::update(float dt)
         {
           // Finalize placement
           dragging_placement = false;
-          auto *aabb = map_source.add_aabbs();
+          auto &aabb = map_source.aabbs.emplace_back();
 
           float min_x = std::min(drag_start.x, current_pos.x);
           float max_x = std::max(drag_start.x, current_pos.x);
@@ -436,29 +397,28 @@ void EditorState::update(float dt)
           float cx = grid_min_x + width * 0.5f;
           float cz = grid_min_z + depth * 0.5f;
 
-          aabb->mutable_center()->set_x(cx);
-          aabb->mutable_center()->set_y(-0.5f); // Center at -0.5
-          aabb->mutable_center()->set_z(cz);
-          aabb->mutable_half_extents()->set_x(width * 0.5f);
-          aabb->mutable_half_extents()->set_y(height * 0.5f);
-          aabb->mutable_half_extents()->set_z(depth * 0.5f);
+          aabb.center.x = cx;
+          aabb.center.y = -0.5f; // Center at -0.5
+          aabb.center.z = cz;
+          aabb.half_extents.x = width * 0.5f;
+          aabb.half_extents.y = height * 0.5f;
+          aabb.half_extents.z = depth * 0.5f;
 
           // Capture for undo
-          game::AABB new_aabb = *aabb;
+          shared::aabb_t new_aabb = aabb;
           undo_stack.push(
               [this]()
               {
                 // UNDO
-                auto *aabbs = map_source.mutable_aabbs();
-                if (!aabbs->empty())
+                if (!map_source.aabbs.empty())
                 {
-                  aabbs->RemoveLast();
+                  map_source.aabbs.pop_back();
                 }
               },
               [this, new_aabb]()
               {
                 // REDO
-                *map_source.add_aabbs() = new_aabb;
+                map_source.aabbs.push_back(new_aabb);
               });
         }
       }
@@ -474,31 +434,28 @@ void EditorState::update(float dt)
         else if (lmb_clicked)
         {
           // Normal single click place (1x1)
-          auto *aabb = map_source.add_aabbs();
-          game::AABB new_aabb;
-          new_aabb.mutable_center()->set_x(current_pos.x + 0.5f);
-          new_aabb.mutable_center()->set_y(-0.5f); // Center at -0.5
-          new_aabb.mutable_center()->set_z(current_pos.z + 0.5f);
-          new_aabb.mutable_half_extents()->set_x(default_aabb_half_size);
-          new_aabb.mutable_half_extents()->set_y(default_aabb_half_size);
-          new_aabb.mutable_half_extents()->set_z(default_aabb_half_size);
-          *aabb = new_aabb;
+          shared::aabb_t new_aabb;
+          new_aabb.center.x = current_pos.x + 0.5f;
+          new_aabb.center.y = -0.5f; // Center at -0.5
+          new_aabb.center.z = current_pos.z + 0.5f;
+          new_aabb.half_extents.x = default_aabb_half_size;
+          new_aabb.half_extents.y = default_aabb_half_size;
+          new_aabb.half_extents.z = default_aabb_half_size;
+          map_source.aabbs.push_back(new_aabb);
 
           undo_stack.push(
               [this]()
               {
                 // UNDO: Remove the last added AABB
-                // Optimization: Check if it matches? For now just pop back.
-                auto *aabbs = map_source.mutable_aabbs();
-                if (!aabbs->empty())
+                if (!map_source.aabbs.empty())
                 {
-                  aabbs->RemoveLast();
+                  map_source.aabbs.pop_back();
                 }
               },
               [this, new_aabb]()
               {
                 // REDO: Add it back
-                *map_source.add_aabbs() = new_aabb;
+                map_source.aabbs.push_back(new_aabb);
               });
         }
       }
@@ -533,15 +490,14 @@ void EditorState::update(float dt)
     if (selected_aabb_indices.size() == 1 && !dragging_selection)
     {
       int idx = *selected_aabb_indices.begin();
-      if (idx >= 0 && idx < map_source.aabbs_size())
+      if (idx >= 0 && idx < (int)map_source.aabbs.size())
       {
-        auto *aabb = map_source.mutable_aabbs(idx);
-        vec3 center = vec3{.x = aabb->center().x(),
-                           .y = aabb->center().y(),
-                           .z = aabb->center().z()};
-        vec3 half = vec3{.x = aabb->half_extents().x(),
-                         .y = aabb->half_extents().y(),
-                         .z = aabb->half_extents().z()};
+        auto *aabb = &map_source.aabbs[idx];
+        vec3 center =
+            vec3{.x = aabb->center.x, .y = aabb->center.y, .z = aabb->center.z};
+        vec3 half = vec3{.x = aabb->half_extents.x,
+                         .y = aabb->half_extents.y,
+                         .z = aabb->half_extents.z};
         vec3 face_normals[6] = {
             {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
             {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
@@ -630,23 +586,26 @@ void EditorState::update(float dt)
             dragging_handle = false;
             dragging_handle_index = -1;
 
+            dragging_handle = false;
+            dragging_handle_index = -1;
+
             // Undo Capture
-            game::AABB safe_copy = *aabb;
-            game::AABB original_copy = dragging_original_aabb;
+            shared::aabb_t safe_copy = *aabb;
+            shared::aabb_t original_copy = dragging_original_aabb;
             int captured_idx = idx;
 
             undo_stack.push(
                 [this, captured_idx, original_copy]()
                 {
                   if (captured_idx >= 0 &&
-                      captured_idx < map_source.aabbs_size())
-                    *map_source.mutable_aabbs(captured_idx) = original_copy;
+                      captured_idx < (int)map_source.aabbs.size())
+                    map_source.aabbs[captured_idx] = original_copy;
                 },
                 [this, captured_idx, safe_copy]()
                 {
                   if (captured_idx >= 0 &&
-                      captured_idx < map_source.aabbs_size())
-                    *map_source.mutable_aabbs(captured_idx) = safe_copy;
+                      captured_idx < (int)map_source.aabbs.size())
+                    map_source.aabbs[captured_idx] = safe_copy;
                 });
           }
           else
@@ -676,18 +635,18 @@ void EditorState::update(float dt)
               float delta = t;
 
               // Apply Delta
-              vec3 old_min = {.x = dragging_original_aabb.center().x() -
-                                   dragging_original_aabb.half_extents().x(),
-                              .y = dragging_original_aabb.center().y() -
-                                   dragging_original_aabb.half_extents().y(),
-                              .z = dragging_original_aabb.center().z() -
-                                   dragging_original_aabb.half_extents().z()};
-              vec3 old_max = {.x = dragging_original_aabb.center().x() +
-                                   dragging_original_aabb.half_extents().x(),
-                              .y = dragging_original_aabb.center().y() +
-                                   dragging_original_aabb.half_extents().y(),
-                              .z = dragging_original_aabb.center().z() +
-                                   dragging_original_aabb.half_extents().z()};
+              vec3 old_min = {.x = dragging_original_aabb.center.x -
+                                   dragging_original_aabb.half_extents.x,
+                              .y = dragging_original_aabb.center.y -
+                                   dragging_original_aabb.half_extents.y,
+                              .z = dragging_original_aabb.center.z -
+                                   dragging_original_aabb.half_extents.z};
+              vec3 old_max = {.x = dragging_original_aabb.center.x +
+                                   dragging_original_aabb.half_extents.x,
+                              .y = dragging_original_aabb.center.y +
+                                   dragging_original_aabb.half_extents.y,
+                              .z = dragging_original_aabb.center.z +
+                                   dragging_original_aabb.half_extents.z};
 
               float new_min_val = old_min[axis];
               float new_max_val = old_max[axis];
@@ -717,18 +676,18 @@ void EditorState::update(float dt)
 
               if (axis == 0)
               {
-                aabb->mutable_center()->set_x(new_center_val);
-                aabb->mutable_half_extents()->set_x(new_half_val);
+                aabb->center.x = new_center_val;
+                aabb->half_extents.x = new_half_val;
               }
               else if (axis == 1)
               {
-                aabb->mutable_center()->set_y(new_center_val);
-                aabb->mutable_half_extents()->set_y(new_half_val);
+                aabb->center.y = new_center_val;
+                aabb->half_extents.y = new_half_val;
               }
               else
               {
-                aabb->mutable_center()->set_z(new_center_val);
-                aabb->mutable_half_extents()->set_z(new_half_val);
+                aabb->center.z = new_center_val;
+                aabb->half_extents.z = new_half_val;
               }
             }
           }
@@ -780,9 +739,9 @@ void EditorState::update(float dt)
 
       // Rotation Active Logic
       if (rotation_mode && rotate_entity_index != invalid_idx &&
-          rotate_entity_index < map_source.entities_size())
+          rotate_entity_index < (int)map_source.entities.size())
       {
-        auto *ent = map_source.mutable_entities(rotate_entity_index);
+        auto *ent = &map_source.entities[rotate_entity_index];
 
         // Raycast to Ground Plane to find current mouse position
         float mouse_x = io.MousePos.x;
@@ -822,7 +781,7 @@ void EditorState::update(float dt)
         }
 
         // Intersect with Plane at Entity Y
-        float plane_y = ent->position().y();
+        float plane_y = ent->position.y;
         if (std::abs(ray_dir.y) > ray_epsilon)
         {
           float t = (plane_y - ray_origin.y) / ray_dir.y;
@@ -833,11 +792,11 @@ void EditorState::update(float dt)
             rotate_debug_point = hit_point;
 
             // Vector from Entity Center to Hit Point
-            float dx = hit_point.x - ent->position().x();
-            float dz = hit_point.z - ent->position().z();
+            float dx = hit_point.x - ent->position.x;
+            float dz = hit_point.z - ent->position.z;
 
             float angle = atan2(dz, dx);
-            ent->set_yaw(lround(angle * 180.0f / pi));
+            ent->yaw = lround(angle * 180.0f / pi);
           }
         }
       }
@@ -877,12 +836,11 @@ void EditorState::update(float dt)
             }
 
             // Select AABBs
-            for (int i = 0; i < map_source.aabbs_size(); ++i)
+            for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
             {
-              const auto &aabb = map_source.aabbs(i);
-              vec3 center = {.x = aabb.center().x(),
-                             .y = aabb.center().y(),
-                             .z = aabb.center().z()};
+              const auto &aabb = map_source.aabbs[i];
+              vec3 center = {
+                  .x = aabb.center.x, .y = aabb.center.y, .z = aabb.center.z};
               // Ideally check projected 8 corners for bounds overlap, but
               // center is a good start for "RTS style" unit selection. Let's
               // check center first.
@@ -904,12 +862,12 @@ void EditorState::update(float dt)
             }
 
             // Select Entities
-            for (int i = 0; i < map_source.entities_size(); ++i)
+            for (int i = 0; i < (int)map_source.entities.size(); ++i)
             {
-              const auto &ent = map_source.entities(i);
-              vec3 pos = {.x = ent.position().x(),
-                          .y = ent.position().y(),
-                          .z = ent.position().z()};
+              const auto &ent = map_source.entities[i];
+              vec3 pos = {.x = ent.position.x,
+                          .y = ent.position.y,
+                          .z = ent.position.z};
 
               vec3 p = linalg::world_to_view(
                   pos, vec3{.x = camera.x, camera.y, camera.z}, camera.yaw,
@@ -989,19 +947,18 @@ void EditorState::update(float dt)
                 int index;
                 float t;
                 float volume;
-                game::AABB aabb;
+                shared::aabb_t aabb;
               };
               std::vector<HitCandidate> candidates;
 
-              for (int i = 0; i < map_source.aabbs_size(); ++i)
+              for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
               {
-                const auto &aabb = map_source.aabbs(i);
-                vec3 center = {.x = aabb.center().x(),
-                               aabb.center().y(),
-                               aabb.center().z()};
-                vec3 half = {.x = aabb.half_extents().x(),
-                             aabb.half_extents().y(),
-                             aabb.half_extents().z()};
+                const auto &aabb = map_source.aabbs[i];
+                vec3 center = {
+                    .x = aabb.center.x, aabb.center.y, aabb.center.z};
+                vec3 half = {.x = aabb.half_extents.x,
+                             aabb.half_extents.y,
+                             aabb.half_extents.z};
                 vec3 min = center - half;
                 vec3 max = center + half;
 
@@ -1035,18 +992,18 @@ void EditorState::update(float dt)
                   const auto &a = best.aabb;
                   const auto &b = next.aabb;
                   if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                          vec3{.x = a.center().x(),
-                               .y = a.center().y(),
-                               .z = a.center().z()},
-                          vec3{.x = a.half_extents().x(),
-                               .y = a.half_extents().y(),
-                               .z = a.half_extents().z()},
-                          vec3{.x = b.center().x(),
-                               .y = b.center().y(),
-                               .z = b.center().z()},
-                          vec3{.x = b.half_extents().x(),
-                               .y = b.half_extents().y(),
-                               .z = b.half_extents().z()}))
+                          vec3{.x = a.center.x,
+                               .y = a.center.y,
+                               .z = a.center.z},
+                          vec3{.x = a.half_extents.x,
+                               .y = a.half_extents.y,
+                               .z = a.half_extents.z},
+                          vec3{.x = b.center.x,
+                               .y = b.center.y,
+                               .z = b.center.z},
+                          vec3{.x = b.half_extents.x,
+                               .y = b.half_extents.y,
+                               .z = b.half_extents.z}))
                   {
                     if (next.volume < best.volume)
                     {
@@ -1062,12 +1019,12 @@ void EditorState::update(float dt)
 
               // Raycast against Entities (using approximated AABB)
               int closest_ent_index = invalid_idx;
-              for (int i = 0; i < map_source.entities_size(); ++i)
+              for (int i = 0; i < (int)map_source.entities.size(); ++i)
               {
-                const auto &ent = map_source.entities(i);
-                vec3 pos = {.x = ent.position().x(),
-                            .y = ent.position().y(),
-                            .z = ent.position().z()};
+                const auto &ent = map_source.entities[i];
+                vec3 pos = {.x = ent.position.x,
+                            .y = ent.position.y,
+                            .z = ent.position.z};
                 float s = default_entity_size; // Size of pyramid
                 vec3 min = {.x = pos.x - s / 2, .y = pos.y, .z = pos.z - s / 2};
                 vec3 max = {
@@ -1301,17 +1258,26 @@ void EditorState::update(float dt)
         ray_origin = {.x = camera.x, .y = camera.y, .z = camera.z};
       }
 
+      if (client::input::is_key_pressed(SDL_SCANCODE_1))
+      {
+        entity_spawn_type = shared::entity_type::PLAYER;
+        renderer::draw_announcement("Player Entity Selected");
+      }
+      if (client::input::is_key_pressed(SDL_SCANCODE_2))
+      {
+        entity_spawn_type = shared::entity_type::WEAPON;
+        renderer::draw_announcement("Weapon Entity Selected");
+      }
+
       entity_cursor_valid = false;
       float min_t = 1e9f;
 
-      for (int i = 0; i < map_source.aabbs_size(); ++i)
+      for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
       {
-        const auto &aabb = map_source.aabbs(i);
-        vec3 center = {
-            .x = aabb.center().x(), aabb.center().y(), aabb.center().z()};
-        vec3 half = {.x = aabb.half_extents().x(),
-                     aabb.half_extents().y(),
-                     aabb.half_extents().z()};
+        const auto &aabb = map_source.aabbs[i];
+        vec3 center = {.x = aabb.center.x, aabb.center.y, aabb.center.z};
+        vec3 half = {
+            .x = aabb.half_extents.x, aabb.half_extents.y, aabb.half_extents.z};
         vec3 min = center - half;
         vec3 max = center + half;
 
@@ -1346,12 +1312,14 @@ void EditorState::update(float dt)
                 // Handle Placement Click
                 if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
-                  auto *ent = map_source.add_entities();
-                  ent->set_type(game::EntityType::PLAYER);
-                  ent->mutable_position()->set_x(entity_cursor_pos.x);
-                  ent->mutable_position()->set_y(entity_cursor_pos.y);
-                  ent->mutable_position()->set_z(entity_cursor_pos.z);
-                  renderer::draw_announcement("Player Placed");
+                  auto &ent = map_source.entities.emplace_back();
+                  ent.type = entity_spawn_type;
+                  ent.position.x = entity_cursor_pos.x;
+                  ent.position.y = entity_cursor_pos.y;
+                  ent.position.z = entity_cursor_pos.z;
+                  renderer::draw_announcement(
+                      (shared::type_to_classname(ent.type) + " Placed")
+                          .c_str());
                 }
               }
             }

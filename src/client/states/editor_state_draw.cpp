@@ -1,4 +1,5 @@
-#include "../renderer.hpp" // Added for render_view
+#include "../renderer.hpp"   // Added for render_view
+#include "../shared/map.hpp" // Added Map_IO, fixed path
 #include "editor_state.hpp"
 #include "imgui.h"
 #include "linalg.hpp"
@@ -6,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iostream> // Added for cerr
 
 constexpr const float fov_default = 90.0f;
 constexpr const float pi = 3.14159265f;
@@ -29,19 +31,13 @@ void EditorState::render_ui()
 
       if (ImGui::MenuItem("Load Map"))
       {
-        std::ifstream in("map.source", std::ios::binary);
-        if (in.is_open())
+        if (shared::load_map("map.source", map_source))
         {
-          map_source.Clear();
-          if (!map_source.ParseFromIstream(&in))
-          {
-            std::cerr << "Failed to load map!" << std::endl;
-          }
-          else
-          {
-            current_filename = "map.source";
-          }
-          in.close();
+          current_filename = "map.source";
+        }
+        else
+        {
+          std::cerr << "Failed to load map!" << std::endl;
         }
       }
       if (ImGui::MenuItem("Set Map Name"))
@@ -59,21 +55,21 @@ void EditorState::render_ui()
     {
       if (ImGui::MenuItem("Add AABB"))
       {
-        auto *aabb = map_source.add_aabbs();
+        auto &aabb = map_source.aabbs.emplace_back();
         float dist = 5.0f;
         float radYaw = to_radians(camera.yaw);
-        aabb->mutable_center()->set_x(camera.x + cos(radYaw) * dist);
-        aabb->mutable_center()->set_y(camera.y);
-        aabb->mutable_center()->set_z(camera.z + sin(radYaw) * dist);
-        aabb->mutable_half_extents()->set_x(1.0f);
-        aabb->mutable_half_extents()->set_y(1.0f);
-        aabb->mutable_half_extents()->set_z(1.0f);
+        aabb.center.x = camera.x + cos(radYaw) * dist;
+        aabb.center.y = camera.y;
+        aabb.center.z = camera.z + sin(radYaw) * dist;
+        aabb.half_extents.x = 1.0f;
+        aabb.half_extents.y = 1.0f;
+        aabb.half_extents.z = 1.0f;
       }
       ImGui::EndMenu();
     }
 
     // Display Map Name in Menu Bar
-    std::string current_name = map_source.name();
+    std::string current_name = map_source.name;
     if (current_name.empty())
       current_name = "Untitled Map";
 
@@ -120,19 +116,10 @@ void EditorState::render_ui()
 
     if (ImGui::Button("Save", ImVec2(120, 0)))
     {
-      std::ofstream out(filename_buf, std::ios::binary);
-      if (out.is_open())
+      if (shared::save_map(filename_buf, map_source))
       {
-        if (!map_source.SerializeToOstream(&out))
-        {
-          std::cerr << "Failed to save map!" << std::endl;
-        }
-        else
-        {
-          current_filename = filename_buf;
-          map_source.set_name(current_filename);
-        }
-        out.close();
+        current_filename = filename_buf;
+        map_source.name = current_filename;
 
         std::ofstream last_map("last_map.txt");
         if (last_map.is_open())
@@ -140,6 +127,10 @@ void EditorState::render_ui()
           last_map << filename_buf;
           last_map.close();
         }
+      }
+      else
+      {
+        std::cerr << "Failed to save map!" << std::endl;
       }
       ImGui::CloseCurrentPopup();
     }
@@ -158,7 +149,7 @@ void EditorState::render_ui()
     static char buf[128] = "";
     if (ImGui::IsWindowAppearing())
     {
-      std::string current_name = map_source.name();
+      std::string current_name = map_source.name;
       if (current_name.length() < sizeof(buf))
       {
         strcpy(buf, current_name.c_str());
@@ -174,7 +165,7 @@ void EditorState::render_ui()
 
     if (ImGui::Button("Save", ImVec2(120, 0)))
     {
-      map_source.set_name(buf);
+      map_source.name = buf;
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -188,26 +179,26 @@ void EditorState::render_ui()
   draw_grid();
 
   // Draw AABBs
-  ImGuiIO &io = ImGui::GetIO();
+  // ImGuiIO &io = ImGui::GetIO();
 
   // Detect overlaps
   std::unordered_set<int> overlapping_indices;
   {
-    for (int i = 0; i < map_source.aabbs_size(); ++i)
+    for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
     {
-      for (int j = i + 1; j < map_source.aabbs_size(); ++j)
+      for (int j = i + 1; j < (int)map_source.aabbs.size(); ++j)
       {
-        const auto &a = map_source.aabbs(i);
-        const auto &b = map_source.aabbs(j);
+        const auto &a = map_source.aabbs[i];
+        const auto &b = map_source.aabbs[j];
         if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                {.x = a.center().x(), .y = a.center().y(), .z = a.center().z()},
-                {.x = a.half_extents().x(),
-                 .y = a.half_extents().y(),
-                 .z = a.half_extents().z()},
-                {.x = b.center().x(), .y = b.center().y(), .z = b.center().z()},
-                {.x = b.half_extents().x(),
-                 .y = b.half_extents().y(),
-                 .z = b.half_extents().z()}))
+                {.x = a.center.x, .y = a.center.y, .z = a.center.z},
+                {.x = a.half_extents.x,
+                 .y = a.half_extents.y,
+                 .z = a.half_extents.z},
+                {.x = b.center.x, .y = b.center.y, .z = b.center.z},
+                {.x = b.half_extents.x,
+                 .y = b.half_extents.y,
+                 .z = b.half_extents.z}))
         {
           overlapping_indices.insert(i);
           overlapping_indices.insert(j);
@@ -219,7 +210,7 @@ void EditorState::render_ui()
   if (wireframe_mode)
   {
     int idx = 0;
-    for (const auto &aabb : map_source.aabbs())
+    for (const auto &aabb : map_source.aabbs)
     {
       uint32_t col = color_green; // Default Green
 
@@ -288,25 +279,21 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     // Detect overlaps
     std::unordered_set<int> overlapping_indices;
     {
-      for (int i = 0; i < map_source.aabbs_size(); ++i)
+      for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
       {
-        for (int j = i + 1; j < map_source.aabbs_size(); ++j)
+        for (int j = i + 1; j < (int)map_source.aabbs.size(); ++j)
         {
-          const auto &a = map_source.aabbs(i);
-          const auto &b = map_source.aabbs(j);
+          const auto &a = map_source.aabbs[i];
+          const auto &b = map_source.aabbs[j];
           if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                  {.x = a.center().x(),
-                   .y = a.center().y(),
-                   .z = a.center().z()},
-                  {.x = a.half_extents().x(),
-                   .y = a.half_extents().y(),
-                   .z = a.half_extents().z()},
-                  {.x = b.center().x(),
-                   .y = b.center().y(),
-                   .z = b.center().z()},
-                  {.x = b.half_extents().x(),
-                   .y = b.half_extents().y(),
-                   .z = b.half_extents().z()}))
+                  {.x = a.center.x, .y = a.center.y, .z = a.center.z},
+                  {.x = a.half_extents.x,
+                   .y = a.half_extents.y,
+                   .z = a.half_extents.z},
+                  {.x = b.center.x, .y = b.center.y, .z = b.center.z},
+                  {.x = b.half_extents.x,
+                   .y = b.half_extents.y,
+                   .z = b.half_extents.z}))
           {
             overlapping_indices.insert(i);
             overlapping_indices.insert(j);
@@ -316,7 +303,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     }
 
     int idx = 0;
-    for (const auto &aabb : map_source.aabbs())
+    for (const auto &aabb : map_source.aabbs)
     {
       uint32_t col = color_green; // Default Green
 
@@ -333,12 +320,11 @@ void EditorState::render_3d(VkCommandBuffer cmd)
         col = color_red | (g << 8) | 0x00FF0000;
       }
 
-      vec3 center = {.x = aabb.center().x(),
-                     .y = aabb.center().y(),
-                     .z = aabb.center().z()};
-      vec3 half = {.x = aabb.half_extents().x(),
-                   .y = aabb.half_extents().y(),
-                   .z = aabb.half_extents().z()};
+      vec3 center = {
+          .x = aabb.center.x, .y = aabb.center.y, .z = aabb.center.z};
+      vec3 half = {.x = aabb.half_extents.x,
+                   .y = aabb.half_extents.y,
+                   .z = aabb.half_extents.z};
       vec3 min = center - half;
       vec3 max = center + half;
 
@@ -365,12 +351,12 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       float grid_max_z = std::floor(max_z) + 1.0f;
       float width = grid_max_x - grid_min_x;
       float depth = grid_max_z - grid_min_z;
-      float height = 1.0f;
+      // float height = 1.0f;
       float center_x = grid_min_x + width * 0.5f;
       float center_z = grid_min_z + depth * 0.5f;
       float center_y = -0.5f; // Center at -0.5
       float half_x = width * 0.5f;
-      float half_y = height * 0.5f;
+      float half_y = 0.5f; // height * 0.5f
       float half_z = depth * 0.5f;
 
       renderer::DrawAABB(cmd,
@@ -396,49 +382,18 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  if (entity_mode && entity_cursor_valid)
-  {
-    // Draw Pyramid
-    vec3 p = entity_cursor_pos;
-    float s = default_entity_size; // Size
-    uint32_t col = color_magenta;  // Magenta
-
-    // Pyramid Points: Tip and 4 base corners
-    vec3 tip = {.x = p.x, .y = p.y + s, .z = p.z};
-    vec3 b1 = {.x = p.x - s / 2, .y = p.y, .z = p.z - s / 2};
-    vec3 b2 = {.x = p.x + s / 2, .y = p.y, .z = p.z - s / 2};
-    vec3 b3 = {.x = p.x + s / 2, .y = p.y, .z = p.z + s / 2};
-    vec3 b4 = {.x = p.x - s / 2, .y = p.y, .z = p.z + s / 2};
-
-    // Draw Lines
-    auto drawLine = [&](vec3 start, vec3 end)
-    { renderer::DrawLine(cmd, start, end, col); };
-
-    // Base
-    drawLine(b1, b2);
-    drawLine(b2, b3);
-    drawLine(b3, b4);
-    drawLine(b4, b1);
-    // Sides
-    drawLine(b1, tip);
-    drawLine(b2, tip);
-    drawLine(b3, tip);
-    drawLine(b4, tip);
-  }
-
   // Draw AABB Handles
   if (selected_aabb_indices.size() == 1)
   {
     int idx = *selected_aabb_indices.begin();
-    if (idx >= 0 && idx < map_source.aabbs_size())
+    if (idx >= 0 && idx < (int)map_source.aabbs.size())
     {
-      const auto &aabb = map_source.aabbs(idx);
-      vec3 center = {.x = aabb.center().x(),
-                     .y = aabb.center().y(),
-                     .z = aabb.center().z()};
-      vec3 half = {.x = aabb.half_extents().x(),
-                   .y = aabb.half_extents().y(),
-                   .z = aabb.half_extents().z()};
+      const auto &aabb = map_source.aabbs[idx];
+      vec3 center = {
+          .x = aabb.center.x, .y = aabb.center.y, .z = aabb.center.z};
+      vec3 half = {.x = aabb.half_extents.x,
+                   .y = aabb.half_extents.y,
+                   .z = aabb.half_extents.z};
       vec3 face_normals[6] = {
           {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
           {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
@@ -464,12 +419,67 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  // Draw Placed Entities
-  for (int i = 0; i < map_source.entities_size(); ++i)
+  if (entity_mode && entity_cursor_valid)
   {
-    const auto &ent = map_source.entities(i);
+    // Draw Pyramid
+    vec3 p = entity_cursor_pos;
+    float s = default_entity_size; // Size
+    uint32_t col = color_magenta;  // Magenta
+
+    // Pyramid Points: Tip and 4 base corners
+    vec3 tip, b1, b2, b3, b4;
+
+    if (entity_spawn_type == shared::entity_type::WEAPON)
+    {
+      // Inverted Pyramid (Base on Top, Tip Down)
+      // Tip is at cursor pos (on ground/top of box), pointing down?
+      // Or should it "hang" from the cursor?
+      // User said "inverted pyramid".
+      // Let's make the TIP touch the cursor point, growing UP, but inverted
+      // shape? Or Base at cursor point, growing Down? Usually "cursor" is where
+      // the entity FEET are. If WEAPON is a pickup, it might float. Let's
+      // assume standard visual: Tip touches ground (cursor), Base is up. Wait,
+      // standard pyramid usually sits on base. "Inverted pyramid" suggests
+      // checking the "V" shape. Let's put Tip at p, and Base at p + height.
+      tip = {.x = p.x, .y = p.y, .z = p.z}; // Tip at cursor
+      b1 = {.x = p.x - s / 2, .y = p.y + s, .z = p.z - s / 2};
+      b2 = {.x = p.x + s / 2, .y = p.y + s, .z = p.z - s / 2};
+      b3 = {.x = p.x + s / 2, .y = p.y + s, .z = p.z + s / 2};
+      b4 = {.x = p.x - s / 2, .y = p.y + s, .z = p.z + s / 2};
+    }
+    else
+    {
+      // Standard Pyramid (Base at cursor, Tip Up)
+      // Base at p
+      tip = {.x = p.x, .y = p.y + s, .z = p.z};
+      b1 = {.x = p.x - s / 2, .y = p.y, .z = p.z - s / 2};
+      b2 = {.x = p.x + s / 2, .y = p.y, .z = p.z - s / 2};
+      b3 = {.x = p.x + s / 2, .y = p.y, .z = p.z + s / 2};
+      b4 = {.x = p.x - s / 2, .y = p.y, .z = p.z + s / 2};
+    }
+
+    // Draw Lines
+    auto drawLine = [&](vec3 start, vec3 end)
+    { renderer::DrawLine(cmd, start, end, col); };
+
+    // Base
+    drawLine(b1, b2);
+    drawLine(b2, b3);
+    drawLine(b3, b4);
+    drawLine(b4, b1);
+    // Sides
+    drawLine(b1, tip);
+    drawLine(b2, tip);
+    drawLine(b3, tip);
+    drawLine(b4, tip);
+  }
+
+  // Draw Placed Entities
+  for (int i = 0; i < (int)map_source.entities.size(); ++i)
+  {
+    const auto &ent = map_source.entities[i];
     // Draw Pyramid for Entity
-    vec3 p = {ent.position().x(), ent.position().y(), ent.position().z()};
+    vec3 p = {ent.position.x, ent.position.y, ent.position.z};
     float s = default_entity_size; // Size
     uint32_t col = color_green;    // Green (Default)
 
@@ -484,7 +494,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
 
     // Pyramid Points: Tip and 4 base corners
     // Rotation
-    float radYaw = to_radians(ent.yaw());
+    float radYaw = to_radians(ent.yaw);
     float cY = cos(radYaw);
     float sY = sin(radYaw);
 
@@ -498,13 +508,32 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     };
 
     // Pyramid Points: Tip and 4 base corners
-    vec3 tip = rotate(0, 0);
-    tip.y += s;
+    // Pyramid Points: Tip and 4 base corners
+    vec3 tip, b1, b2, b3, b4;
 
-    vec3 b1 = rotate(-s / 2, -s / 2);
-    vec3 b2 = rotate(s / 2, -s / 2);
-    vec3 b3 = rotate(s / 2, s / 2);
-    vec3 b4 = rotate(-s / 2, s / 2);
+    if (ent.type == shared::entity_type::WEAPON)
+    {
+      // Inverted Pyramid (Tip Down, Base Up)
+      tip = rotate(0, 0); // Tip at bottom
+      b1 = rotate(-s / 2, -s / 2);
+      b1.y += s;
+      b2 = rotate(s / 2, -s / 2);
+      b2.y += s;
+      b3 = rotate(s / 2, s / 2);
+      b3.y += s;
+      b4 = rotate(-s / 2, s / 2);
+      b4.y += s;
+    }
+    else
+    {
+      // Standard Pyramid (Tip Up, Base Down)
+      tip = rotate(0, 0);
+      tip.y += s; // Tip at top
+      b1 = rotate(-s / 2, -s / 2);
+      b2 = rotate(s / 2, -s / 2);
+      b3 = rotate(s / 2, s / 2);
+      b4 = rotate(-s / 2, s / 2);
+    }
 
     // Draw Lines
     auto drawLine = [&](vec3 start, vec3 end)
@@ -548,7 +577,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       }
 
       // Draw Forward Vector
-      float radYaw = to_radians(ent.yaw());
+      float radYaw = to_radians(ent.yaw);
       // Matches Drag logic: angle = atan2(dz, dx) -> x=cos, z=sin
       vec3 forward = {.x = cos(radYaw), .y = 0.0f, .z = sin(radYaw)};
 
@@ -558,17 +587,18 @@ void EditorState::render_3d(VkCommandBuffer cmd)
   }
 }
 
-void EditorState::draw_aabb_wireframe(const game::AABB &aabb, uint32_t color)
+void EditorState::draw_aabb_wireframe(const shared::aabb_t &aabb,
+                                      uint32_t color)
 {
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
   ImGuiIO &io = ImGui::GetIO();
 
-  float cx = aabb.center().x();
-  float cy = aabb.center().y();
-  float cz = aabb.center().z();
-  float hx = aabb.half_extents().x();
-  float hy = aabb.half_extents().y();
-  float hz = aabb.half_extents().z();
+  float cx = aabb.center.x;
+  float cy = aabb.center.y;
+  float cz = aabb.center.z;
+  float hx = aabb.half_extents.x;
+  float hy = aabb.half_extents.y;
+  float hz = aabb.half_extents.z;
 
   vec3 corners[8] = {{.x = cx - hx, .y = cy - hy, .z = cz - hz},
                      {.x = cx + hx, .y = cy - hy, .z = cz - hz},

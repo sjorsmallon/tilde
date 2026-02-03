@@ -1,3 +1,4 @@
+#include "../shared/entity_system.hpp"
 #include "client_api.hpp"
 #include "console.hpp"
 #include "renderer.hpp"
@@ -50,6 +51,10 @@ bool Init()
   // Set initial state
   state_manager::init();
   state_manager::switch_to(GameStateKind::MainMenu);
+
+  // Register Entities (Shared Logic)
+  // Register Entities (Shared Logic)
+  state_manager::get_entity_system().register_all_entities();
 
   return true;
 }

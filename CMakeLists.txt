@@ -86,8 +86,12 @@ add_library(game_shared STATIC
     src/shared/task_system.hpp
     src/shared/task_system.cpp
     src/shared/entities/player_entity.cpp
+    src/shared/entities/weapon_entity.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
+    src/shared/network/schema.cpp
+    src/shared/map.cpp
+    src/shared/entity_system.cpp
 )
 
 # Protobuf Generation

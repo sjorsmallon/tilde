@@ -3,10 +3,17 @@
 #include "game_state.hpp"
 #include <memory>
 
-namespace client {
+namespace shared
+{
+struct EntitySystem;
+}
+
+namespace client
+{
 
 // Global state management functions
-namespace state_manager {
+namespace state_manager
+{
 
 // Shutdown and cleanup all states
 void shutdown();
@@ -30,7 +37,11 @@ void request_exit();
 void render_ui();
 
 // Render 3D for the current state
+// Render 3D for the current state
 void render_3d(VkCommandBuffer cmd);
+
+// Get access to the shared entity system
+struct shared::EntitySystem &get_entity_system();
 
 } // namespace state_manager
 

@@ -2,9 +2,10 @@
 
 #include "../camera.hpp"
 #include "../game_state.hpp"
+#include "../shared/entity_system.hpp"
 #include "../shared/linalg.hpp"
+#include "../shared/map.hpp" // New map struct
 #include "../undo_stack.hpp"
-#include "game.pb.h"
 #include <unordered_set>
 #include <vector>
 
@@ -31,14 +32,14 @@ public:
   void render_3d(VkCommandBuffer cmd) override;
 
 private:
-  game::MapSource map_source;
+  shared::map_t map_source;
   std::string current_filename;
 
   camera_t camera;
 
   void draw_grid();
   void draw_gimbal();
-  void draw_aabb_wireframe(const game::AABB &aabb, uint32_t color);
+  void draw_aabb_wireframe(const shared::aabb_t &aabb, uint32_t color);
 
   // UI state
   bool show_demo_window = false;
@@ -52,34 +53,34 @@ private:
 
   // Entity Placement Mode
   bool entity_mode = false;
-  linalg::vec3 entity_cursor_pos{0, 0, 0};
+  linalg::vec3 entity_cursor_pos{.x = 0, .y = 0, .z = 0};
   bool entity_cursor_valid = false;
+  shared::entity_type entity_spawn_type = shared::entity_type::PLAYER;
 
   // Dragging state
   bool dragging_placement = false;
-  linalg::vec3 drag_start{0.0f, 0.0f, 0.0f};
+  linalg::vec3 drag_start{.x = 0.0f, .y = 0.0f, .z = 0.0f};
 
   // Wireframe Toggle
   bool wireframe_mode = true;
 
   // Selection Drag State
   bool dragging_selection = false;
-  linalg::vec2 selection_start{0.0f, 0.0f};
+  linalg::vec2 selection_start{.x = 0.0f, .y = 0.0f};
 
   // Rotation state
   bool rotation_mode = false;
   int rotate_entity_index = -1;
-  linalg::vec3 rotate_debug_point{0, 0, 0};
+  linalg::vec3 rotate_debug_point{.x = 0, .y = 0, .z = 0};
 
   // AABB Handle Interaction
   int hovered_handle_index = -1; // 0..5, or -1
   bool dragging_handle = false;
   int dragging_handle_index = -1;
-  game::AABB dragging_original_aabb;
-  linalg::vec3 drag_start_point{0.0f, 0.0f, 0.0f};
+  shared::aabb_t dragging_original_aabb;
+  linalg::vec3 drag_start_point{.x = 0.0f, .y = 0.0f, .z = 0.0f};
   const float handle_length = 1.0f;
 
-  // Selection state
   // Selection state
   std::unordered_set<int> selected_aabb_indices;
   std::unordered_set<int> selected_entity_indices;
