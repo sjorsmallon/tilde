@@ -83,7 +83,6 @@ add_library(game_shared STATIC
     src/shared/old_ideas/ecs.hpp
     src/shared/snapshot_system.hpp
     src/shared/task_system.hpp
-    src/shared/task_system.hpp
     src/shared/task_system.cpp
     src/shared/entities/player_entity.cpp
     src/shared/entities/weapon_entity.cpp

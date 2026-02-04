@@ -333,7 +333,8 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  if (place_mode && selected_tile[1] > invalid_tile_val + 100.0f)
+  if (current_mode == editor_mode::place &&
+      selected_tile[1] > invalid_tile_val + 100.0f)
   {
     if (dragging_placement)
     {
@@ -419,7 +420,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  if (entity_mode && entity_cursor_valid)
+  if (current_mode == editor_mode::entity_place && entity_cursor_valid)
   {
     // Draw Pyramid
     vec3 p = entity_cursor_pos;
@@ -564,7 +565,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       }
 
       // Debug: Draw line to projected mouse position
-      if (rotation_mode && rotate_entity_index == i)
+      if (current_mode == editor_mode::rotate && rotate_entity_index == i)
       {
         renderer::DrawLine(cmd, p, rotate_debug_point,
                            0xFF00FF00); // Green Debug Line
@@ -686,7 +687,7 @@ void EditorState::draw_grid()
   }
 
   // Highlight selected tile
-  if (place_mode && selected_tile[1] > -5000.0f)
+  if (current_mode == editor_mode::place && selected_tile[1] > -5000.0f)
   {
     float x = selected_tile[0];
     float z = selected_tile[2];

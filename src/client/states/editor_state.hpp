@@ -48,11 +48,39 @@ private:
   bool show_name_popup = false;
 
   // Editor modes
-  bool place_mode = false;
+  enum class editor_mode
+  {
+    select,
+    place,
+    entity_place,
+    rotate
+  };
+  editor_mode current_mode = editor_mode::select;
+  void set_mode(editor_mode mode);
+
+  void handle_input(float dt);
+
+  // Input Actions
+  void action_undo();
+  void action_redo();
+  void action_toggle_place();
+  void action_toggle_entity();
+  void action_toggle_iso();
+  void action_toggle_wireframe();
+  void action_toggle_rotation();
+  void action_entity_1();
+  void action_entity_2();
+  void action_delete();
+
+  // Specialized updates
+  void update_select_mode(float dt);
+  void update_place_mode(float dt);
+  void update_entity_mode(float dt);
+  void update_rotation_mode(float dt);
+
   float selected_tile[3] = {0.0f, 0.0f, 0.0f};
 
   // Entity Placement Mode
-  bool entity_mode = false;
   linalg::vec3 entity_cursor_pos{.x = 0, .y = 0, .z = 0};
   bool entity_cursor_valid = false;
   shared::entity_type entity_spawn_type = shared::entity_type::PLAYER;
@@ -69,7 +97,7 @@ private:
   linalg::vec2 selection_start{.x = 0.0f, .y = 0.0f};
 
   // Rotation state
-  bool rotation_mode = false;
+  // bool rotation_mode = false; // Replaced by enum
   int rotate_entity_index = -1;
   linalg::vec3 rotate_debug_point{.x = 0, .y = 0, .z = 0};
 

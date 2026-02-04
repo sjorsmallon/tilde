@@ -108,4 +108,35 @@ inline camera_basis_t get_orientation_vectors(const camera_t &cam,
   return camera_basis_t{F, R, U};
 }
 
+inline linalg::ray_t get_pick_ray(const camera_t &cam, float ndc_x, float ndc_y,
+                                  float aspect_ratio)
+{
+  using namespace linalg;
+  auto [F, R, U] = get_orientation_vectors(cam);
+
+  if (cam.orthographic)
+  {
+    float h = cam.ortho_height;
+    float w = h * aspect_ratio;
+    float ox = ndc_x * (w * 0.5f);
+    float oy = ndc_y * (h * 0.5f);
+    vec3 origin = {cam.x, cam.y, cam.z};
+    // In editor, we usually start ray far back for orthographic picking?
+    // The original code did: ray_origin = cam - F * 1000 + R*ox + U*oy
+    // Let's replicate that behavior.
+    origin = origin - F * 1000.0f;
+    origin = origin + R * ox + U * oy;
+    return {origin, F};
+  }
+  else
+  {
+    float fov = 90.0f; // Hardcoded default from editor_state.cpp for now
+    float tanHalf = std::tan(to_radians(fov) * 0.5f);
+    float vx = ndc_x * aspect_ratio * tanHalf;
+    float vy = ndc_y * tanHalf;
+    vec3 dir = normalize(R * vx + U * vy + F);
+    return {{cam.x, cam.y, cam.z}, dir};
+  }
+}
+
 } // namespace client

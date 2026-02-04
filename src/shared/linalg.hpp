@@ -252,6 +252,27 @@ inline vec3 world_to_view(const vec3 &p, const vec3 &cam_pos, float cam_yaw_deg,
   return {x, y, z};
 }
 
+struct ray_t
+{
+  vec3 origin;
+  vec3 dir;
+};
+
+// Ray-Plane Intersection
+inline bool intersect_ray_plane(const vec3 &ray_origin, const vec3 &ray_dir,
+                                const vec3 &plane_point,
+                                const vec3 &plane_normal, float &t)
+{
+  float denom = dot(plane_normal, ray_dir);
+  if (std::abs(denom) > 1e-6f)
+  {
+    vec3 p0l0 = plane_point - ray_origin;
+    t = dot(p0l0, plane_normal) / denom;
+    return (t >= 0);
+  }
+  return false;
+}
+
 // Ray-AABB Intersection (Slab Method)
 inline bool intersect_ray_aabb(const vec3 &ray_origin, const vec3 &ray_dir,
                                const vec3 &aabb_min, const vec3 &aabb_max,
