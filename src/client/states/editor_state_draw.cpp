@@ -426,37 +426,28 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     float s = default_entity_size; // Size
     uint32_t col = color_magenta;  // Magenta
 
-    // Pyramid Points: Tip and 4 base corners
-    vec3 tip, b1, b2, b3, b4;
+    shared::pyramid_t pyramid;
+    pyramid.size = s;
 
     if (entity_spawn_type == shared::entity_type::WEAPON)
     {
-      // Inverted Pyramid (Base on Top, Tip Down)
-      // Tip is at cursor pos (on ground/top of box), pointing down?
-      // Or should it "hang" from the cursor?
-      // User said "inverted pyramid".
-      // Let's make the TIP touch the cursor point, growing UP, but inverted
-      // shape? Or Base at cursor point, growing Down? Usually "cursor" is where
-      // the entity FEET are. If WEAPON is a pickup, it might float. Let's
-      // assume standard visual: Tip touches ground (cursor), Base is up. Wait,
-      // standard pyramid usually sits on base. "Inverted pyramid" suggests
-      // checking the "V" shape. Let's put Tip at p, and Base at p + height.
-      tip = {.x = p.x, .y = p.y, .z = p.z}; // Tip at cursor
-      b1 = {.x = p.x - s / 2, .y = p.y + s, .z = p.z - s / 2};
-      b2 = {.x = p.x + s / 2, .y = p.y + s, .z = p.z - s / 2};
-      b3 = {.x = p.x + s / 2, .y = p.y + s, .z = p.z + s / 2};
-      b4 = {.x = p.x - s / 2, .y = p.y + s, .z = p.z + s / 2};
+      // Inverted Pyramid (Base on Top, Tip Down at cursor)
+      pyramid.position = {p.x, p.y + s, p.z};
+      pyramid.height = -s;
     }
     else
     {
       // Standard Pyramid (Base at cursor, Tip Up)
-      // Base at p
-      tip = {.x = p.x, .y = p.y + s, .z = p.z};
-      b1 = {.x = p.x - s / 2, .y = p.y, .z = p.z - s / 2};
-      b2 = {.x = p.x + s / 2, .y = p.y, .z = p.z - s / 2};
-      b3 = {.x = p.x + s / 2, .y = p.y, .z = p.z + s / 2};
-      b4 = {.x = p.x - s / 2, .y = p.y, .z = p.z + s / 2};
+      pyramid.position = {p.x, p.y, p.z};
+      pyramid.height = s;
     }
+
+    auto points = shared::get_pyramid_points(pyramid);
+    vec3 tip = points[0];
+    vec3 b1 = points[1];
+    vec3 b2 = points[2];
+    vec3 b3 = points[3];
+    vec3 b4 = points[4];
 
     // Draw Lines
     auto drawLine = [&](vec3 start, vec3 end)
@@ -498,42 +489,45 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     float cY = cos(radYaw);
     float sY = sin(radYaw);
 
-    auto rotate = [&](float x, float z) -> vec3
-    {
-      // Rotation around Y axis:
-      // x' = x*cos - z*sin
-      // z' = x*sin + z*cos
-      return {
-          .x = p.x + (x * cY - z * sY), .y = p.y, .z = p.z + (x * sY + z * cY)};
-    };
-
-    // Pyramid Points: Tip and 4 base corners
-    // Pyramid Points: Tip and 4 base corners
-    vec3 tip, b1, b2, b3, b4;
+    shared::pyramid_t pyramid;
+    pyramid.size = s;
 
     if (ent.type == shared::entity_type::WEAPON)
     {
       // Inverted Pyramid (Tip Down, Base Up)
-      tip = rotate(0, 0); // Tip at bottom
-      b1 = rotate(-s / 2, -s / 2);
-      b1.y += s;
-      b2 = rotate(s / 2, -s / 2);
-      b2.y += s;
-      b3 = rotate(s / 2, s / 2);
-      b3.y += s;
-      b4 = rotate(-s / 2, s / 2);
-      b4.y += s;
+      pyramid.position = {p.x, p.y + s, p.z};
+      pyramid.height = -s;
     }
     else
     {
       // Standard Pyramid (Tip Up, Base Down)
-      tip = rotate(0, 0);
-      tip.y += s; // Tip at top
-      b1 = rotate(-s / 2, -s / 2);
-      b2 = rotate(s / 2, -s / 2);
-      b3 = rotate(s / 2, s / 2);
-      b4 = rotate(-s / 2, s / 2);
+      pyramid.position = {p.x, p.y, p.z};
+      pyramid.height = s;
     }
+
+    auto points = shared::get_pyramid_points(pyramid);
+
+    // Rotate points
+    for (auto &pt : points)
+    {
+      // Translate to origin (relative to p)
+      float x = pt.x - p.x;
+      float z = pt.z - p.z;
+
+      // Rotate
+      float rx = x * cY - z * sY;
+      float rz = x * sY + z * cY;
+
+      // Translate back
+      pt.x = p.x + rx;
+      pt.z = p.z + rz;
+    }
+
+    vec3 tip = points[0];
+    vec3 b1 = points[1];
+    vec3 b2 = points[2];
+    vec3 b3 = points[3];
+    vec3 b4 = points[4];
 
     // Draw Lines
     auto drawLine = [&](vec3 start, vec3 end)

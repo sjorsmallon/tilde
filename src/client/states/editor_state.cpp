@@ -1025,14 +1025,14 @@ void EditorState::update(float dt)
                 vec3 pos = {.x = ent.position.x,
                             .y = ent.position.y,
                             .z = ent.position.z};
-                float s = default_entity_size; // Size of pyramid
-                vec3 min = {.x = pos.x - s / 2, .y = pos.y, .z = pos.z - s / 2};
-                vec3 max = {
-                    .x = pos.x + s / 2, .y = pos.y + 1.0f, .z = pos.z + s / 2};
+                shared::pyramid_t pyramid = {.position = pos,
+                                             .size = default_entity_size,
+                                             .height = 1.0f};
 
+                auto bounds = shared::get_bounds(pyramid);
                 float t = 0;
-                if (linalg::intersect_ray_aabb(ray_origin, ray_dir, min, max,
-                                               t))
+                if (linalg::intersect_ray_aabb(ray_origin, ray_dir, bounds.min,
+                                               bounds.max, t))
                 {
                   if (t < 0.0f)
                     continue; // Ignore intersections behind the camera
@@ -1320,6 +1320,19 @@ void EditorState::update(float dt)
                   renderer::draw_announcement(
                       (shared::type_to_classname(ent.type) + " Placed")
                           .c_str());
+
+                  // Capture for undo
+                  shared::entity_spawn_t new_ent = ent;
+                  undo_stack.push(
+                      [this]()
+                      {
+                        if (!map_source.entities.empty())
+                        {
+                          map_source.entities.pop_back();
+                        }
+                      },
+                      [this, new_ent]()
+                      { map_source.entities.push_back(new_ent); });
                 }
               }
             }

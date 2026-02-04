@@ -2,6 +2,7 @@
 
 #include "entities/entity_list.hpp"
 #include "linalg.hpp"
+#include "shapes.hpp"
 #include <map>
 #include <string>
 #include <vector>
@@ -25,12 +26,6 @@ struct entity_spawn_t
   float yaw = 0.0f;
   // This allows us to instantiate the correct entity when loading the map.
   std::map<std::string, std::string> properties;
-};
-
-struct aabb_t
-{
-  linalg::vec3 center = {{0, 0, 0}};
-  linalg::vec3 half_extents = {{0, 0, 0}};
 };
 
 struct map_t

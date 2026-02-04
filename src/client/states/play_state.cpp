@@ -1,18 +1,29 @@
 #include "play_state.hpp"
 #include "../console.hpp"
+#include "../renderer.hpp"
+#include "../shared/map.hpp"
 #include "../state_manager.hpp"
 
-namespace client {
+// TODO: WORKING ON MAP LOADING!.
 
-void PlayState::on_enter() {
+namespace client
+{
+
+void PlayState::on_enter()
+{
   // console::log("Entered Play State");
+  renderer::draw_announcement("Play State");
+  shared::map_t map;
+  //   if (shared::load_map("levels/start.map", map)) { ... }
 }
 
-void PlayState::update(float dt) {
+void PlayState::update(float dt)
+{
   // Game logic here
 }
 
-void PlayState::render_ui() {
+void PlayState::render_ui()
+{
   // Console is now global in client_impl.cpp
 
   ImGui::ShowDemoWindow();
@@ -21,16 +32,19 @@ void PlayState::render_ui() {
   ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
   if (ImGui::Begin("Game State", nullptr,
                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                       ImGuiWindowFlags_AlwaysAutoResize))
+  {
     ImGui::Text("Current State: PLAY");
-    if (ImGui::Button("Back to Menu")) {
+    if (ImGui::Button("Back to Menu"))
+    {
       state_manager::switch_to(GameStateKind::MainMenu);
     }
   }
   ImGui::End();
 }
 
-void PlayState::render_3d(VkCommandBuffer cmd) {
+void PlayState::render_3d(VkCommandBuffer cmd)
+{
   // 3D rendering calls would go here
 }
 
