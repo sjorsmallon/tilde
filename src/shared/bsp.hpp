@@ -29,7 +29,7 @@ inline AABB aabb_from_triangle(const vec3f &v0, const vec3f &v1,
 }
 
 // move to math
-size_t abs(size_t a, size_t b) { return (a > b) ? (a - b) : (b - a); }
+inline size_t abs(size_t a, size_t b) { return (a > b) ? (a - b) : (b - a); }
 
 inline vec3f compute_triangle_normal(const vec3f &p0, const vec3f &p1,
                                      const vec3f &p2)
@@ -71,8 +71,8 @@ struct BSP
 };
 
 // partition result is "where do we put this face?"
-Partition_Result get_partition_result(Plane &plane, const vec3f &v0,
-                                      const vec3f &v1, const vec3f &v2)
+inline Partition_Result get_partition_result(Plane &plane, const vec3f &v0,
+                                             const vec3f &v1, const vec3f &v2)
 {
   float d0 = dot(plane.normal, v0 - plane.point);
   float d1 = dot(plane.normal, v1 - plane.point);
@@ -100,8 +100,8 @@ Partition_Result get_partition_result(Plane &plane, const vec3f &v0,
 }
 
 // move to math. Thank you, Christer Ericcson. I owe you one.
-bool is_point_in_triangle(const vec3f &point, const vec3f &v0, const vec3f &v1,
-                          const vec3f &v2)
+inline bool is_point_in_triangle(const vec3f &point, const vec3f &v0,
+                                 const vec3f &v1, const vec3f &v2)
 {
   // translate point and triangle so that point lies at origin
   vec3f a = v0 - point;
@@ -127,8 +127,8 @@ bool is_point_in_triangle(const vec3f &point, const vec3f &v0, const vec3f &v1,
 }
 
 // move to math
-float point_to_edge_distance(const vec3f &point, const vec3f &edge_start,
-                             const vec3f &edge_end)
+inline float point_to_edge_distance(const vec3f &point, const vec3f &edge_start,
+                                    const vec3f &edge_end)
 {
   vec3f edge = edge_end - edge_start;        // Vector along the edge
   vec3f point_to_start = point - edge_start; // Vector from edge start to point
@@ -159,8 +159,8 @@ float point_to_edge_distance(const vec3f &point, const vec3f &edge_start,
 
 // move to math
 // returns the distance to the closest point of any particular triangle.
-float point_to_triangle_distance(const vec3f &p, const vec3f &v0,
-                                 const vec3f &v1, const vec3f &v2)
+inline float point_to_triangle_distance(const vec3f &p, const vec3f &v0,
+                                        const vec3f &v1, const vec3f &v2)
 {
   // get the normal of the triangle plane
   vec3f edge0 = v1 - v0;
@@ -203,7 +203,7 @@ float point_to_triangle_distance(const vec3f &p, const vec3f &v0,
 // log?
 // global_buffer is not const since it can be the case we add faces based on a
 // STRADDLING face.
-BSP *build_bsp(std::vector<vertex_xnc> &vertices)
+inline BSP *build_bsp(std::vector<vertex_xnc> &vertices)
 {
   // Construct the initial list of face indices
   assert(vertices.size() % 3 == 0);
@@ -362,8 +362,9 @@ inline float calculate_max_penetration_depth(const AABB &aabb,
 }
 
 // Utility to get min and max projection of a triangle on an axis
-void project_triangle_on_axis(const vec3f &p0, const vec3f &p1, const vec3f &p2,
-                              const vec3f &axis, float &min, float &max)
+inline void project_triangle_on_axis(const vec3f &p0, const vec3f &p1,
+                                     const vec3f &p2, const vec3f &axis,
+                                     float &min, float &max)
 {
   min = max = dot(p0, axis);
   float proj1 = dot(p1, axis);
@@ -373,8 +374,8 @@ void project_triangle_on_axis(const vec3f &p0, const vec3f &p1, const vec3f &p2,
 }
 
 // Utility to get min and max projection of an AABB on an axis
-void project_aabb_on_axis(const AABB &aabb, const vec3f &axis, float &min,
-                          float &max)
+inline void project_aabb_on_axis(const AABB &aabb, const vec3f &axis,
+                                 float &min, float &max)
 {
   std::array<vec3f, 8> corners = {
       vec3f{.x = aabb.min.x, .y = aabb.min.y, .z = aabb.min.z},
@@ -395,8 +396,8 @@ void project_aabb_on_axis(const AABB &aabb, const vec3f &axis, float &min,
   }
 }
 
-bool triangle_intersects_aabb(const vec3f &p0, const vec3f &p1, const vec3f &p2,
-                              const AABB &aabb)
+inline bool triangle_intersects_aabb(const vec3f &p0, const vec3f &p1,
+                                     const vec3f &p2, const AABB &aabb)
 {
 
   std::array<vec3f, 3> aabb_axes{vec3f{.x = 1.f, .y = 0, .z = 0},

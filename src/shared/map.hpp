@@ -10,15 +10,6 @@
 namespace shared
 {
 
-// we override the x macro from entity_list.hpp to just get the enum name.
-#define ENUM_NAME(enum_name, class_name, str_name, header) enum_name,
-enum class entity_type
-{
-  UNKNOWN = 0,
-  SHARED_ENTITIES_LIST(ENUM_NAME) COUNT
-};
-#undef ENUM_NAME
-
 struct entity_spawn_t
 {
   entity_type type = entity_type::UNKNOWN;
@@ -27,6 +18,9 @@ struct entity_spawn_t
   // This allows us to instantiate the correct entity when loading the map.
   std::map<std::string, std::string> properties;
 };
+
+// this is _NOT_ the in-memory structure that will be used for traversal:
+// is it useful when populating from the editor.
 
 struct map_t
 {

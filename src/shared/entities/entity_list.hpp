@@ -23,4 +23,13 @@
   X(WEAPON, network::Weapon_Entity, "weapon_basic",                            \
     "entities/weapon_entity.hpp")
 
+// we override the x macro from st get the enum name.
+#define ENUM_NAME(enum_name, class_name, str_name, header) enum_name,
+enum class entity_type
+{
+  UNKNOWN = 0,
+  SHARED_ENTITIES_LIST(ENUM_NAME) COUNT
+};
+#undef ENUM_NAME
+
 #endif // SHARED_ENTITY_LIST_HPP

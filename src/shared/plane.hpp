@@ -17,7 +17,7 @@ enum class Partition_Result
   STRADDLING
 };
 
-Plane to_plane(vec3f &v0, vec3f &v1, vec3f &v2)
+inline Plane to_plane(vec3f &v0, vec3f &v1, vec3f &v2)
 {
   vec3f e0 = normalize(v1 - v0);
   vec3f e1 = normalize(v2 - v0);

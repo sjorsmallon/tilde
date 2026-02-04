@@ -91,6 +91,7 @@ add_library(game_shared STATIC
     src/shared/network/schema.cpp
     src/shared/map.cpp
     src/shared/entity_system.cpp
+    src/shared/game_session.cpp
 )
 
 # Protobuf Generation
@@ -253,5 +254,10 @@ target_link_libraries(udp_socket_test PRIVATE game_shared)
 add_executable(server_loop_test src/test/server_loop_test.cpp)
 target_include_directories(server_loop_test PRIVATE src)
 target_link_libraries(server_loop_test PRIVATE game_shared)
+
+# 15. Session Test
+add_executable(session_test src/test/session_test.cpp)
+target_include_directories(session_test PRIVATE src)
+target_link_libraries(session_test PRIVATE game_shared)
 
 

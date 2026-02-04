@@ -54,7 +54,7 @@ bool Init()
 
   // Register Entities (Shared Logic)
   // Register Entities (Shared Logic)
-  state_manager::get_entity_system().register_all_entities();
+  state_manager::get_entity_system().register_all_known_entity_types();
 
   return true;
 }

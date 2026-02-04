@@ -39,7 +39,7 @@ bool Init()
   }
 
   // Register Entities
-  g_server_state.entities.register_all_entities();
+  g_server_state.entities.register_all_known_entity_types();
 
   return true;
 }

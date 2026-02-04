@@ -1,6 +1,8 @@
 #pragma once
 
 #include "map.hpp" // For map_t and entity_type
+#include "network/network_types.hpp"
+#include "network/schema.hpp"
 #include <map>
 #include <memory>
 #include <string>
@@ -22,28 +24,79 @@ template <typename T> struct EntityPool : Entity_Pool_Base
 
   void reset() override { entities.clear(); }
 
+  // Instantiates an entity from spawn data.
+  // 1. Calls ent.init_from_map(spawn.properties) to parse generic properties.
+  // 2. "Magically" injects position and yaw if the Entity's schema has matching
+  // fields:
+  //    - Field "position" (Vec3f) <- spawn.position
+  //    - Field "yaw" or "view_angle_yaw" (Float32) <- spawn.yaw
   void instantiate(const entity_spawn_t &spawn) override
   {
     auto &ent = entities.emplace_back();
-    // Default transformation from spawn
-    // Note: The schema might not have "yaw" or "position" if the entity doesn't
-    // use it, but we can try to set it via init_from_map if it's in properties.
-    // However, the spawn struct has explicit pos/yaw.
-    // We should probably rely on properties for generic parsing,
-    // BUT we might need to manually inject pos/yaw into properties if not
-    // present? Or we assume the specific Entity types have a way to set this.
-    // Ideally, we just rely on init_from_map.
 
+    // 1. Init properties from map first
     ent.init_from_map(spawn.properties);
 
-    // If the entity has a "position" field compliant with our schema,
-    // init_from_map handles it IF the map parser put "origin" or "position"
-    // into properties.
+    // 2. "Magic" injection:
+    // If the entity has a "position" field of type Vec3f, set it from
+    // spawn.position If the entity has a "yaw" field of type Float32, set it
+    // from spawn.yaw
+
+    const auto *schema = ent.get_schema();
+    if (schema)
+    {
+      network::uint8 *base = reinterpret_cast<network::uint8 *>(&ent);
+
+      for (const auto &field : schema->fields)
+      {
+        if (field.name == "position" &&
+            field.type == network::Field_Type::Vec3f)
+        {
+          // We have a position field!
+          network::Network_Var<linalg::vec3> *ptr =
+              reinterpret_cast<network::Network_Var<linalg::vec3> *>(
+                  base + field.offset);
+          *ptr = spawn.position;
+        }
+        else if (field.name == "yaw" &&
+                 field.type == network::Field_Type::Float32)
+        {
+          // We have a yaw field!
+          // (Note: player_entity uses view_angle_yaw, so this might need to be
+          // specific or we just rely on standard naming conventions if we want
+          // this to be generic.) BUT, the goal is to map from spawn.yaw if
+          // possible. However, player_entity has "view_angle_yaw". Let's check
+          // for "view_angle_yaw" too? Or maybe we should just set "yaw" if it
+          // exists. For now let's stick to strict "yaw" or maybe check for both
+          // common names? No, let's just do "yaw" and "view_angle_yaw" for
+          // convenience? Wait, "yaw" is what we parse from map property "yaw".
+
+          network::Network_Var<float> *ptr =
+              reinterpret_cast<network::Network_Var<float> *>(base +
+                                                              field.offset);
+          *ptr = spawn.yaw;
+        }
+        else if (field.name == "view_angle_yaw" &&
+                 field.type == network::Field_Type::Float32)
+        {
+          network::Network_Var<float> *ptr =
+              reinterpret_cast<network::Network_Var<float> *>(base +
+                                                              field.offset);
+          *ptr = spawn.yaw;
+        }
+      }
+    }
   }
 };
 
-struct EntitySystem
+//@NOTE(SJM): while I am mostly opposed to constructors and not default
+// parameters,
+// we need to be sure to register all entity types before we can use them, and
+// it does not make sense to live in a world where you can forget that.
+struct Entity_System
 {
+
+  Entity_System() { register_all_known_entity_types(); }
   std::map<entity_type, std::unique_ptr<struct Entity_Pool_Base>> pools;
 
   template <typename T> void register_entity_type(entity_type type)
@@ -65,7 +118,9 @@ struct EntitySystem
 
   void reset();
   void populate_from_map(const map_t &map);
-  void register_all_entities();
+
+  // this is called in the constructor, no need for you to call it.
+  void register_all_known_entity_types();
 };
 
 // Helpers migrated from EntityFactory

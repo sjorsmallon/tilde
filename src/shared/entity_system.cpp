@@ -10,7 +10,7 @@
 namespace shared
 {
 
-void EntitySystem::reset()
+void Entity_System::reset()
 {
   for (auto &[type, pool] : pools)
   {
@@ -18,7 +18,7 @@ void EntitySystem::reset()
   }
 }
 
-void EntitySystem::populate_from_map(const map_t &map)
+void Entity_System::populate_from_map(const map_t &map)
 {
   reset();
 
@@ -36,7 +36,7 @@ void EntitySystem::populate_from_map(const map_t &map)
   }
 }
 
-void EntitySystem::register_all_entities()
+void Entity_System::register_all_known_entity_types()
 {
 #define REGISTER_GEN(enum_name, class_name, str_name, header_path)             \
   register_entity_type<class_name>(entity_type::enum_name);
