@@ -87,6 +87,22 @@ template <typename T> struct EntityPool : Entity_Pool_Base
       }
     }
   }
+
+  void remove(T *ptr)
+  {
+    for (size_t i = 0; i < entities.size(); ++i)
+    {
+      if (&entities[i] == ptr)
+      {
+        if (i != entities.size() - 1)
+        {
+          entities[i] = std::move(entities.back());
+        }
+        entities.pop_back();
+        return;
+      }
+    }
+  }
 };
 
 //@NOTE(SJM): while I am mostly opposed to constructors and not default
@@ -114,6 +130,31 @@ struct Entity_System
       return &static_cast<EntityPool<T> *>(it->second.get())->entities;
     }
     return nullptr;
+  }
+
+  //@FIXME(SJM): I don't think this should actually return T* ? and that delete
+  // should not actually delete but just free up a slot.
+  template <typename T>
+  T *spawn(entity_type type, const entity_spawn_t &info = {})
+  {
+    auto it = pools.find(type);
+    if (it != pools.end())
+    {
+      auto *pool = static_cast<EntityPool<T> *>(it->second.get());
+      pool->instantiate(info);
+      return &pool->entities.back();
+    }
+    return nullptr;
+  }
+
+  template <typename T> void destroy(entity_type type, T *ptr)
+  {
+    auto it = pools.find(type);
+    if (it != pools.end())
+    {
+      auto *pool = static_cast<EntityPool<T> *>(it->second.get());
+      pool->remove(ptr);
+    }
   }
 
   void reset();

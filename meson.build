@@ -111,15 +111,25 @@ protoc_gen = custom_target('game_proto',
 )
 
 game_shared_src = [
+  'src/shared/file_watcher.hpp',
+  'src/shared/file_watcher.cpp',
   'src/shared/log.hpp',
   'src/shared/cvar.hpp',
   'src/shared/timed_function.hpp',
   'src/shared/detached_console.hpp',
   'src/shared/replay_system.hpp',
-  'src/shared/ecs.hpp',
+  'src/shared/old_ideas/ecs.hpp',
   'src/shared/snapshot_system.hpp',
   'src/shared/task_system.hpp',
   'src/shared/task_system.cpp',
+  'src/shared/entities/player_entity.cpp',
+  'src/shared/entities/weapon_entity.cpp',
+  'src/shared/network/udp_socket.cpp',
+  'src/shared/collision_detection.cpp',
+  'src/shared/network/schema.cpp',
+  'src/shared/map.cpp',
+  'src/shared/entity_system.cpp',
+  'src/shared/game_session.cpp',
   protoc_gen
 ]
 
@@ -145,6 +155,7 @@ game_client_src = [
   'src/client/state_manager.cpp',
   'src/client/states/play_state.cpp',
   'src/client/states/editor_state.cpp',
+  'src/client/states/editor_state_draw.cpp',
   'src/client/input.cpp',
   'src/client/renderer.cpp'
 ]
@@ -245,6 +256,36 @@ executable('camera_test',
 
 executable('linalg_test',
   'src/test/linalg_test.cpp',
+  dependencies : [game_shared_dep],
+  include_directories : include_directories('src')
+)
+
+executable('file_watcher_test',
+  'src/test/file_watcher_test.cpp',
+  dependencies : [game_shared_dep],
+  include_directories : include_directories('src')
+)
+
+executable('network_test',
+  'src/test/test_network_serialization.cpp',
+  dependencies : [game_shared_dep],
+  include_directories : include_directories('src')
+)
+
+executable('udp_socket_test',
+  'src/test/test_udp_socket.cpp',
+  dependencies : [game_shared_dep],
+  include_directories : include_directories('src')
+)
+
+executable('server_loop_test',
+  'src/test/server_loop_test.cpp',
+  dependencies : [game_shared_dep],
+  include_directories : include_directories('src')
+)
+
+executable('session_test',
+  'src/test/session_test.cpp',
   dependencies : [game_shared_dep],
   include_directories : include_directories('src')
 )

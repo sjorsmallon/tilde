@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../entity_system.hpp" // Added for EntitySystem
 #include "game.pb.h"
 #include "network_types.hpp"
 #include "udp_socket.hpp"
@@ -14,10 +13,6 @@
 
 namespace network
 {
-
-constexpr auto sv_max_player_count = 32;
-constexpr auto server_port_number = 2020;
-constexpr auto client_port_number = 2024;
 
 struct Byte_Buffer
 {
@@ -35,6 +30,9 @@ struct ServerInbox
 {
   // Pair of player_idx and move
   std::vector<std::pair<int, TimestampedMove>> moves;
+  std::vector<Address> potential_joins;
+  // Commands from players (or potential players)
+  std::vector<std::pair<Address, game::NetCommand>> net_commands;
 };
 
 struct Server_Connection_State
@@ -47,9 +45,6 @@ struct Server_Connection_State
   // Packet reassembly only
   std::array<std::map<uint8, std::vector<Packet>>, sv_max_player_count>
       partial_packets{};
-
-  // Entities
-  shared::Entity_System entities;
 };
 
 inline void disconnect_player(Server_Connection_State &server_connection_state,
@@ -119,9 +114,30 @@ inline void poll_network(Server_Connection_State &state, Udp_Socket &socket,
     Address sender;
     if (socket.receive(packet, sender))
     {
+      if (packet.header.message_type ==
+          static_cast<uint8>(Message_Type::NetCommand))
+      {
+        // For now, assume NetCommands are single-packet for simplicity
+        // regarding unknown senders. Or use a temporary buffer. Since Connect
+        // is small, strict single-packet check.
+        if (packet.header.sequence_count == 1)
+        {
+          game::NetCommand cmd;
+          if (cmd.ParseFromArray(packet.buffer, packet.header.payload_size))
+          {
+            out_inbox.net_commands.push_back({sender, cmd});
+          }
+        }
+      }
+
       size_t player_idx = get_player_idx(state, sender);
       if (player_idx == -1)
+      {
+        // Unknown player, maybe they want to join?
+        // Deduplicate? For now, just add.
+        out_inbox.potential_joins.push_back(sender);
         continue; // Unknown player
+      }
 
       // Store packet fragment
       auto &fragments =

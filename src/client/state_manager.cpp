@@ -16,7 +16,7 @@ static IGameState *g_active_state = nullptr;
 static bool g_should_exit = false;
 
 static std::unordered_map<GameStateKind, std::unique_ptr<IGameState>> g_states;
-static shared::Entity_System g_entity_system;
+static client_context_t g_client_context;
 
 void shutdown()
 {
@@ -26,7 +26,7 @@ void shutdown()
     g_active_state = nullptr;
   }
   g_states.clear();
-  g_entity_system.reset();
+  g_client_context.session.entity_system.reset();
 }
 
 void init()
@@ -87,7 +87,12 @@ void render_3d(VkCommandBuffer cmd)
   }
 }
 
-shared::Entity_System &get_entity_system() { return g_entity_system; }
+shared::Entity_System &get_entity_system()
+{
+  return g_client_context.session.entity_system;
+}
+
+client_context_t &get_client_context() { return g_client_context; }
 
 } // namespace state_manager
 } // namespace client

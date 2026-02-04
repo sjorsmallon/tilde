@@ -21,4 +21,8 @@ using float64 = double;
 
 using vec3f = linalg::vec3_t<float32>;
 
+constexpr auto sv_max_player_count = 32;
+constexpr auto server_port_number = 2020;
+constexpr auto client_port_number = 2024;
+
 } // namespace network

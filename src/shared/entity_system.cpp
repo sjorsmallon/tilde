@@ -38,6 +38,8 @@ void Entity_System::populate_from_map(const map_t &map)
 
 void Entity_System::register_all_known_entity_types()
 {
+  log_terminal("Registering all known entity types");
+
 #define REGISTER_GEN(enum_name, class_name, str_name, header_path)             \
   register_entity_type<class_name>(entity_type::enum_name);
 

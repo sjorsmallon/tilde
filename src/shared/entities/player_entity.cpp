@@ -12,6 +12,7 @@ DEFINE_FIELD(view_angle_pitch, Field_Type::Float32)
 DEFINE_FIELD(health, Field_Type::Int32)
 DEFINE_FIELD(ammo, Field_Type::Int32)
 DEFINE_FIELD(active_weapon_id, Field_Type::Int32)
+DEFINE_FIELD(client_slot_index, Field_Type::Int32)
 END_SCHEMA(Player_Entity)
 
 } // namespace network

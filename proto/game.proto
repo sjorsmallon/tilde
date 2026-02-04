@@ -110,3 +110,34 @@ message MapSource {
   string name = 2;
   repeated EntitySpawn entities = 3;
 }
+
+// --------------------------------------------- Network Negotiation
+
+message CmdConnect {
+    int32 protocol_version = 1;
+    string player_name = 2;
+}
+
+message CmdAccept {
+    int32 client_slot = 1;
+    string map_name = 2;       // The map the server is currently running
+    int32 server_tickrate = 3;
+}
+
+message CmdReject {
+    string reason = 1;
+}
+
+message CmdDisconnect {
+    string reason = 1;
+}
+
+message NetCommand {
+    // Oneof ensures only one payload is set
+    oneof command {
+        CmdConnect connect = 2;
+        CmdAccept accept = 3;
+        CmdReject reject = 4;
+        CmdDisconnect disconnect = 5;
+    }
+}

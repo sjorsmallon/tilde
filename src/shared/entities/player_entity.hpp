@@ -16,6 +16,7 @@ public:
   Network_Var<int32> health;
   Network_Var<int32> ammo;
   Network_Var<int32> active_weapon_id;
+  Network_Var<int32> client_slot_index;
 
   // Required macro to declare schema functions
   DECLARE_SCHEMA(Player_Entity)

@@ -43,10 +43,11 @@ int main()
     assert(packets[0].header.sequence_idx == 0);
     assert(packets[0].header.sequence_count == 3);
     assert(packets[0].header.message_type == 10);
-    assert(packets[0].header.payload_size == MAX_PAYLOAD_SIZE);
+    assert(packets[0].header.payload_size == MAX_PAYLOAD_SIZE_IN_BYTES);
 
     assert(packets[2].header.sequence_idx == 2);
-    assert(packets[2].header.payload_size == (3000 - MAX_PAYLOAD_SIZE * 2));
+    assert(packets[2].header.payload_size ==
+           (3000 - MAX_PAYLOAD_SIZE_IN_BYTES * 2));
 
     std::cout << "  -> Chunking Success! Created " << packets.size()
               << " packets." << std::endl;

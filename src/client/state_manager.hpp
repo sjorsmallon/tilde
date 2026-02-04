@@ -1,5 +1,6 @@
 #pragma once
 
+#include "client_context.hpp"
 #include "game_state.hpp"
 #include <memory>
 
@@ -41,7 +42,11 @@ void render_ui();
 void render_3d(VkCommandBuffer cmd);
 
 // Get access to the shared entity system
+// Get access to the shared entity system (convenience wrapper around context)
 struct shared::Entity_System &get_entity_system();
+
+// Get access to the full client context
+client_context_t &get_client_context();
 
 } // namespace state_manager
 
