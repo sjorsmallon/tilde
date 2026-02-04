@@ -259,8 +259,8 @@ void EditorState::render_ui()
 void EditorState::render_3d(VkCommandBuffer cmd)
 {
   // Full Screen Viewport
-  renderer::viewport_t vp = {.start = {.x = 0.0f, 0.0f},
-                             .dimensions = {.x = 1.0f, 1.0f}};
+  renderer::viewport_t vp = {.start = {.x = 0.0f, .y = 0.0f},
+                             .dimensions = {.x = 1.0f, .y = 1.0f}};
   renderer::render_view_t view = {.viewport = vp, .camera = camera};
 
   // Dummy registry for now
@@ -749,7 +749,7 @@ void EditorState::draw_gimbal()
     // Project to screen (Orthographic)
     // View X is Right, View Y is Up
     // Screen X is Right, Screen Y is Down
-    vec2 end = {.x = center.x + p.x * axis_len, center.y - p.y * axis_len};
+    vec2 end = {.x = center.x + p.x * axis_len, .y = center.y - p.y * axis_len};
 
     dl->AddLine({center.x, center.y}, {end.x, end.y}, colors[i], 2.0f);
     dl->AddText({end.x, end.y}, colors[i], labels[i]);

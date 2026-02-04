@@ -862,7 +862,7 @@ void EditorState::update_select_mode(float dt)
         const auto &aabb = map_source.aabbs[i];
         vec3 p = linalg::world_to_view(
             {.x = aabb.center.x, .y = aabb.center.y, .z = aabb.center.z},
-            {.x = camera.x, camera.y, camera.z}, camera.yaw, camera.pitch);
+            {.x = camera.x, .y = camera.y, .z =camera.z}, camera.yaw, camera.pitch);
         if (p.z < 0 && !camera.orthographic)
           continue;
         vec2 s = linalg::view_to_screen(
@@ -877,7 +877,7 @@ void EditorState::update_select_mode(float dt)
         const auto &ent = map_source.entities[i];
         vec3 p = linalg::world_to_view(
             {.x = ent.position.x, .y = ent.position.y, .z = ent.position.z},
-            {.x = camera.x, camera.y, camera.z}, camera.yaw, camera.pitch);
+            {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw, camera.pitch);
         if (p.z < 0 && !camera.orthographic)
           continue;
         vec2 s = linalg::view_to_screen(

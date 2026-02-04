@@ -82,10 +82,15 @@ public:
         [](FunctionStats *a, FunctionStats *b) { return a->name < b->name; });
 
     log_terminal("\n--- Performance Stats (Last 5 runs moving avg) ---");
-    for (const auto *stat : sorted_stats) {
+
+    for (const auto *stat : sorted_stats)
+    {
       double sum = 0.0;
-      size_t c = stat->count.load(std::memory_order_relaxed);
-      size_t num_samples = std::min(c, MOVING_AVERAGE_WINDOW);
+      
+      
+      size_t count = stat->count.load(std::memory_order_relaxed);
+
+      size_t num_samples = std::min(count, MOVING_AVERAGE_WINDOW);
 
       // Read latest samples (might be slightly tearing if actively writing, but
       // acceptable for profiling) We go backwards from current count to get
@@ -95,12 +100,13 @@ public:
       // (count-5).
 
       size_t samples_accumulated = 0;
-      if (c > 0) {
+      if (count> 0) {
         // Careful with unsigned underflow logic, simplified loop:
-        for (size_t i = 0; i < num_samples; ++i) {
+        for (size_t i = 0; i < num_samples; ++i)
+        {
           // Index in logic: c - 1 - i
           // Index in array: (c - 1 - i) % WINDOW
-          size_t logical_idx = c - 1 - i;
+          size_t logical_idx = count - 1 - i;
           sum += stat->samples[logical_idx % MOVING_AVERAGE_WINDOW].load(
               std::memory_order_relaxed);
           samples_accumulated++;
@@ -109,7 +115,7 @@ public:
 
       double avg =
           (samples_accumulated > 0) ? (sum / samples_accumulated) : 0.0;
-      log_terminal("[{}] Avg: {:.4f} ms (Calls: {})", stat->name, avg, c);
+      log_terminal("[{}] Avg: {:.4f} ms (Calls: {})", stat->name, avg, count);
     }
     log_terminal("--------------------------------------------------\n");
   }
