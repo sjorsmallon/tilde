@@ -49,7 +49,7 @@ struct Server_Connection_State
       partial_packets{};
 
   // Entities
-  shared::EntitySystem entities;
+  shared::Entity_System entities;
 };
 
 inline void disconnect_player(Server_Connection_State &server_connection_state,

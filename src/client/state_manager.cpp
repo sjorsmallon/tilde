@@ -16,7 +16,7 @@ static IGameState *g_active_state = nullptr;
 static bool g_should_exit = false;
 
 static std::unordered_map<GameStateKind, std::unique_ptr<IGameState>> g_states;
-static shared::EntitySystem g_entity_system;
+static shared::Entity_System g_entity_system;
 
 void shutdown()
 {
@@ -87,7 +87,7 @@ void render_3d(VkCommandBuffer cmd)
   }
 }
 
-shared::EntitySystem &get_entity_system() { return g_entity_system; }
+shared::Entity_System &get_entity_system() { return g_entity_system; }
 
 } // namespace state_manager
 } // namespace client

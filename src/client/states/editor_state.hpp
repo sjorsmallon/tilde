@@ -83,7 +83,7 @@ private:
   // Entity Placement Mode
   linalg::vec3 entity_cursor_pos{.x = 0, .y = 0, .z = 0};
   bool entity_cursor_valid = false;
-  shared::entity_type entity_spawn_type = shared::entity_type::PLAYER;
+  entity_type entity_spawn_type = entity_type::PLAYER;
 
   // Dragging state
   bool dragging_placement = false;

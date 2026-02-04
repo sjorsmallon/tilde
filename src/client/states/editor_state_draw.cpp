@@ -430,7 +430,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     shared::pyramid_t pyramid;
     pyramid.size = s;
 
-    if (entity_spawn_type == shared::entity_type::WEAPON)
+    if (entity_spawn_type == entity_type::WEAPON)
     {
       // Inverted Pyramid (Base on Top, Tip Down at cursor)
       pyramid.position = {p.x, p.y + s, p.z};
@@ -493,7 +493,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     shared::pyramid_t pyramid;
     pyramid.size = s;
 
-    if (ent.type == shared::entity_type::WEAPON)
+    if (ent.type == entity_type::WEAPON)
     {
       // Inverted Pyramid (Tip Down, Base Up)
       pyramid.position = {p.x, p.y + s, p.z};

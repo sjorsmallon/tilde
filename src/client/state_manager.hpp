@@ -5,7 +5,7 @@
 
 namespace shared
 {
-struct EntitySystem;
+struct Entity_System;
 }
 
 namespace client
@@ -41,7 +41,7 @@ void render_ui();
 void render_3d(VkCommandBuffer cmd);
 
 // Get access to the shared entity system
-struct shared::EntitySystem &get_entity_system();
+struct shared::Entity_System &get_entity_system();
 
 } // namespace state_manager
 

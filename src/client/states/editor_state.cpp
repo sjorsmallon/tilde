@@ -206,7 +206,7 @@ void EditorState::action_entity_1()
 {
   if (current_mode == editor_mode::entity_place)
   {
-    entity_spawn_type = shared::entity_type::PLAYER;
+    entity_spawn_type = entity_type::PLAYER;
     renderer::draw_announcement("Player Entity Selected");
   }
 }
@@ -215,7 +215,7 @@ void EditorState::action_entity_2()
 {
   if (current_mode == editor_mode::entity_place)
   {
-    entity_spawn_type = shared::entity_type::WEAPON;
+    entity_spawn_type = entity_type::WEAPON;
     renderer::draw_announcement("Weapon Entity Selected");
   }
 }
