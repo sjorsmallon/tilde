@@ -9,10 +9,7 @@
 #include <fstream>
 #include <iostream> // Added for cerr
 
-constexpr const float fov_default = 90.0f;
-constexpr const float pi = 3.14159265f;
-constexpr const float default_entity_size = 0.5f;
-constexpr const float default_aabb_half_size = 0.5f;
+// Constants now in editor_state.hpp
 
 namespace client
 {

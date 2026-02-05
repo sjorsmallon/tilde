@@ -19,6 +19,18 @@ constexpr const uint32_t color_selection_fill = 0x3300FF00;
 constexpr const uint32_t color_selection_border = 0xFF00FF00;
 
 constexpr const float invalid_tile_val = -10000.0f;
+constexpr const float invalid_idx = -1.0f;
+constexpr const float fov_default = 90.0f;
+constexpr const float iso_yaw = 315.0f;
+constexpr const float iso_pitch = -35.264f;
+constexpr const float ray_far_dist = 1000.0f;
+constexpr const float ray_epsilon = 1e-6f;
+constexpr const float pi = 3.14159265f;
+constexpr const float default_entity_size = 0.5f;
+constexpr const float default_aabb_half_size = 0.5f;
+constexpr const float default_floor_y = -2.0f;
+constexpr const float default_floor_extent = 10.0f;
+constexpr const float default_floor_half_height = 0.5f;
 
 namespace client
 {
