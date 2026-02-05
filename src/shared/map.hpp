@@ -26,6 +26,7 @@ struct map_t
 {
   std::string name;
   std::vector<aabb_t> aabbs;
+  std::vector<wedge_t> wedges;
   std::vector<entity_spawn_t> entities;
 };
 

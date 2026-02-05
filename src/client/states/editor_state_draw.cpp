@@ -179,7 +179,7 @@ void EditorState::render_ui()
   // ImGuiIO &io = ImGui::GetIO();
 
   // Detect overlaps
-  std::unordered_set<int> overlapping_indices;
+  std::set<int> overlapping_indices;
   {
     for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
     {
@@ -274,7 +274,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
   if (!wireframe_mode)
   {
     // Detect overlaps
-    std::unordered_set<int> overlapping_indices;
+    std::set<int> overlapping_indices;
     {
       for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
       {
@@ -330,6 +330,25 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     }
   }
 
+  // Draw Wedges
+  if (!wireframe_mode ||
+      wireframe_mode) // Always draw wireframe for wedges as no filled mode
+  {
+    int idx = 0;
+    for (const auto &wedge : map_source.wedges)
+    {
+      uint32_t col = color_green;
+      if (selected_wedge_indices.count(idx))
+      {
+        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f;
+        uint8_t g = (uint8_t)(t * 255.0f);
+        col = color_red | (g << 8) | 0x00FF0000;
+      }
+      draw_wedge_wireframe(wedge, col);
+      idx++;
+    }
+  }
+
   if (current_mode == editor_mode::place &&
       selected_tile[1] > invalid_tile_val + 100.0f)
   {
@@ -357,14 +376,25 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       float half_y = 0.5f; // height * 0.5f
       float half_z = depth * 0.5f;
 
-      renderer::DrawAABB(cmd,
-                         {.x = center_x - half_x,
-                          .y = center_y - half_y,
-                          .z = center_z - half_z},
-                         {.x = center_x + half_x,
-                          .y = center_y + half_y,
-                          .z = center_z + half_z},
-                         color_magenta);
+      if (geometry_place_type == int_geometry_type::WEDGE)
+      {
+        shared::wedge_t wedge;
+        wedge.center = {.x = center_x, .y = center_y, .z = center_z};
+        wedge.half_extents = {.x = half_x, .y = half_y, .z = half_z};
+        wedge.orientation = 0;
+        draw_wedge_wireframe(wedge, color_magenta);
+      }
+      else
+      {
+        renderer::DrawAABB(cmd,
+                           {.x = center_x - half_x,
+                            .y = center_y - half_y,
+                            .z = center_z - half_z},
+                           {.x = center_x + half_x,
+                            .y = center_y + half_y,
+                            .z = center_z + half_z},
+                           color_magenta);
+      }
     }
     else
     {
@@ -374,9 +404,20 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       // User requested subtraction of half-height.
       // Adjusted to -0.5 center.
       // Box: {y - 1.0f} to {y + 0.0f} -> Center -0.5. Range [-1, 0].
-      renderer::DrawAABB(cmd, {.x = x, .y = y - 1.0f, .z = z},
-                         {.x = x + 1.0f, .y = y + 0.0f, .z = z + 1.0f},
-                         color_white);
+      if (geometry_place_type == int_geometry_type::WEDGE)
+      {
+        shared::wedge_t wedge;
+        wedge.center = {.x = x + 0.5f, .y = y - 0.5f, .z = z + 0.5f};
+        wedge.half_extents = {.x = 0.5f, .y = 0.5f, .z = 0.5f};
+        wedge.orientation = 0;
+        draw_wedge_wireframe(wedge, color_white);
+      }
+      else
+      {
+        renderer::DrawAABB(cmd, {.x = x, .y = y - 1.0f, .z = z},
+                           {.x = x + 1.0f, .y = y + 0.0f, .z = z + 1.0f},
+                           color_white);
+      }
     }
   }
 
@@ -404,6 +445,39 @@ void EditorState::render_3d(VkCommandBuffer cmd)
         int axis = i / 2;
         vec3 n = face_normals[i];
         vec3 p = center + n * half_vals[axis]; // Face center
+        vec3 end = p + n * handle_length;
+
+        uint32_t col = color_white;
+        if (hovered_handle_index == i || dragging_handle_index == i)
+        {
+          col = color_green;
+        }
+
+        renderer::draw_arrow(cmd, p, end, col);
+      }
+    }
+  }
+
+  // Draw Wedge Handles
+  if (selected_wedge_indices.size() == 1)
+  {
+    int idx = *selected_wedge_indices.begin();
+    if (idx >= 0 && idx < (int)map_source.wedges.size())
+    {
+      const auto &wedge = map_source.wedges[idx];
+      vec3 center = wedge.center;
+      vec3 half = wedge.half_extents;
+      vec3 face_normals[6] = {
+          {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
+          {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
+          {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
+      float half_vals[3] = {half.x, half.y, half.z};
+
+      for (int i = 0; i < 6; ++i)
+      {
+        int axis = i / 2;
+        vec3 n = face_normals[i];
+        vec3 p = center + n * half_vals[axis];
         vec3 end = p + n * handle_length;
 
         uint32_t col = color_white;
@@ -637,6 +711,100 @@ void EditorState::draw_aabb_wireframe(const shared::aabb_t &aabb,
   drawLine(1, 5);
   drawLine(2, 6);
   drawLine(3, 7);
+}
+
+void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
+                                       uint32_t color)
+{
+  ImGuiIO &io = ImGui::GetIO();
+  auto points = shared::get_wedge_points(wedge);
+
+  // points: 0-3 base, 4-5 top edge
+  // Connectivity depends on orientation
+  // But wait, my get_wedge_points implementation returned 6 points.
+  // I need to map them back to world-to-view.
+
+  std::vector<vec3> world_pts;
+  for (const auto &p : points)
+    world_pts.push_back(p);
+
+  auto drawLine = [&](int i, int j)
+  {
+    vec3 p1 = linalg::world_to_view(
+        world_pts[i], {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw,
+        camera.pitch);
+    vec3 p2 = linalg::world_to_view(
+        world_pts[j], {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw,
+        camera.pitch);
+
+    if (camera.orthographic || linalg::clip_line(p1, p2))
+    {
+      vec2 s1 = linalg::view_to_screen(
+          p1, {.x = io.DisplaySize.x, .y = io.DisplaySize.y},
+          camera.orthographic, camera.ortho_height, fov_default);
+      vec2 s2 = linalg::view_to_screen(
+          p2, {.x = io.DisplaySize.x, .y = io.DisplaySize.y},
+          camera.orthographic, camera.ortho_height, fov_default);
+      ImGui::GetBackgroundDrawList()->AddLine({s1.x, s1.y}, {s2.x, s2.y},
+                                              color);
+    }
+  };
+
+  // Base Quad
+  drawLine(0, 1);
+  drawLine(1, 2);
+  drawLine(2, 3);
+  drawLine(3, 0);
+
+  // Top Edge
+  drawLine(4, 5);
+
+  // Connect Top to Base
+  // Orientation 0 (-Z Slope, Up at -Z): Top is p4-p5. p4 above p0, p5 above p1.
+  // 0,1 are min-Z.
+  // Vertical: 0-4, 1-5.
+  // Sloped: 3-4, 2-5.
+  if (wedge.orientation == 0)
+  {
+    drawLine(0, 4);
+    drawLine(1, 5);
+    drawLine(3, 4);
+    drawLine(2, 5);
+  }
+  else if (wedge.orientation == 1) // +Z Slope, Up at +Z
+  {
+    // Top is p7-p6 (stored in 4,5). p7 above p3, p6 above p2.
+    // 3,2 are max-Z.
+    // Base Indices: 0,1,2,3.
+    // Vertical: 3-4, 2-5.
+    // Sloped: 0-4, 1-5.
+    drawLine(3, 4);
+    drawLine(2, 5);
+    drawLine(0, 4);
+    drawLine(1, 5);
+  }
+  else if (wedge.orientation == 2) // -X Slope, Up at -X
+  {
+    // Top is p4-p7 (stored in 4,5). p4 above p0, p7 above p3.
+    // 0,3 are min-X.
+    // Vertical: 0-4, 3-5.
+    // Sloped: 1-4, 2-5.
+    drawLine(0, 4);
+    drawLine(3, 5);
+    drawLine(1, 4);
+    drawLine(2, 5);
+  }
+  else // 3, +X Slope, Up at +X
+  {
+    // Top is p5-p6 (stored in 4,5). p5 above p1, p6 above p2.
+    // 1,2 are max-X.
+    // Vertical: 1-4, 2-5.
+    // Sloped: 0-4, 3-5.
+    drawLine(1, 4);
+    drawLine(2, 5);
+    drawLine(0, 4);
+    drawLine(3, 5);
+  }
 }
 
 void EditorState::draw_grid()

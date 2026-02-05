@@ -68,7 +68,6 @@ void EditorState::update_place_mode(float dt)
       if (lmb_released)
       {
         dragging_placement = false;
-        auto &aabb = map_source.aabbs.emplace_back();
 
         float min_x = std::min(drag_start.x, current_pos.x);
         float max_x = std::max(drag_start.x, current_pos.x);
@@ -82,18 +81,41 @@ void EditorState::update_place_mode(float dt)
         float d = grid_max_z - grid_min_z;
         float h = 1.0f;
 
-        aabb.center = {
-            .x = grid_min_x + w * 0.5f, .y = -0.5f, .z = grid_min_z + d * 0.5f};
-        aabb.half_extents = {.x = w * 0.5f, .y = h * 0.5f, .z = d * 0.5f};
+        if (geometry_place_type == int_geometry_type::AABB)
+        {
+          auto &aabb = map_source.aabbs.emplace_back();
+          aabb.center = {.x = grid_min_x + w * 0.5f,
+                         .y = -0.5f,
+                         .z = grid_min_z + d * 0.5f};
+          aabb.half_extents = {.x = w * 0.5f, .y = h * 0.5f, .z = d * 0.5f};
 
-        shared::aabb_t new_aabb = aabb;
-        undo_stack.push(
-            [this]()
-            {
-              if (!map_source.aabbs.empty())
-                map_source.aabbs.pop_back();
-            },
-            [this, new_aabb]() { map_source.aabbs.push_back(new_aabb); });
+          shared::aabb_t new_aabb = aabb;
+          undo_stack.push(
+              [this]()
+              {
+                if (!map_source.aabbs.empty())
+                  map_source.aabbs.pop_back();
+              },
+              [this, new_aabb]() { map_source.aabbs.push_back(new_aabb); });
+        }
+        else if (geometry_place_type == int_geometry_type::WEDGE)
+        {
+          auto &wedge = map_source.wedges.emplace_back();
+          wedge.center = {.x = grid_min_x + w * 0.5f,
+                          .y = -0.5f,
+                          .z = grid_min_z + d * 0.5f};
+          wedge.half_extents = {.x = w * 0.5f, .y = h * 0.5f, .z = d * 0.5f};
+          wedge.orientation = 0; // Default orientation
+
+          shared::wedge_t new_wedge = wedge;
+          undo_stack.push(
+              [this]()
+              {
+                if (!map_source.wedges.empty())
+                  map_source.wedges.pop_back();
+              },
+              [this, new_wedge]() { map_source.wedges.push_back(new_wedge); });
+        }
       }
     }
     else
@@ -105,19 +127,39 @@ void EditorState::update_place_mode(float dt)
       }
       else if (lmb_clicked)
       {
-        shared::aabb_t new_aabb;
-        new_aabb.center = {
-            .x = current_pos.x + 0.5f, .y = -0.5f, .z = current_pos.z + 0.5f};
-        new_aabb.half_extents = {.x = 0.5f, .y = 0.5f, .z = 0.5f};
-        map_source.aabbs.push_back(new_aabb);
+        if (geometry_place_type == int_geometry_type::AABB)
+        {
+          shared::aabb_t new_aabb;
+          new_aabb.center = {
+              .x = current_pos.x + 0.5f, .y = -0.5f, .z = current_pos.z + 0.5f};
+          new_aabb.half_extents = {.x = 0.5f, .y = 0.5f, .z = 0.5f};
+          map_source.aabbs.push_back(new_aabb);
 
-        undo_stack.push(
-            [this]()
-            {
-              if (!map_source.aabbs.empty())
-                map_source.aabbs.pop_back();
-            },
-            [this, new_aabb]() { map_source.aabbs.push_back(new_aabb); });
+          undo_stack.push(
+              [this]()
+              {
+                if (!map_source.aabbs.empty())
+                  map_source.aabbs.pop_back();
+              },
+              [this, new_aabb]() { map_source.aabbs.push_back(new_aabb); });
+        }
+        else if (geometry_place_type == int_geometry_type::WEDGE)
+        {
+          shared::wedge_t new_wedge;
+          new_wedge.center = {
+              .x = current_pos.x + 0.5f, .y = -0.5f, .z = current_pos.z + 0.5f};
+          new_wedge.half_extents = {.x = 0.5f, .y = 0.5f, .z = 0.5f};
+          new_wedge.orientation = 0;
+          map_source.wedges.push_back(new_wedge);
+
+          undo_stack.push(
+              [this]()
+              {
+                if (!map_source.wedges.empty())
+                  map_source.wedges.pop_back();
+              },
+              [this, new_wedge]() { map_source.wedges.push_back(new_wedge); });
+        }
       }
     }
   }
@@ -216,9 +258,6 @@ void EditorState::update_entity_mode(float dt)
 void EditorState::update_select_mode(float dt)
 {
   ImGuiIO &io = ImGui::GetIO();
-  if (io.WantCaptureMouse)
-    return;
-
   bool handle_interaction = false;
 
   // Handle Logic Check (Gizmo)
@@ -409,6 +448,187 @@ void EditorState::update_select_mode(float dt)
     }
   }
 
+  // Wedge Gizmo
+  if (selected_wedge_indices.size() == 1 && !dragging_selection &&
+      selected_aabb_indices.empty())
+  {
+    int idx = *selected_wedge_indices.begin();
+    if (idx >= 0 && idx < (int)map_source.wedges.size())
+    {
+      auto *wedge = &map_source.wedges[idx];
+      vec3 center = wedge->center;
+      vec3 half = wedge->half_extents;
+      vec3 face_normals[6] = {
+          {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
+          {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
+          {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
+      float half_vals[3] = {half.x, half.y, half.z};
+
+      float mouse_x = io.MousePos.x;
+      float mouse_y = io.MousePos.y;
+      float width = io.DisplaySize.x;
+      float height = io.DisplaySize.y;
+      vec3 ray_origin, ray_dir;
+      bool valid_ray = false;
+
+      if (width > 0 && height > 0)
+      {
+        float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
+        float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+        float aspect = width / height;
+        linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
+        ray_origin = ray.origin;
+        ray_dir = ray.dir;
+        valid_ray = true;
+      }
+
+      float min_t = 1e9f;
+      if (valid_ray && !dragging_handle)
+      {
+        hovered_handle_index = invalid_idx;
+        for (int i = 0; i < 6; ++i)
+        {
+          int axis = i / 2;
+          vec3 n = face_normals[i];
+          vec3 p = center + n * half_vals[axis];
+          vec3 end = p + n * handle_length;
+          vec3 bmin = {.x = std::min(p.x, end.x),
+                       .y = std::min(p.y, end.y),
+                       .z = std::min(p.z, end.z)};
+          vec3 bmax = {.x = std::max(p.x, end.x),
+                       .y = std::max(p.y, end.y),
+                       .z = std::max(p.z, end.z)};
+          float pad = 0.2f;
+          bmin = bmin - vec3{.x = pad, .y = pad, .z = pad};
+          bmax = bmax + vec3{.x = pad, .y = pad, .z = pad};
+
+          float t = 0;
+          if (linalg::intersect_ray_aabb(ray_origin, ray_dir, bmin, bmax, t))
+          {
+            if (t < min_t && t > 0)
+            {
+              min_t = t;
+              hovered_handle_index = i;
+            }
+          }
+        }
+      }
+
+      if (dragging_handle)
+      {
+        handle_interaction = true;
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+        {
+          dragging_handle = false;
+          dragging_handle_index = -1;
+          shared::wedge_t safe_copy = *wedge;
+          shared::wedge_t original_copy = dragging_original_wedge;
+          int captured_idx = idx;
+          undo_stack.push(
+              [this, captured_idx, original_copy]()
+              {
+                if (captured_idx >= 0 &&
+                    captured_idx < (int)map_source.wedges.size())
+                  map_source.wedges[captured_idx] = original_copy;
+              },
+              [this, captured_idx, safe_copy]()
+              {
+                if (captured_idx >= 0 &&
+                    captured_idx < (int)map_source.wedges.size())
+                  map_source.wedges[captured_idx] = safe_copy;
+              });
+        }
+        else
+        {
+          int i = dragging_handle_index;
+          int axis = i / 2;
+          vec3 n = face_normals[i];
+          vec3 u = n;
+          vec3 p1 = drag_start_point;
+          vec3 q1 = ray_origin;
+          vec3 v = ray_dir;
+          vec3 w0 = p1 - q1;
+          float a = linalg::dot(u, u);
+          float b = linalg::dot(u, v);
+          float c = linalg::dot(v, v);
+          float d = linalg::dot(u, w0);
+          float e = linalg::dot(v, w0);
+          float denom = a * c - b * b;
+
+          if (std::abs(denom) > 1e-4f)
+          {
+            float t = (b * e - c * d) / denom;
+            float delta = t;
+
+            vec3 old_min = dragging_original_wedge.center -
+                           dragging_original_wedge.half_extents;
+            vec3 old_max = dragging_original_wedge.center +
+                           dragging_original_wedge.half_extents;
+
+            float new_min_val = old_min[axis];
+            float new_max_val = old_max[axis];
+
+            if (i % 2 == 0) // + Face
+            {
+              new_max_val += delta;
+              new_max_val = std::round(new_max_val);
+            }
+            else // - Face
+            {
+              new_min_val += (n[axis] * delta);
+              new_min_val = std::round(new_min_val);
+            }
+
+            if (new_max_val < new_min_val + 0.1f)
+            {
+              if (i % 2 == 0)
+                new_max_val = new_min_val + 0.1f;
+              else
+                new_min_val = new_max_val - 0.1f;
+            }
+
+            // For wedges, we might want to also allow changing orientation?
+            // But resizing is primary request.
+            // Orientation changes usually via key press (Rotate).
+
+            float new_center_val = (new_min_val + new_max_val) * 0.5f;
+            float new_half_val = (new_max_val - new_min_val) * 0.5f;
+
+            if (axis == 0)
+            {
+              wedge->center.x = new_center_val;
+              wedge->half_extents.x = new_half_val;
+            }
+            else if (axis == 1)
+            {
+              wedge->center.y = new_center_val;
+              wedge->half_extents.y = new_half_val;
+            }
+            else if (axis == 2)
+            {
+              wedge->center.z = new_center_val;
+              wedge->half_extents.z = new_half_val;
+            }
+          }
+        }
+      }
+      else
+      {
+        if (hovered_handle_index != invalid_idx)
+        {
+          if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+          {
+            dragging_handle = true;
+            dragging_handle_index = hovered_handle_index;
+            dragging_original_wedge = *wedge;
+            drag_start_point = ray_origin + ray_dir * min_t;
+            handle_interaction = true;
+          }
+        }
+      }
+    }
+  }
+
   // Box Selection
   if (!handle_interaction && !dragging_handle)
   {
@@ -418,10 +638,19 @@ void EditorState::update_select_mode(float dt)
       {
         selected_aabb_indices.clear();
         selected_entity_indices.clear();
+        selected_wedge_indices.clear();
       }
 
       int hovered_entity = -1;
       float min_t_ent = 1e9f;
+
+      float mouse_x = io.MousePos.x;
+      float mouse_y = io.MousePos.y;
+      float width = io.DisplaySize.x;
+      float height = io.DisplaySize.y;
+      float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
+      float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+      float aspect = width / height;
 
       // Entity Picking
       for (size_t i = 0; i < map_source.entities.size(); ++i)
@@ -432,15 +661,6 @@ void EditorState::update_select_mode(float dt)
         float r = 0.5f;
         vec3 bmin = pos - vec3{.x = r, .y = 0, .z = r};
         vec3 bmax = pos + vec3{.x = r, .y = 2.0f, .z = r};
-
-        float mouse_x = io.MousePos.x;
-        float mouse_y = io.MousePos.y;
-        float width = io.DisplaySize.x;
-        float height = io.DisplaySize.y;
-
-        float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
-        float y_ndc = 1.0f - 2.0f * (mouse_y / height);
-        float aspect = width / height;
 
         linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
         float t = 0;
@@ -455,42 +675,51 @@ void EditorState::update_select_mode(float dt)
       }
 
       int hovered_aabb = -1;
-      float min_t_aabb = 1e9f;
+      int hovered_wedge = -1;
+      float min_t_geo = 1e9f;
 
       for (size_t i = 0; i < map_source.aabbs.size(); ++i)
       {
         const auto &aabb = map_source.aabbs[i];
-        vec3 center = {
-            .x = aabb.center.x, .y = aabb.center.y, .z = aabb.center.z};
-        vec3 half = {.x = aabb.half_extents.x,
-                     .y = aabb.half_extents.y,
-                     .z = aabb.half_extents.z};
-        vec3 bmin = center - half;
-        vec3 bmax = center + half;
-
-        float mouse_x = io.MousePos.x;
-        float mouse_y = io.MousePos.y;
-        float width = io.DisplaySize.x;
-        float height = io.DisplaySize.y;
-        float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
-        float y_ndc = 1.0f - 2.0f * (mouse_y / height);
-        float aspect = width / height;
+        shared::aabb_bounds_t bounds = shared::get_bounds(aabb);
 
         linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
         float t = 0;
-        if (linalg::intersect_ray_aabb(ray.origin, ray.dir, bmin, bmax, t))
+        if (linalg::intersect_ray_aabb(ray.origin, ray.dir, bounds.min,
+                                       bounds.max, t))
         {
-          if (t < min_t_aabb)
+          if (t < min_t_geo)
           {
-            min_t_aabb = t;
+            min_t_geo = t;
             hovered_aabb = (int)i;
+            hovered_wedge = -1;
+          }
+        }
+      }
+
+      for (size_t i = 0; i < map_source.wedges.size(); ++i)
+      {
+        const auto &wedge = map_source.wedges[i];
+        // For picking, we can treat wedge as AABB for now, or use more precise
+        // test. AABB test is easier and sufficient for coarse picking.
+        shared::aabb_bounds_t bounds = shared::get_bounds(wedge);
+
+        linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
+        float t = 0;
+        if (linalg::intersect_ray_aabb(ray.origin, ray.dir, bounds.min,
+                                       bounds.max, t))
+        {
+          if (t < min_t_geo)
+          {
+            min_t_geo = t;
+            hovered_wedge = (int)i;
+            hovered_aabb = -1;
           }
         }
       }
 
       // Prioritize Entity if close? or just closest
-      if (hovered_entity != -1 &&
-          (hovered_aabb == -1 || min_t_ent < min_t_aabb))
+      if (hovered_entity != -1 && (min_t_ent < min_t_geo))
       {
         if (selected_entity_indices.count(hovered_entity))
           selected_entity_indices.erase(hovered_entity);
@@ -503,6 +732,13 @@ void EditorState::update_select_mode(float dt)
           selected_aabb_indices.erase(hovered_aabb);
         else
           selected_aabb_indices.insert(hovered_aabb);
+      }
+      else if (hovered_wedge != -1)
+      {
+        if (selected_wedge_indices.count(hovered_wedge))
+          selected_wedge_indices.erase(hovered_wedge);
+        else
+          selected_wedge_indices.insert(hovered_wedge);
       }
       else
       {

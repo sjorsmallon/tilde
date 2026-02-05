@@ -6,7 +6,7 @@
 #include "../shared/linalg.hpp"
 #include "../shared/map.hpp" // New map struct
 #include "../undo_stack.hpp"
-#include <unordered_set>
+#include <set>
 #include <vector>
 
 // Colors
@@ -52,6 +52,7 @@ private:
   void draw_grid();
   void draw_gimbal();
   void draw_aabb_wireframe(const shared::aabb_t &aabb, uint32_t color);
+  void draw_wedge_wireframe(const shared::wedge_t &wedge, uint32_t color);
 
   // UI state
   bool show_demo_window = false;
@@ -67,6 +68,13 @@ private:
     entity_place,
     rotate
   };
+
+  enum class int_geometry_type
+  {
+    AABB,
+    WEDGE
+  };
+
   editor_mode current_mode = editor_mode::select;
   void set_mode(editor_mode mode);
 
@@ -118,13 +126,18 @@ private:
   bool dragging_handle = false;
   int dragging_handle_index = -1;
   shared::aabb_t dragging_original_aabb;
+  shared::wedge_t dragging_original_wedge;
   linalg::vec3 drag_start_point{.x = 0.0f, .y = 0.0f, .z = 0.0f};
   const float handle_length = 1.0f;
 
   // Selection state
-  std::unordered_set<int> selected_aabb_indices;
-  std::unordered_set<int> selected_entity_indices;
+  std::set<int> selected_aabb_indices;
+  std::set<int> selected_entity_indices;
+  std::set<int> selected_wedge_indices;
   float selection_timer = 0.0f;
+
+  // Geometry Placement
+  int_geometry_type geometry_place_type = int_geometry_type::AABB;
 
   struct DebugLine
   {

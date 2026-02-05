@@ -136,6 +136,33 @@ bool load_map(const std::string &filename, map_t &out_map)
       }
       out_map.aabbs.push_back(aabb);
     }
+    else if (ent.classname == "wedge")
+    {
+      wedge_t wedge;
+      if (ent.properties.count("center"))
+      {
+        std::stringstream ss(ent.properties.at("center"));
+        ss >> wedge.center.x >> wedge.center.y >> wedge.center.z;
+      }
+      if (ent.properties.count("half_extents"))
+      {
+        std::stringstream ss(ent.properties.at("half_extents"));
+        ss >> wedge.half_extents.x >> wedge.half_extents.y >>
+            wedge.half_extents.z;
+      }
+      if (ent.properties.count("orientation"))
+      {
+        try
+        {
+          wedge.orientation = std::stoi(ent.properties.at("orientation"));
+        }
+        catch (...)
+        {
+          wedge.orientation = 0;
+        }
+      }
+      out_map.wedges.push_back(wedge);
+    }
     else
     {
       // Try entity factory
@@ -213,6 +240,24 @@ bool save_map(const std::string &filename, const map_t &map)
     ss << aabb.half_extents.x << " " << aabb.half_extents.y << " "
        << aabb.half_extents.z;
     def.properties["half_extents"] = ss.str();
+    entities.push_back(def);
+  }
+
+  // Wedges
+  for (const auto &wedge : map.wedges)
+  {
+    map_entity_def_t def;
+    def.classname = "wedge";
+    std::stringstream ss;
+    ss << wedge.center.x << " " << wedge.center.y << " " << wedge.center.z;
+    def.properties["center"] = ss.str();
+
+    ss.str("");
+    ss << wedge.half_extents.x << " " << wedge.half_extents.y << " "
+       << wedge.half_extents.z;
+    def.properties["half_extents"] = ss.str();
+
+    def.properties["orientation"] = std::to_string(wedge.orientation);
     entities.push_back(def);
   }
 

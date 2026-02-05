@@ -157,6 +157,8 @@ add_library(game_client SHARED
     src/client/state_manager.cpp
     src/client/states/play_state.cpp
     src/client/states/editor_state.cpp
+    src/client/states/editor_state_input.cpp
+    src/client/states/editor_state_update.cpp
     src/client/states/editor_state_draw.cpp
     src/client/input.cpp
     src/client/renderer.cpp
