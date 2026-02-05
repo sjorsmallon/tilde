@@ -421,73 +421,37 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  // Draw AABB Handles
+  // Draw AABB Gizmo
   if (selected_aabb_indices.size() == 1)
   {
     int idx = *selected_aabb_indices.begin();
     if (idx >= 0 && idx < (int)map_source.aabbs.size())
     {
       const auto &aabb = map_source.aabbs[idx];
-      vec3 center = {
-          .x = aabb.center.x, .y = aabb.center.y, .z = aabb.center.z};
-      vec3 half = {.x = aabb.half_extents.x,
-                   .y = aabb.half_extents.y,
-                   .z = aabb.half_extents.z};
-      vec3 face_normals[6] = {
-          {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
-          {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
-          {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
-      // Explicitly map half extents to axes
-      float half_vals[3] = {half.x, half.y, half.z};
+      // Update active gizmo visual state (it's updated in Update loop for
+      // logic, but draw needs current state too for color) Actually, if we only
+      // update it in Update, it might trail one frame or be correct. But we
+      // need to ensure the `aabb` in `active_reshape_gizmo` matches the map
+      // `aabb` for drawing correct position.
+      active_reshape_gizmo.aabb = aabb;
+      // The hovered/dragging index should be persisted from Update.
 
-      for (int i = 0; i < 6; ++i)
-      {
-        int axis = i / 2;
-        vec3 n = face_normals[i];
-        vec3 p = center + n * half_vals[axis]; // Face center
-        vec3 end = p + n * handle_length;
-
-        uint32_t col = color_white;
-        if (hovered_handle_index == i || dragging_handle_index == i)
-        {
-          col = color_green;
-        }
-
-        renderer::draw_arrow(cmd, p, end, col);
-      }
+      draw_reshape_gizmo(cmd, active_reshape_gizmo);
     }
   }
 
-  // Draw Wedge Handles
+  // Draw Wedge Gizmo
   if (selected_wedge_indices.size() == 1)
   {
     int idx = *selected_wedge_indices.begin();
     if (idx >= 0 && idx < (int)map_source.wedges.size())
     {
       const auto &wedge = map_source.wedges[idx];
-      vec3 center = wedge.center;
-      vec3 half = wedge.half_extents;
-      vec3 face_normals[6] = {
-          {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
-          {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
-          {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
-      float half_vals[3] = {half.x, half.y, half.z};
+      shared::aabb_bounds_t bounds = shared::get_bounds(wedge);
+      active_reshape_gizmo.aabb.center = (bounds.min + bounds.max) * 0.5f;
+      active_reshape_gizmo.aabb.half_extents = (bounds.max - bounds.min) * 0.5f;
 
-      for (int i = 0; i < 6; ++i)
-      {
-        int axis = i / 2;
-        vec3 n = face_normals[i];
-        vec3 p = center + n * half_vals[axis];
-        vec3 end = p + n * handle_length;
-
-        uint32_t col = color_white;
-        if (hovered_handle_index == i || dragging_handle_index == i)
-        {
-          col = color_green;
-        }
-
-        renderer::draw_arrow(cmd, p, end, col);
-      }
+      draw_reshape_gizmo(cmd, active_reshape_gizmo);
     }
   }
 
@@ -649,6 +613,14 @@ void EditorState::render_3d(VkCommandBuffer cmd)
 
       vec3 line_end = p + forward * radius;
       renderer::DrawLine(cmd, p, line_end, 0xFF0000FF); // Red Direction
+    }
+
+    // Draw Transform Gizmo for selected entity
+    if (selected_entity_indices.count(i) && !dragging_selection)
+    {
+      active_transform_gizmo.position = ent.position;
+      active_transform_gizmo.size = 1.0f;
+      draw_transform_gizmo(cmd, active_transform_gizmo);
     }
   }
 }

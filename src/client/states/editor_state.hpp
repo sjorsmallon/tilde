@@ -6,6 +6,7 @@
 #include "../shared/linalg.hpp"
 #include "../shared/map.hpp" // New map struct
 #include "../undo_stack.hpp"
+#include "editor_gizmo.hpp" // Gizmos
 #include <set>
 #include <vector>
 
@@ -121,12 +122,16 @@ private:
   int rotate_entity_index = -1;
   linalg::vec3 rotate_debug_point{.x = 0, .y = 0, .z = 0};
 
-  // AABB Handle Interaction
-  int hovered_handle_index = -1; // 0..5, or -1
-  bool dragging_handle = false;
-  int dragging_handle_index = -1;
+  // Gizmos
+  reshape_gizmo_t active_reshape_gizmo;
+  transform_gizmo_t active_transform_gizmo;
+
+  // Dragging state for Gizmos
+  bool dragging_gizmo = false;
   shared::aabb_t dragging_original_aabb;
   shared::wedge_t dragging_original_wedge;
+  linalg::vec3 dragging_original_position;
+  float drag_start_offset = 0.0f;
   linalg::vec3 drag_start_point{.x = 0.0f, .y = 0.0f, .z = 0.0f};
   const float handle_length = 1.0f;
 

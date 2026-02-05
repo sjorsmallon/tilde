@@ -260,6 +260,103 @@ void EditorState::update_select_mode(float dt)
   ImGuiIO &io = ImGui::GetIO();
   bool handle_interaction = false;
 
+  // Transform Gizmo Logic (Entities)
+  if (selected_entity_indices.size() == 1 && !dragging_selection)
+  {
+    int idx = *selected_entity_indices.begin();
+    if (idx >= 0 && idx < (int)map_source.entities.size())
+    {
+      auto &ent = map_source.entities[idx];
+      active_transform_gizmo.position = ent.position;
+      active_transform_gizmo.size = 1.0f;
+
+      float mouse_x = io.MousePos.x;
+      float mouse_y = io.MousePos.y;
+      float width = io.DisplaySize.x;
+      float height = io.DisplaySize.y;
+
+      if (width > 0 && height > 0)
+      {
+        float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
+        float y_ndc = 1.0f - 2.0f * (mouse_y / height);
+        float aspect = width / height;
+        linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
+
+        if (!dragging_gizmo)
+        {
+          hit_test_transform_gizmo(ray, active_transform_gizmo);
+        }
+
+        if (dragging_gizmo && active_transform_gizmo.dragging_axis_index != -1)
+        {
+          handle_interaction = true;
+          if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+          {
+            dragging_gizmo = false;
+            active_transform_gizmo.dragging_axis_index = -1;
+            // Undo stack push here?
+          }
+          else
+          {
+            int axis = active_transform_gizmo.dragging_axis_index;
+            vec3 axis_dir = (axis == 0)
+                                ? vec3{1, 0, 0}
+                                : ((axis == 1) ? vec3{0, 1, 0} : vec3{0, 0, 1});
+
+            // Plane normal perpendicular to axis and facing camera
+            vec3 cam_to_obj = active_transform_gizmo.position -
+                              vec3{camera.x, camera.y, camera.z};
+            vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+            plane_normal = linalg::cross(plane_normal, axis_dir);
+
+            float t = 0;
+            if (linalg::intersect_ray_plane(ray.origin, ray.dir,
+                                            active_transform_gizmo.position,
+                                            plane_normal, t))
+            {
+              float current_proj = linalg::dot((ray.origin + ray.dir * t) -
+                                                   dragging_original_position,
+                                               axis_dir);
+              float offset = current_proj - drag_start_offset;
+              ent.position = dragging_original_position + axis_dir * offset;
+            }
+          }
+        }
+        else if (!dragging_gizmo &&
+                 active_transform_gizmo.hovered_axis_index != -1)
+        {
+          if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+          {
+            dragging_gizmo = true;
+            active_transform_gizmo.dragging_axis_index =
+                active_transform_gizmo.hovered_axis_index;
+            dragging_original_position = ent.position;
+
+            int axis = active_transform_gizmo.dragging_axis_index;
+            vec3 axis_dir = (axis == 0)
+                                ? vec3{1, 0, 0}
+                                : ((axis == 1) ? vec3{0, 1, 0} : vec3{0, 0, 1});
+            vec3 cam_to_obj = active_transform_gizmo.position -
+                              vec3{camera.x, camera.y, camera.z};
+            vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+            plane_normal = linalg::cross(plane_normal, axis_dir);
+
+            float t = 0;
+            if (linalg::intersect_ray_plane(ray.origin, ray.dir,
+                                            active_transform_gizmo.position,
+                                            plane_normal, t))
+            {
+              drag_start_offset = linalg::dot((ray.origin + ray.dir * t) -
+                                                  dragging_original_position,
+                                              axis_dir);
+            }
+            handle_interaction = true;
+          }
+        }
+      }
+    }
+  }
+
   // Handle Logic Check (Gizmo)
   if (selected_aabb_indices.size() == 1 && !dragging_selection)
   {
@@ -277,6 +374,9 @@ void EditorState::update_select_mode(float dt)
           {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
           {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
       float half_vals[3] = {half.x, half.y, half.z};
+
+      // Gizmo Setup
+      active_reshape_gizmo.aabb = *aabb;
 
       float mouse_x = io.MousePos.x;
       float mouse_y = io.MousePos.y;
@@ -297,45 +397,19 @@ void EditorState::update_select_mode(float dt)
         valid_ray = true;
       }
 
-      float min_t = 1e9f;
-      if (valid_ray && !dragging_handle)
+      if (valid_ray && !dragging_gizmo)
       {
-        hovered_handle_index = invalid_idx;
-        for (int i = 0; i < 6; ++i)
-        {
-          int axis = i / 2;
-          vec3 n = face_normals[i];
-          vec3 p = center + n * half_vals[axis];
-          vec3 end = p + n * handle_length;
-          vec3 bmin = {.x = std::min(p.x, end.x),
-                       .y = std::min(p.y, end.y),
-                       .z = std::min(p.z, end.z)};
-          vec3 bmax = {.x = std::max(p.x, end.x),
-                       .y = std::max(p.y, end.y),
-                       .z = std::max(p.z, end.z)};
-          float pad = 0.2f;
-          bmin = bmin - vec3{.x = pad, .y = pad, .z = pad};
-          bmax = bmax + vec3{.x = pad, .y = pad, .z = pad};
-
-          float t = 0;
-          if (linalg::intersect_ray_aabb(ray_origin, ray_dir, bmin, bmax, t))
-          {
-            if (t < min_t && t > 0)
-            {
-              min_t = t;
-              hovered_handle_index = i;
-            }
-          }
-        }
+        linalg::ray_t ray = {ray_origin, ray_dir};
+        hit_test_reshape_gizmo(ray, active_reshape_gizmo);
       }
 
-      if (dragging_handle)
+      if (dragging_gizmo)
       {
         handle_interaction = true;
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         {
-          dragging_handle = false;
-          dragging_handle_index = -1;
+          dragging_gizmo = false;
+          active_reshape_gizmo.dragging_handle_index = -1;
           shared::aabb_t safe_copy = *aabb;
           shared::aabb_t original_copy = dragging_original_aabb;
           int captured_idx = idx;
@@ -355,25 +429,25 @@ void EditorState::update_select_mode(float dt)
         }
         else
         {
-          int i = dragging_handle_index;
+          int i = active_reshape_gizmo.dragging_handle_index;
           int axis = i / 2;
-          vec3 n = face_normals[i];
-          vec3 u = n;
-          vec3 p1 = drag_start_point;
-          vec3 q1 = ray_origin;
-          vec3 v = ray_dir;
-          vec3 w0 = p1 - q1;
-          float a = linalg::dot(u, u);
-          float b = linalg::dot(u, v);
-          float c = linalg::dot(v, v);
-          float d = linalg::dot(u, w0);
-          float e = linalg::dot(v, w0);
-          float denom = a * c - b * b;
+          vec3 axis_dir = face_normals[i];
 
-          if (std::abs(denom) > 1e-4f)
+          vec3 cam_to_obj = dragging_original_aabb.center -
+                            vec3{camera.x, camera.y, camera.z};
+          vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+          plane_normal = linalg::cross(plane_normal, axis_dir);
+          vec3 handle_pos =
+              dragging_original_aabb.center +
+              axis_dir * dragging_original_aabb.half_extents[axis];
+
+          float t = 0;
+          if (linalg::intersect_ray_plane(ray_origin, ray_dir, handle_pos,
+                                          plane_normal, t))
           {
-            float t = (b * e - c * d) / denom;
-            float delta = t;
+            vec3 hit = ray_origin + ray_dir * t;
+            float current_proj = linalg::dot(hit, axis_dir);
+            float delta = current_proj - drag_start_offset;
 
             vec3 old_min = {.x = dragging_original_aabb.center.x -
                                  dragging_original_aabb.half_extents.x,
@@ -398,7 +472,7 @@ void EditorState::update_select_mode(float dt)
             }
             else // - Face
             {
-              new_min_val += (n[axis] * delta);
+              new_min_val += (axis_dir[axis] * delta); // axis_dir is normal
               new_min_val = std::round(new_min_val);
             }
 
@@ -433,14 +507,35 @@ void EditorState::update_select_mode(float dt)
       }
       else
       {
-        if (hovered_handle_index != invalid_idx)
+        if (active_reshape_gizmo.hovered_handle_index != invalid_idx)
         {
           if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
           {
-            dragging_handle = true;
-            dragging_handle_index = hovered_handle_index;
+            dragging_gizmo = true;
+            active_reshape_gizmo.dragging_handle_index =
+                active_reshape_gizmo.hovered_handle_index;
             dragging_original_aabb = *aabb;
-            drag_start_point = ray_origin + ray_dir * min_t;
+
+            // Calculate Drag Start Offset
+            int h_idx = active_reshape_gizmo.hovered_handle_index;
+            int axis = h_idx / 2;
+            vec3 axis_dir = face_normals[h_idx];
+
+            vec3 cam_to_obj = active_reshape_gizmo.aabb.center -
+                              vec3{camera.x, camera.y, camera.z};
+            vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+            plane_normal = linalg::cross(plane_normal, axis_dir);
+            vec3 handle_pos =
+                active_reshape_gizmo.aabb.center +
+                axis_dir * active_reshape_gizmo.aabb.half_extents[axis];
+
+            float t = 0;
+            if (linalg::intersect_ray_plane(ray_origin, ray_dir, handle_pos,
+                                            plane_normal, t))
+            {
+              vec3 hit = ray_origin + ray_dir * t;
+              drag_start_offset = linalg::dot(hit, axis_dir);
+            }
             handle_interaction = true;
           }
         }
@@ -464,6 +559,20 @@ void EditorState::update_select_mode(float dt)
           {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
       float half_vals[3] = {half.x, half.y, half.z};
 
+      shared::aabb_bounds_t bounds = shared::get_bounds(*wedge);
+      active_reshape_gizmo.aabb.center = (bounds.min + bounds.max) * 0.5f;
+      active_reshape_gizmo.aabb.half_extents = (bounds.max - bounds.min) * 0.5f;
+
+      // Similar to AABB but wedge has orientation
+      // For Gizmo, we just use the bounds for now as reshape is orthogonal
+      // If we support complex wedge reshape we might need special gizmo,
+      // but prompt implies "gizmos for selected AABBS / wedges".
+      // Wedges have orientation, so AABB handles might align with world Axes,
+      // but wedge axes are local?
+      // `shared::wedge_t` has `center`, `half_extents`, `orientation`.
+      // It is axis aligned modulo orientation? No, it's just 4 orientations of
+      // slope. It is still AABB-like for the base logic.
+
       float mouse_x = io.MousePos.x;
       float mouse_y = io.MousePos.y;
       float width = io.DisplaySize.x;
@@ -482,45 +591,19 @@ void EditorState::update_select_mode(float dt)
         valid_ray = true;
       }
 
-      float min_t = 1e9f;
-      if (valid_ray && !dragging_handle)
+      if (valid_ray && !dragging_gizmo)
       {
-        hovered_handle_index = invalid_idx;
-        for (int i = 0; i < 6; ++i)
-        {
-          int axis = i / 2;
-          vec3 n = face_normals[i];
-          vec3 p = center + n * half_vals[axis];
-          vec3 end = p + n * handle_length;
-          vec3 bmin = {.x = std::min(p.x, end.x),
-                       .y = std::min(p.y, end.y),
-                       .z = std::min(p.z, end.z)};
-          vec3 bmax = {.x = std::max(p.x, end.x),
-                       .y = std::max(p.y, end.y),
-                       .z = std::max(p.z, end.z)};
-          float pad = 0.2f;
-          bmin = bmin - vec3{.x = pad, .y = pad, .z = pad};
-          bmax = bmax + vec3{.x = pad, .y = pad, .z = pad};
-
-          float t = 0;
-          if (linalg::intersect_ray_aabb(ray_origin, ray_dir, bmin, bmax, t))
-          {
-            if (t < min_t && t > 0)
-            {
-              min_t = t;
-              hovered_handle_index = i;
-            }
-          }
-        }
+        linalg::ray_t ray = {ray_origin, ray_dir};
+        hit_test_reshape_gizmo(ray, active_reshape_gizmo);
       }
 
-      if (dragging_handle)
+      if (dragging_gizmo)
       {
         handle_interaction = true;
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         {
-          dragging_handle = false;
-          dragging_handle_index = -1;
+          dragging_gizmo = false;
+          active_reshape_gizmo.dragging_handle_index = -1;
           shared::wedge_t safe_copy = *wedge;
           shared::wedge_t original_copy = dragging_original_wedge;
           int captured_idx = idx;
@@ -540,25 +623,25 @@ void EditorState::update_select_mode(float dt)
         }
         else
         {
-          int i = dragging_handle_index;
+          int i = active_reshape_gizmo.dragging_handle_index;
           int axis = i / 2;
-          vec3 n = face_normals[i];
-          vec3 u = n;
-          vec3 p1 = drag_start_point;
-          vec3 q1 = ray_origin;
-          vec3 v = ray_dir;
-          vec3 w0 = p1 - q1;
-          float a = linalg::dot(u, u);
-          float b = linalg::dot(u, v);
-          float c = linalg::dot(v, v);
-          float d = linalg::dot(u, w0);
-          float e = linalg::dot(v, w0);
-          float denom = a * c - b * b;
+          vec3 axis_dir = face_normals[i];
 
-          if (std::abs(denom) > 1e-4f)
+          vec3 cam_to_obj = dragging_original_wedge.center -
+                            vec3{camera.x, camera.y, camera.z};
+          vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+          plane_normal = linalg::cross(plane_normal, axis_dir);
+          vec3 handle_pos =
+              dragging_original_wedge.center +
+              axis_dir * dragging_original_wedge.half_extents[axis];
+
+          float t = 0;
+          if (linalg::intersect_ray_plane(ray_origin, ray_dir, handle_pos,
+                                          plane_normal, t))
           {
-            float t = (b * e - c * d) / denom;
-            float delta = t;
+            vec3 hit = ray_origin + ray_dir * t;
+            float current_proj = linalg::dot(hit, axis_dir);
+            float delta = current_proj - drag_start_offset;
 
             vec3 old_min = dragging_original_wedge.center -
                            dragging_original_wedge.half_extents;
@@ -575,7 +658,7 @@ void EditorState::update_select_mode(float dt)
             }
             else // - Face
             {
-              new_min_val += (n[axis] * delta);
+              new_min_val += (axis_dir[axis] * delta);
               new_min_val = std::round(new_min_val);
             }
 
@@ -586,10 +669,6 @@ void EditorState::update_select_mode(float dt)
               else
                 new_min_val = new_max_val - 0.1f;
             }
-
-            // For wedges, we might want to also allow changing orientation?
-            // But resizing is primary request.
-            // Orientation changes usually via key press (Rotate).
 
             float new_center_val = (new_min_val + new_max_val) * 0.5f;
             float new_half_val = (new_max_val - new_min_val) * 0.5f;
@@ -614,14 +693,34 @@ void EditorState::update_select_mode(float dt)
       }
       else
       {
-        if (hovered_handle_index != invalid_idx)
+        if (active_reshape_gizmo.hovered_handle_index != invalid_idx)
         {
           if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
           {
-            dragging_handle = true;
-            dragging_handle_index = hovered_handle_index;
+            dragging_gizmo = true;
+            active_reshape_gizmo.dragging_handle_index =
+                active_reshape_gizmo.hovered_handle_index;
             dragging_original_wedge = *wedge;
-            drag_start_point = ray_origin + ray_dir * min_t;
+
+            int h_idx = active_reshape_gizmo.hovered_handle_index;
+            int axis = h_idx / 2;
+            vec3 axis_dir = face_normals[h_idx];
+
+            vec3 cam_to_obj = active_reshape_gizmo.aabb.center -
+                              vec3{camera.x, camera.y, camera.z};
+            vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+            plane_normal = linalg::cross(plane_normal, axis_dir);
+            vec3 handle_pos =
+                active_reshape_gizmo.aabb.center +
+                axis_dir * active_reshape_gizmo.aabb.half_extents[axis];
+
+            float t = 0;
+            if (linalg::intersect_ray_plane(ray_origin, ray_dir, handle_pos,
+                                            plane_normal, t))
+            {
+              vec3 hit = ray_origin + ray_dir * t;
+              drag_start_offset = linalg::dot(hit, axis_dir);
+            }
             handle_interaction = true;
           }
         }
@@ -630,7 +729,7 @@ void EditorState::update_select_mode(float dt)
   }
 
   // Box Selection
-  if (!handle_interaction && !dragging_handle)
+  if (!handle_interaction && !dragging_gizmo)
   {
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse)
     {
