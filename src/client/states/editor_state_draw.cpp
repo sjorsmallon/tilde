@@ -52,7 +52,7 @@ void EditorState::render_ui()
     {
       if (ImGui::MenuItem("Add AABB"))
       {
-        auto &aabb = map_source.aabbs.emplace_back();
+        shared::aabb_t aabb;
         float dist = 5.0f;
         float radYaw = to_radians(camera.yaw);
         aabb.center.x = camera.x + cos(radYaw) * dist;
@@ -61,6 +61,7 @@ void EditorState::render_ui()
         aabb.half_extents.x = 1.0f;
         aabb.half_extents.y = 1.0f;
         aabb.half_extents.z = 1.0f;
+        map_source.static_geometry.push_back({aabb});
       }
       ImGui::EndMenu();
     }
@@ -175,180 +176,7 @@ void EditorState::render_ui()
 
   draw_grid();
 
-  // Draw AABBs
-  // ImGuiIO &io = ImGui::GetIO();
-
-  // Detect overlaps
-  std::set<int> overlapping_indices;
-  {
-    for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
-    {
-      for (int j = i + 1; j < (int)map_source.aabbs.size(); ++j)
-      {
-        const auto &a = map_source.aabbs[i];
-        const auto &b = map_source.aabbs[j];
-        if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                {.x = a.center.x, .y = a.center.y, .z = a.center.z},
-                {.x = a.half_extents.x,
-                 .y = a.half_extents.y,
-                 .z = a.half_extents.z},
-                {.x = b.center.x, .y = b.center.y, .z = b.center.z},
-                {.x = b.half_extents.x,
-                 .y = b.half_extents.y,
-                 .z = b.half_extents.z}))
-        {
-          overlapping_indices.insert(i);
-          overlapping_indices.insert(j);
-        }
-      }
-    }
-  }
-
-  if (wireframe_mode)
-  {
-    int idx = 0;
-    for (const auto &aabb : map_source.aabbs)
-    {
-      uint32_t col = color_green; // Default Green
-
-      if (overlapping_indices.count(idx))
-      {
-        col = color_red; // Red for overlap
-      }
-
-      if (selected_aabb_indices.count(idx))
-      {
-        // Oscillate between Magenta (0xFF00FFFF) and White (0xFFFFFFFF)
-        // ABGR
-        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f; // 0 to 1
-        uint8_t g = (uint8_t)(t * 255.0f);
-        col = color_red | (g << 8) | 0x00FF0000;
-      }
-      draw_aabb_wireframe(aabb, col);
-      idx++;
-    }
-  }
-
-  if (dragging_selection)
-  {
-    ImDrawList *dl = ImGui::GetBackgroundDrawList();
-    // Note: BackgroundDrawList is behind windows, Foreground is front.
-    // We want it on top of 3D, but maybe behind UI?
-    // standard drag select usually goes over everything or just over the
-    // view. Let's us GetForegroundDrawList for visibility.
-    dl = ImGui::GetForegroundDrawList();
-
-    ImVec2 mouse_pos = ImGui::GetMousePos();
-    ImVec2 p1 = {std::min(selection_start.x, mouse_pos.x),
-                 std::min(selection_start.y, mouse_pos.y)};
-    ImVec2 p2 = {std::max(selection_start.x, mouse_pos.x),
-                 std::max(selection_start.y, mouse_pos.y)};
-
-    // Fill - Green with transparency
-    dl->AddRectFilled(p1, p2, color_selection_fill);
-    // Border - Opaque Green
-    dl->AddRect(p1, p2, color_selection_border);
-  }
-
-  draw_gimbal();
-}
-
-void EditorState::render_3d(VkCommandBuffer cmd)
-{
-  // Full Screen Viewport
-  renderer::viewport_t vp = {.start = {.x = 0.0f, .y = 0.0f},
-                             .dimensions = {.x = 1.0f, .y = 1.0f}};
-  renderer::render_view_t view = {.viewport = vp, .camera = camera};
-
-  // Dummy registry for now
-  ecs::Registry reg;
-  renderer::render_view(cmd, view, reg);
-
-  // Debug: Draw AABB (Red Box at 3,0,0)
-  renderer::DrawAABB(
-      cmd,
-      {.x = 3.0f, .y = -default_aabb_half_size, .z = -default_aabb_half_size},
-      {.x = 4.0f, .y = default_aabb_half_size, .z = default_aabb_half_size},
-      color_red);
-
-  if (!wireframe_mode)
-  {
-    // Detect overlaps
-    std::set<int> overlapping_indices;
-    {
-      for (int i = 0; i < (int)map_source.aabbs.size(); ++i)
-      {
-        for (int j = i + 1; j < (int)map_source.aabbs.size(); ++j)
-        {
-          const auto &a = map_source.aabbs[i];
-          const auto &b = map_source.aabbs[j];
-          if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                  {.x = a.center.x, .y = a.center.y, .z = a.center.z},
-                  {.x = a.half_extents.x,
-                   .y = a.half_extents.y,
-                   .z = a.half_extents.z},
-                  {.x = b.center.x, .y = b.center.y, .z = b.center.z},
-                  {.x = b.half_extents.x,
-                   .y = b.half_extents.y,
-                   .z = b.half_extents.z}))
-          {
-            overlapping_indices.insert(i);
-            overlapping_indices.insert(j);
-          }
-        }
-      }
-    }
-
-    int idx = 0;
-    for (const auto &aabb : map_source.aabbs)
-    {
-      uint32_t col = color_green; // Default Green
-
-      if (overlapping_indices.count(idx))
-      {
-        col = color_red; // Red for overlap
-      }
-
-      if (selected_aabb_indices.count(idx))
-      {
-        // Oscillate between Magenta and White
-        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f;
-        uint8_t g = (uint8_t)(t * 255.0f);
-        col = color_red | (g << 8) | 0x00FF0000;
-      }
-
-      vec3 center = {
-          .x = aabb.center.x, .y = aabb.center.y, .z = aabb.center.z};
-      vec3 half = {.x = aabb.half_extents.x,
-                   .y = aabb.half_extents.y,
-                   .z = aabb.half_extents.z};
-      vec3 min = center - half;
-      vec3 max = center + half;
-
-      renderer::DrawAABB(cmd, min, max, col);
-      idx++;
-    }
-  }
-
-  // Draw Wedges
-  if (!wireframe_mode ||
-      wireframe_mode) // Always draw wireframe for wedges as no filled mode
-  {
-    int idx = 0;
-    for (const auto &wedge : map_source.wedges)
-    {
-      uint32_t col = color_green;
-      if (selected_wedge_indices.count(idx))
-      {
-        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f;
-        uint8_t g = (uint8_t)(t * 255.0f);
-        col = color_red | (g << 8) | 0x00FF0000;
-      }
-      draw_wedge_wireframe(wedge, col);
-      idx++;
-    }
-  }
-
+  // Placement Ghost
   if (current_mode == editor_mode::place &&
       selected_tile[1] > invalid_tile_val + 100.0f)
   {
@@ -357,7 +185,6 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       vec3 end_pos = {
           .x = selected_tile[0], .y = selected_tile[1], .z = selected_tile[2]};
 
-      // Math inline
       float min_x = std::min(drag_start.x, end_pos.x);
       float max_x = std::max(drag_start.x, end_pos.x);
       float min_z = std::min(drag_start.z, end_pos.z);
@@ -368,12 +195,12 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       float grid_max_z = std::floor(max_z) + 1.0f;
       float width = grid_max_x - grid_min_x;
       float depth = grid_max_z - grid_min_z;
-      // float height = 1.0f;
+
       float center_x = grid_min_x + width * 0.5f;
       float center_z = grid_min_z + depth * 0.5f;
-      float center_y = -0.5f; // Center at -0.5
+      float center_y = -0.5f;
       float half_x = width * 0.5f;
-      float half_y = 0.5f; // height * 0.5f
+      float half_y = 0.5f;
       float half_z = depth * 0.5f;
 
       if (geometry_place_type == int_geometry_type::WEDGE)
@@ -386,14 +213,10 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       }
       else
       {
-        renderer::DrawAABB(cmd,
-                           {.x = center_x - half_x,
-                            .y = center_y - half_y,
-                            .z = center_z - half_z},
-                           {.x = center_x + half_x,
-                            .y = center_y + half_y,
-                            .z = center_z + half_z},
-                           color_magenta);
+        shared::aabb_t aabb;
+        aabb.center = {.x = center_x, .y = center_y, .z = center_z};
+        aabb.half_extents = {.x = half_x, .y = half_y, .z = half_z};
+        draw_aabb_wireframe(aabb, color_magenta);
       }
     }
     else
@@ -401,9 +224,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       float x = selected_tile[0];
       float y = selected_tile[1];
       float z = selected_tile[2];
-      // User requested subtraction of half-height.
-      // Adjusted to -0.5 center.
-      // Box: {y - 1.0f} to {y + 0.0f} -> Center -0.5. Range [-1, 0].
+
       if (geometry_place_type == int_geometry_type::WEDGE)
       {
         shared::wedge_t wedge;
@@ -414,44 +235,223 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       }
       else
       {
-        renderer::DrawAABB(cmd, {.x = x, .y = y - 1.0f, .z = z},
-                           {.x = x + 1.0f, .y = y + 0.0f, .z = z + 1.0f},
-                           color_white);
+        shared::aabb_t aabb;
+        aabb.center = {.x = x + 0.5f, .y = y - 0.5f, .z = z + 0.5f};
+        aabb.half_extents = {.x = 0.5f, .y = 0.5f, .z = 0.5f};
+        draw_aabb_wireframe(aabb, color_white);
+      }
+    }
+  }
+}
+
+void EditorState::render_3d(VkCommandBuffer cmd)
+{
+  // Draw AABBs
+  // ImGuiIO &io = ImGui::GetIO();
+
+  // Setup View
+  renderer::render_view_t view = {};
+  view.camera = camera;
+  // Ensure we use the full viewport (assuming EditorState takes full window)
+  view.viewport.start = {0.0f, 0.0f};
+  view.viewport.dimensions = {1.0f, 1.0f};
+
+  // Update logic to ensure correct View/Proj matrix is set in renderer
+  // We pass a dummy registry because currently render_view doesn't use it for
+  // drawing static geometry, but the signature requires it.
+  static ecs::Registry dummy_registry;
+  renderer::render_view(cmd, view, dummy_registry);
+
+  // Detect overlaps
+  // Detect overlaps
+  std::set<int> overlapping_indices;
+  {
+    for (int i = 0; i < (int)map_source.static_geometry.size(); ++i)
+    {
+      const auto &geo_a = map_source.static_geometry[i];
+      shared::aabb_bounds_t bounds_a = shared::get_bounds(geo_a);
+      shared::aabb_t aabb_a;
+      aabb_a.center = (bounds_a.min + bounds_a.max) * 0.5f;
+      aabb_a.half_extents = (bounds_a.max - bounds_a.min) * 0.5f;
+
+      for (int j = i + 1; j < (int)map_source.static_geometry.size(); ++j)
+      {
+        const auto &geo_b = map_source.static_geometry[j];
+        shared::aabb_bounds_t bounds_b = shared::get_bounds(geo_b);
+        shared::aabb_t aabb_b;
+        aabb_b.center = (bounds_b.min + bounds_b.max) * 0.5f;
+        aabb_b.half_extents = (bounds_b.max - bounds_b.min) * 0.5f;
+
+        if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
+                {.x = aabb_a.center.x,
+                 .y = aabb_a.center.y,
+                 .z = aabb_a.center.z},
+                {.x = aabb_a.half_extents.x,
+                 .y = aabb_a.half_extents.y,
+                 .z = aabb_a.half_extents.z},
+                {.x = aabb_b.center.x,
+                 .y = aabb_b.center.y,
+                 .z = aabb_b.center.z},
+                {.x = aabb_b.half_extents.x,
+                 .y = aabb_b.half_extents.y,
+                 .z = aabb_b.half_extents.z}))
+        {
+          overlapping_indices.insert(i);
+          overlapping_indices.insert(j);
+        }
       }
     }
   }
 
-  // Draw AABB Gizmo
-  if (selected_aabb_indices.size() == 1)
+  if (!wireframe_mode)
   {
-    int idx = *selected_aabb_indices.begin();
-    if (idx >= 0 && idx < (int)map_source.aabbs.size())
+    // Detect overlaps
+    std::set<int> overlapping_indices;
     {
-      const auto &aabb = map_source.aabbs[idx];
-      // Update active gizmo visual state (it's updated in Update loop for
-      // logic, but draw needs current state too for color) Actually, if we only
-      // update it in Update, it might trail one frame or be correct. But we
-      // need to ensure the `aabb` in `active_reshape_gizmo` matches the map
-      // `aabb` for drawing correct position.
-      active_reshape_gizmo.aabb = aabb;
-      // The hovered/dragging index should be persisted from Update.
+      for (int i = 0; i < (int)map_source.static_geometry.size(); ++i)
+      {
+        const auto &geo_a = map_source.static_geometry[i];
+        shared::aabb_bounds_t bounds_a = shared::get_bounds(geo_a);
+        shared::aabb_t aabb_a;
+        aabb_a.center = (bounds_a.min + bounds_a.max) * 0.5f;
+        aabb_a.half_extents = (bounds_a.max - bounds_a.min) * 0.5f;
 
-      draw_reshape_gizmo(cmd, active_reshape_gizmo);
+        for (int j = i + 1; j < (int)map_source.static_geometry.size(); ++j)
+        {
+          const auto &geo_b = map_source.static_geometry[j];
+          shared::aabb_bounds_t bounds_b = shared::get_bounds(geo_b);
+          shared::aabb_t aabb_b;
+          aabb_b.center = (bounds_b.min + bounds_b.max) * 0.5f;
+          aabb_b.half_extents = (bounds_b.max - bounds_b.min) * 0.5f;
+
+          if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
+                  {.x = aabb_a.center.x,
+                   .y = aabb_a.center.y,
+                   .z = aabb_a.center.z},
+                  {.x = aabb_a.half_extents.x,
+                   .y = aabb_a.half_extents.y,
+                   .z = aabb_a.half_extents.z},
+                  {.x = aabb_b.center.x,
+                   .y = aabb_b.center.y,
+                   .z = aabb_b.center.z},
+                  {.x = aabb_b.half_extents.x,
+                   .y = aabb_b.half_extents.y,
+                   .z = aabb_b.half_extents.z}))
+          {
+            overlapping_indices.insert(i);
+            overlapping_indices.insert(j);
+          }
+        }
+      }
+    }
+
+    int idx = 0;
+    for (const auto &geo : map_source.static_geometry)
+    {
+      uint32_t col = color_green; // Default Green
+
+      if (overlapping_indices.count(idx))
+      {
+        col = color_red; // Red for overlap
+      }
+
+      if (selected_geometry_indices.count(idx))
+      {
+        // Oscillate between Magenta and White
+        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f;
+        uint8_t g = (uint8_t)(t * 255.0f);
+        col = color_red | (g << 8) | 0x00FF0000;
+      }
+
+      std::visit(
+          [&](auto &&arg)
+          {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, shared::aabb_t>)
+            {
+              vec3 center = {
+                  .x = arg.center.x, .y = arg.center.y, .z = arg.center.z};
+              vec3 half = {.x = arg.half_extents.x,
+                           .y = arg.half_extents.y,
+                           .z = arg.half_extents.z};
+              vec3 min = center - half;
+              vec3 max = center + half;
+              renderer::DrawAABB(cmd, min, max, col);
+            }
+            else if constexpr (std::is_same_v<T, shared::wedge_t>)
+            {
+              draw_wedge_wireframe(arg, col);
+            }
+          },
+          geo.data);
+      idx++;
     }
   }
-
-  // Draw Wedge Gizmo
-  if (selected_wedge_indices.size() == 1)
+  else if (wireframe_mode)
   {
-    int idx = *selected_wedge_indices.begin();
-    if (idx >= 0 && idx < (int)map_source.wedges.size())
+    int idx = 0;
+    for (const auto &geo : map_source.static_geometry)
     {
-      const auto &wedge = map_source.wedges[idx];
-      shared::aabb_bounds_t bounds = shared::get_bounds(wedge);
-      active_reshape_gizmo.aabb.center = (bounds.min + bounds.max) * 0.5f;
-      active_reshape_gizmo.aabb.half_extents = (bounds.max - bounds.min) * 0.5f;
+      uint32_t col = color_green; // Default Green
 
-      draw_reshape_gizmo(cmd, active_reshape_gizmo);
+      if (overlapping_indices.count(idx))
+      {
+        col = color_red; // Red for overlap
+      }
+
+      if (selected_geometry_indices.count(idx))
+      {
+        // Oscillate between Magenta (0xFF00FFFF) and White (0xFFFFFFFF)
+        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f; // 0 to 1
+        uint8_t g = (uint8_t)(t * 255.0f);
+        col = color_red | (g << 8) | 0x00FF0000;
+      }
+
+      std::visit(
+          [&](auto &&arg)
+          {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, shared::aabb_t>)
+            {
+              draw_aabb_wireframe(arg, col);
+            }
+            else if constexpr (std::is_same_v<T, shared::wedge_t>)
+            {
+              draw_wedge_wireframe(arg, col);
+            }
+          },
+          geo.data);
+      idx++;
+    }
+  }
+  // Draw Reshape Gizmo (Unified for AABB and Wedge)
+  if (selected_geometry_indices.size() == 1)
+  {
+    int idx = *selected_geometry_indices.begin();
+    if (idx >= 0 && idx < (int)map_source.static_geometry.size())
+    {
+      const auto &geo = map_source.static_geometry[idx];
+      std::visit(
+          [&](auto &&arg)
+          {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, shared::aabb_t>)
+            {
+              // Update active gizmo visual state
+              active_reshape_gizmo.aabb = arg;
+              draw_reshape_gizmo(cmd, active_reshape_gizmo);
+            }
+            else if constexpr (std::is_same_v<T, shared::wedge_t>)
+            {
+              shared::aabb_bounds_t bounds = shared::get_bounds(arg);
+              active_reshape_gizmo.aabb.center =
+                  (bounds.min + bounds.max) * 0.5f;
+              active_reshape_gizmo.aabb.half_extents =
+                  (bounds.max - bounds.min) * 0.5f;
+              draw_reshape_gizmo(cmd, active_reshape_gizmo);
+            }
+          },
+          geo.data);
     }
   }
 

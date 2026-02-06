@@ -127,8 +127,7 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
     // Partition
     auto it = std::partition(
         active_indices.begin() + range_start,
-        active_indices.begin() + range_end,
-        [&](uint32_t idx)
+        active_indices.begin() + range_end, [&](uint32_t idx)
         { return get_aabb_center(inputs[idx].aabb)[axis] < split_pos; });
 
     uint32_t mid =
@@ -309,4 +308,23 @@ void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
         node_stack.push_back(node.left);
     }
   }
+}
+
+void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
+                   const AABB &aabb)
+{
+  std::vector<BVH_Input> inputs;
+  inputs.reserve(bvh.primitives.size() + 1);
+
+  // 1. Gather existing entries from primitives
+  for (const auto &prim : bvh.primitives)
+  {
+    inputs.push_back({prim.id, prim.aabb});
+  }
+
+  // 2. Add new entry
+  inputs.push_back({id, aabb});
+
+  // 3. Rebuild
+  bvh = build_bvh(inputs);
 }

@@ -23,11 +23,11 @@ struct game_session_t
   // Manages all active dynamic entities (Players, Weapons, Projectiles)
   Entity_System entity_system;
 
-  // Static geometry data (AABBs).
+  // Static geometry data.
   // The BVH references indices into this vector.
   // We copy this from the map_t so the session is self-contained and
   // doesn't rely on the map_t remaining in memory.
-  std::vector<aabb_t> static_geometry;
+  std::vector<static_geometry_t> static_geometry;
 
   // The acceleration structure for collision queries against static_geometry.
   // Dynamic entity collision is handled separately via the Entity_System.

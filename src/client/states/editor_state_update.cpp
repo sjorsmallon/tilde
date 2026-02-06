@@ -83,38 +83,42 @@ void EditorState::update_place_mode(float dt)
 
         if (geometry_place_type == int_geometry_type::AABB)
         {
-          auto &aabb = map_source.aabbs.emplace_back();
+          shared::aabb_t aabb;
           aabb.center = {.x = grid_min_x + w * 0.5f,
                          .y = -0.5f,
                          .z = grid_min_z + d * 0.5f};
           aabb.half_extents = {.x = w * 0.5f, .y = h * 0.5f, .z = d * 0.5f};
 
-          shared::aabb_t new_aabb = aabb;
+          shared::static_geometry_t geo = {aabb};
+          map_source.static_geometry.push_back(geo);
+
           undo_stack.push(
               [this]()
               {
-                if (!map_source.aabbs.empty())
-                  map_source.aabbs.pop_back();
+                if (!map_source.static_geometry.empty())
+                  map_source.static_geometry.pop_back();
               },
-              [this, new_aabb]() { map_source.aabbs.push_back(new_aabb); });
+              [this, geo]() { map_source.static_geometry.push_back(geo); });
         }
         else if (geometry_place_type == int_geometry_type::WEDGE)
         {
-          auto &wedge = map_source.wedges.emplace_back();
+          shared::wedge_t wedge;
           wedge.center = {.x = grid_min_x + w * 0.5f,
                           .y = -0.5f,
                           .z = grid_min_z + d * 0.5f};
           wedge.half_extents = {.x = w * 0.5f, .y = h * 0.5f, .z = d * 0.5f};
           wedge.orientation = 0; // Default orientation
 
-          shared::wedge_t new_wedge = wedge;
+          shared::static_geometry_t geo = {wedge};
+          map_source.static_geometry.push_back(geo);
+
           undo_stack.push(
               [this]()
               {
-                if (!map_source.wedges.empty())
-                  map_source.wedges.pop_back();
+                if (!map_source.static_geometry.empty())
+                  map_source.static_geometry.pop_back();
               },
-              [this, new_wedge]() { map_source.wedges.push_back(new_wedge); });
+              [this, geo]() { map_source.static_geometry.push_back(geo); });
         }
       }
     }
@@ -133,15 +137,16 @@ void EditorState::update_place_mode(float dt)
           new_aabb.center = {
               .x = current_pos.x + 0.5f, .y = -0.5f, .z = current_pos.z + 0.5f};
           new_aabb.half_extents = {.x = 0.5f, .y = 0.5f, .z = 0.5f};
-          map_source.aabbs.push_back(new_aabb);
+          shared::static_geometry_t geo = {new_aabb};
+          map_source.static_geometry.push_back(geo);
 
           undo_stack.push(
               [this]()
               {
-                if (!map_source.aabbs.empty())
-                  map_source.aabbs.pop_back();
+                if (!map_source.static_geometry.empty())
+                  map_source.static_geometry.pop_back();
               },
-              [this, new_aabb]() { map_source.aabbs.push_back(new_aabb); });
+              [this, geo]() { map_source.static_geometry.push_back(geo); });
         }
         else if (geometry_place_type == int_geometry_type::WEDGE)
         {
@@ -150,15 +155,16 @@ void EditorState::update_place_mode(float dt)
               .x = current_pos.x + 0.5f, .y = -0.5f, .z = current_pos.z + 0.5f};
           new_wedge.half_extents = {.x = 0.5f, .y = 0.5f, .z = 0.5f};
           new_wedge.orientation = 0;
-          map_source.wedges.push_back(new_wedge);
+          shared::static_geometry_t geo = {new_wedge};
+          map_source.static_geometry.push_back(geo);
 
           undo_stack.push(
               [this]()
               {
-                if (!map_source.wedges.empty())
-                  map_source.wedges.pop_back();
+                if (!map_source.static_geometry.empty())
+                  map_source.static_geometry.pop_back();
               },
-              [this, new_wedge]() { map_source.wedges.push_back(new_wedge); });
+              [this, geo]() { map_source.static_geometry.push_back(geo); });
         }
       }
     }
@@ -203,14 +209,12 @@ void EditorState::update_entity_mode(float dt)
   entity_cursor_valid = false;
   float min_t = 1e9f;
 
-  for (const auto &aabb : map_source.aabbs)
+  for (const auto &geo : map_source.static_geometry)
   {
-    vec3 center = {.x = aabb.center.x, .y = aabb.center.y, .z = aabb.center.z};
-    vec3 half = {.x = aabb.half_extents.x,
-                 .y = aabb.half_extents.y,
-                 .z = aabb.half_extents.z};
-    vec3 min = center - half;
-    vec3 max = center + half;
+    shared::aabb_bounds_t bounds = shared::get_bounds(geo);
+    vec3 center = (bounds.min + bounds.max) * 0.5f;
+    vec3 min = bounds.min;
+    vec3 max = bounds.max;
 
     float t = 0;
     if (linalg::intersect_ray_aabb(ray_origin, ray_dir, min, max, t))
@@ -357,221 +361,23 @@ void EditorState::update_select_mode(float dt)
     }
   }
 
-  // Handle Logic Check (Gizmo)
-  if (selected_aabb_indices.size() == 1 && !dragging_selection)
+  // Unified Gizmo Logic
+  if (selected_geometry_indices.size() == 1 && !dragging_selection)
   {
-    int idx = *selected_aabb_indices.begin();
-    if (idx >= 0 && idx < (int)map_source.aabbs.size())
+    int idx = *selected_geometry_indices.begin();
+    if (idx >= 0 && idx < (int)map_source.static_geometry.size())
     {
-      auto *aabb = &map_source.aabbs[idx];
-      vec3 center = {
-          .x = aabb->center.x, .y = aabb->center.y, .z = aabb->center.z};
-      vec3 half = {.x = aabb->half_extents.x,
-                   .y = aabb->half_extents.y,
-                   .z = aabb->half_extents.z};
-      vec3 face_normals[6] = {
-          {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
-          {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
-          {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
-      float half_vals[3] = {half.x, half.y, half.z};
+      auto &geo = map_source.static_geometry[idx];
+      shared::aabb_bounds_t bounds = shared::get_bounds(geo);
 
-      // Gizmo Setup
-      active_reshape_gizmo.aabb = *aabb;
-
-      float mouse_x = io.MousePos.x;
-      float mouse_y = io.MousePos.y;
-      float width = io.DisplaySize.x;
-      float height = io.DisplaySize.y;
-      vec3 ray_origin, ray_dir;
-      bool valid_ray = false;
-
-      if (width > 0 && height > 0)
-      {
-        float x_ndc = (mouse_x / width) * 2.0f - 1.0f;
-        float y_ndc = 1.0f - 2.0f * (mouse_y / height);
-        float aspect = width / height;
-        // Ray Pick
-        linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
-        ray_origin = ray.origin;
-        ray_dir = ray.dir;
-        valid_ray = true;
-      }
-
-      if (valid_ray && !dragging_gizmo)
-      {
-        linalg::ray_t ray = {ray_origin, ray_dir};
-        hit_test_reshape_gizmo(ray, active_reshape_gizmo);
-      }
-
-      if (dragging_gizmo)
-      {
-        handle_interaction = true;
-        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
-        {
-          dragging_gizmo = false;
-          active_reshape_gizmo.dragging_handle_index = -1;
-          shared::aabb_t safe_copy = *aabb;
-          shared::aabb_t original_copy = dragging_original_aabb;
-          int captured_idx = idx;
-          undo_stack.push(
-              [this, captured_idx, original_copy]()
-              {
-                if (captured_idx >= 0 &&
-                    captured_idx < (int)map_source.aabbs.size())
-                  map_source.aabbs[captured_idx] = original_copy;
-              },
-              [this, captured_idx, safe_copy]()
-              {
-                if (captured_idx >= 0 &&
-                    captured_idx < (int)map_source.aabbs.size())
-                  map_source.aabbs[captured_idx] = safe_copy;
-              });
-        }
-        else
-        {
-          int i = active_reshape_gizmo.dragging_handle_index;
-          int axis = i / 2;
-          vec3 axis_dir = face_normals[i];
-
-          vec3 cam_to_obj = dragging_original_aabb.center -
-                            vec3{camera.x, camera.y, camera.z};
-          vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
-          plane_normal = linalg::cross(plane_normal, axis_dir);
-          vec3 handle_pos =
-              dragging_original_aabb.center +
-              axis_dir * dragging_original_aabb.half_extents[axis];
-
-          float t = 0;
-          if (linalg::intersect_ray_plane(ray_origin, ray_dir, handle_pos,
-                                          plane_normal, t))
-          {
-            vec3 hit = ray_origin + ray_dir * t;
-            float current_proj = linalg::dot(hit, axis_dir);
-            float delta = current_proj - drag_start_offset;
-
-            vec3 old_min = {.x = dragging_original_aabb.center.x -
-                                 dragging_original_aabb.half_extents.x,
-                            .y = dragging_original_aabb.center.y -
-                                 dragging_original_aabb.half_extents.y,
-                            .z = dragging_original_aabb.center.z -
-                                 dragging_original_aabb.half_extents.z};
-            vec3 old_max = {.x = dragging_original_aabb.center.x +
-                                 dragging_original_aabb.half_extents.x,
-                            .y = dragging_original_aabb.center.y +
-                                 dragging_original_aabb.half_extents.y,
-                            .z = dragging_original_aabb.center.z +
-                                 dragging_original_aabb.half_extents.z};
-
-            float new_min_val = old_min[axis];
-            float new_max_val = old_max[axis];
-
-            if (i % 2 == 0) // + Face
-            {
-              new_max_val += delta;
-              new_max_val = std::round(new_max_val);
-            }
-            else // - Face
-            {
-              new_min_val += (axis_dir[axis] * delta); // axis_dir is normal
-              new_min_val = std::round(new_min_val);
-            }
-
-            if (new_max_val < new_min_val + 0.1f)
-            {
-              if (i % 2 == 0)
-                new_max_val = new_min_val + 0.1f;
-              else
-                new_min_val = new_max_val - 0.1f;
-            }
-
-            float new_center_val = (new_min_val + new_max_val) * 0.5f;
-            float new_half_val = (new_max_val - new_min_val) * 0.5f;
-
-            if (axis == 0)
-            {
-              aabb->center.x = new_center_val;
-              aabb->half_extents.x = new_half_val;
-            }
-            else if (axis == 1)
-            {
-              aabb->center.y = new_center_val;
-              aabb->half_extents.y = new_half_val;
-            }
-            else if (axis == 2)
-            {
-              aabb->center.z = new_center_val;
-              aabb->half_extents.z = new_half_val;
-            }
-          }
-        }
-      }
-      else
-      {
-        if (active_reshape_gizmo.hovered_handle_index != invalid_idx)
-        {
-          if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-          {
-            dragging_gizmo = true;
-            active_reshape_gizmo.dragging_handle_index =
-                active_reshape_gizmo.hovered_handle_index;
-            dragging_original_aabb = *aabb;
-
-            // Calculate Drag Start Offset
-            int h_idx = active_reshape_gizmo.hovered_handle_index;
-            int axis = h_idx / 2;
-            vec3 axis_dir = face_normals[h_idx];
-
-            vec3 cam_to_obj = active_reshape_gizmo.aabb.center -
-                              vec3{camera.x, camera.y, camera.z};
-            vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
-            plane_normal = linalg::cross(plane_normal, axis_dir);
-            vec3 handle_pos =
-                active_reshape_gizmo.aabb.center +
-                axis_dir * active_reshape_gizmo.aabb.half_extents[axis];
-
-            float t = 0;
-            if (linalg::intersect_ray_plane(ray_origin, ray_dir, handle_pos,
-                                            plane_normal, t))
-            {
-              vec3 hit = ray_origin + ray_dir * t;
-              drag_start_offset = linalg::dot(hit, axis_dir);
-            }
-            handle_interaction = true;
-          }
-        }
-      }
-    }
-  }
-
-  // Wedge Gizmo
-  if (selected_wedge_indices.size() == 1 && !dragging_selection &&
-      selected_aabb_indices.empty())
-  {
-    int idx = *selected_wedge_indices.begin();
-    if (idx >= 0 && idx < (int)map_source.wedges.size())
-    {
-      auto *wedge = &map_source.wedges[idx];
-      vec3 center = wedge->center;
-      vec3 half = wedge->half_extents;
-      vec3 face_normals[6] = {
-          {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
-          {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
-          {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
-      float half_vals[3] = {half.x, half.y, half.z};
-
-      shared::aabb_bounds_t bounds = shared::get_bounds(*wedge);
+      // Update Gizmo Visuals
       active_reshape_gizmo.aabb.center = (bounds.min + bounds.max) * 0.5f;
       active_reshape_gizmo.aabb.half_extents = (bounds.max - bounds.min) * 0.5f;
 
-      // Similar to AABB but wedge has orientation
-      // For Gizmo, we just use the bounds for now as reshape is orthogonal
-      // If we support complex wedge reshape we might need special gizmo,
-      // but prompt implies "gizmos for selected AABBS / wedges".
-      // Wedges have orientation, so AABB handles might align with world Axes,
-      // but wedge axes are local?
-      // `shared::wedge_t` has `center`, `half_extents`, `orientation`.
-      // It is axis aligned modulo orientation? No, it's just 4 orientations of
-      // slope. It is still AABB-like for the base logic.
+      vec3 face_normals[6] = {
+          {.x = 1, .y = 0, .z = 0}, {.x = -1, .y = 0, .z = 0},
+          {.x = 0, .y = 1, .z = 0}, {.x = 0, .y = -1, .z = 0},
+          {.x = 0, .y = 0, .z = 1}, {.x = 0, .y = 0, .z = -1}};
 
       float mouse_x = io.MousePos.x;
       float mouse_y = io.MousePos.y;
@@ -604,21 +410,22 @@ void EditorState::update_select_mode(float dt)
         {
           dragging_gizmo = false;
           active_reshape_gizmo.dragging_handle_index = -1;
-          shared::wedge_t safe_copy = *wedge;
-          shared::wedge_t original_copy = dragging_original_wedge;
+
+          shared::static_geometry_t safe_copy = geo;
+          shared::static_geometry_t original_copy = dragging_original_geometry;
           int captured_idx = idx;
           undo_stack.push(
               [this, captured_idx, original_copy]()
               {
                 if (captured_idx >= 0 &&
-                    captured_idx < (int)map_source.wedges.size())
-                  map_source.wedges[captured_idx] = original_copy;
+                    captured_idx < (int)map_source.static_geometry.size())
+                  map_source.static_geometry[captured_idx] = original_copy;
               },
               [this, captured_idx, safe_copy]()
               {
                 if (captured_idx >= 0 &&
-                    captured_idx < (int)map_source.wedges.size())
-                  map_source.wedges[captured_idx] = safe_copy;
+                    captured_idx < (int)map_source.static_geometry.size())
+                  map_source.static_geometry[captured_idx] = safe_copy;
               });
         }
         else
@@ -627,13 +434,18 @@ void EditorState::update_select_mode(float dt)
           int axis = i / 2;
           vec3 axis_dir = face_normals[i];
 
-          vec3 cam_to_obj = dragging_original_wedge.center -
-                            vec3{camera.x, camera.y, camera.z};
+          // We need to calculate bounds of the ORIGINAL geometry for dragging
+          // reference
+          shared::aabb_bounds_t orig_bounds =
+              shared::get_bounds(dragging_original_geometry);
+          vec3 orig_center = (orig_bounds.min + orig_bounds.max) * 0.5f;
+          vec3 orig_half = (orig_bounds.max - orig_bounds.min) * 0.5f;
+          float orig_half_vals[3] = {orig_half.x, orig_half.y, orig_half.z};
+
+          vec3 cam_to_obj = orig_center - vec3{camera.x, camera.y, camera.z};
           vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
           plane_normal = linalg::cross(plane_normal, axis_dir);
-          vec3 handle_pos =
-              dragging_original_wedge.center +
-              axis_dir * dragging_original_wedge.half_extents[axis];
+          vec3 handle_pos = orig_center + axis_dir * orig_half_vals[axis];
 
           float t = 0;
           if (linalg::intersect_ray_plane(ray_origin, ray_dir, handle_pos,
@@ -643,10 +455,9 @@ void EditorState::update_select_mode(float dt)
             float current_proj = linalg::dot(hit, axis_dir);
             float delta = current_proj - drag_start_offset;
 
-            vec3 old_min = dragging_original_wedge.center -
-                           dragging_original_wedge.half_extents;
-            vec3 old_max = dragging_original_wedge.center +
-                           dragging_original_wedge.half_extents;
+            // Calculate new min/max based on delta
+            vec3 old_min = orig_bounds.min;
+            vec3 old_max = orig_bounds.max;
 
             float new_min_val = old_min[axis];
             float new_max_val = old_max[axis];
@@ -673,21 +484,32 @@ void EditorState::update_select_mode(float dt)
             float new_center_val = (new_min_val + new_max_val) * 0.5f;
             float new_half_val = (new_max_val - new_min_val) * 0.5f;
 
-            if (axis == 0)
-            {
-              wedge->center.x = new_center_val;
-              wedge->half_extents.x = new_half_val;
-            }
-            else if (axis == 1)
-            {
-              wedge->center.y = new_center_val;
-              wedge->half_extents.y = new_half_val;
-            }
-            else if (axis == 2)
-            {
-              wedge->center.z = new_center_val;
-              wedge->half_extents.z = new_half_val;
-            }
+            // Apply updates to the actual geometry variant
+            std::visit(
+                [&](auto &&arg)
+                {
+                  using T = std::decay_t<decltype(arg)>;
+                  if constexpr (std::is_same_v<T, shared::aabb_t> ||
+                                std::is_same_v<T, shared::wedge_t>)
+                  {
+                    if (axis == 0)
+                    {
+                      arg.center.x = new_center_val;
+                      arg.half_extents.x = new_half_val;
+                    }
+                    else if (axis == 1)
+                    {
+                      arg.center.y = new_center_val;
+                      arg.half_extents.y = new_half_val;
+                    }
+                    else if (axis == 2)
+                    {
+                      arg.center.z = new_center_val;
+                      arg.half_extents.z = new_half_val;
+                    }
+                  }
+                },
+                geo.data);
           }
         }
       }
@@ -700,19 +522,22 @@ void EditorState::update_select_mode(float dt)
             dragging_gizmo = true;
             active_reshape_gizmo.dragging_handle_index =
                 active_reshape_gizmo.hovered_handle_index;
-            dragging_original_wedge = *wedge;
+            dragging_original_geometry = geo;
 
             int h_idx = active_reshape_gizmo.hovered_handle_index;
             int axis = h_idx / 2;
             vec3 axis_dir = face_normals[h_idx];
 
-            vec3 cam_to_obj = active_reshape_gizmo.aabb.center -
-                              vec3{camera.x, camera.y, camera.z};
+            shared::aabb_bounds_t bounds = shared::get_bounds(
+                active_reshape_gizmo.aabb); // Gizmo AABB is valid
+            vec3 center = (bounds.min + bounds.max) * 0.5f;
+            vec3 half = (bounds.max - bounds.min) * 0.5f;
+            float half_vals[3] = {half.x, half.y, half.z};
+
+            vec3 cam_to_obj = center - vec3{camera.x, camera.y, camera.z};
             vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
             plane_normal = linalg::cross(plane_normal, axis_dir);
-            vec3 handle_pos =
-                active_reshape_gizmo.aabb.center +
-                axis_dir * active_reshape_gizmo.aabb.half_extents[axis];
+            vec3 handle_pos = center + axis_dir * half_vals[axis];
 
             float t = 0;
             if (linalg::intersect_ray_plane(ray_origin, ray_dir, handle_pos,
@@ -735,9 +560,8 @@ void EditorState::update_select_mode(float dt)
     {
       if (!client::input::is_key_down(SDL_SCANCODE_LSHIFT))
       {
-        selected_aabb_indices.clear();
+        selected_geometry_indices.clear();
         selected_entity_indices.clear();
-        selected_wedge_indices.clear();
       }
 
       int hovered_entity = -1;
@@ -773,14 +597,13 @@ void EditorState::update_select_mode(float dt)
         }
       }
 
-      int hovered_aabb = -1;
-      int hovered_wedge = -1;
+      int hovered_geo = -1;
       float min_t_geo = 1e9f;
 
-      for (size_t i = 0; i < map_source.aabbs.size(); ++i)
+      for (size_t i = 0; i < map_source.static_geometry.size(); ++i)
       {
-        const auto &aabb = map_source.aabbs[i];
-        shared::aabb_bounds_t bounds = shared::get_bounds(aabb);
+        const auto &geo = map_source.static_geometry[i];
+        shared::aabb_bounds_t bounds = shared::get_bounds(geo);
 
         linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
         float t = 0;
@@ -790,54 +613,40 @@ void EditorState::update_select_mode(float dt)
           if (t < min_t_geo)
           {
             min_t_geo = t;
-            hovered_aabb = (int)i;
-            hovered_wedge = -1;
+            hovered_geo = (int)i;
           }
         }
       }
 
-      for (size_t i = 0; i < map_source.wedges.size(); ++i)
+      if (hovered_entity != -1 && (hovered_geo == -1 || min_t_ent < min_t_geo))
       {
-        const auto &wedge = map_source.wedges[i];
-        // For picking, we can treat wedge as AABB for now, or use more precise
-        // test. AABB test is easier and sufficient for coarse picking.
-        shared::aabb_bounds_t bounds = shared::get_bounds(wedge);
-
-        linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
-        float t = 0;
-        if (linalg::intersect_ray_aabb(ray.origin, ray.dir, bounds.min,
-                                       bounds.max, t))
+        if (client::input::is_key_down(SDL_SCANCODE_LSHIFT))
         {
-          if (t < min_t_geo)
-          {
-            min_t_geo = t;
-            hovered_wedge = (int)i;
-            hovered_aabb = -1;
-          }
+          if (selected_entity_indices.count(hovered_entity))
+            selected_entity_indices.erase(hovered_entity);
+          else
+            selected_entity_indices.insert(hovered_entity);
         }
-      }
-
-      // Prioritize Entity if close? or just closest
-      if (hovered_entity != -1 && (min_t_ent < min_t_geo))
-      {
-        if (selected_entity_indices.count(hovered_entity))
-          selected_entity_indices.erase(hovered_entity);
         else
+        {
+          selected_entity_indices.clear();
           selected_entity_indices.insert(hovered_entity);
+        }
       }
-      else if (hovered_aabb != -1)
+      else if (hovered_geo != -1)
       {
-        if (selected_aabb_indices.count(hovered_aabb))
-          selected_aabb_indices.erase(hovered_aabb);
+        if (client::input::is_key_down(SDL_SCANCODE_LSHIFT))
+        {
+          if (selected_geometry_indices.count(hovered_geo))
+            selected_geometry_indices.erase(hovered_geo);
+          else
+            selected_geometry_indices.insert(hovered_geo);
+        }
         else
-          selected_aabb_indices.insert(hovered_aabb);
-      }
-      else if (hovered_wedge != -1)
-      {
-        if (selected_wedge_indices.count(hovered_wedge))
-          selected_wedge_indices.erase(hovered_wedge);
-        else
-          selected_wedge_indices.insert(hovered_wedge);
+        {
+          selected_geometry_indices.clear();
+          selected_geometry_indices.insert(hovered_geo);
+        }
       }
       else
       {

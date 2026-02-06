@@ -2,11 +2,19 @@
 
 #include <vulkan/vulkan.h>
 
-namespace client {
+namespace client
+{
 
-enum class GameStateKind { MainMenu, Play, Editor };
+enum class GameStateKind
+{
+  MainMenu,
+  Play,
+  Editor,
+  ToolEditor
+};
 
-class IGameState {
+class IGameState
+{
 public:
   virtual ~IGameState() = default;
 

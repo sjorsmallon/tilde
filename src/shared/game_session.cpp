@@ -15,8 +15,8 @@ void init_session_from_map(game_session_t &session, const map_t &map)
   session.entity_system.populate_from_map(map);
 
   // 2. Setup Static Geometry
-  // We copy the AABBs from the map as the static collision geometry.
-  session.static_geometry = map.aabbs;
+  // We copy the static geometry from the map.
+  session.static_geometry = map.static_geometry;
 
   // 3. Build BVH
   std::vector<BVH_Input> bvh_inputs;
@@ -24,8 +24,8 @@ void init_session_from_map(game_session_t &session, const map_t &map)
 
   for (size_t i = 0; i < session.static_geometry.size(); ++i)
   {
-    // Convert center/half_extents to min/max
-    aabb_bounds_t bounds = get_bounds(session.static_geometry[i]);
+    // Convert center/half_extents to min/max using type-aware helper
+    aabb_bounds_t bounds = shared::get_bounds(session.static_geometry[i]);
 
     BVH_Input input;
     input.aabb.min = bounds.min;

@@ -134,7 +134,7 @@ bool load_map(const std::string &filename, map_t &out_map)
         std::stringstream ss(ent.properties.at("half_extents"));
         ss >> aabb.half_extents.x >> aabb.half_extents.y >> aabb.half_extents.z;
       }
-      out_map.aabbs.push_back(aabb);
+      out_map.static_geometry.push_back({aabb});
     }
     else if (ent.classname == "wedge")
     {
@@ -161,7 +161,7 @@ bool load_map(const std::string &filename, map_t &out_map)
           wedge.orientation = 0;
         }
       }
-      out_map.wedges.push_back(wedge);
+      out_map.static_geometry.push_back({wedge});
     }
     else
     {
@@ -227,38 +227,50 @@ bool save_map(const std::string &filename, const map_t &map)
     entities.push_back(world);
   }
 
-  // AABBs
-  for (const auto &aabb : map.aabbs)
+  // Static Geometry
+  for (const auto &geo : map.static_geometry)
   {
-    map_entity_def_t def;
-    def.classname = "aabb";
-    std::stringstream ss;
-    ss << aabb.center.x << " " << aabb.center.y << " " << aabb.center.z;
-    def.properties["center"] = ss.str();
+    std::visit(
+        [&](auto &&arg)
+        {
+          using T = std::decay_t<decltype(arg)>;
+          map_entity_def_t def;
+          if constexpr (std::is_same_v<T, aabb_t>)
+          {
+            def.classname = "aabb";
+            std::stringstream ss;
+            ss << arg.center.x << " " << arg.center.y << " " << arg.center.z;
+            def.properties["center"] = ss.str();
 
-    ss.str("");
-    ss << aabb.half_extents.x << " " << aabb.half_extents.y << " "
-       << aabb.half_extents.z;
-    def.properties["half_extents"] = ss.str();
-    entities.push_back(def);
-  }
+            ss.str("");
+            ss << arg.half_extents.x << " " << arg.half_extents.y << " "
+               << arg.half_extents.z;
+            def.properties["half_extents"] = ss.str();
+            entities.push_back(def);
+          }
+          else if constexpr (std::is_same_v<T, wedge_t>)
+          {
+            def.classname = "wedge";
+            std::stringstream ss;
+            ss << arg.center.x << " " << arg.center.y << " " << arg.center.z;
+            def.properties["center"] = ss.str();
 
-  // Wedges
-  for (const auto &wedge : map.wedges)
-  {
-    map_entity_def_t def;
-    def.classname = "wedge";
-    std::stringstream ss;
-    ss << wedge.center.x << " " << wedge.center.y << " " << wedge.center.z;
-    def.properties["center"] = ss.str();
+            ss.str("");
+            ss << arg.half_extents.x << " " << arg.half_extents.y << " "
+               << arg.half_extents.z;
+            def.properties["half_extents"] = ss.str();
 
-    ss.str("");
-    ss << wedge.half_extents.x << " " << wedge.half_extents.y << " "
-       << wedge.half_extents.z;
-    def.properties["half_extents"] = ss.str();
-
-    def.properties["orientation"] = std::to_string(wedge.orientation);
-    entities.push_back(def);
+            def.properties["orientation"] = std::to_string(arg.orientation);
+            entities.push_back(def);
+          }
+          else if constexpr (std::is_same_v<T, mesh_t>)
+          {
+            // TODO: Serialize mesh_t if needed?
+            // For now, map format doesn't seem to have a spec for mesh.
+            // Maybe "prop_static"?
+          }
+        },
+        geo.data);
   }
 
   // Entities

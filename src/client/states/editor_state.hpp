@@ -128,17 +128,15 @@ private:
 
   // Dragging state for Gizmos
   bool dragging_gizmo = false;
-  shared::aabb_t dragging_original_aabb;
-  shared::wedge_t dragging_original_wedge;
+  shared::static_geometry_t dragging_original_geometry;
   linalg::vec3 dragging_original_position;
   float drag_start_offset = 0.0f;
   linalg::vec3 drag_start_point{.x = 0.0f, .y = 0.0f, .z = 0.0f};
   const float handle_length = 1.0f;
 
   // Selection state
-  std::set<int> selected_aabb_indices;
+  std::set<int> selected_geometry_indices;
   std::set<int> selected_entity_indices;
-  std::set<int> selected_wedge_indices;
   float selection_timer = 0.0f;
 
   // Geometry Placement

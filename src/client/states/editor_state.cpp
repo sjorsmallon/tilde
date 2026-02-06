@@ -60,11 +60,12 @@ void EditorState::on_enter()
     camera.yaw = iso_yaw;
     camera.pitch = iso_pitch;
     map_source.name = "New Default Map";
-    auto &aabb = map_source.aabbs.emplace_back();
+    shared::aabb_t aabb;
     aabb.center = {.x = 0, .y = default_floor_y, .z = 0};
     aabb.half_extents = {.x = default_floor_extent,
                          .y = default_floor_half_height,
                          .z = default_floor_extent};
+    map_source.static_geometry.push_back({aabb});
   }
 }
 

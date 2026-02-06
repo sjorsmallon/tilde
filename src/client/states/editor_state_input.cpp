@@ -115,75 +115,58 @@ void EditorState::action_entity_2()
 
 void EditorState::action_delete()
 {
-  if (selected_aabb_indices.empty() && selected_entity_indices.empty() &&
-      selected_wedge_indices.empty())
+  if (selected_geometry_indices.empty() && selected_entity_indices.empty())
     return;
 
-  std::vector<int> aabbs_to_delete(selected_aabb_indices.begin(),
-                                   selected_aabb_indices.end());
-  std::sort(aabbs_to_delete.rbegin(), aabbs_to_delete.rend());
+  std::vector<int> geo_to_delete(selected_geometry_indices.begin(),
+                                 selected_geometry_indices.end());
+  std::sort(geo_to_delete.rbegin(), geo_to_delete.rend());
 
   std::vector<int> entities_to_delete(selected_entity_indices.begin(),
                                       selected_entity_indices.end());
   std::sort(entities_to_delete.rbegin(), entities_to_delete.rend());
 
-  std::vector<int> wedges_to_delete(selected_wedge_indices.begin(),
-                                    selected_wedge_indices.end());
-  std::sort(wedges_to_delete.rbegin(), wedges_to_delete.rend());
-
-  std::vector<shared::aabb_t> deleted_aabbs;
-  for (int idx : aabbs_to_delete)
-    if (idx >= 0 && idx < (int)map_source.aabbs.size())
-      deleted_aabbs.push_back(map_source.aabbs[idx]);
+  std::vector<shared::static_geometry_t> deleted_geometry;
+  for (int idx : geo_to_delete)
+    if (idx >= 0 && idx < (int)map_source.static_geometry.size())
+      deleted_geometry.push_back(map_source.static_geometry[idx]);
 
   std::vector<shared::entity_spawn_t> deleted_entities;
   for (int idx : entities_to_delete)
     if (idx >= 0 && idx < (int)map_source.entities.size())
       deleted_entities.push_back(map_source.entities[idx]);
 
-  std::vector<shared::wedge_t> deleted_wedges;
-  for (int idx : wedges_to_delete)
-    if (idx >= 0 && idx < (int)map_source.wedges.size())
-      deleted_wedges.push_back(map_source.wedges[idx]);
+  for (int idx : geo_to_delete)
+    if (idx >= 0 && idx < (int)map_source.static_geometry.size())
+      map_source.static_geometry.erase(map_source.static_geometry.begin() +
+                                       idx);
 
-  for (int idx : aabbs_to_delete)
-    if (idx >= 0 && idx < (int)map_source.aabbs.size())
-      map_source.aabbs.erase(map_source.aabbs.begin() + idx);
   for (int idx : entities_to_delete)
     if (idx >= 0 && idx < (int)map_source.entities.size())
       map_source.entities.erase(map_source.entities.begin() + idx);
-  for (int idx : wedges_to_delete)
-    if (idx >= 0 && idx < (int)map_source.wedges.size())
-      map_source.wedges.erase(map_source.wedges.begin() + idx);
 
-  selected_aabb_indices.clear();
+  selected_geometry_indices.clear();
   selected_entity_indices.clear();
-  selected_wedge_indices.clear();
 
   undo_stack.push(
-      [this, deleted_aabbs, deleted_entities, deleted_wedges]()
+      [this, deleted_geometry, deleted_entities]()
       {
-        for (const auto &box : deleted_aabbs)
-          map_source.aabbs.push_back(box);
+        for (const auto &geo : deleted_geometry)
+          map_source.static_geometry.push_back(geo);
         for (const auto &ent : deleted_entities)
           map_source.entities.push_back(ent);
-        for (const auto &wedge : deleted_wedges)
-          map_source.wedges.push_back(wedge);
       },
-      [this, deleted_aabbs, deleted_entities, deleted_wedges]()
+      [this, deleted_geometry, deleted_entities]()
       {
-        int da_count = (int)deleted_aabbs.size();
-        if (map_source.aabbs.size() >= da_count)
-          map_source.aabbs.erase(map_source.aabbs.end() - da_count,
-                                 map_source.aabbs.end());
+        int dg_count = (int)deleted_geometry.size();
+        if (map_source.static_geometry.size() >= dg_count)
+          map_source.static_geometry.erase(map_source.static_geometry.end() -
+                                               dg_count,
+                                           map_source.static_geometry.end());
         int de_count = (int)deleted_entities.size();
         if (map_source.entities.size() >= de_count)
           map_source.entities.erase(map_source.entities.end() - de_count,
                                     map_source.entities.end());
-        int dw_count = (int)deleted_wedges.size();
-        if (map_source.wedges.size() >= dw_count)
-          map_source.wedges.erase(map_source.wedges.end() - dw_count,
-                                  map_source.wedges.end());
       });
 }
 

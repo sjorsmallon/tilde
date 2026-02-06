@@ -73,6 +73,9 @@ struct Bounding_Volume_Hierarchy
   std::vector<BVH_Primitive> primitives;
 };
 
+void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
+                   const AABB &aabb);
+
 Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs);
 
 struct Ray_Hit
