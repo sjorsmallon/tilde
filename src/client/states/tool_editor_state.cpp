@@ -193,7 +193,6 @@ viewport_state_t ToolEditorState::transform_viewport_state()
 
 void ToolEditorState::update(float dt)
 {
-  log_terminal("ToolEditorState::update");
   // Update Camera
   ImGuiIO &io = ImGui::GetIO();
   if (!io.WantCaptureMouse)
@@ -215,6 +214,11 @@ void ToolEditorState::update(float dt)
         camera.yaw = iso_yaw;
         camera.pitch = iso_pitch;
       }
+    }
+
+    if (input::is_key_pressed(SDL_SCANCODE_1))
+    {
+      renderer::draw_announcement("Hello World");
     }
 
     if (input::is_key_down(SDL_SCANCODE_W))
@@ -316,8 +320,8 @@ void ToolEditorState::update(float dt)
     mouse_event_t mouse_e;
     mouse_e.pos = {mx, my};
     mouse_e.delta = {mdx, mdy};
-    mouse_e.shift_down =
-        input::is_key_down(225); // LSHIFT SDL_SCANCODE_LSHIFT = 225
+    mouse_e.shift_down = input::is_key_down(
+        SDL_SCANCODE_LSHIFT); // LSHIFT SDL_SCANCODE_LSHIFT = 225
 
     static bool was_lmb_down = false;
     bool is_lmb_down = input::is_mouse_down(1);
@@ -338,10 +342,31 @@ void ToolEditorState::update(float dt)
     }
     was_lmb_down = is_lmb_down;
 
-    if (input::is_key_down(76)) // Delete
+    // Forward all confirmed key presses to the tool
+    // We iterate over all scancodes to find what was pressed this frame.
+    // 512 checks is negligible.
+    bool shift = input::is_key_down(SDL_SCANCODE_LSHIFT) ||
+                 input::is_key_down(SDL_SCANCODE_RSHIFT);
+    bool ctrl = input::is_key_down(SDL_SCANCODE_LCTRL) ||
+                input::is_key_down(SDL_SCANCODE_RCTRL);
+    bool alt = input::is_key_down(SDL_SCANCODE_LALT) ||
+               input::is_key_down(SDL_SCANCODE_RALT);
+
+    //@FIXME: This is crazy, why can't we forward the key events from the input
+    //system?
+    for (int scancode = 0; scancode < SDL_NUM_SCANCODES; ++scancode)
     {
-      key_event_t key_e = {76, false, false, false, false};
-      tools[active_tool_index]->on_key_down(context, key_e);
+      if (input::is_key_pressed(scancode))
+      {
+        key_event_t key_e;
+        key_e.scancode = scancode;
+        key_e.shift_down = shift;
+        key_e.ctrl_down = ctrl;
+        key_e.alt_down = alt;
+        key_e.repeat = false; // input::is_key_pressed checks for new press only
+
+        tools[active_tool_index]->on_key_down(context, key_e);
+      }
     }
   }
 }
@@ -427,26 +452,25 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   for (const auto &geo : map.static_geometry)
   {
     std::visit(
-        [&](auto &&arg)
+        [&](auto &&shape)
         {
-          using T = std::decay_t<decltype(arg)>;
+          using T = std::decay_t<decltype(shape)>;
           if constexpr (std::is_same_v<T, shared::aabb_t>)
           {
-            renderer::DrawAABB(cmd, arg.center - arg.half_extents,
-                               arg.center + arg.half_extents, 0xFFFFFFFF);
+            renderer::DrawAABB(cmd, shape.center - shape.half_extents,
+                               shape.center + shape.half_extents, 0xFFFFFFFF);
           }
           else if constexpr (std::is_same_v<T, shared::wedge_t>)
           {
             // Simplified wireframe for now: draw bounds
-            // A better impl would draw the wedge shape
-            shared::aabb_bounds_t b = shared::get_bounds(arg);
-            renderer::DrawAABB(cmd, b.min, b.max, 0xFFFFFFFF);
+            renderer::DrawAABB(cmd, shape.center - shape.half_extents,
+                               shape.center + shape.half_extents, 0xFFFFFFFF);
           }
           else if constexpr (std::is_same_v<T, shared::mesh_t>)
           {
             renderer::DrawAABB(
-                cmd, arg.local_aabb.center - arg.local_aabb.half_extents,
-                arg.local_aabb.center + arg.local_aabb.half_extents,
+                cmd, shape.local_aabb.center - shape.local_aabb.half_extents,
+                shape.local_aabb.center + shape.local_aabb.half_extents,
                 0xFF00FFFF);
           }
         },

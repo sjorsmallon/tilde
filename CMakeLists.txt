@@ -161,6 +161,10 @@ add_library(game_client SHARED
     src/client/states/editor_state_update.cpp
     src/client/states/editor_state_draw.cpp
     src/client/states/editor_gizmo.cpp
+    src/client/states/tool_editor_state.cpp
+    src/client/editor/tools/selection_tool.cpp
+    src/client/editor/tools/placement_tool.cpp
+    src/client/editor/tools/sculpting_tool.cpp
     src/client/input.cpp
     src/client/renderer.cpp
     ${SHADER_HEADERS}

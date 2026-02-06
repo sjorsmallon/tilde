@@ -1859,5 +1859,49 @@ void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
   }
 }
 
+void draw_wedge(VkCommandBuffer cmd, const shared::wedge_t &wedge,
+                uint32_t color)
+{
+  auto points = shared::get_wedge_points(wedge);
+
+  // Draw Base Loop (0-1-2-3)
+  DrawLine(cmd, points[0], points[1], color);
+  DrawLine(cmd, points[1], points[2], color);
+  DrawLine(cmd, points[2], points[3], color);
+  DrawLine(cmd, points[3], points[0], color);
+
+  // Draw Top Edge (4-5)
+  DrawLine(cmd, points[4], points[5], color);
+
+  // Connect Top Edge to Base
+  const float epsilon = 0.001f;
+  linalg::vec3 edge_delta = points[5] - points[4];
+  bool edge_along_x = std::abs(edge_delta.x) > std::abs(edge_delta.z);
+
+  for (int i = 4; i <= 5; ++i)
+  {
+    linalg::vec3 top = points[i];
+    for (int j = 0; j < 4; ++j)
+    {
+      linalg::vec3 base = points[j];
+      bool share_x = std::abs(top.x - base.x) < epsilon;
+      bool share_z = std::abs(top.z - base.z) < epsilon;
+
+      if (edge_along_x)
+      {
+        // Edge along X -> Slope along Z. Connect if Share X.
+        if (share_x)
+          DrawLine(cmd, top, base, color);
+      }
+      else
+      {
+        // Edge along Z -> Slope along X. Connect if Share Z.
+        if (share_z)
+          DrawLine(cmd, top, base, color);
+      }
+    }
+  }
+}
+
 } // namespace renderer
 } // namespace client

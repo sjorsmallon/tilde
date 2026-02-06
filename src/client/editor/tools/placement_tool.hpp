@@ -23,6 +23,8 @@ public:
 private:
   linalg::vec3 ghost_pos;
   bool ghost_valid = false;
+
+  shared::static_geometry_t current_geometry;
 };
 
 } // namespace client

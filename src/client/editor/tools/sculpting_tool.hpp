@@ -27,6 +27,7 @@ private:
   bool dragging = false;
   int dragging_geo_index = -1;
   int dragging_face = -1;
+  viewport_state_t last_view;
   linalg::vec3 drag_origin_point;
   // We only support AABB sculpting for now, but we store the variant to be safe
   // or copy of AABB? Storing the full geometry is safer if we revert.

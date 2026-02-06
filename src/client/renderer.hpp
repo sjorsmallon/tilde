@@ -6,6 +6,7 @@
 #include "camera.hpp"
 #include "linalg.hpp"
 #include "old_ideas/ecs.hpp"
+#include "shapes.hpp"
 
 namespace client
 {
@@ -37,6 +38,10 @@ void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
 // Draw an arrow (shaft = AABB, head = Pyramid)
 void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
                 const linalg::vec3 &end, uint32_t color);
+
+// Draw a wireframe wedge
+void draw_wedge(VkCommandBuffer cmd, const shared::wedge_t &wedge,
+                uint32_t color);
 
 // Apply the viewport to the command buffer (calculating pixel rect from
 // normalized)

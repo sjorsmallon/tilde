@@ -159,6 +159,7 @@ game_client_src = [
   'src/client/states/editor_state_update.cpp',
   'src/client/states/editor_state_draw.cpp',
   'src/client/states/editor_gizmo.cpp',
+  'src/client/states/tool_editor_state.cpp',
   'src/client/input.cpp',
   'src/client/renderer.cpp'
 ]

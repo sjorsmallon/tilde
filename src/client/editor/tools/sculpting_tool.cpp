@@ -125,6 +125,8 @@ void Sculpting_Tool::on_disable(editor_context_t &ctx) { dragging = false; }
 void Sculpting_Tool::on_update(editor_context_t &ctx,
                                const viewport_state_t &view)
 {
+  last_view = view;
+
   if (dragging)
     return;
 
@@ -167,6 +169,7 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
     dragging_geo_index = hovered_geo_index;
     dragging_face = hovered_face;
     original_geometry = ctx.map->static_geometry[dragging_geo_index];
+    // We could store drag_origin_point here if we wanted absolute logic
   }
 }
 
@@ -178,44 +181,151 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
     auto &geo = ctx.map->static_geometry[dragging_geo_index];
     if (auto *aabb = std::get_if<shared::aabb_t>(&geo.data))
     {
-      // Restore original to modify from base? Or incremental?
-      // Incremental is hard with just delta. Let's do delta from mouse movement
-      // pixels? Ideally project ray to axis line.
+      using namespace linalg;
 
-      // Simple pixel delta for now since we don't have full camera unproject
-      // helpers here handy in tool Actually we do have ray. Let's use pixel
-      // delta
-      // * sensitivity for simplicity as per requirements (ignore
-      // implementation)
-
-      float delta = (float)e.delta.x * 0.01f + (float)e.delta.y * -0.01f;
-
-      // Depending on face, apply delta
+      // Determine face normal and center
+      vec3 normal = {0, 0, 0};
+      vec3 center_offset = {0, 0, 0}; // Offset from center to face center
       // 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
       switch (dragging_face)
       {
-      case 0: // +X
-        aabb->half_extents.x += delta;
-        aabb->center.x += delta;
+      case 0:
+        normal = {1, 0, 0};
+        center_offset = {aabb->half_extents.x, 0, 0};
         break;
-      case 1: // -X
-        aabb->half_extents.x +=
-            delta; // Growing outwards means negative delta if -X?
-        // Actually mouse movement mapping to 3d axis is tricky without
-        // projection Let's just say "drag right = grow"
-        aabb->center.x -= delta;
+      case 1:
+        normal = {-1, 0, 0};
+        center_offset = {-aabb->half_extents.x, 0, 0};
         break;
-        // ... and so on. This is a naive implementation but sufficient for
-        // "design"
+      case 2:
+        normal = {0, 1, 0};
+        center_offset = {0, aabb->half_extents.y, 0};
+        break;
+      case 3:
+        normal = {0, -1, 0};
+        center_offset = {0, -aabb->half_extents.y, 0};
+        break;
+      case 4:
+        normal = {0, 0, 1};
+        center_offset = {0, 0, aabb->half_extents.z};
+        break;
+      case 5:
+        normal = {0, 0, -1};
+        center_offset = {0, 0, -aabb->half_extents.z};
+        break;
       }
 
-      // Ensure min size
-      if (aabb->half_extents.x < 0.1f)
-        aabb->half_extents.x = 0.1f;
-      if (aabb->half_extents.y < 0.1f)
-        aabb->half_extents.y = 0.1f;
-      if (aabb->half_extents.z < 0.1f)
-        aabb->half_extents.z = 0.1f;
+      vec3 face_center_world = aabb->center + center_offset;
+      vec3 face_end_world = face_center_world + normal; // 1 unit along normal
+
+      // Project to Screen
+      // 1. World -> View
+      vec3 v0 = world_to_view(
+          face_center_world,
+          {last_view.camera.x, last_view.camera.y, last_view.camera.z},
+          last_view.camera.yaw, last_view.camera.pitch);
+      vec3 v1 = world_to_view(
+          face_end_world,
+          {last_view.camera.x, last_view.camera.y, last_view.camera.z},
+          last_view.camera.yaw, last_view.camera.pitch);
+
+      // 2. View -> Screen
+      // Important to use updated last_view params
+      // Note: view_to_screen handles Z clipping implicitly by projection math?
+      // If points are behind camera, it might flip.
+      // Ideally we check z < 0 for perspective (looking down -z)
+
+      bool valid_projection = true;
+      if (!last_view.camera.orthographic && (v0.z > -0.1f || v1.z > -0.1f))
+      {
+        valid_projection = false; // Too close or behind
+      }
+
+      if (valid_projection)
+      {
+        vec2 s0 = view_to_screen(v0, last_view.display_size,
+                                 last_view.camera.orthographic,
+                                 last_view.camera.ortho_height, last_view.fov);
+        vec2 s1 = view_to_screen(v1, last_view.display_size,
+                                 last_view.camera.orthographic,
+                                 last_view.camera.ortho_height, last_view.fov);
+
+        vec2 screen_dir = {s1.x - s0.x, s1.y - s0.y};
+        float screen_len_sq =
+            screen_dir.x * screen_dir.x + screen_dir.y * screen_dir.y;
+
+        if (screen_len_sq > 1e-4f) // Avoid divide by zero
+        {
+          // Project mouse delta onto screen_dir
+          // We want to match visual movement.
+          // Moving mouse 'length(screen_dir)' pixels along 'screen_dir' should
+          // correspond to 1 unit world change. Projection scalar k =
+          // (mouse_delta . screen_dir) / |screen_dir|^2 World delta = k * 1
+          // unit (since screen_dir is 1 world unit vector)
+
+          vec2 mouse_delta = {(float)e.delta.x, (float)e.delta.y};
+          float dot_prod =
+              mouse_delta.x * screen_dir.x + mouse_delta.y * screen_dir.y;
+          float k = dot_prod / screen_len_sq;
+
+          // k is the fraction of the unit vector we moved.
+          // Wait. If I move mouse by screen_dir, dot is |screen_dir|^2. k = 1.
+          // So world delta is k * 1.0f.
+          // This seems correct for 1:1 mapping.
+
+          float world_delta = k;
+
+          // Apply
+          float *ext = nullptr;
+          float *cen = nullptr;
+          if (dragging_face < 2)
+          {
+            ext = &aabb->half_extents.x;
+            cen = &aabb->center.x;
+          }
+          else if (dragging_face < 4)
+          {
+            ext = &aabb->half_extents.y;
+            cen = &aabb->center.y;
+          }
+          else
+          {
+            ext = &aabb->half_extents.z;
+            cen = &aabb->center.z;
+          }
+
+          // Growing always adds to extent. Center moves by half delta
+          // If we are dragging +Face, growing moves center +
+          // If we are dragging -Face, growing moves center -
+
+          // dragging_face & 1 == 0 is positive face (+X, +Y, +Z)
+          // dragging_face & 1 == 1 is negative face (-X, -Y, -Z)
+
+          // If world_delta is positive (dragged OUTWARD from face), we grow.
+          // Wait: normal points OUT.
+          // So moving mouse along S1-S0 (OUT) gives positive k.
+          // Positive k means we should GROW the box in that direction.
+
+          *ext += world_delta * 0.5f;
+          if (dragging_face % 2 == 0)
+            *cen += world_delta * 0.5f;
+          else
+            *cen -= world_delta * 0.5f;
+
+          // Min size
+          if (*ext < 0.1f)
+          {
+            // Determine how much we overshot
+            float diff = 0.1f - *ext;
+            *ext = 0.1f;
+            // Correct center to stop moving
+            if (dragging_face % 2 == 0)
+              *cen -= diff;
+            else
+              *cen += diff;
+          }
+        }
+      }
     }
   }
 }
