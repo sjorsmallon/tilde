@@ -35,28 +35,8 @@ The stream is a sequence of bits that corresponds directly to the fields defined
 ### 3. Delta Encoding
 To save massive amounts of bandwidth, we only send what has **changed**.
 
-When serializing, the system compares the **Current State** against a **Baseline** (the last state the client acknowledged).
-
-#### detailed Wire Format Example
-Imagine an Entity with two fields: `Health` (int) and `Ammo` (int).
-
-**Scenario 1: Full Update (New Entity)**
-The client knows nothing. Everything is considered "changed".
-- **Stream**: `[1][100] [1][30]`
-    - `1` (Bit): Field 1 (Health) Changed? **YES**.
-    - `100` (Bytes): The value of Health.
-    - `1` (Bit): Field 2 (Ammo) Changed? **YES**.
-    - `30` (Bytes): The value of Ammo.
-
-**Scenario 2: Delta Update (Health Changed)**
-The player took damage (100 -> 90). Ammo is unchanged.
-- **Stream**: `[1][90] [0]`
-    - `1` (Bit): Field 1 (Health) Changed? **YES**.
-    - `90` (Bytes): The new value.
-    - `0` (Bit): Field 2 (Ammo) Changed? **NO**.
-    - *(Data for Ammo is skipped entirely)*.
-
-### How to Use
+When serializing, the system compares the **Current State** against a **Baseline** (the 
+last state the client acknowledged).
 
 1. **Inherit from Entity**:
    ```cpp
@@ -84,3 +64,16 @@ The player took damage (100 -> 90). Ammo is unchanged.
 
 4. **Register at Startup**:
    Call `My_Entity::register_schema()` once at the start of your game.
+
+
+# The wire format and its confusion.
+
+The thing I got confused about for the longest time is how to actually pack the entities
+for the entity bundle. what I have settled on is the following:
+
+1) write the entity ID / class
+2) write the BITMASK of which fields have changed. this means we DO NOT have to encode the field id / type whatever _into_ the byte stream buffer. although I guess we cannot arbitrarily seek to whicever fields but I don't care about that now.
+3) write the data using the new functions in entity_serialization. They do not specifically do delta compression but they do support varint / float compression.
+floats are supported up to 5 digits (2^5 = 32, which is the multiplier you see everywhere in that code!) and floats are stored in an "has_value" (is not 0.0), "has integer value" (e.g. 1.23, not 0.23), "has float value" (e.g. the "12345" in "0.12345").
+
+The integer part is way more clever than I initially understood it to be. apparently, a normal way to pack a varint is to write 1 bit for like "keep going", and then 4 subsequent bits for the byte value that follows. so you decompose the integer into constituent bytes and you just string them along.

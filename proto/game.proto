@@ -24,7 +24,7 @@ message C2S_PlayerMoveCommand {
   // The "Buttons" Bitfield
   optional uint64 buttons_bitfield = 7; 
 }
-
+// FOR NOW, ASSUME IS_DELTA IS ALWAYS TRUE!
 // s2c is server to client.
 message S2C_EntityPackage {
     optional int32 expected_max_entities = 1;

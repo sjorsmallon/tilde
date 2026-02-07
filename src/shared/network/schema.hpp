@@ -24,6 +24,7 @@ enum class Field_Type
 struct Field_Prop
 {
   std::string name;
+  uint32_t index; // New: Unique index for this class
   size_t offset;
   size_t size;
   Field_Type type;
@@ -101,7 +102,11 @@ public:                                                                        \
     std::vector<network::Field_Prop> props;
 
 #define DEFINE_FIELD(MemberName, TypeEnum)                                     \
-  props.push_back({#MemberName, offsetof(ThisClass, MemberName),               \
+  static_assert(std::is_trivially_copyable_v<decltype(ThisClass::MemberName)>, \
+                "Field " #MemberName                                           \
+                " must be trivially copyable for Undo/Redo/Networking");       \
+  props.push_back({#MemberName, (uint32_t)props.size(),                        \
+                   offsetof(ThisClass, MemberName),                            \
                    sizeof(ThisClass::MemberName), TypeEnum});
 
 #define END_SCHEMA(ClassName)                                                  \

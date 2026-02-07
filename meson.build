@@ -129,6 +129,7 @@ game_shared_src = [
   'src/shared/network/schema.cpp',
   'src/shared/map.cpp',
   'src/shared/entity_system.cpp',
+  'src/shared/entity.cpp',
   'src/shared/game_session.cpp',
   protoc_gen
 ]
@@ -290,6 +291,12 @@ executable('server_loop_test',
 
 executable('session_test',
   'src/test/session_test.cpp',
+  dependencies : [game_shared_dep],
+  include_directories : include_directories('src')
+)
+
+executable('entity_delta_test',
+  'src/test/test_entity_delta_packing.cpp',
   dependencies : [game_shared_dep],
   include_directories : include_directories('src')
 )

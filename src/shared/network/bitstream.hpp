@@ -62,6 +62,13 @@ public:
     }
     bit_index++;
   }
+  void write_bits(uint32_t value, int bits)
+  {
+    for (int i = 0; i < bits; ++i)
+    {
+      write_bit((value >> i) & 1);
+    }
+  }
 };
 
 class Bit_Reader
@@ -106,6 +113,19 @@ public:
     bool val = (buffer[byte_pos] >> bit_pos) & 1;
     bit_index++;
     return val;
+  }
+
+  uint32_t read_bits(int bits)
+  {
+    uint32_t value = 0;
+    for (int i = 0; i < bits; ++i)
+    {
+      if (read_bit())
+      {
+        value |= (1 << i);
+      }
+    }
+    return value;
   }
 };
 
