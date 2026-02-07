@@ -114,6 +114,8 @@ void ToolEditorState::on_enter()
 
   // Enable first tool
   switch_tool(0);
+
+  update_bvh();
 }
 
 void ToolEditorState::on_exit()
@@ -138,6 +140,8 @@ void ToolEditorState::switch_tool(int index)
 
   // Update context
   context.map = &map;
+  context.bvh = &bvh;
+  context.geometry_updated = &geometry_updated_flag;
   context.time = 0; // TODO: Get real time
 
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
@@ -302,8 +306,16 @@ void ToolEditorState::update(float dt)
     }
   }
 
+  if (geometry_updated_flag)
+  {
+    update_bvh();
+    geometry_updated_flag = false;
+  }
+
   // Update Viewport
   context.map = &map;
+  context.bvh = &bvh;
+  context.geometry_updated = &geometry_updated_flag;
   context.time += dt;
   viewport = transform_viewport_state();
 
@@ -353,7 +365,7 @@ void ToolEditorState::update(float dt)
                input::is_key_down(SDL_SCANCODE_RALT);
 
     //@FIXME: This is crazy, why can't we forward the key events from the input
-    //system?
+    // system?
     for (int scancode = 0; scancode < SDL_NUM_SCANCODES; ++scancode)
     {
       if (input::is_key_pressed(scancode))
@@ -483,6 +495,29 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   {
     tools[active_tool_index]->on_draw_overlay(context, overlay);
   }
+}
+
+void ToolEditorState::update_bvh()
+{
+  // Rebuild BVH from map geometry
+  std::vector<BVH_Input> inputs;
+  inputs.reserve(map.static_geometry.size());
+
+  for (size_t i = 0; i < map.static_geometry.size(); ++i)
+  {
+    const auto &geo = map.static_geometry[i];
+    shared::aabb_bounds_t bounds = shared::get_bounds(geo);
+
+    BVH_Input input;
+    input.aabb.min = bounds.min;
+    input.aabb.max = bounds.max;
+    input.id.type = Collision_Id::Type::Static_Geometry;
+    input.id.index = (uint32_t)i;
+
+    inputs.push_back(input);
+  }
+
+  bvh = build_bvh(inputs);
 }
 
 } // namespace client

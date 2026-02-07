@@ -83,6 +83,8 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
         new_geo.data);
 
     ctx.map->static_geometry.push_back(new_geo);
+    if (ctx.geometry_updated)
+      *ctx.geometry_updated = true;
   }
 }
 

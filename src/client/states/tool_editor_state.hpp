@@ -4,6 +4,7 @@
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
 #include "../game_state.hpp"
+#include "../shared/collision_detection.hpp"
 #include "../shared/map.hpp" // For map_t ownership
 #include <memory>
 #include <vector>
@@ -40,6 +41,10 @@ private:
   viewport_state_t transform_viewport_state();
 
   void switch_tool(int index);
+  void update_bvh();
+
+  Bounding_Volume_Hierarchy bvh;
+  bool geometry_updated_flag = false;
 };
 
 } // namespace client

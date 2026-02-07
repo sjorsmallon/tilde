@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../shared/collision_detection.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/map.hpp" // For map_t
 #include "../camera.hpp"        // For camera_t
@@ -48,6 +49,12 @@ struct editor_context_t
 
   // Helper to get global time if needed
   float time;
+
+  // BVH for picking
+  const Bounding_Volume_Hierarchy *bvh = nullptr;
+
+  // Flag to signal that geometry has been modified and BVH needs rebuild
+  bool *geometry_updated = nullptr;
 };
 
 // Interface for drawing editor overlays

@@ -54,24 +54,60 @@ void Selection_Tool::on_update(editor_context_t &ctx,
   // box)
   if (!is_dragging_box)
   {
-    float closest_t = std::numeric_limits<float>::max();
     hovered_geo_index = -1;
 
-    for (size_t i = 0; i < ctx.map->static_geometry.size(); ++i)
+    // Use BVH if available
+    bool hit_bvh = false;
+    if (ctx.bvh)
     {
-      const auto &geo = ctx.map->static_geometry[i];
-      shared::aabb_bounds_t bounds = shared::get_bounds(geo);
-
-      float t = 0.0f;
-      if (linalg::intersect_ray_aabb(view.mouse_ray.origin, view.mouse_ray.dir,
-                                     bounds.min, bounds.max, t))
+      Ray_Hit hit;
+      if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
+                            hit))
       {
-        if (t < closest_t)
+        if (hit.id.type == Collision_Id::Type::Static_Geometry)
         {
-          closest_t = t;
-          hovered_geo_index = (int)i;
+          hovered_geo_index = (int)hit.id.index;
+          hit_bvh = true;
         }
       }
+    }
+
+    // Grid Indication if nothing picked
+    // The user wants: 3) if there is nothing in the bvh, indicate the selected
+    // grid cell.
+    if (!hit_bvh)
+    {
+      // Raycast against ground plane y = -2.0 (same as placement tool?)
+      // Placement tool uses y = -2.0. Let's consistency check.
+      // In ToolEditorState::on_enter: floor center is {0, -2.0f, 0}.
+      // So plane is y = -2.0f?
+      // Actually floor half_extents.y is 0.5f. So top is -1.5f?
+      // Placement tool uses -2.0... that's inside the floor?
+      // Let's check placement tool again.
+      // Line 26: linalg::vec3 plane_point = {0, -2.0f, 0};
+      // So it picks at center of floor.
+      // I'll use the same plane for consistency.
+
+      linalg::vec3 plane_point = {0, -2.0f, 0};
+      linalg::vec3 plane_normal = {0, 1.0f, 0};
+      float t = 0.0f;
+      if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.dir,
+                                      plane_point, plane_normal, t))
+      {
+        grid_hover_pos = view.mouse_ray.origin + view.mouse_ray.dir * t;
+        // Snap to grid
+        grid_hover_pos.x = std::round(grid_hover_pos.x);
+        grid_hover_pos.z = std::round(grid_hover_pos.z);
+        grid_hover_valid = true;
+      }
+      else
+      {
+        grid_hover_valid = false;
+      }
+    }
+    else
+    {
+      grid_hover_valid = false;
     }
   }
 }
@@ -243,6 +279,11 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
         ctx.map->static_geometry.erase(ctx.map->static_geometry.begin() + idx);
       }
     }
+    if (!selected_geometry_indices.empty())
+    {
+      if (ctx.geometry_updated)
+        *ctx.geometry_updated = true;
+    }
     selected_geometry_indices.clear();
     hovered_geo_index = -1;
   }
@@ -341,6 +382,15 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
         }
       }
     }
+  }
+
+  // 4. Grid Indication
+  if (grid_hover_valid && hovered_geo_index == -1 && !is_dragging_significantly)
+  {
+    linalg::vec3 center = grid_hover_pos;
+    // Draw a thin plate to indicate the grid cell
+    linalg::vec3 half_extents = {0.5f, 0.05f, 0.5f};
+    renderer.draw_wire_box(center, half_extents, 0x88FFFFFF); // Faint white
   }
 }
 

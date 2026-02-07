@@ -34,6 +34,10 @@ private:
 
   // Cached viewport for projection in on_draw_ui / selection logic
   viewport_state_t cached_viewport;
+
+  // Grid indication
+  bool grid_hover_valid = false;
+  linalg::vec3 grid_hover_pos;
 };
 
 } // namespace client
