@@ -11,6 +11,8 @@
 #include "SDL_scancode.h"
 #include "imgui.h"
 #include <SDL.h>
+#include <cstring>
+#include <fstream>
 
 namespace client
 {
@@ -85,8 +87,25 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
 void ToolEditorState::on_enter()
 {
   log_terminal("Entered ToolEditorState");
+
+  // Load map from last_map.txt
+  bool map_loaded = false;
+  std::ifstream f("last_map.txt");
+  if (f.is_open())
+  {
+    log_terminal("Loading map from last_map.txt");
+    std::string line;
+    std::getline(f, line);
+    log_terminal(line);
+    map_loaded = load_map(line, map);
+    if (!map_loaded)
+    {
+      log_terminal("Failed to load map");
+    }
+  }
+
   // Initialize map with a floor
-  if (map.entities.empty())
+  if (!map_loaded)
   {
     map.name = "Tool Editor Map";
     auto floor_ent = std::make_shared<::network::AABB_Entity>();
@@ -424,6 +443,69 @@ void ToolEditorState::update(float dt)
 
 void ToolEditorState::render_ui()
 {
+  ImGui::Begin("Map Info");
+  ImGui::Text("Map: %s", map.name.c_str());
+
+  bool should_open_popup = false;
+  if (ImGui::Button("Save Map As..."))
+  {
+    renderer::draw_announcement("is the gerg ever open?");
+    // Popup for Save Map
+    should_open_popup = true;
+  }
+  ImGui::End();
+
+  if (should_open_popup)
+  {
+    ImGui::OpenPopup("Save Map as");
+    should_open_popup = false;
+  }
+
+  if (ImGui::BeginPopupModal("Save Map as", nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize))
+  {
+    renderer::draw_announcement("is the opup ever open?");
+
+    static char filename_buf[128] = "map.source";
+
+    if (ImGui::IsWindowAppearing())
+    {
+      if (!map.name.empty())
+      {
+        strncpy(filename_buf, map.name.c_str(), sizeof(filename_buf) - 1);
+        filename_buf[sizeof(filename_buf) - 1] = '\0';
+      }
+    }
+
+    ImGui::InputText("Filename", filename_buf, sizeof(filename_buf));
+
+    if (ImGui::Button("Save", ImVec2(120, 0)))
+    {
+      if (shared::save_map(filename_buf, map))
+      {
+        map.name = filename_buf;
+
+        std::ofstream last_map("last_map.txt");
+        if (last_map.is_open())
+        {
+          last_map << filename_buf;
+          last_map.close();
+        }
+      }
+      else
+      {
+        std::cerr << "Failed to save map!" << std::endl;
+      }
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)))
+    {
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+
   ImGui::Begin("Toolbox");
 
   if (ImGui::Button("Select"))
