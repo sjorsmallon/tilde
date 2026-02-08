@@ -21,6 +21,8 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
 
   VulkanOverlayRenderer(VkCommandBuffer c) : cmd(c) {}
 
+  VkCommandBuffer get_command_buffer() override { return cmd; }
+
   void draw_line(const linalg::vec3 &start, const linalg::vec3 &end,
                  uint32_t color) override
   {
@@ -210,6 +212,41 @@ void ToolEditorState::update(float dt)
     linalg::vec3 R = vectors.right;
     linalg::vec3 U = vectors.up;
 
+    if (input::is_key_pressed(SDL_SCANCODE_Z))
+    {
+      if (input::is_key_down(SDL_SCANCODE_LCTRL))
+      {
+        if (input::is_key_down(SDL_SCANCODE_LSHIFT))
+        {
+          if (transaction_system.can_redo())
+          {
+            transaction_system.redo(map);
+            geometry_updated_flag = true;
+          }
+        }
+        else
+        {
+          if (transaction_system.can_undo())
+          {
+            transaction_system.undo(map);
+            geometry_updated_flag = true;
+          }
+        }
+      }
+    }
+
+    if (input::is_key_pressed(SDL_SCANCODE_Y))
+    {
+      if (input::is_key_down(SDL_SCANCODE_LCTRL))
+      {
+        if (transaction_system.can_redo())
+        {
+          transaction_system.redo(map);
+          geometry_updated_flag = true;
+        }
+      }
+    }
+
     if (input::is_key_pressed(SDL_SCANCODE_O))
     {
       camera.orthographic = !camera.orthographic;
@@ -316,6 +353,7 @@ void ToolEditorState::update(float dt)
   context.map = &map;
   context.bvh = &bvh;
   context.geometry_updated = &geometry_updated_flag;
+  context.transaction_system = &transaction_system;
   context.time += dt;
   viewport = transform_viewport_state();
 

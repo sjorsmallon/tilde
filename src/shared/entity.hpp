@@ -60,17 +60,11 @@ public:
   void deserialize(Bit_Reader &reader);
 };
 
-struct Field_Update
-{
-  uint16_t field_id;         // Index from your schema
-  std::vector<uint8_t> data; // The raw bytes of the new value
-};
-
 struct Entity_Delta
 {
   uint32_t entity_id;   // WHICH object is this? (e.g., Player #42)
   uint16_t entity_type; // WHAT is it? (e.g., ET_Player -> uses Player Schema)
-  std::vector<Field_Update> updates;
+  std::vector<network::Field_Update> updates;
 };
 
 struct Entity_Update_Header

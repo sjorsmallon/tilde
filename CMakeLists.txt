@@ -89,7 +89,9 @@ add_library(game_shared STATIC
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/network/schema.cpp
+    src/shared/shapes.cpp
     src/shared/map.cpp
+    src/shared/entity.cpp
     src/shared/entity_system.cpp
     src/shared/game_session.cpp
 )
@@ -266,5 +268,11 @@ target_link_libraries(server_loop_test PRIVATE game_shared)
 add_executable(session_test src/test/session_test.cpp)
 target_include_directories(session_test PRIVATE src)
 target_link_libraries(session_test PRIVATE game_shared)
+
+# 16. Transaction System Test
+# 16. Transaction System Test
+add_executable(transaction_system_test src/test/test_transaction_system.cpp)
+target_include_directories(transaction_system_test PRIVATE src src/client src/client/editor)
+target_link_libraries(transaction_system_test PRIVATE game_shared Vulkan::Vulkan)
 
 

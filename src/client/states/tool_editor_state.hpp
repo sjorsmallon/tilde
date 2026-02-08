@@ -3,6 +3,7 @@
 #include "../camera.hpp"
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
+#include "../editor/transaction_system.hpp"
 #include "../game_state.hpp"
 #include "../shared/collision_detection.hpp"
 #include "../shared/map.hpp" // For map_t ownership
@@ -45,6 +46,8 @@ private:
 
   Bounding_Volume_Hierarchy bvh;
   bool geometry_updated_flag = false;
+
+  Transaction_System transaction_system;
 };
 
 } // namespace client

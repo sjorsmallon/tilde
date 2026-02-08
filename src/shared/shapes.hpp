@@ -1,6 +1,7 @@
 #pragma once
 
 #include "linalg.hpp"
+#include "network/schema.hpp"
 #include <array>
 #include <cmath>
 
@@ -11,6 +12,7 @@ struct aabb_t
 {
   linalg::vec3 center = {{0, 0, 0}};
   linalg::vec3 half_extents = {{0, 0, 0}};
+  DECLARE_SCHEMA(aabb_t);
 };
 
 struct pyramid_t
@@ -18,6 +20,7 @@ struct pyramid_t
   linalg::vec3 position = {{0, 0, 0}};
   float size = 1.0f;
   float height = 1.0f;
+  DECLARE_SCHEMA(pyramid_t);
 };
 
 struct aabb_bounds_t
@@ -88,7 +91,9 @@ struct wedge_t
   linalg::vec3 center = {{0, 0, 0}};
   linalg::vec3 half_extents = {{0, 0, 0}};
   // 0: -Z slope (default), 1: +Z, 2: -X, 3: +X
+  // 0: -Z slope (default), 1: +Z, 2: -X, 3: +X
   int orientation = 0;
+  DECLARE_SCHEMA(wedge_t);
 };
 
 inline aabb_bounds_t get_bounds(const wedge_t &wedge)

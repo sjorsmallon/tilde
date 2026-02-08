@@ -134,7 +134,9 @@ bool load_map(const std::string &filename, map_t &out_map)
         std::stringstream ss(ent.properties.at("half_extents"));
         ss >> aabb.half_extents.x >> aabb.half_extents.y >> aabb.half_extents.z;
       }
-      out_map.static_geometry.push_back({aabb});
+      static_geometry_t geo;
+      geo.data = aabb;
+      out_map.static_geometry.push_back(geo);
     }
     else if (ent.classname == "wedge")
     {
@@ -161,7 +163,9 @@ bool load_map(const std::string &filename, map_t &out_map)
           wedge.orientation = 0;
         }
       }
-      out_map.static_geometry.push_back({wedge});
+      static_geometry_t geo;
+      geo.data = wedge;
+      out_map.static_geometry.push_back(geo);
     }
     else
     {

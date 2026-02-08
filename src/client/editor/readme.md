@@ -20,3 +20,5 @@ I ran into more issues with selection not being generalizable and also how to ke
 
 this also simplifies picking in the editor!
 
+now the next problem to fix is the undo / redo stack. The previous solution uses a pair of function pointers that do undo / redo, but that to me looked like a very fragile mechanism relying on order of insertion etc. Additionally, it means implementing an undo / redo for every single unique action and that also does not seem to scale well IMO. I want to move to a transaction mechanism which can be easily undone or done.
+

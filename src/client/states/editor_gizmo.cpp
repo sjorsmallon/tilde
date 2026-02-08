@@ -1,5 +1,8 @@
 #include "editor_gizmo.hpp"
+#include "../editor/transaction_system.hpp"
 #include "../renderer.hpp"
+#include "../shared/map.hpp" // Full definition needed
+#include <algorithm>         // for min/max
 #include <cmath>
 
 namespace client
@@ -311,6 +314,211 @@ bool update_reshape_gizmo(reshape_gizmo_t &gizmo, const linalg::ray_t &ray,
   // state/drawing is a good step. Or we can add a `drag_context` struct.
 
   return false;
+}
+
+// Editor_Gizmo Implementation
+
+Editor_Gizmo::~Editor_Gizmo() = default;
+
+void Editor_Gizmo::start_interaction(Transaction_System *sys,
+                                     shared::map_t *map, int geo_index)
+{
+  if (!map || geo_index < 0 || geo_index >= (int)map->static_geometry.size())
+    return;
+
+  target_map = map;
+  target_index = geo_index;
+
+  // Start RAII Transaction
+  // This snapshots the CURRENT state of the geometry as "Before"
+  active_transaction =
+      std::make_unique<Editor_Transaction>(sys, target_map, target_index);
+
+  // Store original for drag calculations
+  original_geometry = target_map->static_geometry[target_index];
+}
+
+void Editor_Gizmo::end_interaction()
+{
+  // Destroying the transaction object triggers the commit process:
+  // 1. Calculate "After" snapshot (current state of map)
+  // 2. Diff "Before" vs "After"
+  // 3. Push transaction
+  active_transaction.reset();
+
+  target_map = nullptr;
+  target_index = -1;
+}
+
+bool Editor_Gizmo::is_interacting() const
+{
+  return active_transaction != nullptr;
+}
+
+void Editor_Gizmo::update(const linalg::ray_t &ray, bool is_mouse_down)
+{
+  if (is_interacting())
+    return; // Don't update hover if already dragging
+
+  // Update hover state
+  hit_test_reshape_gizmo(ray, state);
+}
+
+void Editor_Gizmo::draw(VkCommandBuffer cmd) { draw_reshape_gizmo(cmd, state); }
+
+void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
+                                const linalg::vec3 &cam_pos)
+{
+  if (!target_map || target_index == -1)
+    return;
+
+  if (state.dragging_handle_index == -1)
+  {
+    if (is_mouse_down && state.hovered_handle_index != -1)
+    {
+      state.dragging_handle_index = state.hovered_handle_index;
+
+      // Calculate Drag Start Offset
+      int i = state.dragging_handle_index;
+      int axis = i / 2;
+      vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
+                              {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+      vec3 axis_dir = face_normals[i];
+
+      shared::aabb_bounds_t bounds = shared::get_bounds(original_geometry);
+      vec3 center = (bounds.min + bounds.max) * 0.5f;
+      vec3 half = (bounds.max - bounds.min) * 0.5f;
+      float half_vals[3] = {half.x, half.y, half.z};
+
+      vec3 cam_to_obj = center - cam_pos;
+      vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+      plane_normal = linalg::cross(plane_normal, axis_dir);
+      vec3 handle_pos = center + axis_dir * half_vals[axis];
+
+      float t = 0;
+      if (linalg::intersect_ray_plane(ray.origin, ray.dir, handle_pos,
+                                      plane_normal, t))
+      {
+        vec3 hit = ray.origin + ray.dir * t;
+        drag_start_offset = linalg::dot(hit, axis_dir);
+      }
+    }
+  }
+  else
+  {
+    if (!is_mouse_down)
+    {
+      // Stop Dragging
+      state.dragging_handle_index = -1;
+      // Interaction end should be handled by caller calling end_interaction?
+      // Or we can call it here if we own the lifecycle?
+      // Caller manages `Editor_Gizmo` lifecycle usually?
+      // No, `Editor_Gizmo` is persistent, but `interaction` is transient.
+      // Caller should call `end_interaction` when mouse up.
+      // But `handle_input` is called every frame.
+      // If !is_mouse_down, we are done.
+      end_interaction();
+    }
+    else
+    {
+      // Continue Dragging
+      int i = state.dragging_handle_index;
+      int axis = i / 2;
+      vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
+                              {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+
+      vec3 axis_dir = face_normals[i];
+
+      // Use original geometry for calculation
+      shared::aabb_bounds_t orig_bounds = shared::get_bounds(original_geometry);
+      vec3 orig_center = (orig_bounds.min + orig_bounds.max) * 0.5f;
+      vec3 orig_half = (orig_bounds.max - orig_bounds.min) * 0.5f;
+      float orig_half_vals[3] = {orig_half.x, orig_half.y, orig_half.z};
+      vec3 handle_pos = orig_center + axis_dir * orig_half_vals[axis];
+
+      vec3 cam_to_obj = orig_center - cam_pos;
+      vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+      plane_normal = linalg::cross(plane_normal, axis_dir);
+
+      float t = 0;
+      if (linalg::intersect_ray_plane(ray.origin, ray.dir, handle_pos,
+                                      plane_normal, t))
+      {
+        vec3 hit = ray.origin + ray.dir * t;
+        float current_proj = linalg::dot(hit, axis_dir);
+        float delta = current_proj - drag_start_offset;
+
+        // Calculate new min/max
+        vec3 old_min = orig_bounds.min;
+        vec3 old_max = orig_bounds.max;
+
+        float new_min_val = old_min[axis];
+        float new_max_val = old_max[axis];
+
+        if (i % 2 == 0) // + Face
+        {
+          new_max_val += delta;
+          new_max_val = std::round(new_max_val); // Snap?
+        }
+        else // - Face
+        {
+          new_min_val += (axis_dir[axis] * delta);
+          new_min_val = std::round(new_min_val);
+        }
+
+        if (new_max_val < new_min_val + 0.1f)
+        {
+          if (i % 2 == 0)
+            new_max_val = new_min_val + 0.1f;
+          else
+            new_min_val = new_max_val - 0.1f;
+        }
+
+        float new_center_val = (new_min_val + new_max_val) * 0.5f;
+        float new_half_val = (new_max_val - new_min_val) * 0.5f;
+
+        // Update Map Geometry
+        auto &geo = target_map->static_geometry[target_index];
+        std::visit(
+            [&](auto &&arg)
+            {
+              using T = std::decay_t<decltype(arg)>;
+              if constexpr (std::is_same_v<T, shared::aabb_t> ||
+                            std::is_same_v<T, shared::wedge_t>)
+              {
+                if (axis == 0)
+                {
+                  arg.center.x = new_center_val;
+                  arg.half_extents.x = new_half_val;
+                }
+                else if (axis == 1)
+                {
+                  arg.center.y = new_center_val;
+                  arg.half_extents.y = new_half_val;
+                }
+                else if (axis == 2)
+                {
+                  arg.center.z = new_center_val;
+                  arg.half_extents.z = new_half_val;
+                }
+              }
+            },
+            geo.data);
+
+        // Update internal state visuals
+        state.aabb.center =
+            (shared::get_bounds(geo).min + shared::get_bounds(geo).max) * 0.5f;
+        state.aabb.half_extents =
+            (shared::get_bounds(geo).max - shared::get_bounds(geo).min) * 0.5f;
+      }
+    }
+  }
+}
+
+void Editor_Gizmo::set_geometry(const shared::aabb_bounds_t &bounds)
+{
+  state.aabb.center = (bounds.min + bounds.max) * 0.5f;
+  state.aabb.half_extents = (bounds.max - bounds.min) * 0.5f;
 }
 
 } // namespace client

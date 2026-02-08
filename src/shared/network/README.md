@@ -75,5 +75,11 @@ for the entity bundle. what I have settled on is the following:
 2) write the BITMASK of which fields have changed. this means we DO NOT have to encode the field id / type whatever _into_ the byte stream buffer. although I guess we cannot arbitrarily seek to whicever fields but I don't care about that now.
 3) write the data using the new functions in entity_serialization. They do not specifically do delta compression but they do support varint / float compression.
 floats are supported up to 5 digits (2^5 = 32, which is the multiplier you see everywhere in that code!) and floats are stored in an "has_value" (is not 0.0), "has integer value" (e.g. 1.23, not 0.23), "has float value" (e.g. the "12345" in "0.12345").
+Calculation:
+Value: 0.123456
+Scaled: 0.123456 * 32 = 3.950592
+Rounded: 4 (closest integer)
+Reconstructed: 4 / 32 = 0.125
 
 The integer part is way more clever than I initially understood it to be. apparently, a normal way to pack a varint is to write 1 bit for like "keep going", and then 4 subsequent bits for the byte value that follows. so you decompose the integer into constituent bytes and you just string them along.
+

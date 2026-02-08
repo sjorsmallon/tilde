@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../shared/map.hpp"
 #include "../shared/shapes.hpp"
 #include "linalg.hpp"
 #include <vulkan/vulkan.h> // For VkCommandBuffer
@@ -59,5 +60,59 @@ bool hit_test_transform_gizmo(const linalg::ray_t &ray,
 // Returns true if modified
 bool update_reshape_gizmo(reshape_gizmo_t &gizmo, const linalg::ray_t &ray,
                           bool is_dragging);
+
+} // namespace client
+
+// Forward validations
+namespace shared
+{
+struct map_t;
+struct aabb_bounds_t;
+} // namespace shared
+
+namespace client
+{
+
+class Transaction_System;
+
+class Editor_Gizmo
+{
+public:
+  Editor_Gizmo() = default;
+  ~Editor_Gizmo(); // explicit destructor for unique_ptr PIMPL
+
+  void start_interaction(Transaction_System *sys, shared::map_t *map,
+                         int geo_index);
+  void end_interaction();
+  bool is_interacting() const;
+
+  // Passthrough to underlying gizmo logic
+  void update(const linalg::ray_t &ray, bool is_mouse_down);
+  void draw(VkCommandBuffer cmd);
+
+  // Manipulate the gizmo and the underlying object
+  // output_modified: set to true if the object changed
+  // valid_ray/ray: input ray
+  void handle_input(const linalg::ray_t &ray, bool is_mouse_down,
+                    const linalg::vec3 &cam_pos);
+
+  // Access to internal state
+  reshape_gizmo_t &get_state() { return state; }
+  void set_geometry(const shared::aabb_bounds_t &bounds);
+
+private:
+  reshape_gizmo_t state;
+
+  // Transaction State
+  std::unique_ptr<class Editor_Transaction> active_transaction;
+
+  shared::map_t *target_map = nullptr;
+  int target_index = -1;
+
+  // Dragging state helper
+  linalg::vec3 drag_start_point;
+  float drag_start_offset = 0.0f;
+  shared::static_geometry_t original_geometry;
+};
 
 } // namespace client

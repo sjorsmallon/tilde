@@ -12,6 +12,12 @@ namespace network
 
 // --- Schema Definition ---
 
+struct Field_Update
+{
+  uint16_t field_id;         // Index from your schema
+  std::vector<uint8_t> data; // The raw bytes of the new value
+};
+
 enum class Field_Type
 {
   Int32,
@@ -68,6 +74,60 @@ private:
   std::unordered_map<std::string, Class_Schema> schemas;
 };
 
+// Generates a list of updates to transform 'baseline' into 'current'
+// based on the provided schema.
+inline std::vector<Field_Update> diff(const void *baseline, const void *current,
+                                      const Class_Schema *schema)
+{
+  std::vector<Field_Update> updates;
+  const uint8_t *base_ptr = static_cast<const uint8_t *>(baseline);
+  const uint8_t *curr_ptr = static_cast<const uint8_t *>(current);
+
+  for (const auto &field : schema->fields)
+  {
+    if (std::memcmp(base_ptr + field.offset, curr_ptr + field.offset,
+                    field.size) != 0)
+    {
+      Field_Update update;
+      update.field_id = (uint16_t)field.index;
+      update.data.resize(field.size);
+      std::memcpy(update.data.data(), curr_ptr + field.offset, field.size);
+      updates.push_back(std::move(update));
+    }
+  }
+  return updates;
+}
+
+// Applies a list of updates to 'target' based on the provided schema.
+inline void apply_diff(void *target, const std::vector<Field_Update> &updates,
+                       const Class_Schema *schema)
+{
+  uint8_t *target_ptr = static_cast<uint8_t *>(target);
+  for (const auto &update : updates)
+  {
+    // Find field by index (O(N) but N is small, usually < 20)
+    // Could optimize schema to have index -> field lookup if needed
+    for (const auto &field : schema->fields)
+    {
+      if (field.index == update.field_id)
+      {
+        if (update.data.size() == field.size)
+        {
+          std::memcpy(target_ptr + field.offset, update.data.data(),
+                      field.size);
+        }
+        else
+        {
+          // Size mismatch error?
+          std::cerr << "Error: Field size mismatch applying diff for field "
+                    << field.name << "\n";
+        }
+        break;
+      }
+    }
+  }
+}
+
 // --- Network Variable Wrapper ---
 
 template <typename T> struct Network_Var
@@ -115,6 +175,17 @@ public:                                                                        \
   const network::Class_Schema *ClassName::get_schema() const                   \
   {                                                                            \
     return network::Schema_Registry::get().get_schema(#ClassName);             \
+  }                                                                            \
+  namespace                                                                    \
+  {                                                                            \
+  /* Register schema on startup. */                                            \
+  /* Unlike Entities which use X-Macros for auto-registration, these */        \
+  /* structs (aabb_t, etc.) need explicit registration at runtime. */          \
+  struct ClassName##_Schema_Init                                               \
+  {                                                                            \
+    ClassName##_Schema_Init() { ClassName::register_schema(); }                \
+  };                                                                           \
+  static ClassName##_Schema_Init g_##ClassName##_schema_init;                  \
   }
 
 } // namespace network

@@ -1,4 +1,5 @@
 #include "selection_tool.hpp"
+#include "../transaction_system.hpp"
 #include "imgui.h"
 #include <SDL.h>
 #include <algorithm>
@@ -47,14 +48,54 @@ void Selection_Tool::on_update(editor_context_t &ctx,
 {
   cached_viewport = view;
 
+  // 1. Update Gizmo State (Hover)
+  // We need a ray from mouse.
+  // The viewport_state_t has mouse_ray.
+
+  // If we are dragging gizmo, we must pump input here because on_mouse_drag
+  // doesn't provide Ray
+  if (editor_gizmo.is_interacting())
+  {
+    // Wait, if mouse is UP, we rely on on_mouse_up event to stop.
+    // So here we assume it's still down.
+    // This drives the drag animation 60fps independent of events.
+    editor_gizmo.handle_input(view.mouse_ray, true,
+                              {view.camera.x, view.camera.y, view.camera.z});
+  }
+  else
+  {
+    editor_gizmo.update(view.mouse_ray, false);
+  }
+
+  // Sync Gizmo Geometry if single selection
+  if (selected_geometry_indices.size() == 1)
+  {
+    int idx = selected_geometry_indices[0];
+    if (idx >= 0 && idx < (int)ctx.map->static_geometry.size())
+    {
+      const auto &geo = ctx.map->static_geometry[idx];
+      editor_gizmo.set_geometry(shared::get_bounds(geo));
+    }
+  }
+
   if (!ctx.map)
     return;
 
   // Raycast against Static Geometry to find hovered item (only if not dragging
-  // box)
-  if (!is_dragging_box)
+  // box AND not interacting with gizmo)
+  if (!is_dragging_box && !editor_gizmo.is_interacting())
   {
     hovered_geo_index = -1;
+
+    // Check if Gizmo is hovered? If so, don't hover geometry?
+    // Usually gizmo takes precedence.
+    if (editor_gizmo.get_state().hovered_handle_index != -1 &&
+        selected_geometry_indices.size() == 1)
+    {
+      // Gizmo is hovered, so we shouldn't pick other geometry
+      grid_hover_valid = false;
+      return;
+    }
 
     // Use BVH if available
     bool hit_bvh = false;
@@ -117,6 +158,37 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
 {
   if (e.button == 1) // Left click
   {
+    // 0. Check Gizmo Interaction
+    // We need current ray. We can use cached_viewport if it's up to date.
+    // Or we can assume editor_gizmo state is up to date from on_update?
+    // on_update is called every frame. on_mouse_down is called when event
+    // happens. Events usually happen before update. So logic might need to
+    // re-calc ray or just trust last frame's state? Better to re-calc ray to be
+    // precise? But we don't have Viewport here easily without cached one. Let's
+    // use cached_viewport.
+
+    // Update gizmo again just in case mouse moved significantly since last
+    // frame? (Unlikely to matter much for a single frame, but let's be safe).
+    // Actually, on_update is cleaner.
+
+    if (selected_geometry_indices.size() == 1)
+    {
+      // If gizmo is hovered, start interaction
+      // We rely on 'hovered_handle_index' updated in on_update.
+      // OR we assume update called.
+      if (editor_gizmo.get_state().hovered_handle_index != -1)
+      {
+        editor_gizmo.start_interaction(ctx.transaction_system, ctx.map,
+                                       selected_geometry_indices[0]);
+        editor_gizmo.handle_input(cached_viewport.mouse_ray, true,
+                                  {cached_viewport.camera.x,
+                                   cached_viewport.camera.y,
+                                   cached_viewport.camera.z});
+        return; // Consume event, no box select
+      }
+    }
+
+    // Else Box Select
     is_dragging_box = false;
     drag_start_pos = e.pos;
     drag_current_pos = e.pos;
@@ -142,6 +214,71 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
 void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
                                    const mouse_event_t &e)
 {
+  if (editor_gizmo.is_interacting())
+  {
+    // We need to update ray based on new mouse pos!
+    // e.pos is screen coords.
+    // cached_viewport has helper?
+    // We need to re-calculate ray from e.pos using cached_viewport logic.
+    // viewport_state_t doesn't have `ray_from_pixel` helper exposed in struct?
+    // It has `mouse_ray` field calculated by system.
+    // But `mouse_ray` in `cached_viewport` is OLD (from last update).
+    // We need NEW ray for THIS event.
+
+    // We can't easily recalculate ray without `linalg` helpers and viewport
+    // size/camera. cached_viewport HAS camera and display_size! Let's implement
+    // ray calculation.
+
+    linalg::vec2 normalized_mouse = {
+        (float)e.pos.x / cached_viewport.display_size.x * 2.0f - 1.0f,
+        (float)e.pos.y / cached_viewport.display_size.y * 2.0f - 1.0f};
+
+    // Wait, assuming Y down? SDL/ImGui is Top-Left (0,0).
+    // OpenGL/Vulkan Clip Space Y is typically ... wait.
+    // Let's assume standard logic.
+
+    // Actually, simpler: just reuse `cached_viewport` params but update based
+    // on `e.pos`. But `state_manager` calculates `mouse_ray`. If we are getting
+    // `on_mouse_drag` event, `ctx` doesn't provide new ray. So we must
+    // calculate it.
+
+    // Let's look at `state_manager.cpp` to see how it calculates ray.
+    // It uses `client::get_cursor_ray`.
+
+    // I'll skip implementing full raycast here and rely on `on_update` setting
+    // the ray? NO, `handle_input` needs the ray NOW for the drag math to be
+    // smooth. But `on_update` happens every frame. `on_mouse_drag` happens on
+    // event. If I only update in `on_update` it might lag? Actually `on_update`
+    // is the main loop. Events are processed before. We drive the gizmo in
+    // `on_update`? No, `handle_input` handles the logic.
+
+    // Ideally `on_mouse_drag` just updates internal state and `on_update` does
+    // the logic? Or `on_mouse_drag` does logic.
+
+    // Let's try to calculate ray.
+    // editor_tool.hpp doesn't provide ray calculation.
+    // I'll use `cached_viewport` and `linalg::screen_to_ray`? (Does it exist?)
+    // `linalg.hpp` has `screen_to_world`? NO.
+
+    // Fallback: Use `on_update` to drive the drag if
+    // `editor_gizmo.is_interacting()`. But `on_update` doesn't know if mouse is
+    // down unless we track it. `gizmo` tracks `dragging_handle_index`.
+
+    // So:
+    // 1. In `on_mouse_down`: Start interaction.
+    // 2. In `on_update`: If interacting, call `handle_input(view.mouse_ray,
+    // true, ...)`
+    // 3. In `on_mouse_up`: call `handle_input(..., false, ...)`
+
+    // This seems safest given lack of ray calc here.
+    // EXCEPT `on_mouse_up` might happen before `on_update`?
+    // If we rely on `on_update`, we might miss the "release" frame if logic is
+    // tricky. But `handle_input(..., false)` is robust.
+
+    // Let's try driving it in `on_update` mostly?
+    // But we need to handle `on_mouse_up` to end it properly.
+  }
+
   if (is_dragging_box)
   {
     drag_current_pos = e.pos;
@@ -152,6 +289,18 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 {
   if (e.button == 1)
   {
+    if (editor_gizmo.is_interacting())
+    {
+      // End interaction
+      // We can just call handle_input with false.
+      // We might not have perfect ray, but `false` just stops dragging.
+      editor_gizmo.handle_input({}, false,
+                                {cached_viewport.camera.x,
+                                 cached_viewport.camera.y,
+                                 cached_viewport.camera.z});
+      return;
+    }
+
     bool was_dragging = is_dragging_box;
     is_dragging_box = false;
 
@@ -272,10 +421,16 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     // Sort indices descending to remove efficiently
     std::sort(selected_geometry_indices.rbegin(),
               selected_geometry_indices.rend());
+
     for (int idx : selected_geometry_indices)
     {
       if (idx >= 0 && idx < (int)ctx.map->static_geometry.size())
       {
+        auto &geo = ctx.map->static_geometry[idx];
+        if (ctx.transaction_system)
+        {
+          ctx.transaction_system->commit_remove(idx, geo);
+        }
         ctx.map->static_geometry.erase(ctx.map->static_geometry.begin() + idx);
       }
     }
@@ -385,12 +540,19 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   }
 
   // 4. Grid Indication
-  if (grid_hover_valid && hovered_geo_index == -1 && !is_dragging_significantly)
+  if (grid_hover_valid && hovered_geo_index == -1 &&
+      !is_dragging_significantly && !editor_gizmo.is_interacting())
   {
     linalg::vec3 center = grid_hover_pos;
     // Draw a thin plate to indicate the grid cell
     linalg::vec3 half_extents = {0.5f, 0.05f, 0.5f};
     renderer.draw_wire_box(center, half_extents, 0x88FFFFFF); // Faint white
+  }
+
+  // 5. Draw Gizmo
+  if (selected_geometry_indices.size() == 1)
+  {
+    editor_gizmo.draw(renderer.get_command_buffer());
   }
 }
 

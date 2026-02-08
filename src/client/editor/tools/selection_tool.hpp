@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../states/editor_gizmo.hpp"
 #include "../editor_tool.hpp"
 #include <vector>
 
@@ -38,6 +39,9 @@ private:
   // Grid indication
   bool grid_hover_valid = false;
   linalg::vec3 grid_hover_pos;
+
+  // Gizmo
+  Editor_Gizmo editor_gizmo;
 };
 
 } // namespace client

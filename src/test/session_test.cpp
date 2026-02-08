@@ -18,7 +18,7 @@ int main()
   aabb_t aabb;
   aabb.center = {0, 0, 0};
   aabb.half_extents = {10, 10, 10};
-  test_map.static_geometry.push_back({aabb});
+  test_map.static_geometry.push_back({.data = aabb});
 
   // Add a Player Entity Spawn
   entity_spawn_t spawn;

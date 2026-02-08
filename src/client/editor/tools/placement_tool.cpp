@@ -1,4 +1,5 @@
 #include "placement_tool.hpp"
+#include "../transaction_system.hpp"
 #include "log.hpp"
 #include "renderer.hpp"
 #include <SDL.h>
@@ -82,9 +83,27 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
         },
         new_geo.data);
 
-    ctx.map->static_geometry.push_back(new_geo);
-    if (ctx.geometry_updated)
-      *ctx.geometry_updated = true;
+    // 3. Add to map
+    {
+      // Start Transaction for "Place <Classname>"
+      // Note: The user requested a scope based transaction.
+      // Editor_Transaction transaction(ctx.transaction_system, ctx.map, "Place
+      // Object");
+      // However, for *Creation*, we need to know WHERE it was added to track
+      // it? My `Editor_Transaction` for ADD takes a name, and snapshots value
+      // at end? No, I implemented it to snapshot `target_index` at start. If I
+      // push_back, the index matches.
+
+      // We need to ensure the transaction object lives until after the
+      // push_back.
+      client::Editor_Transaction transaction(ctx.transaction_system, ctx.map,
+                                             "Place Object");
+
+      ctx.map->static_geometry.push_back(new_geo);
+    } // Transaction commits here.
+
+    // 4. Trigger update
+    *ctx.geometry_updated = true;
   }
 }
 

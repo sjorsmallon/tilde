@@ -4,6 +4,7 @@
 #include "../../shared/linalg.hpp"
 #include "../../shared/map.hpp" // For map_t
 #include "../camera.hpp"        // For camera_t
+#include <vulkan/vulkan.h>
 
 namespace client
 {
@@ -55,12 +56,16 @@ struct editor_context_t
 
   // Flag to signal that geometry has been modified and BVH needs rebuild
   bool *geometry_updated = nullptr;
+
+  class Transaction_System *transaction_system = nullptr;
 };
 
 // Interface for drawing editor overlays
 struct overlay_renderer_t
 {
   virtual ~overlay_renderer_t() = default;
+
+  virtual VkCommandBuffer get_command_buffer() = 0;
 
   virtual void draw_line(const linalg::vec3 &start, const linalg::vec3 &end,
                          uint32_t color) = 0;
