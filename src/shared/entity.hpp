@@ -6,6 +6,8 @@
 #include <cassert>
 #include <cstring>
 #include <map>
+#include <memory>
+#include <string>
 
 namespace network
 {
@@ -50,6 +52,9 @@ public:
     }
   }
 
+  // Returns all properties as a map of strings (for saving/snapshots)
+  virtual std::map<std::string, std::string> get_all_properties() const;
+
   // Writes the entity state to the stream.
   // If baseline is provided, it only writes changes relative to baseline.
   // If baseline is null, it writes everything (full update).
@@ -75,3 +80,12 @@ struct Entity_Update_Header
 };
 
 } // namespace network
+
+namespace shared
+{
+// Factory helpers
+std::shared_ptr<network::Entity>
+create_entity_by_classname(const std::string &classname);
+
+std::string get_classname_for_entity(const network::Entity *entity);
+} // namespace shared

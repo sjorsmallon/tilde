@@ -1,4 +1,5 @@
 #include "editor_state.hpp"
+#include "../../shared/entities/static_entities.hpp"
 #include "../console.hpp"
 #include "../renderer.hpp" // Added for render_view
 #include "../shared/map.hpp"
@@ -65,7 +66,16 @@ void EditorState::on_enter()
     aabb.half_extents = {.x = default_floor_extent,
                          .y = default_floor_half_height,
                          .z = default_floor_extent};
-    map_source.static_geometry.push_back({aabb});
+
+    // map_source.static_geometry.push_back({aabb}); // REMOVED
+    // Use AABB_Entity
+    auto floor = shared::create_entity_by_classname("aabb_entity");
+    if (auto *e = dynamic_cast<::network::AABB_Entity *>(floor.get()))
+    {
+      e->center = aabb.center;
+      e->half_extents = aabb.half_extents;
+    }
+    map_source.entities.push_back(floor);
   }
 }
 

@@ -3,6 +3,7 @@
 #include "collision_detection.hpp"
 #include "entity_system.hpp"
 #include "map.hpp"
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,11 +24,10 @@ struct game_session_t
   // Manages all active dynamic entities (Players, Weapons, Projectiles)
   Entity_System entity_system;
 
-  // Static geometry data.
-  // The BVH references indices into this vector.
-  // We copy this from the map_t so the session is self-contained and
-  // doesn't rely on the map_t remaining in memory.
-  std::vector<static_geometry_t> static_geometry;
+  // Static entities (AABB, Wedge, StaticMesh)
+  // We keep them separate from Entity_System (dynamic) for now,
+  // though they are all "Entities" in the map.
+  std::vector<std::shared_ptr<network::Entity>> static_entities;
 
   // The acceleration structure for collision queries against static_geometry.
   // Dynamic entity collision is handled separately via the Entity_System.
@@ -40,6 +40,9 @@ struct game_session_t
 // - Resets the entity system and populates it from map entities.
 // - Copies static geometry (AABBs).
 // - Builds the BVH for static geometry.
+// Helper to get bounds from generic entity if it is a supported static type
+std::optional<aabb_bounds_t> get_entity_bounds(const network::Entity *entity);
+
 void init_session_from_map(game_session_t &session, const map_t &map);
 
 } // namespace shared

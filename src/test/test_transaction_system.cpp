@@ -1,22 +1,12 @@
 #include "client/editor/transaction_system.hpp"
+#include "shared/entities/static_entities.hpp"
+#include "shared/map.hpp"
 #include <cassert>
 #include <iostream>
 
 using namespace client;
 using namespace shared;
-
-// Mock Schema for a simple struct to test generic modify
-struct TestObject
-{
-  int x = 0;
-  float y = 0.0f;
-  DECLARE_SCHEMA(TestObject);
-};
-
-BEGIN_SCHEMA(TestObject)
-DEFINE_FIELD(x, network::Field_Type::Int32)
-DEFINE_FIELD(y, network::Field_Type::Float32)
-END_SCHEMA(TestObject)
+using namespace network;
 
 void test_add_remove()
 {
@@ -25,51 +15,51 @@ void test_add_remove()
   map_t map;
 
   // Initial state
-  assert(map.static_geometry.empty());
+  assert(map.entities.empty());
 
   // 1. Add
   {
-    Editor_Transaction t(&ts, &map, "Add Box");
-    aabb_t box;
-    box.center = {0, 0, 0};
-    static_geometry_t geo = {box};
-    map.static_geometry.push_back(geo);
+    Editor_Transaction t(&ts, &map, "Add AABB");
+
+    auto ent = std::make_shared<AABB_Entity>();
+    ent->center = {0, 0, 0};
+    ent->half_extents = {1, 1, 1};
+
+    map.entities.push_back(ent);
   } // Commit
 
-  assert(map.static_geometry.size() == 1);
+  assert(map.entities.size() == 1);
   assert(ts.can_undo());
   assert(!ts.can_redo());
 
   // 2. Undo Add
   ts.undo(map);
-  assert(map.static_geometry.empty());
+  assert(map.entities.empty());
   assert(!ts.can_undo());
   assert(ts.can_redo());
 
   // 3. Redo Add
   ts.redo(map);
-  assert(map.static_geometry.size() == 1);
+  assert(map.entities.size() == 1);
 
   // 4. Remove
   {
-    // For remove, we need to manually invoke commit_remove or use a transaction
-    // wrapper if we had one for remove? The placement tool uses commit_remove
-    // directly. Let's use ts.commit_remove directly as the tool does.
-    auto obj = map.static_geometry[0]; // Snapshot
-    ts.commit_remove(0, obj);
-    map.static_geometry.erase(map.static_geometry.begin());
+    auto ent = map.entities[0];
+    ts.commit_remove(0, ent.get(), "aabb_entity");
+    map.entities.erase(map.entities.begin());
   }
 
-  assert(map.static_geometry.empty());
+  assert(map.entities.empty());
   assert(ts.can_undo());
 
   // 5. Undo Remove
   ts.undo(map);
-  assert(map.static_geometry.size() == 1);
+  assert(map.entities.size() == 1);
+  // Check if restored entity has correct properties would be good too
 
   // 6. Redo Remove
   ts.redo(map);
-  assert(map.static_geometry.empty());
+  assert(map.entities.empty());
 
   std::cout << "Add/Remove Passed." << std::endl;
 }
@@ -81,35 +71,35 @@ void test_modify()
   map_t map;
 
   // Setup
-  aabb_t box;
-  box.center = {0, 0, 0};
-  map.static_geometry.push_back({box});
+  auto ent = std::make_shared<AABB_Entity>();
+  ent->center = {0, 0, 0};
+  map.entities.push_back(ent);
 
   // 1. Modify
   {
     Editor_Transaction t(&ts, &map, (uint32_t)0);
 
     // Modify the object
-    // We need to modify using std::get to be sure
-    if (std::holds_alternative<aabb_t>(map.static_geometry[0].data))
+    if (auto *aabb = dynamic_cast<AABB_Entity *>(map.entities[0].get()))
     {
-      std::get<aabb_t>(map.static_geometry[0].data).center.x = 10.0f;
+      aabb->center = {10.0f, 0, 0};
     }
   } // Commit
 
-  auto &geo = std::get<aabb_t>(map.static_geometry[0].data);
-  assert(geo.center.x == 10.0f);
+  auto *aabb = dynamic_cast<AABB_Entity *>(map.entities[0].get());
+  assert(aabb);
+  assert(aabb->center.value.x == 10.0f);
   assert(ts.can_undo());
 
   // 2. Undo Modify
   ts.undo(map);
-  auto &geo_undo = std::get<aabb_t>(map.static_geometry[0].data);
-  assert(geo_undo.center.x == 0.0f);
+  aabb = dynamic_cast<AABB_Entity *>(map.entities[0].get());
+  assert(aabb->center.value.x == 0.0f);
 
   // 3. Redo Modify
   ts.redo(map);
-  auto &geo_redo = std::get<aabb_t>(map.static_geometry[0].data);
-  assert(geo_redo.center.x == 10.0f);
+  aabb = dynamic_cast<AABB_Entity *>(map.entities[0].get());
+  assert(aabb->center.value.x == 10.0f);
 
   std::cout << "Modify Passed." << std::endl;
 }

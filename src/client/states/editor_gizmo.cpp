@@ -1,6 +1,7 @@
 #include "editor_gizmo.hpp"
 #include "../editor/transaction_system.hpp"
 #include "../renderer.hpp"
+#include "../shared/entities/static_entities.hpp"
 #include "../shared/map.hpp" // Full definition needed
 #include <algorithm>         // for min/max
 #include <cmath>
@@ -323,7 +324,7 @@ Editor_Gizmo::~Editor_Gizmo() = default;
 void Editor_Gizmo::start_interaction(Transaction_System *sys,
                                      shared::map_t *map, int geo_index)
 {
-  if (!map || geo_index < 0 || geo_index >= (int)map->static_geometry.size())
+  if (!map || geo_index < 0 || geo_index >= (int)map->entities.size())
     return;
 
   target_map = map;
@@ -335,15 +336,30 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
       std::make_unique<Editor_Transaction>(sys, target_map, target_index);
 
   // Store original for drag calculations
-  original_geometry = target_map->static_geometry[target_index];
+  auto &ent = target_map->entities[target_index];
+
+  if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+  {
+    original_transform.position = aabb->center.value;
+    original_transform.scale =
+        aabb->half_extents.value; // Store half-extents as scale
+    original_transform.orientation = {0, 0, 0,
+                                      1}; // Identity (AABB has no rotation)
+  }
+  else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
+  {
+    original_transform.position = wedge->center.value;
+    original_transform.scale = wedge->half_extents.value;
+    // Orientation is int 0-3, ignore for reshape gizmo for now or map to quat?
+    // Reshape gizmo works in local space or aligned space?
+    // Current reshape logic assumes axis aligned.
+    original_transform.orientation = {0, 0, 0, 1};
+  }
 }
 
 void Editor_Gizmo::end_interaction()
 {
-  // Destroying the transaction object triggers the commit process:
-  // 1. Calculate "After" snapshot (current state of map)
-  // 2. Diff "Before" vs "After"
-  // 3. Push transaction
+  // Destroying the transaction object triggers the commit process
   active_transaction.reset();
 
   target_map = nullptr;
@@ -385,18 +401,18 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
                               {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
       vec3 axis_dir = face_normals[i];
 
-      shared::aabb_bounds_t bounds = shared::get_bounds(original_geometry);
-      vec3 center = (bounds.min + bounds.max) * 0.5f;
-      vec3 half = (bounds.max - bounds.min) * 0.5f;
-      float half_vals[3] = {half.x, half.y, half.z};
+      // Reconstruct bounds from original_transform
+      vec3 center = original_transform.position;
+      vec3 half = original_transform.scale; // actually half_extents
+
+      vec3 handles_pos = center + axis_dir * half[axis];
 
       vec3 cam_to_obj = center - cam_pos;
       vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
       plane_normal = linalg::cross(plane_normal, axis_dir);
-      vec3 handle_pos = center + axis_dir * half_vals[axis];
 
       float t = 0;
-      if (linalg::intersect_ray_plane(ray.origin, ray.dir, handle_pos,
+      if (linalg::intersect_ray_plane(ray.origin, ray.dir, handles_pos,
                                       plane_normal, t))
       {
         vec3 hit = ray.origin + ray.dir * t;
@@ -410,13 +426,6 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
     {
       // Stop Dragging
       state.dragging_handle_index = -1;
-      // Interaction end should be handled by caller calling end_interaction?
-      // Or we can call it here if we own the lifecycle?
-      // Caller manages `Editor_Gizmo` lifecycle usually?
-      // No, `Editor_Gizmo` is persistent, but `interaction` is transient.
-      // Caller should call `end_interaction` when mouse up.
-      // But `handle_input` is called every frame.
-      // If !is_mouse_down, we are done.
       end_interaction();
     }
     else
@@ -430,11 +439,10 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
       vec3 axis_dir = face_normals[i];
 
       // Use original geometry for calculation
-      shared::aabb_bounds_t orig_bounds = shared::get_bounds(original_geometry);
-      vec3 orig_center = (orig_bounds.min + orig_bounds.max) * 0.5f;
-      vec3 orig_half = (orig_bounds.max - orig_bounds.min) * 0.5f;
-      float orig_half_vals[3] = {orig_half.x, orig_half.y, orig_half.z};
-      vec3 handle_pos = orig_center + axis_dir * orig_half_vals[axis];
+      vec3 orig_center = original_transform.position;
+      vec3 orig_half = original_transform.scale;
+
+      vec3 handle_pos = orig_center + axis_dir * orig_half[axis];
 
       vec3 cam_to_obj = orig_center - cam_pos;
       vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
@@ -449,8 +457,9 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         float delta = current_proj - drag_start_offset;
 
         // Calculate new min/max
-        vec3 old_min = orig_bounds.min;
-        vec3 old_max = orig_bounds.max;
+        // Bounds from center/half
+        vec3 old_min = orig_center - orig_half;
+        vec3 old_max = orig_center + orig_half;
 
         float new_min_val = old_min[axis];
         float new_max_val = old_max[axis];
@@ -478,38 +487,51 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         float new_half_val = (new_max_val - new_min_val) * 0.5f;
 
         // Update Map Geometry
-        auto &geo = target_map->static_geometry[target_index];
-        std::visit(
-            [&](auto &&arg)
-            {
-              using T = std::decay_t<decltype(arg)>;
-              if constexpr (std::is_same_v<T, shared::aabb_t> ||
-                            std::is_same_v<T, shared::wedge_t>)
-              {
-                if (axis == 0)
-                {
-                  arg.center.x = new_center_val;
-                  arg.half_extents.x = new_half_val;
-                }
-                else if (axis == 1)
-                {
-                  arg.center.y = new_center_val;
-                  arg.half_extents.y = new_half_val;
-                }
-                else if (axis == 2)
-                {
-                  arg.center.z = new_center_val;
-                  arg.half_extents.z = new_half_val;
-                }
-              }
-            },
-            geo.data);
+        auto &ent = target_map->entities[target_index];
+        if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+        {
+          if (axis == 0)
+          {
+            aabb->center.value.x = new_center_val;
+            aabb->half_extents.value.x = new_half_val;
+          }
+          else if (axis == 1)
+          {
+            aabb->center.value.y = new_center_val;
+            aabb->half_extents.value.y = new_half_val;
+          }
+          else
+          {
+            aabb->center.value.z = new_center_val;
+            aabb->half_extents.value.z = new_half_val;
+          }
 
-        // Update internal state visuals
-        state.aabb.center =
-            (shared::get_bounds(geo).min + shared::get_bounds(geo).max) * 0.5f;
-        state.aabb.half_extents =
-            (shared::get_bounds(geo).max - shared::get_bounds(geo).min) * 0.5f;
+          // Update internal state visuals
+          state.aabb.center = aabb->center.value;
+          state.aabb.half_extents = aabb->half_extents.value;
+        }
+        else if (auto *wedge =
+                     dynamic_cast<::network::Wedge_Entity *>(ent.get()))
+        {
+          if (axis == 0)
+          {
+            wedge->center.value.x = new_center_val;
+            wedge->half_extents.value.x = new_half_val;
+          }
+          else if (axis == 1)
+          {
+            wedge->center.value.y = new_center_val;
+            wedge->half_extents.value.y = new_half_val;
+          }
+          else
+          {
+            wedge->center.value.z = new_center_val;
+            wedge->half_extents.value.z = new_half_val;
+          }
+
+          state.aabb.center = wedge->center.value;
+          state.aabb.half_extents = wedge->half_extents.value;
+        }
       }
     }
   }

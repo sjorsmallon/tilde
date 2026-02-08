@@ -18,21 +18,36 @@ void Entity_System::reset()
   }
 }
 
+void Entity_System::add_entity(const std::shared_ptr<network::Entity> &entity)
+{
+  if (!entity)
+    return;
+
+#define ADD_IF_TYPE(enum_name, class_name, str_name, header_path)              \
+  if (auto *casted = dynamic_cast<const class_name *>(entity.get()))           \
+  {                                                                            \
+    auto it = pools.find(entity_type::enum_name);                              \
+    if (it != pools.end())                                                     \
+    {                                                                          \
+      it->second->add_existing(entity.get());                                  \
+      return;                                                                  \
+    }                                                                          \
+  }
+
+  SHARED_ENTITIES_LIST(ADD_IF_TYPE)
+
+#undef ADD_IF_TYPE
+
+  // Optional: Log warning if not handled, but some entities might not be in the
+  // system? log_error("Could not add entity of unknown type");
+}
+
 void Entity_System::populate_from_map(const map_t &map)
 {
   reset();
-
   for (const auto &ent : map.entities)
   {
-    auto it = pools.find(ent.type);
-    if (it != pools.end())
-    {
-      it->second->instantiate(ent);
-    }
-    else
-    {
-      log_error("Unknown entity type: {}", (int)ent.type);
-    }
+    add_entity(ent);
   }
 }
 

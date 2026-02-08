@@ -39,6 +39,9 @@ struct Field_Prop
 bool parse_string_to_field(const std::string &value, Field_Type type,
                            void *out_ptr);
 
+bool serialize_field_to_string(const void *in_ptr, Field_Type type,
+                               std::string &out_value);
+
 struct Class_Schema
 {
   std::string class_name;

@@ -1,5 +1,6 @@
 #ifdef ENTITIES_WANT_INCLUDES
 #include "entities/player_entity.hpp"
+#include "entities/static_entities.hpp"
 #include "entities/weapon_entity.hpp"
 #endif
 
@@ -21,7 +22,12 @@
   X(PLAYER, network::Player_Entity, "player_start",                            \
     "entities/player_entity.hpp")                                              \
   X(WEAPON, network::Weapon_Entity, "weapon_basic",                            \
-    "entities/weapon_entity.hpp")
+    "entities/weapon_entity.hpp")                                              \
+  X(AABB, network::AABB_Entity, "aabb_entity", "entities/static_entities.hpp") \
+  X(WEDGE, network::Wedge_Entity, "wedge_entity",                              \
+    "entities/static_entities.hpp")                                            \
+  X(STATIC_MESH, network::Static_Mesh_Entity, "static_mesh_entity",            \
+    "entities/static_entities.hpp")
 
 // we override the x macro from st get the enum name.
 #define ENUM_NAME(enum_name, class_name, str_name, header) enum_name,

@@ -42,6 +42,48 @@ inline uint32_t read_var_uint(Bit_Reader &r)
   return value;
 }
 
+inline void write_string(Bit_Writer &w, const std::string &value)
+{
+  write_var_uint(w, static_cast<uint32_t>(value.size()));
+  for (auto c : value)
+  {
+    w.write_byte(static_cast<uint8_t>(c));
+  }
+}
+
+inline void read_string(Bit_Reader &r, std::string &value)
+{
+  uint32_t size = read_var_uint(r);
+  value.resize(size);
+  for (size_t i = 0; i < size; ++i)
+  {
+    value[i] = static_cast<char>(r.read_byte());
+  }
+}
+
+inline void read_c_string(Bit_Reader &r, char *value, size_t max_size)
+{
+  uint32_t size = read_var_uint(r);
+  if (size >= max_size)
+  {
+    size = max_size - 1;
+  }
+  for (size_t i = 0; i < size; ++i)
+  {
+    value[i] = static_cast<char>(r.read_byte());
+  }
+  value[size] = '\0';
+}
+
+inline void write_c_string(Bit_Writer &w, const char *value)
+{
+  write_var_uint(w, static_cast<uint32_t>(strlen(value)));
+  for (size_t i = 0; i < strlen(value); ++i)
+  {
+    w.write_byte(static_cast<uint8_t>(value[i]));
+  }
+}
+
 inline void write_var_int(Bit_Writer &w, int32_t value)
 {
   bool negative = (value < 0);
@@ -76,22 +118,22 @@ inline void write_coord(Bit_Writer &w, float value)
   // fractional part (around 5 bits precision)
   uint32_t fraction = (uint32_t)std::round((absValue - integer) * 32.0f);
 
-  bool hasInt = (integer != 0);
-  bool hasFrac = (fraction != 0);
+  bool has_int = (integer != 0);
+  bool has_fractional_part = (fraction != 0);
 
-  w.write_bit(hasInt);
-  w.write_bit(hasFrac);
+  w.write_bit(has_int);
+  w.write_bit(has_fractional_part);
 
-  if (hasInt)
+  if (has_int)
   {
     w.write_bit(value < 0); // sign
     write_var_uint(w, integer);
   }
 
-  if (hasFrac)
+  if (has_fractional_part)
   {
 
-    if (!hasInt && hasFrac)
+    if (!has_int && has_fractional_part)
     {
       w.write_bit(value < 0);
     }
@@ -107,12 +149,12 @@ inline float read_coord(Bit_Reader &r)
     return 0.0f;
   }
 
-  bool hasInt = r.read_bit();
-  bool hasFrac = r.read_bit();
+  bool has_int = r.read_bit();
+  bool has_fractional_part = r.read_bit();
 
   float value = 0.0f;
 
-  if (hasInt)
+  if (has_int)
   {
     bool negative = r.read_bit();
     uint32_t integer = read_var_uint(r);
@@ -121,10 +163,10 @@ inline float read_coord(Bit_Reader &r)
       value = -value;
   }
 
-  if (hasFrac)
+  if (has_fractional_part)
   {
     // My fix: read sign if no int
-    if (!hasInt)
+    if (!has_int)
     {
       bool negative = r.read_bit();
       if (negative)
@@ -143,7 +185,7 @@ inline float read_coord(Bit_Reader &r)
 
     uint32_t fraction = r.read_bits(5);
 
-    if (hasInt)
+    if (has_int)
     {
       value += (value < 0 ? -1.0f : 1.0f) * (fraction / 32.0f);
     }

@@ -31,7 +31,8 @@ private:
   linalg::vec3 drag_origin_point;
   // We only support AABB sculpting for now, but we store the variant to be safe
   // or copy of AABB? Storing the full geometry is safer if we revert.
-  shared::static_geometry_t original_geometry;
+  shared::aabb_t original_aabb;
+  std::map<std::string, std::string> before_properties;
 };
 
 } // namespace client

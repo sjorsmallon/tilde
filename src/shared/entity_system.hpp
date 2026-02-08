@@ -11,11 +11,19 @@
 namespace shared
 {
 
+struct Spawn_Info
+{
+  linalg::vec3 position = {{0, 0, 0}};
+  float yaw = 0.0f;
+  std::map<std::string, std::string> properties;
+};
+
 struct Entity_Pool_Base
 {
   virtual ~Entity_Pool_Base() = default;
   virtual void reset() = 0;
-  virtual void instantiate(const entity_spawn_t &spawn) = 0;
+  virtual void instantiate(const Spawn_Info &spawn) = 0;
+  virtual void add_existing(const network::Entity *entity) = 0;
 };
 
 template <typename T> struct EntityPool : Entity_Pool_Base
@@ -30,7 +38,8 @@ template <typename T> struct EntityPool : Entity_Pool_Base
   // fields:
   //    - Field "position" (Vec3f) <- spawn.position
   //    - Field "yaw" or "view_angle_yaw" (Float32) <- spawn.yaw
-  void instantiate(const entity_spawn_t &spawn) override
+  //    - Field "yaw" or "view_angle_yaw" (Float32) <- spawn.yaw
+  void instantiate(const Spawn_Info &spawn) override
   {
     auto &ent = entities.emplace_back();
 
@@ -88,6 +97,14 @@ template <typename T> struct EntityPool : Entity_Pool_Base
     }
   }
 
+  void add_existing(const network::Entity *entity) override
+  {
+    if (const T *cast_ent = dynamic_cast<const T *>(entity))
+    {
+      entities.push_back(*cast_ent);
+    }
+  }
+
   void remove(T *ptr)
   {
     for (size_t i = 0; i < entities.size(); ++i)
@@ -117,6 +134,10 @@ struct Entity_System
 
   template <typename T> void register_entity_type(entity_type type)
   {
+#ifdef ENTITIES_WANT_INCLUDES
+    // Check if T is defined?
+    // Wait, T is a template param.
+#endif
     pools[type] = std::make_unique<EntityPool<T>>();
     T::register_schema();
   }
@@ -134,8 +155,7 @@ struct Entity_System
 
   //@FIXME(SJM): I don't think this should actually return T* ? and that delete
   // should not actually delete but just free up a slot.
-  template <typename T>
-  T *spawn(entity_type type, const entity_spawn_t &info = {})
+  template <typename T> T *spawn(entity_type type, const Spawn_Info &info = {})
   {
     auto it = pools.find(type);
     if (it != pools.end())
@@ -159,6 +179,7 @@ struct Entity_System
 
   void reset();
   void populate_from_map(const map_t &map);
+  void add_entity(const std::shared_ptr<network::Entity> &entity);
 
   // this is called in the constructor, no need for you to call it.
   void register_all_known_entity_types();

@@ -1,4 +1,5 @@
 #include "tool_editor_state.hpp"
+#include "../../shared/entities/static_entities.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
@@ -85,13 +86,13 @@ void ToolEditorState::on_enter()
 {
   log_terminal("Entered ToolEditorState");
   // Initialize map with a floor
-  if (map.static_geometry.empty())
+  if (map.entities.empty())
   {
     map.name = "Tool Editor Map";
-    shared::aabb_t floor_aabb;
-    floor_aabb.center = {0, -2.0f, 0};
-    floor_aabb.half_extents = {10.0f, 0.5f, 10.0f};
-    map.static_geometry.push_back({floor_aabb});
+    auto floor_ent = std::make_shared<::network::AABB_Entity>();
+    floor_ent->center = {0, -2.0f, 0};
+    floor_ent->half_extents = {10.0f, 0.5f, 10.0f};
+    map.entities.push_back(floor_ent);
     renderer::draw_announcement("Welcome to the Tool Editor!");
   }
 
@@ -499,32 +500,30 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw map elements
-  for (const auto &geo : map.static_geometry)
+  for (const auto &ent_ptr : map.entities)
   {
-    std::visit(
-        [&](auto &&shape)
-        {
-          using T = std::decay_t<decltype(shape)>;
-          if constexpr (std::is_same_v<T, shared::aabb_t>)
-          {
-            renderer::DrawAABB(cmd, shape.center - shape.half_extents,
-                               shape.center + shape.half_extents, 0xFFFFFFFF);
-          }
-          else if constexpr (std::is_same_v<T, shared::wedge_t>)
-          {
-            // Simplified wireframe for now: draw bounds
-            renderer::DrawAABB(cmd, shape.center - shape.half_extents,
-                               shape.center + shape.half_extents, 0xFFFFFFFF);
-          }
-          else if constexpr (std::is_same_v<T, shared::mesh_t>)
-          {
-            renderer::DrawAABB(
-                cmd, shape.local_aabb.center - shape.local_aabb.half_extents,
-                shape.local_aabb.center + shape.local_aabb.half_extents,
-                0xFF00FFFF);
-          }
-        },
-        geo.data);
+    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent_ptr.get()))
+    {
+      renderer::DrawAABB(cmd, aabb->center.value - aabb->half_extents.value,
+                         aabb->center.value + aabb->half_extents.value,
+                         0xFFFFFFFF);
+    }
+    else if (auto *wedge =
+                 dynamic_cast<::network::Wedge_Entity *>(ent_ptr.get()))
+    {
+      shared::wedge_t w;
+      w.center = wedge->center.value;
+      w.half_extents = wedge->half_extents.value;
+      w.orientation = wedge->orientation.value;
+      renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
+    }
+    else if (auto *mesh =
+                 dynamic_cast<::network::Static_Mesh_Entity *>(ent_ptr.get()))
+    {
+      linalg::vec3 min = mesh->position.value - mesh->scale.value;
+      linalg::vec3 max = mesh->position.value + mesh->scale.value;
+      renderer::DrawAABB(cmd, min, max, 0xFF00FFFF);
+    }
   }
 
   // Draw Tool Overlay
@@ -539,20 +538,45 @@ void ToolEditorState::update_bvh()
 {
   // Rebuild BVH from map geometry
   std::vector<BVH_Input> inputs;
-  inputs.reserve(map.static_geometry.size());
+  inputs.reserve(map.entities.size());
 
-  for (size_t i = 0; i < map.static_geometry.size(); ++i)
+  for (size_t i = 0; i < map.entities.size(); ++i)
   {
-    const auto &geo = map.static_geometry[i];
-    shared::aabb_bounds_t bounds = shared::get_bounds(geo);
+    auto &ent = map.entities[i];
 
-    BVH_Input input;
-    input.aabb.min = bounds.min;
-    input.aabb.max = bounds.max;
-    input.id.type = Collision_Id::Type::Static_Geometry;
-    input.id.index = (uint32_t)i;
+    shared::aabb_bounds_t bounds;
+    bool valid = false;
 
-    inputs.push_back(input);
+    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+    {
+      bounds.min = aabb->center.value - aabb->half_extents.value;
+      bounds.max = aabb->center.value + aabb->half_extents.value;
+      valid = true;
+    }
+    else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
+    {
+      bounds.min = wedge->center.value - wedge->half_extents.value;
+      bounds.max = wedge->center.value + wedge->half_extents.value;
+      valid = true;
+    }
+    else if (auto *mesh =
+                 dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
+    {
+      bounds.min = mesh->position.value - mesh->scale.value;
+      bounds.max = mesh->position.value + mesh->scale.value;
+      valid = true;
+    }
+
+    if (valid)
+    {
+      BVH_Input input;
+      input.aabb.min = bounds.min;
+      input.aabb.max = bounds.max;
+      input.id.type = Collision_Id::Type::Static_Geometry;
+      input.id.index = (uint32_t)i;
+
+      inputs.push_back(input);
+    }
   }
 
   bvh = build_bvh(inputs);

@@ -52,16 +52,18 @@ void EditorState::render_ui()
     {
       if (ImGui::MenuItem("Add AABB"))
       {
-        shared::aabb_t aabb;
         float dist = 5.0f;
         float radYaw = to_radians(camera.yaw);
-        aabb.center.x = camera.x + cos(radYaw) * dist;
-        aabb.center.y = camera.y;
-        aabb.center.z = camera.z + sin(radYaw) * dist;
-        aabb.half_extents.x = 1.0f;
-        aabb.half_extents.y = 1.0f;
-        aabb.half_extents.z = 1.0f;
-        map_source.static_geometry.push_back({aabb});
+
+        // Create AABB Entity
+        auto ent = shared::create_entity_by_classname("aabb_entity");
+        if (auto *e = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+        {
+          e->center = {camera.x + cos(radYaw) * dist, camera.y,
+                       camera.z + sin(radYaw) * dist};
+          e->half_extents = {1.0f, 1.0f, 1.0f};
+        }
+        map_source.entities.push_back(ent);
       }
       ImGui::EndMenu();
     }
@@ -246,382 +248,258 @@ void EditorState::render_ui()
 
 void EditorState::render_3d(VkCommandBuffer cmd)
 {
-  // Draw AABBs
-  // ImGuiIO &io = ImGui::GetIO();
-
   // Setup View
   renderer::render_view_t view = {};
   view.camera = camera;
-  // Ensure we use the full viewport (assuming EditorState takes full window)
   view.viewport.start = {0.0f, 0.0f};
   view.viewport.dimensions = {1.0f, 1.0f};
 
-  // Update logic to ensure correct View/Proj matrix is set in renderer
-  // We pass a dummy registry because currently render_view doesn't use it for
-  // drawing static geometry, but the signature requires it.
   static ecs::Registry dummy_registry;
   renderer::render_view(cmd, view, dummy_registry);
 
-  // Detect overlaps
-  // Detect overlaps
-  std::set<int> overlapping_indices;
+  // Entities Loop (Consolidated)
+  for (int i = 0; i < (int)map_source.entities.size(); ++i)
   {
-    for (int i = 0; i < (int)map_source.static_geometry.size(); ++i)
+    auto &ent_ptr = map_source.entities[i];
+    if (!ent_ptr)
+      continue;
+
+    uint32_t col = color_green;
+    bool selected = selected_entity_indices.count(i);
+    if (selected)
     {
-      const auto &geo_a = map_source.static_geometry[i];
-      shared::aabb_bounds_t bounds_a = shared::get_bounds(geo_a);
-      shared::aabb_t aabb_a;
-      aabb_a.center = (bounds_a.min + bounds_a.max) * 0.5f;
-      aabb_a.half_extents = (bounds_a.max - bounds_a.min) * 0.5f;
+      float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f;
+      uint8_t g = (uint8_t)(t * 255.0f);
+      col = color_red | (g << 8) | 0x00FF0000;
+    }
 
-      for (int j = i + 1; j < (int)map_source.static_geometry.size(); ++j)
+    if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent_ptr.get()))
+    {
+      shared::aabb_t aabb;
+      aabb.center = aabb_ent->center.value;
+      aabb.half_extents = aabb_ent->half_extents.value;
+
+      if (!wireframe_mode)
       {
-        const auto &geo_b = map_source.static_geometry[j];
-        shared::aabb_bounds_t bounds_b = shared::get_bounds(geo_b);
-        shared::aabb_t aabb_b;
-        aabb_b.center = (bounds_b.min + bounds_b.max) * 0.5f;
-        aabb_b.half_extents = (bounds_b.max - bounds_b.min) * 0.5f;
+        vec3 min = aabb.center - aabb.half_extents;
+        vec3 max = aabb.center + aabb.half_extents;
+        renderer::DrawAABB(cmd, min, max, col);
+      }
+      else
+      {
+        draw_aabb_wireframe(aabb, col);
+      }
 
-        if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                {.x = aabb_a.center.x,
-                 .y = aabb_a.center.y,
-                 .z = aabb_a.center.z},
-                {.x = aabb_a.half_extents.x,
-                 .y = aabb_a.half_extents.y,
-                 .z = aabb_a.half_extents.z},
-                {.x = aabb_b.center.x,
-                 .y = aabb_b.center.y,
-                 .z = aabb_b.center.z},
-                {.x = aabb_b.half_extents.x,
-                 .y = aabb_b.half_extents.y,
-                 .z = aabb_b.half_extents.z}))
-        {
-          overlapping_indices.insert(i);
-          overlapping_indices.insert(j);
-        }
+      // Gizmo for AABB
+      if (selected && selected_entity_indices.size() == 1)
+      {
+        active_reshape_gizmo.aabb = aabb;
+        draw_reshape_gizmo(cmd, active_reshape_gizmo);
       }
     }
-  }
-
-  if (!wireframe_mode)
-  {
-    // Detect overlaps
-    std::set<int> overlapping_indices;
+    else if (auto *wedge_ent =
+                 dynamic_cast<::network::Wedge_Entity *>(ent_ptr.get()))
     {
-      for (int i = 0; i < (int)map_source.static_geometry.size(); ++i)
+      shared::wedge_t wedge;
+      wedge.center = wedge_ent->center.value;
+      wedge.half_extents = wedge_ent->half_extents.value;
+      wedge.orientation = wedge_ent->orientation.value;
+
+      draw_wedge_wireframe(wedge, col);
+
+      // Gizmo for Wedge (use AABB approx)
+      if (selected && selected_entity_indices.size() == 1)
       {
-        const auto &geo_a = map_source.static_geometry[i];
-        shared::aabb_bounds_t bounds_a = shared::get_bounds(geo_a);
-        shared::aabb_t aabb_a;
-        aabb_a.center = (bounds_a.min + bounds_a.max) * 0.5f;
-        aabb_a.half_extents = (bounds_a.max - bounds_a.min) * 0.5f;
+        shared::aabb_bounds_t bounds = shared::get_bounds(wedge);
+        active_reshape_gizmo.aabb.center = (bounds.min + bounds.max) * 0.5f;
+        active_reshape_gizmo.aabb.half_extents =
+            (bounds.max - bounds.min) * 0.5f;
+        draw_reshape_gizmo(cmd, active_reshape_gizmo);
+      }
+    }
+    else if (auto *mesh_ent =
+                 dynamic_cast<::network::Static_Mesh_Entity *>(ent_ptr.get()))
+    {
+      // Fallback to green box using position/scale if available
+      // Assuming Static_Mesh_Entity has position/scale
+      // For now, check if they exist or just rely on generic fallback below
+      // But we can check properties to be safe
+      auto props = ent_ptr->get_all_properties();
+      vec3 p = {0, 0, 0};
+      vec3 s = {1, 1, 1};
+      if (props.count("position"))
+        sscanf(props["position"].c_str(), "%f %f %f", &p.x, &p.y, &p.z);
+      if (props.count("scale"))
+        sscanf(props["scale"].c_str(), "%f %f %f", &s.x, &s.y, &s.z);
 
-        for (int j = i + 1; j < (int)map_source.static_geometry.size(); ++j)
+      vec3 min = p - s * 0.5f;
+      vec3 max = p + s * 0.5f;
+      renderer::DrawAABB(cmd, min, max, col);
+    }
+    else
+    {
+      // Generic Entity Handling (Player, Weapon, etc.)
+      vec3 p = {0, 0, 0};
+      float yaw = 0.0f;
+      bool has_pos = false;
+
+      if (auto *player =
+              dynamic_cast<::network::Player_Entity *>(ent_ptr.get()))
+      {
+        p = player->position.value;
+        yaw = player->view_angle_yaw.value;
+        has_pos = true;
+      }
+      else
+      {
+        // Generic property lookup
+        auto props = ent_ptr->get_all_properties();
+        if (props.count("position"))
         {
-          const auto &geo_b = map_source.static_geometry[j];
-          shared::aabb_bounds_t bounds_b = shared::get_bounds(geo_b);
-          shared::aabb_t aabb_b;
-          aabb_b.center = (bounds_b.min + bounds_b.max) * 0.5f;
-          aabb_b.half_extents = (bounds_b.max - bounds_b.min) * 0.5f;
-
-          if (linalg::intersect_AABB_AABB_from_center_and_half_extents(
-                  {.x = aabb_a.center.x,
-                   .y = aabb_a.center.y,
-                   .z = aabb_a.center.z},
-                  {.x = aabb_a.half_extents.x,
-                   .y = aabb_a.half_extents.y,
-                   .z = aabb_a.half_extents.z},
-                  {.x = aabb_b.center.x,
-                   .y = aabb_b.center.y,
-                   .z = aabb_b.center.z},
-                  {.x = aabb_b.half_extents.x,
-                   .y = aabb_b.half_extents.y,
-                   .z = aabb_b.half_extents.z}))
+          sscanf(props["position"].c_str(), "%f %f %f", &p.x, &p.y, &p.z);
+          has_pos = true;
+        }
+        if (props.count("yaw"))
+        {
+          try
           {
-            overlapping_indices.insert(i);
-            overlapping_indices.insert(j);
+            yaw = std::stof(props["yaw"]);
+          }
+          catch (...)
+          {
+          }
+        }
+        if (props.count("view_angle_yaw"))
+        {
+          try
+          {
+            yaw = std::stof(props["view_angle_yaw"]);
+          }
+          catch (...)
+          {
           }
         }
       }
-    }
 
-    int idx = 0;
-    for (const auto &geo : map_source.static_geometry)
-    {
-      uint32_t col = color_green; // Default Green
-
-      if (overlapping_indices.count(idx))
+      if (has_pos)
       {
-        col = color_red; // Red for overlap
-      }
+        float s = default_entity_size;
 
-      if (selected_geometry_indices.count(idx))
-      {
-        // Oscillate between Magenta and White
-        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f;
-        uint8_t g = (uint8_t)(t * 255.0f);
-        col = color_red | (g << 8) | 0x00FF0000;
-      }
+        if (selected)
+        {
+          float t = sin(selection_timer * 10.0f) * 0.5f + 0.5f;
+          col = color_magenta;
+          if (t > 0.5f)
+            col = color_white;
+        }
 
-      std::visit(
-          [&](auto &&arg)
+        float radYaw = to_radians(yaw);
+        float cY = cos(radYaw);
+        float sY = sin(radYaw);
+
+        shared::pyramid_t pyramid;
+        pyramid.size = s;
+        pyramid.position = {p.x, p.y, p.z};
+        pyramid.height = s;
+
+        // Simple heuristic for "Weapon" vs "Player" if we don't have types?
+        // Maybe check classname
+        std::string cname =
+            ent_ptr->get_schema() ? ent_ptr->get_schema()->class_name : "";
+        if (cname == "weapon_entity" ||
+            cname == "Weapon_Entity") // Hypothetical
+        {
+          pyramid.position = {p.x, p.y + s, p.z};
+          pyramid.height = -s;
+        }
+
+        auto points = shared::get_pyramid_points(pyramid);
+        for (auto &pt : points)
+        {
+          float x = pt.x - p.x;
+          float z = pt.z - p.z;
+          float rx = x * cY - z * sY;
+          float rz = x * sY + z * cY;
+          pt.x = p.x + rx;
+          pt.z = p.z + rz;
+        }
+
+        vec3 tip = points[0];
+        vec3 b1 = points[1];
+        vec3 b2 = points[2];
+        vec3 b3 = points[3];
+        vec3 b4 = points[4];
+
+        auto drawLine2 = [&](vec3 start, vec3 end)
+        { renderer::DrawLine(cmd, start, end, col); };
+        drawLine2(b1, b2);
+        drawLine2(b2, b3);
+        drawLine2(b3, b4);
+        drawLine2(b4, b1);
+        drawLine2(b1, tip);
+        drawLine2(b2, tip);
+        drawLine2(b3, tip);
+        drawLine2(b4, tip);
+
+        if (selected && !dragging_selection)
+        {
+          float radius = 1.5f;
+          int segments = 32;
+          for (int j = 0; j < segments; ++j)
           {
-            using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, shared::aabb_t>)
-            {
-              vec3 center = {
-                  .x = arg.center.x, .y = arg.center.y, .z = arg.center.z};
-              vec3 half = {.x = arg.half_extents.x,
-                           .y = arg.half_extents.y,
-                           .z = arg.half_extents.z};
-              vec3 min = center - half;
-              vec3 max = center + half;
-              renderer::DrawAABB(cmd, min, max, col);
-            }
-            else if constexpr (std::is_same_v<T, shared::wedge_t>)
-            {
-              draw_wedge_wireframe(arg, col);
-            }
-          },
-          geo.data);
-      idx++;
-    }
-  }
-  else if (wireframe_mode)
-  {
-    int idx = 0;
-    for (const auto &geo : map_source.static_geometry)
-    {
-      uint32_t col = color_green; // Default Green
+            float angle1 = (float)j / segments * 2.0f * pi;
+            float angle2 = (float)(j + 1) / segments * 2.0f * pi;
+            vec3 p1 = {.x = p.x + cos(angle1) * radius,
+                       .y = p.y,
+                       .z = p.z + sin(angle1) * radius};
+            vec3 p2 = {.x = p.x + cos(angle2) * radius,
+                       .y = p.y,
+                       .z = p.z + sin(angle2) * radius};
+            renderer::DrawLine(cmd, p1, p2, 0xFF00A5FF);
+          }
+          vec3 forward = {.x = cos(radYaw), .y = 0.0f, .z = sin(radYaw)};
+          renderer::DrawLine(cmd, p, p + forward * radius, 0xFF0000FF);
 
-      if (overlapping_indices.count(idx))
-      {
-        col = color_red; // Red for overlap
+          active_transform_gizmo.position =
+              p; // Fix: Use p instead of ent_ptr->position
+          active_transform_gizmo.size = 1.0f;
+          draw_transform_gizmo(cmd, active_transform_gizmo);
+        }
       }
-
-      if (selected_geometry_indices.count(idx))
-      {
-        // Oscillate between Magenta (0xFF00FFFF) and White (0xFFFFFFFF)
-        float t = (sin(selection_timer * 5.0f) + 1.0f) * 0.5f; // 0 to 1
-        uint8_t g = (uint8_t)(t * 255.0f);
-        col = color_red | (g << 8) | 0x00FF0000;
-      }
-
-      std::visit(
-          [&](auto &&arg)
-          {
-            using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, shared::aabb_t>)
-            {
-              draw_aabb_wireframe(arg, col);
-            }
-            else if constexpr (std::is_same_v<T, shared::wedge_t>)
-            {
-              draw_wedge_wireframe(arg, col);
-            }
-          },
-          geo.data);
-      idx++;
-    }
-  }
-  // Draw Reshape Gizmo (Unified for AABB and Wedge)
-  if (selected_geometry_indices.size() == 1)
-  {
-    int idx = *selected_geometry_indices.begin();
-    if (idx >= 0 && idx < (int)map_source.static_geometry.size())
-    {
-      const auto &geo = map_source.static_geometry[idx];
-      std::visit(
-          [&](auto &&arg)
-          {
-            using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, shared::aabb_t>)
-            {
-              // Update active gizmo visual state
-              active_reshape_gizmo.aabb = arg;
-              draw_reshape_gizmo(cmd, active_reshape_gizmo);
-            }
-            else if constexpr (std::is_same_v<T, shared::wedge_t>)
-            {
-              shared::aabb_bounds_t bounds = shared::get_bounds(arg);
-              active_reshape_gizmo.aabb.center =
-                  (bounds.min + bounds.max) * 0.5f;
-              active_reshape_gizmo.aabb.half_extents =
-                  (bounds.max - bounds.min) * 0.5f;
-              draw_reshape_gizmo(cmd, active_reshape_gizmo);
-            }
-          },
-          geo.data);
     }
   }
 
+  // Draw Entity Placement Cursor
   if (current_mode == editor_mode::entity_place && entity_cursor_valid)
   {
-    // Draw Pyramid
     vec3 p = entity_cursor_pos;
-    float s = default_entity_size; // Size
-    uint32_t col = color_magenta;  // Magenta
+    float s = default_entity_size;
+    uint32_t col = color_magenta;
 
     shared::pyramid_t pyramid;
     pyramid.size = s;
+    pyramid.position = {p.x, p.y, p.z};
+    pyramid.height = s;
 
     if (entity_spawn_type == entity_type::WEAPON)
     {
-      // Inverted Pyramid (Base on Top, Tip Down at cursor)
       pyramid.position = {p.x, p.y + s, p.z};
       pyramid.height = -s;
-    }
-    else
-    {
-      // Standard Pyramid (Base at cursor, Tip Up)
-      pyramid.position = {p.x, p.y, p.z};
-      pyramid.height = s;
-    }
-
-    auto points = shared::get_pyramid_points(pyramid);
-    vec3 tip = points[0];
-    vec3 b1 = points[1];
-    vec3 b2 = points[2];
-    vec3 b3 = points[3];
-    vec3 b4 = points[4];
-
-    // Draw Lines
-    auto drawLine = [&](vec3 start, vec3 end)
-    { renderer::DrawLine(cmd, start, end, col); };
-
-    // Base
-    drawLine(b1, b2);
-    drawLine(b2, b3);
-    drawLine(b3, b4);
-    drawLine(b4, b1);
-    // Sides
-    drawLine(b1, tip);
-    drawLine(b2, tip);
-    drawLine(b3, tip);
-    drawLine(b4, tip);
-  }
-
-  // Draw Placed Entities
-  for (int i = 0; i < (int)map_source.entities.size(); ++i)
-  {
-    const auto &ent = map_source.entities[i];
-    // Draw Pyramid for Entity
-    vec3 p = {ent.position.x, ent.position.y, ent.position.z};
-    float s = default_entity_size; // Size
-    uint32_t col = color_green;    // Green (Default)
-
-    if (selected_entity_indices.count(i))
-    {
-      // Blinking
-      float t = sin(selection_timer * 10.0f) * 0.5f + 0.5f;
-      col = color_magenta; // Base Magenta
-      if (t > 0.5f)
-        col = color_white; // Blink to white
-    }
-
-    // Pyramid Points: Tip and 4 base corners
-    // Rotation
-    float radYaw = to_radians(ent.yaw);
-    float cY = cos(radYaw);
-    float sY = sin(radYaw);
-
-    shared::pyramid_t pyramid;
-    pyramid.size = s;
-
-    if (ent.type == entity_type::WEAPON)
-    {
-      // Inverted Pyramid (Tip Down, Base Up)
-      pyramid.position = {p.x, p.y + s, p.z};
-      pyramid.height = -s;
-    }
-    else
-    {
-      // Standard Pyramid (Tip Up, Base Down)
-      pyramid.position = {p.x, p.y, p.z};
-      pyramid.height = s;
     }
 
     auto points = shared::get_pyramid_points(pyramid);
 
-    // Rotate points
-    for (auto &pt : points)
-    {
-      // Translate to origin (relative to p)
-      float x = pt.x - p.x;
-      float z = pt.z - p.z;
-
-      // Rotate
-      float rx = x * cY - z * sY;
-      float rz = x * sY + z * cY;
-
-      // Translate back
-      pt.x = p.x + rx;
-      pt.z = p.z + rz;
-    }
-
-    vec3 tip = points[0];
-    vec3 b1 = points[1];
-    vec3 b2 = points[2];
-    vec3 b3 = points[3];
-    vec3 b4 = points[4];
-
-    // Draw Lines
     auto drawLine = [&](vec3 start, vec3 end)
     { renderer::DrawLine(cmd, start, end, col); };
 
-    // Base
-    drawLine(b1, b2);
-    drawLine(b2, b3);
-    drawLine(b3, b4);
-    drawLine(b4, b1);
-    // Sides
-    drawLine(b1, tip);
-    drawLine(b2, tip);
-    drawLine(b3, tip);
-    drawLine(b4, tip);
-
-    // Rotation Visualization
-    if (selected_entity_indices.count(i))
-    {
-      // Draw Circle at base
-      float radius = 1.5f;
-      int segments = 32;
-      for (int j = 0; j < segments; ++j)
-      {
-        float angle1 = (float)j / segments * 2.0f * pi;
-        float angle2 = (float)(j + 1) / segments * 2.0f * pi;
-        vec3 p1 = {.x = p.x + cos(angle1) * radius,
-                   .y = p.y,
-                   .z = p.z + sin(angle1) * radius};
-        vec3 p2 = {.x = p.x + cos(angle2) * radius,
-                   .y = p.y,
-                   .z = p.z + sin(angle2) * radius};
-        renderer::DrawLine(cmd, p1, p2, 0xFF00A5FF); // Orange
-      }
-
-      // Debug: Draw line to projected mouse position
-      if (current_mode == editor_mode::rotate && rotate_entity_index == i)
-      {
-        renderer::DrawLine(cmd, p, rotate_debug_point,
-                           0xFF00FF00); // Green Debug Line
-      }
-
-      // Draw Forward Vector
-      float radYaw = to_radians(ent.yaw);
-      // Matches Drag logic: angle = atan2(dz, dx) -> x=cos, z=sin
-      vec3 forward = {.x = cos(radYaw), .y = 0.0f, .z = sin(radYaw)};
-
-      vec3 line_end = p + forward * radius;
-      renderer::DrawLine(cmd, p, line_end, 0xFF0000FF); // Red Direction
-    }
-
-    // Draw Transform Gizmo for selected entity
-    if (selected_entity_indices.count(i) && !dragging_selection)
-    {
-      active_transform_gizmo.position = ent.position;
-      active_transform_gizmo.size = 1.0f;
-      draw_transform_gizmo(cmd, active_transform_gizmo);
-    }
+    drawLine(points[1], points[2]);
+    drawLine(points[2], points[3]);
+    drawLine(points[3], points[4]);
+    drawLine(points[4], points[1]);
+    drawLine(points[1], points[0]);
+    drawLine(points[2], points[0]);
+    drawLine(points[3], points[0]);
+    drawLine(points[4], points[0]);
   }
 }
 

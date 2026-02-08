@@ -1,4 +1,7 @@
 #include "selection_tool.hpp"
+#include "../../../shared/entities/static_entities.hpp"
+#include "../../../shared/game_session.hpp" // for get_entity_bounds
+#include "../../renderer.hpp"
 #include "../transaction_system.hpp"
 #include "imgui.h"
 #include <SDL.h>
@@ -71,10 +74,17 @@ void Selection_Tool::on_update(editor_context_t &ctx,
   if (selected_geometry_indices.size() == 1)
   {
     int idx = selected_geometry_indices[0];
-    if (idx >= 0 && idx < (int)ctx.map->static_geometry.size())
+    if (idx >= 0 && idx < (int)ctx.map->entities.size())
     {
-      const auto &geo = ctx.map->static_geometry[idx];
-      editor_gizmo.set_geometry(shared::get_bounds(geo));
+      const auto &ent = ctx.map->entities[idx];
+      if (ent)
+      {
+        auto bounds = shared::get_entity_bounds(ent.get());
+        if (bounds)
+        {
+          editor_gizmo.set_geometry(*bounds);
+        }
+      }
     }
   }
 
@@ -328,10 +338,16 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 
       const auto &view = cached_viewport;
 
-      for (size_t i = 0; i < ctx.map->static_geometry.size(); ++i)
+      for (size_t i = 0; i < ctx.map->entities.size(); ++i)
       {
-        const auto &geo = ctx.map->static_geometry[i];
-        shared::aabb_bounds_t bounds = shared::get_bounds(geo);
+        const auto &ent = ctx.map->entities[i];
+        if (!ent)
+          continue;
+        auto bounds_opt = shared::get_entity_bounds(ent.get());
+        if (!bounds_opt)
+          continue;
+
+        shared::aabb_bounds_t bounds = *bounds_opt;
 
         // Project center to screen
         linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
@@ -424,14 +440,18 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 
     for (int idx : selected_geometry_indices)
     {
-      if (idx >= 0 && idx < (int)ctx.map->static_geometry.size())
+      if (idx >= 0 && idx < (int)ctx.map->entities.size())
       {
-        auto &geo = ctx.map->static_geometry[idx];
-        if (ctx.transaction_system)
+        auto &ent = ctx.map->entities[idx];
+        if (ent)
         {
-          ctx.transaction_system->commit_remove(idx, geo);
+          if (ctx.transaction_system)
+          {
+            std::string classname = shared::get_classname_for_entity(ent.get());
+            ctx.transaction_system->commit_remove(idx, ent.get(), classname);
+          }
+          ctx.map->entities.erase(ctx.map->entities.begin() + idx);
         }
-        ctx.map->static_geometry.erase(ctx.map->static_geometry.begin() + idx);
       }
     }
     if (!selected_geometry_indices.empty())
@@ -450,16 +470,38 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   if (!ctx.map)
     return;
 
+  auto draw_entity_highlight = [&](const network::Entity *ent, uint32_t color)
+  {
+    if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(ent))
+    {
+      shared::wedge_t w;
+      w.center = wedge->center.value;
+      w.half_extents = wedge->half_extents.value;
+      w.orientation = wedge->orientation.value;
+      renderer::draw_wedge(renderer.get_command_buffer(), w, color);
+    }
+    else
+    {
+      auto bounds_opt = shared::get_entity_bounds(ent);
+      if (bounds_opt)
+      {
+        shared::aabb_bounds_t bounds = *bounds_opt;
+        renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
+                               (bounds.max - bounds.min) * 0.5f, color);
+      }
+    }
+  };
+
   // 1. Draw definitely selected items (Green)
   for (int idx : selected_geometry_indices)
   {
-    if (idx >= 0 && idx < (int)ctx.map->static_geometry.size())
+    if (idx >= 0 && idx < (int)ctx.map->entities.size())
     {
-      const auto &geo = ctx.map->static_geometry[idx];
-      shared::aabb_bounds_t bounds = shared::get_bounds(geo);
-      renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
-                             (bounds.max - bounds.min) * 0.5f,
-                             0xFF00FF00); // Green
+      const auto &ent = ctx.map->entities[idx];
+      if (ent)
+      {
+        draw_entity_highlight(ent.get(), 0xFF00FF00); // Green
+      }
     }
   }
 
@@ -479,13 +521,13 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 
     if (!is_selected)
     {
-      if (hovered_geo_index < (int)ctx.map->static_geometry.size())
+      if (hovered_geo_index < (int)ctx.map->entities.size())
       {
-        const auto &geo = ctx.map->static_geometry[hovered_geo_index];
-        shared::aabb_bounds_t bounds = shared::get_bounds(geo);
-        renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
-                               (bounds.max - bounds.min) * 0.5f,
-                               0xFF00FFFF); // Yellow
+        const auto &ent = ctx.map->entities[hovered_geo_index];
+        if (ent)
+        {
+          draw_entity_highlight(ent.get(), 0xFF00FFFF); // Yellow
+        }
       }
     }
   }
@@ -501,10 +543,16 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 
     const auto &view = cached_viewport;
 
-    for (size_t i = 0; i < ctx.map->static_geometry.size(); ++i)
+    for (size_t i = 0; i < ctx.map->entities.size(); ++i)
     {
-      const auto &geo = ctx.map->static_geometry[i];
-      shared::aabb_bounds_t bounds = shared::get_bounds(geo);
+      const auto &ent = ctx.map->entities[i];
+      if (!ent)
+        continue;
+      auto bounds_opt = shared::get_entity_bounds(ent.get());
+      if (!bounds_opt)
+        continue;
+
+      shared::aabb_bounds_t bounds = *bounds_opt;
 
       // Project center to screen
       linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
@@ -531,9 +579,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 
         if (!already_selected)
         {
-          renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
-                                 (bounds.max - bounds.min) * 0.5f,
-                                 0xFF00FFFF); // Yellow
+          draw_entity_highlight(ent.get(), 0xFF00FFFF); // Yellow
         }
       }
     }

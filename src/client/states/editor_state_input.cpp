@@ -115,54 +115,32 @@ void EditorState::action_entity_2()
 
 void EditorState::action_delete()
 {
-  if (selected_geometry_indices.empty() && selected_entity_indices.empty())
+  if (selected_entity_indices.empty())
     return;
-
-  std::vector<int> geo_to_delete(selected_geometry_indices.begin(),
-                                 selected_geometry_indices.end());
-  std::sort(geo_to_delete.rbegin(), geo_to_delete.rend());
 
   std::vector<int> entities_to_delete(selected_entity_indices.begin(),
                                       selected_entity_indices.end());
   std::sort(entities_to_delete.rbegin(), entities_to_delete.rend());
 
-  std::vector<shared::static_geometry_t> deleted_geometry;
-  for (int idx : geo_to_delete)
-    if (idx >= 0 && idx < (int)map_source.static_geometry.size())
-      deleted_geometry.push_back(map_source.static_geometry[idx]);
-
-  std::vector<shared::entity_spawn_t> deleted_entities;
+  std::vector<std::shared_ptr<network::Entity>> deleted_entities;
   for (int idx : entities_to_delete)
     if (idx >= 0 && idx < (int)map_source.entities.size())
       deleted_entities.push_back(map_source.entities[idx]);
-
-  for (int idx : geo_to_delete)
-    if (idx >= 0 && idx < (int)map_source.static_geometry.size())
-      map_source.static_geometry.erase(map_source.static_geometry.begin() +
-                                       idx);
 
   for (int idx : entities_to_delete)
     if (idx >= 0 && idx < (int)map_source.entities.size())
       map_source.entities.erase(map_source.entities.begin() + idx);
 
-  selected_geometry_indices.clear();
   selected_entity_indices.clear();
 
   undo_stack.push(
-      [this, deleted_geometry, deleted_entities]()
+      [this, deleted_entities]()
       {
-        for (const auto &geo : deleted_geometry)
-          map_source.static_geometry.push_back(geo);
         for (const auto &ent : deleted_entities)
           map_source.entities.push_back(ent);
       },
-      [this, deleted_geometry, deleted_entities]()
+      [this, deleted_entities]()
       {
-        int dg_count = (int)deleted_geometry.size();
-        if (map_source.static_geometry.size() >= dg_count)
-          map_source.static_geometry.erase(map_source.static_geometry.end() -
-                                               dg_count,
-                                           map_source.static_geometry.end());
         int de_count = (int)deleted_entities.size();
         if (map_source.entities.size() >= de_count)
           map_source.entities.erase(map_source.entities.end() - de_count,

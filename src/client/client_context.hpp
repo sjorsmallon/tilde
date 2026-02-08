@@ -12,7 +12,7 @@ namespace client
 struct client_context_t
 {
   shared::game_session_t session;
-  network::Client_Connection_State connection_state;
+  ::network::Client_Connection_State connection_state;
 };
 
 } // namespace client

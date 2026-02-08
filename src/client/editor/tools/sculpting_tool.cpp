@@ -1,4 +1,7 @@
 #include "sculpting_tool.hpp"
+#include "../../../shared/entities/static_entities.hpp"
+#include "../../../shared/map.hpp"
+#include "../transaction_system.hpp"
 #include <cmath>
 #include <limits>
 
@@ -6,9 +9,6 @@ namespace client
 {
 
 // Helper for AABB face hit test
-// Returns t, set normal index
-// This is a crude manual implementation.
-// A real physics engine does this better, but for a simple editor it's fine.
 static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
                                        const linalg::vec3 &ray_dir,
                                        const shared::aabb_t &aabb, float &out_t,
@@ -120,7 +120,16 @@ void Sculpting_Tool::on_enable(editor_context_t &ctx)
   hovered_geo_index = -1;
 }
 
-void Sculpting_Tool::on_disable(editor_context_t &ctx) { dragging = false; }
+void Sculpting_Tool::on_disable(editor_context_t &ctx)
+{
+  if (dragging && dragging_geo_index != -1 && ctx.map && ctx.transaction_system)
+  {
+    // If disabled while dragging, maybe revert or commit?
+    // For safety, let's just reset flag. Logic of commit is complex without end
+    // event.
+  }
+  dragging = false;
+}
 
 void Sculpting_Tool::on_update(editor_context_t &ctx,
                                const viewport_state_t &view)
@@ -138,12 +147,15 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
   hovered_geo_index = -1;
   hovered_face = -1;
 
-  for (size_t i = 0; i < ctx.map->static_geometry.size(); ++i)
+  for (size_t i = 0; i < ctx.map->entities.size(); ++i)
   {
-    auto &geo = ctx.map->static_geometry[i];
-    if (std::holds_alternative<shared::aabb_t>(geo.data))
+    auto &ent = ctx.map->entities[i];
+    if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent.get()))
     {
-      const auto &aabb = std::get<shared::aabb_t>(geo.data);
+      shared::aabb_t aabb;
+      aabb.center = aabb_ent->center.value;
+      aabb.half_extents = aabb_ent->half_extents.value;
+
       float t;
       int face;
       if (ray_aabb_face_intersection(view.mouse_ray.origin, view.mouse_ray.dir,
@@ -168,8 +180,20 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
     dragging = true;
     dragging_geo_index = hovered_geo_index;
     dragging_face = hovered_face;
-    original_geometry = ctx.map->static_geometry[dragging_geo_index];
-    // We could store drag_origin_point here if we wanted absolute logic
+
+    // Store original state for transaction
+    if (dragging_geo_index >= 0 &&
+        dragging_geo_index < (int)ctx.map->entities.size())
+    {
+      auto &ent = ctx.map->entities[dragging_geo_index];
+      if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+      {
+        original_aabb.center = aabb_ent->center.value;
+        original_aabb.half_extents = aabb_ent->half_extents.value;
+
+        before_properties = ent->get_all_properties();
+      }
+    }
   }
 }
 
@@ -178,48 +202,56 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 {
   if (dragging && dragging_geo_index != -1 && ctx.map)
   {
-    auto &geo = ctx.map->static_geometry[dragging_geo_index];
-    if (auto *aabb = std::get_if<shared::aabb_t>(&geo.data))
+    auto &ent = ctx.map->entities[dragging_geo_index];
+    if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent.get()))
     {
       using namespace linalg;
+      // We modify the entity directly for visual feedback.
+      // But we base calculations on current state to implement incremental
+      // update? Or absolute? Original logic was using 'original_geometry' to
+      // commit? No, original logic was modifying `geo.data` directly in map.
+      // And `original_geometry` was purely for Undo system to know "old state".
 
-      // Determine face normal and center
+      // So here we just modify `aabb_ent`.
+
+      vec3 current_center = aabb_ent->center.value;
+      vec3 current_half_extents = aabb_ent->half_extents.value;
+
+      // Determine face normal and center based on CURRENT shape
       vec3 normal = {0, 0, 0};
-      vec3 center_offset = {0, 0, 0}; // Offset from center to face center
-      // 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+      vec3 center_offset = {0, 0, 0};
       switch (dragging_face)
       {
       case 0:
         normal = {1, 0, 0};
-        center_offset = {aabb->half_extents.x, 0, 0};
+        center_offset = {current_half_extents.x, 0, 0};
         break;
       case 1:
         normal = {-1, 0, 0};
-        center_offset = {-aabb->half_extents.x, 0, 0};
+        center_offset = {-current_half_extents.x, 0, 0};
         break;
       case 2:
         normal = {0, 1, 0};
-        center_offset = {0, aabb->half_extents.y, 0};
+        center_offset = {0, current_half_extents.y, 0};
         break;
       case 3:
         normal = {0, -1, 0};
-        center_offset = {0, -aabb->half_extents.y, 0};
+        center_offset = {0, -current_half_extents.y, 0};
         break;
       case 4:
         normal = {0, 0, 1};
-        center_offset = {0, 0, aabb->half_extents.z};
+        center_offset = {0, 0, current_half_extents.z};
         break;
       case 5:
         normal = {0, 0, -1};
-        center_offset = {0, 0, -aabb->half_extents.z};
+        center_offset = {0, 0, -current_half_extents.z};
         break;
       }
 
-      vec3 face_center_world = aabb->center + center_offset;
-      vec3 face_end_world = face_center_world + normal; // 1 unit along normal
+      vec3 face_center_world = current_center + center_offset;
+      vec3 face_end_world = face_center_world + normal;
 
       // Project to Screen
-      // 1. World -> View
       vec3 v0 = world_to_view(
           face_center_world,
           {last_view.camera.x, last_view.camera.y, last_view.camera.z},
@@ -229,16 +261,10 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           {last_view.camera.x, last_view.camera.y, last_view.camera.z},
           last_view.camera.yaw, last_view.camera.pitch);
 
-      // 2. View -> Screen
-      // Important to use updated last_view params
-      // Note: view_to_screen handles Z clipping implicitly by projection math?
-      // If points are behind camera, it might flip.
-      // Ideally we check z < 0 for perspective (looking down -z)
-
       bool valid_projection = true;
       if (!last_view.camera.orthographic && (v0.z > -0.1f || v1.z > -0.1f))
       {
-        valid_projection = false; // Too close or behind
+        valid_projection = false;
       }
 
       if (valid_projection)
@@ -254,57 +280,38 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
         float screen_len_sq =
             screen_dir.x * screen_dir.x + screen_dir.y * screen_dir.y;
 
-        if (screen_len_sq > 1e-4f) // Avoid divide by zero
+        if (screen_len_sq > 1e-4f)
         {
-          // Project mouse delta onto screen_dir
-          // We want to match visual movement.
-          // Moving mouse 'length(screen_dir)' pixels along 'screen_dir' should
-          // correspond to 1 unit world change. Projection scalar k =
-          // (mouse_delta . screen_dir) / |screen_dir|^2 World delta = k * 1
-          // unit (since screen_dir is 1 world unit vector)
-
           vec2 mouse_delta = {(float)e.delta.x, (float)e.delta.y};
           float dot_prod =
               mouse_delta.x * screen_dir.x + mouse_delta.y * screen_dir.y;
           float k = dot_prod / screen_len_sq;
-
-          // k is the fraction of the unit vector we moved.
-          // Wait. If I move mouse by screen_dir, dot is |screen_dir|^2. k = 1.
-          // So world delta is k * 1.0f.
-          // This seems correct for 1:1 mapping.
-
           float world_delta = k;
 
-          // Apply
           float *ext = nullptr;
           float *cen = nullptr;
+
+          // These pointers point to local variables copies if I use `vec3
+          // current_...` I need to point to the entity's values. BUT
+          // `Network_Var` wraps them. Accessing via `.value` gives reference?
+          // `T& value`? No `value` is a member of type T.
+          // `Network_Var<vec3f>` has `vec3f value`.
+
           if (dragging_face < 2)
           {
-            ext = &aabb->half_extents.x;
-            cen = &aabb->center.x;
+            ext = &aabb_ent->half_extents.value.x;
+            cen = &aabb_ent->center.value.x;
           }
           else if (dragging_face < 4)
           {
-            ext = &aabb->half_extents.y;
-            cen = &aabb->center.y;
+            ext = &aabb_ent->half_extents.value.y;
+            cen = &aabb_ent->center.value.y;
           }
           else
           {
-            ext = &aabb->half_extents.z;
-            cen = &aabb->center.z;
+            ext = &aabb_ent->half_extents.value.z;
+            cen = &aabb_ent->center.value.z;
           }
-
-          // Growing always adds to extent. Center moves by half delta
-          // If we are dragging +Face, growing moves center +
-          // If we are dragging -Face, growing moves center -
-
-          // dragging_face & 1 == 0 is positive face (+X, +Y, +Z)
-          // dragging_face & 1 == 1 is negative face (-X, -Y, -Z)
-
-          // If world_delta is positive (dragged OUTWARD from face), we grow.
-          // Wait: normal points OUT.
-          // So moving mouse along S1-S0 (OUT) gives positive k.
-          // Positive k means we should GROW the box in that direction.
 
           *ext += world_delta * 0.5f;
           if (dragging_face % 2 == 0)
@@ -315,10 +322,8 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           // Min size
           if (*ext < 0.1f)
           {
-            // Determine how much we overshot
             float diff = 0.1f - *ext;
             *ext = 0.1f;
-            // Correct center to stop moving
             if (dragging_face % 2 == 0)
               *cen -= diff;
             else
@@ -332,6 +337,17 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 
 void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 {
+  if (dragging && dragging_geo_index != -1 && ctx.map && ctx.transaction_system)
+  {
+    if (dragging_geo_index >= 0 &&
+        dragging_geo_index < (int)ctx.map->entities.size())
+    {
+      auto &ent = ctx.map->entities[dragging_geo_index];
+      ctx.transaction_system->commit_modification(dragging_geo_index, ent.get(),
+                                                  before_properties);
+    }
+  }
+
   dragging = false;
   dragging_geo_index = -1;
 }
@@ -344,19 +360,19 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
   if (hovered_geo_index != -1 && !dragging && ctx.map)
   {
     if (hovered_geo_index >= 0 &&
-        hovered_geo_index < (int)ctx.map->static_geometry.size())
+        hovered_geo_index < (int)ctx.map->entities.size())
     {
-      const auto &geo = ctx.map->static_geometry[hovered_geo_index];
-      if (std::holds_alternative<shared::aabb_t>(geo.data))
+      auto &ent = ctx.map->entities[hovered_geo_index];
+      if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent.get()))
       {
-        const auto &aabb = std::get<shared::aabb_t>(geo.data);
+        shared::aabb_t aabb;
+        aabb.center = aabb_ent->center.value;
+        aabb.half_extents = aabb_ent->half_extents.value;
 
         // Draw face highlight
-        // 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
-        linalg::vec3 c = aabb.center;
+        linalg::vec3 p = aabb.center;
         linalg::vec3 e = aabb.half_extents;
-        linalg::vec3 p = c;
-        linalg::vec3 size = e; // visual size
+        linalg::vec3 size = e;
 
         switch (hovered_face)
         {

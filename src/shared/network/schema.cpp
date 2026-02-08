@@ -75,4 +75,39 @@ bool parse_string_to_field(const std::string &value, Field_Type type,
   }
 }
 
+bool serialize_field_to_string(const void *in_ptr, Field_Type type,
+                               std::string &out_value)
+{
+  if (!in_ptr)
+    return false;
+
+  switch (type)
+  {
+  case Field_Type::Int32:
+  {
+    out_value = std::to_string(*static_cast<const int32 *>(in_ptr));
+    return true;
+  }
+  case Field_Type::Float32:
+  {
+    out_value = std::to_string(*static_cast<const float32 *>(in_ptr));
+    return true;
+  }
+  case Field_Type::Bool:
+  {
+    out_value = *static_cast<const bool *>(in_ptr) ? "true" : "false";
+    return true;
+  }
+  case Field_Type::Vec3f:
+  {
+    auto *vec = static_cast<const vec3f *>(in_ptr);
+    out_value = std::to_string(vec->x) + " " + std::to_string(vec->y) + " " +
+                std::to_string(vec->z);
+    return true;
+  }
+  default:
+    return false;
+  }
+}
+
 } // namespace network

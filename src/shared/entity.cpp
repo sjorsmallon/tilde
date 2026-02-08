@@ -103,6 +103,26 @@ void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
   }
 }
 
+std::map<std::string, std::string> Entity::get_all_properties() const
+{
+  std::map<std::string, std::string> props;
+  const Class_Schema *schema = get_schema();
+  if (schema)
+  {
+    const uint8 *base_ptr = reinterpret_cast<const uint8 *>(this);
+    for (const auto &field : schema->fields)
+    {
+      std::string val_str;
+      if (serialize_field_to_string(base_ptr + field.offset, field.type,
+                                    val_str))
+      {
+        props[field.name] = val_str;
+      }
+    }
+  }
+  return props;
+}
+
 void Entity::deserialize(Bit_Reader &reader)
 {
   const Class_Schema *schema = get_schema();
@@ -163,3 +183,32 @@ void Entity::deserialize(Bit_Reader &reader)
 }
 
 } // namespace network
+
+#define ENTITIES_WANT_INCLUDES
+#include "entities/entity_list.hpp"
+
+namespace shared
+{
+
+std::shared_ptr<network::Entity>
+create_entity_by_classname(const std::string &classname)
+{
+#define X(ENUM, CLASS, NAME, PATH)                                             \
+  if (classname == NAME)                                                       \
+    return std::make_shared<CLASS>();
+  SHARED_ENTITIES_LIST(X)
+#undef X
+  return nullptr;
+}
+
+std::string get_classname_for_entity(const network::Entity *entity)
+{
+#define X(ENUM, CLASS, NAME, PATH)                                             \
+  if (dynamic_cast<const CLASS *>(entity))                                     \
+    return NAME;
+  SHARED_ENTITIES_LIST(X)
+#undef X
+  return "unknown";
+}
+
+} // namespace shared

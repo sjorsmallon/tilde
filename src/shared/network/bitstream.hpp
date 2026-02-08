@@ -5,6 +5,11 @@
 #include <cstring>
 #include <vector>
 
+//@NOTE(SJM): we need to be very careful about aligned reads and writes: I am
+//always
+// under the impression that just advancing bit by bit should be fine but i'm
+// not sure if that's actually true on at least mac / windows.
+
 namespace network
 {
 
@@ -69,6 +74,8 @@ public:
       write_bit((value >> i) & 1);
     }
   }
+
+  void write_byte(uint8_t value) { write_bits(value, 8); }
 };
 
 class Bit_Reader
@@ -86,6 +93,19 @@ public:
     {
       bit_index += (8 - (bit_index % 8));
     }
+  }
+
+  uint8_t read_byte()
+  {
+    align();
+    size_t byte_pos = bit_index / 8;
+    if (byte_pos >= size)
+    {
+      // Error handling needed in real code
+      return 0;
+    }
+    bit_index += 8;
+    return buffer[byte_pos];
   }
 
   void read_bytes(void *out_data, size_t count)

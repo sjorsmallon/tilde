@@ -112,7 +112,13 @@ private:
   // Dragging state helper
   linalg::vec3 drag_start_point;
   float drag_start_offset = 0.0f;
-  shared::static_geometry_t original_geometry;
+
+  struct Transform_Snapshot
+  {
+    linalg::vec3 position;
+    linalg::vec3 scale; // or half_extents * 2
+    linalg::vec4 orientation;
+  } original_transform;
 };
 
 } // namespace client

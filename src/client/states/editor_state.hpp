@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../shared/entities/player_entity.hpp"
+#include "../../shared/entities/static_entities.hpp"
 #include "../camera.hpp"
 #include "../game_state.hpp"
 #include "../shared/entity_system.hpp"
@@ -127,15 +129,24 @@ private:
   transform_gizmo_t active_transform_gizmo;
 
   // Dragging state for Gizmos
+  // Dragging state for Gizmos
   bool dragging_gizmo = false;
-  shared::static_geometry_t dragging_original_geometry;
+  // shared::static_geometry_t dragging_original_geometry; // REMOVED
+  // Instead of static_geometry, we might use a snapshot or copy of entity
+  // properties
+  std::map<std::string, std::string> dragging_original_properties;
+
+  // For Reshape Gizmo logic
+  shared::aabb_bounds_t dragging_original_bounds;
+
   linalg::vec3 dragging_original_position;
   float drag_start_offset = 0.0f;
   linalg::vec3 drag_start_point{.x = 0.0f, .y = 0.0f, .z = 0.0f};
   const float handle_length = 1.0f;
 
   // Selection state
-  std::set<int> selected_geometry_indices;
+  // std::set<int> selected_geometry_indices; // MERGED into
+  // selected_entity_indices
   std::set<int> selected_entity_indices;
   float selection_timer = 0.0f;
 

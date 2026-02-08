@@ -6,6 +6,7 @@
 #include "editor_types.hpp"
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <stack>
 #include <string>
 #include <variant>
@@ -19,16 +20,20 @@ enum class transaction_type_t
   ENTITY_ADD,
   ENTITY_REMOVE,
   ENTITY_MODIFY,
-  GEOMETRY_ADD,
-  GEOMETRY_REMOVE,
-  GEOMETRY_MODIFY
+  // Geometry types removed/merged into ENTITY types
 };
 
-struct field_delta_t
+struct Entity_Snapshot
 {
-  uint16_t id;
-  std::vector<uint8_t> old_val;
-  std::vector<uint8_t> new_val;
+  std::string classname;
+  std::map<std::string, std::string> properties;
+};
+
+struct Property_Change
+{
+  std::string name;
+  std::string old_value;
+  std::string new_value;
 };
 
 struct delta_t
@@ -36,14 +41,11 @@ struct delta_t
   transaction_type_t type;
   uint32_t target_index = 0;
 
-  // For ADD/REMOVE/MODIFY (depending on type)
-  // For ADD/REMOVE: Snapshot of the object (to restore on undo/redo)
-  std::variant<std::monostate, shared::static_geometry_t,
-               shared::entity_spawn_t>
-      object_snapshot;
+  // For ADD/REMOVE: Snapshot of the entity
+  Entity_Snapshot snapshot;
 
-  // For MODIFY: Field changes
-  std::vector<network::field_change_t> changes;
+  // For MODIFY: Property changes
+  std::vector<Property_Change> changes;
 };
 
 struct transaction_t
@@ -58,20 +60,32 @@ struct transaction_t
 class Transaction_System
 {
 public:
-  template <typename T>
-  void commit_modification(uint32_t index, const T &old_val, const T &new_val)
+  // Commit modification of an existing entity
+  void commit_modification(uint32_t index, const network::Entity *entity,
+                           const std::map<std::string, std::string> &old_props)
   {
     transaction_t t;
     delta_t d;
-    d.type = transaction_type_t::GEOMETRY_MODIFY;
+    d.type = transaction_type_t::ENTITY_MODIFY;
     d.target_index = index;
 
-    // Compute reversible field deltas
-    const auto *schema = old_val.get_schema();
-    if (schema)
+    std::map<std::string, std::string> new_props = entity->get_all_properties();
+
+    // Compute diff
+    for (const auto &[key, old_val] : old_props)
     {
-      d.changes = network::diff_reversible(&old_val, &new_val, schema);
+      auto it = new_props.find(key);
+      if (it != new_props.end())
+      {
+        if (it->second != old_val)
+        {
+          d.changes.push_back({key, old_val, it->second});
+        }
+      }
     }
+    // Check for new properties (unlikely with fixed schema but possible if we
+    // had dynamic props) Our schema is fixed so checking old_props keys is
+    // sufficient if both are from get_all_properties().
 
     if (!d.changes.empty())
     {
@@ -80,24 +94,30 @@ public:
     }
   }
 
-  void commit_add(uint32_t index, const shared::static_geometry_t &obj)
+  void commit_add(uint32_t index, const network::Entity *entity,
+                  const std::string &classname)
   {
     transaction_t t;
     delta_t d;
-    d.type = transaction_type_t::GEOMETRY_ADD;
+    d.type = transaction_type_t::ENTITY_ADD;
     d.target_index = index;
-    d.object_snapshot = obj;
+    d.snapshot.classname = classname;
+    d.snapshot.properties = entity->get_all_properties();
+
     t.add(std::move(d));
     push_transaction(std::move(t));
   }
 
-  void commit_remove(uint32_t index, const shared::static_geometry_t &obj)
+  void commit_remove(uint32_t index, const network::Entity *entity,
+                     const std::string &classname)
   {
     transaction_t t;
     delta_t d;
-    d.type = transaction_type_t::GEOMETRY_REMOVE;
+    d.type = transaction_type_t::ENTITY_REMOVE;
     d.target_index = index;
-    d.object_snapshot = obj; // Needed for Undo (which adds it back)
+    d.snapshot.classname = classname;
+    d.snapshot.properties = entity->get_all_properties();
+
     t.add(std::move(d));
     push_transaction(std::move(t));
   }
@@ -158,8 +178,7 @@ private:
   void revert_transaction(shared::map_t &map, const transaction_t &t)
   {
     // Revert needs to happen in reverse order of modifications within
-    // transaction to match stack behavior? Usually transactions are atomic
-    // batch, but reverse order is safer.
+    // transaction
     for (auto it = t.mutations.rbegin(); it != t.mutations.rend(); ++it)
     {
       revert_delta(map, *it);
@@ -170,41 +189,48 @@ private:
   {
     switch (delta.type)
     {
-    case transaction_type_t::GEOMETRY_ADD:
+    case transaction_type_t::ENTITY_ADD:
     {
-      if (std::holds_alternative<shared::static_geometry_t>(
-              delta.object_snapshot))
+      // Create new entity
+      auto new_ent =
+          shared::create_entity_by_classname(delta.snapshot.classname);
+      if (new_ent)
       {
-        auto obj = std::get<shared::static_geometry_t>(delta.object_snapshot);
-        if (delta.target_index <= map.static_geometry.size())
-          map.static_geometry.insert(
-              map.static_geometry.begin() + delta.target_index, obj);
+        new_ent->init_from_map(delta.snapshot.properties);
+
+        if (delta.target_index <= map.entities.size())
+          map.entities.insert(map.entities.begin() + delta.target_index,
+                              new_ent);
         else
-          map.static_geometry.push_back(obj);
+          map.entities.push_back(new_ent);
       }
       break;
     }
-    case transaction_type_t::GEOMETRY_REMOVE:
+    case transaction_type_t::ENTITY_REMOVE:
     {
-      // Apply REMOVE = erase
-      if (delta.target_index < map.static_geometry.size())
+      if (delta.target_index < map.entities.size())
       {
-        map.static_geometry.erase(map.static_geometry.begin() +
-                                  delta.target_index);
+        map.entities.erase(map.entities.begin() + delta.target_index);
       }
       break;
     }
-    case transaction_type_t::GEOMETRY_MODIFY:
+    case transaction_type_t::ENTITY_MODIFY:
     {
-      if (delta.target_index < map.static_geometry.size())
+      if (delta.target_index < map.entities.size())
       {
-        auto &obj = map.static_geometry[delta.target_index];
-        apply_fields(obj, delta.changes, true); // true = use new_val
+        auto &ent = map.entities[delta.target_index];
+        if (ent)
+        {
+          std::map<std::string, std::string> props;
+          for (const auto &change : delta.changes)
+          {
+            props[change.name] = change.new_value;
+          }
+          ent->init_from_map(props);
+        }
       }
       break;
     }
-    default:
-      break;
     }
   }
 
@@ -212,80 +238,50 @@ private:
   {
     switch (delta.type)
     {
-    case transaction_type_t::GEOMETRY_ADD:
+    case transaction_type_t::ENTITY_ADD:
     {
       // Revert ADD = REMOVE
-      if (delta.target_index < map.static_geometry.size())
+      if (delta.target_index < map.entities.size())
       {
-        map.static_geometry.erase(map.static_geometry.begin() +
-                                  delta.target_index);
+        map.entities.erase(map.entities.begin() + delta.target_index);
       }
       break;
     }
-    case transaction_type_t::GEOMETRY_REMOVE:
+    case transaction_type_t::ENTITY_REMOVE:
     {
       // Revert REMOVE = ADD back
-      if (std::holds_alternative<shared::static_geometry_t>(
-              delta.object_snapshot))
+      auto new_ent =
+          shared::create_entity_by_classname(delta.snapshot.classname);
+      if (new_ent)
       {
-        auto obj = std::get<shared::static_geometry_t>(delta.object_snapshot);
-        if (delta.target_index <= map.static_geometry.size())
-          map.static_geometry.insert(
-              map.static_geometry.begin() + delta.target_index, obj);
-        else
-          map.static_geometry.push_back(obj);
-      }
-      break;
-    }
-    case transaction_type_t::GEOMETRY_MODIFY:
-    {
-      if (delta.target_index < map.static_geometry.size())
-      {
-        auto &obj = map.static_geometry[delta.target_index];
-        apply_fields(obj, delta.changes, false); // false = use old_val
-      }
-      break;
-    }
-    default:
-      break;
-    }
-  }
+        new_ent->init_from_map(delta.snapshot.properties);
 
-  void apply_fields(shared::static_geometry_t &obj,
-                    const std::vector<network::field_change_t> &changes,
-                    bool use_new)
-  {
-    std::visit(
-        [&](auto &shape)
+        if (delta.target_index <= map.entities.size())
+          map.entities.insert(map.entities.begin() + delta.target_index,
+                              new_ent);
+        else
+          map.entities.push_back(new_ent);
+      }
+      break;
+    }
+    case transaction_type_t::ENTITY_MODIFY:
+    {
+      if (delta.target_index < map.entities.size())
+      {
+        auto &ent = map.entities[delta.target_index];
+        if (ent)
         {
-          using T = std::decay_t<decltype(shape)>;
-          if constexpr (!std::is_same_v<T, shared::mesh_t>)
+          std::map<std::string, std::string> props;
+          for (const auto &change : delta.changes)
           {
-            const auto *schema = shape.get_schema();
-            if (schema)
-            {
-              uint8_t *target_ptr = reinterpret_cast<uint8_t *>(&shape);
-              for (const auto &change : changes)
-              {
-                for (const auto &field : schema->fields)
-                {
-                  if (field.index == change.id)
-                  {
-                    const auto &data =
-                        use_new ? change.new_val : change.old_val;
-                    if (data.size() == field.size)
-                    {
-                      std::memcpy(target_ptr + field.offset, data.data(),
-                                  field.size);
-                    }
-                    break;
-                  }
-                }
-              }
-            }
+            props[change.name] = change.old_value;
           }
-        },
-        obj.data);
+          ent->init_from_map(props);
+        }
+      }
+      break;
+    }
+    }
   }
 };
 
@@ -293,26 +289,29 @@ private:
 class Editor_Transaction
 {
 public:
-  // For modifying existing geometry
+  // For modifying existing entity
   Editor_Transaction(Transaction_System *sys, shared::map_t *map,
-                     uint32_t geometry_index)
-      : system(sys), map(map), type(transaction_type_t::GEOMETRY_MODIFY),
-        target_index(geometry_index)
+                     uint32_t ent_index)
+      : system(sys), map(map), type(transaction_type_t::ENTITY_MODIFY),
+        target_index(ent_index)
   {
-    if (target_index < map->static_geometry.size())
+    if (target_index < map->entities.size())
     {
-      auto &geo = map->static_geometry[target_index];
-      before_snapshot = geo;
+      auto &ent = map->entities[target_index];
+      if (ent)
+      {
+        before_props = ent->get_all_properties();
+      }
     }
   }
 
-  // For creating new geometry
+  // For creating new entity
   Editor_Transaction(Transaction_System *sys, shared::map_t *map,
                      const std::string &name)
-      : system(sys), map(map), type(transaction_type_t::GEOMETRY_ADD),
+      : system(sys), map(map), type(transaction_type_t::ENTITY_ADD),
         transaction_name(name)
   {
-    target_index = (uint32_t)map->static_geometry.size();
+    target_index = (uint32_t)map->entities.size();
   }
 
   ~Editor_Transaction()
@@ -320,38 +319,28 @@ public:
     if (!system || !map)
       return;
 
-    if (type == transaction_type_t::GEOMETRY_MODIFY)
+    if (type == transaction_type_t::ENTITY_MODIFY)
     {
-      if (target_index < map->static_geometry.size())
+      if (target_index < map->entities.size())
       {
-        auto &current_geo = map->static_geometry[target_index];
-        // Compare inner data
-        std::visit(
-            [&](auto &&before_shape)
-            {
-              using T = std::decay_t<decltype(before_shape)>;
-              if constexpr (!std::is_same_v<T, shared::mesh_t>)
-              {
-                if (std::holds_alternative<T>(current_geo.data))
-                {
-                  const auto &current_shape = std::get<T>(current_geo.data);
-                  // Use system helper to commit
-                  system->commit_modification(target_index, before_shape,
-                                              current_shape);
-                  // Note: commit_modification now internally computes diff
-                  // logic, simplifying this class
-                }
-              }
-            },
-            before_snapshot.data);
+        auto &ent = map->entities[target_index];
+        if (ent)
+        {
+          system->commit_modification(target_index, ent.get(), before_props);
+        }
       }
     }
-    else if (type == transaction_type_t::GEOMETRY_ADD)
+    else if (type == transaction_type_t::ENTITY_ADD)
     {
-      if (map->static_geometry.size() > target_index)
+      if (map->entities.size() > target_index)
       {
-        const auto &new_geo = map->static_geometry[target_index];
-        system->commit_add(target_index, new_geo);
+        const auto &new_ent = map->entities[target_index];
+        if (new_ent)
+        {
+          std::string classname =
+              shared::get_classname_for_entity(new_ent.get());
+          system->commit_add(target_index, new_ent.get(), classname);
+        }
       }
     }
   }
@@ -362,7 +351,7 @@ private:
   transaction_type_t type;
   uint32_t target_index;
   std::string transaction_name;
-  shared::static_geometry_t before_snapshot;
+  std::map<std::string, std::string> before_props;
 };
 
 } // namespace client

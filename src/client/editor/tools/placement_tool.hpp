@@ -2,6 +2,11 @@
 
 #include "../editor_tool.hpp"
 
+namespace network
+{
+class Entity;
+}
+
 namespace client
 {
 
@@ -24,7 +29,7 @@ private:
   linalg::vec3 ghost_pos;
   bool ghost_valid = false;
 
-  shared::static_geometry_t current_geometry;
+  std::shared_ptr<::network::Entity> current_entity;
 };
 
 } // namespace client
