@@ -98,6 +98,43 @@ inline std::vector<Field_Update> diff(const void *baseline, const void *current,
   return updates;
 }
 
+struct field_change_t
+{
+  uint16_t id;
+  std::vector<uint8_t> old_val;
+  std::vector<uint8_t> new_val;
+};
+
+// Generates a list of reversible changes to transform 'baseline' into 'current'
+// capturing both old and new values.
+inline std::vector<field_change_t> diff_reversible(const void *baseline,
+                                                   const void *current,
+                                                   const Class_Schema *schema)
+{
+  std::vector<field_change_t> changes;
+  const uint8_t *base_ptr = static_cast<const uint8_t *>(baseline);
+  const uint8_t *curr_ptr = static_cast<const uint8_t *>(current);
+
+  for (const auto &field : schema->fields)
+  {
+    if (std::memcmp(base_ptr + field.offset, curr_ptr + field.offset,
+                    field.size) != 0)
+    {
+      field_change_t change;
+      change.id = (uint16_t)field.index;
+
+      change.old_val.resize(field.size);
+      std::memcpy(change.old_val.data(), base_ptr + field.offset, field.size);
+
+      change.new_val.resize(field.size);
+      std::memcpy(change.new_val.data(), curr_ptr + field.offset, field.size);
+
+      changes.push_back(std::move(change));
+    }
+  }
+  return changes;
+}
+
 // Applies a list of updates to 'target' based on the provided schema.
 inline void apply_diff(void *target, const std::vector<Field_Update> &updates,
                        const Class_Schema *schema)
