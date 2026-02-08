@@ -1,5 +1,9 @@
 # Build directory
 build/
+cmake_build/
+build_verify/
+build_meson/
+build*/
 
 # IDE files
 .vscode/
