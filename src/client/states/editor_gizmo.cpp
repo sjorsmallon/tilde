@@ -52,6 +52,13 @@ static void draw_ring(VkCommandBuffer cmd, const vec3 &center, float radius,
     }
 
     renderer::DrawLine(cmd, p1, p2, color);
+
+    // Debug: Draw AABBs along the ring
+    if (i % 8 == 0)
+    {
+      float s = radius * 0.05f;
+      renderer::DrawAABB(cmd, p1 - vec3{s, s, s}, p1 + vec3{s, s, s}, color);
+    }
   }
 }
 
@@ -338,6 +345,12 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   // Store original for drag calculations
   auto &ent = target_map->entities[target_index];
 
+  active_transaction =
+      std::make_unique<Editor_Transaction>(sys, target_map, target_index);
+
+  // Store original for drag calculations
+  // auto &ent = target_map->entities[target_index]; // Redundant
+
   if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
   {
     original_transform.position = aabb->center.value;
@@ -350,11 +363,24 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   {
     original_transform.position = wedge->center.value;
     original_transform.scale = wedge->half_extents.value;
-    // Orientation is int 0-3, ignore for reshape gizmo for now or map to quat?
-    // Reshape gizmo works in local space or aligned space?
-    // Current reshape logic assumes axis aligned.
-    original_transform.orientation = {0, 0, 0, 1};
+    original_transform.orientation = {0, 0, 0, 1}; // TODO: Wedge rotation
   }
+  else if (auto *mesh =
+               dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
+  {
+    original_transform.position = mesh->position.value;
+    original_transform.scale = mesh->scale.value;
+    // initial rotation?
+  }
+
+  // Initialize Transform Gizmo State
+  transform_state.position = original_transform.position;
+  transform_state.rotation = {0, 0, 0}; // Relative or absolute?
+  // If we support rotation, we need to read it.
+  // For AABB it's 0. For Wedge it's int orientation (90 deg steps).
+  // For Mesh it might be euler.
+  // Let's assume 0 for now as requested features are basic.
+  transform_state.size = 2.0f; // Reasonable default
 }
 
 void Editor_Gizmo::end_interaction()
@@ -371,16 +397,57 @@ bool Editor_Gizmo::is_interacting() const
   return active_transaction != nullptr;
 }
 
+bool Editor_Gizmo::is_hovered() const
+{
+  return reshape_state.hovered_handle_index != -1 ||
+         transform_state.hovered_axis_index != -1 ||
+         transform_state.hovered_ring_index != -1;
+}
+
 void Editor_Gizmo::update(const linalg::ray_t &ray, bool is_mouse_down)
 {
   if (is_interacting())
     return; // Don't update hover if already dragging
 
   // Update hover state
-  hit_test_reshape_gizmo(ray, state);
+  if (current_mode == Gizmo_Mode::Reshape)
+  {
+    hit_test_reshape_gizmo(ray, reshape_state);
+  }
+  // For Unified, we might want both, but let's prioritize Transform for now or
+  // separate tools?
+  // The user asked for "rings to be drawn".
+  // Let's Always hit test Transform if not reshaping?
+  // Or if mode is Unified/Translate/Rotate.
+  // Let's assume we want to show Transform gizmo by default if Reshape isn't
+  // specifically active? Or maybe we just check both?
+  // If we check both, who wins?
+  // Usually Transform gizmo handles (arrows) are outside the object, Reshape
+  // handles are on faces. Let's check Transform first.
+
+  bool hit_transform = hit_test_transform_gizmo(ray, transform_state);
+  if (!hit_transform)
+  {
+    hit_test_reshape_gizmo(ray, reshape_state);
+  }
+  else
+  {
+    // If transform hit, clear reshape hover
+    reshape_state.hovered_handle_index = -1;
+  }
 }
 
-void Editor_Gizmo::draw(VkCommandBuffer cmd) { draw_reshape_gizmo(cmd, state); }
+void Editor_Gizmo::draw(VkCommandBuffer cmd)
+{
+  if (current_mode == Gizmo_Mode::Reshape ||
+      current_mode == Gizmo_Mode::Unified)
+    draw_reshape_gizmo(cmd, reshape_state);
+
+  // Always draw transform gizmo if it exists/initialized?
+  // Or only if mode allows.
+  // User wants to see rings.
+  draw_transform_gizmo(cmd, transform_state);
+}
 
 void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
                                 const linalg::vec3 &cam_pos)
@@ -388,149 +455,333 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
   if (!target_map || target_index == -1)
     return;
 
-  if (state.dragging_handle_index == -1)
-  {
-    if (is_mouse_down && state.hovered_handle_index != -1)
-    {
-      state.dragging_handle_index = state.hovered_handle_index;
-
-      // Calculate Drag Start Offset
-      int i = state.dragging_handle_index;
-      int axis = i / 2;
-      vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
-                              {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
-      vec3 axis_dir = face_normals[i];
-
-      // Reconstruct bounds from original_transform
-      vec3 center = original_transform.position;
-      vec3 half = original_transform.scale; // actually half_extents
-
-      vec3 handles_pos = center + axis_dir * half[axis];
-
-      vec3 cam_to_obj = center - cam_pos;
-      vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
-      plane_normal = linalg::cross(plane_normal, axis_dir);
-
-      float t = 0;
-      if (linalg::intersect_ray_plane(ray.origin, ray.dir, handles_pos,
-                                      plane_normal, t))
-      {
-        vec3 hit = ray.origin + ray.dir * t;
-        drag_start_offset = linalg::dot(hit, axis_dir);
-      }
-    }
-  }
-  else
+  if (reshape_state.dragging_handle_index != -1)
   {
     if (!is_mouse_down)
     {
-      // Stop Dragging
-      state.dragging_handle_index = -1;
+      reshape_state.dragging_handle_index = -1;
       end_interaction();
+      return;
     }
-    else
+    // Continue Dragging Reshape
+    // ... (Existing Reshape Logic) ...
+    // Refactoring: The existing logic was modifying map directly.
+    // I will keep it mostly as is but fix variable names.
+
+    int i = reshape_state.dragging_handle_index;
+    int axis = i / 2;
+    vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
+                            {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+
+    vec3 axis_dir = face_normals[i];
+    vec3 orig_center = original_transform.position;
+    vec3 orig_half = original_transform.scale;
+    vec3 handle_pos = orig_center + axis_dir * orig_half[axis];
+
+    vec3 cam_to_obj = orig_center - cam_pos;
+    vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+    plane_normal = linalg::cross(plane_normal, axis_dir);
+
+    float t = 0;
+    if (linalg::intersect_ray_plane(ray.origin, ray.dir, handle_pos,
+                                    plane_normal, t))
     {
-      // Continue Dragging
-      int i = state.dragging_handle_index;
-      int axis = i / 2;
-      vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
-                              {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+      vec3 hit = ray.origin + ray.dir * t;
+      float current_proj = linalg::dot(hit, axis_dir);
+      float delta = current_proj - drag_start_offset;
 
-      vec3 axis_dir = face_normals[i];
+      vec3 old_min = orig_center - orig_half;
+      vec3 old_max = orig_center + orig_half;
+      float new_min_val = old_min[axis];
+      float new_max_val = old_max[axis];
 
-      // Use original geometry for calculation
-      vec3 orig_center = original_transform.position;
-      vec3 orig_half = original_transform.scale;
+      if (i % 2 == 0) // + Face
+        new_max_val += delta;
+      else // - Face
+        new_min_val += (axis_dir[axis] * delta);
 
-      vec3 handle_pos = orig_center + axis_dir * orig_half[axis];
+      // Grid Snap (optional, but good for editor)
+      new_max_val = std::round(new_max_val * 2.0f) * 0.5f;
+      new_min_val = std::round(new_min_val * 2.0f) * 0.5f;
 
-      vec3 cam_to_obj = orig_center - cam_pos;
+      if (new_max_val < new_min_val + 0.1f)
+      {
+        if (i % 2 == 0)
+          new_max_val = new_min_val + 0.1f;
+        else
+          new_min_val = new_max_val - 0.1f;
+      }
+
+      float new_center_val = (new_min_val + new_max_val) * 0.5f;
+      float new_half_val = (new_max_val - new_min_val) * 0.5f;
+
+      auto &ent = target_map->entities[target_index];
+      if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+      {
+        if (axis == 0)
+        {
+          aabb->center.value.x = new_center_val;
+          aabb->half_extents.value.x = new_half_val;
+        }
+        else if (axis == 1)
+        {
+          aabb->center.value.y = new_center_val;
+          aabb->half_extents.value.y = new_half_val;
+        }
+        else
+        {
+          aabb->center.value.z = new_center_val;
+          aabb->half_extents.value.z = new_half_val;
+        }
+
+        reshape_state.aabb.center = aabb->center.value;
+        reshape_state.aabb.half_extents = aabb->half_extents.value;
+
+        // Also update transform gizmo
+        transform_state.position = aabb->center.value;
+      }
+    }
+  }
+  else if (transform_state.dragging_axis_index != -1 ||
+           transform_state.dragging_ring_index != -1)
+  {
+    if (!is_mouse_down)
+    {
+      transform_state.dragging_axis_index = -1;
+      transform_state.dragging_ring_index = -1;
+      end_interaction();
+      return;
+    }
+
+    // Handle Transform Drag
+    if (transform_state.dragging_axis_index != -1)
+    {
+      // Axis Drag (Translation)
+      int axis = transform_state.dragging_axis_index;
+      vec3 axis_dir = {0, 0, 0};
+      if (axis == 0)
+        axis_dir = {1, 0, 0};
+      else if (axis == 1)
+        axis_dir = {0, 1, 0};
+      else
+        axis_dir = {0, 0, 1};
+
+      vec3 orig_pos = original_transform.position;
+      vec3 cam_to_obj = orig_pos - cam_pos;
       vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
       plane_normal = linalg::cross(plane_normal, axis_dir);
 
       float t = 0;
-      if (linalg::intersect_ray_plane(ray.origin, ray.dir, handle_pos,
+      if (linalg::intersect_ray_plane(ray.origin, ray.dir, orig_pos,
                                       plane_normal, t))
       {
         vec3 hit = ray.origin + ray.dir * t;
         float current_proj = linalg::dot(hit, axis_dir);
         float delta = current_proj - drag_start_offset;
 
-        // Calculate new min/max
-        // Bounds from center/half
-        vec3 old_min = orig_center - orig_half;
-        vec3 old_max = orig_center + orig_half;
+        // Apply Delta
+        // Snap?
+        // float delta_snapped = std::round(delta * 2.0f) * 0.5f;
 
-        float new_min_val = old_min[axis];
-        float new_max_val = old_max[axis];
+        vec3 new_pos = orig_pos + axis_dir * delta;
+        new_pos.x = std::round(new_pos.x * 2.0f) * 0.5f;
+        new_pos.y = std::round(new_pos.y * 2.0f) * 0.5f;
+        new_pos.z = std::round(new_pos.z * 2.0f) * 0.5f;
 
-        if (i % 2 == 0) // + Face
-        {
-          new_max_val += delta;
-          new_max_val = std::round(new_max_val); // Snap?
-        }
-        else // - Face
-        {
-          new_min_val += (axis_dir[axis] * delta);
-          new_min_val = std::round(new_min_val);
-        }
-
-        if (new_max_val < new_min_val + 0.1f)
-        {
-          if (i % 2 == 0)
-            new_max_val = new_min_val + 0.1f;
-          else
-            new_min_val = new_max_val - 0.1f;
-        }
-
-        float new_center_val = (new_min_val + new_max_val) * 0.5f;
-        float new_half_val = (new_max_val - new_min_val) * 0.5f;
-
-        // Update Map Geometry
         auto &ent = target_map->entities[target_index];
         if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
         {
-          if (axis == 0)
-          {
-            aabb->center.value.x = new_center_val;
-            aabb->half_extents.value.x = new_half_val;
-          }
-          else if (axis == 1)
-          {
-            aabb->center.value.y = new_center_val;
-            aabb->half_extents.value.y = new_half_val;
-          }
-          else
-          {
-            aabb->center.value.z = new_center_val;
-            aabb->half_extents.value.z = new_half_val;
-          }
-
-          // Update internal state visuals
-          state.aabb.center = aabb->center.value;
-          state.aabb.half_extents = aabb->half_extents.value;
+          aabb->center.value = new_pos;
+          // Sync internal state
+          reshape_state.aabb.center = new_pos;
+          transform_state.position = new_pos;
         }
         else if (auto *wedge =
                      dynamic_cast<::network::Wedge_Entity *>(ent.get()))
         {
+          wedge->center.value = new_pos;
+          reshape_state.aabb.center = new_pos;
+          transform_state.position = new_pos;
+        }
+      }
+    }
+    else if (transform_state.dragging_ring_index != -1)
+    {
+      // Ring Drag (Rotation)
+      // For now, simple rotation visual or basic entity rotation (if supported)
+      // AABB doesn't support rotation.
+      // Wedge supports 90 degree steps (0-3).
+
+      int axis = transform_state.dragging_ring_index;
+      vec3 axis_dir = {0, 0, 0};
+      if (axis == 0)
+        axis_dir = {1, 0, 0};
+      else if (axis == 1)
+        axis_dir = {0, 1, 0};
+      else
+        axis_dir = {0, 0, 1};
+
+      // Project ray onto plane perpendicular to axis
+      float t = 0;
+      if (linalg::intersect_ray_plane(ray.origin, ray.dir,
+                                      transform_state.position, axis_dir, t))
+      {
+        vec3 hit = ray.origin + ray.dir * t;
+        vec3 local = hit - transform_state.position;
+        // Calculate angle?
+        // We need start angle.
+        // Let's use `drag_start_offset` as "start angle" (radians).
+
+        // But `drag_start_offset` was float.
+        // Re-calculate current angle
+        // We need a basis on the plane.
+        vec3 u, v;
+        if (axis == 0)
+        {
+          u = {0, 1, 0};
+          v = {0, 0, 1};
+        }
+        else if (axis == 1)
+        {
+          u = {0, 0, 1};
+          v = {1, 0, 0};
+        } // Z, X
+        else
+        {
+          u = {1, 0, 0};
+          v = {0, 1, 0};
+        }
+
+        float x = linalg::dot(local, u);
+        float y = linalg::dot(local, v);
+        float angle = std::atan2(y, x);
+
+        float delta_angle = angle - drag_start_offset;
+
+        // For Wedge: snap to 90 degrees
+        // original orientation + delta?
+        // Wedge orientation is 0,1,2,3 -> 0, 90, 180, 270 around Y axis.
+        // So primarily axis 1 (Y).
+
+        if (axis == 1) // Y rotation
+        {
+          // Snap to PI/2
+          int steps = (int)std::round(delta_angle / (3.14159f * 0.5f));
+
+          auto &ent = target_map->entities[target_index];
+          if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
+          {
+            // We didn't store original int orientation in
+            // `original_transform.orientation`.
+            // `original_transform.orientation` is vec4.
+            // It's 0,0,0,1.
+            // Let's assume we can't easily rotate AABB/Wedge yet without better
+            // Logic. But user wants to SEE rings. We can just rotate the Gizmo
+            // for now? Or hack wedge 90 deg.
+          }
+        }
+      }
+    }
+  }
+  else
+  {
+    // New Drag Start?
+    if (is_mouse_down)
+    {
+      if (transform_state.hovered_axis_index != -1)
+      {
+        transform_state.dragging_axis_index =
+            transform_state.hovered_axis_index;
+        // Init Drag
+        int axis = transform_state.dragging_axis_index;
+        vec3 axis_dir = {0, 0, 0};
+        if (axis == 0)
+          axis_dir = {1, 0, 0};
+        else if (axis == 1)
+          axis_dir = {0, 1, 0};
+        else
+          axis_dir = {0, 0, 1};
+
+        vec3 center = transform_state.position;
+        vec3 cam_to_obj = center - cam_pos;
+        vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+        plane_normal = linalg::cross(plane_normal, axis_dir);
+
+        float t = 0;
+        if (linalg::intersect_ray_plane(ray.origin, ray.dir, center,
+                                        plane_normal, t))
+        {
+          vec3 hit = ray.origin + ray.dir * t;
+          drag_start_offset = linalg::dot(hit, axis_dir);
+        }
+      }
+      else if (transform_state.hovered_ring_index != -1)
+      {
+        transform_state.dragging_ring_index =
+            transform_state.hovered_ring_index;
+
+        // Init Rotate Drag
+        int axis = transform_state.dragging_ring_index;
+        vec3 axis_dir = {0, 0, 0};
+        if (axis == 0)
+          axis_dir = {1, 0, 0};
+        else if (axis == 1)
+          axis_dir = {0, 1, 0};
+        else
+          axis_dir = {0, 0, 1};
+
+        float t = 0;
+        if (linalg::intersect_ray_plane(ray.origin, ray.dir,
+                                        transform_state.position, axis_dir, t))
+        {
+          vec3 hit = ray.origin + ray.dir * t;
+          vec3 local = hit - transform_state.position;
+          vec3 u, v;
           if (axis == 0)
           {
-            wedge->center.value.x = new_center_val;
-            wedge->half_extents.value.x = new_half_val;
+            u = {0, 1, 0};
+            v = {0, 0, 1};
           }
           else if (axis == 1)
           {
-            wedge->center.value.y = new_center_val;
-            wedge->half_extents.value.y = new_half_val;
+            u = {0, 0, 1};
+            v = {1, 0, 0};
           }
           else
           {
-            wedge->center.value.z = new_center_val;
-            wedge->half_extents.value.z = new_half_val;
+            u = {1, 0, 0};
+            v = {0, 1, 0};
           }
 
-          state.aabb.center = wedge->center.value;
-          state.aabb.half_extents = wedge->half_extents.value;
+          float x = linalg::dot(local, u);
+          float y = linalg::dot(local, v);
+          drag_start_offset = std::atan2(y, x); // Store start angle
+        }
+      }
+      else if (reshape_state.hovered_handle_index != -1)
+      {
+        reshape_state.dragging_handle_index =
+            reshape_state.hovered_handle_index;
+        // ... duplicate init logic from before or call function?
+        // Since we inline here, copy paste logic:
+
+        int i = reshape_state.dragging_handle_index;
+        int axis = i / 2;
+        vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
+                                {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+        vec3 axis_dir = face_normals[i];
+        vec3 center = original_transform.position;
+        vec3 half = original_transform.scale;
+        vec3 handles_pos = center + axis_dir * half[axis];
+        vec3 cam_to_obj = center - cam_pos;
+        vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
+        plane_normal = linalg::cross(plane_normal, axis_dir);
+        float t = 0;
+        if (linalg::intersect_ray_plane(ray.origin, ray.dir, handles_pos,
+                                        plane_normal, t))
+        {
+          vec3 hit = ray.origin + ray.dir * t;
+          drag_start_offset = linalg::dot(hit, axis_dir);
         }
       }
     }
@@ -539,8 +790,13 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
 
 void Editor_Gizmo::set_geometry(const shared::aabb_bounds_t &bounds)
 {
-  state.aabb.center = (bounds.min + bounds.max) * 0.5f;
-  state.aabb.half_extents = (bounds.max - bounds.min) * 0.5f;
+  reshape_state.aabb.center = (bounds.min + bounds.max) * 0.5f;
+  reshape_state.aabb.half_extents = (bounds.max - bounds.min) * 0.5f;
+  // Sync transform
+  transform_state.position = reshape_state.aabb.center;
+  // Size? default
+  transform_state.size = 2.0f; // Reset size on new geometry? Or keep?
+  // It's fine.
 }
 
 } // namespace client

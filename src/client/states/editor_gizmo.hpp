@@ -78,6 +78,14 @@ class Transaction_System;
 class Editor_Gizmo
 {
 public:
+  enum class Gizmo_Mode
+  {
+    Translate,
+    Rotate,
+    Reshape, // Scale/Box resize
+    Unified  // Both translate/rotate (maybe not reshape?)
+  };
+
   Editor_Gizmo() = default;
   ~Editor_Gizmo(); // explicit destructor for unique_ptr PIMPL
 
@@ -85,6 +93,7 @@ public:
                          int geo_index);
   void end_interaction();
   bool is_interacting() const;
+  bool is_hovered() const;
 
   // Passthrough to underlying gizmo logic
   void update(const linalg::ray_t &ray, bool is_mouse_down);
@@ -97,11 +106,18 @@ public:
                     const linalg::vec3 &cam_pos);
 
   // Access to internal state
-  reshape_gizmo_t &get_state() { return state; }
+  reshape_gizmo_t &get_reshape_state() { return reshape_state; }
+  transform_gizmo_t &get_transform_state() { return transform_state; }
+
+  void set_mode(Gizmo_Mode mode) { current_mode = mode; }
+  Gizmo_Mode get_mode() const { return current_mode; }
   void set_geometry(const shared::aabb_bounds_t &bounds);
 
 private:
-  reshape_gizmo_t state;
+  reshape_gizmo_t reshape_state;
+  transform_gizmo_t transform_state;
+  Gizmo_Mode current_mode =
+      Gizmo_Mode::Reshape; // Default to reshape for now since that was behavior
 
   // Transaction State
   std::unique_ptr<class Editor_Transaction> active_transaction;

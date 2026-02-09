@@ -2,6 +2,7 @@
 #include "../../../shared/entities/static_entities.hpp"
 #include "../../../shared/map.hpp" // For factory
 #include "../transaction_system.hpp"
+#include "entities/player_entity.hpp"
 #include "log.hpp"
 #include "renderer.hpp"
 #include <SDL.h>
@@ -30,7 +31,7 @@ void Placement_Tool::on_update(editor_context_t &ctx,
                                const viewport_state_t &view)
 {
   // Raycast against ground plane y = -2.0
-  linalg::vec3 plane_point = {0, -2.0f, 0};
+  linalg::vec3 plane_point = {0, 0.0f, 0};
   linalg::vec3 plane_normal = {0, 1.0f, 0};
 
   float t = 0.0f;
@@ -137,6 +138,17 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
       wedge->orientation = 0; // Default
     }
   }
+  else if (e.scancode == SDL_SCANCODE_3)
+  {
+    renderer::draw_announcement("Player");
+    // Switch to Cylinder
+    current_entity = shared::create_entity_by_classname("player_start");
+    if (auto *player =
+            dynamic_cast<::network::Player_Entity *>(current_entity.get()))
+    {
+      player->health = 100;
+    }
+  }
 }
 
 void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
@@ -183,6 +195,11 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
       renderer.draw_line(points[1], points[5], 0xFF00FFFF);
       renderer.draw_line(points[3], points[4], 0xFF00FFFF);
       renderer.draw_line(points[2], points[5], 0xFF00FFFF);
+    }
+    else if (auto *player =
+                 dynamic_cast<::network::Player_Entity *>(current_entity.get()))
+    {
+      renderer.draw_wire_box(center, {0.5f, 0.5f, 0.5f}, 0xFFFFFFFF);
     }
   }
 }

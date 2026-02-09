@@ -99,8 +99,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
 
     // Check if Gizmo is hovered? If so, don't hover geometry?
     // Usually gizmo takes precedence.
-    if (editor_gizmo.get_state().hovered_handle_index != -1 &&
-        selected_geometry_indices.size() == 1)
+    if (editor_gizmo.is_hovered() && selected_geometry_indices.size() == 1)
     {
       // Gizmo is hovered, so we shouldn't pick other geometry
       grid_hover_valid = false;
@@ -186,7 +185,7 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
       // If gizmo is hovered, start interaction
       // We rely on 'hovered_handle_index' updated in on_update.
       // OR we assume update called.
-      if (editor_gizmo.get_state().hovered_handle_index != -1)
+      if (editor_gizmo.is_hovered())
       {
         editor_gizmo.start_interaction(ctx.transaction_system, ctx.map,
                                        selected_geometry_indices[0]);
