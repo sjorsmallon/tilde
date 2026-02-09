@@ -1,4 +1,5 @@
 #include "tool_editor_state.hpp"
+#include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
@@ -377,6 +378,17 @@ void ToolEditorState::update(float dt)
   context.time += dt;
   viewport = transform_viewport_state();
 
+  static bool was_lmb_down = false;
+  static bool tool_processing_mouse = false;
+
+  if (ImGui::GetIO().WantCaptureMouse && !tool_processing_mouse)
+  {
+    // Use a ray that won't hit anything to prevent hovering
+    // Origin far away, direction pointing away
+    viewport.mouse_ray.origin = {0, 1e20f, 0};
+    viewport.mouse_ray.dir = {0, 1.0f, 0};
+  }
+
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
   {
     tools[active_tool_index]->on_update(context, viewport);
@@ -392,23 +404,32 @@ void ToolEditorState::update(float dt)
     mouse_e.delta = {mdx, mdy};
     mouse_e.shift_down = input::is_key_down(
         SDL_SCANCODE_LSHIFT); // LSHIFT SDL_SCANCODE_LSHIFT = 225
+    mouse_e.button = 1;       // Left Button
 
-    static bool was_lmb_down = false;
     bool is_lmb_down = input::is_mouse_down(1);
-
-    mouse_e.button = 1; // Left Button
 
     if (is_lmb_down && !was_lmb_down)
     {
-      tools[active_tool_index]->on_mouse_down(context, mouse_e);
+      if (!ImGui::GetIO().WantCaptureMouse)
+      {
+        tool_processing_mouse = true;
+        tools[active_tool_index]->on_mouse_down(context, mouse_e);
+      }
     }
     else if (is_lmb_down && was_lmb_down)
     {
-      tools[active_tool_index]->on_mouse_drag(context, mouse_e);
+      if (tool_processing_mouse)
+      {
+        tools[active_tool_index]->on_mouse_drag(context, mouse_e);
+      }
     }
     else if (!is_lmb_down && was_lmb_down)
     {
-      tools[active_tool_index]->on_mouse_up(context, mouse_e);
+      if (tool_processing_mouse)
+      {
+        tools[active_tool_index]->on_mouse_up(context, mouse_e);
+        tool_processing_mouse = false;
+      }
     }
     was_lmb_down = is_lmb_down;
 
@@ -424,18 +445,22 @@ void ToolEditorState::update(float dt)
 
     //@FIXME: This is crazy, why can't we forward the key events from the input
     // system?
-    for (int scancode = 0; scancode < SDL_NUM_SCANCODES; ++scancode)
+    if (!ImGui::GetIO().WantCaptureKeyboard)
     {
-      if (input::is_key_pressed(scancode))
+      for (int scancode = 0; scancode < SDL_NUM_SCANCODES; ++scancode)
       {
-        key_event_t key_e;
-        key_e.scancode = scancode;
-        key_e.shift_down = shift;
-        key_e.ctrl_down = ctrl;
-        key_e.alt_down = alt;
-        key_e.repeat = false; // input::is_key_pressed checks for new press only
+        if (input::is_key_pressed(scancode))
+        {
+          key_event_t key_e;
+          key_e.scancode = scancode;
+          key_e.shift_down = shift;
+          key_e.ctrl_down = ctrl;
+          key_e.alt_down = alt;
+          key_e.repeat =
+              false; // input::is_key_pressed checks for new press only
 
-        tools[active_tool_index]->on_key_down(context, key_e);
+          tools[active_tool_index]->on_key_down(context, key_e);
+        }
       }
     }
   }
@@ -605,6 +630,37 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       linalg::vec3 min = mesh->position.value - mesh->scale.value;
       linalg::vec3 max = mesh->position.value + mesh->scale.value;
       renderer::DrawAABB(cmd, min, max, 0xFF00FFFF);
+    }
+    else if (auto *player =
+                 dynamic_cast<::network::Player_Entity *>(ent_ptr.get()))
+    {
+      linalg::vec3 center = player->position.value;
+      // Pyramid for player start!
+      // Base:
+      linalg::vec3 p0 = {center.x - 0.5f, center.y - 0.5f, center.z - 0.5f};
+      linalg::vec3 p1 = {center.x + 0.5f, center.y - 0.5f, center.z - 0.5f};
+      linalg::vec3 p2 = {center.x + 0.5f, center.y - 0.5f, center.z + 0.5f};
+      linalg::vec3 p3 = {center.x - 0.5f, center.y - 0.5f, center.z + 0.5f};
+
+      // Top:
+      linalg::vec3 p4 = {center.x, center.y + 0.5f, center.z};
+
+      // Draw lines manually using vkCmdDraw or similar?
+      // Wait, render_3d takes VkCommandBuffer, but we don't have a direct line
+      // drawer that takes cmd buffer for arbitrary lines easily available here
+      // WITHOUT using the overlay renderer or `DrawLine` helper.
+      // `renderer::DrawLine` exists!
+
+      uint32_t color = 0xFFFFFFFF;
+      renderer::DrawLine(cmd, p0, p1, color);
+      renderer::DrawLine(cmd, p1, p2, color);
+      renderer::DrawLine(cmd, p2, p3, color);
+      renderer::DrawLine(cmd, p3, p0, color);
+
+      renderer::DrawLine(cmd, p0, p4, color);
+      renderer::DrawLine(cmd, p1, p4, color);
+      renderer::DrawLine(cmd, p2, p4, color);
+      renderer::DrawLine(cmd, p3, p4, color);
     }
   }
 

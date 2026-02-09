@@ -1,7 +1,9 @@
 #include "editor_gizmo.hpp"
 #include "../editor/transaction_system.hpp"
 #include "../renderer.hpp"
+#include "../shared/entities/player_entity.hpp"
 #include "../shared/entities/static_entities.hpp"
+#include "../shared/entities/weapon_entity.hpp"
 #include "../shared/map.hpp" // Full definition needed
 #include <algorithm>         // for min/max
 #include <cmath>
@@ -372,6 +374,12 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
     original_transform.scale = mesh->scale.value;
     // initial rotation?
   }
+  else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent.get()))
+  {
+    original_transform.position = player->position.value;
+    original_transform.scale = {1, 1, 1}; // Default scale
+    original_transform.orientation = {0, 0, 0, 1};
+  }
 
   // Initialize Transform Gizmo State
   transform_state.position = original_transform.position;
@@ -600,6 +608,15 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
                      dynamic_cast<::network::Wedge_Entity *>(ent.get()))
         {
           wedge->center.value = new_pos;
+          reshape_state.aabb.center = new_pos;
+          transform_state.position = new_pos;
+        }
+        else if (auto *player =
+                     dynamic_cast<::network::Player_Entity *>(ent.get()))
+        {
+          player->position.value = new_pos;
+          // Player doesn't have AABB/Wedge fields to sync with reshape_state if
+          // we differ, but we used a fake AABB for selection.
           reshape_state.aabb.center = new_pos;
           transform_state.position = new_pos;
         }

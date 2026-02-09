@@ -1,7 +1,9 @@
 #include "selection_tool.hpp"
+#include "../../../shared/entities/player_entity.hpp"
 #include "../../../shared/entities/static_entities.hpp"
 #include "../../../shared/game_session.hpp" // for get_entity_bounds
 #include "../../renderer.hpp"
+#include "../entity_inspector.hpp"
 #include "../transaction_system.hpp"
 #include "imgui.h"
 #include <SDL.h>
@@ -44,6 +46,25 @@ void Selection_Tool::on_draw_ui(editor_context_t &ctx)
       draw_list->AddRectFilled(p1, p2, IM_COL32(0, 255, 0, 50));
     }
   }
+
+  // Inspector
+  if (selected_geometry_indices.size() == 1)
+  {
+    if (ImGui::Begin("Entity Inspector"))
+    {
+      int idx = selected_geometry_indices[0];
+      // Ensure map exists and index is valid
+      if (ctx.map && idx >= 0 && idx < (int)ctx.map->entities.size())
+      {
+        auto &ent = ctx.map->entities[idx];
+        if (ent)
+        {
+          render_imgui_entity_fields_in_a_window(ent.get());
+        }
+      }
+    }
+    ImGui::End();
+  }
 }
 
 void Selection_Tool::on_update(editor_context_t &ctx,
@@ -84,6 +105,15 @@ void Selection_Tool::on_update(editor_context_t &ctx,
         {
           editor_gizmo.set_geometry(*bounds);
         }
+        else if (auto *player =
+                     dynamic_cast<network::Player_Entity *>(ent.get()))
+        {
+          // Manually construct bounds for player (1x1x1 centered)
+          shared::aabb_bounds_t b;
+          b.min = player->position.value - linalg::vec3{0.5f, 0.5f, 0.5f};
+          b.max = player->position.value + linalg::vec3{0.5f, 0.5f, 0.5f};
+          editor_gizmo.set_geometry(b);
+        }
       }
     }
   }
@@ -108,6 +138,8 @@ void Selection_Tool::on_update(editor_context_t &ctx,
 
     // Use BVH if available
     bool hit_bvh = false;
+    float closest_t = std::numeric_limits<float>::max();
+
     if (ctx.bvh)
     {
       Ray_Hit hit;
@@ -117,7 +149,100 @@ void Selection_Tool::on_update(editor_context_t &ctx,
         if (hit.id.type == Collision_Id::Type::Static_Geometry)
         {
           hovered_geo_index = (int)hit.id.index;
+          closest_t = hit.t;
           hit_bvh = true;
+        }
+      }
+    }
+
+    // Check Player Entities (Pyramid Intersection)
+    // We do this manually because players don't have an AABB in the BVH
+    // currently (or at least not one that represents the pyramid shape we want
+    // to pick).
+    auto intersect_ray_triangle =
+        [](const linalg::vec3 &origin, const linalg::vec3 &dir,
+           const linalg::vec3 &v0, const linalg::vec3 &v1,
+           const linalg::vec3 &v2, float &t) -> bool
+    {
+      const float EPSILON = 0.0000001f;
+      linalg::vec3 edge1 = v1 - v0;
+      linalg::vec3 edge2 = v2 - v0;
+      linalg::vec3 h = linalg::cross(dir, edge2);
+      float a = linalg::dot(edge1, h);
+      if (a > -EPSILON && a < EPSILON)
+        return false;
+      float f = 1.0f / a;
+      linalg::vec3 s = origin - v0;
+      float u = f * linalg::dot(s, h);
+      if (u < 0.0f || u > 1.0f)
+        return false;
+      linalg::vec3 q = linalg::cross(s, edge1);
+      float v = f * linalg::dot(dir, q);
+      if (v < 0.0f || u + v > 1.0f)
+        return false;
+      float current_t = f * linalg::dot(edge2, q);
+      if (current_t > EPSILON)
+      {
+        t = current_t;
+        return true;
+      }
+      return false;
+    };
+
+    for (size_t i = 0; i < ctx.map->entities.size(); ++i)
+    {
+      auto *player =
+          dynamic_cast<network::Player_Entity *>(ctx.map->entities[i].get());
+      if (player)
+      {
+        linalg::vec3 center = player->position.value;
+        // Pyramid vertices
+        linalg::vec3 p0 = {center.x - 0.5f, center.y - 0.5f, center.z - 0.5f};
+        linalg::vec3 p1 = {center.x + 0.5f, center.y - 0.5f, center.z - 0.5f};
+        linalg::vec3 p2 = {center.x + 0.5f, center.y - 0.5f, center.z + 0.5f};
+        linalg::vec3 p3 = {center.x - 0.5f, center.y - 0.5f, center.z + 0.5f};
+        linalg::vec3 p4 = {center.x, center.y + 0.5f, center.z}; // Top
+
+        // Check 4 sides (triangles) + Base (2 triangles)
+        // Sides: p0-p1-p4, p1-p2-p4, p2-p3-p4, p3-p0-p4
+        // Base: p0-p1-p2, p0-p2-p3 (Quad p0-p1-p2-p3)
+
+        float t = 0.0f;
+        bool hit = false;
+        float local_min_t = std::numeric_limits<float>::max();
+
+        auto check_tri = [&](const linalg::vec3 &a, const linalg::vec3 &b,
+                             const linalg::vec3 &c)
+        {
+          if (intersect_ray_triangle(view.mouse_ray.origin, view.mouse_ray.dir,
+                                     a, b, c, t))
+          {
+            if (t < local_min_t)
+            {
+              local_min_t = t;
+              hit = true;
+            }
+          }
+        };
+
+        check_tri(p0, p1, p4);
+        check_tri(p1, p2, p4);
+        check_tri(p2, p3, p4);
+        check_tri(p3, p0, p4);
+        // Base
+        check_tri(p0, p2, p1); // Clockwise/CCW? logic above doesn't cull
+                               // backfaces so order doesn't strictly matter for
+                               // hit test if we want double-sided.
+        check_tri(p0, p3, p2);
+
+        if (hit)
+        {
+          if (local_min_t < closest_t)
+          {
+            closest_t = local_min_t;
+            hovered_geo_index = (int)i;
+            hit_bvh = true; // Use this flag to indicate *something* was hit
+          }
         }
       }
     }
@@ -478,6 +603,26 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
       w.half_extents = wedge->half_extents.value;
       w.orientation = wedge->orientation.value;
       renderer::draw_wedge(renderer.get_command_buffer(), w, color);
+    }
+    else if (auto *player = dynamic_cast<const network::Player_Entity *>(ent))
+    {
+      linalg::vec3 center = player->position.value;
+      // Pyramid
+      linalg::vec3 p0 = {center.x - 0.5f, center.y - 0.5f, center.z - 0.5f};
+      linalg::vec3 p1 = {center.x + 0.5f, center.y - 0.5f, center.z - 0.5f};
+      linalg::vec3 p2 = {center.x + 0.5f, center.y - 0.5f, center.z + 0.5f};
+      linalg::vec3 p3 = {center.x - 0.5f, center.y - 0.5f, center.z + 0.5f};
+      linalg::vec3 p4 = {center.x, center.y + 0.5f, center.z}; // Top
+
+      renderer.draw_line(p0, p1, color);
+      renderer.draw_line(p1, p2, color);
+      renderer.draw_line(p2, p3, color);
+      renderer.draw_line(p3, p0, color);
+
+      renderer.draw_line(p0, p4, color);
+      renderer.draw_line(p1, p4, color);
+      renderer.draw_line(p2, p4, color);
+      renderer.draw_line(p3, p4, color);
     }
     else
     {

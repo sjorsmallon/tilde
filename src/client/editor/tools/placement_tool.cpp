@@ -3,6 +3,7 @@
 #include "../../../shared/map.hpp" // For factory
 #include "../transaction_system.hpp"
 #include "entities/player_entity.hpp"
+#include "entities/weapon_entity.hpp"
 #include "log.hpp"
 #include "renderer.hpp"
 #include <SDL.h>
@@ -85,6 +86,11 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
     {
       wedge->center = center;
     }
+    else if (auto *player =
+                 dynamic_cast<::network::Player_Entity *>(new_ent.get()))
+    {
+      player->position = center;
+    }
 
     // 3. Add to map
     {
@@ -149,6 +155,16 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
       player->health = 100;
     }
   }
+  else if (e.scancode == SDL_SCANCODE_4)
+  {
+    renderer::draw_announcement("Weapon");
+    // Switch to Cylinder
+    current_entity = shared::create_entity_by_classname("weapon_basic");
+    if (auto *weapon =
+            dynamic_cast<::network::Weapon_Entity *>(current_entity.get()))
+    {
+    }
+  }
 }
 
 void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
@@ -199,7 +215,25 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
     else if (auto *player =
                  dynamic_cast<::network::Player_Entity *>(current_entity.get()))
     {
-      renderer.draw_wire_box(center, {0.5f, 0.5f, 0.5f}, 0xFFFFFFFF);
+      // Pyramid for player start!
+      // Base:
+      linalg::vec3 p0 = {center.x - 0.5f, center.y - 0.5f, center.z - 0.5f};
+      linalg::vec3 p1 = {center.x + 0.5f, center.y - 0.5f, center.z - 0.5f};
+      linalg::vec3 p2 = {center.x + 0.5f, center.y - 0.5f, center.z + 0.5f};
+      linalg::vec3 p3 = {center.x - 0.5f, center.y - 0.5f, center.z + 0.5f};
+
+      // Top:
+      linalg::vec3 p4 = {center.x, center.y + 0.5f, center.z};
+
+      renderer.draw_line(p0, p1, 0xFFFFFFFF);
+      renderer.draw_line(p1, p2, 0xFFFFFFFF);
+      renderer.draw_line(p2, p3, 0xFFFFFFFF);
+      renderer.draw_line(p3, p0, 0xFFFFFFFF);
+
+      renderer.draw_line(p0, p4, 0xFFFFFFFF);
+      renderer.draw_line(p1, p4, 0xFFFFFFFF);
+      renderer.draw_line(p2, p4, 0xFFFFFFFF);
+      renderer.draw_line(p3, p4, 0xFFFFFFFF);
     }
   }
 }
