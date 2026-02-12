@@ -1,0 +1,7 @@
+- fix editor gimbal whatever sticking to the entity placement?
+- pick a good default size for AABB
+- why is AABB a schema? it's not a good decision.
+- all components that exist now should define a schema. is that what we want?
+- make sure the default mesh is the question mark.
+- clean up BVH traversal because we now just iterate over entities in the map editor.
+- clean up the renderer because it is awful.
