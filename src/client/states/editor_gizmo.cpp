@@ -345,7 +345,8 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
       std::make_unique<Editor_Transaction>(sys, target_map, target_index);
 
   // Store original for drag calculations
-  auto &ent = target_map->entities[target_index];
+  auto &placement = target_map->entities[target_index];
+  auto &ent = placement.entity;
 
   active_transaction =
       std::make_unique<Editor_Transaction>(sys, target_map, target_index);
@@ -355,39 +356,37 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
 
   if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
   {
-    original_transform.position = aabb->center.value;
+    original_transform.position = aabb->center;
     original_transform.scale =
-        aabb->half_extents.value; // Store half-extents as scale
+        aabb->half_extents; // Store half-extents as scale
     original_transform.orientation = {0, 0, 0,
                                       1}; // Identity (AABB has no rotation)
   }
   else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
   {
-    original_transform.position = wedge->center.value;
-    original_transform.scale = wedge->half_extents.value;
+    original_transform.position = wedge->center;
+    original_transform.scale = wedge->half_extents;
     original_transform.orientation = {0, 0, 0, 1}; // TODO: Wedge rotation
   }
   else if (auto *mesh =
                dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
   {
-    original_transform.position = mesh->position.value;
-    original_transform.scale = mesh->scale.value;
+    original_transform.position = mesh->position;
+    original_transform.scale = mesh->scale;
     // initial rotation?
   }
   else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent.get()))
   {
-    original_transform.position = player->position.value;
+    original_transform.position = player->position;
     original_transform.scale = {1, 1, 1}; // Default scale
     original_transform.orientation = {0, 0, 0, 1};
   }
 
   // Initialize Transform Gizmo State
   transform_state.position = original_transform.position;
-  transform_state.rotation = {0, 0, 0}; // Relative or absolute?
-  // If we support rotation, we need to read it.
-  // For AABB it's 0. For Wedge it's int orientation (90 deg steps).
-  // For Mesh it might be euler.
-  // Let's assume 0 for now as requested features are basic.
+  transform_state.rotation = ent->orientation;
+  original_transform.orientation = {ent->orientation.x, ent->orientation.y,
+                                    ent->orientation.z, 0};
   transform_state.size = 2.0f; // Reasonable default
 }
 
@@ -523,30 +522,31 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
       float new_center_val = (new_min_val + new_max_val) * 0.5f;
       float new_half_val = (new_max_val - new_min_val) * 0.5f;
 
-      auto &ent = target_map->entities[target_index];
+      auto &placement = target_map->entities[target_index];
+      auto &ent = placement.entity;
       if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
       {
         if (axis == 0)
         {
-          aabb->center.value.x = new_center_val;
-          aabb->half_extents.value.x = new_half_val;
+          aabb->center.x = new_center_val;
+          aabb->half_extents.x = new_half_val;
         }
         else if (axis == 1)
         {
-          aabb->center.value.y = new_center_val;
-          aabb->half_extents.value.y = new_half_val;
+          aabb->center.y = new_center_val;
+          aabb->half_extents.y = new_half_val;
         }
         else
         {
-          aabb->center.value.z = new_center_val;
-          aabb->half_extents.value.z = new_half_val;
+          aabb->center.z = new_center_val;
+          aabb->half_extents.z = new_half_val;
         }
 
-        reshape_state.aabb.center = aabb->center.value;
-        reshape_state.aabb.half_extents = aabb->half_extents.value;
+        reshape_state.aabb.center = aabb->center;
+        reshape_state.aabb.half_extents = aabb->half_extents;
 
         // Also update transform gizmo
-        transform_state.position = aabb->center.value;
+        transform_state.position = aabb->center;
       }
     }
   }
@@ -596,10 +596,11 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         new_pos.y = std::round(new_pos.y * 2.0f) * 0.5f;
         new_pos.z = std::round(new_pos.z * 2.0f) * 0.5f;
 
-        auto &ent = target_map->entities[target_index];
+        auto &placement = target_map->entities[target_index];
+        auto &ent = placement.entity;
         if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
         {
-          aabb->center.value = new_pos;
+          aabb->center = new_pos;
           // Sync internal state
           reshape_state.aabb.center = new_pos;
           transform_state.position = new_pos;
@@ -607,14 +608,14 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         else if (auto *wedge =
                      dynamic_cast<::network::Wedge_Entity *>(ent.get()))
         {
-          wedge->center.value = new_pos;
+          wedge->center = new_pos;
           reshape_state.aabb.center = new_pos;
           transform_state.position = new_pos;
         }
         else if (auto *player =
                      dynamic_cast<::network::Player_Entity *>(ent.get()))
         {
-          player->position.value = new_pos;
+          player->position = new_pos;
           // Player doesn't have AABB/Wedge fields to sync with reshape_state if
           // we differ, but we used a fake AABB for selection.
           reshape_state.aabb.center = new_pos;
@@ -680,23 +681,19 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         // Wedge orientation is 0,1,2,3 -> 0, 90, 180, 270 around Y axis.
         // So primarily axis 1 (Y).
 
-        if (axis == 1) // Y rotation
-        {
-          // Snap to PI/2
-          int steps = (int)std::round(delta_angle / (3.14159f * 0.5f));
+        // Apply to any entity's base orientation (euler degrees)
+        auto &placement = target_map->entities[target_index];
+        auto &ent = placement.entity;
+        float delta_degrees = delta_angle * (180.0f / 3.14159f);
+        // Snap to 15-degree increments
+        delta_degrees = std::round(delta_degrees / 15.0f) * 15.0f;
 
-          auto &ent = target_map->entities[target_index];
-          if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
-          {
-            // We didn't store original int orientation in
-            // `original_transform.orientation`.
-            // `original_transform.orientation` is vec4.
-            // It's 0,0,0,1.
-            // Let's assume we can't easily rotate AABB/Wedge yet without better
-            // Logic. But user wants to SEE rings. We can just rotate the Gizmo
-            // for now? Or hack wedge 90 deg.
-          }
-        }
+        vec3 new_orient = {original_transform.orientation.x,
+                           original_transform.orientation.y,
+                           original_transform.orientation.z};
+        new_orient[axis] = new_orient[axis] + delta_degrees;
+        ent->orientation = new_orient;
+        transform_state.rotation = new_orient;
       }
     }
   }

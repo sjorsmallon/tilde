@@ -1,6 +1,6 @@
 #pragma once
 
-#include "entity.hpp"
+#include "../entity.hpp"
 
 namespace network
 {
@@ -8,14 +8,13 @@ namespace network
 class Weapon_Entity : public Entity
 {
 public:
-  // Networked Variables
-  Network_Var<linalg::vec3_t<float32>> position;
-  Network_Var<linalg::vec3_t<float32>> angles;
+  SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked | Schema_Flags::Editable);
+  SCHEMA_FIELD(int32, active_weapon_id, Schema_Flags::Networked);
+  SCHEMA_FIELD(pascal_string, asset_id, Schema_Flags::Editable);
 
-  Network_Var<int32> ammo;
-  Network_Var<int32> active_weapon_id;
+  SCHEMA_FIELD(render_component_t, render,
+               Schema_Flags::Networked | Schema_Flags::Editable);
 
-  // Required macro to declare schema functions
   DECLARE_SCHEMA(Weapon_Entity)
 };
 

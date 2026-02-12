@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <vulkan/vulkan.h>
 
+#include "asset.hpp"
 #include "camera.hpp"
 #include "linalg.hpp"
 #include "old_ideas/ecs.hpp"
@@ -34,6 +35,12 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 // Draw a simple 3D line
 void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
               const linalg::vec3 &end, uint32_t color);
+
+// Draw a mesh from an asset handle
+void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
+              const linalg::vec3 &scale,
+              assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
+              uint32_t color);
 
 // Draw an arrow (shaft = AABB, head = Pyramid)
 void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,

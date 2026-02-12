@@ -1,6 +1,8 @@
 #include "tool_editor_state.hpp"
+#include "../../shared/asset.hpp"
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
+#include "../editor/editor_entity.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
@@ -112,7 +114,14 @@ void ToolEditorState::on_enter()
     auto floor_ent = std::make_shared<::network::AABB_Entity>();
     floor_ent->center = {0, -2.0f, 0};
     floor_ent->half_extents = {10.0f, 0.5f, 10.0f};
-    map.entities.push_back(floor_ent);
+
+    shared::entity_placement_t placement;
+    placement.entity = floor_ent;
+    placement.position = {0, -2.0f, 0};
+    placement.scale = {1, 1, 1};
+    placement.rotation = {0, 0, 0};
+
+    map.entities.push_back(placement);
     renderer::draw_announcement("Welcome to the Tool Editor!");
   }
 
@@ -163,6 +172,7 @@ void ToolEditorState::switch_tool(int index)
 
   // Update context
   context.map = &map;
+  context.editor_entities = &editor_entities;
   context.bvh = &bvh;
   context.geometry_updated = &geometry_updated_flag;
   context.time = 0; // TODO: Get real time
@@ -372,6 +382,7 @@ void ToolEditorState::update(float dt)
 
   // Update Viewport
   context.map = &map;
+  context.editor_entities = &editor_entities;
   context.bvh = &bvh;
   context.geometry_updated = &geometry_updated_flag;
   context.transaction_system = &transaction_system;
@@ -607,34 +618,62 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw map elements
-  for (const auto &ent_ptr : map.entities)
+  for (const auto &placement : map.entities)
   {
-    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent_ptr.get()))
+    if (!placement.entity)
+      continue;
+
+    auto *ent_ptr = placement.entity.get();
+
+    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent_ptr))
     {
-      renderer::DrawAABB(cmd, aabb->center.value - aabb->half_extents.value,
-                         aabb->center.value + aabb->half_extents.value,
-                         0xFFFFFFFF);
+      // Use placement position instead of entity's center
+      linalg::vec3 center = placement.position;
+      renderer::DrawAABB(cmd, center - aabb->half_extents,
+                         center + aabb->half_extents, 0xFFFFFFFF);
     }
-    else if (auto *wedge =
-                 dynamic_cast<::network::Wedge_Entity *>(ent_ptr.get()))
+    else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent_ptr))
     {
       shared::wedge_t w;
-      w.center = wedge->center.value;
-      w.half_extents = wedge->half_extents.value;
-      w.orientation = wedge->orientation.value;
+      w.center = placement.position; // Use placement position
+      w.half_extents = wedge->half_extents;
+      w.orientation = wedge->orientation;
       renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
     }
-    else if (auto *mesh =
-                 dynamic_cast<::network::Static_Mesh_Entity *>(ent_ptr.get()))
+    else if (auto *mesh = dynamic_cast<::network::Static_Mesh_Entity *>(ent_ptr))
     {
-      linalg::vec3 min = mesh->position.value - mesh->scale.value;
-      linalg::vec3 max = mesh->position.value + mesh->scale.value;
-      renderer::DrawAABB(cmd, min, max, 0xFF00FFFF);
+      // Map asset_id to mesh path
+      const char *mesh_path = assets::get_mesh_path(mesh->asset_id);
+
+      // Load and render mesh
+      if (mesh_path)
+      {
+        auto mesh_handle = assets::load_mesh(mesh_path);
+        if (mesh_handle.valid())
+        {
+          // Use placement position and scale
+          renderer::DrawMesh(cmd, placement.position, placement.scale,
+                             mesh_handle, 0xFF00FFFF);
+        }
+        else
+        {
+          // Fallback to AABB if mesh fails to load
+          linalg::vec3 min = placement.position - placement.scale;
+          linalg::vec3 max = placement.position + placement.scale;
+          renderer::DrawAABB(cmd, min, max, 0xFF00FFFF);
+        }
+      }
+      else
+      {
+        // Fallback to AABB if no asset path mapped
+        linalg::vec3 min = placement.position - placement.scale;
+        linalg::vec3 max = placement.position + placement.scale;
+        renderer::DrawAABB(cmd, min, max, 0xFF00FFFF);
+      }
     }
-    else if (auto *player =
-                 dynamic_cast<::network::Player_Entity *>(ent_ptr.get()))
+    else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent_ptr))
     {
-      linalg::vec3 center = player->position.value;
+      linalg::vec3 center = placement.position; // Use placement position
       // Pyramid for player start!
       // Base:
       linalg::vec3 p0 = {center.x - 0.5f, center.y - 0.5f, center.z - 0.5f};
@@ -644,12 +683,6 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
 
       // Top:
       linalg::vec3 p4 = {center.x, center.y + 0.5f, center.z};
-
-      // Draw lines manually using vkCmdDraw or similar?
-      // Wait, render_3d takes VkCommandBuffer, but we don't have a direct line
-      // drawer that takes cmd buffer for arbitrary lines easily available here
-      // WITHOUT using the overlay renderer or `DrawLine` helper.
-      // `renderer::DrawLine` exists!
 
       uint32_t color = 0xFFFFFFFF;
       renderer::DrawLine(cmd, p0, p1, color);
@@ -674,50 +707,8 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
 
 void ToolEditorState::update_bvh()
 {
-  // Rebuild BVH from map geometry
-  std::vector<BVH_Input> inputs;
-  inputs.reserve(map.entities.size());
-
-  for (size_t i = 0; i < map.entities.size(); ++i)
-  {
-    auto &ent = map.entities[i];
-
-    shared::aabb_bounds_t bounds;
-    bool valid = false;
-
-    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
-    {
-      bounds.min = aabb->center.value - aabb->half_extents.value;
-      bounds.max = aabb->center.value + aabb->half_extents.value;
-      valid = true;
-    }
-    else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
-    {
-      bounds.min = wedge->center.value - wedge->half_extents.value;
-      bounds.max = wedge->center.value + wedge->half_extents.value;
-      valid = true;
-    }
-    else if (auto *mesh =
-                 dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
-    {
-      bounds.min = mesh->position.value - mesh->scale.value;
-      bounds.max = mesh->position.value + mesh->scale.value;
-      valid = true;
-    }
-
-    if (valid)
-    {
-      BVH_Input input;
-      input.aabb.min = bounds.min;
-      input.aabb.max = bounds.max;
-      input.id.type = Collision_Id::Type::Static_Geometry;
-      input.id.index = (uint32_t)i;
-
-      inputs.push_back(input);
-    }
-  }
-
-  bvh = build_bvh(inputs);
+  editor_entities = build_editor_entities(map);
+  bvh = build_editor_bvh(editor_entities);
 }
 
 } // namespace client

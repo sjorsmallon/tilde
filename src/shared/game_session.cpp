@@ -12,16 +12,16 @@ std::optional<aabb_bounds_t> get_entity_bounds(const network::Entity *entity)
   if (auto *aabb = dynamic_cast<const network::AABB_Entity *>(entity))
   {
     aabb_t t;
-    t.center = aabb->center.value;
-    t.half_extents = aabb->half_extents.value;
+    t.center = aabb->center;
+    t.half_extents = aabb->half_extents;
     return get_bounds(t);
   }
   else if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
   {
     wedge_t t;
-    t.center = wedge->center.value;
-    t.half_extents = wedge->half_extents.value;
-    t.orientation = wedge->orientation.value;
+    t.center = wedge->center;
+    t.half_extents = wedge->half_extents;
+    t.orientation = wedge->orientation;
     return get_bounds(t);
   }
   else if (auto *mesh =
@@ -29,8 +29,8 @@ std::optional<aabb_bounds_t> get_entity_bounds(const network::Entity *entity)
   {
     // TODO: Mesh bounds
     aabb_t t;
-    t.center = mesh->position.value;
-    t.half_extents = mesh->scale.value * 0.5f; // Approximate
+    t.center = mesh->position;
+    t.half_extents = mesh->scale * 0.5f; // Approximate
     return get_bounds(t);
   }
   return std::nullopt;
@@ -43,10 +43,12 @@ void init_session_from_map(game_session_t &session, const map_t &map)
   session.static_entities.clear();
 
   // 1. Separate Static vs Dynamic Entities
-  for (const auto &ent : map.entities)
+  for (const auto &placement : map.entities)
   {
-    if (!ent)
+    if (!placement.entity)
       continue;
+
+    auto &ent = placement.entity;
 
     // Check if it is a static entity type
     // We use dynamic_cast for this.

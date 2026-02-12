@@ -1,6 +1,6 @@
 #pragma once
 
-#include "entity.hpp"
+#include "../entity.hpp"
 #include <string>
 
 namespace network
@@ -9,8 +9,12 @@ namespace network
 class AABB_Entity : public Entity
 {
 public:
-  Network_Var<vec3f> center;
-  Network_Var<vec3f> half_extents;
+  SCHEMA_FIELD(vec3f, center, Schema_Flags::Networked | Schema_Flags::Editable);
+  SCHEMA_FIELD(vec3f, half_extents,
+               Schema_Flags::Networked | Schema_Flags::Editable);
+
+  SCHEMA_FIELD(render_component_t, render,
+               Schema_Flags::Networked | Schema_Flags::Editable);
 
   DECLARE_SCHEMA(AABB_Entity)
 };
@@ -18,9 +22,14 @@ public:
 class Wedge_Entity : public Entity
 {
 public:
-  Network_Var<vec3f> center;
-  Network_Var<vec3f> half_extents;
-  Network_Var<int32> orientation;
+  SCHEMA_FIELD(vec3f, center, Schema_Flags::Networked | Schema_Flags::Editable);
+  SCHEMA_FIELD(vec3f, half_extents,
+               Schema_Flags::Networked | Schema_Flags::Editable);
+  SCHEMA_FIELD(int32, orientation,
+               Schema_Flags::Networked | Schema_Flags::Editable);
+
+  SCHEMA_FIELD(render_component_t, render,
+               Schema_Flags::Networked | Schema_Flags::Editable);
 
   DECLARE_SCHEMA(Wedge_Entity)
 };
@@ -28,13 +37,12 @@ public:
 class Static_Mesh_Entity : public Entity
 {
 public:
-  Network_Var<vec3f> position;
-  Network_Var<vec3f> rotation; // Euler angles
-  Network_Var<vec3f> scale;
+  SCHEMA_FIELD_DEFAULT(vec3f, scale, Schema_Flags::Networked | Schema_Flags::Editable, (vec3f{0.1f, 0.1f, 0.1f}));
+  SCHEMA_FIELD(int32, asset_id,
+               Schema_Flags::Networked | Schema_Flags::Editable);
 
-  // For this task, I will add `asset_id` (hash) which is an int or uint64.
-  // That is trivial.
-  Network_Var<int32> asset_id;
+  SCHEMA_FIELD(render_component_t, render,
+               Schema_Flags::Networked | Schema_Flags::Editable);
 
   DECLARE_SCHEMA(Static_Mesh_Entity)
 };

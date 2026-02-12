@@ -1,4 +1,5 @@
 #include "../console.hpp"
+#include "../editor/editor_entity.hpp"
 #include "../renderer.hpp"
 #include "../shared/map.hpp"  // For map structs
 #include "../shared/math.hpp" // For math utils
@@ -15,47 +16,6 @@ namespace client
 
 using linalg::vec2;
 using linalg::vec3;
-
-// Helper to get bounds from an entity if supported
-static shared::aabb_bounds_t get_entity_bounds(const network::Entity *ent,
-                                               bool &valid)
-{
-  valid = false;
-  shared::aabb_bounds_t bounds = {};
-  if (!ent)
-    return bounds;
-
-  if (auto *aabb_ent = dynamic_cast<const network::AABB_Entity *>(ent))
-  {
-    shared::aabb_t aabb;
-    aabb.center = aabb_ent->center.value;
-    aabb.half_extents = aabb_ent->half_extents.value;
-    bounds = shared::get_bounds(aabb);
-    valid = true;
-  }
-  else if (auto *wedge_ent = dynamic_cast<const network::Wedge_Entity *>(ent))
-  {
-    shared::wedge_t wedge;
-    wedge.center = wedge_ent->center.value;
-    wedge.half_extents = wedge_ent->half_extents.value;
-    wedge.orientation = wedge_ent->orientation.value;
-    bounds = shared::get_bounds(wedge);
-    valid = true;
-  }
-  else if (auto *mesh_ent =
-               dynamic_cast<const network::Static_Mesh_Entity *>(ent))
-  {
-    // Approx bounds for mesh
-    vec3 p = mesh_ent->position.value;
-    vec3 s = mesh_ent->scale.value;
-    bounds.min = p - s * 0.5f;
-    bounds.max = p + s * 0.5f;
-    valid = true;
-  }
-  // Fallback for Player/etc?
-
-  return bounds;
-}
 
 // --- Update Modes ---
 
@@ -275,11 +235,8 @@ void EditorState::update_entity_mode(float dt)
     if (!ent_ptr)
       continue;
 
-    bool valid_bounds = false;
     shared::aabb_bounds_t bounds =
-        get_entity_bounds(ent_ptr.get(), valid_bounds);
-    if (!valid_bounds)
-      continue;
+        client::compute_selection_aabb(ent_ptr.get());
 
     vec3 min = bounds.min;
     vec3 max = bounds.max;
@@ -366,9 +323,8 @@ void EditorState::update_select_mode(float dt)
 
       // Check if AABB/Wedge (Reshape Gizmo) or Generic (Transform Gizmo)
       bool is_shape = false;
-      bool valid_bounds = false;
       shared::aabb_bounds_t bounds =
-          get_entity_bounds(ent_ptr.get(), valid_bounds);
+          client::compute_selection_aabb(ent_ptr.get());
 
       if (dynamic_cast<network::AABB_Entity *>(ent_ptr.get()) ||
           dynamic_cast<network::Wedge_Entity *>(ent_ptr.get()))
@@ -376,7 +332,7 @@ void EditorState::update_select_mode(float dt)
         is_shape = true;
       }
 
-      if (is_shape && valid_bounds)
+      if (is_shape)
       {
         // Reshape Gizmo Logic
         active_reshape_gizmo.aabb.center = (bounds.min + bounds.max) * 0.5f;
@@ -483,18 +439,18 @@ void EditorState::update_select_mode(float dt)
               {
                 if (axis == 0)
                 {
-                  aabb_e->center.value.x = new_center_val;
-                  aabb_e->half_extents.value.x = new_half_val;
+                  aabb_e->center.x = new_center_val;
+                  aabb_e->half_extents.x = new_half_val;
                 }
                 if (axis == 1)
                 {
-                  aabb_e->center.value.y = new_center_val;
-                  aabb_e->half_extents.value.y = new_half_val;
+                  aabb_e->center.y = new_center_val;
+                  aabb_e->half_extents.y = new_half_val;
                 }
                 if (axis == 2)
                 {
-                  aabb_e->center.value.z = new_center_val;
-                  aabb_e->half_extents.value.z = new_half_val;
+                  aabb_e->center.z = new_center_val;
+                  aabb_e->half_extents.z = new_half_val;
                 }
               }
               else if (auto *wedge_e =
@@ -502,18 +458,18 @@ void EditorState::update_select_mode(float dt)
               {
                 if (axis == 0)
                 {
-                  wedge_e->center.value.x = new_center_val;
-                  wedge_e->half_extents.value.x = new_half_val;
+                  wedge_e->center.x = new_center_val;
+                  wedge_e->half_extents.x = new_half_val;
                 }
                 if (axis == 1)
                 {
-                  wedge_e->center.value.y = new_center_val;
-                  wedge_e->half_extents.value.y = new_half_val;
+                  wedge_e->center.y = new_center_val;
+                  wedge_e->half_extents.y = new_half_val;
                 }
                 if (axis == 2)
                 {
-                  wedge_e->center.value.z = new_center_val;
-                  wedge_e->half_extents.value.z = new_half_val;
+                  wedge_e->center.z = new_center_val;
+                  wedge_e->half_extents.z = new_half_val;
                 }
               }
             }
@@ -530,9 +486,8 @@ void EditorState::update_select_mode(float dt)
                   active_reshape_gizmo.hovered_handle_index;
 
               // Capture Start State
-              bool valid = false;
               dragging_original_bounds =
-                  get_entity_bounds(ent_ptr.get(), valid);
+                  client::compute_selection_aabb(ent_ptr.get());
 
               // TODO: Push Undo Here?
               // We need to capture the full entity state for undo.
@@ -603,22 +558,11 @@ void EditorState::update_select_mode(float dt)
           continue;
 
         // Prefer exact bounds check
-        bool valid_bounds = false;
         shared::aabb_bounds_t bounds =
-            get_entity_bounds(ent_ptr.get(), valid_bounds);
+            client::compute_selection_aabb(ent_ptr.get());
 
-        vec3 bmin, bmax;
-        if (valid_bounds)
-        {
-          bmin = bounds.min;
-          bmax = bounds.max;
-        }
-        else
-        {
-          // Fallback for missing bounds (use 0,0,0 and size)
-          // Try to get position from props? or just skip
-          continue;
-        }
+        vec3 bmin = bounds.min;
+        vec3 bmax = bounds.max;
 
         linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
         float t = 0;

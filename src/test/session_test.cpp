@@ -20,22 +20,34 @@ int main()
   auto aabb_ent = shared::create_entity_by_classname("aabb_entity");
   if (auto *e = dynamic_cast<network::AABB_Entity *>(aabb_ent.get()))
   {
-    e->center.value = {0, 0, 0};
-    e->half_extents.value = {10, 10, 10};
+    e->center = {0, 0, 0};
+    e->half_extents = {10, 10, 10};
   }
-  test_map.entities.push_back(aabb_ent);
+
+  shared::entity_placement_t aabb_placement;
+  aabb_placement.entity = aabb_ent;
+  aabb_placement.position = {0, 0, 0};
+  aabb_placement.scale = {1, 1, 1};
+  aabb_placement.rotation = {0, 0, 0};
+  test_map.entities.push_back(aabb_placement);
 
   // Add a Player Entity Spawn
   auto player_ent = shared::create_entity_by_classname("player_start");
   if (auto *p = dynamic_cast<network::Player_Entity *>(player_ent.get()))
   {
-    p->position.value = {5, 5, 0};
-    p->view_angle_yaw.value = 90.0f;
+    p->position = {5, 5, 0};
+    p->view_angle_yaw = 90.0f;
     // Properties are handled by entity serialization/deserialization usually,
     // but here we set values directly on the object which mimics the result of
     // loading.
   }
-  test_map.entities.push_back(player_ent);
+
+  shared::entity_placement_t player_placement;
+  player_placement.entity = player_ent;
+  player_placement.position = {5, 5, 0};
+  player_placement.scale = {1, 1, 1};
+  player_placement.rotation = {0, 0, 0};
+  test_map.entities.push_back(player_placement);
 
   // 2. Initialize Session
   game_session_t session;
@@ -88,15 +100,15 @@ int main()
   }
 
   const auto &player = (*players)[0];
-  log_error("Player spawned at: {}, {}, {}", player.position.value.x,
-            player.position.value.y, player.position.value.z);
+  log_error("Player spawned at: {}, {}, {}", player.position.x,
+            player.position.y, player.position.z);
 
   // Check if properties were applied correctly
-  if (player.position.value.x != 5.0f || player.position.value.y != 5.0f)
+  if (player.position.x != 5.0f || player.position.y != 5.0f)
   {
     log_error("Player Position Mismatch. Expected 5,5,0. Got: {},{},{}",
-              player.position.value.x, player.position.value.y,
-              player.position.value.z);
+              player.position.x, player.position.y,
+              player.position.z);
     return 1;
   }
 

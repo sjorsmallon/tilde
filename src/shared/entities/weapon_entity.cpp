@@ -3,10 +3,14 @@
 namespace network
 {
 
-BEGIN_SCHEMA(Weapon_Entity)
-DEFINE_FIELD(position, Field_Type::Vec3f)
-DEFINE_FIELD(angles, Field_Type::Vec3f)
-DEFINE_FIELD(ammo, Field_Type::Int32)
-END_SCHEMA(Weapon_Entity)
+DEFINE_SCHEMA_CLASS(Weapon_Entity, Entity)
+{
+  BEGIN_SCHEMA_FIELDS()
+  REGISTER_SCHEMA_FIELD(ammo);
+  REGISTER_SCHEMA_FIELD(active_weapon_id);
+  REGISTER_SCHEMA_FIELD(asset_id);
+  REGISTER_SCHEMA_FIELD(render);
+  END_SCHEMA_FIELDS()
+}
 
 } // namespace network

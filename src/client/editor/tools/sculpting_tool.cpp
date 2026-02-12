@@ -149,12 +149,13 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
 
   for (size_t i = 0; i < ctx.map->entities.size(); ++i)
   {
-    auto &ent = ctx.map->entities[i];
-    if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+    auto &placement = ctx.map->entities[i];
+    if (auto *aabb_ent =
+            dynamic_cast<::network::AABB_Entity *>(placement.entity.get()))
     {
       shared::aabb_t aabb;
-      aabb.center = aabb_ent->center.value;
-      aabb.half_extents = aabb_ent->half_extents.value;
+      aabb.center = aabb_ent->center;
+      aabb.half_extents = aabb_ent->half_extents;
 
       float t;
       int face;
@@ -185,13 +186,14 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
     if (dragging_geo_index >= 0 &&
         dragging_geo_index < (int)ctx.map->entities.size())
     {
-      auto &ent = ctx.map->entities[dragging_geo_index];
-      if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+      auto &placement = ctx.map->entities[dragging_geo_index];
+      if (auto *aabb_ent =
+              dynamic_cast<::network::AABB_Entity *>(placement.entity.get()))
       {
-        original_aabb.center = aabb_ent->center.value;
-        original_aabb.half_extents = aabb_ent->half_extents.value;
+        original_aabb.center = aabb_ent->center;
+        original_aabb.half_extents = aabb_ent->half_extents;
 
-        before_properties = ent->get_all_properties();
+        before_properties = placement.entity->get_all_properties();
       }
     }
   }
@@ -202,8 +204,9 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 {
   if (dragging && dragging_geo_index != -1 && ctx.map)
   {
-    auto &ent = ctx.map->entities[dragging_geo_index];
-    if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+    auto &placement = ctx.map->entities[dragging_geo_index];
+    if (auto *aabb_ent =
+            dynamic_cast<::network::AABB_Entity *>(placement.entity.get()))
     {
       using namespace linalg;
       // We modify the entity directly for visual feedback.
@@ -214,8 +217,8 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 
       // So here we just modify `aabb_ent`.
 
-      vec3 current_center = aabb_ent->center.value;
-      vec3 current_half_extents = aabb_ent->half_extents.value;
+      vec3 current_center = aabb_ent->center;
+      vec3 current_half_extents = aabb_ent->half_extents;
 
       // Determine face normal and center based on CURRENT shape
       vec3 normal = {0, 0, 0};
@@ -291,26 +294,20 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           float *ext = nullptr;
           float *cen = nullptr;
 
-          // These pointers point to local variables copies if I use `vec3
-          // current_...` I need to point to the entity's values. BUT
-          // `Network_Var` wraps them. Accessing via `.value` gives reference?
-          // `T& value`? No `value` is a member of type T.
-          // `Network_Var<vec3f>` has `vec3f value`.
-
           if (dragging_face < 2)
           {
-            ext = &aabb_ent->half_extents.value.x;
-            cen = &aabb_ent->center.value.x;
+            ext = &aabb_ent->half_extents.x;
+            cen = &aabb_ent->center.x;
           }
           else if (dragging_face < 4)
           {
-            ext = &aabb_ent->half_extents.value.y;
-            cen = &aabb_ent->center.value.y;
+            ext = &aabb_ent->half_extents.y;
+            cen = &aabb_ent->center.y;
           }
           else
           {
-            ext = &aabb_ent->half_extents.value.z;
-            cen = &aabb_ent->center.value.z;
+            ext = &aabb_ent->half_extents.z;
+            cen = &aabb_ent->center.z;
           }
 
           *ext += world_delta * 0.5f;
@@ -342,9 +339,9 @@ void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
     if (dragging_geo_index >= 0 &&
         dragging_geo_index < (int)ctx.map->entities.size())
     {
-      auto &ent = ctx.map->entities[dragging_geo_index];
-      ctx.transaction_system->commit_modification(dragging_geo_index, ent.get(),
-                                                  before_properties);
+      auto &placement = ctx.map->entities[dragging_geo_index];
+      ctx.transaction_system->commit_modification(
+          dragging_geo_index, placement.entity.get(), before_properties);
     }
   }
 
@@ -362,12 +359,13 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
     if (hovered_geo_index >= 0 &&
         hovered_geo_index < (int)ctx.map->entities.size())
     {
-      auto &ent = ctx.map->entities[hovered_geo_index];
-      if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+      auto &placement = ctx.map->entities[hovered_geo_index];
+      if (auto *aabb_ent =
+              dynamic_cast<::network::AABB_Entity *>(placement.entity.get()))
       {
         shared::aabb_t aabb;
-        aabb.center = aabb_ent->center.value;
-        aabb.half_extents = aabb_ent->half_extents.value;
+        aabb.center = aabb_ent->center;
+        aabb.half_extents = aabb_ent->half_extents;
 
         // Draw face highlight
         linalg::vec3 p = aabb.center;

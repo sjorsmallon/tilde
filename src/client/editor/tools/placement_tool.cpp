@@ -91,15 +91,34 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
     {
       player->position = center;
     }
+    else if (auto *mesh =
+                 dynamic_cast<::network::Static_Mesh_Entity *>(new_ent.get()))
+    {
+      mesh->position = center;
+    }
 
-    // 3. Add to map
+    // 3. Add to map wrapped in entity_placement_t
     {
       // We need to ensure the transaction object lives until after the
       // push_back.
       client::Editor_Transaction transaction(ctx.transaction_system, ctx.map,
                                              "Place Object");
 
-      ctx.map->entities.push_back(new_ent);
+      shared::entity_placement_t placement;
+      placement.entity = new_ent;
+      placement.position = center;
+      placement.scale = {1, 1, 1}; // Default scale
+      placement.rotation = {0, 0, 0}; // Default rotation
+
+      // For Static_Mesh_Entity, we might want to use asset-specific scale
+      if (auto *mesh =
+              dynamic_cast<::network::Static_Mesh_Entity *>(new_ent.get()))
+      {
+        // Could load default scale from asset here
+        placement.scale = {1, 1, 1};
+      }
+
+      ctx.map->entities.push_back(placement);
     } // Transaction commits here.
 
     // 4. Trigger update (because we are pushing back geometry?)
@@ -158,12 +177,20 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
   else if (e.scancode == SDL_SCANCODE_4)
   {
     renderer::draw_announcement("Weapon");
-    // Switch to Cylinder
     current_entity = shared::create_entity_by_classname("weapon_basic");
     if (auto *weapon =
             dynamic_cast<::network::Weapon_Entity *>(current_entity.get()))
     {
     }
+  }
+  else if (e.scancode == SDL_SCANCODE_5)
+  {
+    renderer::draw_announcement("STATIC MESH");
+    current_entity = shared::create_entity_by_classname("static_mesh_entity");
+    if (auto *mesh = dynamic_cast<::network::Static_Mesh_Entity *>(current_entity.get()))
+    {
+       mesh->asset_id = 1;
+     }
   }
 }
 
@@ -179,7 +206,7 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
     if (auto *aabb =
             dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
     {
-      renderer.draw_wire_box(center, aabb->half_extents.value,
+      renderer.draw_wire_box(center, aabb->half_extents,
                              0xFF00FFFF); // Magenta ghost
     }
     else if (auto *wedge =
@@ -190,8 +217,8 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
       // Helper:
       shared::wedge_t ghost_wedge;
       ghost_wedge.center = center;
-      ghost_wedge.half_extents = wedge->half_extents.value;
-      ghost_wedge.orientation = wedge->orientation.value;
+      ghost_wedge.half_extents = wedge->half_extents;
+      ghost_wedge.orientation = wedge->orientation;
 
       auto points = shared::get_wedge_points(ghost_wedge);
 

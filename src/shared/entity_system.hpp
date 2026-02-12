@@ -62,9 +62,8 @@ template <typename T> struct EntityPool : Entity_Pool_Base
             field.type == network::Field_Type::Vec3f)
         {
           // We have a position field!
-          network::Network_Var<linalg::vec3> *ptr =
-              reinterpret_cast<network::Network_Var<linalg::vec3> *>(
-                  base + field.offset);
+          linalg::vec3 *ptr =
+              reinterpret_cast<linalg::vec3 *>(base + field.offset);
           *ptr = spawn.position;
         }
         else if (field.name == "yaw" &&
@@ -76,21 +75,16 @@ template <typename T> struct EntityPool : Entity_Pool_Base
           // this to be generic.) BUT, the goal is to map from spawn.yaw if
           // possible. However, player_entity has "view_angle_yaw". Let's check
           // for "view_angle_yaw" too? Or maybe we should just set "yaw" if it
-          // exists. For now let's stick to strict "yaw" or maybe check for both
-          // common names? No, let's just do "yaw" and "view_angle_yaw" for
+          // exists. For now let's just do "yaw" and "view_angle_yaw" for
           // convenience? Wait, "yaw" is what we parse from map property "yaw".
 
-          network::Network_Var<float> *ptr =
-              reinterpret_cast<network::Network_Var<float> *>(base +
-                                                              field.offset);
+          float *ptr = reinterpret_cast<float *>(base + field.offset);
           *ptr = spawn.yaw;
         }
         else if (field.name == "view_angle_yaw" &&
                  field.type == network::Field_Type::Float32)
         {
-          network::Network_Var<float> *ptr =
-              reinterpret_cast<network::Network_Var<float> *>(base +
-                                                              field.offset);
+          float *ptr = reinterpret_cast<float *>(base + field.offset);
           *ptr = spawn.yaw;
         }
       }

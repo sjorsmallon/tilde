@@ -25,7 +25,12 @@ void test_add_remove()
     ent->center = {0, 0, 0};
     ent->half_extents = {1, 1, 1};
 
-    map.entities.push_back(ent);
+    shared::entity_placement_t placement;
+    placement.entity = ent;
+    placement.position = {0, 0, 0};
+    placement.scale = {1, 1, 1};
+    placement.rotation = {0, 0, 0};
+    map.entities.push_back(placement);
   } // Commit
 
   assert(map.entities.size() == 1);
@@ -44,8 +49,8 @@ void test_add_remove()
 
   // 4. Remove
   {
-    auto ent = map.entities[0];
-    ts.commit_remove(0, ent.get(), "aabb_entity");
+    auto placement = map.entities[0];
+    ts.commit_remove(0, placement.entity.get(), "aabb_entity");
     map.entities.erase(map.entities.begin());
   }
 
@@ -73,33 +78,40 @@ void test_modify()
   // Setup
   auto ent = std::make_shared<AABB_Entity>();
   ent->center = {0, 0, 0};
-  map.entities.push_back(ent);
+
+  shared::entity_placement_t placement;
+  placement.entity = ent;
+  placement.position = {0, 0, 0};
+  placement.scale = {1, 1, 1};
+  placement.rotation = {0, 0, 0};
+  map.entities.push_back(placement);
 
   // 1. Modify
   {
     Editor_Transaction t(&ts, &map, (uint32_t)0);
 
     // Modify the object
-    if (auto *aabb = dynamic_cast<AABB_Entity *>(map.entities[0].get()))
+    if (auto *aabb =
+            dynamic_cast<AABB_Entity *>(map.entities[0].entity.get()))
     {
       aabb->center = {10.0f, 0, 0};
     }
   } // Commit
 
-  auto *aabb = dynamic_cast<AABB_Entity *>(map.entities[0].get());
+  auto *aabb = dynamic_cast<AABB_Entity *>(map.entities[0].entity.get());
   assert(aabb);
-  assert(aabb->center.value.x == 10.0f);
+  assert(aabb->center.x == 10.0f);
   assert(ts.can_undo());
 
   // 2. Undo Modify
   ts.undo(map);
-  aabb = dynamic_cast<AABB_Entity *>(map.entities[0].get());
-  assert(aabb->center.value.x == 0.0f);
+  aabb = dynamic_cast<AABB_Entity *>(map.entities[0].entity.get());
+  assert(aabb->center.x == 0.0f);
 
   // 3. Redo Modify
   ts.redo(map);
-  aabb = dynamic_cast<AABB_Entity *>(map.entities[0].get());
-  assert(aabb->center.value.x == 10.0f);
+  aabb = dynamic_cast<AABB_Entity *>(map.entities[0].entity.get());
+  assert(aabb->center.x == 10.0f);
 
   std::cout << "Modify Passed." << std::endl;
 }

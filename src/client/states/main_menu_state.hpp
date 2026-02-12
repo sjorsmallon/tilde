@@ -24,12 +24,7 @@ public:
         state_manager::switch_to(GameStateKind::Play);
       }
 
-      ImGui::Dummy(ImVec2(0, 10));
 
-      if (ImGui::Button("Editor Mode", ImVec2(-1, 40)))
-      {
-        state_manager::switch_to(GameStateKind::Editor);
-      }
       ImGui::Dummy(ImVec2(0, 10));
       if (ImGui::Button("Tool Editor", ImVec2(-1, 40)))
       {

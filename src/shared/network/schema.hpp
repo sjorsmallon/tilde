@@ -10,6 +10,27 @@
 namespace network
 {
 
+// --- Schema Flags ---
+
+enum Schema_Flags : uint32_t
+{
+  None = 0,
+  Networked = 1 << 0, // Field is synchronized over the network
+  Editable = 1 << 1,  // Field is editable in the editor
+  Saveable = 1 << 2,  // Field is saved to disk
+};
+
+constexpr Schema_Flags operator|(Schema_Flags a, Schema_Flags b)
+{
+  return static_cast<Schema_Flags>(static_cast<uint32_t>(a) |
+                                   static_cast<uint32_t>(b));
+}
+
+constexpr bool has_flag(Schema_Flags flags, Schema_Flags flag)
+{
+  return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(flag)) != 0;
+}
+
 // --- Schema Definition ---
 
 struct Field_Update
@@ -24,16 +45,18 @@ enum class Field_Type
   Float32,
   Bool,
   Vec3f,
-  // Add more as needed
+  PascalString,
+  RenderComponent,
 };
 
 struct Field_Prop
 {
   std::string name;
-  uint32_t index; // New: Unique index for this class
+  uint32_t index; // Unique index for this class
   size_t offset;
   size_t size;
   Field_Type type;
+  Schema_Flags flags;
 };
 
 bool parse_string_to_field(const std::string &value, Field_Type type,
@@ -61,7 +84,6 @@ public:
                       const std::vector<Field_Prop> &fields)
   {
     schemas[name] = {name, fields};
-    // In a real system, you might build a flat lookup table here
   }
 
   const Class_Schema *get_schema(const std::string &name)
@@ -145,8 +167,6 @@ inline void apply_diff(void *target, const std::vector<Field_Update> &updates,
   uint8_t *target_ptr = static_cast<uint8_t *>(target);
   for (const auto &update : updates)
   {
-    // Find field by index (O(N) but N is small, usually < 20)
-    // Could optimize schema to have index -> field lookup if needed
     for (const auto &field : schema->fields)
     {
       if (field.index == update.field_id)
@@ -158,7 +178,6 @@ inline void apply_diff(void *target, const std::vector<Field_Update> &updates,
         }
         else
         {
-          // Size mismatch error?
           std::cerr << "Error: Field size mismatch applying diff for field "
                     << field.name << "\n";
         }
@@ -168,47 +187,95 @@ inline void apply_diff(void *target, const std::vector<Field_Update> &updates,
   }
 }
 
-// --- Network Variable Wrapper ---
+// --- Type to Field_Type mapping ---
+// Note: int32/float32/vec3f are typedefs so no need for separate
+// int/float/linalg::vec3
 
-template <typename T> struct Network_Var
+template <typename T> struct Schema_Type_Info;
+
+template <> struct Schema_Type_Info<int32>
 {
-  T value;
+  static constexpr Field_Type type = Field_Type::Int32;
+};
 
-  Network_Var() : value{} {}
-  Network_Var(T v) : value{v} {}
+template <> struct Schema_Type_Info<float32>
+{
+  static constexpr Field_Type type = Field_Type::Float32;
+};
 
-  Network_Var &operator=(const T &v)
-  {
-    value = v;
-    return *this;
-  }
+template <> struct Schema_Type_Info<bool>
+{
+  static constexpr Field_Type type = Field_Type::Bool;
+};
 
-  operator T() const { return value; }
-  T *operator&() { return &value; }
-  const T *operator&() const { return &value; }
+template <> struct Schema_Type_Info<vec3f>
+{
+  static constexpr Field_Type type = Field_Type::Vec3f;
+};
+
+template <> struct Schema_Type_Info<pascal_string>
+{
+  static constexpr Field_Type type = Field_Type::PascalString;
+};
+
+template <> struct Schema_Type_Info<render_component_t>
+{
+  static constexpr Field_Type type = Field_Type::RenderComponent;
+};
+
+// --- Field metadata for compile-time storage ---
+
+struct Field_Meta
+{
+  const char *name;
+  size_t size;
+  Field_Type type;
+  Schema_Flags flags;
 };
 
 // --- Macros for Schema declaration ---
 
+// Use in class header to declare schema functions
 #define DECLARE_SCHEMA(ClassName)                                              \
 public:                                                                        \
   static void register_schema();                                               \
-  virtual const network::Class_Schema *get_schema() const;
+  virtual const ::network::Class_Schema *get_schema() const;
 
+// Declares a field AND adds it to the schema.
+// Usage: SCHEMA_FIELD(vec3f, position, Schema_Flags::Networked |
+// Schema_Flags::Editable); This macro expands to:
+//   1. The field declaration itself
+//   2. A static field metadata entry (without offset, computed at registration)
+#define SCHEMA_FIELD(Type, Name, Flags)                                        \
+  Type Name{};                                                                 \
+  static constexpr ::network::Field_Meta _schema_meta_##Name = {               \
+      #Name, sizeof(Type), ::network::Schema_Type_Info<Type>::type, Flags};
+
+#define SCHEMA_FIELD_DEFAULT(Type, Name, Flags, Default)                        \
+  Type Name = Default;                                                         \
+  static constexpr ::network::Field_Meta _schema_meta_##Name = {               \
+      #Name, sizeof(Type), ::network::Schema_Type_Info<Type>::type, Flags};
+
+// Begin schema registration in .cpp file
 #define BEGIN_SCHEMA(ClassName)                                                \
   void ClassName::register_schema()                                            \
   {                                                                            \
     using ThisClass = ClassName;                                               \
     std::vector<network::Field_Prop> props;
 
-#define DEFINE_FIELD(MemberName, TypeEnum)                                     \
+// Register a field that was declared with SCHEMA_FIELD
+// Uses the stored metadata and computes offset
+#define REGISTER_FIELD(MemberName)                                             \
   static_assert(std::is_trivially_copyable_v<decltype(ThisClass::MemberName)>, \
                 "Field " #MemberName                                           \
                 " must be trivially copyable for Undo/Redo/Networking");       \
-  props.push_back({#MemberName, (uint32_t)props.size(),                        \
-                   offsetof(ThisClass, MemberName),                            \
-                   sizeof(ThisClass::MemberName), TypeEnum});
+  props.push_back({ThisClass::_schema_meta_##MemberName.name,                  \
+                   (uint32_t)props.size(), offsetof(ThisClass, MemberName),    \
+                   ThisClass::_schema_meta_##MemberName.size,                  \
+                   ThisClass::_schema_meta_##MemberName.type,                  \
+                   ThisClass::_schema_meta_##MemberName.flags});
 
+// End schema registration
 #define END_SCHEMA(ClassName)                                                  \
   network::Schema_Registry::get().register_class(#ClassName, props);           \
   }                                                                            \
@@ -218,14 +285,88 @@ public:                                                                        \
   }                                                                            \
   namespace                                                                    \
   {                                                                            \
-  /* Register schema on startup. */                                            \
-  /* Unlike Entities which use X-Macros for auto-registration, these */        \
-  /* structs (aabb_t, etc.) need explicit registration at runtime. */          \
   struct ClassName##_Schema_Init                                               \
   {                                                                            \
     ClassName##_Schema_Init() { ClassName::register_schema(); }                \
   };                                                                           \
   static ClassName##_Schema_Init g_##ClassName##_schema_init;                  \
+  }
+
+// --- New inheritance-aware schema macros ---
+
+// Helper to get parent schema fields (empty for base classes)
+#define _SCHEMA_INHERIT_FIELDS_1(ClassName)
+#define _SCHEMA_INHERIT_FIELDS_2(ClassName, ParentClass)                       \
+  {                                                                            \
+    const auto *parent_schema =                                                \
+        network::Schema_Registry::get().get_schema(#ParentClass);              \
+    if (parent_schema)                                                         \
+    {                                                                          \
+      for (const auto &pf : parent_schema->fields)                             \
+      {                                                                        \
+        props.push_back({pf.name, (uint32_t)props.size(), pf.offset, pf.size,  \
+                         pf.type, pf.flags});                                  \
+      }                                                                        \
+    }                                                                          \
+  }
+
+// Macro argument counting
+#define _SCHEMA_NARG(...) _SCHEMA_NARG_(__VA_ARGS__, _SCHEMA_RSEQ_N())
+#define _SCHEMA_NARG_(...) _SCHEMA_ARG_N(__VA_ARGS__)
+#define _SCHEMA_ARG_N(_1, _2, N, ...) N
+#define _SCHEMA_RSEQ_N() 2, 1, 0
+
+// Concatenation helpers
+#define _SCHEMA_CAT(a, b) _SCHEMA_CAT_(a, b)
+#define _SCHEMA_CAT_(a, b) a##b
+
+// Dispatch to the correct inherit fields macro
+#define _SCHEMA_INHERIT_FIELDS(...)                                            \
+  _SCHEMA_CAT(_SCHEMA_INHERIT_FIELDS_, _SCHEMA_NARG(__VA_ARGS__))(__VA_ARGS__)
+
+// Main macro: DEFINE_SCHEMA_CLASS(ClassName) or DEFINE_SCHEMA_CLASS(ClassName,
+// ParentClass) Usage in .cpp:
+//   DEFINE_SCHEMA_CLASS(Player_Entity, Entity)
+//   {
+//       BEGIN_SCHEMA_FIELDS()
+//           REGISTER_SCHEMA_FIELD(health);
+//       END_SCHEMA_FIELDS()
+//   }
+#define DEFINE_SCHEMA_CLASS(ClassName, ...)                                    \
+  const network::Class_Schema *ClassName::get_schema() const                   \
+  {                                                                            \
+    return network::Schema_Registry::get().get_schema(#ClassName);             \
+  }                                                                            \
+  namespace                                                                    \
+  {                                                                            \
+  struct ClassName##_Schema_Init                                               \
+  {                                                                            \
+    ClassName##_Schema_Init() { ClassName::register_schema(); }                \
+  };                                                                           \
+  static ClassName##_Schema_Init g_##ClassName##_schema_init;                  \
+  }                                                                            \
+  void ClassName::register_schema()                                            \
+  {                                                                            \
+    using ThisClass = ClassName;                                               \
+    static constexpr const char *_schema_class_name = #ClassName;              \
+    (void)sizeof(ThisClass);                                                   \
+    std::vector<network::Field_Prop> props;                                    \
+    _SCHEMA_INHERIT_FIELDS(ClassName __VA_OPT__(, ) __VA_ARGS__)
+
+#define BEGIN_SCHEMA_FIELDS()
+
+#define REGISTER_SCHEMA_FIELD(MemberName)                                      \
+  static_assert(std::is_trivially_copyable_v<decltype(ThisClass::MemberName)>, \
+                "Field " #MemberName                                           \
+                " must be trivially copyable for Undo/Redo/Networking");       \
+  props.push_back({ThisClass::_schema_meta_##MemberName.name,                  \
+                   (uint32_t)props.size(), offsetof(ThisClass, MemberName),    \
+                   ThisClass::_schema_meta_##MemberName.size,                  \
+                   ThisClass::_schema_meta_##MemberName.type,                  \
+                   ThisClass::_schema_meta_##MemberName.flags});
+
+#define END_SCHEMA_FIELDS()                                                    \
+  network::Schema_Registry::get().register_class(_schema_class_name, props);   \
   }
 
 } // namespace network

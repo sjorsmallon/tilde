@@ -126,7 +126,19 @@ bool load_map(const std::string &filename, map_t &out_map)
     if (new_entity)
     {
       new_entity->init_from_map(ent.properties);
-      out_map.entities.push_back(new_entity);
+
+      // Create entity_placement_t wrapper
+      entity_placement_t placement;
+      placement.entity = new_entity;
+
+      // Extract position from entity (different entities store position differently)
+      placement.position = new_entity->position; // Use base Entity position
+
+      // Extract scale if available (for now default to 1,1,1)
+      placement.scale = {1, 1, 1};
+      placement.rotation = {0, 0, 0};
+
+      out_map.entities.push_back(placement);
     }
     else
     {
@@ -155,10 +167,15 @@ bool save_map(const std::string &filename, const map_t &map)
   }
 
   // Entities
-  for (const auto &ent : map.entities)
+  for (const auto &placement : map.entities)
   {
-    if (!ent)
+    if (!placement.entity)
       continue;
+
+    auto &ent = placement.entity;
+
+    // Sync placement position back to entity before saving
+    ent->position = placement.position;
 
     map_entity_def_t def;
     def.classname = get_classname_for_entity(ent.get());

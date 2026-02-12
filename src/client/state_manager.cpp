@@ -1,7 +1,6 @@
 #include "state_manager.hpp"
 #include "../shared/entity_system.hpp"
 #include "log.hpp"
-#include "states/editor_state.hpp"
 #include "states/main_menu_state.hpp"
 #include "states/play_state.hpp"
 #include "states/tool_editor_state.hpp"
@@ -34,7 +33,6 @@ void init()
 {
   g_states[GameStateKind::MainMenu] = std::make_unique<MainMenuState>();
   g_states[GameStateKind::Play] = std::make_unique<PlayState>();
-  g_states[GameStateKind::Editor] = std::make_unique<EditorState>();
   g_states[GameStateKind::ToolEditor] = std::make_unique<ToolEditorState>();
 }
 

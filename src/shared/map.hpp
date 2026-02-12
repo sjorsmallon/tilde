@@ -13,10 +13,20 @@
 namespace shared
 {
 
+// Entity placement data for the editor
+// This wraps entities with unified placement information
+struct entity_placement_t
+{
+  std::shared_ptr<network::Entity> entity;
+  linalg::vec3 position = {0, 0, 0};
+  linalg::vec3 rotation = {0, 0, 0}; // Euler angles (pitch, yaw, roll)
+  linalg::vec3 scale = {1, 1, 1};
+};
+
 struct map_t
 {
   std::string name;
-  std::vector<std::shared_ptr<network::Entity>> entities;
+  std::vector<entity_placement_t> entities;
 };
 
 // Loads map from VMF-style text file.

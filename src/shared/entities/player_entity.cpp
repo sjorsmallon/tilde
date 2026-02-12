@@ -3,16 +3,17 @@
 namespace network
 {
 
-// Bake the schema (offsets and types)
-BEGIN_SCHEMA(Player_Entity)
-DEFINE_FIELD(position, Field_Type::Vec3f)
-DEFINE_FIELD(view_angle_yaw, Field_Type::Float32)
-DEFINE_FIELD(view_angle_pitch, Field_Type::Float32)
-
-DEFINE_FIELD(health, Field_Type::Int32)
-DEFINE_FIELD(ammo, Field_Type::Int32)
-DEFINE_FIELD(active_weapon_id, Field_Type::Int32)
-DEFINE_FIELD(client_slot_index, Field_Type::Int32)
-END_SCHEMA(Player_Entity)
+DEFINE_SCHEMA_CLASS(Player_Entity, Entity)
+{
+  BEGIN_SCHEMA_FIELDS()
+  REGISTER_SCHEMA_FIELD(view_angle_yaw);
+  REGISTER_SCHEMA_FIELD(view_angle_pitch);
+  REGISTER_SCHEMA_FIELD(health);
+  REGISTER_SCHEMA_FIELD(ammo);
+  REGISTER_SCHEMA_FIELD(active_weapon_id);
+  REGISTER_SCHEMA_FIELD(client_slot_index);
+  REGISTER_SCHEMA_FIELD(render);
+  END_SCHEMA_FIELDS()
+}
 
 } // namespace network

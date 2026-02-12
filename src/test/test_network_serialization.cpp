@@ -9,20 +9,20 @@ using namespace network;
 class TestPlayer : public Entity
 {
 public:
-  Network_Var<int32> health;
-  Network_Var<float32> x;
-  Network_Var<float32> y;
-  Network_Var<int32> ammo;
+  SCHEMA_FIELD(int32, health, Schema_Flags::Networked);
+  SCHEMA_FIELD(float32, x, Schema_Flags::Networked);
+  SCHEMA_FIELD(float32, y, Schema_Flags::Networked);
+  SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked);
 
   DECLARE_SCHEMA(TestPlayer)
 };
 
 // --- Define Schema ---
 BEGIN_SCHEMA(TestPlayer)
-DEFINE_FIELD(health, Field_Type::Int32)
-DEFINE_FIELD(x, Field_Type::Float32)
-DEFINE_FIELD(y, Field_Type::Float32)
-DEFINE_FIELD(ammo, Field_Type::Int32)
+REGISTER_FIELD(health)
+REGISTER_FIELD(x)
+REGISTER_FIELD(y)
+REGISTER_FIELD(ammo)
 END_SCHEMA(TestPlayer)
 
 int main()
@@ -49,52 +49,48 @@ int main()
 
   // 3. Test Full Update (Baseline = nullptr)
   {
-    std::cout << "[TEST] Testing Full Update..." << std::endl;
-    Bit_Writer writer;
-    server_p1.serialize(writer, nullptr);
+    std::cout << "  [Subtest] Full update..." << std::endl;
+    auto updates = diff(nullptr, &server_p1, server_p1.get_schema());
 
-    Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
-    client_p.deserialize(reader);
+    // Full update should produce all fields
+    assert(updates.size() > 0);
+
+    // Apply to client
+    apply_diff(&client_p, updates, client_p.get_schema());
 
     assert(client_p.health == 100);
     assert(client_p.x == 10.0f);
     assert(client_p.y == 20.0f);
     assert(client_p.ammo == 30);
-    std::cout << "  -> Success!" << std::endl;
+
+    std::cout << "    PASSED!" << std::endl;
   }
 
-  // 4. Test Delta Update (Baseline = server_p1)
+  // 4. Test Delta Update
   {
-    std::cout << "[TEST] Testing Delta Update..." << std::endl;
-    Bit_Writer writer;
-    server_p2.serialize(writer, &server_p1);
+    std::cout << "  [Subtest] Delta update..." << std::endl;
 
-    // Verification of Delta Size
-    // Fields: Health(4), X(4), Y(4), Ammo(4)
-    // Changed: Health, X. Unchanged: Y, Ammo.
-    // Bits: 1 (Health Changed) + 1 (X Changed) + 1 (Y Changed) + 1 (Ammo
-    // Changed) = 4 bits Data: 4 bytes (Health) + 4 bytes (X) = 8 bytes. Total
-    // should be roughly 8 bytes + 4 bits.
-    std::cout << "  -> Delta Buffer Size: " << writer.buffer.size() << " bytes"
-              << std::endl;
+    // Before: client_p matches server_p1
+    // Now server changed to server_p2
 
-    Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
+    // Diff from old state to new
+    auto updates = diff(&server_p1, &server_p2, server_p2.get_schema());
 
-    // In a real system, we'd apply this to our existing client_p
-    // But Deserialize currently blindly reads.
-    // We need to ensure we are DESERIALIZING into the object that was used as
-    // baseline logic OR we are just updating the fields that are in the stream.
-    // Our Deserialize implementation reads flags. If flag is 0, it does
-    // NOTHING. So client_p will retain old values for unchanged fields.
-    client_p.deserialize(reader);
+    // Only changed fields should appear
+    // health changed (100->90), x changed (10->12), y unchanged, ammo unchanged
+    assert(updates.size() == 2); // health and x
 
-    assert(client_p.health == 90); // Updated
-    assert(client_p.x == 12.0f);   // Updated
-    assert(client_p.y == 20.0f);   // Retained 20.0f
-    assert(client_p.ammo == 30);   // Retained 30
-    std::cout << "  -> Success!" << std::endl;
+    // Apply to client
+    apply_diff(&client_p, updates, client_p.get_schema());
+
+    assert(client_p.health == 90);
+    assert(client_p.x == 12.0f);
+    assert(client_p.y == 20.0f); // unchanged
+    assert(client_p.ammo == 30); // unchanged
+
+    std::cout << "    PASSED!" << std::endl;
   }
 
-  std::cout << "[TEST] All Tests Passed." << std::endl;
+  std::cout << "[TEST] All Network Serialization Tests Passed!" << std::endl;
   return 0;
 }

@@ -198,11 +198,17 @@ private:
       {
         new_ent->init_from_map(delta.snapshot.properties);
 
+        shared::entity_placement_t placement;
+        placement.entity = new_ent;
+        placement.position = new_ent->position;
+        placement.scale = {1, 1, 1};
+        placement.rotation = {0, 0, 0};
+
         if (delta.target_index <= map.entities.size())
           map.entities.insert(map.entities.begin() + delta.target_index,
-                              new_ent);
+                              placement);
         else
-          map.entities.push_back(new_ent);
+          map.entities.push_back(placement);
       }
       break;
     }
@@ -218,15 +224,15 @@ private:
     {
       if (delta.target_index < map.entities.size())
       {
-        auto &ent = map.entities[delta.target_index];
-        if (ent)
+        auto &placement = map.entities[delta.target_index];
+        if (placement.entity)
         {
           std::map<std::string, std::string> props;
           for (const auto &change : delta.changes)
           {
             props[change.name] = change.new_value;
           }
-          ent->init_from_map(props);
+          placement.entity->init_from_map(props);
         }
       }
       break;
@@ -256,11 +262,17 @@ private:
       {
         new_ent->init_from_map(delta.snapshot.properties);
 
+        shared::entity_placement_t placement;
+        placement.entity = new_ent;
+        placement.position = new_ent->position;
+        placement.scale = {1, 1, 1};
+        placement.rotation = {0, 0, 0};
+
         if (delta.target_index <= map.entities.size())
           map.entities.insert(map.entities.begin() + delta.target_index,
-                              new_ent);
+                              placement);
         else
-          map.entities.push_back(new_ent);
+          map.entities.push_back(placement);
       }
       break;
     }
@@ -268,15 +280,15 @@ private:
     {
       if (delta.target_index < map.entities.size())
       {
-        auto &ent = map.entities[delta.target_index];
-        if (ent)
+        auto &placement = map.entities[delta.target_index];
+        if (placement.entity)
         {
           std::map<std::string, std::string> props;
           for (const auto &change : delta.changes)
           {
             props[change.name] = change.old_value;
           }
-          ent->init_from_map(props);
+          placement.entity->init_from_map(props);
         }
       }
       break;
@@ -297,10 +309,10 @@ public:
   {
     if (target_index < map->entities.size())
     {
-      auto &ent = map->entities[target_index];
-      if (ent)
+      auto &placement = map->entities[target_index];
+      if (placement.entity)
       {
-        before_props = ent->get_all_properties();
+        before_props = placement.entity->get_all_properties();
       }
     }
   }
@@ -323,10 +335,11 @@ public:
     {
       if (target_index < map->entities.size())
       {
-        auto &ent = map->entities[target_index];
-        if (ent)
+        auto &placement = map->entities[target_index];
+        if (placement.entity)
         {
-          system->commit_modification(target_index, ent.get(), before_props);
+          system->commit_modification(target_index, placement.entity.get(),
+                                      before_props);
         }
       }
     }
@@ -334,12 +347,12 @@ public:
     {
       if (map->entities.size() > target_index)
       {
-        const auto &new_ent = map->entities[target_index];
-        if (new_ent)
+        const auto &placement = map->entities[target_index];
+        if (placement.entity)
         {
           std::string classname =
-              shared::get_classname_for_entity(new_ent.get());
-          system->commit_add(target_index, new_ent.get(), classname);
+              shared::get_classname_for_entity(placement.entity.get());
+          system->commit_add(target_index, placement.entity.get(), classname);
         }
       }
     }

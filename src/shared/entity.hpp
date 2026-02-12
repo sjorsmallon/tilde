@@ -26,6 +26,10 @@ class Entity
 {
 public:
   Entity_Id id = null_entity_id;
+  SCHEMA_FIELD(vec3f, position,
+               Schema_Flags::Networked | Schema_Flags::Editable);
+  SCHEMA_FIELD(vec3f, orientation,
+               Schema_Flags::Networked | Schema_Flags::Editable);
 
   virtual ~Entity() = default;
 
@@ -55,9 +59,6 @@ public:
   // Returns all properties as a map of strings (for saving/snapshots)
   virtual std::map<std::string, std::string> get_all_properties() const;
 
-  // Writes the entity state to the stream.
-  // If baseline is provided, it only writes changes relative to baseline.
-  // If baseline is null, it writes everything (full update).
   // Writes the entity state to the stream.
   // If baseline is provided, it only writes changes relative to baseline.
   // If baseline is null, it writes everything (full update).

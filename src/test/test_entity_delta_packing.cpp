@@ -12,20 +12,20 @@ using namespace network;
 class TestPlayer : public Entity
 {
 public:
-  Network_Var<int32> health;
-  Network_Var<float32> x;
-  Network_Var<float32> y;
-  Network_Var<int32> ammo;
+  SCHEMA_FIELD(int32, health, Schema_Flags::Networked);
+  SCHEMA_FIELD(float32, x, Schema_Flags::Networked);
+  SCHEMA_FIELD(float32, y, Schema_Flags::Networked);
+  SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked);
 
   DECLARE_SCHEMA(TestPlayer)
 };
 
 // --- Define Schema ---
 BEGIN_SCHEMA(TestPlayer)
-DEFINE_FIELD(health, Field_Type::Int32)
-DEFINE_FIELD(x, Field_Type::Float32)
-DEFINE_FIELD(y, Field_Type::Float32)
-DEFINE_FIELD(ammo, Field_Type::Int32)
+REGISTER_FIELD(health)
+REGISTER_FIELD(x)
+REGISTER_FIELD(y)
+REGISTER_FIELD(ammo)
 END_SCHEMA(TestPlayer)
 
 int main()

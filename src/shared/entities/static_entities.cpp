@@ -4,24 +4,34 @@ namespace network
 {
 
 // AABB Entity
-BEGIN_SCHEMA(AABB_Entity)
-DEFINE_FIELD(center, Field_Type::Vec3f)
-DEFINE_FIELD(half_extents, Field_Type::Vec3f)
-END_SCHEMA(AABB_Entity)
+DEFINE_SCHEMA_CLASS(AABB_Entity, Entity)
+{
+  BEGIN_SCHEMA_FIELDS()
+  REGISTER_SCHEMA_FIELD(center);
+  REGISTER_SCHEMA_FIELD(half_extents);
+  REGISTER_SCHEMA_FIELD(render);
+  END_SCHEMA_FIELDS()
+}
 
 // Wedge Entity
-BEGIN_SCHEMA(Wedge_Entity)
-DEFINE_FIELD(center, Field_Type::Vec3f)
-DEFINE_FIELD(half_extents, Field_Type::Vec3f)
-DEFINE_FIELD(orientation, Field_Type::Int32)
-END_SCHEMA(Wedge_Entity)
+DEFINE_SCHEMA_CLASS(Wedge_Entity, Entity)
+{
+  BEGIN_SCHEMA_FIELDS()
+  REGISTER_SCHEMA_FIELD(center);
+  REGISTER_SCHEMA_FIELD(half_extents);
+  REGISTER_SCHEMA_FIELD(orientation);
+  REGISTER_SCHEMA_FIELD(render);
+  END_SCHEMA_FIELDS()
+}
 
 // Static Mesh Entity
-BEGIN_SCHEMA(Static_Mesh_Entity)
-DEFINE_FIELD(position, Field_Type::Vec3f)
-DEFINE_FIELD(rotation, Field_Type::Vec3f)
-DEFINE_FIELD(scale, Field_Type::Vec3f)
-DEFINE_FIELD(asset_id, Field_Type::Int32)
-END_SCHEMA(Static_Mesh_Entity)
+DEFINE_SCHEMA_CLASS(Static_Mesh_Entity, Entity)
+{
+  BEGIN_SCHEMA_FIELDS()
+  REGISTER_SCHEMA_FIELD(scale);
+  REGISTER_SCHEMA_FIELD(asset_id);
+  REGISTER_SCHEMA_FIELD(render);
+  END_SCHEMA_FIELDS()
+}
 
 } // namespace network

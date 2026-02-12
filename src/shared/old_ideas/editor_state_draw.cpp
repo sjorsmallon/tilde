@@ -1,5 +1,6 @@
 #include "../renderer.hpp"   // Added for render_view
 #include "../shared/map.hpp" // Added Map_IO, fixed path
+#include "asset.hpp"
 #include "editor_state.hpp"
 #include "imgui.h"
 #include "linalg.hpp"
@@ -276,8 +277,8 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     if (auto *aabb_ent = dynamic_cast<::network::AABB_Entity *>(ent_ptr.get()))
     {
       shared::aabb_t aabb;
-      aabb.center = aabb_ent->center.value;
-      aabb.half_extents = aabb_ent->half_extents.value;
+      aabb.center = aabb_ent->center;
+      aabb.half_extents = aabb_ent->half_extents;
 
       if (!wireframe_mode)
       {
@@ -301,9 +302,9 @@ void EditorState::render_3d(VkCommandBuffer cmd)
                  dynamic_cast<::network::Wedge_Entity *>(ent_ptr.get()))
     {
       shared::wedge_t wedge;
-      wedge.center = wedge_ent->center.value;
-      wedge.half_extents = wedge_ent->half_extents.value;
-      wedge.orientation = wedge_ent->orientation.value;
+      wedge.center = wedge_ent->center;
+      wedge.half_extents = wedge_ent->half_extents;
+      wedge.orientation = wedge_ent->orientation;
 
       draw_wedge_wireframe(wedge, col);
 
@@ -320,10 +321,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
     else if (auto *mesh_ent =
                  dynamic_cast<::network::Static_Mesh_Entity *>(ent_ptr.get()))
     {
-      // Fallback to green box using position/scale if available
-      // Assuming Static_Mesh_Entity has position/scale
-      // For now, check if they exist or just rely on generic fallback below
-      // But we can check properties to be safe
+      // Parse position and scale from properties
       auto props = ent_ptr->get_all_properties();
       vec3 p = {0, 0, 0};
       vec3 s = {1, 1, 1};
@@ -332,9 +330,41 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       if (props.count("scale"))
         sscanf(props["scale"].c_str(), "%f %f %f", &s.x, &s.y, &s.z);
 
-      vec3 min = p - s * 0.5f;
-      vec3 max = p + s * 0.5f;
-      renderer::DrawAABB(cmd, min, max, col);
+      // Map asset_id to mesh path
+      const char *mesh_path = assets::get_mesh_path(mesh_ent->asset_id);
+
+      // Load and render mesh
+      if (mesh_path)
+      {
+        auto mesh_handle = assets::load_mesh(mesh_path);
+        if (mesh_handle.valid())
+        {
+          renderer::DrawMesh(cmd, p, s, mesh_handle, col);
+
+          // Optional: Draw selection AABB wireframe
+          if (selected)
+          {
+            shared::aabb_t selection_aabb;
+            selection_aabb.center = p;
+            selection_aabb.half_extents = s * 0.5f;
+            draw_aabb_wireframe(selection_aabb, 0x88FFFFFF);
+          }
+        }
+        else
+        {
+          // Fallback to AABB if mesh fails to load
+          vec3 min = p - s * 0.5f;
+          vec3 max = p + s * 0.5f;
+          renderer::DrawAABB(cmd, min, max, col);
+        }
+      }
+      else
+      {
+        // Fallback to AABB if no asset path mapped
+        vec3 min = p - s * 0.5f;
+        vec3 max = p + s * 0.5f;
+        renderer::DrawAABB(cmd, min, max, col);
+      }
     }
     else
     {
@@ -346,8 +376,8 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       if (auto *player =
               dynamic_cast<::network::Player_Entity *>(ent_ptr.get()))
       {
-        p = player->position.value;
-        yaw = player->view_angle_yaw.value;
+        p = player->position;
+        yaw = player->view_angle_yaw;
         has_pos = true;
       }
       else

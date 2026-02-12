@@ -26,6 +26,9 @@ void render_imgui_entity_fields_in_a_window(network::Entity *entity)
 
   for (const auto &field : schema->fields)
   {
+    if (!has_flag(field.flags, network::Schema_Flags::Editable))
+      continue;
+
     void *field_ptr = base_ptr + field.offset;
 
     ImGui::PushID(field.index);
@@ -55,6 +58,39 @@ void render_imgui_entity_fields_in_a_window(network::Entity *entity)
       // Assumes vector is 3 floats (linalg::vec3 or similar layout)
       float *val = static_cast<float *>(field_ptr);
       ImGui::DragFloat3(field.name.c_str(), val, 0.1f);
+      break;
+    }
+    case network::Field_Type::PascalString:
+    {
+      auto *ps = static_cast<network::pascal_string *>(field_ptr);
+      // InputText needs a mutable buffer; pascal_string::data is exactly that
+      if (ImGui::InputText(field.name.c_str(), ps->data, ps->max_length(),
+                           ImGuiInputTextFlags_EnterReturnsTrue))
+      {
+        // Update the length to match what ImGui wrote
+        ps->length = static_cast<network::uint8>(strlen(ps->data));
+      }
+      break;
+    }
+    case network::Field_Type::RenderComponent:
+    {
+      auto *rc = static_cast<network::render_component_t *>(field_ptr);
+      if (ImGui::TreeNode(field.name.c_str()))
+      {
+        ImGui::InputInt("mesh_id", &rc->mesh_id);
+        if (ImGui::InputText("mesh_path", rc->mesh_path.data,
+                             rc->mesh_path.max_length(),
+                             ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+          rc->mesh_path.length =
+              static_cast<network::uint8>(strlen(rc->mesh_path.data));
+        }
+        ImGui::Checkbox("visible", &rc->visible);
+        ImGui::DragFloat3("offset", &rc->offset.x, 0.1f);
+        ImGui::DragFloat3("scale", &rc->scale.x, 0.01f);
+        ImGui::DragFloat3("rotation", &rc->rotation.x, 1.0f);
+        ImGui::TreePop();
+      }
       break;
     }
     default:
