@@ -90,8 +90,8 @@ void Selection_Tool::on_update(editor_context_t &ctx,
     editor_gizmo.update(view.mouse_ray, false);
   }
 
-  // Sync Gizmo Geometry if single selection
-  if (selected_geometry_indices.size() == 1)
+  // Sync Gizmo Geometry if single selection (but not while dragging)
+  if (selected_geometry_indices.size() == 1 && !editor_gizmo.is_interacting())
   {
     int idx = selected_geometry_indices[0];
     if (idx >= 0 && idx < (int)ctx.map->entities.size())
@@ -324,13 +324,13 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
   {
     if (editor_gizmo.is_interacting())
     {
-      // End interaction
-      // We can just call handle_input with false.
-      // We might not have perfect ray, but `false` just stops dragging.
       editor_gizmo.handle_input({}, false,
                                 {cached_viewport.camera.x,
                                  cached_viewport.camera.y,
                                  cached_viewport.camera.z});
+      // Rebuild BVH after gizmo interaction
+      if (ctx.geometry_updated)
+        *ctx.geometry_updated = true;
       return;
     }
 

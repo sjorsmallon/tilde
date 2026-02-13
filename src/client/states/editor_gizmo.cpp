@@ -547,6 +547,11 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
 
         // Also update transform gizmo
         transform_state.position = aabb->center;
+
+        // Sync placement
+        placement.position = aabb->center;
+        placement.aabb.center = aabb->center;
+        placement.aabb.half_extents = aabb->half_extents;
       }
     }
   }
@@ -601,7 +606,6 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
         {
           aabb->center = new_pos;
-          // Sync internal state
           reshape_state.aabb.center = new_pos;
           transform_state.position = new_pos;
         }
@@ -612,15 +616,24 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
           reshape_state.aabb.center = new_pos;
           transform_state.position = new_pos;
         }
+        else if (auto *mesh =
+                     dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
+        {
+          mesh->position = new_pos;
+          reshape_state.aabb.center = new_pos;
+          transform_state.position = new_pos;
+        }
         else if (auto *player =
                      dynamic_cast<::network::Player_Entity *>(ent.get()))
         {
           player->position = new_pos;
-          // Player doesn't have AABB/Wedge fields to sync with reshape_state if
-          // we differ, but we used a fake AABB for selection.
           reshape_state.aabb.center = new_pos;
           transform_state.position = new_pos;
         }
+
+        // Sync placement position and aabb
+        placement.position = new_pos;
+        placement.aabb.center = new_pos;
       }
     }
     else if (transform_state.dragging_ring_index != -1)
@@ -694,6 +707,9 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         new_orient[axis] = new_orient[axis] + delta_degrees;
         ent->orientation = new_orient;
         transform_state.rotation = new_orient;
+
+        // Sync placement rotation
+        placement.rotation = new_orient;
       }
     }
   }

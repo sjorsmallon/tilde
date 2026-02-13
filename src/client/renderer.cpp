@@ -1573,7 +1573,7 @@ void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
               const linalg::vec3 &scale,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-              uint32_t color)
+              uint32_t color, const linalg::vec3 &rotation)
 {
   if (!mesh_handle.valid())
     return;
@@ -1596,14 +1596,34 @@ void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
   // Bind index buffer
   vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
-  // Build model matrix: Scale * Translate
-  mat4_t model = mat4_t::identity();
-  model.m[0] = scale.x;
-  model.m[5] = scale.y;
-  model.m[10] = scale.z;
+  // Build model matrix: T * Rz * Ry * Rx * S
+  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
+  float rx = rotation.x * DEG2RAD;
+  float ry = rotation.y * DEG2RAD;
+  float rz = rotation.z * DEG2RAD;
+
+  float cx = cosf(rx), sx = sinf(rx);
+  float cy = cosf(ry), sy = sinf(ry);
+  float cz = cosf(rz), sz = sinf(rz);
+
+  // Combined rotation matrix (Rz * Ry * Rx), then scale each column
+  mat4_t model = {};
+  model.m[0]  = (cz * cy) * scale.x;
+  model.m[1]  = (sz * cy) * scale.x;
+  model.m[2]  = (-sy)     * scale.x;
+  model.m[3]  = 0;
+  model.m[4]  = (cz * sy * sx - sz * cx) * scale.y;
+  model.m[5]  = (sz * sy * sx + cz * cx) * scale.y;
+  model.m[6]  = (cy * sx)                * scale.y;
+  model.m[7]  = 0;
+  model.m[8]  = (cz * sy * cx + sz * sx) * scale.z;
+  model.m[9]  = (sz * sy * cx - cz * sx) * scale.z;
+  model.m[10] = (cy * cx)                * scale.z;
+  model.m[11] = 0;
   model.m[12] = position.x;
   model.m[13] = position.y;
   model.m[14] = position.z;
+  model.m[15] = 1;
 
   // MVP = ViewProj * Model
   mat4_t mvp = mat4_t::mult(g_current_view_proj, model);

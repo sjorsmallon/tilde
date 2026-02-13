@@ -650,9 +650,9 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
         auto mesh_handle = assets::load_mesh(mesh_path);
         if (mesh_handle.valid())
         {
-          // Use placement position and scale
+          // Use placement position, scale, and rotation
           renderer::DrawMesh(cmd, placement.position, placement.scale,
-                             mesh_handle, 0xFF00FFFF);
+                             mesh_handle, 0xFF00FFFF, placement.rotation);
         }
         else
         {
