@@ -2,7 +2,6 @@
 #include "../../../shared/entities/player_entity.hpp"
 #include "../../../shared/entities/static_entities.hpp"
 #include "../../renderer.hpp"
-#include "../editor_entity.hpp"
 #include "../entity_inspector.hpp"
 #include "../transaction_system.hpp"
 #include "imgui.h"
@@ -100,7 +99,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
       const auto &placement = ctx.map->entities[idx];
       if (placement.entity)
       {
-        shared::aabb_bounds_t b = compute_selection_aabb(placement.entity.get());
+        shared::aabb_bounds_t b = shared::get_bounds(placement.aabb);
         editor_gizmo.set_geometry(b);
       }
     }
@@ -128,7 +127,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
     bool hit_bvh = false;
     float closest_t = std::numeric_limits<float>::max();
 
-    if (ctx.bvh && ctx.editor_entities)
+    if (ctx.bvh)
     {
       Ray_Hit hit;
       if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
@@ -136,11 +135,10 @@ void Selection_Tool::on_update(editor_context_t &ctx,
       {
         if (hit.id.type == Collision_Id::Type::Static_Geometry)
         {
-          // Index is into editor_entities, map back to map index
-          int ee_idx = (int)hit.id.index;
-          if (ee_idx >= 0 && ee_idx < (int)ctx.editor_entities->size())
+          int map_idx = (int)hit.id.index;
+          if (map_idx >= 0 && map_idx < (int)ctx.map->entities.size())
           {
-            hovered_geo_index = (*ctx.editor_entities)[ee_idx].map_index;
+            hovered_geo_index = map_idx;
             closest_t = hit.t;
             hit_bvh = true;
           }
@@ -368,7 +366,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
         const auto &placement = ctx.map->entities[i];
         if (!placement.entity)
           continue;
-        auto bounds = compute_selection_aabb(placement.entity.get());
+        auto bounds = shared::get_bounds(placement.aabb);
 
         // Project center to screen
         linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
@@ -493,7 +491,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   if (!ctx.map)
     return;
 
-  auto draw_entity_highlight = [&](const network::Entity *ent, uint32_t color)
+  auto draw_entity_highlight = [&](const network::Entity *ent, const shared::aabb_t &aabb, uint32_t color)
   {
     if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(ent))
     {
@@ -525,7 +523,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
     }
     else
     {
-      shared::aabb_bounds_t bounds = compute_selection_aabb(ent);
+      shared::aabb_bounds_t bounds = shared::get_bounds(aabb);
       renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
                              (bounds.max - bounds.min) * 0.5f, color);
     }
@@ -539,7 +537,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
       const auto &placement = ctx.map->entities[idx];
       if (placement.entity)
       {
-        draw_entity_highlight(placement.entity.get(), 0xFF00FF00); // Green
+        draw_entity_highlight(placement.entity.get(), placement.aabb, 0xFF00FF00); // Green
       }
     }
   }
@@ -565,7 +563,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
         const auto &placement = ctx.map->entities[hovered_geo_index];
         if (placement.entity)
         {
-          draw_entity_highlight(placement.entity.get(), 0xFF00FFFF); // Yellow
+          draw_entity_highlight(placement.entity.get(), placement.aabb, 0xFF00FFFF); // Yellow
         }
       }
     }
@@ -587,7 +585,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
       const auto &placement = ctx.map->entities[i];
       if (!placement.entity)
         continue;
-      auto bounds = compute_selection_aabb(placement.entity.get());
+      auto bounds = shared::get_bounds(placement.aabb);
 
       // Project center to screen
       linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
@@ -614,7 +612,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 
         if (!already_selected)
         {
-          draw_entity_highlight(placement.entity.get(), 0xFF00FFFF); // Yellow
+          draw_entity_highlight(placement.entity.get(), placement.aabb, 0xFF00FFFF); // Yellow
         }
       }
     }

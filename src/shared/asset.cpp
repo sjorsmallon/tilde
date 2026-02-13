@@ -1,5 +1,6 @@
 #include "asset.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -290,10 +291,33 @@ const texture_asset_t *get(asset_handle_t<texture_asset_t> handle)
   return g_textures.get(handle);
 }
 
+bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_max)
+{
+  if (!mesh || mesh->vertices.empty())
+    return false;
+
+  out_min = mesh->vertices[0].position;
+  out_max = mesh->vertices[0].position;
+
+  for (const auto &v : mesh->vertices)
+  {
+    out_min.x = std::min(out_min.x, v.position.x);
+    out_min.y = std::min(out_min.y, v.position.y);
+    out_min.z = std::min(out_min.z, v.position.z);
+    out_max.x = std::max(out_max.x, v.position.x);
+    out_max.y = std::max(out_max.y, v.position.y);
+    out_max.z = std::max(out_max.z, v.position.z);
+  }
+
+  return true;
+}
+
 const char *get_mesh_path(int32_t asset_id)
 {
   switch (asset_id)
   {
+  case 0:
+    return "obj/question_mark.obj";
   case 1:
     return "obj/m4a1_s.obj";
   default:

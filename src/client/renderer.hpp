@@ -27,10 +27,15 @@ struct render_view_t
   camera_t camera;
 };
 
-// Draw a wireframe AABB with barycentric edge darkening
+// Draw a solid AABB (filled faces)
 // min/max in world space
 void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
               const linalg::vec3 &max, uint32_t color);
+
+// Draw a wireframe AABB (12 line edges)
+// min/max in world space
+void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
+                  const linalg::vec3 &max, uint32_t color);
 
 // Draw a simple 3D line
 void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,

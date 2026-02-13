@@ -1538,6 +1538,38 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
   vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
 }
 
+void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
+                  const linalg::vec3 &max, uint32_t color)
+{
+  // 12 edges of the box drawn as individual lines
+  linalg::vec3 corners[8] = {
+      {min.x, min.y, min.z}, // 0 bottom
+      {max.x, min.y, min.z}, // 1
+      {max.x, min.y, max.z}, // 2
+      {min.x, min.y, max.z}, // 3
+      {min.x, max.y, min.z}, // 4 top
+      {max.x, max.y, min.z}, // 5
+      {max.x, max.y, max.z}, // 6
+      {min.x, max.y, max.z}, // 7
+  };
+
+  // Bottom face
+  DrawLine(cmd, corners[0], corners[1], color);
+  DrawLine(cmd, corners[1], corners[2], color);
+  DrawLine(cmd, corners[2], corners[3], color);
+  DrawLine(cmd, corners[3], corners[0], color);
+  // Top face
+  DrawLine(cmd, corners[4], corners[5], color);
+  DrawLine(cmd, corners[5], corners[6], color);
+  DrawLine(cmd, corners[6], corners[7], color);
+  DrawLine(cmd, corners[7], corners[4], color);
+  // Vertical edges
+  DrawLine(cmd, corners[0], corners[4], color);
+  DrawLine(cmd, corners[1], corners[5], color);
+  DrawLine(cmd, corners[2], corners[6], color);
+  DrawLine(cmd, corners[3], corners[7], color);
+}
+
 void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
               const linalg::vec3 &scale,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,

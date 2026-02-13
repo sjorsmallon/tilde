@@ -45,4 +45,10 @@ const texture_asset_t *get(asset_handle_t<texture_asset_t> handle);
 
 const char *get_mesh_path(int32_t asset_id);
 
+// --- Mesh bounds ---
+
+// Compute axis-aligned bounding box of a mesh's vertices (in model space).
+// Returns false if mesh is null or empty.
+bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_max);
+
 } // namespace assets

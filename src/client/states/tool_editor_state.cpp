@@ -40,14 +40,15 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
   {
     linalg::vec3 min = center - half_extents;
     linalg::vec3 max = center + half_extents;
-    renderer::DrawAABB(cmd, min, max, color);
+    renderer::DrawWireAABB(cmd, min, max, color);
   }
 
   void draw_solid_box(const linalg::vec3 &center,
                       const linalg::vec3 &half_extents, uint32_t color) override
   {
-    // Fallback to wireframe for now as renderer implementation is limited
-    draw_wire_box(center, half_extents, color);
+    linalg::vec3 min = center - half_extents;
+    linalg::vec3 max = center + half_extents;
+    renderer::DrawAABB(cmd, min, max, color);
   }
 
   void draw_circle(const linalg::vec3 &center, float radius,
@@ -172,7 +173,6 @@ void ToolEditorState::switch_tool(int index)
 
   // Update context
   context.map = &map;
-  context.editor_entities = &editor_entities;
   context.bvh = &bvh;
   context.geometry_updated = &geometry_updated_flag;
   context.time = 0; // TODO: Get real time
@@ -382,7 +382,6 @@ void ToolEditorState::update(float dt)
 
   // Update Viewport
   context.map = &map;
-  context.editor_entities = &editor_entities;
   context.bvh = &bvh;
   context.geometry_updated = &geometry_updated_flag;
   context.transaction_system = &transaction_system;
@@ -629,8 +628,8 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     {
       // Use placement position instead of entity's center
       linalg::vec3 center = placement.position;
-      renderer::DrawAABB(cmd, center - aabb->half_extents,
-                         center + aabb->half_extents, 0xFFFFFFFF);
+      renderer::DrawWireAABB(cmd, center - aabb->half_extents,
+                             center + aabb->half_extents, 0xFFFFFFFF);
     }
     else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent_ptr))
     {
@@ -660,7 +659,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
           // Fallback to AABB if mesh fails to load
           linalg::vec3 min = placement.position - placement.scale;
           linalg::vec3 max = placement.position + placement.scale;
-          renderer::DrawAABB(cmd, min, max, 0xFF00FFFF);
+          renderer::DrawWireAABB(cmd, min, max, 0xFF00FFFF);
         }
       }
       else
@@ -668,7 +667,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
         // Fallback to AABB if no asset path mapped
         linalg::vec3 min = placement.position - placement.scale;
         linalg::vec3 max = placement.position + placement.scale;
-        renderer::DrawAABB(cmd, min, max, 0xFF00FFFF);
+        renderer::DrawWireAABB(cmd, min, max, 0xFF00FFFF);
       }
     }
     else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent_ptr))
@@ -707,8 +706,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
 
 void ToolEditorState::update_bvh()
 {
-  editor_entities = build_editor_entities(map);
-  bvh = build_editor_bvh(editor_entities);
+  bvh = build_editor_bvh(map);
 }
 
 } // namespace client

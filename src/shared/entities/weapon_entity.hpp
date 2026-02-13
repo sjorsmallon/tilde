@@ -10,7 +10,6 @@ class Weapon_Entity : public Entity
 public:
   SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked | Schema_Flags::Editable);
   SCHEMA_FIELD(int32, active_weapon_id, Schema_Flags::Networked);
-  SCHEMA_FIELD(pascal_string, asset_id, Schema_Flags::Editable);
 
   SCHEMA_FIELD(render_component_t, render,
                Schema_Flags::Networked | Schema_Flags::Editable);

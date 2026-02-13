@@ -21,6 +21,7 @@ struct entity_placement_t
   linalg::vec3 position = {0, 0, 0};
   linalg::vec3 rotation = {0, 0, 0}; // Euler angles (pitch, yaw, roll)
   linalg::vec3 scale = {1, 1, 1};
+  aabb_t aabb = aabb_t(); // Default 10x10x10 box for picking/selection
 };
 
 struct map_t

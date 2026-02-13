@@ -4,7 +4,6 @@
 #include "../../shared/linalg.hpp"
 #include "../../shared/map.hpp" // For map_t
 #include "../camera.hpp"        // For camera_t
-#include <vector>
 #include <vulkan/vulkan.h>
 
 namespace client
@@ -42,21 +41,15 @@ struct viewport_state_t
   float fov;
 };
 
-struct editor_entity_t; // forward declaration
-
 // Forward declaration of the editor state or game state if needed
 struct editor_context_t
 {
   shared::map_t *map;
 
-  // Editor entity list — wraps map entities with precomputed selection AABBs.
-  std::vector<editor_entity_t> *editor_entities = nullptr;
-
   // Helper to get global time if needed
   float time;
 
-  // BVH for editor picking (built from editor_entities, includes ALL entity
-  // types)
+  // BVH for editor picking (built from map entities)
   const Bounding_Volume_Hierarchy *bvh = nullptr;
 
   // Flag to signal that geometry has been modified and BVH needs rebuild

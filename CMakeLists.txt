@@ -95,6 +95,8 @@ add_library(game_shared STATIC
     src/shared/entity.cpp
     src/shared/entity_system.cpp
     src/shared/game_session.cpp
+    src/shared/asset.hpp
+    src/shared/asset.cpp
 )
 
 # Protobuf Generation
@@ -159,15 +161,12 @@ add_library(game_client SHARED
     src/client/console.cpp
     src/client/state_manager.cpp
     src/client/states/play_state.cpp
-    src/client/states/editor_state.cpp
-    src/client/states/editor_state_input.cpp
-    src/client/states/editor_state_update.cpp
-    src/client/states/editor_state_draw.cpp
     src/client/states/editor_gizmo.cpp
     src/client/states/tool_editor_state.cpp
     src/client/editor/tools/selection_tool.cpp
     src/client/editor/tools/placement_tool.cpp
     src/client/editor/tools/sculpting_tool.cpp
+    src/client/editor/entity_inspector.cpp
     src/client/input.cpp
     src/client/renderer.cpp
     ${SHADER_HEADERS}
@@ -287,3 +286,8 @@ target_link_libraries(test_entity_delta_packing PRIVATE game_shared)
 add_executable(test_rng src/test/test_rng.cpp)
 target_include_directories(test_rng PRIVATE src)
 target_link_libraries(test_rng PRIVATE game_shared)
+
+# 19. Asset System Test
+add_executable(asset_test src/test/test_asset_system.cpp)
+target_include_directories(asset_test PRIVATE src)
+target_link_libraries(asset_test PRIVATE game_shared)

@@ -10,12 +10,12 @@ namespace shared
 
 struct aabb_t
 {
-  SCHEMA_FIELD(linalg::vec3, center,
+  SCHEMA_FIELD_DEFAULT(linalg::vec3, center,
                network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable);
-  SCHEMA_FIELD(linalg::vec3, half_extents,
+                   network::Schema_Flags::Saveable, (linalg::vec3{0, 0, 0}));
+  SCHEMA_FIELD_DEFAULT(linalg::vec3, half_extents,
                network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable);
+                   network::Schema_Flags::Saveable, (linalg::vec3{1.f, 1.f, 1.f}));
   DECLARE_SCHEMA(aabb_t);
 };
 

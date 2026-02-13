@@ -1,4 +1,5 @@
 #include "placement_tool.hpp"
+#include "../../../shared/asset.hpp"
 #include "../../../shared/entities/static_entities.hpp"
 #include "../../../shared/map.hpp" // For factory
 #include "../transaction_system.hpp"
@@ -109,13 +110,35 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
       placement.position = center;
       placement.scale = {1, 1, 1}; // Default scale
       placement.rotation = {0, 0, 0}; // Default rotation
+      placement.aabb.center = center; // Center AABB at entity position
 
-      // For Static_Mesh_Entity, we might want to use asset-specific scale
-      if (auto *mesh =
+      // For Static_Mesh_Entity, compute AABB from mesh bounds
+      if (auto *mesh_ent =
               dynamic_cast<::network::Static_Mesh_Entity *>(new_ent.get()))
       {
-        // Could load default scale from asset here
-        placement.scale = {1, 1, 1};
+        placement.scale = mesh_ent->scale;
+        const char *mesh_path = assets::get_mesh_path(mesh_ent->asset_id);
+        if (mesh_path)
+        {
+          auto mesh_handle = assets::load_mesh(mesh_path);
+          if (mesh_handle.valid())
+          {
+            vec3f mesh_min, mesh_max;
+            if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min,
+                                            mesh_max))
+            {
+              vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
+              vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
+              vec3f s = placement.scale;
+              placement.aabb.center = center +
+                  vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
+                        mesh_center.z * s.z};
+              placement.aabb.half_extents =
+                  vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
+                        mesh_half.z * s.z};
+            }
+          }
+        }
       }
 
       ctx.map->entities.push_back(placement);

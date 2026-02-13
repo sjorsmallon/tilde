@@ -46,7 +46,6 @@ private:
   void update_bvh();
 
   Bounding_Volume_Hierarchy bvh;
-  std::vector<editor_entity_t> editor_entities;
   bool geometry_updated_flag = false;
 
   Transaction_System transaction_system;
