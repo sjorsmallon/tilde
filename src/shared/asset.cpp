@@ -320,6 +320,8 @@ const char *get_mesh_path(int32_t asset_id)
     return "obj/question_mark.obj";
   case 1:
     return "obj/m4a1_s.obj";
+  case 2:
+    return "obj/pyramid.obj";
   default:
     return nullptr;
   }

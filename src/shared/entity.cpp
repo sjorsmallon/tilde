@@ -114,6 +114,7 @@ void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
         for (uint8 i = 0; i < rc->mesh_path.length; ++i)
           writer.write_bits(static_cast<uint8>(rc->mesh_path.data[i]), 8);
         writer.write_bit(rc->visible);
+        writer.write_bit(rc->is_wireframe);
         // offset
         write_coord(writer, rc->offset.x);
         write_coord(writer, rc->offset.y);
@@ -230,6 +231,7 @@ void Entity::deserialize(Bit_Reader &reader)
         if (rc->mesh_path.length < rc->mesh_path.max_length())
           rc->mesh_path.data[rc->mesh_path.length] = '\0';
         rc->visible = reader.read_bit();
+        rc->is_wireframe = reader.read_bit();
         // offset
         rc->offset.x = read_coord(reader);
         rc->offset.y = read_coord(reader);
@@ -254,41 +256,40 @@ void Entity::deserialize(Bit_Reader &reader)
 
 } // namespace network
 
-// Register Entity base class schema so derived classes can inherit fields
-namespace
+// Register Entity base class schema so derived classes can inherit fields.
+// Uses a static guard so it can be called on-demand from derived class
+// schema registration (avoiding static init order issues across TUs).
+void network::Entity::register_schema()
 {
-struct Entity_Schema_Init
-{
-  Entity_Schema_Init()
-  {
-    std::vector<network::Field_Prop> props;
+  static bool registered = false;
+  if (registered)
+    return;
+  registered = true;
 
-    // Entity base class fields
-    static_assert(
-        std::is_trivially_copyable_v<decltype(network::Entity::position)>,
-        "Field position must be trivially copyable");
-    props.push_back({network::Entity::_schema_meta_position.name,
-                     (uint32_t)props.size(),
-                     offsetof(network::Entity, position),
-                     network::Entity::_schema_meta_position.size,
-                     network::Entity::_schema_meta_position.type,
-                     network::Entity::_schema_meta_position.flags});
+  std::vector<network::Field_Prop> props;
 
-    static_assert(
-        std::is_trivially_copyable_v<decltype(network::Entity::orientation)>,
-        "Field orientation must be trivially copyable");
-    props.push_back({network::Entity::_schema_meta_orientation.name,
-                     (uint32_t)props.size(),
-                     offsetof(network::Entity, orientation),
-                     network::Entity::_schema_meta_orientation.size,
-                     network::Entity::_schema_meta_orientation.type,
-                     network::Entity::_schema_meta_orientation.flags});
+  static_assert(
+      std::is_trivially_copyable_v<decltype(network::Entity::position)>,
+      "Field position must be trivially copyable");
+  props.push_back({network::Entity::_schema_meta_position.name,
+                   (uint32_t)props.size(),
+                   offsetof(network::Entity, position),
+                   network::Entity::_schema_meta_position.size,
+                   network::Entity::_schema_meta_position.type,
+                   network::Entity::_schema_meta_position.flags});
 
-    network::Schema_Registry::get().register_class("Entity", props);
-  }
-};
-static Entity_Schema_Init g_entity_schema_init;
-} // namespace
+  static_assert(
+      std::is_trivially_copyable_v<decltype(network::Entity::orientation)>,
+      "Field orientation must be trivially copyable");
+  props.push_back({network::Entity::_schema_meta_orientation.name,
+                   (uint32_t)props.size(),
+                   offsetof(network::Entity, orientation),
+                   network::Entity::_schema_meta_orientation.size,
+                   network::Entity::_schema_meta_orientation.type,
+                   network::Entity::_schema_meta_orientation.flags});
+
+  network::Schema_Registry::get().register_class("Entity", props);
+}
 
 #define ENTITIES_WANT_INCLUDES
 #include "entities/entity_list.hpp"

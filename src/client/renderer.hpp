@@ -48,6 +48,13 @@ void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
               uint32_t color,
               const linalg::vec3 &rotation = {0, 0, 0});
 
+// Draw a mesh as wireframe from an asset handle
+void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
+                       const linalg::vec3 &scale,
+                       assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
+                       uint32_t color,
+                       const linalg::vec3 &rotation = {0, 0, 0});
+
 // Draw an arrow (shaft = AABB, head = Pyramid)
 void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
                 const linalg::vec3 &end, uint32_t color);

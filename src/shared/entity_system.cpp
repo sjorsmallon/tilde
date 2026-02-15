@@ -45,9 +45,9 @@ void Entity_System::add_entity(const std::shared_ptr<network::Entity> &entity)
 void Entity_System::populate_from_map(const map_t &map)
 {
   reset();
-  for (const auto &placement : map.entities)
+  for (const auto &entry : map.entities)
   {
-    add_entity(placement.entity);
+    add_entity(entry.entity);
   }
 }
 

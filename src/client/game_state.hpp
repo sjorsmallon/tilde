@@ -13,6 +13,23 @@ enum class GameStateKind
   ToolEditor
 };
 
+static std::string_view to_string(GameStateKind kind)
+{
+  switch (kind)
+  {
+  case GameStateKind::MainMenu:
+    return "Main Menu";
+  case GameStateKind::Play:
+    return "Play";
+  case GameStateKind::Editor:
+    return "Editor";
+  case GameStateKind::ToolEditor:
+    return "ToolEditor";
+  default:
+    return "Unknown";
+  }
+}
+
 class IGameState
 {
 public:

@@ -97,6 +97,63 @@ serialize_map_entities(const std::vector<map_entity_def_t> &entities)
 
 } // namespace
 
+aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
+{
+  // 1. Check for mesh bounds via render component
+  if (const auto *rc = entity->get_component<network::render_component_t>())
+  {
+    if (rc->mesh_id >= 0)
+    {
+      const char *mesh_path = assets::get_mesh_path(rc->mesh_id);
+      if (mesh_path)
+      {
+        auto mesh_handle = assets::load_mesh(mesh_path);
+        if (mesh_handle.valid())
+        {
+          vec3f mesh_min, mesh_max;
+          if (assets::compute_mesh_bounds(assets::get(mesh_handle),
+                                          mesh_min, mesh_max))
+          {
+            vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
+            vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
+            vec3f s = rc->scale;
+            vec3f world_center = entity->position +
+                vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
+                      mesh_center.z * s.z};
+            vec3f world_half =
+                vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
+                      mesh_half.z * s.z};
+            return {world_center - world_half, world_center + world_half};
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Check for AABB entity shape
+  if (auto *aabb = dynamic_cast<const network::AABB_Entity *>(entity))
+  {
+    aabb_t t;
+    t.center = aabb->position;
+    t.half_extents = aabb->half_extents;
+    return get_bounds(t);
+  }
+
+  // 3. Check for Wedge entity shape
+  if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
+  {
+    wedge_t t;
+    t.center = wedge->position;
+    t.half_extents = wedge->half_extents;
+    t.orientation = wedge->orientation;
+    return get_bounds(t);
+  }
+
+  // 4. Default: 0.5 unit box at entity position
+  return {entity->position - vec3f{0.5f, 0.5f, 0.5f},
+          entity->position + vec3f{0.5f, 0.5f, 0.5f}};
+}
+
 bool load_map(const std::string &filename, map_t &out_map)
 {
   std::ifstream in(filename);
@@ -129,56 +186,20 @@ bool load_map(const std::string &filename, map_t &out_map)
     {
       new_entity->init_from_map(ent.properties);
 
-      // Create entity_placement_t wrapper
-      entity_placement_t placement;
-      placement.entity = new_entity;
-
-      // Extract position from entity (different entities store position differently)
-      placement.position = new_entity->position; // Use base Entity position
-
-      // Extract scale if available (for now default to 1,1,1)
-      placement.scale = {1, 1, 1};
-      placement.rotation = {0, 0, 0};
-      placement.aabb.center = new_entity->position; // Center AABB at entity position
-
-      // For Static_Mesh_Entity, compute AABB from mesh bounds
-      if (auto *mesh_ent =
-              dynamic_cast<::network::Static_Mesh_Entity *>(new_entity.get()))
+      // Restore uid from file if present, otherwise auto-assign
+      if (ent.properties.count("_uid"))
       {
-        placement.scale = mesh_ent->scale;
-        const char *mesh_path = assets::get_mesh_path(mesh_ent->asset_id);
-        if (mesh_path)
-        {
-          auto mesh_handle = assets::load_mesh(mesh_path);
-          if (mesh_handle.valid())
-          {
-            vec3f mesh_min, mesh_max;
-            if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min,
-                                            mesh_max))
-            {
-              vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
-              vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
-              vec3f s = placement.scale;
-              placement.aabb.center = placement.position +
-                  vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
-                        mesh_center.z * s.z};
-              placement.aabb.half_extents =
-                  vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
-                        mesh_half.z * s.z};
-            }
-          }
-        }
+        entity_uid_t uid =
+            (entity_uid_t)std::stoul(ent.properties.at("_uid"));
+        out_map.add_entity_with_uid(uid, new_entity);
       }
-
-      out_map.entities.push_back(placement);
+      else
+      {
+        out_map.add_entity(new_entity);
+      }
     }
     else
     {
-      // TODO: Handle unknown entities or generic spawns?
-      // For now, if we can't create it, we skip it or maybe we need a
-      // GenericEntity? logic in previous map.cpp handled "entity_spawn" as
-      // generic. But we are unifying. If it's not in the list, we can't really
-      // use it? Warning?
       printf("Warning: Unknown entity classname: %s\n", ent.classname.c_str());
     }
   }
@@ -199,29 +220,26 @@ bool save_map(const std::string &filename, const map_t &map)
   }
 
   // Entities
-  for (const auto &placement : map.entities)
+  for (const auto &entry : map.entities)
   {
-    if (!placement.entity)
+    if (!entry.entity)
       continue;
 
-    auto &ent = placement.entity;
-
-    // Sync placement position back to entity before saving
-    ent->position = placement.position;
-
     map_entity_def_t def;
-    def.classname = get_classname_for_entity(ent.get());
+    def.classname = get_classname_for_entity(entry.entity.get());
 
     if (def.classname == "unknown")
       continue;
 
+    // Save uid
+    def.properties["_uid"] = std::to_string(entry.uid);
+
     // Serialize properties using Schema
-    const auto *schema = ent->get_schema();
+    const auto *schema = entry.entity->get_schema();
     if (schema)
     {
-      // We need to access the entity data.
-      // The schema offsets are relative to the entity pointer.
-      const uint8_t *base_ptr = reinterpret_cast<const uint8_t *>(ent.get());
+      const uint8_t *base_ptr =
+          reinterpret_cast<const uint8_t *>(entry.entity.get());
 
       for (const auto &field : schema->fields)
       {
@@ -233,12 +251,6 @@ bool save_map(const std::string &filename, const map_t &map)
         }
       }
     }
-
-    // TODO: What about properties NOT in the schema?
-    // The Entity::init_from_map only reads schema fields.
-    // If we want to preserve other properties (like target/targetname if they
-    // aren't in schema), we would need a generic property bag in Entity. For
-    // now, we assume Schema covers everything we need to save.
 
     entities.push_back(def);
   }

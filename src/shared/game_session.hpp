@@ -3,7 +3,6 @@
 #include "collision_detection.hpp"
 #include "entity_system.hpp"
 #include "map.hpp"
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,9 +39,6 @@ struct game_session_t
 // - Resets the entity system and populates it from map entities.
 // - Copies static geometry (AABBs).
 // - Builds the BVH for static geometry.
-// Helper to get bounds from generic entity if it is a supported static type
-std::optional<aabb_bounds_t> get_entity_bounds(const network::Entity *entity);
-
 void init_session_from_map(game_session_t &session, const map_t &map);
 
 } // namespace shared

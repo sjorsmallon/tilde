@@ -2,6 +2,7 @@
 
 #include "../../states/editor_gizmo.hpp"
 #include "../editor_tool.hpp"
+#include "../../../shared/map.hpp"
 #include <vector>
 
 namespace client
@@ -25,8 +26,8 @@ public:
   void on_draw_ui(editor_context_t &ctx) override;
 
 private:
-  int hovered_geo_index = -1;
-  std::vector<int> selected_geometry_indices;
+  shared::entity_uid_t hovered_uid = 0; // 0 = none
+  std::vector<shared::entity_uid_t> selected_uids;
 
   // Drag box selection
   bool is_dragging_box = false;

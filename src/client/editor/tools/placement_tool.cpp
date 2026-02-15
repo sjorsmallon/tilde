@@ -77,74 +77,25 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
     linalg::vec3 center = ghost_pos;
     center.y += 0.5f;
 
-    // Update the properties
-    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(new_ent.get()))
+    // Set position on the entity (all types use inherited Entity::position)
+    new_ent->position = center;
+
+    // Entity-specific setup
+    if (auto *player =
+            dynamic_cast<::network::Player_Entity *>(new_ent.get()))
     {
-      aabb->center = center;
-    }
-    else if (auto *wedge =
-                 dynamic_cast<::network::Wedge_Entity *>(new_ent.get()))
-    {
-      wedge->center = center;
-    }
-    else if (auto *player =
-                 dynamic_cast<::network::Player_Entity *>(new_ent.get()))
-    {
-      player->position = center;
-    }
-    else if (auto *mesh =
-                 dynamic_cast<::network::Static_Mesh_Entity *>(new_ent.get()))
-    {
-      mesh->position = center;
+      player->render.mesh_id = 2; // pyramid
+      player->render.is_wireframe = true;
     }
 
-    // 3. Add to map wrapped in entity_placement_t
+    // Add to map with undo recording
     {
-      // We need to ensure the transaction object lives until after the
-      // push_back.
-      client::Editor_Transaction transaction(ctx.transaction_system, ctx.map,
-                                             "Place Object");
+      Edit_Recorder edit(*ctx.map);
+      edit.add(new_ent);
+      if (auto txn = edit.take())
+        ctx.transaction_system->push(*txn);
+    }
 
-      shared::entity_placement_t placement;
-      placement.entity = new_ent;
-      placement.position = center;
-      placement.scale = {1, 1, 1}; // Default scale
-      placement.rotation = {0, 0, 0}; // Default rotation
-      placement.aabb.center = center; // Center AABB at entity position
-
-      // For Static_Mesh_Entity, compute AABB from mesh bounds
-      if (auto *mesh_ent =
-              dynamic_cast<::network::Static_Mesh_Entity *>(new_ent.get()))
-      {
-        placement.scale = mesh_ent->scale;
-        const char *mesh_path = assets::get_mesh_path(mesh_ent->asset_id);
-        if (mesh_path)
-        {
-          auto mesh_handle = assets::load_mesh(mesh_path);
-          if (mesh_handle.valid())
-          {
-            vec3f mesh_min, mesh_max;
-            if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min,
-                                            mesh_max))
-            {
-              vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
-              vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
-              vec3f s = placement.scale;
-              placement.aabb.center = center +
-                  vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
-                        mesh_center.z * s.z};
-              placement.aabb.half_extents =
-                  vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
-                        mesh_half.z * s.z};
-            }
-          }
-        }
-      }
-
-      ctx.map->entities.push_back(placement);
-    } // Transaction commits here.
-
-    // 4. Trigger update (because we are pushing back geometry?)
     *ctx.geometry_updated = true;
   }
 }
@@ -195,6 +146,8 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
             dynamic_cast<::network::Player_Entity *>(current_entity.get()))
     {
       player->health = 100;
+      player->render.mesh_id = 2;
+      player->render.is_wireframe = true;
     }
   }
   else if (e.scancode == SDL_SCANCODE_4)
@@ -204,6 +157,8 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     if (auto *weapon =
             dynamic_cast<::network::Weapon_Entity *>(current_entity.get()))
     {
+      weapon->render.mesh_id = 1;
+      weapon->render.is_wireframe = true;
     }
   }
   else if (e.scancode == SDL_SCANCODE_5)
@@ -212,7 +167,7 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     current_entity = shared::create_entity_by_classname("static_mesh_entity");
     if (auto *mesh = dynamic_cast<::network::Static_Mesh_Entity *>(current_entity.get()))
     {
-       mesh->asset_id = 1;
+       mesh->render.mesh_id = 1;
      }
   }
 }
@@ -225,65 +180,56 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
     linalg::vec3 center = ghost_pos;
     center.y += 0.5f;
 
-    // Draw based on current selection type
-    if (auto *aabb =
-            dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
+    // Try render component mesh first
+    bool drew_mesh = false;
+    if (const auto *rc = current_entity->get_component<network::render_component_t>())
     {
-      renderer.draw_wire_box(center, aabb->half_extents,
-                             0xFF00FFFF); // Magenta ghost
+      if (rc->mesh_id >= 0)
+      {
+        const char *mesh_path = assets::get_mesh_path(rc->mesh_id);
+        if (mesh_path)
+        {
+          auto mesh_handle = assets::load_mesh(mesh_path);
+          if (mesh_handle.valid())
+          {
+            renderer::DrawMeshWireframe(renderer.get_command_buffer(),
+                center, {1, 1, 1}, mesh_handle, 0xFF00FFFF);
+            drew_mesh = true;
+          }
+        }
+      }
     }
-    else if (auto *wedge =
-                 dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
+
+    // Fallback: entity-specific primitives
+    if (!drew_mesh)
     {
-      // Create a temporary wedge at the ghost position for drawing
-      // But wait, shared::shapes methods take `wedge_t`.
-      // Helper:
-      shared::wedge_t ghost_wedge;
-      ghost_wedge.center = center;
-      ghost_wedge.half_extents = wedge->half_extents;
-      ghost_wedge.orientation = wedge->orientation;
+      if (auto *aabb =
+              dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
+      {
+        renderer.draw_wire_box(center, aabb->half_extents, 0xFF00FFFF);
+      }
+      else if (auto *wedge =
+                   dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
+      {
+        shared::wedge_t ghost_wedge;
+        ghost_wedge.center = center;
+        ghost_wedge.half_extents = wedge->half_extents;
+        ghost_wedge.orientation = wedge->orientation;
 
-      auto points = shared::get_wedge_points(ghost_wedge);
+        auto points = shared::get_wedge_points(ghost_wedge);
 
-      // Draw wireframe for wedge manually since renderer might not support it
-      // directly
-      // Points are: 0,1,2,3 (Base), 4,5 (Top Edge)
-      // Base: 0-1, 1-2, 2-3, 3-0
-      renderer.draw_line(points[0], points[1], 0xFF00FFFF);
-      renderer.draw_line(points[1], points[2], 0xFF00FFFF);
-      renderer.draw_line(points[2], points[3], 0xFF00FFFF);
-      renderer.draw_line(points[3], points[0], 0xFF00FFFF);
+        renderer.draw_line(points[0], points[1], 0xFF00FFFF);
+        renderer.draw_line(points[1], points[2], 0xFF00FFFF);
+        renderer.draw_line(points[2], points[3], 0xFF00FFFF);
+        renderer.draw_line(points[3], points[0], 0xFF00FFFF);
 
-      // Top Edge: 4-5
-      renderer.draw_line(points[4], points[5], 0xFF00FFFF);
+        renderer.draw_line(points[4], points[5], 0xFF00FFFF);
 
-      renderer.draw_line(points[0], points[4], 0xFF00FFFF);
-      renderer.draw_line(points[1], points[5], 0xFF00FFFF);
-      renderer.draw_line(points[3], points[4], 0xFF00FFFF);
-      renderer.draw_line(points[2], points[5], 0xFF00FFFF);
-    }
-    else if (auto *player =
-                 dynamic_cast<::network::Player_Entity *>(current_entity.get()))
-    {
-      // Pyramid for player start!
-      // Base:
-      linalg::vec3 p0 = {center.x - 0.5f, center.y - 0.5f, center.z - 0.5f};
-      linalg::vec3 p1 = {center.x + 0.5f, center.y - 0.5f, center.z - 0.5f};
-      linalg::vec3 p2 = {center.x + 0.5f, center.y - 0.5f, center.z + 0.5f};
-      linalg::vec3 p3 = {center.x - 0.5f, center.y - 0.5f, center.z + 0.5f};
-
-      // Top:
-      linalg::vec3 p4 = {center.x, center.y + 0.5f, center.z};
-
-      renderer.draw_line(p0, p1, 0xFFFFFFFF);
-      renderer.draw_line(p1, p2, 0xFFFFFFFF);
-      renderer.draw_line(p2, p3, 0xFFFFFFFF);
-      renderer.draw_line(p3, p0, 0xFFFFFFFF);
-
-      renderer.draw_line(p0, p4, 0xFFFFFFFF);
-      renderer.draw_line(p1, p4, 0xFFFFFFFF);
-      renderer.draw_line(p2, p4, 0xFFFFFFFF);
-      renderer.draw_line(p3, p4, 0xFFFFFFFF);
+        renderer.draw_line(points[0], points[4], 0xFF00FFFF);
+        renderer.draw_line(points[1], points[5], 0xFF00FFFF);
+        renderer.draw_line(points[3], points[4], 0xFF00FFFF);
+        renderer.draw_line(points[2], points[5], 0xFF00FFFF);
+      }
     }
   }
 }

@@ -113,16 +113,10 @@ void ToolEditorState::on_enter()
   {
     map.name = "Tool Editor Map";
     auto floor_ent = std::make_shared<::network::AABB_Entity>();
-    floor_ent->center = {0, -2.0f, 0};
+    floor_ent->position = {0, -2.0f, 0};
     floor_ent->half_extents = {10.0f, 0.5f, 10.0f};
 
-    shared::entity_placement_t placement;
-    placement.entity = floor_ent;
-    placement.position = {0, -2.0f, 0};
-    placement.scale = {1, 1, 1};
-    placement.rotation = {0, 0, 0};
-
-    map.entities.push_back(placement);
+    map.add_entity(floor_ent);
     renderer::draw_announcement("Welcome to the Tool Editor!");
   }
 
@@ -617,82 +611,66 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw map elements
-  for (const auto &placement : map.entities)
+  for (const auto &entry : map.entities)
   {
-    if (!placement.entity)
+    const auto &ent = entry.entity;
+    if (!ent)
       continue;
 
-    auto *ent_ptr = placement.entity.get();
+    // Try to render via the entity's render component
+    const auto *rc = ent->get_component<network::render_component_t>();
 
-    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent_ptr))
+    if (rc && rc->visible && rc->mesh_id >= 0)
     {
-      // Use placement position instead of entity's center
-      linalg::vec3 center = placement.position;
-      renderer::DrawWireAABB(cmd, center - aabb->half_extents,
-                             center + aabb->half_extents, 0xFFFFFFFF);
-    }
-    else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent_ptr))
-    {
-      shared::wedge_t w;
-      w.center = placement.position; // Use placement position
-      w.half_extents = wedge->half_extents;
-      w.orientation = wedge->orientation;
-      renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
-    }
-    else if (auto *mesh = dynamic_cast<::network::Static_Mesh_Entity *>(ent_ptr))
-    {
-      // Map asset_id to mesh path
-      const char *mesh_path = assets::get_mesh_path(mesh->asset_id);
-
-      // Load and render mesh
+      const char *mesh_path = assets::get_mesh_path(rc->mesh_id);
       if (mesh_path)
       {
         auto mesh_handle = assets::load_mesh(mesh_path);
         if (mesh_handle.valid())
         {
-          // Use placement position, scale, and rotation
-          renderer::DrawMesh(cmd, placement.position, placement.scale,
-                             mesh_handle, 0xFF00FFFF, placement.rotation);
+          if (rc->is_wireframe)
+            renderer::DrawMeshWireframe(cmd, ent->position, rc->scale,
+                                        mesh_handle, 0xFFFFFFFF, ent->orientation);
+          else
+            renderer::DrawMesh(cmd, ent->position, rc->scale,
+                               mesh_handle, 0xFFFFFFFF, ent->orientation);
+          continue;
         }
-        else
-        {
-          // Fallback to AABB if mesh fails to load
-          linalg::vec3 min = placement.position - placement.scale;
-          linalg::vec3 max = placement.position + placement.scale;
-          renderer::DrawWireAABB(cmd, min, max, 0xFF00FFFF);
-        }
-      }
-      else
-      {
-        // Fallback to AABB if no asset path mapped
-        linalg::vec3 min = placement.position - placement.scale;
-        linalg::vec3 max = placement.position + placement.scale;
-        renderer::DrawWireAABB(cmd, min, max, 0xFF00FFFF);
       }
     }
-    else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent_ptr))
+
+    // Fallback: entity-specific primitive rendering
+    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
     {
-      linalg::vec3 center = placement.position; // Use placement position
-      // Pyramid for player start!
-      // Base:
-      linalg::vec3 p0 = {center.x - 0.5f, center.y - 0.5f, center.z - 0.5f};
-      linalg::vec3 p1 = {center.x + 0.5f, center.y - 0.5f, center.z - 0.5f};
-      linalg::vec3 p2 = {center.x + 0.5f, center.y - 0.5f, center.z + 0.5f};
-      linalg::vec3 p3 = {center.x - 0.5f, center.y - 0.5f, center.z + 0.5f};
-
-      // Top:
-      linalg::vec3 p4 = {center.x, center.y + 0.5f, center.z};
-
-      uint32_t color = 0xFFFFFFFF;
-      renderer::DrawLine(cmd, p0, p1, color);
-      renderer::DrawLine(cmd, p1, p2, color);
-      renderer::DrawLine(cmd, p2, p3, color);
-      renderer::DrawLine(cmd, p3, p0, color);
-
-      renderer::DrawLine(cmd, p0, p4, color);
-      renderer::DrawLine(cmd, p1, p4, color);
-      renderer::DrawLine(cmd, p2, p4, color);
-      renderer::DrawLine(cmd, p3, p4, color);
+      renderer::DrawWireAABB(cmd, aabb->position - aabb->half_extents,
+                             aabb->position + aabb->half_extents, 0xFFFFFFFF);
+    }
+    else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
+    {
+      shared::wedge_t w;
+      w.center = wedge->position;
+      w.half_extents = wedge->half_extents;
+      w.orientation = wedge->orientation;
+      renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
+    }
+    else if (dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
+    {
+      // No mesh in render component — draw placeholder AABB
+      auto bounds = shared::compute_entity_bounds(ent.get());
+      renderer::DrawWireAABB(cmd, bounds.min, bounds.max, 0xFF00FFFF);
+    }
+    else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent.get()))
+    {
+      const char *mesh_path = assets::get_mesh_path(2); // pyramid
+      if (mesh_path)
+      {
+        auto mesh_handle = assets::load_mesh(mesh_path);
+        if (mesh_handle.valid())
+        {
+          renderer::DrawMeshWireframe(cmd, ent->position, {1, 1, 1},
+                                      mesh_handle, 0xFFFFFFFF, ent->orientation);
+        }
+      }
     }
   }
 

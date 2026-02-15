@@ -38,7 +38,7 @@ void init()
 
 void switch_to(GameStateKind kind)
 {
-  log_terminal(std::format("Switching to state: {}", (int)kind));
+  log_terminal("Switching to state: {}", to_string(kind));
   IGameState *next_state = g_states[kind].get();
   if (g_active_state)
   {

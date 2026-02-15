@@ -8,24 +8,24 @@ namespace client
 {
 
 // Builds a BVH directly from map entities for editor picking.
-// The Collision_Id index stores the map entity index directly.
+// The Collision_Id index stores the entity uid.
 inline Bounding_Volume_Hierarchy
 build_editor_bvh(const shared::map_t &map)
 {
   std::vector<BVH_Input> inputs;
   inputs.reserve(map.entities.size());
 
-  for (size_t i = 0; i < map.entities.size(); ++i)
+  for (const auto &entry : map.entities)
   {
-    if (!map.entities[i].entity)
+    if (!entry.entity)
       continue;
 
-    auto bounds = shared::get_bounds(map.entities[i].aabb);
+    auto bounds = shared::compute_entity_bounds(entry.entity.get());
 
     BVH_Input input;
     input.aabb.min = bounds.min;
     input.aabb.max = bounds.max;
-    input.id = {Collision_Id::Type::Static_Geometry, (uint32_t)i};
+    input.id = {Collision_Id::Type::Static_Geometry, entry.uid};
     inputs.push_back(input);
   }
 

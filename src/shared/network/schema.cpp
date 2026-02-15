@@ -79,7 +79,7 @@ bool parse_string_to_field(const std::string &value, Field_Type type,
   }
   case Field_Type::RenderComponent:
   {
-    // Format: mesh_id|mesh_path|visible|ox oy oz|sx sy sz|rx ry rz
+    // Format: mesh_id|mesh_path|visible|is_wireframe|ox oy oz|sx sy sz|rx ry rz
     auto *rc = static_cast<render_component_t *>(out_ptr);
     std::stringstream ss(value);
     std::string token;
@@ -99,6 +99,11 @@ bool parse_string_to_field(const std::string &value, Field_Type type,
     if (!std::getline(ss, token, '|'))
       return false;
     rc->visible = (token == "1" || token == "true");
+
+    // is_wireframe
+    if (!std::getline(ss, token, '|'))
+      return false;
+    rc->is_wireframe = (token == "1" || token == "true");
 
     // offset (3 floats space-separated)
     if (!std::getline(ss, token, '|'))
@@ -160,12 +165,13 @@ bool serialize_field_to_string(const void *in_ptr, Field_Type type,
   }
   case Field_Type::RenderComponent:
   {
-    // Format: mesh_id|mesh_path|visible|ox oy oz|sx sy sz|rx ry rz
+    // Format: mesh_id|mesh_path|visible|is_wireframe|ox oy oz|sx sy sz|rx ry rz
     auto *rc = static_cast<const render_component_t *>(in_ptr);
     std::ostringstream os;
     os << rc->mesh_id << "|"
        << std::string(rc->mesh_path.c_str(), rc->mesh_path.length) << "|"
        << (rc->visible ? "true" : "false") << "|"
+       << (rc->is_wireframe ? "true" : "false") << "|"
        << rc->offset.x << " " << rc->offset.y << " " << rc->offset.z << "|"
        << rc->scale.x << " " << rc->scale.y << " " << rc->scale.z << "|"
        << rc->rotation.x << " " << rc->rotation.y << " " << rc->rotation.z;

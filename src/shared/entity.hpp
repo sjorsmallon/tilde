@@ -33,8 +33,35 @@ public:
 
   virtual ~Entity() = default;
 
+  // Register the Entity base class schema (called on-demand by derived schemas)
+  static void register_schema();
+
   // Macro required in every derived class to register schema
   virtual const Class_Schema *get_schema() const = 0;
+
+  // Look up a component by type using the schema system.
+  // Returns nullptr if the entity doesn't have a field of type T.
+  template <typename T>
+  const T *get_component() const
+  {
+    const Class_Schema *schema = get_schema();
+    if (!schema) return nullptr;
+    constexpr Field_Type expected = Schema_Type_Info<T>::type;
+    for (const auto &field : schema->fields)
+    {
+      if (field.type == expected)
+        return reinterpret_cast<const T *>(
+            reinterpret_cast<const uint8_t *>(this) + field.offset);
+    }
+    return nullptr;
+  }
+
+  template <typename T>
+  T *get_component()
+  {
+    return const_cast<T *>(
+        const_cast<const Entity *>(this)->get_component<T>());
+  }
 
   virtual void init_from_map(const std::map<std::string, std::string> &props)
   {
@@ -46,9 +73,15 @@ public:
 
     for (const auto &[key, value] : props)
     {
+      // Backward compat: old maps store "center" for AABB/Wedge entities,
+      // now consolidated into the inherited "position" field.
+      std::string field_name = key;
+      if (key == "center" && !props.count("position"))
+        field_name = "position";
+
       for (const auto &field : schema->fields)
       {
-        if (field.name == key)
+        if (field.name == field_name)
         {
           parse_string_to_field(value, field.type, current_base + field.offset);
         }

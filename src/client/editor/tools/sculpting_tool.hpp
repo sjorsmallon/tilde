@@ -1,6 +1,9 @@
 #pragma once
 
 #include "../editor_tool.hpp"
+#include "../../../shared/map.hpp"
+#include "../transaction_system.hpp"
+#include <optional>
 
 namespace client
 {
@@ -21,18 +24,16 @@ public:
                        overlay_renderer_t &renderer) override;
 
 private:
-  int hovered_geo_index = -1;
+  shared::entity_uid_t hovered_uid = 0;
   int hovered_face = -1; // 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
 
   bool dragging = false;
-  int dragging_geo_index = -1;
+  shared::entity_uid_t dragging_uid = 0;
   int dragging_face = -1;
   viewport_state_t last_view;
   linalg::vec3 drag_origin_point;
-  // We only support AABB sculpting for now, but we store the variant to be safe
-  // or copy of AABB? Storing the full geometry is safer if we revert.
   shared::aabb_t original_aabb;
-  std::map<std::string, std::string> before_properties;
+  std::optional<Edit_Recorder> active_edit;
 };
 
 } // namespace client

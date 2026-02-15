@@ -1,8 +1,9 @@
 #pragma once
 
-#include "../shared/map.hpp"
+#include "../editor/transaction_system.hpp"
 #include "../shared/shapes.hpp"
 #include "linalg.hpp"
+#include <optional>
 #include <vulkan/vulkan.h> // For VkCommandBuffer
 
 namespace client
@@ -63,17 +64,14 @@ bool update_reshape_gizmo(reshape_gizmo_t &gizmo, const linalg::ray_t &ray,
 
 } // namespace client
 
-// Forward validations
+// Forward declarations
 namespace shared
 {
-struct map_t;
 struct aabb_bounds_t;
 } // namespace shared
 
 namespace client
 {
-
-class Transaction_System;
 
 class Editor_Gizmo
 {
@@ -87,10 +85,9 @@ public:
   };
 
   Editor_Gizmo() = default;
-  ~Editor_Gizmo(); // explicit destructor for unique_ptr PIMPL
 
   void start_interaction(Transaction_System *sys, shared::map_t *map,
-                         int geo_index);
+                         shared::entity_uid_t uid);
   void end_interaction();
   bool is_interacting() const;
   bool is_hovered() const;
@@ -100,8 +97,6 @@ public:
   void draw(VkCommandBuffer cmd);
 
   // Manipulate the gizmo and the underlying object
-  // output_modified: set to true if the object changed
-  // valid_ray/ray: input ray
   void handle_input(const linalg::ray_t &ray, bool is_mouse_down,
                     const linalg::vec3 &cam_pos);
 
@@ -120,10 +115,11 @@ private:
       Gizmo_Mode::Reshape; // Default to reshape for now since that was behavior
 
   // Transaction State
-  std::unique_ptr<class Editor_Transaction> active_transaction;
+  Transaction_System *transaction_system = nullptr;
+  std::optional<Edit_Recorder> active_edit;
 
   shared::map_t *target_map = nullptr;
-  int target_index = -1;
+  shared::entity_uid_t target_uid = 0;
 
   // Dragging state helper
   linalg::vec3 drag_start_point;

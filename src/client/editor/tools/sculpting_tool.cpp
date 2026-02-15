@@ -14,14 +14,12 @@ static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
                                        const shared::aabb_t &aabb, float &out_t,
                                        int &out_face)
 {
-  // Slab method again but tracking which face
   linalg::vec3 min = aabb.center - aabb.half_extents;
   linalg::vec3 max = aabb.center + aabb.half_extents;
 
   float tmin = 0.0f;
   float tmax = std::numeric_limits<float>::max();
 
-  // Check X slabs
   if (std::abs(ray_dir.x) < 1e-6f)
   {
     if (ray_origin.x < min.x || ray_origin.x > max.x)
@@ -34,17 +32,14 @@ static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
     float t2 = (max.x - ray_origin.x) * ood;
     if (t1 > t2)
       std::swap(t1, t2);
-
     if (t1 > tmin)
       tmin = t1;
     if (t2 < tmax)
       tmax = t2;
-
     if (tmin > tmax)
       return false;
   }
 
-  // Check Y slabs
   if (std::abs(ray_dir.y) < 1e-6f)
   {
     if (ray_origin.y < min.y || ray_origin.y > max.y)
@@ -57,17 +52,14 @@ static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
     float t2 = (max.y - ray_origin.y) * ood;
     if (t1 > t2)
       std::swap(t1, t2);
-
     if (t1 > tmin)
       tmin = t1;
     if (t2 < tmax)
       tmax = t2;
-
     if (tmin > tmax)
       return false;
   }
 
-  // Check Z slabs
   if (std::abs(ray_dir.z) < 1e-6f)
   {
     if (ray_origin.z < min.z || ray_origin.z > max.z)
@@ -80,36 +72,33 @@ static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
     float t2 = (max.z - ray_origin.z) * ood;
     if (t1 > t2)
       std::swap(t1, t2);
-
     if (t1 > tmin)
       tmin = t1;
     if (t2 < tmax)
       tmax = t2;
-
     if (tmin > tmax)
       return false;
   }
 
   out_t = tmin;
 
-  // Determine face
   linalg::vec3 p = ray_origin + ray_dir * tmin;
   const float eps = 1e-3f;
 
   if (std::abs(p.x - max.x) < eps)
-    out_face = 0; // +X
+    out_face = 0;
   else if (std::abs(p.x - min.x) < eps)
-    out_face = 1; // -X
+    out_face = 1;
   else if (std::abs(p.y - max.y) < eps)
-    out_face = 2; // +Y
+    out_face = 2;
   else if (std::abs(p.y - min.y) < eps)
-    out_face = 3; // -Y
+    out_face = 3;
   else if (std::abs(p.z - max.z) < eps)
-    out_face = 4; // +Z
+    out_face = 4;
   else if (std::abs(p.z - min.z) < eps)
-    out_face = 5; // -Z
+    out_face = 5;
   else
-    return false; // Inside?
+    return false;
 
   return true;
 }
@@ -117,16 +106,20 @@ static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
 void Sculpting_Tool::on_enable(editor_context_t &ctx)
 {
   dragging = false;
-  hovered_geo_index = -1;
+  hovered_uid = 0;
 }
 
 void Sculpting_Tool::on_disable(editor_context_t &ctx)
 {
-  if (dragging && dragging_geo_index != -1 && ctx.map && ctx.transaction_system)
+  if (dragging && dragging_uid != 0 && ctx.map && ctx.transaction_system)
   {
-    // If disabled while dragging, maybe revert or commit?
-    // For safety, let's just reset flag. Logic of commit is complex without end
-    // event.
+    if (active_edit)
+    {
+      active_edit->finish(dragging_uid);
+      if (auto txn = active_edit->take())
+        ctx.transaction_system->push(*txn);
+      active_edit.reset();
+    }
   }
   dragging = false;
 }
@@ -142,31 +135,37 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
   if (!ctx.map)
     return;
 
-  // Hit test
-  float closest_t = std::numeric_limits<float>::max();
-  hovered_geo_index = -1;
+  hovered_uid = 0;
   hovered_face = -1;
 
-  for (size_t i = 0; i < ctx.map->entities.size(); ++i)
+  if (ctx.bvh)
   {
-    auto &placement = ctx.map->entities[i];
-    if (auto *aabb_ent =
-            dynamic_cast<::network::AABB_Entity *>(placement.entity.get()))
+    Ray_Hit hit;
+    if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
+                          hit))
     {
-      shared::aabb_t aabb;
-      aabb.center = aabb_ent->center;
-      aabb.half_extents = aabb_ent->half_extents;
-
-      float t;
-      int face;
-      if (ray_aabb_face_intersection(view.mouse_ray.origin, view.mouse_ray.dir,
-                                     aabb, t, face))
+      if (hit.id.type == Collision_Id::Type::Static_Geometry)
       {
-        if (t < closest_t)
+        shared::entity_uid_t uid = hit.id.index;
+        auto *entry = ctx.map->find_by_uid(uid);
+        if (entry && entry->entity)
         {
-          closest_t = t;
-          hovered_geo_index = (int)i;
-          hovered_face = face;
+          if (auto *aabb_ent =
+                  dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
+          {
+            shared::aabb_t aabb;
+            aabb.center = aabb_ent->position;
+            aabb.half_extents = aabb_ent->half_extents;
+
+            float t;
+            int face;
+            if (ray_aabb_face_intersection(view.mouse_ray.origin,
+                                           view.mouse_ray.dir, aabb, t, face))
+            {
+              hovered_uid = uid;
+              hovered_face = face;
+            }
+          }
         }
       }
     }
@@ -176,24 +175,23 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
 void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
                                    const mouse_event_t &e)
 {
-  if (e.button == 1 && hovered_geo_index != -1 && ctx.map)
+  if (e.button == 1 && hovered_uid != 0 && ctx.map)
   {
     dragging = true;
-    dragging_geo_index = hovered_geo_index;
+    dragging_uid = hovered_uid;
     dragging_face = hovered_face;
 
-    // Store original state for transaction
-    if (dragging_geo_index >= 0 &&
-        dragging_geo_index < (int)ctx.map->entities.size())
+    auto *entry = ctx.map->find_by_uid(dragging_uid);
+    if (entry && entry->entity)
     {
-      auto &placement = ctx.map->entities[dragging_geo_index];
       if (auto *aabb_ent =
-              dynamic_cast<::network::AABB_Entity *>(placement.entity.get()))
+              dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
       {
-        original_aabb.center = aabb_ent->center;
+        original_aabb.center = aabb_ent->position;
         original_aabb.half_extents = aabb_ent->half_extents;
 
-        before_properties = placement.entity->get_all_properties();
+        active_edit.emplace(*ctx.map);
+        active_edit->track(dragging_uid);
       }
     }
   }
@@ -202,25 +200,20 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
 void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
                                    const mouse_event_t &e)
 {
-  if (dragging && dragging_geo_index != -1 && ctx.map)
+  if (dragging && dragging_uid != 0 && ctx.map)
   {
-    auto &placement = ctx.map->entities[dragging_geo_index];
+    auto *entry = ctx.map->find_by_uid(dragging_uid);
+    if (!entry || !entry->entity)
+      return;
+
     if (auto *aabb_ent =
-            dynamic_cast<::network::AABB_Entity *>(placement.entity.get()))
+            dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
     {
       using namespace linalg;
-      // We modify the entity directly for visual feedback.
-      // But we base calculations on current state to implement incremental
-      // update? Or absolute? Original logic was using 'original_geometry' to
-      // commit? No, original logic was modifying `geo.data` directly in map.
-      // And `original_geometry` was purely for Undo system to know "old state".
 
-      // So here we just modify `aabb_ent`.
-
-      vec3 current_center = aabb_ent->center;
+      vec3 current_center = aabb_ent->position;
       vec3 current_half_extents = aabb_ent->half_extents;
 
-      // Determine face normal and center based on CURRENT shape
       vec3 normal = {0, 0, 0};
       vec3 center_offset = {0, 0, 0};
       switch (dragging_face)
@@ -254,7 +247,6 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
       vec3 face_center_world = current_center + center_offset;
       vec3 face_end_world = face_center_world + normal;
 
-      // Project to Screen
       vec3 v0 = world_to_view(
           face_center_world,
           {last_view.camera.x, last_view.camera.y, last_view.camera.z},
@@ -297,17 +289,17 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           if (dragging_face < 2)
           {
             ext = &aabb_ent->half_extents.x;
-            cen = &aabb_ent->center.x;
+            cen = &aabb_ent->position.x;
           }
           else if (dragging_face < 4)
           {
             ext = &aabb_ent->half_extents.y;
-            cen = &aabb_ent->center.y;
+            cen = &aabb_ent->position.y;
           }
           else
           {
             ext = &aabb_ent->half_extents.z;
-            cen = &aabb_ent->center.z;
+            cen = &aabb_ent->position.z;
           }
 
           *ext += world_delta * 0.5f;
@@ -316,7 +308,6 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           else
             *cen -= world_delta * 0.5f;
 
-          // Min size
           if (*ext < 0.1f)
           {
             float diff = 0.1f - *ext;
@@ -334,19 +325,19 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 
 void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 {
-  if (dragging && dragging_geo_index != -1 && ctx.map && ctx.transaction_system)
+  if (dragging && dragging_uid != 0 && ctx.map && ctx.transaction_system)
   {
-    if (dragging_geo_index >= 0 &&
-        dragging_geo_index < (int)ctx.map->entities.size())
+    if (active_edit)
     {
-      auto &placement = ctx.map->entities[dragging_geo_index];
-      ctx.transaction_system->commit_modification(
-          dragging_geo_index, placement.entity.get(), before_properties);
+      active_edit->finish(dragging_uid);
+      if (auto txn = active_edit->take())
+        ctx.transaction_system->push(*txn);
+      active_edit.reset();
     }
   }
 
   dragging = false;
-  dragging_geo_index = -1;
+  dragging_uid = 0;
 }
 
 void Sculpting_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}
@@ -354,20 +345,18 @@ void Sculpting_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}
 void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
                                      overlay_renderer_t &renderer)
 {
-  if (hovered_geo_index != -1 && !dragging && ctx.map)
+  if (hovered_uid != 0 && !dragging && ctx.map)
   {
-    if (hovered_geo_index >= 0 &&
-        hovered_geo_index < (int)ctx.map->entities.size())
+    auto *entry = ctx.map->find_by_uid(hovered_uid);
+    if (entry && entry->entity)
     {
-      auto &placement = ctx.map->entities[hovered_geo_index];
       if (auto *aabb_ent =
-              dynamic_cast<::network::AABB_Entity *>(placement.entity.get()))
+              dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
       {
         shared::aabb_t aabb;
-        aabb.center = aabb_ent->center;
+        aabb.center = aabb_ent->position;
         aabb.half_extents = aabb_ent->half_extents;
 
-        // Draw face highlight
         linalg::vec3 p = aabb.center;
         linalg::vec3 e = aabb.half_extents;
         linalg::vec3 size = e;
@@ -400,7 +389,7 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
           break;
         }
 
-        renderer.draw_wire_box(p, size, 0xFF0000FF); // Red Highlight
+        renderer.draw_wire_box(p, size, 0xFF0000FF);
       }
     }
   }

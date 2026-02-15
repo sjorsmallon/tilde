@@ -328,35 +328,31 @@ bool update_reshape_gizmo(reshape_gizmo_t &gizmo, const linalg::ray_t &ray,
 
 // Editor_Gizmo Implementation
 
-Editor_Gizmo::~Editor_Gizmo() = default;
-
 void Editor_Gizmo::start_interaction(Transaction_System *sys,
-                                     shared::map_t *map, int geo_index)
+                                     shared::map_t *map,
+                                     shared::entity_uid_t uid)
 {
-  if (!map || geo_index < 0 || geo_index >= (int)map->entities.size())
+  if (!map || uid == 0)
+    return;
+
+  auto *entry = map->find_by_uid(uid);
+  if (!entry || !entry->entity)
     return;
 
   target_map = map;
-  target_index = geo_index;
+  target_uid = uid;
+  transaction_system = sys;
 
-  // Start RAII Transaction
-  // This snapshots the CURRENT state of the geometry as "Before"
-  active_transaction =
-      std::make_unique<Editor_Transaction>(sys, target_map, target_index);
-
-  // Store original for drag calculations
-  auto &placement = target_map->entities[target_index];
-  auto &ent = placement.entity;
-
-  active_transaction =
-      std::make_unique<Editor_Transaction>(sys, target_map, target_index);
+  // Start Edit_Recorder — snapshot entity before modification
+  active_edit.emplace(*target_map);
+  active_edit->track(target_uid);
 
   // Store original for drag calculations
-  // auto &ent = target_map->entities[target_index]; // Redundant
+  auto &ent = entry->entity;
 
   if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
   {
-    original_transform.position = aabb->center;
+    original_transform.position = aabb->position;
     original_transform.scale =
         aabb->half_extents; // Store half-extents as scale
     original_transform.orientation = {0, 0, 0,
@@ -364,7 +360,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   }
   else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
   {
-    original_transform.position = wedge->center;
+    original_transform.position = wedge->position;
     original_transform.scale = wedge->half_extents;
     original_transform.orientation = {0, 0, 0, 1}; // TODO: Wedge rotation
   }
@@ -372,13 +368,12 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
                dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
   {
     original_transform.position = mesh->position;
-    original_transform.scale = mesh->scale;
-    // initial rotation?
+    original_transform.scale = mesh->render.scale;
   }
   else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent.get()))
   {
     original_transform.position = player->position;
-    original_transform.scale = {1, 1, 1}; // Default scale
+    original_transform.scale = {1, 1, 1};
     original_transform.orientation = {0, 0, 0, 1};
   }
 
@@ -387,21 +382,30 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   transform_state.rotation = ent->orientation;
   original_transform.orientation = {ent->orientation.x, ent->orientation.y,
                                     ent->orientation.z, 0};
-  transform_state.size = 2.0f; // Reasonable default
+  transform_state.size = 2.0f;
 }
 
 void Editor_Gizmo::end_interaction()
 {
-  // Destroying the transaction object triggers the commit process
-  active_transaction.reset();
+  if (active_edit)
+  {
+    active_edit->finish(target_uid);
+    if (transaction_system)
+    {
+      if (auto txn = active_edit->take())
+        transaction_system->push(*txn);
+    }
+    active_edit.reset();
+  }
 
   target_map = nullptr;
-  target_index = -1;
+  target_uid = 0;
+  transaction_system = nullptr;
 }
 
 bool Editor_Gizmo::is_interacting() const
 {
-  return active_transaction != nullptr;
+  return active_edit.has_value();
 }
 
 bool Editor_Gizmo::is_hovered() const
@@ -433,13 +437,13 @@ void Editor_Gizmo::update(const linalg::ray_t &ray, bool is_mouse_down)
   // handles are on faces. Let's check Transform first.
 
   bool hit_transform = hit_test_transform_gizmo(ray, transform_state);
-  if (!hit_transform)
+  if (!hit_transform &&
+      (current_mode == Gizmo_Mode::Reshape || current_mode == Gizmo_Mode::Unified))
   {
     hit_test_reshape_gizmo(ray, reshape_state);
   }
   else
   {
-    // If transform hit, clear reshape hover
     reshape_state.hovered_handle_index = -1;
   }
 }
@@ -459,7 +463,7 @@ void Editor_Gizmo::draw(VkCommandBuffer cmd)
 void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
                                 const linalg::vec3 &cam_pos)
 {
-  if (!target_map || target_index == -1)
+  if (!target_map || target_uid == 0)
     return;
 
   if (reshape_state.dragging_handle_index != -1)
@@ -522,36 +526,32 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
       float new_center_val = (new_min_val + new_max_val) * 0.5f;
       float new_half_val = (new_max_val - new_min_val) * 0.5f;
 
-      auto &placement = target_map->entities[target_index];
-      auto &ent = placement.entity;
+      auto *_entry = target_map->find_by_uid(target_uid);
+      if (!_entry) return;
+      auto &ent = _entry->entity;
       if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
       {
         if (axis == 0)
         {
-          aabb->center.x = new_center_val;
+          aabb->position.x = new_center_val;
           aabb->half_extents.x = new_half_val;
         }
         else if (axis == 1)
         {
-          aabb->center.y = new_center_val;
+          aabb->position.y = new_center_val;
           aabb->half_extents.y = new_half_val;
         }
         else
         {
-          aabb->center.z = new_center_val;
+          aabb->position.z = new_center_val;
           aabb->half_extents.z = new_half_val;
         }
 
-        reshape_state.aabb.center = aabb->center;
+        reshape_state.aabb.center = aabb->position;
         reshape_state.aabb.half_extents = aabb->half_extents;
 
         // Also update transform gizmo
-        transform_state.position = aabb->center;
-
-        // Sync placement
-        placement.position = aabb->center;
-        placement.aabb.center = aabb->center;
-        placement.aabb.half_extents = aabb->half_extents;
+        transform_state.position = aabb->position;
       }
     }
   }
@@ -601,39 +601,11 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         new_pos.y = std::round(new_pos.y * 2.0f) * 0.5f;
         new_pos.z = std::round(new_pos.z * 2.0f) * 0.5f;
 
-        auto &placement = target_map->entities[target_index];
-        auto &ent = placement.entity;
-        if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
-        {
-          aabb->center = new_pos;
-          reshape_state.aabb.center = new_pos;
-          transform_state.position = new_pos;
-        }
-        else if (auto *wedge =
-                     dynamic_cast<::network::Wedge_Entity *>(ent.get()))
-        {
-          wedge->center = new_pos;
-          reshape_state.aabb.center = new_pos;
-          transform_state.position = new_pos;
-        }
-        else if (auto *mesh =
-                     dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
-        {
-          mesh->position = new_pos;
-          reshape_state.aabb.center = new_pos;
-          transform_state.position = new_pos;
-        }
-        else if (auto *player =
-                     dynamic_cast<::network::Player_Entity *>(ent.get()))
-        {
-          player->position = new_pos;
-          reshape_state.aabb.center = new_pos;
-          transform_state.position = new_pos;
-        }
-
-        // Sync placement position and aabb
-        placement.position = new_pos;
-        placement.aabb.center = new_pos;
+        auto *te = target_map->find_by_uid(target_uid);
+        if (!te) return;
+        te->entity->position = new_pos;
+        reshape_state.aabb.center = new_pos;
+        transform_state.position = new_pos;
       }
     }
     else if (transform_state.dragging_ring_index != -1)
@@ -695,8 +667,9 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         // So primarily axis 1 (Y).
 
         // Apply to any entity's base orientation (euler degrees)
-        auto &placement = target_map->entities[target_index];
-        auto &ent = placement.entity;
+        auto *re = target_map->find_by_uid(target_uid);
+        if (!re) return;
+        auto &ent = re->entity;
         float delta_degrees = delta_angle * (180.0f / 3.14159f);
         // Snap to 15-degree increments
         delta_degrees = std::round(delta_degrees / 15.0f) * 15.0f;
@@ -707,9 +680,6 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         new_orient[axis] = new_orient[axis] + delta_degrees;
         ent->orientation = new_orient;
         transform_state.rotation = new_orient;
-
-        // Sync placement rotation
-        placement.rotation = new_orient;
       }
     }
   }

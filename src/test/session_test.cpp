@@ -20,16 +20,10 @@ int main()
   auto aabb_ent = shared::create_entity_by_classname("aabb_entity");
   if (auto *e = dynamic_cast<network::AABB_Entity *>(aabb_ent.get()))
   {
-    e->center = {0, 0, 0};
+    e->position = {0, 0, 0};
     e->half_extents = {10, 10, 10};
   }
-
-  shared::entity_placement_t aabb_placement;
-  aabb_placement.entity = aabb_ent;
-  aabb_placement.position = {0, 0, 0};
-  aabb_placement.scale = {1, 1, 1};
-  aabb_placement.rotation = {0, 0, 0};
-  test_map.entities.push_back(aabb_placement);
+  test_map.add_entity(aabb_ent);
 
   // Add a Player Entity Spawn
   auto player_ent = shared::create_entity_by_classname("player_start");
@@ -37,17 +31,8 @@ int main()
   {
     p->position = {5, 5, 0};
     p->view_angle_yaw = 90.0f;
-    // Properties are handled by entity serialization/deserialization usually,
-    // but here we set values directly on the object which mimics the result of
-    // loading.
   }
-
-  shared::entity_placement_t player_placement;
-  player_placement.entity = player_ent;
-  player_placement.position = {5, 5, 0};
-  player_placement.scale = {1, 1, 1};
-  player_placement.rotation = {0, 0, 0};
-  test_map.entities.push_back(player_placement);
+  test_map.add_entity(player_ent);
 
   // 2. Initialize Session
   game_session_t session;

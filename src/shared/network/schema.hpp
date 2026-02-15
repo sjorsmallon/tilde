@@ -298,6 +298,7 @@ public:                                                                        \
 #define _SCHEMA_INHERIT_FIELDS_1(ClassName)
 #define _SCHEMA_INHERIT_FIELDS_2(ClassName, ParentClass)                       \
   {                                                                            \
+    ParentClass::register_schema();                                            \
     const auto *parent_schema =                                                \
         network::Schema_Registry::get().get_schema(#ParentClass);              \
     if (parent_schema)                                                         \

@@ -63,6 +63,7 @@ struct render_component_t
   int32 mesh_id = -1;            // integer mesh asset handle (-1 = none)
   pascal_string mesh_path;       // human-readable asset path
   bool visible = true;
+  bool is_wireframe = false;    // render as wireframe instead of solid
   vec3f offset = {0, 0, 0};     // local position offset from entity origin
   vec3f scale = {1, 1, 1};      // local scale
   vec3f rotation = {0, 0, 0};   // local rotation (Euler, degrees)

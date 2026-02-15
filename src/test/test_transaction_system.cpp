@@ -17,50 +17,52 @@ void test_add_remove()
   // Initial state
   assert(map.entities.empty());
 
-  // 1. Add
+  // 1. Add via Edit_Recorder
+  entity_uid_t added_uid;
   {
-    Editor_Transaction t(&ts, &map, "Add AABB");
-
+    Edit_Recorder edit(map);
     auto ent = std::make_shared<AABB_Entity>();
-    ent->center = {0, 0, 0};
+    ent->position = {0, 0, 0};
     ent->half_extents = {1, 1, 1};
-
-    shared::entity_placement_t placement;
-    placement.entity = ent;
-    placement.position = {0, 0, 0};
-    placement.scale = {1, 1, 1};
-    placement.rotation = {0, 0, 0};
-    map.entities.push_back(placement);
-  } // Commit
+    added_uid = edit.add(ent);
+    auto txn = edit.take();
+    assert(txn.has_value());
+    ts.push(*txn);
+  }
 
   assert(map.entities.size() == 1);
+  assert(map.find_by_uid(added_uid) != nullptr);
   assert(ts.can_undo());
   assert(!ts.can_redo());
 
   // 2. Undo Add
   ts.undo(map);
   assert(map.entities.empty());
+  assert(map.find_by_uid(added_uid) == nullptr);
   assert(!ts.can_undo());
   assert(ts.can_redo());
 
   // 3. Redo Add
   ts.redo(map);
   assert(map.entities.size() == 1);
+  assert(map.find_by_uid(added_uid) != nullptr);
 
-  // 4. Remove
+  // 4. Remove via Edit_Recorder
   {
-    auto placement = map.entities[0];
-    ts.commit_remove(0, placement.entity.get(), "aabb_entity");
-    map.entities.erase(map.entities.begin());
+    Edit_Recorder edit(map);
+    edit.remove(added_uid);
+    auto txn = edit.take();
+    assert(txn.has_value());
+    ts.push(*txn);
   }
 
   assert(map.entities.empty());
   assert(ts.can_undo());
 
-  // 5. Undo Remove
+  // 5. Undo Remove — entity comes back with same uid
   ts.undo(map);
   assert(map.entities.size() == 1);
-  // Check if restored entity has correct properties would be good too
+  assert(map.find_by_uid(added_uid) != nullptr);
 
   // 6. Redo Remove
   ts.redo(map);
@@ -77,49 +79,107 @@ void test_modify()
 
   // Setup
   auto ent = std::make_shared<AABB_Entity>();
-  ent->center = {0, 0, 0};
+  ent->position = {0, 0, 0};
+  entity_uid_t uid = map.add_entity(ent);
 
-  shared::entity_placement_t placement;
-  placement.entity = ent;
-  placement.position = {0, 0, 0};
-  placement.scale = {1, 1, 1};
-  placement.rotation = {0, 0, 0};
-  map.entities.push_back(placement);
-
-  // 1. Modify
+  // 1. Modify via Edit_Recorder
   {
-    Editor_Transaction t(&ts, &map, (uint32_t)0);
+    Edit_Recorder edit(map);
+    edit.track(uid);
 
-    // Modify the object
-    if (auto *aabb =
-            dynamic_cast<AABB_Entity *>(map.entities[0].entity.get()))
-    {
-      aabb->center = {10.0f, 0, 0};
-    }
-  } // Commit
+    auto *entry = map.find_by_uid(uid);
+    auto *aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
+    aabb->position = {10.0f, 0, 0};
 
-  auto *aabb = dynamic_cast<AABB_Entity *>(map.entities[0].entity.get());
+    edit.finish(uid);
+    auto txn = edit.take();
+    assert(txn.has_value());
+    ts.push(*txn);
+  }
+
+  auto *entry = map.find_by_uid(uid);
+  auto *aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
   assert(aabb);
-  assert(aabb->center.x == 10.0f);
+  assert(aabb->position.x == 10.0f);
   assert(ts.can_undo());
 
   // 2. Undo Modify
   ts.undo(map);
-  aabb = dynamic_cast<AABB_Entity *>(map.entities[0].entity.get());
-  assert(aabb->center.x == 0.0f);
+  entry = map.find_by_uid(uid);
+  aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
+  assert(aabb->position.x == 0.0f);
 
   // 3. Redo Modify
   ts.redo(map);
-  aabb = dynamic_cast<AABB_Entity *>(map.entities[0].entity.get());
-  assert(aabb->center.x == 10.0f);
+  entry = map.find_by_uid(uid);
+  aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
+  assert(aabb->position.x == 10.0f);
 
   std::cout << "Modify Passed." << std::endl;
+}
+
+void test_batch_delete()
+{
+  std::cout << "Testing Batch Delete..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  // Add 3 entities
+  auto e1 = std::make_shared<AABB_Entity>();
+  e1->position = {1, 0, 0};
+  entity_uid_t uid1 = map.add_entity(e1);
+
+  auto e2 = std::make_shared<AABB_Entity>();
+  e2->position = {2, 0, 0};
+  entity_uid_t uid2 = map.add_entity(e2);
+
+  auto e3 = std::make_shared<AABB_Entity>();
+  e3->position = {3, 0, 0};
+  entity_uid_t uid3 = map.add_entity(e3);
+
+  assert(map.entities.size() == 3);
+
+  // Batch delete all 3 in one transaction
+  {
+    Edit_Recorder edit(map);
+    edit.remove(uid1);
+    edit.remove(uid2);
+    edit.remove(uid3);
+    auto txn = edit.take();
+    assert(txn.has_value());
+    assert(txn->deltas.size() == 3);
+    ts.push(*txn);
+  }
+
+  assert(map.entities.empty());
+
+  // Single undo restores all 3
+  ts.undo(map);
+  assert(map.entities.size() == 3);
+  assert(map.find_by_uid(uid1) != nullptr);
+  assert(map.find_by_uid(uid2) != nullptr);
+  assert(map.find_by_uid(uid3) != nullptr);
+
+  // Verify positions are correct
+  auto *r1 = dynamic_cast<AABB_Entity *>(map.find_by_uid(uid1)->entity.get());
+  auto *r2 = dynamic_cast<AABB_Entity *>(map.find_by_uid(uid2)->entity.get());
+  auto *r3 = dynamic_cast<AABB_Entity *>(map.find_by_uid(uid3)->entity.get());
+  assert(r1->position.x == 1.0f);
+  assert(r2->position.x == 2.0f);
+  assert(r3->position.x == 3.0f);
+
+  // Redo removes all 3 again
+  ts.redo(map);
+  assert(map.entities.empty());
+
+  std::cout << "Batch Delete Passed." << std::endl;
 }
 
 int main()
 {
   test_add_remove();
   test_modify();
+  test_batch_delete();
   std::cout << "All Transaction Logic Tests Passed." << std::endl;
   return 0;
 }

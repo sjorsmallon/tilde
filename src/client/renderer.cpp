@@ -150,6 +150,7 @@ static VkDeviceMemory g_aabb_index_memory = VK_NULL_HANDLE;
 
 // Mesh pipeline for rendering OBJ models
 static VkPipeline g_mesh_pipeline = VK_NULL_HANDLE;
+static VkPipeline g_mesh_wireframe_pipeline = VK_NULL_HANDLE;
 
 // Mesh buffer management
 struct mesh_gpu_buffer_t
@@ -1349,6 +1350,17 @@ static void create_mesh_pipeline()
     log_error("Failed to create mesh pipeline!");
   }
 
+  // Create wireframe variant — same config but polygon mode LINE, no culling
+  rasterizer.polygonMode = VK_POLYGON_MODE_LINE;
+  rasterizer.cullMode = VK_CULL_MODE_NONE;
+
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                nullptr, &g_mesh_wireframe_pipeline) !=
+      VK_SUCCESS)
+  {
+    log_error("Failed to create mesh wireframe pipeline!");
+  }
+
   vkDestroyShaderModule(g_device, vertShaderModule, nullptr);
   vkDestroyShaderModule(g_device, fragShaderModule, nullptr);
 }
@@ -1647,6 +1659,77 @@ void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
                      sizeof(PushConstants), &pc);
 
   // Draw indexed
+  vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
+}
+
+void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
+                       const linalg::vec3 &scale,
+                       assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
+                       uint32_t color, const linalg::vec3 &rotation)
+{
+  if (!mesh_handle.valid())
+    return;
+  if (g_mesh_wireframe_pipeline == VK_NULL_HANDLE)
+    return;
+
+  mesh_gpu_buffer_t *gpu_mesh = upload_mesh_to_gpu(mesh_handle);
+  if (!gpu_mesh || gpu_mesh->index_count == 0)
+    return;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    g_mesh_wireframe_pipeline);
+
+  VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(cmd, 0, 1, vbs, offsets);
+  vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+  // Build model matrix: T * Rz * Ry * Rx * S
+  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
+  float rx = rotation.x * DEG2RAD;
+  float ry = rotation.y * DEG2RAD;
+  float rz = rotation.z * DEG2RAD;
+
+  float cx = cosf(rx), sx = sinf(rx);
+  float cy = cosf(ry), sy = sinf(ry);
+  float cz = cosf(rz), sz = sinf(rz);
+
+  mat4_t model = {};
+  model.m[0]  = (cz * cy) * scale.x;
+  model.m[1]  = (sz * cy) * scale.x;
+  model.m[2]  = (-sy)     * scale.x;
+  model.m[3]  = 0;
+  model.m[4]  = (cz * sy * sx - sz * cx) * scale.y;
+  model.m[5]  = (sz * sy * sx + cz * cx) * scale.y;
+  model.m[6]  = (cy * sx)                * scale.y;
+  model.m[7]  = 0;
+  model.m[8]  = (cz * sy * cx + sz * sx) * scale.z;
+  model.m[9]  = (sz * sy * cx - cz * sx) * scale.z;
+  model.m[10] = (cy * cx)                * scale.z;
+  model.m[11] = 0;
+  model.m[12] = position.x;
+  model.m[13] = position.y;
+  model.m[14] = position.z;
+  model.m[15] = 1;
+
+  mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
+
+  PushConstants pc{};
+  memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
+
+  float a = ((color >> 24) & 0xFF) / 255.0f;
+  float b = ((color >> 16) & 0xFF) / 255.0f;
+  float g = ((color >> 8) & 0xFF) / 255.0f;
+  float r = (color & 0xFF) / 255.0f;
+
+  pc.color[0] = r;
+  pc.color[1] = g;
+  pc.color[2] = b;
+  pc.color[3] = a;
+
+  vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                     sizeof(PushConstants), &pc);
+
   vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
 }
 
@@ -2091,6 +2174,7 @@ void Shutdown()
 
   cleanup_mesh_buffers();
   vkDestroyPipeline(g_device, g_mesh_pipeline, nullptr);
+  vkDestroyPipeline(g_device, g_mesh_wireframe_pipeline, nullptr);
 
   vkDestroyPipeline(g_device, g_line_pipeline, nullptr);
   vkDestroyBuffer(g_device, g_line_vertex_buffer, nullptr);
