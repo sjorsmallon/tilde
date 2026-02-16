@@ -92,18 +92,25 @@ auto step_air_move(const vec3 &old_position, vec3 &new_velocity, const float dt)
     new_velocity = vec3{new_vector.x, y, new_vector.z};
   }
 
+  // NOTE: integrate position BEFORE snapping Y velocity. This order matters!
+  // On slopes, the ground clip gives velocity a Y component so the player
+  // follows the surface. If we zeroed Y first, the position would move
+  // purely horizontally — floating off the slope, losing ground contact, and
+  // falling into air mode (which has no friction and no jump). The snap
+  // afterward prevents Y from accumulating across frames.
+  //
+  // We snap ALL Y (not just negative) because the overbounce factor in
+  // clip_vector can produce tiny positive Y on slopes too. Even a small
+  // positive Y fails the grounded check (vel_y <= 0) next frame, kicking
+  // the player into air mode where gravity builds up negative Y.
+  // The jump is injected by the caller AFTER this function returns, so
+  // it is not affected by this snap.
   vec3 position = old_position + (new_velocity * dt);
 
-  // @FIXME: we need to perform a new trace here to prevent tunneling / getting
-  // stuck in the ground. did we collide with a trace, but are we moving down?
-  if (ground_collided && new_velocity.y < 0.f)
+  if (ground_collided)
   {
-    std::print("snapping to floor (setting y velocity to 0.\n");
     new_velocity.y = 0.f;
   }
-
-  if (new_velocity.y > 0.f)
-    std::print("y velocity: {}", new_velocity.y);
 
   return std::make_tuple(position, new_velocity);
 }
@@ -327,19 +334,29 @@ std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
 
     new_velocity =
         clip_vector(new_velocity, collider_plane.normal, overbounce);
+
+    // FIX #2a: normalize after wall clip, same as the ground clip above
+    // (lines 307-313). Without this, clip shortens the vector (it removes the
+    // component into the wall), and then multiplying by new_speed gives
+    // new_speed * length(clipped_unit) — which is less than new_speed.
+    // The ground path did normalize; the wall path didn't. Now both preserve
+    // the player's speed when sliding along a surface.
+    new_velocity = normalize(new_velocity);
     new_velocity = new_velocity * new_speed;
   }
 
-  // we are missing where to inject the jump. so let me just do that here.
-  // a jump is not a velocity, but just a "set speed" for one particular frame,
-  // that gets removed over time with gravity.
+  // Set jump velocity before step_slide_move so it's integrated into position
+  // immediately (no one-frame delay). When jumping, pass ground_collided=false
+  // so step_slide_move's Y snap doesn't kill the jump velocity — we're
+  // leaving the ground, not staying on it.
   if (jump_pressed_this_frame)
   {
-    std::print("induced jump speed: {}\n", jumpspeed * input_scale);
+    std::print("induced jump speed: {}\n", jumpspeed);
     new_velocity.y = jumpspeed;
   }
 
-  return step_slide_move(old_position, new_velocity, has_ground, dt);
+  return step_slide_move(old_position, new_velocity,
+                         has_ground && !jump_pressed_this_frame, dt);
 }
 
 auto my_air_move(Move_Input &input,
@@ -373,6 +390,16 @@ auto my_air_move(Move_Input &input,
     right_clipped = clip_vector(right_without_y, ground_normal, overbounce);
   }
 
+  // FIX #3: normalize front_clipped and right_clipped, same as my_walk_move
+  // does. Without this, two things go wrong:
+  //   (a) after stripping Y from a unit vector, the XZ remainder is shorter
+  //       when looking up/down, so air control weakens at steep pitch angles;
+  //   (b) after clip_vector redirects the vector along the ground plane, its
+  //       length changes, making wish_speed depend on the ground slope.
+  // my_walk_move normalizes these (lines 265-266); air move should too.
+  front_clipped = normalize(front_clipped);
+  right_clipped = normalize(right_clipped);
+
   bool received_input = (input.forward_pressed || input.backward_pressed ||
                          input.left_pressed || input.right_pressed);
 
@@ -395,7 +422,13 @@ auto my_air_move(Move_Input &input,
 
   if (wish_speed < 0.0000001f) //@FIXME: formalize the treshold.
   {
-    new_velocity = old_velocity; // uh.. how do we apply gravity now?
+    // FIX #1: was `old_velocity`, which includes Y. When the code below does
+    // new_speed = length(new_velocity), that 3D length is dominated by the Y
+    // component (gravity). After clipping strips Y and normalize-rescale runs,
+    // all that vertical speed gets pumped into XZ — making the player speed up
+    // horizontally just by falling. Use the XZ-only velocity so the
+    // clip/normalize/rescale below only operates on horizontal speed.
+    new_velocity = old_velocity_without_y;
   }
   else
   {
@@ -429,6 +462,10 @@ auto my_air_move(Move_Input &input,
 
     new_velocity =
         clip_vector(new_velocity, collider_plane.normal, overbounce);
+
+    // FIX #2b: same as #2a — normalize after wall clip so sliding along a
+    // wall in the air preserves horizontal speed instead of bleeding it.
+    new_velocity = normalize(new_velocity);
     new_velocity = new_velocity * new_speed;
   }
 
@@ -461,6 +498,7 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
   AABB player_aabb;
   player_aabb.min = player_pos - vec3{half_width, half_height, half_width};
   player_aabb.max = player_pos + vec3{half_width, half_height, half_width};
+
 
   std::vector<const BVH_Primitive *> overlapping;
   bvh_intersect_aabb(bvh, player_aabb, overlapping);
@@ -508,8 +546,16 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
     if (outside)
       continue;
 
-    // Push player out along the least-penetrated face
-    player_pos = player_pos + push_normal * (-min_penetration);
+    // Push player out along the least-penetrated face, but keep a small
+    // skin width of penetration. Without this, the player lands exactly at
+    // the surface (penetration = 0), which the penetration test reads as
+    // "outside" next frame — so ground contact is never detected. Leaving
+    // a tiny margin ensures the next frame's test finds penetration < 0
+    // and properly classifies the contact (ground/wall/ceiling).
+    constexpr float skin_width = 0.01f;
+    float push_amount = -min_penetration - skin_width;
+    if (push_amount > 0.f)
+      player_pos = player_pos + push_normal * push_amount;
 
     // Create a collision plane at the contact point
     Plane p;
@@ -559,19 +605,59 @@ std::tuple<vec3, vec3> player_move(
   // - y velocity is going down. (at least not going up.)
   bool grounded = has_ground && (old_velocity.y <= 0.0f);
 
+
+  log_terminal("grounded: {}, has_ground: {}, vel_y: {}\n", grounded, has_ground, old_velocity.y);
+  vec3 new_pos, new_vel;
   if (grounded)
   {
     //@FIXME: currently, we set the y_velocity to 0 here already. because
     // my_walk_move assumes that we are grounded.
     // I do not really like that.
     vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
-    return my_walk_move(input, has_ground, ground_normal, collider_planes,
-                        player_pos, old_velocity_without_y, front, right, dt);
+    std::tie(new_pos, new_vel) =
+        my_walk_move(input, has_ground, ground_normal, collider_planes,
+                     player_pos, old_velocity_without_y, front, right, dt);
   }
   else
   {
-    return my_air_move(input, has_ground, ground_normal, has_ceiling,
-                       ceiling_normal, collider_planes, player_pos,
-                       old_velocity, front, right, dt);
+    std::tie(new_pos, new_vel) =
+        my_air_move(input, has_ground, ground_normal, has_ceiling,
+                    ceiling_normal, collider_planes, player_pos,
+                    old_velocity, front, right, dt);
   }
+
+  // Post-move collision resolve: push position out of any geometry we
+  // tunneled into, and correct velocity so it doesn't fight the surface.
+  Collider_Planes post_planes =
+      resolve_collisions(bvh, new_pos, half_width, half_height);
+
+  const float overbounce = pm_overbounce.Get();
+
+  // Ground: the pre-move resolve uses a penetration test, so the player must
+  // be *inside* geometry for has_ground to be true. But this resolve pushes
+  // the player to exactly the surface (penetration = 0), which reads as
+  // "outside" next frame — so the pre-move resolve won't detect ground.
+  // Without this snap, the player enters air_move, gravity accumulates
+  // unchecked (-3800+), and the post-move keeps pushing them back each frame
+  // in an invisible free-fall loop.
+  //
+  // We do a plain Y=0 snap here, NOT clip_vector — overbounce would push
+  // velocity slightly upward, which fails the grounded check (vel_y <= 0).
+  if (!post_planes.ground_planes.empty() && new_vel.y < 0.f)
+  {
+    new_vel.y = 0.f;
+  }
+
+  for (const auto &plane : post_planes.ceiling_planes)
+  {
+    if (dot(new_vel, plane.normal) < 0.f)
+      new_vel = clip_vector(new_vel, plane.normal, overbounce);
+  }
+  for (const auto &plane : post_planes.wall_planes)
+  {
+    if (dot(new_vel, plane.normal) < 0.f)
+      new_vel = clip_vector(new_vel, plane.normal, overbounce);
+  }
+
+  return {new_pos, new_vel};
 }
