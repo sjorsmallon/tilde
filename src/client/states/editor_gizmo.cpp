@@ -511,16 +511,16 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
       else // - Face
         new_min_val += (axis_dir[axis] * delta);
 
-      // Grid Snap (optional, but good for editor)
-      new_max_val = std::round(new_max_val * 2.0f) * 0.5f;
-      new_min_val = std::round(new_min_val * 2.0f) * 0.5f;
+      // Grid Snap
+      new_max_val = editor::snap(new_max_val, snap_step);
+      new_min_val = editor::snap(new_min_val, snap_step);
 
-      if (new_max_val < new_min_val + 0.1f)
+      if (new_max_val < new_min_val + editor::MIN_EXTENT)
       {
         if (i % 2 == 0)
-          new_max_val = new_min_val + 0.1f;
+          new_max_val = new_min_val + editor::MIN_EXTENT;
         else
-          new_min_val = new_max_val - 0.1f;
+          new_min_val = new_max_val - editor::MIN_EXTENT;
       }
 
       float new_center_val = (new_min_val + new_max_val) * 0.5f;
@@ -592,14 +592,10 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         float current_proj = linalg::dot(hit, axis_dir);
         float delta = current_proj - drag_start_offset;
 
-        // Apply Delta
-        // Snap?
-        // float delta_snapped = std::round(delta * 2.0f) * 0.5f;
-
         vec3 new_pos = orig_pos + axis_dir * delta;
-        new_pos.x = std::round(new_pos.x * 2.0f) * 0.5f;
-        new_pos.y = std::round(new_pos.y * 2.0f) * 0.5f;
-        new_pos.z = std::round(new_pos.z * 2.0f) * 0.5f;
+        new_pos.x = editor::snap(new_pos.x, snap_step);
+        new_pos.y = editor::snap(new_pos.y, snap_step);
+        new_pos.z = editor::snap(new_pos.z, snap_step);
 
         auto *te = target_map->find_by_uid(target_uid);
         if (!te) return;
@@ -671,8 +667,7 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         if (!re) return;
         auto &ent = re->entity;
         float delta_degrees = delta_angle * (180.0f / 3.14159f);
-        // Snap to 15-degree increments
-        delta_degrees = std::round(delta_degrees / 15.0f) * 15.0f;
+        delta_degrees = editor::snap(delta_degrees, editor::ROTATION_SNAP);
 
         vec3 new_orient = {original_transform.orientation.x,
                            original_transform.orientation.y,

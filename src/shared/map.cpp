@@ -154,6 +154,35 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
           entity->position + vec3f{0.5f, 0.5f, 0.5f}};
 }
 
+std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity)
+{
+  // AABB entity -> 6 axis-aligned planes
+  if (auto *aabb = dynamic_cast<const network::AABB_Entity *>(entity))
+  {
+    aabb_t t;
+    t.center = aabb->position;
+    t.half_extents = aabb->half_extents;
+    return compute_collision_planes(t);
+  }
+
+  // Wedge entity -> 5 planes (including slope)
+  if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
+  {
+    wedge_t t;
+    t.center = wedge->position;
+    t.half_extents = wedge->half_extents;
+    t.orientation = wedge->orientation;
+    return compute_collision_planes(t);
+  }
+
+  // Fallback: use entity bounds as an AABB
+  auto bounds = compute_entity_bounds(entity);
+  aabb_t t;
+  t.center = (bounds.min + bounds.max) * 0.5f;
+  t.half_extents = (bounds.max - bounds.min) * 0.5f;
+  return compute_collision_planes(t);
+}
+
 bool load_map(const std::string &filename, map_t &out_map)
 {
   std::ifstream in(filename);

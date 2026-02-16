@@ -4,39 +4,36 @@
 
 using namespace network;
 
-// Helper functions (formerly in header, now internal linkage or private)
+// Movement cvars
+cvar::CVar<float> pm_maxspeed("pm_maxspeed", 320.f, "Maximum player speed", cvar::flags::Replicated);
+cvar::CVar<float> pm_stopspeed("pm_stopspeed", 100.f, "Deceleration threshold", cvar::flags::Replicated);
+cvar::CVar<float> pm_friction("pm_friction", 6.f, "Ground friction", cvar::flags::Replicated);
+cvar::CVar<float> pm_ground_acceleration("pm_ground_acceleration", 10.f, "Ground acceleration", cvar::flags::Replicated);
+cvar::CVar<float> pm_air_acceleration("pm_air_acceleration", 5.f, "Air acceleration", cvar::flags::Replicated);
+cvar::CVar<float> pm_overbounce("pm_overbounce", 1.001f, "Plane clip overbounce factor", cvar::flags::Replicated);
+cvar::CVar<float> pm_jumpspeed("pm_jumpspeed", 270.f, "Jump velocity", cvar::flags::Replicated);
+cvar::CVar<float> g_gravity("g_gravity", 800.f, "Gravity", cvar::flags::Replicated);
+cvar::CVar<float> pm_speed_threshold("pm_speed_threshold", 1.f, "Speed below which friction snaps to zero", cvar::flags::Replicated);
+
 namespace
 {
 
-[[nodiscard]] std::vector<size_t> filter_duplicates(std::vector<size_t> input)
-{
-  std::sort(input.begin(), input.end());
-  auto last = std::unique(input.begin(), input.end());
-  input.erase(last, input.end());
-  return input;
-}
-
-// Velocity is a vector. i.e. velocity = {vx, vy, vz}. both magnitude and
-// direction. SPEED is how we describe the magnitude of velocity.
+// Protocol constant: input range is -127..+127, not a gameplay tunable.
+constexpr float pm_input_axial_extreme = 127.f;
 
 // wish_direction is normalized, new_velocity is not.
 [[nodiscard]]
 auto accelerate(vec3 new_velocity, vec3 wish_direction, float wish_speed,
                 float acceleration, float dt) -> vec3
 {
-  // how hard are we already moving in that direction?
-  // what is the delta we need to add in order to achieve the wish_speed?
   float current_speed_in_wish_direction = dot(new_velocity, wish_direction);
   float add_speed = wish_speed - current_speed_in_wish_direction;
 
-  //  current_speed_in_wish_direction exceeds the wish_speed in that direction,
-  //  that's fine. no need to do anything.
   if (add_speed < 0.0f)
     return new_velocity;
 
   float acceleration_speed = acceleration * dt * wish_speed;
 
-  // even if we overshoot the wish speed, it will be clipped in step_slide_move.
   if (acceleration_speed > add_speed)
     acceleration_speed = add_speed;
 
@@ -49,14 +46,14 @@ auto accelerate(vec3 new_velocity, vec3 wish_direction, float wish_speed,
 auto step_air_move(const vec3 &old_position, vec3 &new_velocity, const float dt)
     -> std::tuple<vec3, vec3>
 {
-  constexpr auto pm_maxspeed = 320.f; //@VOLATILE: also in my move., slide_move.
+  const float maxspeed = pm_maxspeed.Get();
 
   // clip the speed in the horizontal plane to maxspeed.
   float speed =
       sqrt(new_velocity.x * new_velocity.x + new_velocity.z * new_velocity.z);
-  if (speed > pm_maxspeed)
+  if (speed > maxspeed)
   {
-    speed = pm_maxspeed;
+    speed = maxspeed;
     float y = new_velocity.y;
 
     auto new_vector = vec3{new_velocity.x, 0.0f, new_velocity.z};
@@ -68,26 +65,25 @@ auto step_air_move(const vec3 &old_position, vec3 &new_velocity, const float dt)
   vec3 position = old_position + (new_velocity * dt);
 
   // @FIXME: test if we can actually be at the new position (collide with the
-  // environment and push back). for now, we take this to be y = 10.f; we need
-  // to perform a new trace here to prevent tunneling / getting stuck in the
-  // ground.
+  // environment and push back). we need to perform a new trace here to prevent
+  // tunneling / getting stuck in the ground.
 
   return std::make_tuple(position, new_velocity);
 }
 
 [[nodiscard]] std::tuple<vec3, vec3> step_slide_move(const vec3 &old_position,
                                                      vec3 &new_velocity,
-                                                     const Trace &trace,
+                                                     bool ground_collided,
                                                      const float dt)
 {
-  constexpr auto pm_maxspeed = 320.f; //@VOLATILE: also in my move.
+  const float maxspeed = pm_maxspeed.Get();
 
   // clip the speed in the horizontal plane to maxspeed.
   float speed =
       sqrt(new_velocity.x * new_velocity.x + new_velocity.z * new_velocity.z);
-  if (speed > pm_maxspeed)
+  if (speed > maxspeed)
   {
-    speed = pm_maxspeed;
+    speed = maxspeed;
     float y = new_velocity.y;
 
     auto new_vector = vec3{new_velocity.x, 0.0f, new_velocity.z};
@@ -98,11 +94,9 @@ auto step_air_move(const vec3 &old_position, vec3 &new_velocity, const float dt)
 
   vec3 position = old_position + (new_velocity * dt);
 
-  // test if we can actually be at the new position (collide with the
-  // environment and push back). for now, we take this to be y = 10.f;
   // @FIXME: we need to perform a new trace here to prevent tunneling / getting
   // stuck in the ground. did we collide with a trace, but are we moving down?
-  if (trace.collided && new_velocity.y < 0.f)
+  if (ground_collided && new_velocity.y < 0.f)
   {
     std::print("snapping to floor (setting y velocity to 0.\n");
     new_velocity.y = 0.f;
@@ -116,27 +110,22 @@ auto step_air_move(const vec3 &old_position, vec3 &new_velocity, const float dt)
 
 auto apply_friction(vec3 old_velocity, float dt) -> vec3
 {
-  //@Hardcode:
-  auto pm_stopspeed = 100.0f;
-  auto pm_friction = 6.0f;
-
   // snap to only planar movement.
   old_velocity.y = 0.f;
 
   float speed = length(old_velocity);
-  //@Hardcode: what should this be?
   // if we are very small moving, instead of infinitely applying drag, just snap
   // stop.
-  const float speed_treshold = 1.0f;
-  if (speed < speed_treshold)
+  if (speed < pm_speed_threshold.Get())
   {
     return vec3{};
   }
 
   float speed_drop = 0.0f;
 
-  float control = speed < pm_stopspeed ? pm_stopspeed : speed;
-  speed_drop += control * pm_friction * dt;
+  float stopspeed = pm_stopspeed.Get();
+  float control = speed < stopspeed ? stopspeed : speed;
+  speed_drop += control * pm_friction.Get() * dt;
 
   // adjust the speed with the induced speed drop.
   float adjusted_speed = speed - speed_drop;
@@ -145,10 +134,6 @@ auto apply_friction(vec3 old_velocity, float dt) -> vec3
   if (adjusted_speed < 0.0f)
     adjusted_speed = 0.0f;
 
-  // normalize the velocity based on the ground velocity (why?) -> how much
-  // faster or slower are we going w.r.t the original vector. we could also just
-  // normalize the old_velocity and multiply it by the adjusted_speed without
-  // the need for dividing adjusted_speed by 'speed'.
   if (adjusted_speed > 0.0f)
     adjusted_speed /= speed;
 
@@ -201,10 +186,9 @@ auto apply_friction(vec3 old_velocity, float dt) -> vec3
   return scale;
 }
 
-inline bool check_jump(const Move_Input &input) { return input.jump_pressed; }
+bool check_jump(const Move_Input &input) { return input.jump_pressed; }
 
-// old clip vector
-inline vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
+vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
 {
   // how strong is the incoming vector in the direction of the face normal?
   // (i.e. we split the incoming vector in two parts: the one that is parallel
@@ -220,32 +204,23 @@ inline vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
     backoff /= overbounce;
   }
 
-  vec3 change = vec3{0.f, 0.f, 0.f};
+  vec3 change = normal * backoff;
 
-  change = normal * backoff;
-
-  vec3 result = in - change; // how the fuck does this make sense? -> this
-                             // doesn't if we are only moving away. we should
-                             // never be here if we are moving away.
+  vec3 result = in - change;
 
   return result;
 }
 
 std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
-                                    const AABB_Traces &traces,
+                                    bool has_ground, const vec3 &ground_normal,
                                     const Collider_Planes &collider_planes,
                                     const vec3 old_position,
                                     const vec3 old_velocity, const vec3 front,
                                     const vec3 right, const float dt)
 {
-  constexpr auto pm_input_axial_extreme = 127.0f;
-  constexpr auto pm_maxspeed = 320.f;
-  constexpr auto pm_ground_acceleration = 10.f;
-  // constexpr auto pm_air_acceleration = 5.0f; FIXME: this is disabled
-  constexpr auto pm_overbounce = 1.001f;
-  // constexpr auto pm_movement_treshold = 0.00001f; //minimum necessary
-  // movement in either axis.
-  constexpr auto pm_jumpspeed = 270.f;
+  const float maxspeed = pm_maxspeed.Get();
+  const float overbounce = pm_overbounce.Get();
+  const float jumpspeed = pm_jumpspeed.Get();
 
   // we know we were walking when we got here.
   bool jump_pressed_this_frame = check_jump(input);
@@ -275,18 +250,14 @@ std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
   // normal of that face? imagine it is steep, like an incline. we do not want
   // to move inside of that, but move smoothly perpendicular to that normal. so
   // we "clip" the velocity vector such that we redirect it along that
-  // perpendicular axis. for now, no inclines. just flat surfaces. so the normal
-  // is always {0.0f, 1.0f, 0.0f};
+  // perpendicular axis.
   vec3 front_clipped = front_without_y;
   vec3 right_clipped = right_without_y;
 
-  // this does not scale. that's kind of annoying.
-  if (traces.ground_trace.collided)
+  if (has_ground)
   {
-    front_clipped = clip_vector(front_without_y,
-                                traces.ground_trace.face_normal, pm_overbounce);
-    right_clipped = clip_vector(right_without_y,
-                                traces.ground_trace.face_normal, pm_overbounce);
+    front_clipped = clip_vector(front_without_y, ground_normal, overbounce);
+    right_clipped = clip_vector(right_without_y, ground_normal, overbounce);
   }
 
   // don't forget to normalize: if you don't, this will be really small if you
@@ -305,7 +276,7 @@ std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
   vec3 normalized_wish_direction = normalize(wish_direction);
 
   float input_scale =
-      calculate_input_scale(forward_input, right_input, up_input, pm_maxspeed,
+      calculate_input_scale(forward_input, right_input, up_input, maxspeed,
                             pm_input_axial_extreme);
   float wish_speed =
       0.0f; // we set this because I think some float weirdness happens when
@@ -313,9 +284,6 @@ std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
 
   if (received_input)
   {
-    // how hard did we move the joystick? -127... +127. button presses are
-    // always max (127) or min (127). this makes the "wish" direction (the one
-    // purely based on input) less strong.
     wish_speed = input_scale * length(wish_direction);
   }
 
@@ -327,43 +295,16 @@ std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
   }
   else
   {
-    // if we are in the air, you have less control.
-    // float acceleration = (grounded) ? pm_ground_acceleration :
-    // pm_air_acceleration;
-    float acceleration = pm_ground_acceleration;
+    float acceleration = pm_ground_acceleration.Get();
     new_velocity =
         accelerate(old_velocity_with_friction_applied,
                    normalized_wish_direction, wish_speed, acceleration, dt);
   }
 
-  // clip the new velocity it against the ground plane. take the length before
+  // clip the new velocity against the ground plane. take the length before
   // it is clipped.
   float new_speed = length(new_velocity);
-  new_velocity =
-      clip_vector(new_velocity, traces.ground_trace.face_normal, pm_overbounce);
-
-  //@Note: this is disabled for now because it apparently does not matter (yet)
-  // in the new implementation.
-  // if we start seeing nan's, i'll re-enable it. - Sjors, 22-10-2024
-
-  // not moving enough? early exit. set x and z velocity to zero, keep y in case
-  // the player is falling. if (fabs(new_velocity.x) < pm_movement_treshold &&
-  // fabs(new_velocity.z) < pm_movement_treshold)
-  // {
-  //     if (jump_pressed_this_frame && !player_is_airborne)
-  //     {
-
-  //         new_velocity.y = (pm_jumpspeed * input_scale);
-  //     }else if (player_is_airborne)
-  //     {
-  //         new_velocity.y = old_velocity.y;
-  //         new_velocity.y -= g_gravity * dt;
-  //     }
-
-  //     new_velocity = vec3{0.0f, new_velocity.y, 0.0f};
-  //     vec3 new_position = old_position + new_velocity * dt;
-  //     return std::make_tuple(new_position, new_velocity);
-  // }
+  new_velocity = clip_vector(new_velocity, ground_normal, overbounce);
 
   // since we take the velocity before clipping. it can be we clip the movement
   // vectors (effectively reducing player speed.) but we still want to retain
@@ -385,63 +326,31 @@ std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
     }
 
     new_velocity =
-        clip_vector(new_velocity, collider_plane.normal, pm_overbounce);
+        clip_vector(new_velocity, collider_plane.normal, overbounce);
     new_velocity = new_velocity * new_speed;
   }
-
-  //@Note: this is disabled for now because it apparently does not matter (yet)
-  // in the new implementation.
-  // if we start seeing nan's, i'll re-enable it. - Sjors, 22-10-2024
-
-  // skip checking the movement vector if the movement vector is too small.
-  // if (fabs(new_velocity.x) < pm_movement_treshold && fabs(new_velocity.z) <
-  // pm_movement_treshold)
-  // {
-  //     if (jump_pressed_this_frame && !player_is_airborne)
-  //     {
-  //         new_velocity.y = (pm_jumpspeed * input_scale);
-  //     }else if (player_is_airborne)
-  //     {
-  //         new_velocity.y = old_velocity.y;
-  //         new_velocity.y -= g_gravity * dt;
-  //     }
-
-  //     new_velocity = vec3{0.0f, new_velocity.y, 0.0f};
-  //     vec3 new_position = old_position + new_velocity * dt;
-  //     return std::make_tuple(new_position, new_velocity);
-  // }
-
-  // if the player is not airborne, return grounded to true.
-  // if (!player_is_airborne)
-  // {
-  //     grounded = true;
-  // }
-
-  // just before step_slide-move, reassign the y velocity (that has not been
-  // touched up until now.) new_velocity.y = old_velocity.y;
 
   // we are missing where to inject the jump. so let me just do that here.
   // a jump is not a velocity, but just a "set speed" for one particular frame,
   // that gets removed over time with gravity.
   if (jump_pressed_this_frame)
   {
-    std::print("induced jump speed: {}\n", pm_jumpspeed * input_scale);
-    new_velocity.y = pm_jumpspeed;
+    std::print("induced jump speed: {}\n", jumpspeed * input_scale);
+    new_velocity.y = jumpspeed;
   }
 
-  return step_slide_move(old_position, new_velocity, traces.ground_trace, dt);
+  return step_slide_move(old_position, new_velocity, has_ground, dt);
 }
 
-auto my_air_move(Move_Input &input, AABB_Traces &traces,
+auto my_air_move(Move_Input &input,
+                 bool has_ground, const vec3 &ground_normal,
+                 bool has_ceiling, const vec3 &ceiling_normal,
                  Collider_Planes &collider_planes, const vec3 &old_position,
                  const vec3 &old_velocity, const vec3 &front, const vec3 &right,
                  const float dt) -> std::tuple<vec3, vec3>
 {
-  constexpr auto g_gravity = 800.f;
-  constexpr auto pm_input_axial_extreme = 127.f;
-  constexpr auto pm_overbounce = 1.001f;
-  constexpr auto pm_maxspeed = 320.f;
-  constexpr auto pm_air_acceleration = 5.0f;
+  const float maxspeed = pm_maxspeed.Get();
+  const float overbounce = pm_overbounce.Get();
   constexpr auto world_down = vec3{0.f, -1.f, 0.f};
 
   vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
@@ -450,57 +359,35 @@ auto my_air_move(Move_Input &input, AABB_Traces &traces,
                         pm_input_axial_extreme * input.backward_pressed;
   float right_input = pm_input_axial_extreme * input.right_pressed -
                       pm_input_axial_extreme * input.left_pressed;
-  // this does not matter.
-  // float up_input      = pm_input_axial_extreme * (jump_pressed_this_frame);
 
   // get rid of the y component: only look at the xz plane.
-  // where are we looking?
   vec3 front_without_y = vec3{front.x, 0.0f, front.z};
   vec3 right_without_y = vec3{right.x, 0.0f, right.z};
 
-  //@Note: this is naively assuming we are only checking the ground trace. how
-  // do we do collisions with faces?
-  // do we do that later on?
-
-  // look at the floor below you. this is known as a "ground trace". what is the
-  // normal of that face? imagine it is steep, like an incline. we do not want
-  // to move inside of that, but move smoothly perpendicular to that normal. so
-  // we "clip" the velocity vector such that we redirect it along that
-  // perpendicular axis. for now, no inclines. just flat surfaces. so the normal
-  // is always {0.0f, 1.0f, 0.0f};
   vec3 front_clipped = front_without_y;
   vec3 right_clipped = right_without_y;
 
-  // for all planes:
-  if (traces.ground_trace.collided)
+  if (has_ground)
   {
-    front_clipped = clip_vector(front_without_y,
-                                traces.ground_trace.face_normal, pm_overbounce);
-    right_clipped = clip_vector(right_without_y,
-                                traces.ground_trace.face_normal, pm_overbounce);
+    front_clipped = clip_vector(front_without_y, ground_normal, overbounce);
+    right_clipped = clip_vector(right_without_y, ground_normal, overbounce);
   }
 
   bool received_input = (input.forward_pressed || input.backward_pressed ||
                          input.left_pressed || input.right_pressed);
 
-  // what is the resulting direction we should take, based on the new clipped
-  // front and right (accounting for the walls we might be colliding with), and
-  // what buttons I pressed in relation to those vectors.
   vec3 wish_direction =
       front_clipped * forward_input + right_clipped * right_input;
   vec3 normalized_wish_direction = normalize(wish_direction);
 
   float input_scale = calculate_input_scale(
-      forward_input, right_input, pm_maxspeed, pm_input_axial_extreme);
+      forward_input, right_input, maxspeed, pm_input_axial_extreme);
   float wish_speed =
       0.0f; // we set this because I think some float weirdness happens when
             // taking the length of wish_direction when it is 0.
 
   if (received_input)
   {
-    // how hard did we move the joystick? -127... +127. button presses are
-    // always max (127) or min (127). this makes the "wish" direction (the one
-    // purely based on input) less strong.
     wish_speed = input_scale * length(wish_direction);
   }
 
@@ -513,14 +400,13 @@ auto my_air_move(Move_Input &input, AABB_Traces &traces,
   else
   {
     // if we are in the air, you have less control.
-    float acceleration = pm_air_acceleration;
+    float acceleration = pm_air_acceleration.Get();
     new_velocity = accelerate(old_velocity_without_y, normalized_wish_direction,
                               wish_speed, acceleration, dt);
   }
 
   float new_speed = length(new_velocity);
-  new_velocity =
-      clip_vector(new_velocity, traces.ground_trace.face_normal, pm_overbounce);
+  new_velocity = clip_vector(new_velocity, ground_normal, overbounce);
   new_velocity = normalize(new_velocity);
   new_velocity = new_speed * new_velocity;
 
@@ -529,10 +415,8 @@ auto my_air_move(Move_Input &input, AABB_Traces &traces,
   // clip if necessary
   for (auto &collider_plane : collider_planes.wall_planes)
   {
-    //@FIXME: I don't understand if this will fix it, but i want to try anyway.
     // we should not collide with the plane if we are trying to move away from
     // it.
-
     new_speed = length(new_velocity);
     new_velocity = normalize(new_velocity);
 
@@ -544,68 +428,136 @@ auto my_air_move(Move_Input &input, AABB_Traces &traces,
     }
 
     new_velocity =
-        clip_vector(new_velocity, collider_plane.normal, pm_overbounce);
+        clip_vector(new_velocity, collider_plane.normal, overbounce);
     new_velocity = new_velocity * new_speed;
   }
 
   // clip against the ceiling.
-  if (traces.ceiling_trace.collided)
+  if (has_ceiling)
   {
-    auto cos_angle_plane_world_down =
-        dot(traces.ceiling_trace.face_normal, world_down);
+    auto cos_angle_plane_world_down = dot(ceiling_normal, world_down);
     if (cos_angle_plane_world_down > 0.707f)
     {
-      // if we were alreading moving down, it does not matter.
+      // if we were already moving down, it does not matter.
       new_y_velocity = (new_y_velocity < 0.f ? new_y_velocity : 0.f);
     }
   }
 
   // apply gravity.
   new_velocity.y = new_y_velocity;
-  new_velocity.y -= g_gravity * dt;
+  new_velocity.y -= g_gravity.Get() * dt;
 
   return step_air_move(old_position, new_velocity, dt);
 }
+// Resolve collisions against the BVH using hull-plane-based penetration test.
+// Pushes player_pos out of overlapping hulls and classifies contact normals.
+Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
+                                   vec3 &player_pos,
+                                   float half_width, float half_height)
+{
+  Collider_Planes result;
+  constexpr float cos_45 = 0.707f;
+
+  AABB player_aabb;
+  player_aabb.min = player_pos - vec3{half_width, half_height, half_width};
+  player_aabb.max = player_pos + vec3{half_width, half_height, half_width};
+
+  std::vector<const BVH_Primitive *> overlapping;
+  bvh_intersect_aabb(bvh, player_aabb, overlapping);
+
+  for (const auto *prim : overlapping)
+  {
+    if (prim->collision_planes.empty())
+      continue;
+
+    // Rebuild player AABB from (potentially updated) player_pos each iteration
+    player_aabb.min = player_pos - vec3{half_width, half_height, half_width};
+    player_aabb.max = player_pos + vec3{half_width, half_height, half_width};
+
+    // Hull-plane penetration test:
+    // For each plane of the convex hull, compute how far the player AABB
+    // penetrates past it. If the player is fully outside any face, it's
+    // not inside the hull. Otherwise, push out along the least-penetrated face.
+    float min_penetration = -1e30f;
+    vec3 push_normal = {0, 0, 0};
+    bool outside = false;
+
+    for (const auto &plane : prim->collision_planes)
+    {
+      float signed_dist = dot(player_pos - plane.point, plane.normal);
+      // Support radius: how far the AABB extends along the plane normal direction
+      float support_radius = half_width * fabsf(plane.normal.x) +
+                              half_height * fabsf(plane.normal.y) +
+                              half_width * fabsf(plane.normal.z);
+      float penetration = signed_dist - support_radius;
+
+      if (penetration >= 0.f)
+      {
+        // Player is fully outside this face -> not inside the hull
+        outside = true;
+        break;
+      }
+
+      if (penetration > min_penetration)
+      {
+        min_penetration = penetration;
+        push_normal = plane.normal;
+      }
+    }
+
+    if (outside)
+      continue;
+
+    // Push player out along the least-penetrated face
+    player_pos = player_pos + push_normal * (-min_penetration);
+
+    // Create a collision plane at the contact point
+    Plane p;
+    p.normal = push_normal;
+    p.point = player_pos - push_normal * 0.01f;
+
+    // Classify: ground (normal pointing up), ceiling (down), wall (horizontal)
+    if (push_normal.y > cos_45)
+    {
+      result.ground_planes.push_back(p);
+    }
+    else if (push_normal.y < -cos_45)
+    {
+      result.ceiling_planes.push_back(p);
+    }
+    else
+    {
+      result.wall_planes.push_back(p);
+    }
+  }
+
+  return result;
+}
+
 } // namespace
 
 // Exposed functions
 
 std::tuple<vec3, vec3> player_move(
     Move_Input &input,
-    Collider_Planes &collider_planes, // self-evident, I guess.@FIXME: this is
-                                      // not const because we remove an element
-                                      // later for the ground plane. yikes.
+    const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
-    const vec3 &right, const float dt)
+    const vec3 &right, float half_width, float half_height, const float dt)
 {
-  auto traces = AABB_Traces{};
+  // Resolve collisions: push player out of entities and collect contact planes
+  vec3 player_pos = old_position;
+  Collider_Planes collider_planes =
+      resolve_collisions(bvh, player_pos, half_width, half_height);
 
-  //@FIXME: just pick the first ground plane? how do we even deal with this?
-  // if (collider_planes.ground_planes.size() > 1) std::print("[WARNING] more
-  // than one ground plane found. picking the first one.\n");
+  bool has_ground = !collider_planes.ground_planes.empty();
+  bool has_ceiling = !collider_planes.ceiling_planes.empty();
+  vec3 ground_normal = has_ground ? collider_planes.ground_planes[0].normal : vec3{0, 1, 0};
+  vec3 ceiling_normal = has_ceiling ? collider_planes.ceiling_planes[0].normal : vec3{0, -1, 0};
 
-  if (!collider_planes.ground_planes.empty())
-  {
-    // pick the first ground plane.
-    traces.ground_trace.collided = true;
-    traces.ground_trace.face_normal = collider_planes.ground_planes[0].normal;
-  }
-
-  if (collider_planes.ceiling_planes.size() > 1)
-    std::print("[WARNING] more than one ceiling plane found. picking the first "
-               "one.\n");
-
-  if (!collider_planes.ceiling_planes.empty())
-  {
-    traces.ceiling_trace.collided = true;
-    traces.ceiling_trace.face_normal = collider_planes.ceiling_planes[0].normal;
-  }
-
-  auto &ground_trace = traces.ground_trace;
   // we are grounded if (and only if):
   // - the ground trace hits.
   // - y velocity is going down. (at least not going up.)
-  bool grounded = ((ground_trace.collided) && (old_velocity.y <= 0.0f));
+  bool grounded = has_ground && (old_velocity.y <= 0.0f);
 
   if (grounded)
   {
@@ -613,126 +565,13 @@ std::tuple<vec3, vec3> player_move(
     // my_walk_move assumes that we are grounded.
     // I do not really like that.
     vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
-    return my_walk_move(input, traces, collider_planes, old_position,
-                        old_velocity_without_y, front, right, dt);
+    return my_walk_move(input, has_ground, ground_normal, collider_planes,
+                        player_pos, old_velocity_without_y, front, right, dt);
   }
   else
   {
-    return my_air_move(input, traces, collider_planes, old_position,
+    return my_air_move(input, has_ground, ground_normal, has_ceiling,
+                       ceiling_normal, collider_planes, player_pos,
                        old_velocity, front, right, dt);
   }
-}
-
-std::tuple<Collider_Planes, std::vector<size_t>>
-collect_and_classify_intersecting_planes(
-    const BSP *bsp, const std::vector<vertex_xnc> &bsp_vertices,
-    AABB &colliding_aabb)
-{
-  constexpr auto WORLD_UP = vec3{0.f, 1.f, 0.f};
-  // FIXME(Sjors): formalize this value. I "found" it by walking across multiple
-  // aabb and getting the lowest one, which I think is the side of the adjacent
-  // aabb. are we intersecting by a large enough "penetration depth"?
-  constexpr auto PENETRATION_DEPTH_TRESHOLD = 2.f;
-
-  constexpr auto CEILING_ANGLE_COS_TRESHOLD =
-      -.707f; // 45 degree angle -(cos(45 degrees)) -> -cos(0,785398 rads)
-  constexpr auto FLOOR_ANGLE_COS_TRESHOLD =
-      .707f; // 45 degree angle (cos(45 degrees)) -> cos(0,785398 rads)
-
-  //@Note(Sjors): this number is pulled out of my ass. but I want to check if
-  // this resolves at least the horizontal collisions.
-  constexpr auto HEIGHT_OVERLAP_TRESHOLD = 5.f;
-
-  auto all_face_indices = bsp_trace_AABB(bsp, colliding_aabb, bsp_vertices);
-  all_face_indices = filter_duplicates(all_face_indices);
-
-  auto ground_face_indices = std::vector<size_t>{};
-  auto ceiling_face_indices = std::vector<size_t>{};
-  auto wall_face_indices = std::vector<size_t>{};
-
-  // filter aabb
-  for (auto &face_idx : all_face_indices)
-  {
-    const auto &v0 = bsp_vertices[face_idx].position;
-    const auto &v1 = bsp_vertices[face_idx + 1].position;
-    const auto &v2 = bsp_vertices[face_idx + 2].position;
-
-    auto normal = compute_triangle_normal(v0, v1, v2);
-
-    float max_penetration_depth =
-        calculate_max_penetration_depth(colliding_aabb, v0, v1, v2);
-
-    if (max_penetration_depth > PENETRATION_DEPTH_TRESHOLD)
-    {
-      auto triangle_aabb = aabb_from_triangle(v0, v1, v2);
-      auto overlap =
-          vec3{.x = fabs(colliding_aabb.min.x - triangle_aabb.max.x),
-               .y = fabs(colliding_aabb.min.y - triangle_aabb.max.y),
-               .z = fabs(colliding_aabb.min.z - triangle_aabb.max.z)};
-      auto cos_angle = dot(normal, WORLD_UP);
-      if ((cos_angle > FLOOR_ANGLE_COS_TRESHOLD)) //  floor (45 degree angle)
-      {
-        // edge case where we come at a "floor" from the side, and we stick to
-        // it. I have a feeling I need to revisit this very soon.
-        if (triangle_aabb.max.y - colliding_aabb.min.y < 5.f)
-        {
-          ground_face_indices.push_back(face_idx);
-        }
-      }
-      else if ((cos_angle <
-                CEILING_ANGLE_COS_TRESHOLD)) // ceiling (45 degree angle)
-      {
-        // edge case where we come at a "ceiling" from the side, and we stick to
-        // it. I have a feeling I need to revisit this very soon.
-        if (fabs(triangle_aabb.max.y - colliding_aabb.max.y) < 5.f)
-        {
-          ceiling_face_indices.push_back(face_idx);
-        }
-      }
-      else
-      {
-        // what is the height overlap? (this prevents us from "tripping" over
-        // floor tiles that have a normal facing the player direction, but are
-        // actually "underneath" the floor. image running over the top of
-        // aligned AABBS, and then "tripping" over the transition from one AABB
-        // to the other because you are "colliding" with the side of the AABB
-        // you want to cross over.)
-        if (overlap.y > HEIGHT_OVERLAP_TRESHOLD)
-        {
-          wall_face_indices.push_back(face_idx);
-        }
-      }
-    }
-  }
-
-  // plane is combination of v0 and the calculated normal.
-  auto create_planes_from_face_indices =
-      [](const std::vector<size_t> &face_indices,
-         const std::vector<vertex_xnc> &vertices) -> std::vector<Plane>
-  {
-    auto planes = std::vector<Plane>{};
-    for (auto &face_idx : face_indices)
-    {
-      planes.push_back(
-          Plane{vertices[face_idx].position,
-                compute_triangle_normal(vertices[face_idx].position,
-                                        vertices[face_idx + 1].position,
-                                        vertices[face_idx + 2].position)});
-    }
-
-    return planes;
-  };
-
-  auto ground_planes =
-      create_planes_from_face_indices(ground_face_indices, bsp_vertices);
-  auto ceiling_planes =
-      create_planes_from_face_indices(ceiling_face_indices, bsp_vertices);
-  auto wall_planes =
-      create_planes_from_face_indices(wall_face_indices, bsp_vertices);
-  auto collider_planes =
-      Collider_Planes{.ground_planes = std::move(ground_planes),
-                      .ceiling_planes = std::move(ceiling_planes),
-                      .wall_planes = std::move(wall_planes)};
-
-  return {collider_planes, all_face_indices};
 }

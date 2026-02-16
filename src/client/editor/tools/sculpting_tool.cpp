@@ -308,10 +308,10 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           else
             *cen -= world_delta * 0.5f;
 
-          if (*ext < 0.1f)
+          if (*ext < editor::MIN_EXTENT)
           {
-            float diff = 0.1f - *ext;
-            *ext = 0.1f;
+            float diff = editor::MIN_EXTENT - *ext;
+            *ext = editor::MIN_EXTENT;
             if (dragging_face % 2 == 0)
               *cen -= diff;
             else
@@ -338,6 +338,9 @@ void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 
   dragging = false;
   dragging_uid = 0;
+
+  if (ctx.geometry_updated)
+    *ctx.geometry_updated = true;
 }
 
 void Sculpting_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}

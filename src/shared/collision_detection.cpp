@@ -261,7 +261,7 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
 }
 
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
-                        std::vector<Collision_Id> &out_ids)
+                        std::vector<const BVH_Primitive *> &out_primitives)
 {
   if (bvh.nodes.empty())
     return;
@@ -295,7 +295,7 @@ void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
         if (intersect_aabb_aabb(prim.aabb.min, prim.aabb.max, aabb.min,
                                 aabb.max))
         {
-          out_ids.push_back(prim.id);
+          out_primitives.push_back(&prim);
         }
       }
     }
@@ -311,19 +311,20 @@ void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
 }
 
 void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
-                   const AABB &aabb)
+                   const AABB &aabb,
+                   std::vector<Plane> collision_planes)
 {
   std::vector<BVH_Input> inputs;
   inputs.reserve(bvh.primitives.size() + 1);
 
   // 1. Gather existing entries from primitives
-  for (const auto &prim : bvh.primitives)
+  for (auto &prim : bvh.primitives)
   {
-    inputs.push_back({prim.id, prim.aabb});
+    inputs.push_back(std::move(prim));
   }
 
   // 2. Add new entry
-  inputs.push_back({id, aabb});
+  inputs.push_back({id, aabb, std::move(collision_planes)});
 
   // 3. Rebuild
   bvh = build_bvh(inputs);

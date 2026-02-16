@@ -2,8 +2,10 @@
 
 #include "linalg.hpp"
 #include "network/schema.hpp"
+#include "plane.hpp"
 #include <array>
 #include <cmath>
+#include <vector>
 
 namespace shared
 {
@@ -143,6 +145,77 @@ inline std::array<linalg::vec3, 6> get_wedge_points(const wedge_t &wedge)
   {
     return {p0, p1, p2, p3, p5, p6};
   }
+}
+
+// Compute outward-facing collision planes for an AABB (6 planes).
+inline std::vector<Plane> compute_collision_planes(const aabb_t &aabb)
+{
+  auto c = aabb.center;
+  auto h = aabb.half_extents;
+  return {
+      {c + linalg::vec3{h.x, 0, 0}, {+1, 0, 0}},
+      {c - linalg::vec3{h.x, 0, 0}, {-1, 0, 0}},
+      {c + linalg::vec3{0, h.y, 0}, {0, +1, 0}},
+      {c - linalg::vec3{0, h.y, 0}, {0, -1, 0}},
+      {c + linalg::vec3{0, 0, h.z}, {0, 0, +1}},
+      {c - linalg::vec3{0, 0, h.z}, {0, 0, -1}},
+  };
+}
+
+// Compute outward-facing collision planes for a wedge (5 planes).
+// The slope face gets a non-axis-aligned normal.
+inline std::vector<Plane> compute_collision_planes(const wedge_t &wedge)
+{
+  auto pts = get_wedge_points(wedge);
+  auto h = wedge.half_extents;
+
+  // Bottom face is always the base quad (pts[0..3]), normal pointing down
+  Plane bottom = {pts[0], {0, -1, 0}};
+
+  // The back face, side faces, and slope depend on orientation.
+  // For each orientation:
+  //   - back face: the vertical rectangle behind the ridge
+  //   - two side faces: triangular tapered ends
+  //   - slope face: the angled quad connecting the ridge to the opposite base edge
+
+  Plane back_face, side_a, side_b, slope;
+
+  float inv_slope_len; // for normalizing the slope normal
+
+  if (wedge.orientation == 0) // ridge along X at -Z
+  {
+    back_face = {pts[0], {0, 0, -1}};
+    side_a = {pts[0], {-1, 0, 0}};
+    side_b = {pts[1], {+1, 0, 0}};
+    inv_slope_len = 1.f / sqrt(h.z * h.z + h.y * h.y);
+    slope = {pts[4], {0, h.z * inv_slope_len, h.y * inv_slope_len}};
+  }
+  else if (wedge.orientation == 1) // ridge along X at +Z
+  {
+    back_face = {pts[2], {0, 0, +1}};
+    side_a = {pts[0], {-1, 0, 0}};
+    side_b = {pts[1], {+1, 0, 0}};
+    inv_slope_len = 1.f / sqrt(h.z * h.z + h.y * h.y);
+    slope = {pts[4], {0, h.z * inv_slope_len, -h.y * inv_slope_len}};
+  }
+  else if (wedge.orientation == 2) // ridge along Z at -X
+  {
+    back_face = {pts[0], {-1, 0, 0}};
+    side_a = {pts[0], {0, 0, -1}};
+    side_b = {pts[2], {0, 0, +1}};
+    inv_slope_len = 1.f / sqrt(h.x * h.x + h.y * h.y);
+    slope = {pts[4], {h.y * inv_slope_len, h.x * inv_slope_len, 0}};
+  }
+  else // 3: ridge along Z at +X
+  {
+    back_face = {pts[1], {+1, 0, 0}};
+    side_a = {pts[0], {0, 0, -1}};
+    side_b = {pts[2], {0, 0, +1}};
+    inv_slope_len = 1.f / sqrt(h.x * h.x + h.y * h.y);
+    slope = {pts[4], {-h.y * inv_slope_len, h.x * inv_slope_len, 0}};
+  }
+
+  return {bottom, back_face, side_a, side_b, slope};
 }
 
 } // namespace shared

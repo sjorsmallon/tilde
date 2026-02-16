@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../shared/collision_detection.hpp"
+#include "../../shared/editor_grid.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/map.hpp" // For map_t
 #include "../camera.hpp"        // For camera_t
@@ -56,6 +57,8 @@ struct editor_context_t
   bool *geometry_updated = nullptr;
 
   class Transaction_System *transaction_system = nullptr;
+
+  editor::grid_settings_t *grid = nullptr;
 };
 
 // Interface for drawing editor overlays

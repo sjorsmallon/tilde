@@ -7,6 +7,7 @@
 #include "../editor/transaction_system.hpp"
 #include "../game_state.hpp"
 #include "../shared/collision_detection.hpp"
+#include "../shared/editor_grid.hpp"
 #include "../shared/map.hpp" // For map_t ownership
 #include <memory>
 #include <vector>
@@ -33,7 +34,7 @@ private:
   float fov = 60.0f;
   float aspect = 1.77f;
   float z_near = 0.1f;
-  float z_far = 1000.0f;
+  float z_far = 16000.0f;
   const float iso_yaw = 315.0f;
   const float iso_pitch = -35.264f;
   editor_context_t context; // Reused context info
@@ -49,6 +50,8 @@ private:
   bool geometry_updated_flag = false;
 
   Transaction_System transaction_system;
+
+  editor::grid_settings_t grid_settings;
 };
 
 } // namespace client

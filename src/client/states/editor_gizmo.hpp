@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../editor/transaction_system.hpp"
+#include "../shared/editor_grid.hpp"
 #include "../shared/shapes.hpp"
 #include "linalg.hpp"
 #include <optional>
@@ -85,6 +86,9 @@ public:
   };
 
   Editor_Gizmo() = default;
+
+  // Current grid snap step (set by the tool before interaction)
+  float snap_step = editor::MAJOR_GRID_STEP;
 
   void start_interaction(Transaction_System *sys, shared::map_t *map,
                          shared::entity_uid_t uid);

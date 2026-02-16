@@ -64,6 +64,9 @@ void Selection_Tool::on_update(editor_context_t &ctx,
 {
   cached_viewport = view;
 
+  if (ctx.grid)
+    editor_gizmo.snap_step = ctx.grid->step();
+
   if (editor_gizmo.is_interacting())
   {
     editor_gizmo.handle_input(view.mouse_ray, true,
@@ -133,8 +136,9 @@ void Selection_Tool::on_update(editor_context_t &ctx,
                                       plane_point, plane_normal, t))
       {
         grid_hover_pos = view.mouse_ray.origin + view.mouse_ray.dir * t;
-        grid_hover_pos.x = std::round(grid_hover_pos.x);
-        grid_hover_pos.z = std::round(grid_hover_pos.z);
+        float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+        grid_hover_pos.x = editor::snap(grid_hover_pos.x, step);
+        grid_hover_pos.z = editor::snap(grid_hover_pos.z, step);
         grid_hover_valid = true;
       }
       else
@@ -432,7 +436,9 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
       !is_dragging_significantly && !editor_gizmo.is_interacting())
   {
     linalg::vec3 center = grid_hover_pos;
-    linalg::vec3 half_extents = {0.5f, 0.05f, 0.5f};
+    linalg::vec3 half_extents = {editor::GRID_INDICATOR_HALF_W,
+                                  editor::GRID_INDICATOR_HALF_H,
+                                  editor::GRID_INDICATOR_HALF_W};
     renderer.draw_wire_box(center, half_extents, 0x88FFFFFF);
   }
 

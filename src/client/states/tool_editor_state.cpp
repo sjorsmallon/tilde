@@ -113,8 +113,10 @@ void ToolEditorState::on_enter()
   {
     map.name = "Tool Editor Map";
     auto floor_ent = std::make_shared<::network::AABB_Entity>();
-    floor_ent->position = {0, -2.0f, 0};
-    floor_ent->half_extents = {10.0f, 0.5f, 10.0f};
+    floor_ent->position = {0, editor::DEFAULT_FLOOR_Y, 0};
+    floor_ent->half_extents = {editor::DEFAULT_FLOOR_HALF_W,
+                               editor::DEFAULT_FLOOR_HALF_H,
+                               editor::DEFAULT_FLOOR_HALF_W};
 
     map.add_entity(floor_ent);
     renderer::draw_announcement("Welcome to the Tool Editor!");
@@ -122,14 +124,14 @@ void ToolEditorState::on_enter()
 
   // Initialize Camera
   camera.x = 0;
-  camera.y = 5;
+  camera.y = 1024;
   camera.z = 10;
   camera.pitch = -30.0f;
   camera.yaw = 0.0f;
   fov = 90.0f;
   aspect = 1.77f; // Will update
   z_near = 0.1f;
-  z_far = 1000.0f;
+  z_far = 16000.0f;
 
   // Initialize Tools
   if (tools.empty())
@@ -169,6 +171,7 @@ void ToolEditorState::switch_tool(int index)
   context.map = &map;
   context.bvh = &bvh;
   context.geometry_updated = &geometry_updated_flag;
+  context.grid = &grid_settings;
   context.time = 0; // TODO: Get real time
 
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
@@ -228,7 +231,7 @@ void ToolEditorState::update(float dt)
   ImGuiIO &io = ImGui::GetIO();
   if (!io.WantCaptureMouse)
   {
-    float speed = 10.0f * dt;
+    float speed = 1200.0f * dt;
     if (input::is_key_down(SDL_SCANCODE_LSHIFT))
       speed *= 2.0f;
 
@@ -282,9 +285,19 @@ void ToolEditorState::update(float dt)
       }
     }
 
-    if (input::is_key_pressed(SDL_SCANCODE_1))
+    if (input::is_key_pressed(SDL_SCANCODE_RIGHTBRACKET))
     {
-      renderer::draw_announcement("Hello World");
+      grid_settings.increase();
+      char buf[64];
+      snprintf(buf, sizeof(buf), "Grid: %.0f", grid_settings.step());
+      renderer::draw_announcement(buf);
+    }
+    if (input::is_key_pressed(SDL_SCANCODE_LEFTBRACKET))
+    {
+      grid_settings.decrease();
+      char buf[64];
+      snprintf(buf, sizeof(buf), "Grid: %.0f", grid_settings.step());
+      renderer::draw_announcement(buf);
     }
 
     if (input::is_key_down(SDL_SCANCODE_W))
@@ -379,6 +392,7 @@ void ToolEditorState::update(float dt)
   context.bvh = &bvh;
   context.geometry_updated = &geometry_updated_flag;
   context.transaction_system = &transaction_system;
+  context.grid = &grid_settings;
   context.time += dt;
   viewport = transform_viewport_state();
 
@@ -472,7 +486,7 @@ void ToolEditorState::update(float dt)
 
 void ToolEditorState::render_ui()
 {
-  ImGui::Begin("Map Info");
+  ImGui::Begin("Map Info", nullptr, ImGuiWindowFlags_NoNav);
   ImGui::Text("Map: %s", map.name.c_str());
 
   bool should_open_popup = false;
@@ -535,7 +549,7 @@ void ToolEditorState::render_ui()
     ImGui::EndPopup();
   }
 
-  ImGui::Begin("Toolbox");
+  ImGui::Begin("Toolbox", nullptr, ImGuiWindowFlags_NoNav);
 
   if (ImGui::Button("Select"))
     switch_tool(0);
@@ -546,6 +560,12 @@ void ToolEditorState::render_ui()
 
   ImGui::Separator();
   ImGui::Text("Active Tool: %d", active_tool_index);
+
+  ImGui::Separator();
+  if (ImGui::Button("Play"))
+  {
+    state_manager::switch_to(GameStateKind::Play);
+  }
 
   if (ImGui::Button("Back to Menu"))
   {
@@ -583,31 +603,44 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
 
   // Draw Grid
   {
-    int grid_size = 50;
-    float step = 1.0f;
-    uint32_t color = 0x44FFFFFF;        // Faint white
-    uint32_t axis_color_x = 0xFF0000FF; // Red
-    uint32_t axis_color_z = 0xFFFF0000; // Blue
+    constexpr int count = editor::MAJOR_GRID_COUNT;
+    constexpr float major = editor::MAJOR_GRID_STEP;
+    float minor = grid_settings.step();
+    float extent = count * major;
 
-    for (int i = -grid_size; i <= grid_size; ++i)
+    uint32_t major_color = 0x44FFFFFF;      // Faint white
+    uint32_t minor_color = 0x22FFFFFF;      // Fainter
+    uint32_t axis_color_x = 0xFF0000FF;     // Red
+    uint32_t axis_color_z = 0xFFFF0000;     // Blue
+
+    // Subdivision lines (only if grid step < major grid)
+    if (minor < major)
+    {
+      int total = (int)(extent / minor);
+      for (int i = -total; i <= total; ++i)
+      {
+        float p = (float)i * minor;
+        // Skip lines that fall on the major grid (drawn below)
+        if (std::fmod(std::abs(p), major) < 0.01f)
+          continue;
+        renderer::DrawLine(cmd, {-extent, 0, p}, {extent, 0, p}, minor_color);
+        renderer::DrawLine(cmd, {p, 0, -extent}, {p, 0, extent}, minor_color);
+      }
+    }
+
+    // Major grid lines
+    for (int i = -count; i <= count; ++i)
     {
       if (i == 0)
-        continue; // Skip axis lines for now
-
-      float p = (float)i * step;
-      // Z-lines (vary X)
-      renderer::DrawLine(cmd, {-grid_size * step, 0, p},
-                         {grid_size * step, 0, p}, color);
-      // X-lines (vary Z)
-      renderer::DrawLine(cmd, {p, 0, -grid_size * step},
-                         {p, 0, grid_size * step}, color);
+        continue;
+      float p = (float)i * major;
+      renderer::DrawLine(cmd, {-extent, 0, p}, {extent, 0, p}, major_color);
+      renderer::DrawLine(cmd, {p, 0, -extent}, {p, 0, extent}, major_color);
     }
 
     // Axes
-    renderer::DrawLine(cmd, {-grid_size * step, 0, 0}, {grid_size * step, 0, 0},
-                       axis_color_x);
-    renderer::DrawLine(cmd, {0, 0, -grid_size * step}, {0, 0, grid_size * step},
-                       axis_color_z);
+    renderer::DrawLine(cmd, {-extent, 0, 0}, {extent, 0, 0}, axis_color_x);
+    renderer::DrawLine(cmd, {0, 0, -extent}, {0, 0, extent}, axis_color_z);
   }
 
   // Draw map elements
@@ -667,7 +700,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
         auto mesh_handle = assets::load_mesh(mesh_path);
         if (mesh_handle.valid())
         {
-          renderer::DrawMeshWireframe(cmd, ent->position, {1, 1, 1},
+          renderer::DrawMeshWireframe(cmd, ent->position, {32, 72, 32},
                                       mesh_handle, 0xFFFFFFFF, ent->orientation);
         }
       }

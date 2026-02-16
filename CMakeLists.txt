@@ -97,6 +97,7 @@ add_library(game_shared STATIC
     src/shared/game_session.cpp
     src/shared/asset.hpp
     src/shared/asset.cpp
+    src/shared/player_move.cpp
 )
 
 # Protobuf Generation

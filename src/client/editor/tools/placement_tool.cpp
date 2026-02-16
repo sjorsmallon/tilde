@@ -1,5 +1,6 @@
 #include "placement_tool.hpp"
 #include "../../../shared/asset.hpp"
+#include "../../../shared/editor_grid.hpp"
 #include "../../../shared/entities/static_entities.hpp"
 #include "../../../shared/map.hpp" // For factory
 #include "../transaction_system.hpp"
@@ -22,7 +23,9 @@ void Placement_Tool::on_enable(editor_context_t &ctx)
     if (auto *aabb =
             dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
     {
-      aabb->half_extents = {0.5f, 0.5f, 0.5f};
+      aabb->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                            editor::DEFAULT_HALF_EXTENT,
+                            editor::DEFAULT_HALF_EXTENT};
     }
   }
 }
@@ -32,7 +35,6 @@ void Placement_Tool::on_disable(editor_context_t &ctx) { ghost_valid = false; }
 void Placement_Tool::on_update(editor_context_t &ctx,
                                const viewport_state_t &view)
 {
-  // Raycast against ground plane y = -2.0
   linalg::vec3 plane_point = {0, 0.0f, 0};
   linalg::vec3 plane_normal = {0, 1.0f, 0};
 
@@ -42,9 +44,9 @@ void Placement_Tool::on_update(editor_context_t &ctx,
   {
     ghost_pos = view.mouse_ray.origin + view.mouse_ray.dir * t;
 
-    // Snap to grid (optional, say 1.0 units)
-    ghost_pos.x = std::round(ghost_pos.x);
-    ghost_pos.z = std::round(ghost_pos.z);
+    float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+    ghost_pos.x = editor::snap(ghost_pos.x, step);
+    ghost_pos.z = editor::snap(ghost_pos.z, step);
 
     ghost_valid = true;
   }
@@ -75,9 +77,14 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
     // Assuming 1x1x1 size for now (half_extents = 0.5)
 
     linalg::vec3 center = ghost_pos;
-    center.y += 0.5f;
+    // Place entity so its bottom sits on the ground plane
+    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(new_ent.get()))
+      center.y += aabb->half_extents.y;
+    else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(new_ent.get()))
+      center.y += wedge->half_extents.y;
+    else
+      center.y += editor::DEFAULT_HALF_EXTENT;
 
-    // Set position on the entity (all types use inherited Entity::position)
     new_ent->position = center;
 
     // Entity-specific setup
@@ -86,6 +93,7 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
     {
       player->render.mesh_id = 2; // pyramid
       player->render.is_wireframe = true;
+      player->render.scale = {32, 72, 32}; // player hull size
     }
 
     // Add to map with undo recording
@@ -122,7 +130,9 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     if (auto *aabb =
             dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
     {
-      aabb->half_extents = {0.5f, 0.5f, 0.5f};
+      aabb->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                            editor::DEFAULT_HALF_EXTENT,
+                            editor::DEFAULT_HALF_EXTENT};
     }
   }
   else if (e.scancode == SDL_SCANCODE_2)
@@ -133,7 +143,9 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     if (auto *wedge =
             dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
     {
-      wedge->half_extents = {0.5f, 0.5f, 0.5f};
+      wedge->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                             editor::DEFAULT_HALF_EXTENT,
+                             editor::DEFAULT_HALF_EXTENT};
       wedge->orientation = 0; // Default
     }
   }
@@ -148,6 +160,7 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
       player->health = 100;
       player->render.mesh_id = 2;
       player->render.is_wireframe = true;
+      player->render.scale = {32, 72, 32}; // player hull size
     }
   }
   else if (e.scancode == SDL_SCANCODE_4)
@@ -178,7 +191,12 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
   if (ghost_valid && current_entity)
   {
     linalg::vec3 center = ghost_pos;
-    center.y += 0.5f;
+    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
+      center.y += aabb->half_extents.y;
+    else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
+      center.y += wedge->half_extents.y;
+    else
+      center.y += editor::DEFAULT_HALF_EXTENT;
 
     // Try render component mesh first
     bool drew_mesh = false;

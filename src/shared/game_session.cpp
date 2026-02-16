@@ -36,11 +36,13 @@ void init_session_from_map(game_session_t &session, const map_t &map)
 
   for (size_t i = 0; i < session.static_entities.size(); ++i)
   {
-    auto bounds = compute_entity_bounds(session.static_entities[i].get());
+    auto *ent = session.static_entities[i].get();
+    auto bounds = compute_entity_bounds(ent);
     BVH_Input input;
     input.aabb.min = bounds.min;
     input.aabb.max = bounds.max;
     input.id = {Collision_Id::Type::Static_Geometry, (uint32_t)i};
+    input.collision_planes = compute_entity_collision_planes(ent);
     bvh_inputs.push_back(input);
   }
 

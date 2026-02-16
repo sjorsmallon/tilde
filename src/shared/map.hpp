@@ -90,4 +90,9 @@ bool save_map(const std::string &filename, const map_t &map);
 // else default 1x1x1 box at position.
 aabb_bounds_t compute_entity_bounds(const network::Entity *entity);
 
+// Compute outward-facing collision planes for an entity's shape.
+// AABB entities -> 6 planes, Wedge entities -> 5 planes (including slope),
+// Static mesh / fallback -> 6 AABB planes from bounds.
+std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity);
+
 } // namespace shared

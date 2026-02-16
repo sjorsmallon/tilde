@@ -1793,7 +1793,7 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
   }
   else
   {
-    proj = mat4_t::perspective(1.5708f, aspect, 0.1f, 1000.0f); // 90 deg fov
+    proj = mat4_t::perspective(1.5708f, aspect, 1.0f, 50000.0f); // 90 deg fov
   }
 
   // View Matrix from Camera

@@ -1,7 +1,7 @@
 #pragma once
-// TODO: Implement AABB-BVH Intersection
 #include "bsp.hpp"
 #include "entity.hpp"
+#include "plane.hpp"
 #include <vector>
 
 /*
@@ -61,9 +61,9 @@ struct BVH_Primitive
 {
   Collision_Id id;
   AABB aabb;
+  std::vector<Plane> collision_planes; // convex hull faces, normals pointing outward
 };
 
-// Input is same as Primitive for now
 using BVH_Input = BVH_Primitive;
 
 struct Bounding_Volume_Hierarchy
@@ -74,7 +74,8 @@ struct Bounding_Volume_Hierarchy
 };
 
 void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
-                   const AABB &aabb);
+                   const AABB &aabb,
+                   std::vector<Plane> collision_planes = {});
 
 Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs);
 
@@ -89,4 +90,4 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
                        const vec3f &origin, const vec3f &dir, Ray_Hit &out_hit);
 
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
-                        std::vector<Collision_Id> &out_ids);
+                        std::vector<const BVH_Primitive *> &out_primitives);
