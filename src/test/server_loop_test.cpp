@@ -44,11 +44,13 @@ void test_receive_and_reassembly()
   state.player_ips[0] = client_addr;
 
   // Create a Move Command
-  game::CmdMove move;
-  move.set_entity_id(10);
-  move.mutable_target_position()->set_x(100.0f);
-  move.mutable_target_position()->set_y(200.0f);
-  move.mutable_target_position()->set_z(300.0f);
+  game::C2S_PlayerMoveCommand move;
+  move.set_command_number(10);
+  move.set_forwardmove(127.0f);
+  move.set_sidemove(0.0f);
+  auto *va = move.mutable_viewangles();
+  va->set_yaw(45.0f);
+  va->set_pitch(0.0f);
 
   std::vector<uint8> serialized_data(move.ByteSizeLong());
   move.SerializeToArray(serialized_data.data(), serialized_data.size());
@@ -106,8 +108,8 @@ void test_receive_and_reassembly()
   // Timestamp might be 0 as packet helper doesn't set it (comment says
   // "Timestamp should be set by sender") We didn't set it in loop. So it's 0.
 
-  assert(received_move.move.entity_id() == 10);
-  assert(received_move.move.target_position().x() == 100.0f);
+  assert(received_move.move.command_number() == 10);
+  assert(received_move.move.forwardmove() == 127.0f);
   std::cout << "  -> Move Reassembled Correctly!" << std::endl;
 }
 

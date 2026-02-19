@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Cross-platform export macros
 #if defined(_WIN32) || defined(__CYGWIN__)
   #ifdef GAME_SERVER_EXPORTS
@@ -16,4 +18,6 @@ namespace server {
 GAME_SERVER_API bool Init();
 GAME_SERVER_API bool Tick();
 GAME_SERVER_API void Shutdown();
+GAME_SERVER_API double get_tick_interval();
+GAME_SERVER_API uint32_t get_tick_number();
 } // namespace server

@@ -31,7 +31,9 @@ message S2C_EntityPackage {
     optional bool is_delta = 2;
     optional int32 update_baseline = 3;
     optional bytes entity_data = 4; // this is the reflective snapshot data
-} 
+    optional int32 server_tick = 5;
+    optional int32 last_processed_command = 6; // per-client ack for reconciliation
+}
 
 // --------------------------------------------- things that are uncertain
 

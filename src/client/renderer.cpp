@@ -699,18 +699,11 @@ static void create_aabb_pipeline()
   multisampling.sampleShadingEnable = VK_FALSE;
   multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-  // No Depth Test for now OR Enable it? Prompt didn't specify, but safer to
-  // have it off for "overlay" or on for "world". Let's enable Z test but
-  // disable write? Or just typical opaque. Let's do Standard Depth Test. Wait,
-  // I need a depth buffer attachment for that! My current renderpass ONLY has
-  // color attachment. So I cannot enable depth test unless I add depth buffer.
-  // The user didn't ask for depth buffer setup yet.
-  // I will DISABLE depth test for this draft.
   VkPipelineDepthStencilStateCreateInfo depthStencil{};
   depthStencil.sType =
       VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-  depthStencil.depthTestEnable = VK_FALSE;
-  depthStencil.depthWriteEnable = VK_FALSE;
+  depthStencil.depthTestEnable = VK_TRUE;
+  depthStencil.depthWriteEnable = VK_TRUE;
   depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
   // ...
 
@@ -865,7 +858,9 @@ static void create_line_pipeline()
 
   VkPipelineDepthStencilStateCreateInfo depthStencil{
       VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-  depthStencil.depthTestEnable = VK_FALSE;
+  depthStencil.depthTestEnable = VK_TRUE;
+  depthStencil.depthWriteEnable = VK_FALSE;
+  depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
   VkPipelineColorBlendAttachmentState colorBlendAttachment{};
   colorBlendAttachment.colorWriteMask = 0xF;

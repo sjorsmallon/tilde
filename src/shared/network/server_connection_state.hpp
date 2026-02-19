@@ -23,7 +23,7 @@ struct Byte_Buffer
 struct TimestampedMove
 {
   uint64 timestamp;
-  game::CmdMove move;
+  game::C2S_PlayerMoveCommand move;
 };
 
 struct ServerInbox
@@ -182,7 +182,7 @@ inline void poll_network(Server_Connection_State &state, Udp_Socket &socket,
         if (packet.header.message_type ==
             static_cast<uint8>(Message_Type::C2S_PlayerMoveCommand))
         {
-          game::CmdMove move_cmd;
+          game::C2S_PlayerMoveCommand move_cmd;
           if (move_cmd.ParseFromArray(buffer.data(), buffer.size()))
           {
             out_inbox.moves.push_back({static_cast<int>(player_idx),

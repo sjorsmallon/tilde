@@ -1,0 +1,17 @@
+#include "rocket_entity.hpp"
+
+namespace network
+{
+
+DEFINE_SCHEMA_CLASS(Rocket_Entity, Entity)
+{
+  BEGIN_SCHEMA_FIELDS()
+    REGISTER_SCHEMA_FIELD(velocity);    
+    REGISTER_SCHEMA_FIELD(lifetime);
+    REGISTER_SCHEMA_FIELD(damage_radius);
+    REGISTER_SCHEMA_FIELD(damage_amount);
+    REGISTER_SCHEMA_FIELD(render);
+  END_SCHEMA_FIELDS()
+}
+
+} // namespace network

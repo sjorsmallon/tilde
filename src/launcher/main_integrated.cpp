@@ -5,6 +5,7 @@
 #include "shared/log.hpp"
 #include "shared/timed_function.hpp"
 
+#include <chrono>
 #include <iostream>
 
 cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
@@ -35,19 +36,34 @@ int main(int argc, char *argv[])
   log_terminal("=== Initialization Complete, Entering Loop ===");
 
   bool running = true;
+  auto previous_time = std::chrono::high_resolution_clock::now();
+  double server_accumulator = 0.0;
+
   while (running)
   {
-    // Run Client Frame (Input/Render)
-    // If client wants to quit (window closed), we stop.
+    auto current_time = std::chrono::high_resolution_clock::now();
+    double frame_time =
+        std::chrono::duration<double>(current_time - previous_time).count();
+    previous_time = current_time;
+
+    if (frame_time > 0.25)
+      frame_time = 0.25;
+
+    // Client frame (renders at display rate)
     if (!client::Tick())
     {
       running = false;
+      break;
     }
 
-    // Run Server Tick (Game Logic)
-    // In a real scenario, this might run on a separate thread or at a fixed
-    // timestep
-    server::Tick();
+    // Server ticks at fixed rate
+    double tick_interval = server::get_tick_interval();
+    server_accumulator += frame_time;
+    while (server_accumulator >= tick_interval)
+    {
+      server::Tick();
+      server_accumulator -= tick_interval;
+    }
   }
 
   log_terminal("=== Shutdown Initiated ===");

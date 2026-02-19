@@ -87,6 +87,7 @@ add_library(game_shared STATIC
     src/shared/entities/player_entity.cpp
     src/shared/entities/weapon_entity.cpp
     src/shared/entities/static_entities.cpp
+    src/shared/entities/rocket_entity.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/network/schema.cpp

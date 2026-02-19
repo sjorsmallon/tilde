@@ -25,19 +25,38 @@ int main(int argc, char *argv[])
 
   log_terminal("=== Server Initialized. Press Ctrl+C to stop. ===");
 
-  // Simple loop for dedicated server
+  // Fixed-timestep server loop
   bool running = true;
+  auto previous_time = std::chrono::high_resolution_clock::now();
+  double accumulator = 0.0;
+
   while (running)
   {
-    // Run Server Logic
-    server::Tick();
+    auto current_time = std::chrono::high_resolution_clock::now();
+    double frame_time =
+        std::chrono::duration<double>(current_time - previous_time).count();
+    previous_time = current_time;
 
-    // In a real dedicated server, we'd sleep to maintain tickrate
-    // For now, sleep 16ms to avoid burning CPU in this loop
-    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    // Clamp to prevent spiral of death
+    if (frame_time > 0.25)
+      frame_time = 0.25;
 
-    // TODO: Handle signal handling for graceful shutdown (SIGINT)
-    // For this demo, runs until killed or console closed.
+    double tick_interval = server::get_tick_interval();
+    accumulator += frame_time;
+
+    while (accumulator >= tick_interval)
+    {
+      server::Tick();
+      accumulator -= tick_interval;
+    }
+
+    // Sleep for remaining time to avoid busy-waiting
+    double sleep_time = tick_interval - accumulator;
+    if (sleep_time > 0.001)
+    {
+      std::this_thread::sleep_for(
+          std::chrono::microseconds(static_cast<int>(sleep_time * 1000000)));
+    }
   }
 
   server::Shutdown();

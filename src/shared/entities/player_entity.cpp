@@ -12,6 +12,7 @@ DEFINE_SCHEMA_CLASS(Player_Entity, Entity)
   REGISTER_SCHEMA_FIELD(ammo);
   REGISTER_SCHEMA_FIELD(active_weapon_id);
   REGISTER_SCHEMA_FIELD(client_slot_index);
+  REGISTER_SCHEMA_FIELD(velocity);
   REGISTER_SCHEMA_FIELD(render);
   END_SCHEMA_FIELDS()
 }

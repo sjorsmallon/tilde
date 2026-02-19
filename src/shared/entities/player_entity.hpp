@@ -17,6 +17,7 @@ public:
   SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked | Schema_Flags::Editable);
   SCHEMA_FIELD(int32, active_weapon_id, Schema_Flags::Networked);
   SCHEMA_FIELD(int32, client_slot_index, Schema_Flags::Networked);
+  SCHEMA_FIELD(vec3f, velocity, Schema_Flags::Networked);
 
   SCHEMA_FIELD(render_component_t, render,
                Schema_Flags::Networked | Schema_Flags::Editable);

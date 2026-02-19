@@ -1,6 +1,7 @@
 #include "player_move.hpp"
 #include "network/network_types.hpp"
 #include <print>
+#include "timed_function.hpp"
 
 using namespace network;
 
@@ -218,7 +219,7 @@ vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
   return result;
 }
 
-std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
+std::tuple<vec3, vec3> my_walk_move(const Move_Input &input,
                                     bool has_ground, const vec3 &ground_normal,
                                     const Collider_Planes &collider_planes,
                                     const vec3 old_position,
@@ -335,7 +336,7 @@ std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
     new_velocity =
         clip_vector(new_velocity, collider_plane.normal, overbounce);
 
-    // FIX #2a: normalize after wall clip, same as the ground clip above
+    // normalize after wall clip, same as the ground clip above
     // (lines 307-313). Without this, clip shortens the vector (it removes the
     // component into the wall), and then multiplying by new_speed gives
     // new_speed * length(clipped_unit) — which is less than new_speed.
@@ -359,7 +360,7 @@ std::tuple<vec3, vec3> my_walk_move(Move_Input &input,
                          has_ground && !jump_pressed_this_frame, dt);
 }
 
-auto my_air_move(Move_Input &input,
+auto my_air_move(const Move_Input &input,
                  bool has_ground, const vec3 &ground_normal,
                  bool has_ceiling, const vec3 &ceiling_normal,
                  Collider_Planes &collider_planes, const vec3 &old_position,
@@ -585,11 +586,12 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
 // Exposed functions
 
 std::tuple<vec3, vec3> player_move(
-    Move_Input &input,
+    const Move_Input &input,
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
-    const vec3 &right, float half_width, float half_height, const float dt)
+    const vec3 &right, const float half_width, const float half_height, const float dt)
 {
+  timed_function();
   // Resolve collisions: push player out of entities and collect contact planes
   vec3 player_pos = old_position;
   Collider_Planes collider_planes =
@@ -606,7 +608,6 @@ std::tuple<vec3, vec3> player_move(
   bool grounded = has_ground && (old_velocity.y <= 0.0f);
 
 
-  log_terminal("grounded: {}, has_ground: {}, vel_y: {}\n", grounded, has_ground, old_velocity.y);
   vec3 new_pos, new_vel;
   if (grounded)
   {
