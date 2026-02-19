@@ -1,5 +1,8 @@
 #include "../shared/entities/player_entity.hpp"
+#include "../shared/entities/rocket_entity.hpp"
 #include "server_api.hpp"
+#include "systems/bot_system.hpp"
+#include "systems/rocket_system.hpp"
 
 #include <string>
 
@@ -26,14 +29,17 @@ cvar::CVar<float> sv_tickrate("sv_tickrate", 60.0f, "Server tick rate in Hz");
 server_context_t g_state;
 network::Udp_Socket g_socket;
 uint32_t g_tick_number = 0;
-vec3 g_spawn_position = {0, 0, 50};
+vec3 g_spawn_position = {640, 100, -412};
 
 struct Player_Server_State
 {
-  int last_processed_command = -1;
+  int      last_processed_command = -1;
+  uint64_t last_buttons           = 0;
 };
 
 std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
+
+std::vector<Bot_State> g_bots;
 
 void handle_player_leave(server_context_t &state,
                          const network::Address &sender)
@@ -99,6 +105,9 @@ bool Init()
     }
 
     log_terminal("Server loaded map: {}", g_state.session.map_name);
+
+    g_bots.clear();
+    g_bots.push_back(spawn_bot(g_state.session, g_spawn_position, BOT_SLOT_BASE));
   }
   else
   {
@@ -252,10 +261,42 @@ bool Tick()
 
     if (player_idx >= 0 && player_idx < network::sv_max_player_count)
     {
-      g_player_states[player_idx].last_processed_command =
-          move.command_number();
+      auto &pstate = g_player_states[player_idx];
+      pstate.last_processed_command = move.command_number();
+
+      uint64_t cur_buttons  = move.buttons_bitfield();
+      bool fire_pressed = (cur_buttons & Button::Fire) &&
+                          !(pstate.last_buttons & Button::Fire);
+      pstate.last_buttons = cur_buttons;
+
+      if (fire_pressed)
+      {
+        float yaw_rad   = linalg::to_radians(yaw);
+        float pitch_rad = linalg::to_radians(pitch);
+        float cY = std::cos(yaw_rad),   sY = std::sin(yaw_rad);
+        float cP = std::cos(pitch_rad), sP = std::sin(pitch_rad);
+        vec3f dir = {cY * cP, sP, sY * cP};
+
+        auto *rocket = g_state.session.entity_system.spawn<network::Rocket_Entity>(
+            entity_type::ROCKET);
+        if (rocket)
+        {
+          rocket->position        = {player->position.x,
+                                     player->position.y + 28.f,
+                                     player->position.z};
+          rocket->velocity        = dir * 600.f;
+          rocket->lifetime        = 5.f;
+          rocket->damage_amount   = 50.f;
+          rocket->knockback_force = 600.f;
+        }
+      }
     }
   }
+
+  // --- Simulate server-side entities ---
+  float tick_dt = static_cast<float>(get_tick_interval());
+  update_bots(g_bots, g_state.session, tick_dt);
+  update_rockets(g_state.session, tick_dt);
 
   // --- Broadcast entity state to all connected clients ---
   if (pool)

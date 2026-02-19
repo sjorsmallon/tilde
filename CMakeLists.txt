@@ -197,6 +197,8 @@ endif()
 # Contains Game Logic
 add_library(game_server SHARED
     src/server/server_impl.cpp
+    src/server/systems/rocket_system.cpp
+    src/server/systems/bot_system.cpp
 )
 target_include_directories(game_server PUBLIC src/server)
 target_link_libraries(game_server PUBLIC game_shared)

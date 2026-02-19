@@ -42,6 +42,7 @@ constexpr uint64_t Key7     = 1 << 11;
 constexpr uint64_t Key8     = 1 << 12;
 constexpr uint64_t Key9     = 1 << 13;
 constexpr uint64_t Key0     = 1 << 14;
+constexpr uint64_t Fire     = 1 << 15;
 } // namespace Button
 
 struct Move_Input

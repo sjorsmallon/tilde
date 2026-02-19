@@ -11,6 +11,7 @@
 #include "imgui.h"
 
 #include <array>
+#include <unordered_map>
 
 namespace client
 {
@@ -95,8 +96,9 @@ private:
     float render_pitch = 0.f;
   };
 
-  std::array<Remote_Player_State, network::sv_max_player_count> remote_players = {};
+  std::unordered_map<int32_t, Remote_Player_State> remote_players;
   float interpolation_time = 0.f;
+
 };
 
 } // namespace client

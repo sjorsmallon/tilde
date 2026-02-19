@@ -352,7 +352,6 @@ std::tuple<vec3, vec3> my_walk_move(const Move_Input &input,
   // leaving the ground, not staying on it.
   if (jump_pressed_this_frame)
   {
-    std::print("induced jump speed: {}\n", jumpspeed);
     new_velocity.y = jumpspeed;
   }
 

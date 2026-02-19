@@ -189,9 +189,8 @@ void PlayState::update(float dt)
       }
       else
       {
-        // Remote player: push into interpolation buffer
-        if (slot_index >= 0 &&
-            slot_index < static_cast<int>(remote_players.size()))
+        // Remote player (or bot): push into interpolation buffer
+        if (slot_index >= 0)
         {
           auto &rp = remote_players[slot_index];
           rp.active = true;
@@ -296,6 +295,8 @@ void PlayState::update(float dt)
 
   Move_Input move_input = move_input_from_buttons(buttons);
 
+  if (input::is_mouse_down(SDL_BUTTON_LEFT)) buttons |= Button::Fire;
+
   // --- Send input to server ---
   if (connection_phase == Connection_Phase::Connected)
   {
@@ -342,7 +343,7 @@ void PlayState::update(float dt)
 
   // --- Interpolate remote players ---
   float tick_interval = 1.0f / static_cast<float>(server_tickrate);
-  for (auto &rp : remote_players)
+  for (auto &[slot, rp] : remote_players)
   {
     if (!rp.active || rp.snapshot_count < 2)
     {
@@ -504,8 +505,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  // Render remote players as wireframe AABBs
-  for (const auto &rp : remote_players)
+  // Render remote players and bots as wireframe AABBs
+  for (const auto &[slot, rp] : remote_players)
   {
     if (!rp.active || rp.slot_index == my_slot)
       continue;
@@ -517,7 +518,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     vec3f rmax = {rp.render_position.x + half.x,
                   rp.render_position.y + half.y,
                   rp.render_position.z + half.z};
-    renderer::DrawWireAABB(cmd, rmin, rmax, 0xFF00FF00);
+    renderer::DrawAABB(cmd, rmin, rmax, 0xFF00FF00);
   }
 }
 

@@ -1,4 +1,8 @@
 - rocket launcher
+- rockets should not collide ith the player that fired it
+- rockets should collide with the environment.
+- bots do not join?
+
 - sculpting is wrong: after ininitial resize, the face is in the wrong way.
 - undo/redo: entity_placement_t position/scale/rotation not tracked by transaction system. Gizmo translate/rotate syncs placement fields but undo only restores entity schema properties. After undo, placement and entity fields may be out of sync until BVH rebuild.
 - undo/redo: multi-entity delete creates one transaction per entity. Ctrl+Z only undoes one deletion at a time instead of the whole batch.

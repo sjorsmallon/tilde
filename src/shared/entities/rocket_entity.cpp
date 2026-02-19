@@ -10,6 +10,7 @@ DEFINE_SCHEMA_CLASS(Rocket_Entity, Entity)
     REGISTER_SCHEMA_FIELD(lifetime);
     REGISTER_SCHEMA_FIELD(damage_radius);
     REGISTER_SCHEMA_FIELD(damage_amount);
+    REGISTER_SCHEMA_FIELD(knockback_force);
     REGISTER_SCHEMA_FIELD(render);
   END_SCHEMA_FIELDS()
 }

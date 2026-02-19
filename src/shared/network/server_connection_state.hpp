@@ -189,7 +189,6 @@ inline void poll_network(Server_Connection_State &state, Udp_Socket &socket,
                                        {packet.header.timestamp, move_cmd}});
           }
         }
-
         // Cleanup sequence
         state.partial_packets[player_idx].erase(packet.header.sequence_id);
       }
