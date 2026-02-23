@@ -2,6 +2,7 @@
 
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/rocket_entity.hpp"
+#include "../../shared/components/components.hpp"
 
 #include "../../shared/linalg.hpp"
 
@@ -10,19 +11,6 @@
 
 namespace server
 {
-
-static constexpr float player_half_width  = 16.f;
-static constexpr float player_half_height = 36.f;
-
-static bool point_in_player_aabb(const vec3f &p, const vec3f &player_pos)
-{
-  return p.x >= player_pos.x - player_half_width  &&
-         p.x <= player_pos.x + player_half_width  &&
-         p.y >= player_pos.y                       &&
-         p.y <= player_pos.y + 2.f * player_half_height &&
-         p.z >= player_pos.z - player_half_width  &&
-         p.z <= player_pos.z + player_half_width;
-}
 
 void update_rockets(shared::game_session_t &session, float dt)
 {
@@ -54,7 +42,13 @@ void update_rockets(shared::game_session_t &session, float dt)
 
     for (auto &player : *players)
     {
-      if (point_in_player_aabb(rocket.position, player.position))
+      // Skip collision with the player who fired this rocket
+      if (static_cast<int32_t>(player.id.index) == rocket.owner_id)
+        continue;
+
+      // Use hitbox-based collision detection
+      if (network::test_hitbox_collision(rocket.position, rocket.hitbox,
+                                         player.position, player.hitbox))
       {
         player.health -= static_cast<int32_t>(rocket.damage_amount);
         player.velocity = player.velocity +

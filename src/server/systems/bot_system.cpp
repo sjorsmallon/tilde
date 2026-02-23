@@ -21,6 +21,11 @@ Bot_State spawn_bot(shared::game_session_t &session, const vec3f &position,
     bot->position          = position;
     bot->client_slot_index = slot;
     bot->health            = 100;
+
+    // Initialize combat hitbox (capsule: radius 18, half-height 38)
+    bot->hitbox.shape_type.set("capsule");
+    bot->hitbox.size = {18.f, 38.f, 18.f};  // x/z = radius, y = half_height
+    bot->hitbox.offset = {0.f, 38.f, 0.f};  // Offset up so capsule is centered on player
   }
 
   return Bot_State{slot, 0.f};
@@ -104,6 +109,12 @@ void update_bots(std::vector<Bot_State> &bots,
         rocket->lifetime        = 5.f;
         rocket->damage_amount   = 50.f;
         rocket->knockback_force = 600.f;
+        rocket->owner_id        = static_cast<int32_t>(bot_ent->id.index);
+
+        // Initialize hitbox (sphere with 12 unit radius)
+        rocket->hitbox.shape_type.set("sphere");
+        rocket->hitbox.size = {12.f, 12.f, 12.f};  // x = radius
+        rocket->hitbox.offset = {0.f, 0.f, 0.f};
       }
     }
   }

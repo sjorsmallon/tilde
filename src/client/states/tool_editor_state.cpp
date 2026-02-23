@@ -653,12 +653,37 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     // Try to render via the entity's render component
     const auto *rc = ent->get_component<network::render_component_t>();
 
-    if (rc && rc->visible && rc->mesh_id >= 0)
+    if (rc && rc->visible)
     {
-      const char *mesh_path = assets::get_mesh_path(rc->mesh_id);
+      const char *mesh_path = nullptr;
+
+      // Check if mesh_path string is set (for primitives or direct paths)
+      if (rc->mesh_path.length > 0)
+      {
+        mesh_path = rc->mesh_path.c_str();
+      }
+      // Fallback to mesh_id lookup
+      else if (rc->mesh_id >= 0)
+      {
+        mesh_path = assets::get_mesh_path(rc->mesh_id);
+      }
+
       if (mesh_path)
       {
-        auto mesh_handle = assets::load_mesh(mesh_path);
+        // Check if it's a primitive (starts with __primitive_)
+        assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
+        if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
+        {
+          // Extract primitive name (after "__primitive_")
+          const char *prim_name = mesh_path + 12;
+          mesh_handle = assets::get_primitive_mesh(prim_name);
+        }
+        else
+        {
+          // Regular OBJ file
+          mesh_handle = assets::load_mesh(mesh_path);
+        }
+
         if (mesh_handle.valid())
         {
           if (rc->is_wireframe)

@@ -147,6 +147,127 @@ inline std::array<linalg::vec3, 6> get_wedge_points(const wedge_t &wedge)
   }
 }
 
+// Check if two AABBs intersect
+inline bool aabbs_intersect(const aabb_bounds_t &a, const aabb_bounds_t &b)
+{
+  return (a.min.x <= b.max.x && a.max.x >= b.min.x) &&
+         (a.min.y <= b.max.y && a.max.y >= b.min.y) &&
+         (a.min.z <= b.max.z && a.max.z >= b.min.z);
+}
+
+// Subtract one AABB from another, yielding up to 6 non-overlapping pieces.
+// Returns the parts of 'source' that don't overlap with 'subtract'.
+// If they don't intersect, returns the original source AABB.
+inline std::vector<aabb_t> subtract_aabb(const aabb_t &source, const aabb_t &subtract)
+{
+  std::vector<aabb_t> result;
+
+  auto src_bounds = get_bounds(source);
+  auto sub_bounds = get_bounds(subtract);
+
+  // If no intersection, return the original AABB
+  if (!aabbs_intersect(src_bounds, sub_bounds))
+  {
+    result.push_back(source);
+    return result;
+  }
+
+  // Compute the intersection bounds
+  linalg::vec3 intersect_min = {
+    std::max(src_bounds.min.x, sub_bounds.min.x),
+    std::max(src_bounds.min.y, sub_bounds.min.y),
+    std::max(src_bounds.min.z, sub_bounds.min.z)
+  };
+
+  linalg::vec3 intersect_max = {
+    std::min(src_bounds.max.x, sub_bounds.max.x),
+    std::min(src_bounds.max.y, sub_bounds.max.y),
+    std::min(src_bounds.max.z, sub_bounds.max.z)
+  };
+
+  // Generate up to 6 pieces by slicing along each axis
+
+  // Left piece (X-)
+  if (src_bounds.min.x < intersect_min.x)
+  {
+    linalg::vec3 min = src_bounds.min;
+    linalg::vec3 max = {intersect_min.x, src_bounds.max.y, src_bounds.max.z};
+    linalg::vec3 center = (min + max) * 0.5f;
+    linalg::vec3 half_extents = (max - min) * 0.5f;
+    aabb_t box;
+    box.center = center;
+    box.half_extents = half_extents;
+    result.push_back(box);
+  }
+
+  // Right piece (X+)
+  if (src_bounds.max.x > intersect_max.x)
+  {
+    linalg::vec3 min = {intersect_max.x, src_bounds.min.y, src_bounds.min.z};
+    linalg::vec3 max = src_bounds.max;
+    linalg::vec3 center = (min + max) * 0.5f;
+    linalg::vec3 half_extents = (max - min) * 0.5f;
+    aabb_t box;
+    box.center = center;
+    box.half_extents = half_extents;
+    result.push_back(box);
+  }
+
+  // Bottom piece (Y-) - only in the X intersection range
+  if (src_bounds.min.y < intersect_min.y)
+  {
+    linalg::vec3 min = {intersect_min.x, src_bounds.min.y, src_bounds.min.z};
+    linalg::vec3 max = {intersect_max.x, intersect_min.y, src_bounds.max.z};
+    linalg::vec3 center = (min + max) * 0.5f;
+    linalg::vec3 half_extents = (max - min) * 0.5f;
+    aabb_t box;
+    box.center = center;
+    box.half_extents = half_extents;
+    result.push_back(box);
+  }
+
+  // Top piece (Y+) - only in the X intersection range
+  if (src_bounds.max.y > intersect_max.y)
+  {
+    linalg::vec3 min = {intersect_min.x, intersect_max.y, src_bounds.min.z};
+    linalg::vec3 max = {intersect_max.x, src_bounds.max.y, src_bounds.max.z};
+    linalg::vec3 center = (min + max) * 0.5f;
+    linalg::vec3 half_extents = (max - min) * 0.5f;
+    aabb_t box;
+    box.center = center;
+    box.half_extents = half_extents;
+    result.push_back(box);
+  }
+
+  // Front piece (Z-) - only in the X and Y intersection range
+  if (src_bounds.min.z < intersect_min.z)
+  {
+    linalg::vec3 min = {intersect_min.x, intersect_min.y, src_bounds.min.z};
+    linalg::vec3 max = {intersect_max.x, intersect_max.y, intersect_min.z};
+    linalg::vec3 center = (min + max) * 0.5f;
+    linalg::vec3 half_extents = (max - min) * 0.5f;
+    aabb_t box;
+    box.center = center;
+    box.half_extents = half_extents;
+    result.push_back(box);
+  }
+
+  // Back piece (Z+) - only in the X and Y intersection range
+  if (src_bounds.max.z > intersect_max.z)
+  {
+    linalg::vec3 min = {intersect_min.x, intersect_min.y, intersect_max.z};
+    linalg::vec3 max = {intersect_max.x, intersect_max.y, src_bounds.max.z};
+    linalg::vec3 center = (min + max) * 0.5f;
+    linalg::vec3 half_extents = (max - min) * 0.5f;
+    aabb_t box;
+    box.center = center;
+    box.half_extents = half_extents;
+    result.push_back(box);
+  }
+
+  return result;
+}
+
 // Compute outward-facing collision planes for an AABB (6 planes).
 inline std::vector<Plane> compute_collision_planes(const aabb_t &aabb)
 {
@@ -219,3 +340,16 @@ inline std::vector<Plane> compute_collision_planes(const wedge_t &wedge)
 }
 
 } // namespace shared
+
+// Schema name registrations for shapes (at global scope, with full namespace)
+namespace network {
+  template <> struct Schema_Name_Helper<shared::aabb_t> {
+      static constexpr const char* get() { return "aabb_t"; }
+  };
+  template <> struct Schema_Name_Helper<shared::pyramid_t> {
+      static constexpr const char* get() { return "pyramid_t"; }
+  };
+  template <> struct Schema_Name_Helper<shared::wedge_t> {
+      static constexpr const char* get() { return "wedge_t"; }
+  };
+}

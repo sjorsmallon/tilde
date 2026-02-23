@@ -22,7 +22,15 @@ public:
   SCHEMA_FIELD(render_component_t, render,
                Schema_Flags::Networked | Schema_Flags::Editable);
 
+  // Combat hitbox (separate from physics collision used in player_move)
+  // Physics uses 16x36 half-extents, combat hitbox can be tuned independently
+  SCHEMA_FIELD(hitbox_component_t, hitbox,
+               Schema_Flags::Networked | Schema_Flags::Editable);
+
   DECLARE_SCHEMA(Player_Entity)
 };
+
+// Schema name registration (must be at namespace scope)
+SCHEMA_NAME_FOR_TYPE(Player_Entity)
 
 } // namespace network

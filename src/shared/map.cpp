@@ -273,8 +273,9 @@ bool save_map(const std::string &filename, const map_t &map)
       for (const auto &field : schema->fields)
       {
         std::string value;
-        if (network::serialize_field_to_string(base_ptr + field.offset,
-                                               field.type, value))
+        // Use recursive version to handle nested schemas
+        if (network::serialize_field_to_string_recursive(base_ptr + field.offset,
+                                                         field, value))
         {
           def.properties[field.name] = value;
         }

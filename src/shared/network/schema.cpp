@@ -1,4 +1,5 @@
 #include "schema.hpp"
+#include "../components/components.hpp"
 #include <cstring>
 #include <sstream>
 
@@ -122,6 +123,12 @@ bool parse_string_to_field(const std::string &value, Field_Type type,
 
     return true;
   }
+  case Field_Type::NestedSchema:
+  {
+    // This case is handled by the caller with schema name context
+    // We can't deserialize without knowing which schema to use
+    return false;
+  }
   default:
     return false;
   }
@@ -178,8 +185,99 @@ bool serialize_field_to_string(const void *in_ptr, Field_Type type,
     out_value = os.str();
     return true;
   }
+  case Field_Type::NestedSchema:
+  {
+    // This case is handled by the caller with schema name context
+    // We can't serialize without knowing which schema to use
+    return false;
+  }
   default:
     return false;
+  }
+}
+
+// Recursive serialization for nested schemas
+bool parse_string_to_field_recursive(const std::string &value,
+                                      const Field_Prop &field,
+                                      void *out_ptr)
+{
+  if (field.type == Field_Type::NestedSchema)
+  {
+    auto *nested_schema = Schema_Registry::get().get_nested_schema(field);
+    if (!nested_schema)
+      return false;
+
+    // Format: field1:value1|field2:value2|...
+    std::stringstream ss(value);
+    std::string token;
+    uint8_t *base_ptr = static_cast<uint8_t *>(out_ptr);
+
+    while (std::getline(ss, token, '|'))
+    {
+      // Split into field_name:field_value
+      size_t colon_pos = token.find(':');
+      if (colon_pos == std::string::npos)
+        continue;
+
+      std::string field_name = token.substr(0, colon_pos);
+      std::string field_value = token.substr(colon_pos + 1);
+
+      // Find the field in the nested schema
+      for (const auto &nested_field : nested_schema->fields)
+      {
+        if (nested_field.name == field_name)
+        {
+          void *nested_ptr = base_ptr + nested_field.offset;
+          parse_string_to_field_recursive(field_value, nested_field, nested_ptr);
+          break;
+        }
+      }
+    }
+    return true;
+  }
+  else
+  {
+    return parse_string_to_field(value, field.type, out_ptr);
+  }
+}
+
+bool serialize_field_to_string_recursive(const void *in_ptr,
+                                          const Field_Prop &field,
+                                          std::string &out_value)
+{
+  if (field.type == Field_Type::NestedSchema)
+  {
+    auto *nested_schema = Schema_Registry::get().get_nested_schema(field);
+    if (!nested_schema)
+      return false;
+
+    // Format: field1:value1|field2:value2|...
+    std::ostringstream os;
+    const uint8_t *base_ptr = static_cast<const uint8_t *>(in_ptr);
+    bool first = true;
+
+    for (const auto &nested_field : nested_schema->fields)
+    {
+      if (!first)
+        os << "|";
+      first = false;
+
+      os << nested_field.name << ":";
+
+      std::string nested_value;
+      const void *nested_ptr = base_ptr + nested_field.offset;
+      if (serialize_field_to_string_recursive(nested_ptr, nested_field, nested_value))
+      {
+        os << nested_value;
+      }
+    }
+
+    out_value = os.str();
+    return true;
+  }
+  else
+  {
+    return serialize_field_to_string(in_ptr, field.type, out_value);
   }
 }
 

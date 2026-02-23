@@ -129,6 +129,60 @@ void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
         write_coord(writer, rc->rotation.z);
         break;
       }
+      case Field_Type::NestedSchema:
+      {
+        // Recursively serialize nested schema fields
+        const Class_Schema *nested_schema = Schema_Registry::get().get_nested_schema(field);
+        if (nested_schema)
+        {
+          const uint8 *nested_base = current_base + field.offset;
+          for (const auto &nested_field : nested_schema->fields)
+          {
+            // Recursively serialize each field
+            switch (nested_field.type)
+            {
+            case Field_Type::Int32:
+            {
+              int32_t val = *reinterpret_cast<const int32_t *>(nested_base + nested_field.offset);
+              write_var_int(writer, val);
+              break;
+            }
+            case Field_Type::Float32:
+            {
+              float val = *reinterpret_cast<const float *>(nested_base + nested_field.offset);
+              write_coord(writer, val);
+              break;
+            }
+            case Field_Type::Bool:
+            {
+              bool val = *reinterpret_cast<const bool *>(nested_base + nested_field.offset);
+              writer.write_bit(val);
+              break;
+            }
+            case Field_Type::Vec3f:
+            {
+              const float *vals = reinterpret_cast<const float *>(nested_base + nested_field.offset);
+              write_coord(writer, vals[0]);
+              write_coord(writer, vals[1]);
+              write_coord(writer, vals[2]);
+              break;
+            }
+            case Field_Type::PascalString:
+            {
+              const auto *ps = reinterpret_cast<const pascal_string *>(nested_base + nested_field.offset);
+              writer.write_bits(ps->length, 8);
+              for (uint8 j = 0; j < ps->length; ++j)
+                writer.write_bits(static_cast<uint8>(ps->data[j]), 8);
+              break;
+            }
+            default:
+              // TODO: Handle deeper nesting if needed
+              break;
+            }
+          }
+        }
+        break;
+      }
       default:
         assert(false && "Unknown field type");
         break;
@@ -147,8 +201,9 @@ std::map<std::string, std::string> Entity::get_all_properties() const
     for (const auto &field : schema->fields)
     {
       std::string val_str;
-      if (serialize_field_to_string(base_ptr + field.offset, field.type,
-                                    val_str))
+      // Use recursive version to handle nested schemas
+      if (serialize_field_to_string_recursive(base_ptr + field.offset, field,
+                                              val_str))
       {
         props[field.name] = val_str;
       }
@@ -246,12 +301,71 @@ void Entity::deserialize(Bit_Reader &reader)
         rc->rotation.z = read_coord(reader);
         break;
       }
+      case Field_Type::NestedSchema:
+      {
+        // Recursively deserialize nested schema fields
+        const Class_Schema *nested_schema = Schema_Registry::get().get_nested_schema(field);
+        if (nested_schema)
+        {
+          uint8 *nested_base = current_base + field.offset;
+          for (const auto &nested_field : nested_schema->fields)
+          {
+            switch (nested_field.type)
+            {
+            case Field_Type::Int32:
+            {
+              int32_t val = read_var_int(reader);
+              std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
+              break;
+            }
+            case Field_Type::Float32:
+            {
+              float val = read_coord(reader);
+              std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
+              break;
+            }
+            case Field_Type::Bool:
+            {
+              bool val = reader.read_bit();
+              std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
+              break;
+            }
+            case Field_Type::Vec3f:
+            {
+              float vals[3];
+              vals[0] = read_coord(reader);
+              vals[1] = read_coord(reader);
+              vals[2] = read_coord(reader);
+              std::memcpy(nested_base + nested_field.offset, vals, sizeof(vals));
+              break;
+            }
+            case Field_Type::PascalString:
+            {
+              auto *ps = reinterpret_cast<pascal_string *>(nested_base + nested_field.offset);
+              ps->length = static_cast<uint8>(reader.read_bits(8));
+              for (uint8 k = 0; k < ps->length; ++k)
+                ps->data[k] = static_cast<char>(reader.read_bits(8));
+              if (ps->length < ps->max_length())
+                ps->data[ps->length] = '\0';
+              break;
+            }
+            default:
+              // TODO: Handle deeper nesting if needed
+              break;
+            }
+          }
+        }
+        break;
+      }
       default:
         assert(false && "Unknown field type");
         break;
       }
     }
   }
+
+  // Sync id.index from the networked entity_id_index field
+  id.index = static_cast<uint32>(entity_id_index);
 }
 
 } // namespace network
@@ -267,6 +381,16 @@ void network::Entity::register_schema()
   registered = true;
 
   std::vector<network::Field_Prop> props;
+
+  static_assert(
+      std::is_trivially_copyable_v<decltype(network::Entity::entity_id_index)>,
+      "Field entity_id_index must be trivially copyable");
+  props.push_back({network::Entity::_schema_meta_entity_id_index.name,
+                   (uint32_t)props.size(),
+                   offsetof(network::Entity, entity_id_index),
+                   network::Entity::_schema_meta_entity_id_index.size,
+                   network::Entity::_schema_meta_entity_id_index.type,
+                   network::Entity::_schema_meta_entity_id_index.flags});
 
   static_assert(
       std::is_trivially_copyable_v<decltype(network::Entity::position)>,

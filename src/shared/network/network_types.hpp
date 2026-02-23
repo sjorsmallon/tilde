@@ -56,18 +56,8 @@ template <uint8 N = 250> struct pascal_string_t
 // Default pascal string type used by the schema system
 using pascal_string = pascal_string_t<250>;
 
-// Render component — embeddable in any entity via SCHEMA_FIELD.
-// Bundles mesh reference, visibility, and a local transform.
-struct render_component_t
-{
-  int32 mesh_id = -1;            // integer mesh asset handle (-1 = none)
-  pascal_string mesh_path;       // human-readable asset path
-  bool visible = true;
-  bool is_wireframe = false;    // render as wireframe instead of solid
-  vec3f offset = {0, 0, 0};     // local position offset from entity origin
-  vec3f scale = {1, 1, 1};      // local scale
-  vec3f rotation = {0, 0, 0};   // local rotation (Euler, degrees)
-};
+// render_component_t moved to components.hpp (included after schema.hpp)
+// to avoid circular dependencies
 
 constexpr auto sv_max_player_count = 32;
 constexpr auto server_port_number = 2020;

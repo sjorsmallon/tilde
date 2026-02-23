@@ -63,6 +63,15 @@ void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
 void draw_wedge(VkCommandBuffer cmd, const shared::wedge_t &wedge,
                 uint32_t color);
 
+// Debug hitbox visualization helpers
+// Draw a sphere hitbox (wireframe)
+void draw_hitbox_sphere(VkCommandBuffer cmd, const linalg::vec3 &center,
+                        float radius, uint32_t color);
+
+// Draw a capsule hitbox (wireframe cylinder + spheres on ends)
+void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
+                         float radius, float half_height, uint32_t color);
+
 // Apply the viewport to the command buffer (calculating pixel rect from
 // normalized)
 void set_viewport(VkCommandBuffer cmd, const viewport_t &vp);

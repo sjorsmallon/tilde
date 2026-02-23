@@ -1,5 +1,7 @@
 #include "play_state.hpp"
 #include "../../shared/asset.hpp"
+#include "../../shared/debug_collision.hpp"
+#include <cstring>
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
 #include "../../shared/network/quantization.hpp"
@@ -27,6 +29,8 @@ void PlayState::on_enter()
   received_server_update = false;
   interpolation_time = 0.f;
   remote_players = {};
+  remote_rockets.clear();
+  last_processed_tick = 0;
 
   auto &ctx = state_manager::get_client_context();
 
@@ -132,9 +136,20 @@ void PlayState::update(float dt)
     return;
   }
 
+  // U -> toggle mouse capture
+  if (input::is_key_pressed(SDL_SCANCODE_U))
+  {
+    mouse_captured = !mouse_captured;
+    input::set_relative_mouse_mode(mouse_captured);
+  }
+
   // --- Poll network ---
   network::ClientInbox inbox;
   network::poll_client_network(conn, 0.001, inbox); // 1ms receive window
+
+  if (!inbox.entity_updates.empty())
+    printf("[CLIENT] Received %zu entity update packages this frame\n",
+           inbox.entity_updates.size());
 
   for (const auto &cmd : inbox.net_commands)
   {
@@ -162,36 +177,64 @@ void PlayState::update(float dt)
     if (!pkg.has_entity_data() || pkg.entity_data().empty())
       continue;
 
+    uint32_t snap_tick = pkg.has_server_tick() ? pkg.server_tick() : 0;
+
+    // Discard old or duplicate snapshots - only process newer ticks
+    if (snap_tick <= last_processed_tick && last_processed_tick != 0)
+    {
+      printf("[CLIENT] Discarding old snapshot: tick %u (last processed: %u)\n",
+             snap_tick, last_processed_tick);
+      continue;  // Skip this outdated packet
+    }
+
+    printf("[CLIENT] Processing snapshot tick %u (last was %u)\n",
+           snap_tick, last_processed_tick);
+
     const auto *data = reinterpret_cast<const network::uint8 *>(
         pkg.entity_data().data());
     size_t data_size = pkg.entity_data().size();
     network::Bit_Reader reader(data, data_size);
 
     uint32_t entity_count = network::read_var_uint(reader);
-    uint32_t snap_tick = pkg.has_server_tick() ? pkg.server_tick() : 0;
+    printf("[CLIENT] Entity data size: %zu bytes, entity_count: %u\n",
+           data_size, entity_count);
+
+    // Build new rocket map from this snapshot (complete state replacement)
+    std::unordered_map<uint32_t, network::Rocket_Entity> new_rockets;
 
     for (uint32_t i = 0; i < entity_count; ++i)
     {
-      int32_t slot_index =
-          static_cast<int32_t>(network::read_var_uint(reader));
+      uint32_t slot_index = network::read_var_uint(reader);
 
-      network::Player_Entity temp;
-      temp.deserialize(reader);
-
-      if (slot_index == my_slot)
+      // Check if this is a rocket (slot 255) or a player
+      if (slot_index == 255)
       {
-        // Local player: store server state for reconciliation
-        last_server_position = temp.position;
-        last_server_velocity = temp.velocity;
-        last_server_ack_command =
-            pkg.has_last_processed_command() ? pkg.last_processed_command() : -1;
-        received_server_update = true;
+        // This is a rocket entity
+        network::Rocket_Entity rocket;
+        rocket.deserialize(reader);
+        new_rockets[rocket.id.index] = rocket;
+        printf("[CLIENT]   Entity %u: Rocket ID %u at (%.1f, %.1f, %.1f)\n",
+               i, rocket.id.index, rocket.position.x, rocket.position.y,
+               rocket.position.z);
       }
       else
       {
-        // Remote player (or bot): push into interpolation buffer
-        if (slot_index >= 0)
+        // This is a player entity
+        network::Player_Entity temp;
+        temp.deserialize(reader);
+
+        if (static_cast<int32_t>(slot_index) == my_slot)
         {
+          // Local player: store server state for reconciliation
+          last_server_position = temp.position;
+          last_server_velocity = temp.velocity;
+          last_server_ack_command =
+              pkg.has_last_processed_command() ? pkg.last_processed_command() : -1;
+          received_server_update = true;
+        }
+        else
+        {
+          // Remote player (or bot): push into interpolation buffer
           auto &rp = remote_players[slot_index];
           rp.active = true;
           rp.slot_index = slot_index;
@@ -204,7 +247,14 @@ void PlayState::update(float dt)
         }
       }
     }
+
+    // Atomically replace rocket map with new snapshot data
+    printf("[CLIENT] Snapshot complete: %zu rockets received\n", new_rockets.size());
+    remote_rockets = std::move(new_rockets);
+    last_processed_tick = snap_tick;
   }
+
+  printf("[CLIENT] Current rocket count: %zu\n", remote_rockets.size());
 
   // --- Reconciliation ---
   if (received_server_update &&
@@ -265,11 +315,14 @@ void PlayState::update(float dt)
   }
 
   // --- Mouse look ---
-  int dx, dy;
-  input::get_mouse_delta(&dx, &dy);
-  player_yaw += dx * 0.1f;
-  player_pitch -= dy * 0.1f;
-  shared::clamp_this(player_pitch, -89.0f, 89.0f);
+  if (mouse_captured)
+  {
+    int dx, dy;
+    input::get_mouse_delta(&dx, &dy);
+    player_yaw += dx * 0.1f;
+    player_pitch -= dy * 0.1f;
+    shared::clamp_this(player_pitch, -89.0f, 89.0f);
+  }
 
   camera.yaw = player_yaw;
   camera.pitch = player_pitch;
@@ -391,6 +444,7 @@ void PlayState::render_ui()
                        ImGuiWindowFlags_NoSavedSettings))
   {
     ImGui::Text("PLAY MODE  [ESC] to return to editor");
+    ImGui::Text("Uncapture mouse [U]");
     ImGui::Text("pos: %.1f, %.1f, %.1f", player_position.x, player_position.y,
                 player_position.z);
     ImGui::Text("vel: %.1f, %.1f, %.1f", player_velocity.x, player_velocity.y,
@@ -403,6 +457,13 @@ void PlayState::render_ui()
       conn_str = "Connected";
     ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, my_slot,
                 command_number);
+
+    ImGui::Separator();
+    bool show_collisions = debug_collision::debug_show_collisions.Get();
+    if (ImGui::Checkbox("Show Collision Planes", &show_collisions))
+    {
+      debug_collision::debug_show_collisions.Set(show_collisions);
+    }
   }
   ImGui::End();
 }
@@ -430,12 +491,38 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
     // Try render component first
     const auto *rc = ent->get_component<network::render_component_t>();
-    if (rc && rc->visible && rc->mesh_id >= 0)
+    if (rc && rc->visible)
     {
-      const char *mesh_path = assets::get_mesh_path(rc->mesh_id);
+      const char *mesh_path = nullptr;
+
+      // Check if mesh_path string is set (for primitives or direct paths)
+      if (rc->mesh_path.length > 0)
+      {
+        mesh_path = rc->mesh_path.c_str();
+      }
+      // Fallback to mesh_id lookup
+      else if (rc->mesh_id >= 0)
+      {
+        mesh_path = assets::get_mesh_path(rc->mesh_id);
+      }
+
       if (mesh_path)
       {
-        auto mesh_handle = assets::load_mesh(mesh_path);
+        // Check if it's a primitive (starts with __primitive_)
+        assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
+        if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
+        {
+          // Extract primitive name (after "__primitive_")
+          const char *prim_name = mesh_path + 12;
+          printf("[CLIENT] Loading primitive: %s\n", prim_name);
+          mesh_handle = assets::get_primitive_mesh(prim_name);
+        }
+        else
+        {
+          // Regular OBJ file
+          mesh_handle = assets::load_mesh(mesh_path);
+        }
+
         if (mesh_handle.valid())
         {
           if (rc->is_wireframe)
@@ -468,6 +555,33 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     {
       auto bounds = shared::compute_entity_bounds(ent.get());
       renderer::DrawWireAABB(cmd, bounds.min, bounds.max, 0xFF00FFFF);
+    }
+
+    // Debug hitbox visualization
+    if (debug_collision::debug_show_hitboxes.Get())
+    {
+      const auto *hitbox = ent->get_component<network::hitbox_component_t>();
+      if (hitbox)
+      {
+        vec3f hitbox_center = ent->position + hitbox->offset;
+        const char *shape = hitbox->shape_type.c_str();
+
+        if (strcmp(shape, "sphere") == 0)
+        {
+          renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, 0xFF00FF00);
+        }
+        else if (strcmp(shape, "capsule") == 0)
+        {
+          renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x,
+                                        hitbox->size.y, 0xFF00FF00);
+        }
+        else if (strcmp(shape, "aabb") == 0)
+        {
+          vec3f min = hitbox_center - hitbox->size;
+          vec3f max = hitbox_center + hitbox->size;
+          renderer::DrawWireAABB(cmd, min, max, 0xFF00FF00);
+        }
+      }
     }
   }
 
@@ -519,6 +633,94 @@ void PlayState::render_3d(VkCommandBuffer cmd)
                   rp.render_position.y + half.y,
                   rp.render_position.z + half.z};
     renderer::DrawAABB(cmd, rmin, rmax, 0xFF00FF00);
+  }
+
+  // Render rockets received from server
+  for (const auto &[id, rocket] : remote_rockets)
+  {
+    const auto *rc = &rocket.render;
+    if (!rc->visible)
+      continue;
+
+    const char *mesh_path = rc->mesh_path.c_str();
+    if (rc->mesh_path.length > 0)
+    {
+      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
+      if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
+      {
+        const char *prim_name = mesh_path + 12;
+        mesh_handle = assets::get_primitive_mesh(prim_name);
+      }
+      else
+      {
+        mesh_handle = assets::load_mesh(mesh_path);
+      }
+
+      if (mesh_handle.valid())
+      {
+        renderer::DrawMesh(cmd, rocket.position, rc->scale, mesh_handle,
+                          0xFFFFFF00, rocket.orientation);
+      }
+    }
+
+    // Debug hitbox visualization for rockets
+    if (debug_collision::debug_show_hitboxes.Get())
+    {
+      const auto *hitbox = &rocket.hitbox;
+      vec3f hitbox_center = rocket.position + hitbox->offset;
+      const char *shape = hitbox->shape_type.c_str();
+
+      if (strcmp(shape, "sphere") == 0)
+      {
+        renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, 0xFF00FF00);
+      }
+      else if (strcmp(shape, "capsule") == 0)
+      {
+        renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x,
+                                      hitbox->size.y, 0xFF00FF00);
+      }
+      else if (strcmp(shape, "aabb") == 0)
+      {
+        vec3f min = hitbox_center - hitbox->size;
+        vec3f max = hitbox_center + hitbox->size;
+        renderer::DrawWireAABB(cmd, min, max, 0xFF00FF00);
+      }
+    }
+  }
+
+  // Debug: Render collision planes in green
+  if (debug_collision::debug_show_collisions.Get())
+  {
+    constexpr float offset = 0.5f; // Offset to prevent z-fighting
+    constexpr uint32_t green = 0xFF00FF00; // ABGR format: green
+
+    for (const auto &coll : debug_collision::g_collision_planes)
+    {
+      // Generate quad vertices for this plane
+      vec3 quad[4];
+      debug_collision::generate_plane_quad(coll.center, coll.normal, coll.radius, quad);
+
+      // Offset all vertices along normal to prevent z-fighting
+      vec3 offset_vec = coll.normal * offset;
+      for (int i = 0; i < 4; ++i)
+      {
+        quad[i] = quad[i] + offset_vec;
+      }
+
+      // Draw the quad as 4 lines (wireframe)
+      renderer::DrawLine(cmd, quad[0], quad[1], green);
+      renderer::DrawLine(cmd, quad[1], quad[2], green);
+      renderer::DrawLine(cmd, quad[2], quad[3], green);
+      renderer::DrawLine(cmd, quad[3], quad[0], green);
+
+      // Also draw the normal vector as a line for debugging
+      vec3 normal_start = coll.center + offset_vec;
+      vec3 normal_end = normal_start + (coll.normal * 5.0f);
+      renderer::DrawLine(cmd, normal_start, normal_end, 0xFF0000FF); // Red normal
+    }
+
+    // Clear collision planes for next frame
+    debug_collision::clear_collision_planes();
   }
 }
 

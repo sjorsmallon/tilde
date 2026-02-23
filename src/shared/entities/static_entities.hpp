@@ -41,4 +41,9 @@ public:
   DECLARE_SCHEMA(Static_Mesh_Entity)
 };
 
+// Schema name registrations (must be at namespace scope)
+SCHEMA_NAME_FOR_TYPE(AABB_Entity)
+SCHEMA_NAME_FOR_TYPE(Wedge_Entity)
+SCHEMA_NAME_FOR_TYPE(Static_Mesh_Entity)
+
 } // namespace network

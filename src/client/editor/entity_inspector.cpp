@@ -93,6 +93,70 @@ void render_imgui_entity_fields_in_a_window(network::Entity *entity)
       }
       break;
     }
+    case network::Field_Type::NestedSchema:
+    {
+      // Recursively render nested schema fields
+      const auto *nested_schema = network::Schema_Registry::get().get_nested_schema(field);
+      if (nested_schema && ImGui::TreeNode(field.name.c_str()))
+      {
+        uint8_t *nested_base = static_cast<uint8_t *>(field_ptr);
+
+        for (const auto &nested_field : nested_schema->fields)
+        {
+          if (!has_flag(nested_field.flags, network::Schema_Flags::Editable))
+            continue;
+
+          void *nested_field_ptr = nested_base + nested_field.offset;
+          ImGui::PushID(nested_field.index);
+
+          switch (nested_field.type)
+          {
+          case network::Field_Type::Int32:
+          {
+            int *val = static_cast<int *>(nested_field_ptr);
+            ImGui::InputInt(nested_field.name.c_str(), val);
+            break;
+          }
+          case network::Field_Type::Float32:
+          {
+            float *val = static_cast<float *>(nested_field_ptr);
+            ImGui::DragFloat(nested_field.name.c_str(), val, 0.1f);
+            break;
+          }
+          case network::Field_Type::Bool:
+          {
+            bool *val = static_cast<bool *>(nested_field_ptr);
+            ImGui::Checkbox(nested_field.name.c_str(), val);
+            break;
+          }
+          case network::Field_Type::Vec3f:
+          {
+            float *val = static_cast<float *>(nested_field_ptr);
+            ImGui::DragFloat3(nested_field.name.c_str(), val, 0.1f);
+            break;
+          }
+          case network::Field_Type::PascalString:
+          {
+            auto *ps = static_cast<network::pascal_string *>(nested_field_ptr);
+            if (ImGui::InputText(nested_field.name.c_str(), ps->data, ps->max_length(),
+                                 ImGuiInputTextFlags_EnterReturnsTrue))
+            {
+              ps->length = static_cast<network::uint8>(strlen(ps->data));
+            }
+            break;
+          }
+          default:
+            ImGui::Text("%s: <Unknown Type>", nested_field.name.c_str());
+            break;
+          }
+
+          ImGui::PopID();
+        }
+
+        ImGui::TreePop();
+      }
+      break;
+    }
     default:
       ImGui::Text("%s: <Unknown Type>", field.name.c_str());
       break;

@@ -232,6 +232,414 @@ bool load_obj(const char *path, mesh_asset_t &out)
   return !out.vertices.empty();
 }
 
+// --- Primitive mesh generators ---
+
+mesh_asset_t generate_box_mesh()
+{
+  mesh_asset_t mesh;
+
+  // Generate a 1x1x1 box centered at origin (from -0.5 to +0.5)
+  // 24 vertices (4 per face, 6 faces) for proper normals
+
+  const vec3f positions[8] = {
+    {-0.5f, -0.5f, -0.5f}, {0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, -0.5f}, {-0.5f, 0.5f, -0.5f},
+    {-0.5f, -0.5f,  0.5f}, {0.5f, -0.5f,  0.5f}, {0.5f, 0.5f,  0.5f}, {-0.5f, 0.5f,  0.5f}
+  };
+
+  // Define faces with proper normals
+  struct face_t { int idx[4]; vec3f normal; };
+  const face_t faces[6] = {
+    {{0, 1, 2, 3}, {0, 0, -1}},  // front (-Z)
+    {{5, 4, 7, 6}, {0, 0,  1}},  // back (+Z)
+    {{4, 0, 3, 7}, {-1, 0, 0}},  // left (-X)
+    {{1, 5, 6, 2}, { 1, 0, 0}},  // right (+X)
+    {{4, 5, 1, 0}, {0, -1, 0}},  // bottom (-Y)
+    {{3, 2, 6, 7}, {0,  1, 0}}   // top (+Y)
+  };
+
+  for (const auto &face : faces) {
+    int base = mesh.vertices.size();
+    for (int i = 0; i < 4; i++) {
+      vertex_xnu v;
+      v.position = positions[face.idx[i]];
+      v.normal = face.normal;
+      v.uv = {i & 1 ? 1.0f : 0.0f, i & 2 ? 1.0f : 0.0f};
+      mesh.vertices.push_back(v);
+    }
+    // Two triangles per face
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(base), uint32_t(base + 1), uint32_t(base + 2),
+      uint32_t(base), uint32_t(base + 2), uint32_t(base + 3)
+    });
+  }
+
+  return mesh;
+}
+
+mesh_asset_t generate_arrow_mesh()
+{
+  mesh_asset_t mesh;
+
+  // Arrow pointing along +X axis, total length 1.0
+  // Shaft: cylinder from (0,0,0) to (0.7,0,0), radius 0.05
+  // Head: cone from (0.7,0,0) to (1.0,0,0), base radius 0.15
+
+  const int segments = 12;
+  const float shaft_length = 0.7f;
+  const float shaft_radius = 0.05f;
+  const float head_base = 0.7f;
+  const float head_tip = 1.0f;
+  const float head_radius = 0.15f;
+
+  // Generate shaft (cylinder)
+  for (int i = 0; i <= segments; i++) {
+    float angle = (float)i / segments * 2.0f * 3.14159265f;
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+    vec3f normal = {0, c, s};
+
+    // Start cap
+    mesh.vertices.push_back({{0, c * shaft_radius, s * shaft_radius}, normal, {0, (float)i / segments}});
+    // End cap
+    mesh.vertices.push_back({{shaft_length, c * shaft_radius, s * shaft_radius}, normal, {1, (float)i / segments}});
+  }
+
+  // Shaft triangles
+  for (int i = 0; i < segments; i++) {
+    int base = i * 2;
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(base), uint32_t(base + 2), uint32_t(base + 1),
+      uint32_t(base + 1), uint32_t(base + 2), uint32_t(base + 3)
+    });
+  }
+
+  // Generate head (cone)
+  int head_base_idx = mesh.vertices.size();
+  for (int i = 0; i <= segments; i++) {
+    float angle = (float)i / segments * 2.0f * 3.14159265f;
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+    vec3f normal = {0.6f, c * 0.8f, s * 0.8f}; // Approximate cone normal
+    normal = normal * (1.0f / std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z));
+
+    mesh.vertices.push_back({{head_base, c * head_radius, s * head_radius}, normal, {0, (float)i / segments}});
+  }
+
+  int tip_idx = mesh.vertices.size();
+  mesh.vertices.push_back({{head_tip, 0, 0}, {1, 0, 0}, {0.5f, 0.5f}});
+
+  // Cone triangles
+  for (int i = 0; i < segments; i++) {
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(head_base_idx + i), uint32_t(head_base_idx + i + 1), uint32_t(tip_idx)
+    });
+  }
+
+  return mesh;
+}
+
+mesh_asset_t generate_sphere_mesh(int lat_segments = 16, int lon_segments = 16)
+{
+  mesh_asset_t mesh;
+
+  // Generate UV sphere with radius 0.5 (diameter 1.0)
+  const float radius = 0.5f;
+
+  for (int lat = 0; lat <= lat_segments; lat++) {
+    float theta = (float)lat / lat_segments * 3.14159265f;
+    float sin_theta = std::sin(theta);
+    float cos_theta = std::cos(theta);
+
+    for (int lon = 0; lon <= lon_segments; lon++) {
+      float phi = (float)lon / lon_segments * 2.0f * 3.14159265f;
+      float sin_phi = std::sin(phi);
+      float cos_phi = std::cos(phi);
+
+      vec3f position = {
+        radius * sin_theta * cos_phi,
+        radius * cos_theta,
+        radius * sin_theta * sin_phi
+      };
+
+      vec3f normal = position * (1.0f / radius); // Normalized
+      vec2f uv = {(float)lon / lon_segments, (float)lat / lat_segments};
+
+      mesh.vertices.push_back({position, normal, uv});
+    }
+  }
+
+  // Generate indices
+  for (int lat = 0; lat < lat_segments; lat++) {
+    for (int lon = 0; lon < lon_segments; lon++) {
+      int first = lat * (lon_segments + 1) + lon;
+      int second = first + lon_segments + 1;
+
+      mesh.indices.insert(mesh.indices.end(), {
+        uint32_t(first), uint32_t(second), uint32_t(first + 1),
+        uint32_t(second), uint32_t(second + 1), uint32_t(first + 1)
+      });
+    }
+  }
+
+  return mesh;
+}
+
+mesh_asset_t generate_cylinder_mesh(int segments = 16)
+{
+  mesh_asset_t mesh;
+
+  // Cylinder along Y axis, height 1.0, radius 0.5
+  const float radius = 0.5f;
+  const float half_height = 0.5f;
+
+  // Side vertices
+  for (int i = 0; i <= segments; i++) {
+    float angle = (float)i / segments * 2.0f * 3.14159265f;
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+    vec3f normal = {c, 0, s};
+
+    mesh.vertices.push_back({{c * radius, -half_height, s * radius}, normal, {(float)i / segments, 0}});
+    mesh.vertices.push_back({{c * radius,  half_height, s * radius}, normal, {(float)i / segments, 1}});
+  }
+
+  // Side triangles
+  for (int i = 0; i < segments; i++) {
+    int base = i * 2;
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(base), uint32_t(base + 2), uint32_t(base + 1),
+      uint32_t(base + 1), uint32_t(base + 2), uint32_t(base + 3)
+    });
+  }
+
+  // Caps
+  int bottom_center = mesh.vertices.size();
+  mesh.vertices.push_back({{0, -half_height, 0}, {0, -1, 0}, {0.5f, 0.5f}});
+  int top_center = mesh.vertices.size();
+  mesh.vertices.push_back({{0,  half_height, 0}, {0,  1, 0}, {0.5f, 0.5f}});
+
+  for (int i = 0; i <= segments; i++) {
+    float angle = (float)i / segments * 2.0f * 3.14159265f;
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+
+    mesh.vertices.push_back({{c * radius, -half_height, s * radius}, {0, -1, 0}, {c * 0.5f + 0.5f, s * 0.5f + 0.5f}});
+    mesh.vertices.push_back({{c * radius,  half_height, s * radius}, {0,  1, 0}, {c * 0.5f + 0.5f, s * 0.5f + 0.5f}});
+  }
+
+  // Cap triangles
+  int cap_start = bottom_center + 2;
+  for (int i = 0; i < segments; i++) {
+    // Bottom cap
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(bottom_center), uint32_t(cap_start + i * 2), uint32_t(cap_start + (i + 1) * 2)
+    });
+    // Top cap
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(top_center), uint32_t(cap_start + (i + 1) * 2 + 1), uint32_t(cap_start + i * 2 + 1)
+    });
+  }
+
+  return mesh;
+}
+
+mesh_asset_t generate_cone_mesh(int segments = 16)
+{
+  mesh_asset_t mesh;
+
+  // Cone pointing up along +Y, height 1.0, base radius 0.5
+  const float radius = 0.5f;
+  const float height = 1.0f;
+
+  // Base vertices
+  int base_center = mesh.vertices.size();
+  mesh.vertices.push_back({{0, 0, 0}, {0, -1, 0}, {0.5f, 0.5f}});
+
+  for (int i = 0; i <= segments; i++) {
+    float angle = (float)i / segments * 2.0f * 3.14159265f;
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+
+    // Base ring
+    mesh.vertices.push_back({{c * radius, 0, s * radius}, {0, -1, 0}, {c * 0.5f + 0.5f, s * 0.5f + 0.5f}});
+  }
+
+  // Base triangles
+  for (int i = 0; i < segments; i++) {
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(base_center), uint32_t(base_center + i + 1), uint32_t(base_center + i + 2)
+    });
+  }
+
+  // Side vertices (for proper normals)
+  int side_start = mesh.vertices.size();
+  for (int i = 0; i <= segments; i++) {
+    float angle = (float)i / segments * 2.0f * 3.14159265f;
+    float c = std::cos(angle);
+    float s = std::sin(angle);
+
+    // Approximate cone normal
+    vec3f normal = {c * 0.8f, 0.6f, s * 0.8f};
+    float len = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    normal = normal * (1.0f / len);
+
+    mesh.vertices.push_back({{c * radius, 0, s * radius}, normal, {(float)i / segments, 0}});
+  }
+
+  int tip = mesh.vertices.size();
+  mesh.vertices.push_back({{0, height, 0}, {0, 1, 0}, {0.5f, 1.0f}});
+
+  // Side triangles
+  for (int i = 0; i < segments; i++) {
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(side_start + i), uint32_t(side_start + i + 1), uint32_t(tip)
+    });
+  }
+
+  return mesh;
+}
+
+mesh_asset_t generate_pyramid_mesh()
+{
+  mesh_asset_t mesh;
+
+  // Pyramid: square base (1x1) at Y=0, tip at (0, 1, 0)
+  const float half_size = 0.5f;
+  const float height = 1.0f;
+
+  // Base vertices
+  vec3f base[4] = {
+    {-half_size, 0, -half_size},
+    { half_size, 0, -half_size},
+    { half_size, 0,  half_size},
+    {-half_size, 0,  half_size}
+  };
+
+  vec3f tip = {0, height, 0};
+
+  // Base (bottom face)
+  int base_start = mesh.vertices.size();
+  for (int i = 0; i < 4; i++) {
+    mesh.vertices.push_back({base[i], {0, -1, 0}, {i & 1 ? 1.0f : 0.0f, i & 2 ? 1.0f : 0.0f}});
+  }
+  mesh.indices.insert(mesh.indices.end(), {
+    uint32_t(base_start), uint32_t(base_start + 2), uint32_t(base_start + 1),
+    uint32_t(base_start), uint32_t(base_start + 3), uint32_t(base_start + 2)
+  });
+
+  // Side faces
+  for (int i = 0; i < 4; i++) {
+    vec3f v0 = base[i];
+    vec3f v1 = base[(i + 1) % 4];
+
+    // Compute face normal
+    vec3f edge1 = v1 - v0;
+    vec3f edge2 = tip - v0;
+    vec3f normal = {
+      edge1.y * edge2.z - edge1.z * edge2.y,
+      edge1.z * edge2.x - edge1.x * edge2.z,
+      edge1.x * edge2.y - edge1.y * edge2.x
+    };
+    float len = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    normal = normal * (1.0f / len);
+
+    int tri_start = mesh.vertices.size();
+    mesh.vertices.push_back({v0, normal, {0, 0}});
+    mesh.vertices.push_back({v1, normal, {1, 0}});
+    mesh.vertices.push_back({tip, normal, {0.5f, 1}});
+
+    mesh.indices.insert(mesh.indices.end(), {
+      uint32_t(tri_start), uint32_t(tri_start + 1), uint32_t(tri_start + 2)
+    });
+  }
+
+  return mesh;
+}
+
+mesh_asset_t generate_wedge_mesh()
+{
+  mesh_asset_t mesh;
+
+  // Wedge: 1x1x1 box with one edge collapsed (orientation 0: ridge along X at -Z)
+  // Bottom: 4 corners, top: 2 corners (ridge)
+
+  vec3f bottom[4] = {
+    {-0.5f, -0.5f, -0.5f},
+    { 0.5f, -0.5f, -0.5f},
+    { 0.5f, -0.5f,  0.5f},
+    {-0.5f, -0.5f,  0.5f}
+  };
+
+  vec3f top[2] = {
+    {-0.5f, 0.5f, -0.5f},
+    { 0.5f, 0.5f, -0.5f}
+  };
+
+  // Bottom face
+  int b = mesh.vertices.size();
+  for (int i = 0; i < 4; i++) {
+    mesh.vertices.push_back({bottom[i], {0, -1, 0}, {i & 1 ? 1.0f : 0.0f, i & 2 ? 1.0f : 0.0f}});
+  }
+  mesh.indices.insert(mesh.indices.end(), {
+    uint32_t(b), uint32_t(b + 2), uint32_t(b + 1),
+    uint32_t(b), uint32_t(b + 3), uint32_t(b + 2)
+  });
+
+  // Back face (vertical rectangle)
+  b = mesh.vertices.size();
+  mesh.vertices.push_back({bottom[0], {0, 0, -1}, {0, 0}});
+  mesh.vertices.push_back({bottom[1], {0, 0, -1}, {1, 0}});
+  mesh.vertices.push_back({top[1], {0, 0, -1}, {1, 1}});
+  mesh.vertices.push_back({top[0], {0, 0, -1}, {0, 1}});
+  mesh.indices.insert(mesh.indices.end(), {
+    uint32_t(b), uint32_t(b + 1), uint32_t(b + 2),
+    uint32_t(b), uint32_t(b + 2), uint32_t(b + 3)
+  });
+
+  // Left face (triangle)
+  vec3f left_normal = {-1, 0, 0};
+  b = mesh.vertices.size();
+  mesh.vertices.push_back({bottom[0], left_normal, {0, 0}});
+  mesh.vertices.push_back({top[0], left_normal, {0, 1}});
+  mesh.vertices.push_back({bottom[3], left_normal, {1, 0}});
+  mesh.indices.push_back(b);
+  mesh.indices.push_back(b + 1);
+  mesh.indices.push_back(b + 2);
+
+  // Right face (triangle)
+  vec3f right_normal = {1, 0, 0};
+  b = mesh.vertices.size();
+  mesh.vertices.push_back({bottom[1], right_normal, {0, 0}});
+  mesh.vertices.push_back({bottom[2], right_normal, {1, 0}});
+  mesh.vertices.push_back({top[1], right_normal, {0, 1}});
+  mesh.indices.push_back(b);
+  mesh.indices.push_back(b + 1);
+  mesh.indices.push_back(b + 2);
+
+  // Slope face (the angled quad)
+  vec3f edge1 = top[1] - top[0];
+  vec3f edge2 = bottom[2] - top[0];
+  vec3f slope_normal = {
+    edge1.y * edge2.z - edge1.z * edge2.y,
+    edge1.z * edge2.x - edge1.x * edge2.z,
+    edge1.x * edge2.y - edge1.y * edge2.x
+  };
+  float len = std::sqrt(slope_normal.x * slope_normal.x + slope_normal.y * slope_normal.y + slope_normal.z * slope_normal.z);
+  slope_normal = slope_normal * (1.0f / len);
+
+  b = mesh.vertices.size();
+  mesh.vertices.push_back({top[0], slope_normal, {0, 1}});
+  mesh.vertices.push_back({top[1], slope_normal, {1, 1}});
+  mesh.vertices.push_back({bottom[2], slope_normal, {1, 0}});
+  mesh.vertices.push_back({bottom[3], slope_normal, {0, 0}});
+  mesh.indices.insert(mesh.indices.end(), {
+    uint32_t(b), uint32_t(b + 1), uint32_t(b + 2),
+    uint32_t(b), uint32_t(b + 2), uint32_t(b + 3)
+  });
+
+  return mesh;
+}
+
 } // namespace
 
 // --- Public API ---
@@ -325,6 +733,37 @@ const char *get_mesh_path(int32_t asset_id)
   default:
     return nullptr;
   }
+}
+
+asset_handle_t<mesh_asset_t> get_primitive_mesh(const char *primitive_name)
+{
+  static bool initialized = false;
+
+  if (!initialized) {
+    printf("[assets] Initializing primitive meshes...\n");
+
+    g_meshes.add("__primitive_box", generate_box_mesh());
+    g_meshes.add("__primitive_arrow", generate_arrow_mesh());
+    g_meshes.add("__primitive_sphere", generate_sphere_mesh(16, 16));
+    g_meshes.add("__primitive_cylinder", generate_cylinder_mesh(16));
+    g_meshes.add("__primitive_cone", generate_cone_mesh(16));
+    g_meshes.add("__primitive_pyramid", generate_pyramid_mesh());
+    g_meshes.add("__primitive_wedge", generate_wedge_mesh());
+
+    printf("[assets] Primitive meshes initialized (7 types)\n");
+    initialized = true;
+  }
+
+  // Build full path
+  std::string path = std::string("__primitive_") + primitive_name;
+  auto handle = g_meshes.find(path.c_str());
+
+  if (!handle.valid()) {
+    printf("[assets] Unknown primitive: %s\n", primitive_name);
+    return {};
+  }
+
+  return handle;
 }
 
 } // namespace assets

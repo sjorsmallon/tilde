@@ -1,5 +1,6 @@
 #include "player_move.hpp"
 #include "network/network_types.hpp"
+#include "debug_collision.hpp"
 #include <print>
 #include "timed_function.hpp"
 
@@ -561,6 +562,9 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
     Plane p;
     p.normal = push_normal;
     p.point = player_pos - push_normal * 0.01f;
+
+    // Record collision for debug visualization
+    debug_collision::record_collision(p, player_pos, half_width * 2.0f);
 
     // Classify: ground (normal pointing up), ceiling (down), wall (horizontal)
     if (push_normal.y > cos_45)

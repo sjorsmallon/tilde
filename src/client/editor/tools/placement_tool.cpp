@@ -9,6 +9,7 @@
 #include "log.hpp"
 #include "renderer.hpp"
 #include <SDL.h>
+#include <cstring>
 
 namespace client
 {
@@ -202,18 +203,40 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
     bool drew_mesh = false;
     if (const auto *rc = current_entity->get_component<network::render_component_t>())
     {
-      if (rc->mesh_id >= 0)
+      const char *mesh_path = nullptr;
+
+      // Check if mesh_path string is set (for primitives or direct paths)
+      if (rc->mesh_path.length > 0)
       {
-        const char *mesh_path = assets::get_mesh_path(rc->mesh_id);
-        if (mesh_path)
+        mesh_path = rc->mesh_path.c_str();
+      }
+      // Fallback to mesh_id lookup
+      else if (rc->mesh_id >= 0)
+      {
+        mesh_path = assets::get_mesh_path(rc->mesh_id);
+      }
+
+      if (mesh_path)
+      {
+        // Check if it's a primitive (starts with __primitive_)
+        assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
+        if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
         {
-          auto mesh_handle = assets::load_mesh(mesh_path);
-          if (mesh_handle.valid())
-          {
-            renderer::DrawMeshWireframe(renderer.get_command_buffer(),
-                center, {1, 1, 1}, mesh_handle, 0xFF00FFFF);
-            drew_mesh = true;
-          }
+          // Extract primitive name (after "__primitive_")
+          const char *prim_name = mesh_path + 12;
+          mesh_handle = assets::get_primitive_mesh(prim_name);
+        }
+        else
+        {
+          // Regular OBJ file
+          mesh_handle = assets::load_mesh(mesh_path);
+        }
+
+        if (mesh_handle.valid())
+        {
+          renderer::DrawMeshWireframe(renderer.get_command_buffer(),
+              center, {1, 1, 1}, mesh_handle, 0xFF00FFFF);
+          drew_mesh = true;
         }
       }
     }

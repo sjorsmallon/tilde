@@ -14,6 +14,7 @@ DEFINE_SCHEMA_CLASS(Player_Entity, Entity)
   REGISTER_SCHEMA_FIELD(client_slot_index);
   REGISTER_SCHEMA_FIELD(velocity);
   REGISTER_SCHEMA_FIELD(render);
+  REGISTER_SCHEMA_FIELD(hitbox);
   END_SCHEMA_FIELDS()
 }
 

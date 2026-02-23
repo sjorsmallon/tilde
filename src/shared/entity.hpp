@@ -3,6 +3,7 @@
 #include "network/bitstream.hpp"
 #include "network/network_types.hpp"
 #include "network/schema.hpp"
+#include "components/components.hpp"
 #include <cassert>
 #include <cstring>
 #include <map>
@@ -26,6 +27,7 @@ class Entity
 {
 public:
   Entity_Id id = null_entity_id;
+  SCHEMA_FIELD(int32, entity_id_index, Schema_Flags::Networked);  // Networked copy of id.index
   SCHEMA_FIELD(vec3f, position,
                Schema_Flags::Networked | Schema_Flags::Editable);
   SCHEMA_FIELD(vec3f, orientation,
@@ -83,7 +85,8 @@ public:
       {
         if (field.name == field_name)
         {
-          parse_string_to_field(value, field.type, current_base + field.offset);
+          // Use recursive version to handle nested schemas
+          parse_string_to_field_recursive(value, field, current_base + field.offset);
         }
       }
     }

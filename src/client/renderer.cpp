@@ -2499,5 +2499,43 @@ void draw_wedge(VkCommandBuffer cmd, const shared::wedge_t &wedge,
   }
 }
 
+void draw_hitbox_sphere(VkCommandBuffer cmd, const linalg::vec3 &center,
+                        float radius, uint32_t color)
+{
+  // Draw sphere using primitive mesh
+  auto sphere_mesh = assets::get_primitive_mesh("sphere");
+  if (!sphere_mesh.valid())
+    return;
+
+  // Scale by radius * 2 (primitive sphere has diameter 1.0, radius 0.5)
+  linalg::vec3 scale = {radius * 2.0f, radius * 2.0f, radius * 2.0f};
+  DrawMeshWireframe(cmd, center, scale, sphere_mesh, color);
+}
+
+void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
+                         float radius, float half_height, uint32_t color)
+{
+  // Capsule = cylinder + sphere on top + sphere on bottom
+  // Center is at the middle of the capsule
+
+  // Draw cylinder body
+  auto cylinder_mesh = assets::get_primitive_mesh("cylinder");
+  if (cylinder_mesh.valid())
+  {
+    // Cylinder primitive is 1 unit tall, scale to full height (2 * half_height)
+    // and radius * 2 for diameter
+    linalg::vec3 cyl_scale = {radius * 2.0f, half_height * 2.0f, radius * 2.0f};
+    DrawMeshWireframe(cmd, center, cyl_scale, cylinder_mesh, color);
+  }
+
+  // Draw top hemisphere (full sphere for simplicity)
+  linalg::vec3 top_center = {center.x, center.y + half_height, center.z};
+  draw_hitbox_sphere(cmd, top_center, radius, color);
+
+  // Draw bottom hemisphere
+  linalg::vec3 bottom_center = {center.x, center.y - half_height, center.z};
+  draw_hitbox_sphere(cmd, bottom_center, radius, color);
+}
+
 } // namespace renderer
 } // namespace client

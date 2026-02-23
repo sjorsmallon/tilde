@@ -162,6 +162,13 @@ bool Tick()
         {
           player->client_slot_index = slot;
           player->position = g_spawn_position;
+          player->health = 100;
+
+          // Initialize combat hitbox (capsule: radius 18, half-height 38)
+          // Slightly larger than physics collision (16x36) for better hit feedback
+          player->hitbox.shape_type.set("capsule");
+          player->hitbox.size = {18.f, 38.f, 18.f};  // x/z = radius, y = half_height
+          player->hitbox.offset = {0.f, 38.f, 0.f};  // Offset up so capsule is centered on player
         }
 
         // Send Accept
@@ -271,6 +278,7 @@ bool Tick()
 
       if (fire_pressed)
       {
+        log_terminal("Player {} fired a rocket!", player_idx);
         float yaw_rad   = linalg::to_radians(yaw);
         float pitch_rad = linalg::to_radians(pitch);
         float cY = std::cos(yaw_rad),   sY = std::sin(yaw_rad);
@@ -285,9 +293,20 @@ bool Tick()
                                      player->position.y + 28.f,
                                      player->position.z};
           rocket->velocity        = dir * 600.f;
-          rocket->lifetime        = 5.f;
+          rocket->lifetime        = 20.f;
           rocket->damage_amount   = 50.f;
           rocket->knockback_force = 600.f;
+          rocket->owner_id        = static_cast<int32_t>(player->id.index);
+          network::set_primitive_render(rocket->render, "arrow", {25.0f, 25.5f, 25.5f});
+
+          // Initialize hitbox (sphere with 12 unit radius)
+          rocket->hitbox.shape_type.set("sphere");
+          rocket->hitbox.size = {12.f, 12.f, 12.f};  // x = radius
+          rocket->hitbox.offset = {0.f, 0.f, 0.f};
+
+          printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh_path='%s', visible=%d\n",
+                 rocket->position.x, rocket->position.y, rocket->position.z,
+                 rocket->render.mesh_path.c_str(), rocket->render.visible);
         }
       }
     }
@@ -313,14 +332,34 @@ bool Tick()
       package.set_is_delta(false);
 
       network::Bit_Writer writer;
-      int entity_count = static_cast<int>(pool->size());
+
+      // Get rocket entities
+      auto *rocket_pool = g_state.session.entity_system.get_entities<network::Rocket_Entity>(entity_type::ROCKET);
+      int rocket_count = rocket_pool ? static_cast<int>(rocket_pool->size()) : 0;
+
+      int entity_count = static_cast<int>(pool->size()) + rocket_count;
+      printf("[SERVER] Tick %u: Writing entity_count=%d (%zu players + %d rockets)\n",
+             g_tick_number, entity_count, pool->size(), rocket_count);
       network::write_var_uint(writer, entity_count);
 
+      // Serialize players
       for (const auto &entity : *pool)
       {
         network::write_var_uint(
             writer, static_cast<uint32_t>(entity.client_slot_index));
         entity.serialize(writer, nullptr);
+      }
+
+      // Serialize rockets
+      if (rocket_pool)
+      {
+        printf("[SERVER] Tick %u: Sending %zu rockets to slot %d\n",
+               g_tick_number, rocket_pool->size(), slot);
+        for (const auto &rocket : *rocket_pool)
+        {
+          network::write_var_uint(writer, 255); // Special slot for non-player entities
+          rocket.serialize(writer, nullptr);
+        }
       }
 
       package.set_entity_data(writer.buffer.data(), writer.buffer.size());

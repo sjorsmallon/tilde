@@ -17,4 +17,7 @@ public:
   DECLARE_SCHEMA(Weapon_Entity)
 };
 
+// Schema name registration (must be at namespace scope)
+SCHEMA_NAME_FOR_TYPE(Weapon_Entity)
+
 } // namespace network

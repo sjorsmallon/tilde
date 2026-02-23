@@ -45,6 +45,13 @@ const texture_asset_t *get(asset_handle_t<texture_asset_t> handle);
 
 const char *get_mesh_path(int32_t asset_id);
 
+// --- Primitive mesh generation ---
+
+// Get a procedurally generated primitive mesh (cached).
+// Primitives are generated at unit size - use render_component_t scale to size them.
+// Available primitives: "box", "arrow", "sphere", "cylinder", "cone", "wedge", "pyramid"
+asset_handle_t<mesh_asset_t> get_primitive_mesh(const char *primitive_name);
+
 // --- Mesh bounds ---
 
 // Compute axis-aligned bounding box of a mesh's vertices (in model space).
