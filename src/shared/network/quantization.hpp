@@ -101,6 +101,58 @@ inline int32_t read_var_int(Bit_Reader &r)
   return negative ? -int32_t(magnitude) : int32_t(magnitude);
 }
 
+inline void write_var_uint64(Bit_Writer &w, uint64_t value)
+{
+  do
+  {
+    uint64_t chunk = value & 0b1111; // lowest 4 bits
+    value >>= 4;
+
+    bool hasMore = (value != 0);
+
+    w.write_bit(hasMore);   // continuation bit
+    w.write_bits(static_cast<uint32_t>(chunk), 4); // payload
+  } while (value != 0);
+}
+
+inline uint64_t read_var_uint64(Bit_Reader &r)
+{
+  uint64_t value = 0;
+  uint64_t shift = 0;
+
+  while (true)
+  {
+    bool hasMore = r.read_bit();
+    uint64_t chunk = r.read_bits(4);
+
+    value |= (chunk << shift);
+
+    if (!hasMore)
+      break;
+
+    shift += 4;
+  }
+
+  return value;
+}
+
+inline void write_var_int64(Bit_Writer &w, int64_t value)
+{
+  bool negative = (value < 0);
+  uint64_t magnitude = std::abs(value);
+
+  w.write_bit(negative);
+  write_var_uint64(w, magnitude);
+}
+
+inline int64_t read_var_int64(Bit_Reader &r)
+{
+  bool negative = r.read_bit();
+  uint64_t magnitude = read_var_uint64(r);
+
+  return negative ? -int64_t(magnitude) : int64_t(magnitude);
+}
+
 inline void write_coord(Bit_Writer &w, float value)
 {
   if (value == 0.0f)

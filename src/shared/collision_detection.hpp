@@ -62,6 +62,7 @@ struct BVH_Primitive
   Collision_Id id;
   AABB aabb;
   std::vector<Plane> collision_planes; // convex hull faces, normals pointing outward
+  std::vector<std::vector<vec3f>> face_polygons; // face_polygons[i] ↔ collision_planes[i]
 };
 
 using BVH_Input = BVH_Primitive;

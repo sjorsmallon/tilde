@@ -13,21 +13,12 @@
 namespace network
 {
 
-struct Entity_Id
-{
-  uint32 index;
-  uint32 generation;
-
-  bool operator==(const Entity_Id &) const = default;
-};
-
-inline constexpr Entity_Id null_entity_id = {0, 0};
+inline constexpr uint64 null_entity_id = 0;
 
 class Entity
 {
 public:
-  Entity_Id id = null_entity_id;
-  SCHEMA_FIELD(int32, entity_id_index, Schema_Flags::Networked);  // Networked copy of id.index
+  SCHEMA_FIELD(uint64, entity_id, Schema_Flags::Networked);
   SCHEMA_FIELD(vec3f, position,
                Schema_Flags::Networked | Schema_Flags::Editable);
   SCHEMA_FIELD(vec3f, orientation,

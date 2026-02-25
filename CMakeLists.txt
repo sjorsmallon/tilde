@@ -90,7 +90,9 @@ add_library(game_shared STATIC
     src/shared/entities/rocket_entity.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
+    src/shared/debug_collision.cpp
     src/shared/network/schema.cpp
+    src/shared/components/components.cpp
     src/shared/shapes.cpp
     src/shared/map.cpp
     src/shared/entity.cpp

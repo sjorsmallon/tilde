@@ -43,6 +43,7 @@ void init_session_from_map(game_session_t &session, const map_t &map)
     input.aabb.max = bounds.max;
     input.id = {Collision_Id::Type::Static_Geometry, (uint32_t)i};
     input.collision_planes = compute_entity_collision_planes(ent);
+    input.face_polygons    = compute_entity_face_polygons(ent);
     bvh_inputs.push_back(input);
   }
 

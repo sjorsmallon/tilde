@@ -1,5 +1,7 @@
 #include "play_state.hpp"
+#include "../console.hpp"
 #include "../../shared/asset.hpp"
+#include "../../shared/cvar.hpp"
 #include "../../shared/debug_collision.hpp"
 #include <cstring>
 #include "../../shared/entities/player_entity.hpp"
@@ -29,6 +31,7 @@ void PlayState::on_enter()
   received_server_update = false;
   interpolation_time = 0.f;
   remote_players = {};
+  last_player_entities.clear();
   remote_rockets.clear();
   last_processed_tick = 0;
 
@@ -63,6 +66,8 @@ void PlayState::on_enter()
     player_position = player.position;
     player_yaw = player.view_angle_yaw;
     player_pitch = player.view_angle_pitch;
+    log_terminal("[CLIENT] Initial spawn from map: ({:.1f}, {:.1f}, {:.1f})",
+                 player_position.x, player_position.y, player_position.z);
   }
   else
   {
@@ -70,6 +75,7 @@ void PlayState::on_enter()
     player_position = {0, 36, 0};
     player_yaw = 0.0f;
     player_pitch = 0.0f;
+    log_terminal("[CLIENT] Using default spawn: (0, 36, 0)");
   }
 
   // Set up camera at player position (eye height)
@@ -171,6 +177,21 @@ void PlayState::update(float dt)
     }
   }
 
+  // --- Handle server console messages ---
+  for (const auto &msg : inbox.server_messages)
+    Console::Get().Print("%s", msg.message().c_str());
+
+  // --- Apply replicated cvar values from server ---
+  for (const auto &sync : inbox.cvar_syncs)
+  {
+    for (const auto &pair : sync.cvars())
+    {
+      auto *cv = cvar::CVarSystem::Get().Find(pair.name());
+      if (cv)
+        cv->SetFromString(pair.value());
+    }
+  }
+
   // --- Handle entity updates from server ---
   for (const auto &pkg : inbox.entity_updates)
   {
@@ -209,19 +230,34 @@ void PlayState::update(float dt)
       // Check if this is a rocket (slot 255) or a player
       if (slot_index == 255)
       {
-        // This is a rocket entity
+        // Read entity_id (sent explicitly for delta compression)
+        uint64_t entity_id = network::read_var_uint64(reader);
+
+        // Start with existing rocket state (or default if new)
         network::Rocket_Entity rocket;
-        rocket.deserialize(reader);
-        new_rockets[rocket.id.index] = rocket;
-        printf("[CLIENT]   Entity %u: Rocket ID %u at (%.1f, %.1f, %.1f)\n",
-               i, rocket.id.index, rocket.position.x, rocket.position.y,
+        auto it = remote_rockets.find(entity_id);
+        if (it != remote_rockets.end())
+          rocket = it->second;  // Reuse existing state as baseline
+
+        rocket.deserialize(reader);  // Apply delta
+        new_rockets[entity_id] = rocket;
+        printf("[CLIENT]   Entity %u: Rocket ID %llu at (%.1f, %.1f, %.1f)\n",
+               i, entity_id, rocket.position.x, rocket.position.y,
                rocket.position.z);
       }
       else
       {
-        // This is a player entity
+        // Read entity_id (sent explicitly for delta compression)
+        uint64_t entity_id = network::read_var_uint64(reader);
+
+        // Reuse existing entity state as baseline for delta decompression
         network::Player_Entity temp;
+        auto pit = last_player_entities.find(slot_index);
+        if (pit != last_player_entities.end())
+          temp = pit->second;
+
         temp.deserialize(reader);
+        last_player_entities[slot_index] = temp;
 
         if (static_cast<int32_t>(slot_index) == my_slot)
         {
@@ -231,6 +267,13 @@ void PlayState::update(float dt)
           last_server_ack_command =
               pkg.has_last_processed_command() ? pkg.last_processed_command() : -1;
           received_server_update = true;
+
+          static bool first_update = true;
+          if (first_update) {
+            log_terminal("[CLIENT] First server update: position ({:.1f}, {:.1f}, {:.1f}), entity_id {}",
+                         temp.position.x, temp.position.y, temp.position.z, entity_id);
+            first_update = false;
+          }
         }
         else
         {
@@ -688,39 +731,25 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  // Debug: Render collision planes in green
+  // Debug: Render collision faces in green
   if (debug_collision::debug_show_collisions.Get())
   {
-    constexpr float offset = 0.5f; // Offset to prevent z-fighting
-    constexpr uint32_t green = 0xFF00FF00; // ABGR format: green
+    constexpr uint32_t green = 0xFF00FF00; // ABGR: opaque green
 
-    for (const auto &coll : debug_collision::g_collision_planes)
+    renderer::reset_debug_face_buffer();
+
+    for (const auto &face : debug_collision::g_collision_faces)
     {
-      // Generate quad vertices for this plane
-      vec3 quad[4];
-      debug_collision::generate_plane_quad(coll.center, coll.normal, coll.radius, quad);
+      if (!face.polygon.empty())
+        renderer::DrawFilledPolygon(cmd, face.polygon, green);
 
-      // Offset all vertices along normal to prevent z-fighting
-      vec3 offset_vec = coll.normal * offset;
-      for (int i = 0; i < 4; ++i)
-      {
-        quad[i] = quad[i] + offset_vec;
-      }
-
-      // Draw the quad as 4 lines (wireframe)
-      renderer::DrawLine(cmd, quad[0], quad[1], green);
-      renderer::DrawLine(cmd, quad[1], quad[2], green);
-      renderer::DrawLine(cmd, quad[2], quad[3], green);
-      renderer::DrawLine(cmd, quad[3], quad[0], green);
-
-      // Also draw the normal vector as a line for debugging
-      vec3 normal_start = coll.center + offset_vec;
-      vec3 normal_end = normal_start + (coll.normal * 5.0f);
-      renderer::DrawLine(cmd, normal_start, normal_end, 0xFF0000FF); // Red normal
+      // Red arrow showing push normal
+      vec3 arrow_start = face.plane.point + face.plane.normal * 0.5f;
+      vec3 arrow_end = arrow_start + face.plane.normal * 5.0f;
+      renderer::DrawLine(cmd, arrow_start, arrow_end, 0xFF0000FF);
     }
 
-    // Clear collision planes for next frame
-    debug_collision::clear_collision_planes();
+    debug_collision::clear_collision_faces();
   }
 }
 

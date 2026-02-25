@@ -24,6 +24,8 @@ struct ClientInbox
 {
   std::vector<game::NetCommand> net_commands;
   std::vector<game::S2C_EntityPackage> entity_updates;
+  std::vector<game::S2C_ServerMessage> server_messages;
+  std::vector<game::S2C_CVarSync> cvar_syncs;
 };
 
 template <typename T>
@@ -138,6 +140,84 @@ inline void poll_client_network(Client_Connection_State &state,
           if (pkg.ParseFromArray(buffer.data(), buffer.size()))
           {
             out_inbox.entity_updates.push_back(pkg);
+          }
+          state.partial_packets.erase(packet.header.sequence_id);
+        }
+      }
+      else if (packet.header.message_type ==
+               static_cast<uint8>(Message_Type::S2C_ServerMessage))
+      {
+        auto &fragments = state.partial_packets[packet.header.sequence_id];
+
+        if (fragments.empty())
+          fragments.resize(packet.header.sequence_count);
+
+        if (packet.header.sequence_idx < fragments.size())
+          fragments[packet.header.sequence_idx] = packet;
+
+        bool complete = true;
+        size_t total_size = 0;
+        for (const auto &f : fragments)
+        {
+          if (f.header.sequence_count == 0 || f.header.payload_size == 0)
+          {
+            complete = false;
+            break;
+          }
+          total_size += f.header.payload_size;
+        }
+
+        if (complete)
+        {
+          std::vector<uint8> buffer;
+          buffer.reserve(total_size);
+          for (const auto &f : fragments)
+            buffer.insert(buffer.end(), f.buffer,
+                          f.buffer + f.header.payload_size);
+
+          game::S2C_ServerMessage msg;
+          if (msg.ParseFromArray(buffer.data(), buffer.size()))
+          {
+            out_inbox.server_messages.push_back(msg);
+          }
+          state.partial_packets.erase(packet.header.sequence_id);
+        }
+      }
+      else if (packet.header.message_type ==
+               static_cast<uint8>(Message_Type::S2C_CVarSync))
+      {
+        auto &fragments = state.partial_packets[packet.header.sequence_id];
+
+        if (fragments.empty())
+          fragments.resize(packet.header.sequence_count);
+
+        if (packet.header.sequence_idx < fragments.size())
+          fragments[packet.header.sequence_idx] = packet;
+
+        bool complete = true;
+        size_t total_size = 0;
+        for (const auto &f : fragments)
+        {
+          if (f.header.sequence_count == 0 || f.header.payload_size == 0)
+          {
+            complete = false;
+            break;
+          }
+          total_size += f.header.payload_size;
+        }
+
+        if (complete)
+        {
+          std::vector<uint8> buffer;
+          buffer.reserve(total_size);
+          for (const auto &f : fragments)
+            buffer.insert(buffer.end(), f.buffer,
+                          f.buffer + f.header.payload_size);
+
+          game::S2C_CVarSync sync;
+          if (sync.ParseFromArray(buffer.data(), buffer.size()))
+          {
+            out_inbox.cvar_syncs.push_back(sync);
           }
           state.partial_packets.erase(packet.header.sequence_id);
         }

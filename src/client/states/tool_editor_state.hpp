@@ -52,6 +52,10 @@ private:
   Transaction_System transaction_system;
 
   editor::grid_settings_t grid_settings;
+
+  // When true, entities are rendered as solid filled AABBs with random colors
+  // instead of wireframe outlines.
+  bool draw_entities_solid = true;
 };
 
 } // namespace client

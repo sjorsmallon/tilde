@@ -67,6 +67,13 @@ void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
         write_var_int(writer, val);
         break;
       }
+      case Field_Type::Int64:
+      {
+        int64_t val =
+            *reinterpret_cast<const int64_t *>(current_base + field.offset);
+        write_var_int64(writer, val);
+        break;
+      }
       case Field_Type::Float32:
       {
         float val =
@@ -145,6 +152,12 @@ void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
             {
               int32_t val = *reinterpret_cast<const int32_t *>(nested_base + nested_field.offset);
               write_var_int(writer, val);
+              break;
+            }
+            case Field_Type::Int64:
+            {
+              int64_t val = *reinterpret_cast<const int64_t *>(nested_base + nested_field.offset);
+              write_var_int64(writer, val);
               break;
             }
             case Field_Type::Float32:
@@ -242,6 +255,12 @@ void Entity::deserialize(Bit_Reader &reader)
         std::memcpy(current_base + field.offset, &val, sizeof(val));
         break;
       }
+      case Field_Type::Int64:
+      {
+        int64_t val = read_var_int64(reader);
+        std::memcpy(current_base + field.offset, &val, sizeof(val));
+        break;
+      }
       case Field_Type::Float32:
       {
         float val = read_coord(reader);
@@ -318,6 +337,12 @@ void Entity::deserialize(Bit_Reader &reader)
               std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
               break;
             }
+            case Field_Type::Int64:
+            {
+              int64_t val = read_var_int64(reader);
+              std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
+              break;
+            }
             case Field_Type::Float32:
             {
               float val = read_coord(reader);
@@ -363,9 +388,6 @@ void Entity::deserialize(Bit_Reader &reader)
       }
     }
   }
-
-  // Sync id.index from the networked entity_id_index field
-  id.index = static_cast<uint32>(entity_id_index);
 }
 
 } // namespace network
@@ -383,14 +405,14 @@ void network::Entity::register_schema()
   std::vector<network::Field_Prop> props;
 
   static_assert(
-      std::is_trivially_copyable_v<decltype(network::Entity::entity_id_index)>,
-      "Field entity_id_index must be trivially copyable");
-  props.push_back({network::Entity::_schema_meta_entity_id_index.name,
+      std::is_trivially_copyable_v<decltype(network::Entity::entity_id)>,
+      "Field entity_id must be trivially copyable");
+  props.push_back({network::Entity::_schema_meta_entity_id.name,
                    (uint32_t)props.size(),
-                   offsetof(network::Entity, entity_id_index),
-                   network::Entity::_schema_meta_entity_id_index.size,
-                   network::Entity::_schema_meta_entity_id_index.type,
-                   network::Entity::_schema_meta_entity_id_index.flags});
+                   offsetof(network::Entity, entity_id),
+                   network::Entity::_schema_meta_entity_id.size,
+                   network::Entity::_schema_meta_entity_id.type,
+                   network::Entity::_schema_meta_entity_id.flags});
 
   static_assert(
       std::is_trivially_copyable_v<decltype(network::Entity::position)>,

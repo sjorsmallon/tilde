@@ -176,6 +176,8 @@ struct PushConstants
 {
   float mvp[16];
   float color[4];
+  uint32_t random_seed;
+  uint32_t use_random_color;
 };
 
 // --- Globals (Internal) ---
@@ -981,6 +983,196 @@ static void create_line_mesh()
   vkFreeMemory(g_device, iStagingMem, nullptr);
 }
 
+// --- Debug Face Pipeline ---
+// Renders filled convex polygons (e.g. collision faces) as solid triangles.
+// Uses a small persistently-mapped ring buffer; reset each frame.
+
+static VkPipeline g_debug_face_pipeline = VK_NULL_HANDLE;
+static VkBuffer g_debug_face_vertex_buffer = VK_NULL_HANDLE;
+static VkDeviceMemory g_debug_face_vertex_memory = VK_NULL_HANDLE;
+
+static constexpr uint32_t MAX_DEBUG_FACE_VERTS = 512;
+static Vertex *g_debug_face_verts_mapped = nullptr;
+static uint32_t g_debug_face_write_offset = 0;
+
+static void create_debug_face_pipeline()
+{
+  VkShaderModule vert, frag;
+  VkShaderModuleCreateInfo vertInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  vertInfo.codeSize = sizeof(aabb_vert_spv);
+  vertInfo.pCode = aabb_vert_spv;
+  vkCreateShaderModule(g_device, &vertInfo, nullptr, &vert);
+
+  VkShaderModuleCreateInfo fragInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  fragInfo.codeSize = sizeof(aabb_frag_spv);
+  fragInfo.pCode = aabb_frag_spv;
+  vkCreateShaderModule(g_device, &fragInfo, nullptr, &frag);
+
+  VkPipelineShaderStageCreateInfo shaderStages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_VERTEX_BIT, vert, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag, "main", nullptr}};
+
+  VkVertexInputBindingDescription binding{};
+  binding.binding = 0;
+  binding.stride = sizeof(Vertex);
+  binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  VkVertexInputAttributeDescription attrs[3]{};
+  attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)};
+  attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, color)};
+  attrs[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, bary)};
+
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.pVertexBindingDescriptions = &binding;
+  vertexInputInfo.vertexAttributeDescriptionCount = 3;
+  vertexInputInfo.pVertexAttributeDescriptions = attrs;
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewportState{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewportState.viewportCount = 1;
+  viewportState.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_NONE;
+  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterizer.depthBiasEnable = VK_TRUE;
+  rasterizer.depthBiasConstantFactor = -2.0f; // push faces towards camera
+  rasterizer.depthBiasSlopeFactor = -1.0f;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depthStencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+  depthStencil.depthTestEnable = VK_TRUE;
+  depthStencil.depthWriteEnable = VK_FALSE;
+  depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+  colorBlendAttachment.colorWriteMask = 0xF;
+  colorBlendAttachment.blendEnable = VK_TRUE;
+  colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+  colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+
+  VkPipelineColorBlendStateCreateInfo colorBlending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments = &colorBlendAttachment;
+
+  VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                    VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamicState{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
+
+  VkGraphicsPipelineCreateInfo pipelineInfo{
+      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipelineInfo.stageCount = 2;
+  pipelineInfo.pStages = shaderStages;
+  pipelineInfo.pVertexInputState = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisampling;
+  pipelineInfo.pDepthStencilState = &depthStencil;
+  pipelineInfo.pColorBlendState = &colorBlending;
+  pipelineInfo.pDynamicState = &dynamicState;
+  pipelineInfo.layout = g_aabb_pipeline_layout;
+  pipelineInfo.renderPass = g_render_pass;
+  pipelineInfo.subpass = 0;
+
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                nullptr, &g_debug_face_pipeline) != VK_SUCCESS)
+  {
+    log_error("Failed to create debug face pipeline!");
+  }
+
+  vkDestroyShaderModule(g_device, vert, nullptr);
+  vkDestroyShaderModule(g_device, frag, nullptr);
+
+  // Create the persistently-mapped ring buffer for dynamic face vertices
+  VkDeviceSize bufSize = sizeof(Vertex) * MAX_DEBUG_FACE_VERTS;
+  create_buffer(bufSize,
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                g_debug_face_vertex_buffer, g_debug_face_vertex_memory);
+
+  vkMapMemory(g_device, g_debug_face_vertex_memory, 0, bufSize, 0,
+              (void **)&g_debug_face_verts_mapped);
+}
+
+void reset_debug_face_buffer()
+{
+  g_debug_face_write_offset = 0;
+}
+
+void DrawFilledPolygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &verts,
+                       uint32_t color)
+{
+  if (g_debug_face_pipeline == VK_NULL_HANDLE || verts.size() < 3)
+    return;
+
+  int n = (int)verts.size();
+  int tri_count = n - 2;
+  uint32_t first_vertex = g_debug_face_write_offset;
+
+  if (first_vertex + tri_count * 3 > MAX_DEBUG_FACE_VERTS)
+    return; // ring buffer full this frame
+
+  float r = (float)(color & 0xFF) / 255.0f;
+  float g = (float)((color >> 8) & 0xFF) / 255.0f;
+  float b = (float)((color >> 16) & 0xFF) / 255.0f;
+
+  // Triangle fan: (verts[0], verts[i], verts[i+1]) for i in 1..n-2
+  for (int i = 0; i < tri_count; ++i)
+  {
+    auto write_vert = [&](const linalg::vec3 &p) {
+      Vertex &v = g_debug_face_verts_mapped[g_debug_face_write_offset++];
+      v.pos[0] = p.x; v.pos[1] = p.y; v.pos[2] = p.z;
+      v.color[0] = 1.0f; v.color[1] = 1.0f; v.color[2] = 1.0f; // multiplied by push constant
+      v.bary[0] = 1.0f; v.bary[1] = 1.0f; v.bary[2] = 1.0f;   // disable edge darkening
+    };
+    write_vert(verts[0]);
+    write_vert(verts[i + 1]);
+    write_vert(verts[i + 2]);
+  }
+
+  // Bind the pipeline and dynamic vertex buffer
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_debug_face_pipeline);
+  VkBuffer vertexBuffers[] = {g_debug_face_vertex_buffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+
+  // Push constants: use g_current_view_proj directly (verts are in world space)
+  PushConstants pc{};
+  for (int i = 0; i < 16; ++i)
+    pc.mvp[i] = g_current_view_proj.m[i];
+  pc.color[0] = r;
+  pc.color[1] = g;
+  pc.color[2] = b;
+  pc.color[3] = 1.0f;
+  pc.random_seed = 0;
+  pc.use_random_color = 0;
+
+  vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                     sizeof(PushConstants), &pc);
+  vkCmdDraw(cmd, (uint32_t)(tri_count * 3), 1, first_vertex, 0);
+}
+
 void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
               const linalg::vec3 &end, uint32_t color)
 {
@@ -1487,8 +1679,40 @@ static void init_font()
 // --- Public API ---
 
 void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
-              const linalg::vec3 &max, uint32_t color)
+              const linalg::vec3 &max, uint32_t color, bool as_wireframe,
+              bool random_color, uint32_t random_seed)
 {
+  if (as_wireframe)
+  {
+    // 12 edges of the box drawn as individual lines
+    linalg::vec3 corners[8] = {
+        {min.x, min.y, min.z}, // 0 bottom
+        {max.x, min.y, min.z}, // 1
+        {max.x, min.y, max.z}, // 2
+        {min.x, min.y, max.z}, // 3
+        {min.x, max.y, min.z}, // 4 top
+        {max.x, max.y, min.z}, // 5
+        {max.x, max.y, max.z}, // 6
+        {min.x, max.y, max.z}, // 7
+    };
+    // Bottom face
+    DrawLine(cmd, corners[0], corners[1], color);
+    DrawLine(cmd, corners[1], corners[2], color);
+    DrawLine(cmd, corners[2], corners[3], color);
+    DrawLine(cmd, corners[3], corners[0], color);
+    // Top face
+    DrawLine(cmd, corners[4], corners[5], color);
+    DrawLine(cmd, corners[5], corners[6], color);
+    DrawLine(cmd, corners[6], corners[7], color);
+    DrawLine(cmd, corners[7], corners[4], color);
+    // Vertical edges
+    DrawLine(cmd, corners[0], corners[4], color);
+    DrawLine(cmd, corners[1], corners[5], color);
+    DrawLine(cmd, corners[2], corners[6], color);
+    DrawLine(cmd, corners[3], corners[7], color);
+    return;
+  }
+
   if (g_aabb_pipeline == VK_NULL_HANDLE)
     return;
 
@@ -1522,9 +1746,6 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
   // MVP = Proj * View * Model
   mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
 
-  // Copy to PC
-
-  // Copy to PC
   memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
 
   // Extract Color (ABGR format: 0xAABBGGRR)
@@ -1537,6 +1758,8 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
   pc.color[1] = g;
   pc.color[2] = b;
   pc.color[3] = a;
+  pc.random_seed = random_seed;
+  pc.use_random_color = random_color ? 1u : 0u;
 
   vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                      sizeof(PushConstants), &pc);
@@ -1548,33 +1771,7 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
                   const linalg::vec3 &max, uint32_t color)
 {
-  // 12 edges of the box drawn as individual lines
-  linalg::vec3 corners[8] = {
-      {min.x, min.y, min.z}, // 0 bottom
-      {max.x, min.y, min.z}, // 1
-      {max.x, min.y, max.z}, // 2
-      {min.x, min.y, max.z}, // 3
-      {min.x, max.y, min.z}, // 4 top
-      {max.x, max.y, min.z}, // 5
-      {max.x, max.y, max.z}, // 6
-      {min.x, max.y, max.z}, // 7
-  };
-
-  // Bottom face
-  DrawLine(cmd, corners[0], corners[1], color);
-  DrawLine(cmd, corners[1], corners[2], color);
-  DrawLine(cmd, corners[2], corners[3], color);
-  DrawLine(cmd, corners[3], corners[0], color);
-  // Top face
-  DrawLine(cmd, corners[4], corners[5], color);
-  DrawLine(cmd, corners[5], corners[6], color);
-  DrawLine(cmd, corners[6], corners[7], color);
-  DrawLine(cmd, corners[7], corners[4], color);
-  // Vertical edges
-  DrawLine(cmd, corners[0], corners[4], color);
-  DrawLine(cmd, corners[1], corners[5], color);
-  DrawLine(cmd, corners[2], corners[6], color);
-  DrawLine(cmd, corners[3], corners[7], color);
+  DrawAABB(cmd, min, max, color, /*as_wireframe=*/true);
 }
 
 void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
@@ -1783,8 +1980,8 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
     // (GL) -> Vulkan Y Down (flip via viewport or proj). Usually we just flip Y
     // in Viewport (negative height) or Proj. Here we swap bounds: Bottom=-h/2,
     // Top=+h/2.
-    proj = mat4_t::ortho(-w * 0.5f, w * 0.5f, -h * 0.5f, h * 0.5f, -1000.0f,
-                         1000.0f);
+    proj = mat4_t::ortho(-w * 0.5f, w * 0.5f, -h * 0.5f, h * 0.5f, -100000.0f,
+                         100000.0f);
   }
   else
   {
@@ -2035,6 +2232,7 @@ bool Init(SDL_Window *window)
   create_mesh_pipeline();
   create_line_pipeline();
   create_line_mesh();
+  create_debug_face_pipeline();
 
   g_command_buffers.resize(MAX_FRAMES_IN_FLIGHT);
   VkCommandBufferAllocateInfo alloc_info{};
@@ -2176,6 +2374,12 @@ void Shutdown()
   vkFreeMemory(g_device, g_line_vertex_memory, nullptr);
   vkDestroyBuffer(g_device, g_line_index_buffer, nullptr);
   vkFreeMemory(g_device, g_line_index_memory, nullptr);
+
+  if (g_debug_face_verts_mapped)
+    vkUnmapMemory(g_device, g_debug_face_vertex_memory);
+  vkDestroyPipeline(g_device, g_debug_face_pipeline, nullptr);
+  vkDestroyBuffer(g_device, g_debug_face_vertex_buffer, nullptr);
+  vkFreeMemory(g_device, g_debug_face_vertex_memory, nullptr);
 
   vkDestroyRenderPass(g_device, g_render_pass, nullptr);
   vkDestroyDevice(g_device, nullptr);

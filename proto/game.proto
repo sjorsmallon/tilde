@@ -24,7 +24,7 @@ message C2S_PlayerMoveCommand {
   // The "Buttons" Bitfield
   optional uint64 buttons_bitfield = 7; 
 }
-// FOR NOW, ASSUME IS_DELTA IS ALWAYS TRUE!
+
 // s2c is server to client.
 message S2C_EntityPackage {
     optional int32 expected_max_entities = 1;
@@ -37,6 +37,8 @@ message S2C_EntityPackage {
 
 // --------------------------------------------- things that are uncertain
 
+
+// I think most of this is deprecated.
 
 message Player {
   string name = 1;
@@ -142,4 +144,20 @@ message NetCommand {
         CmdReject reject = 4;
         CmdDisconnect disconnect = 5;
     }
+}
+
+// Server → Client: a text message to display in the client console
+message S2C_ServerMessage {
+    string message = 1;
+}
+
+// A single cvar name/value pair
+message CvarPair {
+    string name  = 1;
+    string value = 2;
+}
+
+// Server → Client: replicated cvar values (sent on connect)
+message S2C_CVarSync {
+    repeated CvarPair cvars = 1;
 }

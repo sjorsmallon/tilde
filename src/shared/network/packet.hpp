@@ -15,6 +15,8 @@ enum class Message_Type : uint8
   C2S_PlayerMoveCommand,
   S2C_EntityPackage,
   NetCommand,
+  S2C_ServerMessage,
+  S2C_CVarSync,
 };
 
 // --------------------------------------------------------------------------------
@@ -61,6 +63,16 @@ template <> struct Packet_Traits<game::S2C_EntityPackage>
 template <> struct Packet_Traits<game::C2S_PlayerMoveCommand>
 {
   static constexpr Message_Type type = Message_Type::C2S_PlayerMoveCommand;
+};
+
+template <> struct Packet_Traits<game::S2C_ServerMessage>
+{
+  static constexpr Message_Type type = Message_Type::S2C_ServerMessage;
+};
+
+template <> struct Packet_Traits<game::S2C_CVarSync>
+{
+  static constexpr Message_Type type = Message_Type::S2C_CVarSync;
 };
 
 struct Packet_Header

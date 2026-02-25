@@ -43,7 +43,7 @@ void update_rockets(shared::game_session_t &session, float dt)
     for (auto &player : *players)
     {
       // Skip collision with the player who fired this rocket
-      if (static_cast<int32_t>(player.id.index) == rocket.owner_id)
+      if (static_cast<int32_t>(player.entity_id) == rocket.owner_id)
         continue;
 
       // Use hitbox-based collision detection

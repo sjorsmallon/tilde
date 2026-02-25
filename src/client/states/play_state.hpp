@@ -7,6 +7,7 @@
 #include "../shared/network/client_connection_state.hpp"
 #include "../shared/network/network_types.hpp"
 #include "../shared/player_move.hpp"
+#include "../shared/entities/player_entity.hpp"
 #include "../shared/entities/rocket_entity.hpp"
 #include "../state_manager.hpp"
 #include "imgui.h"
@@ -100,7 +101,8 @@ private:
   std::unordered_map<int32_t, Remote_Player_State> remote_players;
   float interpolation_time = 0.f;
 
-  // Received rocket entities from server
+  // Last received player/rocket entity states per slot/id (for delta decompression)
+  std::unordered_map<int32_t, network::Player_Entity> last_player_entities;
   std::unordered_map<uint32_t, network::Rocket_Entity> remote_rockets;
   uint32_t last_processed_tick = 0;
 

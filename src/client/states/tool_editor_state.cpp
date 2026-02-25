@@ -14,11 +14,52 @@
 #include "SDL_scancode.h"
 #include "imgui.h"
 #include <SDL.h>
+#include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 
 namespace client
 {
+
+// Returns the absolute path to the maps/ directory, creating it if needed.
+// Resolved relative to the executable: <exe_dir>/../../maps/ which puts it at
+// the project root when running from a cmake_build/bin/ layout.
+static std::string get_maps_dir()
+{
+  std::filesystem::path base;
+
+  char *sdl_base = SDL_GetBasePath();
+  if (sdl_base)
+  {
+    // exe is at <project>/cmake_build/bin/, so ../../ is the project root
+    base = std::filesystem::weakly_canonical(
+        std::filesystem::path(sdl_base) / ".." / ".." / "maps");
+    SDL_free(sdl_base);
+  }
+  else
+  {
+    base = std::filesystem::weakly_canonical("maps");
+  }
+
+  std::filesystem::create_directories(base);
+  return base.string() + "/";
+}
+
+// Returns sorted list of all regular files in the maps directory.
+static std::vector<std::string> list_map_files()
+{
+  std::vector<std::string> files;
+  std::error_code ec;
+  for (const auto &entry :
+       std::filesystem::directory_iterator(get_maps_dir(), ec))
+  {
+    if (entry.is_regular_file())
+      files.push_back(entry.path().filename().string());
+  }
+  std::sort(files.begin(), files.end());
+  return files;
+}
 
 // Concrete renderer adapter
 struct VulkanOverlayRenderer : public overlay_renderer_t
@@ -285,6 +326,14 @@ void ToolEditorState::update(float dt)
       }
     }
 
+    if (camera.orthographic)
+    {
+      if (input::is_key_pressed(SDL_SCANCODE_RIGHT))
+        camera.yaw = fmodf(camera.yaw + 90.0f, 360.0f);
+      if (input::is_key_pressed(SDL_SCANCODE_LEFT))
+        camera.yaw = fmodf(camera.yaw - 90.0f + 360.0f, 360.0f);
+    }
+
     if (input::is_key_pressed(SDL_SCANCODE_RIGHTBRACKET))
     {
       grid_settings.increase();
@@ -484,18 +533,119 @@ void ToolEditorState::update(float dt)
   }
 }
 
+// Returns a new map with all AABB entities split so no two overlap.
+// Non-AABB entities are copied unchanged.
+// The result map name is "<source_name>_baked".
+static shared::map_t bake_map_csg(const shared::map_t &src)
+{
+  shared::map_t result;
+
+  // Derive baked filename
+  std::string base = src.name;
+  auto ext_pos = base.rfind('.');
+  if (ext_pos != std::string::npos)
+    result.name = base.substr(0, ext_pos) + "_baked" + base.substr(ext_pos);
+  else
+    result.name = base + "_baked";
+
+  // Copy non-AABB entities unchanged
+  for (const auto &entry : src.entities)
+  {
+    if (!entry.entity)
+      continue;
+    if (!dynamic_cast<network::AABB_Entity *>(entry.entity.get()))
+      result.add_entity(entry.entity);
+  }
+
+  // Gather AABB inputs
+  struct InputAABB
+  {
+    shared::aabb_t shape;
+    network::render_component_t render;
+  };
+  std::vector<InputAABB> inputs;
+  for (const auto &entry : src.entities)
+  {
+    if (!entry.entity)
+      continue;
+    auto *aabb = dynamic_cast<network::AABB_Entity *>(entry.entity.get());
+    if (!aabb)
+      continue;
+    shared::aabb_t shape;
+    shape.center = aabb->position;
+    shape.half_extents = aabb->half_extents;
+    inputs.push_back({shape, aabb->render});
+  }
+
+  // CSG union: each new AABB is clipped against all already-placed ones
+  // so the final set has zero overlaps. Earlier AABBs win where they overlap.
+  struct BakedPiece
+  {
+    shared::aabb_t shape;
+    network::render_component_t render;
+  };
+  std::vector<BakedPiece> baked;
+
+  for (const auto &inp : inputs)
+  {
+    std::vector<shared::aabb_t> pieces = {inp.shape};
+    for (const auto &existing : baked)
+    {
+      std::vector<shared::aabb_t> clipped;
+      for (const auto &piece : pieces)
+      {
+        auto sub = shared::subtract_aabb(piece, existing.shape);
+        clipped.insert(clipped.end(), sub.begin(), sub.end());
+      }
+      pieces = std::move(clipped);
+    }
+    for (const auto &piece : pieces)
+      baked.push_back({piece, inp.render});
+  }
+
+  // Emit one AABB_Entity per piece
+  for (const auto &piece : baked)
+  {
+    auto ent = std::make_shared<network::AABB_Entity>();
+    ent->position = piece.shape.center;
+    ent->half_extents = piece.shape.half_extents;
+    ent->render = piece.render;
+    result.add_entity(ent);
+  }
+
+  return result;
+}
+
 void ToolEditorState::render_ui()
 {
   ImGui::Begin("Map Info", nullptr, ImGuiWindowFlags_NoNav);
   ImGui::Text("Map: %s", map.name.c_str());
 
   bool should_open_popup = false;
+  bool should_open_load_popup = false;
+
   if (ImGui::Button("Save Map As..."))
   {
     renderer::draw_announcement("is the gerg ever open?");
     // Popup for Save Map
     should_open_popup = true;
   }
+
+  if (ImGui::Button("Load Map..."))
+    should_open_load_popup = true;
+
+  ImGui::Checkbox("Solid Entities", &draw_entities_solid);
+
+  if (ImGui::Button("Bake Map"))
+  {
+    auto baked = bake_map_csg(map);
+    std::string full_path = get_maps_dir() + baked.name;
+    if (shared::save_map(full_path, baked))
+      renderer::draw_announcement(("Baked: " + baked.name).c_str());
+    else
+      renderer::draw_announcement("Bake failed!");
+  }
+
   ImGui::End();
 
   if (should_open_popup)
@@ -504,36 +654,105 @@ void ToolEditorState::render_ui()
     should_open_popup = false;
   }
 
+  if (should_open_load_popup)
+  {
+    ImGui::OpenPopup("Load Map");
+    should_open_load_popup = false;
+  }
+
+  if (ImGui::BeginPopupModal("Load Map", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+  {
+    static std::vector<std::string> map_files;
+    static int selected_idx = -1;
+
+    if (ImGui::IsWindowAppearing())
+    {
+      map_files = list_map_files();
+      selected_idx = -1;
+    }
+
+    ImGui::Text("maps/");
+    if (ImGui::BeginChild("##maplist", ImVec2(320, 200), true))
+    {
+      if (map_files.empty())
+      {
+        ImGui::TextDisabled("(no files in maps/)");
+      }
+      else
+      {
+        for (int i = 0; i < (int)map_files.size(); ++i)
+        {
+          bool is_sel = (i == selected_idx);
+          if (ImGui::Selectable(map_files[i].c_str(), is_sel))
+            selected_idx = i;
+        }
+      }
+    }
+    ImGui::EndChild();
+
+    bool can_load = selected_idx >= 0 && selected_idx < (int)map_files.size();
+    if (!can_load)
+      ImGui::BeginDisabled();
+    if (ImGui::Button("Load", ImVec2(120, 0)))
+    {
+      std::string full_path = get_maps_dir() + map_files[selected_idx];
+      shared::map_t new_map;
+      if (shared::load_map(full_path, new_map))
+      {
+        map = std::move(new_map);
+        transaction_system = Transaction_System{};
+        geometry_updated_flag = true;
+
+        std::ofstream last_map_f("last_map.txt");
+        if (last_map_f.is_open())
+          last_map_f << full_path;
+
+        renderer::draw_announcement("Map loaded!");
+      }
+      else
+      {
+        renderer::draw_announcement("Failed to load map!");
+      }
+      ImGui::CloseCurrentPopup();
+    }
+    if (!can_load)
+      ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)))
+      ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
+  }
+
   if (ImGui::BeginPopupModal("Save Map as", nullptr,
                              ImGuiWindowFlags_AlwaysAutoResize))
   {
-    renderer::draw_announcement("is the opup ever open?");
-
     static char filename_buf[128] = "map.source";
 
     if (ImGui::IsWindowAppearing())
     {
-      if (!map.name.empty())
-      {
-        strncpy(filename_buf, map.name.c_str(), sizeof(filename_buf) - 1);
-        filename_buf[sizeof(filename_buf) - 1] = '\0';
-      }
+      // Pre-fill with just the filename part of the current map name
+      std::string leaf = std::filesystem::path(map.name).filename().string();
+      if (leaf.empty())
+        leaf = "map.source";
+      strncpy(filename_buf, leaf.c_str(), sizeof(filename_buf) - 1);
+      filename_buf[sizeof(filename_buf) - 1] = '\0';
     }
 
-    ImGui::InputText("Filename", filename_buf, sizeof(filename_buf));
+    ImGui::Text("maps/");
+    ImGui::SameLine();
+    ImGui::InputText("##savename", filename_buf, sizeof(filename_buf));
 
     if (ImGui::Button("Save", ImVec2(120, 0)))
     {
-      if (shared::save_map(filename_buf, map))
+      std::string full_path = get_maps_dir() + filename_buf;
+      if (shared::save_map(full_path, map))
       {
         map.name = filename_buf;
 
-        std::ofstream last_map("last_map.txt");
-        if (last_map.is_open())
-        {
-          last_map << filename_buf;
-          last_map.close();
-        }
+        std::ofstream last_map_f("last_map.txt");
+        if (last_map_f.is_open())
+          last_map_f << full_path;
       }
       else
       {
@@ -543,9 +762,8 @@ void ToolEditorState::render_ui()
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(120, 0)))
-    {
       ImGui::CloseCurrentPopup();
-    }
+
     ImGui::EndPopup();
   }
 
@@ -700,8 +918,11 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     // Fallback: entity-specific primitive rendering
     if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
     {
-      renderer::DrawWireAABB(cmd, aabb->position - aabb->half_extents,
-                             aabb->position + aabb->half_extents, 0xFFFFFFFF);
+      renderer::DrawAABB(cmd, aabb->position - aabb->half_extents,
+                         aabb->position + aabb->half_extents, 0xFFFFFFFF,
+                         /*as_wireframe=*/!draw_entities_solid,
+                         /*random_color=*/draw_entities_solid,
+                         /*random_seed=*/entry.uid);
     }
     else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
     {
@@ -715,7 +936,10 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     {
       // No mesh in render component — draw placeholder AABB
       auto bounds = shared::compute_entity_bounds(ent.get());
-      renderer::DrawWireAABB(cmd, bounds.min, bounds.max, 0xFF00FFFF);
+      renderer::DrawAABB(cmd, bounds.min, bounds.max, 0xFF00FFFF,
+                         /*as_wireframe=*/!draw_entities_solid,
+                         /*random_color=*/draw_entities_solid,
+                         /*random_seed=*/entry.uid);
     }
     else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent.get()))
     {

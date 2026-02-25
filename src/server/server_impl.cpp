@@ -4,6 +4,7 @@
 #include "systems/bot_system.hpp"
 #include "systems/rocket_system.hpp"
 
+#include <format>
 #include <string>
 
 #include "cvar.hpp"
@@ -26,6 +27,58 @@ namespace server
 
 cvar::CVar<float> sv_tickrate("sv_tickrate", 60.0f, "Server tick rate in Hz");
 
+// Send a text message to a specific client to display in their console
+static void send_server_message(network::Udp_Socket &socket,
+                                const network::Address &ip,
+                                std::string_view text)
+{
+  game::S2C_ServerMessage msg;
+  msg.set_message(std::string(text));
+  std::vector<network::uint8> buf(msg.ByteSizeLong());
+  msg.SerializeToArray(buf.data(), static_cast<int>(buf.size()));
+  constexpr network::uint8 type_id =
+      static_cast<network::uint8>(network::Message_Type::S2C_ServerMessage);
+  for (const auto &pkt : network::convert_to_packets(buf, type_id))
+    socket.send(pkt, ip);
+}
+
+// Broadcast a text message to all currently connected clients
+static void broadcast_server_message(network::Server_Connection_State &net,
+                                     network::Udp_Socket &socket,
+                                     std::string_view text)
+{
+  for (int i = 0; i < network::sv_max_player_count; ++i)
+  {
+    if (net.player_slots[i])
+      send_server_message(socket, net.player_ips[i], text);
+  }
+}
+
+// Send all Replicated cvars to a specific client
+static void send_cvar_sync(network::Udp_Socket &socket,
+                           const network::Address &ip)
+{
+  game::S2C_CVarSync msg;
+  cvar::CVarSystem::Get().VisitAll(
+      [&](const std::string &name, cvar::ICVar *cv)
+      {
+        if (cv->GetFlags() & cvar::flags::Replicated)
+        {
+          auto *pair = msg.add_cvars();
+          pair->set_name(name);
+          pair->set_value(cv->GetString());
+        }
+      });
+  if (msg.cvars_size() == 0)
+    return;
+  std::vector<network::uint8> buf(msg.ByteSizeLong());
+  msg.SerializeToArray(buf.data(), static_cast<int>(buf.size()));
+  constexpr network::uint8 type_id =
+      static_cast<network::uint8>(network::Message_Type::S2C_CVarSync);
+  for (const auto &pkt : network::convert_to_packets(buf, type_id))
+    socket.send(pkt, ip);
+}
+
 server_context_t g_state;
 network::Udp_Socket g_socket;
 uint32_t g_tick_number = 0;
@@ -38,6 +91,17 @@ struct Player_Server_State
 };
 
 std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
+
+// Per-client baseline state for delta compression
+// Stores the last-sent entity state to each client, used as baseline for next update
+struct Client_Baseline_State
+{
+  std::vector<network::Player_Entity> players;
+  std::vector<network::Rocket_Entity> rockets;
+  // Add more entity types here as needed
+};
+
+std::array<Client_Baseline_State, network::sv_max_player_count> g_client_baselines{};
 
 std::vector<Bot_State> g_bots;
 
@@ -64,6 +128,8 @@ void handle_player_leave(server_context_t &state,
   }
 
   g_player_states[slot] = {};
+  broadcast_server_message(state.net, g_socket,
+                           std::format("Player left (slot {})", slot));
   network::disconnect_player(state.net, sender);
   log_terminal("Player left slot {}: {}", slot, sender.to_string());
 }
@@ -164,6 +230,10 @@ bool Tick()
           player->position = g_spawn_position;
           player->health = 100;
 
+          log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
+                       slot, player->entity_id, player->position.x,
+                       player->position.y, player->position.z);
+
           // Initialize combat hitbox (capsule: radius 18, half-height 38)
           // Slightly larger than physics collision (16x36) for better hit feedback
           player->hitbox.shape_type.set("capsule");
@@ -187,6 +257,15 @@ bool Tick()
             static_cast<network::uint8>(network::Message_Type::NetCommand));
         for (const auto &p : packets)
           g_socket.send(p, sender);
+
+        // Sync replicated cvars to the new client
+        send_cvar_sync(g_socket, sender);
+
+        // Announce join to all clients (including the new one)
+        broadcast_server_message(
+            g_state.net, g_socket,
+            std::format("{} joined the server (slot {})",
+                        cmd.connect().player_name(), slot));
       }
       else
       {
@@ -296,7 +375,7 @@ bool Tick()
           rocket->lifetime        = 20.f;
           rocket->damage_amount   = 50.f;
           rocket->knockback_force = 600.f;
-          rocket->owner_id        = static_cast<int32_t>(player->id.index);
+          rocket->owner_id        = static_cast<int32_t>(player->entity_id);
           network::set_primitive_render(rocket->render, "arrow", {25.0f, 25.5f, 25.5f});
 
           // Initialize hitbox (sphere with 12 unit radius)
@@ -318,63 +397,94 @@ bool Tick()
   update_rockets(g_state.session, tick_dt);
 
   // --- Broadcast entity state to all connected clients ---
-  if (pool)
+  // Delta compression: serialize per-client with baselines (only send changed fields)
+
+  auto *rocket_pool = g_state.session.entity_system.get_entities<network::Rocket_Entity>(entity_type::ROCKET);
+
+  int total_entity_count = (pool ? static_cast<int>(pool->size()) : 0) +
+                          (rocket_pool ? static_cast<int>(rocket_pool->size()) : 0);
+
+  // printf("[SERVER] Tick %u: Broadcasting %d entities (%zu players + %d rockets)\n",
+  //        g_tick_number, total_entity_count,
+  //        pool ? pool->size() : 0,
+  //        rocket_pool ? static_cast<int>(rocket_pool->size()) : 0);
+
+  // Serialize and send to each client with per-client delta compression
+  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+    if (!g_state.net.player_slots[slot])
+      continue;
+
+    network::Bit_Writer writer;
+    auto &baseline = g_client_baselines[slot];
+
+    // Write entity count
+    network::write_var_uint(writer, total_entity_count);
+
+    // Helper: find baseline entity by entity_id
+    auto find_player_baseline = [&](uint64_t ent_id) -> const network::Player_Entity* {
+      for (const auto &b : baseline.players)
+        if (b.entity_id == ent_id) return &b;
+      return nullptr;
+    };
+
+    auto find_rocket_baseline = [&](uint64_t ent_id) -> const network::Rocket_Entity* {
+      for (const auto &b : baseline.rockets)
+        if (b.entity_id == ent_id) return &b;
+      return nullptr;
+    };
+
+    // Serialize all players with delta compression
+    if (pool)
     {
-      if (!g_state.net.player_slots[slot])
-        continue;
-
-      game::S2C_EntityPackage package;
-      package.set_server_tick(g_tick_number);
-      package.set_last_processed_command(
-          g_player_states[slot].last_processed_command);
-      package.set_is_delta(false);
-
-      network::Bit_Writer writer;
-
-      // Get rocket entities
-      auto *rocket_pool = g_state.session.entity_system.get_entities<network::Rocket_Entity>(entity_type::ROCKET);
-      int rocket_count = rocket_pool ? static_cast<int>(rocket_pool->size()) : 0;
-
-      int entity_count = static_cast<int>(pool->size()) + rocket_count;
-      printf("[SERVER] Tick %u: Writing entity_count=%d (%zu players + %d rockets)\n",
-             g_tick_number, entity_count, pool->size(), rocket_count);
-      network::write_var_uint(writer, entity_count);
-
-      // Serialize players
       for (const auto &entity : *pool)
       {
-        network::write_var_uint(
-            writer, static_cast<uint32_t>(entity.client_slot_index));
-        entity.serialize(writer, nullptr);
+        network::write_var_uint(writer, static_cast<uint32_t>(entity.client_slot_index));
+        network::write_var_uint64(writer, entity.entity_id);  // Send entity_id explicitly
+        const network::Player_Entity* base = find_player_baseline(entity.entity_id);
+        entity.serialize(writer, base);  // Delta compress against baseline
       }
-
-      // Serialize rockets
-      if (rocket_pool)
-      {
-        printf("[SERVER] Tick %u: Sending %zu rockets to slot %d\n",
-               g_tick_number, rocket_pool->size(), slot);
-        for (const auto &rocket : *rocket_pool)
-        {
-          network::write_var_uint(writer, 255); // Special slot for non-player entities
-          rocket.serialize(writer, nullptr);
-        }
-      }
-
-      package.set_entity_data(writer.buffer.data(), writer.buffer.size());
-      package.set_expected_max_entities(entity_count);
-
-      std::vector<network::uint8> buffer(package.ByteSizeLong());
-      package.SerializeToArray(buffer.data(),
-                               static_cast<int>(buffer.size()));
-      auto packets = network::convert_to_packets(
-          buffer, static_cast<network::uint8>(
-                      network::Message_Type::S2C_EntityPackage));
-
-      for (const auto &p : packets)
-        g_socket.send(p, g_state.net.player_ips[slot]);
     }
+
+    // Serialize all rockets with delta compression
+    if (rocket_pool)
+    {
+      for (const auto &rocket : *rocket_pool)
+      {
+        network::write_var_uint(writer, 255);  // Special slot for non-player entities
+        network::write_var_uint64(writer, rocket.entity_id);  // Send entity_id explicitly
+        const network::Rocket_Entity* base = find_rocket_baseline(rocket.entity_id);
+        rocket.serialize(writer, base);  // Delta compress against baseline
+      }
+    }
+
+    // Create and send package
+    game::S2C_EntityPackage package;
+    package.set_server_tick(g_tick_number);
+    package.set_last_processed_command(g_player_states[slot].last_processed_command);
+    package.set_is_delta(true);  // We're now using delta compression!
+    package.set_entity_data(writer.buffer.data(), writer.buffer.size());
+    package.set_expected_max_entities(total_entity_count);
+
+    std::vector<network::uint8> buffer(package.ByteSizeLong());
+    package.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
+    auto packets = network::convert_to_packets(
+        buffer, static_cast<network::uint8>(network::Message_Type::S2C_EntityPackage));
+
+    for (const auto &p : packets)
+      g_socket.send(p, g_state.net.player_ips[slot]);
+
+    // Update baseline state for this client (for next frame's delta)
+    baseline.players.clear();
+    baseline.rockets.clear();
+
+    if (pool)
+      for (const auto &entity : *pool)
+        baseline.players.push_back(entity);
+
+    if (rocket_pool)
+      for (const auto &rocket : *rocket_pool)
+        baseline.rockets.push_back(rocket);
   }
 
   g_tick_number++;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL.h>
+#include <vector>
 #include <vulkan/vulkan.h>
 
 #include "asset.hpp"
@@ -27,12 +28,16 @@ struct render_view_t
   camera_t camera;
 };
 
-// Draw a solid AABB (filled faces)
+// Draw an AABB (solid filled faces by default, or 12-edge wireframe).
+// When random_color=true the shader hashes random_seed to produce a unique
+// color per AABB, ignoring the color parameter.
 // min/max in world space
 void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
-              const linalg::vec3 &max, uint32_t color);
+              const linalg::vec3 &max, uint32_t color,
+              bool as_wireframe = false, bool random_color = false,
+              uint32_t random_seed = 0);
 
-// Draw a wireframe AABB (12 line edges)
+// Draw a wireframe AABB (12 line edges). Thin wrapper around DrawAABB.
 // min/max in world space
 void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
                   const linalg::vec3 &max, uint32_t color);
@@ -54,6 +59,16 @@ void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
                        assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
                        uint32_t color,
                        const linalg::vec3 &rotation = {0, 0, 0});
+
+// Draw a filled convex polygon (e.g. a collision face).
+// Vertices are in world space. Triangle-fan decomposed internally.
+// Supports alpha blending (pass e.g. 0x8800FF00 for 50% green in ABGR).
+// Call reset_debug_face_buffer() once per frame before any DrawFilledPolygon calls.
+void DrawFilledPolygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &verts,
+                       uint32_t color);
+
+// Reset the ring buffer used by DrawFilledPolygon. Call once at the start of each frame.
+void reset_debug_face_buffer();
 
 // Draw an arrow (shaft = AABB, head = Pyramid)
 void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,

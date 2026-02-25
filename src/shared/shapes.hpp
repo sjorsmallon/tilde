@@ -3,6 +3,7 @@
 #include "linalg.hpp"
 #include "network/schema.hpp"
 #include "plane.hpp"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
@@ -337,6 +338,69 @@ inline std::vector<Plane> compute_collision_planes(const wedge_t &wedge)
   }
 
   return {bottom, back_face, side_a, side_b, slope};
+}
+
+// Returns polygon vertices for each face, parallel to compute_collision_planes().
+// AABB: 6 quads (4 verts each), in the same order as compute_collision_planes(): +X,-X,+Y,-Y,+Z,-Z.
+inline std::vector<std::vector<linalg::vec3>> compute_face_polygons(const aabb_t &aabb)
+{
+  auto c = aabb.center;
+  auto h = aabb.half_extents;
+  using V = linalg::vec3;
+  return {
+    {c+V{h.x,-h.y,-h.z}, c+V{h.x,-h.y,+h.z}, c+V{h.x,+h.y,+h.z}, c+V{h.x,+h.y,-h.z}}, // +X
+    {c+V{-h.x,-h.y,+h.z}, c+V{-h.x,-h.y,-h.z}, c+V{-h.x,+h.y,-h.z}, c+V{-h.x,+h.y,+h.z}}, // -X
+    {c+V{-h.x,+h.y,-h.z}, c+V{+h.x,+h.y,-h.z}, c+V{+h.x,+h.y,+h.z}, c+V{-h.x,+h.y,+h.z}}, // +Y
+    {c+V{+h.x,-h.y,-h.z}, c+V{-h.x,-h.y,-h.z}, c+V{-h.x,-h.y,+h.z}, c+V{+h.x,-h.y,+h.z}}, // -Y
+    {c+V{-h.x,-h.y,+h.z}, c+V{+h.x,-h.y,+h.z}, c+V{+h.x,+h.y,+h.z}, c+V{-h.x,+h.y,+h.z}}, // +Z
+    {c+V{+h.x,-h.y,-h.z}, c+V{-h.x,-h.y,-h.z}, c+V{-h.x,+h.y,-h.z}, c+V{+h.x,+h.y,-h.z}}, // -Z
+  };
+}
+
+// Returns polygon vertices for each wedge face, parallel to compute_collision_planes().
+// Wedge: 5 faces (bottom quad, back quad, 2 side triangles, slope quad).
+// Uses coplanar-vertex selection so it works for all orientations.
+inline std::vector<std::vector<linalg::vec3>> compute_face_polygons(const wedge_t &wedge)
+{
+  auto pts = get_wedge_points(wedge);
+  auto planes = compute_collision_planes(wedge);
+
+  std::vector<std::vector<linalg::vec3>> result;
+  result.reserve(planes.size());
+
+  constexpr float eps = 1e-3f;
+
+  for (const auto &plane : planes)
+  {
+    std::vector<linalg::vec3> poly;
+    for (const auto &p : pts)
+    {
+      if (std::abs(linalg::dot(p - plane.point, plane.normal)) < eps)
+        poly.push_back(p);
+    }
+
+    // Sort vertices CCW around the centroid (viewed from outward normal)
+    // so the triangle fan decomposition is non-self-intersecting.
+    if (poly.size() >= 3)
+    {
+      linalg::vec3 centroid = {};
+      for (const auto &v : poly) centroid = centroid + v;
+      centroid = centroid * (1.0f / (float)poly.size());
+
+      linalg::vec3 ref = linalg::normalize(poly[0] - centroid);
+      linalg::vec3 bitan = linalg::cross(plane.normal, ref);
+
+      std::sort(poly.begin(), poly.end(), [&](const linalg::vec3 &a, const linalg::vec3 &b) {
+        float ang_a = std::atan2(linalg::dot(a - centroid, bitan), linalg::dot(a - centroid, ref));
+        float ang_b = std::atan2(linalg::dot(b - centroid, bitan), linalg::dot(b - centroid, ref));
+        return ang_a < ang_b;
+      });
+    }
+
+    result.push_back(std::move(poly));
+  }
+
+  return result;
 }
 
 } // namespace shared

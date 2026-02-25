@@ -183,6 +183,33 @@ std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity
   return compute_collision_planes(t);
 }
 
+std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const network::Entity *entity)
+{
+  if (auto *aabb = dynamic_cast<const network::AABB_Entity *>(entity))
+  {
+    aabb_t t;
+    t.center = aabb->position;
+    t.half_extents = aabb->half_extents;
+    return compute_face_polygons(t);
+  }
+
+  if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
+  {
+    wedge_t t;
+    t.center = wedge->position;
+    t.half_extents = wedge->half_extents;
+    t.orientation = wedge->orientation;
+    return compute_face_polygons(t);
+  }
+
+  // Fallback: use entity bounds as an AABB
+  auto bounds = compute_entity_bounds(entity);
+  aabb_t t;
+  t.center = (bounds.min + bounds.max) * 0.5f;
+  t.half_extents = (bounds.max - bounds.min) * 0.5f;
+  return compute_face_polygons(t);
+}
+
 bool load_map(const std::string &filename, map_t &out_map)
 {
   std::ifstream in(filename);

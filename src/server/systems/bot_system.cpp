@@ -109,7 +109,7 @@ void update_bots(std::vector<Bot_State> &bots,
         rocket->lifetime        = 5.f;
         rocket->damage_amount   = 50.f;
         rocket->knockback_force = 600.f;
-        rocket->owner_id        = static_cast<int32_t>(bot_ent->id.index);
+        rocket->owner_id        = static_cast<int32_t>(bot_ent->entity_id);
 
         // Initialize hitbox (sphere with 12 unit radius)
         rocket->hitbox.shape_type.set("sphere");

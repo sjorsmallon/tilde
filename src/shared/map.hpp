@@ -95,4 +95,7 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity);
 // Static mesh / fallback -> 6 AABB planes from bounds.
 std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity);
 
+// Returns polygon vertices for each face, parallel to compute_entity_collision_planes().
+std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const network::Entity *entity);
+
 } // namespace shared

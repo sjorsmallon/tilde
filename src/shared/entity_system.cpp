@@ -16,7 +16,7 @@ void Entity_System::reset()
   {
     pool->reset();
   }
-  next_entity_index = 1;  // Reset ID counter when clearing entities
+  next_entity_id = 1;  // Reset ID counter when clearing entities
 }
 
 void Entity_System::add_entity(const std::shared_ptr<network::Entity> &entity)

@@ -16,6 +16,7 @@ cvar::CVar<float> pm_overbounce("pm_overbounce", 1.001f, "Plane clip overbounce 
 cvar::CVar<float> pm_jumpspeed("pm_jumpspeed", 270.f, "Jump velocity", cvar::flags::Replicated);
 cvar::CVar<float> g_gravity("g_gravity", 800.f, "Gravity", cvar::flags::Replicated);
 cvar::CVar<float> pm_speed_threshold("pm_speed_threshold", 1.f, "Speed below which friction snaps to zero", cvar::flags::Replicated);
+cvar::CVar<float> pm_step_height("pm_step_height", 18.f, "Maximum step height the player can glide up", cvar::flags::Replicated);
 
 namespace
 {
@@ -337,14 +338,20 @@ std::tuple<vec3, vec3> my_walk_move(const Move_Input &input,
     new_velocity =
         clip_vector(new_velocity, collider_plane.normal, overbounce);
 
-    // normalize after wall clip, same as the ground clip above
-    // (lines 307-313). Without this, clip shortens the vector (it removes the
-    // component into the wall), and then multiplying by new_speed gives
-    // new_speed * length(clipped_unit) — which is less than new_speed.
-    // The ground path did normalize; the wall path didn't. Now both preserve
-    // the player's speed when sliding along a surface.
-    new_velocity = normalize(new_velocity);
-    new_velocity = new_velocity * new_speed;
+    // Speed-preserving rescale: when sliding along a wall we normalize and
+    // rescale to new_speed so that touching a wall doesn't bleed speed.
+    // BUT: new_velocity was a unit vector entering clip_vector, so when
+    // pressing nearly perpendicular into a wall the clip leaves only a tiny
+    // residual (< 0.01) pointing slightly away. Normalizing that to a unit
+    // vector and rescaling to new_speed launches the player backward at full
+    // speed every frame — causing an oscillation that friction eventually
+    // snaps to zero. Guard: only rescale when the tangential component is
+    // meaningful. A tiny residual is left as-is; friction zeroes it next frame.
+    {
+      float clip_len = length(new_velocity);
+      if (clip_len > 0.01f)
+        new_velocity = (new_velocity * (1.0f / clip_len)) * new_speed;
+    }
   }
 
   // Set jump velocity before step_slide_move so it's integrated into position
@@ -464,10 +471,14 @@ auto my_air_move(const Move_Input &input,
     new_velocity =
         clip_vector(new_velocity, collider_plane.normal, overbounce);
 
-    // FIX #2b: same as #2a — normalize after wall clip so sliding along a
-    // wall in the air preserves horizontal speed instead of bleeding it.
-    new_velocity = normalize(new_velocity);
-    new_velocity = new_velocity * new_speed;
+    // Same guard as my_walk_move: clip operates on a unit vector, so a
+    // near-perpendicular wall press leaves a tiny residual that must not be
+    // rescaled to full speed (that would cause the same oscillation/snap).
+    {
+      float clip_len = length(new_velocity);
+      if (clip_len > 0.01f)
+        new_velocity = (new_velocity * (1.0f / clip_len)) * new_speed;
+    }
   }
 
   // clip against the ceiling.
@@ -518,11 +529,13 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
     // penetrates past it. If the player is fully outside any face, it's
     // not inside the hull. Otherwise, push out along the least-penetrated face.
     float min_penetration = -1e30f;
+    int min_plane_idx = -1;
     vec3 push_normal = {0, 0, 0};
     bool outside = false;
 
-    for (const auto &plane : prim->collision_planes)
+    for (int pi = 0; pi < (int)prim->collision_planes.size(); ++pi)
     {
+      const auto &plane = prim->collision_planes[pi];
       float signed_dist = dot(player_pos - plane.point, plane.normal);
       // Support radius: how far the AABB extends along the plane normal direction
       float support_radius = half_width * fabsf(plane.normal.x) +
@@ -541,6 +554,7 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
       {
         min_penetration = penetration;
         push_normal = plane.normal;
+        min_plane_idx = pi;
       }
     }
 
@@ -564,7 +578,8 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
     p.point = player_pos - push_normal * 0.01f;
 
     // Record collision for debug visualization
-    debug_collision::record_collision(p, player_pos, half_width * 2.0f);
+    if (min_plane_idx >= 0 && min_plane_idx < (int)prim->face_polygons.size())
+      debug_collision::record_collision(p, prim->face_polygons[min_plane_idx]);
 
     // Classify: ground (normal pointing up), ceiling (down), wall (horizontal)
     if (push_normal.y > cos_45)
@@ -587,7 +602,7 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
 } // namespace
 
 // Exposed functions
-
+// new position, new velocity.
 std::tuple<vec3, vec3> player_move(
     const Move_Input &input,
     const Bounding_Volume_Hierarchy &bvh,
@@ -612,22 +627,115 @@ std::tuple<vec3, vec3> player_move(
 
 
   vec3 new_pos, new_vel;
-  if (grounded)
+
+  // Flat wish direction from input — used to determine which walls are
+  // actually being pressed into. We use this instead of old_velocity because
+  // old_velocity gets clipped to near-zero against a wall after the first
+  // frame of contact, so it stops reporting "moving into wall" even while
+  // the player keeps pressing forward.
+  vec3 front_xz = normalize(vec3{front.x, 0.f, front.z});
+  vec3 right_xz = normalize(vec3{right.x, 0.f, right.z});
+  float fwd_in = (input.forward_pressed ? 1.f : 0.f) - (input.backward_pressed ? 1.f : 0.f);
+  float rgt_in = (input.right_pressed  ? 1.f : 0.f) - (input.left_pressed     ? 1.f : 0.f);
+  vec3 wish_dir_xz = front_xz * fwd_in + right_xz * rgt_in;
+  bool has_wish = length(wish_dir_xz) > 0.f;
+  if (has_wish)
+    wish_dir_xz = normalize(wish_dir_xz);
+
+  // Stair-step glide: if grounded and pressing into a wall, try raising the
+  // player by pm_step_height and re-testing. If no wall at the raised height
+  // blocks our wish direction, the obstacle is short enough to step over.
+  // Walk from the raised position, then drop back down onto the surface.
+  bool used_step = false;
+  if (grounded && has_wish && !collider_planes.wall_planes.empty())
   {
-    //@FIXME: currently, we set the y_velocity to 0 here already. because
-    // my_walk_move assumes that we are grounded.
-    // I do not really like that.
-    vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
-    std::tie(new_pos, new_vel) =
-        my_walk_move(input, has_ground, ground_normal, collider_planes,
-                     player_pos, old_velocity_without_y, front, right, dt);
-  }
-  else
+    // Only proceed if we're actually pressing toward at least one wall.
+    bool pressing_into_wall = false;
+    for (const auto &plane : collider_planes.wall_planes)
+    {
+      if (dot(wish_dir_xz, plane.normal) < 0.f)
+      {
+        pressing_into_wall = true;
+        break;
+      }
+    }
+
+    if (pressing_into_wall)
+    {
+      const float step_height = pm_step_height.Get();
+      vec3 raised_pos = player_pos + vec3{0.f, step_height, 0.f};
+      Collider_Planes raised_planes =
+          resolve_collisions(bvh, raised_pos, half_width, half_height);
+
+      // Only abort if a raised wall specifically blocks our wish direction.
+      // Walls from other nearby obstacles that we're not moving into are ignored.
+      bool raised_blocks_wish = false;
+      for (const auto &plane : raised_planes.wall_planes)
+      {
+        if (dot(wish_dir_xz, plane.normal) < 0.f)
+        {
+          raised_blocks_wish = true;
+          break;
+        }
+      }
+
+      if (!raised_blocks_wish && raised_planes.ceiling_planes.empty())
+      {
+        bool raised_has_ground = !raised_planes.ground_planes.empty();
+        vec3 raised_ground_normal = raised_has_ground
+                                        ? raised_planes.ground_planes[0].normal
+                                        : vec3{0.f, 1.f, 0.f};
+
+        // old_velocity may be near-zero: it was clipped against the wall that
+        // triggered this step-up and then zeroed by friction. Reconstruct to
+        // the intended running speed so the player carries momentum through
+        // the step rather than shuffling across it at ~0 units/s.
+        vec3 old_vel_xz = vec3{old_velocity.x, 0.f, old_velocity.z};
+        if (length(old_vel_xz) < pm_speed_threshold.Get())
+          old_vel_xz = wish_dir_xz * pm_maxspeed.Get();
+        vec3 step_pos, step_vel;
+        std::tie(step_pos, step_vel) =
+            my_walk_move(input, true, raised_ground_normal, raised_planes,
+                         raised_pos, old_vel_xz, front, right, dt);
+
+        // Drop back down by step_height. resolve_collisions will push the
+        // player up to sit on top of whatever surface is below (the step top,
+        // or the original floor if we overshot).
+        vec3 drop_pos = step_pos;
+        drop_pos.y -= step_height;
+        Collider_Planes drop_planes =
+            resolve_collisions(bvh, drop_pos, half_width, half_height);
+
+        if (!drop_planes.ground_planes.empty())
+        {
+          new_pos = drop_pos;
+          new_vel = step_vel;
+          new_vel.y = 0.f;
+          used_step = true;
+        }
+      }
+    } // if (pressing_into_wall)
+  }   // if (grounded && has_wish && ...)
+
+  if (!used_step)
   {
-    std::tie(new_pos, new_vel) =
-        my_air_move(input, has_ground, ground_normal, has_ceiling,
-                    ceiling_normal, collider_planes, player_pos,
-                    old_velocity, front, right, dt);
+    if (grounded)
+    {
+      //@FIXME: currently, we set the y_velocity to 0 here already. because
+      // my_walk_move assumes that we are grounded.
+      // I do not really like that.
+      vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
+      std::tie(new_pos, new_vel) =
+          my_walk_move(input, has_ground, ground_normal, collider_planes,
+                       player_pos, old_velocity_without_y, front, right, dt);
+    }
+    else
+    {
+      std::tie(new_pos, new_vel) =
+          my_air_move(input, has_ground, ground_normal, has_ceiling,
+                      ceiling_normal, collider_planes, player_pos,
+                      old_velocity, front, right, dt);
+    }
   }
 
   // Post-move collision resolve: push position out of any geometry we

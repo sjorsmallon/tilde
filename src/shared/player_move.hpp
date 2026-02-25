@@ -15,6 +15,7 @@ extern cvar::CVar<float> pm_overbounce;
 extern cvar::CVar<float> pm_jumpspeed;
 extern cvar::CVar<float> g_gravity;
 extern cvar::CVar<float> pm_speed_threshold;
+extern cvar::CVar<float> pm_step_height;
 
 struct Collider_Planes
 {
