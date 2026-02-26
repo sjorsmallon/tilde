@@ -1,7 +1,9 @@
 #pragma once
 
+#include <functional>
 #include <imgui.h>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace client
@@ -15,6 +17,10 @@ public:
   void Draw();
   void Print(const char *fmt, ...);
   void ExecuteCommand(const char *command_line);
+
+  // Set (or clear with nullptr) a callback that forwards command lines to the
+  // server when the local registry has no matching entry.
+  void SetNetworkForwarder(std::function<void(std::string_view)> fn);
 
   bool IsOpen() const { return should_draw; }
   void Toggle() { should_draw = !should_draw; }
@@ -36,6 +42,8 @@ private:
   std::vector<std::string> Candidates;
   int HistoryPos; // -1: new line, 0..History.Size-1 browsing history.
   std::vector<std::string> History;
+
+  std::function<void(std::string_view)> network_forwarder_;
 
   // Commands
   std::vector<const char *> Commands;

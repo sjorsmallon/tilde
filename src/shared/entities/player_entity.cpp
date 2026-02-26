@@ -3,6 +3,13 @@
 namespace network
 {
 
+DEFINE_SCHEMA_CLASS(Player_Spawn_Entity, Entity)
+{
+  BEGIN_SCHEMA_FIELDS()
+  REGISTER_SCHEMA_FIELD(spawn_type);
+  END_SCHEMA_FIELDS()
+}
+
 DEFINE_SCHEMA_CLASS(Player_Entity, Entity)
 {
   BEGIN_SCHEMA_FIELDS()

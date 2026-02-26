@@ -5,6 +5,7 @@
 #include "entities/rocket_entity.hpp"
 #endif
 
+
 #ifndef SHARED_ENTITY_LIST_HPP
 #define SHARED_ENTITY_LIST_HPP
 
@@ -19,17 +20,18 @@
 // =============================================================================
 
 // X(EnumName, ClassName, StringName, HeaderPath)
-#define SHARED_ENTITIES_LIST(X)                                                \
-  X(PLAYER, network::Player_Entity, "player_start",                            \
-    "entities/player_entity.hpp")                                              \
-  X(WEAPON, network::Weapon_Entity, "weapon_basic",                            \
-    "entities/weapon_entity.hpp")                                              \
-  X(AABB, network::AABB_Entity, "aabb_entity", "entities/static_entities.hpp") \
-  X(WEDGE, network::Wedge_Entity, "wedge_entity",                              \
-    "entities/static_entities.hpp")                                            \
-  X(STATIC_MESH, network::Static_Mesh_Entity, "static_mesh_entity",            \
-    "entities/static_entities.hpp")                                       \
-  X(ROCKET, network::Rocket_Entity, "rocket_entity", "entities/rocket_entity.hpp") 
+#define SHARED_ENTITIES_LIST(X)                                                     \
+  X(PLAYER_SPAWN, network::Player_Spawn_Entity, "player_start",                     \
+    "entities/player_entity.hpp")                                                   \
+  X(PLAYER, network::Player_Entity, "player_entity",                                \
+    "entities/player_entity.hpp")                                                   \
+  X(WEAPON, network::Weapon_Entity, "weapon_basic",                                 \
+    "entities/weapon_entity.hpp")                                                   \
+  X(AABB, network::AABB_Entity, "aabb_entity", "entities/static_entities.hpp")      \
+  X(WEDGE, network::Wedge_Entity, "wedge_entity", "entities/static_entities.hpp")   \
+  X(STATIC_MESH, network::Static_Mesh_Entity, "static_mesh_entity",                 \
+    "entities/static_entities.hpp")                                                 \
+  X(ROCKET, network::Rocket_Entity, "rocket_entity", "entities/rocket_entity.hpp")
 
 
 // we override the x macro from st get the enum name.

@@ -13,6 +13,10 @@ cvar::CVar<bool> debug_show_hitboxes("debug_show_hitboxes", false,
                                      "Show entity hitboxes in wireframe",
                                      cvar::flags::None);
 
+cvar::CVar<bool> debug_show_navmesh("debug_show_navmesh", false,
+                                    "Show baked navmesh as a line grid",
+                                    cvar::flags::None);
+
 void record_collision(const Plane &plane, const std::vector<linalg::vec3> &polygon)
 {
   if (!debug_show_collisions.Get())

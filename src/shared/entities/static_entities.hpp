@@ -9,6 +9,8 @@ namespace network
 class AABB_Entity : public Entity
 {
 public:
+  bool is_collision_geometry() const override { return true; }
+
   SCHEMA_FIELD(vec3f, half_extents,
                Schema_Flags::Networked | Schema_Flags::Editable);
 
@@ -21,6 +23,8 @@ public:
 class Wedge_Entity : public Entity
 {
 public:
+  bool is_collision_geometry() const override { return true; }
+
   SCHEMA_FIELD(vec3f, half_extents,
                Schema_Flags::Networked | Schema_Flags::Editable);
   SCHEMA_FIELD(int32, orientation,
@@ -35,6 +39,8 @@ public:
 class Static_Mesh_Entity : public Entity
 {
 public:
+  bool is_collision_geometry() const override { return true; }
+
   SCHEMA_FIELD(render_component_t, render,
                Schema_Flags::Networked | Schema_Flags::Editable);
 

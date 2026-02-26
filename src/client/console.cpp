@@ -38,6 +38,11 @@ void Console::Print(const char *fmt, ...)
   ScrollToBottom = true;
 }
 
+void Console::SetNetworkForwarder(std::function<void(std::string_view)> fn)
+{
+  network_forwarder_ = std::move(fn);
+}
+
 void Console::ExecuteCommand(const char *command_line)
 {
   Print("# %s", command_line);
@@ -63,37 +68,53 @@ void Console::ExecuteCommand(const char *command_line)
   if (cmd.empty())
     return;
 
-  // Check CVar
-  auto *cvar = cvar::CVarSystem::Get().Find(cmd);
-  if (cvar)
+  auto *obj = cvar::CVarSystem::Get().Find(cmd);
+  if (obj)
   {
-    std::string val;
-    // Remaining part of string is value?
-    // simple parsing: skip whitespace after cmd
-    size_t cmd_end = line.find(cmd) + cmd.length();
-    while (cmd_end < line.length() && std::isspace(line[cmd_end]))
-      cmd_end++;
-
-    if (cmd_end < line.length())
+    if (obj->IsCommand())
     {
-      std::string value_str = line.substr(cmd_end);
-      cvar->SetFromString(value_str);
-      Print("Set %s to %s", cmd.c_str(), value_str.c_str());
+      // Server-flagged commands are forwarded over the network.
+      if (obj->GetFlags() & cvar::flags::Server)
+      {
+        if (network_forwarder_)
+          network_forwarder_(command_line);
+        else
+          Print("[error] Not connected to a server.");
+      }
+      else
+      {
+        // Local command — execute immediately via the unified dispatcher.
+        cvar::CVarSystem::Get().Execute(command_line);
+      }
     }
     else
     {
-      std::string flags_str;
-      uint64_t flags = cvar->GetFlags();
-      if (flags & cvar::flags::Admin)
-        flags_str += "[ADMIN] ";
-      if (flags & cvar::flags::Client)
-        flags_str += "[CLIENT] ";
-      if (flags & cvar::flags::Cheat)
-        flags_str += "[CHEAT] ";
+      // CVar: print current value or set it.
+      size_t cmd_end = line.find(cmd) + cmd.length();
+      while (cmd_end < line.length() && std::isspace(line[cmd_end]))
+        cmd_end++;
 
-      Print("%s is %s %s", cmd.c_str(), cvar->GetString().c_str(),
-            flags_str.c_str());
-      Print("  %s", cvar->GetDescription().c_str());
+      if (cmd_end < line.length())
+      {
+        std::string value_str = line.substr(cmd_end);
+        obj->SetFromString(value_str);
+        Print("Set %s to %s", cmd.c_str(), value_str.c_str());
+      }
+      else
+      {
+        std::string flags_str;
+        uint64_t flags = obj->GetFlags();
+        if (flags & cvar::flags::Admin)
+          flags_str += "[ADMIN] ";
+        if (flags & cvar::flags::Client)
+          flags_str += "[CLIENT] ";
+        if (flags & cvar::flags::Cheat)
+          flags_str += "[CHEAT] ";
+
+        Print("%s is %s %s", cmd.c_str(), obj->GetString().c_str(),
+              flags_str.c_str());
+        Print("  %s", obj->GetDescription().c_str());
+      }
     }
     return;
   }

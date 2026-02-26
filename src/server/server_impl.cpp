@@ -82,7 +82,21 @@ static void send_cvar_sync(network::Udp_Socket &socket,
 server_context_t g_state;
 network::Udp_Socket g_socket;
 uint32_t g_tick_number = 0;
-vec3 g_spawn_position = {640, 100, -412};
+// Returns all human spawn positions (spawn_type == 0) from the entity_system.
+// Used for player join and spawn_bot cycling.
+static std::vector<vec3f> get_human_spawn_positions()
+{
+  auto *pool = g_state.session.entity_system
+                   .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+  std::vector<vec3f> out;
+  if (pool)
+    for (const auto &sp : *pool)
+      if (sp.spawn_type == 0)
+        out.push_back(sp.position);
+  if (out.empty())
+    out.push_back({0.f, 0.f, 0.f}); // safety fallback
+  return out;
+}
 
 struct Player_Server_State
 {
@@ -104,6 +118,21 @@ struct Client_Baseline_State
 std::array<Client_Baseline_State, network::sv_max_player_count> g_client_baselines{};
 
 std::vector<Bot_State> g_bots;
+int g_next_bot_slot = BOT_SLOT_BASE; // increments with each spawned bot
+
+// Registered at static-init time; captured globals are safe because they
+// outlive the command object (both are translation-unit statics).
+cvar::CCommand cmd_spawn_bot(
+    "spawn_bot",
+    [](std::span<std::string_view> /*args*/)
+    {
+      auto spawns = get_human_spawn_positions();
+      const vec3f &pos = spawns[g_bots.size() % spawns.size()];
+      g_bots.push_back(spawn_bot(g_state.session, pos, g_next_bot_slot++));
+      log_terminal("spawn_bot: spawned bot at slot {}", g_next_bot_slot - 1);
+    },
+    "Spawn a bot at the next available spawn position.",
+    cvar::flags::Server);
 
 void handle_player_leave(server_context_t &state,
                          const network::Address &sender)
@@ -159,21 +188,31 @@ bool Init()
     shared::init_session_from_map(g_state.session, server_map);
     g_state.session.map_name = server_map.name;
 
-    // Extract spawn position from map's player entity, then clear the pool.
-    // Map player entities are spawn markers, not active players.
-    auto *player_pool =
+    // Spawn bots for any bot-type spawn markers (spawn_type == 1).
+    // Human spawn markers (spawn_type == 0) stay in entity_system and are
+    // queried directly when players join — no need to extract or clear the pool.
+    g_bots.clear();
+    g_next_bot_slot = BOT_SLOT_BASE;
+
+    auto *spawn_pool =
         g_state.session.entity_system
-            .get_entities<network::Player_Entity>(entity_type::PLAYER);
-    if (player_pool && !player_pool->empty())
+            .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+
+    int human_spawn_count = 0;
+    if (spawn_pool)
     {
-      g_spawn_position = player_pool->front().position;
-      player_pool->clear();
+      for (auto &sp : *spawn_pool)
+      {
+        if (sp.spawn_type == 1)
+          g_bots.push_back(spawn_bot(g_state.session, sp.position, g_next_bot_slot++));
+        else
+          ++human_spawn_count;
+      }
     }
 
-    log_terminal("Server loaded map: {}", g_state.session.map_name);
-
-    g_bots.clear();
-    g_bots.push_back(spawn_bot(g_state.session, g_spawn_position, BOT_SLOT_BASE));
+    log_terminal("Server loaded map: {} ({} human spawns, {} bots)",
+                 g_state.session.map_name, human_spawn_count,
+                 g_bots.size());
   }
   else
   {
@@ -227,7 +266,8 @@ bool Tick()
         if (player)
         {
           player->client_slot_index = slot;
-          player->position = g_spawn_position;
+          auto spawns = get_human_spawn_positions();
+          player->position = spawns[slot % spawns.size()];
           player->health = 100;
 
           log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
@@ -286,6 +326,14 @@ bool Tick()
     {
       handle_player_leave(g_state, sender);
     }
+  }
+
+  // Dispatch console commands from clients
+  for (const auto &[player_idx, line] : inbox.commands)
+  {
+    log_terminal("Command from slot {}: {}", player_idx, line);
+    if (!cvar::CVarSystem::Get().Execute(line))
+      log_terminal("Unknown command from slot {}: {}", player_idx, line);
   }
 
   // Sort moves by timestamp

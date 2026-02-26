@@ -95,6 +95,7 @@ add_library(game_shared STATIC
     src/shared/components/components.cpp
     src/shared/shapes.cpp
     src/shared/map.cpp
+    src/shared/map_baker.cpp
     src/shared/entity.cpp
     src/shared/entity_system.cpp
     src/shared/game_session.cpp

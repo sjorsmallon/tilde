@@ -57,21 +57,21 @@ void PlayState::on_enter()
     return;
   }
 
-  // Find player entity spawn position
-  auto *players = ctx.session.entity_system
-                      .get_entities<network::Player_Entity>(entity_type::PLAYER);
-  if (players && !players->empty())
+  // Find initial spawn position from Player_Spawn_Entity markers in the map.
+  // The server will send the authoritative position once connected, but we use
+  // this to place the camera immediately so there's no jarring jump on load.
+  auto *spawns = ctx.session.entity_system
+                     .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+  if (spawns && !spawns->empty())
   {
-    auto &player = players->front();
-    player_position = player.position;
-    player_yaw = player.view_angle_yaw;
-    player_pitch = player.view_angle_pitch;
+    player_position = spawns->front().position;
+    player_yaw = 0.0f;
+    player_pitch = 0.0f;
     log_terminal("[CLIENT] Initial spawn from map: ({:.1f}, {:.1f}, {:.1f})",
                  player_position.x, player_position.y, player_position.z);
   }
   else
   {
-    // No player entity in map - use default spawn
     player_position = {0, 36, 0};
     player_yaw = 0.0f;
     player_pitch = 0.0f;
@@ -121,6 +121,7 @@ void PlayState::on_exit()
     disconnect_cmd.mutable_disconnect()->set_reason("Player left");
     network::send_protobuf_message(conn, disconnect_cmd);
     connection_phase = Connection_Phase::Disconnected;
+    Console::Get().SetNetworkForwarder(nullptr);
   }
   conn.socket.close();
 
@@ -134,6 +135,7 @@ void PlayState::update(float dt)
 
   auto &ctx = state_manager::get_client_context();
   auto &conn = ctx.connection_state;
+  conn_state_ = &conn;
 
   // ESC -> back to editor
   if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
@@ -169,6 +171,13 @@ void PlayState::update(float dt)
       connection_phase = Connection_Phase::Connected;
       log_terminal("Connected to server! Slot {}, map: {}", my_slot,
                    cmd.accept().map_name());
+
+      // Forward server-flagged console commands over the network.
+      Console::Get().SetNetworkForwarder([this](std::string_view line) {
+        game::C2S_Command cmd;
+        cmd.set_line(std::string(line));
+        network::send_protobuf_message(*conn_state_, cmd);
+      });
     }
     else if (cmd.has_reject())
     {
@@ -504,9 +513,11 @@ void PlayState::render_ui()
     ImGui::Separator();
     bool show_collisions = debug_collision::debug_show_collisions.Get();
     if (ImGui::Checkbox("Show Collision Planes", &show_collisions))
-    {
       debug_collision::debug_show_collisions.Set(show_collisions);
-    }
+
+    bool show_navmesh = debug_collision::debug_show_navmesh.Get();
+    if (ImGui::Checkbox("Show Navmesh", &show_navmesh))
+      debug_collision::debug_show_navmesh.Set(show_navmesh);
   }
   ImGui::End();
 }
@@ -727,6 +738,34 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         vec3f min = hitbox_center - hitbox->size;
         vec3f max = hitbox_center + hitbox->size;
         renderer::DrawWireAABB(cmd, min, max, 0xFF00FF00);
+      }
+    }
+  }
+
+  // Debug: Render navmesh as triangle wireframes, colored by island ID
+  if (debug_collision::debug_show_navmesh.Get())
+  {
+    const navmesh_t &nav = ctx.session.navmesh;
+    constexpr float y_lift = 2.f;
+
+    // Cycle through distinct colors per island
+    static constexpr uint32_t island_colors[] = {
+      0xFFFFFF00, // ABGR: cyan
+      0xFF00FFFF, // yellow
+      0xFF00FF00, // green
+      0xFFFF00FF, // magenta
+    };
+
+    for (const auto &poly : nav.polygons)
+    {
+      uint32_t color = island_colors[poly.island % 4];
+      for (int e = 0; e < 3; ++e)
+      {
+        vec3f a = nav.vertices[poly.verts[e      ]].pos;
+        vec3f b = nav.vertices[poly.verts[(e+1)%3]].pos;
+        a.y += y_lift;
+        b.y += y_lift;
+        renderer::DrawLine(cmd, a, b, color);
       }
     }
   }

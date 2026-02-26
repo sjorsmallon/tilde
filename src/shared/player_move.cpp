@@ -701,15 +701,43 @@ std::tuple<vec3, vec3> player_move(
         // Drop back down by step_height. resolve_collisions will push the
         // player up to sit on top of whatever surface is below (the step top,
         // or the original floor if we overshot).
+        //
+        // IMPORTANT: we also push extra forward by step_height in the wish
+        // direction before dropping. Without this, the player's center is only
+        // (velocity * dt) ≈ 5 units past the step edge. The step's side face
+        // then has less absolute penetration than the top face, so
+        // resolve_collisions pushes the player sideways (wall) instead of up
+        // (ground). Adding step_height of extra horizontal offset guarantees
+        // the top face always wins the SAT test regardless of step size.
         vec3 drop_pos = step_pos;
+        drop_pos.x += wish_dir_xz.x * step_height;
+        drop_pos.z += wish_dir_xz.z * step_height;
         drop_pos.y -= step_height;
         Collider_Planes drop_planes =
             resolve_collisions(bvh, drop_pos, half_width, half_height);
 
-        if (!drop_planes.ground_planes.empty())
+        // Reject the step if a wall still blocks the wish direction at the
+        // drop position — that means we ran into a real obstacle, not just
+        // the edge of the stair we were climbing.
+        bool drop_wall_blocks = false;
+        for (const auto &p : drop_planes.wall_planes)
+        {
+          if (dot(wish_dir_xz, p.normal) < 0.f)
+          {
+            drop_wall_blocks = true;
+            break;
+          }
+        }
+
+        if (!drop_planes.ground_planes.empty() && !drop_wall_blocks)
         {
           new_pos = drop_pos;
-          new_vel = step_vel;
+          // Do not use step_vel here. old_velocity may have been partially
+          // clipped by the wall (anywhere from 0..maxspeed), so step_vel
+          // inherits that reduced speed after friction — giving the player
+          // a visible slowdown on every step. The step bypasses the wall
+          // entirely, so carry full speed in the wish direction instead.
+          new_vel = wish_dir_xz * pm_maxspeed.Get();
           new_vel.y = 0.f;
           used_step = true;
         }

@@ -1,8 +1,10 @@
 #define ENTITIES_WANT_INCLUDES
 #include "map.hpp"
 #include "asset.hpp"
+#include "entities/player_entity.hpp"
 #include "entities/static_entities.hpp"
 #include "entity_system.hpp"
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 
@@ -11,6 +13,92 @@ namespace shared
 
 namespace
 {
+
+// Binary sidecar format for .navmesh files (polygon mesh, v2).
+// Layout: magic(4) + version(4) + num_vertices(4) + num_polygons(4)
+//       + vertices[num_vertices * (float x, float y, float z)]
+//       + polygons[num_polygons * (int32 v0,v1,v2, int32 n0,n1,n2, int32 island)]
+static constexpr uint32_t NAVMESH_MAGIC   = 0x504F4C59; // "POLY"
+static constexpr uint32_t NAVMESH_VERSION = 2;
+
+static std::string navmesh_path_for(const std::string &map_path)
+{
+  auto dot = map_path.rfind('.');
+  if (dot != std::string::npos)
+    return map_path.substr(0, dot) + ".navmesh";
+  return map_path + ".navmesh";
+}
+
+static void save_navmesh(const std::string &map_path, const navmesh_t &nav)
+{
+  std::ofstream out(navmesh_path_for(map_path), std::ios::binary);
+  if (!out.is_open())
+    return;
+
+  auto write = [&](const auto &v) {
+    out.write(reinterpret_cast<const char *>(&v), sizeof(v));
+  };
+
+  write(NAVMESH_MAGIC);
+  write(NAVMESH_VERSION);
+  write((uint32_t)nav.vertices.size());
+  write((uint32_t)nav.polygons.size());
+
+  for (const auto &v : nav.vertices)
+  {
+    write(v.pos.x);
+    write(v.pos.y);
+    write(v.pos.z);
+  }
+
+  for (const auto &p : nav.polygons)
+  {
+    write(p.verts[0]);   write(p.verts[1]);     write(p.verts[2]);
+    write(p.neighbors[0]); write(p.neighbors[1]); write(p.neighbors[2]);
+    write(p.island);
+  }
+}
+
+static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
+{
+  std::ifstream in(navmesh_path_for(map_path), std::ios::binary);
+  if (!in.is_open())
+    return false;
+
+  auto read = [&](auto &v) {
+    in.read(reinterpret_cast<char *>(&v), sizeof(v));
+  };
+
+  uint32_t magic, version;
+  read(magic);
+  read(version);
+  if (magic != NAVMESH_MAGIC || version != NAVMESH_VERSION)
+    return false;
+
+  uint32_t num_verts, num_polys;
+  read(num_verts);
+  read(num_polys);
+
+  nav.vertices.resize(num_verts);
+  for (auto &v : nav.vertices)
+  {
+    read(v.pos.x);
+    read(v.pos.y);
+    read(v.pos.z);
+  }
+
+  nav.polygons.resize(num_polys);
+  for (auto &p : nav.polygons)
+  {
+    read(p.verts[0]);     read(p.verts[1]);     read(p.verts[2]);
+    read(p.neighbors[0]); read(p.neighbors[1]); read(p.neighbors[2]);
+    read(p.island);
+  }
+
+  return in.good();
+}
+
+
 
 struct map_entity_def_t
 {
@@ -149,7 +237,14 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
     return get_bounds(t);
   }
 
-  // 4. Default: 0.5 unit box at entity position
+  // 4. Player spawn: use player hull dimensions for picking
+  if (dynamic_cast<const network::Player_Spawn_Entity *>(entity))
+  {
+    constexpr vec3f hull{16, 36, 16};
+    return {entity->position - hull, entity->position + hull};
+  }
+
+  // 5. Default: 0.5 unit box at entity position
   return {entity->position - vec3f{0.5f, 0.5f, 0.5f},
           entity->position + vec3f{0.5f, 0.5f, 0.5f}};
 }
@@ -260,6 +355,8 @@ bool load_map(const std::string &filename, map_t &out_map)
     }
   }
 
+  load_navmesh(filename, out_map.navmesh);
+
   return true;
 }
 
@@ -318,6 +415,18 @@ bool save_map(const std::string &filename, const map_t &map)
     return false;
   out << content;
   out.close();
+
+  if (map.navmesh.valid())
+    save_navmesh(filename, map.navmesh);
+
+  return true;
+}
+
+bool save_navmesh_sidecar(const std::string &map_path, const navmesh_t &nav)
+{
+  if (!nav.valid())
+    return false;
+  save_navmesh(map_path, nav);
   return true;
 }
 

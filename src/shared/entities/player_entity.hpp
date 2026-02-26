@@ -5,6 +5,22 @@
 namespace network
 {
 
+// Placed in the map editor to mark where players (or bots) spawn.
+// Only exists in the map; the server consumes it at load time and removes it.
+// position/orientation inherited from Entity.
+class Player_Spawn_Entity : public Entity
+{
+public:
+  // 0 = human spawn point (default), 1 = bot spawn point
+  SCHEMA_FIELD(int32, spawn_type, Schema_Flags::Saveable | Schema_Flags::Editable);
+
+  DECLARE_SCHEMA(Player_Spawn_Entity)
+};
+
+SCHEMA_NAME_FOR_TYPE(Player_Spawn_Entity)
+
+// Runtime networked player entity, created by the server when a client connects.
+// Never saved in map files.
 class Player_Entity : public Entity
 {
 public:
@@ -30,7 +46,6 @@ public:
   DECLARE_SCHEMA(Player_Entity)
 };
 
-// Schema name registration (must be at namespace scope)
 SCHEMA_NAME_FOR_TYPE(Player_Entity)
 
 } // namespace network

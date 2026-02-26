@@ -88,14 +88,7 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
 
     new_ent->position = center;
 
-    // Entity-specific setup
-    if (auto *player =
-            dynamic_cast<::network::Player_Entity *>(new_ent.get()))
-    {
-      player->render.mesh_id = 2; // pyramid
-      player->render.is_wireframe = true;
-      player->render.scale = {32, 72, 32}; // player hull size
-    }
+    // Entity-specific setup (Player_Spawn_Entity has no render component)
 
     // Add to map with undo recording
     {
@@ -152,17 +145,9 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
   }
   else if (e.scancode == SDL_SCANCODE_3)
   {
-    renderer::draw_announcement("Player");
-    // Switch to Cylinder
+    renderer::draw_announcement("Player Spawn");
     current_entity = shared::create_entity_by_classname("player_start");
-    if (auto *player =
-            dynamic_cast<::network::Player_Entity *>(current_entity.get()))
-    {
-      player->health = 100;
-      player->render.mesh_id = 2;
-      player->render.is_wireframe = true;
-      player->render.scale = {32, 72, 32}; // player hull size
-    }
+    // Player_Spawn_Entity has no render fields; ghost is drawn as a hull outline
   }
   else if (e.scancode == SDL_SCANCODE_4)
   {
@@ -244,7 +229,14 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
     // Fallback: entity-specific primitives
     if (!drew_mesh)
     {
-      if (auto *aabb =
+      if (dynamic_cast<::network::Player_Spawn_Entity *>(current_entity.get()))
+      {
+        // Draw player hull outline + a short upward spike to mark the spawn
+        constexpr linalg::vec3 hull{16, 36, 16};
+        renderer.draw_wire_box(center, hull, 0xFF8800FF);
+        renderer.draw_line(center, center + linalg::vec3{0, 48, 0}, 0xFF8800FF);
+      }
+      else if (auto *aabb =
               dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
       {
         renderer.draw_wire_box(center, aabb->half_extents, 0xFF00FFFF);

@@ -3,6 +3,7 @@
 #include "collision_detection.hpp"
 #include "entity_system.hpp"
 #include "map.hpp"
+#include "navmesh.hpp"
 #include <string>
 #include <vector>
 
@@ -31,6 +32,9 @@ struct game_session_t
   // The acceleration structure for collision queries against static_geometry.
   // Dynamic entity collision is handled separately via the Entity_System.
   Bounding_Volume_Hierarchy bvh;
+
+  // Baked navmesh — copied from map_t on session init.
+  navmesh_t navmesh;
 
   std::string map_name;
 };

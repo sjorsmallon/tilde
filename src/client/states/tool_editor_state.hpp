@@ -56,6 +56,8 @@ private:
   // When true, entities are rendered as solid filled AABBs with random colors
   // instead of wireframe outlines.
   bool draw_entities_solid = true;
+
+  float navmesh_cell_size = 8.f;
 };
 
 } // namespace client

@@ -3,6 +3,7 @@
 #include "entities/entity_list.hpp"
 #include "entity.hpp"
 #include "linalg.hpp"
+#include "navmesh.hpp"
 #include "shapes.hpp"
 #include <algorithm>
 #include <map>
@@ -27,6 +28,9 @@ struct map_t
   std::string name;
   entity_uid_t next_uid = 1;
   std::vector<map_entity_t> entities;
+
+  // Populated by bake_map(). Loaded from a .navmesh sidecar alongside the map file.
+  navmesh_t navmesh;
 
   // Add entity with auto-assigned uid
   entity_uid_t add_entity(std::shared_ptr<network::Entity> ent)
@@ -84,6 +88,10 @@ bool load_map(const std::string &filename, map_t &out_map);
 // Saves map to VMF-style text file.
 // Returns true on success, false on failure.
 bool save_map(const std::string &filename, const map_t &map);
+
+// Saves only the .navmesh sidecar alongside the given map file path.
+// Returns false if nav is not valid.
+bool save_navmesh_sidecar(const std::string &map_path, const navmesh_t &nav);
 
 // Compute world-space AABB bounds for an entity.
 // Data-driven: uses mesh bounds if available, else entity-specific shape,

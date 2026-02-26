@@ -1,7 +1,9 @@
 #include "tool_editor_state.hpp"
 #include "../../shared/asset.hpp"
+#include "../../shared/debug_collision.hpp"
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
+#include "../../shared/map_baker.hpp"
 #include "../editor/editor_entity.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
@@ -133,34 +135,35 @@ void ToolEditorState::on_enter()
 {
   log_terminal("Entered ToolEditorState");
 
-  // Load map from last_map.txt
-  bool map_loaded = false;
-  std::ifstream f("last_map.txt");
-  if (f.is_open())
+  // Only load from disk on first entry. When returning from play mode the
+  // in-memory map is already correct; reloading would discard unsaved edits
+  // and could pick up the wrong file if last_map.txt is stale.
+  if (map.entities.empty())
   {
-    log_terminal("Loading map from last_map.txt");
-    std::string line;
-    std::getline(f, line);
-    log_terminal(line);
-    map_loaded = load_map(line, map);
+    bool map_loaded = false;
+    std::ifstream f("last_map.txt");
+    if (f.is_open())
+    {
+      log_terminal("Loading map from last_map.txt");
+      std::string line;
+      std::getline(f, line);
+      log_terminal(line);
+      map_loaded = load_map(line, map);
+      if (!map_loaded)
+        log_terminal("Failed to load map");
+    }
+
     if (!map_loaded)
     {
-      log_terminal("Failed to load map");
+      map.name = "Tool Editor Map";
+      auto floor_ent = std::make_shared<::network::AABB_Entity>();
+      floor_ent->position = {0, editor::DEFAULT_FLOOR_Y, 0};
+      floor_ent->half_extents = {editor::DEFAULT_FLOOR_HALF_W,
+                                 editor::DEFAULT_FLOOR_HALF_H,
+                                 editor::DEFAULT_FLOOR_HALF_W};
+      map.add_entity(floor_ent);
+      renderer::draw_announcement("Welcome to the Tool Editor!");
     }
-  }
-
-  // Initialize map with a floor
-  if (!map_loaded)
-  {
-    map.name = "Tool Editor Map";
-    auto floor_ent = std::make_shared<::network::AABB_Entity>();
-    floor_ent->position = {0, editor::DEFAULT_FLOOR_Y, 0};
-    floor_ent->half_extents = {editor::DEFAULT_FLOOR_HALF_W,
-                               editor::DEFAULT_FLOOR_HALF_H,
-                               editor::DEFAULT_FLOOR_HALF_W};
-
-    map.add_entity(floor_ent);
-    renderer::draw_announcement("Welcome to the Tool Editor!");
   }
 
   // Initialize Camera
@@ -623,6 +626,7 @@ void ToolEditorState::render_ui()
 
   bool should_open_popup = false;
   bool should_open_load_popup = false;
+  bool should_open_new_map_popup = false;
 
   if (ImGui::Button("Save Map As..."))
   {
@@ -633,6 +637,9 @@ void ToolEditorState::render_ui()
 
   if (ImGui::Button("Load Map..."))
     should_open_load_popup = true;
+
+  if (ImGui::Button("New Map"))
+    should_open_new_map_popup = true;
 
   ImGui::Checkbox("Solid Entities", &draw_entities_solid);
 
@@ -646,6 +653,41 @@ void ToolEditorState::render_ui()
       renderer::draw_announcement("Bake failed!");
   }
 
+  ImGui::Separator();
+
+  // Navmesh status
+  if (map.navmesh.valid())
+  {
+    int num_islands = 0;
+    for (const auto &p : map.navmesh.polygons)
+      if (p.island >= num_islands) num_islands = p.island + 1;
+    ImGui::TextColored({0.2f, 1.f, 0.4f, 1.f}, "Navmesh: %d vertices, %d polygons, %d islands",
+                       (int)map.navmesh.vertices.size(),
+                       (int)map.navmesh.polygons.size(),
+                       num_islands);
+  }
+  else
+  {
+    ImGui::TextDisabled("Navmesh: not baked");
+  }
+
+  ImGui::SliderFloat("Cell size", &navmesh_cell_size, 1.f, 128.f, "%.0f");
+
+  if (ImGui::Button("Bake Navmesh"))
+  {
+    std::string full_path = get_maps_dir() + map.name;
+    map.navmesh = {};  // discard old navmesh before baking
+    shared::bake_map(map, navmesh_cell_size);
+    if (shared::save_navmesh_sidecar(full_path, map.navmesh))
+      renderer::draw_announcement("Navmesh baked!");
+    else
+      renderer::draw_announcement("Navmesh bake failed (save map first?)");
+  }
+
+  bool show_navmesh = debug_collision::debug_show_navmesh.Get();
+  if (ImGui::Checkbox("Show Navmesh", &show_navmesh))
+    debug_collision::debug_show_navmesh.Set(show_navmesh);
+
   ImGui::End();
 
   if (should_open_popup)
@@ -658,6 +700,12 @@ void ToolEditorState::render_ui()
   {
     ImGui::OpenPopup("Load Map");
     should_open_load_popup = false;
+  }
+
+  if (should_open_new_map_popup)
+  {
+    ImGui::OpenPopup("New Map");
+    should_open_new_map_popup = false;
   }
 
   if (ImGui::BeginPopupModal("Load Map", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -758,6 +806,43 @@ void ToolEditorState::render_ui()
       {
         std::cerr << "Failed to save map!" << std::endl;
       }
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)))
+      ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
+  }
+
+  if (ImGui::BeginPopupModal("New Map", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+  {
+    ImGui::Text("Save current map as backup and open a new empty map?");
+    ImGui::TextDisabled("Backup: maps/%s_backup", map.name.c_str());
+
+    if (ImGui::Button("OK", ImVec2(120, 0)))
+    {
+      // Save backup of current map
+      std::string backup_path = get_maps_dir() + map.name + "_backup";
+      shared::save_map(backup_path, map);
+
+      // Reset to a new empty map with a default floor
+      map = shared::map_t{};
+      map.name = "new_map.source";
+      auto floor_ent = std::make_shared<::network::AABB_Entity>();
+      floor_ent->position = {0, editor::DEFAULT_FLOOR_Y, 0};
+      floor_ent->half_extents = {editor::DEFAULT_FLOOR_HALF_W,
+                                 editor::DEFAULT_FLOOR_HALF_H,
+                                 editor::DEFAULT_FLOOR_HALF_W};
+      map.add_entity(floor_ent);
+
+      transaction_system = Transaction_System{};
+      geometry_updated_flag = true;
+
+      // Clear last_map.txt so the editor doesn't reload the old map on restart
+      std::ofstream("last_map.txt");
+
+      renderer::draw_announcement("New map created!");
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -952,6 +1037,40 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
           renderer::DrawMeshWireframe(cmd, ent->position, {32, 72, 32},
                                       mesh_handle, 0xFFFFFFFF, ent->orientation);
         }
+      }
+    }
+    else if (dynamic_cast<::network::Player_Spawn_Entity *>(ent.get()))
+    {
+      // Draw player hull outline + upward spike (same visual as placement ghost)
+      constexpr linalg::vec3 hull{16, 36, 16};
+      renderer::DrawWireAABB(cmd, ent->position - hull, ent->position + hull, 0xFF8800FF);
+      renderer::DrawLine(cmd, ent->position, ent->position + linalg::vec3{0, 48, 0}, 0xFF8800FF);
+    }
+  }
+
+  // Draw navmesh triangle wireframes, colored by island ID
+  if (debug_collision::debug_show_navmesh.Get() && map.navmesh.valid())
+  {
+    const navmesh_t &nav = map.navmesh;
+    constexpr float y_lift = 2.f;
+
+    static constexpr uint32_t island_colors[] = {
+      0xFFFFFF00, // ABGR: cyan
+      0xFF00FFFF, // yellow
+      0xFF00FF00, // green
+      0xFFFF00FF, // magenta
+    };
+
+    for (const auto &poly : nav.polygons)
+    {
+      uint32_t color = island_colors[poly.island % 4];
+      for (int e = 0; e < 3; ++e)
+      {
+        vec3f a = nav.vertices[poly.verts[e      ]].pos;
+        vec3f b = nav.vertices[poly.verts[(e+1)%3]].pos;
+        a.y += y_lift;
+        b.y += y_lift;
+        renderer::DrawLine(cmd, a, b, color);
       }
     }
   }

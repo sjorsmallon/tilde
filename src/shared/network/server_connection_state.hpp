@@ -31,8 +31,10 @@ struct ServerInbox
   // Pair of player_idx and move
   std::vector<std::pair<int, TimestampedMove>> moves;
   std::vector<Address> potential_joins;
-  // Commands from players (or potential players)
+  // Handshake commands from players (or potential players)
   std::vector<std::pair<Address, game::NetCommand>> net_commands;
+  // Console commands: player_idx + raw command line
+  std::vector<std::pair<int, std::string>> commands;
 };
 
 struct Server_Connection_State
@@ -187,6 +189,16 @@ inline void poll_network(Server_Connection_State &state, Udp_Socket &socket,
           {
             out_inbox.moves.push_back({static_cast<int>(player_idx),
                                        {packet.header.timestamp, move_cmd}});
+          }
+        }
+        else if (packet.header.message_type ==
+                 static_cast<uint8>(Message_Type::C2S_Command))
+        {
+          game::C2S_Command cmd;
+          if (cmd.ParseFromArray(buffer.data(), buffer.size()))
+          {
+            out_inbox.commands.push_back(
+                {static_cast<int>(player_idx), cmd.line()});
           }
         }
         // Cleanup sequence

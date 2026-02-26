@@ -6,11 +6,13 @@
 #include <functional>
 #include <iostream>
 #include <mutex>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <variant>
+#include <vector>
 
 namespace cvar
 {
@@ -50,7 +52,7 @@ public:
     return nullptr;
   }
 
-  // Helper to list all cvars (e.g. for a "list" command)
+  // Helper to list all cvars/commands (e.g. for a "list" command or autocomplete)
   void VisitAll(std::function<void(const std::string &, ICVar *)> visitor)
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -59,6 +61,9 @@ public:
       visitor(name, cvar);
     }
   }
+
+  // Declared here, defined below after ICVar is complete.
+  bool Execute(std::string_view line);
 
 private:
   std::unordered_map<std::string, ICVar *> registry_;
@@ -91,6 +96,10 @@ struct ICVar
 
   virtual std::string GetString() const = 0;
   virtual void SetFromString(const std::string &val) = 0;
+
+  // Overridden by CCommand; returns false for ordinary CVars.
+  virtual bool IsCommand() const { return false; }
+  virtual void Invoke(std::span<std::string_view> /*args*/) {}
 
   const std::string &GetName() const { return name_; }
   const std::string &GetDescription() const { return description_; }
@@ -193,6 +202,65 @@ public:
 private:
   T value_;
   OnChangeCallback callback_;
+};
+
+// CVarSystem::Execute — defined here, after ICVar is complete.
+inline bool CVarSystem::Execute(std::string_view line)
+{
+  std::vector<std::string> tokens;
+  {
+    std::istringstream ss{std::string(line)};
+    std::string tok;
+    while (ss >> tok)
+      tokens.push_back(std::move(tok));
+  }
+  if (tokens.empty())
+    return true;
+
+  auto *obj = Find(tokens[0]);
+  if (!obj)
+    return false;
+
+  if (obj->IsCommand())
+  {
+    std::vector<std::string_view> args;
+    for (size_t i = 1; i < tokens.size(); ++i)
+      args.push_back(tokens[i]);
+    obj->Invoke(args);
+  }
+  else if (tokens.size() > 1)
+  {
+    obj->SetFromString(tokens[1]);
+  }
+  return true;
+}
+
+// A console command: no persistent value, just a callback with arguments.
+// Register like a CVar — the name appears in autocomplete and Execute().
+struct CCommand : ICVar
+{
+  using Handler = std::function<void(std::span<std::string_view>)>;
+
+  CCommand(const std::string &name, Handler fn, const std::string &desc = "",
+           uint64_t flags = flags::None)
+      : ICVar(name, desc, flags), handler_(std::move(fn))
+  {
+  }
+
+  bool IsCommand() const override { return true; }
+
+  void Invoke(std::span<std::string_view> args) override
+  {
+    if (handler_)
+      handler_(args);
+  }
+
+  // ICVar interface — unused for commands but required to be concrete.
+  std::string GetString() const override { return ""; }
+  void SetFromString(const std::string &) override {}
+
+private:
+  Handler handler_;
 };
 
 } // namespace cvar

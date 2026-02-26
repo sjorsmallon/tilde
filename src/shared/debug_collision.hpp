@@ -30,6 +30,9 @@ extern cvar::CVar<bool> debug_show_collisions;
 // CVar to enable/disable hitbox debug visualization
 extern cvar::CVar<bool> debug_show_hitboxes;
 
+// CVar to enable/disable navmesh grid visualization
+extern cvar::CVar<bool> debug_show_navmesh;
+
 // Record a collision with a plane and its actual face polygon (called from collision code)
 void record_collision(const Plane &plane, const std::vector<linalg::vec3> &polygon);
 

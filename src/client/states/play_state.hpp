@@ -109,6 +109,10 @@ private:
   // Mouse capture toggle
   bool mouse_captured = true;
 
+  // Stable pointer to the network connection; set once in update() and used
+  // by the console network-forwarder lambda which outlives the stack frame.
+  network::Client_Connection_State *conn_state_ = nullptr;
+
 };
 
 } // namespace client

@@ -26,6 +26,11 @@ public:
 
   virtual ~Entity() = default;
 
+  // Returns true if this entity type contributes to the static collision BVH.
+  // Static geometry types (AABB, Wedge, StaticMesh) override this to return true.
+  // All other entities go into entity_system at session init.
+  virtual bool is_collision_geometry() const { return false; }
+
   // Register the Entity base class schema (called on-demand by derived schemas)
   static void register_schema();
 

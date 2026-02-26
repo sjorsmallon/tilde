@@ -12,22 +12,17 @@ void init_session_from_map(game_session_t &session, const map_t &map)
   session.entity_system.reset();
   session.static_entities.clear();
 
-  // 1. Separate Static vs Dynamic Entities
+  // Route map entities: collision geometry → static_entities (feeds BVH),
+  // everything else → entity_system (includes spawn markers, weapons, etc.)
   for (const auto &entry : map.entities)
   {
     if (!entry.entity)
       continue;
 
-    if (dynamic_cast<const network::AABB_Entity *>(entry.entity.get()) ||
-        dynamic_cast<const network::Wedge_Entity *>(entry.entity.get()) ||
-        dynamic_cast<const network::Static_Mesh_Entity *>(entry.entity.get()))
-    {
+    if (entry.entity->is_collision_geometry())
       session.static_entities.push_back(entry.entity);
-    }
     else
-    {
       session.entity_system.add_entity(entry.entity);
-    }
   }
 
   // 2. Build BVH from Static Entities
@@ -48,6 +43,8 @@ void init_session_from_map(game_session_t &session, const map_t &map)
   }
 
   session.bvh = build_bvh(bvh_inputs);
+
+  session.navmesh = map.navmesh;
 }
 
 } // namespace shared
