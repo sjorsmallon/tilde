@@ -14,12 +14,12 @@ namespace shared
 namespace
 {
 
-// Binary sidecar format for .navmesh files (polygon mesh, v2).
+// Binary sidecar format for .navmesh files (polygon mesh, v3).
 // Layout: magic(4) + version(4) + num_vertices(4) + num_polygons(4)
 //       + vertices[num_vertices * (float x, float y, float z)]
-//       + polygons[num_polygons * (int32 v0,v1,v2, int32 n0,n1,n2, int32 island)]
+//       + polygons[num_polygons * (uint32 num_verts, int32 verts[N], int32 neighbors[N], int32 island)]
 static constexpr uint32_t NAVMESH_MAGIC   = 0x504F4C59; // "POLY"
-static constexpr uint32_t NAVMESH_VERSION = 2;
+static constexpr uint32_t NAVMESH_VERSION = 3;
 
 static std::string navmesh_path_for(const std::string &map_path)
 {
@@ -53,8 +53,10 @@ static void save_navmesh(const std::string &map_path, const navmesh_t &nav)
 
   for (const auto &p : nav.polygons)
   {
-    write(p.verts[0]);   write(p.verts[1]);     write(p.verts[2]);
-    write(p.neighbors[0]); write(p.neighbors[1]); write(p.neighbors[2]);
+    uint32_t n = (uint32_t)p.verts.size();
+    write(n);
+    for (uint32_t k = 0; k < n; ++k) write(p.verts[k]);
+    for (uint32_t k = 0; k < n; ++k) write(p.neighbors[k]);
     write(p.island);
   }
 }
@@ -90,8 +92,12 @@ static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
   nav.polygons.resize(num_polys);
   for (auto &p : nav.polygons)
   {
-    read(p.verts[0]);     read(p.verts[1]);     read(p.verts[2]);
-    read(p.neighbors[0]); read(p.neighbors[1]); read(p.neighbors[2]);
+    uint32_t n;
+    read(n);
+    p.verts.resize(n);
+    p.neighbors.resize(n);
+    for (uint32_t k = 0; k < n; ++k) read(p.verts[k]);
+    for (uint32_t k = 0; k < n; ++k) read(p.neighbors[k]);
     read(p.island);
   }
 

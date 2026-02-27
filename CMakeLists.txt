@@ -298,3 +298,8 @@ target_link_libraries(test_rng PRIVATE game_shared)
 add_executable(asset_test src/test/test_asset_system.cpp)
 target_include_directories(asset_test PRIVATE src)
 target_link_libraries(asset_test PRIVATE game_shared)
+
+# 20. Navmesh Simplification Test
+add_executable(navmesh_test src/test/test_navmesh.cpp)
+target_include_directories(navmesh_test PRIVATE src)
+target_link_libraries(navmesh_test PRIVATE game_shared)

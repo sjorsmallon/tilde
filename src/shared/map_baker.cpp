@@ -25,6 +25,424 @@ struct nav_span_t
   int   island = -1; // filled during flood-fill
 };
 
+// ---------------------------------------------------------------------------
+// Navmesh invariant checker — call before and after simplify_navmesh().
+// Aborts loudly if any invariant is violated.
+// ---------------------------------------------------------------------------
+
+static void assert_navmesh_invariants(const navmesh_t &nav, const char *label, bool pre_only = false)
+{
+  const auto &polys = nav.polygons;
+  const auto &verts = nav.vertices;
+  const int np = (int)polys.size();
+  const int nv = (int)verts.size();
+
+  // Vertex indices in range.
+  for (int a = 0; a < np; ++a)
+    for (int vi : polys[a].verts)
+      assert(vi >= 0 && vi < nv && "[navmesh] vertex index out of range");
+
+  // Neighbor indices valid, no self-neighbors.
+  for (int a = 0; a < np; ++a)
+    for (int nb : polys[a].neighbors)
+    {
+      assert((nb == -1 || (nb >= 0 && nb < np)) && "[navmesh] neighbor index out of range");
+      assert(nb != a && "[navmesh] polygon is its own neighbor");
+    }
+
+  // NEIGHBOR SYMMETRY — the most critical invariant.
+  for (int a = 0; a < np; ++a)
+    for (int nb : polys[a].neighbors)
+    {
+      if (nb < 0) continue;
+      bool found = false;
+      for (int back : polys[nb].neighbors)
+        if (back == a) { found = true; break; }
+      if (!found)
+      {
+        std::println(stderr, "[navmesh] SYMMETRY BROKEN at '{}': poly {} points to poly {} but not vice-versa", label, a, nb);
+        std::abort();
+      }
+    }
+
+  // Convexity: all cross-products non-negative (CCW from above).
+  for (int a = 0; a < np; ++a)
+  {
+    const auto &p = polys[a];
+    const int N = (int)p.verts.size();
+    for (int i = 0; i < N; ++i)
+    {
+      const auto &prev = verts[p.verts[(i - 1 + N) % N]].pos;
+      const auto &cur  = verts[p.verts[i              ]].pos;
+      const auto &next = verts[p.verts[(i + 1)     % N]].pos;
+      float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
+      if (cross_y < -1e-4f)
+      {
+        std::println(stderr, "[navmesh] CONVEXITY BROKEN at '{}': poly {} edge {}", label, a, i);
+        std::abort();
+      }
+    }
+  }
+
+  if (pre_only)
+  {
+    // PRE-1: all quads.
+    for (int a = 0; a < np; ++a)
+    {
+      assert(polys[a].verts.size() == 4 && "[navmesh-pre] polygon is not a quad");
+      assert(polys[a].neighbors.size() == 4 && "[navmesh-pre] quad does not have 4 neighbors");
+    }
+    // PRE-2: 4 private verts per span.
+    assert(nv == np * 4 && "[navmesh-pre] vertex count != 4 * num_polys");
+    // PRE-3: island IDs assigned.
+    for (int a = 0; a < np; ++a)
+      assert(polys[a].island >= 0 && "[navmesh-pre] unassigned island");
+  }
+
+  std::println("[navmesh] '{}' OK — {} polys, {} verts.", label, np, nv);
+}
+
+// ---------------------------------------------------------------------------
+// Navmesh simplification: merge adjacent coplanar convex polygons.
+// ---------------------------------------------------------------------------
+
+static bool is_convex_candidate(const navmesh_t &nav,
+                                 const std::vector<int32_t> &verts)
+{
+  // All vertices must produce non-negative cross products for CCW winding.
+  const int N = (int)verts.size();
+  for (int i = 0; i < N; ++i)
+  {
+    const auto &prev = nav.vertices[verts[(i - 1 + N) % N]].pos;
+    const auto &cur  = nav.vertices[verts[i              ]].pos;
+    const auto &next = nav.vertices[verts[(i + 1)     % N]].pos;
+    float edge1x = cur.x  - prev.x, edge1z = cur.z  - prev.z;
+    float edge2x = next.x - cur.x,  edge2z = next.z - cur.z;
+    float cross_y = edge1x * edge2z - edge1z * edge2x;
+    if (cross_y < -1e-4f)
+      return false;
+  }
+  return true;
+}
+
+void simplify_navmesh(navmesh_t &nav, int max_merges)
+{
+  const int orig_poly_count = (int)nav.polygons.size();
+
+  // ---- Step 8a: vertex deduplication ----
+  // Each span produced 4 private vertices; adjacent spans share positions.
+  // Unify so that shared edges have identical vertex indices.
+
+  const int nv = (int)nav.vertices.size();
+  std::vector<int32_t> vert_remap(nv);
+  for (int i = 0; i < nv; ++i) vert_remap[i] = i;
+
+  constexpr float EPS = 1e-3f;
+  for (int i = 0; i < nv; ++i)
+  {
+    if (vert_remap[i] != i) continue; // already remapped
+    const auto &pi = nav.vertices[i].pos;
+    for (int j = i + 1; j < nv; ++j)
+    {
+      if (vert_remap[j] != j) continue;
+      const auto &pj = nav.vertices[j].pos;
+      float dx = pi.x - pj.x, dy = pi.y - pj.y, dz = pi.z - pj.z;
+      if (dx*dx + dy*dy + dz*dz < EPS*EPS)
+        vert_remap[j] = i;
+    }
+  }
+
+  // Apply remap to all polygon vertex lists.
+  for (auto &poly : nav.polygons)
+    for (auto &v : poly.verts)
+      v = vert_remap[v];
+
+  // Build compact vertex list and second remap for used indices.
+  std::vector<int32_t> compact_remap(nv, -1);
+  std::vector<nav_vertex_t> new_verts;
+  for (int i = 0; i < nv; ++i)
+  {
+    if (vert_remap[i] == i)
+    {
+      compact_remap[i] = (int32_t)new_verts.size();
+      new_verts.push_back(nav.vertices[i]);
+    }
+  }
+  nav.vertices = std::move(new_verts);
+
+  // Apply compact remap.
+  for (auto &poly : nav.polygons)
+    for (auto &v : poly.verts)
+      v = compact_remap[vert_remap[v]];
+
+  // ---- Step 8b: greedy convex polygon merging ----
+  const int np = (int)nav.polygons.size();
+  std::vector<bool> deleted(np, false);
+
+  // We need a fast way to update neighbor references when B is absorbed into A.
+  // After each merge we do a linear scan — acceptable for navmesh sizes.
+
+  int merges_done = 0;
+  bool any_merged = true;
+  while (any_merged && merges_done < max_merges)
+  {
+    any_merged = false;
+    for (int ai = 0; ai < np && merges_done < max_merges; ++ai)
+    {
+      if (deleted[ai]) continue;
+      nav_polygon_t &A = nav.polygons[ai];
+      const int Na = (int)A.verts.size();
+
+      for (int ei = 0; ei < Na; ++ei)
+      {
+        int bi = A.neighbors[ei];
+        if (bi < 0 || deleted[bi]) continue;
+
+        nav_polygon_t &B = nav.polygons[bi];
+
+        // Must be same island.
+        if (A.island != B.island) continue;
+
+        // Must be coplanar: check that all of B's vertices have the same Y
+        // as A's vertices (within epsilon — flat geometry assumption).
+        float ay = nav.vertices[A.verts[0]].pos.y;
+        float by = nav.vertices[B.verts[0]].pos.y;
+        if (std::abs(ay - by) > EPS) continue;
+
+        // Find the reverse edge in B that shares the same two vertices as
+        // A's edge ei.  A's edge ei runs from A.verts[ei] to A.verts[(ei+1)%Na].
+        // The reverse edge in B must run from A.verts[(ei+1)%Na] to A.verts[ei].
+        const int Nb = (int)B.verts.size();
+        int shared_v0 = A.verts[ei];
+        int shared_v1 = A.verts[(ei + 1) % Na];
+        int ej = -1;
+        for (int k = 0; k < Nb; ++k)
+        {
+          if (B.verts[k] == shared_v1 && B.verts[(k + 1) % Nb] == shared_v0)
+          { ej = k; break; }
+        }
+        if (ej < 0) continue;
+
+        // Count consecutive shared edges starting from (ei, ej).
+        // In A they advance forward: ei, ei+1, ei+2, ...
+        // In B they advance backward: ej, ej-1, ej-2, ...
+        int shared_count = 1;
+        {
+          int a_edge = (ei + 1) % Na;
+          int b_edge = (ej - 1 + Nb) % Nb;
+          while (shared_count < Na - 1 && shared_count < Nb - 1)
+          {
+            if (A.neighbors[a_edge] != bi || B.neighbors[b_edge] != ai) break;
+            int av0 = A.verts[a_edge], av1 = A.verts[(a_edge + 1) % Na];
+            int bv0 = B.verts[b_edge], bv1 = B.verts[(b_edge + 1) % Nb];
+            if (bv0 != av1 || bv1 != av0) break;
+            ++shared_count;
+            a_edge = (a_edge + 1) % Na;
+            b_edge = (b_edge - 1 + Nb) % Nb;
+          }
+        }
+
+        // Build candidate merged vertex list.
+        // From A: Na - shared_count vertices starting after the shared run.
+        // From B: Nb - shared_count vertices starting after B's shared endpoint.
+        std::vector<int32_t> merged_verts;
+        merged_verts.reserve(Na + Nb - 2 * shared_count);
+        for (int k = 0; k < Na - shared_count; ++k)
+          merged_verts.push_back(A.verts[(ei + shared_count + k) % Na]);
+        for (int k = 0; k < Nb - shared_count; ++k)
+          merged_verts.push_back(B.verts[(ej + 1 + k) % Nb]);
+
+        // Sanity: reject if merged polygon has duplicate vertices.
+        {
+          bool has_dup = false;
+          for (int m = 0; m < (int)merged_verts.size() && !has_dup; ++m)
+            for (int n = m + 1; n < (int)merged_verts.size() && !has_dup; ++n)
+              if (merged_verts[m] == merged_verts[n]) has_dup = true;
+          if (has_dup) continue;
+        }
+
+        if (!is_convex_candidate(nav, merged_verts)) continue;
+
+        // Build merged neighbor list to match merged_verts.
+        // Na - shared_count edges from A, Nb - shared_count edges from B.
+        std::vector<int32_t> merged_neighbors;
+        merged_neighbors.reserve(Na + Nb - 2 * shared_count);
+        for (int k = 0; k < Na - shared_count; ++k)
+          merged_neighbors.push_back(A.neighbors[(ei + shared_count + k) % Na]);
+        for (int k = 0; k < Nb - shared_count; ++k)
+          merged_neighbors.push_back(B.neighbors[(ej + 1 + k) % Nb]);
+
+        // Commit the merge: A absorbs B.
+        A.verts     = std::move(merged_verts);
+        A.neighbors = std::move(merged_neighbors);
+        deleted[bi] = true;
+        any_merged  = true;
+        ++merges_done;
+
+        // Fix up all polygons that pointed to B — redirect to A,
+        // updating the edge index to match the new neighbor list.
+        for (int ci = 0; ci < np; ++ci)
+        {
+          if (deleted[ci] || ci == ai) continue;
+          nav_polygon_t &C = nav.polygons[ci];
+          for (int k = 0; k < (int)C.neighbors.size(); ++k)
+          {
+            if (C.neighbors[k] == bi)
+            {
+              // Find which edge of A now borders C.
+              int new_edge = -1;
+              for (int m = 0; m < (int)A.neighbors.size(); ++m)
+                if (A.neighbors[m] == ci) { new_edge = m; break; }
+              // A.neighbors[new_edge] == ci is already set correctly;
+              // we just need C to point back to ai (already correct index).
+              C.neighbors[k] = ai;
+              (void)new_edge;
+              break;
+            }
+          }
+        }
+
+        // Hit max_merges? Stop immediately.
+        if (merges_done >= max_merges) { any_merged = false; }
+
+        // Restart edge scan for this polygon since it changed.
+        break;
+      }
+    }
+  }
+  std::println("[bake] simplify_navmesh: {} merges performed (limit={}).", merges_done,
+               max_merges == INT_MAX ? -1 : max_merges);
+  // ---- Compact: remove deleted polygons and remap neighbor indices ----
+
+  std::vector<int32_t> poly_remap(np, -1);
+  std::vector<nav_polygon_t> compact_polys;
+  compact_polys.reserve(np);
+  for (int i = 0; i < np; ++i)
+  {
+    if (!deleted[i])
+    {
+      poly_remap[i] = (int32_t)compact_polys.size();
+      compact_polys.push_back(std::move(nav.polygons[i]));
+    }
+  }
+  nav.polygons = std::move(compact_polys);
+
+  for (auto &poly : nav.polygons)
+    for (auto &nb : poly.neighbors)
+      if (nb >= 0) nb = poly_remap[nb];
+
+  // Debug: report state right after merge+compact, before collinear removal.
+  {
+    int total_verts_ref = 0;
+    float mn_x = FLT_MAX, mx_x = -FLT_MAX, mn_z = FLT_MAX, mx_z = -FLT_MAX;
+    for (const auto &p : nav.polygons)
+    {
+      total_verts_ref += (int)p.verts.size();
+      for (int v : p.verts)
+      {
+        mn_x = std::min(mn_x, nav.vertices[v].pos.x);
+        mx_x = std::max(mx_x, nav.vertices[v].pos.x);
+        mn_z = std::min(mn_z, nav.vertices[v].pos.z);
+        mx_z = std::max(mx_z, nav.vertices[v].pos.z);
+      }
+    }
+    std::println("[bake] After merge: {} polys, {} unique verts, {} vert refs, bounds x=[{},{}] z=[{},{}]",
+                 (int)nav.polygons.size(), (int)nav.vertices.size(), total_verts_ref,
+                 mn_x, mx_x, mn_z, mx_z);
+    for (int i = 0; i < (int)nav.polygons.size(); ++i)
+      std::println("[bake]   poly[{}]: {} verts, island={}", i,
+                   (int)nav.polygons[i].verts.size(), nav.polygons[i].island);
+  }
+
+  // ---- Step 8c: collinear vertex removal ----
+  // After merging, a polygon's boundary may contain vertices that are
+  // exactly collinear with their neighbours (old interior shared-edge midpoints).
+  //
+  // Vertex i is removable when both its incoming edge (i-1) and outgoing edge (i)
+  // share the SAME neighbor (including both being -1), and the three consecutive
+  // points are collinear. When the shared neighbor is a real polygon Q, we also
+  // remove the matching collinear vertex from Q (by neighbor symmetry, both
+  // reverse edges in Q point back to P, so Q's vertex is also collinear).
+
+  for (int pi = 0; pi < (int)nav.polygons.size(); ++pi)
+  {
+    auto &p = nav.polygons[pi];
+    bool any_removed = true;
+    while (any_removed && (int)p.verts.size() > 3)
+    {
+      any_removed = false;
+      const int N = (int)p.verts.size();
+      for (int i = 0; i < N; ++i)
+      {
+        int prev_edge = (i - 1 + N) % N;
+        int n_prev = p.neighbors[prev_edge];
+        int n_curr = p.neighbors[i];
+
+        // Both flanking edges must share the same neighbor (or both be -1).
+        if (n_prev != n_curr) continue;
+
+        const int vi_b = p.verts[i];
+        const auto &a = nav.vertices[p.verts[prev_edge]].pos;
+        const auto &b = nav.vertices[vi_b].pos;
+        const auto &c = nav.vertices[p.verts[(i + 1) % N]].pos;
+        float cross_y = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
+        if (std::abs(cross_y) > 1e-3f) continue;
+
+        // Erase vertex i from P: remove verts[i] and neighbors[i].
+        // The surviving edge at prev_edge now spans A→C with neighbor n_prev.
+        p.verts.erase    (p.verts.begin()     + i);
+        p.neighbors.erase(p.neighbors.begin() + i);
+
+        // Mirror the removal in the neighbor polygon Q.
+        if (n_prev >= 0)
+        {
+          auto &q = nav.polygons[n_prev];
+          if ((int)q.verts.size() > 3)
+          {
+            const int M = (int)q.verts.size();
+            for (int j = 0; j < M; ++j)
+            {
+              if (q.verts[j] == vi_b)
+              {
+                q.verts.erase    (q.verts.begin()     + j);
+                q.neighbors.erase(q.neighbors.begin() + j);
+                break;
+              }
+            }
+          }
+        }
+
+        any_removed = true;
+        break;
+      }
+    }
+  }
+
+  // Compact vertex list: after collinear removal some vertices may be unused.
+  {
+    const int nv2 = (int)nav.vertices.size();
+    std::vector<bool>    used(nv2, false);
+    for (const auto &p : nav.polygons)
+      for (int v : p.verts)
+        used[v] = true;
+
+    std::vector<int32_t> v2_remap(nv2, -1);
+    std::vector<nav_vertex_t> used_verts;
+    for (int i = 0; i < nv2; ++i)
+      if (used[i]) { v2_remap[i] = (int32_t)used_verts.size(); used_verts.push_back(nav.vertices[i]); }
+    nav.vertices = std::move(used_verts);
+
+    for (auto &p : nav.polygons)
+      for (auto &v : p.verts)
+        v = v2_remap[v];
+  }
+
+  std::println("[bake] Simplified: {} → {} polygons, {} vertices.",
+               orig_poly_count, (int)nav.polygons.size(), (int)nav.vertices.size());
+}
+
+// ---------------------------------------------------------------------------
+
 void bake_map(map_t &map, float cell_size)
 {
   cell_size = std::max(cell_size, NAVMESH_MIN_CELL_SIZE);
@@ -210,35 +628,25 @@ void bake_map(map_t &map, float cell_size)
     ++num_islands;
   }
 
-  // --- 6. Triangle generation ---
-  // Each span emits one flat quad (2 triangles) at its floor_y.
+  // --- 6. Quad generation ---
+  // Each span emits one flat quad at its floor_y.
   // Vertices are NOT deduplicated across spans — each span has 4 private corners.
   //
-  // Triangulation of span s (global index s):
-  //   quad corners (CCW from above):
+  //   Quad corners (CCW from above):
   //     V0 = (cx-half, y, cz-half)  SW
   //     V1 = (cx+half, y, cz-half)  SE
   //     V2 = (cx+half, y, cz+half)  NE
   //     V3 = (cx-half, y, cz+half)  NW
   //
-  //   tri0 (poly 2s  ): verts [V0, V1, V2]
-  //   tri1 (poly 2s+1): verts [V0, V2, V3]
-  //
-  //   Shared hypotenuse V0↔V2:
-  //     tri0.neighbors[2] = 2s+1
-  //     tri1.neighbors[0] = 2s
-  //
-  // Cross-span adjacency (spans s and t in direction d):
-  //   South (dz=-1): s.tri0.neighbors[0] ↔ t.tri1.neighbors[1]
-  //   East  (dx=+1): s.tri0.neighbors[1] ↔ t.tri1.neighbors[2]
-  //   North (dz=+1): s.tri1.neighbors[1] ↔ t.tri0.neighbors[0]
-  //   West  (dx=-1): s.tri1.neighbors[2] ↔ t.tri0.neighbors[1]
+  //   Polygon s: verts [V0, V1, V2, V3]
+  //   Edge 0 (SW→SE) = south, Edge 1 (SE→NE) = east,
+  //   Edge 2 (NE→NW) = north, Edge 3 (NW→SW) = west
 
   navmesh_t &nav = map.navmesh;
   nav.vertices.clear();
   nav.polygons.clear();
   nav.vertices.reserve(num_spans * 4);
-  nav.polygons.reserve(num_spans * 2);
+  nav.polygons.reserve(num_spans);
 
   const float half = cell_size * 0.5f;
 
@@ -255,37 +663,23 @@ void bake_map(map_t &map, float cell_size)
     nav.vertices.push_back(nav_vertex_t{{cx + half, y, cz + half}}); // NE
     nav.vertices.push_back(nav_vertex_t{{cx - half, y, cz + half}}); // NW
 
-    // tri0: [V0, V1, V2], tri1: [V0, V2, V3]
-    // Within-cell neighbors set immediately; cross-span filled in step 7.
-    nav_polygon_t tri0, tri1;
-    tri0.verts[0] = v0; tri0.verts[1] = v0+1; tri0.verts[2] = v0+2;
-    tri0.neighbors[0] = -1; // south edge   → filled later
-    tri0.neighbors[1] = -1; // east edge    → filled later
-    tri0.neighbors[2] = 2*s+1; // hypotenuse → tri1
-    tri0.island = sp.island;
+    nav_polygon_t quad;
+    quad.verts     = {v0, v0+1, v0+2, v0+3};
+    quad.neighbors = {-1, -1, -1, -1}; // filled in step 7
+    quad.island = sp.island;
 
-    tri1.verts[0] = v0; tri1.verts[1] = v0+2; tri1.verts[2] = v0+3;
-    tri1.neighbors[0] = 2*s;   // hypotenuse → tri0
-    tri1.neighbors[1] = -1; // north edge   → filled later
-    tri1.neighbors[2] = -1; // west edge    → filled later
-    tri1.island = sp.island;
-
-    nav.polygons.push_back(tri0);
-    nav.polygons.push_back(tri1);
+    nav.polygons.push_back(quad);
   }
 
   // --- 7. Fill cross-span adjacency ---
-  // We need a lookup: column (ix,iz) → list of (span_index, floor_y)
-  // which we already have in spans_grid.
-  //
-  // For each span s, find its 4 directional neighbors and wire edges.
-  // Only connect spans on the same island.
+  // Polygon index == span index. Edge d corresponds to direction d:
+  //   0=South(iz-1), 1=East(ix+1), 2=North(iz+1), 3=West(ix-1)
+  // Reverse direction is (d+2)%4.
 
   for (int s = 0; s < num_spans; ++s)
   {
     const nav_span_t &sp = spans[s];
 
-    // Directions: 0=South(iz-1), 1=East(ix+1), 2=North(iz+1), 3=West(ix-1)
     const int ndx[] = { 0, +1,  0, -1};
     const int ndz[] = {-1,  0, +1,  0};
 
@@ -313,31 +707,19 @@ void bake_map(map_t &map, float cell_size)
       if (best_t < 0)
         continue;
 
-      int t = best_t;
-      switch (d)
-      {
-        case 0: // South: s.tri0.neighbors[0] ↔ t.tri1.neighbors[1]
-          nav.polygons[2*s  ].neighbors[0] = 2*t+1;
-          nav.polygons[2*t+1].neighbors[1] = 2*s;
-          break;
-        case 1: // East:  s.tri0.neighbors[1] ↔ t.tri1.neighbors[2]
-          nav.polygons[2*s  ].neighbors[1] = 2*t+1;
-          nav.polygons[2*t+1].neighbors[2] = 2*s;
-          break;
-        case 2: // North: s.tri1.neighbors[1] ↔ t.tri0.neighbors[0]
-          nav.polygons[2*s+1].neighbors[1] = 2*t;
-          nav.polygons[2*t  ].neighbors[0] = 2*s+1;
-          break;
-        case 3: // West:  s.tri1.neighbors[2] ↔ t.tri0.neighbors[1]
-          nav.polygons[2*s+1].neighbors[2] = 2*t;
-          nav.polygons[2*t  ].neighbors[1] = 2*s+1;
-          break;
-      }
+      nav.polygons[s].neighbors[d] = best_t;
+      nav.polygons[best_t].neighbors[(d + 2) % 4] = s;
     }
   }
 
   std::println("[bake] Navmesh: {} spans, {} polygons, {} islands.",
                num_spans, (int)nav.polygons.size(), num_islands);
+
+  // --- 8. Pre-simplify invariant check ---
+  // bake_map only generates the raw triangle soup.
+  // The caller is responsible for calling simplify_navmesh() afterward.
+  assert_navmesh_invariants(nav, "pre-simplify", /*pre_only=*/true);
+
 }
 
 } // namespace shared

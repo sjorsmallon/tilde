@@ -759,14 +759,25 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     for (const auto &poly : nav.polygons)
     {
       uint32_t color = island_colors[poly.island % 4];
-      for (int e = 0; e < 3; ++e)
+      const int N = (int)poly.verts.size();
+      for (int e = 0; e < N; ++e)
       {
-        vec3f a = nav.vertices[poly.verts[e      ]].pos;
-        vec3f b = nav.vertices[poly.verts[(e+1)%3]].pos;
+        vec3f a = nav.vertices[poly.verts[e          ]].pos;
+        vec3f b = nav.vertices[poly.verts[(e + 1) % N]].pos;
         a.y += y_lift;
         b.y += y_lift;
         renderer::DrawLine(cmd, a, b, color);
       }
+    }
+
+    // Draw each vertex as a small cross so winding/deduplication is visible.
+    constexpr float r = 2.f;
+    constexpr uint32_t vert_color = 0xFFFFFFFF; // white
+    for (const auto &v : nav.vertices)
+    {
+      vec3f p = v.pos; p.y += y_lift;
+      renderer::DrawLine(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
+      renderer::DrawLine(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
     }
   }
 

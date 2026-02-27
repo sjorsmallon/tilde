@@ -146,6 +146,11 @@ message NetCommand {
     }
 }
 
+// Client → Server: a console command line (e.g. "spawn_bot")
+message C2S_Command {
+    string line = 1;
+}
+
 // Server → Client: a text message to display in the client console
 message S2C_ServerMessage {
     string message = 1;

@@ -58,6 +58,12 @@ private:
   bool draw_entities_solid = true;
 
   float navmesh_cell_size = 8.f;
+
+  // Step-by-step simplification debugging.
+  // m_raw_navmesh holds the baked triangle soup before any simplification.
+  // m_simplify_steps is the number of merges applied when stepping manually.
+  navmesh_t m_raw_navmesh;
+  int m_simplify_steps = 0;
 };
 
 } // namespace client

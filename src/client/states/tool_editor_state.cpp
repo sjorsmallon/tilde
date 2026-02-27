@@ -671,17 +671,34 @@ void ToolEditorState::render_ui()
     ImGui::TextDisabled("Navmesh: not baked");
   }
 
-  ImGui::SliderFloat("Cell size", &navmesh_cell_size, 1.f, 128.f, "%.0f");
+  ImGui::SliderFloat("Cell size", &navmesh_cell_size, 1.f, 512.f, "%.0f");
 
   if (ImGui::Button("Bake Navmesh"))
   {
     std::string full_path = get_maps_dir() + map.name;
-    map.navmesh = {};  // discard old navmesh before baking
-    shared::bake_map(map, navmesh_cell_size);
+    map.navmesh = {};
+    shared::bake_map(map, navmesh_cell_size);  // raw triangles only
+    m_raw_navmesh = map.navmesh;               // save before simplification
+    m_simplify_steps = 0;
+    shared::simplify_navmesh(map.navmesh);     // full simplify
     if (shared::save_navmesh_sidecar(full_path, map.navmesh))
       renderer::draw_announcement("Navmesh baked!");
     else
       renderer::draw_announcement("Navmesh bake failed (save map first?)");
+  }
+
+  // Step-by-step simplification for debugging.
+  if (m_raw_navmesh.valid())
+  {
+    ImGui::SameLine();
+    if (ImGui::Button("Simplify Step"))
+    {
+      map.navmesh = m_raw_navmesh;
+      ++m_simplify_steps;
+      shared::simplify_navmesh(map.navmesh, m_simplify_steps);
+    }
+    ImGui::SameLine();
+    ImGui::Text("(step %d)", m_simplify_steps);
   }
 
   bool show_navmesh = debug_collision::debug_show_navmesh.Get();
@@ -1064,14 +1081,25 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     for (const auto &poly : nav.polygons)
     {
       uint32_t color = island_colors[poly.island % 4];
-      for (int e = 0; e < 3; ++e)
+      const int N = (int)poly.verts.size();
+      for (int e = 0; e < N; ++e)
       {
-        vec3f a = nav.vertices[poly.verts[e      ]].pos;
-        vec3f b = nav.vertices[poly.verts[(e+1)%3]].pos;
+        vec3f a = nav.vertices[poly.verts[e          ]].pos;
+        vec3f b = nav.vertices[poly.verts[(e + 1) % N]].pos;
         a.y += y_lift;
         b.y += y_lift;
         renderer::DrawLine(cmd, a, b, color);
       }
+    }
+
+    // Draw each vertex as a small cross so winding/deduplication is visible.
+    constexpr float r = 2.f;
+    constexpr uint32_t vert_color = 0xFFFFFFFF; // white
+    for (const auto &v : nav.vertices)
+    {
+      vec3f p = v.pos; p.y += y_lift;
+      renderer::DrawLine(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
+      renderer::DrawLine(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
     }
   }
 
