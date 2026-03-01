@@ -166,3 +166,16 @@ message CvarPair {
 message S2C_CVarSync {
     repeated CvarPair cvars = 1;
 }
+
+// Server → Client: bot debug state sent every tick
+message BotDebugEntry {
+    int32 slot       = 1;
+    int32 goal       = 2; // BotGoal: 0=Idle 1=Chase 2=Attack 3=Retreat
+    int32 type       = 3; // BotType: 0=Idle 1=Chase 2=Regular
+    repeated Vec3 path = 4;
+    int32 path_index = 5;
+}
+
+message S2C_BotDebug {
+    repeated BotDebugEntry bots = 1;
+}

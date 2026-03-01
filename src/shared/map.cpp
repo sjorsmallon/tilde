@@ -246,7 +246,7 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
   // 4. Player spawn: use player hull dimensions for picking
   if (dynamic_cast<const network::Player_Spawn_Entity *>(entity))
   {
-    constexpr vec3f hull{16, 36, 16};
+    const vec3f hull{network::player_half_width, network::player_half_height, network::player_half_width};
     return {entity->position - hull, entity->position + hull};
   }
 

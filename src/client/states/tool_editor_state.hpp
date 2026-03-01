@@ -57,6 +57,9 @@ private:
   // instead of wireframe outlines.
   bool draw_entities_solid = true;
 
+  // When true, map geometry (AABBs/wedges/meshes) is not rendered.
+  bool hide_geometry = false;
+
   float navmesh_cell_size = 8.f;
 
   // Step-by-step simplification debugging.

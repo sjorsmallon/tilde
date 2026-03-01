@@ -96,12 +96,15 @@ add_library(game_shared STATIC
     src/shared/shapes.cpp
     src/shared/map.cpp
     src/shared/map_baker.cpp
+    src/shared/pathfinding.cpp
     src/shared/entity.cpp
     src/shared/entity_system.cpp
     src/shared/game_session.cpp
     src/shared/asset.hpp
     src/shared/asset.cpp
     src/shared/player_move.cpp
+    src/shared/bot_debug.hpp
+    src/shared/bot_debug.cpp
 )
 
 # Protobuf Generation
@@ -171,6 +174,7 @@ add_library(game_client SHARED
     src/client/editor/tools/selection_tool.cpp
     src/client/editor/tools/placement_tool.cpp
     src/client/editor/tools/sculpting_tool.cpp
+    src/client/editor/tools/pathfinding_test_tool.cpp
     src/client/editor/entity_inspector.cpp
     src/client/input.cpp
     src/client/renderer.cpp

@@ -143,6 +143,14 @@ template <typename T> inline T dot(const vec3_t<T> &a, const vec3_t<T> &b)
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+inline float length(const vec3 &v) { return std::sqrt(dot(v, v)); }
+
+inline float euclidean_distance_between(const vec3 &a, const vec3 &b)
+{
+  return length(a - b);
+}
+
+
 template <typename T>
 inline vec3_t<T> cross(const vec3_t<T> &a, const vec3_t<T> &b)
 {
@@ -155,7 +163,6 @@ inline vec3_t<T> cross(const vec3_t<T> &a, const vec3_t<T> &b)
 
 inline float length_squared(const vec3 &v) { return dot(v, v); }
 
-inline float length(const vec3 &v) { return std::sqrt(dot(v, v)); }
 
 inline float distance_between(const vec3 &a, const vec3 &b)
 {

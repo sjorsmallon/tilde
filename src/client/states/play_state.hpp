@@ -41,10 +41,9 @@ private:
   float player_yaw = 0.0f;
   float player_pitch = 0.0f;
 
-  // Player dimensions (half extents for collision AABB, Source units: 1 unit = 1 inch)
-  // Standing hull: 32x72x32 (width x height x depth)
-  static constexpr float player_half_width = 16.f;
-  static constexpr float player_half_height = 36.f;
+  // Player dimensions — canonical values live in network::player_half_width/height
+  static constexpr float player_half_width  = network::player_half_width;
+  static constexpr float player_half_height = network::player_half_height;
 
   // --- Networking ---
   enum class Connection_Phase
@@ -108,6 +107,9 @@ private:
 
   // Mouse capture toggle
   bool mouse_captured = true;
+
+  // When true, map geometry (AABBs/wedges) is not rendered
+  bool hide_geometry = false;
 
   // Stable pointer to the network connection; set once in update() and used
   // by the console network-forwarder lambda which outlives the stack frame.

@@ -124,14 +124,27 @@ int g_next_bot_slot = BOT_SLOT_BASE; // increments with each spawned bot
 // outlive the command object (both are translation-unit statics).
 cvar::CCommand cmd_spawn_bot(
     "spawn_bot",
-    [](std::span<std::string_view> /*args*/)
+    [](std::span<std::string_view> args)
     {
+      // Parse optional type argument: "idle" | "chase" | "regular" (default: idle)
+      BotType type = BotType::Idle;
+      if (!args.empty())
+      {
+        if (args[0] == "chase")   type = BotType::Chase;
+        else if (args[0] == "regular") type = BotType::Regular;
+        // "idle" or unrecognised → BotType::Idle
+      }
+
       auto spawns = get_human_spawn_positions();
       const vec3f &pos = spawns[g_bots.size() % spawns.size()];
-      g_bots.push_back(spawn_bot(g_state.session, pos, g_next_bot_slot++));
-      log_terminal("spawn_bot: spawned bot at slot {}", g_next_bot_slot - 1);
+      g_bots.push_back(spawn_bot(g_state.session, pos, g_next_bot_slot++, type));
+
+      const char *type_str = (type == BotType::Chase)   ? "chase"
+                           : (type == BotType::Regular) ? "regular"
+                                                        : "idle";
+      log_terminal("spawn_bot: spawned {} bot at slot {}", type_str, g_next_bot_slot - 1);
     },
-    "Spawn a bot at the next available spawn position.",
+    "Spawn a bot. Optional arg: idle (default) | chase | regular",
     cvar::flags::Server);
 
 void handle_player_leave(server_context_t &state,
@@ -204,7 +217,7 @@ bool Init()
       for (auto &sp : *spawn_pool)
       {
         if (sp.spawn_type == 1)
-          g_bots.push_back(spawn_bot(g_state.session, sp.position, g_next_bot_slot++));
+          g_bots.push_back(spawn_bot(g_state.session, sp.position, g_next_bot_slot++, BotType::Regular));
         else
           ++human_spawn_count;
       }
@@ -443,6 +456,38 @@ bool Tick()
   float tick_dt = static_cast<float>(get_tick_interval());
   update_bots(g_bots, g_state.session, tick_dt);
   update_rockets(g_state.session, tick_dt);
+
+  // --- Broadcast bot debug state to all connected clients ---
+  if (!g_bots.empty())
+  {
+    game::S2C_BotDebug dbg_msg;
+    for (const auto &bot : g_bots)
+    {
+      auto *entry = dbg_msg.add_bots();
+      entry->set_slot(bot.player_slot);
+      entry->set_goal(static_cast<int>(bot.goal));
+      entry->set_type(static_cast<int>(bot.type));
+      entry->set_path_index(bot.path_index);
+      for (const auto &wp : bot.path)
+      {
+        auto *v = entry->add_path();
+        v->set_x(wp.x);
+        v->set_y(wp.y);
+        v->set_z(wp.z);
+      }
+    }
+    std::vector<network::uint8> dbg_buf(dbg_msg.ByteSizeLong());
+    dbg_msg.SerializeToArray(dbg_buf.data(), static_cast<int>(dbg_buf.size()));
+    constexpr network::uint8 dbg_type =
+        static_cast<network::uint8>(network::Message_Type::S2C_BotDebug);
+    for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+    {
+      if (!g_state.net.player_slots[slot])
+        continue;
+      for (const auto &pkt : network::convert_to_packets(dbg_buf, dbg_type))
+        g_socket.send(pkt, g_state.net.player_ips[slot]);
+    }
+  }
 
   // --- Broadcast entity state to all connected clients ---
   // Delta compression: serialize per-client with baselines (only send changed fields)

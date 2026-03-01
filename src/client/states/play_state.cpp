@@ -12,6 +12,7 @@
 #include "../shared/linalg.hpp"
 #include "../shared/math.hpp"
 #include "../state_manager.hpp"
+#include "../../shared/bot_debug.hpp"
 #include "SDL_scancode.h"
 #include <SDL.h>
 #include <fstream>
@@ -130,19 +131,19 @@ void PlayState::on_exit()
 
 void PlayState::update(float dt)
 {
+  // ESC -> back to editor (works even if no map was loaded)
+  if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
+  {
+    state_manager::switch_to(GameStateKind::ToolEditor);
+    return;
+  }
+
   if (!session_loaded)
     return;
 
   auto &ctx = state_manager::get_client_context();
   auto &conn = ctx.connection_state;
   conn_state_ = &conn;
-
-  // ESC -> back to editor
-  if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
-  {
-    state_manager::switch_to(GameStateKind::ToolEditor);
-    return;
-  }
 
   // U -> toggle mouse capture
   if (input::is_key_pressed(SDL_SCANCODE_U))
@@ -198,6 +199,23 @@ void PlayState::update(float dt)
       auto *cv = cvar::CVarSystem::Get().Find(pair.name());
       if (cv)
         cv->SetFromString(pair.value());
+    }
+  }
+
+  // --- Apply bot debug packets from server ---
+  for (const auto &msg : inbox.bot_debug_updates)
+  {
+    bot_debug::g_entries.clear();
+    for (const auto &e : msg.bots())
+    {
+      bot_debug::Entry entry;
+      entry.slot       = e.slot();
+      entry.goal       = e.goal();
+      entry.type       = e.type();
+      entry.path_index = e.path_index();
+      for (const auto &v : e.path())
+        entry.path.push_back({v.x(), v.y(), v.z()});
+      bot_debug::g_entries.push_back(std::move(entry));
     }
   }
 
@@ -366,8 +384,10 @@ void PlayState::update(float dt)
     }
   }
 
+  const bool console_open = Console::Get().IsOpen();
+
   // --- Mouse look ---
-  if (mouse_captured)
+  if (mouse_captured && !console_open)
   {
     int dx, dy;
     input::get_mouse_delta(&dx, &dy);
@@ -380,27 +400,29 @@ void PlayState::update(float dt)
   camera.pitch = player_pitch;
   auto basis = get_orientation_vectors(camera);
 
-  // --- Gather move input ---
+  // --- Gather move input (suppressed while console is open) ---
   uint64_t buttons = 0;
-  if (input::is_key_down(SDL_SCANCODE_W))     buttons |= Button::Forward;
-  if (input::is_key_down(SDL_SCANCODE_S))     buttons |= Button::Backward;
-  if (input::is_key_down(SDL_SCANCODE_A))     buttons |= Button::Left;
-  if (input::is_key_down(SDL_SCANCODE_D))     buttons |= Button::Right;
-  if (input::is_key_down(SDL_SCANCODE_SPACE)) buttons |= Button::Jump;
-  if (input::is_key_down(SDL_SCANCODE_1))     buttons |= Button::Key1;
-  if (input::is_key_down(SDL_SCANCODE_2))     buttons |= Button::Key2;
-  if (input::is_key_down(SDL_SCANCODE_3))     buttons |= Button::Key3;
-  if (input::is_key_down(SDL_SCANCODE_4))     buttons |= Button::Key4;
-  if (input::is_key_down(SDL_SCANCODE_5))     buttons |= Button::Key5;
-  if (input::is_key_down(SDL_SCANCODE_6))     buttons |= Button::Key6;
-  if (input::is_key_down(SDL_SCANCODE_7))     buttons |= Button::Key7;
-  if (input::is_key_down(SDL_SCANCODE_8))     buttons |= Button::Key8;
-  if (input::is_key_down(SDL_SCANCODE_9))     buttons |= Button::Key9;
-  if (input::is_key_down(SDL_SCANCODE_0))     buttons |= Button::Key0;
+  if (!console_open)
+  {
+    if (input::is_key_down(SDL_SCANCODE_W))     buttons |= Button::Forward;
+    if (input::is_key_down(SDL_SCANCODE_S))     buttons |= Button::Backward;
+    if (input::is_key_down(SDL_SCANCODE_A))     buttons |= Button::Left;
+    if (input::is_key_down(SDL_SCANCODE_D))     buttons |= Button::Right;
+    if (input::is_key_down(SDL_SCANCODE_SPACE)) buttons |= Button::Jump;
+    if (input::is_key_down(SDL_SCANCODE_1))     buttons |= Button::Key1;
+    if (input::is_key_down(SDL_SCANCODE_2))     buttons |= Button::Key2;
+    if (input::is_key_down(SDL_SCANCODE_3))     buttons |= Button::Key3;
+    if (input::is_key_down(SDL_SCANCODE_4))     buttons |= Button::Key4;
+    if (input::is_key_down(SDL_SCANCODE_5))     buttons |= Button::Key5;
+    if (input::is_key_down(SDL_SCANCODE_6))     buttons |= Button::Key6;
+    if (input::is_key_down(SDL_SCANCODE_7))     buttons |= Button::Key7;
+    if (input::is_key_down(SDL_SCANCODE_8))     buttons |= Button::Key8;
+    if (input::is_key_down(SDL_SCANCODE_9))     buttons |= Button::Key9;
+    if (input::is_key_down(SDL_SCANCODE_0))     buttons |= Button::Key0;
+    if (input::is_mouse_down(SDL_BUTTON_LEFT))  buttons |= Button::Fire;
+  }
 
   Move_Input move_input = move_input_from_buttons(buttons);
-
-  if (input::is_mouse_down(SDL_BUTTON_LEFT)) buttons |= Button::Fire;
 
   // --- Send input to server ---
   if (connection_phase == Connection_Phase::Connected)
@@ -518,8 +540,37 @@ void PlayState::render_ui()
     bool show_navmesh = debug_collision::debug_show_navmesh.Get();
     if (ImGui::Checkbox("Show Navmesh", &show_navmesh))
       debug_collision::debug_show_navmesh.Set(show_navmesh);
+
+    ImGui::Checkbox("Hide Geometry", &hide_geometry);
   }
   ImGui::End();
+
+  // --- Bot debug HUD ---
+  if (!bot_debug::g_entries.empty())
+  {
+    static constexpr const char *goal_names[] = {"Idle","Chase","Attack","Retreat"};
+    static constexpr const char *type_names[] = {"idle","chase","regular"};
+
+    ImGui::SetNextWindowPos(ImVec2(10, 200), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.4f);
+    if (ImGui::Begin("##bot_hud", nullptr,
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                         ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoSavedSettings))
+    {
+      ImGui::TextDisabled("-- Bots --");
+      for (const auto &bot : bot_debug::g_entries)
+      {
+        const char *goal_str = (bot.goal >= 0 && bot.goal < 4) ? goal_names[bot.goal] : "?";
+        const char *type_str = (bot.type >= 0 && bot.type < 3) ? type_names[bot.type] : "?";
+        int wp_remaining = (int)bot.path.size() - bot.path_index;
+        ImGui::Text("slot %d [%s] %s  wp:%d",
+                    bot.slot, type_str, goal_str, wp_remaining);
+      }
+    }
+    ImGui::End();
+  }
 }
 
 void PlayState::render_3d(VkCommandBuffer cmd)
@@ -538,6 +589,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   renderer::set_viewport(cmd, view_def.viewport);
 
   // Render static entities from session
+  if (!hide_geometry)
   for (const auto &ent : ctx.session.static_entities)
   {
     if (!ent)
@@ -800,6 +852,41 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
 
     debug_collision::clear_collision_faces();
+  }
+
+  // --- Bot path / goal debug draw ---
+  {
+    // Goal colours: Idle=grey, Chase=yellow, Attack=red, Retreat=blue
+    static constexpr uint32_t goal_color[] = {
+      0xFF888888, // Idle
+      0x00FF00FF, // Chase  (ABGR: yellow)
+      0xFF0000FF, // Attack (ABGR: red)
+      0xFFFF4400, // Retreat (ABGR: blue-ish)
+    };
+
+    for (const auto &bot : bot_debug::g_entries)
+    {
+      int gi = static_cast<int>(bot.goal);
+      uint32_t color = goal_color[gi < 4 ? gi : 0];
+
+      // Draw path segments starting from the current waypoint
+      const auto &path = bot.path;
+      for (int i = bot.path_index; i + 1 < (int)path.size(); ++i)
+      {
+        vec3f a = path[i];     a.y += 4.f;
+        vec3f b = path[i + 1]; b.y += 4.f;
+        renderer::DrawLine(cmd, a, b, color);
+      }
+
+      // Mark the current waypoint target with a small cross
+      if (bot.path_index < (int)path.size())
+      {
+        vec3f wp = path[bot.path_index]; wp.y += 4.f;
+        constexpr float r = 8.f;
+        renderer::DrawLine(cmd, {wp.x - r, wp.y, wp.z}, {wp.x + r, wp.y, wp.z}, color);
+        renderer::DrawLine(cmd, {wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);
+      }
+    }
   }
 }
 

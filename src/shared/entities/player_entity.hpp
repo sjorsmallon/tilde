@@ -5,6 +5,11 @@
 namespace network
 {
 
+// Physics hull half-extents for the standing player.
+// Shared by player_move, editor ghost, spawn placement, and map bounds.
+constexpr float player_half_width  = 16.f;
+constexpr float player_half_height = 36.f;
+
 // Placed in the map editor to mark where players (or bots) spawn.
 // Only exists in the map; the server consumes it at load time and removes it.
 // position/orientation inherited from Entity.

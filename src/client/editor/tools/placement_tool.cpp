@@ -36,24 +36,42 @@ void Placement_Tool::on_disable(editor_context_t &ctx) { ghost_valid = false; }
 void Placement_Tool::on_update(editor_context_t &ctx,
                                const viewport_state_t &view)
 {
-  linalg::vec3 plane_point = {0, 0.0f, 0};
-  linalg::vec3 plane_normal = {0, 1.0f, 0};
+  float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
 
-  float t = 0.0f;
-  if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.dir,
-                                  plane_point, plane_normal, t))
+  // Prefer hitting existing geometry so entities can be stacked
+  bool hit_geometry = false;
+  if (ctx.bvh && !ctx.bvh->nodes.empty())
   {
-    ghost_pos = view.mouse_ray.origin + view.mouse_ray.dir * t;
-
-    float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
-    ghost_pos.x = editor::snap(ghost_pos.x, step);
-    ghost_pos.z = editor::snap(ghost_pos.z, step);
-
-    ghost_valid = true;
+    Ray_Hit hit{};
+    if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir, hit))
+    {
+      ghost_pos = view.mouse_ray.origin + view.mouse_ray.dir * hit.t;
+      ghost_pos.x = editor::snap(ghost_pos.x, step);
+      ghost_pos.z = editor::snap(ghost_pos.z, step);
+      ghost_pos.y = editor::snap(ghost_pos.y, step);
+      ghost_valid = true;
+      hit_geometry = true;
+    }
   }
-  else
+
+  // Fallback: intersect with the Y=0 plane
+  if (!hit_geometry)
   {
-    ghost_valid = false;
+    linalg::vec3 plane_point = {0, 0.0f, 0};
+    linalg::vec3 plane_normal = {0, 1.0f, 0};
+    float t = 0.0f;
+    if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.dir,
+                                    plane_point, plane_normal, t))
+    {
+      ghost_pos = view.mouse_ray.origin + view.mouse_ray.dir * t;
+      ghost_pos.x = editor::snap(ghost_pos.x, step);
+      ghost_pos.z = editor::snap(ghost_pos.z, step);
+      ghost_valid = true;
+    }
+    else
+    {
+      ghost_valid = false;
+    }
   }
 }
 
@@ -83,6 +101,8 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
       center.y += aabb->half_extents.y;
     else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(new_ent.get()))
       center.y += wedge->half_extents.y;
+    else if (dynamic_cast<::network::Player_Spawn_Entity *>(new_ent.get()))
+      center.y += network::player_half_height;
     else
       center.y += editor::DEFAULT_HALF_EXTENT;
 
@@ -181,6 +201,8 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
       center.y += aabb->half_extents.y;
     else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
       center.y += wedge->half_extents.y;
+    else if (dynamic_cast<::network::Player_Spawn_Entity *>(current_entity.get()))
+      center.y += network::player_half_height;
     else
       center.y += editor::DEFAULT_HALF_EXTENT;
 
@@ -232,7 +254,7 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
       if (dynamic_cast<::network::Player_Spawn_Entity *>(current_entity.get()))
       {
         // Draw player hull outline + a short upward spike to mark the spawn
-        constexpr linalg::vec3 hull{16, 36, 16};
+        const linalg::vec3 hull{network::player_half_width, network::player_half_height, network::player_half_width};
         renderer.draw_wire_box(center, hull, 0xFF8800FF);
         renderer.draw_line(center, center + linalg::vec3{0, 48, 0}, 0xFF8800FF);
       }

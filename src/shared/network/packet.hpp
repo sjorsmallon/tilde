@@ -18,6 +18,7 @@ enum class Message_Type : uint8
   S2C_ServerMessage,
   S2C_CVarSync,
   C2S_Command,
+  S2C_BotDebug,
 };
 
 // --------------------------------------------------------------------------------
@@ -79,6 +80,11 @@ template <> struct Packet_Traits<game::S2C_CVarSync>
 template <> struct Packet_Traits<game::C2S_Command>
 {
   static constexpr Message_Type type = Message_Type::C2S_Command;
+};
+
+template <> struct Packet_Traits<game::S2C_BotDebug>
+{
+  static constexpr Message_Type type = Message_Type::S2C_BotDebug;
 };
 
 struct Packet_Header

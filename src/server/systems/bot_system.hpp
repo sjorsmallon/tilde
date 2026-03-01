@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../shared/game_session.hpp"
+#include "../../shared/linalg.hpp"
 #include "../../shared/network/network_types.hpp"
 #include <vector>
 
@@ -12,15 +13,53 @@ namespace server
 // range keeps the value meaningful and in sync with sv_max_player_count.
 static constexpr int32_t BOT_SLOT_BASE = network::sv_max_player_count;
 
+enum class BotGoal { Idle, Chase, Attack, Retreat };
+
+// Controls which state-machine transitions are allowed for a bot.
+// Idle  : stays put; never transitions to Chase/Attack.
+// Chase : chases players but never fires.
+// Regular : full behaviour (chase → attack → retreat).
+enum class BotType { Idle, Chase, Regular };
+
+struct BotPersonality
+{
+  float engage_range      = 300.f; // distance at which Chase transitions to Attack
+  float retreat_health    = 0.f;   // health threshold to retreat (0 = never)
+  float fire_rate         = 2.f;   // seconds between shots
+  float move_speed        = 16.f;
+  float path_refresh_rate = 1.5f;  // seconds between path recalculations
+};
+
+inline BotPersonality aggressive_personality()
+{
+  return {.engage_range = 400.f, .retreat_health = 0.f,
+          .fire_rate = 1.5f, .move_speed = 20.f, .path_refresh_rate = 1.0f};
+}
+
+inline BotPersonality defensive_personality()
+{
+  return {.engage_range = 200.f, .retreat_health = 40.f,
+          .fire_rate = 2.5f, .move_speed = 14.f, .path_refresh_rate = 2.0f};
+}
+
 struct Bot_State
 {
-  int32_t player_slot  = -1;
-  float   fire_cooldown = 0.f;
+  int32_t        player_slot   = -1;
+  float          fire_cooldown = 0.f;
+  BotGoal        goal          = BotGoal::Idle;
+  BotType        type          = BotType::Idle;
+  BotPersonality personality   = {};
+
+  std::vector<linalg::vec3> path;
+  int                       path_index   = 0;
+  float                     path_refresh = 0.f; // countdown to next path recalc
+  float                     state_timer  = 0.f; // time spent in current state
 };
 
 // Spawns a bot Player_Entity at position and returns its tracking state.
 Bot_State spawn_bot(shared::game_session_t &session, const vec3f &position,
-                    int32_t slot);
+                    int32_t slot, BotType type = BotType::Regular,
+                    BotPersonality personality = {});
 
 // Called once per server tick.
 void update_bots(std::vector<Bot_State> &bots,

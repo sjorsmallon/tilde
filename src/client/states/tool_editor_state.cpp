@@ -5,6 +5,7 @@
 #include "../../shared/entities/static_entities.hpp"
 #include "../../shared/map_baker.hpp"
 #include "../editor/editor_entity.hpp"
+#include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
@@ -183,6 +184,7 @@ void ToolEditorState::on_enter()
     tools.push_back(std::make_unique<Selection_Tool>());
     tools.push_back(std::make_unique<Placement_Tool>());
     tools.push_back(std::make_unique<Sculpting_Tool>());
+    tools.push_back(std::make_unique<PathfindingTestTool>());
   }
 
   // Enable first tool
@@ -642,6 +644,7 @@ void ToolEditorState::render_ui()
     should_open_new_map_popup = true;
 
   ImGui::Checkbox("Solid Entities", &draw_entities_solid);
+  ImGui::Checkbox("Hide Geometry", &hide_geometry);
 
   if (ImGui::Button("Bake Map"))
   {
@@ -877,6 +880,8 @@ void ToolEditorState::render_ui()
     switch_tool(1);
   if (ImGui::Button("Sculpt"))
     switch_tool(2);
+  if (ImGui::Button("Pathfinding"))
+    switch_tool(3);
 
   ImGui::Separator();
   ImGui::Text("Active Tool: %d", active_tool_index);
@@ -964,6 +969,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw map elements
+  if (!hide_geometry)
   for (const auto &entry : map.entities)
   {
     const auto &ent = entry.entity;
@@ -1059,14 +1065,15 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     else if (dynamic_cast<::network::Player_Spawn_Entity *>(ent.get()))
     {
       // Draw player hull outline + upward spike (same visual as placement ghost)
-      constexpr linalg::vec3 hull{16, 36, 16};
+      const linalg::vec3 hull{network::player_half_width, network::player_half_height, network::player_half_width};
       renderer::DrawWireAABB(cmd, ent->position - hull, ent->position + hull, 0xFF8800FF);
       renderer::DrawLine(cmd, ent->position, ent->position + linalg::vec3{0, 48, 0}, 0xFF8800FF);
     }
   }
 
-  // Draw navmesh triangle wireframes, colored by island ID
-  if (debug_collision::debug_show_navmesh.Get() && map.navmesh.valid())
+  // Draw navmesh triangle wireframes, colored by island ID.
+  // Suppressed when the pathfinding tool is active — it draws the navmesh itself.
+  if (debug_collision::debug_show_navmesh.Get() && map.navmesh.valid() && active_tool_index != 3)
   {
     const navmesh_t &nav = map.navmesh;
     constexpr float y_lift = 2.f;
