@@ -288,17 +288,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
           for (int k = 0; k < (int)C.neighbors.size(); ++k)
           {
             if (C.neighbors[k] == bi)
-            {
-              // Find which edge of A now borders C.
-              int new_edge = -1;
-              for (int m = 0; m < (int)A.neighbors.size(); ++m)
-                if (A.neighbors[m] == ci) { new_edge = m; break; }
-              // A.neighbors[new_edge] == ci is already set correctly;
-              // we just need C to point back to ai (already correct index).
               C.neighbors[k] = ai;
-              (void)new_edge;
-              break;
-            }
           }
         }
 
@@ -364,56 +354,90 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
   // remove the matching collinear vertex from Q (by neighbor symmetry, both
   // reverse edges in Q point back to P, so Q's vertex is also collinear).
 
-  for (int pi = 0; pi < (int)nav.polygons.size(); ++pi)
+  // Run globally until no more collinear vertices are found, because removing
+  // a vertex from neighbor Q can expose new collinear vertices in Q.
+  bool global_removed = true;
+  while (global_removed)
   {
-    auto &p = nav.polygons[pi];
-    bool any_removed = true;
-    while (any_removed && (int)p.verts.size() > 3)
+    global_removed = false;
+    for (int pi = 0; pi < (int)nav.polygons.size(); ++pi)
     {
-      any_removed = false;
-      const int N = (int)p.verts.size();
-      for (int i = 0; i < N; ++i)
+      auto &p = nav.polygons[pi];
+      bool any_removed = true;
+      while (any_removed && (int)p.verts.size() > 3)
       {
-        int prev_edge = (i - 1 + N) % N;
-        int n_prev = p.neighbors[prev_edge];
-        int n_curr = p.neighbors[i];
-
-        // Both flanking edges must share the same neighbor (or both be -1).
-        if (n_prev != n_curr) continue;
-
-        const int vi_b = p.verts[i];
-        const auto &a = nav.vertices[p.verts[prev_edge]].pos;
-        const auto &b = nav.vertices[vi_b].pos;
-        const auto &c = nav.vertices[p.verts[(i + 1) % N]].pos;
-        float cross_y = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
-        if (std::abs(cross_y) > 1e-3f) continue;
-
-        // Erase vertex i from P: remove verts[i] and neighbors[i].
-        // The surviving edge at prev_edge now spans A→C with neighbor n_prev.
-        p.verts.erase    (p.verts.begin()     + i);
-        p.neighbors.erase(p.neighbors.begin() + i);
-
-        // Mirror the removal in the neighbor polygon Q.
-        if (n_prev >= 0)
+        any_removed = false;
+        const int N = (int)p.verts.size();
+        for (int i = 0; i < N; ++i)
         {
-          auto &q = nav.polygons[n_prev];
-          if ((int)q.verts.size() > 3)
+          int prev_edge = (i - 1 + N) % N;
+          int n_prev = p.neighbors[prev_edge];
+          int n_curr = p.neighbors[i];
+
+          // Both flanking edges must share the same neighbor (or both be -1).
+          if (n_prev != n_curr) continue;
+
+          const int vi_b = p.verts[i];
+          const auto &a = nav.vertices[p.verts[prev_edge]].pos;
+          const auto &b = nav.vertices[vi_b].pos;
+          const auto &c = nav.vertices[p.verts[(i + 1) % N]].pos;
+          float cross_y = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
+          if (std::abs(cross_y) > 1e-3f) continue;
+
+          // Erase vertex i from P: remove verts[i] and neighbors[i].
+          // The surviving edge at prev_edge now spans A→C with neighbor n_prev.
+          p.verts.erase    (p.verts.begin()     + i);
+          p.neighbors.erase(p.neighbors.begin() + i);
+
+          // Mirror the removal in the neighbor polygon Q.
+          if (n_prev >= 0)
           {
-            const int M = (int)q.verts.size();
-            for (int j = 0; j < M; ++j)
+            auto &q = nav.polygons[n_prev];
+            if ((int)q.verts.size() > 3)
             {
-              if (q.verts[j] == vi_b)
+              const int M = (int)q.verts.size();
+              for (int j = 0; j < M; ++j)
               {
-                q.verts.erase    (q.verts.begin()     + j);
-                q.neighbors.erase(q.neighbors.begin() + j);
-                break;
+                if (q.verts[j] == vi_b)
+                {
+                  q.verts.erase    (q.verts.begin()     + j);
+                  q.neighbors.erase(q.neighbors.begin() + j);
+                  break;
+                }
               }
             }
           }
-        }
 
-        any_removed = true;
-        break;
+          any_removed = true;
+          global_removed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // ---- Assert: no collinear vertices remain ----
+  for (int pi = 0; pi < (int)nav.polygons.size(); ++pi)
+  {
+    const auto &p = nav.polygons[pi];
+    const int N = (int)p.verts.size();
+    for (int i = 0; i < N; ++i)
+    {
+      int prev_edge = (i - 1 + N) % N;
+      const auto &a = nav.vertices[p.verts[prev_edge]].pos;
+      const auto &b = nav.vertices[p.verts[i]].pos;
+      const auto &c = nav.vertices[p.verts[(i + 1) % N]].pos;
+      float cross_y = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
+      if (std::abs(cross_y) <= 1e-3f)
+      {
+        int n_prev = p.neighbors[prev_edge];
+        int n_curr = p.neighbors[i];
+        std::println(stderr, "[navmesh] COLLINEAR VERTEX: poly {} vert {} (idx {}), "
+                     "pos=({:.2f},{:.2f},{:.2f}), cross_y={:.6f}, neighbors=[{}, {}]{}",
+                     pi, i, p.verts[i], b.x, b.y, b.z, cross_y,
+                     n_prev, n_curr,
+                     n_prev != n_curr ? " (DIFFERENT neighbors — not removable with current approach)" : "");
+        assert(false && "[navmesh] collinear vertex not removed during simplification");
       }
     }
   }
