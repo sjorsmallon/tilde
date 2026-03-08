@@ -135,6 +135,15 @@ std::vector<linalg::vec3> find_path(const navmesh_t &nav, const linalg::vec3 &st
         log_terminal("[pathfinding] no path found from start to end.");
         return {};
     }
+
+    // If start and end are in the same polygon, go directly.
+    if (corridor.size() == 1)
+    {
+        path.push_back(start);
+        path.push_back(end);
+        return path;
+    }
+
     // Build the path from portal midpoints.
     // The first waypoint is the start, then one midpoint per shared edge between
     // consecutive corridor polygons, then the end.

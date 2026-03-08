@@ -27,7 +27,7 @@ struct BotPersonality
   float retreat_health    = 0.f;   // health threshold to retreat (0 = never)
   float fire_rate         = 2.f;   // seconds between shots
   float move_speed        = 16.f;
-  float path_refresh_rate = 1.5f;  // seconds between path recalculations
+  float path_refresh_rate = 0.5f;  // seconds between path recalculations
 };
 
 inline BotPersonality aggressive_personality()
@@ -54,6 +54,7 @@ struct Bot_State
   int                       path_index   = 0;
   float                     path_refresh = 0.f; // countdown to next path recalc
   float                     state_timer  = 0.f; // time spent in current state
+  linalg::vec3              last_facing  = {1.f, 0.f, 0.f}; // preserved facing when path exhausted
 };
 
 // Spawns a bot Player_Entity at position and returns its tracking state.

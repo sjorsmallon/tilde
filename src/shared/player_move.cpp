@@ -550,9 +550,18 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
         break;
       }
 
-      if (penetration > min_penetration)
+      // At ledge corners the side face often has slightly less penetration
+      // than the top face, so the resolver pushes sideways (wall) instead of
+      // upward (ground). Bias toward upward-facing normals so the player
+      // lands on top rather than bouncing off the side.
+      bool is_ground_normal = plane.normal.y > cos_45;
+      float biased_penetration = penetration;
+      if (is_ground_normal)
+        biased_penetration += 8.f; // make ground faces win when close
+
+      if (biased_penetration > min_penetration)
       {
-        min_penetration = penetration;
+        min_penetration = penetration; // store actual penetration for push amount
         push_normal = plane.normal;
         min_plane_idx = pi;
       }

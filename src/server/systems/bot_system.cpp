@@ -43,7 +43,7 @@ Bot_State spawn_bot(shared::game_session_t &session, const vec3f &position,
 static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
 {
   if (bot.path.empty() || bot.path_index >= static_cast<int>(bot.path.size()))
-    return {1.f, 0.f, 0.f};
+    return bot.last_facing;
 
   // Advance past waypoints we've already reached.
   while (bot.path_index < static_cast<int>(bot.path.size()))
@@ -59,13 +59,15 @@ static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
   }
 
   if (bot.path_index >= static_cast<int>(bot.path.size()))
-    return {1.f, 0.f, 0.f};
+    return bot.last_facing;
 
   const vec3f &wp = bot.path[bot.path_index];
   vec3f dir = {wp.x - bot_pos.x, 0.f, wp.z - bot_pos.z};
   float len = linalg::length(dir);
-  if (len < 0.001f) return {1.f, 0.f, 0.f};
-  return dir * (1.f / len);
+  if (len < 0.001f) return bot.last_facing;
+  vec3f facing = dir * (1.f / len);
+  bot.last_facing = facing;
+  return facing;
 }
 
 void update_bots(std::vector<Bot_State> &bots,
@@ -287,6 +289,9 @@ void update_bots(std::vector<Bot_State> &bots,
 
     bot_ent->position = new_pos;
     bot_ent->velocity = new_vel;
+
+    // Update facing direction so the client can visualise it.
+    bot_ent->view_angle_yaw = std::atan2(front.x, front.z);
   }
 }
 

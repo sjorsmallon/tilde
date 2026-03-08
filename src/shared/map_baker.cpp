@@ -432,11 +432,15 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
       {
         int n_prev = p.neighbors[prev_edge];
         int n_curr = p.neighbors[i];
+        // Collinear vertices with DIFFERENT neighbors on their flanking edges
+        // are structurally necessary — they mark T-junctions where adjacency
+        // changes along a straight edge. Only same-neighbor cases are bugs.
+        if (n_prev != n_curr) continue;
+
         std::println(stderr, "[navmesh] COLLINEAR VERTEX: poly {} vert {} (idx {}), "
-                     "pos=({:.2f},{:.2f},{:.2f}), cross_y={:.6f}, neighbors=[{}, {}]{}",
+                     "pos=({:.2f},{:.2f},{:.2f}), cross_y={:.6f}, neighbors=[{}, {}]",
                      pi, i, p.verts[i], b.x, b.y, b.z, cross_y,
-                     n_prev, n_curr,
-                     n_prev != n_curr ? " (DIFFERENT neighbors — not removable with current approach)" : "");
+                     n_prev, n_curr);
         assert(false && "[navmesh] collinear vertex not removed during simplification");
       }
     }

@@ -1,6 +1,12 @@
+- is the navmesh only planar? or does A* just need two-dimensional? I think there's something wrong.
+
+
+
 
 - gizmo for selection moving is not finalized.
 - undo/redo: multi-entity delete creates one transaction per entity. Ctrl+Z only undoes one deletion at a time instead of the whole batch.
+
+
 
 
 

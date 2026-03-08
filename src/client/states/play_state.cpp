@@ -886,6 +886,21 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         renderer::DrawLine(cmd, {wp.x - r, wp.y, wp.z}, {wp.x + r, wp.y, wp.z}, color);
         renderer::DrawLine(cmd, {wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);
       }
+
+      // Draw facing direction arrow from the bot's position
+      auto pit = last_player_entities.find(bot.slot);
+      if (pit != last_player_entities.end())
+      {
+        const auto &ent = pit->second;
+        float yaw = ent.view_angle_yaw;
+        vec3f origin = ent.position;
+        origin.y += 40.f;
+        constexpr float arrow_len = 30.f;
+        vec3f tip = {origin.x + std::sin(yaw) * arrow_len,
+                     origin.y,
+                     origin.z + std::cos(yaw) * arrow_len};
+        renderer::DrawLine(cmd, origin, tip, 0xFFFFFFFF);
+      }
     }
   }
 }
