@@ -60,7 +60,7 @@ private:
   // When true, map geometry (AABBs/wedges/meshes) is not rendered.
   bool hide_geometry = false;
 
-  float navmesh_cell_size = 8.f;
+  float navmesh_cell_size = 256.f;
 
   // Step-by-step simplification debugging.
   // m_raw_navmesh holds the baked triangle soup before any simplification.

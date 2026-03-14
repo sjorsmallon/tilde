@@ -623,6 +623,30 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
 
 void ToolEditorState::render_ui()
 {
+  // Ctrl+S / Cmd+S — quick save with CSG simplification
+  if (input::is_key_pressed(SDL_SCANCODE_S) &&
+      (input::is_key_down(SDL_SCANCODE_LCTRL) ||
+       input::is_key_down(SDL_SCANCODE_RCTRL) ||
+       input::is_key_down(SDL_SCANCODE_LGUI) ||
+       input::is_key_down(SDL_SCANCODE_RGUI)))
+  {
+    std::string full_path = get_maps_dir() + map.name;
+    auto simplified = bake_map_csg(map);
+    simplified.name = map.name;
+    simplified.navmesh = map.navmesh;
+    if (shared::save_map(full_path, simplified))
+    {
+      std::ofstream last_map_f("last_map.txt");
+      if (last_map_f.is_open())
+        last_map_f << full_path;
+      renderer::draw_announcement("Saved & simplified!");
+    }
+    else
+    {
+      renderer::draw_announcement("Save failed!");
+    }
+  }
+
   ImGui::Begin("Map Info", nullptr, ImGuiWindowFlags_NoNav);
   ImGui::Text("Map: %s", map.name.c_str());
 
@@ -646,16 +670,6 @@ void ToolEditorState::render_ui()
   ImGui::Checkbox("Solid Entities", &draw_entities_solid);
   ImGui::Checkbox("Hide Geometry", &hide_geometry);
 
-  if (ImGui::Button("Bake Map"))
-  {
-    auto baked = bake_map_csg(map);
-    std::string full_path = get_maps_dir() + baked.name;
-    if (shared::save_map(full_path, baked))
-      renderer::draw_announcement(("Baked: " + baked.name).c_str());
-    else
-      renderer::draw_announcement("Bake failed!");
-  }
-
   ImGui::Separator();
 
   // Navmesh status
@@ -674,7 +688,7 @@ void ToolEditorState::render_ui()
     ImGui::TextDisabled("Navmesh: not baked");
   }
 
-  ImGui::SliderFloat("Cell size", &navmesh_cell_size, 1.f, 512.f, "%.0f");
+  ImGui::SliderFloat("Cell size", &navmesh_cell_size, 128.f, 512.f, "%.0f");
 
   if (ImGui::Button("Bake Navmesh"))
   {
@@ -814,17 +828,22 @@ void ToolEditorState::render_ui()
     if (ImGui::Button("Save", ImVec2(120, 0)))
     {
       std::string full_path = get_maps_dir() + filename_buf;
-      if (shared::save_map(full_path, map))
+      auto simplified = bake_map_csg(map);
+      simplified.name = filename_buf;
+      simplified.navmesh = map.navmesh;
+      if (shared::save_map(full_path, simplified))
       {
         map.name = filename_buf;
 
         std::ofstream last_map_f("last_map.txt");
         if (last_map_f.is_open())
           last_map_f << full_path;
+
+        renderer::draw_announcement("Saved & simplified!");
       }
       else
       {
-        std::cerr << "Failed to save map!" << std::endl;
+        renderer::draw_announcement("Save failed!");
       }
       ImGui::CloseCurrentPopup();
     }
