@@ -1,3 +1,6 @@
+- player movement is dependent on delta t. that does not seem good.. is the fps too high? should we limit fps?
+- entity spawn indicators disappear upon map loading and saving.
+
 - is the navmesh only planar? or does A* just need two-dimensional? I think there's something wrong.
 
 

@@ -11,7 +11,7 @@
 #include <typeinfo>
 
 // --- FIX 1: Guard cxxabi.h ---
-#if defined(__GNUC__) || defined(__clang__)
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
     #include <cxxabi.h>
 #endif
 
@@ -31,7 +31,7 @@ namespace detail
 // --- FIX 2: Cross-platform Demangling ---
 template <typename T>
 std::string demangle_type_name() {
-#if defined(__GNUC__) || defined(__clang__)
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)
     int status = 0;
     std::unique_ptr<char, void (*)(void *)> res {
         abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &status),
@@ -39,7 +39,7 @@ std::string demangle_type_name() {
     };
     return (status == 0) ? res.get() : typeid(T).name();
 #else
-    // MSVC already returns a human-readable string from typeid.name()
+    // MSVC or Windows already returns a human-readable string from typeid.name()
     return typeid(T).name();
 #endif
 }

@@ -60,7 +60,7 @@ using pascal_string = pascal_string_t<250>;
 // to avoid circular dependencies
 
 constexpr auto sv_max_player_count = 32;
-constexpr auto server_port_number = 2020;
-constexpr auto client_port_number = 2024;
+constexpr auto server_port_number = 9999;
+constexpr auto client_port_number = 5001;
 
 } // namespace network

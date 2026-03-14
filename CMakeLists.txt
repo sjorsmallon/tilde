@@ -68,6 +68,12 @@ target_link_libraries(imgui PUBLIC
     Vulkan::Vulkan
 )
 
+# this is to silence a lot of schema warnings.
+if(MSVC)
+    add_compile_options(/Zc:preprocessor)
+endif()
+
+
 # --- Components ---
 
 # 1. Game Shared (Static Library)

@@ -636,6 +636,9 @@ void ToolEditorState::render_ui()
     simplified.navmesh = map.navmesh;
     if (shared::save_map(full_path, simplified))
     {
+      map = std::move(simplified);
+      geometry_updated_flag = true;
+
       std::ofstream last_map_f("last_map.txt");
       if (last_map_f.is_open())
         last_map_f << full_path;
@@ -833,7 +836,8 @@ void ToolEditorState::render_ui()
       simplified.navmesh = map.navmesh;
       if (shared::save_map(full_path, simplified))
       {
-        map.name = filename_buf;
+        map = std::move(simplified);
+        geometry_updated_flag = true;
 
         std::ofstream last_map_f("last_map.txt");
         if (last_map_f.is_open())

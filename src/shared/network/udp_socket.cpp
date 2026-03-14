@@ -1,6 +1,9 @@
 #include "udp_socket.hpp"
+#include "../log.hpp"
 #include <cstdio>
 #include <string>
+#include <cerrno>
+#include <cstring>
 
 #ifdef _WIN32
     #ifndef WIN32_LEAN_AND_MEAN
@@ -68,11 +71,62 @@ Udp_Socket::~Udp_Socket() { close(); }
 
 bool Udp_Socket::open(uint16 port)
 {
-    close(); 
+    printf("[UDP] Attempting to open socket on port %d\n", port);
+    close();
 
+#ifdef _WIN32
+    // Ensure Winsock is initialized once per process
+    static bool winsock_initialized = false;
+    if (!winsock_initialized)
+    {
+        printf("[UDP] Initializing Winsock...\n");
+        WSADATA wsaData;
+        int wsaErr = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (wsaErr != 0)
+        {
+            printf("[UDP] ERROR: WSAStartup failed: %d\n", wsaErr);
+            log_error("WSAStartup failed: {}", wsaErr);
+            return false;
+        }
+        printf("[UDP] Winsock initialized successfully\n");
+        winsock_initialized = true;
+    }
+#endif
+
+    printf("[UDP] Creating socket...\n");
     m_socket_handle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (m_socket_handle == INVALID_SOCKET)
     {
+#ifdef _WIN32
+        int err = WSAGetLastError();
+        printf("[UDP] ERROR: socket() failed with code: %d\n", err);
+        log_error("socket() failed: {}", err);
+#else
+        printf("[UDP] ERROR: socket() failed with errno: %d (%s)\n", errno, std::strerror(errno));
+        log_error("socket() failed: {} ({})", errno, std::strerror(errno));
+#endif
+        return false;
+    }
+    printf("[UDP] Socket created successfully\n");
+
+    // Allow reusing the port if it's in TIME_WAIT state (useful for rapid restarts)
+    int reuse = 1;
+    printf("[UDP] Setting SO_REUSEADDR...\n");
+#ifdef _WIN32
+    if (setsockopt(m_socket_handle, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse)) == SOCKET_ERROR)
+#else
+    if (setsockopt(m_socket_handle, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
+#endif
+    {
+#ifdef _WIN32
+        int err = WSAGetLastError();
+        printf("[UDP] ERROR: setsockopt(SO_REUSEADDR) failed with code: %d\n", err);
+        log_error("setsockopt(SO_REUSEADDR) failed: {}", err);
+#else
+        printf("[UDP] ERROR: setsockopt(SO_REUSEADDR) failed with errno: %d (%s)\n", errno, std::strerror(errno));
+        log_error("setsockopt(SO_REUSEADDR) failed: {} ({})", errno, std::strerror(errno));
+#endif
+        close();
         return false;
     }
 
@@ -81,17 +135,31 @@ bool Udp_Socket::open(uint16 port)
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(port);
 
+    printf("[UDP] Binding to port %d...\n", port);
     if (bind(m_socket_handle, (const struct sockaddr *)&address, sizeof(address)) == SOCKET_ERROR)
     {
+#ifdef _WIN32
+        int err = WSAGetLastError();
+        printf("[UDP] ERROR: bind() failed on port %d with code: %d\n", port, err);
+        log_error("bind() failed on port {}: {}", port, err);
+#else
+        printf("[UDP] ERROR: bind() failed on port %d with errno: %d (%s)\n", port, errno, std::strerror(errno));
+        log_error("bind() failed on port {}: {} ({})", port, errno, std::strerror(errno));
+#endif
         close();
         return false;
     }
+    printf("[UDP] Successfully bound to port %d\n", port);
 
     // --- Set Non-Blocking ---
+    printf("[UDP] Setting non-blocking mode...\n");
 #ifdef _WIN32
     u_long mode = 1; // 1 to enable non-blocking
     if (ioctlsocket(m_socket_handle, FIONBIO, &mode) != 0)
     {
+        int err = WSAGetLastError();
+        printf("[UDP] ERROR: ioctlsocket(FIONBIO) failed with code: %d\n", err);
+        log_error("ioctlsocket(FIONBIO) failed: {}", err);
         close();
         return false;
     }
@@ -100,11 +168,14 @@ bool Udp_Socket::open(uint16 port)
     if (flags == -1) flags = 0;
     if (fcntl(m_socket_handle, F_SETFL, flags | O_NONBLOCK) == -1)
     {
+        printf("[UDP] ERROR: fcntl(F_SETFL) failed with errno: %d (%s)\n", errno, std::strerror(errno));
+        log_error("fcntl(F_SETFL) failed: {} ({})", errno, std::strerror(errno));
         close();
         return false;
     }
 #endif
 
+    printf("[UDP] Socket successfully opened on port %d\n", port);
     return true;
 }
 

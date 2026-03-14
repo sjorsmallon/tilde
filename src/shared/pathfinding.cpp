@@ -3,6 +3,7 @@
 #include "navmesh.hpp"
 #include "log.hpp"
 #include "timed_function.hpp"
+#include <queue>
 
 namespace
 {

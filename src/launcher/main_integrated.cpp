@@ -15,7 +15,7 @@ cvar::CVar<std::string> map("map", "dm_aabb", "Map to load", cvar::flags::None,
 
 int main(int argc, char *argv[])
 {
-  console::SpawnNew();
+  // console::SpawnNew();
   timed_function();
 
   log_terminal("=== Starting MyGame (Integrated) ===");

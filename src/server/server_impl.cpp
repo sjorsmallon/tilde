@@ -179,59 +179,83 @@ void handle_player_leave(server_context_t &state,
 bool Init()
 {
   log_terminal("--- Initializing Server ---");
+  log_terminal("Server port: {}", network::server_port_number);
 
   if (!g_socket.open(network::server_port_number))
   {
-    log_terminal("Failed to open server socket on port {}",
+    log_error("Failed to open server socket on port {}. Port may be in use or insufficient permissions.",
                  network::server_port_number);
     return false;
   }
+  log_terminal("Successfully bound server socket to port {}", network::server_port_number);
 
   // Load map for server-side collision
   shared::map_t server_map;
+  std::string map_name;
+
   std::ifstream f("last_map.txt");
-  std::string map_name = "dm_aabb";
   if (f.is_open())
   {
-    std::getline(f, map_name);
+    if (std::getline(f, map_name))
+    {
+      log_terminal("Loaded map name from last_map.txt: '{}'", map_name);
+    }
+    f.close();
   }
 
-  if (shared::load_map(map_name, server_map))
+  if (!map_name.empty())
   {
-    shared::init_session_from_map(g_state.session, server_map);
-    g_state.session.map_name = server_map.name;
-
-    // Spawn bots for any bot-type spawn markers (spawn_type == 1).
-    // Human spawn markers (spawn_type == 0) stay in entity_system and are
-    // queried directly when players join — no need to extract or clear the pool.
-    g_bots.clear();
-    g_next_bot_slot = BOT_SLOT_BASE;
-
-    auto *spawn_pool =
-        g_state.session.entity_system
-            .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
-
-    int human_spawn_count = 0;
-    if (spawn_pool)
+    log_terminal("Attempting to load map '{}'...", map_name);
+    if (shared::load_map(map_name, server_map))
     {
-      for (auto &sp : *spawn_pool)
-      {
-        if (sp.spawn_type == 1)
-          g_bots.push_back(spawn_bot(g_state.session, sp.position, g_next_bot_slot++, BotType::Regular));
-        else
-          ++human_spawn_count;
-      }
+      log_terminal("Map loaded successfully: '{}'", server_map.name);
+      shared::init_session_from_map(g_state.session, server_map);
+      g_state.session.map_name = server_map.name;
+      log_terminal("Game session initialized from map");
     }
-
-    log_terminal("Server loaded map: {} ({} human spawns, {} bots)",
-                 g_state.session.map_name, human_spawn_count,
-                 g_bots.size());
+    else
+    {
+      log_error("Failed to load map '{}'. Starting with empty session.", map_name);
+      g_state.session = {};
+    }
   }
   else
   {
-    log_terminal("Server WARNING: Could not load map '{}'", map_name);
+    log_terminal("No map specified, starting with empty session.");
+    g_state.session = {};
   }
 
+  // Spawn bots for any bot-type spawn markers (spawn_type == 1).
+  // Human spawn markers (spawn_type == 0) stay in entity_system and are
+  // queried directly when players join — no need to extract or clear the pool.
+  g_bots.clear();
+  g_next_bot_slot = BOT_SLOT_BASE;
+
+  auto *spawn_pool =
+      g_state.session.entity_system
+          .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+
+  int human_spawn_count = 0;
+  int bot_spawn_count = 0;
+  if (spawn_pool)
+  {
+    log_terminal("Found {} spawn entities", spawn_pool->size());
+    for (auto &sp : *spawn_pool)
+    {
+      if (sp.spawn_type == 1)
+      {
+        g_bots.push_back(spawn_bot(g_state.session, sp.position, g_next_bot_slot++, BotType::Regular));
+        ++bot_spawn_count;
+      }
+      else
+        ++human_spawn_count;
+    }
+  }
+
+  log_terminal("Server initialized: map='{}', {} human spawns, {} bot spawns",
+               g_state.session.map_name, human_spawn_count, bot_spawn_count);
+
+  log_terminal("--- Server initialization complete ---");
   return true;
 }
 
