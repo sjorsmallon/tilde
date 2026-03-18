@@ -116,6 +116,12 @@ private:
   bool hide_geometry = false;
   float last_dt = 0.016f;
 
+  // FPS averaging ring buffer
+  static constexpr int FPS_HISTORY_SIZE = 64;
+  float dt_history[FPS_HISTORY_SIZE] = {};
+  int dt_history_index = 0;
+  int dt_history_count = 0;
+
   // Client-side explosion particle effects (spawned when rockets disappear)
   struct explosion_effect_t
   {

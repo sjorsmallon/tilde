@@ -11,11 +11,10 @@
 #include <SDL.h>
 
 #include "cvar.hpp"
+#include "game_cvars.hpp"
 #include "input.hpp"
 #include "log.hpp"
 #include "timed_function.hpp"
-
-cvar::CVar<float> cl_timescale("cl_timescale", 1.0f, "Time scale factor (0.5 = slow-mo, 2.0 = fast)");
 
 namespace client
 {

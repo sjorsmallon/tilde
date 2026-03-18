@@ -156,6 +156,16 @@ inline bool aabbs_intersect(const aabb_bounds_t &a, const aabb_bounds_t &b)
          (a.min.z <= b.max.z && a.max.z >= b.min.z);
 }
 
+inline bool aabbs_intersect_with_tolerance(
+    const aabb_bounds_t &lhs,
+    const aabb_bounds_t &rhs,
+    float tolerance)
+{
+    return (lhs.min.x <= rhs.max.x + tolerance && lhs.max.x >= rhs.min.x - tolerance) &&
+           (lhs.min.y <= rhs.max.y + tolerance && lhs.max.y >= rhs.min.y - tolerance) &&
+           (lhs.min.z <= rhs.max.z + tolerance && lhs.max.z >= rhs.min.z - tolerance);
+}
+
 // Subtract one AABB from another, yielding up to 6 non-overlapping pieces.
 // Returns the parts of 'source' that don't overlap with 'subtract'.
 // If they don't intersect, returns the original source AABB.
@@ -167,7 +177,7 @@ inline std::vector<aabb_t> subtract_aabb(const aabb_t &source, const aabb_t &sub
   auto sub_bounds = get_bounds(subtract);
 
   // If no intersection, return the original AABB
-  if (!aabbs_intersect(src_bounds, sub_bounds))
+  if (!aabbs_intersect_with_tolerance(src_bounds, sub_bounds, 1.f))
   {
     result.push_back(source);
     return result;

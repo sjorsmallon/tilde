@@ -1,4 +1,5 @@
 #include "server/server_api.hpp"
+#include "shared/crash_handler.hpp"
 #include "shared/cvar.hpp"
 #include "shared/detached_console.hpp"
 #include "shared/log.hpp"
@@ -12,6 +13,7 @@ cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
 
 int main(int argc, char *argv[])
 {
+  crash_handler::install();
   // console::SpawnNew();
   timed_function();
 

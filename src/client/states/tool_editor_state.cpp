@@ -522,7 +522,7 @@ void ToolEditorState::update(float dt)
 
     //@FIXME: This is crazy, why can't we forward the key events from the input
     // system?
-    if (!ImGui::GetIO().WantCaptureKeyboard)
+    if (!ImGui::GetIO().WantTextInput)
     {
       for (int scancode = 0; scancode < SDL_NUM_SCANCODES; ++scancode)
       {

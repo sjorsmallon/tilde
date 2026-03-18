@@ -126,6 +126,7 @@ game_shared_src = [
   'src/shared/entities/weapon_entity.cpp',
   'src/shared/network/udp_socket.cpp',
   'src/shared/collision_detection.cpp',
+  'src/shared/game_cvars.cpp',
   'src/shared/network/schema.cpp',
   'src/shared/map.cpp',
   'src/shared/entity_system.cpp',

@@ -1,7 +1,9 @@
 #include "client/client_api.hpp"
 #include "server/server_api.hpp"
+#include "shared/crash_handler.hpp"
 #include "shared/cvar.hpp"
 #include "shared/detached_console.hpp"
+#include "shared/game_cvars.hpp"
 #include "shared/log.hpp"
 #include "shared/timed_function.hpp"
 
@@ -11,13 +13,13 @@
 
 cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
 cvar::CVar<float> cl_maxfps("cl_maxfps", 1000.0f, "Maximum client framerate (0 = unlimited)");
-extern cvar::CVar<float> cl_timescale;
 cvar::CVar<std::string> map("map", "dm_aabb", "Map to load", cvar::flags::None,
                             [](const std::string &val)
                             { log_terminal("Map changed to: {}", val); });
 
 int main(int argc, char *argv[])
 {
+  crash_handler::install();
   // console::SpawnNew();
   timed_function();
 

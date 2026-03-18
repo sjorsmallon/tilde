@@ -30,6 +30,9 @@ set(SDL_TEST OFF CACHE BOOL "Build SDL2 test" FORCE)
 FetchContent_MakeAvailable(SDL2)
 
 # 3. Protobuf
+# this is to silence a shitload of float normalization warnings that are super annoying.
+add_compile_definitions(_SILENCE_CXX23_DENORM_DEPRECATION_WARNING)
+
 set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
@@ -98,6 +101,7 @@ add_library(game_shared STATIC
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
+    src/shared/game_cvars.cpp
     src/shared/network/schema.cpp
     src/shared/components/components.cpp
     src/shared/shapes.cpp

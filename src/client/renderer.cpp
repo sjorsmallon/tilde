@@ -923,7 +923,7 @@ static void create_line_pipeline()
   VkPipelineDepthStencilStateCreateInfo depthStencil{
       VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
   depthStencil.depthTestEnable = VK_TRUE;
-  depthStencil.depthWriteEnable = VK_FALSE;
+  depthStencil.depthWriteEnable = VK_TRUE;
   depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
   VkPipelineColorBlendAttachmentState colorBlendAttachment{};
@@ -1879,14 +1879,14 @@ static void create_particle_descriptor_layout()
   layout_info.pBindings = bindings;
   vkCreateDescriptorSetLayout(g_device, &layout_info, nullptr, &g_particle_ds_layout);
 
-  // Descriptor pool (enough for 32 emitters)
+  // Descriptor pool (enough for 256 emitters)
   VkDescriptorPoolSize pool_sizes[] = {
-      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32},
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 256},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 256},
   };
   VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
   pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-  pool_info.maxSets = 32;
+  pool_info.maxSets = 256;
   pool_info.poolSizeCount = 2;
   pool_info.pPoolSizes = pool_sizes;
   vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_particle_descriptor_pool);
@@ -2084,7 +2084,14 @@ static particle_emitter_gpu_t *get_or_create_emitter_gpu(uint64_t entity_id, uin
   ds_alloc.descriptorPool = g_particle_descriptor_pool;
   ds_alloc.descriptorSetCount = 1;
   ds_alloc.pSetLayouts = &g_particle_ds_layout;
-  vkAllocateDescriptorSets(g_device, &ds_alloc, &gpu.descriptor_set);
+  VkResult alloc_result = vkAllocateDescriptorSets(g_device, &ds_alloc, &gpu.descriptor_set);
+  if (alloc_result != VK_SUCCESS)
+  {
+    log_error("Failed to allocate particle descriptor set (pool exhausted? result={})", (int)alloc_result);
+    vkDestroyBuffer(g_device, gpu.ssbo, nullptr);
+    vkFreeMemory(g_device, gpu.ssbo_memory, nullptr);
+    return nullptr;
+  }
 
   // Write descriptor set
   VkDescriptorBufferInfo buf_info{};
@@ -3044,7 +3051,11 @@ void UpdateParticles(VkCommandBuffer cmd, const particle_emitter_params_t &param
   if (params.max_particles == 0) return;
 
   particle_emitter_gpu_t *gpu = get_or_create_emitter_gpu(params.entity_id, params.max_particles);
-  if (!gpu) return;
+  if (!gpu)
+  {
+    log_warning("Skipping particle emitter {} — GPU allocation failed", params.entity_id);
+    return;
+  }
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_particle_compute_pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_particle_compute_layout,

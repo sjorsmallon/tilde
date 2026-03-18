@@ -134,6 +134,12 @@ void PlayState::update(float dt)
 {
   last_dt = dt;
 
+  // Record dt for FPS averaging
+  dt_history[dt_history_index] = dt;
+  dt_history_index = (dt_history_index + 1) % FPS_HISTORY_SIZE;
+  if (dt_history_count < FPS_HISTORY_SIZE)
+    dt_history_count++;
+
   // Tick down explosion effects
   for (auto &fx : explosion_effects)
     fx.time_remaining -= dt;
@@ -167,8 +173,11 @@ void PlayState::update(float dt)
   network::poll_client_network(conn, 0.001, inbox); // 1ms receive window
 
   if (!inbox.entity_updates.empty())
-    printf("[CLIENT] Received %zu entity update packages this frame\n",
-           inbox.entity_updates.size());
+  {
+
+    // log_terminal("[CLIENT] Received {} entity update packages this frame\n",
+    //        inbox.entity_updates.size());
+  }
 
   for (const auto &cmd : inbox.net_commands)
   {
@@ -240,13 +249,14 @@ void PlayState::update(float dt)
     // Discard old or duplicate snapshots - only process newer ticks
     if (snap_tick <= last_processed_tick && last_processed_tick != 0)
     {
-      printf("[CLIENT] Discarding old snapshot: tick %u (last processed: %u)\n",
-             snap_tick, last_processed_tick);
+      // log_terminal("[CLIENT] Discarding old snapshot: tick %u (last processed: %u)\n",
+      //        snap_tick, last_processed_tick);
+
       continue;  // Skip this outdated packet
     }
 
-    printf("[CLIENT] Processing snapshot tick %u (last was %u)\n",
-           snap_tick, last_processed_tick);
+    // log_terminal("[CLIENT] Processing snapshot tick {} (last was {})\n",
+    //        snap_tick, last_processed_tick);
 
     const auto *data = reinterpret_cast<const network::uint8 *>(
         pkg.entity_data().data());
@@ -254,8 +264,8 @@ void PlayState::update(float dt)
     network::Bit_Reader reader(data, data_size);
 
     uint32_t entity_count = network::read_var_uint(reader);
-    printf("[CLIENT] Entity data size: %zu bytes, entity_count: %u\n",
-           data_size, entity_count);
+    // log_terminal("[CLIENT] Entity data size: {} bytes, entity_count: {} \n",
+    //        data_size, entity_count);
 
     // Build new rocket map from this snapshot (complete state replacement)
     std::unordered_map<uint32_t, network::Rocket_Entity> new_rockets;
@@ -278,9 +288,8 @@ void PlayState::update(float dt)
 
         rocket.deserialize(reader);  // Apply delta
         new_rockets[entity_id] = rocket;
-        printf("[CLIENT]   Entity %u: Rocket ID %llu at (%.1f, %.1f, %.1f)\n",
-               i, entity_id, rocket.position.x, rocket.position.y,
-               rocket.position.z);
+        // log_terminal("[CLIENT]  Entity {}  Rocket ID {} at ({:.1f}, {:.1f}, {:.1f})\n",
+        //        i, entity_id, rocket.position.x, rocket.position.y, rocket.position.z);
       }
       else
       {
@@ -342,12 +351,10 @@ void PlayState::update(float dt)
     }
 
     // Atomically replace rocket map with new snapshot data
-    printf("[CLIENT] Snapshot complete: %zu rockets received\n", new_rockets.size());
     remote_rockets = std::move(new_rockets);
     last_processed_tick = snap_tick;
   }
 
-  printf("[CLIENT] Current rocket count: %zu\n", remote_rockets.size());
 
   // --- Reconciliation ---
   if (received_server_update &&
@@ -558,6 +565,12 @@ void PlayState::render_ui()
                 player_position.z);
     ImGui::Text("vel: %.1f, %.1f, %.1f", player_velocity.x, player_velocity.y,
                 player_velocity.z);
+
+    float avg_dt = 0.f;
+    for (int i = 0; i < dt_history_count; i++)
+      avg_dt += dt_history[i];
+    avg_dt /= (float)dt_history_count;
+    ImGui::Text("%.1f fps (%.2f ms)", 1.f / avg_dt, avg_dt * 1000.f);
 
     const char *conn_str = "Disconnected";
     if (connection_phase == Connection_Phase::Connecting)
