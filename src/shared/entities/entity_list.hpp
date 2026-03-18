@@ -3,6 +3,7 @@
 #include "entities/static_entities.hpp"
 #include "entities/weapon_entity.hpp"
 #include "entities/rocket_entity.hpp"
+#include "entities/particle_emitter_entity.hpp"
 #endif
 
 
@@ -31,7 +32,9 @@
   X(WEDGE, network::Wedge_Entity, "wedge_entity", "entities/static_entities.hpp")   \
   X(STATIC_MESH, network::Static_Mesh_Entity, "static_mesh_entity",                 \
     "entities/static_entities.hpp")                                                 \
-  X(ROCKET, network::Rocket_Entity, "rocket_entity", "entities/rocket_entity.hpp")
+  X(ROCKET, network::Rocket_Entity, "rocket_entity", "entities/rocket_entity.hpp")   \
+  X(PARTICLE_EMITTER, network::Particle_Emitter_Entity, "particle_emitter",         \
+    "entities/particle_emitter_entity.hpp")
 
 
 // we override the x macro from st get the enum name.

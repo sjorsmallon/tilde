@@ -48,6 +48,9 @@ public:
   // Render UI (ImGui)
   virtual void render_ui() = 0;
 
+  // Pre-render pass (compute dispatches, etc.) — called before BeginRenderPass
+  virtual void pre_render(VkCommandBuffer cmd) {}
+
   // Render 3D scene (Vulkan)
   virtual void render_3d(VkCommandBuffer cmd) {}
 };

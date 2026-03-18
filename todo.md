@@ -1,3 +1,9 @@
+
+Sprite transparency — smoke.png has opaque backgrounds that need alpha masking
+Particle editor tool — dedicated ImGui panel for live parameter tweaking
+Easing functions — replace linear lerp with ease-in/out curves
+
+
 - player movement is dependent on delta t. that does not seem good.. is the fps too high? should we limit fps?
 - entity spawn indicators disappear upon map loading and saving.
 

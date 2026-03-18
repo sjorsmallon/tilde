@@ -80,6 +80,14 @@ void render_ui()
   }
 }
 
+void pre_render(VkCommandBuffer cmd)
+{
+  if (g_active_state)
+  {
+    g_active_state->pre_render(cmd);
+  }
+}
+
 void render_3d(VkCommandBuffer cmd)
 {
   if (g_active_state)

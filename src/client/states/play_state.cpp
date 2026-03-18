@@ -6,6 +6,7 @@
 #include <cstring>
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
+#include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/network/quantization.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -131,6 +132,15 @@ void PlayState::on_exit()
 
 void PlayState::update(float dt)
 {
+  last_dt = dt;
+
+  // Tick down explosion effects
+  for (auto &fx : explosion_effects)
+    fx.time_remaining -= dt;
+  std::erase_if(explosion_effects, [](const explosion_effect_t &fx) {
+    return fx.time_remaining <= 0.f;
+  });
+
   // ESC -> back to editor (works even if no map was loaded)
   if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
   {
@@ -318,6 +328,19 @@ void PlayState::update(float dt)
       }
     }
 
+    // Detect rockets that disappeared (hit something) and spawn explosions
+    for (const auto &[id, rocket] : remote_rockets)
+    {
+      if (new_rockets.find(id) == new_rockets.end())
+      {
+        explosion_effect_t fx;
+        fx.position = rocket.position;
+        fx.time_remaining = 1.2f;
+        fx.emitter_id = next_explosion_id++;
+        explosion_effects.push_back(fx);
+      }
+    }
+
     // Atomically replace rocket map with new snapshot data
     printf("[CLIENT] Snapshot complete: %zu rockets received\n", new_rockets.size());
     remote_rockets = std::move(new_rockets);
@@ -424,43 +447,55 @@ void PlayState::update(float dt)
 
   Move_Input move_input = move_input_from_buttons(buttons);
 
-  // --- Send input to server ---
-  if (connection_phase == Connection_Phase::Connected)
-  {
-    game::C2S_PlayerMoveCommand move_cmd;
-    move_cmd.set_command_number(command_number);
-    move_cmd.set_tick_count(command_number);
-
-    auto *va = move_cmd.mutable_viewangles();
-    va->set_pitch(player_pitch);
-    va->set_yaw(player_yaw);
-
-    move_cmd.set_buttons_bitfield(buttons);
-
-    network::send_protobuf_message(conn, move_cmd);
-  }
-
   // --- Client-side prediction (run movement physics locally) ---
-  float move_dt = (connection_phase == Connection_Phase::Connected)
-                      ? (1.0f / static_cast<float>(server_tickrate))
-                      : dt;
-
-  auto [new_pos, new_vel] =
-      player_move(move_input, ctx.session.bvh, player_position,
-                  player_velocity, basis.forward, basis.right,
-                  player_half_width, player_half_height, move_dt);
-
-  player_position = new_pos;
-  player_velocity = new_vel;
-
-  // Save command for reconciliation
+  // When connected, physics must step at the server tickrate so prediction
+  // matches the server. Accumulate real frame time and step in fixed
+  // increments; send one command per step.
   if (connection_phase == Connection_Phase::Connected)
   {
-    int idx = command_number % MAX_PENDING_COMMANDS;
-    pending_commands[idx] = {command_number,     move_input,
-                             player_yaw,         player_pitch,
-                             player_position,    player_velocity};
-    command_number++;
+    float tick_dt = 1.0f / static_cast<float>(server_tickrate);
+    physics_accumulator += dt;
+
+    while (physics_accumulator >= tick_dt)
+    {
+      physics_accumulator -= tick_dt;
+
+      // Send this tick's command to the server
+      game::C2S_PlayerMoveCommand move_cmd;
+      move_cmd.set_command_number(command_number);
+      move_cmd.set_tick_count(command_number);
+      auto *va = move_cmd.mutable_viewangles();
+      va->set_pitch(player_pitch);
+      va->set_yaw(player_yaw);
+      move_cmd.set_buttons_bitfield(buttons);
+      network::send_protobuf_message(conn, move_cmd);
+
+      auto [new_pos, new_vel] =
+          player_move(move_input, ctx.session.bvh, player_position,
+                      player_velocity, basis.forward, basis.right,
+                      player_half_width, player_half_height, tick_dt);
+
+      player_position = new_pos;
+      player_velocity = new_vel;
+
+      // Save command for reconciliation
+      int idx = command_number % MAX_PENDING_COMMANDS;
+      pending_commands[idx] = {command_number,     move_input,
+                               player_yaw,         player_pitch,
+                               player_position,    player_velocity};
+      command_number++;
+    }
+  }
+  else
+  {
+    // Disconnected: use real frame dt directly
+    auto [new_pos, new_vel] =
+        player_move(move_input, ctx.session.bvh, player_position,
+                    player_velocity, basis.forward, basis.right,
+                    player_half_width, player_half_height, dt);
+
+    player_position = new_pos;
+    player_velocity = new_vel;
   }
 
   // --- Update camera ---
@@ -902,6 +937,125 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         renderer::DrawLine(cmd, origin, tip, 0xFFFFFFFF);
       }
     }
+  }
+
+  // Draw particle emitters
+  for (const auto &entry : map.entities)
+  {
+    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
+    if (!pe) continue;
+
+    renderer::particle_emitter_params_t p{};
+    p.entity_id = pe->entity_id;
+    p.position = pe->position;
+    p.delta_time = last_dt;
+    p.emit_rate = pe->emit_rate;
+    p.max_particles = pe->max_particles;
+    p.lifetime_min = pe->lifetime_min;
+    p.lifetime_max = pe->lifetime_max;
+    p.velocity_min = pe->velocity_min;
+    p.velocity_max = pe->velocity_max;
+    p.spread = pe->spread;
+    p.gravity = pe->gravity;
+    p.drag = pe->drag;
+    p.size_start = pe->size_start;
+    p.size_end = pe->size_end;
+    p.rotation_speed_min = pe->rotation_speed_min;
+    p.rotation_speed_max = pe->rotation_speed_max;
+    p.color_start = pe->color_start;
+    p.color_end = pe->color_end;
+    p.alpha_start = pe->alpha_start;
+    p.alpha_end = pe->alpha_end;
+    renderer::DrawParticles(cmd, p);
+  }
+
+  // Draw explosion effects
+  for (const auto &fx : explosion_effects)
+  {
+    renderer::particle_emitter_params_t p{};
+    p.entity_id = fx.emitter_id;
+    p.position = fx.position;
+    p.delta_time = last_dt;
+    // Stop emitting new particles in the second half so they can fade out
+    p.emit_rate = (fx.time_remaining > 0.6f) ? 200.0f : 0.0f;
+    p.max_particles = 48;
+    p.lifetime_min = 0.3f;
+    p.lifetime_max = 0.8f;
+    p.velocity_min = 40.0f;
+    p.velocity_max = 120.0f;
+    p.spread = 2.0f;
+    p.gravity = {0, -20.0f, 0};
+    p.drag = 1.5f;
+    p.size_start = 3.0f;
+    p.size_end = 8.0f;
+    p.rotation_speed_min = -3.0f;
+    p.rotation_speed_max = 3.0f;
+    p.color_start = {1.0f, 0.8f, 0.3f};
+    p.color_end = {0.4f, 0.4f, 0.4f};
+    p.alpha_start = 0.9f;
+    p.alpha_end = 0.0f;
+    renderer::DrawParticles(cmd, p);
+  }
+}
+
+void PlayState::pre_render(VkCommandBuffer cmd)
+{
+  if (!session_loaded) return;
+
+  for (const auto &entry : map.entities)
+  {
+    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
+    if (!pe) continue;
+
+    renderer::particle_emitter_params_t p{};
+    p.entity_id = pe->entity_id;
+    p.position = pe->position;
+    p.delta_time = last_dt;
+    p.emit_rate = pe->emit_rate;
+    p.max_particles = pe->max_particles;
+    p.lifetime_min = pe->lifetime_min;
+    p.lifetime_max = pe->lifetime_max;
+    p.velocity_min = pe->velocity_min;
+    p.velocity_max = pe->velocity_max;
+    p.spread = pe->spread;
+    p.gravity = pe->gravity;
+    p.drag = pe->drag;
+    p.size_start = pe->size_start;
+    p.size_end = pe->size_end;
+    p.rotation_speed_min = pe->rotation_speed_min;
+    p.rotation_speed_max = pe->rotation_speed_max;
+    p.color_start = pe->color_start;
+    p.color_end = pe->color_end;
+    p.alpha_start = pe->alpha_start;
+    p.alpha_end = pe->alpha_end;
+    renderer::UpdateParticles(cmd, p);
+  }
+
+  // Update explosion particle effects
+  for (const auto &fx : explosion_effects)
+  {
+    renderer::particle_emitter_params_t p{};
+    p.entity_id = fx.emitter_id;
+    p.position = fx.position;
+    p.delta_time = last_dt;
+    p.emit_rate = (fx.time_remaining > 0.6f) ? 200.0f : 0.0f;
+    p.max_particles = 48;
+    p.lifetime_min = 0.3f;
+    p.lifetime_max = 0.8f;
+    p.velocity_min = 40.0f;
+    p.velocity_max = 120.0f;
+    p.spread = 2.0f;
+    p.gravity = {0, -20.0f, 0};
+    p.drag = 1.5f;
+    p.size_start = 3.0f;
+    p.size_end = 8.0f;
+    p.rotation_speed_min = -3.0f;
+    p.rotation_speed_max = 3.0f;
+    p.color_start = {1.0f, 0.8f, 0.3f};
+    p.color_end = {0.4f, 0.4f, 0.4f};
+    p.alpha_start = 0.9f;
+    p.alpha_end = 0.0f;
+    renderer::UpdateParticles(cmd, p);
   }
 }
 

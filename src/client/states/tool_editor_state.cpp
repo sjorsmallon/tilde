@@ -3,11 +3,13 @@
 #include "../../shared/debug_collision.hpp"
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
+#include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/map_baker.hpp"
 #include "../editor/editor_entity.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
+#include "../editor/tools/particle_editor_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -185,6 +187,7 @@ void ToolEditorState::on_enter()
     tools.push_back(std::make_unique<Placement_Tool>());
     tools.push_back(std::make_unique<Sculpting_Tool>());
     tools.push_back(std::make_unique<PathfindingTestTool>());
+    tools.push_back(std::make_unique<ParticleEditorTool>());
   }
 
   // Enable first tool
@@ -273,6 +276,8 @@ viewport_state_t ToolEditorState::transform_viewport_state()
 
 void ToolEditorState::update(float dt)
 {
+  last_dt = dt;
+
   // Update Camera
   ImGuiIO &io = ImGui::GetIO();
   if (!io.WantCaptureMouse)
@@ -691,7 +696,9 @@ void ToolEditorState::render_ui()
     ImGui::TextDisabled("Navmesh: not baked");
   }
 
-  ImGui::SliderFloat("Cell size", &navmesh_cell_size, 128.f, 512.f, "%.0f");
+  constexpr float navmesh_cell_size_min = 128.f;
+  constexpr float navmesh_cell_size_max = 512.f;
+  ImGui::SliderFloat("Cell size", &navmesh_cell_size, navmesh_cell_size_min, navmesh_cell_size_max, "%.0f");
 
   if (ImGui::Button("Bake Navmesh"))
   {
@@ -905,6 +912,8 @@ void ToolEditorState::render_ui()
     switch_tool(2);
   if (ImGui::Button("Pathfinding"))
     switch_tool(3);
+  if (ImGui::Button("Particles"))
+    switch_tool(4);
 
   ImGui::Separator();
   ImGui::Text("Active Tool: %d", active_tool_index);
@@ -1133,11 +1142,73 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     }
   }
 
+  // Draw particle emitters
+  for (const auto &entry : map.entities)
+  {
+    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
+    if (!pe) continue;
+
+    renderer::particle_emitter_params_t p{};
+    p.entity_id = pe->entity_id;
+    p.position = pe->position;
+    p.delta_time = last_dt;
+    p.emit_rate = pe->emit_rate;
+    p.max_particles = pe->max_particles;
+    p.lifetime_min = pe->lifetime_min;
+    p.lifetime_max = pe->lifetime_max;
+    p.velocity_min = pe->velocity_min;
+    p.velocity_max = pe->velocity_max;
+    p.spread = pe->spread;
+    p.gravity = pe->gravity;
+    p.drag = pe->drag;
+    p.size_start = pe->size_start;
+    p.size_end = pe->size_end;
+    p.rotation_speed_min = pe->rotation_speed_min;
+    p.rotation_speed_max = pe->rotation_speed_max;
+    p.color_start = pe->color_start;
+    p.color_end = pe->color_end;
+    p.alpha_start = pe->alpha_start;
+    p.alpha_end = pe->alpha_end;
+    renderer::DrawParticles(cmd, p);
+  }
+
   // Draw Tool Overlay
   VulkanOverlayRenderer overlay(cmd);
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
   {
     tools[active_tool_index]->on_draw_overlay(context, overlay);
+  }
+}
+
+void ToolEditorState::pre_render(VkCommandBuffer cmd)
+{
+  for (const auto &entry : map.entities)
+  {
+    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
+    if (!pe) continue;
+
+    renderer::particle_emitter_params_t p{};
+    p.entity_id = pe->entity_id;
+    p.position = pe->position;
+    p.delta_time = last_dt;
+    p.emit_rate = pe->emit_rate;
+    p.max_particles = pe->max_particles;
+    p.lifetime_min = pe->lifetime_min;
+    p.lifetime_max = pe->lifetime_max;
+    p.velocity_min = pe->velocity_min;
+    p.velocity_max = pe->velocity_max;
+    p.spread = pe->spread;
+    p.gravity = pe->gravity;
+    p.drag = pe->drag;
+    p.size_start = pe->size_start;
+    p.size_end = pe->size_end;
+    p.rotation_speed_min = pe->rotation_speed_min;
+    p.rotation_speed_max = pe->rotation_speed_max;
+    p.color_start = pe->color_start;
+    p.color_end = pe->color_end;
+    p.alpha_start = pe->alpha_start;
+    p.alpha_end = pe->alpha_end;
+    renderer::UpdateParticles(cmd, p);
   }
 }
 

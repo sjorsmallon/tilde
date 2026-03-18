@@ -27,6 +27,20 @@ const uint32_t aabb_frag_spv[] =
 #include "aabb.frag.spv.h"
     ;
 
+const uint32_t particle_comp_spv[] =
+#include "particle.comp.spv.h"
+    ;
+
+const uint32_t particle_vert_spv[] =
+#include "particle.vert.spv.h"
+    ;
+
+const uint32_t particle_frag_spv[] =
+#include "particle.frag.spv.h"
+    ;
+
+#include "stb_image.h"
+
 namespace client
 {
 namespace renderer
@@ -139,6 +153,8 @@ struct mat4_t
 };
 
 static mat4_t g_current_view_proj;
+static float g_camera_right[3] = {1, 0, 0};
+static float g_camera_up[3] = {0, 1, 0};
 
 // --- AABB Pipeline Globals ---
 static VkPipelineLayout g_aabb_pipeline_layout = VK_NULL_HANDLE;
@@ -240,6 +256,52 @@ static uint32_t g_current_frame = 0;
 const int MAX_FRAMES_IN_FLIGHT = 2;
 static bool g_swapchain_rebuild = false;
 static uint32_t g_image_index = 0; // Stored between BeginFrame and EndFrame
+
+// --- Particle System ---
+
+struct ParticleComputePC
+{
+  float emitter_pos[3];
+  float delta_time;
+  float gravity[3];
+  float drag;
+  float color_start[4];
+  float color_end[4];
+  float size_start, size_end, rot_speed_min, rot_speed_max;
+  float vel_min, vel_max, lifetime_min, lifetime_max;
+  uint32_t frame_seed, max_particles, spread_x1000, emit_rate_x100;
+};
+
+struct ParticleGraphicsPC
+{
+  float view_proj[16];
+  float camera_right[4]; // xyz + pad
+  float camera_up[4];    // xyz + pad
+};
+
+struct particle_emitter_gpu_t
+{
+  VkBuffer ssbo = VK_NULL_HANDLE;
+  VkDeviceMemory ssbo_memory = VK_NULL_HANDLE;
+  VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+  uint32_t max_particles = 0;
+};
+
+static VkPipeline g_particle_compute_pipeline = VK_NULL_HANDLE;
+static VkPipelineLayout g_particle_compute_layout = VK_NULL_HANDLE;
+static VkPipeline g_particle_graphics_pipeline = VK_NULL_HANDLE;
+static VkPipelineLayout g_particle_graphics_layout = VK_NULL_HANDLE;
+static VkDescriptorSetLayout g_particle_ds_layout = VK_NULL_HANDLE;
+static VkDescriptorPool g_particle_descriptor_pool = VK_NULL_HANDLE;
+
+// Sprite texture
+static VkImage g_particle_texture = VK_NULL_HANDLE;
+static VkDeviceMemory g_particle_texture_memory = VK_NULL_HANDLE;
+static VkImageView g_particle_texture_view = VK_NULL_HANDLE;
+static VkSampler g_particle_sampler = VK_NULL_HANDLE;
+
+static std::unordered_map<uint64_t, particle_emitter_gpu_t> g_particle_emitters;
+static uint32_t g_particle_frame_counter = 0;
 
 // --- Helper Functions ---
 
@@ -1672,6 +1734,411 @@ static void cleanup_mesh_buffers()
   g_mesh_buffers.clear();
 }
 
+// --- Particle System Implementation ---
+
+static VkCommandBuffer begin_single_command()
+{
+  VkCommandBufferAllocateInfo info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+  info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  info.commandPool = g_command_pool;
+  info.commandBufferCount = 1;
+  VkCommandBuffer cmd;
+  vkAllocateCommandBuffers(g_device, &info, &cmd);
+  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cmd, &begin);
+  return cmd;
+}
+
+static void end_single_command(VkCommandBuffer cmd)
+{
+  vkEndCommandBuffer(cmd);
+  VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+  submit.commandBufferCount = 1;
+  submit.pCommandBuffers = &cmd;
+  vkQueueSubmit(g_graphics_queue, 1, &submit, VK_NULL_HANDLE);
+  vkQueueWaitIdle(g_graphics_queue);
+  vkFreeCommandBuffers(g_device, g_command_pool, 1, &cmd);
+}
+
+static void create_particle_texture()
+{
+  int w, h, channels;
+  stbi_uc *pixels = stbi_load("resources/sprites/smoke.png", &w, &h, &channels, STBI_rgb_alpha);
+  if (!pixels)
+  {
+    log_error("Failed to load particle sprite: resources/sprites/smoke.png");
+    return;
+  }
+
+  VkDeviceSize image_size = w * h * 4;
+
+  // Staging buffer
+  VkBuffer staging;
+  VkDeviceMemory staging_mem;
+  create_buffer(image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                staging, staging_mem);
+  void *data;
+  vkMapMemory(g_device, staging_mem, 0, image_size, 0, &data);
+  memcpy(data, pixels, image_size);
+  vkUnmapMemory(g_device, staging_mem);
+  stbi_image_free(pixels);
+
+  // Create image
+  VkImageCreateInfo img_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  img_info.imageType = VK_IMAGE_TYPE_2D;
+  img_info.format = VK_FORMAT_R8G8B8A8_SRGB;
+  img_info.extent = {(uint32_t)w, (uint32_t)h, 1};
+  img_info.mipLevels = 1;
+  img_info.arrayLayers = 1;
+  img_info.samples = VK_SAMPLE_COUNT_1_BIT;
+  img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  img_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  vkCreateImage(g_device, &img_info, nullptr, &g_particle_texture);
+
+  VkMemoryRequirements mem_req;
+  vkGetImageMemoryRequirements(g_device, g_particle_texture, &mem_req);
+  VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  alloc.allocationSize = mem_req.size;
+  alloc.memoryTypeIndex = find_memory_type(mem_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(g_device, &alloc, nullptr, &g_particle_texture_memory);
+  vkBindImageMemory(g_device, g_particle_texture, g_particle_texture_memory, 0);
+
+  // Transition + copy
+  VkCommandBuffer cmd = begin_single_command();
+
+  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = g_particle_texture;
+  barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+  VkBufferImageCopy region{};
+  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  region.imageExtent = {(uint32_t)w, (uint32_t)h, 1};
+  vkCmdCopyBufferToImage(cmd, staging, g_particle_texture,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+  barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+  end_single_command(cmd);
+
+  vkDestroyBuffer(g_device, staging, nullptr);
+  vkFreeMemory(g_device, staging_mem, nullptr);
+
+  // Image view
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image = g_particle_texture;
+  view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view_info.format = VK_FORMAT_R8G8B8A8_SRGB;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  vkCreateImageView(g_device, &view_info, nullptr, &g_particle_texture_view);
+
+  // Sampler
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter = VK_FILTER_LINEAR;
+  sampler_info.minFilter = VK_FILTER_LINEAR;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  vkCreateSampler(g_device, &sampler_info, nullptr, &g_particle_sampler);
+}
+
+static void create_particle_descriptor_layout()
+{
+  VkDescriptorSetLayoutBinding bindings[2]{};
+
+  // Binding 0: SSBO (compute + vertex)
+  bindings[0].binding = 0;
+  bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  bindings[0].descriptorCount = 1;
+  bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+
+  // Binding 1: Sprite texture (fragment)
+  bindings[1].binding = 1;
+  bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  bindings[1].descriptorCount = 1;
+  bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  layout_info.bindingCount = 2;
+  layout_info.pBindings = bindings;
+  vkCreateDescriptorSetLayout(g_device, &layout_info, nullptr, &g_particle_ds_layout);
+
+  // Descriptor pool (enough for 32 emitters)
+  VkDescriptorPoolSize pool_sizes[] = {
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32},
+  };
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  pool_info.maxSets = 32;
+  pool_info.poolSizeCount = 2;
+  pool_info.pPoolSizes = pool_sizes;
+  vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_particle_descriptor_pool);
+}
+
+static void create_particle_compute_pipeline()
+{
+  VkShaderModule comp_module;
+  VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  module_info.codeSize = sizeof(particle_comp_spv);
+  module_info.pCode = particle_comp_spv;
+  vkCreateShaderModule(g_device, &module_info, nullptr, &comp_module);
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  push_range.size = sizeof(ParticleComputePC);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount = 1;
+  layout_info.pSetLayouts = &g_particle_ds_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges = &push_range;
+  vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_particle_compute_layout);
+
+  VkComputePipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+  pipeline_info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+  pipeline_info.stage.module = comp_module;
+  pipeline_info.stage.pName = "main";
+  pipeline_info.layout = g_particle_compute_layout;
+  vkCreateComputePipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &g_particle_compute_pipeline);
+
+  vkDestroyShaderModule(g_device, comp_module, nullptr);
+}
+
+static void create_particle_graphics_pipeline()
+{
+  VkShaderModule vert_module, frag_module;
+
+  VkShaderModuleCreateInfo vert_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  vert_info.codeSize = sizeof(particle_vert_spv);
+  vert_info.pCode = particle_vert_spv;
+  vkCreateShaderModule(g_device, &vert_info, nullptr, &vert_module);
+
+  VkShaderModuleCreateInfo frag_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  frag_info.codeSize = sizeof(particle_frag_spv);
+  frag_info.pCode = particle_frag_spv;
+  vkCreateShaderModule(g_device, &frag_info, nullptr, &frag_module);
+
+  VkPipelineShaderStageCreateInfo stages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_VERTEX_BIT, vert_module, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr},
+  };
+
+  // No vertex input — vertices generated from gl_VertexIndex/gl_InstanceIndex + SSBO
+  VkPipelineVertexInputStateCreateInfo vertex_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_NONE; // Billboards face camera
+  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+  depth_stencil.depthTestEnable = VK_TRUE;
+  depth_stencil.depthWriteEnable = VK_FALSE; // Don't write depth — transparent
+  depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+
+  // Alpha blending
+  VkPipelineColorBlendAttachmentState blend_attachment{};
+  blend_attachment.blendEnable = VK_TRUE;
+  blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+  blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+  blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+  blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+  VkPipelineColorBlendStateCreateInfo blend_state{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  blend_state.attachmentCount = 1;
+  blend_state.pAttachments = &blend_attachment;
+
+  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates = dynamic_states;
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_range.size = sizeof(ParticleGraphicsPC);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount = 1;
+  layout_info.pSetLayouts = &g_particle_ds_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges = &push_range;
+  vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_particle_graphics_layout);
+
+  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipeline_info.stageCount = 2;
+  pipeline_info.pStages = stages;
+  pipeline_info.pVertexInputState = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState = &multisampling;
+  pipeline_info.pDepthStencilState = &depth_stencil;
+  pipeline_info.pColorBlendState = &blend_state;
+  pipeline_info.pDynamicState = &dynamic_state;
+  pipeline_info.layout = g_particle_graphics_layout;
+  pipeline_info.renderPass = g_render_pass;
+  pipeline_info.subpass = 0;
+
+  vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &g_particle_graphics_pipeline);
+
+  vkDestroyShaderModule(g_device, vert_module, nullptr);
+  vkDestroyShaderModule(g_device, frag_module, nullptr);
+}
+
+static void init_particle_system()
+{
+  create_particle_texture();
+  create_particle_descriptor_layout();
+  create_particle_compute_pipeline();
+  create_particle_graphics_pipeline();
+}
+
+static particle_emitter_gpu_t *get_or_create_emitter_gpu(uint64_t entity_id, uint32_t max_particles)
+{
+  auto it = g_particle_emitters.find(entity_id);
+  if (it != g_particle_emitters.end())
+  {
+    if (it->second.max_particles == max_particles)
+      return &it->second;
+    // Size changed — destroy old
+    vkDeviceWaitIdle(g_device);
+    vkDestroyBuffer(g_device, it->second.ssbo, nullptr);
+    vkFreeMemory(g_device, it->second.ssbo_memory, nullptr);
+    vkFreeDescriptorSets(g_device, g_particle_descriptor_pool, 1, &it->second.descriptor_set);
+    g_particle_emitters.erase(it);
+  }
+
+  particle_emitter_gpu_t gpu{};
+  gpu.max_particles = max_particles;
+
+  // Create SSBO (64 bytes per particle: 4 x vec4)
+  VkDeviceSize ssbo_size = max_particles * 64;
+  create_buffer(ssbo_size,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                gpu.ssbo, gpu.ssbo_memory);
+
+  // Initialize all particles as dead (life = 1.0 in pos_life.w)
+  // Create a staging buffer with dead particles
+  VkBuffer staging;
+  VkDeviceMemory staging_mem;
+  create_buffer(ssbo_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                staging, staging_mem);
+  void *data;
+  vkMapMemory(g_device, staging_mem, 0, ssbo_size, 0, &data);
+  // Zero everything, then set life (pos_life.w = float at offset 12) to 1.0 for each particle
+  memset(data, 0, ssbo_size);
+  float *fdata = (float *)data;
+  for (uint32_t i = 0; i < max_particles; i++)
+  {
+    fdata[i * 16 + 3] = 1.0f; // pos_life.w = dead
+  }
+  vkUnmapMemory(g_device, staging_mem);
+
+  VkCommandBuffer cmd = begin_single_command();
+  VkBufferCopy copy{};
+  copy.size = ssbo_size;
+  vkCmdCopyBuffer(cmd, staging, gpu.ssbo, 1, &copy);
+  end_single_command(cmd);
+  vkDestroyBuffer(g_device, staging, nullptr);
+  vkFreeMemory(g_device, staging_mem, nullptr);
+
+  // Allocate descriptor set
+  VkDescriptorSetAllocateInfo ds_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  ds_alloc.descriptorPool = g_particle_descriptor_pool;
+  ds_alloc.descriptorSetCount = 1;
+  ds_alloc.pSetLayouts = &g_particle_ds_layout;
+  vkAllocateDescriptorSets(g_device, &ds_alloc, &gpu.descriptor_set);
+
+  // Write descriptor set
+  VkDescriptorBufferInfo buf_info{};
+  buf_info.buffer = gpu.ssbo;
+  buf_info.offset = 0;
+  buf_info.range = ssbo_size;
+
+  VkDescriptorImageInfo img_info{};
+  img_info.sampler = g_particle_sampler;
+  img_info.imageView = g_particle_texture_view;
+  img_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet writes[2]{};
+  writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  writes[0].dstSet = gpu.descriptor_set;
+  writes[0].dstBinding = 0;
+  writes[0].descriptorCount = 1;
+  writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  writes[0].pBufferInfo = &buf_info;
+
+  writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  writes[1].dstSet = gpu.descriptor_set;
+  writes[1].dstBinding = 1;
+  writes[1].descriptorCount = 1;
+  writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[1].pImageInfo = &img_info;
+
+  vkUpdateDescriptorSets(g_device, 2, writes, 0, nullptr);
+
+  g_particle_emitters[entity_id] = gpu;
+  return &g_particle_emitters[entity_id];
+}
+
+static void cleanup_particle_system()
+{
+  for (auto &[id, gpu] : g_particle_emitters)
+  {
+    vkDestroyBuffer(g_device, gpu.ssbo, nullptr);
+    vkFreeMemory(g_device, gpu.ssbo_memory, nullptr);
+  }
+  g_particle_emitters.clear();
+
+  if (g_particle_compute_pipeline) vkDestroyPipeline(g_device, g_particle_compute_pipeline, nullptr);
+  if (g_particle_compute_layout) vkDestroyPipelineLayout(g_device, g_particle_compute_layout, nullptr);
+  if (g_particle_graphics_pipeline) vkDestroyPipeline(g_device, g_particle_graphics_pipeline, nullptr);
+  if (g_particle_graphics_layout) vkDestroyPipelineLayout(g_device, g_particle_graphics_layout, nullptr);
+  if (g_particle_ds_layout) vkDestroyDescriptorSetLayout(g_device, g_particle_ds_layout, nullptr);
+  if (g_particle_descriptor_pool) vkDestroyDescriptorPool(g_device, g_particle_descriptor_pool, nullptr);
+  if (g_particle_texture_view) vkDestroyImageView(g_device, g_particle_texture_view, nullptr);
+  if (g_particle_texture) vkDestroyImage(g_device, g_particle_texture, nullptr);
+  if (g_particle_texture_memory) vkFreeMemory(g_device, g_particle_texture_memory, nullptr);
+  if (g_particle_sampler) vkDestroySampler(g_device, g_particle_sampler, nullptr);
+}
+
 static void init_font()
 {
   // No-op
@@ -2011,6 +2478,14 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
 
   g_current_view_proj = mat4_t::mult(proj, viewMat);
 
+  // Extract camera right and up from view matrix (first two rows)
+  g_camera_right[0] = viewMat.m[0];
+  g_camera_right[1] = viewMat.m[4];
+  g_camera_right[2] = viewMat.m[8];
+  g_camera_up[0] = viewMat.m[1];
+  g_camera_up[1] = viewMat.m[5];
+  g_camera_up[2] = viewMat.m[9];
+
   // TODO: Use view.camera and render entities from registry
   // logic to iterate and draw would go here
   (void)registry; // unused for now
@@ -2233,6 +2708,7 @@ bool Init(SDL_Window *window)
   create_line_pipeline();
   create_line_mesh();
   create_debug_face_pipeline();
+  init_particle_system();
 
   g_command_buffers.resize(MAX_FRAMES_IN_FLIGHT);
   VkCommandBufferAllocateInfo alloc_info{};
@@ -2335,6 +2811,7 @@ void Shutdown()
   ImGui::DestroyContext();
 
   cleanup_swapchain();
+  cleanup_particle_system();
   vkDestroyDescriptorPool(g_device, g_descriptor_pool, nullptr);
 
   // Font cleanup
@@ -2560,6 +3037,105 @@ void EndFrame(VkCommandBuffer cmd)
 }
 
 VkDevice GetDevice() { return g_device; }
+
+void UpdateParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
+{
+  if (g_particle_compute_pipeline == VK_NULL_HANDLE) return;
+  if (params.max_particles == 0) return;
+
+  particle_emitter_gpu_t *gpu = get_or_create_emitter_gpu(params.entity_id, params.max_particles);
+  if (!gpu) return;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_particle_compute_pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_particle_compute_layout,
+                          0, 1, &gpu->descriptor_set, 0, nullptr);
+
+  g_particle_frame_counter++;
+
+  ParticleComputePC pc{};
+  pc.emitter_pos[0] = params.position.x;
+  pc.emitter_pos[1] = params.position.y;
+  pc.emitter_pos[2] = params.position.z;
+  pc.delta_time = params.delta_time;
+  pc.gravity[0] = params.gravity.x;
+  pc.gravity[1] = params.gravity.y;
+  pc.gravity[2] = params.gravity.z;
+  pc.drag = params.drag;
+  pc.color_start[0] = params.color_start.x;
+  pc.color_start[1] = params.color_start.y;
+  pc.color_start[2] = params.color_start.z;
+  pc.color_start[3] = params.alpha_start;
+  pc.color_end[0] = params.color_end.x;
+  pc.color_end[1] = params.color_end.y;
+  pc.color_end[2] = params.color_end.z;
+  pc.color_end[3] = params.alpha_end;
+  pc.size_start = params.size_start;
+  pc.size_end = params.size_end;
+  pc.rot_speed_min = params.rotation_speed_min;
+  pc.rot_speed_max = params.rotation_speed_max;
+  pc.vel_min = params.velocity_min;
+  pc.vel_max = params.velocity_max;
+  pc.lifetime_min = params.lifetime_min;
+  pc.lifetime_max = params.lifetime_max;
+  pc.frame_seed = g_particle_frame_counter * 7919 + params.entity_id * 104729;
+  pc.max_particles = params.max_particles;
+  pc.spread_x1000 = (uint32_t)(params.spread * 1000.0f);
+  pc.emit_rate_x100 = (uint32_t)(params.emit_rate * 100.0f);
+
+  vkCmdPushConstants(cmd, g_particle_compute_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+                     0, sizeof(ParticleComputePC), &pc);
+
+  uint32_t groups = (params.max_particles + 63) / 64;
+  vkCmdDispatch(cmd, groups, 1, 1);
+
+  // Memory barrier: compute write -> vertex read
+  VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+  barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  barrier.buffer = gpu->ssbo;
+  barrier.size = VK_WHOLE_SIZE;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                       0, 0, nullptr, 1, &barrier, 0, nullptr);
+}
+
+void DrawParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
+{
+  if (g_particle_graphics_pipeline == VK_NULL_HANDLE) return;
+  if (params.max_particles == 0) return;
+
+  auto it = g_particle_emitters.find(params.entity_id);
+  if (it == g_particle_emitters.end()) return;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_particle_graphics_pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_particle_graphics_layout,
+                          0, 1, &it->second.descriptor_set, 0, nullptr);
+
+  ParticleGraphicsPC pc{};
+  memcpy(pc.view_proj, g_current_view_proj.m, sizeof(float) * 16);
+
+  // Extract camera right and up from the view-projection matrix's inverse
+  // Actually, we need these from the view matrix. The view matrix rows give us
+  // camera axes. g_current_view_proj = proj * view, so we can't easily extract.
+  // Instead, we'll store camera vectors when set_viewport / render_view is called.
+  // For now, extract from the view-proj matrix inverse... or better, we just
+  // store the camera vectors as static globals.
+  pc.camera_right[0] = g_camera_right[0];
+  pc.camera_right[1] = g_camera_right[1];
+  pc.camera_right[2] = g_camera_right[2];
+  pc.camera_up[0] = g_camera_up[0];
+  pc.camera_up[1] = g_camera_up[1];
+  pc.camera_up[2] = g_camera_up[2];
+
+  vkCmdPushConstants(cmd, g_particle_graphics_layout, VK_SHADER_STAGE_VERTEX_BIT,
+                     0, sizeof(ParticleGraphicsPC), &pc);
+
+  // 6 vertices per quad, one instance per particle
+  vkCmdDraw(cmd, 6, params.max_particles, 0, 0);
+}
 
 } // namespace renderer
 } // namespace client

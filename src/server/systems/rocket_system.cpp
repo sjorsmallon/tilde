@@ -3,6 +3,7 @@
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/rocket_entity.hpp"
 #include "../../shared/components/components.hpp"
+#include "../../shared/collision_detection.hpp"
 
 #include "../../shared/linalg.hpp"
 
@@ -35,6 +36,24 @@ void update_rockets(shared::game_session_t &session, float dt)
     {
       to_remove.push_back(i);
       continue;
+    }
+
+    // Check collision with map geometry via BVH
+    if (!session.bvh.nodes.empty())
+    {
+      float radius = rocket.hitbox.size.x;
+      AABB rocket_aabb;
+      rocket_aabb.min = rocket.position - vec3f{radius, radius, radius};
+      rocket_aabb.max = rocket.position + vec3f{radius, radius, radius};
+
+      std::vector<const BVH_Primitive *> overlapping;
+      bvh_intersect_aabb(session.bvh, rocket_aabb, overlapping);
+
+      if (!overlapping.empty())
+      {
+        to_remove.push_back(i);
+        continue;
+      }
     }
 
     if (!players)

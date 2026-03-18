@@ -25,6 +25,7 @@ public:
   void on_exit() override;
   void update(float dt) override;
   void render_ui() override;
+  void pre_render(VkCommandBuffer cmd) override;
   void render_3d(VkCommandBuffer cmd) override;
 
 private:
@@ -105,11 +106,25 @@ private:
   std::unordered_map<uint32_t, network::Rocket_Entity> remote_rockets;
   uint32_t last_processed_tick = 0;
 
+  // Physics accumulator — physics steps at server tickrate, not render rate
+  float physics_accumulator = 0.f;
+
   // Mouse capture toggle
   bool mouse_captured = true;
 
   // When true, map geometry (AABBs/wedges) is not rendered
   bool hide_geometry = false;
+  float last_dt = 0.016f;
+
+  // Client-side explosion particle effects (spawned when rockets disappear)
+  struct explosion_effect_t
+  {
+    vec3f position;
+    float time_remaining; // seconds left
+    uint64_t emitter_id;  // fake entity_id for the renderer
+  };
+  std::vector<explosion_effect_t> explosion_effects;
+  uint64_t next_explosion_id = 900000; // start high to avoid collisions
 
   // Stable pointer to the network connection; set once in update() and used
   // by the console network-forwarder lambda which outlives the stack frame.

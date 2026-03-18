@@ -37,7 +37,9 @@ void request_exit();
 // Render UI for the current state
 void render_ui();
 
-// Render 3D for the current state
+// Pre-render pass (compute dispatches)
+void pre_render(VkCommandBuffer cmd);
+
 // Render 3D for the current state
 void render_3d(VkCommandBuffer cmd);
 

@@ -94,6 +94,7 @@ add_library(game_shared STATIC
     src/shared/entities/weapon_entity.cpp
     src/shared/entities/static_entities.cpp
     src/shared/entities/rocket_entity.cpp
+    src/shared/entities/particle_emitter_entity.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
@@ -155,6 +156,9 @@ file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/aabb.vert
     ${SHADER_SRC_DIR}/aabb.frag
+    ${SHADER_SRC_DIR}/particle.comp
+    ${SHADER_SRC_DIR}/particle.vert
+    ${SHADER_SRC_DIR}/particle.frag
 )
 set(SHADER_HEADERS "")
 
@@ -181,7 +185,9 @@ add_library(game_client SHARED
     src/client/editor/tools/placement_tool.cpp
     src/client/editor/tools/sculpting_tool.cpp
     src/client/editor/tools/pathfinding_test_tool.cpp
+    src/client/editor/tools/particle_editor_tool.cpp
     src/client/editor/entity_inspector.cpp
+    src/client/editor/entity_editor_traits.cpp
     src/client/input.cpp
     src/client/renderer.cpp
     ${SHADER_HEADERS}

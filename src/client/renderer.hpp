@@ -130,5 +130,32 @@ void EndFrame(VkCommandBuffer cmd);
 
 VkDevice GetDevice(); // Helper if needed
 
+// --- Particle System ---
+
+struct particle_emitter_params_t
+{
+  uint64_t entity_id;
+  linalg::vec3 position;
+  float delta_time;
+  float emit_rate;
+  uint32_t max_particles;
+  float lifetime_min, lifetime_max;
+  float velocity_min, velocity_max;
+  float spread;
+  linalg::vec3 gravity;
+  float drag;
+  float size_start, size_end;
+  float rotation_speed_min, rotation_speed_max;
+  linalg::vec3 color_start, color_end;
+  float alpha_start, alpha_end;
+};
+
+// Dispatch compute shader to update particles for one emitter.
+// Call BEFORE BeginRenderPass.
+void UpdateParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params);
+
+// Draw particles for one emitter. Call INSIDE render pass.
+void DrawParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params);
+
 } // namespace renderer
 } // namespace client

@@ -1,0 +1,119 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+struct Particle {
+    vec4 pos_life;        // xyz = position, w = normalized_life (0..1, >=1 = dead)
+    vec4 vel_maxlife;     // xyz = velocity, w = max_lifetime_seconds
+    vec4 rot_size_sprite; // x = rotation, y = rot_speed, z = current_size, w = sprite_index
+    vec4 color;           // current rgba
+};
+
+layout(std430, set = 0, binding = 0) buffer ParticleBuffer {
+    Particle particles[];
+};
+
+layout(push_constant) uniform Params {
+    vec4 emitter_pos_dt;    // xyz = emitter position, w = delta_time
+    vec4 gravity_drag;      // xyz = gravity, w = drag
+    vec4 color_start;       // rgba
+    vec4 color_end;         // rgba
+    vec4 size_rot;          // x = size_start, y = size_end, z = rot_speed_min, w = rot_speed_max
+    vec4 vel_life;          // x = vel_min, y = vel_max, z = lifetime_min, w = lifetime_max
+    uvec4 seed_count;       // x = frame_seed, y = max_particles, z = spread_x1000, w = emit_rate_x100
+} params;
+
+uint hash(uint x) {
+    x ^= x >> 17u;
+    x *= 0xbf324c81u;
+    x ^= x >> 11u;
+    x *= 0x9a812cd5u;
+    x ^= x >> 15u;
+    return x;
+}
+
+float rand01(uint seed) {
+    return float(hash(seed)) / 4294967295.0;
+}
+
+// Easing functions — replace linear lerp for smoother particle animations
+float ease_out_quad(float t) {
+    return t * (2.0 - t);
+}
+
+float ease_in_quad(float t) {
+    return t * t;
+}
+
+float ease_in_out_cubic(float t) {
+    return t < 0.5
+        ? 4.0 * t * t * t
+        : 1.0 - pow(-2.0 * t + 2.0, 3.0) / 2.0;
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= params.seed_count.y) return;
+
+    Particle p = particles[idx];
+    float dt = params.emitter_pos_dt.w;
+    float spread = float(params.seed_count.z) / 1000.0;
+    float emit_rate = float(params.seed_count.w) / 100.0;
+
+    // Dead particle — try to respawn
+    if (p.pos_life.w >= 1.0) {
+        uint seed = hash(idx + params.seed_count.x);
+        float chance = emit_rate * dt / float(params.seed_count.y);
+        if (rand01(seed) > chance) return; // stay dead
+
+        // Respawn at emitter position
+        p.pos_life.xyz = params.emitter_pos_dt.xyz;
+        p.pos_life.w = 0.0;
+
+        // Random velocity — mostly upward with spread
+        vec3 dir;
+        dir.x = (rand01(seed + 1u) - 0.5) * spread;
+        dir.y = 1.0;
+        dir.z = (rand01(seed + 2u) - 0.5) * spread;
+        dir = normalize(dir);
+
+        float speed = mix(params.vel_life.x, params.vel_life.y, rand01(seed + 3u));
+        p.vel_maxlife.xyz = dir * speed;
+        p.vel_maxlife.w = mix(params.vel_life.z, params.vel_life.w, rand01(seed + 4u));
+
+        // Random initial rotation and rotation speed
+        p.rot_size_sprite.x = rand01(seed + 5u) * 6.28318;
+        p.rot_size_sprite.y = mix(params.size_rot.z, params.size_rot.w, rand01(seed + 6u));
+        p.rot_size_sprite.z = params.size_rot.x; // start size
+        p.rot_size_sprite.w = float(hash(seed + 7u) % 9u); // sprite 0-8
+
+        p.color = params.color_start;
+
+        particles[idx] = p;
+        return;
+    }
+
+    // Advance lifetime
+    float life_delta = dt / max(p.vel_maxlife.w, 0.001);
+    p.pos_life.w = min(p.pos_life.w + life_delta, 1.0);
+    float t = p.pos_life.w;
+
+    // Physics
+    p.vel_maxlife.xyz += params.gravity_drag.xyz * dt;
+    p.vel_maxlife.xyz *= max(1.0 - params.gravity_drag.w * dt, 0.0);
+    p.pos_life.xyz += p.vel_maxlife.xyz * dt;
+
+    // Rotation
+    p.rot_size_sprite.x += p.rot_size_sprite.y * dt;
+
+    // Interpolate size and color over lifetime with easing
+    // Size grows with ease-out (fast start, slow finish) for natural expansion
+    float size_t = ease_out_quad(t);
+    p.rot_size_sprite.z = mix(params.size_rot.x, params.size_rot.y, size_t);
+
+    // Color/alpha transitions with ease-in-out for smooth fade
+    float color_t = ease_in_out_cubic(t);
+    p.color = mix(params.color_start, params.color_end, color_t);
+
+    particles[idx] = p;
+}

@@ -7,8 +7,11 @@
 
 #include <chrono>
 #include <iostream>
+#include <thread>
 
 cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
+cvar::CVar<float> cl_maxfps("cl_maxfps", 1000.0f, "Maximum client framerate (0 = unlimited)");
+extern cvar::CVar<float> cl_timescale;
 cvar::CVar<std::string> map("map", "dm_aabb", "Map to load", cvar::flags::None,
                             [](const std::string &val)
                             { log_terminal("Map changed to: {}", val); });
@@ -49,6 +52,12 @@ int main(int argc, char *argv[])
     if (frame_time > 0.25)
       frame_time = 0.25;
 
+    // Apply time scale
+    double timescale = static_cast<double>(cl_timescale.Get());
+    if (timescale < 0.01)
+      timescale = 0.01;
+    frame_time *= timescale;
+
     // Client frame (renders at display rate)
     if (!client::Tick())
     {
@@ -63,6 +72,22 @@ int main(int argc, char *argv[])
     {
       server::Tick();
       server_accumulator -= tick_interval;
+    }
+
+    // Framerate cap
+    float maxfps = cl_maxfps.Get();
+    if (maxfps > 0.f)
+    {
+      double min_frame_time = 1.0 / static_cast<double>(maxfps);
+      auto frame_end = std::chrono::high_resolution_clock::now();
+      double elapsed =
+          std::chrono::duration<double>(frame_end - previous_time).count();
+      if (elapsed < min_frame_time)
+      {
+        double sleep_us = (min_frame_time - elapsed) * 1000000.0;
+        std::this_thread::sleep_for(
+            std::chrono::microseconds(static_cast<int64_t>(sleep_us)));
+      }
     }
   }
 

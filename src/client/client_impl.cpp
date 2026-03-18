@@ -4,6 +4,7 @@
 #include "renderer.hpp"
 #include "state_manager.hpp"
 
+#include <chrono>
 #include <iostream>
 #include <string>
 
@@ -14,10 +15,14 @@
 #include "log.hpp"
 #include "timed_function.hpp"
 
+cvar::CVar<float> cl_timescale("cl_timescale", 1.0f, "Time scale factor (0.5 = slow-mo, 2.0 = fast)");
+
 namespace client
 {
 
 static SDL_Window *g_window = nullptr;
+static std::chrono::high_resolution_clock::time_point g_last_tick_time;
+static bool g_tick_time_initialized = false;
 
 bool Init()
 {
@@ -102,8 +107,29 @@ bool Tick()
     // Or just let `ProcessEvent` handle it.
   }
 
+  // Compute real dt
+  auto now = std::chrono::high_resolution_clock::now();
+  if (!g_tick_time_initialized)
+  {
+    g_last_tick_time = now;
+    g_tick_time_initialized = true;
+  }
+  float dt = static_cast<float>(
+      std::chrono::duration<double>(now - g_last_tick_time).count());
+  g_last_tick_time = now;
+  if (dt > 0.25f)
+    dt = 0.25f;
+  if (dt < 0.0001f)
+    dt = 0.0001f;
+
+  // Apply time scale
+  float timescale = cl_timescale.Get();
+  if (timescale < 0.01f)
+    timescale = 0.01f;
+  dt *= timescale;
+
   // Update state
-  if (!state_manager::update(0.016f))
+  if (!state_manager::update(dt))
   {
     return false;
   }
@@ -124,6 +150,7 @@ bool Tick()
   }
   client::Console::Get().Draw();
 
+  state_manager::pre_render(cmd);
   renderer::BeginRenderPass(cmd);
   state_manager::render_3d(cmd);
   renderer::EndFrame(cmd);

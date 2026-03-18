@@ -22,6 +22,7 @@ public:
   void on_exit() override;
   void update(float dt) override;
   void render_ui() override;
+  void pre_render(VkCommandBuffer cmd) override;
   void render_3d(VkCommandBuffer cmd) override;
 
 private:
@@ -59,6 +60,7 @@ private:
 
   // When true, map geometry (AABBs/wedges/meshes) is not rendered.
   bool hide_geometry = false;
+  float last_dt = 0.016f;
 
   float navmesh_cell_size = 256.f;
 
