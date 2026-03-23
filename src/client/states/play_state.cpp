@@ -3,6 +3,7 @@
 #include "../../shared/asset.hpp"
 #include "../../shared/cvar.hpp"
 #include "../../shared/debug_collision.hpp"
+#include <cmath>
 #include <cstring>
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
@@ -402,20 +403,24 @@ void PlayState::update(float dt)
     reconc_error_mag = error_mag;
 
     constexpr float SNAP_THRESHOLD = 5.0f;
-    constexpr float SMOOTH_FACTOR = 0.1f;
 
     if (error_mag > SNAP_THRESHOLD)
     {
-      player_position = reconciled_pos;
-      player_velocity = reconciled_vel;
+      // Too far off — hard snap, no visual smoothing
+      visual_error_offset = {0, 0, 0};
     }
-    else if (error_mag > 0.1f)
+    else
     {
-      player_position.x += error.x * SMOOTH_FACTOR;
-      player_position.y += error.y * SMOOTH_FACTOR;
-      player_position.z += error.z * SMOOTH_FACTOR;
-      player_velocity = reconciled_vel;
+      // Accumulate the visual debt: camera stays where it was,
+      // but physics snaps to the correct position
+      visual_error_offset.x += player_position.x - reconciled_pos.x;
+      visual_error_offset.y += player_position.y - reconciled_pos.y;
+      visual_error_offset.z += player_position.z - reconciled_pos.z;
     }
+
+    // Always snap physics to reconciled state
+    player_position = reconciled_pos;
+    player_velocity = reconciled_vel;
   }
 
   const bool console_open = Console::Get().IsOpen();
@@ -509,10 +514,26 @@ void PlayState::update(float dt)
     player_velocity = new_vel;
   }
 
-  // --- Update camera ---
-  camera.x = player_position.x;
-  camera.y = player_position.y + 28.f;
-  camera.z = player_position.z;
+  // --- Decay visual error offset (frame-rate independent) ---
+  {
+    constexpr float SMOOTH_SPEED = 16.0f; // higher = faster correction
+    float decay = std::exp(-SMOOTH_SPEED * dt);
+    visual_error_offset.x *= decay;
+    visual_error_offset.y *= decay;
+    visual_error_offset.z *= decay;
+
+    // Zero out when negligible to avoid permanent micro-drift
+    if (linalg::length(visual_error_offset) < 0.001f)
+      visual_error_offset = {0, 0, 0};
+  }
+
+  // --- Update camera (physics position + visual smoothing offset) ---
+  // Extrapolate by the leftover physics accumulator so the camera moves
+  // smoothly between fixed-rate physics ticks instead of stuttering.
+  float extrap = (connection_phase == Connection_Phase::Connected) ? physics_accumulator : 0.f;
+  camera.x = player_position.x + player_velocity.x * extrap + visual_error_offset.x;
+  camera.y = player_position.y + player_velocity.y * extrap + visual_error_offset.y + 28.f;
+  camera.z = player_position.z + player_velocity.z * extrap + visual_error_offset.z;
 
   // --- Interpolate remote players ---
   float tick_interval = 1.0f / static_cast<float>(server_tickrate);
@@ -590,6 +611,13 @@ void PlayState::render_ui()
                          reconc_error_mag, reconc_error.x, reconc_error.y, reconc_error.z);
     else
       ImGui::Text("reconc err: %7.3f", reconc_error_mag);
+
+    float vis_offset_mag = linalg::length(visual_error_offset);
+    if (vis_offset_mag > 0.01f)
+      ImGui::TextColored(ImVec4(1, 1, 0.3f, 1), "vis offset: %7.3f (%7.2f, %7.2f, %7.2f)",
+                         vis_offset_mag, visual_error_offset.x, visual_error_offset.y, visual_error_offset.z);
+    else
+      ImGui::Text("vis offset: %7.3f", vis_offset_mag);
 
     ImGui::Separator();
     bool show_collisions = debug_collision::debug_show_collisions.Get();

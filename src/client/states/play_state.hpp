@@ -78,6 +78,9 @@ private:
   int last_server_ack_command = -1;
   bool received_server_update = false;
 
+  // Visual smoothing offset: decays over time, applied only to camera
+  vec3f visual_error_offset = {0, 0, 0};
+
   // Debug: reconciliation error tracking
   vec3f reconc_error = {0, 0, 0};
   float reconc_error_mag = 0.f;
