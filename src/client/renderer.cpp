@@ -27,6 +27,22 @@ const uint32_t aabb_frag_spv[] =
 #include "aabb.frag.spv.h"
     ;
 
+const uint32_t unlit_vert_spv[] =
+#include "unlit.vert.spv.h"
+    ;
+
+const uint32_t unlit_frag_spv[] =
+#include "unlit.frag.spv.h"
+    ;
+
+const uint32_t lit_vert_spv[] =
+#include "lit.vert.spv.h"
+    ;
+
+const uint32_t lit_frag_spv[] =
+#include "lit.frag.spv.h"
+    ;
+
 const uint32_t particle_comp_spv[] =
 #include "particle.comp.spv.h"
     ;
@@ -168,6 +184,11 @@ static VkDeviceMemory g_aabb_index_memory = VK_NULL_HANDLE;
 static VkPipeline g_mesh_pipeline = VK_NULL_HANDLE;
 static VkPipeline g_mesh_wireframe_pipeline = VK_NULL_HANDLE;
 
+// Material pipelines (lit/unlit)
+static VkPipeline g_unlit_pipeline = VK_NULL_HANDLE;
+static VkPipeline g_lit_pipeline = VK_NULL_HANDLE;
+static VkPipelineLayout g_lit_pipeline_layout = VK_NULL_HANDLE;
+
 // Mesh buffer management
 struct mesh_gpu_buffer_t
 {
@@ -195,6 +216,17 @@ struct PushConstants
   uint32_t random_seed;
   uint32_t use_random_color;
 };
+
+// Push constants for the lit pipeline (128 bytes — the guaranteed minimum).
+// mat3 in GLSL push constants stores each column padded to vec4 (16 bytes).
+struct LitPushConstants
+{
+  float mvp[16];           // 64 bytes
+  float color[4];          // 16 bytes
+  float normal_mat_c0[4];  // 16 bytes (column 0 of 3x3 rotation, w=0)
+  float normal_mat_c1[4];  // 16 bytes
+  float normal_mat_c2[4];  // 16 bytes
+};                         // = 128 bytes total
 
 // --- Globals (Internal) ---
 
@@ -1614,6 +1646,182 @@ static void create_mesh_pipeline()
   vkDestroyShaderModule(g_device, fragShaderModule, nullptr);
 }
 
+// Helper: create a material pipeline (shared boilerplate for unlit/lit).
+// Returns the created pipeline handle. Caller passes shaders, layout, and output.
+static VkPipeline create_material_pipeline_impl(
+    const uint32_t *vert_spv, size_t vert_size,
+    const uint32_t *frag_spv, size_t frag_size,
+    VkPipelineLayout layout)
+{
+  VkShaderModule vertModule, fragModule;
+
+  VkShaderModuleCreateInfo vertInfo{};
+  vertInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  vertInfo.codeSize = vert_size;
+  vertInfo.pCode = vert_spv;
+  if (vkCreateShaderModule(g_device, &vertInfo, nullptr, &vertModule) != VK_SUCCESS)
+  {
+    log_error("Failed to create material vert shader module");
+    return VK_NULL_HANDLE;
+  }
+
+  VkShaderModuleCreateInfo fragInfo{};
+  fragInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  fragInfo.codeSize = frag_size;
+  fragInfo.pCode = frag_spv;
+  if (vkCreateShaderModule(g_device, &fragInfo, nullptr, &fragModule) != VK_SUCCESS)
+  {
+    log_error("Failed to create material frag shader module");
+    vkDestroyShaderModule(g_device, vertModule, nullptr);
+    return VK_NULL_HANDLE;
+  }
+
+  VkPipelineShaderStageCreateInfo shaderStages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_VERTEX_BIT, vertModule, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, fragModule, "main", nullptr}};
+
+  VkVertexInputBindingDescription bindingDescription{};
+  bindingDescription.binding = 0;
+  bindingDescription.stride = sizeof(vertex_xnu);
+  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  VkVertexInputAttributeDescription attributeDescriptions[3]{};
+  attributeDescriptions[0].binding = 0;
+  attributeDescriptions[0].location = 0;
+  attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributeDescriptions[0].offset = offsetof(vertex_xnu, position);
+  attributeDescriptions[1].binding = 0;
+  attributeDescriptions[1].location = 1;
+  attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributeDescriptions[1].offset = offsetof(vertex_xnu, normal);
+  attributeDescriptions[2].binding = 0;
+  attributeDescriptions[2].location = 2;
+  attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+  attributeDescriptions[2].offset = offsetof(vertex_xnu, uv);
+
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+  vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+  vertexInputInfo.vertexAttributeDescriptionCount = 3;
+  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+  inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+  VkPipelineViewportStateCreateInfo viewportState{};
+  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1;
+  viewportState.scissorCount = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.depthClampEnable = VK_FALSE;
+  rasterizer.rasterizerDiscardEnable = VK_FALSE;
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterizer.depthBiasEnable = VK_FALSE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{};
+  multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisampling.sampleShadingEnable = VK_FALSE;
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depthStencil{};
+  depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  depthStencil.depthTestEnable = VK_TRUE;
+  depthStencil.depthWriteEnable = VK_TRUE;
+  depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+  colorBlendAttachment.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.blendEnable = VK_FALSE;
+
+  VkPipelineColorBlendStateCreateInfo colorBlending{};
+  colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlending.logicOpEnable = VK_FALSE;
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments = &colorBlendAttachment;
+
+  VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                    VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamicState{};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
+
+  VkGraphicsPipelineCreateInfo pipelineInfo{};
+  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.stageCount = 2;
+  pipelineInfo.pStages = shaderStages;
+  pipelineInfo.pVertexInputState = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisampling;
+  pipelineInfo.pDepthStencilState = &depthStencil;
+  pipelineInfo.pColorBlendState = &colorBlending;
+  pipelineInfo.pDynamicState = &dynamicState;
+  pipelineInfo.layout = layout;
+  pipelineInfo.renderPass = g_render_pass;
+  pipelineInfo.subpass = 0;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                nullptr, &pipeline) != VK_SUCCESS)
+  {
+    log_error("Failed to create material pipeline!");
+  }
+
+  vkDestroyShaderModule(g_device, vertModule, nullptr);
+  vkDestroyShaderModule(g_device, fragModule, nullptr);
+  return pipeline;
+}
+
+static void create_unlit_pipeline()
+{
+  // Unlit pipeline reuses the existing AABB pipeline layout (88-byte push constants).
+  g_unlit_pipeline = create_material_pipeline_impl(
+      unlit_vert_spv, sizeof(unlit_vert_spv),
+      unlit_frag_spv, sizeof(unlit_frag_spv),
+      g_aabb_pipeline_layout);
+}
+
+static void create_lit_pipeline()
+{
+  // Lit pipeline needs a larger push constant range (128 bytes) for the normal matrix.
+  VkPushConstantRange pushConstantRange{};
+  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushConstantRange.offset = 0;
+  pushConstantRange.size = sizeof(LitPushConstants);
+
+  VkPipelineLayoutCreateInfo layoutInfo{};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  layoutInfo.setLayoutCount = 0;
+  layoutInfo.pushConstantRangeCount = 1;
+  layoutInfo.pPushConstantRanges = &pushConstantRange;
+
+  if (vkCreatePipelineLayout(g_device, &layoutInfo, nullptr,
+                              &g_lit_pipeline_layout) != VK_SUCCESS)
+  {
+    log_error("Failed to create lit pipeline layout!");
+    return;
+  }
+
+  g_lit_pipeline = create_material_pipeline_impl(
+      lit_vert_spv, sizeof(lit_vert_spv),
+      lit_frag_spv, sizeof(lit_frag_spv),
+      g_lit_pipeline_layout);
+}
+
 static mesh_gpu_buffer_t *upload_mesh_to_gpu(
     assets::asset_handle_t<assets::mesh_asset_t> handle)
 {
@@ -2399,6 +2607,94 @@ void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
   vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
 }
 
+void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
+                      const linalg::vec3 &scale,
+                      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
+                      const linalg::vec3 &color, ShaderType shader_type,
+                      const linalg::vec3 &rotation)
+{
+  if (!mesh_handle.valid())
+    return;
+
+  VkPipeline pipeline = (shader_type == ShaderType::Lit) ? g_lit_pipeline : g_unlit_pipeline;
+  if (pipeline == VK_NULL_HANDLE)
+    return;
+
+  mesh_gpu_buffer_t *gpu_mesh = upload_mesh_to_gpu(mesh_handle);
+  if (!gpu_mesh || gpu_mesh->index_count == 0)
+    return;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+  VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(cmd, 0, 1, vbs, offsets);
+  vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+  // Build model matrix: T * Rz * Ry * Rx * S
+  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
+  float rx = rotation.x * DEG2RAD;
+  float ry = rotation.y * DEG2RAD;
+  float rz = rotation.z * DEG2RAD;
+
+  float cx = cosf(rx), sx = sinf(rx);
+  float cy = cosf(ry), sy = sinf(ry);
+  float cz = cosf(rz), sz = sinf(rz);
+
+  mat4_t model = {};
+  model.m[0]  = (cz * cy) * scale.x;
+  model.m[1]  = (sz * cy) * scale.x;
+  model.m[2]  = (-sy)     * scale.x;
+  model.m[3]  = 0;
+  model.m[4]  = (cz * sy * sx - sz * cx) * scale.y;
+  model.m[5]  = (sz * sy * sx + cz * cx) * scale.y;
+  model.m[6]  = (cy * sx)                * scale.y;
+  model.m[7]  = 0;
+  model.m[8]  = (cz * sy * cx + sz * sx) * scale.z;
+  model.m[9]  = (sz * sy * cx - cz * sx) * scale.z;
+  model.m[10] = (cy * cx)                * scale.z;
+  model.m[11] = 0;
+  model.m[12] = position.x;
+  model.m[13] = position.y;
+  model.m[14] = position.z;
+  model.m[15] = 1;
+
+  mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
+
+  if (shader_type == ShaderType::Lit)
+  {
+    LitPushConstants lpc{};
+    memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
+    lpc.color[0] = color.x;
+    lpc.color[1] = color.y;
+    lpc.color[2] = color.z;
+    lpc.color[3] = 1.0f;
+    // Extract upper-left 3x3 of model matrix (column-major).
+    // For non-uniform scale this is not the true inverse-transpose,
+    // but good enough for moderate scale differences.
+    lpc.normal_mat_c0[0] = model.m[0]; lpc.normal_mat_c0[1] = model.m[1]; lpc.normal_mat_c0[2] = model.m[2]; lpc.normal_mat_c0[3] = 0;
+    lpc.normal_mat_c1[0] = model.m[4]; lpc.normal_mat_c1[1] = model.m[5]; lpc.normal_mat_c1[2] = model.m[6]; lpc.normal_mat_c1[3] = 0;
+    lpc.normal_mat_c2[0] = model.m[8]; lpc.normal_mat_c2[1] = model.m[9]; lpc.normal_mat_c2[2] = model.m[10]; lpc.normal_mat_c2[3] = 0;
+    vkCmdPushConstants(cmd, g_lit_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(LitPushConstants), &lpc);
+  }
+  else
+  {
+    PushConstants pc{};
+    memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
+    pc.color[0] = color.x;
+    pc.color[1] = color.y;
+    pc.color[2] = color.z;
+    pc.color[3] = 1.0f;
+    pc.random_seed = 0;
+    pc.use_random_color = 0;
+    vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(PushConstants), &pc);
+  }
+
+  vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
+}
+
 void draw_announcement(const char *text)
 {
   g_announcement_text = text;
@@ -2712,6 +3008,8 @@ bool Init(SDL_Window *window)
   create_aabb_pipeline();
   create_aabb_mesh();
   create_mesh_pipeline();
+  create_unlit_pipeline();
+  create_lit_pipeline();
   create_line_pipeline();
   create_line_mesh();
   create_debug_face_pipeline();
@@ -2852,6 +3150,9 @@ void Shutdown()
   cleanup_mesh_buffers();
   vkDestroyPipeline(g_device, g_mesh_pipeline, nullptr);
   vkDestroyPipeline(g_device, g_mesh_wireframe_pipeline, nullptr);
+  vkDestroyPipeline(g_device, g_unlit_pipeline, nullptr);
+  vkDestroyPipeline(g_device, g_lit_pipeline, nullptr);
+  vkDestroyPipelineLayout(g_device, g_lit_pipeline_layout, nullptr);
 
   vkDestroyPipeline(g_device, g_line_pipeline, nullptr);
   vkDestroyBuffer(g_device, g_line_vertex_buffer, nullptr);

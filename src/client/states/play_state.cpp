@@ -7,6 +7,7 @@
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
 #include "../../shared/entities/particle_emitter_entity.hpp"
+#include "../../shared/entities/weapon_entity.hpp"
 #include "../../shared/network/quantization.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -397,6 +398,9 @@ void PlayState::update(float dt)
                    reconciled_pos.z - player_position.z};
     float error_mag = linalg::length(error);
 
+    reconc_error = error;
+    reconc_error_mag = error_mag;
+
     constexpr float SNAP_THRESHOLD = 5.0f;
     constexpr float SMOOTH_FACTOR = 0.1f;
 
@@ -580,6 +584,13 @@ void PlayState::render_ui()
     ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, my_slot,
                 command_number);
 
+    // Reconciliation error debug
+    if (reconc_error_mag > 0.01f)
+      ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "reconc err: %7.3f (%7.2f, %7.2f, %7.2f)",
+                         reconc_error_mag, reconc_error.x, reconc_error.y, reconc_error.z);
+    else
+      ImGui::Text("reconc err: %7.3f", reconc_error_mag);
+
     ImGui::Separator();
     bool show_collisions = debug_collision::debug_show_collisions.Get();
     if (ImGui::Checkbox("Show Collision Planes", &show_collisions))
@@ -590,8 +601,77 @@ void PlayState::render_ui()
       debug_collision::debug_show_navmesh.Set(show_navmesh);
 
     ImGui::Checkbox("Hide Geometry", &hide_geometry);
+    ImGui::Checkbox("Show Entities", &show_entity_debug);
   }
   ImGui::End();
+
+  // --- Entity debug overlay ---
+  if (show_entity_debug)
+  {
+    auto &ctx = state_manager::get_client_context();
+    ImGui::SetNextWindowPos(ImVec2(300, 10), ImGuiCond_Once);
+    ImGui::SetNextWindowBgAlpha(0.5f);
+    if (ImGui::Begin("Entities##entity_debug", &show_entity_debug,
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_NoSavedSettings))
+    {
+      int total = 0;
+
+      // Dynamic entities from entity_system pools
+      for (auto &[type, pool_ptr] : ctx.session.entity_system.pools)
+      {
+        if (!pool_ptr) continue;
+        std::string name = shared::type_to_classname(type);
+        // Use the EntityPool base to get count — cast to concrete pool
+        // We iterate known types via the X-macro
+        int count = 0;
+#define COUNT_POOL(enum_name, class_name, str_name, header_path)                \
+  if (type == entity_type::enum_name)                                           \
+  {                                                                             \
+    auto *typed = ctx.session.entity_system                                     \
+                      .get_entities<class_name>(entity_type::enum_name);        \
+    if (typed) count = (int)typed->size();                                      \
+  }
+        SHARED_ENTITIES_LIST(COUNT_POOL)
+#undef COUNT_POOL
+
+        if (count > 0)
+        {
+          ImGui::Text("%-20s %d", name.c_str(), count);
+          total += count;
+        }
+      }
+
+      // Static entities (collision geometry)
+      int static_count = (int)ctx.session.static_entities.size();
+      if (static_count > 0)
+      {
+        ImGui::Text("%-20s %d", "static (collision)", static_count);
+        total += static_count;
+      }
+
+      // Remote players (client-side interpolation state)
+      int remote_count = 0;
+      for (auto &[slot, rp] : remote_players)
+        if (rp.active) remote_count++;
+      if (remote_count > 0)
+        ImGui::Text("%-20s %d", "remote players", remote_count);
+
+      // Client-side rockets
+      int rocket_count = (int)remote_rockets.size();
+      if (rocket_count > 0)
+        ImGui::Text("%-20s %d", "remote rockets", rocket_count);
+
+      // Explosions
+      int fx_count = (int)explosion_effects.size();
+      if (fx_count > 0)
+        ImGui::Text("%-20s %d", "explosion fx", fx_count);
+
+      ImGui::Separator();
+      ImGui::Text("total (pools+static) %d", total);
+    }
+    ImGui::End();
+  }
 
   // --- Bot debug HUD ---
   if (!bot_debug::g_entries.empty())
@@ -680,12 +760,21 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         if (mesh_handle.valid())
         {
           if (rc->is_wireframe)
+          {
             renderer::DrawMeshWireframe(cmd, ent->position, rc->scale,
                                         mesh_handle, 0xFFFFFFFF,
                                         ent->orientation);
+          }
           else
-            renderer::DrawMesh(cmd, ent->position, rc->scale, mesh_handle,
-                               0xFFFFFFFF, ent->orientation);
+          {
+            auto st = renderer::ShaderType::Lit;
+            vec3f mat_color = rc->material.color;
+            if (strcmp(rc->material.shader_type.c_str(), "unlit") == 0)
+              st = renderer::ShaderType::Unlit;
+            renderer::DrawMeshMaterial(cmd, ent->position, rc->scale,
+                                       mesh_handle, mat_color, st,
+                                       ent->orientation);
+          }
           continue;
         }
       }
@@ -766,8 +855,13 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         auto mesh_handle = assets::load_mesh(mesh_path);
         if (mesh_handle.valid())
         {
-          renderer::DrawMesh(cmd, ent->position, rc->scale, mesh_handle,
-                             0xFFFFFFFF, ent->orientation);
+          auto st = renderer::ShaderType::Lit;
+          vec3f mat_color = rc->material.color;
+          if (strcmp(rc->material.shader_type.c_str(), "unlit") == 0)
+            st = renderer::ShaderType::Unlit;
+          renderer::DrawMeshMaterial(cmd, ent->position, rc->scale,
+                                     mesh_handle, mat_color, st,
+                                     ent->orientation);
         }
       }
     }

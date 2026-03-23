@@ -78,6 +78,10 @@ private:
   int last_server_ack_command = -1;
   bool received_server_update = false;
 
+  // Debug: reconciliation error tracking
+  vec3f reconc_error = {0, 0, 0};
+  float reconc_error_mag = 0.f;
+
   // Remote player interpolation
   struct Remote_Player_Snapshot
   {
@@ -114,6 +118,7 @@ private:
 
   // When true, map geometry (AABBs/wedges) is not rendered
   bool hide_geometry = false;
+  bool show_entity_debug = false;
   float last_dt = 0.016f;
 
   // FPS averaging ring buffer

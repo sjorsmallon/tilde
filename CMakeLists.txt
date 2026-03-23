@@ -160,6 +160,10 @@ file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/aabb.vert
     ${SHADER_SRC_DIR}/aabb.frag
+    ${SHADER_SRC_DIR}/unlit.vert
+    ${SHADER_SRC_DIR}/unlit.frag
+    ${SHADER_SRC_DIR}/lit.vert
+    ${SHADER_SRC_DIR}/lit.frag
     ${SHADER_SRC_DIR}/particle.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag

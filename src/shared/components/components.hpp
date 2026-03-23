@@ -5,6 +5,32 @@
 namespace network
 {
 
+// Material component — shader selection and surface properties.
+struct material_t
+{
+  // "lit" (default) or "unlit" — selects the rendering pipeline.
+  SCHEMA_FIELD_DEFAULT(pascal_string, shader_type,
+                      Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable,
+                      "lit");
+  // Base surface color (RGB, 0-1 range).
+  SCHEMA_FIELD_DEFAULT(vec3f, color,
+                      Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable,
+                      (vec3f{1, 1, 1}));
+  // Roughness (unused for now, reserved for future PBR).
+  SCHEMA_FIELD_DEFAULT(float32, roughness,
+                      Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable,
+                      0.5f);
+
+  DECLARE_COMPONENT_SCHEMA(material_t)
+};
+
+SCHEMA_NAME_FOR_TYPE(material_t)
+
+template <> struct Schema_Type_Info<material_t>
+{
+  static constexpr Field_Type type = Field_Type::NestedSchema;
+};
+
 // Render component — embeddable in any entity via SCHEMA_FIELD.
 // Bundles mesh reference, visibility, and a local transform.
 // This is now a composable schema component!
@@ -30,6 +56,8 @@ struct render_component_t
   SCHEMA_FIELD_DEFAULT(vec3f, rotation,
                       Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable,
                       (vec3f{0, 0, 0}));
+  SCHEMA_FIELD(material_t, material,
+              Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable);
 
   DECLARE_COMPONENT_SCHEMA(render_component_t)
 };

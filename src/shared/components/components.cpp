@@ -8,6 +8,16 @@
 namespace network
 {
 
+// Schema registration for material_t
+DEFINE_SCHEMA_CLASS(material_t)
+{
+  BEGIN_SCHEMA_FIELDS()
+    REGISTER_SCHEMA_FIELD(shader_type);
+    REGISTER_SCHEMA_FIELD(color);
+    REGISTER_SCHEMA_FIELD(roughness);
+  END_SCHEMA_FIELDS()
+}
+
 // Schema registration for render_component_t
 DEFINE_SCHEMA_CLASS(render_component_t)
 {
@@ -19,6 +29,7 @@ DEFINE_SCHEMA_CLASS(render_component_t)
     REGISTER_SCHEMA_FIELD(offset);
     REGISTER_SCHEMA_FIELD(scale);
     REGISTER_SCHEMA_FIELD(rotation);
+    REGISTER_SCHEMA_FIELD(material);
   END_SCHEMA_FIELDS()
 }
 

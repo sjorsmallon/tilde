@@ -60,6 +60,14 @@ void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
                        uint32_t color,
                        const linalg::vec3 &rotation = {0, 0, 0});
 
+// Material-aware mesh drawing with proper shaders.
+enum class ShaderType : uint8_t { Lit, Unlit };
+void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
+                      const linalg::vec3 &scale,
+                      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
+                      const linalg::vec3 &color, ShaderType shader_type,
+                      const linalg::vec3 &rotation = {0, 0, 0});
+
 // Draw a filled convex polygon (e.g. a collision face).
 // Vertices are in world space. Triangle-fan decomposed internally.
 // Supports alpha blending (pass e.g. 0x8800FF00 for 50% green in ABGR).
