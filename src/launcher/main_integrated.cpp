@@ -118,10 +118,10 @@ int main(int argc, char *argv[])
 
   print_timing_stats();
 
-#ifdef _WIN32
-  log_terminal("Press Enter to exit...");
-  std::cin.get();
-#endif
+// #ifdef _WIN32
+//   log_terminal("Press Enter to exit...");
+//   std::cin.get();
+// #endif
 
   return 0;
 }

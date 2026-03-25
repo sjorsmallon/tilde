@@ -16,7 +16,15 @@
       "Bash(VK_LOADER_DEBUG=all VK_LAYER_PATH=/opt/homebrew/share/vulkan/explicit_layer.d ./cmake_build/bin/MyGame)",
       "Bash(DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib VK_LAYER_PATH=/opt/homebrew/share/vulkan/explicit_layer.d ./cmake_build/bin/MyGame)",
       "Bash(./cmake_build/bin/asset_test)",
-      "Bash(grep -E \"error:|Built target MyGame$\")"
+      "Bash(grep -E \"error:|Built target MyGame$\")",
+      "Bash(./cmake_build/bin/ecs_test)",
+      "Bash(./cmake_build/bin/network_test)",
+      "Bash(git stash:*)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(./cmake_build/bin/test_entity_delta_packing)",
+      "Bash(./cmake_build/bin/session_test)",
+      "Bash(./cmake_build/bin/linalg_test)",
+      "Bash(./cmake_build/bin/log_test)"
     ]
   }
 }

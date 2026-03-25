@@ -62,8 +62,38 @@ last state the client acknowledged).
    END_SCHEMA(My_Entity)
    ```
 
-4. **Register at Startup**:
-   Call `My_Entity::register_schema()` once at the start of your game.
+4. **Registration** happens automatically via static initializers — no manual
+   `register_schema()` call needed.
+
+### Nested / Composable Schemas
+
+Any struct with `DECLARE_COMPONENT_SCHEMA` can be used as a field inside another
+schema via `SCHEMA_FIELD`. The system detects nested schema types automatically
+(via `has_schema_v<T>`) and handles serialization, deserialization, delta
+compression, and editor widgets recursively — no special-casing required.
+
+```cpp
+// Component (components.hpp)
+struct material_t {
+    SCHEMA_FIELD_DEFAULT(vec3f, color, ..., (vec3f{1,1,1}));
+    DECLARE_COMPONENT_SCHEMA(material_t)
+};
+SCHEMA_NAME_FOR_TYPE(material_t)
+
+// Used inside another component or entity
+struct render_component_t {
+    SCHEMA_FIELD(material_t, material, ...);   // just works
+    DECLARE_COMPONENT_SCHEMA(render_component_t)
+};
+```
+
+To add a new component: declare fields with `SCHEMA_FIELD`, add
+`DECLARE_COMPONENT_SCHEMA`, and `SCHEMA_NAME_FOR_TYPE` at namespace scope.
+No `Schema_Type_Info` specialization or custom serialize code needed.
+
+**Init order**: `REGISTER_SCHEMA_FIELD` calls `ensure_schema_registered<T>()`
+for nested types, so the child schema is always registered before the parent
+that uses it — regardless of static initializer ordering across translation units.
 
 
 # The wire format and its confusion.

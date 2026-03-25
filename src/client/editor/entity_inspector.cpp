@@ -7,6 +7,72 @@
 namespace client
 {
 
+// Renders a single schema field as ImGui widgets, recursing into nested schemas.
+static void render_field_imgui(uint8_t *base_ptr, const network::Field_Prop &field)
+{
+  if (!has_flag(field.flags, network::Schema_Flags::Editable))
+    return;
+
+  void *field_ptr = base_ptr + field.offset;
+
+  ImGui::PushID(field.index);
+
+  switch (field.type)
+  {
+  case network::Field_Type::Int32:
+  {
+    int *val = static_cast<int *>(field_ptr);
+    ImGui::InputInt(field.name.c_str(), val);
+    break;
+  }
+  case network::Field_Type::Float32:
+  {
+    float *val = static_cast<float *>(field_ptr);
+    ImGui::DragFloat(field.name.c_str(), val, 0.1f);
+    break;
+  }
+  case network::Field_Type::Bool:
+  {
+    bool *val = static_cast<bool *>(field_ptr);
+    ImGui::Checkbox(field.name.c_str(), val);
+    break;
+  }
+  case network::Field_Type::Vec3f:
+  {
+    float *val = static_cast<float *>(field_ptr);
+    ImGui::DragFloat3(field.name.c_str(), val, 0.1f);
+    break;
+  }
+  case network::Field_Type::PascalString:
+  {
+    auto *ps = static_cast<network::pascal_string *>(field_ptr);
+    if (ImGui::InputText(field.name.c_str(), ps->data, ps->max_length(),
+                         ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+      ps->length = static_cast<network::uint8>(strlen(ps->data));
+    }
+    break;
+  }
+  case network::Field_Type::NestedSchema:
+  {
+    const auto *nested_schema = network::Schema_Registry::get().get_nested_schema(field);
+    if (nested_schema && ImGui::TreeNode(field.name.c_str()))
+    {
+      uint8_t *nested_base = static_cast<uint8_t *>(field_ptr);
+      for (const auto &nested_field : nested_schema->fields)
+        render_field_imgui(nested_base, nested_field);
+      ImGui::TreePop();
+    }
+    break;
+  }
+  default:
+    ImGui::Text("%s: <Unknown Type>", field.name.c_str());
+    break;
+  }
+
+  ImGui::PopID();
+}
+
 void render_imgui_entity_fields_in_a_window(network::Entity *entity)
 {
   if (!entity)
@@ -25,145 +91,7 @@ void render_imgui_entity_fields_in_a_window(network::Entity *entity)
   uint8_t *base_ptr = reinterpret_cast<uint8_t *>(entity);
 
   for (const auto &field : schema->fields)
-  {
-    if (!has_flag(field.flags, network::Schema_Flags::Editable))
-      continue;
-
-    void *field_ptr = base_ptr + field.offset;
-
-    ImGui::PushID(field.index);
-
-    switch (field.type)
-    {
-    case network::Field_Type::Int32:
-    {
-      int *val = static_cast<int *>(field_ptr);
-      ImGui::InputInt(field.name.c_str(), val);
-      break;
-    }
-    case network::Field_Type::Float32:
-    {
-      float *val = static_cast<float *>(field_ptr);
-      ImGui::DragFloat(field.name.c_str(), val, 0.1f);
-      break;
-    }
-    case network::Field_Type::Bool:
-    {
-      bool *val = static_cast<bool *>(field_ptr);
-      ImGui::Checkbox(field.name.c_str(), val);
-      break;
-    }
-    case network::Field_Type::Vec3f:
-    {
-      // Assumes vector is 3 floats (linalg::vec3 or similar layout)
-      float *val = static_cast<float *>(field_ptr);
-      ImGui::DragFloat3(field.name.c_str(), val, 0.1f);
-      break;
-    }
-    case network::Field_Type::PascalString:
-    {
-      auto *ps = static_cast<network::pascal_string *>(field_ptr);
-      // InputText needs a mutable buffer; pascal_string::data is exactly that
-      if (ImGui::InputText(field.name.c_str(), ps->data, ps->max_length(),
-                           ImGuiInputTextFlags_EnterReturnsTrue))
-      {
-        // Update the length to match what ImGui wrote
-        ps->length = static_cast<network::uint8>(strlen(ps->data));
-      }
-      break;
-    }
-    case network::Field_Type::RenderComponent:
-    {
-      auto *rc = static_cast<network::render_component_t *>(field_ptr);
-      if (ImGui::TreeNode(field.name.c_str()))
-      {
-        ImGui::InputInt("mesh_id", &rc->mesh_id);
-        if (ImGui::InputText("mesh_path", rc->mesh_path.data,
-                             rc->mesh_path.max_length(),
-                             ImGuiInputTextFlags_EnterReturnsTrue))
-        {
-          rc->mesh_path.length =
-              static_cast<network::uint8>(strlen(rc->mesh_path.data));
-        }
-        ImGui::Checkbox("visible", &rc->visible);
-        ImGui::DragFloat3("offset", &rc->offset.x, 0.1f);
-        ImGui::DragFloat3("scale", &rc->scale.x, 0.01f);
-        ImGui::DragFloat3("rotation", &rc->rotation.x, 1.0f);
-        ImGui::TreePop();
-      }
-      break;
-    }
-    case network::Field_Type::NestedSchema:
-    {
-      // Recursively render nested schema fields
-      const auto *nested_schema = network::Schema_Registry::get().get_nested_schema(field);
-      if (nested_schema && ImGui::TreeNode(field.name.c_str()))
-      {
-        uint8_t *nested_base = static_cast<uint8_t *>(field_ptr);
-
-        for (const auto &nested_field : nested_schema->fields)
-        {
-          if (!has_flag(nested_field.flags, network::Schema_Flags::Editable))
-            continue;
-
-          void *nested_field_ptr = nested_base + nested_field.offset;
-          ImGui::PushID(nested_field.index);
-
-          switch (nested_field.type)
-          {
-          case network::Field_Type::Int32:
-          {
-            int *val = static_cast<int *>(nested_field_ptr);
-            ImGui::InputInt(nested_field.name.c_str(), val);
-            break;
-          }
-          case network::Field_Type::Float32:
-          {
-            float *val = static_cast<float *>(nested_field_ptr);
-            ImGui::DragFloat(nested_field.name.c_str(), val, 0.1f);
-            break;
-          }
-          case network::Field_Type::Bool:
-          {
-            bool *val = static_cast<bool *>(nested_field_ptr);
-            ImGui::Checkbox(nested_field.name.c_str(), val);
-            break;
-          }
-          case network::Field_Type::Vec3f:
-          {
-            float *val = static_cast<float *>(nested_field_ptr);
-            ImGui::DragFloat3(nested_field.name.c_str(), val, 0.1f);
-            break;
-          }
-          case network::Field_Type::PascalString:
-          {
-            auto *ps = static_cast<network::pascal_string *>(nested_field_ptr);
-            if (ImGui::InputText(nested_field.name.c_str(), ps->data, ps->max_length(),
-                                 ImGuiInputTextFlags_EnterReturnsTrue))
-            {
-              ps->length = static_cast<network::uint8>(strlen(ps->data));
-            }
-            break;
-          }
-          default:
-            ImGui::Text("%s: <Unknown Type>", nested_field.name.c_str());
-            break;
-          }
-
-          ImGui::PopID();
-        }
-
-        ImGui::TreePop();
-      }
-      break;
-    }
-    default:
-      ImGui::Text("%s: <Unknown Type>", field.name.c_str());
-      break;
-    }
-
-    ImGui::PopID();
-  }
+    render_field_imgui(base_ptr, field);
 }
 
 } // namespace client

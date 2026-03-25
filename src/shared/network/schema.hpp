@@ -47,7 +47,6 @@ enum class Field_Type
   Bool,
   Vec3f,
   PascalString,
-  RenderComponent, // Deprecated - use NestedSchema instead
   NestedSchema,    // Any type that has its own schema
 };
 
@@ -62,20 +61,11 @@ struct Field_Prop
   std::string nested_schema_name; // Class name for NestedSchema types
 };
 
-bool parse_string_to_field(const std::string &value, Field_Type type,
+bool parse_string_to_field(const std::string &value, const Field_Prop &field,
                            void *out_ptr);
 
-bool serialize_field_to_string(const void *in_ptr, Field_Type type,
+bool serialize_field_to_string(const void *in_ptr, const Field_Prop &field,
                                std::string &out_value);
-
-// Recursive versions that handle nested schemas
-bool parse_string_to_field_recursive(const std::string &value,
-                                      const Field_Prop &field,
-                                      void *out_ptr);
-
-bool serialize_field_to_string_recursive(const void *in_ptr,
-                                          const Field_Prop &field,
-                                          std::string &out_value);
 
 struct Class_Schema
 {
@@ -95,6 +85,8 @@ public:
   void register_class(const std::string &name,
                       const std::vector<Field_Prop> &fields)
   {
+    if (schemas.find(name) != schemas.end())
+      return; // Already registered
     schemas[name] = {name, fields};
   }
 
@@ -230,7 +222,18 @@ const char* get_schema_name_for_type() {
     return typeid(T).name(); // Will be overridden by macro for proper names
 }
 
-template <typename T> struct Schema_Type_Info;
+// Maps C++ types to Field_Type. Primitive types get explicit specializations;
+// any type with a schema (detected via has_schema_v) automatically resolves
+// to NestedSchema without needing a manual specialization.
+template <typename T, typename = void>
+struct Schema_Type_Info;
+
+// Types that have their own schema are automatically NestedSchema.
+template <typename T>
+struct Schema_Type_Info<T, std::enable_if_t<has_schema_v<T>>>
+{
+  static constexpr Field_Type type = Field_Type::NestedSchema;
+};
 
 template <> struct Schema_Type_Info<int32>
 {
@@ -267,17 +270,6 @@ template <> struct Schema_Type_Info<pascal_string>
   static constexpr Field_Type type = Field_Type::PascalString;
 };
 
-// render_component_t is now a composable schema - no special case needed
-// The has_schema_v<render_component_t> check will automatically use NestedSchema
-
-// Default: if a type has a schema, treat it as NestedSchema
-// This allows automatic composition without manual specialization
-template <typename T>
-struct Schema_Type_Info_Auto {
-    static constexpr Field_Type type =
-        has_schema_v<T> ? Field_Type::NestedSchema : Field_Type::Int32; // fallback
-};
-
 // Helper to get nested schema name at compile time
 template <typename T>
 struct Schema_Name_Helper {
@@ -289,6 +281,18 @@ struct Schema_Name_Helper {
   template <> struct ::network::Schema_Name_Helper<ClassName> { \
       static constexpr const char* get() { return #ClassName; } \
   };
+
+// Ensures a nested schema type is registered before the parent.
+// Called during REGISTER_SCHEMA_FIELD for NestedSchema fields.
+// No-op for primitive types.
+template <typename T>
+void ensure_schema_registered()
+{
+  if constexpr (has_schema_v<T>)
+  {
+    T::register_schema();
+  }
+}
 
 // --- Field metadata for compile-time storage ---
 
@@ -325,16 +329,14 @@ public:                                                                        \
   Type Name{};                                                                 \
   static constexpr ::network::Field_Meta _schema_meta_##Name = {               \
       #Name, sizeof(Type),                                                     \
-      ::network::has_schema_v<Type> ? ::network::Field_Type::NestedSchema      \
-                                    : ::network::Schema_Type_Info<Type>::type, \
+      ::network::Schema_Type_Info<Type>::type,                                 \
       Flags, ::network::Schema_Name_Helper<Type>::get()};
 
 #define SCHEMA_FIELD_DEFAULT(Type, Name, Flags, Default)                        \
   Type Name = Default;                                                         \
   static constexpr ::network::Field_Meta _schema_meta_##Name = {               \
       #Name, sizeof(Type),                                                     \
-      ::network::has_schema_v<Type> ? ::network::Field_Type::NestedSchema      \
-                                    : ::network::Schema_Type_Info<Type>::type, \
+      ::network::Schema_Type_Info<Type>::type,                                 \
       Flags, ::network::Schema_Name_Helper<Type>::get()};
 
 // Begin schema registration in .cpp file
@@ -350,6 +352,7 @@ public:                                                                        \
   static_assert(std::is_trivially_copyable_v<decltype(ThisClass::MemberName)>, \
                 "Field " #MemberName                                           \
                 " must be trivially copyable for Undo/Redo/Networking");       \
+  ::network::ensure_schema_registered<decltype(ThisClass::MemberName)>();      \
   props.push_back({ThisClass::_schema_meta_##MemberName.name,                  \
                    (uint32_t)props.size(), offsetof(ThisClass, MemberName),    \
                    ThisClass::_schema_meta_##MemberName.size,                  \
@@ -442,6 +445,7 @@ public:                                                                        \
   static_assert(std::is_trivially_copyable_v<decltype(ThisClass::MemberName)>, \
                 "Field " #MemberName                                           \
                 " must be trivially copyable for Undo/Redo/Networking");       \
+  ::network::ensure_schema_registered<decltype(ThisClass::MemberName)>();      \
   props.push_back({ThisClass::_schema_meta_##MemberName.name,                  \
                    (uint32_t)props.size(), offsetof(ThisClass, MemberName),    \
                    ThisClass::_schema_meta_##MemberName.size,                  \

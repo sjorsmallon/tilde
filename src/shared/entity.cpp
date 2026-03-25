@@ -2,9 +2,145 @@
 #include "network/quantization.hpp"
 #include <cstring>
 #include <iostream>
+#include <print>
 
 namespace network
 {
+
+// Writes a single field (of any type) to the bitstream, recursing into nested schemas.
+static void serialize_field_to_bits(Bit_Writer &writer, const uint8 *base,
+                                    const Field_Prop &field)
+{
+  switch (field.type)
+  {
+  case Field_Type::Int32:
+  {
+    int32_t val = *reinterpret_cast<const int32_t *>(base + field.offset);
+    write_var_int(writer, val);
+    break;
+  }
+  case Field_Type::Int64:
+  {
+    int64_t val = *reinterpret_cast<const int64_t *>(base + field.offset);
+    write_var_int64(writer, val);
+    break;
+  }
+  case Field_Type::Float32:
+  {
+    float val = *reinterpret_cast<const float *>(base + field.offset);
+    write_coord(writer, val);
+    break;
+  }
+  case Field_Type::Bool:
+  {
+    bool val = *reinterpret_cast<const bool *>(base + field.offset);
+    writer.write_bit(val);
+    break;
+  }
+  case Field_Type::Vec3f:
+  {
+    const float *vals = reinterpret_cast<const float *>(base + field.offset);
+    write_coord(writer, vals[0]);
+    write_coord(writer, vals[1]);
+    write_coord(writer, vals[2]);
+    break;
+  }
+  case Field_Type::PascalString:
+  {
+    const auto *ps = reinterpret_cast<const pascal_string *>(base + field.offset);
+    writer.write_bits(ps->length, 8);
+    for (uint8 i = 0; i < ps->length; ++i)
+      writer.write_bits(static_cast<uint8>(ps->data[i]), 8);
+    break;
+  }
+  case Field_Type::NestedSchema:
+  {
+    const Class_Schema *nested_schema = Schema_Registry::get().get_nested_schema(field);
+    if (!nested_schema)
+    {
+      std::print("[SCHEMA] ERROR: serialize: nested schema {} not found for field {}\n",
+                 field.nested_schema_name.c_str(), field.name.c_str());
+      break;
+    }
+    const uint8 *nested_base = base + field.offset;
+    for (const auto &nested_field : nested_schema->fields)
+      serialize_field_to_bits(writer, nested_base, nested_field);
+    break;
+  }
+  default:
+    assert(false && "Unknown field type");
+    break;
+  }
+}
+
+// Reads a single field (of any type) from the bitstream, recursing into nested schemas.
+static void deserialize_field_from_bits(Bit_Reader &reader, uint8 *base,
+                                        const Field_Prop &field)
+{
+  switch (field.type)
+  {
+  case Field_Type::Int32:
+  {
+    int32_t val = read_var_int(reader);
+    std::memcpy(base + field.offset, &val, sizeof(val));
+    break;
+  }
+  case Field_Type::Int64:
+  {
+    int64_t val = read_var_int64(reader);
+    std::memcpy(base + field.offset, &val, sizeof(val));
+    break;
+  }
+  case Field_Type::Float32:
+  {
+    float val = read_coord(reader);
+    std::memcpy(base + field.offset, &val, sizeof(val));
+    break;
+  }
+  case Field_Type::Bool:
+  {
+    bool val = reader.read_bit();
+    std::memcpy(base + field.offset, &val, sizeof(val));
+    break;
+  }
+  case Field_Type::Vec3f:
+  {
+    float vals[3];
+    vals[0] = read_coord(reader);
+    vals[1] = read_coord(reader);
+    vals[2] = read_coord(reader);
+    std::memcpy(base + field.offset, vals, sizeof(vals));
+    break;
+  }
+  case Field_Type::PascalString:
+  {
+    auto *ps = reinterpret_cast<pascal_string *>(base + field.offset);
+    ps->length = static_cast<uint8>(reader.read_bits(8));
+    for (uint8 j = 0; j < ps->length; ++j)
+      ps->data[j] = static_cast<char>(reader.read_bits(8));
+    if (ps->length < ps->max_length())
+      ps->data[ps->length] = '\0';
+    break;
+  }
+  case Field_Type::NestedSchema:
+  {
+    const Class_Schema *nested_schema = Schema_Registry::get().get_nested_schema(field);
+    if (!nested_schema)
+    {
+      std::print("[SCHEMA] ERROR: deserialize: nested schema {} not found for field {} — bitstream desync!\n",
+                 field.nested_schema_name.c_str(), field.name.c_str());
+      break;
+    }
+    uint8 *nested_base = base + field.offset;
+    for (const auto &nested_field : nested_schema->fields)
+      deserialize_field_from_bits(reader, nested_base, nested_field);
+    break;
+  }
+  default:
+    assert(false && "Unknown field type");
+    break;
+  }
+}
 
 void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
 {
@@ -57,163 +193,7 @@ void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
     if (changed_flags[i])
     {
       const auto &field = schema->fields[i];
-      // Use quantization functions
-      switch (field.type)
-      {
-      case Field_Type::Int32:
-      {
-        int32_t val =
-            *reinterpret_cast<const int32_t *>(current_base + field.offset);
-        write_var_int(writer, val);
-        break;
-      }
-      case Field_Type::Int64:
-      {
-        int64_t val =
-            *reinterpret_cast<const int64_t *>(current_base + field.offset);
-        write_var_int64(writer, val);
-        break;
-      }
-      case Field_Type::Float32:
-      {
-        float val =
-            *reinterpret_cast<const float *>(current_base + field.offset);
-        write_coord(writer, val);
-        break;
-      }
-      case Field_Type::Bool:
-      {
-        bool val = *reinterpret_cast<const bool *>(current_base + field.offset);
-        writer.write_bit(val);
-        break;
-      }
-      case Field_Type::Vec3f:
-      {
-        // Vec3f usually has 3 floats.
-        // Assuming network::vec3f or similar structure.
-        // The type is not standard, let's look at `network_types.hpp` or assume
-        // `struct { x,y,z }` We can just cast to float* and write 3 coords?
-        // Let's verify structure size.
-        // If field.size == 12 (3 * 4), safe to assume 3 floats.
-        const float *vals =
-            reinterpret_cast<const float *>(current_base + field.offset);
-        write_coord(writer, vals[0]);
-        write_coord(writer, vals[1]);
-        write_coord(writer, vals[2]);
-        break;
-      }
-      case Field_Type::PascalString:
-      {
-        const auto *ps =
-            reinterpret_cast<const pascal_string *>(current_base + field.offset);
-        writer.write_bits(ps->length, 8);
-        for (uint8 i = 0; i < ps->length; ++i)
-          writer.write_bits(static_cast<uint8>(ps->data[i]), 8);
-        break;
-      }
-      case Field_Type::RenderComponent:
-      {
-        const auto *rc = reinterpret_cast<const render_component_t *>(
-            current_base + field.offset);
-        write_var_int(writer, rc->mesh_id);
-        // pascal_string sub-field
-        writer.write_bits(rc->mesh_path.length, 8);
-        for (uint8 i = 0; i < rc->mesh_path.length; ++i)
-          writer.write_bits(static_cast<uint8>(rc->mesh_path.data[i]), 8);
-        writer.write_bit(rc->visible);
-        writer.write_bit(rc->is_wireframe);
-        // offset
-        write_coord(writer, rc->offset.x);
-        write_coord(writer, rc->offset.y);
-        write_coord(writer, rc->offset.z);
-        // scale
-        write_coord(writer, rc->scale.x);
-        write_coord(writer, rc->scale.y);
-        write_coord(writer, rc->scale.z);
-        // rotation
-        write_coord(writer, rc->rotation.x);
-        write_coord(writer, rc->rotation.y);
-        write_coord(writer, rc->rotation.z);
-        break;
-      }
-      case Field_Type::NestedSchema:
-      {
-        // Recursively serialize nested schema fields
-        const Class_Schema *nested_schema = Schema_Registry::get().get_nested_schema(field);
-        if (!nested_schema)
-        {
-          printf("[SCHEMA] ERROR: serialize: nested schema '%s' not found for field '%s' — field will be silently skipped on both sides\n",
-                 field.nested_schema_name.c_str(), field.name.c_str());
-        }
-        if (nested_schema)
-        {
-          const uint8 *nested_base = current_base + field.offset;
-          for (const auto &nested_field : nested_schema->fields)
-          {
-            if (nested_field.type == Field_Type::PascalString)
-            {
-              const auto *ps = reinterpret_cast<const pascal_string *>(nested_base + nested_field.offset);
-              // printf("[SCHEMA] serialize: field '%s.%s' PascalString length=%u\n",
-              //        field.name.c_str(), nested_field.name.c_str(), ps->length);
-            }
-          }
-          for (const auto &nested_field : nested_schema->fields)
-          {
-            // Recursively serialize each field
-            switch (nested_field.type)
-            {
-            case Field_Type::Int32:
-            {
-              int32_t val = *reinterpret_cast<const int32_t *>(nested_base + nested_field.offset);
-              write_var_int(writer, val);
-              break;
-            }
-            case Field_Type::Int64:
-            {
-              int64_t val = *reinterpret_cast<const int64_t *>(nested_base + nested_field.offset);
-              write_var_int64(writer, val);
-              break;
-            }
-            case Field_Type::Float32:
-            {
-              float val = *reinterpret_cast<const float *>(nested_base + nested_field.offset);
-              write_coord(writer, val);
-              break;
-            }
-            case Field_Type::Bool:
-            {
-              bool val = *reinterpret_cast<const bool *>(nested_base + nested_field.offset);
-              writer.write_bit(val);
-              break;
-            }
-            case Field_Type::Vec3f:
-            {
-              const float *vals = reinterpret_cast<const float *>(nested_base + nested_field.offset);
-              write_coord(writer, vals[0]);
-              write_coord(writer, vals[1]);
-              write_coord(writer, vals[2]);
-              break;
-            }
-            case Field_Type::PascalString:
-            {
-              const auto *ps = reinterpret_cast<const pascal_string *>(nested_base + nested_field.offset);
-              writer.write_bits(ps->length, 8);
-              for (uint8 j = 0; j < ps->length; ++j)
-                writer.write_bits(static_cast<uint8>(ps->data[j]), 8);
-              break;
-            }
-            default:
-              // TODO: Handle deeper nesting if needed
-              break;
-            }
-          }
-        }
-        break;
-      }
-      default:
-        assert(false && "Unknown field type");
-        break;
-      }
+      serialize_field_to_bits(writer, current_base, field);
     }
   }
 }
@@ -228,9 +208,7 @@ std::map<std::string, std::string> Entity::get_all_properties() const
     for (const auto &field : schema->fields)
     {
       std::string val_str;
-      // Use recursive version to handle nested schemas
-      if (serialize_field_to_string_recursive(base_ptr + field.offset, field,
-                                              val_str))
+      if (serialize_field_to_string(base_ptr + field.offset, field, val_str))
       {
         props[field.name] = val_str;
       }
@@ -261,152 +239,7 @@ void Entity::deserialize(Bit_Reader &reader)
     if (changed_flags[i])
     {
       const auto &field = schema->fields[i];
-      switch (field.type)
-      {
-      case Field_Type::Int32:
-      {
-        int32_t val = read_var_int(reader);
-        std::memcpy(current_base + field.offset, &val, sizeof(val));
-        break;
-      }
-      case Field_Type::Int64:
-      {
-        int64_t val = read_var_int64(reader);
-        std::memcpy(current_base + field.offset, &val, sizeof(val));
-        break;
-      }
-      case Field_Type::Float32:
-      {
-        float val = read_coord(reader);
-        std::memcpy(current_base + field.offset, &val, sizeof(val));
-        break;
-      }
-      case Field_Type::Bool:
-      {
-        bool val = reader.read_bit();
-        std::memcpy(current_base + field.offset, &val, sizeof(val));
-        break;
-      }
-      case Field_Type::Vec3f:
-      {
-        float vals[3];
-        vals[0] = read_coord(reader);
-        vals[1] = read_coord(reader);
-        vals[2] = read_coord(reader);
-        std::memcpy(current_base + field.offset, vals, sizeof(vals));
-        break;
-      }
-      case Field_Type::PascalString:
-      {
-        auto *ps =
-            reinterpret_cast<pascal_string *>(current_base + field.offset);
-        ps->length = static_cast<uint8>(reader.read_bits(8));
-        for (uint8 j = 0; j < ps->length; ++j)
-          ps->data[j] = static_cast<char>(reader.read_bits(8));
-        if (ps->length < ps->max_length())
-          ps->data[ps->length] = '\0';
-        break;
-      }
-      case Field_Type::RenderComponent:
-      {
-        auto *rc = reinterpret_cast<render_component_t *>(
-            current_base + field.offset);
-        rc->mesh_id = read_var_int(reader);
-        // pascal_string sub-field
-        rc->mesh_path.length = static_cast<uint8>(reader.read_bits(8));
-        for (uint8 j = 0; j < rc->mesh_path.length; ++j)
-          rc->mesh_path.data[j] = static_cast<char>(reader.read_bits(8));
-        if (rc->mesh_path.length < rc->mesh_path.max_length())
-          rc->mesh_path.data[rc->mesh_path.length] = '\0';
-        rc->visible = reader.read_bit();
-        rc->is_wireframe = reader.read_bit();
-        // offset
-        rc->offset.x = read_coord(reader);
-        rc->offset.y = read_coord(reader);
-        rc->offset.z = read_coord(reader);
-        // scale
-        rc->scale.x = read_coord(reader);
-        rc->scale.y = read_coord(reader);
-        rc->scale.z = read_coord(reader);
-        // rotation
-        rc->rotation.x = read_coord(reader);
-        rc->rotation.y = read_coord(reader);
-        rc->rotation.z = read_coord(reader);
-        break;
-      }
-      case Field_Type::NestedSchema:
-      {
-        // Recursively deserialize nested schema fields
-        const Class_Schema *nested_schema = Schema_Registry::get().get_nested_schema(field);
-        if (!nested_schema)
-        {
-          printf("[SCHEMA] ERROR: deserialize: nested schema '%s' not found for field '%s' — field bits were written by server but will NOT be read, causing bitstream desync!\n",
-                 field.nested_schema_name.c_str(), field.name.c_str());
-        }
-        if (nested_schema)
-        {
-          uint8 *nested_base = current_base + field.offset;
-          for (const auto &nested_field : nested_schema->fields)
-          {
-            switch (nested_field.type)
-            {
-            case Field_Type::Int32:
-            {
-              int32_t val = read_var_int(reader);
-              std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
-              break;
-            }
-            case Field_Type::Int64:
-            {
-              int64_t val = read_var_int64(reader);
-              std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
-              break;
-            }
-            case Field_Type::Float32:
-            {
-              float val = read_coord(reader);
-              std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
-              break;
-            }
-            case Field_Type::Bool:
-            {
-              bool val = reader.read_bit();
-              std::memcpy(nested_base + nested_field.offset, &val, sizeof(val));
-              break;
-            }
-            case Field_Type::Vec3f:
-            {
-              float vals[3];
-              vals[0] = read_coord(reader);
-              vals[1] = read_coord(reader);
-              vals[2] = read_coord(reader);
-              std::memcpy(nested_base + nested_field.offset, vals, sizeof(vals));
-              break;
-            }
-            case Field_Type::PascalString:
-            {
-              auto *ps = reinterpret_cast<pascal_string *>(nested_base + nested_field.offset);
-              ps->length = static_cast<uint8>(reader.read_bits(8));
-              printf("[SCHEMA] deserialize: field '%s' PascalString length=%u\n",
-                     nested_field.name.c_str(), ps->length);
-              for (uint8 k = 0; k < ps->length; ++k)
-                ps->data[k] = static_cast<char>(reader.read_bits(8));
-              if (ps->length < ps->max_length())
-                ps->data[ps->length] = '\0';
-              break;
-            }
-            default:
-              // TODO: Handle deeper nesting if needed
-              break;
-            }
-          }
-        }
-        break;
-      }
-      default:
-        assert(false && "Unknown field type");
-        break;
-      }
+      deserialize_field_from_bits(reader, current_base, field);
     }
   }
 }

@@ -8,7 +8,12 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#ifdef _WIN32
+#include <direct.h>
+#define getcwd _getcwd
+#else
 #include <unistd.h>
+#endif
 #include <unordered_map>
 
 #define STB_IMAGE_IMPLEMENTATION

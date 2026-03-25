@@ -26,11 +26,6 @@ struct material_t
 
 SCHEMA_NAME_FOR_TYPE(material_t)
 
-template <> struct Schema_Type_Info<material_t>
-{
-  static constexpr Field_Type type = Field_Type::NestedSchema;
-};
-
 // Render component — embeddable in any entity via SCHEMA_FIELD.
 // Bundles mesh reference, visibility, and a local transform.
 // This is now a composable schema component!
@@ -62,14 +57,7 @@ struct render_component_t
   DECLARE_COMPONENT_SCHEMA(render_component_t)
 };
 
-// Schema name registration (must be at namespace scope)
 SCHEMA_NAME_FOR_TYPE(render_component_t)
-
-// Explicit Schema_Type_Info specialization (for backward compat and clarity)
-template <> struct Schema_Type_Info<render_component_t>
-{
-  static constexpr Field_Type type = Field_Type::NestedSchema;
-};
 
 // Hitbox component — defines combat/interaction collision bounds.
 // Separate from physics collision used in player_move.
@@ -97,14 +85,7 @@ struct hitbox_component_t
   DECLARE_COMPONENT_SCHEMA(hitbox_component_t)
 };
 
-// Schema name registration (must be at namespace scope)
 SCHEMA_NAME_FOR_TYPE(hitbox_component_t)
-
-// Explicit Schema_Type_Info specialization
-template <> struct Schema_Type_Info<hitbox_component_t>
-{
-  static constexpr Field_Type type = Field_Type::NestedSchema;
-};
 
 // --- Helper functions ---
 

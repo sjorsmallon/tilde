@@ -1,18 +1,17 @@
 #include "schema.hpp"
-#include "../components/components.hpp"
 #include <cstring>
 #include <sstream>
 
 namespace network
 {
 
-bool parse_string_to_field(const std::string &value, Field_Type type,
+bool parse_string_to_field(const std::string &value, const Field_Prop &field,
                            void *out_ptr)
 {
   if (!out_ptr)
     return false;
 
-  switch (type)
+  switch (field.type)
   {
   case Field_Type::Int32:
   {
@@ -52,10 +51,7 @@ bool parse_string_to_field(const std::string &value, Field_Type type,
   }
   case Field_Type::Bool:
   {
-    // "1", "true", "True" -> true
-    // "0", "false", "False" -> false
     std::string v = value;
-    // Lowercase
     for (auto &c : v)
       c = std::tolower(c);
 
@@ -64,8 +60,6 @@ bool parse_string_to_field(const std::string &value, Field_Type type,
       result = true;
     else if (v == "0" || v == "false")
       result = false;
-    // else default to false or fail? Source usually treats valid non-zero as
-    // true, but strict checking is fine.
     *static_cast<bool *>(out_ptr) = result;
     return true;
   }
@@ -90,69 +84,50 @@ bool parse_string_to_field(const std::string &value, Field_Type type,
     ps->set(value.c_str());
     return true;
   }
-  case Field_Type::RenderComponent:
-  {
-    // Format: mesh_id|mesh_path|visible|is_wireframe|ox oy oz|sx sy sz|rx ry rz
-    auto *rc = static_cast<render_component_t *>(out_ptr);
-    std::stringstream ss(value);
-    std::string token;
-
-    // mesh_id
-    if (!std::getline(ss, token, '|'))
-      return false;
-    try { rc->mesh_id = std::stoi(token); }
-    catch (...) { return false; }
-
-    // mesh_path
-    if (!std::getline(ss, token, '|'))
-      return false;
-    rc->mesh_path.set(token.c_str());
-
-    // visible
-    if (!std::getline(ss, token, '|'))
-      return false;
-    rc->visible = (token == "1" || token == "true");
-
-    // is_wireframe
-    if (!std::getline(ss, token, '|'))
-      return false;
-    rc->is_wireframe = (token == "1" || token == "true");
-
-    // offset (3 floats space-separated)
-    if (!std::getline(ss, token, '|'))
-      return false;
-    { std::stringstream vs(token); vs >> rc->offset.x >> rc->offset.y >> rc->offset.z; }
-
-    // scale (3 floats space-separated)
-    if (!std::getline(ss, token, '|'))
-      return false;
-    { std::stringstream vs(token); vs >> rc->scale.x >> rc->scale.y >> rc->scale.z; }
-
-    // rotation (3 floats space-separated)
-    if (!std::getline(ss, token, '|'))
-      return false;
-    { std::stringstream vs(token); vs >> rc->rotation.x >> rc->rotation.y >> rc->rotation.z; }
-
-    return true;
-  }
   case Field_Type::NestedSchema:
   {
-    // This case is handled by the caller with schema name context
-    // We can't deserialize without knowing which schema to use
-    return false;
+    auto *nested_schema = Schema_Registry::get().get_nested_schema(field);
+    if (!nested_schema)
+      return false;
+
+    // Format: field1:value1|field2:value2|...
+    std::stringstream ss(value);
+    std::string token;
+    uint8_t *base_ptr = static_cast<uint8_t *>(out_ptr);
+
+    while (std::getline(ss, token, '|'))
+    {
+      size_t colon_pos = token.find(':');
+      if (colon_pos == std::string::npos)
+        continue;
+
+      std::string field_name = token.substr(0, colon_pos);
+      std::string field_value = token.substr(colon_pos + 1);
+
+      for (const auto &nested_field : nested_schema->fields)
+      {
+        if (nested_field.name == field_name)
+        {
+          void *nested_ptr = base_ptr + nested_field.offset;
+          parse_string_to_field(field_value, nested_field, nested_ptr);
+          break;
+        }
+      }
+    }
+    return true;
   }
   default:
     return false;
   }
 }
 
-bool serialize_field_to_string(const void *in_ptr, Field_Type type,
+bool serialize_field_to_string(const void *in_ptr, const Field_Prop &field,
                                std::string &out_value)
 {
   if (!in_ptr)
     return false;
 
-  switch (type)
+  switch (field.type)
   {
   case Field_Type::Int32:
   {
@@ -187,82 +162,7 @@ bool serialize_field_to_string(const void *in_ptr, Field_Type type,
     out_value = std::string(ps->c_str(), ps->length);
     return true;
   }
-  case Field_Type::RenderComponent:
-  {
-    // Format: mesh_id|mesh_path|visible|is_wireframe|ox oy oz|sx sy sz|rx ry rz
-    auto *rc = static_cast<const render_component_t *>(in_ptr);
-    std::ostringstream os;
-    os << rc->mesh_id << "|"
-       << std::string(rc->mesh_path.c_str(), rc->mesh_path.length) << "|"
-       << (rc->visible ? "true" : "false") << "|"
-       << (rc->is_wireframe ? "true" : "false") << "|"
-       << rc->offset.x << " " << rc->offset.y << " " << rc->offset.z << "|"
-       << rc->scale.x << " " << rc->scale.y << " " << rc->scale.z << "|"
-       << rc->rotation.x << " " << rc->rotation.y << " " << rc->rotation.z;
-    out_value = os.str();
-    return true;
-  }
   case Field_Type::NestedSchema:
-  {
-    // This case is handled by the caller with schema name context
-    // We can't serialize without knowing which schema to use
-    return false;
-  }
-  default:
-    return false;
-  }
-}
-
-// Recursive serialization for nested schemas
-bool parse_string_to_field_recursive(const std::string &value,
-                                      const Field_Prop &field,
-                                      void *out_ptr)
-{
-  if (field.type == Field_Type::NestedSchema)
-  {
-    auto *nested_schema = Schema_Registry::get().get_nested_schema(field);
-    if (!nested_schema)
-      return false;
-
-    // Format: field1:value1|field2:value2|...
-    std::stringstream ss(value);
-    std::string token;
-    uint8_t *base_ptr = static_cast<uint8_t *>(out_ptr);
-
-    while (std::getline(ss, token, '|'))
-    {
-      // Split into field_name:field_value
-      size_t colon_pos = token.find(':');
-      if (colon_pos == std::string::npos)
-        continue;
-
-      std::string field_name = token.substr(0, colon_pos);
-      std::string field_value = token.substr(colon_pos + 1);
-
-      // Find the field in the nested schema
-      for (const auto &nested_field : nested_schema->fields)
-      {
-        if (nested_field.name == field_name)
-        {
-          void *nested_ptr = base_ptr + nested_field.offset;
-          parse_string_to_field_recursive(field_value, nested_field, nested_ptr);
-          break;
-        }
-      }
-    }
-    return true;
-  }
-  else
-  {
-    return parse_string_to_field(value, field.type, out_ptr);
-  }
-}
-
-bool serialize_field_to_string_recursive(const void *in_ptr,
-                                          const Field_Prop &field,
-                                          std::string &out_value)
-{
-  if (field.type == Field_Type::NestedSchema)
   {
     auto *nested_schema = Schema_Registry::get().get_nested_schema(field);
     if (!nested_schema)
@@ -283,7 +183,7 @@ bool serialize_field_to_string_recursive(const void *in_ptr,
 
       std::string nested_value;
       const void *nested_ptr = base_ptr + nested_field.offset;
-      if (serialize_field_to_string_recursive(nested_ptr, nested_field, nested_value))
+      if (serialize_field_to_string(nested_ptr, nested_field, nested_value))
       {
         os << nested_value;
       }
@@ -292,9 +192,8 @@ bool serialize_field_to_string_recursive(const void *in_ptr,
     out_value = os.str();
     return true;
   }
-  else
-  {
-    return serialize_field_to_string(in_ptr, field.type, out_value);
+  default:
+    return false;
   }
 }
 

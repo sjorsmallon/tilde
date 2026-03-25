@@ -81,8 +81,7 @@ public:
       {
         if (field.name == field_name)
         {
-          // Use recursive version to handle nested schemas
-          parse_string_to_field_recursive(value, field, current_base + field.offset);
+          parse_string_to_field(value, field, current_base + field.offset);
         }
       }
     }
