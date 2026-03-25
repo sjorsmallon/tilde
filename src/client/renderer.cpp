@@ -259,6 +259,9 @@ static uint64_t g_announcement_end_time = 0;
 
 static SDL_Window *g_window = nullptr;
 static VkInstance g_instance = VK_NULL_HANDLE;
+#ifndef NDEBUG
+static VkDebugUtilsMessengerEXT g_debug_messenger = VK_NULL_HANDLE;
+#endif
 static VkPhysicalDevice g_physical_device = VK_NULL_HANDLE;
 static VkDevice g_device = VK_NULL_HANDLE;
 static VkQueue g_graphics_queue = VK_NULL_HANDLE;
@@ -2524,26 +2527,52 @@ void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
   // MVP = ViewProj * Model
   mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
 
-  // Push constants
-  PushConstants pc{};
-  memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
+  // Check if mesh has per-material submeshes
+  const assets::mesh_asset_t *mesh_data = assets::get(mesh_handle);
+  bool use_submeshes = mesh_data && mesh_data->has_materials();
 
-  // Extract color (ABGR format)
-  float a = ((color >> 24) & 0xFF) / 255.0f;
-  float b = ((color >> 16) & 0xFF) / 255.0f;
-  float g = ((color >> 8) & 0xFF) / 255.0f;
-  float r = (color & 0xFF) / 255.0f;
+  if (use_submeshes)
+  {
+    // Switch to lit pipeline — the AABB shader multiplies vertex color (normal) by
+    // the push constant, which produces garbage for OBJ meshes.
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_lit_pipeline);
 
-  pc.color[0] = r;
-  pc.color[1] = g;
-  pc.color[2] = b;
-  pc.color[3] = a;
-
-  vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                     sizeof(PushConstants), &pc);
-
-  // Draw indexed
-  vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
+    for (const auto &sub : mesh_data->submeshes)
+    {
+      const auto &mat = mesh_data->materials[sub.material_index];
+      LitPushConstants lpc{};
+      memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
+      lpc.color[0] = mat.diffuse_color.x;
+      lpc.color[1] = mat.diffuse_color.y;
+      lpc.color[2] = mat.diffuse_color.z;
+      lpc.color[3] = 1.0f;
+      lpc.normal_mat_c0[0] = model.m[0]; lpc.normal_mat_c0[1] = model.m[1]; lpc.normal_mat_c0[2] = model.m[2]; lpc.normal_mat_c0[3] = 0;
+      lpc.normal_mat_c1[0] = model.m[4]; lpc.normal_mat_c1[1] = model.m[5]; lpc.normal_mat_c1[2] = model.m[6]; lpc.normal_mat_c1[3] = 0;
+      lpc.normal_mat_c2[0] = model.m[8]; lpc.normal_mat_c2[1] = model.m[9]; lpc.normal_mat_c2[2] = model.m[10]; lpc.normal_mat_c2[3] = 0;
+      vkCmdPushConstants(cmd, g_lit_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                         sizeof(LitPushConstants), &lpc);
+      vkCmdDrawIndexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
+    }
+  }
+  else
+  {
+    // Original AABB pipeline path for non-material meshes
+    PushConstants pc{};
+    memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
+    float a = ((color >> 24) & 0xFF) / 255.0f;
+    float b = ((color >> 16) & 0xFF) / 255.0f;
+    float g = ((color >> 8) & 0xFF) / 255.0f;
+    float r = (color & 0xFF) / 255.0f;
+    pc.color[0] = r;
+    pc.color[1] = g;
+    pc.color[2] = b;
+    pc.color[3] = a;
+    pc.random_seed = 0;
+    pc.use_random_color = 0;
+    vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(PushConstants), &pc);
+    vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
+  }
 }
 
 void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
@@ -2623,6 +2652,7 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
                       const linalg::vec3 &color, ShaderType shader_type,
                       const linalg::vec3 &rotation)
 {
+  log_terminal("DrawMeshMaterial: handle={} shader_type={}", mesh_handle.index, (int)shader_type);
   if (!mesh_handle.valid())
     return;
 
@@ -2671,38 +2701,81 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
 
   mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
 
-  if (shader_type == ShaderType::Lit)
+  // Check if mesh has per-material submeshes
+  const assets::mesh_asset_t *mesh_data = assets::get(mesh_handle);
+  bool use_submeshes = mesh_data && mesh_data->has_materials();
+
+  static bool diag_once = false;
+  if (!diag_once)
   {
-    LitPushConstants lpc{};
-    memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
-    lpc.color[0] = color.x;
-    lpc.color[1] = color.y;
-    lpc.color[2] = color.z;
-    lpc.color[3] = 1.0f;
-    // Extract upper-left 3x3 of model matrix (column-major).
-    // For non-uniform scale this is not the true inverse-transpose,
-    // but good enough for moderate scale differences.
-    lpc.normal_mat_c0[0] = model.m[0]; lpc.normal_mat_c0[1] = model.m[1]; lpc.normal_mat_c0[2] = model.m[2]; lpc.normal_mat_c0[3] = 0;
-    lpc.normal_mat_c1[0] = model.m[4]; lpc.normal_mat_c1[1] = model.m[5]; lpc.normal_mat_c1[2] = model.m[6]; lpc.normal_mat_c1[3] = 0;
-    lpc.normal_mat_c2[0] = model.m[8]; lpc.normal_mat_c2[1] = model.m[9]; lpc.normal_mat_c2[2] = model.m[10]; lpc.normal_mat_c2[3] = 0;
-    vkCmdPushConstants(cmd, g_lit_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                       sizeof(LitPushConstants), &lpc);
+    printf("[renderer] DrawMeshMaterial diag: handle=%u mesh_data=%p\n",
+           mesh_handle.index, (const void *)mesh_data);
+    if (mesh_data)
+      printf("[renderer]   verts=%zu indices=%zu materials=%zu submeshes=%zu has_materials=%d\n",
+             mesh_data->vertices.size(), mesh_data->indices.size(),
+             mesh_data->materials.size(), mesh_data->submeshes.size(),
+             mesh_data->has_materials());
+    diag_once = true;
+  }
+
+  auto push_and_draw = [&](const linalg::vec3 &draw_color, uint32_t index_count, uint32_t first_index) {
+    if (shader_type == ShaderType::Lit)
+    {
+      LitPushConstants lpc{};
+      memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
+      lpc.color[0] = draw_color.x;
+      lpc.color[1] = draw_color.y;
+      lpc.color[2] = draw_color.z;
+      lpc.color[3] = 1.0f;
+      lpc.normal_mat_c0[0] = model.m[0]; lpc.normal_mat_c0[1] = model.m[1]; lpc.normal_mat_c0[2] = model.m[2]; lpc.normal_mat_c0[3] = 0;
+      lpc.normal_mat_c1[0] = model.m[4]; lpc.normal_mat_c1[1] = model.m[5]; lpc.normal_mat_c1[2] = model.m[6]; lpc.normal_mat_c1[3] = 0;
+      lpc.normal_mat_c2[0] = model.m[8]; lpc.normal_mat_c2[1] = model.m[9]; lpc.normal_mat_c2[2] = model.m[10]; lpc.normal_mat_c2[3] = 0;
+      vkCmdPushConstants(cmd, g_lit_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                         sizeof(LitPushConstants), &lpc);
+    }
+    else
+    {
+      PushConstants pc{};
+      memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
+      pc.color[0] = draw_color.x;
+      pc.color[1] = draw_color.y;
+      pc.color[2] = draw_color.z;
+      pc.color[3] = 1.0f;
+      pc.random_seed = 0;
+      pc.use_random_color = 0;
+      vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                         sizeof(PushConstants), &pc);
+    }
+    vkCmdDrawIndexed(cmd, index_count, 1, first_index, 0, 0);
+  };
+
+  if (use_submeshes)
+  {
+    static bool logged_once = false;
+    if (!logged_once)
+    {
+      printf("[renderer] DrawMeshMaterial: using %zu submeshes, %zu materials\n",
+             mesh_data->submeshes.size(), mesh_data->materials.size());
+      for (size_t i = 0; i < mesh_data->submeshes.size(); i++)
+      {
+        const auto &sub = mesh_data->submeshes[i];
+        const auto &mat = mesh_data->materials[sub.material_index];
+        printf("[renderer]   submesh %zu: offset=%u count=%u mat='%s' Kd=(%.3f,%.3f,%.3f)\n",
+               i, sub.index_offset, sub.index_count,
+               mat.name.c_str(), mat.diffuse_color.x, mat.diffuse_color.y, mat.diffuse_color.z);
+      }
+      logged_once = true;
+    }
+    for (const auto &sub : mesh_data->submeshes)
+    {
+      vec3f mat_color = mesh_data->materials[sub.material_index].diffuse_color;
+      push_and_draw(mat_color, sub.index_count, sub.index_offset);
+    }
   }
   else
   {
-    PushConstants pc{};
-    memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
-    pc.color[0] = color.x;
-    pc.color[1] = color.y;
-    pc.color[2] = color.z;
-    pc.color[3] = 1.0f;
-    pc.random_seed = 0;
-    pc.use_random_color = 0;
-    vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                       sizeof(PushConstants), &pc);
+    push_and_draw(color, gpu_mesh->index_count, 0);
   }
-
-  vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
 }
 
 void draw_announcement(const char *text)
@@ -2815,6 +2888,28 @@ void ProcessEvent(const SDL_Event *event)
   }
 }
 
+#ifndef NDEBUG
+static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT type,
+    const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
+    void *user_data)
+{
+  const char *severity_str = "UNKNOWN";
+  if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+    severity_str = "ERROR";
+  else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+    severity_str = "WARNING";
+  else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
+    severity_str = "INFO";
+  else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
+    severity_str = "VERBOSE";
+
+  std::print("[vulkan {}] {}\n", severity_str, callback_data->pMessage);
+  return VK_FALSE;
+}
+#endif
+
 bool Init(SDL_Window *window)
 {
   g_window = window;
@@ -2838,30 +2933,78 @@ bool Init(SDL_Window *window)
   instance_info.pApplicationInfo = &app_info;
 
 #ifndef NDEBUG
-  // Enable Vulkan validation layers in debug builds
+  // Check if validation layer is available
+  bool validation_available = false;
+  {
+    uint32_t layer_count;
+    vkEnumerateInstanceLayerProperties(&layer_count, nullptr);
+    std::vector<VkLayerProperties> available_layers(layer_count);
+    vkEnumerateInstanceLayerProperties(&layer_count, available_layers.data());
+    for (const auto &layer : available_layers)
+    {
+      if (strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0)
+      {
+        validation_available = true;
+        break;
+      }
+    }
+  }
   const char *validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
-  instance_info.enabledLayerCount = 1;
-  instance_info.ppEnabledLayerNames = validationLayers;
-  std::print("[renderer] Vulkan validation layers enabled\n");
+  if (validation_available)
+  {
+    instance_info.enabledLayerCount = 1;
+    instance_info.ppEnabledLayerNames = validationLayers;
+    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    std::print("[renderer] Vulkan validation layers enabled\n");
+  }
+  else
+  {
+    std::print("[renderer] WARNING: VK_LAYER_KHRONOS_validation not available\n");
+  }
 #endif
 
 #ifdef __APPLE__
-  std::vector<const char *> appleExtensions = extensions;
-  appleExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+  extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
   instance_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
-  instance_info.enabledExtensionCount = (uint32_t)appleExtensions.size();
-  instance_info.ppEnabledExtensionNames = appleExtensions.data();
-#else
+#endif
   instance_info.enabledExtensionCount = (uint32_t)extensions.size();
   instance_info.ppEnabledExtensionNames = extensions.data();
-#endif
 
-  if (vkCreateInstance(&instance_info, nullptr, &g_instance) != VK_SUCCESS)
+  // Log what we're requesting for debugging
+  std::print("[renderer] Requesting {} extensions:\n", extensions.size());
+  for (const auto *ext : extensions)
+    std::print("[renderer]   {}\n", ext);
+  std::print("[renderer] Requesting {} layers\n", instance_info.enabledLayerCount);
+
+  VkResult instance_result = vkCreateInstance(&instance_info, nullptr, &g_instance);
+  if (instance_result != VK_SUCCESS)
   {
-    log_error("Failed to create Vulkan instance!");
+    log_error("Failed to create Vulkan instance! VkResult = {}", (int)instance_result);
     return false;
   }
   log_terminal("Vulkan Instance created.");
+
+#ifndef NDEBUG
+  if (validation_available)
+  {
+    VkDebugUtilsMessengerCreateInfoEXT debug_info = {};
+    debug_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    debug_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    debug_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                             VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                             VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    debug_info.pfnUserCallback = vulkan_debug_callback;
+
+    auto create_fn = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+        g_instance, "vkCreateDebugUtilsMessengerEXT");
+    if (create_fn)
+    {
+      create_fn(g_instance, &debug_info, nullptr, &g_debug_messenger);
+      std::print("[renderer] Vulkan debug messenger created\n");
+    }
+  }
+#endif
 
   if (!SDL_Vulkan_CreateSurface(g_window, g_instance, &g_surface))
   {
@@ -3205,6 +3348,15 @@ void Shutdown()
   {
     vkDestroySurfaceKHR(g_instance, g_surface, nullptr);
   }
+#ifndef NDEBUG
+  if (g_debug_messenger)
+  {
+    auto destroy_fn = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+        g_instance, "vkDestroyDebugUtilsMessengerEXT");
+    if (destroy_fn)
+      destroy_fn(g_instance, g_debug_messenger, nullptr);
+  }
+#endif
   if (g_instance)
   {
     vkDestroyInstance(g_instance, nullptr);

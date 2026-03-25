@@ -2,6 +2,7 @@
 
 #include "vertex.hpp"
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace assets
@@ -17,10 +18,27 @@ template <typename T> struct asset_handle_t
 
 // --- Asset types ---
 
+struct obj_material_t
+{
+  vec3f diffuse_color = {1, 1, 1};
+  std::string name;
+};
+
+struct submesh_t
+{
+  uint32_t index_offset = 0;
+  uint32_t index_count = 0;
+  uint32_t material_index = 0;
+};
+
 struct mesh_asset_t
 {
   std::vector<vertex_xnu> vertices;
   std::vector<uint32_t> indices;
+  std::vector<obj_material_t> materials;
+  std::vector<submesh_t> submeshes;
+
+  bool has_materials() const { return !submeshes.empty(); }
 };
 
 struct texture_asset_t

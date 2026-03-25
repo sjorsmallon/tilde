@@ -792,7 +792,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
           {
             renderer::DrawMeshWireframe(cmd, ent->position, rc->scale,
                                         mesh_handle, 0xFFFFFFFF,
-                                        ent->orientation);
+                                        ent->orientation + rc->rotation);
           }
           else
           {
@@ -802,7 +802,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
               st = renderer::ShaderType::Unlit;
             renderer::DrawMeshMaterial(cmd, ent->position, rc->scale,
                                        mesh_handle, mat_color, st,
-                                       ent->orientation);
+                                       ent->orientation + rc->rotation);
           }
           continue;
         }
@@ -890,7 +890,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
             st = renderer::ShaderType::Unlit;
           renderer::DrawMeshMaterial(cmd, ent->position, rc->scale,
                                      mesh_handle, mat_color, st,
-                                     ent->orientation);
+                                     ent->orientation + rc->rotation);
         }
       }
     }
@@ -935,9 +935,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
       if (mesh_handle.valid())
       {
-        std::print("[CLIENT] Drawing rocket {}: pos=({:.1f},{:.1f},{:.1f}) scale=({:.1f},{:.1f},{:.1f})\n",
-                   id, rocket.position.x, rocket.position.y, rocket.position.z,
-                   rc->scale.x, rc->scale.y, rc->scale.z);
+
         renderer::DrawMesh(cmd, rocket.position, rc->scale, mesh_handle,
                           0xFFFFFF00, rocket.orientation);
       }

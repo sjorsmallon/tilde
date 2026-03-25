@@ -153,8 +153,8 @@ void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
             if (nested_field.type == Field_Type::PascalString)
             {
               const auto *ps = reinterpret_cast<const pascal_string *>(nested_base + nested_field.offset);
-              printf("[SCHEMA] serialize: field '%s.%s' PascalString length=%u\n",
-                     field.name.c_str(), nested_field.name.c_str(), ps->length);
+              // printf("[SCHEMA] serialize: field '%s.%s' PascalString length=%u\n",
+              //        field.name.c_str(), nested_field.name.c_str(), ps->length);
             }
           }
           for (const auto &nested_field : nested_schema->fields)

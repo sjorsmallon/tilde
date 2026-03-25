@@ -278,6 +278,12 @@ void ToolEditorState::update(float dt)
 {
   last_dt = dt;
 
+  if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
+  {
+    state_manager::switch_to(GameStateKind::MainMenu);
+    return;
+  }
+
   // Update Camera
   ImGuiIO &io = ImGui::GetIO();
   if (!io.WantCaptureMouse)
@@ -1046,10 +1052,10 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
         {
           if (rc->is_wireframe)
             renderer::DrawMeshWireframe(cmd, ent->position, rc->scale,
-                                        mesh_handle, 0xFFFFFFFF, ent->orientation);
+                                        mesh_handle, 0xFFFFFFFF, ent->orientation + rc->rotation);
           else
             renderer::DrawMesh(cmd, ent->position, rc->scale,
-                               mesh_handle, 0xFFFFFFFF, ent->orientation);
+                               mesh_handle, 0xFFFFFFFF, ent->orientation + rc->rotation);
           continue;
         }
       }

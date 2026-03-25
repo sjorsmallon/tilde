@@ -464,7 +464,8 @@ bool Tick()
           // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
           rocket->render.mesh_path.set("resources/obj/error.obj"); // or "resources/obj/tinker.obj"
           rocket->render.visible = true;
-          rocket->render.scale = {25.f, 25.f, 25.f};
+          rocket->render.scale = vec3{1.f, 1.f, 1.f};
+          rocket->render.rotation = vec3{0.f, 0.f, 0.f};
 
           // Initialize hitbox (sphere with 12 unit radius)
           rocket->hitbox.shape_type.set("sphere");

@@ -1,11 +1,9 @@
 
-Sprite transparency — smoke.png has opaque backgrounds that need alpha masking
-Particle editor tool — dedicated ImGui panel for live parameter tweaking
-Easing functions — replace linear lerp with ease-in/out curves
+- orientation is not clear whether it uses euler angles / degrees / radians. we are inconsistent. that's not good
+- nested schemas are annoying. can we clean that code up?
 
 
-- player movement is dependent on delta t. that does not seem good.. is the fps too high? should we limit fps?
-- entity spawn indicators disappear upon map loading and saving.
+
 
 - is the navmesh only planar? or does A* just need two-dimensional? I think there's something wrong.
 
@@ -14,6 +12,12 @@ Easing functions — replace linear lerp with ease-in/out curves
 
 - gizmo for selection moving is not finalized.
 - undo/redo: multi-entity delete creates one transaction per entity. Ctrl+Z only undoes one deletion at a time instead of the whole batch.
+
+
+Sprite transparency — smoke.png has opaque backgrounds that need 
+alpha masking
+Particle editor tool — dedicated ImGui panel for live parameter tweaking
+Easing functions — replace linear lerp with ease-in/out curves
 
 
 
@@ -28,7 +32,7 @@ Easing functions — replace linear lerp with ease-in/out curves
 - [x] client receives and deserializes entity snapshots
 - [x] client-side prediction with server reconciliation
 - [x] remote player interpolation (2-snapshot buffer)
-
+- player movement is dependent on delta t. that does not seem good.. is the fps too high? should we limit fps?
 ## Multiplayer Networking (TODO: next steps)
 - delta compression for snapshots (currently full updates every tick)
 - ack/nack system for reliable packet delivery

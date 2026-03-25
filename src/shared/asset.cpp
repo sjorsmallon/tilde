@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unistd.h>
 #include <unordered_map>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -139,17 +140,91 @@ obj_index_t parse_face_vertex(const char *token)
   return idx;
 }
 
+// Parse a .mtl file and return materials keyed by name.
+std::unordered_map<std::string, obj_material_t> load_mtl(const char *path)
+{
+  std::unordered_map<std::string, obj_material_t> materials;
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    printf("[assets] WARNING: Could not open MTL file: '%s' (cwd: ", path);
+    char cwd[512];
+    if (getcwd(cwd, sizeof(cwd)))
+      printf("%s", cwd);
+    printf(")\n");
+    return materials;
+  }
+
+  obj_material_t *current = nullptr;
+  std::string line;
+  while (std::getline(file, line))
+  {
+    if (line.empty() || line[0] == '#')
+      continue;
+
+    std::istringstream ss(line);
+    std::string prefix;
+    ss >> prefix;
+
+    if (prefix == "newmtl")
+    {
+      std::string name;
+      ss >> name;
+      materials[name] = {};
+      materials[name].name = name;
+      current = &materials[name];
+    }
+    else if (prefix == "Kd" && current)
+    {
+      ss >> current->diffuse_color.x >> current->diffuse_color.y >> current->diffuse_color.z;
+    }
+  }
+
+  printf("[assets] Loaded MTL '%s': %zu materials\n", path, materials.size());
+  for (const auto &[name, mat] : materials)
+    printf("[assets]   material '%s': Kd = (%.3f, %.3f, %.3f)\n",
+           name.c_str(), mat.diffuse_color.x, mat.diffuse_color.y, mat.diffuse_color.z);
+  return materials;
+}
+
 bool load_obj(const char *path, mesh_asset_t &out)
 {
   std::ifstream file(path);
   if (!file.is_open())
     return false;
 
+  // Derive the directory of the OBJ file for resolving mtllib paths
+  std::string obj_dir;
+  {
+    std::string obj_path = path;
+    auto slash = obj_path.find_last_of("/\\");
+    if (slash != std::string::npos)
+      obj_dir = obj_path.substr(0, slash + 1);
+  }
+
   std::vector<vec3f> positions;
   std::vector<vec3f> normals;
   std::vector<vec2f> uvs;
 
   std::unordered_map<obj_index_t, uint32_t, obj_index_hash> vertex_cache;
+  std::unordered_map<std::string, obj_material_t> mtl_lib;
+
+  // Track current material and submesh building
+  int current_material = -1; // index into out.materials
+  uint32_t submesh_start = 0;
+
+  auto flush_submesh = [&]() {
+    uint32_t idx_count = static_cast<uint32_t>(out.indices.size()) - submesh_start;
+    if (idx_count > 0)
+    {
+      submesh_t sub;
+      sub.index_offset = submesh_start;
+      sub.index_count = idx_count;
+      sub.material_index = current_material >= 0 ? current_material : 0;
+      out.submeshes.push_back(sub);
+    }
+    submesh_start = static_cast<uint32_t>(out.indices.size());
+  };
 
   std::string line;
   while (std::getline(file, line))
@@ -161,7 +236,54 @@ bool load_obj(const char *path, mesh_asset_t &out)
     std::string prefix;
     ss >> prefix;
 
-    if (prefix == "v")
+    if (prefix == "mtllib")
+    {
+      std::string mtl_filename;
+      ss >> mtl_filename;
+      std::string mtl_path = obj_dir + mtl_filename;
+      printf("[assets] OBJ '%s' references mtllib '%s' -> resolved to '%s'\n",
+             path, mtl_filename.c_str(), mtl_path.c_str());
+      mtl_lib = load_mtl(mtl_path.c_str());
+    }
+    else if (prefix == "usemtl")
+    {
+      std::string mat_name;
+      ss >> mat_name;
+
+      // Flush previous submesh
+      flush_submesh();
+
+      // Find or add this material
+      current_material = -1;
+      for (int i = 0; i < (int)out.materials.size(); i++)
+      {
+        if (out.materials[i].name == mat_name)
+        {
+          current_material = i;
+          break;
+        }
+      }
+      if (current_material < 0)
+      {
+        // Add new material from mtl_lib or default
+        obj_material_t mat;
+        auto it = mtl_lib.find(mat_name);
+        if (it != mtl_lib.end())
+        {
+          mat = it->second;
+          printf("[assets]   usemtl '%s': Kd = (%.3f, %.3f, %.3f)\n",
+                 mat_name.c_str(), mat.diffuse_color.x, mat.diffuse_color.y, mat.diffuse_color.z);
+        }
+        else
+        {
+          mat.name = mat_name;
+          printf("[assets]   usemtl '%s': NOT FOUND in mtl_lib, using default white\n", mat_name.c_str());
+        }
+        current_material = static_cast<int>(out.materials.size());
+        out.materials.push_back(mat);
+      }
+    }
+    else if (prefix == "v")
     {
       vec3f p;
       ss >> p.x >> p.y >> p.z;
@@ -229,6 +351,13 @@ bool load_obj(const char *path, mesh_asset_t &out)
       }
     }
   }
+
+  // Flush the last submesh
+  flush_submesh();
+
+  // If no materials were encountered, clear submeshes so has_materials() returns false
+  if (out.materials.empty())
+    out.submeshes.clear();
 
   return !out.vertices.empty();
 }

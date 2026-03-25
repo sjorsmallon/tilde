@@ -58,3 +58,10 @@ cmake --build cmake_build
 
 *   **CMake not found**: Install CMake via Homebrew (`brew install cmake`) or installer.
 *   **Vulkan not found**: Reinstall Vulkan SDK. On macOS, ensure `source ~/VulkanSDK/x.y.z/setup-env.sh` is run if not permanently added to shell.
+*   **Vulkan validation layers fail (`VK_ERROR_LAYER_NOT_PRESENT`, VkResult -6)**: Debug builds enable `VK_LAYER_KHRONOS_validation` automatically. On macOS with Homebrew, the Vulkan loader can't find the validation layer dylib because the layer JSON uses a relative library path and `/opt/homebrew/lib` isn't in the default search path. Fix:
+    ```bash
+    brew install vulkan-validationlayers
+    # Add to .zshrc:
+    export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib
+    ```
+    The code falls back gracefully if the layer isn't available, but you won't get validation messages.

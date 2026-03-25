@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../game_state.hpp"
+#include "../input.hpp"
 #include "../state_manager.hpp"
+#include "SDL_scancode.h"
 #include "imgui.h"
 
 namespace client
@@ -10,7 +12,13 @@ namespace client
 class MainMenuState : public IGameState
 {
 public:
-  void update(float dt) override {}
+  void update(float dt) override
+  {
+    if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
+    {
+      state_manager::request_exit();
+    }
+  }
 
   void render_ui() override
   {

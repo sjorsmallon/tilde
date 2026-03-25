@@ -2,7 +2,21 @@
   "permissions": {
     "allow": [
       "Bash(cmake --build cmake_build -j8)",
-      "Bash(tasklist)"
+      "Bash(tasklist)",
+      "Bash(cmake --build /Users/sjors/Desktop/tilde/cmake_build -j8)",
+      "Bash(./cmake_build/bin/MyGame)",
+      "Bash(vulkaninfo --summary)",
+      "Read(//opt/homebrew/**)",
+      "Read(//usr/local/**)",
+      "Bash(echo \"VK_LAYER_PATH=$VK_LAYER_PATH\")",
+      "Bash(echo \"VK_ICD_FILENAMES=$VK_ICD_FILENAMES\")",
+      "Bash(vulkaninfo)",
+      "Bash(VK_LAYER_PATH=/opt/homebrew/share/vulkan/explicit_layer.d ./cmake_build/bin/MyGame)",
+      "Bash(DYLD_PRINT_LIBRARIES=1 VK_LAYER_PATH=/opt/homebrew/share/vulkan/explicit_layer.d VK_LOADER_DEBUG=all ./cmake_build/bin/MyGame)",
+      "Bash(VK_LOADER_DEBUG=all VK_LAYER_PATH=/opt/homebrew/share/vulkan/explicit_layer.d ./cmake_build/bin/MyGame)",
+      "Bash(DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib VK_LAYER_PATH=/opt/homebrew/share/vulkan/explicit_layer.d ./cmake_build/bin/MyGame)",
+      "Bash(./cmake_build/bin/asset_test)",
+      "Bash(grep -E \"error:|Built target MyGame$\")"
     ]
   }
 }
