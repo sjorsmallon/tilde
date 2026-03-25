@@ -276,6 +276,14 @@ inline std::vector<aabb_t> subtract_aabb(const aabb_t &source, const aabb_t &sub
     result.push_back(box);
   }
 
+  // Discard degenerate thin slices produced by near-touching AABBs.
+  constexpr float MIN_THICKNESS = 1.f;
+  std::erase_if(result, [](const aabb_t &b) {
+    return b.half_extents.x < MIN_THICKNESS ||
+           b.half_extents.y < MIN_THICKNESS ||
+           b.half_extents.z < MIN_THICKNESS;
+  });
+
   return result;
 }
 

@@ -130,42 +130,120 @@ std::vector<linalg::vec3> find_path(const navmesh_t &nav, const linalg::vec3 &st
 {
     timed_function();
     auto corridor = build_corridor_using_A_Star(nav, start, end);
-    std::vector<linalg::vec3> path;
+
     if (corridor.empty())
     {
         log_terminal("[pathfinding] no path found from start to end.");
         return {};
     }
 
-    // If start and end are in the same polygon, go directly.
     if (corridor.size() == 1)
-    {
-        path.push_back(start);
-        path.push_back(end);
-        return path;
-    }
+        return {start, end};
 
-    // Build the path from portal midpoints.
-    // The first waypoint is the start, then one midpoint per shared edge between
-    // consecutive corridor polygons, then the end.
-    path.push_back(start);
+    // Build portal list from corridor.
+    // Portal i is the shared edge between corridor[i] and corridor[i+1].
+    // For CCW-wound polygons, edge e goes from verts[e] to verts[(e+1)%N]
+    // with the polygon interior to the left of that edge direction.
+    // Looking from cur toward next: right = verts[e], left = verts[(e+1)%N].
+    struct Portal { linalg::vec3f left, right; };
+    std::vector<Portal> portals;
+    portals.reserve(corridor.size() + 1);
+
+    portals.push_back({.left = start, .right = start});
 
     for (int i = 0; i + 1 < (int)corridor.size(); ++i)
     {
         const nav_polygon_t *cur  = corridor[i];
         const nav_polygon_t *next = corridor[i + 1];
+        int next_idx = (int)(next - nav.polygons.data());
 
-        // Find which edge of cur is shared with next.
         const int N = (int)cur->neighbors.size();
         for (int e = 0; e < N; ++e)
         {
-            if (cur->neighbors[e] == (next - nav.polygons.data()))
+            if (cur->neighbors[e] == next_idx)
             {
-                // Edge e runs from verts[e] to verts[(e+1)%N].
                 linalg::vec3f a = nav.vertices[cur->verts[e          ]].pos;
                 linalg::vec3f b = nav.vertices[cur->verts[(e + 1) % N]].pos;
-                path.push_back((a + b) * 0.5f);
+                portals.push_back({.left = a, .right = b});
                 break;
+            }
+        }
+    }
+
+    portals.push_back({.left = end, .right = end});
+
+    // Simple Stupid Funnel Algorithm (Mikko Mononen).
+    // Maintains a funnel defined by apex, left edge, and right edge.
+    // Tightens the funnel at each portal; when one side crosses the other,
+    // the crossed vertex becomes a turn point and a new apex.
+    auto v3eq = [](const linalg::vec3f &a, const linalg::vec3f &b) -> bool
+    {
+        return a.x == b.x && a.y == b.y && a.z == b.z;
+    };
+
+    auto tri_area_2d = [](const linalg::vec3f &a, const linalg::vec3f &b, const linalg::vec3f &c) -> float
+    {
+        return (b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z);
+    };
+
+    std::vector<linalg::vec3> path;
+    path.push_back(start);
+
+    linalg::vec3f funnel_apex  = start;
+    linalg::vec3f funnel_left  = start;
+    linalg::vec3f funnel_right = start;
+    int apex_index  = 0;
+    int left_index  = 0;
+    int right_index = 0;
+
+    for (int i = 1; i < (int)portals.size(); ++i)
+    {
+        const linalg::vec3f &new_left  = portals[i].left;
+        const linalg::vec3f &new_right = portals[i].right;
+
+        // Try to tighten the right side of the funnel.
+        if (tri_area_2d(funnel_apex, funnel_right, new_right) <= 0.0f)
+        {
+            if (v3eq(funnel_apex, funnel_right) || tri_area_2d(funnel_apex, funnel_left, new_right) > 0.0f)
+            {
+                funnel_right = new_right;
+                right_index = i;
+            }
+            else
+            {
+                // Right crossed over left — left vertex is a turn point.
+                path.push_back(funnel_left);
+                funnel_apex = funnel_left;
+                apex_index  = left_index;
+                funnel_left  = funnel_apex;
+                funnel_right = funnel_apex;
+                left_index  = apex_index;
+                right_index = apex_index;
+                i = apex_index;
+                continue;
+            }
+        }
+
+        // Try to tighten the left side of the funnel.
+        if (tri_area_2d(funnel_apex, funnel_left, new_left) >= 0.0f)
+        {
+            if (v3eq(funnel_apex, funnel_left) || tri_area_2d(funnel_apex, funnel_right, new_left) < 0.0f)
+            {
+                funnel_left = new_left;
+                left_index = i;
+            }
+            else
+            {
+                // Left crossed over right — right vertex is a turn point.
+                path.push_back(funnel_right);
+                funnel_apex = funnel_right;
+                apex_index  = right_index;
+                funnel_left  = funnel_apex;
+                funnel_right = funnel_apex;
+                left_index  = apex_index;
+                right_index = apex_index;
+                i = apex_index;
+                continue;
             }
         }
     }
