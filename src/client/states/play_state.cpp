@@ -5,6 +5,7 @@
 #include "../../shared/debug_collision.hpp"
 #include <cmath>
 #include <cstring>
+#include <print>
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
 #include "../../shared/entities/particle_emitter_entity.hpp"
@@ -934,9 +935,22 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
       if (mesh_handle.valid())
       {
+        std::print("[CLIENT] Drawing rocket {}: pos=({:.1f},{:.1f},{:.1f}) scale=({:.1f},{:.1f},{:.1f})\n",
+                   id, rocket.position.x, rocket.position.y, rocket.position.z,
+                   rc->scale.x, rc->scale.y, rc->scale.z);
         renderer::DrawMesh(cmd, rocket.position, rc->scale, mesh_handle,
                           0xFFFFFF00, rocket.orientation);
       }
+      else
+      {
+        std::print("[CLIENT] Rocket {} mesh_handle INVALID (path='{}')\n",
+                   id, mesh_path);
+      }
+    }
+    else
+    {
+      std::print("[CLIENT] Rocket {} has no mesh_path set (visible={}, mesh_id={})\n",
+                 id, rc->visible, rc->mesh_id);
     }
 
     // Debug hitbox visualization for rockets

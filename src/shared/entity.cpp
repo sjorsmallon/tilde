@@ -140,9 +140,23 @@ void Entity::serialize(Bit_Writer &writer, const Entity *baseline) const
       {
         // Recursively serialize nested schema fields
         const Class_Schema *nested_schema = Schema_Registry::get().get_nested_schema(field);
+        if (!nested_schema)
+        {
+          printf("[SCHEMA] ERROR: serialize: nested schema '%s' not found for field '%s' — field will be silently skipped on both sides\n",
+                 field.nested_schema_name.c_str(), field.name.c_str());
+        }
         if (nested_schema)
         {
           const uint8 *nested_base = current_base + field.offset;
+          for (const auto &nested_field : nested_schema->fields)
+          {
+            if (nested_field.type == Field_Type::PascalString)
+            {
+              const auto *ps = reinterpret_cast<const pascal_string *>(nested_base + nested_field.offset);
+              printf("[SCHEMA] serialize: field '%s.%s' PascalString length=%u\n",
+                     field.name.c_str(), nested_field.name.c_str(), ps->length);
+            }
+          }
           for (const auto &nested_field : nested_schema->fields)
           {
             // Recursively serialize each field
@@ -324,6 +338,11 @@ void Entity::deserialize(Bit_Reader &reader)
       {
         // Recursively deserialize nested schema fields
         const Class_Schema *nested_schema = Schema_Registry::get().get_nested_schema(field);
+        if (!nested_schema)
+        {
+          printf("[SCHEMA] ERROR: deserialize: nested schema '%s' not found for field '%s' — field bits were written by server but will NOT be read, causing bitstream desync!\n",
+                 field.nested_schema_name.c_str(), field.name.c_str());
+        }
         if (nested_schema)
         {
           uint8 *nested_base = current_base + field.offset;
@@ -368,6 +387,8 @@ void Entity::deserialize(Bit_Reader &reader)
             {
               auto *ps = reinterpret_cast<pascal_string *>(nested_base + nested_field.offset);
               ps->length = static_cast<uint8>(reader.read_bits(8));
+              printf("[SCHEMA] deserialize: field '%s' PascalString length=%u\n",
+                     nested_field.name.c_str(), ps->length);
               for (uint8 k = 0; k < ps->length; ++k)
                 ps->data[k] = static_cast<char>(reader.read_bits(8));
               if (ps->length < ps->max_length())

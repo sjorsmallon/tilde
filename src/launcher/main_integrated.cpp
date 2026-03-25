@@ -8,6 +8,7 @@
 #include "shared/timed_function.hpp"
 
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <thread>
 
@@ -19,6 +20,24 @@ cvar::CVar<std::string> map("map", "dm_aabb", "Map to load", cvar::flags::None,
 
 int main(int argc, char *argv[])
 {
+  // Change working directory to the project root (parent of cmake_build/).
+  // Executable lives at cmake_build/bin/MyGame.exe, so go up three levels.
+  // We use absolute() first so this works regardless of where the game is launched from.
+  {
+    auto exe_abs    = std::filesystem::absolute(argv[0]);
+    auto project_root = exe_abs
+                            .parent_path()  // cmake_build/bin/
+                            .parent_path()  // cmake_build/
+                            .parent_path(); // project root
+    std::error_code ec;
+    std::filesystem::current_path(project_root, ec);
+    if (ec)
+      printf("[main] WARNING: failed to set working directory to '%s': %s\n",
+             project_root.string().c_str(), ec.message().c_str());
+    else
+      printf("[main] Working directory set to: %s\n", project_root.string().c_str());
+  }
+
   crash_handler::install();
   // console::SpawnNew();
   timed_function();

@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -642,25 +643,96 @@ mesh_asset_t generate_wedge_mesh()
 
 } // namespace
 
+// --- Path resolution ---
+
+// Resolves a raw mesh path to an actual file on disk.
+// Handles missing "resources/obj/" prefix and missing ".obj" extension.
+// Returns the resolved path, or empty string if no candidate was found.
+static std::string resolve_mesh_path(const char *raw)
+{
+  std::string s = raw;
+
+  // Strip trailing .obj to get the stem, so we can try combinations.
+  std::string stem = s;
+  if (stem.size() >= 4 && stem.substr(stem.size() - 4) == ".obj")
+    stem = stem.substr(0, stem.size() - 4);
+
+  // Candidates in priority order (deduplicated below).
+  std::string candidates[] = {
+    s,                                // exactly as given
+    stem + ".obj",                    // ensure .obj extension
+    "resources/obj/" + stem + ".obj", // resources prefix + .obj
+    "resources/obj/" + s,             // resources prefix, as given
+  };
+
+  for (const auto &c : candidates)
+  {
+    // Skip duplicates (e.g. if s already ends in .obj, first two are the same).
+    bool seen = false;
+    for (const auto &prev : candidates)
+    {
+      if (&prev == &c)
+        break;
+      if (prev == c)
+      {
+        seen = true;
+        break;
+      }
+    }
+    if (seen)
+      continue;
+
+    if (std::filesystem::exists(c))
+    {
+      if (c != s)
+        printf("[assets] Resolved mesh '%s' -> '%s'\n", raw, c.c_str());
+      return c;
+    }
+  }
+
+  // Nothing found — emit a clear diagnostic.
+  printf("[assets] ERROR: Cannot find mesh file for '%s'. Tried:\n", raw);
+  bool printed[4] = {};
+  for (int i = 0; i < 4; ++i)
+  {
+    bool dup = false;
+    for (int j = 0; j < i; ++j)
+      if (candidates[j] == candidates[i]) { dup = true; break; }
+    if (!dup)
+      printf("[assets]   '%s'\n", candidates[i].c_str());
+  }
+  printf("[assets] Make sure the working directory is the project root and the file exists under resources/obj/\n");
+  return {};
+}
+
 // --- Public API ---
 
 asset_handle_t<mesh_asset_t> load_mesh(const char *path)
 {
-  // Return cached if already loaded
+  // Check cache first (by resolved key if previously loaded).
   auto existing = g_meshes.find(path);
   if (existing.valid())
     return existing;
 
+  std::string resolved = resolve_mesh_path(path);
+  if (resolved.empty())
+    return {};
+
+  // Check cache again by resolved path (covers alias cases).
+  existing = g_meshes.find(resolved.c_str());
+  if (existing.valid())
+    return existing;
+
   mesh_asset_t mesh;
-  if (!load_obj(path, mesh))
+  if (!load_obj(resolved.c_str(), mesh))
   {
-    printf("[assets] failed to load mesh: %s\n", path);
+    printf("[assets] ERROR: File exists but failed to parse OBJ: '%s'\n", resolved.c_str());
     return {};
   }
 
-  printf("[assets] loaded mesh: %s (%zu verts, %zu indices)\n", path,
-         mesh.vertices.size(), mesh.indices.size());
-  return g_meshes.add(path, std::move(mesh));
+  printf("[assets] Loaded mesh '%s': %zu verts, %zu indices\n",
+         resolved.c_str(), mesh.vertices.size(), mesh.indices.size());
+  return g_meshes.add(resolved.c_str(), std::move(mesh));
 }
 
 asset_handle_t<texture_asset_t> load_texture(const char *path)
@@ -725,11 +797,11 @@ const char *get_mesh_path(int32_t asset_id)
   switch (asset_id)
   {
   case 0:
-    return "obj/question_mark.obj";
+    return "resources/obj/question_mark.obj";
   case 1:
-    return "obj/m4a1_s.obj";
+    return "resources/obj/m4a1_s.obj";
   case 2:
-    return "obj/pyramid.obj";
+    return "resources/obj/pyramid.obj";
   default:
     return nullptr;
   }

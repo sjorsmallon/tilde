@@ -461,7 +461,10 @@ bool Tick()
           rocket->damage_amount   = 50.f;
           rocket->knockback_force = 600.f;
           rocket->owner_id        = static_cast<int32_t>(player->entity_id);
-          network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.5f, 25.5f});
+          // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
+          rocket->render.mesh_path.set("resources/obj/error.obj"); // or "resources/obj/tinker.obj"
+          rocket->render.visible = true;
+          rocket->render.scale = {25.f, 25.f, 25.f};
 
           // Initialize hitbox (sphere with 12 unit radius)
           rocket->hitbox.shape_type.set("sphere");

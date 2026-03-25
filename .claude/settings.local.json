@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --build cmake_build -j8)",
+      "Bash(tasklist)"
+    ]
+  }
+}

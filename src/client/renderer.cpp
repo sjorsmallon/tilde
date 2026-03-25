@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <optional>
+#include <print>
 #include <set>
 #include <unordered_map>
 #include <vector>
@@ -183,6 +184,7 @@ static VkDeviceMemory g_aabb_index_memory = VK_NULL_HANDLE;
 // Mesh pipeline for rendering OBJ models
 static VkPipeline g_mesh_pipeline = VK_NULL_HANDLE;
 static VkPipeline g_mesh_wireframe_pipeline = VK_NULL_HANDLE;
+static bool g_supports_wireframe = false;
 
 // Material pipelines (lit/unlit)
 static VkPipeline g_unlit_pipeline = VK_NULL_HANDLE;
@@ -943,7 +945,7 @@ static void create_line_pipeline()
 
   VkPipelineRasterizationStateCreateInfo rasterizer{
       VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-  rasterizer.polygonMode = VK_POLYGON_MODE_LINE; // FILL works too for lines
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL; // topology is LINE_LIST, polygonMode irrelevant
   rasterizer.lineWidth = 1.0f;
   rasterizer.cullMode = VK_CULL_MODE_NONE;
   rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
@@ -1630,16 +1632,24 @@ static void create_mesh_pipeline()
   {
     log_error("Failed to create mesh pipeline!");
   }
+  else
+  {
+    std::print("[renderer] Mesh pipeline created OK (handle={})\n",
+               (void *)g_mesh_pipeline);
+  }
 
   // Create wireframe variant — same config but polygon mode LINE, no culling
-  rasterizer.polygonMode = VK_POLYGON_MODE_LINE;
-  rasterizer.cullMode = VK_CULL_MODE_NONE;
-
-  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
-                                nullptr, &g_mesh_wireframe_pipeline) !=
-      VK_SUCCESS)
+  if (g_supports_wireframe)
   {
-    log_error("Failed to create mesh wireframe pipeline!");
+    rasterizer.polygonMode = VK_POLYGON_MODE_LINE;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+
+    if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                  nullptr, &g_mesh_wireframe_pipeline) !=
+        VK_SUCCESS)
+    {
+      log_error("Failed to create mesh wireframe pipeline!");
+    }
   }
 
   vkDestroyShaderModule(g_device, vertShaderModule, nullptr);
@@ -2827,6 +2837,14 @@ bool Init(SDL_Window *window)
   instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   instance_info.pApplicationInfo = &app_info;
 
+#ifndef NDEBUG
+  // Enable Vulkan validation layers in debug builds
+  const char *validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
+  instance_info.enabledLayerCount = 1;
+  instance_info.ppEnabledLayerNames = validationLayers;
+  std::print("[renderer] Vulkan validation layers enabled\n");
+#endif
+
 #ifdef __APPLE__
   std::vector<const char *> appleExtensions = extensions;
   appleExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
@@ -2880,12 +2898,28 @@ bool Init(SDL_Window *window)
     queue_create_infos.push_back(queue_create_info);
   }
 
+  // Query and enable optional device features
+  VkPhysicalDeviceFeatures supported_features{};
+  vkGetPhysicalDeviceFeatures(g_physical_device, &supported_features);
+
+  VkPhysicalDeviceFeatures enabled_features{};
+  if (supported_features.fillModeNonSolid)
+  {
+    enabled_features.fillModeNonSolid = VK_TRUE;
+    g_supports_wireframe = true;
+    std::print("[renderer] fillModeNonSolid supported — wireframe enabled\n");
+  }
+  else
+  {
+    std::print("[renderer] fillModeNonSolid NOT supported — wireframe disabled\n");
+  }
+
   VkDeviceCreateInfo device_info{};
   device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   device_info.queueCreateInfoCount =
       static_cast<uint32_t>(queue_create_infos.size());
   device_info.pQueueCreateInfos = queue_create_infos.data();
-  device_info.pEnabledFeatures = nullptr;
+  device_info.pEnabledFeatures = &enabled_features;
 
   const std::vector<const char *> device_extensions = {
       VK_KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -3096,8 +3130,6 @@ bool Init(SDL_Window *window)
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffer;
-    vkQueueSubmit(g_graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
-    vkDeviceWaitIdle(g_device);
     vkQueueSubmit(g_graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
     vkDeviceWaitIdle(g_device);
   }
