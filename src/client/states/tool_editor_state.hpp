@@ -58,6 +58,9 @@ private:
   // instead of wireframe outlines.
   bool draw_entities_solid = true;
 
+  // When true, the editor ground grid is drawn.
+  bool show_grid = true;
+
   // When true, map geometry (AABBs/wedges/meshes) is not rendered.
   bool hide_geometry = false;
   float last_dt = 0.016f;

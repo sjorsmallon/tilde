@@ -8,6 +8,7 @@
 #include <print>
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
+#include "../../shared/entities/displacement_entity.hpp"
 #include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/entities/weapon_entity.hpp"
 #include "../../shared/network/quantization.hpp"
@@ -822,6 +823,21 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       w.half_extents = wedge->half_extents;
       w.orientation = wedge->orientation;
       renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
+    }
+    else if (auto *disp = dynamic_cast<network::Displacement_Entity *>(ent.get()))
+    {
+      std::string disp_key =
+          "__displacement_" + std::to_string(disp->entity_id);
+      auto mesh = network::generate_displacement_mesh(*disp);
+      auto mesh_handle =
+          assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
+      if (mesh_handle.valid())
+      {
+        renderer::DrawMeshMaterial(cmd, disp->position, {1, 1, 1},
+                                   mesh_handle, {0.6f, 0.6f, 0.6f},
+                                   renderer::ShaderType::Lit,
+                                   disp->orientation);
+      }
     }
     else if (dynamic_cast<network::Static_Mesh_Entity *>(ent.get()))
     {

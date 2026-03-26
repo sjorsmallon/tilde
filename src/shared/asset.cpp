@@ -900,6 +900,27 @@ const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle)
   return g_meshes.get(handle);
 }
 
+asset_handle_t<mesh_asset_t> find_mesh_in_cache(const char *path)
+{
+  return g_meshes.find(path);
+}
+
+mesh_asset_t *get_mutable(asset_handle_t<mesh_asset_t> handle)
+{
+  if (!handle.valid() || handle.index >= g_meshes.items.size())
+    return nullptr;
+  return &g_meshes.items[handle.index];
+}
+
+asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path,
+                                                    mesh_asset_t &&mesh)
+{
+  auto existing = g_meshes.find(path);
+  if (existing.valid())
+    return existing;
+  return g_meshes.add(path, std::move(mesh));
+}
+
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle)
 {
   return g_textures.get(handle);

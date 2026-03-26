@@ -2,6 +2,7 @@
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
 #include "../../shared/entities/player_entity.hpp"
+#include "../../shared/entities/displacement_entity.hpp"
 #include "../../shared/entities/static_entities.hpp"
 #include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/map_baker.hpp"
@@ -10,6 +11,7 @@
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
 #include "../editor/tools/particle_editor_tool.hpp"
+#include "../editor/tools/displacement_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -188,6 +190,7 @@ void ToolEditorState::on_enter()
     tools.push_back(std::make_unique<Sculpting_Tool>());
     tools.push_back(std::make_unique<PathfindingTestTool>());
     tools.push_back(std::make_unique<ParticleEditorTool>());
+    tools.push_back(std::make_unique<Displacement_Tool>());
   }
 
   // Enable first tool
@@ -683,6 +686,7 @@ void ToolEditorState::render_ui()
 
   ImGui::Checkbox("Solid Entities", &draw_entities_solid);
   ImGui::Checkbox("Hide Geometry", &hide_geometry);
+  ImGui::Checkbox("Show Grid", &show_grid);
 
   ImGui::Separator();
 
@@ -920,6 +924,8 @@ void ToolEditorState::render_ui()
     switch_tool(3);
   if (ImGui::Button("Particles"))
     switch_tool(4);
+  if (ImGui::Button("Displacement"))
+    switch_tool(5);
 
   ImGui::Separator();
   ImGui::Text("Active Tool: %d", active_tool_index);
@@ -965,6 +971,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   renderer::set_viewport(cmd, view_def.viewport);
 
   // Draw Grid
+  if (show_grid)
   {
     constexpr int count = editor::MAJOR_GRID_COUNT;
     constexpr float major = editor::MAJOR_GRID_STEP;
@@ -1077,6 +1084,25 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       w.half_extents = wedge->half_extents;
       w.orientation = wedge->orientation;
       renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
+    }
+    else if (auto *disp = dynamic_cast<::network::Displacement_Entity *>(ent.get()))
+    {
+      std::string disp_key =
+          "__displacement_" + std::to_string(entry.uid);
+      auto mesh_handle = assets::find_mesh_in_cache(disp_key.c_str());
+      if (!mesh_handle.valid())
+      {
+        auto mesh = network::generate_displacement_mesh(*disp);
+        mesh_handle =
+            assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
+      }
+      if (mesh_handle.valid())
+      {
+        renderer::DrawMeshMaterial(cmd, disp->position, {1, 1, 1},
+                                   mesh_handle, {0.6f, 0.6f, 0.6f},
+                                   renderer::ShaderType::Lit,
+                                   disp->orientation);
+      }
     }
     else if (dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
     {

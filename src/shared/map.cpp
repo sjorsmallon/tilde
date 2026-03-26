@@ -3,6 +3,7 @@
 #include "asset.hpp"
 #include "entities/player_entity.hpp"
 #include "entities/static_entities.hpp"
+#include "entities/displacement_entity.hpp"
 #include "entity_system.hpp"
 #include <cstdint>
 #include <fstream>
@@ -230,6 +231,15 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
     aabb_t t;
     t.center = aabb->position;
     t.half_extents = aabb->half_extents;
+    return get_bounds(t);
+  }
+
+  // 2b. Check for Displacement entity shape
+  if (auto *disp = dynamic_cast<const network::Displacement_Entity *>(entity))
+  {
+    aabb_t t;
+    t.center = disp->position;
+    t.half_extents = disp->half_extents;
     return get_bounds(t);
   }
 

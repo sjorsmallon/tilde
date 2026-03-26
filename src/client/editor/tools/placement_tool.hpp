@@ -24,10 +24,14 @@ public:
 
   void on_draw_overlay(editor_context_t &ctx,
                        overlay_renderer_t &renderer) override;
+  void on_draw_ui(editor_context_t &ctx) override;
 
 private:
+  void select_entity_type(int index);
+
   linalg::vec3 ghost_pos;
   bool ghost_valid = false;
+  int selected_type_index = 0;
 
   std::shared_ptr<::network::Entity> current_entity;
 };

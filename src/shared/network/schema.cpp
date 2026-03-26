@@ -84,6 +84,23 @@ bool parse_string_to_field(const std::string &value, const Field_Prop &field,
     ps->set(value.c_str());
     return true;
   }
+  case Field_Type::Float32Array:
+  {
+    // Format: "count v0 v1 v2 ..."
+    std::stringstream ss(value);
+    uint16_t count = 0;
+    ss >> count;
+    uint16_t max_cap = schema_float_array_max_capacity(field.size);
+    if (count > max_cap)
+      count = max_cap;
+    schema_float_array_set_count(out_ptr, count);
+    float32 *data = schema_float_array_data_mut(out_ptr);
+    for (uint16_t i = 0; i < count; ++i)
+    {
+      ss >> data[i];
+    }
+    return true;
+  }
   case Field_Type::NestedSchema:
   {
     auto *nested_schema = Schema_Registry::get().get_nested_schema(field);
@@ -160,6 +177,20 @@ bool serialize_field_to_string(const void *in_ptr, const Field_Prop &field,
   {
     auto *ps = static_cast<const pascal_string *>(in_ptr);
     out_value = std::string(ps->c_str(), ps->length);
+    return true;
+  }
+  case Field_Type::Float32Array:
+  {
+    // Format: "count v0 v1 v2 ..."
+    uint16_t count = schema_float_array_count(in_ptr);
+    const float32 *data = schema_float_array_data(in_ptr);
+    std::ostringstream os;
+    os << count;
+    for (uint16_t i = 0; i < count; ++i)
+    {
+      os << " " << data[i];
+    }
+    out_value = os.str();
     return true;
   }
   case Field_Type::NestedSchema:

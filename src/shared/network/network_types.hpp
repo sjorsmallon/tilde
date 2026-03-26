@@ -1,6 +1,7 @@
 #pragma once
 
 #include "linalg.hpp"
+#include <cstddef>
 #include <cstdint>
 
 namespace network
@@ -55,6 +56,80 @@ template <uint8 N = 250> struct pascal_string_t
 
 // Default pascal string type used by the schema system
 using pascal_string = pascal_string_t<250>;
+
+// Fixed-capacity inline array, trivially copyable for schema serialization.
+// Follows the same pattern as pascal_string_t: count-prefixed, inline storage.
+template <typename T, uint16 MaxN> struct schema_array_t
+{
+  uint16 count = 0;
+  T data[MaxN] = {};
+
+  schema_array_t() = default;
+
+  uint16 size() const { return count; }
+  uint16 capacity() const { return MaxN; }
+  bool empty() const { return count == 0; }
+
+  T &operator[](uint16 i) { return data[i]; }
+  const T &operator[](uint16 i) const { return data[i]; }
+
+  void push_back(const T &val)
+  {
+    if (count < MaxN)
+      data[count++] = val;
+  }
+
+  void resize(uint16 n)
+  {
+    if (n > MaxN)
+      n = MaxN;
+    // Zero-init new elements
+    for (uint16 i = count; i < n; ++i)
+      data[i] = T{};
+    count = n;
+  }
+
+  void clear() { count = 0; }
+
+  T *begin() { return data; }
+  T *end() { return data + count; }
+  const T *begin() const { return data; }
+  const T *end() const { return data + count; }
+};
+
+// Helpers for type-erased access to schema_array_t<float32, N> from serialization code.
+// The memory layout is the same for all N: [uint16 count] [padding] [float32 data...]
+using schema_float_array_1 = schema_array_t<float32, 1>;
+static constexpr size_t schema_float_array_data_offset =
+    offsetof(schema_float_array_1, data);
+
+inline uint16 schema_float_array_count(const void *ptr)
+{
+  return *static_cast<const uint16 *>(ptr);
+}
+
+inline void schema_float_array_set_count(void *ptr, uint16 n)
+{
+  *static_cast<uint16 *>(ptr) = n;
+}
+
+inline const float32 *schema_float_array_data(const void *ptr)
+{
+  return reinterpret_cast<const float32 *>(
+      static_cast<const uint8 *>(ptr) + schema_float_array_data_offset);
+}
+
+inline float32 *schema_float_array_data_mut(void *ptr)
+{
+  return reinterpret_cast<float32 *>(
+      static_cast<uint8 *>(ptr) + schema_float_array_data_offset);
+}
+
+inline uint16 schema_float_array_max_capacity(size_t field_size)
+{
+  return static_cast<uint16>(
+      (field_size - schema_float_array_data_offset) / sizeof(float32));
+}
 
 // render_component_t moved to components.hpp (included after schema.hpp)
 // to avoid circular dependencies

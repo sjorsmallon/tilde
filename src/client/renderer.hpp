@@ -68,6 +68,10 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
                       const linalg::vec3 &color, ShaderType shader_type,
                       const linalg::vec3 &rotation = {0, 0, 0});
 
+// Invalidate a cached GPU mesh buffer so it gets re-uploaded on next draw.
+// Used for dynamic meshes (e.g. displacement surfaces) that change at runtime.
+void invalidate_mesh_gpu(assets::asset_handle_t<assets::mesh_asset_t> handle);
+
 // Draw a filled convex polygon (e.g. a collision face).
 // Vertices are in world space. Triangle-fan decomposed internally.
 // Supports alpha blending (pass e.g. 0x8800FF00 for 50% green in ABGR).

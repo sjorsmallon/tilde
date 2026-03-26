@@ -1,6 +1,7 @@
 #ifdef ENTITIES_WANT_INCLUDES
 #include "entities/player_entity.hpp"
 #include "entities/static_entities.hpp"
+#include "entities/displacement_entity.hpp"
 #include "entities/weapon_entity.hpp"
 #include "entities/rocket_entity.hpp"
 #include "entities/particle_emitter_entity.hpp"
@@ -34,7 +35,9 @@
     "entities/static_entities.hpp")                                                 \
   X(ROCKET, network::Rocket_Entity, "rocket_entity", "entities/rocket_entity.hpp")   \
   X(PARTICLE_EMITTER, network::Particle_Emitter_Entity, "particle_emitter",         \
-    "entities/particle_emitter_entity.hpp")
+    "entities/particle_emitter_entity.hpp")                                        \
+  X(DISPLACEMENT, network::Displacement_Entity, "displacement_entity",             \
+    "entities/displacement_entity.hpp")
 
 
 // we override the x macro from st get the enum name.

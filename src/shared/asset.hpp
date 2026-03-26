@@ -70,6 +70,17 @@ const char *get_mesh_path(int32_t asset_id);
 // Available primitives: "box", "arrow", "sphere", "cylinder", "cone", "wedge", "pyramid"
 asset_handle_t<mesh_asset_t> get_primitive_mesh(const char *primitive_name);
 
+// --- Dynamic mesh registration (for procedural geometry like displacements) ---
+
+// Look up a mesh by path in cache only (no file I/O). Returns invalid handle if not found.
+asset_handle_t<mesh_asset_t> find_mesh_in_cache(const char *path);
+
+// Register a new mesh with a given path key. If already registered, returns existing handle.
+asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path, mesh_asset_t &&mesh);
+
+// Get a mutable pointer to a mesh asset (for updating dynamic meshes).
+mesh_asset_t *get_mutable(asset_handle_t<mesh_asset_t> handle);
+
 // --- Mesh bounds ---
 
 // Compute axis-aligned bounding box of a mesh's vertices (in model space).

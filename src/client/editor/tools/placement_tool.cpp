@@ -1,5 +1,6 @@
 #include "placement_tool.hpp"
 #include "../../../shared/editor_grid.hpp"
+#include "../../../shared/entities/displacement_entity.hpp"
 #include "../../../shared/entities/particle_emitter_entity.hpp"
 #include "../../../shared/entities/static_entities.hpp"
 #include "../../../shared/map.hpp"
@@ -7,6 +8,7 @@
 #include "../transaction_system.hpp"
 #include "entities/player_entity.hpp"
 #include "entities/weapon_entity.hpp"
+#include "imgui.h"
 #include "log.hpp"
 #include "renderer.hpp"
 #include <SDL.h>
@@ -109,66 +111,98 @@ void Placement_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 {
 }
 
+// Entity type table for placement
+struct placeable_type_t
+{
+  const char *label;
+  const char *classname;
+  int scancode; // SDL_SCANCODE_*
+};
+
+static const placeable_type_t g_placeable_types[] = {
+    {"AABB", "aabb_entity", SDL_SCANCODE_1},
+    {"Wedge", "wedge_entity", SDL_SCANCODE_2},
+    {"Player Spawn", "player_start", SDL_SCANCODE_3},
+    {"Weapon", "weapon_basic", SDL_SCANCODE_4},
+    {"Static Mesh", "static_mesh_entity", SDL_SCANCODE_5},
+    {"Particle Emitter", "particle_emitter", SDL_SCANCODE_6},
+    {"Displacement", "displacement_entity", SDL_SCANCODE_7},
+};
+static constexpr int g_placeable_count =
+    sizeof(g_placeable_types) / sizeof(g_placeable_types[0]);
+
+void Placement_Tool::select_entity_type(int index)
+{
+  if (index < 0 || index >= g_placeable_count)
+    return;
+  selected_type_index = index;
+  const auto &type = g_placeable_types[index];
+  renderer::draw_announcement(type.label);
+  current_entity = shared::create_entity_by_classname(type.classname);
+  if (!current_entity)
+    return;
+
+  // Set up defaults for types that need them
+  if (auto *aabb =
+          dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
+  {
+    aabb->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                          editor::DEFAULT_HALF_EXTENT,
+                          editor::DEFAULT_HALF_EXTENT};
+  }
+  else if (auto *wedge =
+               dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
+  {
+    wedge->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                           editor::DEFAULT_HALF_EXTENT,
+                           editor::DEFAULT_HALF_EXTENT};
+    wedge->orientation = 0;
+  }
+  else if (auto *weapon =
+               dynamic_cast<::network::Weapon_Entity *>(current_entity.get()))
+  {
+    weapon->render.mesh_id = 1;
+    weapon->render.is_wireframe = true;
+  }
+  else if (auto *mesh = dynamic_cast<::network::Static_Mesh_Entity *>(
+               current_entity.get()))
+  {
+    mesh->render.mesh_id = 1;
+  }
+  else if (auto *disp = dynamic_cast<::network::Displacement_Entity *>(
+               current_entity.get()))
+  {
+    disp->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                          editor::DEFAULT_HALF_EXTENT,
+                          editor::DEFAULT_HALF_EXTENT};
+  }
+}
+
 void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
-  renderer::draw_announcement(
-      SDL_GetScancodeName(static_cast<SDL_Scancode>(e.scancode)));
-  if (e.scancode == SDL_SCANCODE_1)
+  for (int i = 0; i < g_placeable_count; ++i)
   {
-    renderer::draw_announcement("AABB");
-    current_entity = shared::create_entity_by_classname("aabb_entity");
-    if (auto *aabb =
-            dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
+    if (e.scancode == g_placeable_types[i].scancode)
     {
-      aabb->half_extents = {editor::DEFAULT_HALF_EXTENT,
-                            editor::DEFAULT_HALF_EXTENT,
-                            editor::DEFAULT_HALF_EXTENT};
+      select_entity_type(i);
+      return;
     }
   }
-  else if (e.scancode == SDL_SCANCODE_2)
+}
+
+void Placement_Tool::on_draw_ui(editor_context_t &ctx)
+{
+  ImGui::SetNextWindowSize({200, 0}, ImGuiCond_FirstUseEver);
+  if (ImGui::Begin("Placement"))
   {
-    renderer::draw_announcement("Wedge");
-    current_entity = shared::create_entity_by_classname("wedge_entity");
-    if (auto *wedge =
-            dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
+    for (int i = 0; i < g_placeable_count; ++i)
     {
-      wedge->half_extents = {editor::DEFAULT_HALF_EXTENT,
-                             editor::DEFAULT_HALF_EXTENT,
-                             editor::DEFAULT_HALF_EXTENT};
-      wedge->orientation = 0;
+      bool selected = (i == selected_type_index);
+      if (ImGui::Selectable(g_placeable_types[i].label, selected))
+        select_entity_type(i);
     }
   }
-  else if (e.scancode == SDL_SCANCODE_3)
-  {
-    renderer::draw_announcement("Player Spawn");
-    current_entity = shared::create_entity_by_classname("player_start");
-  }
-  else if (e.scancode == SDL_SCANCODE_4)
-  {
-    renderer::draw_announcement("Weapon");
-    current_entity = shared::create_entity_by_classname("weapon_basic");
-    if (auto *weapon =
-            dynamic_cast<::network::Weapon_Entity *>(current_entity.get()))
-    {
-      weapon->render.mesh_id = 1;
-      weapon->render.is_wireframe = true;
-    }
-  }
-  else if (e.scancode == SDL_SCANCODE_5)
-  {
-    renderer::draw_announcement("STATIC MESH");
-    current_entity = shared::create_entity_by_classname("static_mesh_entity");
-    if (auto *mesh = dynamic_cast<::network::Static_Mesh_Entity *>(
-            current_entity.get()))
-    {
-      mesh->render.mesh_id = 1;
-    }
-  }
-  else if (e.scancode == SDL_SCANCODE_6)
-  {
-    renderer::draw_announcement("PARTICLE EMITTER");
-    current_entity = shared::create_entity_by_classname("particle_emitter");
-  }
+  ImGui::End();
 }
 
 void Placement_Tool::on_draw_overlay(editor_context_t &ctx,

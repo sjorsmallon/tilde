@@ -48,6 +48,7 @@ enum class Field_Type
   Vec3f,
   PascalString,
   NestedSchema,    // Any type that has its own schema
+  Float32Array,    // schema_array_t<float32, N> - count-prefixed inline float array
 };
 
 struct Field_Prop
@@ -268,6 +269,13 @@ template <> struct Schema_Type_Info<vec3f>
 template <> struct Schema_Type_Info<pascal_string>
 {
   static constexpr Field_Type type = Field_Type::PascalString;
+};
+
+// Partial specialization: any schema_array_t<float32, N> maps to Float32Array.
+template <uint16 N>
+struct Schema_Type_Info<schema_array_t<float32, N>>
+{
+  static constexpr Field_Type type = Field_Type::Float32Array;
 };
 
 // Helper to get nested schema name at compile time

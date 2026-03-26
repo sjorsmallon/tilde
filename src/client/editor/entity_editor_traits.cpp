@@ -173,6 +173,24 @@ bool Entity_Editor_Traits<network::Player_Entity>::draw_ghost(
   return false;
 }
 
+// -- Displacement -------------------------------------------------------
+
+template <>
+linalg::vec3
+Entity_Editor_Traits<network::Displacement_Entity>::get_half_extents(
+    const network::Displacement_Entity *e)
+{
+  return e->half_extents;
+}
+
+template <>
+bool Entity_Editor_Traits<network::Displacement_Entity>::draw_ghost(
+    const network::Displacement_Entity *, overlay_renderer_t &,
+    const linalg::vec3 &)
+{
+  return false; // use default wire box
+}
+
 // -- Rocket (runtime only, not placed in editor) ------------------------
 
 template <>
