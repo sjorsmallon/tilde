@@ -736,9 +736,17 @@ void bake_map(map_t &map, float cell_size)
         continue;
 
       nav.polygons[s].neighbors[d] = best_t;
-      nav.polygons[best_t].neighbors[(d + 2) % 4] = s;
     }
   }
+
+  // Enforce neighbor symmetry: keep a link only if both sides agree.
+  for (int s = 0; s < num_spans; ++s)
+    for (int d = 0; d < 4; ++d)
+    {
+      int t = nav.polygons[s].neighbors[d];
+      if (t >= 0 && nav.polygons[t].neighbors[(d + 2) % 4] != s)
+        nav.polygons[s].neighbors[d] = -1;
+    }
 
   std::println("[bake] Navmesh: {} spans, {} polygons, {} islands.",
                num_spans, (int)nav.polygons.size(), num_islands);

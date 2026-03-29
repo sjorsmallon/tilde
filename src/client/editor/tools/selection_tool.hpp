@@ -2,7 +2,9 @@
 
 #include "../../states/editor_gizmo.hpp"
 #include "../editor_tool.hpp"
+#include "../transaction_system.hpp"
 #include "../../../shared/map.hpp"
+#include <optional>
 #include <vector>
 
 namespace client
@@ -43,6 +45,12 @@ private:
 
   // Gizmo
   Editor_Gizmo editor_gizmo;
+
+  // Direct object drag (hold LMB on object to move in XZ plane)
+  bool is_dragging_object = false;
+  linalg::vec3 drag_object_start_pos;   // entity position at drag start
+  linalg::vec3 drag_plane_hit_start;    // initial XZ plane hit point
+  std::optional<Edit_Recorder> drag_edit;
 };
 
 } // namespace client

@@ -172,6 +172,48 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
       }
     }
 
+    // If clicking on a hovered entity, start direct object drag
+    if (hovered_uid != 0)
+    {
+      // Select the entity if not already selected
+      bool already_selected = false;
+      for (auto uid : selected_uids)
+        if (uid == hovered_uid) already_selected = true;
+      if (!already_selected)
+      {
+        if (!e.shift_down)
+          selected_uids.clear();
+        selected_uids.push_back(hovered_uid);
+      }
+
+      // Find the entity's Y to set up the drag plane
+      auto *entry = ctx.map->find_by_uid(hovered_uid);
+      if (entry && entry->entity)
+      {
+        float plane_y = entry->entity->position.y;
+        linalg::vec3 plane_point = {0, plane_y, 0};
+        linalg::vec3 plane_normal = {0, 1, 0};
+        float t = 0.0f;
+        if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
+                                        cached_viewport.mouse_ray.dir,
+                                        plane_point, plane_normal, t) && t > 0)
+        {
+          drag_plane_hit_start = cached_viewport.mouse_ray.origin +
+                                 cached_viewport.mouse_ray.dir * t;
+          drag_object_start_pos = entry->entity->position;
+          is_dragging_object = true;
+
+          // Begin undo transaction
+          if (ctx.transaction_system && ctx.map)
+          {
+            drag_edit.emplace(*ctx.map);
+            drag_edit->track(hovered_uid);
+          }
+          return;
+        }
+      }
+    }
+
     is_dragging_box = false;
     drag_start_pos = e.pos;
     drag_current_pos = e.pos;
@@ -197,6 +239,37 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
   {
   }
 
+  if (is_dragging_object && !selected_uids.empty() && ctx.map)
+  {
+    auto *entry = ctx.map->find_by_uid(selected_uids[0]);
+    if (entry && entry->entity)
+    {
+      float plane_y = drag_object_start_pos.y;
+      linalg::vec3 plane_point = {0, plane_y, 0};
+      linalg::vec3 plane_normal = {0, 1, 0};
+      float t = 0.0f;
+      if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
+                                      cached_viewport.mouse_ray.dir,
+                                      plane_point, plane_normal, t) && t > 0)
+      {
+        linalg::vec3 current_hit = cached_viewport.mouse_ray.origin +
+                                   cached_viewport.mouse_ray.dir * t;
+        linalg::vec3 delta = current_hit - drag_plane_hit_start;
+
+        float snap_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+        linalg::vec3 new_position = drag_object_start_pos + delta;
+        new_position.x = editor::snap(new_position.x, snap_step);
+        new_position.z = editor::snap(new_position.z, snap_step);
+        new_position.y = drag_object_start_pos.y;
+
+        entry->entity->position = new_position;
+        if (ctx.geometry_updated)
+          *ctx.geometry_updated = true;
+      }
+    }
+    return;
+  }
+
   if (is_dragging_box)
   {
     drag_current_pos = e.pos;
@@ -213,6 +286,22 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
                                 {cached_viewport.camera.x,
                                  cached_viewport.camera.y,
                                  cached_viewport.camera.z});
+      if (ctx.geometry_updated)
+        *ctx.geometry_updated = true;
+      return;
+    }
+
+    // End direct object drag
+    if (is_dragging_object)
+    {
+      is_dragging_object = false;
+      if (drag_edit && ctx.transaction_system && !selected_uids.empty())
+      {
+        drag_edit->finish(selected_uids[0]);
+        if (auto txn = drag_edit->take())
+          ctx.transaction_system->push(*txn);
+      }
+      drag_edit.reset();
       if (ctx.geometry_updated)
         *ctx.geometry_updated = true;
       return;

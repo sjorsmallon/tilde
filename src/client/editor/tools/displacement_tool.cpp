@@ -784,6 +784,22 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
 
 void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
 {
+  // Draw green selection rectangle while box-selecting vertices
+  if (mode == Mode::Select && box_selecting)
+  {
+    float dx = box_end_screen.x - box_start_screen.x;
+    float dy = box_end_screen.y - box_start_screen.y;
+
+    if (dx * dx + dy * dy > 25)
+    {
+      ImDrawList *draw_list = ImGui::GetForegroundDrawList();
+      ImVec2 p1 = ImVec2(box_start_screen.x, box_start_screen.y);
+      ImVec2 p2 = ImVec2(box_end_screen.x, box_end_screen.y);
+      draw_list->AddRect(p1, p2, IM_COL32(0, 255, 0, 255));
+      draw_list->AddRectFilled(p1, p2, IM_COL32(0, 255, 0, 50));
+    }
+  }
+
   ImGui::SetNextWindowSize({220, 0}, ImGuiCond_FirstUseEver);
   if (ImGui::Begin("Displacement"))
   {

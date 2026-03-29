@@ -65,6 +65,16 @@ private:
   bool hide_geometry = false;
   float last_dt = 0.016f;
 
+  // Axis-aligned view mode (Shift+Space cycles through these)
+  enum class ViewMode
+  {
+    FreeCam,  // Normal perspective free camera
+    TopDown,  // Looking down -Y axis (XZ plane)
+    Front,    // Looking along +X axis (YZ plane)
+    Side      // Looking along +Z axis (XY plane)
+  };
+  ViewMode view_mode = ViewMode::FreeCam;
+
   float navmesh_cell_size = 256.f;
 
   // Step-by-step simplification debugging.

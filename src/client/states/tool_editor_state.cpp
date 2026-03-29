@@ -343,9 +343,48 @@ void ToolEditorState::update(float dt)
         camera.yaw = iso_yaw;
         camera.pitch = iso_pitch;
       }
+      else
+      {
+        view_mode = ViewMode::FreeCam;
+      }
     }
 
-    if (camera.orthographic)
+    // Shift+Space: cycle through axis-aligned views
+    if (input::is_key_pressed(SDL_SCANCODE_SPACE) &&
+        input::is_key_down(SDL_SCANCODE_LSHIFT))
+    {
+      switch (view_mode)
+      {
+      case ViewMode::FreeCam:
+        view_mode = ViewMode::TopDown;
+        camera.orthographic = true;
+        camera.yaw = 0.0f;
+        camera.pitch = -89.0f;
+        renderer::draw_announcement("Top Down (-Y)");
+        break;
+      case ViewMode::TopDown:
+        view_mode = ViewMode::Front;
+        camera.orthographic = true;
+        camera.yaw = 0.0f;
+        camera.pitch = 0.0f;
+        renderer::draw_announcement("Front (+X)");
+        break;
+      case ViewMode::Front:
+        view_mode = ViewMode::Side;
+        camera.orthographic = true;
+        camera.yaw = 90.0f;
+        camera.pitch = 0.0f;
+        renderer::draw_announcement("Side (+Z)");
+        break;
+      case ViewMode::Side:
+        view_mode = ViewMode::FreeCam;
+        camera.orthographic = false;
+        renderer::draw_announcement("Free Cam");
+        break;
+      }
+    }
+
+    if (camera.orthographic && view_mode == ViewMode::FreeCam)
     {
       if (input::is_key_pressed(SDL_SCANCODE_RIGHT))
         camera.yaw = fmodf(camera.yaw + 90.0f, 360.0f);
@@ -408,7 +447,9 @@ void ToolEditorState::update(float dt)
       camera.x -= R.x * speed;
       camera.z -= R.z * speed;
     }
-    if (input::is_key_down(SDL_SCANCODE_SPACE))
+    if (input::is_key_down(SDL_SCANCODE_SPACE) &&
+        !input::is_key_down(SDL_SCANCODE_LSHIFT) &&
+        !input::is_key_down(SDL_SCANCODE_RSHIFT))
     {
       if (camera.orthographic)
         camera.ortho_height += speed;
@@ -437,7 +478,7 @@ void ToolEditorState::update(float dt)
         camera.y -= speed;
     }
 
-    if (input::is_mouse_down(SDL_BUTTON_RIGHT))
+    if (input::is_mouse_down(SDL_BUTTON_RIGHT) && view_mode == ViewMode::FreeCam)
     {
       input::set_relative_mouse_mode(true);
       int dx, dy;
@@ -983,8 +1024,30 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
 
     uint32_t major_color = 0x44FFFFFF;      // Faint white
     uint32_t minor_color = 0x22FFFFFF;      // Fainter
-    uint32_t axis_color_x = 0xFF0000FF;     // Red
-    uint32_t axis_color_z = 0xFFFF0000;     // Blue
+    uint32_t axis_color_x = 0xFF0000FF;     // Red  (X)
+    uint32_t axis_color_y = 0xFF00FF00;     // Green (Y)
+    uint32_t axis_color_z = 0xFFFF0000;     // Blue (Z)
+
+    // Helper lambdas to make grid line endpoints based on plane orientation
+    // plane 0 = XZ (Y=0, default), plane 1 = XY (Z=0, side view), plane 2 = YZ (X=0, front view)
+    auto make_line_a = [&](float p, float ext, int plane) -> std::pair<linalg::vec3, linalg::vec3> {
+      switch (plane) {
+      case 1: return {{-ext, p, 0}, {ext, p, 0}};  // XY: horizontal lines (along X, stepping Y)
+      case 2: return {{0, -ext, p}, {0, ext, p}};   // YZ: lines along Y, stepping Z
+      default: return {{-ext, 0, p}, {ext, 0, p}};  // XZ: lines along X, stepping Z
+      }
+    };
+    auto make_line_b = [&](float p, float ext, int plane) -> std::pair<linalg::vec3, linalg::vec3> {
+      switch (plane) {
+      case 1: return {{p, -ext, 0}, {p, ext, 0}};  // XY: vertical lines (along Y, stepping X)
+      case 2: return {{0, p, -ext}, {0, p, ext}};   // YZ: lines along Z, stepping Y
+      default: return {{p, 0, -ext}, {p, 0, ext}};  // XZ: lines along Z, stepping X
+      }
+    };
+
+    int grid_plane = 0; // XZ by default
+    if (view_mode == ViewMode::Side) grid_plane = 1;       // XY plane
+    else if (view_mode == ViewMode::Front) grid_plane = 2; // YZ plane
 
     // Subdivision lines (only if grid step < major grid)
     if (minor < major)
@@ -993,11 +1056,12 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       for (int i = -total; i <= total; ++i)
       {
         float p = (float)i * minor;
-        // Skip lines that fall on the major grid (drawn below)
         if (std::fmod(std::abs(p), major) < 0.01f)
           continue;
-        renderer::DrawLine(cmd, {-extent, 0, p}, {extent, 0, p}, minor_color);
-        renderer::DrawLine(cmd, {p, 0, -extent}, {p, 0, extent}, minor_color);
+        auto [s1, e1] = make_line_a(p, extent, grid_plane);
+        auto [s2, e2] = make_line_b(p, extent, grid_plane);
+        renderer::DrawLine(cmd, s1, e1, minor_color);
+        renderer::DrawLine(cmd, s2, e2, minor_color);
       }
     }
 
@@ -1007,13 +1071,17 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       if (i == 0)
         continue;
       float p = (float)i * major;
-      renderer::DrawLine(cmd, {-extent, 0, p}, {extent, 0, p}, major_color);
-      renderer::DrawLine(cmd, {p, 0, -extent}, {p, 0, extent}, major_color);
+      auto [s1, e1] = make_line_a(p, extent, grid_plane);
+      auto [s2, e2] = make_line_b(p, extent, grid_plane);
+      renderer::DrawLine(cmd, s1, e1, major_color);
+      renderer::DrawLine(cmd, s2, e2, major_color);
     }
 
-    // Axes
+    // Axes - always draw all relevant axis lines
     renderer::DrawLine(cmd, {-extent, 0, 0}, {extent, 0, 0}, axis_color_x);
     renderer::DrawLine(cmd, {0, 0, -extent}, {0, 0, extent}, axis_color_z);
+    if (grid_plane != 0) // Also draw Y axis for non-XZ planes
+      renderer::DrawLine(cmd, {0, -extent, 0}, {0, extent, 0}, axis_color_y);
   }
 
   // Draw map elements

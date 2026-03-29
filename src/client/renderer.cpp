@@ -2588,11 +2588,13 @@ static void init_font()
 }
 // --- Public API ---
 
-// Draw 128-unit grid subdivision lines on each face of an AABB.
+// Draw grid subdivision lines on each face of an AABB.
+// Each face is subdivided into cells_per_face x cells_per_face cells.
 // perimeter_color for the 12 outer edges, inner_color for inner lines.
 static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
-                                const linalg::vec3 &max, float grid_step,
-                                uint32_t perimeter_color, uint32_t inner_color)
+                                const linalg::vec3 &max,
+                                uint32_t perimeter_color, uint32_t inner_color,
+                                int cells_per_face = 8)
 {
   // 12 perimeter edges
   {
@@ -2616,18 +2618,18 @@ static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
     DrawLine(cmd, c[3], c[7], perimeter_color);
   }
 
-  // Inner grid lines on each pair of faces
+  // Inner grid lines on each pair of faces (uniform subdivision)
   auto draw_face_grid = [&](int axis0, int axis1, int fixed_axis,
                             float fixed_val0, float fixed_val1) {
     float a0_min = (&min.x)[axis0], a0_max = (&max.x)[axis0];
     float a1_min = (&min.x)[axis1], a1_max = (&max.x)[axis1];
+    float a0_range = a0_max - a0_min;
+    float a1_range = a1_max - a1_min;
 
     // Lines along axis1, stepping axis0
-    for (float p = std::ceil(a0_min / grid_step) * grid_step;
-         p < a0_max - 0.01f; p += grid_step)
+    for (int i = 1; i < cells_per_face; ++i)
     {
-      if (std::abs(p - a0_min) < 0.01f || std::abs(p - a0_max) < 0.01f)
-        continue;
+      float p = a0_min + a0_range * (float)i / (float)cells_per_face;
       for (float fv : {fixed_val0, fixed_val1})
       {
         linalg::vec3 s{}, e{};
@@ -2639,11 +2641,9 @@ static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
     }
 
     // Lines along axis0, stepping axis1
-    for (float p = std::ceil(a1_min / grid_step) * grid_step;
-         p < a1_max - 0.01f; p += grid_step)
+    for (int i = 1; i < cells_per_face; ++i)
     {
-      if (std::abs(p - a1_min) < 0.01f || std::abs(p - a1_max) < 0.01f)
-        continue;
+      float p = a1_min + a1_range * (float)i / (float)cells_per_face;
       for (float fv : {fixed_val0, fixed_val1})
       {
         linalg::vec3 s{}, e{};
@@ -2667,7 +2667,7 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
   if (as_wireframe)
   {
     // Draw grid overlay (perimeter + inner subdivision lines)
-    DrawAABBGridOverlay(cmd, min, max, 128.f, 0xFFFFFFFF, 0x66FFFFFF);
+    DrawAABBGridOverlay(cmd, min, max, 0xFFFFFFFF, 0x44FFFFFF);
     return;
   }
 
@@ -2726,7 +2726,7 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
   vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
 
   // Draw grid overlay on top of the solid faces
-  DrawAABBGridOverlay(cmd, min, max, 128.f, 0xFFFFFFFF, 0x66FFFFFF);
+  DrawAABBGridOverlay(cmd, min, max, 0xFFFFFFFF, 0x44FFFFFF);
 }
 
 void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
