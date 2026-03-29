@@ -833,10 +833,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
           assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
       if (mesh_handle.valid())
       {
-        renderer::DrawMeshMaterial(cmd, disp->position, {1, 1, 1},
-                                   mesh_handle, {0.6f, 0.6f, 0.6f},
-                                   renderer::ShaderType::Lit,
-                                   disp->orientation);
+        renderer::DrawMeshTextured(cmd, disp->position, {1, 1, 1},
+                                   mesh_handle, disp->orientation);
       }
     }
     else if (dynamic_cast<network::Static_Mesh_Entity *>(ent.get()))

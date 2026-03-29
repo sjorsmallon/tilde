@@ -68,6 +68,13 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
                       const linalg::vec3 &color, ShaderType shader_type,
                       const linalg::vec3 &rotation = {0, 0, 0});
 
+// Draw a displacement mesh using the textured unlit pipeline.
+// UVs are worldspace-based (pre-baked into the mesh at 128-unit scale).
+void DrawMeshTextured(VkCommandBuffer cmd, const linalg::vec3 &position,
+                      const linalg::vec3 &scale,
+                      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
+                      const linalg::vec3 &rotation = {0, 0, 0});
+
 // Invalidate a cached GPU mesh buffer so it gets re-uploaded on next draw.
 // Used for dynamic meshes (e.g. displacement surfaces) that change at runtime.
 void invalidate_mesh_gpu(assets::asset_handle_t<assets::mesh_asset_t> handle);

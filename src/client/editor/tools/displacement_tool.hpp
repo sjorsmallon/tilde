@@ -3,6 +3,7 @@
 #include "../../../shared/entities/displacement_entity.hpp"
 #include "../../../shared/map.hpp"
 #include "../editor_tool.hpp"
+#include "../transaction_system.hpp"
 #include <optional>
 
 namespace client
@@ -24,11 +25,14 @@ public:
                        overlay_renderer_t &renderer) override;
   void on_draw_ui(editor_context_t &ctx) override;
 
+  bool capture_keyboard() const override { return mode == Mode::Select; }
+
 private:
   enum class Mode
   {
-    Setup, // Select entity, pick face, set subdivision
-    Paint  // Brush displacement painting
+    Setup,  // Select entity, pick face, set subdivision
+    Paint,  // Brush displacement painting
+    Select  // Box-select vertices and step height
   };
 
   Mode mode = Mode::Setup;
@@ -51,6 +55,22 @@ private:
   // Subdivision control
   int pending_subdivision = 4;
 
+  // Face-drag resize (Setup mode, before displacement)
+  bool resize_dragging = false;
+  bool resize_moved = false;
+  int resize_face = -1;
+  viewport_state_t resize_last_view;
+  std::optional<Edit_Recorder> resize_edit;
+
+  // Select mode state
+  std::vector<bool> sel_verts;          // gs*gs selection bitmask
+  bool box_selecting = false;
+  linalg::vec2 box_start_screen;        // pixels, drag start
+  linalg::vec2 box_end_screen;          // pixels, drag current/end
+  float height_snap = 128.0f;
+  viewport_state_t cached_view;         // updated each on_update
+  std::optional<Edit_Recorder> select_edit;
+
   // Helpers
   network::Displacement_Entity *get_selected(editor_context_t &ctx);
   bool raycast_displacement_mesh(const network::Displacement_Entity &ent,
@@ -60,6 +80,9 @@ private:
   void apply_brush(network::Displacement_Entity &ent, float dt, bool invert);
   void regenerate_mesh(network::Displacement_Entity &ent,
                        shared::entity_uid_t uid);
+  linalg::vec2 project_to_screen(const linalg::vec3 &world_pos) const;
+  void commit_select_edit();
+  void clear_selection(int gs);
 };
 
 } // namespace client

@@ -98,6 +98,7 @@ add_library(game_shared STATIC
     src/shared/entities/static_entities.cpp
     src/shared/entities/rocket_entity.cpp
     src/shared/entities/particle_emitter_entity.cpp
+    src/shared/entities/displacement_entity.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
@@ -167,6 +168,8 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/particle.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
+    ${SHADER_SRC_DIR}/disp_textured.vert
+    ${SHADER_SRC_DIR}/disp_textured.frag
 )
 set(SHADER_HEADERS "")
 
@@ -194,6 +197,7 @@ add_library(game_client SHARED
     src/client/editor/tools/sculpting_tool.cpp
     src/client/editor/tools/pathfinding_test_tool.cpp
     src/client/editor/tools/particle_editor_tool.cpp
+    src/client/editor/tools/displacement_tool.cpp
     src/client/editor/entity_inspector.cpp
     src/client/editor/entity_editor_traits.cpp
     src/client/input.cpp

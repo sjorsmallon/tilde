@@ -27,6 +27,10 @@ public:
   // Keyboard Shortcuts
   virtual void on_key_down(editor_context_t &ctx, const key_event_t &e) = 0;
 
+  // Return true when the tool wants exclusive keyboard focus (suppresses
+  // camera movement keys in tool_editor_state).
+  virtual bool capture_keyboard() const { return false; }
+
   // Visuals
   virtual void on_draw_overlay(editor_context_t &ctx,
                                overlay_renderer_t &renderer) = 0;

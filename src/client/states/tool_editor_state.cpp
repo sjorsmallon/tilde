@@ -428,7 +428,10 @@ void ToolEditorState::update(float dt)
         camera.y -= speed;
       }
     }
-    if (input::is_key_down(SDL_SCANCODE_Q))
+    bool tool_captures_kb = active_tool_index >= 0 &&
+                            active_tool_index < (int)tools.size() &&
+                            tools[active_tool_index]->capture_keyboard();
+    if (!tool_captures_kb && input::is_key_down(SDL_SCANCODE_Q))
     {
       if (!camera.orthographic)
         camera.y -= speed;
@@ -1098,10 +1101,8 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       }
       if (mesh_handle.valid())
       {
-        renderer::DrawMeshMaterial(cmd, disp->position, {1, 1, 1},
-                                   mesh_handle, {0.6f, 0.6f, 0.6f},
-                                   renderer::ShaderType::Lit,
-                                   disp->orientation);
+        renderer::DrawMeshTextured(cmd, disp->position, {1, 1, 1},
+                                   mesh_handle, disp->orientation);
       }
     }
     else if (dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))

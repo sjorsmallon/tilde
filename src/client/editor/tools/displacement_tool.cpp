@@ -108,12 +108,25 @@ void Displacement_Tool::on_enable(editor_context_t &ctx)
   mode = Mode::Setup;
   painting = false;
   cursor_valid = false;
+  resize_dragging = false;
+  resize_moved = false;
 }
 
 void Displacement_Tool::on_disable(editor_context_t &ctx)
 {
   painting = false;
   cursor_valid = false;
+  box_selecting = false;
+  commit_select_edit();
+
+  if (resize_dragging && resize_edit && ctx.transaction_system)
+  {
+    resize_edit->finish(selected_uid);
+    if (auto txn = resize_edit->take())
+      ctx.transaction_system->push(*txn);
+  }
+  resize_dragging = false;
+  resize_edit.reset();
 }
 
 // ===================================================================
@@ -234,6 +247,33 @@ void Displacement_Tool::regenerate_mesh(network::Displacement_Entity &ent,
   }
 }
 
+linalg::vec2 Displacement_Tool::project_to_screen(const linalg::vec3 &world_pos) const
+{
+  linalg::vec3 cam_pos = {cached_view.camera.x, cached_view.camera.y,
+                          cached_view.camera.z};
+  linalg::vec3 view_pos = linalg::world_to_view(world_pos, cam_pos,
+                                                cached_view.camera.yaw,
+                                                cached_view.camera.pitch);
+  return linalg::view_to_screen(view_pos, cached_view.display_size,
+                                cached_view.camera.orthographic,
+                                cached_view.camera.ortho_height,
+                                cached_view.fov);
+}
+
+void Displacement_Tool::commit_select_edit()
+{
+  if (select_edit)
+  {
+    // select_edit tracks changes; just drop it (changes are already applied).
+    select_edit.reset();
+  }
+}
+
+void Displacement_Tool::clear_selection(int gs)
+{
+  sel_verts.assign((size_t)(gs * gs), false);
+}
+
 // ===================================================================
 // Update
 // ===================================================================
@@ -244,38 +284,46 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
   if (!ctx.map)
     return;
 
+  resize_last_view = view;
+  cached_view = view;
+
   if (mode == Mode::Setup)
   {
-    hovered_uid = 0;
-    hovered_face = -1;
-
-    if (ctx.bvh)
+    // Don't update hover while dragging a face
+    if (!resize_dragging)
     {
-      Ray_Hit hit;
-      if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin,
-                             view.mouse_ray.dir, hit))
-      {
-        if (hit.id.type == Collision_Id::Type::Static_Geometry)
-        {
-          shared::entity_uid_t uid = hit.id.index;
-          auto *entry = ctx.map->find_by_uid(uid);
-          if (entry && entry->entity)
-          {
-            if (auto *disp = dynamic_cast<network::Displacement_Entity *>(
-                    entry->entity.get()))
-            {
-              hovered_uid = uid;
+      hovered_uid = 0;
+      hovered_face = -1;
 
-              // Face picking on the AABB bounds
-              shared::aabb_t aabb;
-              aabb.center = disp->position;
-              aabb.half_extents = disp->half_extents;
-              float t;
-              int face;
-              if (ray_aabb_face_intersection(view.mouse_ray.origin,
-                                             view.mouse_ray.dir, aabb, t, face))
+      if (ctx.bvh)
+      {
+        Ray_Hit hit;
+        if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin,
+                               view.mouse_ray.dir, hit))
+        {
+          if (hit.id.type == Collision_Id::Type::Static_Geometry)
+          {
+            shared::entity_uid_t uid = hit.id.index;
+            auto *entry = ctx.map->find_by_uid(uid);
+            if (entry && entry->entity)
+            {
+              if (auto *disp = dynamic_cast<network::Displacement_Entity *>(
+                      entry->entity.get()))
               {
-                hovered_face = face;
+                hovered_uid = uid;
+
+                // Face picking on the AABB bounds
+                shared::aabb_t aabb;
+                aabb.center = disp->position;
+                aabb.half_extents = disp->half_extents;
+                float t;
+                int face;
+                if (ray_aabb_face_intersection(view.mouse_ray.origin,
+                                               view.mouse_ray.dir, aabb, t,
+                                               face))
+                {
+                  hovered_face = face;
+                }
               }
             }
           }
@@ -330,12 +378,30 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
       if (ent)
       {
         pending_subdivision = ent->subdivision_level;
+
         if (ent->active_face < 0 && hovered_face >= 0)
         {
-          // First click on a face: initialize displacement on that face
-          ent->init_displacement(hovered_face, pending_subdivision);
-          regenerate_mesh(*ent, selected_uid);
-          *ctx.geometry_updated = true;
+          if (e.shift_down)
+          {
+            // Shift+click: initialize displacement on this face
+            ent->init_displacement(hovered_face, pending_subdivision);
+            regenerate_mesh(*ent, selected_uid);
+            if (ctx.geometry_updated)
+              *ctx.geometry_updated = true;
+          }
+          else
+          {
+            // Plain click: start face drag (resize)
+            resize_dragging = true;
+            resize_moved = false;
+            resize_face = hovered_face;
+
+            if (ctx.transaction_system && ctx.map)
+            {
+              resize_edit.emplace(*ctx.map);
+              resize_edit->track(selected_uid);
+            }
+          }
         }
       }
     }
@@ -344,18 +410,184 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
   {
     painting = true;
   }
+  else if (mode == Mode::Select)
+  {
+    // Begin box selection drag
+    box_selecting = true;
+    box_start_screen = {(float)e.pos.x, (float)e.pos.y};
+    box_end_screen   = box_start_screen;
+    // Commit any pending height edit before starting a new selection
+    commit_select_edit();
+  }
 }
 
 void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
                                       const mouse_event_t &e)
 {
+  if (resize_dragging && selected_uid != 0 && ctx.map)
+  {
+    auto *ent = get_selected(ctx);
+    if (!ent)
+      return;
+
+    resize_moved = true;
+
+    using namespace linalg;
+
+    vec3 current_center = ent->position;
+    vec3 current_he = ent->half_extents;
+
+    vec3 normal = {0, 0, 0};
+    vec3 center_offset = {0, 0, 0};
+    switch (resize_face)
+    {
+    case 0: normal = {1, 0, 0}; center_offset = {current_he.x, 0, 0}; break;
+    case 1: normal = {-1, 0, 0}; center_offset = {-current_he.x, 0, 0}; break;
+    case 2: normal = {0, 1, 0}; center_offset = {0, current_he.y, 0}; break;
+    case 3: normal = {0, -1, 0}; center_offset = {0, -current_he.y, 0}; break;
+    case 4: normal = {0, 0, 1}; center_offset = {0, 0, current_he.z}; break;
+    case 5: normal = {0, 0, -1}; center_offset = {0, 0, -current_he.z}; break;
+    }
+
+    vec3 face_center_world = current_center + center_offset;
+    vec3 face_end_world = face_center_world + normal;
+
+    vec3 cam_pos = {resize_last_view.camera.x, resize_last_view.camera.y,
+                    resize_last_view.camera.z};
+    vec3 v0 = world_to_view(face_center_world, cam_pos,
+                             resize_last_view.camera.yaw,
+                             resize_last_view.camera.pitch);
+    vec3 v1 = world_to_view(face_end_world, cam_pos,
+                             resize_last_view.camera.yaw,
+                             resize_last_view.camera.pitch);
+
+    bool valid = true;
+    if (!resize_last_view.camera.orthographic && (v0.z > -0.1f || v1.z > -0.1f))
+      valid = false;
+
+    if (valid)
+    {
+      vec2 s0 = view_to_screen(v0, resize_last_view.display_size,
+                                resize_last_view.camera.orthographic,
+                                resize_last_view.camera.ortho_height,
+                                resize_last_view.fov);
+      vec2 s1 = view_to_screen(v1, resize_last_view.display_size,
+                                resize_last_view.camera.orthographic,
+                                resize_last_view.camera.ortho_height,
+                                resize_last_view.fov);
+
+      vec2 screen_dir = {s1.x - s0.x, s1.y - s0.y};
+      float screen_len_sq =
+          screen_dir.x * screen_dir.x + screen_dir.y * screen_dir.y;
+
+      if (screen_len_sq > 1e-4f)
+      {
+        vec2 mouse_delta = {(float)e.delta.x, (float)e.delta.y};
+        float dot_prod =
+            mouse_delta.x * screen_dir.x + mouse_delta.y * screen_dir.y;
+        float k = dot_prod / screen_len_sq;
+        float world_delta = k;
+
+        float *ext = nullptr;
+        float *cen = nullptr;
+
+        if (resize_face < 2)
+        {
+          ext = &ent->half_extents.x;
+          cen = &ent->position.x;
+        }
+        else if (resize_face < 4)
+        {
+          ext = &ent->half_extents.y;
+          cen = &ent->position.y;
+        }
+        else
+        {
+          ext = &ent->half_extents.z;
+          cen = &ent->position.z;
+        }
+
+        *ext += world_delta * 0.5f;
+        if (resize_face % 2 == 0)
+          *cen += world_delta * 0.5f;
+        else
+          *cen -= world_delta * 0.5f;
+
+        if (*ext < editor::MIN_EXTENT)
+        {
+          float diff = editor::MIN_EXTENT - *ext;
+          *ext = editor::MIN_EXTENT;
+          if (resize_face % 2 == 0)
+            *cen -= diff;
+          else
+            *cen += diff;
+        }
+
+        regenerate_mesh(*ent, selected_uid);
+        *ctx.geometry_updated = true;
+      }
+    }
+  }
   // Painting is handled in on_update while painting == true
+
+  if (mode == Mode::Select && box_selecting)
+  {
+    box_end_screen.x += (float)e.delta.x;
+    box_end_screen.y += (float)e.delta.y;
+  }
 }
 
 void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
                                     const mouse_event_t &e)
 {
   painting = false;
+
+  if (resize_dragging)
+  {
+    resize_dragging = false;
+
+    // Commit the resize transaction
+    if (resize_edit && ctx.transaction_system)
+    {
+      resize_edit->finish(selected_uid);
+      if (auto txn = resize_edit->take())
+        ctx.transaction_system->push(*txn);
+    }
+    if (ctx.geometry_updated)
+      *ctx.geometry_updated = true;
+    resize_edit.reset();
+  }
+
+  if (mode == Mode::Select && box_selecting)
+  {
+    box_selecting = false;
+
+    auto *ent = get_selected(ctx);
+    if (ent && ent->active_face >= 0)
+    {
+      int gs = ent->grid_size();
+      sel_verts.resize((size_t)(gs * gs), false);
+
+      float x0 = std::min(box_start_screen.x, box_end_screen.x);
+      float x1 = std::max(box_start_screen.x, box_end_screen.x);
+      float y0 = std::min(box_start_screen.y, box_end_screen.y);
+      float y1 = std::max(box_start_screen.y, box_end_screen.y);
+
+      // Shift = additive selection; otherwise replace
+      if (!(ImGui::GetIO().KeyShift))
+        clear_selection(gs);
+
+      for (int j = 0; j < gs; ++j)
+      {
+        for (int i = 0; i < gs; ++i)
+        {
+          linalg::vec2 sp = project_to_screen(ent->get_vertex_world(i, j));
+          if (sp.x >= x0 && sp.x <= x1 && sp.y >= y0 && sp.y <= y1)
+            sel_verts[(size_t)(j * gs + i)] = true;
+        }
+      }
+    }
+  }
 }
 
 void Displacement_Tool::on_key_down(editor_context_t &ctx,
@@ -365,12 +597,82 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
   {
     auto *ent = get_selected(ctx);
     if (ent && ent->active_face >= 0)
+    {
+      commit_select_edit();
       mode = Mode::Paint;
+    }
+  }
+  else if (e.scancode == SDL_SCANCODE_S)
+  {
+    auto *ent = get_selected(ctx);
+    if (ent && ent->active_face >= 0)
+    {
+      if (mode != Mode::Select)
+      {
+        mode = Mode::Select;
+        int gs = ent->grid_size();
+        if ((int)sel_verts.size() != gs * gs)
+          clear_selection(gs);
+      }
+    }
   }
   else if (e.scancode == SDL_SCANCODE_ESCAPE)
   {
     if (mode == Mode::Paint)
       mode = Mode::Setup;
+    else if (mode == Mode::Select)
+    {
+      commit_select_edit();
+      auto *ent = get_selected(ctx);
+      if (ent)
+        clear_selection(ent->grid_size());
+      mode = Mode::Setup;
+    }
+  }
+  else if (mode == Mode::Select &&
+           (e.scancode == SDL_SCANCODE_Q || e.scancode == SDL_SCANCODE_E))
+  {
+    auto *ent = get_selected(ctx);
+    if (!ent || ent->active_face < 0)
+      return;
+
+    int gs = ent->grid_size();
+    if ((int)sel_verts.size() != gs * gs)
+      return;
+
+    // Count selected verts
+    int sel_count = 0;
+    for (bool b : sel_verts)
+      if (b) ++sel_count;
+    if (sel_count == 0)
+      return;
+
+    // Begin transaction on first height change (reset each time we enter Select mode)
+    if (!select_edit && ctx.transaction_system && ctx.map)
+    {
+      select_edit.emplace(*ctx.map);
+      select_edit->track(selected_uid);
+    }
+
+    float sign = (e.scancode == SDL_SCANCODE_Q) ? 1.0f : -1.0f;
+    linalg::vec3 face_normal = ent->get_face_normal();
+    linalg::vec3 delta = face_normal * (sign * height_snap);
+
+    for (int j = 0; j < gs; ++j)
+    {
+      for (int i = 0; i < gs; ++i)
+      {
+        if (sel_verts[(size_t)(j * gs + i)])
+        {
+          linalg::vec3 d = ent->get_displacement(i, j);
+          ent->set_displacement(i, j, d + delta);
+        }
+      }
+    }
+
+    regenerate_mesh(*ent, selected_uid);
+    if (ctx.geometry_updated)
+      *ctx.geometry_updated = true;
   }
 }
 
@@ -448,6 +750,32 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
     linalg::vec3 arrow_end = cursor_pos + cursor_normal * (brush_radius * 0.5f);
     renderer.draw_line(cursor_pos, arrow_end, 0xFF0000FF);
   }
+
+  // In select mode: highlight selected vertices and draw dragging box
+  if (mode == Mode::Select && selected_uid != 0 && ctx.map)
+  {
+    auto *ent = get_selected(ctx);
+    if (ent && ent->active_face >= 0)
+    {
+      int gs = ent->grid_size();
+      if ((int)sel_verts.size() == gs * gs)
+      {
+        const float dot_r = 0.4f;
+        linalg::vec3 fn = ent->get_face_normal();
+        for (int j = 0; j < gs; ++j)
+        {
+          for (int i = 0; i < gs; ++i)
+          {
+            if (sel_verts[(size_t)(j * gs + i)])
+            {
+              linalg::vec3 vp = ent->get_vertex_world(i, j);
+              renderer.draw_circle(vp, dot_r, fn, 0xFFFFFF00); // Yellow dot
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 // ===================================================================
@@ -475,6 +803,7 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
           {
             const char *face_names[] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
             ImGui::Text("Face: %s", face_names[ent->active_face]);
+            ImGui::TextDisabled("(resize locked after displacement)");
 
             // Subdivision slider
             if (ImGui::SliderInt("Subdivision", &pending_subdivision, 2, 32))
@@ -492,7 +821,8 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
           }
           else
           {
-            ImGui::Text("Click a face to start displacement");
+            ImGui::Text("Drag face to resize");
+            ImGui::Text("Shift+click face to begin displacement");
           }
         }
       }
@@ -512,10 +842,40 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
       ImGui::Separator();
       ImGui::Text("LMB: displace along normal");
       ImGui::Text("Shift+LMB: displace inward");
-      ImGui::Text("ESC: back to setup");
+      ImGui::Text("S: Select mode  ESC: Setup");
 
       if (ImGui::Button("Back to Setup (ESC)"))
+        mode = Mode::Setup;
+    }
+    else if (mode == Mode::Select)
+    {
+      ImGui::Text("Mode: Select");
+      ImGui::Separator();
+
+      int sel_count = 0;
+      for (bool b : sel_verts)
+        if (b) ++sel_count;
+      ImGui::Text("Selected: %d vertices", sel_count);
+
+      ImGui::SliderFloat("Snap", &height_snap, 1.0f, 512.0f);
+
+      ImGui::Separator();
+      ImGui::Text("Drag: box select");
+      ImGui::Text("Shift+Drag: additive select");
+      ImGui::Text("Q: raise  E: lower");
+      ImGui::Text("P: Paint  ESC: Setup");
+
+      if (ImGui::Button("Clear Selection"))
       {
+        auto *ent = get_selected(ctx);
+        if (ent) clear_selection(ent->grid_size());
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Back to Setup"))
+      {
+        commit_select_edit();
+        auto *ent = get_selected(ctx);
+        if (ent) clear_selection(ent->grid_size());
         mode = Mode::Setup;
       }
     }

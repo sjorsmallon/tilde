@@ -201,14 +201,20 @@ assets::mesh_asset_t generate_displacement_mesh(const Displacement_Entity &ent)
     }
   }
 
-  // Emit vertices
+  // Emit vertices — UVs use worldspace position / 128 so the texture tiles
+  // at 128-unit intervals regardless of displacement entity size or position.
+  vec3f face_u, face_v;
+  ent.get_face_axes(face_u, face_v);
+
   uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
   for (int j = 0; j < gs; ++j)
   {
     for (int i = 0; i < gs; ++i)
     {
-      float u = (gs > 1) ? static_cast<float>(i) / (gs - 1) : 0.5f;
-      float v = (gs > 1) ? static_cast<float>(j) / (gs - 1) : 0.5f;
+      // Use base (undisplaced) world position so UVs don't swim while painting.
+      vec3f world_pos = ent.position + ent.get_base_vertex_local(i, j);
+      float u = linalg::dot(world_pos, face_u) / 128.0f;
+      float v = linalg::dot(world_pos, face_v) / 128.0f;
       mesh.vertices.push_back(
           {grid_positions[j * gs + i], grid_normals[j * gs + i], {u, v}});
     }

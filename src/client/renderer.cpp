@@ -57,6 +57,14 @@ const uint32_t particle_frag_spv[] =
 #include "particle.frag.spv.h"
     ;
 
+const uint32_t disp_textured_vert_spv[] =
+#include "disp_textured.vert.spv.h"
+    ;
+
+const uint32_t disp_textured_frag_spv[] =
+#include "disp_textured.frag.spv.h"
+    ;
+
 #include "stb_image.h"
 
 namespace client
@@ -191,6 +199,17 @@ static bool g_supports_wireframe = false;
 static VkPipeline g_unlit_pipeline = VK_NULL_HANDLE;
 static VkPipeline g_lit_pipeline = VK_NULL_HANDLE;
 static VkPipelineLayout g_lit_pipeline_layout = VK_NULL_HANDLE;
+
+// Displacement textured pipeline
+static VkPipeline             g_disp_textured_pipeline  = VK_NULL_HANDLE;
+static VkPipelineLayout       g_disp_textured_layout    = VK_NULL_HANDLE;
+static VkDescriptorSetLayout  g_disp_texture_ds_layout  = VK_NULL_HANDLE;
+static VkDescriptorSet        g_disp_texture_ds         = VK_NULL_HANDLE;
+static VkDescriptorPool       g_disp_texture_pool       = VK_NULL_HANDLE;
+static VkImage                g_disp_texture_image      = VK_NULL_HANDLE;
+static VkImageView            g_disp_texture_image_view = VK_NULL_HANDLE;
+static VkSampler              g_disp_texture_sampler    = VK_NULL_HANDLE;
+static VkDeviceMemory         g_disp_texture_memory     = VK_NULL_HANDLE;
 
 // Mesh buffer management
 struct mesh_gpu_buffer_t
@@ -1836,6 +1855,184 @@ static void create_lit_pipeline()
       g_lit_pipeline_layout);
 }
 
+// Forward declarations for command-buffer helpers defined later in this file.
+static VkCommandBuffer begin_single_command();
+static void end_single_command(VkCommandBuffer cmd);
+
+struct DispTexturedPC
+{
+  float mvp[16];
+  float color[4]; // unused by shader but keeps the layout simple
+};
+
+static void init_displacement_texture()
+{
+  // -- Load texture pixels --
+  int w, h, ch;
+  stbi_uc *pixels = stbi_load("resources/textures/128x128.png", &w, &h, &ch, 4);
+  if (!pixels)
+  {
+    log_error("Failed to load displacement texture: resources/textures/128x128.png");
+    return;
+  }
+
+  VkDeviceSize image_size = (VkDeviceSize)w * h * 4;
+
+  // Staging buffer
+  VkBuffer staging;
+  VkDeviceMemory staging_mem;
+  create_buffer(image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                staging, staging_mem);
+  void *data;
+  vkMapMemory(g_device, staging_mem, 0, image_size, 0, &data);
+  memcpy(data, pixels, (size_t)image_size);
+  vkUnmapMemory(g_device, staging_mem);
+  stbi_image_free(pixels);
+
+  // Create VkImage
+  VkImageCreateInfo img_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  img_info.imageType   = VK_IMAGE_TYPE_2D;
+  img_info.format      = VK_FORMAT_R8G8B8A8_SRGB;
+  img_info.extent      = {(uint32_t)w, (uint32_t)h, 1};
+  img_info.mipLevels   = 1;
+  img_info.arrayLayers = 1;
+  img_info.samples     = VK_SAMPLE_COUNT_1_BIT;
+  img_info.tiling      = VK_IMAGE_TILING_OPTIMAL;
+  img_info.usage       = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  vkCreateImage(g_device, &img_info, nullptr, &g_disp_texture_image);
+
+  VkMemoryRequirements mem_req;
+  vkGetImageMemoryRequirements(g_device, g_disp_texture_image, &mem_req);
+  VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  alloc.allocationSize   = mem_req.size;
+  alloc.memoryTypeIndex  = find_memory_type(mem_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(g_device, &alloc, nullptr, &g_disp_texture_memory);
+  vkBindImageMemory(g_device, g_disp_texture_image, g_disp_texture_memory, 0);
+
+  // Transition + copy
+  VkCommandBuffer cmd = begin_single_command();
+
+  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image            = g_disp_texture_image;
+  barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  barrier.srcAccessMask    = 0;
+  barrier.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+  VkBufferImageCopy region{};
+  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  region.imageExtent      = {(uint32_t)w, (uint32_t)h, 1};
+  vkCmdCopyBufferToImage(cmd, staging, g_disp_texture_image,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+  barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+  end_single_command(cmd);
+  vkDestroyBuffer(g_device, staging, nullptr);
+  vkFreeMemory(g_device, staging_mem, nullptr);
+
+  // Image view
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image            = g_disp_texture_image;
+  view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+  view_info.format           = VK_FORMAT_R8G8B8A8_SRGB;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  vkCreateImageView(g_device, &view_info, nullptr, &g_disp_texture_image_view);
+
+  // Sampler — REPEAT for worldspace tiling
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter    = VK_FILTER_LINEAR;
+  sampler_info.minFilter    = VK_FILTER_LINEAR;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  vkCreateSampler(g_device, &sampler_info, nullptr, &g_disp_texture_sampler);
+
+  // Descriptor set layout — set 0, binding 0: combined image sampler (fragment)
+  VkDescriptorSetLayoutBinding ds_binding{};
+  ds_binding.binding         = 0;
+  ds_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  ds_binding.descriptorCount = 1;
+  ds_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo ds_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  ds_layout_info.bindingCount = 1;
+  ds_layout_info.pBindings    = &ds_binding;
+  vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_disp_texture_ds_layout);
+
+  // Descriptor pool — just 1 set
+  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.maxSets       = 1;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes    = &pool_size;
+  vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_disp_texture_pool);
+
+  // Pipeline layout — push constants + descriptor set
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(DispTexturedPC);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = 1;
+  layout_info.pSetLayouts            = &g_disp_texture_ds_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_disp_textured_layout);
+
+  // Pipeline
+  g_disp_textured_pipeline = create_material_pipeline_impl(
+      disp_textured_vert_spv, sizeof(disp_textured_vert_spv),
+      disp_textured_frag_spv, sizeof(disp_textured_frag_spv),
+      g_disp_textured_layout);
+
+  // Allocate + write descriptor set
+  VkDescriptorSetAllocateInfo ds_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  ds_alloc.descriptorPool     = g_disp_texture_pool;
+  ds_alloc.descriptorSetCount = 1;
+  ds_alloc.pSetLayouts        = &g_disp_texture_ds_layout;
+  vkAllocateDescriptorSets(g_device, &ds_alloc, &g_disp_texture_ds);
+
+  VkDescriptorImageInfo img_desc{};
+  img_desc.sampler     = g_disp_texture_sampler;
+  img_desc.imageView   = g_disp_texture_image_view;
+  img_desc.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet ds_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  ds_write.dstSet          = g_disp_texture_ds;
+  ds_write.dstBinding      = 0;
+  ds_write.descriptorCount = 1;
+  ds_write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  ds_write.pImageInfo      = &img_desc;
+  vkUpdateDescriptorSets(g_device, 1, &ds_write, 0, nullptr);
+}
+
+static void cleanup_displacement_texture()
+{
+  if (g_disp_texture_pool)    vkDestroyDescriptorPool(g_device, g_disp_texture_pool, nullptr);
+  if (g_disp_texture_ds_layout) vkDestroyDescriptorSetLayout(g_device, g_disp_texture_ds_layout, nullptr);
+  if (g_disp_textured_layout) vkDestroyPipelineLayout(g_device, g_disp_textured_layout, nullptr);
+  if (g_disp_textured_pipeline) vkDestroyPipeline(g_device, g_disp_textured_pipeline, nullptr);
+  if (g_disp_texture_sampler) vkDestroySampler(g_device, g_disp_texture_sampler, nullptr);
+  if (g_disp_texture_image_view) vkDestroyImageView(g_device, g_disp_texture_image_view, nullptr);
+  if (g_disp_texture_image)   vkDestroyImage(g_device, g_disp_texture_image, nullptr);
+  if (g_disp_texture_memory)  vkFreeMemory(g_device, g_disp_texture_memory, nullptr);
+}
+
 static mesh_gpu_buffer_t *upload_mesh_to_gpu(
     assets::asset_handle_t<assets::mesh_asset_t> handle)
 {
@@ -2847,6 +3044,62 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
   }
 }
 
+void DrawMeshTextured(VkCommandBuffer cmd, const linalg::vec3 &position,
+                      const linalg::vec3 &scale,
+                      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
+                      const linalg::vec3 &rotation)
+{
+  if (!mesh_handle.valid() || g_disp_textured_pipeline == VK_NULL_HANDLE)
+    return;
+
+  mesh_gpu_buffer_t *gpu_mesh = upload_mesh_to_gpu(mesh_handle);
+  if (!gpu_mesh || gpu_mesh->index_count == 0)
+    return;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_layout,
+                          0, 1, &g_disp_texture_ds, 0, nullptr);
+
+  VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(cmd, 0, 1, vbs, offsets);
+  vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
+  float rx = rotation.x * DEG2RAD;
+  float ry = rotation.y * DEG2RAD;
+  float rz = rotation.z * DEG2RAD;
+  float cx = cosf(rx), sx = sinf(rx);
+  float cy = cosf(ry), sy = sinf(ry);
+  float cz = cosf(rz), sz = sinf(rz);
+
+  mat4_t model = {};
+  model.m[0]  = (cz * cy) * scale.x;
+  model.m[1]  = (sz * cy) * scale.x;
+  model.m[2]  = (-sy)     * scale.x;
+  model.m[3]  = 0;
+  model.m[4]  = (cz * sy * sx - sz * cx) * scale.y;
+  model.m[5]  = (sz * sy * sx + cz * cx) * scale.y;
+  model.m[6]  = (cy * sx)                * scale.y;
+  model.m[7]  = 0;
+  model.m[8]  = (cz * sy * cx + sz * sx) * scale.z;
+  model.m[9]  = (sz * sy * cx - cz * sx) * scale.z;
+  model.m[10] = (cy * cx)                * scale.z;
+  model.m[11] = 0;
+  model.m[12] = position.x;
+  model.m[13] = position.y;
+  model.m[14] = position.z;
+  model.m[15] = 1;
+
+  mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
+
+  DispTexturedPC pc{};
+  memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
+  vkCmdPushConstants(cmd, g_disp_textured_layout, VK_SHADER_STAGE_VERTEX_BIT,
+                     0, sizeof(DispTexturedPC), &pc);
+  vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
+}
+
 void draw_announcement(const char *text)
 {
   g_announcement_text = text;
@@ -3270,6 +3523,7 @@ bool Init(SDL_Window *window)
   create_line_mesh();
   create_debug_face_pipeline();
   init_particle_system();
+  init_displacement_texture();
 
   g_command_buffers.resize(MAX_FRAMES_IN_FLIGHT);
   VkCommandBufferAllocateInfo alloc_info{};
@@ -3371,6 +3625,7 @@ void Shutdown()
 
   cleanup_swapchain();
   cleanup_particle_system();
+  cleanup_displacement_texture();
   vkDestroyDescriptorPool(g_device, g_descriptor_pool, nullptr);
 
   // Font cleanup
