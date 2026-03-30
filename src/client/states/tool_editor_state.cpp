@@ -7,6 +7,7 @@
 #include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/map_baker.hpp"
 #include "../editor/editor_entity.hpp"
+#include "../editor/entity_editor_traits.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
@@ -172,9 +173,9 @@ void ToolEditorState::on_enter()
   }
 
   // Initialize Camera
-  camera.x = 0;
-  camera.y = 1024;
-  camera.z = 10;
+  camera.position.x = 0;
+  camera.position.y = 1024.f;
+  camera.position.z = 10;
   camera.pitch = -30.0f;
   camera.yaw = 0.0f;
   fov = 90.0f;
@@ -360,6 +361,7 @@ void ToolEditorState::update(float dt)
         camera.orthographic = true;
         camera.yaw = 0.0f;
         camera.pitch = -89.0f;
+        camera.position.y = 1500.f;
         renderer::draw_announcement("Top Down (-Y)");
         break;
       case ViewMode::TopDown:
@@ -411,41 +413,41 @@ void ToolEditorState::update(float dt)
     {
       if (camera.orthographic)
       {
-        camera.x += U.x * speed;
-        camera.y += U.y * speed;
-        camera.z += U.z * speed;
+        camera.position.x += U.x * speed;
+        camera.position.y += U.y * speed;
+        camera.position.z += U.z * speed;
       }
       else
       {
-        camera.x += F.x * speed;
-        camera.y += F.y * speed;
-        camera.z += F.z * speed;
+        camera.position.x += F.x * speed;
+        camera.position.y += F.y * speed;
+        camera.position.z += F.z * speed;
       }
     }
     if (input::is_key_down(SDL_SCANCODE_S))
     {
       if (camera.orthographic)
       {
-        camera.x -= U.x * speed;
-        camera.y -= U.y * speed;
-        camera.z -= U.z * speed;
+        camera.position.x -= U.x * speed;
+        camera.position.y -= U.y * speed;
+        camera.position.z -= U.z * speed;
       }
       else
       {
-        camera.x -= F.x * speed;
-        camera.y -= F.y * speed;
-        camera.z -= F.z * speed;
+        camera.position.x -= F.x * speed;
+        camera.position.y -= F.y * speed;
+        camera.position.z -= F.z * speed;
       }
     }
     if (input::is_key_down(SDL_SCANCODE_D))
     {
-      camera.x += R.x * speed;
-      camera.z += R.z * speed;
+      camera.position.x += R.x * speed;
+      camera.position.z += R.z * speed;
     }
     if (input::is_key_down(SDL_SCANCODE_A))
     {
-      camera.x -= R.x * speed;
-      camera.z -= R.z * speed;
+      camera.position.x -= R.x * speed;
+      camera.position.z -= R.z * speed;
     }
     if (input::is_key_down(SDL_SCANCODE_SPACE) &&
         !input::is_key_down(SDL_SCANCODE_LSHIFT) &&
@@ -454,9 +456,9 @@ void ToolEditorState::update(float dt)
       if (camera.orthographic)
         camera.ortho_height += speed;
       else
-        camera.y += speed;
+        camera.position.y += speed;
     }
-    if (input::is_key_down(SDL_SCANCODE_LCTRL))
+    if (input::is_key_down(SDL_SCANCODE_C))
     {
       if (camera.orthographic)
       {
@@ -466,7 +468,7 @@ void ToolEditorState::update(float dt)
       }
       else
       {
-        camera.y -= speed;
+        camera.position.y -= speed;
       }
     }
     bool tool_captures_kb = active_tool_index >= 0 &&
@@ -475,7 +477,7 @@ void ToolEditorState::update(float dt)
     if (!tool_captures_kb && input::is_key_down(SDL_SCANCODE_Q))
     {
       if (!camera.orthographic)
-        camera.y -= speed;
+        camera.position.y -= speed;
     }
 
     if (input::is_mouse_down(SDL_BUTTON_RIGHT) && view_mode == ViewMode::FreeCam)
@@ -532,8 +534,12 @@ void ToolEditorState::update(float dt)
     mouse_event_t mouse_e;
     mouse_e.pos = {mx, my};
     mouse_e.delta = {mdx, mdy};
-    mouse_e.shift_down = input::is_key_down(
-        SDL_SCANCODE_LSHIFT); // LSHIFT SDL_SCANCODE_LSHIFT = 225
+    mouse_e.shift_down = input::is_key_down(SDL_SCANCODE_LSHIFT) ||
+                          input::is_key_down(SDL_SCANCODE_RSHIFT);
+    mouse_e.ctrl_down = input::is_key_down(SDL_SCANCODE_LCTRL) ||
+                         input::is_key_down(SDL_SCANCODE_RCTRL);
+    mouse_e.alt_down = input::is_key_down(SDL_SCANCODE_LALT) ||
+                        input::is_key_down(SDL_SCANCODE_RALT);
     mouse_e.button = 1;       // Left Button
 
     bool is_lmb_down = input::is_mouse_down(1);
@@ -992,6 +998,23 @@ void ToolEditorState::render_ui()
   {
     tools[active_tool_index]->on_draw_ui(context);
   }
+
+  // Camera position overlay (bottom-right)
+  {
+    ImGuiIO &io = ImGui::GetIO();
+    float padding = 8.0f;
+    ImVec2 window_pos = ImVec2(io.DisplaySize.x - padding, io.DisplaySize.y - padding);
+    ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.5f);
+    if (ImGui::Begin("##camera_pos", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing))
+    {
+      ImGui::Text("%.0f, %.0f, %.0f", camera.position.x, camera.position.y, camera.position.z);
+    }
+    ImGui::End();
+  }
 }
 
 void ToolEditorState::render_3d(VkCommandBuffer cmd)
@@ -1084,124 +1107,15 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       renderer::DrawLine(cmd, {0, -extent, 0}, {0, extent, 0}, axis_color_y);
   }
 
-  // Draw map elements
+  // Draw map elements — dispatch through Entity_Editor_Traits.
+  VulkanOverlayRenderer overlay(cmd);
   if (!hide_geometry)
   for (const auto &entry : map.entities)
   {
-    const auto &ent = entry.entity;
-    if (!ent)
+    if (!entry.entity)
       continue;
-
-    // Try to render via the entity's render component
-    const auto *rc = ent->get_component<network::render_component_t>();
-
-    if (rc && rc->visible)
-    {
-      const char *mesh_path = nullptr;
-
-      // Check if mesh_path string is set (for primitives or direct paths)
-      if (rc->mesh_path.length > 0)
-      {
-        mesh_path = rc->mesh_path.c_str();
-      }
-      // Fallback to mesh_id lookup
-      else if (rc->mesh_id >= 0)
-      {
-        mesh_path = assets::get_mesh_path(rc->mesh_id);
-      }
-
-      if (mesh_path)
-      {
-        // Check if it's a primitive (starts with __primitive_)
-        assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
-        if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
-        {
-          // Extract primitive name (after "__primitive_")
-          const char *prim_name = mesh_path + 12;
-          mesh_handle = assets::get_primitive_mesh(prim_name);
-        }
-        else
-        {
-          // Regular OBJ file
-          mesh_handle = assets::load_mesh(mesh_path);
-        }
-
-        if (mesh_handle.valid())
-        {
-          if (rc->is_wireframe)
-            renderer::DrawMeshWireframe(cmd, ent->position, rc->scale,
-                                        mesh_handle, 0xFFFFFFFF, ent->orientation + rc->rotation);
-          else
-            renderer::DrawMesh(cmd, ent->position, rc->scale,
-                               mesh_handle, 0xFFFFFFFF, ent->orientation + rc->rotation);
-          continue;
-        }
-      }
-    }
-
-    // Fallback: entity-specific primitive rendering
-    if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
-    {
-      renderer::DrawAABB(cmd, aabb->position - aabb->half_extents,
-                         aabb->position + aabb->half_extents, 0xFFFFFFFF,
-                         /*as_wireframe=*/!draw_entities_solid,
-                         /*random_color=*/draw_entities_solid,
-                         /*random_seed=*/entry.uid);
-    }
-    else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
-    {
-      shared::wedge_t w;
-      w.center = wedge->position;
-      w.half_extents = wedge->half_extents;
-      w.orientation = wedge->orientation;
-      renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
-    }
-    else if (auto *disp = dynamic_cast<::network::Displacement_Entity *>(ent.get()))
-    {
-      std::string disp_key =
-          "__displacement_" + std::to_string(entry.uid);
-      auto mesh_handle = assets::find_mesh_in_cache(disp_key.c_str());
-      if (!mesh_handle.valid())
-      {
-        auto mesh = network::generate_displacement_mesh(*disp);
-        mesh_handle =
-            assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
-      }
-      if (mesh_handle.valid())
-      {
-        renderer::DrawMeshTextured(cmd, disp->position, {1, 1, 1},
-                                   mesh_handle, disp->orientation);
-      }
-    }
-    else if (dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
-    {
-      // No mesh in render component — draw placeholder AABB
-      auto bounds = shared::compute_entity_bounds(ent.get());
-      renderer::DrawAABB(cmd, bounds.min, bounds.max, 0xFF00FFFF,
-                         /*as_wireframe=*/!draw_entities_solid,
-                         /*random_color=*/draw_entities_solid,
-                         /*random_seed=*/entry.uid);
-    }
-    else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent.get()))
-    {
-      const char *mesh_path = assets::get_mesh_path(2); // pyramid
-      if (mesh_path)
-      {
-        auto mesh_handle = assets::load_mesh(mesh_path);
-        if (mesh_handle.valid())
-        {
-          renderer::DrawMeshWireframe(cmd, ent->position, {32, 72, 32},
-                                      mesh_handle, 0xFFFFFFFF, ent->orientation);
-        }
-      }
-    }
-    else if (dynamic_cast<::network::Player_Spawn_Entity *>(ent.get()))
-    {
-      // Draw player hull outline + upward spike (same visual as placement ghost)
-      const linalg::vec3 hull{network::player_half_width, network::player_half_height, network::player_half_width};
-      renderer::DrawWireAABB(cmd, ent->position - hull, ent->position + hull, 0xFF8800FF);
-      renderer::DrawLine(cmd, ent->position, ent->position + linalg::vec3{0, 48, 0}, 0xFF8800FF);
-    }
+    draw_entity_in_editor(entry.entity.get(), overlay, entry.uid,
+                          draw_entities_solid);
   }
 
   // Draw navmesh triangle wireframes, colored by island ID.
@@ -1274,7 +1188,6 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw Tool Overlay
-  VulkanOverlayRenderer overlay(cmd);
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
   {
     tools[active_tool_index]->on_draw_overlay(context, overlay);

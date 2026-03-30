@@ -70,7 +70,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
   if (editor_gizmo.is_interacting())
   {
     editor_gizmo.handle_input(view.mouse_ray, true,
-                              {view.camera.x, view.camera.y, view.camera.z});
+                              {view.camera.position.x, view.camera.position.y, view.camera.position.z});
   }
   else
   {
@@ -165,49 +165,52 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
         editor_gizmo.start_interaction(ctx.transaction_system, ctx.map,
                                        selected_uids[0]);
         editor_gizmo.handle_input(cached_viewport.mouse_ray, true,
-                                  {cached_viewport.camera.x,
-                                   cached_viewport.camera.y,
-                                   cached_viewport.camera.z});
+                                  {cached_viewport.camera.position.x,
+                                   cached_viewport.camera.position.y,
+                                   cached_viewport.camera.position.z});
         return;
       }
     }
 
-    // If clicking on a hovered entity, start direct object drag
-    if (hovered_uid != 0)
+    // Ctrl+LMB: move selected objects in the camera's view plane
+    if (e.ctrl_down && !selected_uids.empty() && ctx.map)
     {
-      // Select the entity if not already selected
-      bool already_selected = false;
+      // Compute center of all selected entities for the drag plane
+      linalg::vec3 center = {0, 0, 0};
+      int count = 0;
+      drag_start_positions.clear();
       for (auto uid : selected_uids)
-        if (uid == hovered_uid) already_selected = true;
-      if (!already_selected)
       {
-        if (!e.shift_down)
-          selected_uids.clear();
-        selected_uids.push_back(hovered_uid);
+        auto *entry = ctx.map->find_by_uid(uid);
+        if (entry && entry->entity)
+        {
+          drag_start_positions.push_back({uid, entry->entity->position});
+          center = center + entry->entity->position;
+          ++count;
+        }
       }
 
-      // Find the entity's Y to set up the drag plane
-      auto *entry = ctx.map->find_by_uid(hovered_uid);
-      if (entry && entry->entity)
+      if (count > 0)
       {
-        float plane_y = entry->entity->position.y;
-        linalg::vec3 plane_point = {0, plane_y, 0};
-        linalg::vec3 plane_normal = {0, 1, 0};
+        center = center * (1.0f / (float)count);
+
+        auto basis = client::get_orientation_vectors(cached_viewport.camera);
+        drag_plane_normal = basis.forward;
+
         float t = 0.0f;
         if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
                                         cached_viewport.mouse_ray.dir,
-                                        plane_point, plane_normal, t) && t > 0)
+                                        center, drag_plane_normal, t) && t > 0)
         {
           drag_plane_hit_start = cached_viewport.mouse_ray.origin +
                                  cached_viewport.mouse_ray.dir * t;
-          drag_object_start_pos = entry->entity->position;
           is_dragging_object = true;
 
-          // Begin undo transaction
-          if (ctx.transaction_system && ctx.map)
+          if (ctx.transaction_system)
           {
             drag_edit.emplace(*ctx.map);
-            drag_edit->track(hovered_uid);
+            for (auto uid : selected_uids)
+              drag_edit->track(uid);
           }
           return;
         }
@@ -239,33 +242,34 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
   {
   }
 
-  if (is_dragging_object && !selected_uids.empty() && ctx.map)
+  if (is_dragging_object && !drag_start_positions.empty() && ctx.map)
   {
-    auto *entry = ctx.map->find_by_uid(selected_uids[0]);
-    if (entry && entry->entity)
+    // Use the first entity's start position as the plane reference point
+    linalg::vec3 plane_point = drag_start_positions[0].second;
+    float t = 0.0f;
+    if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
+                                    cached_viewport.mouse_ray.dir,
+                                    plane_point, drag_plane_normal, t) && t > 0)
     {
-      float plane_y = drag_object_start_pos.y;
-      linalg::vec3 plane_point = {0, plane_y, 0};
-      linalg::vec3 plane_normal = {0, 1, 0};
-      float t = 0.0f;
-      if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
-                                      cached_viewport.mouse_ray.dir,
-                                      plane_point, plane_normal, t) && t > 0)
+      linalg::vec3 current_hit = cached_viewport.mouse_ray.origin +
+                                 cached_viewport.mouse_ray.dir * t;
+      linalg::vec3 delta = current_hit - drag_plane_hit_start;
+
+      float snap_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+
+      // Snap the delta itself so all entities move uniformly
+      delta.x = editor::snap(delta.x, snap_step);
+      delta.y = editor::snap(delta.y, snap_step);
+      delta.z = editor::snap(delta.z, snap_step);
+
+      for (auto &[uid, start_pos] : drag_start_positions)
       {
-        linalg::vec3 current_hit = cached_viewport.mouse_ray.origin +
-                                   cached_viewport.mouse_ray.dir * t;
-        linalg::vec3 delta = current_hit - drag_plane_hit_start;
-
-        float snap_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
-        linalg::vec3 new_position = drag_object_start_pos + delta;
-        new_position.x = editor::snap(new_position.x, snap_step);
-        new_position.z = editor::snap(new_position.z, snap_step);
-        new_position.y = drag_object_start_pos.y;
-
-        entry->entity->position = new_position;
-        if (ctx.geometry_updated)
-          *ctx.geometry_updated = true;
+        auto *entry = ctx.map->find_by_uid(uid);
+        if (entry && entry->entity)
+          entry->entity->position = start_pos + delta;
       }
+      if (ctx.geometry_updated)
+        *ctx.geometry_updated = true;
     }
     return;
   }
@@ -283,9 +287,9 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
     if (editor_gizmo.is_interacting())
     {
       editor_gizmo.handle_input({}, false,
-                                {cached_viewport.camera.x,
-                                 cached_viewport.camera.y,
-                                 cached_viewport.camera.z});
+                                {cached_viewport.camera.position.x,
+                                 cached_viewport.camera.position.y,
+                                 cached_viewport.camera.position.z});
       if (ctx.geometry_updated)
         *ctx.geometry_updated = true;
       return;
@@ -295,13 +299,15 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
     if (is_dragging_object)
     {
       is_dragging_object = false;
-      if (drag_edit && ctx.transaction_system && !selected_uids.empty())
+      if (drag_edit && ctx.transaction_system)
       {
-        drag_edit->finish(selected_uids[0]);
+        for (auto &[uid, start_pos] : drag_start_positions)
+          drag_edit->finish(uid);
         if (auto txn = drag_edit->take())
           ctx.transaction_system->push(*txn);
       }
       drag_edit.reset();
+      drag_start_positions.clear();
       if (ctx.geometry_updated)
         *ctx.geometry_updated = true;
       return;
@@ -340,7 +346,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
         linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
 
         linalg::vec3 view_pos = linalg::world_to_view(
-            p, {view.camera.x, view.camera.y, view.camera.z}, view.camera.yaw,
+            p, {view.camera.position.x, view.camera.position.y, view.camera.position.z}, view.camera.yaw,
             view.camera.pitch);
 
         if (view_pos.z > 0)
@@ -494,7 +500,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
       linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
 
       linalg::vec3 view_pos = linalg::world_to_view(
-          p, {view.camera.x, view.camera.y, view.camera.z}, view.camera.yaw,
+          p, {view.camera.position.x, view.camera.position.y, view.camera.position.z}, view.camera.yaw,
           view.camera.pitch);
 
       if (view_pos.z >= -0.1f)

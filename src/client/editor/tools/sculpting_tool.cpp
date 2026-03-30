@@ -249,11 +249,11 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 
       vec3 v0 = world_to_view(
           face_center_world,
-          {last_view.camera.x, last_view.camera.y, last_view.camera.z},
+          {last_view.camera.position.x, last_view.camera.position.y, last_view.camera.position.z},
           last_view.camera.yaw, last_view.camera.pitch);
       vec3 v1 = world_to_view(
           face_end_world,
-          {last_view.camera.x, last_view.camera.y, last_view.camera.z},
+          {last_view.camera.position.x, last_view.camera.position.y, last_view.camera.position.z},
           last_view.camera.yaw, last_view.camera.pitch);
 
       bool valid_projection = true;

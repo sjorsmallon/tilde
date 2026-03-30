@@ -5,6 +5,7 @@
 #include "entities/weapon_entity.hpp"
 #include "entities/rocket_entity.hpp"
 #include "entities/particle_emitter_entity.hpp"
+#include "entities/trigger_volume_entity.hpp"
 #endif
 
 
@@ -37,7 +38,9 @@
   X(PARTICLE_EMITTER, network::Particle_Emitter_Entity, "particle_emitter",         \
     "entities/particle_emitter_entity.hpp")                                        \
   X(DISPLACEMENT, network::Displacement_Entity, "displacement_entity",             \
-    "entities/displacement_entity.hpp")
+    "entities/displacement_entity.hpp")                                            \
+  X(TRIGGER_VOLUME, network::Trigger_Volume_Entity, "trigger_volume",              \
+    "entities/trigger_volume_entity.hpp")
 
 
 // we override the x macro from st get the enum name.

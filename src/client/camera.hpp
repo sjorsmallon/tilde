@@ -4,12 +4,13 @@
 
 #include "../shared/linalg.hpp"
 
+
 namespace client
 {
 
 struct camera_t
 {
-  float x = 0.0f, y = 0.0f, z = 0.0f;
+  linalg::vec3f position = {0.0f, 0.0f, 0.0f};
   float yaw = 0.0f;
   float pitch = 0.0f;
   bool orthographic = false;
@@ -20,7 +21,7 @@ struct camera_t
 
   // Construct from position coordinates (yaw/pitch default to 0 - Looking +X)
   camera_t(float in_x, float in_y, float in_z)
-      : x(in_x), y(in_y), z(in_z), yaw(0.0f), pitch(0.0f)
+      : position{.x = in_x, .y = in_y, . z = in_z}, yaw(0.0f), pitch(0.0f)
   {
   }
 
@@ -30,9 +31,9 @@ struct camera_t
                                    float vy, float vz)
   {
     camera_t cam;
-    cam.x = px;
-    cam.y = py;
-    cam.z = pz;
+    cam.position.x = px;
+    cam.position.y = py;
+    cam.position.z = pz;
 
     // Pitch from Y component
     // Y up. sin(pitch) = y.
@@ -50,9 +51,9 @@ struct camera_t
 
 inline void look_at(camera_t &cam, const linalg::vec3 &target)
 {
-  float dx = target.x - cam.x;
-  float dy = target.y - cam.y;
-  float dz = target.z - cam.z;
+  float dx = target.x - cam.position.x;
+  float dy = target.y - cam.position.y;
+  float dz = target.z - cam.position.z;
 
   // Normalize
   float len = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -120,7 +121,7 @@ inline linalg::ray_t get_pick_ray(const camera_t &cam, float ndc_x, float ndc_y,
     float w = h * aspect_ratio;
     float ox = ndc_x * (w * 0.5f);
     float oy = ndc_y * (h * 0.5f);
-    vec3 origin = {cam.x, cam.y, cam.z};
+    vec3 origin = {cam.position.x, cam.position.y, cam.position.z};
     // In editor, we usually start ray far back for orthographic picking?
     // The original code did: ray_origin = cam - F * 1000 + R*ox + U*oy
     // Let's replicate that behavior.
@@ -135,7 +136,7 @@ inline linalg::ray_t get_pick_ray(const camera_t &cam, float ndc_x, float ndc_y,
     float vx = ndc_x * aspect_ratio * tanHalf;
     float vy = ndc_y * tanHalf;
     vec3 dir = normalize(R * vx + U * vy + F);
-    return {{cam.x, cam.y, cam.z}, dir};
+    return {{cam.position.x, cam.position.y, cam.position.z}, dir};
   }
 }
 

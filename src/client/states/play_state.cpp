@@ -11,6 +11,7 @@
 #include "../../shared/entities/displacement_entity.hpp"
 #include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/entities/weapon_entity.hpp"
+#include "../../shared/entities/trigger_volume_entity.hpp"
 #include "../../shared/network/quantization.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -85,9 +86,9 @@ void PlayState::on_enter()
   }
 
   // Set up camera at player position (eye height)
-  camera.x = player_position.x;
-  camera.y = player_position.y + 28.f; // eye level
-  camera.z = player_position.z;
+  camera.position.x = player_position.x;
+  camera.position.y = player_position.y + 28.f; // eye level
+  camera.position.z = player_position.z;
   camera.yaw = player_yaw;
   camera.pitch = player_pitch;
   camera.orthographic = false;
@@ -533,9 +534,9 @@ void PlayState::update(float dt)
   // Extrapolate by the leftover physics accumulator so the camera moves
   // smoothly between fixed-rate physics ticks instead of stuttering.
   float extrap = (connection_phase == Connection_Phase::Connected) ? physics_accumulator : 0.f;
-  camera.x = player_position.x + player_velocity.x * extrap + visual_error_offset.x;
-  camera.y = player_position.y + player_velocity.y * extrap + visual_error_offset.y + 28.f;
-  camera.z = player_position.z + player_velocity.z * extrap + visual_error_offset.z;
+  camera.position.x = player_position.x + player_velocity.x * extrap + visual_error_offset.x;
+  camera.position.y = player_position.y + player_velocity.y * extrap + visual_error_offset.y + 28.f;
+  camera.position.z = player_position.z + player_velocity.z * extrap + visual_error_offset.z;
 
   // --- Interpolate remote players ---
   float tick_interval = 1.0f / static_cast<float>(server_tickrate);

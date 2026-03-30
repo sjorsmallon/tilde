@@ -60,8 +60,8 @@ void EditorState::render_ui()
         auto ent = shared::create_entity_by_classname("aabb_entity");
         if (auto *e = dynamic_cast<::network::AABB_Entity *>(ent.get()))
         {
-          e->center = {camera.x + cos(radYaw) * dist, camera.y,
-                       camera.z + sin(radYaw) * dist};
+          e->center = {camera.position.x + cos(radYaw) * dist, camera.position.y,
+                       camera.position.z + sin(radYaw) * dist};
           e->half_extents = {1.0f, 1.0f, 1.0f};
         }
         map_source.entities.push_back(ent);
@@ -558,10 +558,10 @@ void EditorState::draw_aabb_wireframe(const shared::aabb_t &aabb,
   auto drawLine = [&](int i, int j)
   {
     vec3 p1 = linalg::world_to_view(
-        corners[i], {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw,
+        corners[i], {.x = camera.position.x, .y = camera.position.y, .z = camera.position.z}, camera.yaw,
         camera.pitch);
     vec3 p2 = linalg::world_to_view(
-        corners[j], {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw,
+        corners[j], {.x = camera.position.x, .y = camera.position.y, .z = camera.position.z}, camera.yaw,
         camera.pitch);
 
     if (camera.orthographic || linalg::clip_line(p1, p2))
@@ -611,10 +611,10 @@ void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
   auto drawLine = [&](int i, int j)
   {
     vec3 p1 = linalg::world_to_view(
-        world_pts[i], {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw,
+        world_pts[i], {.x = camera.position.x, .y = camera.position.y, .z = camera.position.z}, camera.yaw,
         camera.pitch);
     vec3 p2 = linalg::world_to_view(
-        world_pts[j], {.x = camera.x, .y = camera.y, .z = camera.z}, camera.yaw,
+        world_pts[j], {.x = camera.position.x, .y = camera.position.y, .z = camera.position.z}, camera.yaw,
         camera.pitch);
 
     if (camera.orthographic || linalg::clip_line(p1, p2))
@@ -700,9 +700,9 @@ void EditorState::draw_grid()
 
   auto drawLine = [&](vec3 start, vec3 end, uint32_t col)
   {
-    vec3 p1 = linalg::world_to_view(start, {camera.x, camera.y, camera.z},
+    vec3 p1 = linalg::world_to_view(start, {camera.position.x, camera.position.y, camera.position.z},
                                     camera.yaw, camera.pitch);
-    vec3 p2 = linalg::world_to_view(end, {camera.x, camera.y, camera.z},
+    vec3 p2 = linalg::world_to_view(end, {camera.position.x, camera.position.y, camera.position.z},
                                     camera.yaw, camera.pitch);
 
     if (camera.orthographic || linalg::clip_line(p1, p2))

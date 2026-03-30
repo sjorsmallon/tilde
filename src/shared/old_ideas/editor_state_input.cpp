@@ -200,48 +200,48 @@ void EditorState::handle_input(float dt)
     {
       if (camera.orthographic)
       {
-        camera.x += U.x * speed;
-        camera.y += U.y * speed;
-        camera.z += U.z * speed;
+        camera.position.x += U.x * speed;
+        camera.position.y += U.y * speed;
+        camera.position.z += U.z * speed;
       }
       else
       {
-        camera.x += F.x * speed;
-        camera.y += F.y * speed;
-        camera.z += F.z * speed;
+        camera.position.x += F.x * speed;
+        camera.position.y += F.y * speed;
+        camera.position.z += F.z * speed;
       }
     }
     if (client::input::is_key_down(SDL_SCANCODE_S))
     {
       if (camera.orthographic)
       {
-        camera.x -= U.x * speed;
-        camera.y -= U.y * speed;
-        camera.z -= U.z * speed;
+        camera.position.x -= U.x * speed;
+        camera.position.y -= U.y * speed;
+        camera.position.z -= U.z * speed;
       }
       else
       {
-        camera.x -= F.x * speed;
-        camera.y -= F.y * speed;
-        camera.z -= F.z * speed;
+        camera.position.x -= F.x * speed;
+        camera.position.y -= F.y * speed;
+        camera.position.z -= F.z * speed;
       }
     }
     if (client::input::is_key_down(SDL_SCANCODE_D))
     {
-      camera.x += R.x * speed;
-      camera.z += R.z * speed;
+      camera.position.x += R.x * speed;
+      camera.position.z += R.z * speed;
     }
     if (client::input::is_key_down(SDL_SCANCODE_A))
     {
-      camera.x -= R.x * speed;
-      camera.z -= R.z * speed;
+      camera.position.x -= R.x * speed;
+      camera.position.z -= R.z * speed;
     }
     if (client::input::is_key_down(SDL_SCANCODE_SPACE))
     {
       if (camera.orthographic)
         camera.ortho_height += speed;
       else
-        camera.y += speed;
+        camera.position.y += speed;
     }
     if (client::input::is_key_down(SDL_SCANCODE_LCTRL))
     {
@@ -253,13 +253,13 @@ void EditorState::handle_input(float dt)
       }
       else
       {
-        camera.y -= speed;
+        camera.position.y -= speed;
       }
     }
     if (client::input::is_key_down(SDL_SCANCODE_Q))
     {
       if (!camera.orthographic)
-        camera.y -= speed;
+        camera.position.y -= speed;
     }
 
     if (client::input::is_mouse_down(SDL_BUTTON_RIGHT))

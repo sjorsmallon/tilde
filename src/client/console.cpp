@@ -119,7 +119,18 @@ void Console::ExecuteCommand(const char *command_line)
     return;
   }
 
-  Print("Unknown command: %s", cmd.c_str());
+  // Command not found locally — try forwarding to the server.
+  // Server-only commands (e.g. spawn_bot) live in the server DLL's CVarSystem
+  // and aren't visible to the client, so we forward unknown commands rather
+  // than requiring client-side stubs.
+  if (network_forwarder_)
+  {
+    network_forwarder_(command_line);
+  }
+  else
+  {
+    Print("Unknown command: %s", cmd.c_str());
+  }
 }
 
 int Console::TextEditCallbackStub(ImGuiInputTextCallbackData *data)

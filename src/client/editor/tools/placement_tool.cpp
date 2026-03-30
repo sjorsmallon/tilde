@@ -1,13 +1,12 @@
 #include "placement_tool.hpp"
 #include "../../../shared/editor_grid.hpp"
-#include "../../../shared/entities/displacement_entity.hpp"
-#include "../../../shared/entities/particle_emitter_entity.hpp"
-#include "../../../shared/entities/static_entities.hpp"
 #include "../../../shared/map.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../transaction_system.hpp"
-#include "entities/player_entity.hpp"
-#include "entities/weapon_entity.hpp"
+
+#define ENTITIES_WANT_INCLUDES
+#include "../../../shared/entities/entity_list.hpp"
+#undef ENTITIES_WANT_INCLUDES
 #include "imgui.h"
 #include "log.hpp"
 #include "renderer.hpp"
@@ -111,22 +110,17 @@ void Placement_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 {
 }
 
-// Entity type table for placement
+// Entity type table for placement — auto-generated from the X-macro.
 struct placeable_type_t
 {
   const char *label;
   const char *classname;
-  int scancode; // SDL_SCANCODE_*
 };
 
 static const placeable_type_t g_placeable_types[] = {
-    {"AABB", "aabb_entity", SDL_SCANCODE_1},
-    {"Wedge", "wedge_entity", SDL_SCANCODE_2},
-    {"Player Spawn", "player_start", SDL_SCANCODE_3},
-    {"Weapon", "weapon_basic", SDL_SCANCODE_4},
-    {"Static Mesh", "static_mesh_entity", SDL_SCANCODE_5},
-    {"Particle Emitter", "particle_emitter", SDL_SCANCODE_6},
-    {"Displacement", "displacement_entity", SDL_SCANCODE_7},
+#define X(ENUM, CLASS, NAME, PATH) {#ENUM, NAME},
+    SHARED_ENTITIES_LIST(X)
+#undef X
 };
 static constexpr int g_placeable_count =
     sizeof(g_placeable_types) / sizeof(g_placeable_types[0]);
@@ -176,13 +170,20 @@ void Placement_Tool::select_entity_type(int index)
                           editor::DEFAULT_HALF_EXTENT,
                           editor::DEFAULT_HALF_EXTENT};
   }
+  else if (auto *trigger = dynamic_cast<::network::Trigger_Volume_Entity *>(
+               current_entity.get()))
+  {
+    trigger->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                             editor::DEFAULT_HALF_EXTENT,
+                             editor::DEFAULT_HALF_EXTENT};
+  }
 }
 
 void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
-  for (int i = 0; i < g_placeable_count; ++i)
+  for (int i = 0; i < g_placeable_count && i < 9; ++i)
   {
-    if (e.scancode == g_placeable_types[i].scancode)
+    if (e.scancode == SDL_SCANCODE_1 + i)
     {
       select_entity_type(i);
       return;

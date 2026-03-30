@@ -1,5 +1,6 @@
 #include "../shared/entities/player_entity.hpp"
 #include "../shared/entities/rocket_entity.hpp"
+#include "../shared/entities/trigger_volume_entity.hpp"
 #include "server_api.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/rocket_system.hpp"
@@ -370,8 +371,18 @@ bool Tick()
   for (const auto &[player_idx, line] : inbox.commands)
   {
     log_terminal("Command from slot {}: {}", player_idx, line);
+    const auto &client_ip = g_state.net.player_ips[player_idx];
     if (!cvar::CVarSystem::Get().Execute(line))
+    {
       log_terminal("Unknown command from slot {}: {}", player_idx, line);
+      send_server_message(g_socket, client_ip,
+                          std::string("Unknown command: ") + line);
+    }
+    else
+    {
+      send_server_message(g_socket, client_ip,
+                          std::string("OK: ") + line);
+    }
   }
 
   // Sort moves by timestamp
@@ -485,6 +496,46 @@ bool Tick()
   float tick_dt = static_cast<float>(get_tick_interval());
   update_bots(g_bots, g_state.session, tick_dt);
   update_rockets(g_state.session, tick_dt);
+
+  // --- Check trigger volumes against players ---
+  auto *trigger_pool = g_state.session.entity_system
+      .get_entities<network::Trigger_Volume_Entity>(entity_type::TRIGGER_VOLUME);
+  if (pool && trigger_pool)
+  {
+    for (auto &player : *pool)
+    {
+      for (const auto &trigger : *trigger_pool)
+      {
+        vec3f delta = player.position - trigger.position;
+        // Player feet are at position, center of mass is offset up by half_height
+        // Check if any part of the player capsule overlaps the trigger box
+        vec3f player_min = {
+          player.position.x - network::player_half_width,
+          player.position.y,
+          player.position.z - network::player_half_width
+        };
+        vec3f player_max = {
+          player.position.x + network::player_half_width,
+          player.position.y + network::player_half_height * 2.f,
+          player.position.z + network::player_half_width
+        };
+        vec3f trigger_min = trigger.position - trigger.half_extents;
+        vec3f trigger_max = trigger.position + trigger.half_extents;
+
+        bool overlaps = player_min.x <= trigger_max.x && player_max.x >= trigger_min.x
+                     && player_min.y <= trigger_max.y && player_max.y >= trigger_min.y
+                     && player_min.z <= trigger_max.z && player_max.z >= trigger_min.z;
+
+        if (overlaps)
+        {
+          if (trigger.action == static_cast<int32_t>(network::trigger_action::kill))
+          {
+            player.health = 0;
+          }
+        }
+      }
+    }
+  }
 
   // --- Broadcast bot debug state to all connected clients ---
   if (!g_bots.empty())

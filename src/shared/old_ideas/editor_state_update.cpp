@@ -198,7 +198,7 @@ void EditorState::update_place_mode(float dt)
 
   if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
   {
-    vec3 start = {.x = camera.x, .y = camera.y, .z = camera.z};
+    vec3 start = {.x = camera.position.x, .y = camera.position.y, .z = camera.position.z};
     vec3 end = hit ? vec3{.x = selected_tile[0],
                           .y = selected_tile[1],
                           .z = selected_tile[2]}
@@ -391,7 +391,7 @@ void EditorState::update_select_mode(float dt)
             vec3 orig_half = (orig_bounds.max - orig_bounds.min) * 0.5f;
             float orig_half_vals[3] = {orig_half.x, orig_half.y, orig_half.z};
 
-            vec3 cam_to_obj = orig_center - vec3{camera.x, camera.y, camera.z};
+            vec3 cam_to_obj = orig_center - vec3{camera.position.x, camera.position.y, camera.position.z};
             vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
             plane_normal = linalg::cross(plane_normal, axis_dir);
             vec3 handle_pos = orig_center + axis_dir * orig_half_vals[axis];
@@ -509,7 +509,7 @@ void EditorState::update_select_mode(float dt)
                           0.5f;
               float half_vals[3] = {half.x, half.y, half.z};
 
-              vec3 cam_to_obj = center - vec3{camera.x, camera.y, camera.z};
+              vec3 cam_to_obj = center - vec3{camera.position.x, camera.position.y, camera.position.z};
               vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
               plane_normal = linalg::cross(plane_normal, axis_dir);
               vec3 handle_pos = center + axis_dir * half_vals[axis];

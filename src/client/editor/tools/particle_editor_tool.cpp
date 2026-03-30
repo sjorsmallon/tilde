@@ -125,8 +125,8 @@ void ParticleEditorTool::on_draw_ui(editor_context_t &ctx)
   {
     auto emitter = std::make_shared<network::Particle_Emitter_Entity>();
     // Place at camera position
-    emitter->position = {m_viewport.camera.x, m_viewport.camera.y,
-                         m_viewport.camera.z};
+    emitter->position = {m_viewport.camera.position.x, m_viewport.camera.position.y,
+                         m_viewport.camera.position.z};
     selected_emitter_uid = ctx.map->add_entity(emitter);
     if (ctx.geometry_updated)
       *ctx.geometry_updated = true;

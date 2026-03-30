@@ -249,8 +249,8 @@ void Displacement_Tool::regenerate_mesh(network::Displacement_Entity &ent,
 
 linalg::vec2 Displacement_Tool::project_to_screen(const linalg::vec3 &world_pos) const
 {
-  linalg::vec3 cam_pos = {cached_view.camera.x, cached_view.camera.y,
-                          cached_view.camera.z};
+  linalg::vec3 cam_pos = {cached_view.camera.position.x, cached_view.camera.position.y,
+                          cached_view.camera.position.z};
   linalg::vec3 view_pos = linalg::world_to_view(world_pos, cam_pos,
                                                 cached_view.camera.yaw,
                                                 cached_view.camera.pitch);
@@ -452,8 +452,8 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
     vec3 face_center_world = current_center + center_offset;
     vec3 face_end_world = face_center_world + normal;
 
-    vec3 cam_pos = {resize_last_view.camera.x, resize_last_view.camera.y,
-                    resize_last_view.camera.z};
+    vec3 cam_pos = {resize_last_view.camera.position.x, resize_last_view.camera.position.y,
+                    resize_last_view.camera.position.z};
     vec3 v0 = world_to_view(face_center_world, cam_pos,
                              resize_last_view.camera.yaw,
                              resize_last_view.camera.pitch);

@@ -46,10 +46,11 @@ private:
   // Gizmo
   Editor_Gizmo editor_gizmo;
 
-  // Direct object drag (hold LMB on object to move in XZ plane)
+  // Direct object drag (Ctrl+LMB to move in camera view plane)
   bool is_dragging_object = false;
-  linalg::vec3 drag_object_start_pos;   // entity position at drag start
-  linalg::vec3 drag_plane_hit_start;    // initial XZ plane hit point
+  std::vector<std::pair<shared::entity_uid_t, linalg::vec3>> drag_start_positions;
+  linalg::vec3 drag_plane_hit_start;    // initial plane hit point
+  linalg::vec3 drag_plane_normal;       // normal of the drag plane
   std::optional<Edit_Recorder> drag_edit;
 };
 

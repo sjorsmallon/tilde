@@ -3164,9 +3164,9 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
   }
 
   // View Matrix from Camera
-  float cx = view.camera.x;
-  float cy = view.camera.y;
-  float cz = view.camera.z;
+  float cx = view.camera.position.x;
+  float cy = view.camera.position.y;
+  float cz = view.camera.position.z;
 
   // Direction from Yaw/Pitch
   float radYaw = view.camera.yaw * 0.0174533f;

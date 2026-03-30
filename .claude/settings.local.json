@@ -24,7 +24,9 @@
       "Bash(./cmake_build/bin/test_entity_delta_packing)",
       "Bash(./cmake_build/bin/session_test)",
       "Bash(./cmake_build/bin/linalg_test)",
-      "Bash(./cmake_build/bin/log_test)"
+      "Bash(./cmake_build/bin/log_test)",
+      "Bash(./cmake_build/bin/navmesh_test.exe)",
+      "Bash(grep -E \"\\\\.\\(hpp|cpp\\)$\")"
     ]
   }
 }
