@@ -898,6 +898,8 @@ static void create_aabb_pipeline()
 }
 
 // --- Line Pipeline Globals ---
+static float g_line_depth_bias_constant = -2.0f;
+static float g_line_depth_bias_slope = -1.0f;
 static VkPipeline g_line_pipeline = VK_NULL_HANDLE;
 static VkBuffer g_line_vertex_buffer = VK_NULL_HANDLE;
 static VkDeviceMemory g_line_vertex_memory = VK_NULL_HANDLE;
@@ -972,6 +974,7 @@ static void create_line_pipeline()
   rasterizer.lineWidth = 2.0f;
   rasterizer.cullMode = VK_CULL_MODE_NONE;
   rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterizer.depthBiasEnable = VK_TRUE;
 
   VkPipelineMultisampleStateCreateInfo multisampling{
       VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
@@ -997,10 +1000,11 @@ static void create_line_pipeline()
   colorBlending.pAttachments = &colorBlendAttachment;
 
   VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
-                                    VK_DYNAMIC_STATE_SCISSOR};
+                                    VK_DYNAMIC_STATE_SCISSOR,
+                                    VK_DYNAMIC_STATE_DEPTH_BIAS};
   VkPipelineDynamicStateCreateInfo dynamicState{
       VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-  dynamicState.dynamicStateCount = 2;
+  dynamicState.dynamicStateCount = 3;
   dynamicState.pDynamicStates = dynamicStates;
 
   pipelineInfo.stageCount = 2;
@@ -1292,6 +1296,12 @@ void DrawFilledPolygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &ver
   vkCmdDraw(cmd, (uint32_t)(tri_count * 3), 1, first_vertex, 0);
 }
 
+void SetLineDepthBias(float constant_factor, float slope_factor)
+{
+  g_line_depth_bias_constant = constant_factor;
+  g_line_depth_bias_slope = slope_factor;
+}
+
 void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
               const linalg::vec3 &end, uint32_t color)
 {
@@ -1299,6 +1309,7 @@ void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
     return;
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_line_pipeline);
+  vkCmdSetDepthBias(cmd, g_line_depth_bias_constant, 0.0f, g_line_depth_bias_slope);
   VkBuffer vertexBuffers[] = {g_line_vertex_buffer};
   VkDeviceSize offsets[] = {0};
   vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
@@ -1627,10 +1638,11 @@ static void create_mesh_pipeline()
   colorBlending.pAttachments = &colorBlendAttachment;
 
   VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
-                                    VK_DYNAMIC_STATE_SCISSOR};
+                                    VK_DYNAMIC_STATE_SCISSOR,
+                                    VK_DYNAMIC_STATE_DEPTH_BIAS};
   VkPipelineDynamicStateCreateInfo dynamicState{};
   dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynamicState.dynamicStateCount = 2;
+  dynamicState.dynamicStateCount = 3;
   dynamicState.pDynamicStates = dynamicStates;
 
   // Reuse AABB pipeline layout (same push constants)
@@ -1662,10 +1674,14 @@ static void create_mesh_pipeline()
   }
 
   // Create wireframe variant — same config but polygon mode LINE, no culling
+  // Depth bias so wireframe overlays render in front of solid geometry.
   if (g_supports_wireframe)
   {
     rasterizer.polygonMode = VK_POLYGON_MODE_LINE;
     rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = -2.0f;
+    rasterizer.depthBiasSlopeFactor = -1.0f;
 
     if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipelineInfo,
                                   nullptr, &g_mesh_wireframe_pipeline) !=
@@ -2857,6 +2873,7 @@ void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     g_mesh_wireframe_pipeline);
+  vkCmdSetDepthBias(cmd, g_line_depth_bias_constant, 0.0f, g_line_depth_bias_slope);
 
   VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
   VkDeviceSize offsets[] = {0};

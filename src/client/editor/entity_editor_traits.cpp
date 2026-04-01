@@ -2,9 +2,12 @@
 #include "../../shared/asset.hpp"
 #include "../../shared/editor_grid.hpp"
 #include "../../shared/entities/entity_list.hpp"
+#include "../../shared/map.hpp"
 #include "../../shared/shapes.hpp"
 #include "renderer.hpp"
+#include <cmath>
 #include <cstring>
+#include <print>
 #include <string>
 
 // Pull in all entity headers so the X-macro can see every class.
@@ -49,6 +52,14 @@ bool Entity_Editor_Traits<network::AABB_Entity>::draw_in_editor(
                      /*as_wireframe=*/!solid,
                      /*random_color=*/solid,
                      /*random_seed=*/uid);
+  return true;
+}
+
+template <>
+bool Entity_Editor_Traits<network::AABB_Entity>::draw_selection_wireframe(
+    const network::AABB_Entity *e, overlay_renderer_t &renderer, uint32_t color)
+{
+  renderer.draw_wire_box(e->position, e->half_extents, color);
   return true;
 }
 
@@ -99,6 +110,28 @@ bool Entity_Editor_Traits<network::Wedge_Entity>::draw_in_editor(
   return true;
 }
 
+template <>
+bool Entity_Editor_Traits<network::Wedge_Entity>::draw_selection_wireframe(
+    const network::Wedge_Entity *e, overlay_renderer_t &renderer,
+    uint32_t color)
+{
+  shared::wedge_t w;
+  w.center = e->position;
+  w.half_extents = e->half_extents;
+  w.orientation = e->orientation;
+  auto points = shared::get_wedge_points(w);
+  renderer.draw_line(points[0], points[1], color);
+  renderer.draw_line(points[1], points[2], color);
+  renderer.draw_line(points[2], points[3], color);
+  renderer.draw_line(points[3], points[0], color);
+  renderer.draw_line(points[4], points[5], color);
+  renderer.draw_line(points[0], points[4], color);
+  renderer.draw_line(points[1], points[5], color);
+  renderer.draw_line(points[3], points[4], color);
+  renderer.draw_line(points[2], points[5], color);
+  return true;
+}
+
 // -- Player Spawn -------------------------------------------------------
 
 template <>
@@ -134,6 +167,13 @@ bool Entity_Editor_Traits<network::Player_Spawn_Entity>::draw_in_editor(
   renderer.draw_wire_box(e->position, hull, 0xFF8800FF);
   renderer.draw_line(e->position, e->position + linalg::vec3{0, 48, 0}, 0xFF8800FF);
   return true;
+}
+
+template <>
+bool Entity_Editor_Traits<network::Player_Spawn_Entity>::draw_selection_wireframe(
+    const network::Player_Spawn_Entity *, overlay_renderer_t &, uint32_t)
+{
+  return false; // use AABB fallback
 }
 
 // -- Particle Emitter ---------------------------------------------------
@@ -174,6 +214,13 @@ bool Entity_Editor_Traits<network::Particle_Emitter_Entity>::draw_in_editor(
   return true;
 }
 
+template <>
+bool Entity_Editor_Traits<network::Particle_Emitter_Entity>::draw_selection_wireframe(
+    const network::Particle_Emitter_Entity *, overlay_renderer_t &, uint32_t)
+{
+  return false; // use AABB fallback
+}
+
 // -- Static Mesh --------------------------------------------------------
 
 template <>
@@ -205,6 +252,13 @@ bool Entity_Editor_Traits<network::Static_Mesh_Entity>::draw_in_editor(
   return true;
 }
 
+template <>
+bool Entity_Editor_Traits<network::Static_Mesh_Entity>::draw_selection_wireframe(
+    const network::Static_Mesh_Entity *, overlay_renderer_t &, uint32_t)
+{
+  return false; // try render component mesh first in draw_selection_highlight
+}
+
 // -- Weapon -------------------------------------------------------------
 
 template <>
@@ -228,6 +282,13 @@ bool Entity_Editor_Traits<network::Weapon_Entity>::draw_in_editor(
     const network::Weapon_Entity *, overlay_renderer_t &, uint32_t, bool)
 {
   return false; // relies on render component
+}
+
+template <>
+bool Entity_Editor_Traits<network::Weapon_Entity>::draw_selection_wireframe(
+    const network::Weapon_Entity *, overlay_renderer_t &, uint32_t)
+{
+  return false; // try render component mesh first
 }
 
 // -- Player (runtime only, not placed in editor) ------------------------
@@ -265,6 +326,13 @@ bool Entity_Editor_Traits<network::Player_Entity>::draw_in_editor(
       return true;
     }
   }
+  return false;
+}
+
+template <>
+bool Entity_Editor_Traits<network::Player_Entity>::draw_selection_wireframe(
+    const network::Player_Entity *, overlay_renderer_t &, uint32_t)
+{
   return false;
 }
 
@@ -308,6 +376,13 @@ bool Entity_Editor_Traits<network::Displacement_Entity>::draw_in_editor(
   return false;
 }
 
+template <>
+bool Entity_Editor_Traits<network::Displacement_Entity>::draw_selection_wireframe(
+    const network::Displacement_Entity *, overlay_renderer_t &, uint32_t)
+{
+  return false; // use AABB fallback
+}
+
 // -- Trigger Volume -----------------------------------------------------
 
 template <>
@@ -336,6 +411,15 @@ bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_in_editor(
   return true;
 }
 
+template <>
+bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_selection_wireframe(
+    const network::Trigger_Volume_Entity *e, overlay_renderer_t &renderer,
+    uint32_t color)
+{
+  renderer.draw_wire_box(e->position, e->half_extents, color);
+  return true;
+}
+
 // -- Rocket (runtime only, not placed in editor) ------------------------
 
 template <>
@@ -359,6 +443,13 @@ bool Entity_Editor_Traits<network::Rocket_Entity>::draw_in_editor(
     const network::Rocket_Entity *, overlay_renderer_t &, uint32_t, bool)
 {
   return false; // runtime only
+}
+
+template <>
+bool Entity_Editor_Traits<network::Rocket_Entity>::draw_selection_wireframe(
+    const network::Rocket_Entity *, overlay_renderer_t &, uint32_t)
+{
+  return false;
 }
 
 // ===================================================================
@@ -444,6 +535,113 @@ bool draw_entity_in_editor(const network::Entity *e,
   SHARED_ENTITIES_LIST(X)
 #undef X
   return false;
+}
+
+// ===================================================================
+// Selection highlight: pulsating pink <-> white wireframe
+// ===================================================================
+
+static uint32_t compute_pulsating_color(float time)
+{
+  // Pulsate between hot pink (0xFFCB00FF in ABGR = RGB 255,0,203)
+  // and white (0xFFFFFFFF) at ~2 Hz
+  float t = std::sin(time * 4.0f) * 0.5f + 0.5f; // 0..1
+
+  auto lerp_byte = [](uint8_t a, uint8_t b, float t) -> uint8_t
+  {
+    return (uint8_t)(a + (b - a) * t);
+  };
+
+  // ABGR format
+  uint8_t a = 0xFF;
+  uint8_t b_pink = 0xCB, b_white = 0xFF;
+  uint8_t g_pink = 0x00, g_white = 0xFF;
+  uint8_t r_pink = 0xFF, r_white = 0xFF;
+
+  uint8_t b = lerp_byte(b_pink, b_white, t);
+  uint8_t g = lerp_byte(g_pink, g_white, t);
+  uint8_t r = lerp_byte(r_pink, r_white, t);
+
+  return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)g << 8) | r;
+}
+
+// Try to draw a mesh wireframe from the entity's render component.
+static bool try_draw_mesh_selection_wireframe(const network::Entity *e,
+                                              VkCommandBuffer cmd,
+                                              uint32_t color)
+{
+  const auto *rc = e->get_component<network::render_component_t>();
+  if (!rc || !rc->visible)
+    return false;
+
+  const char *mesh_path = nullptr;
+  if (rc->mesh_path.length > 0)
+    mesh_path = rc->mesh_path.c_str();
+  else if (rc->mesh_id >= 0)
+    mesh_path = assets::get_mesh_path(rc->mesh_id);
+
+  if (!mesh_path)
+    return false;
+
+  assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
+  if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
+    mesh_handle = assets::get_primitive_mesh(mesh_path + 12);
+  else
+    mesh_handle = assets::load_mesh(mesh_path);
+
+  if (!mesh_handle.valid())
+    return false;
+
+  renderer::DrawMeshWireframe(cmd, e->position, rc->scale, mesh_handle,
+                              color, e->orientation + rc->rotation);
+  return true;
+}
+
+// Runtime dispatch for draw_selection_wireframe trait.
+static bool dispatch_selection_wireframe(const network::Entity *e,
+                                         overlay_renderer_t &renderer,
+                                         uint32_t color)
+{
+#define X(ENUM, CLASS, NAME, PATH)                                             \
+  if (dynamic_cast<const CLASS *>(e))                                          \
+    return Entity_Editor_Traits<CLASS>::draw_selection_wireframe(               \
+        static_cast<const CLASS *>(e), renderer, color);
+  SHARED_ENTITIES_LIST(X)
+#undef X
+  return false;
+}
+
+void draw_selection_highlight(const network::Entity *e,
+                              overlay_renderer_t &renderer, float time)
+{
+  uint32_t color = compute_pulsating_color(time);
+  std::print("[selection] draw_selection_highlight called, time={:.2f} color=0x{:08X}\n", time, color);
+
+  // Push stronger depth bias so selection wireframe renders in front of
+  // both solid geometry and normal editor wireframes.
+  renderer::SetLineDepthBias(-8.0f, -4.0f);
+
+  // 1. Try mesh wireframe from render component
+  if (try_draw_mesh_selection_wireframe(e, renderer.get_command_buffer(), color))
+  {
+    renderer::SetLineDepthBias(-2.0f, -1.0f);
+    return;
+  }
+
+  // 2. Try per-entity shape wireframe (wedge, AABB, trigger volume, etc.)
+  if (dispatch_selection_wireframe(e, renderer, color))
+  {
+    renderer::SetLineDepthBias(-2.0f, -1.0f);
+    return;
+  }
+
+  // 3. Fallback: AABB bounds wireframe
+  auto bounds = shared::compute_entity_bounds(e);
+  renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
+                         (bounds.max - bounds.min) * 0.5f, color);
+
+  // Restore default depth bias
+  renderer::SetLineDepthBias(-2.0f, -1.0f);
 }
 
 // ===================================================================

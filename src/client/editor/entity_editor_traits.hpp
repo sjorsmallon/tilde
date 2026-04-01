@@ -27,6 +27,12 @@ struct Entity_Editor_Traits
   // solid: true when the user has "Solid Entities" checked.
   static bool draw_in_editor(const EntityClass *e, overlay_renderer_t &renderer,
                              uint32_t uid, bool solid);
+
+  // Draw a selection wireframe for this entity. Return true if you drew a
+  // shape-specific wireframe, false to fall back to AABB bounds wireframe.
+  static bool draw_selection_wireframe(const EntityClass *e,
+                                       overlay_renderer_t &renderer,
+                                       uint32_t color);
 };
 
 // Runtime dispatch wrappers (resolve entity type via the X-macro table).
@@ -47,5 +53,11 @@ linalg::vec3 compute_placement_center(const network::Entity *e,
 // Default ghost drawing: tries render component mesh wireframe, then wire box.
 void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,
                         const linalg::vec3 &center);
+
+// Draw a pulsating selection highlight wireframe for an entity.
+// Uses the entity's mesh wireframe if available, else per-entity shape,
+// else AABB bounds. Color pulsates between pink and white based on time.
+void draw_selection_highlight(const network::Entity *e,
+                              overlay_renderer_t &renderer, float time);
 
 } // namespace client

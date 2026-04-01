@@ -46,6 +46,10 @@ void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
               const linalg::vec3 &end, uint32_t color);
 
+// Set depth bias for subsequent DrawLine / draw_wire_box calls.
+// Use stronger (more negative) values to push lines closer to camera.
+void SetLineDepthBias(float constant_factor, float slope_factor);
+
 // Draw a mesh from an asset handle
 void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
               const linalg::vec3 &scale,

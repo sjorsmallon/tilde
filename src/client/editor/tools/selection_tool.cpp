@@ -2,6 +2,7 @@
 #include "../../../shared/entities/player_entity.hpp"
 #include "../../../shared/entities/static_entities.hpp"
 #include "../../renderer.hpp"
+#include "../entity_editor_traits.hpp"
 #include "../entity_inspector.hpp"
 #include "../transaction_system.hpp"
 #include "imgui.h"
@@ -449,13 +450,13 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
                            (bounds.max - bounds.min) * 0.5f, color);
   };
 
-  // 1. Draw definitely selected items (Green)
+  // 1. Draw selected items with pulsating pink/white wireframe
   for (auto uid : selected_uids)
   {
     auto *entry = ctx.map->find_by_uid(uid);
     if (entry && entry->entity)
     {
-      draw_entity_highlight(entry->entity.get(), 0xFF00FF00);
+      draw_selection_highlight(entry->entity.get(), renderer, ctx.time);
     }
   }
 
