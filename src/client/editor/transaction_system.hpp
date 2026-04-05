@@ -5,9 +5,9 @@
 #include "../../shared/network/schema.hpp"
 #include <cstdint>
 #include <map>
-#include <optional>
 #include <stack>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace client
@@ -28,33 +28,100 @@ struct entity_snapshot_t
   std::map<std::string, std::string> properties;
 };
 
-struct entity_delta_t
+struct diff_entity_created_t
 {
-  enum class type_t
-  {
-    Add,
-    Remove,
-    Modify
-  };
-
-  type_t type;
-  shared::entity_uid_t entity_uid;
-
-  // For Add/Remove: full entity snapshot
+  shared::entity_uid_t uid;
   entity_snapshot_t snapshot;
+};
 
-  // For Modify: changed properties with before/after values
+struct diff_entity_removed_t
+{
+  shared::entity_uid_t uid;
+  entity_snapshot_t snapshot;
+};
+
+struct diff_entity_modified_t
+{
+  shared::entity_uid_t uid;
   std::vector<property_change_t> changes;
 };
 
+using edit_diff_t = std::variant<diff_entity_created_t, diff_entity_removed_t,
+                                 diff_entity_modified_t>;
+
 struct transaction_t
 {
-  std::vector<entity_delta_t> deltas;
-  bool empty() const { return deltas.empty(); }
+  std::vector<edit_diff_t> diffs;
+  bool empty() const { return diffs.empty(); }
+};
+
+// --- Free helpers ---
+
+template <class... Ts> struct overloaded : Ts...
+{
+  using Ts::operator()...;
+};
+
+inline std::vector<property_change_t>
+diff_properties(const std::map<std::string, std::string> &before,
+                const std::map<std::string, std::string> &after)
+{
+  std::vector<property_change_t> changes;
+  for (const auto &[key, old_val] : before)
+  {
+    auto it = after.find(key);
+    if (it != after.end() && it->second != old_val)
+      changes.push_back({key, old_val, it->second});
+  }
+  return changes;
+}
+
+inline entity_snapshot_t snapshot_entity(const network::Entity *ent)
+{
+  return {shared::get_classname_for_entity(ent), ent->get_all_properties()};
+}
+
+// --- transaction_builder_t ---
+
+struct transaction_builder_t
+{
+  std::vector<edit_diff_t> diffs;
+
+  void add_created(shared::entity_uid_t uid, entity_snapshot_t snapshot)
+  {
+    diffs.push_back(diff_entity_created_t{uid, std::move(snapshot)});
+  }
+
+  void add_removed(shared::entity_uid_t uid, entity_snapshot_t snapshot)
+  {
+    diffs.push_back(diff_entity_removed_t{uid, std::move(snapshot)});
+  }
+
+  void add_modified(shared::entity_uid_t uid,
+                    std::vector<property_change_t> changes)
+  {
+    if (!changes.empty())
+      diffs.push_back(
+          diff_entity_modified_t{uid, std::move(changes)});
+  }
+
+  void add_modified_from_diff(
+      shared::entity_uid_t uid,
+      const std::map<std::string, std::string> &before,
+      const std::map<std::string, std::string> &after)
+  {
+    add_modified(uid, diff_properties(before, after));
+  }
+
+  transaction_t take()
+  {
+    transaction_t txn;
+    txn.diffs = std::move(diffs);
+    return txn;
+  }
 };
 
 // --- Transaction_System ---
-// Passive undo/redo stack.
 
 class Transaction_System
 {
@@ -97,180 +164,75 @@ private:
 
   void apply_transaction(shared::map_t &map, const transaction_t &t)
   {
-    for (const auto &delta : t.deltas)
-      apply_delta(map, delta);
+    for (const auto &diff : t.diffs)
+      apply_diff(map, diff);
   }
 
   void revert_transaction(shared::map_t &map, const transaction_t &t)
   {
-    for (auto it = t.deltas.rbegin(); it != t.deltas.rend(); ++it)
-      revert_delta(map, *it);
+    for (auto it = t.diffs.rbegin(); it != t.diffs.rend(); ++it)
+      revert_diff(map, *it);
   }
 
-  void apply_delta(shared::map_t &map, const entity_delta_t &d)
+  void apply_diff(shared::map_t &map, const edit_diff_t &diff)
   {
-    switch (d.type)
-    {
-    case entity_delta_t::type_t::Add:
-    {
-      auto ent = shared::create_entity_by_classname(d.snapshot.classname);
-      if (ent)
-      {
-        ent->init_from_map(d.snapshot.properties);
-        map.add_entity_with_uid(d.entity_uid, ent);
-      }
-      break;
-    }
-    case entity_delta_t::type_t::Remove:
-    {
-      map.remove_entity(d.entity_uid);
-      break;
-    }
-    case entity_delta_t::type_t::Modify:
-    {
-      auto *entry = map.find_by_uid(d.entity_uid);
-      if (entry && entry->entity)
-      {
-        std::map<std::string, std::string> props;
-        for (const auto &c : d.changes)
-          props[c.field] = c.after;
-        entry->entity->init_from_map(props);
-      }
-      break;
-    }
-    }
+    std::visit(
+        overloaded{
+            [&](const diff_entity_created_t &d)
+            {
+              auto ent =
+                  shared::create_entity_by_classname(d.snapshot.classname);
+              if (ent)
+              {
+                ent->init_from_map(d.snapshot.properties);
+                map.add_entity_with_uid(d.uid, ent);
+              }
+            },
+            [&](const diff_entity_removed_t &d)
+            { map.remove_entity(d.uid); },
+            [&](const diff_entity_modified_t &d)
+            {
+              auto *entry = map.find_by_uid(d.uid);
+              if (entry && entry->entity)
+              {
+                std::map<std::string, std::string> props;
+                for (const auto &c : d.changes)
+                  props[c.field] = c.after;
+                entry->entity->init_from_map(props);
+              }
+            }},
+        diff);
   }
 
-  void revert_delta(shared::map_t &map, const entity_delta_t &d)
+  void revert_diff(shared::map_t &map, const edit_diff_t &diff)
   {
-    switch (d.type)
-    {
-    case entity_delta_t::type_t::Add:
-    {
-      map.remove_entity(d.entity_uid);
-      break;
-    }
-    case entity_delta_t::type_t::Remove:
-    {
-      auto ent = shared::create_entity_by_classname(d.snapshot.classname);
-      if (ent)
-      {
-        ent->init_from_map(d.snapshot.properties);
-        map.add_entity_with_uid(d.entity_uid, ent);
-      }
-      break;
-    }
-    case entity_delta_t::type_t::Modify:
-    {
-      auto *entry = map.find_by_uid(d.entity_uid);
-      if (entry && entry->entity)
-      {
-        std::map<std::string, std::string> props;
-        for (const auto &c : d.changes)
-          props[c.field] = c.before;
-        entry->entity->init_from_map(props);
-      }
-      break;
-    }
-    }
+    std::visit(
+        overloaded{
+            [&](const diff_entity_created_t &d)
+            { map.remove_entity(d.uid); },
+            [&](const diff_entity_removed_t &d)
+            {
+              auto ent =
+                  shared::create_entity_by_classname(d.snapshot.classname);
+              if (ent)
+              {
+                ent->init_from_map(d.snapshot.properties);
+                map.add_entity_with_uid(d.uid, ent);
+              }
+            },
+            [&](const diff_entity_modified_t &d)
+            {
+              auto *entry = map.find_by_uid(d.uid);
+              if (entry && entry->entity)
+              {
+                std::map<std::string, std::string> props;
+                for (const auto &c : d.changes)
+                  props[c.field] = c.before;
+                entry->entity->init_from_map(props);
+              }
+            }},
+        diff);
   }
-};
-
-// --- Edit_Recorder ---
-// Wraps map mutations and records them for undo/redo.
-
-class Edit_Recorder
-{
-public:
-  explicit Edit_Recorder(shared::map_t &map) : map_(map) {}
-
-  // Add entity to map and record it
-  shared::entity_uid_t add(std::shared_ptr<network::Entity> ent)
-  {
-    shared::entity_uid_t uid = map_.add_entity(ent);
-
-    entity_delta_t d;
-    d.type = entity_delta_t::type_t::Add;
-    d.entity_uid = uid;
-    d.snapshot.classname = shared::get_classname_for_entity(ent.get());
-    d.snapshot.properties = ent->get_all_properties();
-    txn_.deltas.push_back(std::move(d));
-
-    return uid;
-  }
-
-  // Record removal and remove entity from map
-  void remove(shared::entity_uid_t uid)
-  {
-    auto *entry = map_.find_by_uid(uid);
-    if (!entry || !entry->entity)
-      return;
-
-    entity_delta_t d;
-    d.type = entity_delta_t::type_t::Remove;
-    d.entity_uid = uid;
-    d.snapshot.classname =
-        shared::get_classname_for_entity(entry->entity.get());
-    d.snapshot.properties = entry->entity->get_all_properties();
-    txn_.deltas.push_back(std::move(d));
-
-    map_.remove_entity(uid);
-  }
-
-  // Snapshot entity before modification
-  void track(shared::entity_uid_t uid)
-  {
-    auto *entry = map_.find_by_uid(uid);
-    if (!entry || !entry->entity)
-      return;
-    tracked_[uid] = entry->entity->get_all_properties();
-  }
-
-  // Diff entity after modification, record changes
-  void finish(shared::entity_uid_t uid)
-  {
-    auto it = tracked_.find(uid);
-    if (it == tracked_.end())
-      return;
-
-    auto *entry = map_.find_by_uid(uid);
-    if (!entry || !entry->entity)
-      return;
-
-    auto new_props = entry->entity->get_all_properties();
-    const auto &old_props = it->second;
-
-    entity_delta_t d;
-    d.type = entity_delta_t::type_t::Modify;
-    d.entity_uid = uid;
-
-    for (const auto &[key, old_val] : old_props)
-    {
-      auto nit = new_props.find(key);
-      if (nit != new_props.end() && nit->second != old_val)
-      {
-        d.changes.push_back({key, old_val, nit->second});
-      }
-    }
-
-    if (!d.changes.empty())
-      txn_.deltas.push_back(std::move(d));
-
-    tracked_.erase(it);
-  }
-
-  // Extract the transaction (empty if nothing changed)
-  std::optional<transaction_t> take()
-  {
-    if (txn_.empty())
-      return std::nullopt;
-    return std::move(txn_);
-  }
-
-private:
-  shared::map_t &map_;
-  transaction_t txn_;
-  std::map<shared::entity_uid_t, std::map<std::string, std::string>> tracked_;
 };
 
 } // namespace client

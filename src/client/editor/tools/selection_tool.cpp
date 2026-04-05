@@ -209,9 +209,13 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
 
           if (ctx.transaction_system)
           {
-            drag_edit.emplace(*ctx.map);
+            drag_start_snapshots.clear();
             for (auto uid : selected_uids)
-              drag_edit->track(uid);
+            {
+              auto *e = ctx.map->find_by_uid(uid);
+              if (e && e->entity)
+                drag_start_snapshots[uid] = e->entity->get_all_properties();
+            }
           }
           return;
         }
@@ -300,14 +304,19 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
     if (is_dragging_object)
     {
       is_dragging_object = false;
-      if (drag_edit && ctx.transaction_system)
+      if (!drag_start_snapshots.empty() && ctx.transaction_system)
       {
-        for (auto &[uid, start_pos] : drag_start_positions)
-          drag_edit->finish(uid);
-        if (auto txn = drag_edit->take())
-          ctx.transaction_system->push(*txn);
+        transaction_builder_t builder;
+        for (auto &[uid, before_props] : drag_start_snapshots)
+        {
+          auto *e = ctx.map->find_by_uid(uid);
+          if (e && e->entity)
+            builder.add_modified_from_diff(uid, before_props,
+                                           e->entity->get_all_properties());
+        }
+        ctx.transaction_system->push(builder.take());
       }
-      drag_edit.reset();
+      drag_start_snapshots.clear();
       drag_start_positions.clear();
       if (ctx.geometry_updated)
         *ctx.geometry_updated = true;
@@ -423,11 +432,17 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
   {
     if (!selected_uids.empty() && ctx.map && ctx.transaction_system)
     {
-      Edit_Recorder edit(*ctx.map);
+      transaction_builder_t builder;
       for (auto uid : selected_uids)
-        edit.remove(uid);
-      if (auto txn = edit.take())
-        ctx.transaction_system->push(*txn);
+      {
+        auto *entry = ctx.map->find_by_uid(uid);
+        if (entry && entry->entity)
+        {
+          builder.add_removed(uid, snapshot_entity(entry->entity.get()));
+          ctx.map->remove_entity(uid);
+        }
+      }
+      ctx.transaction_system->push(builder.take());
 
       if (ctx.geometry_updated)
         *ctx.geometry_updated = true;

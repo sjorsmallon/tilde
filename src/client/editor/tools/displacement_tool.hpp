@@ -60,7 +60,7 @@ private:
   bool resize_moved = false;
   int resize_face = -1;
   viewport_state_t resize_last_view;
-  std::optional<Edit_Recorder> resize_edit;
+  std::map<std::string, std::string> resize_start_props;
 
   // Select mode state
   std::vector<bool> sel_verts;          // gs*gs selection bitmask
@@ -69,7 +69,7 @@ private:
   linalg::vec2 box_end_screen;          // pixels, drag current/end
   float height_snap = 128.0f;
   viewport_state_t cached_view;         // updated each on_update
-  std::optional<Edit_Recorder> select_edit;
+  std::map<std::string, std::string> select_start_props;
 
   // Helpers
   network::Displacement_Entity *get_selected(editor_context_t &ctx);

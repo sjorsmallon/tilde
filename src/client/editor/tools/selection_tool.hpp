@@ -51,7 +51,8 @@ private:
   std::vector<std::pair<shared::entity_uid_t, linalg::vec3>> drag_start_positions;
   linalg::vec3 drag_plane_hit_start;    // initial plane hit point
   linalg::vec3 drag_plane_normal;       // normal of the drag plane
-  std::optional<Edit_Recorder> drag_edit;
+  std::map<shared::entity_uid_t, std::map<std::string, std::string>>
+      drag_start_snapshots;
 };
 
 } // namespace client

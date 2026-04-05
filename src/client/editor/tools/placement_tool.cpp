@@ -91,10 +91,10 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
     new_ent->position = compute_placement_center(new_ent.get(), ghost_pos);
 
     {
-      Edit_Recorder edit(*ctx.map);
-      edit.add(new_ent);
-      if (auto txn = edit.take())
-        ctx.transaction_system->push(*txn);
+      auto uid = ctx.map->add_entity(new_ent);
+      transaction_builder_t builder;
+      builder.add_created(uid, snapshot_entity(new_ent.get()));
+      ctx.transaction_system->push(builder.take());
     }
 
     *ctx.geometry_updated = true;

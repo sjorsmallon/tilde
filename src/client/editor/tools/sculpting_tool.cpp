@@ -113,12 +113,17 @@ void Sculpting_Tool::on_disable(editor_context_t &ctx)
 {
   if (dragging && dragging_uid != 0 && ctx.map && ctx.transaction_system)
   {
-    if (active_edit)
+    if (!sculpt_start_props.empty())
     {
-      active_edit->finish(dragging_uid);
-      if (auto txn = active_edit->take())
-        ctx.transaction_system->push(*txn);
-      active_edit.reset();
+      auto *entry = ctx.map->find_by_uid(dragging_uid);
+      if (entry && entry->entity)
+      {
+        transaction_builder_t builder;
+        builder.add_modified_from_diff(dragging_uid, sculpt_start_props,
+                                       entry->entity->get_all_properties());
+        ctx.transaction_system->push(builder.take());
+      }
+      sculpt_start_props.clear();
     }
   }
   dragging = false;
@@ -190,8 +195,7 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
         original_aabb.center = aabb_ent->position;
         original_aabb.half_extents = aabb_ent->half_extents;
 
-        active_edit.emplace(*ctx.map);
-        active_edit->track(dragging_uid);
+        sculpt_start_props = entry->entity->get_all_properties();
       }
     }
   }
@@ -327,12 +331,17 @@ void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 {
   if (dragging && dragging_uid != 0 && ctx.map && ctx.transaction_system)
   {
-    if (active_edit)
+    if (!sculpt_start_props.empty())
     {
-      active_edit->finish(dragging_uid);
-      if (auto txn = active_edit->take())
-        ctx.transaction_system->push(*txn);
-      active_edit.reset();
+      auto *entry = ctx.map->find_by_uid(dragging_uid);
+      if (entry && entry->entity)
+      {
+        transaction_builder_t builder;
+        builder.add_modified_from_diff(dragging_uid, sculpt_start_props,
+                                       entry->entity->get_all_properties());
+        ctx.transaction_system->push(builder.take());
+      }
+      sculpt_start_props.clear();
     }
   }
 

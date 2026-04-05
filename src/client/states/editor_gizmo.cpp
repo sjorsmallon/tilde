@@ -343,9 +343,9 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   target_uid = uid;
   transaction_system = sys;
 
-  // Start Edit_Recorder — snapshot entity before modification
-  active_edit.emplace(*target_map);
-  active_edit->track(target_uid);
+  // Snapshot entity before modification
+  interacting_ = true;
+  start_props = entry->entity->get_all_properties();
 
   // Store original for drag calculations
   auto &ent = entry->entity;
@@ -387,17 +387,22 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
 
 void Editor_Gizmo::end_interaction()
 {
-  if (active_edit)
+  if (interacting_ && target_map && target_uid != 0)
   {
-    active_edit->finish(target_uid);
-    if (transaction_system)
+    auto *entry = target_map->find_by_uid(target_uid);
+    if (entry && entry->entity && transaction_system)
     {
-      if (auto txn = active_edit->take())
-        transaction_system->push(*txn);
+      transaction_builder_t builder;
+      builder.add_modified_from_diff(target_uid, start_props,
+                                     entry->entity->get_all_properties());
+      auto txn = builder.take();
+      if (!txn.empty())
+        transaction_system->push(std::move(txn));
     }
-    active_edit.reset();
+    start_props.clear();
   }
 
+  interacting_ = false;
   target_map = nullptr;
   target_uid = 0;
   transaction_system = nullptr;
@@ -405,7 +410,7 @@ void Editor_Gizmo::end_interaction()
 
 bool Editor_Gizmo::is_interacting() const
 {
-  return active_edit.has_value();
+  return interacting_;
 }
 
 bool Editor_Gizmo::is_hovered() const

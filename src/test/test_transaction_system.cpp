@@ -17,17 +17,16 @@ void test_add_remove()
   // Initial state
   assert(map.entities.empty());
 
-  // 1. Add via Edit_Recorder
-  entity_uid_t added_uid;
+  // 1. Add entity and record diff
+  auto ent = std::make_shared<AABB_Entity>();
+  ent->position = {0, 0, 0};
+  ent->half_extents = {1, 1, 1};
+  entity_uid_t added_uid = map.add_entity(ent);
+
   {
-    Edit_Recorder edit(map);
-    auto ent = std::make_shared<AABB_Entity>();
-    ent->position = {0, 0, 0};
-    ent->half_extents = {1, 1, 1};
-    added_uid = edit.add(ent);
-    auto txn = edit.take();
-    assert(txn.has_value());
-    ts.push(*txn);
+    transaction_builder_t builder;
+    builder.add_created(added_uid, snapshot_entity(ent.get()));
+    ts.push(builder.take());
   }
 
   assert(map.entities.size() == 1);
@@ -47,13 +46,13 @@ void test_add_remove()
   assert(map.entities.size() == 1);
   assert(map.find_by_uid(added_uid) != nullptr);
 
-  // 4. Remove via Edit_Recorder
+  // 4. Remove entity and record diff
   {
-    Edit_Recorder edit(map);
-    edit.remove(added_uid);
-    auto txn = edit.take();
-    assert(txn.has_value());
-    ts.push(*txn);
+    auto *entry = map.find_by_uid(added_uid);
+    transaction_builder_t builder;
+    builder.add_removed(added_uid, snapshot_entity(entry->entity.get()));
+    map.remove_entity(added_uid);
+    ts.push(builder.take());
   }
 
   assert(map.entities.empty());
@@ -82,19 +81,18 @@ void test_modify()
   ent->position = {0, 0, 0};
   entity_uid_t uid = map.add_entity(ent);
 
-  // 1. Modify via Edit_Recorder
+  // 1. Modify via snapshot/diff
   {
-    Edit_Recorder edit(map);
-    edit.track(uid);
-
     auto *entry = map.find_by_uid(uid);
+    auto before = entry->entity->get_all_properties();
+
     auto *aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
     aabb->position = {10.0f, 0, 0};
 
-    edit.finish(uid);
-    auto txn = edit.take();
-    assert(txn.has_value());
-    ts.push(*txn);
+    transaction_builder_t builder;
+    builder.add_modified_from_diff(uid, before,
+                                   entry->entity->get_all_properties());
+    ts.push(builder.take());
   }
 
   auto *entry = map.find_by_uid(uid);
@@ -141,14 +139,18 @@ void test_batch_delete()
 
   // Batch delete all 3 in one transaction
   {
-    Edit_Recorder edit(map);
-    edit.remove(uid1);
-    edit.remove(uid2);
-    edit.remove(uid3);
-    auto txn = edit.take();
-    assert(txn.has_value());
-    assert(txn->deltas.size() == 3);
-    ts.push(*txn);
+    transaction_builder_t builder;
+    auto *r1 = map.find_by_uid(uid1);
+    auto *r2 = map.find_by_uid(uid2);
+    auto *r3 = map.find_by_uid(uid3);
+    builder.add_removed(uid1, snapshot_entity(r1->entity.get()));
+    builder.add_removed(uid2, snapshot_entity(r2->entity.get()));
+    builder.add_removed(uid3, snapshot_entity(r3->entity.get()));
+    map.remove_entity(uid1);
+    map.remove_entity(uid2);
+    map.remove_entity(uid3);
+    assert(builder.diffs.size() == 3);
+    ts.push(builder.take());
   }
 
   assert(map.entities.empty());

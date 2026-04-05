@@ -119,14 +119,20 @@ void Displacement_Tool::on_disable(editor_context_t &ctx)
   box_selecting = false;
   commit_select_edit();
 
-  if (resize_dragging && resize_edit && ctx.transaction_system)
+  if (resize_dragging && !resize_start_props.empty() && ctx.transaction_system &&
+      ctx.map)
   {
-    resize_edit->finish(selected_uid);
-    if (auto txn = resize_edit->take())
-      ctx.transaction_system->push(*txn);
+    auto *entry = ctx.map->find_by_uid(selected_uid);
+    if (entry && entry->entity)
+    {
+      transaction_builder_t builder;
+      builder.add_modified_from_diff(selected_uid, resize_start_props,
+                                     entry->entity->get_all_properties());
+      ctx.transaction_system->push(builder.take());
+    }
   }
   resize_dragging = false;
-  resize_edit.reset();
+  resize_start_props.clear();
 }
 
 // ===================================================================
@@ -262,11 +268,7 @@ linalg::vec2 Displacement_Tool::project_to_screen(const linalg::vec3 &world_pos)
 
 void Displacement_Tool::commit_select_edit()
 {
-  if (select_edit)
-  {
-    // select_edit tracks changes; just drop it (changes are already applied).
-    select_edit.reset();
-  }
+  select_start_props.clear();
 }
 
 void Displacement_Tool::clear_selection(int gs)
@@ -398,8 +400,9 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
 
             if (ctx.transaction_system && ctx.map)
             {
-              resize_edit.emplace(*ctx.map);
-              resize_edit->track(selected_uid);
+              auto *e = ctx.map->find_by_uid(selected_uid);
+              if (e && e->entity)
+                resize_start_props = e->entity->get_all_properties();
             }
           }
         }
@@ -547,15 +550,20 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
     resize_dragging = false;
 
     // Commit the resize transaction
-    if (resize_edit && ctx.transaction_system)
+    if (!resize_start_props.empty() && ctx.transaction_system && ctx.map)
     {
-      resize_edit->finish(selected_uid);
-      if (auto txn = resize_edit->take())
-        ctx.transaction_system->push(*txn);
+      auto *entry = ctx.map->find_by_uid(selected_uid);
+      if (entry && entry->entity)
+      {
+        transaction_builder_t builder;
+        builder.add_modified_from_diff(selected_uid, resize_start_props,
+                                       entry->entity->get_all_properties());
+        ctx.transaction_system->push(builder.take());
+      }
     }
     if (ctx.geometry_updated)
       *ctx.geometry_updated = true;
-    resize_edit.reset();
+    resize_start_props.clear();
   }
 
   if (mode == Mode::Select && box_selecting)
@@ -647,11 +655,12 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
     if (sel_count == 0)
       return;
 
-    // Begin transaction on first height change (reset each time we enter Select mode)
-    if (!select_edit && ctx.transaction_system && ctx.map)
+    // Snapshot on first height change (reset each time we enter Select mode)
+    if (select_start_props.empty() && ctx.transaction_system && ctx.map)
     {
-      select_edit.emplace(*ctx.map);
-      select_edit->track(selected_uid);
+      auto *entry = ctx.map->find_by_uid(selected_uid);
+      if (entry && entry->entity)
+        select_start_props = entry->entity->get_all_properties();
     }
 
     float sign = (e.scancode == SDL_SCANCODE_Q) ? 1.0f : -1.0f;

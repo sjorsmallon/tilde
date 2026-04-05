@@ -120,7 +120,8 @@ private:
 
   // Transaction State
   Transaction_System *transaction_system = nullptr;
-  std::optional<Edit_Recorder> active_edit;
+  bool interacting_ = false;
+  std::map<std::string, std::string> start_props;
 
   shared::map_t *target_map = nullptr;
   shared::entity_uid_t target_uid = 0;

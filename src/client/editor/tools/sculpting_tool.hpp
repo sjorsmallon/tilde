@@ -33,7 +33,7 @@ private:
   viewport_state_t last_view;
   linalg::vec3 drag_origin_point;
   shared::aabb_t original_aabb;
-  std::optional<Edit_Recorder> active_edit;
+  std::map<std::string, std::string> sculpt_start_props;
 };
 
 } // namespace client
