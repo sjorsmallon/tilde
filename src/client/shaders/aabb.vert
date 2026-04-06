@@ -6,12 +6,14 @@ layout(location = 2) in vec3 inBarycentric;
 
 layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec3 fragBarycentric;
+layout(location = 2) out flat uint fragBaryMode;
 
 layout(push_constant) uniform PushConstants {
     mat4 mvp;
     vec4 instanceColor;
     uint randomSeed;
     uint useRandomColor;
+    uint use2dBary;
 } pc;
 
 // Hash-based unique color from an integer seed
@@ -30,10 +32,14 @@ vec3 seed_to_color(uint seed) {
 
 void main() {
     gl_Position = pc.mvp * vec4(inPosition, 1.0);
-    if (pc.useRandomColor != 0u) {
+    if (pc.useRandomColor == 1u) {
         fragColor = seed_to_color(pc.randomSeed);
+    } else if (pc.useRandomColor == 2u) {
+        // Flat color: ignore vertex normal, use instance color directly
+        fragColor = pc.instanceColor.rgb;
     } else {
         fragColor = inColor * pc.instanceColor.rgb;
     }
     fragBarycentric = inBarycentric;
+    fragBaryMode = pc.use2dBary;
 }

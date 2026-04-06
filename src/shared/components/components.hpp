@@ -31,9 +31,6 @@ SCHEMA_NAME_FOR_TYPE(material_t)
 // This is now a composable schema component!
 struct render_component_t
 {
-  SCHEMA_FIELD_DEFAULT(int32, mesh_id,
-                      Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable,
-                      -1);
   SCHEMA_FIELD(pascal_string, mesh_path,
               Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable);
   SCHEMA_FIELD_DEFAULT(bool, visible,
@@ -47,7 +44,7 @@ struct render_component_t
                       (vec3f{0, 0, 0}));
   SCHEMA_FIELD_DEFAULT(vec3f, scale,
                       Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable,
-                      (vec3f{1, 1, 1}));
+                      (vec3f{1.f, 1.f, 1.f}));
   SCHEMA_FIELD_DEFAULT(vec3f, rotation,
                       Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable,
                       (vec3f{0, 0, 0}));

@@ -30,9 +30,10 @@ struct Entity_Editor_Traits
 
   // Draw a selection wireframe for this entity. Return true if you drew a
   // shape-specific wireframe, false to fall back to AABB bounds wireframe.
+  // grid_step: current editor grid step for grid-aligned face overlays.
   static bool draw_selection_wireframe(const EntityClass *e,
                                        overlay_renderer_t &renderer,
-                                       uint32_t color);
+                                       uint32_t color, float grid_step);
 };
 
 // Runtime dispatch wrappers (resolve entity type via the X-macro table).
@@ -57,7 +58,9 @@ void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,
 // Draw a pulsating selection highlight wireframe for an entity.
 // Uses the entity's mesh wireframe if available, else per-entity shape,
 // else AABB bounds. Color pulsates between pink and white based on time.
+// grid_step: current editor grid step (used for AABB face grid overlay).
 void draw_selection_highlight(const network::Entity *e,
-                              overlay_renderer_t &renderer, float time);
+                              overlay_renderer_t &renderer, float time,
+                              float grid_step);
 
 } // namespace client

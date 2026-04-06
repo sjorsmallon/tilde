@@ -6,6 +6,7 @@
 #include "entities/displacement_entity.hpp"
 #include "entity_system.hpp"
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 
@@ -197,29 +198,32 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
   // 1. Check for mesh bounds via render component
   if (const auto *rc = entity->get_component<network::render_component_t>())
   {
-    if (rc->mesh_id >= 0)
+    const char *mesh_path = rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
+
+    if (mesh_path)
     {
-      const char *mesh_path = assets::get_mesh_path(rc->mesh_id);
-      if (mesh_path)
+      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
+      if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
+        mesh_handle = assets::get_primitive_mesh(mesh_path + 12);
+      else
+        mesh_handle = assets::load_mesh(mesh_path);
+
+      if (mesh_handle.valid())
       {
-        auto mesh_handle = assets::load_mesh(mesh_path);
-        if (mesh_handle.valid())
+        vec3f mesh_min, mesh_max;
+        if (assets::compute_mesh_bounds(assets::get(mesh_handle),
+                                        mesh_min, mesh_max))
         {
-          vec3f mesh_min, mesh_max;
-          if (assets::compute_mesh_bounds(assets::get(mesh_handle),
-                                          mesh_min, mesh_max))
-          {
-            vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
-            vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
-            vec3f s = rc->scale;
-            vec3f world_center = entity->position +
-                vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
-                      mesh_center.z * s.z};
-            vec3f world_half =
-                vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
-                      mesh_half.z * s.z};
-            return {world_center - world_half, world_center + world_half};
-          }
+          vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
+          vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
+          vec3f s = rc->scale;
+          vec3f world_center = entity->position +
+              vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
+                    mesh_center.z * s.z};
+          vec3f world_half =
+              vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
+                    mesh_half.z * s.z};
+          return {world_center - world_half, world_center + world_half};
         }
       }
     }
@@ -253,7 +257,22 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
     return get_bounds(t);
   }
 
-  // 4. Player spawn: use player hull dimensions for picking
+  // 4. Player entity: use pyramid mesh bounds
+  if (dynamic_cast<const network::Player_Entity *>(entity))
+  {
+    auto mesh_handle = assets::load_mesh("resources/obj/pyramid.obj");
+    if (mesh_handle.valid())
+    {
+      vec3f mesh_min, mesh_max;
+      if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min, mesh_max))
+        return {entity->position + mesh_min, entity->position + mesh_max};
+    }
+    // Fallback to player hull if mesh not yet loaded
+    const vec3f hull{network::player_half_width, network::player_half_height, network::player_half_width};
+    return {entity->position - hull, entity->position + hull};
+  }
+
+  // 4b. Player spawn: use player hull dimensions for picking
   if (dynamic_cast<const network::Player_Spawn_Entity *>(entity))
   {
     const vec3f hull{network::player_half_width, network::player_half_height, network::player_half_width};

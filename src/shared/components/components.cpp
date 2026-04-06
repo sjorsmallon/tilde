@@ -22,7 +22,6 @@ DEFINE_SCHEMA_CLASS(material_t)
 DEFINE_SCHEMA_CLASS(render_component_t)
 {
   BEGIN_SCHEMA_FIELDS()
-    REGISTER_SCHEMA_FIELD(mesh_id);
     REGISTER_SCHEMA_FIELD(mesh_path);
     REGISTER_SCHEMA_FIELD(visible);
     REGISTER_SCHEMA_FIELD(is_wireframe);
@@ -51,7 +50,6 @@ void set_primitive_render(render_component_t& rc, const char* primitive_name, ve
   // Set up the render component
   std::string path = std::string("__primitive_") + primitive_name;
   rc.mesh_path.set(path.c_str());
-  rc.mesh_id = -1; // Not using ID-based lookup
   rc.scale = size;
   rc.visible = true;
 }

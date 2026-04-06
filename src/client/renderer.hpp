@@ -51,33 +51,26 @@ void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
 void SetLineDepthBias(float constant_factor, float slope_factor);
 
 // Draw a mesh from an asset handle
-void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
-              const linalg::vec3 &scale,
+// Returns true if the GPU supports polygon wireframe (fillModeNonSolid).
+bool WireframeSupported();
+
+enum class ShaderType : uint8_t { Lit, Unlit, Textured };
+
+struct mesh_draw_params_t
+{
+  linalg::vec3 position  = {0, 0, 0};
+  linalg::vec3 scale     = {1, 1, 1};
+  linalg::vec3 rotation  = {0, 0, 0};
+  // Tint color (ABGR). Used as flat color for unshaded meshes, and as a
+  // fallback tint for meshes without per-material colors.
+  uint32_t     color     = 0xFFFFFFFF;
+  ShaderType   shader    = ShaderType::Lit;
+  bool         wireframe = false;
+};
+
+void DrawMesh(VkCommandBuffer cmd,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-              uint32_t color,
-              const linalg::vec3 &rotation = {0, 0, 0});
-
-// Draw a mesh as wireframe from an asset handle
-void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
-                       const linalg::vec3 &scale,
-                       assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-                       uint32_t color,
-                       const linalg::vec3 &rotation = {0, 0, 0});
-
-// Material-aware mesh drawing with proper shaders.
-enum class ShaderType : uint8_t { Lit, Unlit };
-void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
-                      const linalg::vec3 &scale,
-                      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-                      const linalg::vec3 &color, ShaderType shader_type,
-                      const linalg::vec3 &rotation = {0, 0, 0});
-
-// Draw a displacement mesh using the textured unlit pipeline.
-// UVs are worldspace-based (pre-baked into the mesh at 128-unit scale).
-void DrawMeshTextured(VkCommandBuffer cmd, const linalg::vec3 &position,
-                      const linalg::vec3 &scale,
-                      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-                      const linalg::vec3 &rotation = {0, 0, 0});
+              const mesh_draw_params_t &params = {});
 
 // Invalidate a cached GPU mesh buffer so it gets re-uploaded on next draw.
 // Used for dynamic meshes (e.g. displacement surfaces) that change at runtime.

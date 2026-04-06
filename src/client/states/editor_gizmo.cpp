@@ -382,7 +382,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   transform_state.rotation = ent->orientation;
   original_transform.orientation = {ent->orientation.x, ent->orientation.y,
                                     ent->orientation.z, 0};
-  transform_state.size = 2.0f;
+  transform_state.size = 64.0f;
 }
 
 void Editor_Gizmo::end_interaction()
@@ -795,7 +795,7 @@ void Editor_Gizmo::set_geometry(const shared::aabb_bounds_t &bounds)
   // Sync transform
   transform_state.position = reshape_state.aabb.center;
   // Size? default
-  transform_state.size = 2.0f; // Reset size on new geometry? Or keep?
+  transform_state.size = 64.0f; // Reset size on new geometry? Or keep?
   // It's fine.
 }
 

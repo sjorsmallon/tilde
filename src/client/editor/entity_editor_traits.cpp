@@ -44,22 +44,83 @@ bool Entity_Editor_Traits<network::AABB_Entity>::draw_ghost(
 template <>
 bool Entity_Editor_Traits<network::AABB_Entity>::draw_in_editor(
     const network::AABB_Entity *e, overlay_renderer_t &renderer,
-    uint32_t uid, bool solid)
+    uint32_t uid, bool)
 {
   auto cmd = renderer.get_command_buffer();
   renderer::DrawAABB(cmd, e->position - e->half_extents,
                      e->position + e->half_extents, 0xFFFFFFFF,
-                     /*as_wireframe=*/!solid,
-                     /*random_color=*/solid,
+                     /*as_wireframe=*/false,
+                     /*random_color=*/true,
                      /*random_seed=*/uid);
   return true;
 }
 
 template <>
 bool Entity_Editor_Traits<network::AABB_Entity>::draw_selection_wireframe(
-    const network::AABB_Entity *e, overlay_renderer_t &renderer, uint32_t color)
+    const network::AABB_Entity *e, overlay_renderer_t &renderer, uint32_t color,
+    float grid_step)
 {
-  renderer.draw_wire_box(e->position, e->half_extents, color);
+  const linalg::vec3 &p = e->position;
+  const linalg::vec3 &h = e->half_extents;
+  const float x0 = p.x - h.x, x1 = p.x + h.x;
+  const float y0 = p.y - h.y, y1 = p.y + h.y;
+  const float z0 = p.z - h.z, z1 = p.z + h.z;
+
+  // Draw grid lines on each of the 6 faces at world-aligned grid_step intervals.
+  // Lines parallel to Z (varying x) and parallel to X (varying z) on Y faces.
+  // Lines parallel to Z (varying y) and parallel to Y (varying z) on X faces.
+  // Lines parallel to X (varying y) and parallel to Y (varying x) on Z faces.
+
+  auto draw_grid_xz = [&](float y, float xa, float xb, float za, float zb)
+  {
+    float xs = std::ceil(xa / grid_step) * grid_step;
+    for (float x = xs; x <= xb + 1e-3f; x += grid_step)
+      renderer.draw_line({x, y, za}, {x, y, zb}, color);
+    float zs = std::ceil(za / grid_step) * grid_step;
+    for (float z = zs; z <= zb + 1e-3f; z += grid_step)
+      renderer.draw_line({xa, y, z}, {xb, y, z}, color);
+  };
+
+  auto draw_grid_xz_outer = [&](float y, float xa, float xb, float za, float zb)
+  {
+    // Always draw the 4 outer edges regardless of grid alignment
+    renderer.draw_line({xa, y, za}, {xb, y, za}, color);
+    renderer.draw_line({xb, y, za}, {xb, y, zb}, color);
+    renderer.draw_line({xb, y, zb}, {xa, y, zb}, color);
+    renderer.draw_line({xa, y, zb}, {xa, y, za}, color);
+    draw_grid_xz(y, xa, xb, za, zb);
+  };
+
+  auto draw_grid_yz = [&](float x, float ya, float yb, float za, float zb)
+  {
+    float ys = std::ceil(ya / grid_step) * grid_step;
+    for (float y = ys; y <= yb + 1e-3f; y += grid_step)
+      renderer.draw_line({x, y, za}, {x, y, zb}, color);
+    float zs = std::ceil(za / grid_step) * grid_step;
+    for (float z = zs; z <= zb + 1e-3f; z += grid_step)
+      renderer.draw_line({x, ya, z}, {x, yb, z}, color);
+  };
+
+  auto draw_grid_xy = [&](float z, float xa, float xb, float ya, float yb)
+  {
+    float xs = std::ceil(xa / grid_step) * grid_step;
+    for (float x = xs; x <= xb + 1e-3f; x += grid_step)
+      renderer.draw_line({x, ya, z}, {x, yb, z}, color);
+    float ys = std::ceil(ya / grid_step) * grid_step;
+    for (float y = ys; y <= yb + 1e-3f; y += grid_step)
+      renderer.draw_line({xa, y, z}, {xb, y, z}, color);
+  };
+
+  // Top and bottom (Y faces)
+  draw_grid_xz_outer(y1, x0, x1, z0, z1);
+  draw_grid_xz_outer(y0, x0, x1, z0, z1);
+  // Left and right (X faces) — vertical edges already drawn above
+  draw_grid_yz(x0, y0, y1, z0, z1);
+  draw_grid_yz(x1, y0, y1, z0, z1);
+  // Front and back (Z faces)
+  draw_grid_xy(z0, x0, x1, y0, y1);
+  draw_grid_xy(z1, x0, x1, y0, y1);
+
   return true;
 }
 
@@ -113,7 +174,7 @@ bool Entity_Editor_Traits<network::Wedge_Entity>::draw_in_editor(
 template <>
 bool Entity_Editor_Traits<network::Wedge_Entity>::draw_selection_wireframe(
     const network::Wedge_Entity *e, overlay_renderer_t &renderer,
-    uint32_t color)
+    uint32_t color, float)
 {
   shared::wedge_t w;
   w.center = e->position;
@@ -171,7 +232,7 @@ bool Entity_Editor_Traits<network::Player_Spawn_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Player_Spawn_Entity>::draw_selection_wireframe(
-    const network::Player_Spawn_Entity *, overlay_renderer_t &, uint32_t)
+    const network::Player_Spawn_Entity *, overlay_renderer_t &, uint32_t, float)
 {
   return false; // use AABB fallback
 }
@@ -216,7 +277,7 @@ bool Entity_Editor_Traits<network::Particle_Emitter_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Particle_Emitter_Entity>::draw_selection_wireframe(
-    const network::Particle_Emitter_Entity *, overlay_renderer_t &, uint32_t)
+    const network::Particle_Emitter_Entity *, overlay_renderer_t &, uint32_t, float)
 {
   return false; // use AABB fallback
 }
@@ -254,7 +315,7 @@ bool Entity_Editor_Traits<network::Static_Mesh_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Static_Mesh_Entity>::draw_selection_wireframe(
-    const network::Static_Mesh_Entity *, overlay_renderer_t &, uint32_t)
+    const network::Static_Mesh_Entity *, overlay_renderer_t &, uint32_t, float)
 {
   return false; // try render component mesh first in draw_selection_highlight
 }
@@ -286,7 +347,7 @@ bool Entity_Editor_Traits<network::Weapon_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Weapon_Entity>::draw_selection_wireframe(
-    const network::Weapon_Entity *, overlay_renderer_t &, uint32_t)
+    const network::Weapon_Entity *, overlay_renderer_t &, uint32_t, float)
 {
   return false; // try render component mesh first
 }
@@ -314,15 +375,16 @@ bool Entity_Editor_Traits<network::Player_Entity>::draw_in_editor(
     const network::Player_Entity *e, overlay_renderer_t &renderer,
     uint32_t, bool)
 {
-  const char *mesh_path = assets::get_mesh_path(2); // pyramid
+  const char *mesh_path = "resources/obj/pyramid.obj";
   if (mesh_path)
   {
     auto mesh_handle = assets::load_mesh(mesh_path);
     if (mesh_handle.valid())
     {
-      renderer::DrawMeshWireframe(renderer.get_command_buffer(),
-                                  e->position, {32, 72, 32}, mesh_handle,
-                                  0xFFFFFFFF, e->orientation);
+      renderer::DrawMesh(renderer.get_command_buffer(), mesh_handle,
+                         {.position = e->position,
+                          .rotation = e->orientation,
+                          .wireframe = true});
       return true;
     }
   }
@@ -331,9 +393,21 @@ bool Entity_Editor_Traits<network::Player_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Player_Entity>::draw_selection_wireframe(
-    const network::Player_Entity *, overlay_renderer_t &, uint32_t)
+    const network::Player_Entity *e, overlay_renderer_t &renderer, uint32_t color,
+    float)
 {
-  return false;
+  const char *mesh_path = "resources/obj/pyramid.obj";
+  auto mesh_handle = assets::load_mesh(mesh_path);
+  if (!mesh_handle.valid())
+    return false;
+  if (!renderer::WireframeSupported())
+    return false;
+  renderer::DrawMesh(renderer.get_command_buffer(), mesh_handle,
+                     {.position  = e->position,
+                      .rotation  = e->orientation,
+                      .color     = color,
+                      .wireframe = true});
+  return true;
 }
 
 // -- Displacement -------------------------------------------------------
@@ -369,8 +443,10 @@ bool Entity_Editor_Traits<network::Displacement_Entity>::draw_in_editor(
   }
   if (mesh_handle.valid())
   {
-    renderer::DrawMeshTextured(renderer.get_command_buffer(), e->position,
-                               {1, 1, 1}, mesh_handle, e->orientation);
+    renderer::DrawMesh(renderer.get_command_buffer(), mesh_handle,
+                       {.position = e->position,
+                        .rotation = e->orientation,
+                        .shader = renderer::ShaderType::Textured});
     return true;
   }
   return false;
@@ -378,7 +454,7 @@ bool Entity_Editor_Traits<network::Displacement_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Displacement_Entity>::draw_selection_wireframe(
-    const network::Displacement_Entity *, overlay_renderer_t &, uint32_t)
+    const network::Displacement_Entity *, overlay_renderer_t &, uint32_t, float)
 {
   return false; // use AABB fallback
 }
@@ -414,7 +490,7 @@ bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_in_editor(
 template <>
 bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_selection_wireframe(
     const network::Trigger_Volume_Entity *e, overlay_renderer_t &renderer,
-    uint32_t color)
+    uint32_t color, float)
 {
   renderer.draw_wire_box(e->position, e->half_extents, color);
   return true;
@@ -447,7 +523,7 @@ bool Entity_Editor_Traits<network::Rocket_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Rocket_Entity>::draw_selection_wireframe(
-    const network::Rocket_Entity *, overlay_renderer_t &, uint32_t)
+    const network::Rocket_Entity *, overlay_renderer_t &, uint32_t, float)
 {
   return false;
 }
@@ -492,11 +568,7 @@ static bool try_draw_render_component(const network::Entity *e,
   if (!rc || !rc->visible)
     return false;
 
-  const char *mesh_path = nullptr;
-  if (rc->mesh_path.length > 0)
-    mesh_path = rc->mesh_path.c_str();
-  else if (rc->mesh_id >= 0)
-    mesh_path = assets::get_mesh_path(rc->mesh_id);
+  const char *mesh_path = rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
 
   if (!mesh_path)
     return false;
@@ -510,12 +582,10 @@ static bool try_draw_render_component(const network::Entity *e,
   if (!mesh_handle.valid())
     return false;
 
-  if (rc->is_wireframe)
-    renderer::DrawMeshWireframe(cmd, e->position, rc->scale, mesh_handle,
-                                0xFFFFFFFF, e->orientation + rc->rotation);
-  else
-    renderer::DrawMesh(cmd, e->position, rc->scale, mesh_handle,
-                       0xFFFFFFFF, e->orientation + rc->rotation);
+  renderer::DrawMesh(cmd, mesh_handle,
+                     {.position = e->position,
+                      .scale    = rc->scale,
+                      .rotation = e->orientation + rc->rotation});
   return true;
 }
 
@@ -574,11 +644,7 @@ static bool try_draw_mesh_selection_wireframe(const network::Entity *e,
   if (!rc || !rc->visible)
     return false;
 
-  const char *mesh_path = nullptr;
-  if (rc->mesh_path.length > 0)
-    mesh_path = rc->mesh_path.c_str();
-  else if (rc->mesh_id >= 0)
-    mesh_path = assets::get_mesh_path(rc->mesh_id);
+  const char *mesh_path = rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
 
   if (!mesh_path)
     return false;
@@ -592,34 +658,42 @@ static bool try_draw_mesh_selection_wireframe(const network::Entity *e,
   if (!mesh_handle.valid())
     return false;
 
-  renderer::DrawMeshWireframe(cmd, e->position, rc->scale, mesh_handle,
-                              color, e->orientation + rc->rotation);
+  if (!renderer::WireframeSupported())
+    return false;
+
+  renderer::DrawMesh(cmd, mesh_handle,
+                     {.position  = e->position,
+                      .scale     = rc->scale,
+                      .rotation  = e->orientation + rc->rotation,
+                      .color     = color,
+                      .wireframe = true});
   return true;
 }
 
 // Runtime dispatch for draw_selection_wireframe trait.
 static bool dispatch_selection_wireframe(const network::Entity *e,
                                          overlay_renderer_t &renderer,
-                                         uint32_t color)
+                                         uint32_t color, float grid_step)
 {
 #define X(ENUM, CLASS, NAME, PATH)                                             \
   if (dynamic_cast<const CLASS *>(e))                                          \
     return Entity_Editor_Traits<CLASS>::draw_selection_wireframe(               \
-        static_cast<const CLASS *>(e), renderer, color);
+        static_cast<const CLASS *>(e), renderer, color, grid_step);
   SHARED_ENTITIES_LIST(X)
 #undef X
   return false;
 }
 
 void draw_selection_highlight(const network::Entity *e,
-                              overlay_renderer_t &renderer, float time)
+                              overlay_renderer_t &renderer, float time,
+                              float grid_step)
 {
   uint32_t color = compute_pulsating_color(time);
-  std::print("[selection] draw_selection_highlight called, time={:.2f} color=0x{:08X}\n", time, color);
 
-  // Push stronger depth bias so selection wireframe renders in front of
-  // both solid geometry and normal editor wireframes.
-  renderer::SetLineDepthBias(-8.0f, -4.0f);
+  // Push a very strong depth bias so the selection wireframe renders in front
+  // of the solid barycentric mesh. The constant factor dominates for
+  // flat-facing surfaces; the slope factor helps for oblique angles.
+  renderer::SetLineDepthBias(-200.0f, -10.0f);
 
   // 1. Try mesh wireframe from render component
   if (try_draw_mesh_selection_wireframe(e, renderer.get_command_buffer(), color))
@@ -629,7 +703,7 @@ void draw_selection_highlight(const network::Entity *e,
   }
 
   // 2. Try per-entity shape wireframe (wedge, AABB, trigger volume, etc.)
-  if (dispatch_selection_wireframe(e, renderer, color))
+  if (dispatch_selection_wireframe(e, renderer, color, grid_step))
   {
     renderer::SetLineDepthBias(-2.0f, -1.0f);
     return;
@@ -640,7 +714,6 @@ void draw_selection_highlight(const network::Entity *e,
   renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
                          (bounds.max - bounds.min) * 0.5f, color);
 
-  // Restore default depth bias
   renderer::SetLineDepthBias(-2.0f, -1.0f);
 }
 
@@ -653,12 +726,7 @@ void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,
 {
   if (const auto *rc = e->get_component<network::render_component_t>())
   {
-    const char *mesh_path = nullptr;
-
-    if (rc->mesh_path.length > 0)
-      mesh_path = rc->mesh_path.c_str();
-    else if (rc->mesh_id >= 0)
-      mesh_path = assets::get_mesh_path(rc->mesh_id);
+    const char *mesh_path = rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
 
     if (mesh_path)
     {
@@ -670,8 +738,10 @@ void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,
 
       if (mesh_handle.valid())
       {
-        renderer::DrawMeshWireframe(renderer.get_command_buffer(), center,
-                                    {1, 1, 1}, mesh_handle, 0xFF00FFFF);
+        renderer::DrawMesh(renderer.get_command_buffer(), mesh_handle,
+                           {.position  = center,
+                            .color     = 0xFF00FFFF,
+                            .wireframe = true});
         return;
       }
     }

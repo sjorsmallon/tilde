@@ -155,13 +155,13 @@ void Placement_Tool::select_entity_type(int index)
   else if (auto *weapon =
                dynamic_cast<::network::Weapon_Entity *>(current_entity.get()))
   {
-    weapon->render.mesh_id = 1;
+    weapon->render.mesh_path.set("resources/obj/m4a1_s.obj");
     weapon->render.is_wireframe = true;
   }
   else if (auto *mesh = dynamic_cast<::network::Static_Mesh_Entity *>(
                current_entity.get()))
   {
-    mesh->render.mesh_id = 1;
+    mesh->render.mesh_path.set("resources/obj/m4a1_s.obj");
   }
   else if (auto *disp = dynamic_cast<::network::Displacement_Entity *>(
                current_entity.get()))

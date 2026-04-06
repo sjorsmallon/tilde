@@ -59,10 +59,6 @@ asset_handle_t<texture_asset_t> load_texture(const char *path);
 const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle);
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle);
 
-// --- Asset ID mapping ---
-
-const char *get_mesh_path(int32_t asset_id);
-
 // --- Primitive mesh generation ---
 
 // Get a procedurally generated primitive mesh (cached).

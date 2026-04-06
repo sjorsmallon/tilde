@@ -1,6 +1,7 @@
 #include "renderer.hpp"
 
 #include <iostream>
+#include <numeric>
 #include <optional>
 #include <print>
 #include <set>
@@ -237,6 +238,7 @@ struct PushConstants
   float color[4];
   uint32_t random_seed;
   uint32_t use_random_color;
+  uint32_t use_2d_bary; // 0=AABB/line, 1=solid mesh (2D UV bary), 2=wireframe flat
 };
 
 // Push constants for the lit pipeline (128 bytes — the guaranteed minimum).
@@ -901,10 +903,13 @@ static void create_aabb_pipeline()
 static float g_line_depth_bias_constant = -2.0f;
 static float g_line_depth_bias_slope = -1.0f;
 static VkPipeline g_line_pipeline = VK_NULL_HANDLE;
-static VkBuffer g_line_vertex_buffer = VK_NULL_HANDLE;
-static VkDeviceMemory g_line_vertex_memory = VK_NULL_HANDLE;
-static VkBuffer g_line_index_buffer = VK_NULL_HANDLE;
-static VkDeviceMemory g_line_index_memory = VK_NULL_HANDLE;
+
+// Batched line draw list — accumulated via DrawLine(), flushed once per frame.
+static constexpr uint32_t LINE_BATCH_MAX_VERTICES = 131072; // 64k lines
+static std::vector<Vertex> g_line_batch;
+static VkBuffer g_line_batch_buffer = VK_NULL_HANDLE;
+static VkDeviceMemory g_line_batch_memory = VK_NULL_HANDLE;
+static void *g_line_batch_mapped = nullptr;
 
 static void create_line_pipeline()
 {
@@ -1031,79 +1036,15 @@ static void create_line_pipeline()
   vkDestroyShaderModule(g_device, frag, nullptr);
 }
 
-static void create_line_mesh()
+static void create_line_batch_buffer()
 {
-  // Unit Line along +Z (0,0,0) to (0,0,1) matches lookAt Z forward
-  // Or X? Let's use Forward Z to simplify lookAt usage.
-  // Vertices:
-  std::vector<Vertex> vertices = {{{0, 0, 0}, {1, 1, 1}, {1, 1, 1}},
-                                  {{0, 0, 1}, {1, 1, 1}, {1, 1, 1}}};
-  std::vector<uint16_t> indices = {0, 1};
-
-  // Vertex Buffer
-  VkDeviceSize vSize = sizeof(Vertex) * vertices.size();
-  VkBuffer vStaging;
-  VkDeviceMemory vStagingMem;
-  create_buffer(vSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+  VkDeviceSize size = sizeof(Vertex) * LINE_BATCH_MAX_VERTICES;
+  create_buffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                vStaging, vStagingMem);
-  void *data;
-  vkMapMemory(g_device, vStagingMem, 0, vSize, 0, &data);
-  memcpy(data, vertices.data(), (size_t)vSize);
-  vkUnmapMemory(g_device, vStagingMem);
-  create_buffer(vSize,
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, g_line_vertex_buffer,
-                g_line_vertex_memory);
-
-  // Index Buffer
-  VkDeviceSize iSize = sizeof(uint16_t) * indices.size();
-  VkBuffer iStaging;
-  VkDeviceMemory iStagingMem;
-  create_buffer(iSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                iStaging, iStagingMem);
-  vkMapMemory(g_device, iStagingMem, 0, iSize, 0, &data);
-  memcpy(data, indices.data(), (size_t)iSize);
-  vkUnmapMemory(g_device, iStagingMem);
-  create_buffer(iSize,
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, g_line_index_buffer,
-                g_line_index_memory);
-
-  // Copy
-  VkCommandBufferAllocateInfo allocInfo{
-      VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandPool = g_command_pool;
-  allocInfo.commandBufferCount = 1;
-  VkCommandBuffer cmd;
-  vkAllocateCommandBuffers(g_device, &allocInfo, &cmd);
-  VkCommandBufferBeginInfo beginInfo{
-      VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  vkBeginCommandBuffer(cmd, &beginInfo);
-  VkBufferCopy vCopy{};
-  vCopy.size = vSize;
-  vkCmdCopyBuffer(cmd, vStaging, g_line_vertex_buffer, 1, &vCopy);
-  VkBufferCopy iCopy{};
-  iCopy.size = iSize;
-  vkCmdCopyBuffer(cmd, iStaging, g_line_index_buffer, 1, &iCopy);
-  vkEndCommandBuffer(cmd);
-  VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &cmd;
-  vkQueueSubmit(g_graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
-  vkQueueWaitIdle(g_graphics_queue);
-  vkFreeCommandBuffers(g_device, g_command_pool, 1, &cmd);
-  vkDestroyBuffer(g_device, vStaging, nullptr);
-  vkFreeMemory(g_device, vStagingMem, nullptr);
-  vkDestroyBuffer(g_device, iStaging, nullptr);
-  vkFreeMemory(g_device, iStagingMem, nullptr);
+                g_line_batch_buffer, g_line_batch_memory);
+  vkMapMemory(g_device, g_line_batch_memory, 0, size, 0, &g_line_batch_mapped);
+  g_line_batch.reserve(LINE_BATCH_MAX_VERTICES);
 }
 
 // --- Debug Face Pipeline ---
@@ -1302,96 +1243,54 @@ void SetLineDepthBias(float constant_factor, float slope_factor)
   g_line_depth_bias_slope = slope_factor;
 }
 
-void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
+void DrawLine(VkCommandBuffer /*cmd*/, const linalg::vec3 &start,
               const linalg::vec3 &end, uint32_t color)
 {
-  if (g_line_pipeline == VK_NULL_HANDLE)
+  if (g_line_batch_mapped == nullptr)
     return;
+  if (g_line_batch.size() + 2 > LINE_BATCH_MAX_VERTICES)
+  {
+    log_error("DrawLine: line batch capacity exceeded (%u vertices)", LINE_BATCH_MAX_VERTICES);
+    return;
+  }
+
+  float r = (float)(color & 0xFF) / 255.0f;
+  float g = (float)((color >> 8) & 0xFF) / 255.0f;
+  float b = (float)((color >> 16) & 0xFF) / 255.0f;
+
+  // bary = {1,1,1} so the frag shader outputs full colour with no edge mixing
+  g_line_batch.push_back({{start.x, start.y, start.z}, {r, g, b}, {1.f, 1.f, 1.f}});
+  g_line_batch.push_back({{end.x, end.y, end.z}, {r, g, b}, {1.f, 1.f, 1.f}});
+}
+
+static void flush_lines(VkCommandBuffer cmd)
+{
+  if (g_line_batch.empty() || g_line_pipeline == VK_NULL_HANDLE)
+    return;
+
+  uint32_t vertex_count = (uint32_t)g_line_batch.size();
+  memcpy(g_line_batch_mapped, g_line_batch.data(), vertex_count * sizeof(Vertex));
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_line_pipeline);
   vkCmdSetDepthBias(cmd, g_line_depth_bias_constant, 0.0f, g_line_depth_bias_slope);
-  VkBuffer vertexBuffers[] = {g_line_vertex_buffer};
+
+  VkBuffer buffers[] = {g_line_batch_buffer};
   VkDeviceSize offsets[] = {0};
-  vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
-  vkCmdBindIndexBuffer(cmd, g_line_index_buffer, 0, VK_INDEX_TYPE_UINT16);
+  vkCmdBindVertexBuffers(cmd, 0, 1, buffers, offsets);
 
-  // Calc Model Matrix
-  // Unit line is (0,0,0) -> (0,0,1) (+Z)
-  // Target is start -> end
-  float dx = end.x - start.x;
-  float dy = end.y - start.y;
-  float dz = end.z - start.z;
-  float len = sqrt(dx * dx + dy * dy + dz * dz);
-  if (len < 0.0001f)
-    return;
-
-  // We need rotation to align +Z to dir
-  float dx_n = dx / len;
-  float dy_n = dy / len;
-  float dz_n = dz / len;
-
-  // LookAt constructs logic where Z is Forward.
-  // If we use LookAt(0,0,0, dir, ...) we get View Matrix (Inverse Rotation).
-  // We want Rotation Matrix. Model = Rotation * Scale * Translate? No,
-  // Translate * Rotation * Scale
-
-  // Custom Rotation Matrix aligning (0,0,1) to (dx_n, dy_n, dz_n)
-  // Up can be generic, e.g. Y, unless dir is Y
-  float ux = 0, uy = 1, uz = 0;
-  if (fabs(dx_n) < 0.001f && fabs(dz_n) < 0.001f)
-  {
-    ux = 1;
-    uy = 0;
-    uz = 0; // If dir is vertical, use X as Up
-  }
-
-  // Forward = Dir
-  float fx = dx_n, fy = dy_n, fz = dz_n;
-  // Right = Up x Forward
-  float rx = uy * fz - uz * fy;
-  float ry = uz * fx - ux * fz;
-  float rz = ux * fy - uy * fx;
-  float rlen = 1.0f / sqrt(rx * rx + ry * ry + rz * rz);
-  rx *= rlen;
-  ry *= rlen;
-  rz *= rlen;
-  // Real Up = Forward x Right
-  ux = fy * rz - fz * ry;
-  uy = fz * rx - fx * rz;
-  uz = fx * ry - fy * rx;
-
-  mat4_t rot_scale = mat4_t::identity();
-  // Columns: Right, Up, Forward (since we map Z to Forward)
-  rot_scale.m[0] = rx /** 1 (X scale unused)*/;
-  rot_scale.m[4] = ux /** 1*/;
-  rot_scale.m[8] = fx * len; // Z is scaled by len
-  rot_scale.m[1] = ry;
-  rot_scale.m[5] = uy;
-  rot_scale.m[9] = fy * len;
-  rot_scale.m[2] = rz;
-  rot_scale.m[6] = uz;
-  rot_scale.m[10] = fz * len;
-
-  // Translate
-  rot_scale.m[12] = start.x;
-  rot_scale.m[13] = start.y;
-  rot_scale.m[14] = start.z;
-
-  mat4_t mvp = mat4_t::mult(g_current_view_proj, rot_scale);
-
-  PushConstants pc{}; // Need to match strict layout
-  // Copy matrix
+  PushConstants pc{};
   for (int i = 0; i < 16; ++i)
-    pc.mvp[i] = mvp.m[i];
-  // Color
-  pc.color[0] = (float)(color & 0xFF) / 255.0f;
-  pc.color[1] = (float)((color >> 8) & 0xFF) / 255.0f;
-  pc.color[2] = (float)((color >> 16) & 0xFF) / 255.0f;
-  pc.color[3] = (float)((color >> 24) & 0xFF) / 255.0f;
+    pc.mvp[i] = g_current_view_proj.m[i];
+  pc.color[0] = 1.f; pc.color[1] = 1.f; pc.color[2] = 1.f; pc.color[3] = 1.f;
+  pc.random_seed = 0;
+  pc.use_random_color = 0;
+  pc.use_2d_bary = 0;
 
   vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                      sizeof(PushConstants), &pc);
-  vkCmdDrawIndexed(cmd, 2, 1, 0, 0, 0);
+  vkCmdDraw(cmd, vertex_count, 1, 0, 0);
+
+  g_line_batch.clear();
 }
 
 static void create_aabb_mesh()
@@ -2069,10 +1968,41 @@ static mesh_gpu_buffer_t *upload_mesh_to_gpu(
 
   mesh_gpu_buffer_t gpu_mesh = {};
   gpu_mesh.asset_handle = handle;
-  gpu_mesh.index_count = static_cast<uint32_t>(mesh->indices.size());
+
+  // For non-material meshes rendered with the barycentric pipeline, we expand
+  // vertices so each triangle vertex gets a distinct 2D barycentric UV:
+  //   tri-vertex 0 → (1,0),  tri-vertex 1 → (0,1),  tri-vertex 2 → (0,0)
+  // The fragment shader reconstructs b2 = 1-x-y to get the full vec3 bary.
+  // Material meshes use the lit pipeline which needs real UVs — leave them as-is.
+  std::vector<vertex_xnu> expanded_verts;
+  std::vector<uint32_t>   seq_indices;
+  const vertex_xnu *verts_ptr   = mesh->vertices.data();
+  size_t            vert_count  = mesh->vertices.size();
+  const uint32_t   *indices_ptr = mesh->indices.data();
+  size_t            index_count = mesh->indices.size();
+
+  if (!mesh->has_materials() && !mesh->indices.empty())
+  {
+    constexpr vec2f bary_uvs[3] = {{1.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f}};
+    expanded_verts.reserve(mesh->indices.size());
+    for (size_t i = 0; i < mesh->indices.size(); i++)
+    {
+      vertex_xnu v = mesh->vertices[mesh->indices[i]];
+      v.uv = bary_uvs[i % 3];
+      expanded_verts.push_back(v);
+    }
+    seq_indices.resize(expanded_verts.size());
+    std::iota(seq_indices.begin(), seq_indices.end(), 0u);
+    verts_ptr   = expanded_verts.data();
+    vert_count  = expanded_verts.size();
+    indices_ptr = seq_indices.data();
+    index_count = seq_indices.size();
+  }
+
+  gpu_mesh.index_count = static_cast<uint32_t>(index_count);
 
   // Upload vertices
-  VkDeviceSize vert_size = mesh->vertices.size() * sizeof(vertex_xnu);
+  VkDeviceSize vert_size = vert_count * sizeof(vertex_xnu);
   VkBuffer vert_staging;
   VkDeviceMemory vert_staging_mem;
 
@@ -2083,7 +2013,7 @@ static mesh_gpu_buffer_t *upload_mesh_to_gpu(
 
   void *data;
   vkMapMemory(g_device, vert_staging_mem, 0, vert_size, 0, &data);
-  memcpy(data, mesh->vertices.data(), vert_size);
+  memcpy(data, verts_ptr, vert_size);
   vkUnmapMemory(g_device, vert_staging_mem);
 
   create_buffer(vert_size,
@@ -2093,7 +2023,7 @@ static mesh_gpu_buffer_t *upload_mesh_to_gpu(
                 gpu_mesh.vertex_memory);
 
   // Upload indices
-  VkDeviceSize idx_size = mesh->indices.size() * sizeof(uint32_t);
+  VkDeviceSize idx_size = index_count * sizeof(uint32_t);
   VkBuffer idx_staging;
   VkDeviceMemory idx_staging_mem;
 
@@ -2103,7 +2033,7 @@ static mesh_gpu_buffer_t *upload_mesh_to_gpu(
                 idx_staging, idx_staging_mem);
 
   vkMapMemory(g_device, idx_staging_mem, 0, idx_size, 0, &data);
-  memcpy(data, mesh->indices.data(), idx_size);
+  memcpy(data, indices_ptr, idx_size);
   vkUnmapMemory(g_device, idx_staging_mem);
 
   create_buffer(
@@ -2151,7 +2081,7 @@ static mesh_gpu_buffer_t *upload_mesh_to_gpu(
   g_mesh_buffers[handle.index] = gpu_mesh;
 
   log_terminal("[renderer] Uploaded mesh {}: {} verts, {} indices",
-               handle.index, mesh->vertices.size(), gpu_mesh.index_count);
+               handle.index, vert_count, gpu_mesh.index_count);
 
   return &g_mesh_buffers[handle.index];
 }
@@ -2682,8 +2612,10 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 {
   if (as_wireframe)
   {
-    // Draw grid overlay (perimeter + inner subdivision lines)
-    DrawAABBGridOverlay(cmd, min, max, 0xFFFFFFFF, 0x44FFFFFF);
+    // Draw grid overlay (perimeter + inner subdivision lines).
+    // Use the caller's colour for the perimeter; dim only the alpha for inner lines.
+    uint32_t inner_color = (color & 0x00FFFFFFu) | 0x44000000u;
+    DrawAABBGridOverlay(cmd, min, max, color, inner_color);
     return;
   }
 
@@ -2740,269 +2672,149 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 
   // 36 indices
   vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
-
-  // Draw grid overlay on top of the solid faces
-  DrawAABBGridOverlay(cmd, min, max, 0xFFFFFFFF, 0x44FFFFFF);
 }
 
 void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
                   const linalg::vec3 &max, uint32_t color)
 {
-  DrawAABB(cmd, min, max, color, /*as_wireframe=*/true);
+  // Just the 12 outer edges — no inner grid.
+  linalg::vec3 c[8] = {
+      {min.x, min.y, min.z}, {max.x, min.y, min.z},
+      {max.x, min.y, max.z}, {min.x, min.y, max.z},
+      {min.x, max.y, min.z}, {max.x, max.y, min.z},
+      {max.x, max.y, max.z}, {min.x, max.y, max.z},
+  };
+  DrawLine(cmd, c[0], c[1], color); DrawLine(cmd, c[1], c[2], color);
+  DrawLine(cmd, c[2], c[3], color); DrawLine(cmd, c[3], c[0], color);
+  DrawLine(cmd, c[4], c[5], color); DrawLine(cmd, c[5], c[6], color);
+  DrawLine(cmd, c[6], c[7], color); DrawLine(cmd, c[7], c[4], color);
+  DrawLine(cmd, c[0], c[4], color); DrawLine(cmd, c[1], c[5], color);
+  DrawLine(cmd, c[2], c[6], color); DrawLine(cmd, c[3], c[7], color);
 }
 
-void DrawMesh(VkCommandBuffer cmd, const linalg::vec3 &position,
-              const linalg::vec3 &scale,
+bool WireframeSupported()
+{
+  return g_mesh_wireframe_pipeline != VK_NULL_HANDLE;
+}
+
+void DrawMesh(VkCommandBuffer cmd,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-              uint32_t color, const linalg::vec3 &rotation)
+              const mesh_draw_params_t &params)
 {
   if (!mesh_handle.valid())
     return;
-  if (g_mesh_pipeline == VK_NULL_HANDLE)
+
+  if (params.wireframe && g_mesh_wireframe_pipeline == VK_NULL_HANDLE)
+    return;
+  if (!params.wireframe && params.shader == ShaderType::Textured &&
+      g_disp_textured_pipeline == VK_NULL_HANDLE)
+    return;
+  if (!params.wireframe && params.shader != ShaderType::Textured &&
+      g_mesh_pipeline == VK_NULL_HANDLE)
     return;
 
-  // Get or upload mesh buffers
   mesh_gpu_buffer_t *gpu_mesh = upload_mesh_to_gpu(mesh_handle);
   if (!gpu_mesh || gpu_mesh->index_count == 0)
     return;
 
   // Bind pipeline
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline);
-
-  // Bind vertex buffer
-  VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
-  VkDeviceSize offsets[] = {0};
-  vkCmdBindVertexBuffers(cmd, 0, 1, vbs, offsets);
-
-  // Bind index buffer
-  vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-  // Build model matrix: T * Rz * Ry * Rx * S
-  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
-  float rx = rotation.x * DEG2RAD;
-  float ry = rotation.y * DEG2RAD;
-  float rz = rotation.z * DEG2RAD;
-
-  float cx = cosf(rx), sx = sinf(rx);
-  float cy = cosf(ry), sy = sinf(ry);
-  float cz = cosf(rz), sz = sinf(rz);
-
-  // Combined rotation matrix (Rz * Ry * Rx), then scale each column
-  mat4_t model = {};
-  model.m[0]  = (cz * cy) * scale.x;
-  model.m[1]  = (sz * cy) * scale.x;
-  model.m[2]  = (-sy)     * scale.x;
-  model.m[3]  = 0;
-  model.m[4]  = (cz * sy * sx - sz * cx) * scale.y;
-  model.m[5]  = (sz * sy * sx + cz * cx) * scale.y;
-  model.m[6]  = (cy * sx)                * scale.y;
-  model.m[7]  = 0;
-  model.m[8]  = (cz * sy * cx + sz * sx) * scale.z;
-  model.m[9]  = (sz * sy * cx - cz * sx) * scale.z;
-  model.m[10] = (cy * cx)                * scale.z;
-  model.m[11] = 0;
-  model.m[12] = position.x;
-  model.m[13] = position.y;
-  model.m[14] = position.z;
-  model.m[15] = 1;
-
-  // MVP = ViewProj * Model
-  mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
-
-  // Check if mesh has per-material submeshes
-  const assets::mesh_asset_t *mesh_data = assets::get(mesh_handle);
-  bool use_submeshes = mesh_data && mesh_data->has_materials();
-
-  if (use_submeshes)
+  if (params.wireframe)
   {
-    // Switch to lit pipeline — the AABB shader multiplies vertex color (normal) by
-    // the push constant, which produces garbage for OBJ meshes.
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_wireframe_pipeline);
+    vkCmdSetDepthBias(cmd, g_line_depth_bias_constant, 0.0f, g_line_depth_bias_slope);
+  }
+  else if (params.shader == ShaderType::Textured)
+  {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_layout,
+                            0, 1, &g_disp_texture_ds, 0, nullptr);
+  }
+  else if (params.shader == ShaderType::Lit)
+  {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_lit_pipeline);
-
-    for (const auto &sub : mesh_data->submeshes)
-    {
-      const auto &mat = mesh_data->materials[sub.material_index];
-      LitPushConstants lpc{};
-      memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
-      lpc.color[0] = mat.diffuse_color.x;
-      lpc.color[1] = mat.diffuse_color.y;
-      lpc.color[2] = mat.diffuse_color.z;
-      lpc.color[3] = 1.0f;
-      lpc.normal_mat_c0[0] = model.m[0]; lpc.normal_mat_c0[1] = model.m[1]; lpc.normal_mat_c0[2] = model.m[2]; lpc.normal_mat_c0[3] = 0;
-      lpc.normal_mat_c1[0] = model.m[4]; lpc.normal_mat_c1[1] = model.m[5]; lpc.normal_mat_c1[2] = model.m[6]; lpc.normal_mat_c1[3] = 0;
-      lpc.normal_mat_c2[0] = model.m[8]; lpc.normal_mat_c2[1] = model.m[9]; lpc.normal_mat_c2[2] = model.m[10]; lpc.normal_mat_c2[3] = 0;
-      vkCmdPushConstants(cmd, g_lit_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                         sizeof(LitPushConstants), &lpc);
-      vkCmdDrawIndexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
-    }
   }
   else
   {
-    // Original AABB pipeline path for non-material meshes
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_unlit_pipeline);
+  }
+
+  VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(cmd, 0, 1, vbs, offsets);
+  vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+  // Build model matrix: T * Rz * Ry * Rx * S
+  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
+  float rx = params.rotation.x * DEG2RAD;
+  float ry = params.rotation.y * DEG2RAD;
+  float rz = params.rotation.z * DEG2RAD;
+
+  float cx = cosf(rx), sx = sinf(rx);
+  float cy = cosf(ry), sy = sinf(ry);
+  float cz = cosf(rz), sz = sinf(rz);
+
+  mat4_t model = {};
+  model.m[0]  = (cz * cy) * params.scale.x;
+  model.m[1]  = (sz * cy) * params.scale.x;
+  model.m[2]  = (-sy)     * params.scale.x;
+  model.m[3]  = 0;
+  model.m[4]  = (cz * sy * sx - sz * cx) * params.scale.y;
+  model.m[5]  = (sz * sy * sx + cz * cx) * params.scale.y;
+  model.m[6]  = (cy * sx)                * params.scale.y;
+  model.m[7]  = 0;
+  model.m[8]  = (cz * sy * cx + sz * sx) * params.scale.z;
+  model.m[9]  = (sz * sy * cx - cz * sx) * params.scale.z;
+  model.m[10] = (cy * cx)                * params.scale.z;
+  model.m[11] = 0;
+  model.m[12] = params.position.x;
+  model.m[13] = params.position.y;
+  model.m[14] = params.position.z;
+  model.m[15] = 1;
+
+  mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
+
+  // Textured displacement path — no color, just MVP
+  if (params.shader == ShaderType::Textured && !params.wireframe)
+  {
+    DispTexturedPC pc{};
+    memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
+    vkCmdPushConstants(cmd, g_disp_textured_layout, VK_SHADER_STAGE_VERTEX_BIT,
+                       0, sizeof(DispTexturedPC), &pc);
+    vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
+    return;
+  }
+
+  // Wireframe path — flat color, no lighting
+  if (params.wireframe)
+  {
     PushConstants pc{};
     memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
-    float a = ((color >> 24) & 0xFF) / 255.0f;
-    float b = ((color >> 16) & 0xFF) / 255.0f;
-    float g = ((color >> 8) & 0xFF) / 255.0f;
-    float r = (color & 0xFF) / 255.0f;
-    pc.color[0] = r;
-    pc.color[1] = g;
-    pc.color[2] = b;
-    pc.color[3] = a;
-    pc.random_seed = 0;
-    pc.use_random_color = 0;
+    uint32_t color = params.color;
+    pc.color[0] = (color & 0xFF) / 255.0f;
+    pc.color[1] = ((color >> 8) & 0xFF) / 255.0f;
+    pc.color[2] = ((color >> 16) & 0xFF) / 255.0f;
+    pc.color[3] = ((color >> 24) & 0xFF) / 255.0f;
+    pc.use_random_color = 2;
+    pc.use_2d_bary = 2;
     vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                        sizeof(PushConstants), &pc);
     vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
+    return;
   }
-}
 
-void DrawMeshWireframe(VkCommandBuffer cmd, const linalg::vec3 &position,
-                       const linalg::vec3 &scale,
-                       assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-                       uint32_t color, const linalg::vec3 &rotation)
-{
-  if (!mesh_handle.valid())
-    return;
-  if (g_mesh_wireframe_pipeline == VK_NULL_HANDLE)
-    return;
-
-  mesh_gpu_buffer_t *gpu_mesh = upload_mesh_to_gpu(mesh_handle);
-  if (!gpu_mesh || gpu_mesh->index_count == 0)
-    return;
-
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    g_mesh_wireframe_pipeline);
-  vkCmdSetDepthBias(cmd, g_line_depth_bias_constant, 0.0f, g_line_depth_bias_slope);
-
-  VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
-  VkDeviceSize offsets[] = {0};
-  vkCmdBindVertexBuffers(cmd, 0, 1, vbs, offsets);
-  vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-  // Build model matrix: T * Rz * Ry * Rx * S
-  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
-  float rx = rotation.x * DEG2RAD;
-  float ry = rotation.y * DEG2RAD;
-  float rz = rotation.z * DEG2RAD;
-
-  float cx = cosf(rx), sx = sinf(rx);
-  float cy = cosf(ry), sy = sinf(ry);
-  float cz = cosf(rz), sz = sinf(rz);
-
-  mat4_t model = {};
-  model.m[0]  = (cz * cy) * scale.x;
-  model.m[1]  = (sz * cy) * scale.x;
-  model.m[2]  = (-sy)     * scale.x;
-  model.m[3]  = 0;
-  model.m[4]  = (cz * sy * sx - sz * cx) * scale.y;
-  model.m[5]  = (sz * sy * sx + cz * cx) * scale.y;
-  model.m[6]  = (cy * sx)                * scale.y;
-  model.m[7]  = 0;
-  model.m[8]  = (cz * sy * cx + sz * sx) * scale.z;
-  model.m[9]  = (sz * sy * cx - cz * sx) * scale.z;
-  model.m[10] = (cy * cx)                * scale.z;
-  model.m[11] = 0;
-  model.m[12] = position.x;
-  model.m[13] = position.y;
-  model.m[14] = position.z;
-  model.m[15] = 1;
-
-  mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
-
-  PushConstants pc{};
-  memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
-
-  float a = ((color >> 24) & 0xFF) / 255.0f;
-  float b = ((color >> 16) & 0xFF) / 255.0f;
-  float g = ((color >> 8) & 0xFF) / 255.0f;
-  float r = (color & 0xFF) / 255.0f;
-
-  pc.color[0] = r;
-  pc.color[1] = g;
-  pc.color[2] = b;
-  pc.color[3] = a;
-
-  vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                     sizeof(PushConstants), &pc);
-
-  vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
-}
-
-void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
-                      const linalg::vec3 &scale,
-                      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-                      const linalg::vec3 &color, ShaderType shader_type,
-                      const linalg::vec3 &rotation)
-{
-  log_terminal("DrawMeshMaterial: handle={} shader_type={}", mesh_handle.index, (int)shader_type);
-  if (!mesh_handle.valid())
-    return;
-
-  VkPipeline pipeline = (shader_type == ShaderType::Lit) ? g_lit_pipeline : g_unlit_pipeline;
-  if (pipeline == VK_NULL_HANDLE)
-    return;
-
-  mesh_gpu_buffer_t *gpu_mesh = upload_mesh_to_gpu(mesh_handle);
-  if (!gpu_mesh || gpu_mesh->index_count == 0)
-    return;
-
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-  VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
-  VkDeviceSize offsets[] = {0};
-  vkCmdBindVertexBuffers(cmd, 0, 1, vbs, offsets);
-  vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-  // Build model matrix: T * Rz * Ry * Rx * S
-  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
-  float rx = rotation.x * DEG2RAD;
-  float ry = rotation.y * DEG2RAD;
-  float rz = rotation.z * DEG2RAD;
-
-  float cx = cosf(rx), sx = sinf(rx);
-  float cy = cosf(ry), sy = sinf(ry);
-  float cz = cosf(rz), sz = sinf(rz);
-
-  mat4_t model = {};
-  model.m[0]  = (cz * cy) * scale.x;
-  model.m[1]  = (sz * cy) * scale.x;
-  model.m[2]  = (-sy)     * scale.x;
-  model.m[3]  = 0;
-  model.m[4]  = (cz * sy * sx - sz * cx) * scale.y;
-  model.m[5]  = (sz * sy * sx + cz * cx) * scale.y;
-  model.m[6]  = (cy * sx)                * scale.y;
-  model.m[7]  = 0;
-  model.m[8]  = (cz * sy * cx + sz * sx) * scale.z;
-  model.m[9]  = (sz * sy * cx - cz * sx) * scale.z;
-  model.m[10] = (cy * cx)                * scale.z;
-  model.m[11] = 0;
-  model.m[12] = position.x;
-  model.m[13] = position.y;
-  model.m[14] = position.z;
-  model.m[15] = 1;
-
-  mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
-
-  // Check if mesh has per-material submeshes
+  // Solid path — lit or unlit, with per-material submeshes when available
   const assets::mesh_asset_t *mesh_data = assets::get(mesh_handle);
-  bool use_submeshes = mesh_data && mesh_data->has_materials();
+  const bool use_submeshes = mesh_data && mesh_data->has_materials();
 
-  static bool diag_once = false;
-  if (!diag_once)
+  // Decode tint color from params (used as fallback when no submesh materials)
+  uint32_t tint = params.color;
+  vec3f tint_rgb = {(tint & 0xFF) / 255.0f,
+                    ((tint >> 8) & 0xFF) / 255.0f,
+                    ((tint >> 16) & 0xFF) / 255.0f};
+
+  auto push_and_draw = [&](const vec3f &draw_color, uint32_t index_count, uint32_t first_index)
   {
-    printf("[renderer] DrawMeshMaterial diag: handle=%u mesh_data=%p\n",
-           mesh_handle.index, (const void *)mesh_data);
-    if (mesh_data)
-      printf("[renderer]   verts=%zu indices=%zu materials=%zu submeshes=%zu has_materials=%d\n",
-             mesh_data->vertices.size(), mesh_data->indices.size(),
-             mesh_data->materials.size(), mesh_data->submeshes.size(),
-             mesh_data->has_materials());
-    diag_once = true;
-  }
-
-  auto push_and_draw = [&](const linalg::vec3 &draw_color, uint32_t index_count, uint32_t first_index) {
-    if (shader_type == ShaderType::Lit)
+    if (params.shader == ShaderType::Lit)
     {
       LitPushConstants lpc{};
       memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
@@ -3010,9 +2822,9 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
       lpc.color[1] = draw_color.y;
       lpc.color[2] = draw_color.z;
       lpc.color[3] = 1.0f;
-      lpc.normal_mat_c0[0] = model.m[0]; lpc.normal_mat_c0[1] = model.m[1]; lpc.normal_mat_c0[2] = model.m[2]; lpc.normal_mat_c0[3] = 0;
-      lpc.normal_mat_c1[0] = model.m[4]; lpc.normal_mat_c1[1] = model.m[5]; lpc.normal_mat_c1[2] = model.m[6]; lpc.normal_mat_c1[3] = 0;
-      lpc.normal_mat_c2[0] = model.m[8]; lpc.normal_mat_c2[1] = model.m[9]; lpc.normal_mat_c2[2] = model.m[10]; lpc.normal_mat_c2[3] = 0;
+      lpc.normal_mat_c0[0] = cz * cy;           lpc.normal_mat_c0[1] = sz * cy;           lpc.normal_mat_c0[2] = -sy;     lpc.normal_mat_c0[3] = 0;
+      lpc.normal_mat_c1[0] = cz*sy*sx - sz*cx;  lpc.normal_mat_c1[1] = sz*sy*sx + cz*cx;  lpc.normal_mat_c1[2] = cy * sx; lpc.normal_mat_c1[3] = 0;
+      lpc.normal_mat_c2[0] = cz*sy*cx + sz*sx;  lpc.normal_mat_c2[1] = sz*sy*cx - cz*sx;  lpc.normal_mat_c2[2] = cy * cx; lpc.normal_mat_c2[3] = 0;
       vkCmdPushConstants(cmd, g_lit_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                          sizeof(LitPushConstants), &lpc);
     }
@@ -3024,7 +2836,6 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
       pc.color[1] = draw_color.y;
       pc.color[2] = draw_color.z;
       pc.color[3] = 1.0f;
-      pc.random_seed = 0;
       pc.use_random_color = 0;
       vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                          sizeof(PushConstants), &pc);
@@ -3034,21 +2845,7 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
 
   if (use_submeshes)
   {
-    static bool logged_once = false;
-    if (!logged_once)
-    {
-      printf("[renderer] DrawMeshMaterial: using %zu submeshes, %zu materials\n",
-             mesh_data->submeshes.size(), mesh_data->materials.size());
-      for (size_t i = 0; i < mesh_data->submeshes.size(); i++)
-      {
-        const auto &sub = mesh_data->submeshes[i];
-        const auto &mat = mesh_data->materials[sub.material_index];
-        printf("[renderer]   submesh %zu: offset=%u count=%u mat='%s' Kd=(%.3f,%.3f,%.3f)\n",
-               i, sub.index_offset, sub.index_count,
-               mat.name.c_str(), mat.diffuse_color.x, mat.diffuse_color.y, mat.diffuse_color.z);
-      }
-      logged_once = true;
-    }
+    // When the mesh has its own materials, use those colors; tint is ignored.
     for (const auto &sub : mesh_data->submeshes)
     {
       vec3f mat_color = mesh_data->materials[sub.material_index].diffuse_color;
@@ -3057,64 +2854,8 @@ void DrawMeshMaterial(VkCommandBuffer cmd, const linalg::vec3 &position,
   }
   else
   {
-    push_and_draw(color, gpu_mesh->index_count, 0);
+    push_and_draw(tint_rgb, gpu_mesh->index_count, 0);
   }
-}
-
-void DrawMeshTextured(VkCommandBuffer cmd, const linalg::vec3 &position,
-                      const linalg::vec3 &scale,
-                      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-                      const linalg::vec3 &rotation)
-{
-  if (!mesh_handle.valid() || g_disp_textured_pipeline == VK_NULL_HANDLE)
-    return;
-
-  mesh_gpu_buffer_t *gpu_mesh = upload_mesh_to_gpu(mesh_handle);
-  if (!gpu_mesh || gpu_mesh->index_count == 0)
-    return;
-
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_pipeline);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_layout,
-                          0, 1, &g_disp_texture_ds, 0, nullptr);
-
-  VkBuffer vbs[] = {gpu_mesh->vertex_buffer};
-  VkDeviceSize offsets[] = {0};
-  vkCmdBindVertexBuffers(cmd, 0, 1, vbs, offsets);
-  vkCmdBindIndexBuffer(cmd, gpu_mesh->index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-  constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
-  float rx = rotation.x * DEG2RAD;
-  float ry = rotation.y * DEG2RAD;
-  float rz = rotation.z * DEG2RAD;
-  float cx = cosf(rx), sx = sinf(rx);
-  float cy = cosf(ry), sy = sinf(ry);
-  float cz = cosf(rz), sz = sinf(rz);
-
-  mat4_t model = {};
-  model.m[0]  = (cz * cy) * scale.x;
-  model.m[1]  = (sz * cy) * scale.x;
-  model.m[2]  = (-sy)     * scale.x;
-  model.m[3]  = 0;
-  model.m[4]  = (cz * sy * sx - sz * cx) * scale.y;
-  model.m[5]  = (sz * sy * sx + cz * cx) * scale.y;
-  model.m[6]  = (cy * sx)                * scale.y;
-  model.m[7]  = 0;
-  model.m[8]  = (cz * sy * cx + sz * sx) * scale.z;
-  model.m[9]  = (sz * sy * cx - cz * sx) * scale.z;
-  model.m[10] = (cy * cx)                * scale.z;
-  model.m[11] = 0;
-  model.m[12] = position.x;
-  model.m[13] = position.y;
-  model.m[14] = position.z;
-  model.m[15] = 1;
-
-  mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
-
-  DispTexturedPC pc{};
-  memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
-  vkCmdPushConstants(cmd, g_disp_textured_layout, VK_SHADER_STAGE_VERTEX_BIT,
-                     0, sizeof(DispTexturedPC), &pc);
-  vkCmdDrawIndexed(cmd, gpu_mesh->index_count, 1, 0, 0, 0);
 }
 
 void draw_announcement(const char *text)
@@ -3537,7 +3278,7 @@ bool Init(SDL_Window *window)
   create_unlit_pipeline();
   create_lit_pipeline();
   create_line_pipeline();
-  create_line_mesh();
+  create_line_batch_buffer();
   create_debug_face_pipeline();
   init_particle_system();
   init_displacement_texture();
@@ -3681,10 +3422,9 @@ void Shutdown()
   vkDestroyPipelineLayout(g_device, g_lit_pipeline_layout, nullptr);
 
   vkDestroyPipeline(g_device, g_line_pipeline, nullptr);
-  vkDestroyBuffer(g_device, g_line_vertex_buffer, nullptr);
-  vkFreeMemory(g_device, g_line_vertex_memory, nullptr);
-  vkDestroyBuffer(g_device, g_line_index_buffer, nullptr);
-  vkFreeMemory(g_device, g_line_index_memory, nullptr);
+  vkUnmapMemory(g_device, g_line_batch_memory);
+  vkDestroyBuffer(g_device, g_line_batch_buffer, nullptr);
+  vkFreeMemory(g_device, g_line_batch_memory, nullptr);
 
   if (g_debug_face_verts_mapped)
     vkUnmapMemory(g_device, g_debug_face_vertex_memory);
@@ -3795,11 +3535,15 @@ static void render_announcement(VkCommandBuffer cmd)
   // Use ImGui display size to handle High-DPI correctly
   ImVec2 center = ImGui::GetMainViewport()->GetCenter();
 
+  // offset by half of the center? in the y direction?
+  // y goes from the top to the bottom (0 -> 12300);
+  center.y -= 0.5f * center.y;
+
   // Set position to center
   ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
   // Transparent, no-decoration window
-  ImGui::SetNextWindowBgAlpha(0.0f);
+  // ImGui::SetNextWindowBgAlpha(0.0f);
   if (ImGui::Begin("AnnouncementOverlay", nullptr,
                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
@@ -3815,6 +3559,7 @@ static void render_announcement(VkCommandBuffer cmd)
 
 void EndFrame(VkCommandBuffer cmd)
 {
+  flush_lines(cmd);
   render_announcement(cmd);
 
   ImGui::Render();
@@ -4135,8 +3880,10 @@ void draw_hitbox_sphere(VkCommandBuffer cmd, const linalg::vec3 &center,
     return;
 
   // Scale by radius * 2 (primitive sphere has diameter 1.0, radius 0.5)
-  linalg::vec3 scale = {radius * 2.0f, radius * 2.0f, radius * 2.0f};
-  DrawMeshWireframe(cmd, center, scale, sphere_mesh, color);
+  DrawMesh(cmd, sphere_mesh, {.position = center,
+                               .scale = {radius * 2.0f, radius * 2.0f, radius * 2.0f},
+                               .color = color,
+                               .wireframe = true});
 }
 
 void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
@@ -4151,8 +3898,10 @@ void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
   {
     // Cylinder primitive is 1 unit tall, scale to full height (2 * half_height)
     // and radius * 2 for diameter
-    linalg::vec3 cyl_scale = {radius * 2.0f, half_height * 2.0f, radius * 2.0f};
-    DrawMeshWireframe(cmd, center, cyl_scale, cylinder_mesh, color);
+    DrawMesh(cmd, cylinder_mesh, {.position = center,
+                                   .scale = {radius * 2.0f, half_height * 2.0f, radius * 2.0f},
+                                   .color = color,
+                                   .wireframe = true});
   }
 
   // Draw top hemisphere (full sphere for simplicity)

@@ -237,6 +237,7 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
     }
 
     is_dragging_box = true;
+
   }
 }
 
@@ -323,7 +324,6 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
       return;
     }
 
-    bool was_dragging = is_dragging_box;
     is_dragging_box = false;
 
     int dx = e.pos.x - drag_start_pos.x;
@@ -466,12 +466,13 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   };
 
   // 1. Draw selected items with pulsating pink/white wireframe
+  float grid_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
   for (auto uid : selected_uids)
   {
     auto *entry = ctx.map->find_by_uid(uid);
     if (entry && entry->entity)
     {
-      draw_selection_highlight(entry->entity.get(), renderer, ctx.time);
+      draw_selection_highlight(entry->entity.get(), renderer, ctx.time, grid_step);
     }
   }
 

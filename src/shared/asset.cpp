@@ -364,6 +364,36 @@ bool load_obj(const char *path, mesh_asset_t &out)
   if (out.materials.empty())
     out.submeshes.clear();
 
+  // Normalize OBJ to 100-unit max extent so meshes are game-sized by default.
+  // Scale uniformly around the origin so the pivot is preserved.
+  if (!out.vertices.empty())
+  {
+    vec3f mesh_min = out.vertices[0].position;
+    vec3f mesh_max = out.vertices[0].position;
+    for (const auto &v : out.vertices)
+    {
+      mesh_min.x = std::min(mesh_min.x, v.position.x);
+      mesh_min.y = std::min(mesh_min.y, v.position.y);
+      mesh_min.z = std::min(mesh_min.z, v.position.z);
+      mesh_max.x = std::max(mesh_max.x, v.position.x);
+      mesh_max.y = std::max(mesh_max.y, v.position.y);
+      mesh_max.z = std::max(mesh_max.z, v.position.z);
+    }
+    float max_extent = std::max({mesh_max.x - mesh_min.x,
+                                  mesh_max.y - mesh_min.y,
+                                  mesh_max.z - mesh_min.z});
+    if (max_extent > 0.0f)
+    {
+      float scale = 100.0f / max_extent;
+      for (auto &v : out.vertices)
+      {
+        v.position.x *= scale;
+        v.position.y *= scale;
+        v.position.z *= scale;
+      }
+    }
+  }
+
   return !out.vertices.empty();
 }
 
@@ -945,21 +975,6 @@ bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_ma
   }
 
   return true;
-}
-
-const char *get_mesh_path(int32_t asset_id)
-{
-  switch (asset_id)
-  {
-  case 0:
-    return "resources/obj/question_mark.obj";
-  case 1:
-    return "resources/obj/m4a1_s.obj";
-  case 2:
-    return "resources/obj/pyramid.obj";
-  default:
-    return nullptr;
-  }
 }
 
 asset_handle_t<mesh_asset_t> get_primitive_mesh(const char *primitive_name)

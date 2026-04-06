@@ -758,18 +758,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     const auto *rc = ent->get_component<network::render_component_t>();
     if (rc && rc->visible)
     {
-      const char *mesh_path = nullptr;
-
-      // Check if mesh_path string is set (for primitives or direct paths)
-      if (rc->mesh_path.length > 0)
-      {
-        mesh_path = rc->mesh_path.c_str();
-      }
-      // Fallback to mesh_id lookup
-      else if (rc->mesh_id >= 0)
-      {
-        mesh_path = assets::get_mesh_path(rc->mesh_id);
-      }
+      const char *mesh_path = rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
 
       if (mesh_path)
       {
@@ -792,19 +781,28 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         {
           if (rc->is_wireframe)
           {
-            renderer::DrawMeshWireframe(cmd, ent->position, rc->scale,
-                                        mesh_handle, 0xFFFFFFFF,
-                                        ent->orientation + rc->rotation);
+            renderer::DrawMesh(cmd, mesh_handle,
+                               {.position  = ent->position,
+                                .scale     = rc->scale,
+                                .rotation  = ent->orientation + rc->rotation,
+                                .wireframe = true});
           }
           else
           {
-            auto st = renderer::ShaderType::Lit;
-            vec3f mat_color = rc->material.color;
+            auto shader = renderer::ShaderType::Lit;
             if (strcmp(rc->material.shader_type.c_str(), "unlit") == 0)
-              st = renderer::ShaderType::Unlit;
-            renderer::DrawMeshMaterial(cmd, ent->position, rc->scale,
-                                       mesh_handle, mat_color, st,
-                                       ent->orientation + rc->rotation);
+              shader = renderer::ShaderType::Unlit;
+            vec3f mat_color = rc->material.color;
+            uint32_t tint = (uint32_t(mat_color.x * 255) & 0xFF) |
+                            ((uint32_t(mat_color.y * 255) & 0xFF) << 8) |
+                            ((uint32_t(mat_color.z * 255) & 0xFF) << 16) |
+                            0xFF000000u;
+            renderer::DrawMesh(cmd, mesh_handle,
+                               {.position = ent->position,
+                                .scale    = rc->scale,
+                                .rotation = ent->orientation + rc->rotation,
+                                .color    = tint,
+                                .shader   = shader});
           }
           continue;
         }
@@ -834,8 +832,10 @@ void PlayState::render_3d(VkCommandBuffer cmd)
           assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
       if (mesh_handle.valid())
       {
-        renderer::DrawMeshTextured(cmd, disp->position, {1, 1, 1},
-                                   mesh_handle, disp->orientation);
+        renderer::DrawMesh(cmd, mesh_handle,
+                           {.position = disp->position,
+                            .rotation = disp->orientation,
+                            .shader   = renderer::ShaderType::Textured});
       }
     }
     else if (dynamic_cast<network::Static_Mesh_Entity *>(ent.get()))
@@ -891,21 +891,28 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
     // Render other dynamic entities with their render components
     const auto *rc = ent->get_component<network::render_component_t>();
-    if (rc && rc->visible && rc->mesh_id >= 0)
+    if (rc && rc->visible && rc->mesh_path.length > 0)
     {
-      const char *mesh_path = assets::get_mesh_path(rc->mesh_id);
+      const char *mesh_path = rc->mesh_path.c_str();
       if (mesh_path)
       {
         auto mesh_handle = assets::load_mesh(mesh_path);
         if (mesh_handle.valid())
         {
-          auto st = renderer::ShaderType::Lit;
-          vec3f mat_color = rc->material.color;
+          auto shader = renderer::ShaderType::Lit;
           if (strcmp(rc->material.shader_type.c_str(), "unlit") == 0)
-            st = renderer::ShaderType::Unlit;
-          renderer::DrawMeshMaterial(cmd, ent->position, rc->scale,
-                                     mesh_handle, mat_color, st,
-                                     ent->orientation + rc->rotation);
+            shader = renderer::ShaderType::Unlit;
+          vec3f mat_color = rc->material.color;
+          uint32_t tint = (uint32_t(mat_color.x * 255) & 0xFF) |
+                          ((uint32_t(mat_color.y * 255) & 0xFF) << 8) |
+                          ((uint32_t(mat_color.z * 255) & 0xFF) << 16) |
+                          0xFF000000u;
+          renderer::DrawMesh(cmd, mesh_handle,
+                             {.position = ent->position,
+                              .scale    = rc->scale,
+                              .rotation = ent->orientation + rc->rotation,
+                              .color    = tint,
+                              .shader   = shader});
         }
       }
     }
@@ -951,8 +958,11 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       if (mesh_handle.valid())
       {
 
-        renderer::DrawMesh(cmd, rocket.position, rc->scale, mesh_handle,
-                          0xFFFFFF00, rocket.orientation);
+        renderer::DrawMesh(cmd, mesh_handle,
+                           {.position = rocket.position,
+                            .scale    = rc->scale,
+                            .rotation = rocket.orientation,
+                            .color    = 0xFFFFFF00});
       }
       else
       {
@@ -962,8 +972,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
     else
     {
-      std::print("[CLIENT] Rocket {} has no mesh_path set (visible={}, mesh_id={})\n",
-                 id, rc->visible, rc->mesh_id);
+      std::print("[CLIENT] Rocket {} has no mesh_path set (visible={})\n",
+                 id, rc->visible);
     }
 
     // Debug hitbox visualization for rockets
