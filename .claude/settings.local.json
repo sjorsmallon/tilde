@@ -26,7 +26,9 @@
       "Bash(./cmake_build/bin/linalg_test)",
       "Bash(./cmake_build/bin/log_test)",
       "Bash(./cmake_build/bin/navmesh_test.exe)",
-      "Bash(grep -E \"\\\\.\\(hpp|cpp\\)$\")"
+      "Bash(grep -E \"\\\\.\\(hpp|cpp\\)$\")",
+      "Bash(xargs grep:*)",
+      "Bash(cmake -S . -B cmake_build)"
     ]
   }
 }

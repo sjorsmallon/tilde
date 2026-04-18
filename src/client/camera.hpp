@@ -16,6 +16,14 @@ struct camera_t
   bool orthographic = false;
   float ortho_height = 10.0f; // Scale/Zoom factor for ortho
 
+  // Orbit mode fields — when orbit is true, position is derived from
+  // orbit_target + orbit_distance + yaw/pitch each frame via update_orbit().
+  bool orbit = false;
+  linalg::vec3f orbit_target = {0.0f, 0.0f, 0.0f};
+  float orbit_distance = 5.0f;
+  float orbit_min_distance = 0.5f;
+  float orbit_max_distance = 50.0f;
+
   // Default constructor
   camera_t() = default;
 
@@ -107,6 +115,53 @@ inline camera_basis_t get_orientation_vectors(const camera_t &cam,
   linalg::vec3 U = linalg::cross(R, F);
 
   return camera_basis_t{F, R, U};
+}
+
+// --- Orbit mode helpers ---
+
+// Recompute position from orbit_target + orbit_distance + yaw/pitch.
+// Call after changing yaw/pitch/distance/target in orbit mode.
+inline void update_orbit(camera_t &cam)
+{
+  float yaw_rad = linalg::to_radians(cam.yaw);
+  float pitch_rad = linalg::to_radians(cam.pitch);
+  float cos_pitch = std::cos(pitch_rad);
+  linalg::vec3f offset = {
+      cos_pitch * std::cos(yaw_rad),
+      std::sin(pitch_rad),
+      cos_pitch * std::sin(yaw_rad)};
+  cam.position = cam.orbit_target + offset * cam.orbit_distance;
+}
+
+// Rotate around target
+inline void orbit_rotate(camera_t &cam, float delta_x, float delta_y,
+                         float sensitivity = 0.3f)
+{
+  cam.yaw += delta_x * sensitivity;
+  cam.pitch -= delta_y * sensitivity;
+  cam.pitch = linalg::clamp(cam.pitch, -89.0f, 89.0f);
+  update_orbit(cam);
+}
+
+// Pan orbit target in the camera's local right/up plane
+inline void orbit_pan(camera_t &cam, float delta_x, float delta_y,
+                      float sensitivity = 0.005f)
+{
+  auto [forward, right, up] = get_orientation_vectors(cam);
+  float scale = cam.orbit_distance * sensitivity;
+  cam.orbit_target = cam.orbit_target - right * (delta_x * scale);
+  cam.orbit_target = cam.orbit_target + up * (delta_y * scale);
+  update_orbit(cam);
+}
+
+// Zoom by changing orbit distance
+inline void orbit_zoom(camera_t &cam, float delta, float sensitivity = 0.5f)
+{
+  cam.orbit_distance -= delta * sensitivity;
+  cam.orbit_distance = linalg::clamp(cam.orbit_distance,
+                                     cam.orbit_min_distance,
+                                     cam.orbit_max_distance);
+  update_orbit(cam);
 }
 
 inline linalg::ray_t get_pick_ray(const camera_t &cam, float ndc_x, float ndc_y,

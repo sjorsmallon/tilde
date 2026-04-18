@@ -19,6 +19,7 @@ bool is_key_pressed(int scancode); // True only on the frame it was pressed
 bool is_mouse_down(int button); // SDL_BUTTON_LEFT/RIGHT/MIDDLE
 void get_mouse_pos(int *x, int *y);
 void get_mouse_delta(int *x, int *y);
+float get_scroll_delta(); // Accumulated scroll wheel delta this frame
 void set_relative_mouse_mode(bool enabled);
 
 } // namespace input

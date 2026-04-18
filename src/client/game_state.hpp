@@ -11,7 +11,8 @@ enum class GameStateKind
   MainMenu,
   Play,
   Editor,
-  ToolEditor
+  ToolEditor,
+  ShaderEditor
 };
 
 static std::string_view to_string(GameStateKind kind)
@@ -26,6 +27,8 @@ static std::string_view to_string(GameStateKind kind)
     return "Editor";
   case GameStateKind::ToolEditor:
     return "ToolEditor";
+  case GameStateKind::ShaderEditor:
+    return "ShaderEditor";
   default:
     return "Unknown";
   }

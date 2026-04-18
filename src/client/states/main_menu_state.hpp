@@ -41,6 +41,12 @@ public:
       }
 
       ImGui::Dummy(ImVec2(0, 10));
+      if (ImGui::Button("Shader Editor", ImVec2(-1, 40)))
+      {
+        state_manager::switch_to(GameStateKind::ShaderEditor);
+      }
+
+      ImGui::Dummy(ImVec2(0, 10));
 
       if (ImGui::Button("Quit", ImVec2(-1, 40)))
       {

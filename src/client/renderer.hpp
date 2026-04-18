@@ -144,7 +144,20 @@ void draw_announcement(const char *text);
 // End the frame. Renders ImGui, ends render pass, submits to queue, presents.
 void EndFrame(VkCommandBuffer cmd);
 
-VkDevice GetDevice(); // Helper if needed
+VkDevice GetDevice();
+VkRenderPass GetRenderPass();
+VkPhysicalDevice GetPhysicalDevice();
+
+// Get GPU-uploaded mesh buffers for custom pipeline drawing.
+// Returns false if the mesh isn't valid or upload fails.
+struct mesh_gpu_info_t
+{
+  VkBuffer vertex_buffer;
+  VkBuffer index_buffer;
+  uint32_t index_count;
+};
+bool GetMeshGPUInfo(assets::asset_handle_t<assets::mesh_asset_t> handle,
+                    mesh_gpu_info_t &out);
 
 // --- Particle System ---
 

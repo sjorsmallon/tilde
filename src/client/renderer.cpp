@@ -3625,6 +3625,22 @@ void EndFrame(VkCommandBuffer cmd)
 }
 
 VkDevice GetDevice() { return g_device; }
+VkRenderPass GetRenderPass() { return g_render_pass; }
+VkPhysicalDevice GetPhysicalDevice() { return g_physical_device; }
+
+bool GetMeshGPUInfo(assets::asset_handle_t<assets::mesh_asset_t> handle,
+                    mesh_gpu_info_t &out)
+{
+  if (!handle.valid())
+    return false;
+  mesh_gpu_buffer_t *gpu_mesh = upload_mesh_to_gpu(handle);
+  if (!gpu_mesh || gpu_mesh->index_count == 0)
+    return false;
+  out.vertex_buffer = gpu_mesh->vertex_buffer;
+  out.index_buffer = gpu_mesh->index_buffer;
+  out.index_count = gpu_mesh->index_count;
+  return true;
+}
 
 void UpdateParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
 {

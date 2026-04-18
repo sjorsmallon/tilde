@@ -12,6 +12,7 @@
 #include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/entities/weapon_entity.hpp"
 #include "../../shared/entities/trigger_volume_entity.hpp"
+#include "../../shared/entities/light_entity.hpp"
 #include "../../shared/network/quantization.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"

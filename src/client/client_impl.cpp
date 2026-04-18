@@ -73,6 +73,7 @@ bool Tick()
   while (SDL_PollEvent(&event))
   {
     renderer::ProcessEvent(&event);
+    input::process_event(&event);
 
     if (event.type == SDL_QUIT)
     {

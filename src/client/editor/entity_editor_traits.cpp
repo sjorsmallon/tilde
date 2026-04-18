@@ -528,6 +528,64 @@ bool Entity_Editor_Traits<network::Rocket_Entity>::draw_selection_wireframe(
   return false;
 }
 
+// -- Light (point/spot/directional, drawn as a cross in editor) ------
+
+template <>
+linalg::vec3
+Entity_Editor_Traits<network::Light_Entity>::get_half_extents(
+    const network::Light_Entity *)
+{
+  return {editor::DEFAULT_HALF_EXTENT, editor::DEFAULT_HALF_EXTENT,
+          editor::DEFAULT_HALF_EXTENT};
+}
+
+template <>
+bool Entity_Editor_Traits<network::Light_Entity>::draw_ghost(
+    const network::Light_Entity *, overlay_renderer_t &renderer,
+    const linalg::vec3 &center)
+{
+  float size = 0.3f;
+  renderer.draw_line(center - linalg::vec3{size, 0, 0},
+                     center + linalg::vec3{size, 0, 0}, 0xFF00FFFF);
+  renderer.draw_line(center - linalg::vec3{0, size, 0},
+                     center + linalg::vec3{0, size, 0}, 0xFF00FFFF);
+  renderer.draw_line(center - linalg::vec3{0, 0, size},
+                     center + linalg::vec3{0, 0, size}, 0xFF00FFFF);
+  return true;
+}
+
+template <>
+bool Entity_Editor_Traits<network::Light_Entity>::draw_in_editor(
+    const network::Light_Entity *e, overlay_renderer_t &renderer,
+    uint32_t, bool)
+{
+  float size = 0.3f;
+  linalg::vec3 p = e->position;
+  renderer.draw_line(p - linalg::vec3{size, 0, 0},
+                     p + linalg::vec3{size, 0, 0}, 0xFF00FFFF);
+  renderer.draw_line(p - linalg::vec3{0, size, 0},
+                     p + linalg::vec3{0, size, 0}, 0xFF00FFFF);
+  renderer.draw_line(p - linalg::vec3{0, 0, size},
+                     p + linalg::vec3{0, 0, size}, 0xFF00FFFF);
+  return true;
+}
+
+template <>
+bool Entity_Editor_Traits<network::Light_Entity>::draw_selection_wireframe(
+    const network::Light_Entity *e, overlay_renderer_t &renderer,
+    uint32_t color, float)
+{
+  float size = 0.4f;
+  linalg::vec3 p = e->position;
+  renderer.draw_line(p - linalg::vec3{size, 0, 0},
+                     p + linalg::vec3{size, 0, 0}, color);
+  renderer.draw_line(p - linalg::vec3{0, size, 0},
+                     p + linalg::vec3{0, size, 0}, color);
+  renderer.draw_line(p - linalg::vec3{0, 0, size},
+                     p + linalg::vec3{0, 0, size}, color);
+  return true;
+}
+
 // ===================================================================
 // X-macro dispatch: runtime entity* -> compile-time specialization
 // ===================================================================

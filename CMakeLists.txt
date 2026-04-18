@@ -100,6 +100,7 @@ add_library(game_shared STATIC
     src/shared/entities/particle_emitter_entity.cpp
     src/shared/entities/displacement_entity.cpp
     src/shared/entities/trigger_volume_entity.cpp
+    src/shared/entities/light_entity.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
@@ -186,6 +187,17 @@ foreach(SHADER ${SHADER_SOURCES})
         COMMENT "Compiling shader ${SHADER_NAME} to C header..."
     )
 endforeach()
+
+# Shader tool paths — generated header so runtime knows where glslc and preview shaders live
+set(PREVIEW_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/client/shaders/preview")
+set(SHADER_TOOL_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/shader_tool_cache")
+file(MAKE_DIRECTORY ${SHADER_TOOL_CACHE_DIR})
+configure_file(
+    src/client/shader_tool_paths.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/shader_tool_paths.h
+    @ONLY
+)
+
 add_library(game_client SHARED
     src/client/client_impl.cpp
     src/client/console.cpp
@@ -193,6 +205,7 @@ add_library(game_client SHARED
     src/client/states/play_state.cpp
     src/client/states/editor_gizmo.cpp
     src/client/states/tool_editor_state.cpp
+    src/client/states/shader_editor_state.cpp
     src/client/editor/tools/selection_tool.cpp
     src/client/editor/tools/placement_tool.cpp
     src/client/editor/tools/sculpting_tool.cpp
@@ -203,6 +216,7 @@ add_library(game_client SHARED
     src/client/editor/entity_editor_traits.cpp
     src/client/input.cpp
     src/client/renderer.cpp
+    src/client/shader_tool_runtime.cpp
     ${SHADER_HEADERS}
 )
 target_include_directories(game_client PUBLIC 

@@ -7,6 +7,7 @@ namespace input {
 
 static int g_mouse_delta_x = 0;
 static int g_mouse_delta_y = 0;
+static float g_scroll_delta = 0.0f;
 static Uint8 g_prev_keyboard_state[SDL_NUM_SCANCODES];
 static Uint8 g_curr_keyboard_state[SDL_NUM_SCANCODES];
 
@@ -18,6 +19,7 @@ void new_frame() {
   // call. So we must call it EXACTLY ONCE per frame to catch all movement.
 
   SDL_GetRelativeMouseState(&g_mouse_delta_x, &g_mouse_delta_y);
+  g_scroll_delta = 0.0f;
 
   // Update keyboard state for "pressed" detection
   const Uint8 *state = SDL_GetKeyboardState(nullptr);
@@ -26,8 +28,11 @@ void new_frame() {
 }
 
 void process_event(const void *event) {
-  // const SDL_Event* e = static_cast<const SDL_Event*>(event);
-  // Handle events if needed
+  const SDL_Event *e = static_cast<const SDL_Event *>(event);
+  if (e->type == SDL_MOUSEWHEEL)
+  {
+    g_scroll_delta += static_cast<float>(e->wheel.y);
+  }
 }
 
 bool is_key_down(int scancode) {
@@ -54,6 +59,8 @@ void get_mouse_delta(int *x, int *y) {
   if (y)
     *y = g_mouse_delta_y;
 }
+
+float get_scroll_delta() { return g_scroll_delta; }
 
 void set_relative_mouse_mode(bool enabled) {
   SDL_SetRelativeMouseMode(enabled ? SDL_TRUE : SDL_FALSE);
