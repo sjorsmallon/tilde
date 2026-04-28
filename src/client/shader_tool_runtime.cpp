@@ -132,7 +132,7 @@ struct preview_scene_ubo_t
   float camera_position[4];
   float time[4];
   int32_t light_count;
-  int32_t _pad0, _pad1, _pad2;
+  int32_t debug_flags, _pad1, _pad2;
   gpu_light_t lights[MAX_LIGHTS];
   float param_color[4][4]; // 4 vec4s
   float param_vec4[8][4];  // 8 vec4s
@@ -150,18 +150,26 @@ bool create_preview_resources(VkDevice device,
                               VkPhysicalDevice physical_device,
                               preview_pipeline_t &out)
 {
-  // --- Descriptor set layout ---
-  VkDescriptorSetLayoutBinding ubo_binding{};
-  ubo_binding.binding = 0;
-  ubo_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  ubo_binding.descriptorCount = 1;
-  ubo_binding.stageFlags =
-      VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  // --- Descriptor set layout: binding 0 = UBO, bindings 1���6 = PBR texture samplers ---
+  VkDescriptorSetLayoutBinding bindings[1 + PBR_TEXTURE_SLOT_COUNT]{};
+
+  bindings[0].binding         = 0;
+  bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  bindings[0].descriptorCount = 1;
+  bindings[0].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
+  {
+    bindings[1 + i].binding         = static_cast<uint32_t>(1 + i);
+    bindings[1 + i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1 + i].descriptorCount = 1;
+    bindings[1 + i].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  }
 
   VkDescriptorSetLayoutCreateInfo layout_info{};
-  layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  layout_info.bindingCount = 1;
-  layout_info.pBindings = &ubo_binding;
+  layout_info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  layout_info.bindingCount = 1 + PBR_TEXTURE_SLOT_COUNT;
+  layout_info.pBindings    = bindings;
 
   if (vkCreateDescriptorSetLayout(device, &layout_info, nullptr,
                                   &out.descriptor_set_layout) != VK_SUCCESS)
@@ -191,52 +199,53 @@ bool create_preview_resources(VkDevice device,
     return false;
   }
 
-  // --- UBO buffer (host-visible, persistently mapped) ---
-  VkBufferCreateInfo buffer_info{};
-  buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  buffer_info.size = sizeof(preview_scene_ubo_t);
-  buffer_info.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-  buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  if (vkCreateBuffer(device, &buffer_info, nullptr, &out.ubo_buffer) !=
-      VK_SUCCESS)
+  // --- UBO buffers (one per frame in flight, host-visible, persistently mapped) ---
+  for (int i = 0; i < PREVIEW_MAX_FRAMES_IN_FLIGHT; i++)
   {
-    log_error("Failed to create preview UBO buffer");
-    return false;
+    VkBufferCreateInfo buffer_info{};
+    buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size        = sizeof(preview_scene_ubo_t);
+    buffer_info.usage       = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(device, &buffer_info, nullptr, &out.ubo_buffer[i]) != VK_SUCCESS)
+    {
+      log_error("Failed to create preview UBO buffer (frame {})", i);
+      return false;
+    }
+
+    VkMemoryRequirements memory_requirements;
+    vkGetBufferMemoryRequirements(device, out.ubo_buffer[i], &memory_requirements);
+
+    VkMemoryAllocateInfo alloc_info{};
+    alloc_info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize  = memory_requirements.size;
+    alloc_info.memoryTypeIndex = find_memory_type(
+        physical_device, memory_requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (vkAllocateMemory(device, &alloc_info, nullptr, &out.ubo_memory[i]) != VK_SUCCESS)
+    {
+      log_error("Failed to allocate preview UBO memory (frame {})", i);
+      return false;
+    }
+
+    vkBindBufferMemory(device, out.ubo_buffer[i], out.ubo_memory[i], 0);
+    vkMapMemory(device, out.ubo_memory[i], 0, sizeof(preview_scene_ubo_t), 0, &out.ubo_mapped[i]);
   }
 
-  VkMemoryRequirements memory_requirements;
-  vkGetBufferMemoryRequirements(device, out.ubo_buffer, &memory_requirements);
-
-  VkMemoryAllocateInfo alloc_info{};
-  alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  alloc_info.allocationSize = memory_requirements.size;
-  alloc_info.memoryTypeIndex = find_memory_type(
-      physical_device, memory_requirements.memoryTypeBits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-  if (vkAllocateMemory(device, &alloc_info, nullptr, &out.ubo_memory) !=
-      VK_SUCCESS)
-  {
-    log_error("Failed to allocate preview UBO memory");
-    return false;
-  }
-
-  vkBindBufferMemory(device, out.ubo_buffer, out.ubo_memory, 0);
-  vkMapMemory(device, out.ubo_memory, 0, sizeof(preview_scene_ubo_t), 0,
-              &out.ubo_mapped);
-
-  // --- Descriptor pool + set ---
-  VkDescriptorPoolSize pool_size{};
-  pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  pool_size.descriptorCount = 1;
+  // --- Descriptor pool + sets (one per frame in flight) ---
+  VkDescriptorPoolSize pool_sizes[2]{};
+  pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  pool_sizes[0].descriptorCount = PREVIEW_MAX_FRAMES_IN_FLIGHT;
+  pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pool_sizes[1].descriptorCount = PBR_TEXTURE_SLOT_COUNT * PREVIEW_MAX_FRAMES_IN_FLIGHT;
 
   VkDescriptorPoolCreateInfo pool_info{};
-  pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  pool_info.poolSizeCount = 1;
-  pool_info.pPoolSizes = &pool_size;
-  pool_info.maxSets = 1;
+  pool_info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  pool_info.poolSizeCount = 2;
+  pool_info.pPoolSizes    = pool_sizes;
+  pool_info.maxSets       = PREVIEW_MAX_FRAMES_IN_FLIGHT;
 
   if (vkCreateDescriptorPool(device, &pool_info, nullptr,
                              &out.descriptor_pool) != VK_SUCCESS)
@@ -245,35 +254,78 @@ bool create_preview_resources(VkDevice device,
     return false;
   }
 
-  VkDescriptorSetAllocateInfo set_alloc_info{};
-  set_alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  set_alloc_info.descriptorPool = out.descriptor_pool;
-  set_alloc_info.descriptorSetCount = 1;
-  set_alloc_info.pSetLayouts = &out.descriptor_set_layout;
+  VkDescriptorSetLayout layouts[PREVIEW_MAX_FRAMES_IN_FLIGHT];
+  for (int i = 0; i < PREVIEW_MAX_FRAMES_IN_FLIGHT; i++)
+    layouts[i] = out.descriptor_set_layout;
 
-  if (vkAllocateDescriptorSets(device, &set_alloc_info, &out.descriptor_set) !=
-      VK_SUCCESS)
+  VkDescriptorSetAllocateInfo set_alloc_info{};
+  set_alloc_info.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  set_alloc_info.descriptorPool     = out.descriptor_pool;
+  set_alloc_info.descriptorSetCount = PREVIEW_MAX_FRAMES_IN_FLIGHT;
+  set_alloc_info.pSetLayouts        = layouts;
+
+  if (vkAllocateDescriptorSets(device, &set_alloc_info, out.descriptor_set) != VK_SUCCESS)
   {
-    log_error("Failed to allocate preview descriptor set");
+    log_error("Failed to allocate preview descriptor sets");
     return false;
   }
 
-  // Write UBO to descriptor set
-  VkDescriptorBufferInfo buffer_descriptor{};
-  buffer_descriptor.buffer = out.ubo_buffer;
-  buffer_descriptor.offset = 0;
-  buffer_descriptor.range = sizeof(preview_scene_ubo_t);
+  // Write each frame's UBO into its descriptor set binding 0
+  for (int i = 0; i < PREVIEW_MAX_FRAMES_IN_FLIGHT; i++)
+  {
+    VkDescriptorBufferInfo buffer_descriptor{};
+    buffer_descriptor.buffer = out.ubo_buffer[i];
+    buffer_descriptor.offset = 0;
+    buffer_descriptor.range  = sizeof(preview_scene_ubo_t);
 
-  VkWriteDescriptorSet descriptor_write{};
-  descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  descriptor_write.dstSet = out.descriptor_set;
-  descriptor_write.dstBinding = 0;
-  descriptor_write.dstArrayElement = 0;
-  descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  descriptor_write.descriptorCount = 1;
-  descriptor_write.pBufferInfo = &buffer_descriptor;
+    VkWriteDescriptorSet ubo_write{};
+    ubo_write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    ubo_write.dstSet          = out.descriptor_set[i];
+    ubo_write.dstBinding      = 0;
+    ubo_write.dstArrayElement = 0;
+    ubo_write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    ubo_write.descriptorCount = 1;
+    ubo_write.pBufferInfo     = &buffer_descriptor;
 
-  vkUpdateDescriptorSets(device, 1, &descriptor_write, 0, nullptr);
+    vkUpdateDescriptorSets(device, 1, &ubo_write, 0, nullptr);
+  }
+
+  // Create a 1x1 white fallback texture and write it to all 6 sampler slots.
+  // Vulkan requires all bound descriptor slots to be valid even before real textures are loaded.
+  {
+    assets::texture_asset_t white{};
+    white.width    = 1;
+    white.height   = 1;
+    white.channels = 4;
+    white.pixels   = {0xFF, 0xFF, 0xFF, 0xFF};
+    out.fallback_white_texture = renderer::UploadTexture(&white);
+    if (!out.fallback_white_texture.valid())
+    {
+      log_error("[shader_tool] Failed to create fallback white texture");
+      return false;
+    }
+
+    VkDescriptorImageInfo fallback_img{};
+    fallback_img.sampler     = out.fallback_white_texture.sampler;
+    fallback_img.imageView   = out.fallback_white_texture.view;
+    fallback_img.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet sampler_writes[PBR_TEXTURE_SLOT_COUNT]{};
+    for (int frame = 0; frame < PREVIEW_MAX_FRAMES_IN_FLIGHT; frame++)
+    {
+      for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
+      {
+        sampler_writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        sampler_writes[i].dstSet          = out.descriptor_set[frame];
+        sampler_writes[i].dstBinding      = static_cast<uint32_t>(1 + i);
+        sampler_writes[i].dstArrayElement = 0;
+        sampler_writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sampler_writes[i].descriptorCount = 1;
+        sampler_writes[i].pImageInfo      = &fallback_img;
+      }
+      vkUpdateDescriptorSets(device, PBR_TEXTURE_SLOT_COUNT, sampler_writes, 0, nullptr);
+    }
+  }
 
   log_terminal("[shader_tool] Preview resources created (UBO size = {} bytes)",
                sizeof(preview_scene_ubo_t));
@@ -478,20 +530,25 @@ void destroy_preview_resources(VkDevice device, preview_pipeline_t &pipeline)
 {
   destroy_preview_pipeline(device, pipeline);
 
-  if (pipeline.ubo_mapped)
+  for (int i = 0; i < PREVIEW_MAX_FRAMES_IN_FLIGHT; i++)
   {
-    vkUnmapMemory(device, pipeline.ubo_memory);
-    pipeline.ubo_mapped = nullptr;
-  }
-  if (pipeline.ubo_buffer != VK_NULL_HANDLE)
-  {
-    vkDestroyBuffer(device, pipeline.ubo_buffer, nullptr);
-    pipeline.ubo_buffer = VK_NULL_HANDLE;
-  }
-  if (pipeline.ubo_memory != VK_NULL_HANDLE)
-  {
-    vkFreeMemory(device, pipeline.ubo_memory, nullptr);
-    pipeline.ubo_memory = VK_NULL_HANDLE;
+    if (pipeline.ubo_mapped[i])
+    {
+      vkUnmapMemory(device, pipeline.ubo_memory[i]);
+      pipeline.ubo_mapped[i] = nullptr;
+    }
+    if (pipeline.ubo_buffer[i] != VK_NULL_HANDLE)
+    {
+      vkDestroyBuffer(device, pipeline.ubo_buffer[i], nullptr);
+      pipeline.ubo_buffer[i] = VK_NULL_HANDLE;
+    }
+    if (pipeline.ubo_memory[i] != VK_NULL_HANDLE)
+    {
+      vkFreeMemory(device, pipeline.ubo_memory[i], nullptr);
+      pipeline.ubo_memory[i] = VK_NULL_HANDLE;
+    }
+    // descriptor_sets are freed when the pool is destroyed
+    pipeline.descriptor_set[i] = VK_NULL_HANDLE;
   }
   if (pipeline.descriptor_pool != VK_NULL_HANDLE)
   {
@@ -505,13 +562,66 @@ void destroy_preview_resources(VkDevice device, preview_pipeline_t &pipeline)
   }
   if (pipeline.descriptor_set_layout != VK_NULL_HANDLE)
   {
-    vkDestroyDescriptorSetLayout(device, pipeline.descriptor_set_layout,
-                                 nullptr);
+    vkDestroyDescriptorSetLayout(device, pipeline.descriptor_set_layout, nullptr);
     pipeline.descriptor_set_layout = VK_NULL_HANDLE;
   }
 
-  // descriptor_set is freed when pool is destroyed
-  pipeline.descriptor_set = VK_NULL_HANDLE;
+  // Destroy PBR textures and fallback
+  for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
+    renderer::DestroyTexture(pipeline.pbr_textures[i]);
+  renderer::DestroyTexture(pipeline.fallback_white_texture);
+}
+
+// ---------------------------------------------------------------------------
+// PBR texture binding
+// ---------------------------------------------------------------------------
+
+void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
+                       const assets::pbr_material_asset_t &material)
+{
+  const assets::asset_handle_t<assets::texture_asset_t> slots[PBR_TEXTURE_SLOT_COUNT] = {
+      material.albedo, material.normal, material.roughness,
+      material.ambient_occlusion, material.metallic, material.height,
+  };
+
+  // Upload each texture; destroy any previously-held GPU texture first.
+  for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
+  {
+    renderer::DestroyTexture(pipeline.pbr_textures[i]);
+
+    const assets::texture_asset_t *tex = assets::get(slots[i]);
+    if (tex)
+      pipeline.pbr_textures[i] = renderer::UploadTexture(tex);
+  }
+
+  // Write descriptor set bindings 1–6 for every frame in flight.
+  VkDescriptorImageInfo image_infos[PBR_TEXTURE_SLOT_COUNT]{};
+  for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
+  {
+    const renderer::gpu_texture_t &gpu_tex = pipeline.pbr_textures[i].valid()
+                                                 ? pipeline.pbr_textures[i]
+                                                 : pipeline.fallback_white_texture;
+    image_infos[i].sampler     = gpu_tex.sampler;
+    image_infos[i].imageView   = gpu_tex.view;
+    image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  }
+
+  VkWriteDescriptorSet writes[PBR_TEXTURE_SLOT_COUNT]{};
+  for (int frame = 0; frame < PREVIEW_MAX_FRAMES_IN_FLIGHT; frame++)
+  {
+    for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
+    {
+      writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[i].dstSet          = pipeline.descriptor_set[frame];
+      writes[i].dstBinding      = static_cast<uint32_t>(1 + i);
+      writes[i].dstArrayElement = 0;
+      writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      writes[i].descriptorCount = 1;
+      writes[i].pImageInfo      = &image_infos[i];
+    }
+    vkUpdateDescriptorSets(device, PBR_TEXTURE_SLOT_COUNT, writes, 0, nullptr);
+  }
+  log_terminal("[shader_tool] PBR textures bound to descriptor sets");
 }
 
 VkPhysicalDevice get_physical_device()

@@ -147,6 +147,23 @@ void EndFrame(VkCommandBuffer cmd);
 VkDevice GetDevice();
 VkRenderPass GetRenderPass();
 VkPhysicalDevice GetPhysicalDevice();
+uint32_t GetCurrentFrame();
+int GetMaxFramesInFlight();
+
+// --- GPU texture upload ---
+// Upload a texture_asset_t to the GPU. Returns an invalid gpu_texture_t on failure.
+// The caller owns the returned object and must call DestroyTexture when done.
+struct gpu_texture_t
+{
+  VkImage        image   = VK_NULL_HANDLE;
+  VkDeviceMemory memory  = VK_NULL_HANDLE;
+  VkImageView    view    = VK_NULL_HANDLE;
+  VkSampler      sampler = VK_NULL_HANDLE;
+  bool valid() const { return image != VK_NULL_HANDLE; }
+};
+
+gpu_texture_t UploadTexture(const assets::texture_asset_t *texture);
+void          DestroyTexture(gpu_texture_t &tex);
 
 // Get GPU-uploaded mesh buffers for custom pipeline drawing.
 // Returns false if the mesh isn't valid or upload fails.

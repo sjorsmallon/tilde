@@ -36,7 +36,7 @@ struct preview_scene_ubo_t
   float camera_position[4];
   float time[4];
   int32_t light_count;
-  int32_t _pad0, _pad1, _pad2;
+  int32_t debug_flags, _pad1, _pad2;
   gpu_light_t lights[MAX_LIGHTS];
   float param_color[4][4];
   float param_vec4[8][4];
@@ -95,6 +95,18 @@ void ShaderEditorState::on_enter()
   mesh_path = "resources/obj/isosphere.obj";
   strncpy(mesh_path_buffer, mesh_path.c_str(), sizeof(mesh_path_buffer) - 1);
 
+  // Shader paths — default to PBR shaders
+  {
+    std::filesystem::path pbr_dir = std::filesystem::path(PREVIEW_SHADER_DIR).parent_path() / "pbr";
+    vert_shader_path = (pbr_dir / "pbr.vert").string();
+    frag_shader_path = (pbr_dir / "pbr.frag").string();
+  }
+  strncpy(vert_path_buffer, vert_shader_path.c_str(), sizeof(vert_path_buffer) - 1);
+  strncpy(frag_path_buffer, frag_shader_path.c_str(), sizeof(frag_path_buffer) - 1);
+
+  // PBR material folder
+  strncpy(pbr_folder_buffer, pbr_material_folder.c_str(), sizeof(pbr_folder_buffer) - 1);
+
   // Load mesh
   load_preview_mesh();
 
@@ -108,10 +120,19 @@ void ShaderEditorState::on_enter()
     return;
   }
 
+  // Auto-load PBR material and bind textures
+  pbr_material_handle = assets::load_pbr_material(pbr_material_folder.c_str());
+  if (pbr_material_handle.valid())
+  {
+    const assets::pbr_material_asset_t *mat = assets::get(pbr_material_handle);
+    if (mat)
+      bind_pbr_textures(device, preview_pipeline, *mat);
+  }
+
   // Compile shaders and create pipeline
   recompile_preview_shaders();
 
-  // Set up file watcher
+  // Set up file watcher — watch user-specified shader files + common header
   std::string shader_dir = PREVIEW_SHADER_DIR;
   auto reload_callback = [this](const std::filesystem::path &)
   {
@@ -119,16 +140,11 @@ void ShaderEditorState::on_enter()
     recompile_preview_shaders();
   };
 
-  std::filesystem::path vert_path =
-      std::filesystem::path(shader_dir) / "preview.vert";
-  std::filesystem::path frag_path =
-      std::filesystem::path(shader_dir) / "preview.frag";
-  std::filesystem::path common_path =
-      std::filesystem::path(shader_dir) / "shader_tool_common.glsl";
-
-  file_watcher.add_file(vert_path, reload_callback);
-  file_watcher.add_file(frag_path, reload_callback);
-  file_watcher.add_file(common_path, reload_callback);
+  file_watcher.add_file(std::filesystem::path(vert_shader_path), reload_callback);
+  file_watcher.add_file(std::filesystem::path(frag_shader_path), reload_callback);
+  // Always watch shader_tool_common.glsl since most shaders #include it
+  file_watcher.add_file(std::filesystem::path(shader_dir) / "shader_tool_common.glsl",
+                        reload_callback);
 
   elapsed_time = 0.0f;
   log_terminal("[ShaderEditor] Initialization complete");
@@ -151,12 +167,12 @@ void ShaderEditorState::on_exit()
 
 void ShaderEditorState::recompile_preview_shaders()
 {
-  std::string shader_dir = PREVIEW_SHADER_DIR;
-  std::string cache_dir = SHADER_TOOL_CACHE_DIR;
-  std::string vert_src = shader_dir + "/preview.vert";
-  std::string frag_src = shader_dir + "/preview.frag";
-  std::string vert_spv = cache_dir + "/preview.vert.spv";
-  std::string frag_spv = cache_dir + "/preview.frag.spv";
+  std::string shader_dir = std::filesystem::path(PREVIEW_SHADER_DIR).parent_path().string();
+  std::string cache_dir  = SHADER_TOOL_CACHE_DIR;
+  std::string vert_src   = vert_shader_path;
+  std::string frag_src   = frag_shader_path;
+  std::string vert_spv   = cache_dir + "/preview.vert.spv";
+  std::string frag_spv   = cache_dir + "/preview.frag.spv";
 
   std::string error;
 
@@ -436,8 +452,8 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
   ubo.time[2] = std::cos(elapsed_time);
   ubo.time[3] = 0.016f; // approximate dt
 
-  ubo.light_count =
-      static_cast<int32_t>(std::min(lights.size(), static_cast<size_t>(MAX_LIGHTS)));
+  ubo.light_count  = static_cast<int32_t>(std::min(lights.size(), static_cast<size_t>(MAX_LIGHTS)));
+  ubo.debug_flags  = render_normals ? 1 : 0;
   for (int i = 0; i < ubo.light_count; i++)
   {
     const auto &light = lights[i];
@@ -466,15 +482,16 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
     memcpy(ubo.param_vec4[i], param_vec4s[i], sizeof(float) * 4);
   memcpy(ubo.param_float, param_floats.data(), sizeof(float) * PARAM_FLOAT_COUNT);
 
-  // Upload UBO
-  memcpy(preview_pipeline.ubo_mapped, &ubo, sizeof(ubo));
+  // Upload UBO to the current frame's buffer to avoid GPU/CPU races.
+  uint32_t frame = renderer::GetCurrentFrame();
+  memcpy(preview_pipeline.ubo_mapped[frame], &ubo, sizeof(ubo));
 
   // Bind pipeline
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     preview_pipeline.pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           preview_pipeline.pipeline_layout, 0, 1,
-                          &preview_pipeline.descriptor_set, 0, nullptr);
+                          &preview_pipeline.descriptor_set[frame], 0, nullptr);
 
   // Push constant: identity model matrix (OBJ loader normalizes to 100 units)
   float model_matrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -667,8 +684,34 @@ void ShaderEditorState::render_ui()
     // Shader compilation
     if (ImGui::CollapsingHeader("Shader", ImGuiTreeNodeFlags_DefaultOpen))
     {
+      auto set_preset = [&](const char *vert, const char *frag)
+      {
+        vert_shader_path = vert;
+        frag_shader_path = frag;
+        strncpy(vert_path_buffer, vert, sizeof(vert_path_buffer) - 1);
+        strncpy(frag_path_buffer, frag, sizeof(frag_path_buffer) - 1);
+        recompile_preview_shaders();
+      };
+
+      {
+        std::filesystem::path preview_dir(PREVIEW_SHADER_DIR);
+        std::filesystem::path shader_dir = preview_dir.parent_path();
+        std::string pbr_vert   = (shader_dir / "pbr" / "pbr.vert").string();
+        std::string pbr_frag   = (shader_dir / "pbr" / "pbr.frag").string();
+        std::string prev_vert  = (preview_dir / "preview.vert").string();
+        std::string prev_frag  = (preview_dir / "preview.frag").string();
+
+        if (ImGui::Button("PBR"))   set_preset(pbr_vert.c_str(),  pbr_frag.c_str());
+        ImGui::SameLine();
+        if (ImGui::Button("Preview")) set_preset(prev_vert.c_str(), prev_frag.c_str());
+      }
+
+      ImGui::InputText("Vert", vert_path_buffer, sizeof(vert_path_buffer));
+      ImGui::InputText("Frag", frag_path_buffer, sizeof(frag_path_buffer));
       if (ImGui::Button("Recompile"))
       {
+        vert_shader_path = vert_path_buffer;
+        frag_shader_path = frag_path_buffer;
         recompile_preview_shaders();
       }
 
@@ -682,6 +725,31 @@ void ShaderEditorState::render_ui()
       {
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Pipeline OK");
       }
+    }
+
+    // PBR material
+    if (ImGui::CollapsingHeader("PBR Material", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+      ImGui::InputText("Folder", pbr_folder_buffer, sizeof(pbr_folder_buffer));
+      ImGui::SameLine();
+      if (ImGui::Button("Load##mat"))
+      {
+        pbr_material_folder = pbr_folder_buffer;
+        pbr_material_handle = assets::load_pbr_material(pbr_material_folder.c_str());
+        if (pbr_material_handle.valid())
+        {
+          const assets::pbr_material_asset_t *mat = assets::get(pbr_material_handle);
+          if (mat)
+          {
+            vkDeviceWaitIdle(renderer::GetDevice());
+            bind_pbr_textures(renderer::GetDevice(), preview_pipeline, *mat);
+          }
+        }
+      }
+      if (pbr_material_handle.valid())
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Material loaded");
+      else
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "No material loaded");
     }
 
     // Lights section
@@ -833,6 +901,7 @@ void ShaderEditorState::render_ui()
     ImGui::Text("Scroll: zoom  |  Escape: main menu");
     ImGui::Text("LMB: select light  |  LMB drag: move along dir");
     ImGui::Checkbox("Invert orbit Y", &invert_orbit_y);
+    ImGui::Checkbox("Render Normals", &render_normals);
   }
   ImGui::End();
 }

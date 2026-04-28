@@ -46,18 +46,34 @@ struct texture_asset_t
   std::vector<uint8_t> pixels;
   int32_t width = 0;
   int32_t height = 0;
-  int32_t channels = 0;
+  int32_t channels = 0; // always 4 (RGBA) — stb_image is forced to STBI_rgb_alpha
+};
+
+// A set of PBR texture maps loaded from a single folder.
+// Expected filenames: albedo.png, normal.png, roughness.png, ao.png, metallic.png, height.png
+// Missing files produce an invalid handle (warning logged, not error).
+struct pbr_material_asset_t
+{
+  asset_handle_t<texture_asset_t> albedo;
+  asset_handle_t<texture_asset_t> normal;
+  asset_handle_t<texture_asset_t> roughness;
+  asset_handle_t<texture_asset_t> ambient_occlusion;
+  asset_handle_t<texture_asset_t> metallic;
+  asset_handle_t<texture_asset_t> height;
 };
 
 // --- Loading (cached by path) ---
 
 asset_handle_t<mesh_asset_t> load_mesh(const char *path);
 asset_handle_t<texture_asset_t> load_texture(const char *path);
+// Load all PBR maps from a folder (cached by folder path).
+asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path);
 
 // --- Access ---
 
 const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle);
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle);
+const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle);
 
 // --- Primitive mesh generation ---
 

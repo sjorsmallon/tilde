@@ -42,8 +42,19 @@ private:
   camera_t camera;
 
   // Mesh
-  std::string mesh_path = "resources/obj/icosphere.obj";
+  std::string mesh_path = "resources/obj/isosphere.obj";
   assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
+
+  // PBR material
+  std::string pbr_material_folder = "resources/textures/sloppy_mortar_stone";
+  assets::asset_handle_t<assets::pbr_material_asset_t> pbr_material_handle;
+  char pbr_folder_buffer[256] = {};
+
+  // Configurable shader paths (default to preview shaders)
+  std::string vert_shader_path;
+  std::string frag_shader_path;
+  char vert_path_buffer[256] = {};
+  char frag_path_buffer[256] = {};
 
   // Lights
   std::vector<editor_light_t> lights;
@@ -72,7 +83,8 @@ private:
   std::array<char[32], PARAM_FLOAT_COUNT> param_float_labels = {};
 
   // Controls
-  bool invert_orbit_y = false;
+  bool invert_orbit_y = true;
+  bool render_normals = false;
 
   // Light interaction
   bool mouse_was_down = false;

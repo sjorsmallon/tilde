@@ -17,7 +17,7 @@ layout(set = 0, binding = 0) uniform SceneUBO {
     vec4 camera_position;     // xyz, w unused
     vec4 time;                // x = seconds, y = sin(t), z = cos(t), w = dt
     int  light_count;
-    int  _pad0, _pad1, _pad2;
+    int  debug_flags, _pad1, _pad2;
     Light lights[MAX_LIGHTS];
     vec4  param_color[4];
     vec4  param_vec4[8];

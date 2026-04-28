@@ -9,6 +9,12 @@ layout(location = 0) out vec4 out_color;
 
 void main() {
     vec3 normal = normalize(frag_world_normal);
+
+    if ((scene.debug_flags & 1) != 0) {
+        out_color = vec4(normal * 0.5 + 0.5, 1.0);
+        return;
+    }
+
     vec3 base_color = scene.param_color[0].rgb;
     if (base_color == vec3(0.0))
         base_color = vec3(0.8, 0.75, 0.7); // default clay color

@@ -156,7 +156,7 @@ target_link_libraries(game_shared PUBLIC libprotobuf)
 
 # Shaders
 find_program(GLSLC_EXECUTABLE glslc REQUIRED)
-set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/client/shaders)
+set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 
@@ -189,7 +189,7 @@ foreach(SHADER ${SHADER_SOURCES})
 endforeach()
 
 # Shader tool paths — generated header so runtime knows where glslc and preview shaders live
-set(PREVIEW_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/client/shaders/preview")
+set(PREVIEW_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders/preview")
 set(SHADER_TOOL_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/shader_tool_cache")
 file(MAKE_DIRECTORY ${SHADER_TOOL_CACHE_DIR})
 configure_file(

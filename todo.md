@@ -3,6 +3,10 @@
 - nested schemas are annoying. can we clean that code up?
 
 
+- irradiance map
+- environment lighting
+- pack PBR textures into one RGB (gltf tdoes occlusion, roughness, metallic (ORM))
+- pack normal maps: store xy in RG (reconstruct Z) and use BA for roughness / height.
 
 
 - is the navmesh only planar? or does A* just need two-dimensional? I think there's something wrong.

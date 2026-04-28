@@ -63,6 +63,7 @@ template <typename T> struct Asset_Pool
 
 static Asset_Pool<mesh_asset_t> g_meshes;
 static Asset_Pool<texture_asset_t> g_textures;
+static Asset_Pool<pbr_material_asset_t> g_pbr_materials;
 
 // --- OBJ loader (positions, normals, UVs) ---
 
@@ -907,7 +908,10 @@ asset_handle_t<texture_asset_t> load_texture(const char *path)
     return existing;
 
   int w, h, ch;
-  unsigned char *pixels = stbi_load(path, &w, &h, &ch, 0);
+  // Always force RGBA so every texture has a uniform 4-byte stride.
+  // Single-channel maps (roughness, metallic, ao) get their data in the R channel;
+  // the shader samples .r which is correct regardless of the padding.
+  unsigned char *pixels = stbi_load(path, &w, &h, &ch, STBI_rgb_alpha);
   if (!pixels)
   {
     printf("[assets] failed to load texture: %s\n", path);
@@ -917,11 +921,11 @@ asset_handle_t<texture_asset_t> load_texture(const char *path)
   texture_asset_t tex;
   tex.width = w;
   tex.height = h;
-  tex.channels = ch;
-  tex.pixels.assign(pixels, pixels + (w * h * ch));
+  tex.channels = 4;
+  tex.pixels.assign(pixels, pixels + (w * h * 4));
   stbi_image_free(pixels);
 
-  printf("[assets] loaded texture: %s (%dx%d, %d channels)\n", path, w, h, ch);
+  printf("[assets] loaded texture: %s (%dx%d, %d->4 channels)\n", path, w, h, ch);
   return g_textures.add(path, std::move(tex));
 }
 
@@ -954,6 +958,40 @@ asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path,
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle)
 {
   return g_textures.get(handle);
+}
+
+const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle)
+{
+  return g_pbr_materials.get(handle);
+}
+
+asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
+{
+  auto existing = g_pbr_materials.find(folder_path);
+  if (existing.valid())
+    return existing;
+
+  std::string folder(folder_path);
+
+  auto try_load = [&](const char *filename) -> asset_handle_t<texture_asset_t>
+  {
+    std::string full_path = folder + "/" + filename;
+    auto handle = load_texture(full_path.c_str());
+    if (!handle.valid())
+      printf("[assets] pbr_material: missing optional map '%s'\n", full_path.c_str());
+    return handle;
+  };
+
+  pbr_material_asset_t mat;
+  mat.albedo            = try_load("albedo.png");
+  mat.normal            = try_load("normal.png");
+  mat.roughness         = try_load("roughness.png");
+  mat.ambient_occlusion = try_load("ao.png");
+  mat.metallic          = try_load("metallic.png");
+  mat.height            = try_load("height.png");
+
+  printf("[assets] loaded pbr_material from folder: %s\n", folder_path);
+  return g_pbr_materials.add(folder_path, std::move(mat));
 }
 
 bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_max)

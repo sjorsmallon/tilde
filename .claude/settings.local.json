@@ -28,7 +28,10 @@
       "Bash(./cmake_build/bin/navmesh_test.exe)",
       "Bash(grep -E \"\\\\.\\(hpp|cpp\\)$\")",
       "Bash(xargs grep:*)",
-      "Bash(cmake -S . -B cmake_build)"
+      "Bash(cmake -S . -B cmake_build)",
+      "Bash(git log *)",
+      "Bash(\"C:/VulkanSDK/1.3.250.1/Bin/glslc.exe\" \"resources/shaders/pbr.vert\" -o \"cmake_build/shader_tool_cache/pbr.vert.spv\" --target-env=vulkan1.0 -I\"resources/shaders\")",
+      "Bash(\"C:/VulkanSDK/1.3.250.1/Bin/glslc.exe\" \"resources/shaders/pbr.frag\" -o \"cmake_build/shader_tool_cache/pbr.frag.spv\" --target-env=vulkan1.0 -I\"resources/shaders\")"
     ]
   }
 }

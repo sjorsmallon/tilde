@@ -1948,6 +1948,124 @@ static void cleanup_displacement_texture()
   if (g_disp_texture_memory)  vkFreeMemory(g_device, g_disp_texture_memory, nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// Public GPU texture upload / destroy
+// ---------------------------------------------------------------------------
+
+gpu_texture_t UploadTexture(const assets::texture_asset_t *texture)
+{
+  gpu_texture_t result{};
+
+  if (!texture || texture->pixels.empty() || texture->width <= 0 || texture->height <= 0)
+  {
+    log_error("[renderer] UploadTexture: invalid texture_asset_t");
+    return result;
+  }
+
+  const int w = texture->width;
+  const int h = texture->height;
+  VkDeviceSize image_size = (VkDeviceSize)w * h * 4; // always RGBA (channels==4)
+
+  // Staging buffer
+  VkBuffer staging_buf;
+  VkDeviceMemory staging_mem;
+  create_buffer(image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                staging_buf, staging_mem);
+  void *mapped;
+  vkMapMemory(g_device, staging_mem, 0, image_size, 0, &mapped);
+  memcpy(mapped, texture->pixels.data(), (size_t)image_size);
+  vkUnmapMemory(g_device, staging_mem);
+
+  // VkImage
+  VkImageCreateInfo img_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  img_info.imageType     = VK_IMAGE_TYPE_2D;
+  img_info.format        = VK_FORMAT_R8G8B8A8_UNORM;
+  img_info.extent        = {(uint32_t)w, (uint32_t)h, 1};
+  img_info.mipLevels     = 1;
+  img_info.arrayLayers   = 1;
+  img_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+  img_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+  img_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  img_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+  img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(g_device, &img_info, nullptr, &result.image) != VK_SUCCESS)
+  {
+    log_error("[renderer] UploadTexture: vkCreateImage failed");
+    vkDestroyBuffer(g_device, staging_buf, nullptr);
+    vkFreeMemory(g_device, staging_mem, nullptr);
+    return {};
+  }
+
+  VkMemoryRequirements mem_req;
+  vkGetImageMemoryRequirements(g_device, result.image, &mem_req);
+  VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  alloc.allocationSize  = mem_req.size;
+  alloc.memoryTypeIndex = find_memory_type(mem_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(g_device, &alloc, nullptr, &result.memory);
+  vkBindImageMemory(g_device, result.image, result.memory, 0);
+
+  // Transition UNDEFINED → TRANSFER_DST, copy, transition → SHADER_READ_ONLY
+  VkCommandBuffer cmd = begin_single_command();
+
+  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image               = result.image;
+  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+  barrier.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+  VkBufferImageCopy region{};
+  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  region.imageExtent      = {(uint32_t)w, (uint32_t)h, 1};
+  vkCmdCopyBufferToImage(cmd, staging_buf, result.image,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+  barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+  end_single_command(cmd);
+  vkDestroyBuffer(g_device, staging_buf, nullptr);
+  vkFreeMemory(g_device, staging_mem, nullptr);
+
+  // Image view
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image            = result.image;
+  view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+  view_info.format           = VK_FORMAT_R8G8B8A8_UNORM;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  vkCreateImageView(g_device, &view_info, nullptr, &result.view);
+
+  // Sampler — linear, repeat
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter    = VK_FILTER_LINEAR;
+  sampler_info.minFilter    = VK_FILTER_LINEAR;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  vkCreateSampler(g_device, &sampler_info, nullptr, &result.sampler);
+
+  return result;
+}
+
+void DestroyTexture(gpu_texture_t &tex)
+{
+  if (tex.sampler) { vkDestroySampler(g_device, tex.sampler, nullptr);    tex.sampler = VK_NULL_HANDLE; }
+  if (tex.view)    { vkDestroyImageView(g_device, tex.view, nullptr);     tex.view    = VK_NULL_HANDLE; }
+  if (tex.image)   { vkDestroyImage(g_device, tex.image, nullptr);        tex.image   = VK_NULL_HANDLE; }
+  if (tex.memory)  { vkFreeMemory(g_device, tex.memory, nullptr);         tex.memory  = VK_NULL_HANDLE; }
+}
+
 static mesh_gpu_buffer_t *upload_mesh_to_gpu(
     assets::asset_handle_t<assets::mesh_asset_t> handle)
 {
@@ -3627,6 +3745,8 @@ void EndFrame(VkCommandBuffer cmd)
 VkDevice GetDevice() { return g_device; }
 VkRenderPass GetRenderPass() { return g_render_pass; }
 VkPhysicalDevice GetPhysicalDevice() { return g_physical_device; }
+uint32_t GetCurrentFrame() { return g_current_frame; }
+int GetMaxFramesInFlight() { return MAX_FRAMES_IN_FLIGHT; }
 
 bool GetMeshGPUInfo(assets::asset_handle_t<assets::mesh_asset_t> handle,
                     mesh_gpu_info_t &out)
