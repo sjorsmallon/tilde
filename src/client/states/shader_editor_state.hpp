@@ -13,12 +13,24 @@
 namespace client
 {
 
+enum class DebugFlag : int32_t
+{
+  RenderNormals = (1 << 0),
+  RenderUV = (1 << 1),
+  RenderParallaxUV = (1 << 2)
+};
+
 struct editor_light_t
 {
   linalg::vec3f position = {2.0f, 2.0f, 2.0f};
   linalg::vec3f direction = {0.0f, -1.0f, 0.0f};
   linalg::vec3f color = {1.0f, 1.0f, 1.0f};
-  float intensity = 1.0f;
+  // Intensity is in lumens-ish units. The shader applies physically correct 1/d² falloff
+  // with d in world units (Quake convention: 1 unit ≈ 1 inch). Expect values in the
+  // hundreds to low thousands for lights at typical room/level scales — e.g. a single
+  // light covering ~10m of scene wants intensity in the 1000-5000 range, not ~1.
+  float intensity = 1500.0f;
+  // Range is the cutoff radius (world units) where the windowed falloff reaches zero.
   float range = 20.0f;
   float spot_inner_degrees = 30.0f;
   float spot_outer_degrees = 45.0f;
@@ -45,8 +57,9 @@ private:
   std::string mesh_path = "resources/obj/isosphere.obj";
   assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
 
+  // sloppy_mortar_stone
   // PBR material
-  std::string pbr_material_folder = "resources/textures/sloppy_mortar_stone";
+  std::string pbr_material_folder = "resources/textures/harsh_bricks";
   assets::asset_handle_t<assets::pbr_material_asset_t> pbr_material_handle;
   char pbr_folder_buffer[256] = {};
 
@@ -85,6 +98,8 @@ private:
   // Controls
   bool invert_orbit_y = true;
   bool render_normals = false;
+  bool render_uv = false;
+  bool render_parallax_uv = false;
 
   // Light interaction
   bool mouse_was_down = false;

@@ -67,7 +67,9 @@ void ShaderEditorState::on_enter()
   default_light.position = {96.0f, 128.0f, 64.0f};
   default_light.direction = linalg::normalize(linalg::vec3f{0.0f, 0.0f, 0.0f} - linalg::vec3f{96.0f, 128.0f, 64.0f});
   default_light.color = {1.0f, 0.95f, 0.9f};
-  default_light.intensity = 1.5f;
+  // Sphere sits near origin, light at d ≈ 172 units. With 1/d² falloff intensity must
+  // be on the order of d² to give ~unit brightness at the surface — see editor_light_t.
+  default_light.intensity = 30000.0f;
   default_light.range = 512.0f;
   default_light.light_type = 1; // spot
   lights.push_back(default_light);
@@ -453,7 +455,10 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
   ubo.time[3] = 0.016f; // approximate dt
 
   ubo.light_count  = static_cast<int32_t>(std::min(lights.size(), static_cast<size_t>(MAX_LIGHTS)));
-  ubo.debug_flags  = render_normals ? 1 : 0;
+  ubo.debug_flags  = 0;
+  if (render_normals) ubo.debug_flags |= static_cast<int32_t>(DebugFlag::RenderNormals);
+  if (render_uv) ubo.debug_flags |= static_cast<int32_t>(DebugFlag::RenderUV);
+  if (render_parallax_uv) ubo.debug_flags |= static_cast<int32_t>(DebugFlag::RenderParallaxUV);
   for (int i = 0; i < ubo.light_count; i++)
   {
     const auto &light = lights[i];
@@ -902,6 +907,8 @@ void ShaderEditorState::render_ui()
     ImGui::Text("LMB: select light  |  LMB drag: move along dir");
     ImGui::Checkbox("Invert orbit Y", &invert_orbit_y);
     ImGui::Checkbox("Render Normals", &render_normals);
+    ImGui::Checkbox("Render UV", &render_uv);
+    ImGui::Checkbox("Render Parallax UV", &render_parallax_uv);
   }
   ImGui::End();
 }
