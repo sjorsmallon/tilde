@@ -44,6 +44,7 @@ public:
 
   bool IsOpen() const { return should_draw; }
   void Toggle() { should_draw = !should_draw; }
+  void Close() { should_draw = false; }
 
 private:
   Console();

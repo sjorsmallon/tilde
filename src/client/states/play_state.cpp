@@ -188,8 +188,17 @@ void PlayState::update(float dt)
   // ESC -> back to editor (works even if no map was loaded)
   if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
   {
-    state_manager::switch_to(GameStateKind::ToolEditor);
-    return;
+    if (Console::Get().IsOpen())
+    {
+      // If the console is open, just close it and stay in play mode.
+      Console::Get().Close();
+    }
+    else
+    {
+      // Otherwise, go back to the editor.
+      state_manager::switch_to(GameStateKind::ToolEditor);
+      return;
+    }
   }
 
   if (!session_loaded)
