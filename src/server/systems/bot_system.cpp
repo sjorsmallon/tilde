@@ -12,7 +12,8 @@
 namespace server
 {
 
-Bot_State spawn_bot(shared::game_session_t &session, const vec3f &position,
+Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
+                    const vec3f &position,
                     int32_t slot, BotType type, BotPersonality personality)
 {
   auto *bot = session.entity_system.spawn<network::Player_Entity>(
@@ -27,6 +28,11 @@ Bot_State spawn_bot(shared::game_session_t &session, const vec3f &position,
     bot->hitbox.shape_type.set("capsule");
     bot->hitbox.size   = {18.f, 38.f, 18.f};
     bot->hitbox.offset = {0.f,  38.f,  0.f};
+
+    register_kinematic_capsule(physics,
+                               static_cast<shared::entity_uid_t>(bot->entity_id),
+                               bot->position + vec3f{0.f, 38.f, 0.f},
+                               18.f, 20.f);
   }
 
   Bot_State state;
@@ -72,6 +78,7 @@ static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
 
 void update_bots(std::vector<Bot_State> &bots,
                  shared::game_session_t  &session,
+                 physics_state_t         &physics,
                  float                    dt)
 {
   // Refresh debug bridge every tick so the client can visualise bot state.
@@ -237,6 +244,7 @@ void update_bots(std::vector<Bot_State> &bots,
             rocket->velocity        = aim_dir * 600.f;
             rocket->lifetime        = 5.f;
             rocket->damage_amount   = 50.f;
+            rocket->damage_radius   = 120.f;
             rocket->knockback_force = 600.f;
             rocket->owner_id        = static_cast<int32_t>(bot_ent->entity_id);
 
@@ -289,6 +297,11 @@ void update_bots(std::vector<Bot_State> &bots,
 
     bot_ent->position = new_pos;
     bot_ent->velocity = new_vel;
+
+    set_kinematic_pose(physics,
+                       static_cast<shared::entity_uid_t>(bot_ent->entity_id),
+                       new_pos + vec3f{0.f, 38.f, 0.f},
+                       new_vel);
 
     // Update facing direction so the client can visualise it.
     bot_ent->view_angle_yaw = std::atan2(front.x, front.z);

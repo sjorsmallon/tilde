@@ -35,7 +35,11 @@
       "Bash(find c:/Users/sjors/Desktop/Projects/tilde -name \"*.hpp\" -path \"*/Jolt/Renderer*\" 2>/dev/null | head -10; ls c:/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build/_deps/jolt-src/Jolt/Renderer/ 2>/dev/null || echo \"not found\")",
       "Read(//c/Users/sjors/Desktop/Projects/tilde/**)",
       "Bash(cmake --build cmake_build -j8 --target game_client)",
-      "Bash(cmake --build cmake_build -j8 --target MyGame)"
+      "Bash(cmake --build cmake_build -j8 --target MyGame)",
+      "Bash(./cmake_build/bin/network_test.exe)",
+      "Bash(./cmake_build/bin/session_test.exe)",
+      "Bash(./cmake_build/bin/transaction_system_test.exe)",
+      "Bash(./cmake_build/bin/ecs_test.exe)"
     ]
   }
 }

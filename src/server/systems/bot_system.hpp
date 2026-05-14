@@ -3,6 +3,7 @@
 #include "../../shared/game_session.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/network/network_types.hpp"
+#include "../../shared/physics.hpp"
 #include <vector>
 
 namespace server
@@ -58,13 +59,15 @@ struct Bot_State
 };
 
 // Spawns a bot Player_Entity at position and returns its tracking state.
-Bot_State spawn_bot(shared::game_session_t &session, const vec3f &position,
+Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
+                    const vec3f &position,
                     int32_t slot, BotType type = BotType::Regular,
                     BotPersonality personality = {});
 
 // Called once per server tick.
 void update_bots(std::vector<Bot_State> &bots,
                  shared::game_session_t  &session,
+                 physics_state_t         &physics,
                  float                    dt);
 
 } // namespace server

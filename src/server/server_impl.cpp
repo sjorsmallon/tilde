@@ -30,11 +30,10 @@
 namespace server
 {
 
-
 cvar::CVar<float> sv_tickrate("sv_tickrate", 60.0f, "Server tick rate in Hz");
 
 // Send a text message to a specific client to display in their console
-static void send_server_message(network::Udp_Socket &socket,
+static void send_text_message_to_a_specific_client(network::Udp_Socket &socket,
                                 const network::Address &ip,
                                 std::string_view text)
 {
@@ -56,7 +55,7 @@ static void broadcast_server_message(network::Server_Connection_State &net,
   for (int i = 0; i < network::sv_max_player_count; ++i)
   {
     if (net.player_slots[i])
-      send_server_message(socket, net.player_ips[i], text);
+      send_text_message_to_a_specific_client(socket, net.player_ips[i], text);
   }
 }
 
@@ -180,7 +179,7 @@ cvar::Console_Command cmd_spawn_bot(
 
       auto spawns = get_human_spawn_positions();
       const vec3f &pos = spawns[g_bots.size() % spawns.size()];
-      g_bots.push_back(spawn_bot(g_state.session, pos, g_next_bot_slot++, type));
+      g_bots.push_back(spawn_bot(g_state.session, *g_state.physics, pos, g_next_bot_slot++, type));
 
       const char *type_str = (type == BotType::Chase)   ? "chase"
                            : (type == BotType::Regular) ? "regular"
@@ -205,9 +204,9 @@ cvar::Console_Command cmd_spawn_cube(
         log_error("spawn_cube: no Player_Entity for caller_slot {}", context.caller_slot);
         return;
       }
-      vec3f half_extents = {16.f, 16.f, 16.f};
+      vec3f full_extents = {16.f, 16.f, 16.f};
       auto *body = spawn_physics_body(g_state.session, *g_state.physics,
-                                      "box", half_extents, *drop_position);
+                                      "box", full_extents, *drop_position);
       if (body)
         log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
                      body->entity_id, drop_position->x, drop_position->y, drop_position->z);
@@ -230,9 +229,9 @@ cvar::Console_Command cmd_spawn_sphere(
         log_error("spawn_sphere: no Player_Entity for caller_slot {}", context.caller_slot);
         return;
       }
-      vec3f size = {16.f, 16.f, 16.f}; // x = radius
+      vec3f full_extents = {16.f, 16.f, 16.f}; // x = diameter
       auto *body = spawn_physics_body(g_state.session, *g_state.physics,
-                                      "sphere", size, *drop_position);
+                                      "sphere", full_extents, *drop_position);
       if (body)
         log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
                      body->entity_id, drop_position->x, drop_position->y, drop_position->z);
@@ -256,6 +255,9 @@ void handle_player_leave(server_context_t &state,
     {
       if ((*pool)[i].client_slot_index == slot)
       {
+        if (g_state.physics)
+          unregister_physics_body(*g_state.physics,
+                                  static_cast<shared::entity_uid_t>((*pool)[i].entity_id));
         state.session.entity_system.destroy(entity_type::PLAYER, &(*pool)[i]);
         break;
       }
@@ -347,7 +349,7 @@ bool Init()
     {
       if (sp.spawn_type == 1)
       {
-        g_bots.push_back(spawn_bot(g_state.session, sp.position, g_next_bot_slot++, BotType::Regular));
+        g_bots.push_back(spawn_bot(g_state.session, *g_state.physics, sp.position, g_next_bot_slot++, BotType::Regular));
         ++bot_spawn_count;
       }
       else
@@ -419,6 +421,16 @@ bool Tick()
           player->hitbox.shape_type.set("capsule");
           player->hitbox.size = {18.f, 38.f, 18.f};  // x/z = radius, y = half_height
           player->hitbox.offset = {0.f, 38.f, 0.f};  // Offset up so capsule is centered on player
+
+          // Register a kinematic Jolt body so rockets and overlap queries can find this player.
+          // Capsule center sits at feet + 38 (matches hitbox offset above).
+          if (g_state.physics)
+          {
+            register_kinematic_capsule(*g_state.physics,
+                                       static_cast<shared::entity_uid_t>(player->entity_id),
+                                       player->position + vec3f{0.f, 38.f, 0.f},
+                                       18.f, 20.f);
+          }
         }
 
         // Send Accept
@@ -477,12 +489,12 @@ bool Tick()
     if (!cvar::CVarSystem::Get().Execute(line, context))
     {
       log_terminal("Unknown command from slot {}: {}", player_idx, line);
-      send_server_message(g_socket, client_ip,
+      send_text_message_to_a_specific_client(g_socket, client_ip,
                           std::string("Unknown command: ") + line);
     }
     else
     {
-      send_server_message(g_socket, client_ip,
+      send_text_message_to_a_specific_client(g_socket, client_ip,
                           std::string("OK: ") + line);
     }
   }
@@ -544,6 +556,14 @@ bool Tick()
     player->view_angle_yaw = yaw;
     player->view_angle_pitch = pitch;
 
+    if (g_state.physics)
+    {
+      set_kinematic_pose(*g_state.physics,
+                         static_cast<shared::entity_uid_t>(player->entity_id),
+                         new_pos + vec3f{0.f, 38.f, 0.f},
+                         new_vel);
+    }
+
     if (player_idx >= 0 && player_idx < network::sv_max_player_count)
     {
       auto &pstate = g_player_states[player_idx];
@@ -573,6 +593,7 @@ bool Tick()
           rocket->velocity        = dir * 600.f;
           rocket->lifetime        = 20.f;
           rocket->damage_amount   = 50.f;
+          rocket->damage_radius   = 120.f;
           rocket->knockback_force = 600.f;
           rocket->owner_id        = static_cast<int32_t>(player->entity_id);
           // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
@@ -596,14 +617,16 @@ bool Tick()
 
   // --- Simulate server-side entities ---
   float tick_dt = static_cast<float>(get_tick_interval());
-  update_bots(g_bots, g_state.session, tick_dt);
-  update_rockets(g_state.session, tick_dt);
-
-  if (g_state.physics)
+  if (!g_state.physics)
   {
-    step_physics(*g_state.physics, tick_dt);
-    update_physics_bodies(g_state.session, *g_state.physics);
+    log_error("Server tick with no physics state — Init() must have failed");
+    return false;
   }
+  update_bots(g_bots, g_state.session, *g_state.physics, tick_dt);
+  update_rockets(g_state.session, *g_state.physics, tick_dt);
+
+  step_physics(*g_state.physics, tick_dt);
+  update_physics_bodies(g_state.session, *g_state.physics);
 
   // --- Check trigger volumes against players ---
   auto *trigger_pool = g_state.session.entity_system

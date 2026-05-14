@@ -68,17 +68,20 @@ spawn_physics_body(shared::game_session_t &session,
   body->render.visible = true;
   body->render.scale   = size;
 
+  // `size` is full extents (diameter on each axis), matching render.scale and the
+  // diameter-1 primitive meshes. Jolt's BoxShape takes half-extents and SphereShape
+  // takes a radius, so halve at this boundary.
   if (std::strcmp(shape_type, "box") == 0)
   {
     body->render.mesh_path.set("__primitive_box");
     register_dynamic_box(physics, static_cast<shared::entity_uid_t>(body->entity_id),
-                         position, size, initial_velocity);
+                         position, size * 0.5f, initial_velocity);
   }
   else if (std::strcmp(shape_type, "sphere") == 0)
   {
     body->render.mesh_path.set("__primitive_sphere");
     register_dynamic_sphere(physics, static_cast<shared::entity_uid_t>(body->entity_id),
-                            position, size.x, initial_velocity);
+                            position, size.x * 0.5f, initial_velocity);
   }
   else
   {
