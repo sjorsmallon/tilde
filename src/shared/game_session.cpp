@@ -2,6 +2,7 @@
 #include "game_session.hpp"
 #include "entities/entity_list.hpp"
 #include "shapes.hpp"
+#include "physics.hpp"
 
 namespace shared
 {
@@ -45,6 +46,27 @@ void init_session_from_map(game_session_t &session, const map_t &map)
   session.bvh = build_bvh(bvh_inputs);
 
   session.navmesh = map.navmesh;
+}
+
+void populate_static_physics_bodies(physics_state_t &state, const map_t &map)
+{
+  for (const auto &entry : map.entities)
+  {
+    if (!entry.entity)
+      continue;
+
+    if (auto *aabb = dynamic_cast<network::AABB_Entity *>(entry.entity.get()))
+    {
+      register_static_box(state, entry.uid, aabb->position, aabb->half_extents);
+    }
+    else if (auto *wedge = dynamic_cast<network::Wedge_Entity *>(entry.entity.get()))
+    {
+      // Approximate the wedge with its bounding box. The BVH handles exact
+      // wedge collision for player movement; Jolt bodies are for projectiles.
+      register_static_box(state, entry.uid, wedge->position, wedge->half_extents);
+    }
+    // Static_Mesh_Entity: skipped — no shape can be derived from schema fields alone.
+  }
 }
 
 } // namespace shared

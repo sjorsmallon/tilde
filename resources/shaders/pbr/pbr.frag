@@ -20,7 +20,12 @@ layout(set = 0, binding = 6) uniform sampler2D height_texture_map;
 
 const float PI = 3.14159265359;
 
-vec2 parallax_occlusion(vec3 view_direction_tangent, vec2 uv)
+
+// tangent space is a per-fragment local coordinate space.
+// it is called tangent because T and B are _TANGENT_  to the surface at that point.
+// every fragment has its own. as you walk across a curved surface, the tangent space rotates to stay aligned with the surface normal.
+
+vec2 parallax_mapping(vec3 view_direction_tangent, vec2 uv)
 {
     float height = texture(height_texture_map, uv).r;
     float height_scale = 0.005;
@@ -29,6 +34,59 @@ vec2 parallax_occlusion(vec3 view_direction_tangent, vec2 uv)
     vec2 offset_direction_in_uv_space = V.xy / max(V.z, 0.1);
 
     return uv - offset_direction_in_uv_space * (height * height_scale);
+}
+
+vec2 parallax_occlusion(vec3 view_direction_tangent, vec2 uv)
+{
+    const float height_scale = 0.01;
+
+    // why the double bounds on layer count?
+    //  with too few layers, the intersection is very inaccurate and can cause swimming and other artifacts. 
+     //with too many layers, performance suffers. this range was found through trial and error to give good results 
+     // across a wide range of angles while keeping the cost reasonable. (this is bullshit but whatever)
+    const float minimum_layer_count = 8.0;
+    const float maximum_layer_count = 32.0;
+
+    vec3 view_direction = normalize(view_direction_tangent);
+
+    // More layers at grazing angles: the ray slides far across UV per unit of
+    // depth there, so we need finer steps to catch the intersection.
+    float layer_count      = mix(maximum_layer_count, minimum_layer_count, abs(view_direction.z));
+    float layer_depth_step = 1.0 / layer_count;
+
+    // view_direction.xy / view_direction.z = "UV slide per unit of depth gained" (similar triangles).
+    // Times height_scale = total UV offset for a full traversal from depth 0 to depth 1.
+    // Times layer_depth_step (= 1 / layer_count) = the UV nudge per marching step.
+    vec2 slope_uv_per_depth         = view_direction.xy / view_direction.z;
+    vec2 total_uv_offset_full_depth = slope_uv_per_depth * height_scale;
+    vec2 uv_step                    = total_uv_offset_full_depth * layer_depth_step;
+
+    // Start at the original UV, sitting on the polygon surface (depth 0).
+    vec2  current_uv            = uv;
+    float current_ray_depth     = 0.0;
+    float current_surface_depth = texture(height_texture_map, current_uv).r;
+
+    // Walk the ray deeper into the surface until it punches through the heightfield.
+    // Each iteration: take one UV nudge, go one layer deeper, resample the heightmap.
+    while (current_ray_depth < current_surface_depth)
+    {
+        current_uv            -= uv_step;
+        current_ray_depth     += layer_depth_step;
+        current_surface_depth  = texture(height_texture_map, current_uv).r;
+    }
+
+    // The true intersection lies between the previous step (still above surface)
+    // and the current step (already below). Linearly interpolate between the two UVs
+    // by how far each one missed the surface, to smooth out the discrete layer banding.
+    vec2  previous_uv            = current_uv + uv_step;
+    float previous_surface_depth = texture(height_texture_map, previous_uv).r;
+    float previous_ray_depth     = current_ray_depth - layer_depth_step;
+
+    float overshoot            = current_ray_depth - current_surface_depth;     // how far past the surface "current" is
+    float undershoot           = previous_surface_depth - previous_ray_depth;   // how far above the surface "previous" was
+    float interpolation_weight = overshoot / (overshoot + undershoot);
+
+    return mix(current_uv, previous_uv, interpolation_weight);
 }
 
 vec3 construct_surface_normal(vec3 N, vec2 uv)
@@ -111,10 +169,12 @@ void main()
     vec3 B  = cross(world_space_normal, T);
     mat3 TBN = mat3(T, B, world_space_normal);
 
-    vec3 view_dir_tangent = transpose(TBN) * V;
+    vec3 view_dir_in_fragment_tangent_space = normalize(transpose(TBN) * V);
 
-    vec2 parallax_uv = parallax_occlusion(view_dir_tangent, uv);
+    vec2 parallax_uv = parallax_occlusion(view_dir_in_fragment_tangent_space, uv);
     uv = parallax_uv;
+    // vec2 parallax_uv = parallax_mapping(view_dir_in_fragment_tangent_space, uv);
+    // uv = parallax_uv;
    
 
     vec3 N = construct_surface_normal(normalize(world_space_normal), uv);

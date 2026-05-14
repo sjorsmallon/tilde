@@ -19,7 +19,7 @@ struct aabb_t
   SCHEMA_FIELD_DEFAULT(linalg::vec3, half_extents,
                network::Schema_Flags::Editable |
                    network::Schema_Flags::Saveable, (linalg::vec3{1.f, 1.f, 1.f}));
-  DECLARE_SCHEMA(aabb_t);
+  DECLARE_COMPONENT_SCHEMA(aabb_t);
 };
 
 struct pyramid_t
@@ -33,7 +33,7 @@ struct pyramid_t
   SCHEMA_FIELD(float, height,
                network::Schema_Flags::Editable |
                    network::Schema_Flags::Saveable);
-  DECLARE_SCHEMA(pyramid_t);
+  DECLARE_COMPONENT_SCHEMA(pyramid_t);
 };
 
 struct aabb_bounds_t
@@ -104,7 +104,7 @@ struct wedge_t
   SCHEMA_FIELD(int, orientation,
                network::Schema_Flags::Editable |
                    network::Schema_Flags::Saveable);
-  DECLARE_SCHEMA(wedge_t);
+  DECLARE_COMPONENT_SCHEMA(wedge_t);
 };
 
 inline aabb_bounds_t get_bounds(const wedge_t &wedge)

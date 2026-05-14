@@ -31,7 +31,11 @@
       "Bash(cmake -S . -B cmake_build)",
       "Bash(git log *)",
       "Bash(\"C:/VulkanSDK/1.3.250.1/Bin/glslc.exe\" \"resources/shaders/pbr.vert\" -o \"cmake_build/shader_tool_cache/pbr.vert.spv\" --target-env=vulkan1.0 -I\"resources/shaders\")",
-      "Bash(\"C:/VulkanSDK/1.3.250.1/Bin/glslc.exe\" \"resources/shaders/pbr.frag\" -o \"cmake_build/shader_tool_cache/pbr.frag.spv\" --target-env=vulkan1.0 -I\"resources/shaders\")"
+      "Bash(\"C:/VulkanSDK/1.3.250.1/Bin/glslc.exe\" \"resources/shaders/pbr.frag\" -o \"cmake_build/shader_tool_cache/pbr.frag.spv\" --target-env=vulkan1.0 -I\"resources/shaders\")",
+      "Bash(find c:/Users/sjors/Desktop/Projects/tilde -name \"*.hpp\" -path \"*/Jolt/Renderer*\" 2>/dev/null | head -10; ls c:/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build/_deps/jolt-src/Jolt/Renderer/ 2>/dev/null || echo \"not found\")",
+      "Read(//c/Users/sjors/Desktop/Projects/tilde/**)",
+      "Bash(cmake --build cmake_build -j8 --target game_client)",
+      "Bash(cmake --build cmake_build -j8 --target MyGame)"
     ]
   }
 }

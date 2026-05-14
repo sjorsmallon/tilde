@@ -12,7 +12,7 @@ enum class GameStateKind
   Play,
   Editor,
   ToolEditor,
-  ShaderEditor
+  ShaderEditor,
 };
 
 static std::string_view to_string(GameStateKind kind)

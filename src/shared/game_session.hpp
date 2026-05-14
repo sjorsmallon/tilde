@@ -4,6 +4,7 @@
 #include "entity_system.hpp"
 #include "map.hpp"
 #include "navmesh.hpp"
+#include "physics.hpp"
 #include <string>
 #include <vector>
 
@@ -33,6 +34,9 @@ struct game_session_t
   // Dynamic entity collision is handled separately via the Entity_System.
   Bounding_Volume_Hierarchy bvh;
 
+
+  
+
   // Baked navmesh — copied from map_t on session init.
   navmesh_t navmesh;
 
@@ -44,5 +48,10 @@ struct game_session_t
 // - Copies static geometry (AABBs).
 // - Builds the BVH for static geometry.
 void init_session_from_map(game_session_t &session, const map_t &map);
+
+// Register Jolt static bodies for all collision geometry in the map (AABB_Entity, Wedge_Entity).
+// Call after init_session_from_map on both server and client when physics is needed.
+// Static_Mesh_Entity is skipped — no simple shape is available from schema fields.
+void populate_static_physics_bodies(physics_state_t &state, const map_t &map);
 
 } // namespace shared

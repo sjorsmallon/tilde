@@ -71,6 +71,20 @@ target_link_libraries(imgui PUBLIC
     Vulkan::Vulkan
 )
 
+# 5. Jolt Physics
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG v5.2.0
+    SOURCE_SUBDIR Build  # Jolt's CMakeLists.txt lives in Build/, not the repo root
+)
+FetchContent_MakeAvailable(JoltPhysics)
+
 # this is to silence a lot of schema warnings.
 if(MSVC)
     add_compile_options(/Zc:preprocessor)
@@ -117,6 +131,8 @@ add_library(game_shared STATIC
     src/shared/asset.hpp
     src/shared/asset.cpp
     src/shared/player_move.cpp
+    src/shared/physics.hpp
+    src/shared/physics.cpp
     src/shared/bot_debug.hpp
     src/shared/bot_debug.cpp
 )
@@ -148,7 +164,8 @@ target_include_directories(game_shared PUBLIC
     src/shared 
     ${PROTO_OUT_DIR}
 )
-target_link_libraries(game_shared PUBLIC libprotobuf)
+target_link_libraries(game_shared PUBLIC libprotobuf Jolt)
+target_include_directories(game_shared PUBLIC ${joltphysics_SOURCE_DIR})
 
 
 # 2. Game Client (Shared Library / DLL)
@@ -199,6 +216,7 @@ configure_file(
 )
 
 add_library(game_client SHARED
+    src/client/jolt_debug_renderer.cpp
     src/client/client_impl.cpp
     src/client/console.cpp
     src/client/state_manager.cpp

@@ -1,5 +1,9 @@
 #include "play_state.hpp"
 #include "../console.hpp"
+#include "../../shared/physics.hpp"
+#ifdef JPH_DEBUG_RENDERER
+#include <Jolt/Physics/Body/BodyManager.h>
+#endif
 #include "../../shared/asset.hpp"
 #include "../../shared/cvar.hpp"
 #include "../../shared/debug_collision.hpp"
@@ -28,22 +32,33 @@
 namespace client
 {
 
+using Connection_Phase  = client_context_t::Connection_Phase;
+using explosion_effect_t = client_context_t::explosion_effect_t;
+
 void PlayState::on_enter()
 {
   session_loaded = false;
-  player_velocity = {0, 0, 0};
-  connection_phase = Connection_Phase::Disconnected;
-  my_slot = -1;
-  command_number = 0;
-  last_server_ack_command = -1;
-  received_server_update = false;
-  interpolation_time = 0.f;
-  remote_players = {};
-  last_player_entities.clear();
-  remote_rockets.clear();
-  last_processed_tick = 0;
 
   auto &ctx = state_manager::get_client_context();
+
+  ctx.player_velocity        = {0, 0, 0};
+  ctx.player_position        = {0, 36, 0};
+  ctx.player_yaw             = 0.0f;
+  ctx.player_pitch           = 0.0f;
+  ctx.physics_accumulator    = 0.0f;
+  ctx.connection_phase       = Connection_Phase::Disconnected;
+  ctx.my_slot                = -1;
+  ctx.command_number         = 0;
+  ctx.last_server_ack_command = -1;
+  ctx.received_server_update = false;
+  ctx.interpolation_time     = 0.f;
+  ctx.remote_players         = {};
+  ctx.last_player_entities.clear();
+  ctx.remote_rockets.clear();
+  ctx.last_processed_tick    = 0;
+  ctx.pending_commands       = {};
+  ctx.explosion_effects.clear();
+  ctx.next_explosion_index   = 0;
 
   // Load the same map the editor uses (from last_map.txt)
   std::ifstream f("last_map.txt");
@@ -72,29 +87,40 @@ void PlayState::on_enter()
                      .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
   if (spawns && !spawns->empty())
   {
-    player_position = spawns->front().position;
-    player_yaw = 0.0f;
-    player_pitch = 0.0f;
+    ctx.player_position = spawns->front().position;
     log_terminal("[CLIENT] Initial spawn from map: ({:.1f}, {:.1f}, {:.1f})",
-                 player_position.x, player_position.y, player_position.z);
+                 ctx.player_position.x, ctx.player_position.y, ctx.player_position.z);
   }
   else
   {
-    player_position = {0, 36, 0};
-    player_yaw = 0.0f;
-    player_pitch = 0.0f;
+    ctx.player_position = {0, 36, 0};
     log_terminal("[CLIENT] Using default spawn: (0, 36, 0)");
   }
 
   // Set up camera at player position (eye height)
-  camera.position.x = player_position.x;
-  camera.position.y = player_position.y + 28.f; // eye level
-  camera.position.z = player_position.z;
-  camera.yaw = player_yaw;
-  camera.pitch = player_pitch;
+  camera.position.x = ctx.player_position.x;
+  camera.position.y = ctx.player_position.y + 28.f;
+  camera.position.z = ctx.player_position.z;
+  camera.yaw = ctx.player_yaw;
+  camera.pitch = ctx.player_pitch;
   camera.orthographic = false;
 
   input::set_relative_mouse_mode(true);
+
+  // --- Physics ---
+  static bool jolt_initialized = false;
+  if (!jolt_initialized)
+  {
+    jolt_init();
+    jolt_initialized = true;
+  }
+  physics_state = std::make_unique<physics_state_t>();
+  init_physics(*physics_state);
+  if (session_loaded)
+    shared::populate_static_physics_bodies(*physics_state, map);
+#ifdef JPH_DEBUG_RENDERER
+  jolt_debug_renderer = std::make_unique<client::jolt_debug_renderer_t>();
+#endif
 
   // --- Connect to server ---
   auto &conn = ctx.connection_state;
@@ -103,9 +129,7 @@ void PlayState::on_enter()
     conn.socket.open(network::client_port_number);
   }
 
-  // For integrated mode: connect to localhost
-  conn.server_address =
-      network::Address(127, 0, 0, 1, network::server_port_number);
+  conn.server_address = network::Address(127, 0, 0, 1, network::server_port_number);
 
   game::NetCommand connect_cmd;
   auto *connect = connect_cmd.mutable_connect();
@@ -113,7 +137,7 @@ void PlayState::on_enter()
   connect->set_player_name("Player");
 
   network::send_protobuf_message(conn, connect_cmd);
-  connection_phase = Connection_Phase::Connecting;
+  ctx.connection_phase = Connection_Phase::Connecting;
 
   renderer::draw_announcement("Play Mode");
 }
@@ -123,17 +147,22 @@ void PlayState::on_exit()
   auto &ctx = state_manager::get_client_context();
   auto &conn = ctx.connection_state;
 
-  if (connection_phase != Connection_Phase::Disconnected)
+  if (ctx.connection_phase != Connection_Phase::Disconnected)
   {
     game::NetCommand disconnect_cmd;
     disconnect_cmd.mutable_disconnect()->set_reason("Player left");
     network::send_protobuf_message(conn, disconnect_cmd);
-    connection_phase = Connection_Phase::Disconnected;
+    ctx.connection_phase = Connection_Phase::Disconnected;
     Console::Get().SetNetworkForwarder(nullptr);
   }
   conn.socket.close();
 
   input::set_relative_mouse_mode(false);
+
+#ifdef JPH_DEBUG_RENDERER
+  jolt_debug_renderer.reset();
+#endif
+  physics_state.reset();
 }
 
 void PlayState::update(float dt)
@@ -146,10 +175,12 @@ void PlayState::update(float dt)
   if (dt_history_count < FPS_HISTORY_SIZE)
     dt_history_count++;
 
+  auto &ctx = state_manager::get_client_context();
+
   // Tick down explosion effects
-  for (auto &fx : explosion_effects)
+  for (auto &fx : ctx.explosion_effects)
     fx.time_remaining -= dt;
-  std::erase_if(explosion_effects, [](const explosion_effect_t &fx) {
+  std::erase_if(ctx.explosion_effects, [](const explosion_effect_t &fx) {
     return fx.time_remaining <= 0.f;
   });
 
@@ -163,7 +194,6 @@ void PlayState::update(float dt)
   if (!session_loaded)
     return;
 
-  auto &ctx = state_manager::get_client_context();
   auto &conn = ctx.connection_state;
   conn_state_ = &conn;
 
@@ -178,24 +208,17 @@ void PlayState::update(float dt)
   network::ClientInbox inbox;
   network::poll_client_network(conn, 0.001, inbox); // 1ms receive window
 
-  if (!inbox.entity_updates.empty())
-  {
-
-    // log_terminal("[CLIENT] Received {} entity update packages this frame\n",
-    //        inbox.entity_updates.size());
-  }
-
   for (const auto &cmd : inbox.net_commands)
   {
     if (cmd.has_accept())
     {
-      my_slot = cmd.accept().client_slot();
-      server_tickrate = cmd.accept().server_tickrate();
-      if (server_tickrate == 0)
-        server_tickrate = 60;
+      ctx.my_slot = cmd.accept().client_slot();
+      ctx.server_tickrate = cmd.accept().server_tickrate();
+      if (ctx.server_tickrate == 0)
+        ctx.server_tickrate = 60;
       conn.connected = true;
-      connection_phase = Connection_Phase::Connected;
-      log_terminal("Connected to server! Slot {}, map: {}", my_slot,
+      ctx.connection_phase = Connection_Phase::Connected;
+      log_terminal("Connected to server! Slot {}, map: {}", ctx.my_slot,
                    cmd.accept().map_name());
 
       // Forward server-flagged console commands over the network.
@@ -208,7 +231,7 @@ void PlayState::update(float dt)
     else if (cmd.has_reject())
     {
       log_terminal("Connection rejected: {}", cmd.reject().reason());
-      connection_phase = Connection_Phase::Disconnected;
+      ctx.connection_phase = Connection_Phase::Disconnected;
     }
   }
 
@@ -252,17 +275,8 @@ void PlayState::update(float dt)
 
     uint32_t snap_tick = pkg.has_server_tick() ? pkg.server_tick() : 0;
 
-    // Discard old or duplicate snapshots - only process newer ticks
-    if (snap_tick <= last_processed_tick && last_processed_tick != 0)
-    {
-      // log_terminal("[CLIENT] Discarding old snapshot: tick %u (last processed: %u)\n",
-      //        snap_tick, last_processed_tick);
-
-      continue;  // Skip this outdated packet
-    }
-
-    // log_terminal("[CLIENT] Processing snapshot tick {} (last was {})\n",
-    //        snap_tick, last_processed_tick);
+    if (snap_tick <= ctx.last_processed_tick && ctx.last_processed_tick != 0)
+      continue;
 
     const auto *data = reinterpret_cast<const network::uint8 *>(
         pkg.entity_data().data());
@@ -270,8 +284,6 @@ void PlayState::update(float dt)
     network::Bit_Reader reader(data, data_size);
 
     uint32_t entity_count = network::read_var_uint(reader);
-    // log_terminal("[CLIENT] Entity data size: {} bytes, entity_count: {} \n",
-    //        data_size, entity_count);
 
     // Build new rocket map from this snapshot (complete state replacement)
     std::unordered_map<uint32_t, network::Rocket_Entity> new_rockets;
@@ -280,45 +292,37 @@ void PlayState::update(float dt)
     {
       uint32_t slot_index = network::read_var_uint(reader);
 
-      // Check if this is a rocket (slot 255) or a player
       if (slot_index == 255)
       {
-        // Read entity_id (sent explicitly for delta compression)
         uint64_t entity_id = network::read_var_uint64(reader);
 
-        // Start with existing rocket state (or default if new)
         network::Rocket_Entity rocket;
-        auto it = remote_rockets.find(entity_id);
-        if (it != remote_rockets.end())
-          rocket = it->second;  // Reuse existing state as baseline
+        auto it = ctx.remote_rockets.find(entity_id);
+        if (it != ctx.remote_rockets.end())
+          rocket = it->second;
 
-        rocket.deserialize(reader);  // Apply delta
+        rocket.deserialize(reader);
         new_rockets[entity_id] = rocket;
-        // log_terminal("[CLIENT]  Entity {}  Rocket ID {} at ({:.1f}, {:.1f}, {:.1f})\n",
-        //        i, entity_id, rocket.position.x, rocket.position.y, rocket.position.z);
       }
       else
       {
-        // Read entity_id (sent explicitly for delta compression)
         uint64_t entity_id = network::read_var_uint64(reader);
 
-        // Reuse existing entity state as baseline for delta decompression
         network::Player_Entity temp;
-        auto pit = last_player_entities.find(slot_index);
-        if (pit != last_player_entities.end())
+        auto pit = ctx.last_player_entities.find(slot_index);
+        if (pit != ctx.last_player_entities.end())
           temp = pit->second;
 
         temp.deserialize(reader);
-        last_player_entities[slot_index] = temp;
+        ctx.last_player_entities[slot_index] = temp;
 
-        if (static_cast<int32_t>(slot_index) == my_slot)
+        if (static_cast<int32_t>(slot_index) == ctx.my_slot)
         {
-          // Local player: store server state for reconciliation
-          last_server_position = temp.position;
-          last_server_velocity = temp.velocity;
-          last_server_ack_command =
+          ctx.last_server_position = temp.position;
+          ctx.last_server_velocity = temp.velocity;
+          ctx.last_server_ack_command =
               pkg.has_last_processed_command() ? pkg.last_processed_command() : -1;
-          received_server_update = true;
+          ctx.received_server_update = true;
 
           static bool first_update = true;
           if (first_update) {
@@ -329,8 +333,7 @@ void PlayState::update(float dt)
         }
         else
         {
-          // Remote player (or bot): push into interpolation buffer
-          auto &rp = remote_players[slot_index];
+          auto &rp = ctx.remote_players[slot_index];
           rp.active = true;
           rp.slot_index = slot_index;
           rp.snapshots[0] = rp.snapshots[1];
@@ -338,51 +341,47 @@ void PlayState::update(float dt)
                              temp.view_angle_pitch, snap_tick};
           if (rp.snapshot_count < 2)
             rp.snapshot_count++;
-          interpolation_time = 0.f;
+          ctx.interpolation_time = 0.f;
         }
       }
     }
 
     // Detect rockets that disappeared (hit something) and spawn explosions
-    for (const auto &[id, rocket] : remote_rockets)
+    for (const auto &[id, rocket] : ctx.remote_rockets)
     {
       if (new_rockets.find(id) == new_rockets.end())
       {
         explosion_effect_t fx;
         fx.position = rocket.position;
         fx.time_remaining = 1.2f;
-        fx.emitter_id = next_explosion_id++;
-        explosion_effects.push_back(fx);
+        fx.explosion_index = ctx.next_explosion_index++;
+        ctx.explosion_effects.push_back(fx);
       }
     }
 
-    // Atomically replace rocket map with new snapshot data
-    remote_rockets = std::move(new_rockets);
-    last_processed_tick = snap_tick;
+    ctx.remote_rockets = std::move(new_rockets);
+    ctx.last_processed_tick = snap_tick;
   }
 
-
   // --- Reconciliation ---
-  if (received_server_update &&
-      connection_phase == Connection_Phase::Connected)
+  if (ctx.received_server_update &&
+      ctx.connection_phase == Connection_Phase::Connected)
   {
-    received_server_update = false;
+    ctx.received_server_update = false;
 
-    vec3f reconciled_pos = last_server_position;
-    vec3f reconciled_vel = last_server_velocity;
+    vec3f reconciled_pos = ctx.last_server_position;
+    vec3f reconciled_vel = ctx.last_server_velocity;
 
-    float prediction_dt = 1.0f / static_cast<float>(server_tickrate);
+    float prediction_dt = 1.0f / static_cast<float>(ctx.server_tickrate);
 
-    // Re-apply all commands the server hasn't processed yet
-    for (int cmd_num = last_server_ack_command + 1; cmd_num < command_number;
+    for (int cmd_num = ctx.last_server_ack_command + 1; cmd_num < ctx.command_number;
          ++cmd_num)
     {
-      int idx = cmd_num % MAX_PENDING_COMMANDS;
-      const auto &saved = pending_commands[idx];
+      int idx = cmd_num % (int)ctx.pending_commands.size();
+      const auto &saved = ctx.pending_commands[idx];
       if (saved.command_number != cmd_num)
-        break; // Ring buffer overwritten
+        break;
 
-      // Rebuild basis from saved viewangles
       camera_t temp_cam;
       temp_cam.yaw = saved.yaw;
       temp_cam.pitch = saved.pitch;
@@ -397,34 +396,29 @@ void PlayState::update(float dt)
       reconciled_vel = repredict_vel;
     }
 
-    // Compare prediction vs reconciliation
-    vec3f error = {reconciled_pos.x - player_position.x,
-                   reconciled_pos.y - player_position.y,
-                   reconciled_pos.z - player_position.z};
+    vec3f error = {reconciled_pos.x - ctx.player_position.x,
+                   reconciled_pos.y - ctx.player_position.y,
+                   reconciled_pos.z - ctx.player_position.z};
     float error_mag = linalg::length(error);
 
-    reconc_error = error;
-    reconc_error_mag = error_mag;
+    ctx.reconc_error = error;
+    ctx.reconc_error_mag = error_mag;
 
     constexpr float SNAP_THRESHOLD = 5.0f;
 
     if (error_mag > SNAP_THRESHOLD)
     {
-      // Too far off — hard snap, no visual smoothing
-      visual_error_offset = {0, 0, 0};
+      ctx.visual_error_offset = {0, 0, 0};
     }
     else
     {
-      // Accumulate the visual debt: camera stays where it was,
-      // but physics snaps to the correct position
-      visual_error_offset.x += player_position.x - reconciled_pos.x;
-      visual_error_offset.y += player_position.y - reconciled_pos.y;
-      visual_error_offset.z += player_position.z - reconciled_pos.z;
+      ctx.visual_error_offset.x += ctx.player_position.x - reconciled_pos.x;
+      ctx.visual_error_offset.y += ctx.player_position.y - reconciled_pos.y;
+      ctx.visual_error_offset.z += ctx.player_position.z - reconciled_pos.z;
     }
 
-    // Always snap physics to reconciled state
-    player_position = reconciled_pos;
-    player_velocity = reconciled_vel;
+    ctx.player_position = reconciled_pos;
+    ctx.player_velocity = reconciled_vel;
   }
 
   const bool console_open = Console::Get().IsOpen();
@@ -434,13 +428,13 @@ void PlayState::update(float dt)
   {
     int dx, dy;
     input::get_mouse_delta(&dx, &dy);
-    player_yaw += dx * 0.1f;
-    player_pitch -= dy * 0.1f;
-    shared::clamp_this(player_pitch, -89.0f, 89.0f);
+    ctx.player_yaw += dx * 0.1f;
+    ctx.player_pitch -= dy * 0.1f;
+    shared::clamp_this(ctx.player_pitch, -89.0f, 89.0f);
   }
 
-  camera.yaw = player_yaw;
-  camera.pitch = player_pitch;
+  camera.yaw = ctx.player_yaw;
+  camera.pitch = ctx.player_pitch;
   auto basis = get_orientation_vectors(camera);
 
   // --- Gather move input (suppressed while console is open) ---
@@ -467,81 +461,76 @@ void PlayState::update(float dt)
 
   Move_Input move_input = move_input_from_buttons(buttons);
 
-  // --- Client-side prediction (run movement physics locally) ---
-  // When connected, physics must step at the server tickrate so prediction
-  // matches the server. Accumulate real frame time and step in fixed
-  // increments; send one command per step.
-  if (connection_phase == Connection_Phase::Connected)
+  // --- Client-side prediction ---
+  // When connected, physics steps at the server tickrate so prediction matches
+  // the server. Accumulate real frame time and step in fixed increments.
+  if (ctx.connection_phase == Connection_Phase::Connected)
   {
-    float tick_dt = 1.0f / static_cast<float>(server_tickrate);
-    physics_accumulator += dt;
+    float tick_dt = 1.0f / static_cast<float>(ctx.server_tickrate);
+    ctx.physics_accumulator += dt;
 
-    while (physics_accumulator >= tick_dt)
+    while (ctx.physics_accumulator >= tick_dt)
     {
-      physics_accumulator -= tick_dt;
+      ctx.physics_accumulator -= tick_dt;
 
-      // Send this tick's command to the server
       game::C2S_PlayerMoveCommand move_cmd;
-      move_cmd.set_command_number(command_number);
-      move_cmd.set_tick_count(command_number);
+      move_cmd.set_command_number(ctx.command_number);
+      move_cmd.set_tick_count(ctx.command_number);
       auto *va = move_cmd.mutable_viewangles();
-      va->set_pitch(player_pitch);
-      va->set_yaw(player_yaw);
+      va->set_pitch(ctx.player_pitch);
+      va->set_yaw(ctx.player_yaw);
       move_cmd.set_buttons_bitfield(buttons);
       network::send_protobuf_message(conn, move_cmd);
 
       auto [new_pos, new_vel] =
-          player_move(move_input, ctx.session.bvh, player_position,
-                      player_velocity, basis.forward, basis.right,
+          player_move(move_input, ctx.session.bvh, ctx.player_position,
+                      ctx.player_velocity, basis.forward, basis.right,
                       player_half_width, player_half_height, tick_dt);
 
-      player_position = new_pos;
-      player_velocity = new_vel;
+      ctx.player_position = new_pos;
+      ctx.player_velocity = new_vel;
 
-      // Save command for reconciliation
-      int idx = command_number % MAX_PENDING_COMMANDS;
-      pending_commands[idx] = {command_number,     move_input,
-                               player_yaw,         player_pitch,
-                               player_position,    player_velocity};
-      command_number++;
+      int idx = ctx.command_number % (int)ctx.pending_commands.size();
+      ctx.pending_commands[idx] = {ctx.command_number,    move_input,
+                                   ctx.player_yaw,        ctx.player_pitch,
+                                   ctx.player_position,   ctx.player_velocity};
+      ctx.command_number++;
     }
   }
   else
   {
-    // Disconnected: use real frame dt directly
     auto [new_pos, new_vel] =
-        player_move(move_input, ctx.session.bvh, player_position,
-                    player_velocity, basis.forward, basis.right,
+        player_move(move_input, ctx.session.bvh, ctx.player_position,
+                    ctx.player_velocity, basis.forward, basis.right,
                     player_half_width, player_half_height, dt);
 
-    player_position = new_pos;
-    player_velocity = new_vel;
+    ctx.player_position = new_pos;
+    ctx.player_velocity = new_vel;
   }
 
   // --- Decay visual error offset (frame-rate independent) ---
   {
-    constexpr float SMOOTH_SPEED = 16.0f; // higher = faster correction
+    constexpr float SMOOTH_SPEED = 16.0f;
     float decay = std::exp(-SMOOTH_SPEED * dt);
-    visual_error_offset.x *= decay;
-    visual_error_offset.y *= decay;
-    visual_error_offset.z *= decay;
+    ctx.visual_error_offset.x *= decay;
+    ctx.visual_error_offset.y *= decay;
+    ctx.visual_error_offset.z *= decay;
 
-    // Zero out when negligible to avoid permanent micro-drift
-    if (linalg::length(visual_error_offset) < 0.001f)
-      visual_error_offset = {0, 0, 0};
+    if (linalg::length(ctx.visual_error_offset) < 0.001f)
+      ctx.visual_error_offset = {0, 0, 0};
   }
 
-  // --- Update camera (physics position + visual smoothing offset) ---
-  // Extrapolate by the leftover physics accumulator so the camera moves
-  // smoothly between fixed-rate physics ticks instead of stuttering.
-  float extrap = (connection_phase == Connection_Phase::Connected) ? physics_accumulator : 0.f;
-  camera.position.x = player_position.x + player_velocity.x * extrap + visual_error_offset.x;
-  camera.position.y = player_position.y + player_velocity.y * extrap + visual_error_offset.y + 28.f;
-  camera.position.z = player_position.z + player_velocity.z * extrap + visual_error_offset.z;
+  // --- Update camera ---
+  // Extrapolate by the leftover accumulator for smooth inter-tick camera motion.
+  float extrap = (ctx.connection_phase == Connection_Phase::Connected)
+                     ? ctx.physics_accumulator : 0.f;
+  camera.position.x = ctx.player_position.x + ctx.player_velocity.x * extrap + ctx.visual_error_offset.x;
+  camera.position.y = ctx.player_position.y + ctx.player_velocity.y * extrap + ctx.visual_error_offset.y + 28.f;
+  camera.position.z = ctx.player_position.z + ctx.player_velocity.z * extrap + ctx.visual_error_offset.z;
 
   // --- Interpolate remote players ---
-  float tick_interval = 1.0f / static_cast<float>(server_tickrate);
-  for (auto &[slot, rp] : remote_players)
+  float tick_interval = 1.0f / static_cast<float>(ctx.server_tickrate);
+  for (auto &[slot, rp] : ctx.remote_players)
   {
     if (!rp.active || rp.snapshot_count < 2)
     {
@@ -554,32 +543,28 @@ void PlayState::update(float dt)
       continue;
     }
 
-    uint32_t tick_diff =
-        rp.snapshots[1].server_tick - rp.snapshots[0].server_tick;
+    uint32_t tick_diff = rp.snapshots[1].server_tick - rp.snapshots[0].server_tick;
     if (tick_diff == 0)
       tick_diff = 1;
 
     float interp_duration = tick_interval * static_cast<float>(tick_diff);
-    float t = interpolation_time / interp_duration;
+    float t = ctx.interpolation_time / interp_duration;
     if (t > 1.f)
       t = 1.f;
 
-    rp.render_position.x = rp.snapshots[0].position.x * (1.f - t) +
-                            rp.snapshots[1].position.x * t;
-    rp.render_position.y = rp.snapshots[0].position.y * (1.f - t) +
-                            rp.snapshots[1].position.y * t;
-    rp.render_position.z = rp.snapshots[0].position.z * (1.f - t) +
-                            rp.snapshots[1].position.z * t;
-    rp.render_yaw =
-        rp.snapshots[0].yaw * (1.f - t) + rp.snapshots[1].yaw * t;
-    rp.render_pitch =
-        rp.snapshots[0].pitch * (1.f - t) + rp.snapshots[1].pitch * t;
+    rp.render_position.x = rp.snapshots[0].position.x * (1.f - t) + rp.snapshots[1].position.x * t;
+    rp.render_position.y = rp.snapshots[0].position.y * (1.f - t) + rp.snapshots[1].position.y * t;
+    rp.render_position.z = rp.snapshots[0].position.z * (1.f - t) + rp.snapshots[1].position.z * t;
+    rp.render_yaw   = rp.snapshots[0].yaw   * (1.f - t) + rp.snapshots[1].yaw   * t;
+    rp.render_pitch = rp.snapshots[0].pitch * (1.f - t) + rp.snapshots[1].pitch * t;
   }
-  interpolation_time += dt;
+  ctx.interpolation_time += dt;
 }
 
 void PlayState::render_ui()
 {
+  auto &ctx = state_manager::get_client_context();
+
   ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
   ImGui::SetNextWindowBgAlpha(0.3f);
   if (ImGui::Begin("##play_hud", nullptr,
@@ -590,10 +575,10 @@ void PlayState::render_ui()
   {
     ImGui::Text("PLAY MODE  [ESC] to return to editor");
     ImGui::Text("Uncapture mouse [U]");
-    ImGui::Text("pos: %.1f, %.1f, %.1f", player_position.x, player_position.y,
-                player_position.z);
-    ImGui::Text("vel: %.1f, %.1f, %.1f", player_velocity.x, player_velocity.y,
-                player_velocity.z);
+    ImGui::Text("pos: %.1f, %.1f, %.1f", ctx.player_position.x, ctx.player_position.y,
+                ctx.player_position.z);
+    ImGui::Text("vel: %.1f, %.1f, %.1f", ctx.player_velocity.x, ctx.player_velocity.y,
+                ctx.player_velocity.z);
 
     float avg_dt = 0.f;
     for (int i = 0; i < dt_history_count; i++)
@@ -602,24 +587,22 @@ void PlayState::render_ui()
     ImGui::Text("%.1f fps (%.2f ms)", 1.f / avg_dt, avg_dt * 1000.f);
 
     const char *conn_str = "Disconnected";
-    if (connection_phase == Connection_Phase::Connecting)
+    if (ctx.connection_phase == Connection_Phase::Connecting)
       conn_str = "Connecting...";
-    else if (connection_phase == Connection_Phase::Connected)
+    else if (ctx.connection_phase == Connection_Phase::Connected)
       conn_str = "Connected";
-    ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, my_slot,
-                command_number);
+    ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, ctx.my_slot, ctx.command_number);
 
-    // Reconciliation error debug
-    if (reconc_error_mag > 0.01f)
+    if (ctx.reconc_error_mag > 0.01f)
       ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "reconc err: %7.3f (%7.2f, %7.2f, %7.2f)",
-                         reconc_error_mag, reconc_error.x, reconc_error.y, reconc_error.z);
+                         ctx.reconc_error_mag, ctx.reconc_error.x, ctx.reconc_error.y, ctx.reconc_error.z);
     else
-      ImGui::Text("reconc err: %7.3f", reconc_error_mag);
+      ImGui::Text("reconc err: %7.3f", ctx.reconc_error_mag);
 
-    float vis_offset_mag = linalg::length(visual_error_offset);
+    float vis_offset_mag = linalg::length(ctx.visual_error_offset);
     if (vis_offset_mag > 0.01f)
       ImGui::TextColored(ImVec4(1, 1, 0.3f, 1), "vis offset: %7.3f (%7.2f, %7.2f, %7.2f)",
-                         vis_offset_mag, visual_error_offset.x, visual_error_offset.y, visual_error_offset.z);
+                         vis_offset_mag, ctx.visual_error_offset.x, ctx.visual_error_offset.y, ctx.visual_error_offset.z);
     else
       ImGui::Text("vis offset: %7.3f", vis_offset_mag);
 
@@ -634,13 +617,15 @@ void PlayState::render_ui()
 
     ImGui::Checkbox("Hide Geometry", &hide_geometry);
     ImGui::Checkbox("Show Entities", &show_entity_debug);
+#ifdef JPH_DEBUG_RENDERER
+    ImGui::Checkbox("Show Physics Debug", &show_physics_debug);
+#endif
   }
   ImGui::End();
 
   // --- Entity debug overlay ---
   if (show_entity_debug)
   {
-    auto &ctx = state_manager::get_client_context();
     ImGui::SetNextWindowPos(ImVec2(300, 10), ImGuiCond_Once);
     ImGui::SetNextWindowBgAlpha(0.5f);
     if (ImGui::Begin("Entities##entity_debug", &show_entity_debug,
@@ -649,13 +634,10 @@ void PlayState::render_ui()
     {
       int total = 0;
 
-      // Dynamic entities from entity_system pools
       for (auto &[type, pool_ptr] : ctx.session.entity_system.pools)
       {
         if (!pool_ptr) continue;
         std::string name = shared::type_to_classname(type);
-        // Use the EntityPool base to get count — cast to concrete pool
-        // We iterate known types via the X-macro
         int count = 0;
 #define COUNT_POOL(enum_name, class_name, str_name, header_path)                \
   if (type == entity_type::enum_name)                                           \
@@ -674,7 +656,6 @@ void PlayState::render_ui()
         }
       }
 
-      // Static entities (collision geometry)
       int static_count = (int)ctx.session.static_entities.size();
       if (static_count > 0)
       {
@@ -682,20 +663,17 @@ void PlayState::render_ui()
         total += static_count;
       }
 
-      // Remote players (client-side interpolation state)
       int remote_count = 0;
-      for (auto &[slot, rp] : remote_players)
+      for (auto &[slot, rp] : ctx.remote_players)
         if (rp.active) remote_count++;
       if (remote_count > 0)
         ImGui::Text("%-20s %d", "remote players", remote_count);
 
-      // Client-side rockets
-      int rocket_count = (int)remote_rockets.size();
+      int rocket_count = (int)ctx.remote_rockets.size();
       if (rocket_count > 0)
         ImGui::Text("%-20s %d", "remote rockets", rocket_count);
 
-      // Explosions
-      int fx_count = (int)explosion_effects.size();
+      int fx_count = (int)ctx.explosion_effects.size();
       if (fx_count > 0)
         ImGui::Text("%-20s %d", "explosion fx", fx_count);
 
@@ -725,8 +703,7 @@ void PlayState::render_ui()
         const char *goal_str = (bot.goal >= 0 && bot.goal < 4) ? goal_names[bot.goal] : "?";
         const char *type_str = (bot.type >= 0 && bot.type < 3) ? type_names[bot.type] : "?";
         int wp_remaining = (int)bot.path.size() - bot.path_index;
-        ImGui::Text("slot %d [%s] %s  wp:%d",
-                    bot.slot, type_str, goal_str, wp_remaining);
+        ImGui::Text("slot %d [%s] %s  wp:%d", bot.slot, type_str, goal_str, wp_remaining);
       }
     }
     ImGui::End();
@@ -755,7 +732,6 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     if (!ent)
       continue;
 
-    // Try render component first
     const auto *rc = ent->get_component<network::render_component_t>();
     if (rc && rc->visible)
     {
@@ -763,18 +739,15 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
       if (mesh_path)
       {
-        // Check if it's a primitive (starts with __primitive_)
         assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
         if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
         {
-          // Extract primitive name (after "__primitive_")
           const char *prim_name = mesh_path + 12;
           printf("[CLIENT] Loading primitive: %s\n", prim_name);
           mesh_handle = assets::get_primitive_mesh(prim_name);
         }
         else
         {
-          // Regular OBJ file
           mesh_handle = assets::load_mesh(mesh_path);
         }
 
@@ -826,11 +799,9 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
     else if (auto *disp = dynamic_cast<network::Displacement_Entity *>(ent.get()))
     {
-      std::string disp_key =
-          "__displacement_" + std::to_string(disp->entity_id);
+      std::string disp_key = "__displacement_" + std::to_string(disp->entity_id);
       auto mesh = network::generate_displacement_mesh(*disp);
-      auto mesh_handle =
-          assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
+      auto mesh_handle = assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
       if (mesh_handle.valid())
       {
         renderer::DrawMesh(cmd, mesh_handle,
@@ -845,7 +816,6 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       renderer::DrawWireAABB(cmd, bounds.min, bounds.max, 0xFF00FFFF);
     }
 
-    // Debug hitbox visualization
     if (debug_collision::debug_show_hitboxes.Get())
     {
       const auto *hitbox = ent->get_component<network::hitbox_component_t>();
@@ -855,14 +825,9 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         const char *shape = hitbox->shape_type.c_str();
 
         if (strcmp(shape, "sphere") == 0)
-        {
           renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, 0xFF00FF00);
-        }
         else if (strcmp(shape, "capsule") == 0)
-        {
-          renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x,
-                                        hitbox->size.y, 0xFF00FF00);
-        }
+          renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y, 0xFF00FF00);
         else if (strcmp(shape, "aabb") == 0)
         {
           vec3f min = hitbox_center - hitbox->size;
@@ -873,24 +838,21 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  // Render map entities that aren't static (dynamic entities like other players)
+  // Render map entities that aren't static
   for (const auto &entry : map.entities)
   {
     const auto &ent = entry.entity;
     if (!ent)
       continue;
 
-    // Skip static types (already rendered above from session)
     if (dynamic_cast<network::AABB_Entity *>(ent.get()) ||
         dynamic_cast<network::Wedge_Entity *>(ent.get()) ||
         dynamic_cast<network::Static_Mesh_Entity *>(ent.get()))
       continue;
 
-    // Skip the player entity we're occupying (first person - don't render self)
     if (dynamic_cast<network::Player_Entity *>(ent.get()))
       continue;
 
-    // Render other dynamic entities with their render components
     const auto *rc = ent->get_component<network::render_component_t>();
     if (rc && rc->visible && rc->mesh_path.length > 0)
     {
@@ -920,9 +882,9 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   }
 
   // Render remote players and bots as wireframe AABBs
-  for (const auto &[slot, rp] : remote_players)
+  for (const auto &[slot, rp] : ctx.remote_players)
   {
-    if (!rp.active || rp.slot_index == my_slot)
+    if (!rp.active || rp.slot_index == ctx.my_slot)
       continue;
 
     vec3f half = {player_half_width, player_half_height, player_half_width};
@@ -936,7 +898,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   }
 
   // Render rockets received from server
-  for (const auto &[id, rocket] : remote_rockets)
+  for (const auto &[id, rocket] : ctx.remote_rockets)
   {
     const auto *rc = &rocket.render;
     if (!rc->visible)
@@ -947,18 +909,12 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     {
       assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
       if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
-      {
-        const char *prim_name = mesh_path + 12;
-        mesh_handle = assets::get_primitive_mesh(prim_name);
-      }
+        mesh_handle = assets::get_primitive_mesh(mesh_path + 12);
       else
-      {
         mesh_handle = assets::load_mesh(mesh_path);
-      }
 
       if (mesh_handle.valid())
       {
-
         renderer::DrawMesh(cmd, mesh_handle,
                            {.position = rocket.position,
                             .scale    = rc->scale,
@@ -967,17 +923,14 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       }
       else
       {
-        std::print("[CLIENT] Rocket {} mesh_handle INVALID (path='{}')\n",
-                   id, mesh_path);
+        std::print("[CLIENT] Rocket {} mesh_handle INVALID (path='{}')\n", id, mesh_path);
       }
     }
     else
     {
-      std::print("[CLIENT] Rocket {} has no mesh_path set (visible={})\n",
-                 id, rc->visible);
+      std::print("[CLIENT] Rocket {} has no mesh_path set (visible={})\n", id, rc->visible);
     }
 
-    // Debug hitbox visualization for rockets
     if (debug_collision::debug_show_hitboxes.Get())
     {
       const auto *hitbox = &rocket.hitbox;
@@ -985,14 +938,9 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       const char *shape = hitbox->shape_type.c_str();
 
       if (strcmp(shape, "sphere") == 0)
-      {
         renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, 0xFF00FF00);
-      }
       else if (strcmp(shape, "capsule") == 0)
-      {
-        renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x,
-                                      hitbox->size.y, 0xFF00FF00);
-      }
+        renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y, 0xFF00FF00);
       else if (strcmp(shape, "aabb") == 0)
       {
         vec3f min = hitbox_center - hitbox->size;
@@ -1002,13 +950,12 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  // Debug: Render navmesh as triangle wireframes, colored by island ID
+  // Debug: navmesh as triangle wireframes, colored by island ID
   if (debug_collision::debug_show_navmesh.Get())
   {
     const navmesh_t &nav = ctx.session.navmesh;
     constexpr float y_lift = 2.f;
 
-    // Cycle through distinct colors per island
     static constexpr uint32_t island_colors[] = {
       0xFFFFFF00, // ABGR: cyan
       0xFF00FFFF, // yellow
@@ -1030,9 +977,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       }
     }
 
-    // Draw each vertex as a small cross so winding/deduplication is visible.
     constexpr float r = 2.f;
-    constexpr uint32_t vert_color = 0xFFFFFFFF; // white
+    constexpr uint32_t vert_color = 0xFFFFFFFF;
     for (const auto &v : nav.vertices)
     {
       vec3f p = v.pos; p.y += y_lift;
@@ -1041,10 +987,10 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  // Debug: Render collision faces in green
+  // Debug: collision faces in green
   if (debug_collision::debug_show_collisions.Get())
   {
-    constexpr uint32_t green = 0xFF00FF00; // ABGR: opaque green
+    constexpr uint32_t green = 0xFF00FF00;
 
     renderer::reset_debug_face_buffer();
 
@@ -1053,7 +999,6 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       if (!face.polygon.empty())
         renderer::DrawFilledPolygon(cmd, face.polygon, green);
 
-      // Red arrow showing push normal
       vec3 arrow_start = face.plane.point + face.plane.normal * 0.5f;
       vec3 arrow_end = arrow_start + face.plane.normal * 5.0f;
       renderer::DrawLine(cmd, arrow_start, arrow_end, 0xFF0000FF);
@@ -1064,12 +1009,11 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
   // --- Bot path / goal debug draw ---
   {
-    // Goal colours: Idle=grey, Chase=yellow, Attack=red, Retreat=blue
     static constexpr uint32_t goal_color[] = {
       0xFF888888, // Idle
-      0x00FF00FF, // Chase  (ABGR: yellow)
-      0xFF0000FF, // Attack (ABGR: red)
-      0xFFFF4400, // Retreat (ABGR: blue-ish)
+      0x00FF00FF, // Chase
+      0xFF0000FF, // Attack
+      0xFFFF4400, // Retreat
     };
 
     for (const auto &bot : bot_debug::g_entries)
@@ -1077,7 +1021,6 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       int gi = static_cast<int>(bot.goal);
       uint32_t color = goal_color[gi < 4 ? gi : 0];
 
-      // Draw path segments starting from the current waypoint
       const auto &path = bot.path;
       for (int i = bot.path_index; i + 1 < (int)path.size(); ++i)
       {
@@ -1086,7 +1029,6 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         renderer::DrawLine(cmd, a, b, color);
       }
 
-      // Mark the current waypoint target with a small cross
       if (bot.path_index < (int)path.size())
       {
         vec3f wp = path[bot.path_index]; wp.y += 4.f;
@@ -1095,9 +1037,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         renderer::DrawLine(cmd, {wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);
       }
 
-      // Draw facing direction arrow from the bot's position
-      auto pit = last_player_entities.find(bot.slot);
-      if (pit != last_player_entities.end())
+      auto pit = ctx.last_player_entities.find(bot.slot);
+      if (pit != ctx.last_player_entities.end())
       {
         const auto &ent = pit->second;
         float yaw = ent.view_angle_yaw;
@@ -1119,54 +1060,72 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     if (!pe) continue;
 
     renderer::particle_emitter_params_t p{};
-    p.entity_id = pe->entity_id;
-    p.position = pe->position;
-    p.delta_time = last_dt;
-    p.emit_rate = pe->emit_rate;
-    p.max_particles = pe->max_particles;
-    p.lifetime_min = pe->lifetime_min;
-    p.lifetime_max = pe->lifetime_max;
-    p.velocity_min = pe->velocity_min;
-    p.velocity_max = pe->velocity_max;
-    p.spread = pe->spread;
-    p.gravity = pe->gravity;
-    p.drag = pe->drag;
-    p.size_start = pe->size_start;
-    p.size_end = pe->size_end;
+    p.entity_id          = pe->entity_id;
+    p.position           = pe->position;
+    p.delta_time         = last_dt;
+    p.emit_rate          = pe->emit_rate;
+    p.max_particles      = pe->max_particles;
+    p.lifetime_min       = pe->lifetime_min;
+    p.lifetime_max       = pe->lifetime_max;
+    p.velocity_min       = pe->velocity_min;
+    p.velocity_max       = pe->velocity_max;
+    p.spread             = pe->spread;
+    p.gravity            = pe->gravity;
+    p.drag               = pe->drag;
+    p.size_start         = pe->size_start;
+    p.size_end           = pe->size_end;
     p.rotation_speed_min = pe->rotation_speed_min;
     p.rotation_speed_max = pe->rotation_speed_max;
-    p.color_start = pe->color_start;
-    p.color_end = pe->color_end;
-    p.alpha_start = pe->alpha_start;
-    p.alpha_end = pe->alpha_end;
+    p.color_start        = pe->color_start;
+    p.color_end          = pe->color_end;
+    p.alpha_start        = pe->alpha_start;
+    p.alpha_end          = pe->alpha_end;
     renderer::DrawParticles(cmd, p);
   }
 
+  // Jolt physics debug overlay
+#ifdef JPH_DEBUG_RENDERER
+  if (show_physics_debug && physics_state && jolt_debug_renderer)
+  {
+    jolt_debug_renderer->set_command_buffer(cmd);
+    jolt_debug_renderer->SetCameraPos(
+        JPH::RVec3(camera.position.x, camera.position.y, camera.position.z));
+
+    JPH::BodyManager::DrawSettings draw_settings;
+    draw_settings.mDrawShape = true;
+    physics_state->physics_system.DrawBodies(draw_settings, jolt_debug_renderer.get());
+    physics_state->physics_system.DrawConstraints(jolt_debug_renderer.get());
+
+    jolt_debug_renderer->NextFrame();
+    jolt_debug_renderer->set_command_buffer(VK_NULL_HANDLE);
+  }
+#endif
+
   // Draw explosion effects
-  for (const auto &fx : explosion_effects)
+  // entity_id uses high bit to guarantee no collision with real entity IDs
+  for (const auto &fx : ctx.explosion_effects)
   {
     renderer::particle_emitter_params_t p{};
-    p.entity_id = fx.emitter_id;
-    p.position = fx.position;
-    p.delta_time = last_dt;
-    // Stop emitting new particles in the second half so they can fade out
-    p.emit_rate = (fx.time_remaining > 0.6f) ? 200.0f : 0.0f;
-    p.max_particles = 48;
-    p.lifetime_min = 0.3f;
-    p.lifetime_max = 0.8f;
-    p.velocity_min = 40.0f;
-    p.velocity_max = 120.0f;
-    p.spread = 2.0f;
-    p.gravity = {0, -20.0f, 0};
-    p.drag = 1.5f;
-    p.size_start = 3.0f;
-    p.size_end = 8.0f;
+    p.entity_id          = 0x8000000000000000ULL | fx.explosion_index;
+    p.position           = fx.position;
+    p.delta_time         = last_dt;
+    p.emit_rate          = (fx.time_remaining > 0.6f) ? 200.0f : 0.0f;
+    p.max_particles      = 48;
+    p.lifetime_min       = 0.3f;
+    p.lifetime_max       = 0.8f;
+    p.velocity_min       = 40.0f;
+    p.velocity_max       = 120.0f;
+    p.spread             = 2.0f;
+    p.gravity            = {0, -20.0f, 0};
+    p.drag               = 1.5f;
+    p.size_start         = 3.0f;
+    p.size_end           = 8.0f;
     p.rotation_speed_min = -3.0f;
     p.rotation_speed_max = 3.0f;
-    p.color_start = {1.0f, 0.8f, 0.3f};
-    p.color_end = {0.4f, 0.4f, 0.4f};
-    p.alpha_start = 0.9f;
-    p.alpha_end = 0.0f;
+    p.color_start        = {1.0f, 0.8f, 0.3f};
+    p.color_end          = {0.4f, 0.4f, 0.4f};
+    p.alpha_start        = 0.9f;
+    p.alpha_end          = 0.0f;
     renderer::DrawParticles(cmd, p);
   }
 }
@@ -1181,53 +1140,53 @@ void PlayState::pre_render(VkCommandBuffer cmd)
     if (!pe) continue;
 
     renderer::particle_emitter_params_t p{};
-    p.entity_id = pe->entity_id;
-    p.position = pe->position;
-    p.delta_time = last_dt;
-    p.emit_rate = pe->emit_rate;
-    p.max_particles = pe->max_particles;
-    p.lifetime_min = pe->lifetime_min;
-    p.lifetime_max = pe->lifetime_max;
-    p.velocity_min = pe->velocity_min;
-    p.velocity_max = pe->velocity_max;
-    p.spread = pe->spread;
-    p.gravity = pe->gravity;
-    p.drag = pe->drag;
-    p.size_start = pe->size_start;
-    p.size_end = pe->size_end;
+    p.entity_id          = pe->entity_id;
+    p.position           = pe->position;
+    p.delta_time         = last_dt;
+    p.emit_rate          = pe->emit_rate;
+    p.max_particles      = pe->max_particles;
+    p.lifetime_min       = pe->lifetime_min;
+    p.lifetime_max       = pe->lifetime_max;
+    p.velocity_min       = pe->velocity_min;
+    p.velocity_max       = pe->velocity_max;
+    p.spread             = pe->spread;
+    p.gravity            = pe->gravity;
+    p.drag               = pe->drag;
+    p.size_start         = pe->size_start;
+    p.size_end           = pe->size_end;
     p.rotation_speed_min = pe->rotation_speed_min;
     p.rotation_speed_max = pe->rotation_speed_max;
-    p.color_start = pe->color_start;
-    p.color_end = pe->color_end;
-    p.alpha_start = pe->alpha_start;
-    p.alpha_end = pe->alpha_end;
+    p.color_start        = pe->color_start;
+    p.color_end          = pe->color_end;
+    p.alpha_start        = pe->alpha_start;
+    p.alpha_end          = pe->alpha_end;
     renderer::UpdateParticles(cmd, p);
   }
 
-  // Update explosion particle effects
-  for (const auto &fx : explosion_effects)
+  auto &ctx = state_manager::get_client_context();
+  for (const auto &fx : ctx.explosion_effects)
   {
     renderer::particle_emitter_params_t p{};
-    p.entity_id = fx.emitter_id;
-    p.position = fx.position;
-    p.delta_time = last_dt;
-    p.emit_rate = (fx.time_remaining > 0.6f) ? 200.0f : 0.0f;
-    p.max_particles = 48;
-    p.lifetime_min = 0.3f;
-    p.lifetime_max = 0.8f;
-    p.velocity_min = 40.0f;
-    p.velocity_max = 120.0f;
-    p.spread = 2.0f;
-    p.gravity = {0, -20.0f, 0};
-    p.drag = 1.5f;
-    p.size_start = 3.0f;
-    p.size_end = 8.0f;
+    p.entity_id          = 0x8000000000000000ULL | fx.explosion_index;
+    p.position           = fx.position;
+    p.delta_time         = last_dt;
+    p.emit_rate          = (fx.time_remaining > 0.6f) ? 200.0f : 0.0f;
+    p.max_particles      = 48;
+    p.lifetime_min       = 0.3f;
+    p.lifetime_max       = 0.8f;
+    p.velocity_min       = 40.0f;
+    p.velocity_max       = 120.0f;
+    p.spread             = 2.0f;
+    p.gravity            = {0, -20.0f, 0};
+    p.drag               = 1.5f;
+    p.size_start         = 3.0f;
+    p.size_end           = 8.0f;
     p.rotation_speed_min = -3.0f;
     p.rotation_speed_max = 3.0f;
-    p.color_start = {1.0f, 0.8f, 0.3f};
-    p.color_end = {0.4f, 0.4f, 0.4f};
-    p.alpha_start = 0.9f;
-    p.alpha_end = 0.0f;
+    p.color_start        = {1.0f, 0.8f, 0.3f};
+    p.color_end          = {0.4f, 0.4f, 0.4f};
+    p.alpha_start        = 0.9f;
+    p.alpha_end          = 0.0f;
     renderer::UpdateParticles(cmd, p);
   }
 }

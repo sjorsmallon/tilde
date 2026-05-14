@@ -183,6 +183,15 @@ bool Init()
   log_terminal("--- Initializing Server ---");
   log_terminal("Server port: {}", network::server_port_number);
 
+  static bool jolt_initialized = false;
+  if (!jolt_initialized)
+  {
+    jolt_init();
+    jolt_initialized = true;
+  }
+  g_state.physics = std::make_unique<physics_state_t>();
+  init_physics(*g_state.physics);
+
   if (!g_socket.open(network::server_port_number))
   {
     log_error("Failed to open server socket on port {}. Port may be in use or insufficient permissions.",
@@ -213,6 +222,7 @@ bool Init()
       log_terminal("Map loaded successfully: '{}'", server_map.name);
       shared::init_session_from_map(g_state.session, server_map);
       g_state.session.map_name = server_map.name;
+      shared::populate_static_physics_bodies(*g_state.physics, server_map);
       log_terminal("Game session initialized from map");
     }
     else

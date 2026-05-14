@@ -320,7 +320,7 @@ struct Field_Meta
 #define DECLARE_SCHEMA(ClassName)                                              \
 public:                                                                        \
   static void register_schema();                                               \
-  virtual const ::network::Class_Schema *get_schema() const;
+  virtual const ::network::Class_Schema *get_schema() const override;
 
 // Version for component structs (non-polymorphic, no virtual)
 // Note: You must also add SCHEMA_NAME_FOR_TYPE(ClassName) at namespace scope
@@ -449,17 +449,26 @@ public:                                                                        \
 
 #define BEGIN_SCHEMA_FIELDS()
 
+// offsetof on non-standard-layout types (those with virtual functions) is
+// technically UB per the C++ standard, but works reliably on all target
+// platforms (x86/x64, Clang/GCC/MSVC) because vtable pointers don't disturb
+// member offsets. The correct fix would be splitting entity data into a
+// standard-layout base struct, but that's a significant refactor for no
+// practical gain.
 #define REGISTER_SCHEMA_FIELD(MemberName)                                      \
   static_assert(std::is_trivially_copyable_v<decltype(ThisClass::MemberName)>, \
                 "Field " #MemberName                                           \
                 " must be trivially copyable for Undo/Redo/Networking");       \
   ::network::ensure_schema_registered<decltype(ThisClass::MemberName)>();      \
+_Pragma("clang diagnostic push")                                               \
+_Pragma("clang diagnostic ignored \"-Winvalid-offsetof\"")                     \
   props.push_back({ThisClass::_schema_meta_##MemberName.name,                  \
                    (uint32_t)props.size(), offsetof(ThisClass, MemberName),    \
                    ThisClass::_schema_meta_##MemberName.size,                  \
                    ThisClass::_schema_meta_##MemberName.type,                  \
                    ThisClass::_schema_meta_##MemberName.flags,                 \
-                   ThisClass::_schema_meta_##MemberName.nested_schema_name});
+                   ThisClass::_schema_meta_##MemberName.nested_schema_name}); \
+_Pragma("clang diagnostic pop")
 
 #define END_SCHEMA_FIELDS()                                                    \
   network::Schema_Registry::get().register_class(_schema_class_name, props);   \

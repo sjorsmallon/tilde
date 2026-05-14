@@ -41,8 +41,9 @@ struct map_t
   }
 
   // Add entity with a specific uid (for undo/redo restore)
-  void add_entity_with_uid(entity_uid_t uid,
-                           std::shared_ptr<network::Entity> ent)
+  void add_entity_with_uid(
+      entity_uid_t uid,
+      std::shared_ptr<network::Entity> ent)
   {
     entities.push_back({uid, std::move(ent)});
     if (uid >= next_uid)
