@@ -170,6 +170,15 @@ inline void write_coord(Bit_Writer &w, float value)
   // fractional part (around 5 bits precision)
   uint32_t fraction = (uint32_t)std::round((absValue - integer) * 32.0f);
 
+  // round() can return 32 when the fractional part is >= 31.5/32 (~0.984).
+  // The fraction field is 5 bits wide, so 32 wraps to 0 and the value silently
+  // drops by ~1 unit (e.g. 35.99 transmits as 35). Carry into the integer.
+  if (fraction >= 32)
+  {
+    fraction = 0;
+    integer += 1;
+  }
+
   bool has_int = (integer != 0);
   bool has_fractional_part = (fraction != 0);
 

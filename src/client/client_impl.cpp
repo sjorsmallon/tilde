@@ -173,4 +173,9 @@ void Shutdown()
   SDL_Quit();
 }
 
+void set_integrated_server_session(const shared::game_session_t *session)
+{
+  state_manager::get_client_context().server_session = session;
+}
+
 } // namespace client

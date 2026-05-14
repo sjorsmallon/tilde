@@ -18,7 +18,17 @@ namespace cvar
 {
 
 // Forward declare
-struct ICVar;
+struct Console_Entry_Base;
+
+// Per-invocation context passed to console commands. The cvar system treats
+// caller_slot as an opaque integer — interpretation is left to the caller.
+// In this game, caller_slot is a network player slot index (>= 0), or -1 if
+// the command was invoked locally (client console) or by the server itself
+// (no human caller).
+struct command_context_t
+{
+  int caller_slot = -1;
+};
 
 // The Registry Singleton
 class CVarSystem
@@ -30,7 +40,7 @@ public:
     return instance;
   }
 
-  void Register(const std::string &name, ICVar *cvar)
+  void Register(const std::string &name, Console_Entry_Base *cvar)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (registry_.find(name) != registry_.end())
@@ -41,7 +51,7 @@ public:
     registry_[name] = cvar;
   }
 
-  ICVar *Find(const std::string &name)
+  Console_Entry_Base *Find(const std::string &name)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = registry_.find(name);
@@ -53,7 +63,7 @@ public:
   }
 
   // Helper to list all cvars/commands (e.g. for a "list" command or autocomplete)
-  void VisitAll(std::function<void(const std::string &, ICVar *)> visitor)
+  void VisitAll(std::function<void(const std::string &, Console_Entry_Base *)> visitor)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto &[name, cvar] : registry_)
@@ -62,11 +72,11 @@ public:
     }
   }
 
-  // Declared here, defined below after ICVar is complete.
-  bool Execute(std::string_view line);
+  // Declared here, defined below after Console_Entry_Base is complete.
+  bool Execute(std::string_view line, const command_context_t &context = {});
 
 private:
-  std::unordered_map<std::string, ICVar *> registry_;
+  std::unordered_map<std::string, Console_Entry_Base *> registry_;
   std::mutex mutex_;
 };
 
@@ -84,22 +94,23 @@ enum : uint64_t
 }
 
 // Type-erased base interface for all CVars
-struct ICVar
+struct Console_Entry_Base
 {
-  ICVar(const std::string &name, const std::string &desc,
+  Console_Entry_Base(const std::string &name, const std::string &desc,
         uint64_t flags = flags::None)
       : name_(name), description_(desc), flags_(flags)
   {
     CVarSystem::Get().Register(name, this);
   }
-  virtual ~ICVar() = default;
+  virtual ~Console_Entry_Base() = default;
 
   virtual std::string GetString() const = 0;
   virtual void SetFromString(const std::string &val) = 0;
 
-  // Overridden by CCommand; returns false for ordinary CVars.
+  // Overridden by Console_Command; returns false for ordinary CVars.
   virtual bool IsCommand() const { return false; }
-  virtual void Invoke(std::span<std::string_view> /*args*/) {}
+  virtual void Invoke(std::span<std::string_view> /*args*/,
+                      const command_context_t & /*context*/) {}
 
   const std::string &GetName() const { return name_; }
   const std::string &GetDescription() const { return description_; }
@@ -112,14 +123,14 @@ protected:
 };
 
 // Typed implementation
-template <typename T> class CVar : public ICVar
+template <typename T> class CVar : public Console_Entry_Base
 {
 public:
   using OnChangeCallback = std::function<void(const T &newValue)>;
 
   CVar(const std::string &name, T defaultValue, const std::string &desc = "",
        uint64_t flags = flags::None, OnChangeCallback cb = nullptr)
-      : ICVar(name, desc, flags), value_(defaultValue), callback_(cb)
+      : Console_Entry_Base(name, desc, flags), value_(defaultValue), callback_(cb)
   {
   }
 
@@ -140,7 +151,7 @@ public:
       callback_(value_);
   }
 
-  // --- ICVar Implementation ---
+  // --- Console_Entry_Base Implementation ---
 
   std::string GetString() const override
   {
@@ -204,8 +215,8 @@ private:
   OnChangeCallback callback_;
 };
 
-// CVarSystem::Execute — defined here, after ICVar is complete.
-inline bool CVarSystem::Execute(std::string_view line)
+// CVarSystem::Execute — defined here, after Console_Entry_Base is complete.
+inline bool CVarSystem::Execute(std::string_view line, const command_context_t &context)
 {
   std::vector<std::string> tokens;
   {
@@ -226,7 +237,7 @@ inline bool CVarSystem::Execute(std::string_view line)
     std::vector<std::string_view> args;
     for (size_t i = 1; i < tokens.size(); ++i)
       args.push_back(tokens[i]);
-    obj->Invoke(args);
+    obj->Invoke(args, context);
   }
   else if (tokens.size() > 1)
   {
@@ -237,25 +248,25 @@ inline bool CVarSystem::Execute(std::string_view line)
 
 // A console command: no persistent value, just a callback with arguments.
 // Register like a CVar — the name appears in autocomplete and Execute().
-struct CCommand : ICVar
+struct Console_Command : Console_Entry_Base
 {
-  using Handler = std::function<void(std::span<std::string_view>)>;
+  using Handler = std::function<void(std::span<std::string_view>, const command_context_t &)>;
 
-  CCommand(const std::string &name, Handler fn, const std::string &desc = "",
+  Console_Command(const std::string &name, Handler fn, const std::string &desc = "",
            uint64_t flags = flags::None)
-      : ICVar(name, desc, flags), handler_(std::move(fn))
+      : Console_Entry_Base(name, desc, flags), handler_(std::move(fn))
   {
   }
 
   bool IsCommand() const override { return true; }
 
-  void Invoke(std::span<std::string_view> args) override
+  void Invoke(std::span<std::string_view> args, const command_context_t &context) override
   {
     if (handler_)
-      handler_(args);
+      handler_(args, context);
   }
 
-  // ICVar interface — unused for commands but required to be concrete.
+  // Console_Entry_Base interface — unused for commands but required to be concrete.
   std::string GetString() const override { return ""; }
   void SetFromString(const std::string &) override {}
 

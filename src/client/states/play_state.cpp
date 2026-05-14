@@ -17,6 +17,7 @@
 #include "../../shared/entities/weapon_entity.hpp"
 #include "../../shared/entities/trigger_volume_entity.hpp"
 #include "../../shared/entities/light_entity.hpp"
+#include "../../shared/entities/physics_body_entity.hpp"
 #include "../../shared/network/quantization.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -201,8 +202,25 @@ void PlayState::update(float dt)
   if (input::is_key_pressed(SDL_SCANCODE_U))
   {
     mouse_captured = !mouse_captured;
-    input::set_relative_mouse_mode(mouse_captured);
   }
+
+  // Falling edge: console just closed -> recapture the mouse for play.
+  // This also overrides any prior U-toggle so closing the console always
+  // returns the player to "playing" with a captured cursor.
+  const bool console_open = Console::Get().IsOpen();
+  if (console_was_open && !console_open)
+    mouse_captured = true;
+  console_was_open = console_open;
+
+  // Re-assert relative mouse mode every frame so the console can transparently
+  // release the cursor while it's open. Without this, SDL stays in relative
+  // mode (cursor hidden and warped to center) even when the console is up,
+  // making the console unusable with the mouse.
+  input::set_relative_mouse_mode(mouse_captured && !console_open);
+
+  // Dispatch key bindings configured via the `bind` command. PollBindings is
+  // a no-op when the console is open, so we don't have to gate it here.
+  Console::Get().PollBindings();
 
   // --- Poll network ---
   network::ClientInbox inbox;
@@ -239,14 +257,16 @@ void PlayState::update(float dt)
   for (const auto &msg : inbox.server_messages)
     Console::Get().Print("%s", msg.message().c_str());
 
-  // --- Apply replicated cvar values from server ---
+  // --- Apply server cvar sync ---
+  // Updates local replicated cvar values and registers stubs for any
+  // server-only cvars/commands the client doesn't know about (e.g. spawn_cube).
   for (const auto &sync : inbox.cvar_syncs)
   {
     for (const auto &pair : sync.cvars())
     {
-      auto *cv = cvar::CVarSystem::Get().Find(pair.name());
-      if (cv)
-        cv->SetFromString(pair.value());
+      Console::Get().RegisterRemoteCVar(pair.name(), pair.value(),
+                                        pair.flags(), pair.is_command(),
+                                        pair.description());
     }
   }
 
@@ -287,6 +307,7 @@ void PlayState::update(float dt)
 
     // Build new rocket map from this snapshot (complete state replacement)
     std::unordered_map<uint32_t, network::Rocket_Entity> new_rockets;
+    std::unordered_map<uint64_t, network::Physics_Body_Entity> new_physics_bodies;
 
     for (uint32_t i = 0; i < entity_count; ++i)
     {
@@ -303,6 +324,18 @@ void PlayState::update(float dt)
 
         rocket.deserialize(reader);
         new_rockets[entity_id] = rocket;
+      }
+      else if (slot_index == 254)
+      {
+        uint64_t entity_id = network::read_var_uint64(reader);
+
+        network::Physics_Body_Entity body;
+        auto it = ctx.remote_physics_bodies.find(entity_id);
+        if (it != ctx.remote_physics_bodies.end())
+          body = it->second;
+
+        body.deserialize(reader);
+        new_physics_bodies[entity_id] = body;
       }
       else
       {
@@ -360,6 +393,7 @@ void PlayState::update(float dt)
     }
 
     ctx.remote_rockets = std::move(new_rockets);
+    ctx.remote_physics_bodies = std::move(new_physics_bodies);
     ctx.last_processed_tick = snap_tick;
   }
 
@@ -405,23 +439,29 @@ void PlayState::update(float dt)
     ctx.reconc_error_mag = error_mag;
 
     constexpr float SNAP_THRESHOLD = 5.0f;
+    // Server position is quantized to 1/32 per axis by write_coord, so a 3D
+    // error below sqrt(3)/32 (~0.054) is indistinguishable from quantization
+    // noise. Without this deadzone the offset reaches a non-zero steady state
+    // and the camera jitters even when the player is standing still.
+    constexpr float QUANTIZATION_DEADZONE = 0.0625f;
 
     if (error_mag > SNAP_THRESHOLD)
     {
       ctx.visual_error_offset = {0, 0, 0};
+      ctx.player_position = reconciled_pos;
+      ctx.player_velocity = reconciled_vel;
     }
-    else
+    else if (error_mag > QUANTIZATION_DEADZONE)
     {
       ctx.visual_error_offset.x += ctx.player_position.x - reconciled_pos.x;
       ctx.visual_error_offset.y += ctx.player_position.y - reconciled_pos.y;
       ctx.visual_error_offset.z += ctx.player_position.z - reconciled_pos.z;
+      ctx.player_position = reconciled_pos;
+      ctx.player_velocity = reconciled_vel;
     }
-
-    ctx.player_position = reconciled_pos;
-    ctx.player_velocity = reconciled_vel;
+    // else: error is below quantization noise — keep local prediction and
+    // leave visual_error_offset alone so it can decay to zero.
   }
-
-  const bool console_open = Console::Get().IsOpen();
 
   // --- Mouse look ---
   if (mouse_captured && !console_open)
@@ -457,6 +497,12 @@ void PlayState::update(float dt)
     if (input::is_key_down(SDL_SCANCODE_9))     buttons |= Button::Key9;
     if (input::is_key_down(SDL_SCANCODE_0))     buttons |= Button::Key0;
     if (input::is_mouse_down(SDL_BUTTON_LEFT))  buttons |= Button::Fire;
+  }
+
+  if (input::is_key_pressed(SDL_SCANCODE_P))
+  {
+    // buttons |= Button::P;
+    
   }
 
   Move_Input move_input = move_input_from_buttons(buttons);
@@ -947,6 +993,49 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         vec3f max = hitbox_center + hitbox->size;
         renderer::DrawWireAABB(cmd, min, max, 0xFF00FF00);
       }
+    }
+  }
+
+  // --- Render physics bodies ---
+  // Integrated mode reads straight from the server's authoritative pool.
+  // Networked mode uses the snapshot map (no interpolation yet — see todo.md;
+  // visible stutter at tick boundaries is expected for now).
+  {
+    auto draw_one = [&](const network::Physics_Body_Entity &body) {
+      const auto &render = body.render;
+      if (!render.visible) return;
+
+      const char *mesh_path = render.mesh_path.c_str();
+      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
+      if (render.mesh_path.length > 12 &&
+          std::strncmp(mesh_path, "__primitive_", 12) == 0)
+        mesh_handle = assets::get_primitive_mesh(mesh_path + 12);
+      else if (render.mesh_path.length > 0)
+        mesh_handle = assets::load_mesh(mesh_path);
+
+      if (!mesh_handle.valid()) return;
+
+      renderer::DrawMesh(cmd, mesh_handle,
+                         {.position = body.position,
+                          .scale    = render.scale,
+                          .rotation = body.orientation + render.rotation,
+                          .shader   = renderer::ShaderType::Lit});
+    };
+
+    if (ctx.server_session)
+    {
+      auto *physics_pool = const_cast<shared::game_session_t *>(ctx.server_session)
+                               ->entity_system
+                               .get_entities<network::Physics_Body_Entity>(
+                                   entity_type::PHYSICS_BODY);
+      if (physics_pool)
+        for (const auto &body : *physics_pool)
+          draw_one(body);
+    }
+    else
+    {
+      for (const auto &[id, body] : ctx.remote_physics_bodies)
+        draw_one(body);
     }
   }
 

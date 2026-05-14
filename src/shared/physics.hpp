@@ -114,5 +114,9 @@ void register_dynamic_sphere(physics_state_t &state, shared::entity_uid_t uid,
                               vec3f position, float radius,
                               vec3f initial_velocity = {});
 
+void register_dynamic_box(physics_state_t &state, shared::entity_uid_t uid,
+                             vec3f position, vec3f half_extents,
+                             vec3f initial_velocity = {});
+
 // Remove a body. No-op if uid is not registered.
 void unregister_physics_body(physics_state_t &state, shared::entity_uid_t uid);

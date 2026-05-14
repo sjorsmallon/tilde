@@ -1,5 +1,8 @@
 #include "console.hpp"
 #include "cvar.hpp"
+#include "input.hpp"
+#include "log.hpp"
+#include <SDL_scancode.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -19,6 +22,8 @@ Console::Console()
 
   Print("Console Initialized.");
 }
+
+Console::~Console() = default;
 
 Console &Console::Get()
 {
@@ -42,6 +47,98 @@ void Console::SetNetworkForwarder(std::function<void(std::string_view)> fn)
 {
   network_forwarder_ = std::move(fn);
 }
+
+void Console::RegisterRemoteCVar(const std::string &name,
+                                 const std::string &value, uint64_t flags,
+                                 bool is_command,
+                                 const std::string &description)
+{
+  auto &registry = cvar::CVarSystem::Get();
+  if (auto *existing = registry.Find(name))
+  {
+    // Already known locally — keep the value in sync if it's a data cvar.
+    // Commands have no value to mirror.
+    if (!existing->IsCommand() && !is_command)
+      existing->SetFromString(value);
+    return;
+  }
+
+  if (is_command)
+  {
+    // Stub command: empty handler. ExecuteCommand sees the Server flag and
+    // forwards the whole line to the network forwarder.
+    remote_stubs_.push_back(std::make_unique<cvar::Console_Command>(
+        name,
+        [](std::span<std::string_view>, const cvar::command_context_t &) {},
+        description, flags));
+  }
+  else
+  {
+    // Stub data cvar: snapshot of server value as a string. Setting it
+    // locally has no effect on the server; the value is just informational.
+    remote_stubs_.push_back(
+        std::make_unique<cvar::CVar<std::string>>(name, value, description, flags));
+  }
+}
+
+bool Console::BindKey(std::string_view key, std::string command_line)
+{
+  if (key.size() != 1)
+  {
+    log_error("bind: only single ASCII keys (a-z) are supported, got '{}'",
+              std::string(key));
+    return false;
+  }
+  char c = key[0];
+  if (c < 'a' || c > 'z')
+  {
+    log_error("bind: only lowercase a-z keys are supported, got '{}'", c);
+    return false;
+  }
+  int scancode = SDL_SCANCODE_A + (c - 'a');
+  bindings_[scancode] = std::move(command_line);
+  return true;
+}
+
+void Console::ClearBindings() { bindings_.clear(); }
+
+void Console::PollBindings()
+{
+  if (should_draw)
+    return; // never fire bindings while the console is open
+
+  for (const auto &[scancode, line] : bindings_)
+  {
+    if (input::is_key_pressed(scancode))
+      ExecuteCommand(line.c_str());
+  }
+}
+
+// Register the `bind` command in the client's CVarSystem. Captures Console::Get()
+// at invocation time (the singleton is local-static, lazily initialised).
+static cvar::Console_Command cmd_bind(
+    "bind",
+    [](std::span<std::string_view> args, const cvar::command_context_t &)
+    {
+      if (args.size() < 2)
+      {
+        Console::Get().Print("usage: bind <key> <command...>");
+        return;
+      }
+      std::string command_line;
+      for (size_t i = 1; i < args.size(); ++i)
+      {
+        if (i > 1)
+          command_line.push_back(' ');
+        command_line.append(args[i].begin(), args[i].end());
+      }
+      if (Console::Get().BindKey(args[0], command_line))
+        Console::Get().Print("bound '%.*s' to: %s",
+                             static_cast<int>(args[0].size()), args[0].data(),
+                             command_line.c_str());
+    },
+    "Bind a key (a-z) to a command line. Usage: bind <key> <command...>",
+    cvar::flags::Client);
 
 void Console::ExecuteCommand(const char *command_line)
 {
@@ -157,7 +254,7 @@ int Console::TextEditCallback(ImGuiInputTextCallbackData *data)
     std::string prefix(word_start, word_end - word_start);
 
     cvar::CVarSystem::Get().VisitAll(
-        [&](const std::string &name, cvar::ICVar *)
+        [&](const std::string &name, cvar::Console_Entry_Base *)
         {
           if (name.compare(0, prefix.size(), prefix) == 0)
             Candidates.push_back(name);

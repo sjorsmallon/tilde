@@ -158,8 +158,11 @@ message S2C_ServerMessage {
 
 // A single cvar name/value pair
 message CvarPair {
-    string name  = 1;
-    string value = 2;
+    string name        = 1;
+    string value       = 2;
+    uint64 flags       = 3;
+    bool   is_command  = 4;
+    string description = 5;
 }
 
 // Server → Client: replicated cvar values (sent on connect)

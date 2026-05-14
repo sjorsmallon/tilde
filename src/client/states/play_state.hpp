@@ -40,6 +40,7 @@ private:
 
   // UI/debug state
   bool mouse_captured = true;
+  bool console_was_open = false;
   bool hide_geometry = false;
   bool show_entity_debug = false;
   float last_dt = 0.016f;

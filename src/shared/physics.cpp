@@ -42,6 +42,7 @@ void init_physics(physics_state_t &state)
     JPH::PhysicsSettings settings;
     settings.mDeterministicSimulation = true;
     state.physics_system.SetPhysicsSettings(settings);
+    state.physics_system.SetGravity({0, -800.f, 0});
 }
 
 void step_physics(physics_state_t &state, float dt)
@@ -90,6 +91,29 @@ void register_dynamic_sphere(physics_state_t &state, shared::entity_uid_t uid,
     if (!body)
     {
         log_error("register_dynamic_sphere: body limit reached for uid {}", uid);
+        return;
+    }
+    body_interface.AddBody(body->GetID(), JPH::EActivation::Activate);
+    state.entity_body_map[uid]             = body->GetID();
+    state.body_entity_map[body->GetID()]   = uid;
+}
+
+void register_dynamic_box(physics_state_t &state, shared::entity_uid_t uid,
+                             vec3f position, vec3f half_extents, vec3f initial_velocity)
+{
+    JPH::BodyCreationSettings settings(
+        new JPH::BoxShape(to_jolt(half_extents)),
+        to_jolt_r(position),
+        JPH::Quat::sIdentity(),
+        JPH::EMotionType::Dynamic,
+        Physics_Layers::DYNAMIC);
+    settings.mLinearVelocity = to_jolt(initial_velocity);
+
+    JPH::BodyInterface &body_interface = state.physics_system.GetBodyInterface();
+    JPH::Body *body = body_interface.CreateBody(settings);
+    if (!body)
+    {
+        log_error("register_dynamic_box: body limit reached for uid {}", uid);
         return;
     }
     body_interface.AddBody(body->GetID(), JPH::EActivation::Activate);

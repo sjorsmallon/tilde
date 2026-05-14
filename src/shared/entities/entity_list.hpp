@@ -7,6 +7,7 @@
 #include "entities/particle_emitter_entity.hpp"
 #include "entities/trigger_volume_entity.hpp"
 #include "entities/light_entity.hpp"
+#include "entities/physics_body_entity.hpp"
 #endif
 
 
@@ -43,7 +44,9 @@
   X(TRIGGER_VOLUME, network::Trigger_Volume_Entity, "trigger_volume",              \
     "entities/trigger_volume_entity.hpp")                                          \
   X(LIGHT, network::Light_Entity, "light_entity",                                 \
-    "entities/light_entity.hpp")
+    "entities/light_entity.hpp")                                                  \
+  X(PHYSICS_BODY, network::Physics_Body_Entity, "physics_body",                   \
+    "entities/physics_body_entity.hpp")
 
 
 // we override the x macro from st get the enum name.

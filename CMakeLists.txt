@@ -115,6 +115,7 @@ add_library(game_shared STATIC
     src/shared/entities/displacement_entity.cpp
     src/shared/entities/trigger_volume_entity.cpp
     src/shared/entities/light_entity.cpp
+    src/shared/entities/physics_body_entity.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
@@ -263,6 +264,7 @@ add_library(game_server SHARED
     src/server/server_impl.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bot_system.cpp
+    src/server/systems/physics_body_system.cpp
 )
 target_include_directories(game_server PUBLIC src/server)
 target_link_libraries(game_server PUBLIC game_shared)

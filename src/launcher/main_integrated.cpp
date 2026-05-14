@@ -57,6 +57,11 @@ int main(int argc, char *argv[])
     return 1;
   }
 
+  // Integrated build: hand the client a direct pointer to the server's session
+  // so it can render entity pools (physics bodies, etc.) without going through
+  // the snapshot/interpolation pipeline.
+  client::set_integrated_server_session(server::get_session_for_integrated_client());
+
   log_terminal("=== Initialization Complete, Entering Loop ===");
 
   bool running = true;

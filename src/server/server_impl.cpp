@@ -1,11 +1,15 @@
+#include "../shared/entities/physics_body_entity.hpp"
 #include "../shared/entities/player_entity.hpp"
 #include "../shared/entities/rocket_entity.hpp"
 #include "../shared/entities/trigger_volume_entity.hpp"
 #include "server_api.hpp"
 #include "systems/bot_system.hpp"
+#include "systems/physics_body_system.hpp"
 #include "systems/rocket_system.hpp"
 
+#include <cmath>
 #include <format>
+#include <optional>
 #include <string>
 
 #include "cvar.hpp"
@@ -56,20 +60,27 @@ static void broadcast_server_message(network::Server_Connection_State &net,
   }
 }
 
-// Send all Replicated cvars to a specific client
+// Send every server-side cvar/command to a specific client so the client can
+// register stubs for unknown names. Stubs make server commands appear in
+// autocomplete and let `bind` reference them by name.
 static void send_cvar_sync(network::Udp_Socket &socket,
                            const network::Address &ip)
 {
   game::S2C_CVarSync msg;
   cvar::CVarSystem::Get().VisitAll(
-      [&](const std::string &name, cvar::ICVar *cv)
+      [&](const std::string &name, cvar::Console_Entry_Base *cv)
       {
-        if (cv->GetFlags() & cvar::flags::Replicated)
-        {
-          auto *pair = msg.add_cvars();
-          pair->set_name(name);
-          pair->set_value(cv->GetString());
-        }
+        // Skip client-only entries. Because game_shared is a static lib, the
+        // server's CVarSystem also contains every Client-flagged cvar declared
+        // in shared code — propagating those back to the client is pointless.
+        if (cv->GetFlags() & cvar::flags::Client)
+          return;
+        auto *pair = msg.add_cvars();
+        pair->set_name(name);
+        pair->set_value(cv->IsCommand() ? std::string{} : cv->GetString());
+        pair->set_flags(cv->GetFlags());
+        pair->set_is_command(cv->IsCommand());
+        pair->set_description(cv->GetDescription());
       });
   if (msg.cvars_size() == 0)
     return;
@@ -112,8 +123,9 @@ std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
 // Stores the last-sent entity state to each client, used as baseline for next update
 struct Client_Baseline_State
 {
-  std::vector<network::Player_Entity> players;
-  std::vector<network::Rocket_Entity> rockets;
+  std::vector<network::Player_Entity>       players;
+  std::vector<network::Rocket_Entity>       rockets;
+  std::vector<network::Physics_Body_Entity> physics_bodies;
   // Add more entity types here as needed
 };
 
@@ -122,11 +134,40 @@ std::array<Client_Baseline_State, network::sv_max_player_count> g_client_baselin
 std::vector<Bot_State> g_bots;
 int g_next_bot_slot = BOT_SLOT_BASE; // increments with each spawned bot
 
+// Compute a spawn position roughly at the caller's eye height and 80 units
+// forward along their view direction. Returns nullopt if the slot has no
+// associated Player_Entity (e.g. command typed at the dedicated-server console
+// where caller_slot == -1, or an unconnected slot).
+static std::optional<vec3f>
+spawn_position_in_front_of(int caller_slot)
+{
+  if (caller_slot < 0) return std::nullopt;
+
+  auto *players = g_state.session.entity_system
+                      .get_entities<network::Player_Entity>(entity_type::PLAYER);
+  if (!players) return std::nullopt;
+
+  for (auto &player : *players)
+  {
+    if (player.client_slot_index != caller_slot) continue;
+
+    float yaw_rad   = linalg::to_radians(player.view_angle_yaw);
+    float pitch_rad = linalg::to_radians(player.view_angle_pitch);
+    vec3f forward = {std::cos(yaw_rad) * std::cos(pitch_rad),
+                     std::sin(pitch_rad),
+                     std::sin(yaw_rad) * std::cos(pitch_rad)};
+    constexpr float forward_offset = 80.f;
+    constexpr float eye_height     = 40.f;
+    return player.position + vec3f{0, eye_height, 0} + forward * forward_offset;
+  }
+  return std::nullopt;
+}
+
 // Registered at static-init time; captured globals are safe because they
 // outlive the command object (both are translation-unit statics).
-cvar::CCommand cmd_spawn_bot(
+cvar::Console_Command cmd_spawn_bot(
     "spawn_bot",
-    [](std::span<std::string_view> args)
+    [](std::span<std::string_view> args, const cvar::command_context_t &)
     {
       // Parse optional type argument: "idle" | "chase" | "regular" (default: idle)
       BotType type = BotType::Idle;
@@ -147,6 +188,56 @@ cvar::CCommand cmd_spawn_bot(
       log_terminal("spawn_bot: spawned {} bot at slot {}", type_str, g_next_bot_slot - 1);
     },
     "Spawn a bot. Optional arg: idle (default) | chase | regular",
+    cvar::flags::Server);
+
+cvar::Console_Command cmd_spawn_cube(
+    "spawn_cube",
+    [](std::span<std::string_view>, const cvar::command_context_t &context)
+    {
+      if (!g_state.physics)
+      {
+        log_error("spawn_cube: physics state not initialized");
+        return;
+      }
+      auto drop_position = spawn_position_in_front_of(context.caller_slot);
+      if (!drop_position)
+      {
+        log_error("spawn_cube: no Player_Entity for caller_slot {}", context.caller_slot);
+        return;
+      }
+      vec3f half_extents = {16.f, 16.f, 16.f};
+      auto *body = spawn_physics_body(g_state.session, *g_state.physics,
+                                      "box", half_extents, *drop_position);
+      if (body)
+        log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
+                     body->entity_id, drop_position->x, drop_position->y, drop_position->z);
+    },
+    "Spawn a physics cube in front of the calling player",
+    cvar::flags::Server);
+
+cvar::Console_Command cmd_spawn_sphere(
+    "spawn_sphere",
+    [](std::span<std::string_view>, const cvar::command_context_t &context)
+    {
+      if (!g_state.physics)
+      {
+        log_error("spawn_sphere: physics state not initialized");
+        return;
+      }
+      auto drop_position = spawn_position_in_front_of(context.caller_slot);
+      if (!drop_position)
+      {
+        log_error("spawn_sphere: no Player_Entity for caller_slot {}", context.caller_slot);
+        return;
+      }
+      vec3f size = {16.f, 16.f, 16.f}; // x = radius
+      auto *body = spawn_physics_body(g_state.session, *g_state.physics,
+                                      "sphere", size, *drop_position);
+      if (body)
+        log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
+                     body->entity_id, drop_position->x, drop_position->y, drop_position->z);
+    },
+    "Spawn a physics sphere in front of the calling player",
     cvar::flags::Server);
 
 void handle_player_leave(server_context_t &state,
@@ -382,7 +473,8 @@ bool Tick()
   {
     log_terminal("Command from slot {}: {}", player_idx, line);
     const auto &client_ip = g_state.net.player_ips[player_idx];
-    if (!cvar::CVarSystem::Get().Execute(line))
+    cvar::command_context_t context{ .caller_slot = static_cast<int>(player_idx) };
+    if (!cvar::CVarSystem::Get().Execute(line, context))
     {
       log_terminal("Unknown command from slot {}: {}", player_idx, line);
       send_server_message(g_socket, client_ip,
@@ -507,6 +599,12 @@ bool Tick()
   update_bots(g_bots, g_state.session, tick_dt);
   update_rockets(g_state.session, tick_dt);
 
+  if (g_state.physics)
+  {
+    step_physics(*g_state.physics, tick_dt);
+    update_physics_bodies(g_state.session, *g_state.physics);
+  }
+
   // --- Check trigger volumes against players ---
   auto *trigger_pool = g_state.session.entity_system
       .get_entities<network::Trigger_Volume_Entity>(entity_type::TRIGGER_VOLUME);
@@ -583,9 +681,12 @@ bool Tick()
   // Delta compression: serialize per-client with baselines (only send changed fields)
 
   auto *rocket_pool = g_state.session.entity_system.get_entities<network::Rocket_Entity>(entity_type::ROCKET);
+  auto *physics_body_pool = g_state.session.entity_system
+      .get_entities<network::Physics_Body_Entity>(entity_type::PHYSICS_BODY);
 
   int total_entity_count = (pool ? static_cast<int>(pool->size()) : 0) +
-                          (rocket_pool ? static_cast<int>(rocket_pool->size()) : 0);
+                          (rocket_pool ? static_cast<int>(rocket_pool->size()) : 0) +
+                          (physics_body_pool ? static_cast<int>(physics_body_pool->size()) : 0);
 
   // printf("[SERVER] Tick %u: Broadcasting %d entities (%zu players + %d rockets)\n",
   //        g_tick_number, total_entity_count,
@@ -617,6 +718,12 @@ bool Tick()
       return nullptr;
     };
 
+    auto find_physics_body_baseline = [&](uint64_t ent_id) -> const network::Physics_Body_Entity* {
+      for (const auto &b : baseline.physics_bodies)
+        if (b.entity_id == ent_id) return &b;
+      return nullptr;
+    };
+
     // Serialize all players with delta compression
     if (pool)
     {
@@ -641,6 +748,18 @@ bool Tick()
       }
     }
 
+    // Serialize all physics bodies with delta compression (slot=254 sentinel)
+    if (physics_body_pool)
+    {
+      for (const auto &body : *physics_body_pool)
+      {
+        network::write_var_uint(writer, 254);
+        network::write_var_uint64(writer, body.entity_id);
+        const network::Physics_Body_Entity* base = find_physics_body_baseline(body.entity_id);
+        body.serialize(writer, base);
+      }
+    }
+
     // Create and send package
     game::S2C_EntityPackage package;
     package.set_server_tick(g_tick_number);
@@ -660,6 +779,7 @@ bool Tick()
     // Update baseline state for this client (for next frame's delta)
     baseline.players.clear();
     baseline.rockets.clear();
+    baseline.physics_bodies.clear();
 
     if (pool)
       for (const auto &entity : *pool)
@@ -668,6 +788,10 @@ bool Tick()
     if (rocket_pool)
       for (const auto &rocket : *rocket_pool)
         baseline.rockets.push_back(rocket);
+
+    if (physics_body_pool)
+      for (const auto &body : *physics_body_pool)
+        baseline.physics_bodies.push_back(body);
   }
 
   g_tick_number++;
@@ -686,5 +810,10 @@ double get_tick_interval()
 }
 
 uint32_t get_tick_number() { return g_tick_number; }
+
+const shared::game_session_t *get_session_for_integrated_client()
+{
+  return &g_state.session;
+}
 
 } // namespace server

@@ -12,8 +12,15 @@
   #define GAME_CLIENT_API __attribute__((visibility("default")))
 #endif
 
+namespace shared { struct game_session_t; }
+
 namespace client {
 GAME_CLIENT_API bool Init();
 GAME_CLIENT_API bool Tick(); // Returns false if should quit
 GAME_CLIENT_API void Shutdown();
+
+// Integrated build only: hand the client a pointer to the server's session
+// so the renderer can read entity pools directly. Pass nullptr in
+// dedicated/networked builds (this is also the default).
+GAME_CLIENT_API void set_integrated_server_session(const shared::game_session_t *session);
 } // namespace client

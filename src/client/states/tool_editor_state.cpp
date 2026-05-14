@@ -14,6 +14,7 @@
 #include "../editor/tools/particle_editor_tool.hpp"
 #include "../editor/tools/displacement_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
+#include "../console.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
 #include "../shared/linalg.hpp"
@@ -480,7 +481,8 @@ void ToolEditorState::update(float dt)
         camera.position.y -= speed;
     }
 
-    if (input::is_mouse_down(SDL_BUTTON_RIGHT) && view_mode == ViewMode::FreeCam)
+    const bool console_open = Console::Get().IsOpen();
+    if (input::is_mouse_down(SDL_BUTTON_RIGHT) && view_mode == ViewMode::FreeCam && !console_open)
     {
       input::set_relative_mouse_mode(true);
       int dx, dy;

@@ -2,6 +2,7 @@
 
 #include "../shared/game_session.hpp"
 #include "../shared/network/client_connection_state.hpp"
+#include "../shared/entities/physics_body_entity.hpp"
 #include "../shared/entities/player_entity.hpp"
 #include "../shared/entities/rocket_entity.hpp"
 #include "../shared/player_move.hpp"
@@ -81,7 +82,18 @@ struct client_context_t
   // --- Delta decompression baselines ---
   std::unordered_map<int32_t, network::Player_Entity> last_player_entities;
   std::unordered_map<uint32_t, network::Rocket_Entity> remote_rockets;
+  // Physics bodies received from server. State is replaced wholesale each
+  // snapshot — no interpolation yet (see todo.md). Renders correctly in
+  // integrated mode via server_session; in networked mode this will visibly
+  // stutter at server tick boundaries until interpolation is added.
+  std::unordered_map<uint64_t, network::Physics_Body_Entity> remote_physics_bodies;
   uint32_t last_processed_tick = 0;
+
+  // --- Integrated-mode session pointer ---
+  // In integrated builds, set to the server's authoritative session so the
+  // renderer can read entity pools directly instead of going through snapshot
+  // interpolation. Null in dedicated/networked-only builds.
+  const shared::game_session_t *server_session = nullptr;
 
   // --- Client-side transient visual effects ---
   struct explosion_effect_t

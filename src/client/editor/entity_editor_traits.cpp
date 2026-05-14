@@ -586,6 +586,41 @@ bool Entity_Editor_Traits<network::Light_Entity>::draw_selection_wireframe(
   return true;
 }
 
+// -- Physics_Body (runtime only, server-spawned via console) ------------
+
+template <>
+linalg::vec3
+Entity_Editor_Traits<network::Physics_Body_Entity>::get_half_extents(
+    const network::Physics_Body_Entity *e)
+{
+  return e ? e->size
+           : linalg::vec3{editor::DEFAULT_HALF_EXTENT,
+                          editor::DEFAULT_HALF_EXTENT,
+                          editor::DEFAULT_HALF_EXTENT};
+}
+
+template <>
+bool Entity_Editor_Traits<network::Physics_Body_Entity>::draw_ghost(
+    const network::Physics_Body_Entity *, overlay_renderer_t &,
+    const linalg::vec3 &)
+{
+  return false;
+}
+
+template <>
+bool Entity_Editor_Traits<network::Physics_Body_Entity>::draw_in_editor(
+    const network::Physics_Body_Entity *, overlay_renderer_t &, uint32_t, bool)
+{
+  return false; // runtime only — never appears in editor
+}
+
+template <>
+bool Entity_Editor_Traits<network::Physics_Body_Entity>::draw_selection_wireframe(
+    const network::Physics_Body_Entity *, overlay_renderer_t &, uint32_t, float)
+{
+  return false;
+}
+
 // ===================================================================
 // X-macro dispatch: runtime entity* -> compile-time specialization
 // ===================================================================
