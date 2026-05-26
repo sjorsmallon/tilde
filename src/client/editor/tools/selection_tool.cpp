@@ -87,8 +87,9 @@ void Selection_Tool::on_update(editor_context_t &ctx,
       auto bounds = shared::compute_entity_bounds(entry->entity.get());
       editor_gizmo.set_geometry(bounds);
 
-      // Only show reshape handles for entities that support face sculpting
-      if (dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
+      // Only show reshape handles for entities that own a box_volume_t
+      // (sculptable via the same code path).
+      if (entry->entity->get_box_volume() != nullptr)
         editor_gizmo.set_mode(Editor_Gizmo::Gizmo_Mode::Unified);
       else
         editor_gizmo.set_mode(Editor_Gizmo::Gizmo_Mode::Translate);
@@ -112,7 +113,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
 
     if (ctx.bvh)
     {
-      Ray_Hit hit;
+      ray_hit_result_t hit;
       if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
                             hit))
       {

@@ -57,7 +57,7 @@ void populate_static_physics_bodies(physics_state_t &state, const map_t &map)
 
     if (auto *aabb = dynamic_cast<network::AABB_Entity *>(entry.entity.get()))
     {
-      register_static_box(state, entry.uid, aabb->position, aabb->half_extents);
+      register_static_box(state, entry.uid, aabb->position, aabb->volume.half_extents);
     }
     else if (auto *wedge = dynamic_cast<network::Wedge_Entity *>(entry.entity.get()))
     {

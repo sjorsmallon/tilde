@@ -8,6 +8,10 @@ REGISTER_FIELD(center)
 REGISTER_FIELD(half_extents)
 END_SCHEMA(aabb_t)
 
+BEGIN_SCHEMA(box_volume_t)
+REGISTER_FIELD(half_extents)
+END_SCHEMA(box_volume_t)
+
 BEGIN_SCHEMA(pyramid_t)
 REGISTER_FIELD(position)
 REGISTER_FIELD(size)

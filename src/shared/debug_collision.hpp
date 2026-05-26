@@ -33,6 +33,11 @@ extern cvar::CVar<bool> debug_show_hitboxes;
 // CVar to enable/disable navmesh grid visualization
 extern cvar::CVar<bool> debug_show_navmesh;
 
+// CVar to draw every entity's box_volume_t as a wireframe AABB (triggers,
+// clip volumes, and any other box-shaped entity that would otherwise be
+// invisible in-game). Useful for diagnosing trigger-overlap issues.
+extern cvar::CVar<bool> debug_show_box_volumes;
+
 // Record a collision with a plane and its actual face polygon (called from collision code)
 void record_collision(const Plane &plane, const std::vector<linalg::vec3> &polygon);
 

@@ -27,6 +27,7 @@ struct ClientInbox
   std::vector<game::S2C_ServerMessage> server_messages;
   std::vector<game::S2C_CVarSync> cvar_syncs;
   std::vector<game::S2C_BotDebug> bot_debug_updates;
+  std::vector<game::S2C_GameEventBatch> game_event_batches;
 };
 
 template <typename T>
@@ -258,6 +259,45 @@ inline void poll_client_network(Client_Connection_State &state,
           if (msg.ParseFromArray(buffer.data(), buffer.size()))
           {
             out_inbox.bot_debug_updates.push_back(std::move(msg));
+          }
+          state.partial_packets.erase(packet.header.sequence_id);
+        }
+      }
+      else if (packet.header.message_type ==
+               static_cast<uint8>(Message_Type::S2C_GameEventBatch))
+      {
+        auto &fragments = state.partial_packets[packet.header.sequence_id];
+
+        if (fragments.empty())
+          fragments.resize(packet.header.sequence_count);
+
+        if (packet.header.sequence_idx < fragments.size())
+          fragments[packet.header.sequence_idx] = packet;
+
+        bool complete = true;
+        size_t total_size = 0;
+        for (const auto &f : fragments)
+        {
+          if (f.header.sequence_count == 0 || f.header.payload_size == 0)
+          {
+            complete = false;
+            break;
+          }
+          total_size += f.header.payload_size;
+        }
+
+        if (complete)
+        {
+          std::vector<uint8> buffer;
+          buffer.reserve(total_size);
+          for (const auto &f : fragments)
+            buffer.insert(buffer.end(), f.buffer,
+                          f.buffer + f.header.payload_size);
+
+          game::S2C_GameEventBatch msg;
+          if (msg.ParseFromArray(buffer.data(), buffer.size()))
+          {
+            out_inbox.game_event_batches.push_back(std::move(msg));
           }
           state.partial_packets.erase(packet.header.sequence_id);
         }

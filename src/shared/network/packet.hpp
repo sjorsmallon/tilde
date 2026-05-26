@@ -19,6 +19,7 @@ enum class Message_Type : uint8
   S2C_CVarSync,
   C2S_Command,
   S2C_BotDebug,
+  S2C_GameEventBatch,
 };
 
 // --------------------------------------------------------------------------------
@@ -85,6 +86,11 @@ template <> struct Packet_Traits<game::C2S_Command>
 template <> struct Packet_Traits<game::S2C_BotDebug>
 {
   static constexpr Message_Type type = Message_Type::S2C_BotDebug;
+};
+
+template <> struct Packet_Traits<game::S2C_GameEventBatch>
+{
+  static constexpr Message_Type type = Message_Type::S2C_GameEventBatch;
 };
 
 struct Packet_Header

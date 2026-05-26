@@ -1,6 +1,7 @@
 #include "../shared/entity_system.hpp"
 #include "client_api.hpp"
 #include "console.hpp"
+#include "cosmetic_events.hpp"
 #include "renderer.hpp"
 #include "state_manager.hpp"
 
@@ -59,6 +60,11 @@ bool Init()
   // Register Entities (Shared Logic)
   // Register Entities (Shared Logic)
   state_manager::get_entity_system().register_all_known_entity_types();
+
+  // Bind every cosmetic-effect handler. Each effect_type_t maps to exactly
+  // one function — registration must happen before the first snapshot can
+  // arrive, so it lives in client Init() rather than PlayState::on_enter.
+  register_all_effect_handlers();
 
   return true;
 }
@@ -176,6 +182,21 @@ void Shutdown()
 void set_integrated_server_session(const shared::game_session_t *session)
 {
   state_manager::get_client_context().server_session = session;
+}
+
+static server_map_reload_hook_t g_server_map_reload_hook = nullptr;
+
+void set_server_map_reload_hook(server_map_reload_hook_t hook)
+{
+  g_server_map_reload_hook = hook;
+}
+
+// Internal accessor for tool_editor_state.cpp / play_state.cpp.
+bool invoke_server_map_reload_hook(const std::string &map_path)
+{
+  if (!g_server_map_reload_hook)
+    return false;
+  return g_server_map_reload_hook(map_path.c_str());
 }
 
 } // namespace client

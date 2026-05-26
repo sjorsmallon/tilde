@@ -261,9 +261,70 @@ bool cast_sphere(physics_state_t &state,
     return true;
 }
 
-void overlap_sphere(physics_state_t &state,
-                    vec3f center, float radius,
-                    std::vector<hit_result_t> &out)
+// Broad-phase filter that only admits the STATIC broad-phase layer. Pairs with
+// Static_Only_Object_Layer_Filter to skip every dynamic / kinematic body
+// (players, rockets, physics props) in a cast — used by client-side effect
+// handlers that only care about world-geometry surface contact.
+class Static_Only_Broad_Phase_Layer_Filter final : public JPH::BroadPhaseLayerFilter
+{
+public:
+    bool ShouldCollide(JPH::BroadPhaseLayer layer) const override
+    {
+        return layer == Broad_Phase_Layers::STATIC;
+    }
+};
+
+class Static_Only_Object_Layer_Filter final : public JPH::ObjectLayerFilter
+{
+public:
+    bool ShouldCollide(JPH::ObjectLayer layer) const override
+    {
+        return layer == Physics_Layers::STATIC;
+    }
+};
+
+bool cast_sphere_static(physics_state_t &state,
+                        vec3f from, vec3f to, float radius,
+                        hit_result_t &out)
+{
+    JPH::SphereShape sphere(radius);
+    sphere.SetEmbedded();
+
+    JPH::Vec3 motion = to_jolt(to - from);
+    JPH::RShapeCast cast(&sphere, JPH::Vec3::sReplicate(1.0f),
+                         JPH::RMat44::sTranslation(to_jolt_r(from)),
+                         motion);
+
+    // Ignore back faces so a cast that starts inside (or barely inside) a
+    // static body doesn't return fraction-0 with a flipped normal. Callers
+    // are decal-style: they want the front face the surface is showing them.
+    JPH::ShapeCastSettings settings;
+    settings.mBackFaceModeTriangles = JPH::EBackFaceMode::IgnoreBackFaces;
+    settings.mBackFaceModeConvex    = JPH::EBackFaceMode::IgnoreBackFaces;
+
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+
+    Static_Only_Broad_Phase_Layer_Filter broad_phase_filter;
+    Static_Only_Object_Layer_Filter      object_layer_filter;
+
+    state.physics_system.GetNarrowPhaseQuery().CastShape(
+        cast, settings, JPH::RVec3::sZero(), collector,
+        broad_phase_filter, object_layer_filter, {});
+
+    if (!collector.HadHit()) return false;
+
+    JPH::BodyID hit_id = collector.mHit.mBodyID2;
+    auto e_it = state.body_entity_map.find(hit_id);
+    out.entity_id = (e_it != state.body_entity_map.end()) ? e_it->second : 0;
+    out.fraction  = collector.mHit.mFraction;
+    out.position  = from + (to - from) * collector.mHit.mFraction;
+    JPH::Vec3 n = collector.mHit.mPenetrationAxis.Normalized();
+    out.normal = from_jolt(n);
+    return true;
+}
+
+std::vector<hit_result_t> find_all_bodies_overlapping_sphere(physics_state_t &state,
+                    vec3f center, float radius)
 {
     JPH::SphereShape sphere(radius);
     sphere.SetEmbedded();
@@ -278,8 +339,9 @@ void overlap_sphere(physics_state_t &state,
         JPH::RMat44::sTranslation(to_jolt_r(center)),
         settings, JPH::RVec3::sZero(), collector);
 
-    out.reserve(out.size() + collector.mHits.size());
-    for (const auto &h : collector.mHits)
+    std::vector<hit_result_t> hits;
+    hits.reserve(collector.mHits.size());
+    for (const JPH::CollideShapeResult &h : collector.mHits)
     {
         hit_result_t r{};
         auto e_it = state.body_entity_map.find(h.mBodyID2);
@@ -288,6 +350,7 @@ void overlap_sphere(physics_state_t &state,
         JPH::Vec3 n = h.mPenetrationAxis.NormalizedOr(JPH::Vec3::sAxisY());
         r.normal    = from_jolt(n);
         r.fraction  = 0.f;
-        out.push_back(r);
+        hits.push_back(r);
     }
+    return hits;
 }

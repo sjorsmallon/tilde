@@ -10,6 +10,12 @@
 #include <memory>
 #include <string>
 
+namespace shared
+{
+// Forward decl so Entity can expose get_box_volume() without pulling in shapes.hpp.
+struct box_volume_t;
+} // namespace shared
+
 namespace network
 {
 
@@ -30,6 +36,13 @@ public:
   // Static geometry types (AABB, Wedge, StaticMesh) override this to return true.
   // All other entities go into entity_system at session init.
   virtual bool is_collision_geometry() const { return false; }
+
+  // Box-shaped entities (AABB, Trigger_Volume, Displacement, ...) override this
+  // to return a pointer to their owned box_volume_t. Editor tools dispatch on
+  // this instead of dynamic_cast<concrete_entity>, so any entity that grows a
+  // box volume becomes sculptable/pickable through the same code path.
+  virtual shared::box_volume_t *get_box_volume() { return nullptr; }
+  virtual const shared::box_volume_t *get_box_volume() const { return nullptr; }
 
   // Register the Entity base class schema (called on-demand by derived schemas)
   static void register_schema();
@@ -83,6 +96,36 @@ public:
         {
           parse_string_to_field(value, field, current_base + field.offset);
         }
+      }
+    }
+
+    // Backward compat: pre-box-volume-component maps stored "half_extents" as a
+    // flat property on AABB_Entity / Trigger_Volume_Entity / Displacement_Entity.
+    // If we see that key and the entity has a "volume" nested-schema field,
+    // route the value into volume.half_extents. Skipped if "volume" is already
+    // present (newer save format wins).
+    auto half_extents_it = props.find("half_extents");
+    if (half_extents_it != props.end() && !props.count("volume"))
+    {
+      for (const auto &field : schema->fields)
+      {
+        if (field.name != "volume" || field.type != Field_Type::NestedSchema)
+          continue;
+        const Class_Schema *nested =
+            Schema_Registry::get().get_nested_schema(field);
+        if (!nested)
+          break;
+        uint8 *volume_base = current_base + field.offset;
+        for (const auto &nfield : nested->fields)
+        {
+          if (nfield.name == "half_extents")
+          {
+            parse_string_to_field(half_extents_it->second, nfield,
+                                  volume_base + nfield.offset);
+            break;
+          }
+        }
+        break;
       }
     }
   }

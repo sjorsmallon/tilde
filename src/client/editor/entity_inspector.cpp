@@ -1,8 +1,11 @@
 #include "entity_inspector.hpp"
 #include "../../shared/entity.hpp"
+#include "../../shared/log.hpp"
 #include "../../shared/network/schema.hpp"
 #include "imgui.h"
+#include <algorithm>
 #include <string>
+#include <vector>
 
 namespace client
 {
@@ -46,10 +49,58 @@ static void render_field_imgui(uint8_t *base_ptr, const network::Field_Prop &fie
   case network::Field_Type::PascalString:
   {
     auto *ps = static_cast<network::pascal_string *>(field_ptr);
-    if (ImGui::InputText(field.name.c_str(), ps->data, ps->max_length(),
-                         ImGuiInputTextFlags_EnterReturnsTrue))
+    if (field.string_choices_provider)
     {
-      ps->length = static_cast<network::uint8>(strlen(ps->data));
+      // Dropdown rendering: the field declares a callable that returns the
+      // valid value set. Lookup the current value's index, fall back to 0
+      // if absent (and surface that as a warning -- never silently rebind).
+      std::vector<std::string> choices = field.string_choices_provider();
+      if (choices.empty())
+      {
+        // Render visible disabled text rather than nothing — silently
+        // rendering an invisible field was the symptom of the
+        // static-init-in-static-lib drop that emptied the trigger action
+        // registry, and there's no situation where the user benefits from
+        // a totally invisible field. No log here; the inspector ticks every
+        // frame and would spam.
+        ImGui::BeginDisabled();
+        ImGui::Text("%s: (no choices available)", field.name.c_str());
+        ImGui::EndDisabled();
+        break;
+      }
+      int current_index = -1;
+      for (int i = 0; i < static_cast<int>(choices.size()); ++i)
+      {
+        if (choices[i] == ps->c_str())
+        {
+          current_index = i;
+          break;
+        }
+      }
+      if (current_index < 0)
+      {
+        log_warning("inspector: field '{}' has value '{}' that is not in its "
+                    "choices provider; falling back to index 0",
+                    field.name, ps->c_str());
+        current_index = 0;
+      }
+      std::vector<const char *> choice_ptrs;
+      choice_ptrs.reserve(choices.size());
+      for (const auto &choice : choices)
+        choice_ptrs.push_back(choice.c_str());
+      if (ImGui::Combo(field.name.c_str(), &current_index, choice_ptrs.data(),
+                       static_cast<int>(choice_ptrs.size())))
+      {
+        ps->set(choices[current_index].c_str());
+      }
+    }
+    else
+    {
+      if (ImGui::InputText(field.name.c_str(), ps->data, ps->max_length(),
+                           ImGuiInputTextFlags_EnterReturnsTrue))
+      {
+        ps->length = static_cast<network::uint8>(strlen(ps->data));
+      }
     }
     break;
   }

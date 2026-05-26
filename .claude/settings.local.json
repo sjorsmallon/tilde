@@ -39,7 +39,17 @@
       "Bash(./cmake_build/bin/network_test.exe)",
       "Bash(./cmake_build/bin/session_test.exe)",
       "Bash(./cmake_build/bin/transaction_system_test.exe)",
-      "Bash(./cmake_build/bin/ecs_test.exe)"
+      "Bash(./cmake_build/bin/ecs_test.exe)",
+      "Bash(./cmake_build/bin/test_entity_delta_packing.exe)",
+      "Bash(echo \"---EXIT $?---\")",
+      "Bash(xargs basename -a)",
+      "Bash(cmake --build cmake_build -j8 --target map_migration_test)",
+      "Bash(./cmake_build/bin/map_migration_test.exe)",
+      "Bash(grep -nE \"^[[:space:]]*$|^}\" src/client/states/play_state.cpp)",
+      "Bash(awk -F: '$1 > 940 && $1 < 1100')",
+      "Bash(cmake --build cmake_build -j8 --target session_test transaction_system_test)",
+      "Bash(ls \"C:\\\\Users\\\\sjors\\\\.claude\\\\projects\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\memory\\\\\" 2>&1 | head -20)",
+      "Read(//c/Users/sjors/.claude/projects/c--Users-sjors-Desktop-Projects-tilde-tilde/**)"
     ]
   }
 }

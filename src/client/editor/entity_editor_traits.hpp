@@ -47,9 +47,9 @@ bool draw_entity_in_editor(const network::Entity *e,
                            overlay_renderer_t &renderer, uint32_t uid,
                            bool solid);
 
-// Convenience: ghost_pos -> center with Y-offset applied.
+// Convenience: ghost_position -> center with Y-offset applied.
 linalg::vec3 compute_placement_center(const network::Entity *e,
-                                      const linalg::vec3 &ghost_pos);
+                                      const linalg::vec3 &ghost_position);
 
 // Default ghost drawing: tries render component mesh wireframe, then wire box.
 void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,

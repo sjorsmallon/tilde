@@ -22,6 +22,19 @@ struct aabb_t
   DECLARE_COMPONENT_SCHEMA(aabb_t);
 };
 
+// Local-frame box geometry owned by entities (entity.position is the world-space
+// center). Decoupled from aabb_t (which carries its own center) so entities that
+// also have a position field don't duplicate state.
+struct box_volume_t
+{
+  SCHEMA_FIELD_DEFAULT(linalg::vec3, half_extents,
+               network::Schema_Flags::Networked |
+                   network::Schema_Flags::Editable |
+                   network::Schema_Flags::Saveable,
+               (linalg::vec3{1.f, 1.f, 1.f}));
+  DECLARE_COMPONENT_SCHEMA(box_volume_t);
+};
+
 struct pyramid_t
 {
   SCHEMA_FIELD(linalg::vec3, position,
@@ -47,6 +60,25 @@ inline aabb_bounds_t get_bounds(const aabb_t &aabb)
   return {
       aabb.center - aabb.half_extents,
       aabb.center + aabb.half_extents,
+  };
+}
+
+// Promote a local-frame box volume to a world-space aabb_t at the given center.
+// Lets callers reuse the existing aabb_t-based helpers (get_bounds,
+// compute_collision_planes, compute_face_polygons) without duplicating logic.
+inline aabb_t to_aabb(const box_volume_t &volume, const linalg::vec3 &center)
+{
+  aabb_t result;
+  result.center = center;
+  result.half_extents = volume.half_extents;
+  return result;
+}
+
+inline aabb_bounds_t get_bounds(const box_volume_t &volume, const linalg::vec3 &center)
+{
+  return {
+      center - volume.half_extents,
+      center + volume.half_extents,
   };
 }
 
@@ -427,6 +459,9 @@ inline std::vector<std::vector<linalg::vec3>> compute_face_polygons(const wedge_
 namespace network {
   template <> struct Schema_Name_Helper<shared::aabb_t> {
       static constexpr const char* get() { return "aabb_t"; }
+  };
+  template <> struct Schema_Name_Helper<shared::box_volume_t> {
+      static constexpr const char* get() { return "box_volume_t"; }
   };
   template <> struct Schema_Name_Helper<shared::pyramid_t> {
       static constexpr const char* get() { return "pyramid_t"; }

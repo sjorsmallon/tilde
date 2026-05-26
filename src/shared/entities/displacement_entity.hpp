@@ -16,8 +16,11 @@ class Displacement_Entity : public Entity
 public:
   bool is_collision_geometry() const override { return true; }
 
-  SCHEMA_FIELD(vec3f, half_extents,
-               Schema_Flags::Networked | Schema_Flags::Editable);
+  SCHEMA_FIELD(shared::box_volume_t, volume,
+               Schema_Flags::Networked | Schema_Flags::Editable | Schema_Flags::Saveable);
+
+  shared::box_volume_t *get_box_volume() override { return &volume; }
+  const shared::box_volume_t *get_box_volume() const override { return &volume; }
 
   SCHEMA_FIELD_DEFAULT(int32, active_face,
                        Schema_Flags::Editable | Schema_Flags::Saveable, -1);

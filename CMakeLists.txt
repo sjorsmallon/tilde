@@ -116,6 +116,7 @@ add_library(game_shared STATIC
     src/shared/entities/trigger_volume_entity.cpp
     src/shared/entities/light_entity.cpp
     src/shared/entities/physics_body_entity.cpp
+    src/shared/trigger_action_list.hpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
@@ -136,6 +137,10 @@ add_library(game_shared STATIC
     src/shared/physics.cpp
     src/shared/bot_debug.hpp
     src/shared/bot_debug.cpp
+    src/shared/cosmetic_events.hpp
+    src/shared/cosmetic_events.cpp
+    src/shared/game_events.hpp
+    src/shared/game_events.cpp
 )
 
 # Protobuf Generation
@@ -219,6 +224,10 @@ configure_file(
 add_library(game_client SHARED
     src/client/jolt_debug_renderer.cpp
     src/client/client_impl.cpp
+    src/client/cosmetic_events.cpp
+    src/client/effects/rocket_explosion.cpp
+    src/client/game_events.cpp
+    src/client/hud/kill_feed.cpp
     src/client/console.cpp
     src/client/state_manager.cpp
     src/client/states/play_state.cpp
@@ -262,9 +271,17 @@ endif()
 # Contains Game Logic
 add_library(game_server SHARED
     src/server/server_impl.cpp
+    src/server/cosmetic_events.cpp
+    src/server/game_events.cpp
+    src/server/damage.hpp
+    src/server/damage.cpp
+    src/server/trigger_action_registry.hpp
+    src/server/trigger_action_registry.cpp
+    src/server/trigger_actions.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/physics_body_system.cpp
+    src/server/systems/respawn_system.cpp
 )
 target_include_directories(game_server PUBLIC src/server)
 target_link_libraries(game_server PUBLIC game_shared)
@@ -366,3 +383,8 @@ target_link_libraries(asset_test PRIVATE game_shared)
 add_executable(navmesh_test src/test/test_navmesh.cpp)
 target_include_directories(navmesh_test PRIVATE src)
 target_link_libraries(navmesh_test PRIVATE game_shared)
+
+# 21. Map migration / round-trip test (box_volume_t refactor + wedge-strip)
+add_executable(map_migration_test src/test/map_migration_test.cpp)
+target_include_directories(map_migration_test PRIVATE src src/shared)
+target_link_libraries(map_migration_test PRIVATE game_shared)

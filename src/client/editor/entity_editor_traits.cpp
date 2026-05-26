@@ -31,7 +31,7 @@ linalg::vec3
 Entity_Editor_Traits<network::AABB_Entity>::get_half_extents(
     const network::AABB_Entity *e)
 {
-  return e->half_extents;
+  return e->volume.half_extents;
 }
 
 template <>
@@ -47,8 +47,8 @@ bool Entity_Editor_Traits<network::AABB_Entity>::draw_in_editor(
     uint32_t uid, bool)
 {
   auto cmd = renderer.get_command_buffer();
-  renderer::DrawAABB(cmd, e->position - e->half_extents,
-                     e->position + e->half_extents, 0xFFFFFFFF,
+  renderer::DrawAABB(cmd, e->position - e->volume.half_extents,
+                     e->position + e->volume.half_extents, 0xFFFFFFFF,
                      /*as_wireframe=*/false,
                      /*random_color=*/true,
                      /*random_seed=*/uid);
@@ -61,7 +61,7 @@ bool Entity_Editor_Traits<network::AABB_Entity>::draw_selection_wireframe(
     float grid_step)
 {
   const linalg::vec3 &p = e->position;
-  const linalg::vec3 &h = e->half_extents;
+  const linalg::vec3 &h = e->volume.half_extents;
   const float x0 = p.x - h.x, x1 = p.x + h.x;
   const float y0 = p.y - h.y, y1 = p.y + h.y;
   const float z0 = p.z - h.z, z1 = p.z + h.z;
@@ -417,7 +417,7 @@ linalg::vec3
 Entity_Editor_Traits<network::Displacement_Entity>::get_half_extents(
     const network::Displacement_Entity *e)
 {
-  return e->half_extents;
+  return e->volume.half_extents;
 }
 
 template <>
@@ -466,7 +466,7 @@ linalg::vec3
 Entity_Editor_Traits<network::Trigger_Volume_Entity>::get_half_extents(
     const network::Trigger_Volume_Entity *e)
 {
-  return e->half_extents;
+  return e->volume.half_extents;
 }
 
 template <>
@@ -474,7 +474,7 @@ bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_ghost(
     const network::Trigger_Volume_Entity *e, overlay_renderer_t &renderer,
     const linalg::vec3 &center)
 {
-  renderer.draw_wire_box(center, e->half_extents, 0xFF0000FF); // red
+  renderer.draw_wire_box(center, e->volume.half_extents, 0xFF0000FF); // red
   return true;
 }
 
@@ -483,7 +483,7 @@ bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_in_editor(
     const network::Trigger_Volume_Entity *e, overlay_renderer_t &renderer,
     uint32_t, bool)
 {
-  renderer.draw_wire_box(e->position, e->half_extents, 0xFF0000FF); // red
+  renderer.draw_wire_box(e->position, e->volume.half_extents, 0xFF0000FF); // red
   return true;
 }
 
@@ -492,7 +492,7 @@ bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_selection_wirefr
     const network::Trigger_Volume_Entity *e, overlay_renderer_t &renderer,
     uint32_t color, float)
 {
-  renderer.draw_wire_box(e->position, e->half_extents, color);
+  renderer.draw_wire_box(e->position, e->volume.half_extents, color);
   return true;
 }
 
@@ -627,6 +627,12 @@ bool Entity_Editor_Traits<network::Physics_Body_Entity>::draw_selection_wirefram
 
 linalg::vec3 get_placement_half_extents(const network::Entity *e)
 {
+  // Box-volume entities (AABB, Trigger_Volume, Displacement, ...) share the
+  // geometry path: any entity that owns a box_volume_t reports its extents
+  // through the virtual hook, no per-class trait code required.
+  if (const shared::box_volume_t *volume = e->get_box_volume())
+    return volume->half_extents;
+
 #define X(ENUM, CLASS, NAME, PATH)                                             \
   if (dynamic_cast<const CLASS *>(e))                                          \
     return Entity_Editor_Traits<CLASS>::get_half_extents(                       \
@@ -850,9 +856,9 @@ void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,
 // ===================================================================
 
 linalg::vec3 compute_placement_center(const network::Entity *e,
-                                      const linalg::vec3 &ghost_pos)
+                                      const linalg::vec3 &ghost_position)
 {
-  linalg::vec3 center = ghost_pos;
+  linalg::vec3 center = ghost_position;
   center.y += get_placement_half_extents(e).y;
   return center;
 }

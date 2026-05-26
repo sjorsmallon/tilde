@@ -1,10 +1,14 @@
+#include "../shared/cosmetic_events.hpp"
+#include "../shared/game_events.hpp"
 #include "../shared/entities/physics_body_entity.hpp"
 #include "../shared/entities/player_entity.hpp"
 #include "../shared/entities/rocket_entity.hpp"
 #include "../shared/entities/trigger_volume_entity.hpp"
 #include "server_api.hpp"
+#include "trigger_action_registry.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/physics_body_system.hpp"
+#include "systems/respawn_system.hpp"
 #include "systems/rocket_system.hpp"
 
 #include <cmath>
@@ -94,19 +98,29 @@ static void send_cvar_sync(network::Udp_Socket &socket,
 server_context_t g_state;
 network::Udp_Socket g_socket;
 uint32_t g_tick_number = 0;
-// Returns all human spawn positions (spawn_type == 0) from the entity_system.
+// Snapshot of a Player_Spawn_Entity used at (re)spawn time: position +
+// orientation (Euler degrees, .y = yaw, .x = pitch, .z = roll/unused). The
+// respawn_system has its own private picker because it lives in
+// game_server; this file-local one is for player-join and bot cycling.
+struct human_spawn_transform_t
+{
+  vec3f position;
+  vec3f orientation;
+};
+
+// Returns all human spawn markers (spawn_type == 0) from the entity_system.
 // Used for player join and spawn_bot cycling.
-static std::vector<vec3f> get_human_spawn_positions()
+static std::vector<human_spawn_transform_t> get_human_spawn_transforms()
 {
   auto *pool = g_state.session.entity_system
                    .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
-  std::vector<vec3f> out;
+  std::vector<human_spawn_transform_t> out;
   if (pool)
     for (const auto &sp : *pool)
       if (sp.spawn_type == 0)
-        out.push_back(sp.position);
+        out.push_back({sp.position, sp.orientation});
   if (out.empty())
-    out.push_back({0.f, 0.f, 0.f}); // safety fallback
+    out.push_back({{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}}); // safety fallback
   return out;
 }
 
@@ -177,8 +191,8 @@ cvar::Console_Command cmd_spawn_bot(
         // "idle" or unrecognised → BotType::Idle
       }
 
-      auto spawns = get_human_spawn_positions();
-      const vec3f &pos = spawns[g_bots.size() % spawns.size()];
+      auto spawns = get_human_spawn_transforms();
+      const vec3f &pos = spawns[g_bots.size() % spawns.size()].position;
       g_bots.push_back(spawn_bot(g_state.session, *g_state.physics, pos, g_next_bot_slot++, type));
 
       const char *type_str = (type == BotType::Chase)   ? "chase"
@@ -271,71 +285,45 @@ void handle_player_leave(server_context_t &state,
   log_terminal("Player left slot {}: {}", slot, sender.to_string());
 }
 
-bool Init()
+// Load a map file into g_state, replacing any existing session. Resets the
+// physics world, bot list, trigger-overlap set, and per-client delta baselines
+// so nothing from the prior map leaks into the new one.
+// Returns true on successful load. On failure the session is left empty.
+static bool load_map_into_state(const std::string &map_path)
 {
-  log_terminal("--- Initializing Server ---");
-  log_terminal("Server port: {}", network::server_port_number);
-
-  static bool jolt_initialized = false;
-  if (!jolt_initialized)
-  {
-    jolt_init();
-    jolt_initialized = true;
-  }
+  // Tear down previous world. Recreating physics_state_t is the cleanest way to
+  // drop all static/dynamic bodies — there's no bulk-clear API on physics_state_t.
   g_state.physics = std::make_unique<physics_state_t>();
   init_physics(*g_state.physics);
 
-  if (!g_socket.open(network::server_port_number))
+  g_state.session = {};
+  g_bots.clear();
+  g_next_bot_slot = BOT_SLOT_BASE;
+  g_state.previous_tick_overlapping_trigger_player_pairs.clear();
+  for (auto &baseline : g_client_baselines)
+    baseline = {};
+
+  if (map_path.empty())
   {
-    log_error("Failed to open server socket on port {}. Port may be in use or insufficient permissions.",
-                 network::server_port_number);
+    log_terminal("load_map_into_state: empty path, leaving session empty.");
     return false;
   }
-  log_terminal("Successfully bound server socket to port {}", network::server_port_number);
 
-  // Load map for server-side collision
   shared::map_t server_map;
-  std::string map_name;
-
-  std::ifstream f("last_map.txt");
-  if (f.is_open())
+  log_terminal("Loading map '{}'...", map_path);
+  if (!shared::load_map(map_path, server_map))
   {
-    if (std::getline(f, map_name))
-    {
-      log_terminal("Loaded map name from last_map.txt: '{}'", map_name);
-    }
-    f.close();
+    log_error("Failed to load map '{}'. Session is empty.", map_path);
+    return false;
   }
 
-  if (!map_name.empty())
-  {
-    log_terminal("Attempting to load map '{}'...", map_name);
-    if (shared::load_map(map_name, server_map))
-    {
-      log_terminal("Map loaded successfully: '{}'", server_map.name);
-      shared::init_session_from_map(g_state.session, server_map);
-      g_state.session.map_name = server_map.name;
-      shared::populate_static_physics_bodies(*g_state.physics, server_map);
-      log_terminal("Game session initialized from map");
-    }
-    else
-    {
-      log_error("Failed to load map '{}'. Starting with empty session.", map_name);
-      g_state.session = {};
-    }
-  }
-  else
-  {
-    log_terminal("No map specified, starting with empty session.");
-    g_state.session = {};
-  }
+  shared::init_session_from_map(g_state.session, server_map);
+  g_state.session.map_name = server_map.name;
+  shared::populate_static_physics_bodies(*g_state.physics, server_map);
 
   // Spawn bots for any bot-type spawn markers (spawn_type == 1).
   // Human spawn markers (spawn_type == 0) stay in entity_system and are
   // queried directly when players join — no need to extract or clear the pool.
-  g_bots.clear();
-  g_next_bot_slot = BOT_SLOT_BASE;
-
   auto *spawn_pool =
       g_state.session.entity_system
           .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
@@ -344,7 +332,6 @@ bool Init()
   int bot_spawn_count = 0;
   if (spawn_pool)
   {
-    log_terminal("Found {} spawn entities", spawn_pool->size());
     for (auto &sp : *spawn_pool)
     {
       if (sp.spawn_type == 1)
@@ -357,11 +344,65 @@ bool Init()
     }
   }
 
-  log_terminal("Server initialized: map='{}', {} human spawns, {} bot spawns",
+  log_terminal("Loaded map='{}', {} human spawns, {} bot spawns",
                g_state.session.map_name, human_spawn_count, bot_spawn_count);
+  return true;
+}
+
+bool Init()
+{
+  log_terminal("--- Initializing Server ---");
+  log_terminal("Server port: {}", network::server_port_number);
+
+  static bool jolt_initialized = false;
+  if (!jolt_initialized)
+  {
+    jolt_init();
+    jolt_initialized = true;
+  }
+
+  if (!g_socket.open(network::server_port_number))
+  {
+    log_error("Failed to open server socket on port {}. Port may be in use or insufficient permissions.",
+                 network::server_port_number);
+    return false;
+  }
+  log_terminal("Successfully bound server socket to port {}", network::server_port_number);
+
+  std::string map_name;
+  std::ifstream f("last_map.txt");
+  if (f.is_open())
+  {
+    if (std::getline(f, map_name))
+      log_terminal("Boot map from last_map.txt: '{}'", map_name);
+    f.close();
+  }
+
+  load_map_into_state(map_name);
 
   log_terminal("--- Server initialization complete ---");
   return true;
+}
+
+bool reload_map(const std::string &map_path)
+{
+  log_terminal("--- Reloading server map: '{}' ---", map_path);
+
+  // Disconnect any currently-connected players. The map is changing under them,
+  // so their player entities / kinematic bodies (which we're about to wipe)
+  // would otherwise dangle. Players reconnect normally on the next Connect.
+  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  {
+    if (g_state.net.player_slots[slot])
+    {
+      g_state.net.player_slots[slot] = false;
+      g_state.net.player_ips[slot] = {};
+      g_state.net.player_byte_buffers[slot] = {};
+      g_player_states[slot] = {};
+    }
+  }
+
+  return load_map_into_state(map_path);
 }
 
 bool Tick()
@@ -408,8 +449,12 @@ bool Tick()
         if (player)
         {
           player->client_slot_index = slot;
-          auto spawns = get_human_spawn_positions();
-          player->position = spawns[slot % spawns.size()];
+          auto spawns = get_human_spawn_transforms();
+          const human_spawn_transform_t &chosen_spawn = spawns[slot % spawns.size()];
+          player->position         = chosen_spawn.position;
+          player->orientation      = chosen_spawn.orientation;
+          player->view_angle_yaw   = chosen_spawn.orientation.y;
+          player->view_angle_pitch = chosen_spawn.orientation.x;
           player->health = 100;
 
           log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
@@ -431,6 +476,14 @@ bool Tick()
                                        player->position + vec3f{0.f, 38.f, 0.f},
                                        18.f, 20.f);
           }
+
+          // Initial-spawn gameplay event. Same shape as the respawn-driven
+          // fire in respawn_system.cpp — clients can't tell whether this is
+          // a connect-time spawn or a respawn, by design.
+          fire_player_spawned_event(g_state,
+                                    static_cast<shared::entity_uid_t>(player->entity_id),
+                                    chosen_spawn.position,
+                                    chosen_spawn.orientation);
         }
 
         // Send Accept
@@ -623,50 +676,81 @@ bool Tick()
     return false;
   }
   update_bots(g_bots, g_state.session, *g_state.physics, tick_dt);
-  update_rockets(g_state.session, *g_state.physics, tick_dt);
+  update_rockets(g_state, tick_dt);
+  // Respawn drain runs after damage systems so any deaths registered this
+  // tick are eligible for the deadline check (delay is >0 ticks, so a
+  // same-tick death-respawn never happens — but ordering is the intent).
+  update_respawns(g_state, g_tick_number,
+                  static_cast<uint32_t>(sv_tickrate.Get()));
 
   step_physics(*g_state.physics, tick_dt);
   update_physics_bodies(g_state.session, *g_state.physics);
 
   // --- Check trigger volumes against players ---
+  //
+  // Linear scan O(triggers x players). This is intentional for now; the
+  // canonical replacement is Jolt sensor bodies in the broadphase. See the
+  // "Spatial query strategy" section in src/client/editor/readme.md for the
+  // migration trigger.
+  //
+  // For each overlap, we look up trigger.action_name in the global registry
+  // and invoke it. Two fire modes are supported:
+  //   - "on_enter":   fire only on the rising edge (previous tick: no overlap).
+  //   - "every_tick": fire whenever overlap is active.
+  // Per-(trigger, player) overlap state is kept on g_state across ticks.
   auto *trigger_pool = g_state.session.entity_system
       .get_entities<network::Trigger_Volume_Entity>(entity_type::TRIGGER_VOLUME);
+  std::set<std::pair<std::uint64_t, std::uint64_t>> current_tick_overlaps;
   if (pool && trigger_pool)
   {
     for (auto &player : *pool)
     {
-      for (const auto &trigger : *trigger_pool)
+      vec3f player_min = {
+        player.position.x - network::player_half_width,
+        player.position.y,
+        player.position.z - network::player_half_width
+      };
+      vec3f player_max = {
+        player.position.x + network::player_half_width,
+        player.position.y + network::player_half_height * 2.f,
+        player.position.z + network::player_half_width
+      };
+
+      for (auto &trigger : *trigger_pool)
       {
-        vec3f delta = player.position - trigger.position;
-        // Player feet are at position, center of mass is offset up by half_height
-        // Check if any part of the player capsule overlaps the trigger box
-        vec3f player_min = {
-          player.position.x - network::player_half_width,
-          player.position.y,
-          player.position.z - network::player_half_width
-        };
-        vec3f player_max = {
-          player.position.x + network::player_half_width,
-          player.position.y + network::player_half_height * 2.f,
-          player.position.z + network::player_half_width
-        };
-        vec3f trigger_min = trigger.position - trigger.half_extents;
-        vec3f trigger_max = trigger.position + trigger.half_extents;
+        vec3f trigger_min = trigger.position - trigger.volume.half_extents;
+        vec3f trigger_max = trigger.position + trigger.volume.half_extents;
+        if (!linalg::intersect_aabb_aabb(player_min, player_max,
+                                         trigger_min, trigger_max))
+          continue;
 
-        bool overlaps = player_min.x <= trigger_max.x && player_max.x >= trigger_min.x
-                     && player_min.y <= trigger_max.y && player_max.y >= trigger_min.y
-                     && player_min.z <= trigger_max.z && player_max.z >= trigger_min.z;
+        std::pair<std::uint64_t, std::uint64_t> pair_key{trigger.entity_id,
+                                                          player.entity_id};
+        bool was_overlapping =
+            g_state.previous_tick_overlapping_trigger_player_pairs.count(
+                pair_key) > 0;
+        current_tick_overlaps.insert(pair_key);
 
-        if (overlaps)
+        std::string mode = trigger.fire_mode.c_str();
+        bool should_fire = (mode == "on_enter") ? !was_overlapping : true;
+        if (!should_fire)
+          continue;
+
+        std::string name = trigger.action_name.c_str();
+        auto fn = server::Trigger_Action_Registry::get().find_action(name);
+        if (!fn)
         {
-          if (trigger.action == static_cast<int32_t>(network::trigger_action::kill))
-          {
-            player.health = 0;
-          }
+          log_error("trigger entity {} references unknown action '{}' (no "
+                    "matching registration in Trigger_Action_Registry)",
+                    trigger.entity_id, name);
+          continue;
         }
+        fn(g_state, trigger, player);
       }
     }
   }
+  g_state.previous_tick_overlapping_trigger_player_pairs =
+      std::move(current_tick_overlaps);
 
   // --- Broadcast bot debug state to all connected clients ---
   if (!g_bots.empty())
@@ -783,6 +867,12 @@ bool Tick()
       }
     }
 
+    // Cosmetic effect batch rides in the same packet, after entity deltas.
+    // Unreliable by design (lost effect = silently dropped). Identical bytes
+    // sent to every client; per-client filtering is a future addition if PVS
+    // / relevancy ever lands.
+    shared::serialize_effect_batch(writer, g_state.effect_queue_this_tick);
+
     // Create and send package
     game::S2C_EntityPackage package;
     package.set_server_tick(g_tick_number);
@@ -816,6 +906,40 @@ bool Tick()
       for (const auto &body : *physics_body_pool)
         baseline.physics_bodies.push_back(body);
   }
+
+  // Effect queue is drained per tick: every connected client received this
+  // tick's batch in the loop above, so the next tick starts empty.
+  g_state.effect_queue_this_tick.clear();
+
+  // Reliable gameplay event batch. Sent on its own protobuf message (not
+  // bolted onto the snapshot) because gameplay events are reliable while
+  // snapshots are unreliable — different reliability guarantees, different
+  // wire path. The encoded body is identical for every client, so we encode
+  // once and send to each connected client.
+  if (!g_state.game_event_queue_this_tick.empty())
+  {
+    network::Bit_Writer event_writer;
+    shared::serialize_game_event_batch(event_writer, g_state.game_event_queue_this_tick);
+
+    game::S2C_GameEventBatch batch;
+    batch.set_event_data(event_writer.buffer.data(), event_writer.buffer.size());
+    batch.set_server_tick(g_tick_number);
+
+    std::vector<network::uint8> batch_buffer(batch.ByteSizeLong());
+    batch.SerializeToArray(batch_buffer.data(),
+                           static_cast<int>(batch_buffer.size()));
+    auto event_packets = network::convert_to_packets(
+        batch_buffer,
+        static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch));
+
+    for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+    {
+      if (!g_state.net.player_slots[slot]) continue;
+      for (const auto &p : event_packets)
+        g_socket.send(p, g_state.net.player_ips[slot]);
+    }
+  }
+  g_state.game_event_queue_this_tick.clear();
 
   g_tick_number++;
   return true;

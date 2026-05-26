@@ -5,6 +5,7 @@
 #include "../shared/entities/physics_body_entity.hpp"
 #include "../shared/entities/player_entity.hpp"
 #include "../shared/entities/rocket_entity.hpp"
+#include "../shared/physics.hpp"
 #include "../shared/player_move.hpp"
 
 #include <array>
@@ -94,6 +95,13 @@ struct client_context_t
   // renderer can read entity pools directly instead of going through snapshot
   // interpolation. Null in dedicated/networked-only builds.
   const shared::game_session_t *server_session = nullptr;
+
+  // --- Client-owned physics world (static geometry only) ---
+  // Borrowed from PlayState for the duration of the play session — set in
+  // PlayState::on_enter, cleared in on_exit. Effect handlers (e.g. the
+  // rocket-explosion handler) cast against this to resolve surface contact
+  // locally. Null in editor / menu states and during reconnects.
+  physics_state_t *physics_state = nullptr;
 
   // --- Client-side transient visual effects ---
   struct explosion_effect_t

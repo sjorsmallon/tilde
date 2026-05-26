@@ -162,7 +162,7 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
 }
 
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
-                       const vec3f &origin, const vec3f &dir, Ray_Hit &out_hit)
+                       const vec3f &origin, const vec3f &dir, ray_hit_result_t &out_hit)
 {
   if (bvh.nodes.empty())
     return false;

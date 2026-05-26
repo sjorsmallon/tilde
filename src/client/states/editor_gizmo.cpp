@@ -5,6 +5,7 @@
 #include "../shared/entities/static_entities.hpp"
 #include "../shared/entities/weapon_entity.hpp"
 #include "../shared/map.hpp" // Full definition needed
+#include "../shared/shapes.hpp"
 #include <algorithm>         // for min/max
 #include <cmath>
 
@@ -350,13 +351,13 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   // Store original for drag calculations
   auto &ent = entry->entity;
 
-  if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+  if (const shared::box_volume_t *volume = ent->get_box_volume())
   {
-    original_transform.position = aabb->position;
+    original_transform.position = ent->position;
     original_transform.scale =
-        aabb->half_extents; // Store half-extents as scale
+        volume->half_extents; // Store half-extents as scale
     original_transform.orientation = {0, 0, 0,
-                                      1}; // Identity (AABB has no rotation)
+                                      1}; // Identity (box has no rotation)
   }
   else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
   {
@@ -534,29 +535,29 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
       auto *_entry = target_map->find_by_uid(target_uid);
       if (!_entry) return;
       auto &ent = _entry->entity;
-      if (auto *aabb = dynamic_cast<::network::AABB_Entity *>(ent.get()))
+      if (shared::box_volume_t *volume = ent->get_box_volume())
       {
         if (axis == 0)
         {
-          aabb->position.x = new_center_val;
-          aabb->half_extents.x = new_half_val;
+          ent->position.x = new_center_val;
+          volume->half_extents.x = new_half_val;
         }
         else if (axis == 1)
         {
-          aabb->position.y = new_center_val;
-          aabb->half_extents.y = new_half_val;
+          ent->position.y = new_center_val;
+          volume->half_extents.y = new_half_val;
         }
         else
         {
-          aabb->position.z = new_center_val;
-          aabb->half_extents.z = new_half_val;
+          ent->position.z = new_center_val;
+          volume->half_extents.z = new_half_val;
         }
 
-        reshape_state.aabb.center = aabb->position;
-        reshape_state.aabb.half_extents = aabb->half_extents;
+        reshape_state.aabb.center = ent->position;
+        reshape_state.aabb.half_extents = volume->half_extents;
 
         // Also update transform gizmo
-        transform_state.position = aabb->position;
+        transform_state.position = ent->position;
       }
     }
   }

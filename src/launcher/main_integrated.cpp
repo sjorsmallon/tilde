@@ -62,6 +62,12 @@ int main(int argc, char *argv[])
   // the snapshot/interpolation pipeline.
   client::set_integrated_server_session(server::get_session_for_integrated_client());
 
+  // Bridge the editor's commit_map_to_disk → server::reload_map. Editor and
+  // server live in different DLLs that don't link each other; this hook lets
+  // them rendez-vous through the launcher.
+  client::set_server_map_reload_hook(
+      [](const char *path) -> bool { return server::reload_map(path); });
+
   log_terminal("=== Initialization Complete, Entering Loop ===");
 
   bool running = true;

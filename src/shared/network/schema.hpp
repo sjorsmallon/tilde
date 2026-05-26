@@ -2,6 +2,7 @@
 
 #include "network_types.hpp"
 #include <cstddef>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -60,6 +61,12 @@ struct Field_Prop
   Field_Type type;
   Schema_Flags flags;
   std::string nested_schema_name; // Class name for NestedSchema types
+
+  // Optional. When set on a PascalString field, the editor inspector renders a
+  // Combo of the strings returned by this function instead of a free-form text
+  // input. Evaluated at render time (not at registration) so a registry that
+  // populates after schema-init still produces correct choices.
+  std::function<std::vector<std::string>()> string_choices_provider;
 };
 
 bool parse_string_to_field(const std::string &value, const Field_Prop &field,

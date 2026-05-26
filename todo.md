@@ -46,6 +46,7 @@ Easing functions — replace linear lerp with ease-in/out curves
 - lag compensation
 - bandwidth throttling / send rate limiting
 - replicated CVar sync from server to client
+- client-side dynamic-entity prediction. Today the dedicated/networked client's Jolt world contains only static map geometry (via `populate_static_physics_bodies`); rockets / physics cubes / remote players are interpolated from snapshots, not simulated locally. Cosmetic effects sidestep this by only casting against static geometry (`cast_sphere_static`), which is byte-identical on client and server. If we ever want projectile prediction (fake-fire a rocket immediately, reconcile on server confirm) or local cosmetic queries against moving bodies, we'd need to register dynamic bodies into the client's Jolt world and step it. Until then, server-side casts whose result rides in the effect payload is the right shape.
 
 - why is AABB a schema? it's not a good decision.
 - all components that exist now should define a schema. is that what we want?

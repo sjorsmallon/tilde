@@ -1,5 +1,9 @@
 #include "play_state.hpp"
 #include "../console.hpp"
+#include "../cosmetic_events.hpp"
+#include "../game_events.hpp"
+#include "../../shared/cosmetic_events.hpp"
+#include "../../shared/game_events.hpp"
 #include "../../shared/physics.hpp"
 #ifdef JPH_DEBUG_RENDERER
 #include <Jolt/Physics/Body/BodyManager.h>
@@ -119,6 +123,9 @@ void PlayState::on_enter()
   init_physics(*physics_state);
   if (session_loaded)
     shared::populate_static_physics_bodies(*physics_state, map);
+  // Lend the client_context_t a borrowed pointer so cosmetic-effect handlers
+  // (e.g. rocket_explosion) can cast against the local static world.
+  ctx.physics_state = physics_state.get();
 #ifdef JPH_DEBUG_RENDERER
   jolt_debug_renderer = std::make_unique<client::jolt_debug_renderer_t>();
 #endif
@@ -163,6 +170,10 @@ void PlayState::on_exit()
 #ifdef JPH_DEBUG_RENDERER
   jolt_debug_renderer.reset();
 #endif
+  // Clear the borrowed handle before the owning unique_ptr destroys the body
+  // so any late-arriving effect dispatch sees a null pointer rather than a
+  // dangling one.
+  ctx.physics_state = nullptr;
   physics_state.reset();
 }
 
@@ -279,6 +290,23 @@ void PlayState::update(float dt)
     }
   }
 
+  // --- Apply reliable gameplay event batches from server ---
+  // Decoded here so consumers (kill feed, score HUD, …) see events the same
+  // tick they arrive, regardless of snapshot ordering.
+  for (const auto &batch : inbox.game_event_batches)
+  {
+    if (!batch.has_event_data() || batch.event_data().empty())
+      continue;
+
+    const auto *data =
+        reinterpret_cast<const network::uint8 *>(batch.event_data().data());
+    network::Bit_Reader reader(data, batch.event_data().size());
+    std::vector<shared::game_event_t> events =
+        shared::deserialize_game_event_batch(reader);
+    if (!events.empty())
+      dispatch_received_game_events(ctx, events);
+  }
+
   // --- Apply bot debug packets from server ---
   for (const auto &msg : inbox.bot_debug_updates)
   {
@@ -388,22 +416,22 @@ void PlayState::update(float dt)
       }
     }
 
-    // Detect rockets that disappeared (hit something) and spawn explosions
-    for (const auto &[id, rocket] : ctx.remote_rockets)
-    {
-      if (new_rockets.find(id) == new_rockets.end())
-      {
-        explosion_effect_t fx;
-        fx.position = rocket.position;
-        fx.time_remaining = 1.2f;
-        fx.explosion_index = ctx.next_explosion_index++;
-        ctx.explosion_effects.push_back(fx);
-      }
-    }
+    // Explosion particle effects are now spawned by the ROCKET_EXPLOSION
+    // cosmetic-event handler (src/client/effects/rocket_explosion.cpp).
+    // Previously inferred here from "rocket disappeared from snapshot"; the
+    // explicit dispatch is authoritative and runs even if a rocket entity
+    // delta is dropped or coalesced.
 
     ctx.remote_rockets = std::move(new_rockets);
     ctx.remote_physics_bodies = std::move(new_physics_bodies);
     ctx.last_processed_tick = snap_tick;
+
+    // Cosmetic effect batch tails the entity deltas in the same packet.
+    // Dispatch immediately — handlers are one-shot, fire-and-forget.
+    std::vector<shared::dispatched_effect_t> effects =
+        shared::deserialize_effect_batch(reader);
+    if (!effects.empty())
+      dispatch_received_effects(ctx, effects);
   }
 
   // --- Reconciliation ---
@@ -838,21 +866,12 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       }
     }
 
-    // Fallback primitive rendering
-    if (auto *aabb = dynamic_cast<network::AABB_Entity *>(ent.get()))
-    {
-      renderer::DrawAABB(cmd, aabb->position - aabb->half_extents,
-                         aabb->position + aabb->half_extents, 0xFFFFFFFF);
-    }
-    else if (auto *wedge = dynamic_cast<network::Wedge_Entity *>(ent.get()))
-    {
-      shared::wedge_t w;
-      w.center = wedge->position;
-      w.half_extents = wedge->half_extents;
-      w.orientation = wedge->orientation;
-      renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
-    }
-    else if (auto *disp = dynamic_cast<network::Displacement_Entity *>(ent.get()))
+    // Fallback primitive rendering. Displacement is checked first because it
+    // also reports a box volume (for picking) but renders as a heightmap mesh,
+    // not a solid box. After that, any box-volume entity falls through to the
+    // generic solid-box draw — so any future box-volume collision entity
+    // (clip-brush, hurt-volume, ...) gets visible fallback rendering for free.
+    if (auto *disp = dynamic_cast<network::Displacement_Entity *>(ent.get()))
     {
       std::string disp_key = "__displacement_" + std::to_string(disp->entity_id);
       auto mesh = network::generate_displacement_mesh(*disp);
@@ -864,6 +883,19 @@ void PlayState::render_3d(VkCommandBuffer cmd)
                             .rotation = disp->orientation,
                             .shader   = renderer::ShaderType::Textured});
       }
+    }
+    else if (auto *volume = ent->get_box_volume())
+    {
+      renderer::DrawAABB(cmd, ent->position - volume->half_extents,
+                         ent->position + volume->half_extents, 0xFFFFFFFF);
+    }
+    else if (auto *wedge = dynamic_cast<network::Wedge_Entity *>(ent.get()))
+    {
+      shared::wedge_t w;
+      w.center = wedge->position;
+      w.half_extents = wedge->half_extents;
+      w.orientation = wedge->orientation;
+      renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
     }
     else if (dynamic_cast<network::Static_Mesh_Entity *>(ent.get()))
     {
@@ -900,9 +932,10 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     if (!ent)
       continue;
 
-    if (dynamic_cast<network::AABB_Entity *>(ent.get()) ||
-        dynamic_cast<network::Wedge_Entity *>(ent.get()) ||
-        dynamic_cast<network::Static_Mesh_Entity *>(ent.get()))
+    // Skip everything that's already been rendered in the static-entities
+    // loop above (AABB, Wedge, Static_Mesh, Displacement all override
+    // is_collision_geometry()==true).
+    if (ent->is_collision_geometry())
       continue;
 
     if (dynamic_cast<network::Player_Entity *>(ent.get()))
@@ -1103,6 +1136,31 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     }
 
     debug_collision::clear_collision_faces();
+  }
+
+  // Debug: every entity.get_box_volume() as a wireframe AABB. Color-coded by
+  // classname so triggers (invisible in play state) and clip-style volumes
+  // stand out from regular AABB worldspawn boxes.
+  if (debug_collision::debug_show_box_volumes.Get())
+  {
+    for (const auto &entry : map.entities)
+    {
+      const auto *ent = entry.entity.get();
+      if (!ent) continue;
+      const auto *volume = ent->get_box_volume();
+      if (!volume) continue;
+
+      uint32_t color = 0xFF00FFFF; // cyan default
+      if (dynamic_cast<const network::Trigger_Volume_Entity *>(ent))
+        color = 0xFFFF00FF; // magenta — triggers are invisible otherwise
+      else if (dynamic_cast<const network::AABB_Entity *>(ent))
+        color = 0xFFFFFFFF; // white
+      else if (dynamic_cast<const network::Displacement_Entity *>(ent))
+        color = 0xFF00FFFF; // yellow-ish — flag the box vs the heightmap
+
+      renderer::DrawWireAABB(cmd, ent->position - volume->half_extents,
+                             ent->position + volume->half_extents, color);
+    }
   }
 
   // --- Bot path / goal debug draw ---

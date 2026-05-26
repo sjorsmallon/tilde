@@ -159,7 +159,14 @@ bool cast_sphere(physics_state_t &state,
                  shared::entity_uid_t ignore_uid,
                  hit_result_t &out);
 
+// Swept sphere from `from` to `to` filtered to only hit Physics_Layers::STATIC
+// (world geometry). Skips all dynamic / kinematic bodies. Used by client-side
+// effect handlers that want to land a decal against the surface the server
+// described, ignoring everything else in the local scene.
+bool cast_sphere_static(physics_state_t &state,
+                        vec3f from, vec3f to, float radius,
+                        hit_result_t &out);
+
 // All bodies overlapping a sphere. Used for explosion splash queries.
-void overlap_sphere(physics_state_t &state,
-                    vec3f center, float radius,
-                    std::vector<hit_result_t> &out);
+std::vector<hit_result_t> find_all_bodies_overlapping_sphere(physics_state_t &state,
+                    vec3f center, float radius);

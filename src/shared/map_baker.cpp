@@ -483,7 +483,19 @@ void bake_map(map_t &map, float cell_size)
     auto *ent = entry.entity.get();
     if (!ent)
       continue;
-    if (!dynamic_cast<network::AABB_Entity *>(ent) &&
+    // Static collision contributors: any box-volume entity that's marked as
+    // collision geometry, plus the wedge and static-mesh special cases.
+    // Triggers (box volume but is_collision_geometry()==false) are correctly
+    // filtered out by the is_collision_geometry() check.
+    //
+    // Static_Mesh stays an explicit case because its collision shape is the
+    // mesh's axis-aligned bounds (derived from the loaded asset, not from an
+    // edited volume), and compute_entity_collision_planes falls through to the
+    // bounds-based fallback for it. If/when proper triangle-mesh collision
+    // lands (via Jolt or otherwise), this branch goes away.
+    if (!ent->is_collision_geometry())
+      continue;
+    if (!ent->get_box_volume() &&
         !dynamic_cast<network::Wedge_Entity *>(ent) &&
         !dynamic_cast<network::Static_Mesh_Entity *>(ent))
       continue;
@@ -565,7 +577,7 @@ void bake_map(map_t &map, float cell_size)
 
       while (true)
       {
-        Ray_Hit floor_hit;
+        ray_hit_result_t floor_hit;
         if (!bvh_intersect_ray(bvh, ray_origin, down, floor_hit))
           break;
 
@@ -584,7 +596,7 @@ void bake_map(map_t &map, float cell_size)
         {
           // Headroom check: must have enough clearance above the floor.
           vec3f ceil_origin = {cx, floor_y + 0.01f, cz};
-          Ray_Hit ceil_hit;
+          ray_hit_result_t ceil_hit;
           float clearance = FLT_MAX;
           if (bvh_intersect_ray(bvh, ceil_origin, up, ceil_hit))
             clearance = ceil_hit.t;

@@ -31,6 +31,12 @@
 namespace client
 {
 
+// Internal client hook (defined in client_impl.cpp). Invokes the integrated
+// launcher's server::reload_map. Returns false if no hook is installed (e.g.
+// in a hypothetical dedicated/networked client build) — caller should treat
+// that as "server-side reload not available" but otherwise continue.
+bool invoke_server_map_reload_hook(const std::string &map_path);
+
 // Returns the absolute path to the maps/ directory, creating it if needed.
 // Resolved relative to the executable: <exe_dir>/../../maps/ which puts it at
 // the project root when running from a cmake_build/bin/ layout.
@@ -68,6 +74,69 @@ static std::vector<std::string> list_map_files()
   }
   std::sort(files.begin(), files.end());
   return files;
+}
+
+// Copy `path` to `path + ".bak"`, overwriting any existing .bak. No-op if
+// `path` doesn't exist. Errors are logged but non-fatal — a missed backup is
+// strictly less bad than blocking a save the user asked for.
+static void rotate_backup_file(const std::string &path)
+{
+  std::error_code ec;
+  if (!std::filesystem::exists(path, ec))
+    return;
+  std::filesystem::copy_file(
+      path, path + ".bak",
+      std::filesystem::copy_options::overwrite_existing, ec);
+  if (ec)
+    log_error("Backup failed for '{}': {}", path, ec.message());
+}
+
+// Single funnel for getting an editor map onto disk and into the running
+// server's session. Used by Ctrl+S, "Save Map As...", and the Play button so
+// all three paths produce the same on-disk + in-memory state.
+//
+// Steps:
+//   1. Rotate <full_path> to <full_path>.bak (if file exists).
+//   2. Write `map` to <full_path>.
+//   3. Update last_map.txt so the next boot picks up the same file.
+//   4. Ask the integrated server to reload from <full_path> so its session
+//      matches what we just saved (fixes the long-standing "save then play
+//      runs the old map" bug).
+//
+// Returns true on success. On failure the on-disk state is left untouched
+// (well, .bak may have been refreshed — but that's by design).
+static bool commit_map_to_disk(const shared::map_t &map,
+                                const std::string &full_path)
+{
+  rotate_backup_file(full_path);
+
+  if (!shared::save_map(full_path, map))
+  {
+    log_error("save_map failed for '{}'", full_path);
+    return false;
+  }
+
+  std::ofstream last_map_f("last_map.txt");
+  if (last_map_f.is_open())
+    last_map_f << full_path;
+  else
+    log_error("Could not write last_map.txt");
+
+  // Server reload is best-effort: if the hook isn't installed (non-integrated
+  // build) we still want the save itself to succeed.
+  if (!invoke_server_map_reload_hook(full_path))
+    log_terminal("Server map-reload hook not installed; server session may be stale.");
+
+  return true;
+}
+
+// On-load backup: snapshot the file as it was when it was opened so the
+// editor can roll back if the user trashes the in-memory map and saves over
+// it (which would otherwise leave only the previous-save .bak from
+// rotate_backup_file). Safe to call on any path; no-op if missing.
+static void snapshot_on_load(const std::string &full_path)
+{
+  rotate_backup_file(full_path);
 }
 
 // Concrete renderer adapter
@@ -158,6 +227,8 @@ void ToolEditorState::on_enter()
       map_loaded = load_map(line, map);
       if (!map_loaded)
         log_terminal("Failed to load map");
+      else
+        snapshot_on_load(line);
     }
 
     if (!map_loaded)
@@ -165,9 +236,9 @@ void ToolEditorState::on_enter()
       map.name = "Tool Editor Map";
       auto floor_ent = std::make_shared<::network::AABB_Entity>();
       floor_ent->position = {0, editor::DEFAULT_FLOOR_Y, 0};
-      floor_ent->half_extents = {editor::DEFAULT_FLOOR_HALF_W,
-                                 editor::DEFAULT_FLOOR_HALF_H,
-                                 editor::DEFAULT_FLOOR_HALF_W};
+      floor_ent->volume.half_extents = {editor::DEFAULT_FLOOR_HALF_W,
+                                        editor::DEFAULT_FLOOR_HALF_H,
+                                        editor::DEFAULT_FLOOR_HALF_W};
       map.add_entity(floor_ent);
       renderer::draw_announcement("Welcome to the Tool Editor!");
     }
@@ -619,7 +690,11 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   else
     result.name = base + "_baked";
 
-  // Copy non-AABB entities unchanged
+  // CSG bake is intentionally type-locked to AABB_Entity on both the input
+  // and output side: the output is std::make_shared<AABB_Entity>(...), so
+  // running this on Trigger_Volume_Entity or Displacement_Entity (also
+  // box-volume entities) would silently strip their behavior payload
+  // (action_name, fire_mode, heightmap, ...). Stay per-class here.
   for (const auto &entry : src.entities)
   {
     if (!entry.entity)
@@ -628,7 +703,6 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
       result.add_entity(entry.entity);
   }
 
-  // Gather AABB inputs
   struct InputAABB
   {
     shared::aabb_t shape;
@@ -642,10 +716,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
     auto *aabb = dynamic_cast<network::AABB_Entity *>(entry.entity.get());
     if (!aabb)
       continue;
-    shared::aabb_t shape;
-    shape.center = aabb->position;
-    shape.half_extents = aabb->half_extents;
-    inputs.push_back({shape, aabb->render});
+    inputs.push_back({shared::to_aabb(aabb->volume, aabb->position), aabb->render});
   }
 
   // CSG union: each new AABB is clipped against all already-placed ones
@@ -679,7 +750,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   {
     auto ent = std::make_shared<network::AABB_Entity>();
     ent->position = piece.shape.center;
-    ent->half_extents = piece.shape.half_extents;
+    ent->volume.half_extents = piece.shape.half_extents;
     ent->render = piece.render;
     result.add_entity(ent);
   }
@@ -689,7 +760,9 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
 
 void ToolEditorState::render_ui()
 {
-  // Ctrl+S / Cmd+S — quick save with CSG simplification
+  // Ctrl+S / Cmd+S — save current map to disk (no implicit CSG bake; use the
+  // "Bake CSG" button for that). Goes through commit_map_to_disk so the
+  // running server's session is reloaded too.
   if (input::is_key_pressed(SDL_SCANCODE_S) &&
       (input::is_key_down(SDL_SCANCODE_LCTRL) ||
        input::is_key_down(SDL_SCANCODE_RCTRL) ||
@@ -697,23 +770,10 @@ void ToolEditorState::render_ui()
        input::is_key_down(SDL_SCANCODE_RGUI)))
   {
     std::string full_path = get_maps_dir() + map.name;
-    auto simplified = bake_map_csg(map);
-    simplified.name = map.name;
-    simplified.navmesh = map.navmesh;
-    if (shared::save_map(full_path, simplified))
-    {
-      map = std::move(simplified);
-      geometry_updated_flag = true;
-
-      std::ofstream last_map_f("last_map.txt");
-      if (last_map_f.is_open())
-        last_map_f << full_path;
-      renderer::draw_announcement("Saved & simplified!");
-    }
+    if (commit_map_to_disk(map, full_path))
+      renderer::draw_announcement("Saved!");
     else
-    {
       renderer::draw_announcement("Save failed!");
-    }
   }
 
   ImGui::Begin("Map Info", nullptr, ImGuiWindowFlags_NoNav);
@@ -735,6 +795,20 @@ void ToolEditorState::render_ui()
 
   if (ImGui::Button("New Map"))
     should_open_new_map_popup = true;
+
+  // Bake CSG: subtracts overlapping AABBs against each other and replaces the
+  // in-memory map with the simplified result. Save is no longer destructive,
+  // so this is the only path that mutates geometry — explicit and reversible
+  // via undo.
+  if (ImGui::Button("Bake CSG"))
+  {
+    auto simplified = bake_map_csg(map);
+    simplified.name = map.name;
+    simplified.navmesh = map.navmesh;
+    map = std::move(simplified);
+    geometry_updated_flag = true;
+    renderer::draw_announcement("Geometry simplified (not saved)");
+  }
 
   ImGui::Checkbox("Solid Entities", &draw_entities_solid);
   ImGui::Checkbox("Hide Geometry", &hide_geometry);
@@ -861,6 +935,10 @@ void ToolEditorState::render_ui()
         if (last_map_f.is_open())
           last_map_f << full_path;
 
+        // Snapshot the file as it was on disk, so the user can roll back even
+        // if their first action is to delete everything and Ctrl+S.
+        snapshot_on_load(full_path);
+
         renderer::draw_announcement("Map loaded!");
       }
       else
@@ -900,24 +978,11 @@ void ToolEditorState::render_ui()
     if (ImGui::Button("Save", ImVec2(120, 0)))
     {
       std::string full_path = get_maps_dir() + filename_buf;
-      auto simplified = bake_map_csg(map);
-      simplified.name = filename_buf;
-      simplified.navmesh = map.navmesh;
-      if (shared::save_map(full_path, simplified))
-      {
-        map = std::move(simplified);
-        geometry_updated_flag = true;
-
-        std::ofstream last_map_f("last_map.txt");
-        if (last_map_f.is_open())
-          last_map_f << full_path;
-
-        renderer::draw_announcement("Saved & simplified!");
-      }
+      map.name = filename_buf;
+      if (commit_map_to_disk(map, full_path))
+        renderer::draw_announcement("Saved!");
       else
-      {
         renderer::draw_announcement("Save failed!");
-      }
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -943,9 +1008,9 @@ void ToolEditorState::render_ui()
       map.name = "new_map.source";
       auto floor_ent = std::make_shared<::network::AABB_Entity>();
       floor_ent->position = {0, editor::DEFAULT_FLOOR_Y, 0};
-      floor_ent->half_extents = {editor::DEFAULT_FLOOR_HALF_W,
-                                 editor::DEFAULT_FLOOR_HALF_H,
-                                 editor::DEFAULT_FLOOR_HALF_W};
+      floor_ent->volume.half_extents = {editor::DEFAULT_FLOOR_HALF_W,
+                                        editor::DEFAULT_FLOOR_HALF_H,
+                                        editor::DEFAULT_FLOOR_HALF_W};
       map.add_entity(floor_ent);
 
       transaction_system = Transaction_System{};
@@ -985,7 +1050,19 @@ void ToolEditorState::render_ui()
   ImGui::Separator();
   if (ImGui::Button("Play"))
   {
-    state_manager::switch_to(GameStateKind::Play);
+    // Commit current edits to disk before switching. This is the same code
+    // path as Ctrl+S, so PlayState's last_map.txt reload and the server's
+    // reload_map both see exactly what's in the editor right now — no more
+    // "I clicked save AND play and it still ran the old map" surprises.
+    std::string full_path = get_maps_dir() + map.name;
+    if (!commit_map_to_disk(map, full_path))
+    {
+      renderer::draw_announcement("Save before Play failed!");
+    }
+    else
+    {
+      state_manager::switch_to(GameStateKind::Play);
+    }
   }
 
   if (ImGui::Button("Back to Menu"))

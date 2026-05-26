@@ -80,7 +80,7 @@ void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
 
 Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs);
 
-struct Ray_Hit
+struct ray_hit_result_t
 {
   bool hit;
   float t;
@@ -88,7 +88,7 @@ struct Ray_Hit
 };
 
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
-                       const vec3f &origin, const vec3f &dir, Ray_Hit &out_hit);
+                       const vec3f &origin, const vec3f &dir, ray_hit_result_t &out_hit);
 
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
                         std::vector<const BVH_Primitive *> &out_primitives);

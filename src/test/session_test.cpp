@@ -21,7 +21,7 @@ int main()
   if (auto *e = dynamic_cast<network::AABB_Entity *>(aabb_ent.get()))
   {
     e->position = {0, 0, 0};
-    e->half_extents = {10, 10, 10};
+    e->volume.half_extents = {10, 10, 10};
   }
   test_map.add_entity(aabb_ent);
 

@@ -23,4 +23,12 @@ GAME_CLIENT_API void Shutdown();
 // so the renderer can read entity pools directly. Pass nullptr in
 // dedicated/networked builds (this is also the default).
 GAME_CLIENT_API void set_integrated_server_session(const shared::game_session_t *session);
+
+// Integrated build only: install a callback the editor invokes after writing a
+// map to disk (Save / Play). The launcher wires this to server::reload_map so
+// the running server picks up the new map without restarting the executable.
+// Pass nullptr (the default) in dedicated/networked builds — the editor will
+// then skip the server-side reload step.
+using server_map_reload_hook_t = bool (*)(const char *map_path);
+GAME_CLIENT_API void set_server_map_reload_hook(server_map_reload_hook_t hook);
 } // namespace client

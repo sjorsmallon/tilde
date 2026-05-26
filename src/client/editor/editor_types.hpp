@@ -10,6 +10,13 @@
 namespace client
 {
 
+  enum mouse_button
+  {
+    MOUSE_BUTTON_LEFT = 1,
+    MOUSE_BUTTON_MIDDLE = 2,
+    MOUSE_BUTTON_RIGHT = 3
+  };
+
 struct mouse_event_t
 {
   // SDL Button constants or custom enum

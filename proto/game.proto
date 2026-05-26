@@ -182,3 +182,13 @@ message BotDebugEntry {
 message S2C_BotDebug {
     repeated BotDebugEntry bots = 1;
 }
+
+// Server → Client: a batch of reliable gameplay events produced this tick.
+// The payload is the packed shared::game_event_t batch format
+// ([count:u16][kind:u16][packed payload]…), encoded via Bit_Writer. Reliable
+// channel by design (kill feed entries can't silently drop); ack/retransmit
+// is a follow-up if/when packet loss causes visible gaps.
+message S2C_GameEventBatch {
+    optional bytes event_data  = 1;
+    optional uint32 server_tick = 2;
+}

@@ -7,7 +7,7 @@ namespace network
 DEFINE_SCHEMA_CLASS(AABB_Entity, Entity)
 {
   BEGIN_SCHEMA_FIELDS()
-  REGISTER_SCHEMA_FIELD(half_extents);
+  REGISTER_SCHEMA_FIELD(volume);
   REGISTER_SCHEMA_FIELD(render);
   END_SCHEMA_FIELDS()
 }

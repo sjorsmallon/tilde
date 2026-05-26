@@ -62,24 +62,58 @@ Because `Entity` is abstract (pure virtual `get_schema`), it can't use the macro
 ```
 Entity (abstract base)
 ├── position, orientation
+│   └── virtual get_box_volume() -> box_volume_t*  (default: nullptr)
 │
 ├── Player_Entity
 │   └── view_angle_yaw, view_angle_pitch, health, ammo, ...
 │
-├── AABB_Entity
-│   └── center, half_extents
+├── AABB_Entity                       (owns box_volume_t volume)
 │
-├── Wedge_Entity
-│   └── center, half_extents, orientation
+├── Trigger_Volume_Entity             (owns box_volume_t volume + action_name, fire_mode, ...)
+│
+├── Displacement_Entity               (owns box_volume_t volume + heightmap)
+│
+├── Wedge_Entity                      (legacy; loose half_extents + orientation — stripped at load, see below)
 │
 ├── Static_Mesh_Entity
-│   └── scale, asset_id
+│   └── render (mesh bounds drive picking and collision)
 │
 └── Weapon_Entity
     └── ...
 ```
 
-Every derived entity inherits `Entity`'s schema fields (`position`, `orientation`) automatically through `DEFINE_SCHEMA_CLASS(Derived, Entity)`. The flattened schema for e.g. `AABB_Entity` therefore contains: `position`, `orientation`, `center`, `half_extents`.
+Every derived entity inherits `Entity`'s schema fields (`position`, `orientation`) automatically through `DEFINE_SCHEMA_CLASS(Derived, Entity)`. The flattened schema for e.g. `AABB_Entity` therefore contains: `position`, `orientation`, plus the nested `volume` (a `box_volume_t` whose own fields include `half_extents`).
+
+## Box-Volume Component
+
+`shared::box_volume_t` (in [src/shared/shapes.hpp](../shapes.hpp)) is the geometry primitive that box-shaped entities **own**, rather than **are**. It's a nested-schema component with a single `half_extents` field; world-space `aabb_t` is reconstructed on demand via `to_aabb(volume, entity.position)`. Three entities use it today: `AABB_Entity`, `Trigger_Volume_Entity`, `Displacement_Entity`.
+
+### Dispatch — `get_box_volume()`
+
+`Entity` exposes:
+
+```cpp
+virtual shared::box_volume_t *get_box_volume() { return nullptr; }
+virtual const shared::box_volume_t *get_box_volume() const { return nullptr; }
+```
+
+Each box-owning entity overrides it as a one-liner: `return &volume;`. Editor tools, picking, collision, fallback rendering all dispatch on this virtual instead of `dynamic_cast<AABB_Entity*>` — any new box-volume entity (clip-brush, hurt-volume, fog-volume, ...) becomes sculptable, pickable, and CSG-aware **for free**, with no edits to the editor or BVH code.
+
+The virtual is used for class-level facts ("does this class have a box volume?") that are known at compile time. Don't use `Entity::get_component<box_volume_t>()` for this purpose — that's a runtime schema walk, slower for no gain. `get_component<T>` is fine for generic property access, just not for dispatch.
+
+### How to add a new box-volume entity
+
+1. Add a `SCHEMA_FIELD(shared::box_volume_t, volume, Networked | Editable | Saveable)` member.
+2. Override `get_box_volume()` (const + non-const) to return `&volume`.
+3. Add the entity to `SHARED_ENTITIES_LIST` as usual.
+
+That's it. Sculpting, placement, picking, the BVH path, and runtime fallback rendering all pick the new entity up. Behavior-specific code (drawing tints, action lookups, etc.) stays per-class — only the **geometry** layer flows through the virtual.
+
+### Wedge migration is deferred
+
+`Wedge_Entity` still uses loose `half_extents` + `orientation` fields rather than a component. To keep the box-volume refactor narrow, **all `Wedge_Entity` entries are stripped from maps at load time** (with a non-silent `printf` per stripped wedge — see [map.cpp](../map.cpp)'s `load_map`). The class itself stays in the codebase so existing code compiles; it just stops appearing in any loaded map.
+
+Future follow-up: introduce `wedge_volume_t` + `virtual wedge_volume_t* get_wedge_volume()` on `Entity`, restore `Wedge_Entity` (or its replacement) as the first user, collapse the existing wedge `dynamic_cast` sites. The pattern is already established by `box_volume_t`.
 
 ## Entity List & Factory
 

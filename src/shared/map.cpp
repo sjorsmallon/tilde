@@ -4,11 +4,14 @@
 #include "entities/player_entity.hpp"
 #include "entities/static_entities.hpp"
 #include "entities/displacement_entity.hpp"
+#include "entities/trigger_volume_entity.hpp"
 #include "entity_system.hpp"
+#include "log.hpp"
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <typeinfo>
 
 namespace shared
 {
@@ -193,13 +196,35 @@ serialize_map_entities(const std::vector<map_entity_def_t> &entities)
 
 } // namespace
 
-aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
+// ============================================================================
+// Per-entity picking bounds
+//
+// The primary template is intentionally NOT defined. If a new entity type is
+// added to SHARED_ENTITIES_LIST and the dev forgets to specialize this here,
+// the linker will fail with "undefined reference to
+// compute_picking_bounds_for<Foo_Entity>". That's the point -- forces every
+// entity type to declare its picking shape rather than silently falling back
+// to a tiny default box that makes selection effectively impossible.
+//
+// Mirrors the Entity_Editor_Traits pattern at
+// src/client/editor/entity_editor_traits.hpp.
+// ============================================================================
+
+template <typename EntityClass>
+aabb_bounds_t compute_picking_bounds_for(const EntityClass *e);
+
+namespace
 {
-  // 1. Check for mesh bounds via render component
+// Mesh-bounds-or-default-box. Shared helper for entities whose picking shape
+// is "whatever the render_component's mesh tells us, with a small fallback if
+// the mesh hasn't loaded yet".
+aabb_bounds_t mesh_or_point_bounds(const network::Entity *entity,
+                                   float fallback_half = 0.5f)
+{
   if (const auto *rc = entity->get_component<network::render_component_t>())
   {
-    const char *mesh_path = rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
-
+    const char *mesh_path =
+        rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
     if (mesh_path)
     {
       assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
@@ -211,89 +236,164 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
       if (mesh_handle.valid())
       {
         vec3f mesh_min, mesh_max;
-        if (assets::compute_mesh_bounds(assets::get(mesh_handle),
-                                        mesh_min, mesh_max))
+        if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min,
+                                        mesh_max))
         {
           vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
           vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
           vec3f s = rc->scale;
-          vec3f world_center = entity->position +
-              vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
-                    mesh_center.z * s.z};
-          vec3f world_half =
-              vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
-                    mesh_half.z * s.z};
+          vec3f world_center =
+              entity->position + vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
+                                       mesh_center.z * s.z};
+          vec3f world_half = vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
+                                   mesh_half.z * s.z};
           return {world_center - world_half, world_center + world_half};
         }
       }
     }
   }
+  return {entity->position -
+              vec3f{fallback_half, fallback_half, fallback_half},
+          entity->position +
+              vec3f{fallback_half, fallback_half, fallback_half}};
+}
+} // namespace
 
-  // 2. Check for AABB entity shape
-  if (auto *aabb = dynamic_cast<const network::AABB_Entity *>(entity))
+template <>
+aabb_bounds_t compute_picking_bounds_for(const network::Player_Spawn_Entity *e)
+{
+  const vec3f hull{network::player_half_width, network::player_half_height,
+                   network::player_half_width};
+  return {e->position - hull, e->position + hull};
+}
+
+template <>
+aabb_bounds_t compute_picking_bounds_for(const network::Player_Entity *e)
+{
+  auto mesh_handle = assets::load_mesh("resources/obj/pyramid.obj");
+  if (mesh_handle.valid())
   {
-    aabb_t t;
-    t.center = aabb->position;
-    t.half_extents = aabb->half_extents;
-    return get_bounds(t);
+    vec3f mesh_min, mesh_max;
+    if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min,
+                                    mesh_max))
+      return {e->position + mesh_min, e->position + mesh_max};
+  }
+  const vec3f hull{network::player_half_width, network::player_half_height,
+                   network::player_half_width};
+  return {e->position - hull, e->position + hull};
+}
+
+template <>
+aabb_bounds_t compute_picking_bounds_for(const network::Weapon_Entity *e)
+{
+  return mesh_or_point_bounds(e);
+}
+
+template <>
+aabb_bounds_t compute_picking_bounds_for(const network::AABB_Entity *e)
+{
+  return get_bounds(e->volume, e->position);
+}
+
+template <>
+aabb_bounds_t compute_picking_bounds_for(const network::Wedge_Entity *e)
+{
+  wedge_t t;
+  t.center = e->position;
+  t.half_extents = e->half_extents;
+  t.orientation = e->orientation;
+  return get_bounds(t);
+}
+
+template <>
+aabb_bounds_t compute_picking_bounds_for(const network::Static_Mesh_Entity *e)
+{
+  return mesh_or_point_bounds(e);
+}
+
+template <>
+aabb_bounds_t compute_picking_bounds_for(const network::Rocket_Entity *e)
+{
+  return mesh_or_point_bounds(e);
+}
+
+template <>
+aabb_bounds_t
+compute_picking_bounds_for(const network::Particle_Emitter_Entity *e)
+{
+  return mesh_or_point_bounds(e);
+}
+
+template <>
+aabb_bounds_t
+compute_picking_bounds_for(const network::Displacement_Entity *e)
+{
+  return get_bounds(e->volume, e->position);
+}
+
+template <>
+aabb_bounds_t
+compute_picking_bounds_for(const network::Trigger_Volume_Entity *e)
+{
+  return get_bounds(e->volume, e->position);
+}
+
+template <>
+aabb_bounds_t compute_picking_bounds_for(const network::Light_Entity *e)
+{
+  return mesh_or_point_bounds(e);
+}
+
+template <>
+aabb_bounds_t
+compute_picking_bounds_for(const network::Physics_Body_Entity *e)
+{
+  return mesh_or_point_bounds(e);
+}
+
+aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
+{
+  if (!entity)
+  {
+    log_error("compute_entity_bounds called with null entity");
+    return {{0, 0, 0}, {0, 0, 0}};
   }
 
-  // 2b. Check for Displacement entity shape
-  if (auto *disp = dynamic_cast<const network::Displacement_Entity *>(entity))
-  {
-    aabb_t t;
-    t.center = disp->position;
-    t.half_extents = disp->half_extents;
-    return get_bounds(t);
-  }
+  // Generic fast-path: any entity that owns a box volume picks through it,
+  // regardless of concrete class. Per-class specializations below remain only
+  // for non-box entities (mesh, wedge, player, ...).
+  if (const auto *volume = entity->get_box_volume())
+    return get_bounds(*volume, entity->position);
 
-  // 3. Check for Wedge entity shape
-  if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
-  {
-    wedge_t t;
-    t.center = wedge->position;
-    t.half_extents = wedge->half_extents;
-    t.orientation = wedge->orientation;
-    return get_bounds(t);
-  }
+#define X(ENUM, CLASS, NAME, PATH)                                             \
+  if (auto *casted = dynamic_cast<const CLASS *>(entity))                      \
+    return compute_picking_bounds_for<CLASS>(casted);
+  SHARED_ENTITIES_LIST(X)
+#undef X
 
-  // 4. Player entity: use pyramid mesh bounds
-  if (dynamic_cast<const network::Player_Entity *>(entity))
-  {
-    auto mesh_handle = assets::load_mesh("resources/obj/pyramid.obj");
-    if (mesh_handle.valid())
-    {
-      vec3f mesh_min, mesh_max;
-      if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min, mesh_max))
-        return {entity->position + mesh_min, entity->position + mesh_max};
-    }
-    // Fallback to player hull if mesh not yet loaded
-    const vec3f hull{network::player_half_width, network::player_half_height, network::player_half_width};
-    return {entity->position - hull, entity->position + hull};
-  }
-
-  // 4b. Player spawn: use player hull dimensions for picking
-  if (dynamic_cast<const network::Player_Spawn_Entity *>(entity))
-  {
-    const vec3f hull{network::player_half_width, network::player_half_height, network::player_half_width};
-    return {entity->position - hull, entity->position + hull};
-  }
-
-  // 5. Default: 0.5 unit box at entity position
+  // Unreachable if every entity type in SHARED_ENTITIES_LIST is handled above
+  // (which the linker enforces). Reaching here means something derived from
+  // network::Entity exists outside the X-macro -- a real bug.
+  log_error("compute_entity_bounds: entity not in SHARED_ENTITIES_LIST "
+            "(typeid={}); register it via the X-macro in entity_list.hpp",
+            typeid(*entity).name());
   return {entity->position - vec3f{0.5f, 0.5f, 0.5f},
           entity->position + vec3f{0.5f, 0.5f, 0.5f}};
 }
 
 std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity)
 {
-  // AABB entity -> 6 axis-aligned planes
-  if (auto *aabb = dynamic_cast<const network::AABB_Entity *>(entity))
-  {
-    aabb_t t;
-    t.center = aabb->position;
-    t.half_extents = aabb->half_extents;
-    return compute_collision_planes(t);
-  }
+  // Any entity that owns a box volume -> 6 axis-aligned planes.
+  //
+  // TODO(displacement-collision): Displacement_Entity also flows through this
+  // branch because it owns a box_volume_t, so its in-game collision is a flat
+  // axis-aligned box rather than its actual heightmap surface. Players will
+  // walk on an invisible lid above the terrain. Fix is to either give
+  // Displacement its own compute_entity_collision_planes path (slice the
+  // heightmap into per-quad planes) or wire it through a future
+  // mesh_volume_t / triangle collision path.
+  if (const auto *volume = entity->get_box_volume())
+    return compute_collision_planes(to_aabb(*volume, entity->position));
 
   // Wedge entity -> 5 planes (including slope)
   if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
@@ -315,13 +415,9 @@ std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity
 
 std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const network::Entity *entity)
 {
-  if (auto *aabb = dynamic_cast<const network::AABB_Entity *>(entity))
-  {
-    aabb_t t;
-    t.center = aabb->position;
-    t.half_extents = aabb->half_extents;
-    return compute_face_polygons(t);
-  }
+  // Any entity that owns a box volume -> 6 axis-aligned face quads
+  if (const auto *volume = entity->get_box_volume())
+    return compute_face_polygons(to_aabb(*volume, entity->position));
 
   if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
   {
@@ -364,6 +460,23 @@ bool load_map(const std::string &filename, map_t &out_map)
       {
         out_map.name = ent.properties.at("name");
       }
+      continue;
+    }
+
+    // Wedge entities are being retired pending a follow-up that gives them a
+    // proper wedge_volume_t component (parallel to the box_volume_t refactor).
+    // Strip them on load so existing maps clean themselves on the next save.
+    // Non-silent by design: wedges are real data being discarded.
+    if (ent.classname == "wedge_entity")
+    {
+      const std::string &pos = ent.properties.count("position")
+                                   ? ent.properties.at("position")
+                                   : (ent.properties.count("center")
+                                          ? ent.properties.at("center")
+                                          : std::string("?"));
+      printf("Info: stripped wedge entity from %s at position %s "
+             "(deferred refactor)\n",
+             filename.c_str(), pos.c_str());
       continue;
     }
 

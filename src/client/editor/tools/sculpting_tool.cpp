@@ -1,6 +1,7 @@
 #include "sculpting_tool.hpp"
-#include "../../../shared/entities/static_entities.hpp"
+#include "../../../shared/entity.hpp"
 #include "../../../shared/map.hpp"
+#include "../../../shared/shapes.hpp"
 #include "../transaction_system.hpp"
 #include <cmath>
 #include <limits>
@@ -145,7 +146,7 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
 
   if (ctx.bvh)
   {
-    Ray_Hit hit;
+    ray_hit_result_t hit;
     if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
                           hit))
     {
@@ -155,12 +156,10 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
         auto *entry = ctx.map->find_by_uid(uid);
         if (entry && entry->entity)
         {
-          if (auto *aabb_ent =
-                  dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
+          if (const shared::box_volume_t *volume =
+                  entry->entity->get_box_volume())
           {
-            shared::aabb_t aabb;
-            aabb.center = aabb_ent->position;
-            aabb.half_extents = aabb_ent->half_extents;
+            shared::aabb_t aabb = shared::to_aabb(*volume, entry->entity->position);
 
             float t;
             int face;
@@ -189,11 +188,10 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
     auto *entry = ctx.map->find_by_uid(dragging_uid);
     if (entry && entry->entity)
     {
-      if (auto *aabb_ent =
-              dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
+      if (const shared::box_volume_t *volume =
+              entry->entity->get_box_volume())
       {
-        original_aabb.center = aabb_ent->position;
-        original_aabb.half_extents = aabb_ent->half_extents;
+        original_aabb = shared::to_aabb(*volume, entry->entity->position);
 
         sculpt_start_props = entry->entity->get_all_properties();
       }
@@ -210,13 +208,12 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
     if (!entry || !entry->entity)
       return;
 
-    if (auto *aabb_ent =
-            dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
+    if (shared::box_volume_t *volume = entry->entity->get_box_volume())
     {
       using namespace linalg;
 
-      vec3 current_center = aabb_ent->position;
-      vec3 current_half_extents = aabb_ent->half_extents;
+      vec3 current_center = entry->entity->position;
+      vec3 current_half_extents = volume->half_extents;
 
       vec3 normal = {0, 0, 0};
       vec3 center_offset = {0, 0, 0};
@@ -292,18 +289,18 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 
           if (dragging_face < 2)
           {
-            ext = &aabb_ent->half_extents.x;
-            cen = &aabb_ent->position.x;
+            ext = &volume->half_extents.x;
+            cen = &entry->entity->position.x;
           }
           else if (dragging_face < 4)
           {
-            ext = &aabb_ent->half_extents.y;
-            cen = &aabb_ent->position.y;
+            ext = &volume->half_extents.y;
+            cen = &entry->entity->position.y;
           }
           else
           {
-            ext = &aabb_ent->half_extents.z;
-            cen = &aabb_ent->position.z;
+            ext = &volume->half_extents.z;
+            cen = &entry->entity->position.z;
           }
 
           *ext += world_delta * 0.5f;
@@ -362,12 +359,10 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
     auto *entry = ctx.map->find_by_uid(hovered_uid);
     if (entry && entry->entity)
     {
-      if (auto *aabb_ent =
-              dynamic_cast<::network::AABB_Entity *>(entry->entity.get()))
+      if (const shared::box_volume_t *volume =
+              entry->entity->get_box_volume())
       {
-        shared::aabb_t aabb;
-        aabb.center = aabb_ent->position;
-        aabb.half_extents = aabb_ent->half_extents;
+        shared::aabb_t aabb = shared::to_aabb(*volume, entry->entity->position);
 
         linalg::vec3 p = aabb.center;
         linalg::vec3 e = aabb.half_extents;

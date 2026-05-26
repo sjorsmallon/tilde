@@ -1,6 +1,7 @@
 #include "placement_tool.hpp"
 #include "../../../shared/editor_grid.hpp"
 #include "../../../shared/map.hpp"
+#include "../../../shared/shapes.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../transaction_system.hpp"
 
@@ -18,15 +19,15 @@ namespace client
 void Placement_Tool::on_enable(editor_context_t &ctx)
 {
   ghost_valid = false;
+  
   if (!current_entity)
   {
     current_entity = shared::create_entity_by_classname("aabb_entity");
-    if (auto *aabb =
-            dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
+    if (shared::box_volume_t *volume = current_entity->get_box_volume())
     {
-      aabb->half_extents = {editor::DEFAULT_HALF_EXTENT,
-                            editor::DEFAULT_HALF_EXTENT,
-                            editor::DEFAULT_HALF_EXTENT};
+      volume->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                              editor::DEFAULT_HALF_EXTENT,
+                              editor::DEFAULT_HALF_EXTENT};
     }
   }
 }
@@ -38,18 +39,20 @@ void Placement_Tool::on_update(editor_context_t &ctx,
 {
   float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
 
-  // Prefer hitting existing geometry so entities can be stacked
+  // Prefer hitting existing geometry so we can place entities on walls/ceilings,
+  //  but if there's no geometry under the cursor, fall back to the ground plane.
   bool hit_geometry = false;
+
   if (ctx.bvh && !ctx.bvh->nodes.empty())
   {
-    Ray_Hit hit{};
+    auto hit_result = ray_hit_result_t{};
     if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
-                          hit))
+                          hit_result))
     {
-      ghost_pos = view.mouse_ray.origin + view.mouse_ray.dir * hit.t;
-      ghost_pos.x = editor::snap(ghost_pos.x, step);
-      ghost_pos.z = editor::snap(ghost_pos.z, step);
-      ghost_pos.y = editor::snap(ghost_pos.y, step);
+      ghost_position = view.mouse_ray.origin + view.mouse_ray.dir * hit_result.t;
+      ghost_position.x = editor::snap(ghost_position.x, step);
+      ghost_position.z = editor::snap(ghost_position.z, step);
+      ghost_position.y = editor::snap(ghost_position.y, step);
       ghost_valid = true;
       hit_geometry = true;
     }
@@ -64,9 +67,9 @@ void Placement_Tool::on_update(editor_context_t &ctx,
     if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.dir,
                                     plane_point, plane_normal, t))
     {
-      ghost_pos = view.mouse_ray.origin + view.mouse_ray.dir * t;
-      ghost_pos.x = editor::snap(ghost_pos.x, step);
-      ghost_pos.z = editor::snap(ghost_pos.z, step);
+      ghost_position = view.mouse_ray.origin + view.mouse_ray.dir * t;
+      ghost_position.x = editor::snap(ghost_position.x, step);
+      ghost_position.z = editor::snap(ghost_position.z, step);
       ghost_valid = true;
     }
     else
@@ -79,21 +82,22 @@ void Placement_Tool::on_update(editor_context_t &ctx,
 void Placement_Tool::on_mouse_down(editor_context_t &ctx,
                                    const mouse_event_t &e)
 {
-  if (e.button == 1 && ghost_valid && ctx.map && current_entity)
+  if (e.button == mouse_button::MOUSE_BUTTON_LEFT && ghost_valid && ctx.map && current_entity)
   {
     std::string classname =
         shared::get_classname_for_entity(current_entity.get());
-    auto new_ent = shared::create_entity_by_classname(classname);
-    if (!new_ent)
+
+    auto new_entity = shared::create_entity_by_classname(classname);
+    if (!new_entity)
       return;
 
-    new_ent->init_from_map(current_entity->get_all_properties());
-    new_ent->position = compute_placement_center(new_ent.get(), ghost_pos);
+    new_entity->init_from_map(current_entity->get_all_properties());
+    new_entity->position = compute_placement_center(new_entity.get(), ghost_position);
 
     {
-      auto uid = ctx.map->add_entity(new_ent);
+      auto uid = ctx.map->add_entity(new_entity);
       transaction_builder_t builder;
-      builder.add_created(uid, snapshot_entity(new_ent.get()));
+      builder.add_created(uid, snapshot_entity(new_entity.get()));
       ctx.transaction_system->push(builder.take());
     }
 
@@ -136,13 +140,14 @@ void Placement_Tool::select_entity_type(int index)
   if (!current_entity)
     return;
 
-  // Set up defaults for types that need them
-  if (auto *aabb =
-          dynamic_cast<::network::AABB_Entity *>(current_entity.get()))
+  // Set up defaults for types that need them.
+  // Box-volume entities (AABB, Displacement, Trigger_Volume, ...) all flow
+  // through the same path: default extents into their owned box_volume_t.
+  if (shared::box_volume_t *volume = current_entity->get_box_volume())
   {
-    aabb->half_extents = {editor::DEFAULT_HALF_EXTENT,
-                          editor::DEFAULT_HALF_EXTENT,
-                          editor::DEFAULT_HALF_EXTENT};
+    volume->half_extents = {editor::DEFAULT_HALF_EXTENT,
+                            editor::DEFAULT_HALF_EXTENT,
+                            editor::DEFAULT_HALF_EXTENT};
   }
   else if (auto *wedge =
                dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
@@ -163,29 +168,15 @@ void Placement_Tool::select_entity_type(int index)
   {
     mesh->render.mesh_path.set("resources/obj/m4a1_s.obj");
   }
-  else if (auto *disp = dynamic_cast<::network::Displacement_Entity *>(
-               current_entity.get()))
-  {
-    disp->half_extents = {editor::DEFAULT_HALF_EXTENT,
-                          editor::DEFAULT_HALF_EXTENT,
-                          editor::DEFAULT_HALF_EXTENT};
-  }
-  else if (auto *trigger = dynamic_cast<::network::Trigger_Volume_Entity *>(
-               current_entity.get()))
-  {
-    trigger->half_extents = {editor::DEFAULT_HALF_EXTENT,
-                             editor::DEFAULT_HALF_EXTENT,
-                             editor::DEFAULT_HALF_EXTENT};
-  }
 }
 
 void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
-  for (int i = 0; i < g_placeable_count && i < 9; ++i)
+  for (int idx = 0; idx < g_placeable_count && idx < 9; ++idx)
   {
-    if (e.scancode == SDL_SCANCODE_1 + i)
+    if (e.scancode == SDL_SCANCODE_1 + idx)
     {
-      select_entity_type(i);
+      select_entity_type(idx);
       return;
     }
   }
@@ -196,11 +187,11 @@ void Placement_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::SetNextWindowSize({200, 0}, ImGuiCond_FirstUseEver);
   if (ImGui::Begin("Placement"))
   {
-    for (int i = 0; i < g_placeable_count; ++i)
+    for (int idx = 0; idx < g_placeable_count; ++idx)
     {
-      bool selected = (i == selected_type_index);
-      if (ImGui::Selectable(g_placeable_types[i].label, selected))
-        select_entity_type(i);
+      bool selected = (idx == selected_type_index);
+      if (ImGui::Selectable(g_placeable_types[idx].label, selected))
+        select_entity_type(idx);
     }
   }
   ImGui::End();
@@ -212,7 +203,7 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
   if (ghost_valid && current_entity)
   {
     linalg::vec3 center =
-        compute_placement_center(current_entity.get(), ghost_pos);
+        compute_placement_center(current_entity.get(), ghost_position);
 
     if (!draw_entity_ghost(current_entity.get(), renderer, center))
       draw_default_ghost(current_entity.get(), renderer, center);

@@ -29,7 +29,7 @@ public:
 private:
   void select_entity_type(int index);
 
-  linalg::vec3 ghost_pos;
+  linalg::vec3 ghost_position;
   bool ghost_valid = false;
   int selected_type_index = 0;
 

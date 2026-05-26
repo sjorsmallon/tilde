@@ -20,7 +20,7 @@ void test_add_remove()
   // 1. Add entity and record diff
   auto ent = std::make_shared<AABB_Entity>();
   ent->position = {0, 0, 0};
-  ent->half_extents = {1, 1, 1};
+  ent->volume.half_extents = {1, 1, 1};
   entity_uid_t added_uid = map.add_entity(ent);
 
   {

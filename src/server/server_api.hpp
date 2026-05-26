@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 // Cross-platform export macros
 #if defined(_WIN32) || defined(__CYGWIN__)
@@ -27,4 +28,10 @@ GAME_SERVER_API uint32_t get_tick_number();
 // so the client can render directly from it instead of going through the
 // snapshot/interpolation pipeline. Returns nullptr if Init() has not run.
 GAME_SERVER_API const shared::game_session_t *get_session_for_integrated_client();
+
+// Reload the server with a different map. Wipes the current session, physics
+// world, bots, and per-client baselines, then loads `map_path` and respawns
+// map-defined bots. Any currently-connected players are disconnected; they
+// will reconnect on their next Connect packet. Returns true on successful load.
+GAME_SERVER_API bool reload_map(const std::string &map_path);
 } // namespace server

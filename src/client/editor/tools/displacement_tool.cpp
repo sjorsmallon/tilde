@@ -299,7 +299,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
 
       if (ctx.bvh)
       {
-        Ray_Hit hit;
+        ray_hit_result_t hit;
         if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin,
                                view.mouse_ray.dir, hit))
         {
@@ -317,7 +317,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
                 // Face picking on the AABB bounds
                 shared::aabb_t aabb;
                 aabb.center = disp->position;
-                aabb.half_extents = disp->half_extents;
+                aabb.half_extents = disp->volume.half_extents;
                 float t;
                 int face;
                 if (ray_aabb_face_intersection(view.mouse_ray.origin,
@@ -438,7 +438,7 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
     using namespace linalg;
 
     vec3 current_center = ent->position;
-    vec3 current_he = ent->half_extents;
+    vec3 current_he = ent->volume.half_extents;
 
     vec3 normal = {0, 0, 0};
     vec3 center_offset = {0, 0, 0};
@@ -496,17 +496,17 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
 
         if (resize_face < 2)
         {
-          ext = &ent->half_extents.x;
+          ext = &ent->volume.half_extents.x;
           cen = &ent->position.x;
         }
         else if (resize_face < 4)
         {
-          ext = &ent->half_extents.y;
+          ext = &ent->volume.half_extents.y;
           cen = &ent->position.y;
         }
         else
         {
-          ext = &ent->half_extents.z;
+          ext = &ent->volume.half_extents.z;
           cen = &ent->position.z;
         }
 
@@ -702,7 +702,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
               entry->entity.get()))
       {
         linalg::vec3 p = disp->position;
-        linalg::vec3 he = disp->half_extents;
+        linalg::vec3 he = disp->volume.half_extents;
         linalg::vec3 size = he;
 
         switch (hovered_face)

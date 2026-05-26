@@ -6,7 +6,7 @@ namespace network
 DEFINE_SCHEMA_CLASS(Displacement_Entity, Entity)
 {
   BEGIN_SCHEMA_FIELDS()
-  REGISTER_SCHEMA_FIELD(half_extents);
+  REGISTER_SCHEMA_FIELD(volume);
   REGISTER_SCHEMA_FIELD(active_face);
   REGISTER_SCHEMA_FIELD(subdivision_level);
   REGISTER_SCHEMA_FIELD(displacements);
@@ -77,9 +77,9 @@ vec3f Displacement_Entity::get_base_vertex_local(int i, int j) const
   vec3f normal = get_face_normal();
 
   // Extents along the two tangent axes
-  float u_extent = linalg::dot(half_extents, vec3f{std::abs(face_u.x), std::abs(face_u.y), std::abs(face_u.z)});
-  float v_extent = linalg::dot(half_extents, vec3f{std::abs(face_v.x), std::abs(face_v.y), std::abs(face_v.z)});
-  float n_extent = linalg::dot(half_extents, vec3f{std::abs(normal.x), std::abs(normal.y), std::abs(normal.z)});
+  float u_extent = linalg::dot(volume.half_extents, vec3f{std::abs(face_u.x), std::abs(face_u.y), std::abs(face_u.z)});
+  float v_extent = linalg::dot(volume.half_extents, vec3f{std::abs(face_v.x), std::abs(face_v.y), std::abs(face_v.z)});
+  float n_extent = linalg::dot(volume.half_extents, vec3f{std::abs(normal.x), std::abs(normal.y), std::abs(normal.z)});
 
   // Base position on the face plane
   vec3f u_pos = face_u * (-u_extent + 2.0f * u_extent * u_frac);
@@ -140,7 +140,7 @@ static void add_box_quad(assets::mesh_asset_t &mesh,
 assets::mesh_asset_t generate_displacement_mesh(const Displacement_Entity &ent)
 {
   assets::mesh_asset_t mesh;
-  const vec3f &he = ent.half_extents;
+  const vec3f &he = ent.volume.half_extents;
 
   if (ent.active_face < 0 || ent.active_face > 5)
   {
