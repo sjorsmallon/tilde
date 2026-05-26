@@ -14,17 +14,26 @@ void init_session_from_map(game_session_t &session, const map_t &map)
   session.static_entities.clear();
 
   // Route map entities: collision geometry → static_entities (feeds BVH),
-  // everything else → entity_system (includes spawn markers, weapons, etc.)
+  // everything else → entity_system (includes spawn markers, weapons, etc.).
+  // Collision-geometry uids are stamped onto the Entity directly so static
+  // bodies and dynamic bodies share one ID space.
   for (const auto &entry : map.entities)
   {
     if (!entry.entity)
       continue;
 
+    entry.entity->entity_id = entry.uid;
+
     if (entry.entity->is_collision_geometry())
       session.static_entities.push_back(entry.entity);
     else
-      session.entity_system.add_entity(entry.entity);
+      session.entity_system.add_entity(entry.uid, entry.entity);
   }
+
+  // Seed runtime spawn counter past the highest map uid so subsequent
+  // spawn() calls produce IDs that can never collide with map-loaded ones.
+  if (map.next_uid > session.entity_system.next_entity_id)
+    session.entity_system.next_entity_id = map.next_uid;
 
   // 2. Build BVH from Static Entities
   std::vector<BVH_Input> bvh_inputs;

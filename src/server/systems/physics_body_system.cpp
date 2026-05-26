@@ -74,13 +74,13 @@ spawn_physics_body(shared::game_session_t &session,
   if (std::strcmp(shape_type, "box") == 0)
   {
     body->render.mesh_path.set("__primitive_box");
-    register_dynamic_box(physics, static_cast<shared::entity_uid_t>(body->entity_id),
+    register_dynamic_box(physics, body->entity_id,
                          position, size * 0.5f, initial_velocity);
   }
   else if (std::strcmp(shape_type, "sphere") == 0)
   {
     body->render.mesh_path.set("__primitive_sphere");
-    register_dynamic_sphere(physics, static_cast<shared::entity_uid_t>(body->entity_id),
+    register_dynamic_sphere(physics, body->entity_id,
                             position, size.x * 0.5f, initial_velocity);
   }
   else
@@ -106,8 +106,7 @@ void update_physics_bodies(shared::game_session_t &session,
 
   for (auto &body : *pool)
   {
-    auto it = physics.entity_body_map.find(
-        static_cast<shared::entity_uid_t>(body.entity_id));
+    auto it = physics.entity_body_map.find(body.entity_id);
     if (it == physics.entity_body_map.end())
     {
       log_error("update_physics_bodies: no Jolt body for entity_id {}", body.entity_id);

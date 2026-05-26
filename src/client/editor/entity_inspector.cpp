@@ -28,6 +28,12 @@ static void render_field_imgui(uint8_t *base_ptr, const network::Field_Prop &fie
     ImGui::InputInt(field.name.c_str(), val);
     break;
   }
+  case network::Field_Type::UInt32:
+  {
+    uint32_t *val = static_cast<uint32_t *>(field_ptr);
+    ImGui::InputScalar(field.name.c_str(), ImGuiDataType_U32, val);
+    break;
+  }
   case network::Field_Type::Float32:
   {
     float *val = static_cast<float *>(field_ptr);

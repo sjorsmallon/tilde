@@ -37,6 +37,19 @@ bool parse_string_to_field(const std::string &value, const Field_Prop &field,
       return false;
     }
   }
+  case Field_Type::UInt32:
+  {
+    try
+    {
+      *static_cast<uint32 *>(out_ptr) =
+          static_cast<uint32>(std::stoul(value));
+      return true;
+    }
+    catch (...)
+    {
+      return false;
+    }
+  }
   case Field_Type::Float32:
   {
     try
@@ -154,6 +167,11 @@ bool serialize_field_to_string(const void *in_ptr, const Field_Prop &field,
   case Field_Type::Int64:
   {
     out_value = std::to_string(*static_cast<const int64 *>(in_ptr));
+    return true;
+  }
+  case Field_Type::UInt32:
+  {
+    out_value = std::to_string(*static_cast<const uint32 *>(in_ptr));
     return true;
   }
   case Field_Type::Float32:

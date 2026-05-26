@@ -127,7 +127,7 @@ struct Entity_System
   std::map<entity_type, std::unique_ptr<struct Entity_Pool_Base>> pools;
 
   // Entity ID generation (simple incrementing counter)
-  network::uint64 next_entity_id = 1;  // Start at 1 (0 is reserved for null)
+  shared::entity_uid_t next_entity_id = 1;  // Start at 1 (0 is reserved for null)
 
   template <typename T> void register_entity_type(entity_type type)
   {
@@ -181,7 +181,8 @@ struct Entity_System
 
   void reset();
   void populate_from_map(const map_t &map);
-  void add_entity(const std::shared_ptr<network::Entity> &entity);
+  void add_entity(shared::entity_uid_t uid,
+                  const std::shared_ptr<network::Entity> &entity);
 
   // this is called in the constructor, no need for you to call it.
   void register_all_known_entity_types();

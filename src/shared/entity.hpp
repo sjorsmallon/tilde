@@ -19,12 +19,10 @@ struct box_volume_t;
 namespace network
 {
 
-inline constexpr uint64 null_entity_id = 0;
-
 class Entity
 {
 public:
-  SCHEMA_FIELD(uint64, entity_id, Schema_Flags::Networked);
+  SCHEMA_FIELD(uint32, entity_id, Schema_Flags::Networked);
   SCHEMA_FIELD(vec3f, position,
                Schema_Flags::Networked | Schema_Flags::Editable);
   SCHEMA_FIELD(vec3f, orientation,
@@ -138,20 +136,6 @@ public:
   // If baseline is null, it writes everything (full update).
   void serialize(Bit_Writer &writer, const Entity *baseline) const;
   void deserialize(Bit_Reader &reader);
-};
-
-struct Entity_Delta
-{
-  uint32_t entity_id;   // WHICH object is this? (e.g., Player #42)
-  uint16_t entity_type; // WHAT is it? (e.g., ET_Player -> uses Player Schema)
-  std::vector<network::Field_Update> updates;
-};
-
-struct Entity_Update_Header
-{
-  uint32_t ent_id;
-  uint16_t ent_type;
-  uint8_t field_count;
 };
 
 } // namespace network

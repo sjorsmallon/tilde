@@ -16,7 +16,7 @@ namespace client
 static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
                                        const linalg::vec3 &ray_dir,
                                        const shared::aabb_t &aabb, float &out_t,
-                                       int &out_face)
+                                       network::box_face_t &out_face)
 {
   linalg::vec3 min = aabb.center - aabb.half_extents;
   linalg::vec3 max = aabb.center + aabb.half_extents;
@@ -52,17 +52,17 @@ static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
   const float eps = 1e-3f;
 
   if (std::abs(p.x - max.x) < eps)
-    out_face = 0;
+    out_face = network::box_face_t::Plus_X;
   else if (std::abs(p.x - min.x) < eps)
-    out_face = 1;
+    out_face = network::box_face_t::Minus_X;
   else if (std::abs(p.y - max.y) < eps)
-    out_face = 2;
+    out_face = network::box_face_t::Plus_Y;
   else if (std::abs(p.y - min.y) < eps)
-    out_face = 3;
+    out_face = network::box_face_t::Minus_Y;
   else if (std::abs(p.z - max.z) < eps)
-    out_face = 4;
+    out_face = network::box_face_t::Plus_Z;
   else if (std::abs(p.z - min.z) < eps)
-    out_face = 5;
+    out_face = network::box_face_t::Minus_Z;
   else
     return false;
 
@@ -154,17 +154,17 @@ bool Displacement_Tool::raycast_displacement_mesh(
     const network::Displacement_Entity &ent, const linalg::vec3 &ray_origin,
     const linalg::vec3 &ray_dir, float &out_t, linalg::vec3 &out_normal)
 {
-  if (ent.active_face < 0)
+  if (ent.active_face == network::box_face_t::Invalid)
     return false;
 
-  int gs = ent.grid_size();
+  int grid_size = ent.grid_size();
   float best_t = 1e30f;
   linalg::vec3 best_normal = {0, 1, 0};
   bool hit = false;
 
-  for (int j = 0; j < gs - 1; ++j)
+  for (int j = 0; j < grid_size - 1; ++j)
   {
-    for (int i = 0; i < gs - 1; ++i)
+    for (int i = 0; i < grid_size - 1; ++i)
     {
       linalg::vec3 tl = ent.get_vertex_world(i, j);
       linalg::vec3 tr = ent.get_vertex_world(i + 1, j);
@@ -204,17 +204,17 @@ bool Displacement_Tool::raycast_displacement_mesh(
 void Displacement_Tool::apply_brush(network::Displacement_Entity &ent,
                                     float dt, bool invert)
 {
-  if (!cursor_valid || ent.active_face < 0)
+  if (!cursor_valid || ent.active_face == network::box_face_t::Invalid)
     return;
 
-  int gs = ent.grid_size();
+  int grid_size = ent.grid_size();
   linalg::vec3 face_normal = ent.get_face_normal();
   float sign = invert ? -1.0f : 1.0f;
   float sigma = 0.33f;
 
-  for (int j = 0; j < gs; ++j)
+  for (int j = 0; j < grid_size; ++j)
   {
-    for (int i = 0; i < gs; ++i)
+    for (int i = 0; i < grid_size; ++i)
     {
       linalg::vec3 vpos = ent.get_vertex_world(i, j);
       linalg::vec3 diff = vpos - cursor_pos;
@@ -271,9 +271,9 @@ void Displacement_Tool::commit_select_edit()
   select_start_props.clear();
 }
 
-void Displacement_Tool::clear_selection(int gs)
+void Displacement_Tool::clear_selection(int grid_size)
 {
-  sel_verts.assign((size_t)(gs * gs), false);
+  selected_vertices_bitmask.assign((size_t)(grid_size * grid_size), false);
 }
 
 // ===================================================================
@@ -295,7 +295,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
     if (!resize_dragging)
     {
       hovered_uid = 0;
-      hovered_face = -1;
+      hovered_face = network::box_face_t::Invalid;
 
       if (ctx.bvh)
       {
@@ -319,7 +319,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
                 aabb.center = disp->position;
                 aabb.half_extents = disp->volume.half_extents;
                 float t;
-                int face;
+                network::box_face_t face;
                 if (ray_aabb_face_intersection(view.mouse_ray.origin,
                                                view.mouse_ray.dir, aabb, t,
                                                face))
@@ -381,7 +381,8 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
       {
         pending_subdivision = ent->subdivision_level;
 
-        if (ent->active_face < 0 && hovered_face >= 0)
+        if (ent->active_face == network::box_face_t::Invalid &&
+            hovered_face != network::box_face_t::Invalid)
         {
           if (e.shift_down)
           {
@@ -440,17 +441,12 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
     vec3 current_center = ent->position;
     vec3 current_he = ent->volume.half_extents;
 
-    vec3 normal = {0, 0, 0};
-    vec3 center_offset = {0, 0, 0};
-    switch (resize_face)
-    {
-    case 0: normal = {1, 0, 0}; center_offset = {current_he.x, 0, 0}; break;
-    case 1: normal = {-1, 0, 0}; center_offset = {-current_he.x, 0, 0}; break;
-    case 2: normal = {0, 1, 0}; center_offset = {0, current_he.y, 0}; break;
-    case 3: normal = {0, -1, 0}; center_offset = {0, -current_he.y, 0}; break;
-    case 4: normal = {0, 0, 1}; center_offset = {0, 0, current_he.z}; break;
-    case 5: normal = {0, 0, -1}; center_offset = {0, 0, -current_he.z}; break;
-    }
+    vec3 normal = network::get_box_face_normal(resize_face);
+    vec3 center_offset = {
+        normal.x * current_he.x,
+        normal.y * current_he.y,
+        normal.z * current_he.z,
+    };
 
     vec3 face_center_world = current_center + center_offset;
     vec3 face_end_world = face_center_world + normal;
@@ -491,15 +487,17 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
         float k = dot_prod / screen_len_sq;
         float world_delta = k;
 
+        int axis = network::box_face_axis(resize_face);
+        bool positive_face = network::box_face_is_positive(resize_face);
+
         float *ext = nullptr;
         float *cen = nullptr;
-
-        if (resize_face < 2)
+        if (axis == 0)
         {
           ext = &ent->volume.half_extents.x;
           cen = &ent->position.x;
         }
-        else if (resize_face < 4)
+        else if (axis == 1)
         {
           ext = &ent->volume.half_extents.y;
           cen = &ent->position.y;
@@ -511,7 +509,7 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
         }
 
         *ext += world_delta * 0.5f;
-        if (resize_face % 2 == 0)
+        if (positive_face)
           *cen += world_delta * 0.5f;
         else
           *cen -= world_delta * 0.5f;
@@ -520,7 +518,7 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
         {
           float diff = editor::MIN_EXTENT - *ext;
           *ext = editor::MIN_EXTENT;
-          if (resize_face % 2 == 0)
+          if (positive_face)
             *cen -= diff;
           else
             *cen += diff;
@@ -571,10 +569,10 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
     box_selecting = false;
 
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face >= 0)
+    if (ent && ent->active_face != network::box_face_t::Invalid)
     {
-      int gs = ent->grid_size();
-      sel_verts.resize((size_t)(gs * gs), false);
+      int grid_size = ent->grid_size();
+      selected_vertices_bitmask.resize((size_t)(grid_size * grid_size), false);
 
       float x0 = std::min(box_start_screen.x, box_end_screen.x);
       float x1 = std::max(box_start_screen.x, box_end_screen.x);
@@ -583,15 +581,15 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
 
       // Shift = additive selection; otherwise replace
       if (!(ImGui::GetIO().KeyShift))
-        clear_selection(gs);
+        clear_selection(grid_size);
 
-      for (int j = 0; j < gs; ++j)
+      for (int j = 0; j < grid_size; ++j)
       {
-        for (int i = 0; i < gs; ++i)
+        for (int i = 0; i < grid_size; ++i)
         {
           linalg::vec2 sp = project_to_screen(ent->get_vertex_world(i, j));
           if (sp.x >= x0 && sp.x <= x1 && sp.y >= y0 && sp.y <= y1)
-            sel_verts[(size_t)(j * gs + i)] = true;
+            selected_vertices_bitmask[(size_t)(j * grid_size + i)] = true;
         }
       }
     }
@@ -604,7 +602,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
   if (e.scancode == SDL_SCANCODE_P)
   {
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face >= 0)
+    if (ent && ent->active_face != network::box_face_t::Invalid)
     {
       commit_select_edit();
       mode = Mode::Paint;
@@ -613,14 +611,14 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
   else if (e.scancode == SDL_SCANCODE_S)
   {
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face >= 0)
+    if (ent && ent->active_face != network::box_face_t::Invalid)
     {
       if (mode != Mode::Select)
       {
         mode = Mode::Select;
-        int gs = ent->grid_size();
-        if ((int)sel_verts.size() != gs * gs)
-          clear_selection(gs);
+        int grid_size = ent->grid_size();
+        if ((int)selected_vertices_bitmask.size() != grid_size * grid_size)
+          clear_selection(grid_size);
       }
     }
   }
@@ -641,16 +639,16 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
            (e.scancode == SDL_SCANCODE_Q || e.scancode == SDL_SCANCODE_E))
   {
     auto *ent = get_selected(ctx);
-    if (!ent || ent->active_face < 0)
+    if (!ent || ent->active_face == network::box_face_t::Invalid)
       return;
 
-    int gs = ent->grid_size();
-    if ((int)sel_verts.size() != gs * gs)
+    int grid_size = ent->grid_size();
+    if ((int)selected_vertices_bitmask.size() != grid_size * grid_size)
       return;
 
     // Count selected verts
     int sel_count = 0;
-    for (bool b : sel_verts)
+    for (bool b : selected_vertices_bitmask)
       if (b) ++sel_count;
     if (sel_count == 0)
       return;
@@ -667,11 +665,11 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
     linalg::vec3 face_normal = ent->get_face_normal();
     linalg::vec3 delta = face_normal * (sign * height_snap);
 
-    for (int j = 0; j < gs; ++j)
+    for (int j = 0; j < grid_size; ++j)
     {
-      for (int i = 0; i < gs; ++i)
+      for (int i = 0; i < grid_size; ++i)
       {
-        if (sel_verts[(size_t)(j * gs + i)])
+        if (selected_vertices_bitmask[(size_t)(j * grid_size + i)])
         {
           linalg::vec3 d = ent->get_displacement(i, j);
           ent->set_displacement(i, j, d + delta);
@@ -693,7 +691,8 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
                                         overlay_renderer_t &renderer)
 {
   // In setup mode: highlight hovered face
-  if (mode == Mode::Setup && hovered_uid != 0 && hovered_face >= 0 && ctx.map)
+  if (mode == Mode::Setup && hovered_uid != 0 &&
+      hovered_face != network::box_face_t::Invalid && ctx.map)
   {
     auto *entry = ctx.map->find_by_uid(hovered_uid);
     if (entry && entry->entity)
@@ -701,19 +700,17 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
       if (auto *disp = dynamic_cast<network::Displacement_Entity *>(
               entry->entity.get()))
       {
-        linalg::vec3 p = disp->position;
         linalg::vec3 he = disp->volume.half_extents;
+        linalg::vec3 normal = network::get_box_face_normal(hovered_face);
+        // Move plane center to the face by going one half-extent along the
+        // face normal, then flatten the box along that same axis (size = 0).
+        linalg::vec3 p = disp->position +
+                         linalg::vec3{normal.x * he.x, normal.y * he.y, normal.z * he.z};
         linalg::vec3 size = he;
-
-        switch (hovered_face)
-        {
-        case 0: p.x += he.x; size.x = 0; break;
-        case 1: p.x -= he.x; size.x = 0; break;
-        case 2: p.y += he.y; size.y = 0; break;
-        case 3: p.y -= he.y; size.y = 0; break;
-        case 4: p.z += he.z; size.z = 0; break;
-        case 5: p.z -= he.z; size.z = 0; break;
-        }
+        int axis = network::box_face_axis(hovered_face);
+        if (axis == 0) size.x = 0;
+        else if (axis == 1) size.y = 0;
+        else size.z = 0;
 
         renderer.draw_wire_box(p, size, 0xFF00FF00); // Green highlight
       }
@@ -724,24 +721,24 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   if (selected_uid != 0 && ctx.map)
   {
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face >= 0)
+    if (ent && ent->active_face != network::box_face_t::Invalid)
     {
-      int gs = ent->grid_size();
+      int grid_size = ent->grid_size();
       uint32_t grid_color = 0xFF444444;
 
       // Draw grid lines along i
-      for (int j = 0; j < gs; ++j)
+      for (int j = 0; j < grid_size; ++j)
       {
-        for (int i = 0; i < gs - 1; ++i)
+        for (int i = 0; i < grid_size - 1; ++i)
         {
           renderer.draw_line(ent->get_vertex_world(i, j),
                              ent->get_vertex_world(i + 1, j), grid_color);
         }
       }
       // Draw grid lines along j
-      for (int i = 0; i < gs; ++i)
+      for (int i = 0; i < grid_size; ++i)
       {
-        for (int j = 0; j < gs - 1; ++j)
+        for (int j = 0; j < grid_size - 1; ++j)
         {
           renderer.draw_line(ent->get_vertex_world(i, j),
                              ent->get_vertex_world(i, j + 1), grid_color);
@@ -764,18 +761,18 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   if (mode == Mode::Select && selected_uid != 0 && ctx.map)
   {
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face >= 0)
+    if (ent && ent->active_face != network::box_face_t::Invalid)
     {
-      int gs = ent->grid_size();
-      if ((int)sel_verts.size() == gs * gs)
+      int grid_size = ent->grid_size();
+      if ((int)selected_vertices_bitmask.size() == grid_size * grid_size)
       {
         const float dot_r = 0.4f;
         linalg::vec3 fn = ent->get_face_normal();
-        for (int j = 0; j < gs; ++j)
+        for (int j = 0; j < grid_size; ++j)
         {
-          for (int i = 0; i < gs; ++i)
+          for (int i = 0; i < grid_size; ++i)
           {
-            if (sel_verts[(size_t)(j * gs + i)])
+            if (selected_vertices_bitmask[(size_t)(j * grid_size + i)])
             {
               linalg::vec3 vp = ent->get_vertex_world(i, j);
               renderer.draw_circle(vp, dot_r, fn, 0xFFFFFF00); // Yellow dot
@@ -824,10 +821,11 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
         {
           ImGui::Text("Entity: %u", selected_uid);
 
-          if (ent->active_face >= 0)
+          if (ent->active_face != network::box_face_t::Invalid)
           {
-            const char *face_names[] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
-            ImGui::Text("Face: %s", face_names[ent->active_face]);
+            const char *face_names[network::box_face_count] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+            ImGui::Text("Face: %s",
+                        face_names[static_cast<size_t>(ent->active_face)]);
             ImGui::TextDisabled("(resize locked after displacement)");
 
             // Subdivision slider
@@ -878,7 +876,7 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
       ImGui::Separator();
 
       int sel_count = 0;
-      for (bool b : sel_verts)
+      for (bool b : selected_vertices_bitmask)
         if (b) ++sel_count;
       ImGui::Text("Selected: %d vertices", sel_count);
 

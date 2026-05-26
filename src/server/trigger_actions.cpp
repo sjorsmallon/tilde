@@ -49,7 +49,7 @@ void action_kill(server::server_context_t &context,
                  network::Player_Entity &player)
 {
   server::damage_info_t info{};
-  info.victim_uid      = static_cast<shared::entity_uid_t>(player.entity_id);
+  info.victim_uid      = player.entity_id;
   info.attacker_uid    = 0; // world kill — kill feed renders as suicide/world
   info.inflictor_uid   = 0;
   info.amount          = 9999.f;

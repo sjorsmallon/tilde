@@ -1,7 +1,7 @@
 #pragma once
 
 #include "linalg.hpp"
-#include "map.hpp" // shared::entity_uid_t
+#include "entity_uid.hpp"
 #include "network/bitstream.hpp"
 
 #include <cstdint>
@@ -25,9 +25,9 @@ enum class effect_type_t : uint16_t
 // entity / zero material id mean "not applicable" for that effect.
 struct effect_data_t
 {
-  vec3f                origin;
-  vec3f                normal;
-  vec3f                color;
+  linalg::vec3f        origin;
+  linalg::vec3f        normal;
+  linalg::vec3f        color;
   float                scale;
   shared::entity_uid_t attached_entity; // 0 if world-space
   uint16_t             surface_material; // 0 if unknown

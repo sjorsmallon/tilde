@@ -39,6 +39,12 @@ message S2C_EntityPackage {
 
 
 // I think most of this is deprecated.
+//
+// NOTE: entity_id fields in CmdSpawn/CmdMove (int32) and EntityState (uint64)
+// below are legacy. The live wire path is S2C_EntityPackage.entity_data, a
+// Bit_Writer-encoded bitstream where entity_uid_t rides as var-int uint32 —
+// see src/shared/entity_uid.hpp. If any of these legacy messages are revived,
+// align their entity_id type to uint32 to match.
 
 message Player {
   string name = 1;

@@ -32,7 +32,7 @@
 // =============================================================================
 
 #include "../shared/linalg.hpp"
-#include "../shared/map.hpp" // shared::entity_uid_t
+#include "../shared/entity_uid.hpp"
 #include "server_context.hpp"
 
 #include <cstdint>

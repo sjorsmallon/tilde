@@ -25,6 +25,12 @@ static void serialize_field_to_bits(Bit_Writer &writer, const uint8 *base,
     write_var_int64(writer, val);
     break;
   }
+  case Field_Type::UInt32:
+  {
+    uint32_t val = *reinterpret_cast<const uint32_t *>(base + field.offset);
+    write_var_uint(writer, val);
+    break;
+  }
   case Field_Type::Float32:
   {
     float val = *reinterpret_cast<const float *>(base + field.offset);
@@ -88,6 +94,12 @@ static void deserialize_field_from_bits(Bit_Reader &reader, uint8 *base,
   case Field_Type::Int64:
   {
     int64_t val = read_var_int64(reader);
+    std::memcpy(base + field.offset, &val, sizeof(val));
+    break;
+  }
+  case Field_Type::UInt32:
+  {
+    uint32_t val = read_var_uint(reader);
     std::memcpy(base + field.offset, &val, sizeof(val));
     break;
   }

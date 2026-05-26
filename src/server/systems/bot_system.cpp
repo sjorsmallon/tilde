@@ -30,7 +30,7 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
     bot->hitbox.offset = {0.f,  38.f,  0.f};
 
     register_kinematic_capsule(physics,
-                               static_cast<shared::entity_uid_t>(bot->entity_id),
+                               bot->entity_id,
                                bot->position + vec3f{0.f, 38.f, 0.f},
                                18.f, 20.f);
   }
@@ -246,7 +246,7 @@ void update_bots(std::vector<Bot_State> &bots,
             rocket->damage_amount   = 50.f;
             rocket->damage_radius   = 120.f;
             rocket->knockback_force = 600.f;
-            rocket->owner_id        = static_cast<int32_t>(bot_ent->entity_id);
+            rocket->owner_id        = bot_ent->entity_id;
 
             rocket->hitbox.shape_type.set("sphere");
             rocket->hitbox.size   = {12.f, 12.f, 12.f};
@@ -299,7 +299,7 @@ void update_bots(std::vector<Bot_State> &bots,
     bot_ent->velocity = new_vel;
 
     set_kinematic_pose(physics,
-                       static_cast<shared::entity_uid_t>(bot_ent->entity_id),
+                       bot_ent->entity_id,
                        new_pos + vec3f{0.f, 38.f, 0.f},
                        new_vel);
 

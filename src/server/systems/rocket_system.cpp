@@ -26,7 +26,7 @@ find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
       entity_type::PLAYER);
   if (!players) return nullptr;
   for (auto &p : *players)
-    if (static_cast<shared::entity_uid_t>(p.entity_id) == uid) return &p;
+    if (p.entity_id == uid) return &p;
   return nullptr;
 }
 
@@ -37,7 +37,7 @@ find_physics_body_by_uid(shared::game_session_t &session, shared::entity_uid_t u
       entity_type::PHYSICS_BODY);
   if (!pool) return nullptr;
   for (auto &b : *pool)
-    if (static_cast<shared::entity_uid_t>(b.entity_id) == uid) return &b;
+    if (b.entity_id == uid) return &b;
   return nullptr;
 }
 
@@ -74,10 +74,8 @@ static void detonate(const network::Rocket_Entity &rocket,
   // One body may surface multiple contact points; only apply damage/impulse once.
   std::unordered_set<shared::entity_uid_t> already_applied;
 
-  const shared::entity_uid_t attacker_uid =
-      (rocket.owner_id > 0) ? static_cast<shared::entity_uid_t>(rocket.owner_id) : 0;
-  const shared::entity_uid_t inflictor_uid =
-      static_cast<shared::entity_uid_t>(rocket.entity_id);
+  const shared::entity_uid_t attacker_uid = rocket.owner_id;
+  const shared::entity_uid_t inflictor_uid = rocket.entity_id;
 
   for (const auto &h : hits)
   {
@@ -143,8 +141,7 @@ static void detonate(const network::Rocket_Entity &rocket,
 
   shared::game_event_t event{};
   event.kind = shared::game_event_kind_t::ROCKET_DETONATED;
-  event.rocket_detonated.attacker_id =
-      (rocket.owner_id > 0) ? static_cast<shared::entity_uid_t>(rocket.owner_id) : 0;
+  event.rocket_detonated.attacker_id = rocket.owner_id;
   event.rocket_detonated.victim_id   = victim_id;
   event.rocket_detonated.weapon_id   = 0; // rocket carries no weapon id yet
   fire_game_event(context, event);
@@ -178,8 +175,7 @@ void update_rockets(server_context_t &context, float dt)
     vec3f next_pos = rocket.position + rocket.velocity * dt;
 
     hit_result_t hit;
-    shared::entity_uid_t ignore_uid =
-        (rocket.owner_id > 0) ? static_cast<shared::entity_uid_t>(rocket.owner_id) : 0;
+    shared::entity_uid_t ignore_uid = rocket.owner_id;
 
     if (cast_sphere(physics, rocket.position, next_pos,
                     rocket.hitbox.size.x, ignore_uid, hit))

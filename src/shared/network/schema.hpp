@@ -44,6 +44,7 @@ enum class Field_Type
 {
   Int32,
   Int64,
+  UInt32,
   Float32,
   Bool,
   Vec3f,
@@ -251,6 +252,11 @@ template <> struct Schema_Type_Info<int32>
 template <> struct Schema_Type_Info<int64>
 {
   static constexpr Field_Type type = Field_Type::Int64;
+};
+
+template <> struct Schema_Type_Info<uint32>
+{
+  static constexpr Field_Type type = Field_Type::UInt32;
 };
 
 template <> struct Schema_Type_Info<uint64>

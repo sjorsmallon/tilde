@@ -15,6 +15,8 @@
 
 #include "log.hpp"
 
+using namespace linalg;
+
 static JPH::Vec3  to_jolt(vec3f v)  { return {v.x, v.y, v.z}; }
 static JPH::RVec3 to_jolt_r(vec3f v){ return {v.x, v.y, v.z}; }
 static vec3f from_jolt(JPH::Vec3 v) { return {v.GetX(), v.GetY(), v.GetZ()}; }

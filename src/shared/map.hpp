@@ -2,6 +2,7 @@
 
 #include "entities/entity_list.hpp"
 #include "entity.hpp"
+#include "entity_uid.hpp"
 #include "linalg.hpp"
 #include "navmesh.hpp"
 #include "shapes.hpp"
@@ -14,8 +15,6 @@
 
 namespace shared
 {
-
-using entity_uid_t = uint32_t;
 
 struct map_entity_t
 {

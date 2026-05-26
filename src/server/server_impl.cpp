@@ -270,8 +270,7 @@ void handle_player_leave(server_context_t &state,
       if ((*pool)[i].client_slot_index == slot)
       {
         if (g_state.physics)
-          unregister_physics_body(*g_state.physics,
-                                  static_cast<shared::entity_uid_t>((*pool)[i].entity_id));
+          unregister_physics_body(*g_state.physics, (*pool)[i].entity_id);
         state.session.entity_system.destroy(entity_type::PLAYER, &(*pool)[i]);
         break;
       }
@@ -472,7 +471,7 @@ bool Tick()
           if (g_state.physics)
           {
             register_kinematic_capsule(*g_state.physics,
-                                       static_cast<shared::entity_uid_t>(player->entity_id),
+                                       player->entity_id,
                                        player->position + vec3f{0.f, 38.f, 0.f},
                                        18.f, 20.f);
           }
@@ -481,7 +480,7 @@ bool Tick()
           // fire in respawn_system.cpp — clients can't tell whether this is
           // a connect-time spawn or a respawn, by design.
           fire_player_spawned_event(g_state,
-                                    static_cast<shared::entity_uid_t>(player->entity_id),
+                                    player->entity_id,
                                     chosen_spawn.position,
                                     chosen_spawn.orientation);
         }
@@ -612,7 +611,7 @@ bool Tick()
     if (g_state.physics)
     {
       set_kinematic_pose(*g_state.physics,
-                         static_cast<shared::entity_uid_t>(player->entity_id),
+                         player->entity_id,
                          new_pos + vec3f{0.f, 38.f, 0.f},
                          new_vel);
     }
@@ -648,7 +647,7 @@ bool Tick()
           rocket->damage_amount   = 50.f;
           rocket->damage_radius   = 120.f;
           rocket->knockback_force = 600.f;
-          rocket->owner_id        = static_cast<int32_t>(player->entity_id);
+          rocket->owner_id        = player->entity_id;
           // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
           rocket->render.mesh_path.set("resources/obj/error.obj"); // or "resources/obj/tinker.obj"
           rocket->render.visible = true;
@@ -837,7 +836,7 @@ bool Tick()
       for (const auto &entity : *pool)
       {
         network::write_var_uint(writer, static_cast<uint32_t>(entity.client_slot_index));
-        network::write_var_uint64(writer, entity.entity_id);  // Send entity_id explicitly
+        network::write_var_uint(writer, entity.entity_id);  // Send entity_id explicitly
         const network::Player_Entity* base = find_player_baseline(entity.entity_id);
         entity.serialize(writer, base);  // Delta compress against baseline
       }
@@ -849,7 +848,7 @@ bool Tick()
       for (const auto &rocket : *rocket_pool)
       {
         network::write_var_uint(writer, 255);  // Special slot for non-player entities
-        network::write_var_uint64(writer, rocket.entity_id);  // Send entity_id explicitly
+        network::write_var_uint(writer, rocket.entity_id);  // Send entity_id explicitly
         const network::Rocket_Entity* base = find_rocket_baseline(rocket.entity_id);
         rocket.serialize(writer, base);  // Delta compress against baseline
       }
@@ -861,7 +860,7 @@ bool Tick()
       for (const auto &body : *physics_body_pool)
       {
         network::write_var_uint(writer, 254);
-        network::write_var_uint64(writer, body.entity_id);
+        network::write_var_uint(writer, body.entity_id);
         const network::Physics_Body_Entity* base = find_physics_body_baseline(body.entity_id);
         body.serialize(writer, base);
       }

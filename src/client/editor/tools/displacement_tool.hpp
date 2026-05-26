@@ -40,12 +40,12 @@ private:
   // Setup mode state
   shared::entity_uid_t selected_uid = 0;
   shared::entity_uid_t hovered_uid = 0;
-  int hovered_face = -1;
+  network::box_face_t hovered_face = network::box_face_t::Invalid;
 
   // Paint mode state
   bool painting = false;
-  linalg::vec3 cursor_pos;
-  linalg::vec3 cursor_normal;
+  linalg::vec3 cursor_pos = {};
+  linalg::vec3 cursor_normal = {};
   bool cursor_valid = false;
 
   // Brush parameters
@@ -58,12 +58,12 @@ private:
   // Face-drag resize (Setup mode, before displacement)
   bool resize_dragging = false;
   bool resize_moved = false;
-  int resize_face = -1;
+  network::box_face_t resize_face = network::box_face_t::Invalid;
   viewport_state_t resize_last_view;
   std::map<std::string, std::string> resize_start_props;
 
   // Select mode state
-  std::vector<bool> sel_verts;          // gs*gs selection bitmask
+  std::vector<bool> selected_vertices_bitmask;          // grid_size*grid_size selection bitmask
   bool box_selecting = false;
   linalg::vec2 box_start_screen;        // pixels, drag start
   linalg::vec2 box_end_screen;          // pixels, drag current/end
@@ -82,7 +82,7 @@ private:
                        shared::entity_uid_t uid);
   linalg::vec2 project_to_screen(const linalg::vec3 &world_pos) const;
   void commit_select_edit();
-  void clear_selection(int gs);
+  void clear_selection(int grid_size);
 };
 
 } // namespace client

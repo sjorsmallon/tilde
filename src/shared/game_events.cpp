@@ -5,6 +5,8 @@
 
 #include <cassert>
 
+using namespace linalg;
+
 namespace shared
 {
 
@@ -20,8 +22,8 @@ static rocket_detonated_payload_t
 deserialize_rocket_detonated(network::Bit_Reader &reader)
 {
   rocket_detonated_payload_t payload{};
-  payload.attacker_id = static_cast<entity_uid_t>(network::read_var_uint(reader));
-  payload.victim_id   = static_cast<entity_uid_t>(network::read_var_uint(reader));
+  payload.attacker_id = network::read_var_uint(reader);
+  payload.victim_id   = network::read_var_uint(reader);
   payload.weapon_id   = static_cast<uint16_t>(reader.read_bits(16));
   return payload;
 }
@@ -39,8 +41,8 @@ static player_died_payload_t
 deserialize_player_died(network::Bit_Reader &reader)
 {
   player_died_payload_t payload{};
-  payload.victim_id    = static_cast<entity_uid_t>(network::read_var_uint(reader));
-  payload.attacker_id  = static_cast<entity_uid_t>(network::read_var_uint(reader));
+  payload.victim_id    = network::read_var_uint(reader);
+  payload.attacker_id  = network::read_var_uint(reader);
   payload.weapon_id    = static_cast<uint16_t>(reader.read_bits(16));
   payload.was_headshot = reader.read_bits(1) != 0;
   return payload;
@@ -77,7 +79,7 @@ static player_spawned_payload_t
 deserialize_player_spawned(network::Bit_Reader &reader)
 {
   player_spawned_payload_t payload{};
-  payload.player_id         = static_cast<entity_uid_t>(network::read_var_uint(reader));
+  payload.player_id         = network::read_var_uint(reader);
   payload.spawn_position    = read_vec3_coord(reader);
   payload.spawn_orientation = read_vec3_coord(reader);
   return payload;

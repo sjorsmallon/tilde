@@ -5,7 +5,8 @@
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
-#include "map.hpp" // shared::entity_uid_t
+#include "entity_uid.hpp"
+#include "linalg.hpp"
 
 #include <map>
 #include <vector>
@@ -107,37 +108,37 @@ void step_physics(physics_state_t &state, float dt);
 // Register a static axis-aligned box body for a map entity (AABB_Entity, Wedge_Entity).
 // Call this on both server and client after init_session_from_map.
 void register_static_box(physics_state_t &state, shared::entity_uid_t uid,
-                          vec3f position, vec3f half_extents);
+                          linalg::vec3f position, linalg::vec3f half_extents);
 
 // Register a dynamic sphere body for a spawned game entity (e.g. Rocket_Entity).
 // Only call this on the server — dynamic simulation is authoritative.
 void register_dynamic_sphere(physics_state_t &state, shared::entity_uid_t uid,
-                              vec3f position, float radius,
-                              vec3f initial_velocity = {});
+                              linalg::vec3f position, float radius,
+                              linalg::vec3f initial_velocity = {});
 
 void register_dynamic_box(physics_state_t &state, shared::entity_uid_t uid,
-                             vec3f position, vec3f half_extents,
-                             vec3f initial_velocity = {});
+                             linalg::vec3f position, linalg::vec3f half_extents,
+                             linalg::vec3f initial_velocity = {});
 
 // Register a kinematic capsule body. Use for players: position/velocity will be
 // driven externally each tick via set_kinematic_pose() — Jolt does not integrate
 // kinematic bodies from forces, but queries and contacts see the body normally.
 void register_kinematic_capsule(physics_state_t &state, shared::entity_uid_t uid,
-                                vec3f position, float radius, float half_height);
+                                linalg::vec3f position, float radius, float half_height);
 
 // Drive a kinematic body's pose. Call after running your own movement code.
 void set_kinematic_pose(physics_state_t &state, shared::entity_uid_t uid,
-                        vec3f position, vec3f velocity);
+                        linalg::vec3f position, linalg::vec3f velocity);
 
 // Apply a one-shot impulse (mass*velocity units). No-op for static/kinematic bodies.
-void apply_impulse(physics_state_t &state, shared::entity_uid_t uid, vec3f impulse);
+void apply_impulse(physics_state_t &state, shared::entity_uid_t uid, linalg::vec3f impulse);
 
 // Add a velocity delta directly (no mass scaling). Use this when you want a
 // fixed-magnitude knockback regardless of body mass — semantically what most
 // FPS games mean by "knockback force". Activates the body. Kinematic-body
 // velocity is clobbered by the next set_kinematic_pose() call, so for
 // kinematic-controlled entities (players) update the game-state velocity.
-void add_linear_velocity(physics_state_t &state, shared::entity_uid_t uid, vec3f delta);
+void add_linear_velocity(physics_state_t &state, shared::entity_uid_t uid, linalg::vec3f delta);
 
 // Remove a body. No-op if uid is not registered.
 void unregister_physics_body(physics_state_t &state, shared::entity_uid_t uid);
@@ -147,15 +148,15 @@ void unregister_physics_body(physics_state_t &state, shared::entity_uid_t uid);
 struct hit_result_t
 {
     shared::entity_uid_t entity_id; // 0 if hit body has no entity mapping (shouldn't happen)
-    vec3f position;
-    vec3f normal;
+    linalg::vec3f position;
+    linalg::vec3f normal;
     float fraction;                 // 0..1 along swept path (for casts)
 };
 
 // Swept sphere from `from` to `to`. Returns true on first hit. `ignore_uid` skips
 // the firing player's own body for projectiles. Pass 0 to ignore nothing.
 bool cast_sphere(physics_state_t &state,
-                 vec3f from, vec3f to, float radius,
+                 linalg::vec3f from, linalg::vec3f to, float radius,
                  shared::entity_uid_t ignore_uid,
                  hit_result_t &out);
 
@@ -164,9 +165,9 @@ bool cast_sphere(physics_state_t &state,
 // effect handlers that want to land a decal against the surface the server
 // described, ignoring everything else in the local scene.
 bool cast_sphere_static(physics_state_t &state,
-                        vec3f from, vec3f to, float radius,
+                        linalg::vec3f from, linalg::vec3f to, float radius,
                         hit_result_t &out);
 
 // All bodies overlapping a sphere. Used for explosion splash queries.
 std::vector<hit_result_t> find_all_bodies_overlapping_sphere(physics_state_t &state,
-                    vec3f center, float radius);
+                    linalg::vec3f center, float radius);

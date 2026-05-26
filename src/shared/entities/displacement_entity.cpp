@@ -14,7 +14,7 @@ DEFINE_SCHEMA_CLASS(Displacement_Entity, Entity)
   END_SCHEMA_FIELDS()
 }
 
-void Displacement_Entity::init_displacement(int face, int subdiv)
+void Displacement_Entity::init_displacement(box_face_t face, int subdiv)
 {
   active_face = face;
   subdivision_level = subdiv;
@@ -25,52 +25,21 @@ void Displacement_Entity::init_displacement(int face, int subdiv)
 
 vec3f Displacement_Entity::get_face_normal() const
 {
-  // Face indices: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
-  switch (active_face)
-  {
-  case 0: return {1, 0, 0};
-  case 1: return {-1, 0, 0};
-  case 2: return {0, 1, 0};
-  case 3: return {0, -1, 0};
-  case 4: return {0, 0, 1};
-  case 5: return {0, 0, -1};
-  default: return {0, 1, 0};
-  }
+  return get_box_face_normal(active_face);
 }
 
 void Displacement_Entity::get_face_axes(vec3f &out_u, vec3f &out_v) const
 {
-  // For each face, define two tangent axes that span the grid plane.
-  // The grid goes from -extent to +extent along these axes.
-  switch (active_face)
-  {
-  case 0: // +X face: grid on YZ plane
-  case 1: // -X face
-    out_u = {0, 0, 1};
-    out_v = {0, 1, 0};
-    break;
-  case 2: // +Y face: grid on XZ plane
-  case 3: // -Y face
-    out_u = {1, 0, 0};
-    out_v = {0, 0, 1};
-    break;
-  case 4: // +Z face: grid on XY plane
-  case 5: // -Z face
-    out_u = {1, 0, 0};
-    out_v = {0, 1, 0};
-    break;
-  default:
-    out_u = {1, 0, 0};
-    out_v = {0, 0, 1};
-    break;
-  }
+  box_face_tangents tangents = get_box_face_tangents(active_face);
+  out_u = tangents.u;
+  out_v = tangents.v;
 }
 
 vec3f Displacement_Entity::get_base_vertex_local(int i, int j) const
 {
-  int gs = grid_size();
-  float u_frac = (gs > 1) ? static_cast<float>(i) / (gs - 1) : 0.5f;
-  float v_frac = (gs > 1) ? static_cast<float>(j) / (gs - 1) : 0.5f;
+  int grid_size = this->grid_size();
+  float u_frac = (grid_size > 1) ? static_cast<float>(i) / (grid_size - 1) : 0.5f;
+  float v_frac = (grid_size > 1) ? static_cast<float>(j) / (grid_size - 1) : 0.5f;
 
   vec3f face_u, face_v;
   get_face_axes(face_u, face_v);
@@ -91,8 +60,8 @@ vec3f Displacement_Entity::get_base_vertex_local(int i, int j) const
 
 vec3f Displacement_Entity::get_displacement(int i, int j) const
 {
-  int gs = grid_size();
-  int idx = (j * gs + i) * 3;
+  int grid_size = this->grid_size();
+  int idx = (j * grid_size + i) * 3;
   if (idx + 2 >= displacements.count)
     return {0, 0, 0};
   return {displacements.data[idx], displacements.data[idx + 1],
@@ -101,8 +70,8 @@ vec3f Displacement_Entity::get_displacement(int i, int j) const
 
 void Displacement_Entity::set_displacement(int i, int j, const vec3f &d)
 {
-  int gs = grid_size();
-  int idx = (j * gs + i) * 3;
+  int grid_size = this->grid_size();
+  int idx = (j * grid_size + i) * 3;
   if (idx + 2 >= displacements.count)
     return;
   displacements.data[idx] = d.x;
@@ -142,7 +111,7 @@ assets::mesh_asset_t generate_displacement_mesh(const Displacement_Entity &ent)
   assets::mesh_asset_t mesh;
   const vec3f &he = ent.volume.half_extents;
 
-  if (ent.active_face < 0 || ent.active_face > 5)
+  if (ent.active_face == box_face_t::Invalid)
   {
     // No displacement - generate a simple box
     vec3f mn = he * -1.0f;
@@ -168,36 +137,36 @@ assets::mesh_asset_t generate_displacement_mesh(const Displacement_Entity &ent)
     return mesh;
   }
 
-  int gs = ent.grid_size();
+  int grid_size = ent.grid_size();
 
   // Generate the displaced face as a subdivided grid
   // First, compute all vertex positions in local space
-  std::vector<vec3f> grid_positions(gs * gs);
-  for (int j = 0; j < gs; ++j)
+  std::vector<vec3f> grid_positions(grid_size * grid_size);
+  for (int j = 0; j < grid_size; ++j)
   {
-    for (int i = 0; i < gs; ++i)
+    for (int i = 0; i < grid_size; ++i)
     {
-      grid_positions[j * gs + i] =
+      grid_positions[j * grid_size + i] =
           ent.get_base_vertex_local(i, j) + ent.get_displacement(i, j);
     }
   }
 
   // Compute normals via central differences
-  std::vector<vec3f> grid_normals(gs * gs);
-  for (int j = 0; j < gs; ++j)
+  std::vector<vec3f> grid_normals(grid_size * grid_size);
+  for (int j = 0; j < grid_size; ++j)
   {
-    for (int i = 0; i < gs; ++i)
+    for (int i = 0; i < grid_size; ++i)
     {
       int il = std::max(0, i - 1);
-      int ir = std::min(gs - 1, i + 1);
+      int ir = std::min(grid_size - 1, i + 1);
       int jl = std::max(0, j - 1);
-      int jr = std::min(gs - 1, j + 1);
+      int jr = std::min(grid_size - 1, j + 1);
 
-      vec3f du = grid_positions[j * gs + ir] - grid_positions[j * gs + il];
-      vec3f dv = grid_positions[jr * gs + i] - grid_positions[jl * gs + i];
+      vec3f du = grid_positions[j * grid_size + ir] - grid_positions[j * grid_size + il];
+      vec3f dv = grid_positions[jr * grid_size + i] - grid_positions[jl * grid_size + i];
       vec3f n = linalg::cross(du, dv);
       float len = linalg::length(n);
-      grid_normals[j * gs + i] = (len > 1e-6f) ? n * (1.0f / len) : ent.get_face_normal();
+      grid_normals[j * grid_size + i] = (len > 1e-6f) ? n * (1.0f / len) : ent.get_face_normal();
     }
   }
 
@@ -207,27 +176,27 @@ assets::mesh_asset_t generate_displacement_mesh(const Displacement_Entity &ent)
   ent.get_face_axes(face_u, face_v);
 
   uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
-  for (int j = 0; j < gs; ++j)
+  for (int j = 0; j < grid_size; ++j)
   {
-    for (int i = 0; i < gs; ++i)
+    for (int i = 0; i < grid_size; ++i)
     {
       // Use base (undisplaced) world position so UVs don't swim while painting.
       vec3f world_pos = ent.position + ent.get_base_vertex_local(i, j);
       float u = linalg::dot(world_pos, face_u) / 128.0f;
       float v = linalg::dot(world_pos, face_v) / 128.0f;
       mesh.vertices.push_back(
-          {grid_positions[j * gs + i], grid_normals[j * gs + i], {u, v}});
+          {grid_positions[j * grid_size + i], grid_normals[j * grid_size + i], {u, v}});
     }
   }
 
   // Emit triangles (two per grid cell)
-  for (int j = 0; j < gs - 1; ++j)
+  for (int j = 0; j < grid_size - 1; ++j)
   {
-    for (int i = 0; i < gs - 1; ++i)
+    for (int i = 0; i < grid_size - 1; ++i)
     {
-      uint32_t tl = base + j * gs + i;
+      uint32_t tl = base + j * grid_size + i;
       uint32_t tr = tl + 1;
-      uint32_t bl = tl + gs;
+      uint32_t bl = tl + grid_size;
       uint32_t br = bl + 1;
       mesh.indices.push_back(tl);
       mesh.indices.push_back(bl);
@@ -243,17 +212,17 @@ assets::mesh_asset_t generate_displacement_mesh(const Displacement_Entity &ent)
   vec3f mx = he;
   struct face_def
   {
-    int face_id;
+    box_face_t face_id;
     vec3f p0, p1, p2, p3;
     vec3f normal;
   };
   face_def faces[6] = {
-      {0, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mx.x, mn.y, mx.z}, {1, 0, 0}},
-      {1, {mn.x, mn.y, mx.z}, {mn.x, mx.y, mx.z}, {mn.x, mx.y, mn.z}, {mn.x, mn.y, mn.z}, {-1, 0, 0}},
-      {2, {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, {0, 1, 0}},
-      {3, {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, {0, -1, 0}},
-      {4, {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, {0, 0, 1}},
-      {5, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, {0, 0, -1}},
+      {box_face_t::Plus_X,  {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mx.x, mn.y, mx.z}, { 1, 0, 0}},
+      {box_face_t::Minus_X, {mn.x, mn.y, mx.z}, {mn.x, mx.y, mx.z}, {mn.x, mx.y, mn.z}, {mn.x, mn.y, mn.z}, {-1, 0, 0}},
+      {box_face_t::Plus_Y,  {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, { 0, 1, 0}},
+      {box_face_t::Minus_Y, {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, { 0,-1, 0}},
+      {box_face_t::Plus_Z,  {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, { 0, 0, 1}},
+      {box_face_t::Minus_Z, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, { 0, 0,-1}},
   };
 
   for (const auto &f : faces)

@@ -86,7 +86,7 @@ public:
                        0.0f);
 
   // Parent entity to follow (0 = no parent, uses own position)
-  SCHEMA_FIELD_DEFAULT(uint64, parent_entity_id,
+  SCHEMA_FIELD_DEFAULT(uint32, parent_entity_id,
                        Schema_Flags::Networked | Schema_Flags::Editable,
                        0);
 

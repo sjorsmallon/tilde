@@ -18,7 +18,7 @@ find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
       entity_type::PLAYER);
   if (!players) return nullptr;
   for (auto &p : *players)
-    if (static_cast<shared::entity_uid_t>(p.entity_id) == uid) return &p;
+    if (p.entity_id == uid) return &p;
   return nullptr;
 }
 
@@ -30,7 +30,7 @@ find_physics_body_by_uid(shared::game_session_t &session,
       entity_type::PHYSICS_BODY);
   if (!pool) return nullptr;
   for (auto &b : *pool)
-    if (static_cast<shared::entity_uid_t>(b.entity_id) == uid) return &b;
+    if (b.entity_id == uid) return &b;
   return nullptr;
 }
 

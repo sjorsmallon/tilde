@@ -1,7 +1,7 @@
 #pragma once
 
 #include "linalg.hpp"
-#include "map.hpp" // shared::entity_uid_t
+#include "entity_uid.hpp"
 #include "network/bitstream.hpp"
 
 #include <cstdint>
@@ -76,8 +76,8 @@ struct player_died_payload_t
 struct player_spawned_payload_t
 {
   shared::entity_uid_t player_id;
-  vec3f                spawn_position;
-  vec3f                spawn_orientation;
+  linalg::vec3f        spawn_position;
+  linalg::vec3f        spawn_orientation;
 };
 
 // Tagged union over every event kind. Receivers switch on `kind` and read the

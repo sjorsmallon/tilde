@@ -5,6 +5,8 @@
 
 #include <cassert>
 
+using namespace linalg;
+
 namespace shared
 {
 
@@ -58,7 +60,7 @@ dispatched_effect_t deserialize_effect(network::Bit_Reader &reader)
   effect.data.normal           = read_vec3_coord(reader);
   effect.data.color            = read_vec3_coord(reader);
   effect.data.scale            = network::read_coord(reader);
-  effect.data.attached_entity  = static_cast<entity_uid_t>(network::read_var_uint(reader));
+  effect.data.attached_entity  = network::read_var_uint(reader);
   effect.data.surface_material = static_cast<uint16_t>(reader.read_bits(16));
   return effect;
 }

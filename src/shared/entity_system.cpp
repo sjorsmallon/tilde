@@ -19,10 +19,17 @@ void Entity_System::reset()
   next_entity_id = 1;  // Reset ID counter when clearing entities
 }
 
-void Entity_System::add_entity(const std::shared_ptr<network::Entity> &entity)
+void Entity_System::add_entity(shared::entity_uid_t uid,
+                               const std::shared_ptr<network::Entity> &entity)
 {
   if (!entity)
     return;
+
+  // Map-loaded entities carry their canonical uid here. Runtime-spawned
+  // entities go through Entity_System::spawn() instead, which assigns from
+  // next_entity_id. Both ID spaces are unified at session init time (see
+  // init_session_from_map).
+  entity->entity_id = uid;
 
 #define ADD_IF_TYPE(enum_name, class_name, str_name, header_path)              \
   if (auto *casted = dynamic_cast<const class_name *>(entity.get()))           \
@@ -39,8 +46,8 @@ void Entity_System::add_entity(const std::shared_ptr<network::Entity> &entity)
 
 #undef ADD_IF_TYPE
 
-  // Optional: Log warning if not handled, but some entities might not be in the
-  // system? log_error("Could not add entity of unknown type");
+  log_error("Entity_System::add_entity: entity (uid={}) has no matching pool — "
+            "is the entity type registered?", uid);
 }
 
 void Entity_System::populate_from_map(const map_t &map)
@@ -48,8 +55,12 @@ void Entity_System::populate_from_map(const map_t &map)
   reset();
   for (const auto &entry : map.entities)
   {
-    add_entity(entry.entity);
+    add_entity(entry.uid, entry.entity);
   }
+  // Continue runtime IDs from where the map left off so map-loaded and
+  // runtime-spawned IDs share one monotonic space.
+  if (map.next_uid > next_entity_id)
+    next_entity_id = map.next_uid;
 }
 
 void Entity_System::register_all_known_entity_types()

@@ -343,8 +343,8 @@ void PlayState::update(float dt)
     uint32_t entity_count = network::read_var_uint(reader);
 
     // Build new rocket map from this snapshot (complete state replacement)
-    std::unordered_map<uint32_t, network::Rocket_Entity> new_rockets;
-    std::unordered_map<uint64_t, network::Physics_Body_Entity> new_physics_bodies;
+    std::unordered_map<shared::entity_uid_t, network::Rocket_Entity> new_rockets;
+    std::unordered_map<shared::entity_uid_t, network::Physics_Body_Entity> new_physics_bodies;
 
     for (uint32_t i = 0; i < entity_count; ++i)
     {
@@ -352,7 +352,7 @@ void PlayState::update(float dt)
 
       if (slot_index == 255)
       {
-        uint64_t entity_id = network::read_var_uint64(reader);
+        shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
         network::Rocket_Entity rocket;
         auto it = ctx.remote_rockets.find(entity_id);
@@ -364,7 +364,7 @@ void PlayState::update(float dt)
       }
       else if (slot_index == 254)
       {
-        uint64_t entity_id = network::read_var_uint64(reader);
+        shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
         network::Physics_Body_Entity body;
         auto it = ctx.remote_physics_bodies.find(entity_id);
@@ -376,7 +376,7 @@ void PlayState::update(float dt)
       }
       else
       {
-        uint64_t entity_id = network::read_var_uint64(reader);
+        shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
         network::Player_Entity temp;
         auto pit = ctx.last_player_entities.find(slot_index);
