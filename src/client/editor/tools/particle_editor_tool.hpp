@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../editor_tool.hpp"
+#include "../../../shared/entity_uid.hpp"
 #include <cstdint>
 
 namespace client
@@ -22,7 +23,7 @@ public:
   void on_draw_ui(editor_context_t &ctx) override;
 
 private:
-  uint64_t selected_emitter_uid = 0;
+  uint64_t selected_emitter_uid = invalid_entity_uid;
   viewport_state_t m_viewport;
 };
 

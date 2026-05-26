@@ -9,7 +9,7 @@ namespace client
 
 void ParticleEditorTool::on_enable(editor_context_t &ctx)
 {
-  selected_emitter_uid = 0;
+  selected_emitter_uid = invalid_entity_uid;
 
   // Auto-select the first particle emitter if there is one
   if (ctx.map)

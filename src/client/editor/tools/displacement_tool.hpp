@@ -38,8 +38,8 @@ private:
   Mode mode = Mode::Setup;
 
   // Setup mode state
-  shared::entity_uid_t selected_uid = 0;
-  shared::entity_uid_t hovered_uid = 0;
+  shared::entity_uid_t selected_uid = invalid_entity_uid;
+  shared::entity_uid_t hovered_uid = invalid_entity_uid;
   network::box_face_t hovered_face = network::box_face_t::Invalid;
 
   // Paint mode state
