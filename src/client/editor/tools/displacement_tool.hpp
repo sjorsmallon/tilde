@@ -38,9 +38,9 @@ private:
   Mode mode = Mode::Setup;
 
   // Setup mode state
-  shared::entity_uid_t selected_uid = invalid_entity_uid;
-  shared::entity_uid_t hovered_uid = invalid_entity_uid;
-  network::box_face_t hovered_face = network::box_face_t::Invalid;
+  shared::entity_uid_t selected_uid = shared::invalid_entity_uid;
+  shared::entity_uid_t hovered_uid = shared::invalid_entity_uid;
+  shared::box_face_t hovered_face = shared::box_face_t::Invalid;
 
   // Paint mode state
   bool painting = false;
@@ -58,7 +58,7 @@ private:
   // Face-drag resize (Setup mode, before displacement)
   bool resize_dragging = false;
   bool resize_moved = false;
-  network::box_face_t resize_face = network::box_face_t::Invalid;
+  shared::box_face_t resize_face = shared::box_face_t::Invalid;
   viewport_state_t resize_last_view;
   std::map<std::string, std::string> resize_start_props;
 

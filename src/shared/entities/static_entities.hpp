@@ -7,7 +7,7 @@
 namespace network
 {
 
-class AABB_Entity : public Entity
+class AABB_Entity : public Entity_Of<::entity_type::AABB>
 {
 public:
   bool is_collision_geometry() const override { return true; }
@@ -24,7 +24,7 @@ public:
   DECLARE_SCHEMA(AABB_Entity)
 };
 
-class Wedge_Entity : public Entity
+class Wedge_Entity : public Entity_Of<::entity_type::WEDGE>
 {
 public:
   bool is_collision_geometry() const override { return true; }
@@ -40,7 +40,7 @@ public:
   DECLARE_SCHEMA(Wedge_Entity)
 };
 
-class Static_Mesh_Entity : public Entity
+class Static_Mesh_Entity : public Entity_Of<::entity_type::STATIC_MESH>
 {
 public:
   bool is_collision_geometry() const override { return true; }

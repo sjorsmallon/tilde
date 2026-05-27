@@ -31,20 +31,12 @@ void Entity_System::add_entity(shared::entity_uid_t uid,
   // init_session_from_map).
   entity->entity_id = uid;
 
-#define ADD_IF_TYPE(enum_name, class_name, str_name, header_path)              \
-  if (auto *casted = dynamic_cast<const class_name *>(entity.get()))           \
-  {                                                                            \
-    auto it = pools.find(entity_type::enum_name);                              \
-    if (it != pools.end())                                                     \
-    {                                                                          \
-      it->second->add_existing(entity.get());                                  \
-      return;                                                                  \
-    }                                                                          \
+  auto it = pools.find(entity->get_type());
+  if (it != pools.end())
+  {
+    it->second->add_existing(entity.get());
+    return;
   }
-
-  SHARED_ENTITIES_LIST(ADD_IF_TYPE)
-
-#undef ADD_IF_TYPE
 
   log_error("Entity_System::add_entity: entity (uid={}) has no matching pool — "
             "is the entity type registered?", uid);

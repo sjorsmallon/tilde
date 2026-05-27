@@ -59,7 +59,7 @@ int main()
   size_t aabbs_checked = 0;
   for (const auto &e : loaded.entities)
   {
-    auto *aabb = dynamic_cast<network::AABB_Entity *>(e.entity.get());
+    auto *aabb = entity_as<network::AABB_Entity>(e.entity.get());
     if (!aabb) continue;
     const auto &h = aabb->volume.half_extents;
     if (h.x == 0.f && h.y == 0.f && h.z == 0.f)
@@ -94,7 +94,7 @@ int main()
   auto get_aabbs = [](const map_t &m) {
     std::vector<network::AABB_Entity *> out;
     for (const auto &e : m.entities)
-      if (auto *a = dynamic_cast<network::AABB_Entity *>(e.entity.get()))
+      if (auto *a = entity_as<network::AABB_Entity>(e.entity.get()))
         out.push_back(a);
     return out;
   };
@@ -122,7 +122,7 @@ int main()
     map_t trig_map;
     trig_map.name = "trig_roundtrip";
     auto t = create_entity_by_classname("trigger_volume");
-    auto *trig = dynamic_cast<network::Trigger_Volume_Entity *>(t.get());
+    auto *trig = entity_as<network::Trigger_Volume_Entity>(t.get());
     if (!trig) return fail("trigger: factory returned wrong type");
     trig->position = {7.f, 8.f, 9.f};
     trig->volume.half_extents = {11.f, 12.f, 13.f};
@@ -146,7 +146,7 @@ int main()
     size_t n = 0;
     network::Trigger_Volume_Entity *rt = nullptr;
     for (const auto &e : reloaded_trig.entities)
-      if (auto *tt = dynamic_cast<network::Trigger_Volume_Entity *>(e.entity.get()))
+      if (auto *tt = entity_as<network::Trigger_Volume_Entity>(e.entity.get()))
       { rt = tt; ++n; }
     if (n != 1) return fail("trigger: expected exactly 1 reloaded trigger");
     if (rt->position.x != 7.f || rt->position.y != 8.f || rt->position.z != 9.f)

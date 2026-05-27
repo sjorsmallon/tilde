@@ -17,7 +17,7 @@ namespace network
 // The owning physics_state_t holds the actual Jolt body; this entity carries
 // the replicated state (position/orientation inherited from Entity, plus
 // velocity for interpolation and the shape parameters needed to render).
-class Physics_Body_Entity : public Entity
+class Physics_Body_Entity : public Entity_Of<::entity_type::PHYSICS_BODY>
 {
 public:
   SCHEMA_FIELD(pascal_string, shape_type,

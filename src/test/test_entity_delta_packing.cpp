@@ -17,6 +17,10 @@ public:
   SCHEMA_FIELD(float32, y, Schema_Flags::Networked);
   SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked);
 
+  // Synthetic entity used only by this test — not in the X-macro registry,
+  // so it has no real entity_type tag. UNKNOWN is the right answer here.
+  ::entity_type get_type() const override { return ::entity_type::UNKNOWN; }
+
   DECLARE_SCHEMA(TestPlayer)
 };
 

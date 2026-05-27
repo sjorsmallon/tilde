@@ -396,7 +396,7 @@ std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity
     return compute_collision_planes(to_aabb(*volume, entity->position));
 
   // Wedge entity -> 5 planes (including slope)
-  if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
+  if (auto *wedge = shared::entity_as<network::Wedge_Entity>(entity))
   {
     wedge_t t;
     t.center = wedge->position;
@@ -419,7 +419,7 @@ std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const networ
   if (const auto *volume = entity->get_box_volume())
     return compute_face_polygons(to_aabb(*volume, entity->position));
 
-  if (auto *wedge = dynamic_cast<const network::Wedge_Entity *>(entity))
+  if (auto *wedge = shared::entity_as<network::Wedge_Entity>(entity))
   {
     wedge_t t;
     t.center = wedge->position;

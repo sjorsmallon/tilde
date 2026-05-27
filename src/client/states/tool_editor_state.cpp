@@ -699,7 +699,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   {
     if (!entry.entity)
       continue;
-    if (!dynamic_cast<network::AABB_Entity *>(entry.entity.get()))
+    if (entry.entity->get_type() != ::entity_type::AABB)
       result.add_entity(entry.entity);
   }
 
@@ -709,13 +709,8 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
     network::render_component_t render;
   };
   std::vector<InputAABB> inputs;
-  for (const auto &entry : src.entities)
+  for (auto [uid, aabb] : src.entities_of_type<network::AABB_Entity>())
   {
-    if (!entry.entity)
-      continue;
-    auto *aabb = dynamic_cast<network::AABB_Entity *>(entry.entity.get());
-    if (!aabb)
-      continue;
     inputs.push_back({shared::to_aabb(aabb->volume, aabb->position), aabb->render});
   }
 
@@ -1237,11 +1232,8 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw particle emitters
-  for (const auto &entry : map.entities)
+  for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
   {
-    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
-    if (!pe) continue;
-
     renderer::particle_emitter_params_t p{};
     p.entity_id = pe->entity_id;
     p.position = pe->position;
@@ -1275,11 +1267,8 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
 
 void ToolEditorState::pre_render(VkCommandBuffer cmd)
 {
-  for (const auto &entry : map.entities)
+  for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
   {
-    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
-    if (!pe) continue;
-
     renderer::particle_emitter_params_t p{};
     p.entity_id = pe->entity_id;
     p.position = pe->position;

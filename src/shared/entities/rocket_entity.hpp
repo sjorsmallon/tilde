@@ -5,7 +5,7 @@
 namespace network
 {
 
-class Rocket_Entity : public Entity
+class Rocket_Entity : public Entity_Of<::entity_type::ROCKET>
 {
 public:
   SCHEMA_FIELD(vec3f, velocity, Schema_Flags::Networked | Schema_Flags::Editable);

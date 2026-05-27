@@ -64,17 +64,26 @@ void populate_static_physics_bodies(physics_state_t &state, const map_t &map)
     if (!entry.entity)
       continue;
 
-    if (auto *aabb = dynamic_cast<network::AABB_Entity *>(entry.entity.get()))
+    switch (entry.entity->get_type())
     {
+    case ::entity_type::AABB:
+    {
+      auto *aabb = static_cast<network::AABB_Entity *>(entry.entity.get());
       register_static_box(state, entry.uid, aabb->position, aabb->volume.half_extents);
+      break;
     }
-    else if (auto *wedge = dynamic_cast<network::Wedge_Entity *>(entry.entity.get()))
+    case ::entity_type::WEDGE:
     {
       // Approximate the wedge with its bounding box. The BVH handles exact
       // wedge collision for player movement; Jolt bodies are for projectiles.
+      auto *wedge = static_cast<network::Wedge_Entity *>(entry.entity.get());
       register_static_box(state, entry.uid, wedge->position, wedge->half_extents);
+      break;
     }
-    // Static_Mesh_Entity: skipped — no shape can be derived from schema fields alone.
+    default:
+      // Static_Mesh_Entity: skipped — no shape can be derived from schema fields alone.
+      break;
+    }
   }
 }
 

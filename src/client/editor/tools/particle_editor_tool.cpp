@@ -9,18 +9,15 @@ namespace client
 
 void ParticleEditorTool::on_enable(editor_context_t &ctx)
 {
-  selected_emitter_uid = invalid_entity_uid;
+  selected_emitter_uid = shared::invalid_entity_uid;
 
   // Auto-select the first particle emitter if there is one
   if (ctx.map)
   {
-    for (const auto &entry : ctx.map->entities)
+    for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
     {
-      if (dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get()))
-      {
-        selected_emitter_uid = entry.uid;
-        break;
-      }
+      selected_emitter_uid = uid;
+      break;
     }
   }
 }
@@ -45,33 +42,29 @@ void ParticleEditorTool::on_mouse_down(editor_context_t &ctx,
 
   // Just find the closest particle emitter to the ray
   float best_dist = 1e18f;
-  uint64_t best_uid = 0;
+  shared::entity_uid_t best_uid = shared::invalid_entity_uid;
 
-  for (const auto &entry : ctx.map->entities)
+  for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
   {
-    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
-    if (!pe)
-      continue;
-
     // Simple sphere pick test (particle emitters are point-like)
-    linalg::vec3 to_emitter = pe->position - m_viewport.mouse_ray.origin;
+    linalg::vec3 to_emitter = emitter->position - m_viewport.mouse_ray.origin;
     float t = linalg::dot(to_emitter, m_viewport.mouse_ray.dir);
     if (t < 0.f)
       continue;
 
     linalg::vec3 closest = m_viewport.mouse_ray.origin + m_viewport.mouse_ray.dir * t;
-    linalg::vec3 delta = pe->position - closest;
+    linalg::vec3 delta = emitter->position - closest;
     float dist = linalg::length(delta);
 
     // 32-unit pick radius
     if (dist < 32.f && t < best_dist)
     {
       best_dist = t;
-      best_uid = entry.uid;
+      best_uid = uid;
     }
   }
 
-  if (best_uid != 0)
+  if (best_uid != shared::invalid_entity_uid)
     selected_emitter_uid = best_uid;
 }
 
@@ -83,15 +76,11 @@ void ParticleEditorTool::on_draw_overlay(editor_context_t &ctx,
                                           overlay_renderer_t &renderer)
 {
   // Highlight all particle emitters with a circle, selected one brighter
-  for (const auto &entry : ctx.map->entities)
+  for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
   {
-    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
-    if (!pe)
-      continue;
-
-    uint32_t color = (entry.uid == selected_emitter_uid) ? 0xFF00FFFF : 0xFF008080;
-    renderer.draw_circle(pe->position, 16.f, {0, 1, 0}, color);
-    renderer.draw_wire_box(pe->position, {4, 4, 4}, color);
+    uint32_t color = (uid == selected_emitter_uid) ? 0xFF00FFFF : 0xFF008080;
+    renderer.draw_circle(emitter->position, 16.f, {0, 1, 0}, color);
+    renderer.draw_wire_box(emitter->position, {4, 4, 4}, color);
   }
 }
 
@@ -103,20 +92,15 @@ void ParticleEditorTool::on_draw_ui(editor_context_t &ctx)
   if (ImGui::BeginCombo("Emitter",
                          selected_emitter_uid ? "Selected" : "None"))
   {
-    for (const auto &entry : ctx.map->entities)
+    for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
     {
-      auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(
-          entry.entity.get());
-      if (!pe)
-        continue;
-
       char label[64];
       snprintf(label, sizeof(label), "Emitter #%u (%.0f, %.0f, %.0f)",
-               entry.uid, pe->position.x, pe->position.y, pe->position.z);
+               uid, emitter->position.x, emitter->position.y, emitter->position.z);
 
-      bool is_selected = (entry.uid == selected_emitter_uid);
+      bool is_selected = (uid == selected_emitter_uid);
       if (ImGui::Selectable(label, is_selected))
-        selected_emitter_uid = entry.uid;
+        selected_emitter_uid = uid;
     }
     ImGui::EndCombo();
   }
@@ -140,7 +124,7 @@ void ParticleEditorTool::on_draw_ui(editor_context_t &ctx)
   {
     auto *entry = ctx.map->find_by_uid(selected_emitter_uid);
     if (entry)
-      pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry->entity.get());
+      pe = shared::entity_as<network::Particle_Emitter_Entity>(entry->entity.get());
   }
 
   if (!pe)

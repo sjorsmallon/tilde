@@ -359,19 +359,18 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
     original_transform.orientation = {0, 0, 0,
                                       1}; // Identity (box has no rotation)
   }
-  else if (auto *wedge = dynamic_cast<::network::Wedge_Entity *>(ent.get()))
+  else if (auto *wedge = shared::entity_as<::network::Wedge_Entity>(ent.get()))
   {
     original_transform.position = wedge->position;
     original_transform.scale = wedge->half_extents;
     original_transform.orientation = {0, 0, 0, 1}; // TODO: Wedge rotation
   }
-  else if (auto *mesh =
-               dynamic_cast<::network::Static_Mesh_Entity *>(ent.get()))
+  else if (auto *mesh = shared::entity_as<::network::Static_Mesh_Entity>(ent.get()))
   {
     original_transform.position = mesh->position;
     original_transform.scale = mesh->render.scale;
   }
-  else if (auto *player = dynamic_cast<::network::Player_Entity *>(ent.get()))
+  else if (auto *player = shared::entity_as<::network::Player_Entity>(ent.get()))
   {
     original_transform.position = player->position;
     original_transform.scale = {1, 1, 1};

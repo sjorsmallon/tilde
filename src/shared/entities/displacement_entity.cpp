@@ -14,7 +14,7 @@ DEFINE_SCHEMA_CLASS(Displacement_Entity, Entity)
   END_SCHEMA_FIELDS()
 }
 
-void Displacement_Entity::init_displacement(box_face_t face, int subdiv)
+void Displacement_Entity::init_displacement(shared::box_face_t face, int subdiv)
 {
   active_face = face;
   subdivision_level = subdiv;
@@ -25,12 +25,12 @@ void Displacement_Entity::init_displacement(box_face_t face, int subdiv)
 
 vec3f Displacement_Entity::get_face_normal() const
 {
-  return get_box_face_normal(active_face);
+  return shared::get_box_face_normal(active_face);
 }
 
 void Displacement_Entity::get_face_axes(vec3f &out_u, vec3f &out_v) const
 {
-  box_face_tangents tangents = get_box_face_tangents(active_face);
+  shared::box_face_tangents tangents = shared::get_box_face_tangents(active_face);
   out_u = tangents.u;
   out_v = tangents.v;
 }
@@ -111,7 +111,7 @@ assets::mesh_asset_t generate_displacement_mesh(const Displacement_Entity &ent)
   assets::mesh_asset_t mesh;
   const vec3f &he = ent.volume.half_extents;
 
-  if (ent.active_face == box_face_t::Invalid)
+  if (ent.active_face == shared::box_face_t::Invalid)
   {
     // No displacement - generate a simple box
     vec3f mn = he * -1.0f;
@@ -212,17 +212,17 @@ assets::mesh_asset_t generate_displacement_mesh(const Displacement_Entity &ent)
   vec3f mx = he;
   struct face_def
   {
-    box_face_t face_id;
+    shared::box_face_t face_id;
     vec3f p0, p1, p2, p3;
     vec3f normal;
   };
   face_def faces[6] = {
-      {box_face_t::Plus_X,  {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mx.x, mn.y, mx.z}, { 1, 0, 0}},
-      {box_face_t::Minus_X, {mn.x, mn.y, mx.z}, {mn.x, mx.y, mx.z}, {mn.x, mx.y, mn.z}, {mn.x, mn.y, mn.z}, {-1, 0, 0}},
-      {box_face_t::Plus_Y,  {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, { 0, 1, 0}},
-      {box_face_t::Minus_Y, {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, { 0,-1, 0}},
-      {box_face_t::Plus_Z,  {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, { 0, 0, 1}},
-      {box_face_t::Minus_Z, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, { 0, 0,-1}},
+      {shared::box_face_t::Plus_X,  {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mx.x, mn.y, mx.z}, { 1, 0, 0}},
+      {shared::box_face_t::Minus_X, {mn.x, mn.y, mx.z}, {mn.x, mx.y, mx.z}, {mn.x, mx.y, mn.z}, {mn.x, mn.y, mn.z}, {-1, 0, 0}},
+      {shared::box_face_t::Plus_Y,  {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, { 0, 1, 0}},
+      {shared::box_face_t::Minus_Y, {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, { 0,-1, 0}},
+      {shared::box_face_t::Plus_Z,  {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, { 0, 0, 1}},
+      {shared::box_face_t::Minus_Z, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, { 0, 0,-1}},
   };
 
   for (const auto &f : faces)

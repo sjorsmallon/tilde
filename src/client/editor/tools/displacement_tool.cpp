@@ -1,4 +1,5 @@
 #include "displacement_tool.hpp"
+#include "../../../shared/box_face.hpp"
 #include "../../../shared/collision_detection.hpp"
 #include "../../../shared/shapes.hpp"
 #include "imgui.h"
@@ -8,66 +9,6 @@
 
 namespace client
 {
-
-// ===================================================================
-// Ray-AABB face intersection (copied from sculpting tool)
-// ===================================================================
-
-static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
-                                       const linalg::vec3 &ray_dir,
-                                       const shared::aabb_t &aabb, float &out_t,
-                                       network::box_face_t &out_face)
-{
-  linalg::vec3 min = aabb.center - aabb.half_extents;
-  linalg::vec3 max = aabb.center + aabb.half_extents;
-
-  float tmin = 0.0f;
-  float tmax = 1e30f;
-
-  auto slab = [&](float origin, float dir, float mn, float mx) -> bool
-  {
-    if (std::abs(dir) < 1e-6f)
-      return (origin >= mn && origin <= mx);
-    float ood = 1.0f / dir;
-    float t1 = (mn - origin) * ood;
-    float t2 = (mx - origin) * ood;
-    if (t1 > t2)
-      std::swap(t1, t2);
-    if (t1 > tmin)
-      tmin = t1;
-    if (t2 < tmax)
-      tmax = t2;
-    return tmin <= tmax;
-  };
-
-  if (!slab(ray_origin.x, ray_dir.x, min.x, max.x))
-    return false;
-  if (!slab(ray_origin.y, ray_dir.y, min.y, max.y))
-    return false;
-  if (!slab(ray_origin.z, ray_dir.z, min.z, max.z))
-    return false;
-
-  out_t = tmin;
-  linalg::vec3 p = ray_origin + ray_dir * tmin;
-  const float eps = 1e-3f;
-
-  if (std::abs(p.x - max.x) < eps)
-    out_face = network::box_face_t::Plus_X;
-  else if (std::abs(p.x - min.x) < eps)
-    out_face = network::box_face_t::Minus_X;
-  else if (std::abs(p.y - max.y) < eps)
-    out_face = network::box_face_t::Plus_Y;
-  else if (std::abs(p.y - min.y) < eps)
-    out_face = network::box_face_t::Minus_Y;
-  else if (std::abs(p.z - max.z) < eps)
-    out_face = network::box_face_t::Plus_Z;
-  else if (std::abs(p.z - min.z) < eps)
-    out_face = network::box_face_t::Minus_Z;
-  else
-    return false;
-
-  return true;
-}
 
 // ===================================================================
 // Moller-Trumbore ray-triangle intersection
@@ -147,14 +88,14 @@ Displacement_Tool::get_selected(editor_context_t &ctx)
   auto *entry = ctx.map->find_by_uid(selected_uid);
   if (!entry || !entry->entity)
     return nullptr;
-  return dynamic_cast<network::Displacement_Entity *>(entry->entity.get());
+  return shared::entity_as<network::Displacement_Entity>(entry->entity.get());
 }
 
 bool Displacement_Tool::raycast_displacement_mesh(
     const network::Displacement_Entity &ent, const linalg::vec3 &ray_origin,
     const linalg::vec3 &ray_dir, float &out_t, linalg::vec3 &out_normal)
 {
-  if (ent.active_face == network::box_face_t::Invalid)
+  if (ent.active_face == shared::box_face_t::Invalid)
     return false;
 
   int grid_size = ent.grid_size();
@@ -204,7 +145,7 @@ bool Displacement_Tool::raycast_displacement_mesh(
 void Displacement_Tool::apply_brush(network::Displacement_Entity &ent,
                                     float dt, bool invert)
 {
-  if (!cursor_valid || ent.active_face == network::box_face_t::Invalid)
+  if (!cursor_valid || ent.active_face == shared::box_face_t::Invalid)
     return;
 
   int grid_size = ent.grid_size();
@@ -295,7 +236,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
     if (!resize_dragging)
     {
       hovered_uid = 0;
-      hovered_face = network::box_face_t::Invalid;
+      hovered_face = shared::box_face_t::Invalid;
 
       if (ctx.bvh)
       {
@@ -309,7 +250,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
             auto *entry = ctx.map->find_by_uid(uid);
             if (entry && entry->entity)
             {
-              if (auto *disp = dynamic_cast<network::Displacement_Entity *>(
+              if (auto *disp = shared::entity_as<network::Displacement_Entity>(
                       entry->entity.get()))
               {
                 hovered_uid = uid;
@@ -319,10 +260,10 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
                 aabb.center = disp->position;
                 aabb.half_extents = disp->volume.half_extents;
                 float t;
-                network::box_face_t face;
-                if (ray_aabb_face_intersection(view.mouse_ray.origin,
-                                               view.mouse_ray.dir, aabb, t,
-                                               face))
+                shared::box_face_t face;
+                if (shared::ray_aabb_face_intersection(view.mouse_ray.origin,
+                                                      view.mouse_ray.dir, aabb,
+                                                      t, face))
                 {
                   hovered_face = face;
                 }
@@ -381,8 +322,8 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
       {
         pending_subdivision = ent->subdivision_level;
 
-        if (ent->active_face == network::box_face_t::Invalid &&
-            hovered_face != network::box_face_t::Invalid)
+        if (ent->active_face == shared::box_face_t::Invalid &&
+            hovered_face != shared::box_face_t::Invalid)
         {
           if (e.shift_down)
           {
@@ -441,7 +382,7 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
     vec3 current_center = ent->position;
     vec3 current_he = ent->volume.half_extents;
 
-    vec3 normal = network::get_box_face_normal(resize_face);
+    vec3 normal = shared::get_box_face_normal(resize_face);
     vec3 center_offset = {
         normal.x * current_he.x,
         normal.y * current_he.y,
@@ -487,8 +428,8 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
         float k = dot_prod / screen_len_sq;
         float world_delta = k;
 
-        int axis = network::box_face_axis(resize_face);
-        bool positive_face = network::box_face_is_positive(resize_face);
+        int axis = shared::box_face_axis(resize_face);
+        bool positive_face = shared::box_face_is_positive(resize_face);
 
         float *ext = nullptr;
         float *cen = nullptr;
@@ -569,7 +510,7 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
     box_selecting = false;
 
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face != network::box_face_t::Invalid)
+    if (ent && ent->active_face != shared::box_face_t::Invalid)
     {
       int grid_size = ent->grid_size();
       selected_vertices_bitmask.resize((size_t)(grid_size * grid_size), false);
@@ -602,7 +543,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
   if (e.scancode == SDL_SCANCODE_P)
   {
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face != network::box_face_t::Invalid)
+    if (ent && ent->active_face != shared::box_face_t::Invalid)
     {
       commit_select_edit();
       mode = Mode::Paint;
@@ -611,7 +552,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
   else if (e.scancode == SDL_SCANCODE_S)
   {
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face != network::box_face_t::Invalid)
+    if (ent && ent->active_face != shared::box_face_t::Invalid)
     {
       if (mode != Mode::Select)
       {
@@ -639,7 +580,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
            (e.scancode == SDL_SCANCODE_Q || e.scancode == SDL_SCANCODE_E))
   {
     auto *ent = get_selected(ctx);
-    if (!ent || ent->active_face == network::box_face_t::Invalid)
+    if (!ent || ent->active_face == shared::box_face_t::Invalid)
       return;
 
     int grid_size = ent->grid_size();
@@ -692,22 +633,22 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
 {
   // In setup mode: highlight hovered face
   if (mode == Mode::Setup && hovered_uid != 0 &&
-      hovered_face != network::box_face_t::Invalid && ctx.map)
+      hovered_face != shared::box_face_t::Invalid && ctx.map)
   {
     auto *entry = ctx.map->find_by_uid(hovered_uid);
     if (entry && entry->entity)
     {
-      if (auto *disp = dynamic_cast<network::Displacement_Entity *>(
+      if (auto *disp = shared::entity_as<network::Displacement_Entity>(
               entry->entity.get()))
       {
         linalg::vec3 he = disp->volume.half_extents;
-        linalg::vec3 normal = network::get_box_face_normal(hovered_face);
+        linalg::vec3 normal = shared::get_box_face_normal(hovered_face);
         // Move plane center to the face by going one half-extent along the
         // face normal, then flatten the box along that same axis (size = 0).
         linalg::vec3 p = disp->position +
                          linalg::vec3{normal.x * he.x, normal.y * he.y, normal.z * he.z};
         linalg::vec3 size = he;
-        int axis = network::box_face_axis(hovered_face);
+        int axis = shared::box_face_axis(hovered_face);
         if (axis == 0) size.x = 0;
         else if (axis == 1) size.y = 0;
         else size.z = 0;
@@ -721,7 +662,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   if (selected_uid != 0 && ctx.map)
   {
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face != network::box_face_t::Invalid)
+    if (ent && ent->active_face != shared::box_face_t::Invalid)
     {
       int grid_size = ent->grid_size();
       uint32_t grid_color = 0xFF444444;
@@ -761,7 +702,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   if (mode == Mode::Select && selected_uid != 0 && ctx.map)
   {
     auto *ent = get_selected(ctx);
-    if (ent && ent->active_face != network::box_face_t::Invalid)
+    if (ent && ent->active_face != shared::box_face_t::Invalid)
     {
       int grid_size = ent->grid_size();
       if ((int)selected_vertices_bitmask.size() == grid_size * grid_size)
@@ -821,9 +762,9 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
         {
           ImGui::Text("Entity: %u", selected_uid);
 
-          if (ent->active_face != network::box_face_t::Invalid)
+          if (ent->active_face != shared::box_face_t::Invalid)
           {
-            const char *face_names[network::box_face_count] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+            const char *face_names[shared::box_face_count] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
             ImGui::Text("Face: %s",
                         face_names[static_cast<size_t>(ent->active_face)]);
             ImGui::TextDisabled("(resize locked after displacement)");

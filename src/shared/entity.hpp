@@ -4,6 +4,7 @@
 #include "network/network_types.hpp"
 #include "network/schema.hpp"
 #include "components/components.hpp"
+#include "entities/entity_type.hpp"
 #include <cassert>
 #include <cstring>
 #include <map>
@@ -47,6 +48,13 @@ public:
 
   // Macro required in every derived class to register schema
   virtual const Class_Schema *get_schema() const = 0;
+
+  // Returns the closed-enum tag for this entity's concrete type.
+  // Pure virtual: every concrete entity must declare its type. The standard
+  // way is to inherit from Entity_Of<entity_type::FOO> instead of Entity
+  // directly — the CRTP base supplies both this override and a compile-time
+  // T::static_type constant. Replaces dynamic_cast for type queries.
+  virtual ::entity_type get_type() const = 0;
 
   // Look up a component by type using the schema system.
   // Returns nullptr if the entity doesn't have a field of type T.
@@ -138,6 +146,18 @@ public:
   void deserialize(Bit_Reader &reader);
 };
 
+// CRTP base that supplies get_type() and a compile-time static_type constant.
+// Every concrete entity should inherit from Entity_Of<entity_type::FOO> rather
+// than Entity directly. The intermediate base has no data members, so the
+// object layout is identical to inheriting Entity directly.
+template <::entity_type Type>
+class Entity_Of : public Entity
+{
+public:
+  static constexpr ::entity_type static_type = Type;
+  ::entity_type get_type() const override { return Type; }
+};
+
 } // namespace network
 
 namespace shared
@@ -146,5 +166,37 @@ namespace shared
 std::shared_ptr<network::Entity>
 create_entity_by_classname(const std::string &classname);
 
+// Preferred internal factory: takes the enum tag, not a string. Use this
+// when you know the type at compile time or already have it as an enum.
+// The classname factory is for callers that genuinely have a string
+// (map loader, transaction snapshot restore).
+std::shared_ptr<network::Entity>
+create_entity_by_type(::entity_type type);
+
 std::string get_classname_for_entity(const network::Entity *entity);
+
+// Closed-enum replacement for dynamic_cast<T*>(entity).
+// Returns the pointer typed as T* if the entity's concrete type is exactly T,
+// else nullptr. Uses Entity_Of's T::static_type integer compare instead of
+// walking RTTI — one branch + one load, no type-info traversal.
+//
+// Semantics differ from dynamic_cast in one way: this is *exact match only*.
+// The entity hierarchy is closed and one-level (all leaves inherit Entity_Of
+// directly), so this matches what every existing dynamic_cast call site in
+// this codebase actually wants.
+template <typename T>
+T *entity_as(network::Entity *entity)
+{
+  if (!entity || entity->get_type() != T::static_type)
+    return nullptr;
+  return static_cast<T *>(entity);
+}
+
+template <typename T>
+const T *entity_as(const network::Entity *entity)
+{
+  if (!entity || entity->get_type() != T::static_type)
+    return nullptr;
+  return static_cast<const T *>(entity);
+}
 } // namespace shared

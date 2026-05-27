@@ -86,7 +86,7 @@ void test_modify()
     auto *entry = map.find_by_uid(uid);
     auto before = entry->entity->get_all_properties();
 
-    auto *aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
+    auto *aabb = entity_as<AABB_Entity>(entry->entity.get());
     aabb->position = {10.0f, 0, 0};
 
     transaction_builder_t builder;
@@ -96,7 +96,7 @@ void test_modify()
   }
 
   auto *entry = map.find_by_uid(uid);
-  auto *aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
+  auto *aabb = entity_as<AABB_Entity>(entry->entity.get());
   assert(aabb);
   assert(aabb->position.x == 10.0f);
   assert(ts.can_undo());
@@ -104,13 +104,13 @@ void test_modify()
   // 2. Undo Modify
   ts.undo(map);
   entry = map.find_by_uid(uid);
-  aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
+  aabb = entity_as<AABB_Entity>(entry->entity.get());
   assert(aabb->position.x == 0.0f);
 
   // 3. Redo Modify
   ts.redo(map);
   entry = map.find_by_uid(uid);
-  aabb = dynamic_cast<AABB_Entity *>(entry->entity.get());
+  aabb = entity_as<AABB_Entity>(entry->entity.get());
   assert(aabb->position.x == 10.0f);
 
   std::cout << "Modify Passed." << std::endl;
@@ -163,9 +163,9 @@ void test_batch_delete()
   assert(map.find_by_uid(uid3) != nullptr);
 
   // Verify positions are correct
-  auto *r1 = dynamic_cast<AABB_Entity *>(map.find_by_uid(uid1)->entity.get());
-  auto *r2 = dynamic_cast<AABB_Entity *>(map.find_by_uid(uid2)->entity.get());
-  auto *r3 = dynamic_cast<AABB_Entity *>(map.find_by_uid(uid3)->entity.get());
+  auto *r1 = entity_as<AABB_Entity>(map.find_by_uid(uid1)->entity.get());
+  auto *r2 = entity_as<AABB_Entity>(map.find_by_uid(uid2)->entity.get());
+  auto *r3 = entity_as<AABB_Entity>(map.find_by_uid(uid3)->entity.get());
   assert(r1->position.x == 1.0f);
   assert(r2->position.x == 2.0f);
   assert(r3->position.x == 3.0f);

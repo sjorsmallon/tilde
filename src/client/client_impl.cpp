@@ -58,7 +58,6 @@ bool Init()
   state_manager::switch_to(GameStateKind::MainMenu);
 
   // Register Entities (Shared Logic)
-  // Register Entities (Shared Logic)
   state_manager::get_entity_system().register_all_known_entity_types();
 
   // Bind every cosmetic-effect handler. Each effect_type_t maps to exactly

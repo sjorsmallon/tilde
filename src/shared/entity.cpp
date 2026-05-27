@@ -1,4 +1,5 @@
 #include "entity.hpp"
+#include "entity_system.hpp" // for classname_to_type / type_to_classname
 #include "network/quantization.hpp"
 #include <cstring>
 #include <iostream>
@@ -310,24 +311,31 @@ namespace shared
 {
 
 std::shared_ptr<network::Entity>
+create_entity_by_type(::entity_type type)
+{
+  switch (type)
+  {
+#define X(ENUM, CLASS, NAME, PATH)                                             \
+  case ::entity_type::ENUM:                                                    \
+    return std::make_shared<CLASS>();
+    SHARED_ENTITIES_LIST(X)
+#undef X
+  default:
+    return nullptr;
+  }
+}
+
+std::shared_ptr<network::Entity>
 create_entity_by_classname(const std::string &classname)
 {
-#define X(ENUM, CLASS, NAME, PATH)                                             \
-  if (classname == NAME)                                                       \
-    return std::make_shared<CLASS>();
-  SHARED_ENTITIES_LIST(X)
-#undef X
-  return nullptr;
+  return create_entity_by_type(classname_to_type(classname));
 }
 
 std::string get_classname_for_entity(const network::Entity *entity)
 {
-#define X(ENUM, CLASS, NAME, PATH)                                             \
-  if (dynamic_cast<const CLASS *>(entity))                                     \
-    return NAME;
-  SHARED_ENTITIES_LIST(X)
-#undef X
-  return "unknown";
+  if (!entity)
+    return "unknown";
+  return type_to_classname(entity->get_type());
 }
 
 } // namespace shared

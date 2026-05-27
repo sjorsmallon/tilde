@@ -871,7 +871,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     // not a solid box. After that, any box-volume entity falls through to the
     // generic solid-box draw — so any future box-volume collision entity
     // (clip-brush, hurt-volume, ...) gets visible fallback rendering for free.
-    if (auto *disp = dynamic_cast<network::Displacement_Entity *>(ent.get()))
+    if (auto *disp = shared::entity_as<network::Displacement_Entity>(ent.get()))
     {
       std::string disp_key = "__displacement_" + std::to_string(disp->entity_id);
       auto mesh = network::generate_displacement_mesh(*disp);
@@ -889,7 +889,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       renderer::DrawAABB(cmd, ent->position - volume->half_extents,
                          ent->position + volume->half_extents, 0xFFFFFFFF);
     }
-    else if (auto *wedge = dynamic_cast<network::Wedge_Entity *>(ent.get()))
+    else if (auto *wedge = shared::entity_as<network::Wedge_Entity>(ent.get()))
     {
       shared::wedge_t w;
       w.center = wedge->position;
@@ -897,7 +897,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       w.orientation = wedge->orientation;
       renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
     }
-    else if (dynamic_cast<network::Static_Mesh_Entity *>(ent.get()))
+    else if (ent->get_type() == ::entity_type::STATIC_MESH)
     {
       auto bounds = shared::compute_entity_bounds(ent.get());
       renderer::DrawWireAABB(cmd, bounds.min, bounds.max, 0xFF00FFFF);
@@ -938,7 +938,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     if (ent->is_collision_geometry())
       continue;
 
-    if (dynamic_cast<network::Player_Entity *>(ent.get()))
+    if (ent->get_type() == ::entity_type::PLAYER)
       continue;
 
     const auto *rc = ent->get_component<network::render_component_t>();
@@ -1151,12 +1151,13 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       if (!volume) continue;
 
       uint32_t color = 0xFF00FFFF; // cyan default
-      if (dynamic_cast<const network::Trigger_Volume_Entity *>(ent))
-        color = 0xFFFF00FF; // magenta — triggers are invisible otherwise
-      else if (dynamic_cast<const network::AABB_Entity *>(ent))
-        color = 0xFFFFFFFF; // white
-      else if (dynamic_cast<const network::Displacement_Entity *>(ent))
-        color = 0xFF00FFFF; // yellow-ish — flag the box vs the heightmap
+      switch (ent->get_type())
+      {
+      case ::entity_type::TRIGGER_VOLUME: color = 0xFFFF00FF; break; // magenta — triggers are invisible otherwise
+      case ::entity_type::AABB:           color = 0xFFFFFFFF; break; // white
+      case ::entity_type::DISPLACEMENT:   color = 0xFF00FFFF; break; // yellow-ish — flag the box vs the heightmap
+      default: break;
+      }
 
       renderer::DrawWireAABB(cmd, ent->position - volume->half_extents,
                              ent->position + volume->half_extents, color);
@@ -1210,11 +1211,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw particle emitters
-  for (const auto &entry : map.entities)
+  for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
   {
-    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
-    if (!pe) continue;
-
     renderer::particle_emitter_params_t p{};
     p.entity_id          = pe->entity_id;
     p.position           = pe->position;
@@ -1290,11 +1288,8 @@ void PlayState::pre_render(VkCommandBuffer cmd)
 {
   if (!session_loaded) return;
 
-  for (const auto &entry : map.entities)
+  for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
   {
-    auto *pe = dynamic_cast<network::Particle_Emitter_Entity *>(entry.entity.get());
-    if (!pe) continue;
-
     renderer::particle_emitter_params_t p{};
     p.entity_id          = pe->entity_id;
     p.position           = pe->position;

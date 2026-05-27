@@ -18,7 +18,7 @@ int main()
 
   // Add an AABB Entity instead of static_geometry
   auto aabb_ent = shared::create_entity_by_classname("aabb_entity");
-  if (auto *e = dynamic_cast<network::AABB_Entity *>(aabb_ent.get()))
+  if (auto *e = shared::entity_as<network::AABB_Entity>(aabb_ent.get()))
   {
     e->position = {0, 0, 0};
     e->volume.half_extents = {10, 10, 10};
@@ -27,7 +27,7 @@ int main()
 
   // Add a Player Spawn marker
   auto spawn_ent = shared::create_entity_by_classname("player_start");
-  if (auto *p = dynamic_cast<network::Player_Spawn_Entity *>(spawn_ent.get()))
+  if (auto *p = shared::entity_as<network::Player_Spawn_Entity>(spawn_ent.get()))
   {
     p->position = {5, 5, 0};
   }
@@ -62,7 +62,7 @@ int main()
   // map-loaded entity ended up with entity_id == 0 because the map→runtime
   // hand-off didn't copy uid → entity_id.
   network::AABB_Entity *aabb_static =
-      dynamic_cast<network::AABB_Entity *>(session.static_entities[0].get());
+      shared::entity_as<network::AABB_Entity>(session.static_entities[0].get());
   if (!aabb_static || aabb_static->entity_id != 1)
   {
     log_error("AABB static entity_id should equal map uid 1, got {}",

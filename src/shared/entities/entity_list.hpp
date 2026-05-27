@@ -1,3 +1,21 @@
+#ifndef SHARED_ENTITY_LIST_HPP
+#define SHARED_ENTITY_LIST_HPP
+
+// entity_list.hpp is the "give me everything" header: the X-macro, the enum,
+// and (under ENTITIES_WANT_INCLUDES) every entity class definition.
+//
+// The enum + X-macro live in entity_type.hpp so entity.hpp can include them
+// without recursively pulling in entity headers (which depend on entity.hpp).
+// See entity_type.hpp for the rationale.
+
+#include "entity_type.hpp"
+
+#endif // SHARED_ENTITY_LIST_HPP
+
+
+// The full entity-header pull-in is opt-in (ENTITIES_WANT_INCLUDES) and lives
+// AFTER the include guard on purpose — it must run every time the user
+// re-includes this file with ENTITIES_WANT_INCLUDES newly defined.
 #ifdef ENTITIES_WANT_INCLUDES
 #include "entities/player_entity.hpp"
 #include "entities/static_entities.hpp"
@@ -9,53 +27,3 @@
 #include "entities/light_entity.hpp"
 #include "entities/physics_body_entity.hpp"
 #endif
-
-
-#ifndef SHARED_ENTITY_LIST_HPP
-#define SHARED_ENTITY_LIST_HPP
-
-// =============================================================================
-// ENTITY REGISTRATION GUIDE
-// =============================================================================
-// To add a new entity type:
-// 1. Add the #include for your entity in the block above (inside #ifdef).
-// 2. Add an entry to the macro below:
-//    X(ENUM_NAME, Namespace::Class_Name, "string_classname", "path/ignored")
-// 3. Make sure to declare schemas in your entity class using DECLARE_SCHEMA.
-// =============================================================================
-
-// X(EnumName, ClassName, StringName, HeaderPath)
-#define SHARED_ENTITIES_LIST(X)                                                     \
-  X(PLAYER_SPAWN, network::Player_Spawn_Entity, "player_start",                     \
-    "entities/player_entity.hpp")                                                   \
-  X(PLAYER, network::Player_Entity, "player_entity",                                \
-    "entities/player_entity.hpp")                                                   \
-  X(WEAPON, network::Weapon_Entity, "weapon_basic",                                 \
-    "entities/weapon_entity.hpp")                                                   \
-  X(AABB, network::AABB_Entity, "aabb_entity", "entities/static_entities.hpp")      \
-  X(WEDGE, network::Wedge_Entity, "wedge_entity", "entities/static_entities.hpp")   \
-  X(STATIC_MESH, network::Static_Mesh_Entity, "static_mesh_entity",                 \
-    "entities/static_entities.hpp")                                                 \
-  X(ROCKET, network::Rocket_Entity, "rocket_entity", "entities/rocket_entity.hpp")   \
-  X(PARTICLE_EMITTER, network::Particle_Emitter_Entity, "particle_emitter",         \
-    "entities/particle_emitter_entity.hpp")                                        \
-  X(DISPLACEMENT, network::Displacement_Entity, "displacement_entity",             \
-    "entities/displacement_entity.hpp")                                            \
-  X(TRIGGER_VOLUME, network::Trigger_Volume_Entity, "trigger_volume",              \
-    "entities/trigger_volume_entity.hpp")                                          \
-  X(LIGHT, network::Light_Entity, "light_entity",                                 \
-    "entities/light_entity.hpp")                                                  \
-  X(PHYSICS_BODY, network::Physics_Body_Entity, "physics_body",                   \
-    "entities/physics_body_entity.hpp")
-
-
-// we override the x macro from st get the enum name.
-#define ENUM_NAME(enum_name, class_name, str_name, header) enum_name,
-enum class entity_type
-{
-  UNKNOWN = 0,
-  SHARED_ENTITIES_LIST(ENUM_NAME) COUNT
-};
-#undef ENUM_NAME
-
-#endif // SHARED_ENTITY_LIST_HPP

@@ -97,7 +97,7 @@ Sculpting, the selection-tool gizmo-mode decision (Unified-reshape vs Translate-
 
 What stays per-class via the trait specializations: **behavior-specific drawing only.** Trigger volumes get a red selection wireframe, AABBs get a random-colored solid fill, displacements draw their heightmap mesh. Those are class-level visual decisions, not geometry — they don't migrate to the virtual.
 
-The wedge dispatch sites in the gizmo and BVH still use `dynamic_cast<Wedge_Entity*>`. Wedges are intentionally untouched here — they'll get their own `wedge_volume_t` + virtual in a follow-up, following the same pattern. See [src/shared/entities/README.md](../../shared/entities/README.md#box-volume-component) for the entity-side story.
+The wedge dispatch sites in the gizmo and BVH go through `shared::entity_as<Wedge_Entity>` (closed-enum tag compare, no RTTI walk). Wedges will eventually grow their own `wedge_volume_t` + virtual following the same pattern as box-volume entities, at which point those `entity_as` calls collapse into the virtual too. See [src/shared/entities/README.md](../../shared/entities/README.md#box-volume-component) for the entity-side story.
 
 ## Trigger Actions
 

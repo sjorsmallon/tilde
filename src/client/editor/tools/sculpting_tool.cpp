@@ -1,108 +1,13 @@
 #include "sculpting_tool.hpp"
+#include "../../../shared/box_face.hpp"
 #include "../../../shared/entity.hpp"
 #include "../../../shared/map.hpp"
 #include "../../../shared/shapes.hpp"
 #include "../transaction_system.hpp"
 #include <cmath>
-#include <limits>
 
 namespace client
 {
-
-// Helper for AABB face hit test
-static bool ray_aabb_face_intersection(const linalg::vec3 &ray_origin,
-                                       const linalg::vec3 &ray_dir,
-                                       const shared::aabb_t &aabb, float &out_t,
-                                       int &out_face)
-{
-  linalg::vec3 min = aabb.center - aabb.half_extents;
-  linalg::vec3 max = aabb.center + aabb.half_extents;
-
-  float tmin = 0.0f;
-  float tmax = std::numeric_limits<float>::max();
-
-  if (std::abs(ray_dir.x) < 1e-6f)
-  {
-    if (ray_origin.x < min.x || ray_origin.x > max.x)
-      return false;
-  }
-  else
-  {
-    float ood = 1.0f / ray_dir.x;
-    float t1 = (min.x - ray_origin.x) * ood;
-    float t2 = (max.x - ray_origin.x) * ood;
-    if (t1 > t2)
-      std::swap(t1, t2);
-    if (t1 > tmin)
-      tmin = t1;
-    if (t2 < tmax)
-      tmax = t2;
-    if (tmin > tmax)
-      return false;
-  }
-
-  if (std::abs(ray_dir.y) < 1e-6f)
-  {
-    if (ray_origin.y < min.y || ray_origin.y > max.y)
-      return false;
-  }
-  else
-  {
-    float ood = 1.0f / ray_dir.y;
-    float t1 = (min.y - ray_origin.y) * ood;
-    float t2 = (max.y - ray_origin.y) * ood;
-    if (t1 > t2)
-      std::swap(t1, t2);
-    if (t1 > tmin)
-      tmin = t1;
-    if (t2 < tmax)
-      tmax = t2;
-    if (tmin > tmax)
-      return false;
-  }
-
-  if (std::abs(ray_dir.z) < 1e-6f)
-  {
-    if (ray_origin.z < min.z || ray_origin.z > max.z)
-      return false;
-  }
-  else
-  {
-    float ood = 1.0f / ray_dir.z;
-    float t1 = (min.z - ray_origin.z) * ood;
-    float t2 = (max.z - ray_origin.z) * ood;
-    if (t1 > t2)
-      std::swap(t1, t2);
-    if (t1 > tmin)
-      tmin = t1;
-    if (t2 < tmax)
-      tmax = t2;
-    if (tmin > tmax)
-      return false;
-  }
-
-  out_t = tmin;
-
-  linalg::vec3 p = ray_origin + ray_dir * tmin;
-  const float eps = 1e-3f;
-
-  if (std::abs(p.x - max.x) < eps)
-    out_face = 0;
-  else if (std::abs(p.x - min.x) < eps)
-    out_face = 1;
-  else if (std::abs(p.y - max.y) < eps)
-    out_face = 2;
-  else if (std::abs(p.y - min.y) < eps)
-    out_face = 3;
-  else if (std::abs(p.z - max.z) < eps)
-    out_face = 4;
-  else if (std::abs(p.z - min.z) < eps)
-    out_face = 5;
-  else
-    return false;
-
-  return true;
-}
 
 void Sculpting_Tool::on_enable(editor_context_t &ctx)
 {
@@ -142,7 +47,7 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
     return;
 
   hovered_uid = 0;
-  hovered_face = -1;
+  hovered_face = shared::box_face_t::Invalid;
 
   if (ctx.bvh)
   {
@@ -162,9 +67,10 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
             shared::aabb_t aabb = shared::to_aabb(*volume, entry->entity->position);
 
             float t;
-            int face;
-            if (ray_aabb_face_intersection(view.mouse_ray.origin,
-                                           view.mouse_ray.dir, aabb, t, face))
+            shared::box_face_t face;
+            if (shared::ray_aabb_face_intersection(view.mouse_ray.origin,
+                                                   view.mouse_ray.dir, aabb,
+                                                   t, face))
             {
               hovered_uid = uid;
               hovered_face = face;
@@ -215,35 +121,12 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
       vec3 current_center = entry->entity->position;
       vec3 current_half_extents = volume->half_extents;
 
-      vec3 normal = {0, 0, 0};
-      vec3 center_offset = {0, 0, 0};
-      switch (dragging_face)
-      {
-      case 0:
-        normal = {1, 0, 0};
-        center_offset = {current_half_extents.x, 0, 0};
-        break;
-      case 1:
-        normal = {-1, 0, 0};
-        center_offset = {-current_half_extents.x, 0, 0};
-        break;
-      case 2:
-        normal = {0, 1, 0};
-        center_offset = {0, current_half_extents.y, 0};
-        break;
-      case 3:
-        normal = {0, -1, 0};
-        center_offset = {0, -current_half_extents.y, 0};
-        break;
-      case 4:
-        normal = {0, 0, 1};
-        center_offset = {0, 0, current_half_extents.z};
-        break;
-      case 5:
-        normal = {0, 0, -1};
-        center_offset = {0, 0, -current_half_extents.z};
-        break;
-      }
+      vec3 normal = shared::get_box_face_normal(dragging_face);
+      vec3 center_offset = {
+          normal.x * current_half_extents.x,
+          normal.y * current_half_extents.y,
+          normal.z * current_half_extents.z,
+      };
 
       vec3 face_center_world = current_center + center_offset;
       vec3 face_end_world = face_center_world + normal;
@@ -284,15 +167,17 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           float k = dot_prod / screen_len_sq;
           float world_delta = k;
 
+          int axis = shared::box_face_axis(dragging_face);
+          bool positive_face = shared::box_face_is_positive(dragging_face);
+
           float *ext = nullptr;
           float *cen = nullptr;
-
-          if (dragging_face < 2)
+          if (axis == 0)
           {
             ext = &volume->half_extents.x;
             cen = &entry->entity->position.x;
           }
-          else if (dragging_face < 4)
+          else if (axis == 1)
           {
             ext = &volume->half_extents.y;
             cen = &entry->entity->position.y;
@@ -304,7 +189,7 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           }
 
           *ext += world_delta * 0.5f;
-          if (dragging_face % 2 == 0)
+          if (positive_face)
             *cen += world_delta * 0.5f;
           else
             *cen -= world_delta * 0.5f;
@@ -313,7 +198,7 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           {
             float diff = editor::MIN_EXTENT - *ext;
             *ext = editor::MIN_EXTENT;
-            if (dragging_face % 2 == 0)
+            if (positive_face)
               *cen -= diff;
             else
               *cen += diff;
@@ -364,37 +249,15 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
       {
         shared::aabb_t aabb = shared::to_aabb(*volume, entry->entity->position);
 
-        linalg::vec3 p = aabb.center;
         linalg::vec3 e = aabb.half_extents;
+        linalg::vec3 normal = shared::get_box_face_normal(hovered_face);
+        linalg::vec3 p = aabb.center +
+                         linalg::vec3{normal.x * e.x, normal.y * e.y, normal.z * e.z};
         linalg::vec3 size = e;
-
-        switch (hovered_face)
-        {
-        case 0:
-          p.x += e.x;
-          size.x = 0;
-          break;
-        case 1:
-          p.x -= e.x;
-          size.x = 0;
-          break;
-        case 2:
-          p.y += e.y;
-          size.y = 0;
-          break;
-        case 3:
-          p.y -= e.y;
-          size.y = 0;
-          break;
-        case 4:
-          p.z += e.z;
-          size.z = 0;
-          break;
-        case 5:
-          p.z -= e.z;
-          size.z = 0;
-          break;
-        }
+        int axis = shared::box_face_axis(hovered_face);
+        if (axis == 0) size.x = 0;
+        else if (axis == 1) size.y = 0;
+        else size.z = 0;
 
         renderer.draw_wire_box(p, size, 0xFF0000FF);
       }

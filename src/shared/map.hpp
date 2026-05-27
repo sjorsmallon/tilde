@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <ranges>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -75,6 +77,45 @@ struct map_t
       if (e.uid == uid)
         return &e;
     return nullptr;
+  }
+
+  // Iterate every entity whose concrete type is exactly T.
+  // Yields std::pair<entity_uid_t, T*> where the pointer is guaranteed non-null.
+  //
+  // Usage:
+  //   for (auto [uid, emitter] : map.entities_of_type<network::Particle_Emitter_Entity>())
+  //     { ... }
+  //
+  // The type check uses T::static_type (from the Entity_Of CRTP base) and is a
+  // single integer compare per element — no RTTI walk. Because the comparison
+  // is exact, this only matches concrete T, not subclasses. The entity hierarchy
+  // is closed and one-level (all leaves inherit Entity_Of<...> directly), so
+  // exact-match is the desired behavior.
+  //
+  // The view is invalidated by anything that mutates `entities`, same as a raw
+  // iterator.
+  template <typename T>
+  auto entities_of_type()
+  {
+    return entities
+      | std::views::filter([](const map_entity_t &e) {
+          return e.entity && e.entity->get_type() == T::static_type;
+        })
+      | std::views::transform([](map_entity_t &e) {
+          return std::pair<entity_uid_t, T *>{e.uid, static_cast<T *>(e.entity.get())};
+        });
+  }
+
+  template <typename T>
+  auto entities_of_type() const
+  {
+    return entities
+      | std::views::filter([](const map_entity_t &e) {
+          return e.entity && e.entity->get_type() == T::static_type;
+        })
+      | std::views::transform([](const map_entity_t &e) {
+          return std::pair<entity_uid_t, const T *>{e.uid, static_cast<const T *>(e.entity.get())};
+        });
   }
 };
 

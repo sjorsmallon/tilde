@@ -496,8 +496,8 @@ void bake_map(map_t &map, float cell_size)
     if (!ent->is_collision_geometry())
       continue;
     if (!ent->get_box_volume() &&
-        !dynamic_cast<network::Wedge_Entity *>(ent) &&
-        !dynamic_cast<network::Static_Mesh_Entity *>(ent))
+        ent->get_type() != ::entity_type::WEDGE &&
+        ent->get_type() != ::entity_type::STATIC_MESH)
       continue;
 
     auto bounds = compute_entity_bounds(ent);

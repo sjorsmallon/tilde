@@ -5,7 +5,7 @@
 namespace network
 {
 
-class Particle_Emitter_Entity : public Entity
+class Particle_Emitter_Entity : public Entity_Of<::entity_type::PARTICLE_EMITTER>
 {
 public:
   // Sprite sheet path

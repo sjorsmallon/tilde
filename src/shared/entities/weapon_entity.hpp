@@ -5,7 +5,7 @@
 namespace network
 {
 
-class Weapon_Entity : public Entity
+class Weapon_Entity : public Entity_Of<::entity_type::WEAPON>
 {
 public:
   SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked | Schema_Flags::Editable);

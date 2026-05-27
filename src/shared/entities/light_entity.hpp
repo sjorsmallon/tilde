@@ -12,7 +12,7 @@ enum class light_type_t : int32_t
   Directional = 2
 };
 
-class Light_Entity : public Entity
+class Light_Entity : public Entity_Of<::entity_type::LIGHT>
 {
 public:
   SCHEMA_FIELD(vec3f, direction, Schema_Flags::Networked | Schema_Flags::Editable);

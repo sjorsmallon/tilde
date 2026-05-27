@@ -13,7 +13,7 @@ constexpr float player_half_height = 36.f;
 // Placed in the map editor to mark where players (or bots) spawn.
 // Only exists in the map; the server consumes it at load time and removes it.
 // position/orientation inherited from Entity.
-class Player_Spawn_Entity : public Entity
+class Player_Spawn_Entity : public Entity_Of<::entity_type::PLAYER_SPAWN>
 {
 public:
   // 0 = human spawn point (default), 1 = bot spawn point
@@ -26,7 +26,7 @@ SCHEMA_NAME_FOR_TYPE(Player_Spawn_Entity)
 
 // Runtime networked player entity, created by the server when a client connects.
 // Never saved in map files.
-class Player_Entity : public Entity
+class Player_Entity : public Entity_Of<::entity_type::PLAYER>
 {
 public:
   SCHEMA_FIELD(float32, view_angle_yaw,

@@ -19,10 +19,10 @@ namespace client
 void Placement_Tool::on_enable(editor_context_t &ctx)
 {
   ghost_valid = false;
-  
+
   if (!current_entity)
   {
-    current_entity = shared::create_entity_by_classname("aabb_entity");
+    current_entity = std::make_shared<network::AABB_Entity>();
     if (shared::box_volume_t *volume = current_entity->get_box_volume())
     {
       volume->half_extents = {editor::DEFAULT_HALF_EXTENT,
@@ -84,10 +84,7 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
 {
   if (e.button == mouse_button::MOUSE_BUTTON_LEFT && ghost_valid && ctx.map && current_entity)
   {
-    std::string classname =
-        shared::get_classname_for_entity(current_entity.get());
-
-    auto new_entity = shared::create_entity_by_classname(classname);
+    auto new_entity = shared::create_entity_by_type(current_entity->get_type());
     if (!new_entity)
       return;
 
@@ -118,11 +115,11 @@ void Placement_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 struct placeable_type_t
 {
   const char *label;
-  const char *classname;
+  ::entity_type type;
 };
 
 static const placeable_type_t g_placeable_types[] = {
-#define X(ENUM, CLASS, NAME, PATH) {#ENUM, NAME},
+#define X(ENUM, CLASS, NAME, PATH) {#ENUM, ::entity_type::ENUM},
     SHARED_ENTITIES_LIST(X)
 #undef X
 };
@@ -136,7 +133,7 @@ void Placement_Tool::select_entity_type(int index)
   selected_type_index = index;
   const auto &type = g_placeable_types[index];
   renderer::draw_announcement(type.label);
-  current_entity = shared::create_entity_by_classname(type.classname);
+  current_entity = shared::create_entity_by_type(type.type);
   if (!current_entity)
     return;
 
@@ -148,25 +145,35 @@ void Placement_Tool::select_entity_type(int index)
     volume->half_extents = {editor::DEFAULT_HALF_EXTENT,
                             editor::DEFAULT_HALF_EXTENT,
                             editor::DEFAULT_HALF_EXTENT};
+    return;
   }
-  else if (auto *wedge =
-               dynamic_cast<::network::Wedge_Entity *>(current_entity.get()))
+
+  switch (current_entity->get_type())
   {
+  case ::entity_type::WEDGE:
+  {
+    auto *wedge = static_cast<network::Wedge_Entity *>(current_entity.get());
     wedge->half_extents = {editor::DEFAULT_HALF_EXTENT,
                            editor::DEFAULT_HALF_EXTENT,
                            editor::DEFAULT_HALF_EXTENT};
     wedge->orientation = 0;
+    break;
   }
-  else if (auto *weapon =
-               dynamic_cast<::network::Weapon_Entity *>(current_entity.get()))
+  case ::entity_type::WEAPON:
   {
+    auto *weapon = static_cast<network::Weapon_Entity *>(current_entity.get());
     weapon->render.mesh_path.set("resources/obj/m4a1_s.obj");
     weapon->render.is_wireframe = true;
+    break;
   }
-  else if (auto *mesh = dynamic_cast<::network::Static_Mesh_Entity *>(
-               current_entity.get()))
+  case ::entity_type::STATIC_MESH:
   {
+    auto *mesh = static_cast<network::Static_Mesh_Entity *>(current_entity.get());
     mesh->render.mesh_path.set("resources/obj/m4a1_s.obj");
+    break;
+  }
+  default:
+    break;
   }
 }
 

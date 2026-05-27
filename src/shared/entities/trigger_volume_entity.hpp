@@ -35,7 +35,7 @@ namespace network
 //     and a full per-action schema (Unity / Unreal), which would require
 //     discriminated-union schema support that doesn't exist here yet.
 
-class Trigger_Volume_Entity : public Entity
+class Trigger_Volume_Entity : public Entity_Of<::entity_type::TRIGGER_VOLUME>
 {
 public:
   SCHEMA_FIELD(shared::box_volume_t, volume,
