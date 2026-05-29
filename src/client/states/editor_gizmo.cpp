@@ -16,7 +16,7 @@ using namespace linalg;
 
 // Helper to draw a ring (circle) in 3D
 static void draw_ring(VkCommandBuffer cmd, const vec3 &center, float radius,
-                      int axis, uint32_t color)
+                      int axis, color_t color)
 {
   const int segments = 64;
   const float step = (2.0f * 3.1415926535f) / float(segments);
@@ -54,7 +54,7 @@ static void draw_ring(VkCommandBuffer cmd, const vec3 &center, float radius,
             center.y + std::sin(theta2) * radius, center.z};
     }
 
-    renderer::DrawLine(cmd, p1, p2, color);
+    renderer::draw_line(cmd, p1, p2, color);
 
     // Debug: Draw AABBs along the ring
     if (i % 8 == 0)
@@ -93,11 +93,11 @@ void draw_reshape_gizmo(VkCommandBuffer cmd, const reshape_gizmo_t &gizmo)
 
   for (const auto &h : handles)
   {
-    uint32_t col = 0xFFFFFFFF; // White
+    color_t col = colors::white;
     if (gizmo.hovered_handle_index == h.index ||
         gizmo.dragging_handle_index == h.index)
     {
-      col = 0xFF00FF00; // Green
+      col = colors::green;
     }
 
     vec3 end = h.origin + h.dir * handle_length;
@@ -110,17 +110,11 @@ void draw_transform_gizmo(VkCommandBuffer cmd, const transform_gizmo_t &gizmo)
   vec3 p = gizmo.position;
   float s = gizmo.size;
 
-  // Colors (ABGR format often used in this project? Or RGBA?)
-  // renderer.cpp uses uint32_t color. EditorStateDraw uses 0xFF0000FF for Red
-  // (ABGR? A=FF B=00 G=00 R=FF -> Red?) Actually, usually it's 0xAABBGGRR.
-  // 0xFF0000FF -> A=FF, B=00, G=00, R=FF. Yes.
-  // 0xFF00A5FF -> Orange/Gold?
-
   // Standard Axis Colors: X=Red, Y=Green, Z=Blue
-  uint32_t col_x = 0xFF0000FF;
-  uint32_t col_y = 0xFF00FF00;
-  uint32_t col_z = 0xFFFF0000;
-  uint32_t col_sel = 0xFFFFFFFF; // White for selection
+  color_t col_x = colors::red;
+  color_t col_y = colors::green;
+  color_t col_z = colors::blue;
+  color_t col_sel = colors::white; // White for selection
 
   // Draw Arrows
   // X Axis

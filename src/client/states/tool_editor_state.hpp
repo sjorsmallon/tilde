@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../camera.hpp"
-#include "../editor/editor_entity.hpp"
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
 #include "../editor/transaction_system.hpp"

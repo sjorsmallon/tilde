@@ -90,7 +90,7 @@ Samples the sprite texture and multiplies by the particle's interpolated color/a
 Two public functions:
 
 - `UpdateParticles(cmd, params)` — binds compute pipeline, fills push constants, dispatches compute, issues memory barrier. Call BEFORE `BeginRenderPass`.
-- `DrawParticles(cmd, params)` — binds graphics pipeline, fills push constants (view-proj + camera basis), draws instanced quads. Call INSIDE render pass.
+- `draw_particles(cmd, params)` — binds graphics pipeline, fills push constants (view-proj + camera basis), draws instanced quads. Call INSIDE render pass.
 
 Per-emitter GPU state (`particle_emitter_gpu_t`) is stored in an `unordered_map<uint64_t, ...>` keyed by entity ID. Contains the SSBO, descriptor set, and max particle count. Created lazily, destroyed/recreated if max_particles changes.
 

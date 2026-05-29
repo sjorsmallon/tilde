@@ -48,7 +48,7 @@ bool Entity_Editor_Traits<network::AABB_Entity>::draw_in_editor(
 {
   auto cmd = renderer.get_command_buffer();
   renderer::DrawAABB(cmd, e->position - e->volume.half_extents,
-                     e->position + e->volume.half_extents, 0xFFFFFFFF,
+                     e->position + e->volume.half_extents, colors::white,
                      /*as_wireframe=*/false,
                      /*random_color=*/true,
                      /*random_seed=*/uid);
@@ -57,7 +57,7 @@ bool Entity_Editor_Traits<network::AABB_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::AABB_Entity>::draw_selection_wireframe(
-    const network::AABB_Entity *e, overlay_renderer_t &renderer, uint32_t color,
+    const network::AABB_Entity *e, overlay_renderer_t &renderer, color_t color,
     float grid_step)
 {
   const linalg::vec3 &p = e->position;
@@ -146,15 +146,15 @@ bool Entity_Editor_Traits<network::Wedge_Entity>::draw_ghost(
 
   auto points = shared::get_wedge_points(w);
 
-  renderer.draw_line(points[0], points[1], 0xFF00FFFF);
-  renderer.draw_line(points[1], points[2], 0xFF00FFFF);
-  renderer.draw_line(points[2], points[3], 0xFF00FFFF);
-  renderer.draw_line(points[3], points[0], 0xFF00FFFF);
-  renderer.draw_line(points[4], points[5], 0xFF00FFFF);
-  renderer.draw_line(points[0], points[4], 0xFF00FFFF);
-  renderer.draw_line(points[1], points[5], 0xFF00FFFF);
-  renderer.draw_line(points[3], points[4], 0xFF00FFFF);
-  renderer.draw_line(points[2], points[5], 0xFF00FFFF);
+  renderer.draw_line(points[0], points[1], colors::yellow);
+  renderer.draw_line(points[1], points[2], colors::yellow);
+  renderer.draw_line(points[2], points[3], colors::yellow);
+  renderer.draw_line(points[3], points[0], colors::yellow);
+  renderer.draw_line(points[4], points[5], colors::yellow);
+  renderer.draw_line(points[0], points[4], colors::yellow);
+  renderer.draw_line(points[1], points[5], colors::yellow);
+  renderer.draw_line(points[3], points[4], colors::yellow);
+  renderer.draw_line(points[2], points[5], colors::yellow);
   return true;
 }
 
@@ -167,14 +167,14 @@ bool Entity_Editor_Traits<network::Wedge_Entity>::draw_in_editor(
   w.center = e->position;
   w.half_extents = e->half_extents;
   w.orientation = e->orientation;
-  renderer::draw_wedge(renderer.get_command_buffer(), w, 0xFFFFFFFF);
+  renderer::draw_wedge(renderer.get_command_buffer(), w, colors::white);
   return true;
 }
 
 template <>
 bool Entity_Editor_Traits<network::Wedge_Entity>::draw_selection_wireframe(
     const network::Wedge_Entity *e, overlay_renderer_t &renderer,
-    uint32_t color, float)
+    color_t color, float)
 {
   shared::wedge_t w;
   w.center = e->position;
@@ -212,8 +212,8 @@ bool Entity_Editor_Traits<network::Player_Spawn_Entity>::draw_ghost(
   const linalg::vec3 hull{network::player_half_width,
                           network::player_half_height,
                           network::player_half_width};
-  renderer.draw_wire_box(center, hull, 0xFF8800FF);
-  renderer.draw_line(center, center + linalg::vec3{0, 48, 0}, 0xFF8800FF);
+  renderer.draw_wire_box(center, hull, colors::pink);
+  renderer.draw_line(center, center + linalg::vec3{0, 48, 0}, colors::pink);
   return true;
 }
 
@@ -225,14 +225,14 @@ bool Entity_Editor_Traits<network::Player_Spawn_Entity>::draw_in_editor(
   const linalg::vec3 hull{network::player_half_width,
                           network::player_half_height,
                           network::player_half_width};
-  renderer.draw_wire_box(e->position, hull, 0xFF8800FF);
-  renderer.draw_line(e->position, e->position + linalg::vec3{0, 48, 0}, 0xFF8800FF);
+  renderer.draw_wire_box(e->position, hull, colors::pink);
+  renderer.draw_line(e->position, e->position + linalg::vec3{0, 48, 0}, colors::pink);
   return true;
 }
 
 template <>
 bool Entity_Editor_Traits<network::Player_Spawn_Entity>::draw_selection_wireframe(
-    const network::Player_Spawn_Entity *, overlay_renderer_t &, uint32_t, float)
+    const network::Player_Spawn_Entity *, overlay_renderer_t &, color_t, float)
 {
   return false; // use AABB fallback
 }
@@ -254,10 +254,10 @@ bool Entity_Editor_Traits<network::Particle_Emitter_Entity>::draw_ghost(
 {
   constexpr float r = 16.f;
   renderer.draw_line(center + linalg::vec3{-r, 0, 0},
-                     center + linalg::vec3{r, 0, 0}, 0xFF00CCFF);
+                     center + linalg::vec3{r, 0, 0}, colors::gold);
   renderer.draw_line(center + linalg::vec3{0, 0, -r},
-                     center + linalg::vec3{0, 0, r}, 0xFF00CCFF);
-  renderer.draw_line(center, center + linalg::vec3{0, 32, 0}, 0xFF00CCFF);
+                     center + linalg::vec3{0, 0, r}, colors::gold);
+  renderer.draw_line(center, center + linalg::vec3{0, 32, 0}, colors::gold);
   return true;
 }
 
@@ -268,16 +268,16 @@ bool Entity_Editor_Traits<network::Particle_Emitter_Entity>::draw_in_editor(
 {
   constexpr float r = 16.f;
   renderer.draw_line(e->position + linalg::vec3{-r, 0, 0},
-                     e->position + linalg::vec3{r, 0, 0}, 0xFF00CCFF);
+                     e->position + linalg::vec3{r, 0, 0}, colors::gold);
   renderer.draw_line(e->position + linalg::vec3{0, 0, -r},
-                     e->position + linalg::vec3{0, 0, r}, 0xFF00CCFF);
-  renderer.draw_line(e->position, e->position + linalg::vec3{0, 32, 0}, 0xFF00CCFF);
+                     e->position + linalg::vec3{0, 0, r}, colors::gold);
+  renderer.draw_line(e->position, e->position + linalg::vec3{0, 32, 0}, colors::gold);
   return true;
 }
 
 template <>
 bool Entity_Editor_Traits<network::Particle_Emitter_Entity>::draw_selection_wireframe(
-    const network::Particle_Emitter_Entity *, overlay_renderer_t &, uint32_t, float)
+    const network::Particle_Emitter_Entity *, overlay_renderer_t &, color_t, float)
 {
   return false; // use AABB fallback
 }
@@ -308,14 +308,14 @@ bool Entity_Editor_Traits<network::Static_Mesh_Entity>::draw_in_editor(
   // No mesh resolved by render component — draw placeholder AABB
   auto bounds = shared::compute_entity_bounds(e);
   renderer::DrawAABB(renderer.get_command_buffer(), bounds.min, bounds.max,
-                     0xFF00FFFF, /*as_wireframe=*/!solid,
+                     colors::yellow, /*as_wireframe=*/!solid,
                      /*random_color=*/solid, /*random_seed=*/uid);
   return true;
 }
 
 template <>
 bool Entity_Editor_Traits<network::Static_Mesh_Entity>::draw_selection_wireframe(
-    const network::Static_Mesh_Entity *, overlay_renderer_t &, uint32_t, float)
+    const network::Static_Mesh_Entity *, overlay_renderer_t &, color_t, float)
 {
   return false; // try render component mesh first in draw_selection_highlight
 }
@@ -347,7 +347,7 @@ bool Entity_Editor_Traits<network::Weapon_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Weapon_Entity>::draw_selection_wireframe(
-    const network::Weapon_Entity *, overlay_renderer_t &, uint32_t, float)
+    const network::Weapon_Entity *, overlay_renderer_t &, color_t, float)
 {
   return false; // try render component mesh first
 }
@@ -381,7 +381,7 @@ bool Entity_Editor_Traits<network::Player_Entity>::draw_in_editor(
     auto mesh_handle = assets::load_mesh(mesh_path);
     if (mesh_handle.valid())
     {
-      renderer::DrawMesh(renderer.get_command_buffer(), mesh_handle,
+      renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
                          {.position = e->position,
                           .rotation = e->orientation,
                           .wireframe = true});
@@ -393,7 +393,7 @@ bool Entity_Editor_Traits<network::Player_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Player_Entity>::draw_selection_wireframe(
-    const network::Player_Entity *e, overlay_renderer_t &renderer, uint32_t color,
+    const network::Player_Entity *e, overlay_renderer_t &renderer, color_t color,
     float)
 {
   const char *mesh_path = "resources/obj/pyramid.obj";
@@ -402,7 +402,7 @@ bool Entity_Editor_Traits<network::Player_Entity>::draw_selection_wireframe(
     return false;
   if (!renderer::WireframeSupported())
     return false;
-  renderer::DrawMesh(renderer.get_command_buffer(), mesh_handle,
+  renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
                      {.position  = e->position,
                       .rotation  = e->orientation,
                       .color     = color,
@@ -443,7 +443,7 @@ bool Entity_Editor_Traits<network::Displacement_Entity>::draw_in_editor(
   }
   if (mesh_handle.valid())
   {
-    renderer::DrawMesh(renderer.get_command_buffer(), mesh_handle,
+    renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
                        {.position = e->position,
                         .rotation = e->orientation,
                         .shader = renderer::ShaderType::Textured});
@@ -454,7 +454,7 @@ bool Entity_Editor_Traits<network::Displacement_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Displacement_Entity>::draw_selection_wireframe(
-    const network::Displacement_Entity *, overlay_renderer_t &, uint32_t, float)
+    const network::Displacement_Entity *, overlay_renderer_t &, color_t, float)
 {
   return false; // use AABB fallback
 }
@@ -474,7 +474,7 @@ bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_ghost(
     const network::Trigger_Volume_Entity *e, overlay_renderer_t &renderer,
     const linalg::vec3 &center)
 {
-  renderer.draw_wire_box(center, e->volume.half_extents, 0xFF0000FF); // red
+  renderer.draw_wire_box(center, e->volume.half_extents, colors::red); // red
   return true;
 }
 
@@ -483,14 +483,14 @@ bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_in_editor(
     const network::Trigger_Volume_Entity *e, overlay_renderer_t &renderer,
     uint32_t, bool)
 {
-  renderer.draw_wire_box(e->position, e->volume.half_extents, 0xFF0000FF); // red
+  renderer.draw_wire_box(e->position, e->volume.half_extents, colors::red); // red
   return true;
 }
 
 template <>
 bool Entity_Editor_Traits<network::Trigger_Volume_Entity>::draw_selection_wireframe(
     const network::Trigger_Volume_Entity *e, overlay_renderer_t &renderer,
-    uint32_t color, float)
+    color_t color, float)
 {
   renderer.draw_wire_box(e->position, e->volume.half_extents, color);
   return true;
@@ -523,7 +523,7 @@ bool Entity_Editor_Traits<network::Rocket_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Rocket_Entity>::draw_selection_wireframe(
-    const network::Rocket_Entity *, overlay_renderer_t &, uint32_t, float)
+    const network::Rocket_Entity *, overlay_renderer_t &, color_t, float)
 {
   return false;
 }
@@ -546,11 +546,11 @@ bool Entity_Editor_Traits<network::Light_Entity>::draw_ghost(
 {
   float size = 0.3f;
   renderer.draw_line(center - linalg::vec3{size, 0, 0},
-                     center + linalg::vec3{size, 0, 0}, 0xFF00FFFF);
+                     center + linalg::vec3{size, 0, 0}, colors::yellow);
   renderer.draw_line(center - linalg::vec3{0, size, 0},
-                     center + linalg::vec3{0, size, 0}, 0xFF00FFFF);
+                     center + linalg::vec3{0, size, 0}, colors::yellow);
   renderer.draw_line(center - linalg::vec3{0, 0, size},
-                     center + linalg::vec3{0, 0, size}, 0xFF00FFFF);
+                     center + linalg::vec3{0, 0, size}, colors::yellow);
   return true;
 }
 
@@ -562,18 +562,18 @@ bool Entity_Editor_Traits<network::Light_Entity>::draw_in_editor(
   float size = 0.3f;
   linalg::vec3 p = e->position;
   renderer.draw_line(p - linalg::vec3{size, 0, 0},
-                     p + linalg::vec3{size, 0, 0}, 0xFF00FFFF);
+                     p + linalg::vec3{size, 0, 0}, colors::yellow);
   renderer.draw_line(p - linalg::vec3{0, size, 0},
-                     p + linalg::vec3{0, size, 0}, 0xFF00FFFF);
+                     p + linalg::vec3{0, size, 0}, colors::yellow);
   renderer.draw_line(p - linalg::vec3{0, 0, size},
-                     p + linalg::vec3{0, 0, size}, 0xFF00FFFF);
+                     p + linalg::vec3{0, 0, size}, colors::yellow);
   return true;
 }
 
 template <>
 bool Entity_Editor_Traits<network::Light_Entity>::draw_selection_wireframe(
     const network::Light_Entity *e, overlay_renderer_t &renderer,
-    uint32_t color, float)
+    color_t color, float)
 {
   float size = 0.4f;
   linalg::vec3 p = e->position;
@@ -616,7 +616,7 @@ bool Entity_Editor_Traits<network::Physics_Body_Entity>::draw_in_editor(
 
 template <>
 bool Entity_Editor_Traits<network::Physics_Body_Entity>::draw_selection_wireframe(
-    const network::Physics_Body_Entity *, overlay_renderer_t &, uint32_t, float)
+    const network::Physics_Body_Entity *, overlay_renderer_t &, color_t, float)
 {
   return false;
 }
@@ -681,7 +681,7 @@ static bool try_draw_render_component(const network::Entity *e,
   if (!mesh_handle.valid())
     return false;
 
-  renderer::DrawMesh(cmd, mesh_handle,
+  renderer::draw_mesh(cmd, mesh_handle,
                      {.position = e->position,
                       .scale    = rc->scale,
                       .rotation = e->orientation + rc->rotation});
@@ -710,10 +710,9 @@ bool draw_entity_in_editor(const network::Entity *e,
 // Selection highlight: pulsating pink <-> white wireframe
 // ===================================================================
 
-static uint32_t compute_pulsating_color(float time)
+static color_t compute_pulsating_color(float time)
 {
-  // Pulsate between hot pink (0xFFCB00FF in ABGR = RGB 255,0,203)
-  // and white (0xFFFFFFFF) at ~2 Hz
+  // Pulsate between hot pink and white at ~2 Hz.
   float t = std::sin(time * 4.0f) * 0.5f + 0.5f; // 0..1
 
   auto lerp_byte = [](uint8_t a, uint8_t b, float t) -> uint8_t
@@ -721,23 +720,16 @@ static uint32_t compute_pulsating_color(float time)
     return (uint8_t)(a + (b - a) * t);
   };
 
-  // ABGR format
-  uint8_t a = 0xFF;
-  uint8_t b_pink = 0xCB, b_white = 0xFF;
-  uint8_t g_pink = 0x00, g_white = 0xFF;
-  uint8_t r_pink = 0xFF, r_white = 0xFF;
-
-  uint8_t b = lerp_byte(b_pink, b_white, t);
-  uint8_t g = lerp_byte(g_pink, g_white, t);
-  uint8_t r = lerp_byte(r_pink, r_white, t);
-
-  return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)g << 8) | r;
+  const color_t from = colors::hot_pink;
+  const color_t to   = colors::white;
+  return color_t{lerp_byte(from.r, to.r, t), lerp_byte(from.g, to.g, t),
+                 lerp_byte(from.b, to.b, t), 255};
 }
 
 // Try to draw a mesh wireframe from the entity's render component.
 static bool try_draw_mesh_selection_wireframe(const network::Entity *e,
                                               VkCommandBuffer cmd,
-                                              uint32_t color)
+                                              color_t color)
 {
   const auto *rc = e->get_component<network::render_component_t>();
   if (!rc || !rc->visible)
@@ -760,7 +752,7 @@ static bool try_draw_mesh_selection_wireframe(const network::Entity *e,
   if (!renderer::WireframeSupported())
     return false;
 
-  renderer::DrawMesh(cmd, mesh_handle,
+  renderer::draw_mesh(cmd, mesh_handle,
                      {.position  = e->position,
                       .scale     = rc->scale,
                       .rotation  = e->orientation + rc->rotation,
@@ -772,7 +764,7 @@ static bool try_draw_mesh_selection_wireframe(const network::Entity *e,
 // Runtime dispatch for draw_selection_wireframe trait.
 static bool dispatch_selection_wireframe(const network::Entity *e,
                                          overlay_renderer_t &renderer,
-                                         uint32_t color, float grid_step)
+                                         color_t color, float grid_step)
 {
 #define X(ENUM, CLASS, NAME, PATH)                                             \
   if (dynamic_cast<const CLASS *>(e))                                          \
@@ -787,7 +779,7 @@ void draw_selection_highlight(const network::Entity *e,
                               overlay_renderer_t &renderer, float time,
                               float grid_step)
 {
-  uint32_t color = compute_pulsating_color(time);
+  color_t color = compute_pulsating_color(time);
 
   // Push a very strong depth bias so the selection wireframe renders in front
   // of the solid barycentric mesh. The constant factor dominates for
@@ -837,9 +829,9 @@ void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,
 
       if (mesh_handle.valid())
       {
-        renderer::DrawMesh(renderer.get_command_buffer(), mesh_handle,
+        renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
                            {.position  = center,
-                            .color     = 0xFF00FFFF,
+                            .color     = colors::yellow,
                             .wireframe = true});
         return;
       }
@@ -848,7 +840,7 @@ void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,
 
   // Fallback: wire box
   linalg::vec3 he = get_placement_half_extents(e);
-  renderer.draw_wire_box(center, he, 0xFF00FFFF);
+  renderer.draw_wire_box(center, he, colors::yellow);
 }
 
 // ===================================================================

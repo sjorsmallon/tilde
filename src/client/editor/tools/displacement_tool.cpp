@@ -4,45 +4,10 @@
 #include "../../../shared/shapes.hpp"
 #include "imgui.h"
 #include "renderer.hpp"
-#include <SDL.h>
 #include <cmath>
 
 namespace client
 {
-
-// ===================================================================
-// Moller-Trumbore ray-triangle intersection
-// ===================================================================
-
-static bool ray_triangle(const linalg::vec3 &origin, const linalg::vec3 &dir,
-                         const linalg::vec3 &v0, const linalg::vec3 &v1,
-                         const linalg::vec3 &v2, float &out_t)
-{
-  linalg::vec3 e1 = v1 - v0;
-  linalg::vec3 e2 = v2 - v0;
-  linalg::vec3 h = linalg::cross(dir, e2);
-  float a = linalg::dot(e1, h);
-  if (std::abs(a) < 1e-8f)
-    return false;
-  float f = 1.0f / a;
-  linalg::vec3 s = origin - v0;
-  float u = f * linalg::dot(s, h);
-  if (u < 0.0f || u > 1.0f)
-    return false;
-  linalg::vec3 q = linalg::cross(s, e1);
-  float v = f * linalg::dot(dir, q);
-  if (v < 0.0f || u + v > 1.0f)
-    return false;
-  float t = f * linalg::dot(e2, q);
-  if (t < 1e-4f)
-    return false;
-  out_t = t;
-  return true;
-}
-
-// ===================================================================
-// Lifecycle
-// ===================================================================
 
 void Displacement_Tool::on_enable(editor_context_t &ctx)
 {
@@ -83,7 +48,7 @@ void Displacement_Tool::on_disable(editor_context_t &ctx)
 network::Displacement_Entity *
 Displacement_Tool::get_selected(editor_context_t &ctx)
 {
-  if (selected_uid == 0 || !ctx.map)
+  if (selected_uid == shared::invalid_entity_uid|| !ctx.map)
     return nullptr;
   auto *entry = ctx.map->find_by_uid(selected_uid);
   if (!entry || !entry->entity)
@@ -107,12 +72,13 @@ bool Displacement_Tool::raycast_displacement_mesh(
   {
     for (int i = 0; i < grid_size - 1; ++i)
     {
+      // construct the two triangles for this quad
       linalg::vec3 tl = ent.get_vertex_world(i, j);
       linalg::vec3 tr = ent.get_vertex_world(i + 1, j);
       linalg::vec3 bl = ent.get_vertex_world(i, j + 1);
       linalg::vec3 br = ent.get_vertex_world(i + 1, j + 1);
 
-      float t;
+      float t{};
       // Triangle 1: tl, bl, tr
       if (ray_triangle(ray_origin, ray_dir, tl, bl, tr, t) && t < best_t)
       {
@@ -222,7 +188,7 @@ void Displacement_Tool::clear_selection(int grid_size)
 // ===================================================================
 
 void Displacement_Tool::on_update(editor_context_t &ctx,
-                                  const viewport_state_t &view)
+                                  const viewport_state_t &view, float dt)
 {
   if (!ctx.map)
     return;
@@ -294,8 +260,8 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
     // If currently painting, apply brush every frame
     if (painting && cursor_valid)
     {
-      bool invert = ImGui::GetIO().KeyShift;
-      apply_brush(*ent, 1.0f / 60.0f, invert); // Approximate dt
+      bool invert = input::current_modifiers().shift;
+      apply_brush(*ent, dt, invert);
       regenerate_mesh(*ent, selected_uid);
       *ctx.geometry_updated = true;
     }
@@ -309,7 +275,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
 void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
                                       const mouse_event_t &e)
 {
-  if (e.button != 1)
+  if (e.button != input::MouseButton::Left)
     return;
 
   if (mode == Mode::Setup)
@@ -325,7 +291,7 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
         if (ent->active_face == shared::box_face_t::Invalid &&
             hovered_face != shared::box_face_t::Invalid)
         {
-          if (e.shift_down)
+          if (e.mods.shift)
           {
             // Shift+click: initialize displacement on this face
             ent->init_displacement(hovered_face, pending_subdivision);
@@ -359,7 +325,7 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
   {
     // Begin box selection drag
     box_selecting = true;
-    box_start_screen = {(float)e.pos.x, (float)e.pos.y};
+    box_start_screen = {(float)e.position.x, (float)e.position.y};
     box_end_screen   = box_start_screen;
     // Commit any pending height edit before starting a new selection
     commit_select_edit();
@@ -407,62 +373,46 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
 
     if (valid)
     {
-      vec2 s0 = view_to_screen(v0, resize_last_view.display_size,
-                                resize_last_view.camera.orthographic,
-                                resize_last_view.camera.ortho_height,
-                                resize_last_view.fov);
-      vec2 s1 = view_to_screen(v1, resize_last_view.display_size,
-                                resize_last_view.camera.orthographic,
-                                resize_last_view.camera.ortho_height,
-                                resize_last_view.fov);
+      vec2 screen_start = view_to_screen(v0, resize_last_view.display_size,
+                                         resize_last_view.camera.orthographic,
+                                         resize_last_view.camera.ortho_height,
+                                         resize_last_view.fov);
+      vec2 screen_end = view_to_screen(v1, resize_last_view.display_size,
+                                       resize_last_view.camera.orthographic,
+                                       resize_last_view.camera.ortho_height,
+                                       resize_last_view.fov);
 
-      vec2 screen_dir = {s1.x - s0.x, s1.y - s0.y};
-      float screen_len_sq =
-          screen_dir.x * screen_dir.x + screen_dir.y * screen_dir.y;
+      // v0..v1 spans exactly one world unit along the face normal, so projecting
+      // the mouse movement onto the face's on-screen direction gives the drag
+      // distance directly in world units.
+      vec2 face_screen_direction = {screen_end.x - screen_start.x,
+                              screen_end.y - screen_start.y};
+      float screen_direction_length_squared = face_screen_direction.x * face_screen_direction.x +
+                                face_screen_direction.y * face_screen_direction.y;
 
-      if (screen_len_sq > 1e-4f)
+      if (screen_direction_length_squared > 1e-4f)
       {
         vec2 mouse_delta = {(float)e.delta.x, (float)e.delta.y};
-        float dot_prod =
-            mouse_delta.x * screen_dir.x + mouse_delta.y * screen_dir.y;
-        float k = dot_prod / screen_len_sq;
-        float world_delta = k;
+        float world_delta = (mouse_delta.x * face_screen_direction.x +
+                             mouse_delta.y * face_screen_direction.y) /
+                            screen_direction_length_squared;
 
         int axis = shared::box_face_axis(resize_face);
-        bool positive_face = shared::box_face_is_positive(resize_face);
+        float face_sign = shared::box_face_is_positive(resize_face) ? 1.0f : -1.0f;
 
-        float *ext = nullptr;
-        float *cen = nullptr;
-        if (axis == 0)
-        {
-          ext = &ent->volume.half_extents.x;
-          cen = &ent->position.x;
-        }
-        else if (axis == 1)
-        {
-          ext = &ent->volume.half_extents.y;
-          cen = &ent->position.y;
-        }
-        else
-        {
-          ext = &ent->volume.half_extents.z;
-          cen = &ent->position.z;
-        }
+        // Grow the box by half the drag along the dragged axis and shift the
+        // center by the other half, so the opposite face stays anchored.
+        float half_delta = world_delta * 0.5f;
+        ent->volume.half_extents[axis] += half_delta;
+        ent->position[axis] += half_delta * face_sign;
 
-        *ext += world_delta * 0.5f;
-        if (positive_face)
-          *cen += world_delta * 0.5f;
-        else
-          *cen -= world_delta * 0.5f;
-
-        if (*ext < editor::MIN_EXTENT)
+        // Enforce the minimum extent, again keeping the opposite face anchored.
+        float &extent = ent->volume.half_extents[axis];
+        if (extent < editor::MIN_EXTENT)
         {
-          float diff = editor::MIN_EXTENT - *ext;
-          *ext = editor::MIN_EXTENT;
-          if (positive_face)
-            *cen -= diff;
-          else
-            *cen += diff;
+          float correction = editor::MIN_EXTENT - extent;
+          extent = editor::MIN_EXTENT;
+          ent->position[axis] -= correction * face_sign;
         }
 
         regenerate_mesh(*ent, selected_uid);
@@ -521,7 +471,7 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
       float y1 = std::max(box_start_screen.y, box_end_screen.y);
 
       // Shift = additive selection; otherwise replace
-      if (!(ImGui::GetIO().KeyShift))
+      if (!input::current_modifiers().shift)
         clear_selection(grid_size);
 
       for (int j = 0; j < grid_size; ++j)
@@ -540,7 +490,7 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
 void Displacement_Tool::on_key_down(editor_context_t &ctx,
                                     const key_event_t &e)
 {
-  if (e.scancode == SDL_SCANCODE_P)
+  if (e.key == input::Key::P)
   {
     auto *ent = get_selected(ctx);
     if (ent && ent->active_face != shared::box_face_t::Invalid)
@@ -549,7 +499,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
       mode = Mode::Paint;
     }
   }
-  else if (e.scancode == SDL_SCANCODE_S)
+  else if (e.key == input::Key::S)
   {
     auto *ent = get_selected(ctx);
     if (ent && ent->active_face != shared::box_face_t::Invalid)
@@ -563,7 +513,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
       }
     }
   }
-  else if (e.scancode == SDL_SCANCODE_ESCAPE)
+  else if (e.key == input::Key::Escape)
   {
     if (mode == Mode::Paint)
       mode = Mode::Setup;
@@ -577,7 +527,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
     }
   }
   else if (mode == Mode::Select &&
-           (e.scancode == SDL_SCANCODE_Q || e.scancode == SDL_SCANCODE_E))
+           (e.key == input::Key::Q || e.key == input::Key::E))
   {
     auto *ent = get_selected(ctx);
     if (!ent || ent->active_face == shared::box_face_t::Invalid)
@@ -602,7 +552,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
         select_start_props = entry->entity->get_all_properties();
     }
 
-    float sign = (e.scancode == SDL_SCANCODE_Q) ? 1.0f : -1.0f;
+    float sign = (e.key == input::Key::Q) ? 1.0f : -1.0f;
     linalg::vec3 face_normal = ent->get_face_normal();
     linalg::vec3 delta = face_normal * (sign * height_snap);
 
@@ -653,7 +603,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
         else if (axis == 1) size.y = 0;
         else size.z = 0;
 
-        renderer.draw_wire_box(p, size, 0xFF00FF00); // Green highlight
+        renderer.draw_wire_box(p, size, colors::green); // Green highlight
       }
     }
   }
@@ -665,7 +615,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
     if (ent && ent->active_face != shared::box_face_t::Invalid)
     {
       int grid_size = ent->grid_size();
-      uint32_t grid_color = 0xFF444444;
+      color_t grid_color = colors::grey;
 
       // Draw grid lines along i
       for (int j = 0; j < grid_size; ++j)
@@ -691,11 +641,11 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   // In paint mode: draw brush circle and normal arrow
   if (mode == Mode::Paint && cursor_valid)
   {
-    renderer.draw_circle(cursor_pos, brush_radius, cursor_normal, 0xFF00FFFF);
+    renderer.draw_circle(cursor_pos, brush_radius, cursor_normal, colors::yellow);
 
     // Draw normal arrow
     linalg::vec3 arrow_end = cursor_pos + cursor_normal * (brush_radius * 0.5f);
-    renderer.draw_line(cursor_pos, arrow_end, 0xFF0000FF);
+    renderer.draw_line(cursor_pos, arrow_end, colors::red);
   }
 
   // In select mode: highlight selected vertices and draw dragging box
@@ -716,7 +666,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
             if (selected_vertices_bitmask[(size_t)(j * grid_size + i)])
             {
               linalg::vec3 vp = ent->get_vertex_world(i, j);
-              renderer.draw_circle(vp, dot_r, fn, 0xFFFFFF00); // Yellow dot
+              renderer.draw_circle(vp, dot_r, fn, colors::cyan); // selected-vertex dot
             }
           }
         }

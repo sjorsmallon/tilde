@@ -9,23 +9,23 @@
 struct MockRenderer : public client::overlay_renderer_t
 {
   void draw_line(const linalg::vec3 &start, const linalg::vec3 &end,
-                 uint32_t color) override
+                 color_t color) override
   {
   }
   void draw_wire_box(const linalg::vec3 &center,
-                     const linalg::vec3 &half_extents, uint32_t color) override
+                     const linalg::vec3 &half_extents, color_t color) override
   {
   }
   void draw_solid_box(const linalg::vec3 &center,
-                      const linalg::vec3 &half_extents, uint32_t color) override
+                      const linalg::vec3 &half_extents, color_t color) override
   {
   }
   void draw_circle(const linalg::vec3 &center, float radius,
-                   const linalg::vec3 &normal, uint32_t color) override
+                   const linalg::vec3 &normal, color_t color) override
   {
   }
   void draw_text(const linalg::vec3 &pos, const char *text,
-                 uint32_t color) override
+                 color_t color) override
   {
   }
 };
@@ -47,7 +47,7 @@ int main()
   for (auto *tool : tools)
   {
     tool->on_enable(ctx);
-    tool->on_update(ctx, view);
+    tool->on_update(ctx, view, 1.0f / 60.0f);
     tool->on_mouse_down(ctx, mouse);
     tool->on_mouse_drag(ctx, mouse);
     tool->on_mouse_up(ctx, mouse);

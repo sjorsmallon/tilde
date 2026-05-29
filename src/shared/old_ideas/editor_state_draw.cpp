@@ -339,7 +339,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
         auto mesh_handle = assets::load_mesh(mesh_path);
         if (mesh_handle.valid())
         {
-          renderer::DrawMesh(cmd, p, s, mesh_handle, col);
+          renderer::draw_mesh(cmd, p, s, mesh_handle, col);
 
           // Optional: Draw selection AABB wireframe
           if (selected)
@@ -461,7 +461,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
         vec3 b4 = points[4];
 
         auto drawLine2 = [&](vec3 start, vec3 end)
-        { renderer::DrawLine(cmd, start, end, col); };
+        { renderer::draw_line(cmd, start, end, col); };
         drawLine2(b1, b2);
         drawLine2(b2, b3);
         drawLine2(b3, b4);
@@ -485,10 +485,10 @@ void EditorState::render_3d(VkCommandBuffer cmd)
             vec3 p2 = {.x = p.x + cos(angle2) * radius,
                        .y = p.y,
                        .z = p.z + sin(angle2) * radius};
-            renderer::DrawLine(cmd, p1, p2, 0xFF00A5FF);
+            renderer::draw_line(cmd, p1, p2, 0xFF00A5FF);
           }
           vec3 forward = {.x = cos(radYaw), .y = 0.0f, .z = sin(radYaw)};
-          renderer::DrawLine(cmd, p, p + forward * radius, 0xFF0000FF);
+          renderer::draw_line(cmd, p, p + forward * radius, 0xFF0000FF);
 
           active_transform_gizmo.position =
               p; // Fix: Use p instead of ent_ptr->position
@@ -519,17 +519,17 @@ void EditorState::render_3d(VkCommandBuffer cmd)
 
     auto points = shared::get_pyramid_points(pyramid);
 
-    auto drawLine = [&](vec3 start, vec3 end)
-    { renderer::DrawLine(cmd, start, end, col); };
+    auto draw_line = [&](vec3 start, vec3 end)
+    { renderer::draw_line(cmd, start, end, col); };
 
-    drawLine(points[1], points[2]);
-    drawLine(points[2], points[3]);
-    drawLine(points[3], points[4]);
-    drawLine(points[4], points[1]);
-    drawLine(points[1], points[0]);
-    drawLine(points[2], points[0]);
-    drawLine(points[3], points[0]);
-    drawLine(points[4], points[0]);
+    draw_line(points[1], points[2]);
+    draw_line(points[2], points[3]);
+    draw_line(points[3], points[4]);
+    draw_line(points[4], points[1]);
+    draw_line(points[1], points[0]);
+    draw_line(points[2], points[0]);
+    draw_line(points[3], points[0]);
+    draw_line(points[4], points[0]);
   }
 }
 
@@ -555,7 +555,7 @@ void EditorState::draw_aabb_wireframe(const shared::aabb_t &aabb,
                      {.x = cx + hx, .y = cy + hy, .z = cz + hz},
                      {.x = cx - hx, .y = cy + hy, .z = cz + hz}};
 
-  auto drawLine = [&](int i, int j)
+  auto draw_line = [&](int i, int j)
   {
     vec3 p1 = linalg::world_to_view(
         corners[i], {.x = camera.position.x, .y = camera.position.y, .z = camera.position.z}, camera.yaw,
@@ -577,20 +577,20 @@ void EditorState::draw_aabb_wireframe(const shared::aabb_t &aabb,
   };
 
   // 0-1-2-3 (Back)
-  drawLine(0, 1);
-  drawLine(1, 2);
-  drawLine(2, 3);
-  drawLine(3, 0);
+  draw_line(0, 1);
+  draw_line(1, 2);
+  draw_line(2, 3);
+  draw_line(3, 0);
   // 4-5-6-7 (Front)
-  drawLine(4, 5);
-  drawLine(5, 6);
-  drawLine(6, 7);
-  drawLine(7, 4);
+  draw_line(4, 5);
+  draw_line(5, 6);
+  draw_line(6, 7);
+  draw_line(7, 4);
   // Connect
-  drawLine(0, 4);
-  drawLine(1, 5);
-  drawLine(2, 6);
-  drawLine(3, 7);
+  draw_line(0, 4);
+  draw_line(1, 5);
+  draw_line(2, 6);
+  draw_line(3, 7);
 }
 
 void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
@@ -608,7 +608,7 @@ void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
   for (const auto &p : points)
     world_pts.push_back(p);
 
-  auto drawLine = [&](int i, int j)
+  auto draw_line = [&](int i, int j)
   {
     vec3 p1 = linalg::world_to_view(
         world_pts[i], {.x = camera.position.x, .y = camera.position.y, .z = camera.position.z}, camera.yaw,
@@ -631,13 +631,13 @@ void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
   };
 
   // Base Quad
-  drawLine(0, 1);
-  drawLine(1, 2);
-  drawLine(2, 3);
-  drawLine(3, 0);
+  draw_line(0, 1);
+  draw_line(1, 2);
+  draw_line(2, 3);
+  draw_line(3, 0);
 
   // Top Edge
-  drawLine(4, 5);
+  draw_line(4, 5);
 
   // Connect Top to Base
   // Orientation 0 (-Z Slope, Up at -Z): Top is p4-p5. p4 above p0, p5 above p1.
@@ -646,10 +646,10 @@ void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
   // Sloped: 3-4, 2-5.
   if (wedge.orientation == 0)
   {
-    drawLine(0, 4);
-    drawLine(1, 5);
-    drawLine(3, 4);
-    drawLine(2, 5);
+    draw_line(0, 4);
+    draw_line(1, 5);
+    draw_line(3, 4);
+    draw_line(2, 5);
   }
   else if (wedge.orientation == 1) // +Z Slope, Up at +Z
   {
@@ -658,10 +658,10 @@ void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
     // Base Indices: 0,1,2,3.
     // Vertical: 3-4, 2-5.
     // Sloped: 0-4, 1-5.
-    drawLine(3, 4);
-    drawLine(2, 5);
-    drawLine(0, 4);
-    drawLine(1, 5);
+    draw_line(3, 4);
+    draw_line(2, 5);
+    draw_line(0, 4);
+    draw_line(1, 5);
   }
   else if (wedge.orientation == 2) // -X Slope, Up at -X
   {
@@ -669,10 +669,10 @@ void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
     // 0,3 are min-X.
     // Vertical: 0-4, 3-5.
     // Sloped: 1-4, 2-5.
-    drawLine(0, 4);
-    drawLine(3, 5);
-    drawLine(1, 4);
-    drawLine(2, 5);
+    draw_line(0, 4);
+    draw_line(3, 5);
+    draw_line(1, 4);
+    draw_line(2, 5);
   }
   else // 3, +X Slope, Up at +X
   {
@@ -680,10 +680,10 @@ void EditorState::draw_wedge_wireframe(const shared::wedge_t &wedge,
     // 1,2 are max-X.
     // Vertical: 1-4, 2-5.
     // Sloped: 0-4, 3-5.
-    drawLine(1, 4);
-    drawLine(2, 5);
-    drawLine(0, 4);
-    drawLine(3, 5);
+    draw_line(1, 4);
+    draw_line(2, 5);
+    draw_line(0, 4);
+    draw_line(3, 5);
   }
 }
 
@@ -698,7 +698,7 @@ void EditorState::draw_grid()
   uint32_t axis_color_x = 0xFF0000FF; // Red (ABGR) -> Red
   uint32_t axis_color_z = 0xFFFF0000; // Blue (ABGR) -> Blue
 
-  auto drawLine = [&](vec3 start, vec3 end, uint32_t col)
+  auto draw_line = [&](vec3 start, vec3 end, uint32_t col)
   {
     vec3 p1 = linalg::world_to_view(start, {camera.position.x, camera.position.y, camera.position.z},
                                     camera.yaw, camera.pitch);
@@ -722,12 +722,12 @@ void EditorState::draw_grid()
     float pos = i * step;
     // Lines parallel to Z axis (varying X)
     uint32_t col = (i == 0) ? axis_color_z : color;
-    drawLine({.x = pos, .y = 0.0f, .z = (float)-grid_size * step},
+    draw_line({.x = pos, .y = 0.0f, .z = (float)-grid_size * step},
              {.x = pos, .y = 0.0f, .z = (float)grid_size * step}, col);
 
     // Lines parallel to X axis (varying Z)
     col = (i == 0) ? axis_color_x : color;
-    drawLine({.x = (float)-grid_size * step, .y = 0.0f, .z = pos},
+    draw_line({.x = (float)-grid_size * step, .y = 0.0f, .z = pos},
              {.x = (float)grid_size * step, .y = 0.0f, .z = pos}, col);
   }
 
@@ -738,13 +738,13 @@ void EditorState::draw_grid()
     float z = selected_tile[2];
     uint32_t highlight_col = 0xFFFFFFFF; // Bright white
 
-    drawLine({.x = x, .y = 0.0f, .z = z}, {.x = x + 1.0f, .y = 0.0f, .z = z},
+    draw_line({.x = x, .y = 0.0f, .z = z}, {.x = x + 1.0f, .y = 0.0f, .z = z},
              highlight_col);
-    drawLine({.x = x + 1.0f, .y = 0.0f, .z = z},
+    draw_line({.x = x + 1.0f, .y = 0.0f, .z = z},
              {.x = x + 1.0f, .y = 0.0f, .z = z + 1.0f}, highlight_col);
-    drawLine({.x = x + 1.0f, .y = 0.0f, .z = z + 1.0f},
+    draw_line({.x = x + 1.0f, .y = 0.0f, .z = z + 1.0f},
              {.x = x, .y = 0.0f, .z = z + 1.0f}, highlight_col);
-    drawLine({.x = x, .y = 0.0f, .z = z + 1.0f}, {.x = x, .y = 0.0f, .z = z},
+    draw_line({.x = x, .y = 0.0f, .z = z + 1.0f}, {.x = x, .y = 0.0f, .z = z},
              highlight_col);
   }
 }

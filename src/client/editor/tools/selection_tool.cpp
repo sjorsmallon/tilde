@@ -6,7 +6,6 @@
 #include "../entity_inspector.hpp"
 #include "../transaction_system.hpp"
 #include "imgui.h"
-#include <SDL.h>
 #include <algorithm>
 #include <limits>
 
@@ -61,7 +60,7 @@ void Selection_Tool::on_draw_ui(editor_context_t &ctx)
 }
 
 void Selection_Tool::on_update(editor_context_t &ctx,
-                               const viewport_state_t &view)
+                               const viewport_state_t &view, float /*dt*/)
 {
   cached_viewport = view;
 
@@ -158,7 +157,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
 void Selection_Tool::on_mouse_down(editor_context_t &ctx,
                                    const mouse_event_t &e)
 {
-  if (e.button == 1)
+  if (e.button == input::MouseButton::Left)
   {
     if (selected_uids.size() == 1)
     {
@@ -175,7 +174,7 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
     }
 
     // Ctrl+LMB: move selected objects in the camera's view plane
-    if (e.ctrl_down && !selected_uids.empty() && ctx.map)
+    if (e.mods.ctrl && !selected_uids.empty() && ctx.map)
     {
       // Compute center of all selected entities for the drag plane
       linalg::vec3 center = {0, 0, 0};
@@ -224,11 +223,11 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
     }
 
     is_dragging_box = false;
-    drag_start_pos = e.pos;
-    drag_current_pos = e.pos;
+    drag_start_pos = e.position;
+    drag_current_pos = e.position;
 
     ImVec2 m = ImGui::GetMousePos();
-    if (std::abs(m.x - e.pos.x) < 20 && std::abs(m.y - e.pos.y) < 20)
+    if (std::abs(m.x - e.position.x) < 20 && std::abs(m.y - e.position.y) < 20)
     {
     }
     else
@@ -283,13 +282,13 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
 
   if (is_dragging_box)
   {
-    drag_current_pos = e.pos;
+    drag_current_pos = e.position;
   }
 }
 
 void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 {
-  if (e.button == 1)
+  if (e.button == input::MouseButton::Left)
   {
     if (editor_gizmo.is_interacting())
     {
@@ -327,8 +326,8 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 
     is_dragging_box = false;
 
-    int dx = e.pos.x - drag_start_pos.x;
-    int dy = e.pos.y - drag_start_pos.y;
+    int dx = e.position.x - drag_start_pos.x;
+    int dy = e.position.y - drag_start_pos.y;
     bool moved_significantly = (dx * dx + dy * dy) > 25;
 
     if (moved_significantly)
@@ -341,7 +340,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
       int y_min = std::min(drag_start_pos.y, drag_current_pos.y);
       int y_max = std::max(drag_start_pos.y, drag_current_pos.y);
 
-      if (!e.shift_down)
+      if (!e.mods.shift)
       {
         selected_uids.clear();
       }
@@ -395,7 +394,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
           }
         }
 
-        if (e.shift_down)
+        if (e.mods.shift)
         {
           if (already_selected)
           {
@@ -417,7 +416,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
       }
       else
       {
-        if (!e.shift_down)
+        if (!e.mods.shift)
         {
           selected_uids.clear();
         }
@@ -428,8 +427,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 
 void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
-  if (e.scancode == SDL_SCANCODE_DELETE ||
-      e.scancode == SDL_SCANCODE_BACKSPACE)
+  if (e.key == input::Key::Delete || e.key == input::Key::Backspace)
   {
     if (!selected_uids.empty() && ctx.map && ctx.transaction_system)
     {
@@ -459,7 +457,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   if (!ctx.map)
     return;
 
-  auto draw_entity_highlight = [&](const network::Entity *ent, uint32_t color)
+  auto draw_entity_highlight = [&](const network::Entity *ent, color_t color)
   {
     auto bounds = shared::compute_entity_bounds(ent);
     renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
@@ -494,7 +492,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
       auto *entry = ctx.map->find_by_uid(hovered_uid);
       if (entry && entry->entity)
       {
-        draw_entity_highlight(entry->entity.get(), 0xFF00FFFF);
+        draw_entity_highlight(entry->entity.get(), colors::yellow);
       }
     }
   }
@@ -538,7 +536,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 
         if (!already_selected)
         {
-          draw_entity_highlight(entry.entity.get(), 0xFF00FFFF);
+          draw_entity_highlight(entry.entity.get(), colors::yellow);
         }
       }
     }
@@ -552,7 +550,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
     linalg::vec3 half_extents = {editor::GRID_INDICATOR_HALF_W,
                                   editor::GRID_INDICATOR_HALF_H,
                                   editor::GRID_INDICATOR_HALF_W};
-    renderer.draw_wire_box(center, half_extents, 0x88FFFFFF);
+    renderer.draw_wire_box(center, half_extents, with_alpha(colors::white, 0x88));
   }
 
   // 5. Draw Gizmo

@@ -6,7 +6,7 @@
 #include "../../shared/entities/static_entities.hpp"
 #include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/map_baker.hpp"
-#include "../editor/editor_entity.hpp"
+#include "../editor/editor_bvh.hpp"
 #include "../editor/entity_editor_traits.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
@@ -20,9 +20,9 @@
 #include "../shared/linalg.hpp"
 #include "../shared/math.hpp"
 #include "../state_manager.hpp"
-#include "SDL_scancode.h"
 #include "imgui.h"
-#include <SDL.h>
+#include <SDL_filesystem.h>
+#include <SDL_stdinc.h>
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -149,13 +149,13 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
   VkCommandBuffer get_command_buffer() override { return cmd; }
 
   void draw_line(const linalg::vec3 &start, const linalg::vec3 &end,
-                 uint32_t color) override
+                 color_t color) override
   {
-    renderer::DrawLine(cmd, start, end, color);
+    renderer::draw_line(cmd, start, end, color);
   }
 
   void draw_wire_box(const linalg::vec3 &center,
-                     const linalg::vec3 &half_extents, uint32_t color) override
+                     const linalg::vec3 &half_extents, color_t color) override
   {
     linalg::vec3 min = center - half_extents;
     linalg::vec3 max = center + half_extents;
@@ -163,7 +163,7 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
   }
 
   void draw_solid_box(const linalg::vec3 &center,
-                      const linalg::vec3 &half_extents, uint32_t color) override
+                      const linalg::vec3 &half_extents, color_t color) override
   {
     linalg::vec3 min = center - half_extents;
     linalg::vec3 max = center + half_extents;
@@ -171,7 +171,7 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
   }
 
   void draw_circle(const linalg::vec3 &center, float radius,
-                   const linalg::vec3 &normal, uint32_t color) override
+                   const linalg::vec3 &normal, color_t color) override
   {
     // Approximate circle with lines
     const int segments = 16;
@@ -199,7 +199,7 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
   }
 
   void draw_text(const linalg::vec3 &pos, const char *text,
-                 uint32_t color) override
+                 color_t color) override
   {
     // Not supported in immediate 3d cmd buffer easily without font texture
     // binding Could use ImGui::GetBackgroundDrawList()->AddText but that
@@ -261,8 +261,8 @@ void ToolEditorState::on_enter()
     tools.push_back(std::make_unique<Selection_Tool>());
     tools.push_back(std::make_unique<Placement_Tool>());
     tools.push_back(std::make_unique<Sculpting_Tool>());
-    tools.push_back(std::make_unique<PathfindingTestTool>());
-    tools.push_back(std::make_unique<ParticleEditorTool>());
+    tools.push_back(std::make_unique<Pathfinding_Test_Tool>());
+    tools.push_back(std::make_unique<Particle_Editor_Tool>());
     tools.push_back(std::make_unique<Displacement_Tool>());
   }
 
@@ -322,8 +322,7 @@ viewport_state_t ToolEditorState::transform_viewport_state()
   // So here just copy camera.
   view.camera = camera;
 
-  int mx, my;
-  input::get_mouse_pos(&mx, &my);
+  linalg::vec2i mouse = input::mouse_position();
 
   // Ray construct
   // Normalized Device Coordinates
@@ -336,8 +335,8 @@ viewport_state_t ToolEditorState::transform_viewport_state()
     height = 720;
   }
 
-  float x_ndc = (2.0f * mx) / width - 1.0f;
-  float y_ndc = 1.0f - (2.0f * my) / height;
+  float x_ndc = (2.0f * mouse.x) / width - 1.0f;
+  float y_ndc = 1.0f - (2.0f * mouse.y) / height;
 
   view.mouse_ray = client::get_pick_ray(camera, x_ndc, y_ndc, width / height);
   // view.orthographic etc were removed from struct.
@@ -354,18 +353,19 @@ void ToolEditorState::update(float dt)
 {
   last_dt = dt;
 
-  if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
+  if (input::is_key_pressed(input::Key::Escape))
   {
     state_manager::switch_to(GameStateKind::MainMenu);
     return;
   }
 
   // Update Camera
-  ImGuiIO &io = ImGui::GetIO();
-  if (!io.WantCaptureMouse)
+  if (!input::ui_wants_mouse())
   {
+    input::Modifiers mods = input::current_modifiers();
+
     float speed = 1200.0f * dt;
-    if (input::is_key_down(SDL_SCANCODE_LSHIFT))
+    if (mods.shift)
       speed *= 2.0f;
 
     auto vectors = client::get_orientation_vectors(camera);
@@ -373,11 +373,11 @@ void ToolEditorState::update(float dt)
     linalg::vec3 R = vectors.right;
     linalg::vec3 U = vectors.up;
 
-    if (input::is_key_pressed(SDL_SCANCODE_Z))
+    if (input::is_key_pressed(input::Key::Z))
     {
-      if (input::is_key_down(SDL_SCANCODE_LCTRL))
+      if (mods.ctrl)
       {
-        if (input::is_key_down(SDL_SCANCODE_LSHIFT))
+        if (mods.shift)
         {
           if (transaction_system.can_redo())
           {
@@ -396,9 +396,9 @@ void ToolEditorState::update(float dt)
       }
     }
 
-    if (input::is_key_pressed(SDL_SCANCODE_Y))
+    if (input::is_key_pressed(input::Key::Y))
     {
-      if (input::is_key_down(SDL_SCANCODE_LCTRL))
+      if (mods.ctrl)
       {
         if (transaction_system.can_redo())
         {
@@ -408,7 +408,7 @@ void ToolEditorState::update(float dt)
       }
     }
 
-    if (input::is_key_pressed(SDL_SCANCODE_O))
+    if (input::is_key_pressed(input::Key::O))
     {
       camera.orthographic = !camera.orthographic;
       if (camera.orthographic)
@@ -423,8 +423,7 @@ void ToolEditorState::update(float dt)
     }
 
     // Shift+Space: cycle through axis-aligned views
-    if (input::is_key_pressed(SDL_SCANCODE_SPACE) &&
-        input::is_key_down(SDL_SCANCODE_LSHIFT))
+    if (input::is_key_pressed(input::Key::Space) && mods.shift)
     {
       switch (view_mode)
       {
@@ -460,20 +459,20 @@ void ToolEditorState::update(float dt)
 
     if (camera.orthographic && view_mode == ViewMode::FreeCam)
     {
-      if (input::is_key_pressed(SDL_SCANCODE_RIGHT))
+      if (input::is_key_pressed(input::Key::ArrowRight))
         camera.yaw = fmodf(camera.yaw + 90.0f, 360.0f);
-      if (input::is_key_pressed(SDL_SCANCODE_LEFT))
+      if (input::is_key_pressed(input::Key::ArrowLeft))
         camera.yaw = fmodf(camera.yaw - 90.0f + 360.0f, 360.0f);
     }
 
-    if (input::is_key_pressed(SDL_SCANCODE_RIGHTBRACKET))
+    if (input::is_key_pressed(input::Key::RightBracket))
     {
       grid_settings.increase();
       char buf[64];
       snprintf(buf, sizeof(buf), "Grid: %.0f", grid_settings.step());
       renderer::draw_announcement(buf);
     }
-    if (input::is_key_pressed(SDL_SCANCODE_LEFTBRACKET))
+    if (input::is_key_pressed(input::Key::LeftBracket))
     {
       grid_settings.decrease();
       char buf[64];
@@ -481,7 +480,7 @@ void ToolEditorState::update(float dt)
       renderer::draw_announcement(buf);
     }
 
-    if (input::is_key_down(SDL_SCANCODE_W))
+    if (input::is_key_down(input::Key::W))
     {
       if (camera.orthographic)
       {
@@ -496,7 +495,7 @@ void ToolEditorState::update(float dt)
         camera.position.z += F.z * speed;
       }
     }
-    if (input::is_key_down(SDL_SCANCODE_S))
+    if (input::is_key_down(input::Key::S))
     {
       if (camera.orthographic)
       {
@@ -511,26 +510,24 @@ void ToolEditorState::update(float dt)
         camera.position.z -= F.z * speed;
       }
     }
-    if (input::is_key_down(SDL_SCANCODE_D))
+    if (input::is_key_down(input::Key::D))
     {
       camera.position.x += R.x * speed;
       camera.position.z += R.z * speed;
     }
-    if (input::is_key_down(SDL_SCANCODE_A))
+    if (input::is_key_down(input::Key::A))
     {
       camera.position.x -= R.x * speed;
       camera.position.z -= R.z * speed;
     }
-    if (input::is_key_down(SDL_SCANCODE_SPACE) &&
-        !input::is_key_down(SDL_SCANCODE_LSHIFT) &&
-        !input::is_key_down(SDL_SCANCODE_RSHIFT))
+    if (input::is_key_down(input::Key::Space) && !mods.shift)
     {
       if (camera.orthographic)
         camera.ortho_height += speed;
       else
         camera.position.y += speed;
     }
-    if (input::is_key_down(SDL_SCANCODE_C))
+    if (input::is_key_down(input::Key::C))
     {
       if (camera.orthographic)
       {
@@ -546,20 +543,19 @@ void ToolEditorState::update(float dt)
     bool tool_captures_kb = active_tool_index >= 0 &&
                             active_tool_index < (int)tools.size() &&
                             tools[active_tool_index]->capture_keyboard();
-    if (!tool_captures_kb && input::is_key_down(SDL_SCANCODE_Q))
+    if (!tool_captures_kb && input::is_key_down(input::Key::Q))
     {
       if (!camera.orthographic)
         camera.position.y -= speed;
     }
 
     const bool console_open = Console::Get().IsOpen();
-    if (input::is_mouse_down(SDL_BUTTON_RIGHT) && view_mode == ViewMode::FreeCam && !console_open)
+    if (input::is_mouse_down(input::MouseButton::Right) && view_mode == ViewMode::FreeCam && !console_open)
     {
       input::set_relative_mouse_mode(true);
-      int dx, dy;
-      input::get_mouse_delta(&dx, &dy);
-      camera.yaw += dx * 0.1f;
-      camera.pitch -= dy * 0.1f;
+      linalg::vec2i delta = input::mouse_delta();
+      camera.yaw += delta.x * 0.1f;
+      camera.pitch -= delta.y * 0.1f;
       shared::clamp_this(camera.pitch, -89.0f, 89.0f);
     }
     else
@@ -586,7 +582,7 @@ void ToolEditorState::update(float dt)
   static bool was_lmb_down = false;
   static bool tool_processing_mouse = false;
 
-  if (ImGui::GetIO().WantCaptureMouse && !tool_processing_mouse)
+  if (input::ui_wants_mouse() && !tool_processing_mouse)
   {
     // Use a ray that won't hit anything to prevent hovering
     // Origin far away, direction pointing away
@@ -596,30 +592,19 @@ void ToolEditorState::update(float dt)
 
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
   {
-    tools[active_tool_index]->on_update(context, viewport);
-
-    // Mouse Events
-    int mx, my;
-    input::get_mouse_pos(&mx, &my);
-    int mdx, mdy;
-    input::get_mouse_delta(&mdx, &mdy);
+    tools[active_tool_index]->on_update(context, viewport, dt);
 
     mouse_event_t mouse_e;
-    mouse_e.pos = {mx, my};
-    mouse_e.delta = {mdx, mdy};
-    mouse_e.shift_down = input::is_key_down(SDL_SCANCODE_LSHIFT) ||
-                          input::is_key_down(SDL_SCANCODE_RSHIFT);
-    mouse_e.ctrl_down = input::is_key_down(SDL_SCANCODE_LCTRL) ||
-                         input::is_key_down(SDL_SCANCODE_RCTRL);
-    mouse_e.alt_down = input::is_key_down(SDL_SCANCODE_LALT) ||
-                        input::is_key_down(SDL_SCANCODE_RALT);
-    mouse_e.button = 1;       // Left Button
+    mouse_e.button = input::MouseButton::Left;
+    mouse_e.position = input::mouse_position();
+    mouse_e.delta = input::mouse_delta();
+    mouse_e.mods = input::current_modifiers();
 
-    bool is_lmb_down = input::is_mouse_down(1);
+    bool is_lmb_down = input::is_mouse_down(input::MouseButton::Left);
 
     if (is_lmb_down && !was_lmb_down)
     {
-      if (!ImGui::GetIO().WantCaptureMouse)
+      if (!input::ui_wants_mouse())
       {
         tool_processing_mouse = true;
         tools[active_tool_index]->on_mouse_down(context, mouse_e);
@@ -642,34 +627,13 @@ void ToolEditorState::update(float dt)
     }
     was_lmb_down = is_lmb_down;
 
-    // Forward all confirmed key presses to the tool
-    // We iterate over all scancodes to find what was pressed this frame.
-    // 512 checks is negligible.
-    bool shift = input::is_key_down(SDL_SCANCODE_LSHIFT) ||
-                 input::is_key_down(SDL_SCANCODE_RSHIFT);
-    bool ctrl = input::is_key_down(SDL_SCANCODE_LCTRL) ||
-                input::is_key_down(SDL_SCANCODE_RCTRL);
-    bool alt = input::is_key_down(SDL_SCANCODE_LALT) ||
-               input::is_key_down(SDL_SCANCODE_RALT);
-
-    //@FIXME: This is crazy, why can't we forward the key events from the input
-    // system?
-    if (!ImGui::GetIO().WantTextInput)
+    // Forward this frame's key-down events to the active tool. The input
+    // system collects these from the SDL event pump, so no scancode polling.
+    if (!input::ui_wants_keyboard())
     {
-      for (int scancode = 0; scancode < SDL_NUM_SCANCODES; ++scancode)
+      for (const input::KeyEvent &key_event : input::frame_key_events())
       {
-        if (input::is_key_pressed(scancode))
-        {
-          key_event_t key_e;
-          key_e.scancode = scancode;
-          key_e.shift_down = shift;
-          key_e.ctrl_down = ctrl;
-          key_e.alt_down = alt;
-          key_e.repeat =
-              false; // input::is_key_pressed checks for new press only
-
-          tools[active_tool_index]->on_key_down(context, key_e);
-        }
+        tools[active_tool_index]->on_key_down(context, key_event);
       }
     }
   }
@@ -758,17 +722,16 @@ void ToolEditorState::render_ui()
   // Ctrl+S / Cmd+S — save current map to disk (no implicit CSG bake; use the
   // "Bake CSG" button for that). Goes through commit_map_to_disk so the
   // running server's session is reloaded too.
-  if (input::is_key_pressed(SDL_SCANCODE_S) &&
-      (input::is_key_down(SDL_SCANCODE_LCTRL) ||
-       input::is_key_down(SDL_SCANCODE_RCTRL) ||
-       input::is_key_down(SDL_SCANCODE_LGUI) ||
-       input::is_key_down(SDL_SCANCODE_RGUI)))
   {
-    std::string full_path = get_maps_dir() + map.name;
-    if (commit_map_to_disk(map, full_path))
-      renderer::draw_announcement("Saved!");
-    else
-      renderer::draw_announcement("Save failed!");
+    input::Modifiers mods = input::current_modifiers();
+    if (input::is_key_pressed(input::Key::S) && (mods.ctrl || mods.gui))
+    {
+      std::string full_path = get_maps_dir() + map.name;
+      if (commit_map_to_disk(map, full_path))
+        renderer::draw_announcement("Saved!");
+      else
+        renderer::draw_announcement("Save failed!");
+    }
   }
 
   ImGui::Begin("Map Info", nullptr, ImGuiWindowFlags_NoNav);
@@ -1119,11 +1082,11 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     float minor = grid_settings.step();
     float extent = count * major;
 
-    uint32_t major_color = 0x44FFFFFF;      // Faint white
-    uint32_t minor_color = 0x22FFFFFF;      // Fainter
-    uint32_t axis_color_x = 0xFF0000FF;     // Red  (X)
-    uint32_t axis_color_y = 0xFF00FF00;     // Green (Y)
-    uint32_t axis_color_z = 0xFFFF0000;     // Blue (Z)
+    color_t major_color = with_alpha(colors::white, 0x44); // Faint white
+    color_t minor_color = with_alpha(colors::white, 0x22); // Fainter
+    color_t axis_color_x = colors::red;   // X
+    color_t axis_color_y = colors::green; // Y
+    color_t axis_color_z = colors::blue;  // Z
 
     // Helper lambdas to make grid line endpoints based on plane orientation
     // plane 0 = XZ (Y=0, default), plane 1 = XY (Z=0, side view), plane 2 = YZ (X=0, front view)
@@ -1157,8 +1120,8 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
           continue;
         auto [s1, e1] = make_line_a(p, extent, grid_plane);
         auto [s2, e2] = make_line_b(p, extent, grid_plane);
-        renderer::DrawLine(cmd, s1, e1, minor_color);
-        renderer::DrawLine(cmd, s2, e2, minor_color);
+        renderer::draw_line(cmd, s1, e1, minor_color);
+        renderer::draw_line(cmd, s2, e2, minor_color);
       }
     }
 
@@ -1170,15 +1133,15 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       float p = (float)i * major;
       auto [s1, e1] = make_line_a(p, extent, grid_plane);
       auto [s2, e2] = make_line_b(p, extent, grid_plane);
-      renderer::DrawLine(cmd, s1, e1, major_color);
-      renderer::DrawLine(cmd, s2, e2, major_color);
+      renderer::draw_line(cmd, s1, e1, major_color);
+      renderer::draw_line(cmd, s2, e2, major_color);
     }
 
     // Axes - always draw all relevant axis lines
-    renderer::DrawLine(cmd, {-extent, 0, 0}, {extent, 0, 0}, axis_color_x);
-    renderer::DrawLine(cmd, {0, 0, -extent}, {0, 0, extent}, axis_color_z);
+    renderer::draw_line(cmd, {-extent, 0, 0}, {extent, 0, 0}, axis_color_x);
+    renderer::draw_line(cmd, {0, 0, -extent}, {0, 0, extent}, axis_color_z);
     if (grid_plane != 0) // Also draw Y axis for non-XZ planes
-      renderer::DrawLine(cmd, {0, -extent, 0}, {0, extent, 0}, axis_color_y);
+      renderer::draw_line(cmd, {0, -extent, 0}, {0, extent, 0}, axis_color_y);
   }
 
   // Draw map elements — dispatch through Entity_Editor_Traits.
@@ -1199,16 +1162,16 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     const navmesh_t &nav = map.navmesh;
     constexpr float y_lift = 2.f;
 
-    static constexpr uint32_t island_colors[] = {
-      0xFFFFFF00, // ABGR: cyan
-      0xFF00FFFF, // yellow
-      0xFF00FF00, // green
-      0xFFFF00FF, // magenta
+    static constexpr color_t island_colors[] = {
+      colors::cyan,
+      colors::yellow,
+      colors::green,
+      colors::magenta,
     };
 
     for (const auto &poly : nav.polygons)
     {
-      uint32_t color = island_colors[poly.island % 4];
+      color_t color = island_colors[poly.island % 4];
       const int N = (int)poly.verts.size();
       for (int e = 0; e < N; ++e)
       {
@@ -1216,18 +1179,18 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
         vec3f b = nav.vertices[poly.verts[(e + 1) % N]].pos;
         a.y += y_lift;
         b.y += y_lift;
-        renderer::DrawLine(cmd, a, b, color);
+        renderer::draw_line(cmd, a, b, color);
       }
     }
 
     // Draw each vertex as a small cross so winding/deduplication is visible.
     constexpr float r = 2.f;
-    constexpr uint32_t vert_color = 0xFFFFFFFF; // white
+    constexpr color_t vert_color = colors::white;
     for (const auto &v : nav.vertices)
     {
       vec3f p = v.pos; p.y += y_lift;
-      renderer::DrawLine(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
-      renderer::DrawLine(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
+      renderer::draw_line(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
+      renderer::draw_line(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
     }
   }
 
@@ -1255,7 +1218,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     p.color_end = pe->color_end;
     p.alpha_start = pe->alpha_start;
     p.alpha_end = pe->alpha_end;
-    renderer::DrawParticles(cmd, p);
+    renderer::draw_particles(cmd, p);
   }
 
   // Draw Tool Overlay

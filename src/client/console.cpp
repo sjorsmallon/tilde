@@ -2,7 +2,6 @@
 #include "cvar.hpp"
 #include "input.hpp"
 #include "log.hpp"
-#include <SDL_scancode.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -95,8 +94,9 @@ bool Console::BindKey(std::string_view key, std::string command_line)
     log_error("bind: only lowercase a-z keys are supported, got '{}'", c);
     return false;
   }
-  int scancode = SDL_SCANCODE_A + (c - 'a');
-  bindings_[scancode] = std::move(command_line);
+  input::Key bound_key = static_cast<input::Key>(
+      static_cast<int>(input::Key::A) + (c - 'a'));
+  bindings_[bound_key] = std::move(command_line);
   return true;
 }
 
@@ -107,9 +107,9 @@ void Console::PollBindings()
   if (should_draw)
     return; // never fire bindings while the console is open
 
-  for (const auto &[scancode, line] : bindings_)
+  for (const auto &[key, line] : bindings_)
   {
-    if (input::is_key_pressed(scancode))
+    if (input::is_key_pressed(key))
       ExecuteCommand(line.c_str());
   }
 }

@@ -2,6 +2,10 @@
 
 #include "editor_types.hpp"
 
+//@NOTE(SJM):
+// full virtual root tool interface. the tool_editor state contains a list of all tools, and forwards input/events to the active one.
+// tools can also choose to capture keyboard input for shortcuts.
+
 namespace client
 {
 
@@ -15,9 +19,9 @@ public:
   virtual void on_disable(editor_context_t &ctx) = 0;
 
   // Input Dispatch
-  // Tools logic update
+  // Tools logic update. dt is the real frame delta-time in seconds.
   virtual void on_update(editor_context_t &ctx,
-                         const viewport_state_t &view) = 0;
+                         const viewport_state_t &view, float dt) = 0;
 
   // Mouse events
   virtual void on_mouse_down(editor_context_t &ctx, const mouse_event_t &e) = 0;

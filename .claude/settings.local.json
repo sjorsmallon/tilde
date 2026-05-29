@@ -54,7 +54,10 @@
       "Bash(echo \"exit code: $?\")",
       "Bash(echo \"session_test: $?\")",
       "Bash(echo \"transaction_system_test: $?\")",
-      "Bash(echo \"test_entity_delta_packing: $?\")"
+      "Bash(echo \"test_entity_delta_packing: $?\")",
+      "Bash(cmake --build \"c:/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build\" -j8 --target game_client)",
+      "Bash(cmake --build \"c:/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build\" -j8)",
+      "Bash(git -C \"c:/Users/sjors/Desktop/Projects/tilde/tilde\" rm src/client/editor/editor_entity.hpp)"
     ]
   }
 }

@@ -59,7 +59,7 @@ Entity hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Enti
 
 Tool pattern: `ToolEditorState` dispatches to the active tool (Selection, Placement, Sculpting). Each tool handles mouse/key events and overlay drawing. Transaction system provides undo/redo by capturing entity diffs via schema reflection.
 
-`editor_entity_t` wraps map entities with selection AABBs. A BVH is built from these for picking.
+The editor picking BVH is built directly from `map_t` entities by `build_editor_bvh()` (`editor/editor_bvh.hpp`). Its `Collision_Id.index` holds the entity uid (resolved via `map.find_by_uid()`), unlike the runtime session BVH whose index is a `static_entities` array position.
 
 ### Asset System
 

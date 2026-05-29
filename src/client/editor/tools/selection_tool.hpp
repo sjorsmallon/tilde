@@ -15,7 +15,7 @@ class Selection_Tool : public Editor_Tool
 public:
   void on_enable(editor_context_t &ctx) override;
   void on_disable(editor_context_t &ctx) override;
-  void on_update(editor_context_t &ctx, const viewport_state_t &view) override;
+  void on_update(editor_context_t &ctx, const viewport_state_t &view, float dt) override;
 
   void on_mouse_down(editor_context_t &ctx, const mouse_event_t &e) override;
   void on_mouse_drag(editor_context_t &ctx, const mouse_event_t &e) override;

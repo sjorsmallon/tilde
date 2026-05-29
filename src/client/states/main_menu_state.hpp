@@ -3,7 +3,6 @@
 #include "../game_state.hpp"
 #include "../input.hpp"
 #include "../state_manager.hpp"
-#include "SDL_scancode.h"
 #include "imgui.h"
 
 namespace client
@@ -14,7 +13,7 @@ class MainMenuState : public IGameState
 public:
   void update(float dt) override
   {
-    if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
+    if (input::is_key_pressed(input::Key::Escape))
     {
       state_manager::request_exit();
     }

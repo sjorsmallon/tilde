@@ -6,6 +6,7 @@
 
 #include "asset.hpp"
 #include "camera.hpp"
+#include "color.hpp"
 #include "linalg.hpp"
 #include "old_ideas/ecs.hpp"
 #include "shapes.hpp"
@@ -33,20 +34,20 @@ struct render_view_t
 // color per AABB, ignoring the color parameter.
 // min/max in world space
 void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
-              const linalg::vec3 &max, uint32_t color,
+              const linalg::vec3 &max, color_t color,
               bool as_wireframe = false, bool random_color = false,
               uint32_t random_seed = 0);
 
 // Draw a wireframe AABB (12 line edges). Thin wrapper around DrawAABB.
 // min/max in world space
 void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
-                  const linalg::vec3 &max, uint32_t color);
+                  const linalg::vec3 &max, color_t color);
 
 // Draw a simple 3D line
-void DrawLine(VkCommandBuffer cmd, const linalg::vec3 &start,
-              const linalg::vec3 &end, uint32_t color);
+void draw_line(VkCommandBuffer cmd, const linalg::vec3 &start,
+              const linalg::vec3 &end, color_t color);
 
-// Set depth bias for subsequent DrawLine / draw_wire_box calls.
+// Set depth bias for subsequent draw_line / draw_wire_box calls.
 // Use stronger (more negative) values to push lines closer to camera.
 void SetLineDepthBias(float constant_factor, float slope_factor);
 
@@ -61,14 +62,14 @@ struct mesh_draw_params_t
   linalg::vec3 position  = {0, 0, 0};
   linalg::vec3 scale     = {1, 1, 1};
   linalg::vec3 rotation  = {0, 0, 0};
-  // Tint color (ABGR). Used as flat color for unshaded meshes, and as a
+  // Tint color. Used as flat color for unshaded meshes, and as a
   // fallback tint for meshes without per-material colors.
-  uint32_t     color     = 0xFFFFFFFF;
+  color_t      color     = colors::white;
   ShaderType   shader    = ShaderType::Lit;
   bool         wireframe = false;
 };
 
-void DrawMesh(VkCommandBuffer cmd,
+void draw_mesh(VkCommandBuffer cmd,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
               const mesh_draw_params_t &params = {});
 
@@ -78,30 +79,30 @@ void invalidate_mesh_gpu(assets::asset_handle_t<assets::mesh_asset_t> handle);
 
 // Draw a filled convex polygon (e.g. a collision face).
 // Vertices are in world space. Triangle-fan decomposed internally.
-// Supports alpha blending (pass e.g. 0x8800FF00 for 50% green in ABGR).
+// Supports alpha blending (pass e.g. with_alpha(colors::green, 128) for 50% green).
 // Call reset_debug_face_buffer() once per frame before any DrawFilledPolygon calls.
 void DrawFilledPolygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &verts,
-                       uint32_t color);
+                       color_t color);
 
 // Reset the ring buffer used by DrawFilledPolygon. Call once at the start of each frame.
 void reset_debug_face_buffer();
 
 // Draw an arrow (shaft = AABB, head = Pyramid)
 void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
-                const linalg::vec3 &end, uint32_t color);
+                const linalg::vec3 &end, color_t color);
 
 // Draw a wireframe wedge
 void draw_wedge(VkCommandBuffer cmd, const shared::wedge_t &wedge,
-                uint32_t color);
+                color_t color);
 
 // Debug hitbox visualization helpers
 // Draw a sphere hitbox (wireframe)
 void draw_hitbox_sphere(VkCommandBuffer cmd, const linalg::vec3 &center,
-                        float radius, uint32_t color);
+                        float radius, color_t color);
 
 // Draw a capsule hitbox (wireframe cylinder + spheres on ends)
 void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
-                         float radius, float half_height, uint32_t color);
+                         float radius, float half_height, color_t color);
 
 // Apply the viewport to the command buffer (calculating pixel rect from
 // normalized)
@@ -201,7 +202,7 @@ struct particle_emitter_params_t
 void UpdateParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params);
 
 // Draw particles for one emitter. Call INSIDE render pass.
-void DrawParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params);
+void draw_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params);
 
 } // namespace renderer
 } // namespace client

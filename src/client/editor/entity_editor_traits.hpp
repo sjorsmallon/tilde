@@ -33,7 +33,7 @@ struct Entity_Editor_Traits
   // grid_step: current editor grid step for grid-aligned face overlays.
   static bool draw_selection_wireframe(const EntityClass *e,
                                        overlay_renderer_t &renderer,
-                                       uint32_t color, float grid_step);
+                                       color_t color, float grid_step);
 };
 
 // Runtime dispatch wrappers (resolve entity type via the X-macro table).

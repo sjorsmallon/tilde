@@ -1,42 +1,26 @@
 #pragma once
 
 #include "../../shared/collision_detection.hpp"
+#include "../../shared/color.hpp"
 #include "../../shared/editor_grid.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/map.hpp" // For map_t
 #include "../camera.hpp"        // For camera_t
+#include "../input.hpp"
 #include <vulkan/vulkan.h>
 
 namespace client
 {
 
-  enum mouse_button
-  {
-    MOUSE_BUTTON_LEFT = 1,
-    MOUSE_BUTTON_MIDDLE = 2,
-    MOUSE_BUTTON_RIGHT = 3
-  };
-
 struct mouse_event_t
 {
-  // SDL Button constants or custom enum
-  // 1: Left, 2: Middle, 3: Right
-  int button;
-  linalg::vec2i pos;
+  input::MouseButton button; // Which button triggered down/up. Undefined for drag dispatches.
+  linalg::vec2i position;
   linalg::vec2i delta;
-  bool shift_down;
-  bool ctrl_down;
-  bool alt_down;
+  input::Modifiers mods;
 };
 
-struct key_event_t
-{
-  int scancode; // SDL_Scancode
-  bool shift_down;
-  bool ctrl_down;
-  bool alt_down;
-  bool repeat;
-};
+using key_event_t = input::KeyEvent;
 
 struct viewport_state_t
 {
@@ -76,17 +60,17 @@ struct overlay_renderer_t
   virtual VkCommandBuffer get_command_buffer() = 0;
 
   virtual void draw_line(const linalg::vec3 &start, const linalg::vec3 &end,
-                         uint32_t color) = 0;
+                         color_t color) = 0;
   virtual void draw_wire_box(const linalg::vec3 &center,
                              const linalg::vec3 &half_extents,
-                             uint32_t color) = 0;
+                             color_t color) = 0;
   virtual void draw_solid_box(const linalg::vec3 &center,
                               const linalg::vec3 &half_extents,
-                              uint32_t color) = 0;
+                              color_t color) = 0;
   virtual void draw_circle(const linalg::vec3 &center, float radius,
-                           const linalg::vec3 &normal, uint32_t color) = 0;
+                           const linalg::vec3 &normal, color_t color) = 0;
   virtual void draw_text(const linalg::vec3 &pos, const char *text,
-                         uint32_t color) = 0;
+                         color_t color) = 0;
 };
 
 } // namespace client

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "input.hpp"
+
 #include <functional>
 #include <imgui.h>
 #include <memory>
@@ -70,8 +72,8 @@ private:
   // with cvar::CVarSystem in its constructor and stays alive for the process.
   std::vector<std::unique_ptr<cvar::Console_Entry_Base>> remote_stubs_;
 
-  // Key bindings: SDL scancode -> command line.
-  std::unordered_map<int, std::string> bindings_;
+  // Key bindings: Key -> command line.
+  std::unordered_map<input::Key, std::string> bindings_;
 
   // Commands
   std::vector<const char *> Commands;

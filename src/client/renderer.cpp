@@ -904,7 +904,7 @@ static float g_line_depth_bias_constant = -2.0f;
 static float g_line_depth_bias_slope = -1.0f;
 static VkPipeline g_line_pipeline = VK_NULL_HANDLE;
 
-// Batched line draw list — accumulated via DrawLine(), flushed once per frame.
+// Batched line draw list — accumulated via draw_line(), flushed once per frame.
 static constexpr uint32_t LINE_BATCH_MAX_VERTICES = 131072; // 64k lines
 static std::vector<Vertex> g_line_batch;
 static VkBuffer g_line_batch_buffer = VK_NULL_HANDLE;
@@ -1185,7 +1185,7 @@ void reset_debug_face_buffer()
 }
 
 void DrawFilledPolygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &verts,
-                       uint32_t color)
+                       color_t color)
 {
   if (g_debug_face_pipeline == VK_NULL_HANDLE || verts.size() < 3)
     return;
@@ -1197,9 +1197,9 @@ void DrawFilledPolygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &ver
   if (first_vertex + tri_count * 3 > MAX_DEBUG_FACE_VERTS)
     return; // ring buffer full this frame
 
-  float r = (float)(color & 0xFF) / 255.0f;
-  float g = (float)((color >> 8) & 0xFF) / 255.0f;
-  float b = (float)((color >> 16) & 0xFF) / 255.0f;
+  float r = color.r / 255.0f;
+  float g = color.g / 255.0f;
+  float b = color.b / 255.0f;
 
   // Triangle fan: (verts[0], verts[i], verts[i+1]) for i in 1..n-2
   for (int i = 0; i < tri_count; ++i)
@@ -1243,20 +1243,20 @@ void SetLineDepthBias(float constant_factor, float slope_factor)
   g_line_depth_bias_slope = slope_factor;
 }
 
-void DrawLine(VkCommandBuffer /*cmd*/, const linalg::vec3 &start,
-              const linalg::vec3 &end, uint32_t color)
+void draw_line(VkCommandBuffer /*cmd*/, const linalg::vec3 &start,
+              const linalg::vec3 &end, color_t color)
 {
   if (g_line_batch_mapped == nullptr)
     return;
   if (g_line_batch.size() + 2 > LINE_BATCH_MAX_VERTICES)
   {
-    log_error("DrawLine: line batch capacity exceeded (%u vertices)", LINE_BATCH_MAX_VERTICES);
+    log_error("draw_line: line batch capacity exceeded (%u vertices)", LINE_BATCH_MAX_VERTICES);
     return;
   }
 
-  float r = (float)(color & 0xFF) / 255.0f;
-  float g = (float)((color >> 8) & 0xFF) / 255.0f;
-  float b = (float)((color >> 16) & 0xFF) / 255.0f;
+  float r = color.r / 255.0f;
+  float g = color.g / 255.0f;
+  float b = color.b / 255.0f;
 
   // bary = {1,1,1} so the frag shader outputs full colour with no edge mixing
   g_line_batch.push_back({{start.x, start.y, start.z}, {r, g, b}, {1.f, 1.f, 1.f}});
@@ -2657,7 +2657,7 @@ static void init_font()
 // perimeter_color for the 12 outer edges, inner_color for inner lines.
 static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
                                 const linalg::vec3 &max,
-                                uint32_t perimeter_color, uint32_t inner_color,
+                                color_t perimeter_color, color_t inner_color,
                                 int cells_per_face = 8)
 {
   // 12 perimeter edges
@@ -2668,18 +2668,18 @@ static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
         {min.x, max.y, min.z}, {max.x, max.y, min.z},
         {max.x, max.y, max.z}, {min.x, max.y, max.z},
     };
-    DrawLine(cmd, c[0], c[1], perimeter_color);
-    DrawLine(cmd, c[1], c[2], perimeter_color);
-    DrawLine(cmd, c[2], c[3], perimeter_color);
-    DrawLine(cmd, c[3], c[0], perimeter_color);
-    DrawLine(cmd, c[4], c[5], perimeter_color);
-    DrawLine(cmd, c[5], c[6], perimeter_color);
-    DrawLine(cmd, c[6], c[7], perimeter_color);
-    DrawLine(cmd, c[7], c[4], perimeter_color);
-    DrawLine(cmd, c[0], c[4], perimeter_color);
-    DrawLine(cmd, c[1], c[5], perimeter_color);
-    DrawLine(cmd, c[2], c[6], perimeter_color);
-    DrawLine(cmd, c[3], c[7], perimeter_color);
+    draw_line(cmd, c[0], c[1], perimeter_color);
+    draw_line(cmd, c[1], c[2], perimeter_color);
+    draw_line(cmd, c[2], c[3], perimeter_color);
+    draw_line(cmd, c[3], c[0], perimeter_color);
+    draw_line(cmd, c[4], c[5], perimeter_color);
+    draw_line(cmd, c[5], c[6], perimeter_color);
+    draw_line(cmd, c[6], c[7], perimeter_color);
+    draw_line(cmd, c[7], c[4], perimeter_color);
+    draw_line(cmd, c[0], c[4], perimeter_color);
+    draw_line(cmd, c[1], c[5], perimeter_color);
+    draw_line(cmd, c[2], c[6], perimeter_color);
+    draw_line(cmd, c[3], c[7], perimeter_color);
   }
 
   // Inner grid lines on each pair of faces (uniform subdivision)
@@ -2700,7 +2700,7 @@ static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
         (&s.x)[axis0] = p; (&e.x)[axis0] = p;
         (&s.x)[axis1] = a1_min; (&e.x)[axis1] = a1_max;
         (&s.x)[fixed_axis] = fv; (&e.x)[fixed_axis] = fv;
-        DrawLine(cmd, s, e, inner_color);
+        draw_line(cmd, s, e, inner_color);
       }
     }
 
@@ -2714,7 +2714,7 @@ static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
         (&s.x)[axis0] = a0_min; (&e.x)[axis0] = a0_max;
         (&s.x)[axis1] = p; (&e.x)[axis1] = p;
         (&s.x)[fixed_axis] = fv; (&e.x)[fixed_axis] = fv;
-        DrawLine(cmd, s, e, inner_color);
+        draw_line(cmd, s, e, inner_color);
       }
     }
   };
@@ -2725,15 +2725,14 @@ static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
 }
 
 void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
-              const linalg::vec3 &max, uint32_t color, bool as_wireframe,
+              const linalg::vec3 &max, color_t color, bool as_wireframe,
               bool random_color, uint32_t random_seed)
 {
   if (as_wireframe)
   {
     // Draw grid overlay (perimeter + inner subdivision lines).
     // Use the caller's colour for the perimeter; dim only the alpha for inner lines.
-    uint32_t inner_color = (color & 0x00FFFFFFu) | 0x44000000u;
-    DrawAABBGridOverlay(cmd, min, max, color, inner_color);
+    DrawAABBGridOverlay(cmd, min, max, color, with_alpha(color, 0x44));
     return;
   }
 
@@ -2772,11 +2771,10 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 
   memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
 
-  // Extract Color (ABGR format: 0xAABBGGRR)
-  float a = ((color >> 24) & 0xFF) / 255.0f;
-  float b = ((color >> 16) & 0xFF) / 255.0f;
-  float g = ((color >> 8) & 0xFF) / 255.0f;
-  float r = (color & 0xFF) / 255.0f;
+  float a = color.a / 255.0f;
+  float b = color.b / 255.0f;
+  float g = color.g / 255.0f;
+  float r = color.r / 255.0f;
 
   pc.color[0] = r;
   pc.color[1] = g;
@@ -2793,7 +2791,7 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 }
 
 void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
-                  const linalg::vec3 &max, uint32_t color)
+                  const linalg::vec3 &max, color_t color)
 {
   // Just the 12 outer edges — no inner grid.
   linalg::vec3 c[8] = {
@@ -2802,12 +2800,12 @@ void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
       {min.x, max.y, min.z}, {max.x, max.y, min.z},
       {max.x, max.y, max.z}, {min.x, max.y, max.z},
   };
-  DrawLine(cmd, c[0], c[1], color); DrawLine(cmd, c[1], c[2], color);
-  DrawLine(cmd, c[2], c[3], color); DrawLine(cmd, c[3], c[0], color);
-  DrawLine(cmd, c[4], c[5], color); DrawLine(cmd, c[5], c[6], color);
-  DrawLine(cmd, c[6], c[7], color); DrawLine(cmd, c[7], c[4], color);
-  DrawLine(cmd, c[0], c[4], color); DrawLine(cmd, c[1], c[5], color);
-  DrawLine(cmd, c[2], c[6], color); DrawLine(cmd, c[3], c[7], color);
+  draw_line(cmd, c[0], c[1], color); draw_line(cmd, c[1], c[2], color);
+  draw_line(cmd, c[2], c[3], color); draw_line(cmd, c[3], c[0], color);
+  draw_line(cmd, c[4], c[5], color); draw_line(cmd, c[5], c[6], color);
+  draw_line(cmd, c[6], c[7], color); draw_line(cmd, c[7], c[4], color);
+  draw_line(cmd, c[0], c[4], color); draw_line(cmd, c[1], c[5], color);
+  draw_line(cmd, c[2], c[6], color); draw_line(cmd, c[3], c[7], color);
 }
 
 bool WireframeSupported()
@@ -2815,7 +2813,7 @@ bool WireframeSupported()
   return g_mesh_wireframe_pipeline != VK_NULL_HANDLE;
 }
 
-void DrawMesh(VkCommandBuffer cmd,
+void draw_mesh(VkCommandBuffer cmd,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
               const mesh_draw_params_t &params)
 {
@@ -2907,11 +2905,10 @@ void DrawMesh(VkCommandBuffer cmd,
   {
     PushConstants pc{};
     memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
-    uint32_t color = params.color;
-    pc.color[0] = (color & 0xFF) / 255.0f;
-    pc.color[1] = ((color >> 8) & 0xFF) / 255.0f;
-    pc.color[2] = ((color >> 16) & 0xFF) / 255.0f;
-    pc.color[3] = ((color >> 24) & 0xFF) / 255.0f;
+    pc.color[0] = params.color.r / 255.0f;
+    pc.color[1] = params.color.g / 255.0f;
+    pc.color[2] = params.color.b / 255.0f;
+    pc.color[3] = params.color.a / 255.0f;
     pc.use_random_color = 2;
     pc.use_2d_bary = 2;
     vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
@@ -2924,11 +2921,9 @@ void DrawMesh(VkCommandBuffer cmd,
   const assets::mesh_asset_t *mesh_data = assets::get(mesh_handle);
   const bool use_submeshes = mesh_data && mesh_data->has_materials();
 
-  // Decode tint color from params (used as fallback when no submesh materials)
-  uint32_t tint = params.color;
-  vec3f tint_rgb = {(tint & 0xFF) / 255.0f,
-                    ((tint >> 8) & 0xFF) / 255.0f,
-                    ((tint >> 16) & 0xFF) / 255.0f};
+  // Tint color from params (used as fallback when no submesh materials)
+  vec3f tint_rgb = {params.color.r / 255.0f, params.color.g / 255.0f,
+                    params.color.b / 255.0f};
 
   auto push_and_draw = [&](const vec3f &draw_color, uint32_t index_count, uint32_t first_index)
   {
@@ -3830,7 +3825,7 @@ void UpdateParticles(VkCommandBuffer cmd, const particle_emitter_params_t &param
                        0, 0, nullptr, 1, &barrier, 0, nullptr);
 }
 
-void DrawParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
+void draw_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
 {
   if (g_particle_graphics_pipeline == VK_NULL_HANDLE) return;
   if (params.max_particles == 0) return;
@@ -3874,7 +3869,7 @@ namespace renderer
 {
 
 void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
-                const linalg::vec3 &end, uint32_t color)
+                const linalg::vec3 &end, color_t color)
 {
   using namespace linalg;
 
@@ -3923,22 +3918,22 @@ void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
     vec3 c8 = shaft_end - u * sw + v * sw;
 
     // Base
-    DrawLine(cmd, c1, c2, color);
-    DrawLine(cmd, c2, c3, color);
-    DrawLine(cmd, c3, c4, color);
-    DrawLine(cmd, c4, c1, color);
+    draw_line(cmd, c1, c2, color);
+    draw_line(cmd, c2, c3, color);
+    draw_line(cmd, c3, c4, color);
+    draw_line(cmd, c4, c1, color);
 
     // Top
-    DrawLine(cmd, c5, c6, color);
-    DrawLine(cmd, c6, c7, color);
-    DrawLine(cmd, c7, c8, color);
-    DrawLine(cmd, c8, c5, color);
+    draw_line(cmd, c5, c6, color);
+    draw_line(cmd, c6, c7, color);
+    draw_line(cmd, c7, c8, color);
+    draw_line(cmd, c8, c5, color);
 
     // Sides
-    DrawLine(cmd, c1, c5, color);
-    DrawLine(cmd, c2, c6, color);
-    DrawLine(cmd, c3, c7, color);
-    DrawLine(cmd, c4, c8, color);
+    draw_line(cmd, c1, c5, color);
+    draw_line(cmd, c2, c6, color);
+    draw_line(cmd, c3, c7, color);
+    draw_line(cmd, c4, c8, color);
   }
 
   // -- Draw Head (Pyramid) --
@@ -3950,32 +3945,32 @@ void draw_arrow(VkCommandBuffer cmd, const linalg::vec3 &start,
     vec3 b4 = shaft_end - u * hw + v * hw;
 
     // Base
-    DrawLine(cmd, b1, b2, color);
-    DrawLine(cmd, b2, b3, color);
-    DrawLine(cmd, b3, b4, color);
-    DrawLine(cmd, b4, b1, color);
+    draw_line(cmd, b1, b2, color);
+    draw_line(cmd, b2, b3, color);
+    draw_line(cmd, b3, b4, color);
+    draw_line(cmd, b4, b1, color);
 
     // Tip
-    DrawLine(cmd, b1, end, color);
-    DrawLine(cmd, b2, end, color);
-    DrawLine(cmd, b3, end, color);
-    DrawLine(cmd, b4, end, color);
+    draw_line(cmd, b1, end, color);
+    draw_line(cmd, b2, end, color);
+    draw_line(cmd, b3, end, color);
+    draw_line(cmd, b4, end, color);
   }
 }
 
 void draw_wedge(VkCommandBuffer cmd, const shared::wedge_t &wedge,
-                uint32_t color)
+                color_t color)
 {
   auto points = shared::get_wedge_points(wedge);
 
   // Draw Base Loop (0-1-2-3)
-  DrawLine(cmd, points[0], points[1], color);
-  DrawLine(cmd, points[1], points[2], color);
-  DrawLine(cmd, points[2], points[3], color);
-  DrawLine(cmd, points[3], points[0], color);
+  draw_line(cmd, points[0], points[1], color);
+  draw_line(cmd, points[1], points[2], color);
+  draw_line(cmd, points[2], points[3], color);
+  draw_line(cmd, points[3], points[0], color);
 
   // Draw Top Edge (4-5)
-  DrawLine(cmd, points[4], points[5], color);
+  draw_line(cmd, points[4], points[5], color);
 
   // Connect Top Edge to Base
   const float epsilon = 0.001f;
@@ -3995,20 +3990,20 @@ void draw_wedge(VkCommandBuffer cmd, const shared::wedge_t &wedge,
       {
         // Edge along X -> Slope along Z. Connect if Share X.
         if (share_x)
-          DrawLine(cmd, top, base, color);
+          draw_line(cmd, top, base, color);
       }
       else
       {
         // Edge along Z -> Slope along X. Connect if Share Z.
         if (share_z)
-          DrawLine(cmd, top, base, color);
+          draw_line(cmd, top, base, color);
       }
     }
   }
 }
 
 void draw_hitbox_sphere(VkCommandBuffer cmd, const linalg::vec3 &center,
-                        float radius, uint32_t color)
+                        float radius, color_t color)
 {
   // Draw sphere using primitive mesh
   auto sphere_mesh = assets::get_primitive_mesh("sphere");
@@ -4016,14 +4011,14 @@ void draw_hitbox_sphere(VkCommandBuffer cmd, const linalg::vec3 &center,
     return;
 
   // Scale by radius * 2 (primitive sphere has diameter 1.0, radius 0.5)
-  DrawMesh(cmd, sphere_mesh, {.position = center,
+  draw_mesh(cmd, sphere_mesh, {.position = center,
                                .scale = {radius * 2.0f, radius * 2.0f, radius * 2.0f},
                                .color = color,
                                .wireframe = true});
 }
 
 void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
-                         float radius, float half_height, uint32_t color)
+                         float radius, float half_height, color_t color)
 {
   // Capsule = cylinder + sphere on top + sphere on bottom
   // Center is at the middle of the capsule
@@ -4034,7 +4029,7 @@ void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
   {
     // Cylinder primitive is 1 unit tall, scale to full height (2 * half_height)
     // and radius * 2 for diameter
-    DrawMesh(cmd, cylinder_mesh, {.position = center,
+    draw_mesh(cmd, cylinder_mesh, {.position = center,
                                    .scale = {radius * 2.0f, half_height * 2.0f, radius * 2.0f},
                                    .color = color,
                                    .wireframe = true});

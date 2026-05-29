@@ -6,9 +6,9 @@
 
 namespace client {
 
-static uint32_t jolt_color_to_abgr(JPH::ColorArg c)
+static color_t jolt_color_to_color(JPH::ColorArg c)
 {
-    return (uint32_t(c.a) << 24) | (uint32_t(c.b) << 16) | (uint32_t(c.g) << 8) | uint32_t(c.r);
+    return color_t{c.r, c.g, c.b, c.a};
 }
 
 jolt_debug_renderer_t::jolt_debug_renderer_t()
@@ -22,7 +22,7 @@ void jolt_debug_renderer_t::DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::
         return;
     linalg::vec3 a{float(from.GetX()), float(from.GetY()), float(from.GetZ())};
     linalg::vec3 b{float(to.GetX()),   float(to.GetY()),   float(to.GetZ())};
-    renderer::DrawLine(command_buffer_, a, b, jolt_color_to_abgr(color));
+    renderer::draw_line(command_buffer_, a, b, jolt_color_to_color(color));
 }
 
 void jolt_debug_renderer_t::DrawText3D(JPH::RVec3Arg, const std::string_view &,

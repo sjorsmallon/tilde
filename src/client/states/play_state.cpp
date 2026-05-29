@@ -29,8 +29,6 @@
 #include "../shared/math.hpp"
 #include "../state_manager.hpp"
 #include "../../shared/bot_debug.hpp"
-#include "SDL_scancode.h"
-#include <SDL.h>
 #include <fstream>
 #include <print>
 
@@ -197,7 +195,7 @@ void PlayState::update(float dt)
   });
 
   // ESC -> back to editor (works even if no map was loaded)
-  if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
+  if (input::is_key_pressed(input::Key::Escape))
   {
     if (Console::Get().IsOpen())
     {
@@ -219,7 +217,7 @@ void PlayState::update(float dt)
   conn_state_ = &conn;
 
   // U -> toggle mouse capture
-  if (input::is_key_pressed(SDL_SCANCODE_U))
+  if (input::is_key_pressed(input::Key::U))
   {
     mouse_captured = !mouse_captured;
   }
@@ -503,10 +501,9 @@ void PlayState::update(float dt)
   // --- Mouse look ---
   if (mouse_captured && !console_open)
   {
-    int dx, dy;
-    input::get_mouse_delta(&dx, &dy);
-    ctx.player_yaw += dx * 0.1f;
-    ctx.player_pitch -= dy * 0.1f;
+    linalg::vec2i delta = input::mouse_delta();
+    ctx.player_yaw += delta.x * 0.1f;
+    ctx.player_pitch -= delta.y * 0.1f;
     shared::clamp_this(ctx.player_pitch, -89.0f, 89.0f);
   }
 
@@ -518,25 +515,25 @@ void PlayState::update(float dt)
   uint64_t buttons = 0;
   if (!console_open)
   {
-    if (input::is_key_down(SDL_SCANCODE_W))     buttons |= Button::Forward;
-    if (input::is_key_down(SDL_SCANCODE_S))     buttons |= Button::Backward;
-    if (input::is_key_down(SDL_SCANCODE_A))     buttons |= Button::Left;
-    if (input::is_key_down(SDL_SCANCODE_D))     buttons |= Button::Right;
-    if (input::is_key_down(SDL_SCANCODE_SPACE)) buttons |= Button::Jump;
-    if (input::is_key_down(SDL_SCANCODE_1))     buttons |= Button::Key1;
-    if (input::is_key_down(SDL_SCANCODE_2))     buttons |= Button::Key2;
-    if (input::is_key_down(SDL_SCANCODE_3))     buttons |= Button::Key3;
-    if (input::is_key_down(SDL_SCANCODE_4))     buttons |= Button::Key4;
-    if (input::is_key_down(SDL_SCANCODE_5))     buttons |= Button::Key5;
-    if (input::is_key_down(SDL_SCANCODE_6))     buttons |= Button::Key6;
-    if (input::is_key_down(SDL_SCANCODE_7))     buttons |= Button::Key7;
-    if (input::is_key_down(SDL_SCANCODE_8))     buttons |= Button::Key8;
-    if (input::is_key_down(SDL_SCANCODE_9))     buttons |= Button::Key9;
-    if (input::is_key_down(SDL_SCANCODE_0))     buttons |= Button::Key0;
-    if (input::is_mouse_down(SDL_BUTTON_LEFT))  buttons |= Button::Fire;
+    if (input::is_key_down(input::Key::W))                  buttons |= Button::Forward;
+    if (input::is_key_down(input::Key::S))                  buttons |= Button::Backward;
+    if (input::is_key_down(input::Key::A))                  buttons |= Button::Left;
+    if (input::is_key_down(input::Key::D))                  buttons |= Button::Right;
+    if (input::is_key_down(input::Key::Space))              buttons |= Button::Jump;
+    if (input::is_key_down(input::Key::Num1))               buttons |= Button::Key1;
+    if (input::is_key_down(input::Key::Num2))               buttons |= Button::Key2;
+    if (input::is_key_down(input::Key::Num3))               buttons |= Button::Key3;
+    if (input::is_key_down(input::Key::Num4))               buttons |= Button::Key4;
+    if (input::is_key_down(input::Key::Num5))               buttons |= Button::Key5;
+    if (input::is_key_down(input::Key::Num6))               buttons |= Button::Key6;
+    if (input::is_key_down(input::Key::Num7))               buttons |= Button::Key7;
+    if (input::is_key_down(input::Key::Num8))               buttons |= Button::Key8;
+    if (input::is_key_down(input::Key::Num9))               buttons |= Button::Key9;
+    if (input::is_key_down(input::Key::Num0))               buttons |= Button::Key0;
+    if (input::is_mouse_down(input::MouseButton::Left))     buttons |= Button::Fire;
   }
 
-  if (input::is_key_pressed(SDL_SCANCODE_P))
+  if (input::is_key_pressed(input::Key::P))
   {
     // buttons |= Button::P;
     
@@ -838,7 +835,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         {
           if (rc->is_wireframe)
           {
-            renderer::DrawMesh(cmd, mesh_handle,
+            renderer::draw_mesh(cmd, mesh_handle,
                                {.position  = ent->position,
                                 .scale     = rc->scale,
                                 .rotation  = ent->orientation + rc->rotation,
@@ -850,11 +847,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
             if (strcmp(rc->material.shader_type.c_str(), "unlit") == 0)
               shader = renderer::ShaderType::Unlit;
             vec3f mat_color = rc->material.color;
-            uint32_t tint = (uint32_t(mat_color.x * 255) & 0xFF) |
-                            ((uint32_t(mat_color.y * 255) & 0xFF) << 8) |
-                            ((uint32_t(mat_color.z * 255) & 0xFF) << 16) |
-                            0xFF000000u;
-            renderer::DrawMesh(cmd, mesh_handle,
+            color_t tint = color_from_vec3(mat_color);
+            renderer::draw_mesh(cmd, mesh_handle,
                                {.position = ent->position,
                                 .scale    = rc->scale,
                                 .rotation = ent->orientation + rc->rotation,
@@ -878,7 +872,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       auto mesh_handle = assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
       if (mesh_handle.valid())
       {
-        renderer::DrawMesh(cmd, mesh_handle,
+        renderer::draw_mesh(cmd, mesh_handle,
                            {.position = disp->position,
                             .rotation = disp->orientation,
                             .shader   = renderer::ShaderType::Textured});
@@ -887,7 +881,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     else if (auto *volume = ent->get_box_volume())
     {
       renderer::DrawAABB(cmd, ent->position - volume->half_extents,
-                         ent->position + volume->half_extents, 0xFFFFFFFF);
+                         ent->position + volume->half_extents, colors::white);
     }
     else if (auto *wedge = shared::entity_as<network::Wedge_Entity>(ent.get()))
     {
@@ -895,12 +889,12 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       w.center = wedge->position;
       w.half_extents = wedge->half_extents;
       w.orientation = wedge->orientation;
-      renderer::draw_wedge(cmd, w, 0xFFFFFFFF);
+      renderer::draw_wedge(cmd, w, colors::white);
     }
     else if (ent->get_type() == ::entity_type::STATIC_MESH)
     {
       auto bounds = shared::compute_entity_bounds(ent.get());
-      renderer::DrawWireAABB(cmd, bounds.min, bounds.max, 0xFF00FFFF);
+      renderer::DrawWireAABB(cmd, bounds.min, bounds.max, colors::yellow);
     }
 
     if (debug_collision::debug_show_hitboxes.Get())
@@ -912,14 +906,14 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         const char *shape = hitbox->shape_type.c_str();
 
         if (strcmp(shape, "sphere") == 0)
-          renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, 0xFF00FF00);
+          renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, colors::green);
         else if (strcmp(shape, "capsule") == 0)
-          renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y, 0xFF00FF00);
+          renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y, colors::green);
         else if (strcmp(shape, "aabb") == 0)
         {
           vec3f min = hitbox_center - hitbox->size;
           vec3f max = hitbox_center + hitbox->size;
-          renderer::DrawWireAABB(cmd, min, max, 0xFF00FF00);
+          renderer::DrawWireAABB(cmd, min, max, colors::green);
         }
       }
     }
@@ -954,11 +948,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
           if (strcmp(rc->material.shader_type.c_str(), "unlit") == 0)
             shader = renderer::ShaderType::Unlit;
           vec3f mat_color = rc->material.color;
-          uint32_t tint = (uint32_t(mat_color.x * 255) & 0xFF) |
-                          ((uint32_t(mat_color.y * 255) & 0xFF) << 8) |
-                          ((uint32_t(mat_color.z * 255) & 0xFF) << 16) |
-                          0xFF000000u;
-          renderer::DrawMesh(cmd, mesh_handle,
+          color_t tint = color_from_vec3(mat_color);
+          renderer::draw_mesh(cmd, mesh_handle,
                              {.position = ent->position,
                               .scale    = rc->scale,
                               .rotation = ent->orientation + rc->rotation,
@@ -982,7 +973,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     vec3f rmax = {rp.render_position.x + half.x,
                   rp.render_position.y + half.y,
                   rp.render_position.z + half.z};
-    renderer::DrawAABB(cmd, rmin, rmax, 0xFF00FF00);
+    renderer::DrawAABB(cmd, rmin, rmax, colors::green);
   }
 
   // Render rockets received from server
@@ -1003,11 +994,11 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
       if (mesh_handle.valid())
       {
-        renderer::DrawMesh(cmd, mesh_handle,
+        renderer::draw_mesh(cmd, mesh_handle,
                            {.position = rocket.position,
                             .scale    = rc->scale,
                             .rotation = rocket.orientation,
-                            .color    = 0xFFFFFF00});
+                            .color    = colors::cyan});
       }
       else
       {
@@ -1026,14 +1017,14 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       const char *shape = hitbox->shape_type.c_str();
 
       if (strcmp(shape, "sphere") == 0)
-        renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, 0xFF00FF00);
+        renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, colors::green);
       else if (strcmp(shape, "capsule") == 0)
-        renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y, 0xFF00FF00);
+        renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y, colors::green);
       else if (strcmp(shape, "aabb") == 0)
       {
         vec3f min = hitbox_center - hitbox->size;
         vec3f max = hitbox_center + hitbox->size;
-        renderer::DrawWireAABB(cmd, min, max, 0xFF00FF00);
+        renderer::DrawWireAABB(cmd, min, max, colors::green);
       }
     }
   }
@@ -1057,7 +1048,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
       if (!mesh_handle.valid()) return;
 
-      renderer::DrawMesh(cmd, mesh_handle,
+      renderer::draw_mesh(cmd, mesh_handle,
                          {.position = body.position,
                           .scale    = render.scale,
                           .rotation = body.orientation + render.rotation,
@@ -1087,16 +1078,16 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     const navmesh_t &nav = ctx.session.navmesh;
     constexpr float y_lift = 2.f;
 
-    static constexpr uint32_t island_colors[] = {
-      0xFFFFFF00, // ABGR: cyan
-      0xFF00FFFF, // yellow
-      0xFF00FF00, // green
-      0xFFFF00FF, // magenta
+    static constexpr color_t island_colors[] = {
+      colors::cyan,
+      colors::yellow,
+      colors::green,
+      colors::magenta,
     };
 
     for (const auto &poly : nav.polygons)
     {
-      uint32_t color = island_colors[poly.island % 4];
+      color_t color = island_colors[poly.island % 4];
       const int N = (int)poly.verts.size();
       for (int e = 0; e < N; ++e)
       {
@@ -1104,24 +1095,24 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         vec3f b = nav.vertices[poly.verts[(e + 1) % N]].pos;
         a.y += y_lift;
         b.y += y_lift;
-        renderer::DrawLine(cmd, a, b, color);
+        renderer::draw_line(cmd, a, b, color);
       }
     }
 
     constexpr float r = 2.f;
-    constexpr uint32_t vert_color = 0xFFFFFFFF;
+    constexpr color_t vert_color = colors::white;
     for (const auto &v : nav.vertices)
     {
       vec3f p = v.pos; p.y += y_lift;
-      renderer::DrawLine(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
-      renderer::DrawLine(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
+      renderer::draw_line(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
+      renderer::draw_line(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
     }
   }
 
   // Debug: collision faces in green
   if (debug_collision::debug_show_collisions.Get())
   {
-    constexpr uint32_t green = 0xFF00FF00;
+    constexpr color_t green = colors::green;
 
     renderer::reset_debug_face_buffer();
 
@@ -1132,7 +1123,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
       vec3 arrow_start = face.plane.point + face.plane.normal * 0.5f;
       vec3 arrow_end = arrow_start + face.plane.normal * 5.0f;
-      renderer::DrawLine(cmd, arrow_start, arrow_end, 0xFF0000FF);
+      renderer::draw_line(cmd, arrow_start, arrow_end, colors::red);
     }
 
     debug_collision::clear_collision_faces();
@@ -1150,12 +1141,12 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       const auto *volume = ent->get_box_volume();
       if (!volume) continue;
 
-      uint32_t color = 0xFF00FFFF; // cyan default
+      color_t color = colors::yellow; // default
       switch (ent->get_type())
       {
-      case ::entity_type::TRIGGER_VOLUME: color = 0xFFFF00FF; break; // magenta — triggers are invisible otherwise
-      case ::entity_type::AABB:           color = 0xFFFFFFFF; break; // white
-      case ::entity_type::DISPLACEMENT:   color = 0xFF00FFFF; break; // yellow-ish — flag the box vs the heightmap
+      case ::entity_type::TRIGGER_VOLUME: color = colors::magenta; break; // triggers are invisible otherwise
+      case ::entity_type::AABB:           color = colors::white;   break;
+      case ::entity_type::DISPLACEMENT:   color = colors::yellow;  break; // flag the box vs the heightmap
       default: break;
       }
 
@@ -1166,32 +1157,32 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
   // --- Bot path / goal debug draw ---
   {
-    static constexpr uint32_t goal_color[] = {
-      0xFF888888, // Idle
-      0x00FF00FF, // Chase
-      0xFF0000FF, // Attack
-      0xFFFF4400, // Retreat
+    static constexpr color_t goal_color[] = {
+      color_t{136, 136, 136},  // Idle
+      color_t{255, 0, 255},    // Chase 
+      colors::red,             // Attack
+      color_t{0, 68, 255},     // Retreat
     };
 
     for (const auto &bot : bot_debug::g_entries)
     {
       int gi = static_cast<int>(bot.goal);
-      uint32_t color = goal_color[gi < 4 ? gi : 0];
+      color_t color = goal_color[gi < 4 ? gi : 0];
 
       const auto &path = bot.path;
       for (int i = bot.path_index; i + 1 < (int)path.size(); ++i)
       {
         vec3f a = path[i];     a.y += 4.f;
         vec3f b = path[i + 1]; b.y += 4.f;
-        renderer::DrawLine(cmd, a, b, color);
+        renderer::draw_line(cmd, a, b, color);
       }
 
       if (bot.path_index < (int)path.size())
       {
         vec3f wp = path[bot.path_index]; wp.y += 4.f;
         constexpr float r = 8.f;
-        renderer::DrawLine(cmd, {wp.x - r, wp.y, wp.z}, {wp.x + r, wp.y, wp.z}, color);
-        renderer::DrawLine(cmd, {wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);
+        renderer::draw_line(cmd, {wp.x - r, wp.y, wp.z}, {wp.x + r, wp.y, wp.z}, color);
+        renderer::draw_line(cmd, {wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);
       }
 
       auto pit = ctx.last_player_entities.find(bot.slot);
@@ -1205,7 +1196,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
         vec3f tip = {origin.x + std::sin(yaw) * arrow_len,
                      origin.y,
                      origin.z + std::cos(yaw) * arrow_len};
-        renderer::DrawLine(cmd, origin, tip, 0xFFFFFFFF);
+        renderer::draw_line(cmd, origin, tip, colors::white);
       }
     }
   }
@@ -1234,7 +1225,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     p.color_end          = pe->color_end;
     p.alpha_start        = pe->alpha_start;
     p.alpha_end          = pe->alpha_end;
-    renderer::DrawParticles(cmd, p);
+    renderer::draw_particles(cmd, p);
   }
 
   // Jolt physics debug overlay
@@ -1280,7 +1271,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     p.color_end          = {0.4f, 0.4f, 0.4f};
     p.alpha_start        = 0.9f;
     p.alpha_end          = 0.0f;
-    renderer::DrawParticles(cmd, p);
+    renderer::draw_particles(cmd, p);
   }
 }
 

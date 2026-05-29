@@ -1,5 +1,5 @@
 #include "../console.hpp"
-#include "../editor/editor_entity.hpp"
+#include "../editor/editor_bvh.hpp"
 #include "../renderer.hpp"
 #include "../shared/map.hpp"  // For map structs
 #include "../shared/math.hpp" // For math utils

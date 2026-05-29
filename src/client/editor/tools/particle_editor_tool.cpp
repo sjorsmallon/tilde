@@ -7,7 +7,7 @@
 namespace client
 {
 
-void ParticleEditorTool::on_enable(editor_context_t &ctx)
+void Particle_Editor_Tool::on_enable(editor_context_t &ctx)
 {
   selected_emitter_uid = shared::invalid_entity_uid;
 
@@ -22,18 +22,18 @@ void ParticleEditorTool::on_enable(editor_context_t &ctx)
   }
 }
 
-void ParticleEditorTool::on_disable(editor_context_t &) {}
+void Particle_Editor_Tool::on_disable(editor_context_t &) {}
 
-void ParticleEditorTool::on_update(editor_context_t &ctx,
-                                    const viewport_state_t &view)
+void Particle_Editor_Tool::on_update(editor_context_t &ctx,
+                                    const viewport_state_t &view, float /*dt*/)
 {
   m_viewport = view;
 }
 
-void ParticleEditorTool::on_mouse_down(editor_context_t &ctx,
+void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
                                         const mouse_event_t &e)
 {
-  if (e.button != 1)
+  if (e.button != input::MouseButton::Left)
     return;
 
   // Raycast to pick a particle emitter
@@ -68,23 +68,23 @@ void ParticleEditorTool::on_mouse_down(editor_context_t &ctx,
     selected_emitter_uid = best_uid;
 }
 
-void ParticleEditorTool::on_mouse_drag(editor_context_t &, const mouse_event_t &) {}
-void ParticleEditorTool::on_mouse_up(editor_context_t &, const mouse_event_t &) {}
-void ParticleEditorTool::on_key_down(editor_context_t &, const key_event_t &) {}
+void Particle_Editor_Tool::on_mouse_drag(editor_context_t &, const mouse_event_t &) {}
+void Particle_Editor_Tool::on_mouse_up(editor_context_t &, const mouse_event_t &) {}
+void Particle_Editor_Tool::on_key_down(editor_context_t &, const key_event_t &) {}
 
-void ParticleEditorTool::on_draw_overlay(editor_context_t &ctx,
+void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
                                           overlay_renderer_t &renderer)
 {
   // Highlight all particle emitters with a circle, selected one brighter
   for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
   {
-    uint32_t color = (uid == selected_emitter_uid) ? 0xFF00FFFF : 0xFF008080;
+    color_t color = (uid == selected_emitter_uid) ? colors::yellow : color_t{128, 128, 0};
     renderer.draw_circle(emitter->position, 16.f, {0, 1, 0}, color);
     renderer.draw_wire_box(emitter->position, {4, 4, 4}, color);
   }
 }
 
-void ParticleEditorTool::on_draw_ui(editor_context_t &ctx)
+void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
 {
   ImGui::Begin("Particle Editor", nullptr, ImGuiWindowFlags_NoNav);
 

@@ -7,7 +7,6 @@
 #include "log.hpp"
 #include "shader_tool_paths.h"
 #include "imgui.h"
-#include "SDL_scancode.h"
 #include <SDL.h>
 #include <cmath>
 #include <cstring>
@@ -238,57 +237,53 @@ void ShaderEditorState::update(float dt)
   file_watcher.update();
 
   // Escape to return to main menu
-  if (input::is_key_pressed(SDL_SCANCODE_ESCAPE))
+  if (input::is_key_pressed(input::Key::Escape))
   {
     state_manager::switch_to(GameStateKind::MainMenu);
     return;
   }
 
   // Camera controls (only when ImGui doesn't want the mouse)
-  ImGuiIO &io = ImGui::GetIO();
-  if (!io.WantCaptureMouse)
+  if (!input::ui_wants_mouse())
   {
     // RMB drag = orbit
-    if (input::is_mouse_down(SDL_BUTTON_RIGHT))
+    if (input::is_mouse_down(input::MouseButton::Right))
     {
-      int delta_x, delta_y;
-      input::get_mouse_delta(&delta_x, &delta_y);
-      float dy = static_cast<float>(delta_y) * (invert_orbit_y ? -1.0f : 1.0f);
-      orbit_rotate(camera, static_cast<float>(delta_x), dy);
+      linalg::vec2i delta = input::mouse_delta();
+      float dy = static_cast<float>(delta.y) * (invert_orbit_y ? -1.0f : 1.0f);
+      orbit_rotate(camera, static_cast<float>(delta.x), dy);
     }
 
     // MMB drag = pan
-    if (input::is_mouse_down(SDL_BUTTON_MIDDLE))
+    if (input::is_mouse_down(input::MouseButton::Middle))
     {
-      int delta_x, delta_y;
-      input::get_mouse_delta(&delta_x, &delta_y);
-      orbit_pan(camera, static_cast<float>(delta_x),
-                static_cast<float>(delta_y));
+      linalg::vec2i delta = input::mouse_delta();
+      orbit_pan(camera, static_cast<float>(delta.x),
+                static_cast<float>(delta.y));
     }
 
     // Scroll = zoom
-    float scroll = input::get_scroll_delta();
+    float scroll = input::scroll_delta();
     if (scroll != 0.0f)
     {
       orbit_zoom(camera, scroll, 16.0f);
     }
 
     // LMB: select light / drag along facing direction
-    bool mouse_down = input::is_mouse_down(SDL_BUTTON_LEFT);
+    bool mouse_down = input::is_mouse_down(input::MouseButton::Left);
     bool mouse_just_pressed = mouse_down && !mouse_was_down;
 
     if (mouse_just_pressed)
     {
-      int mouse_x, mouse_y;
-      input::get_mouse_pos(&mouse_x, &mouse_y);
+      linalg::vec2i mouse = input::mouse_position();
 
       SDL_Window *window = SDL_GL_GetCurrentWindow();
       int window_width = 1, window_height = 1;
       if (window)
         SDL_GetWindowSize(window, &window_width, &window_height);
 
-      float ndc_x = 2.0f * mouse_x / window_width - 1.0f;
-      float ndc_y = 1.0f - 2.0f * mouse_y / window_height;
+      float ndc_x = 2.0f * mouse.x / window_width - 1.0f;
+      float ndc_y = 1.0f - 2.0f * mouse.y / window_height;
       float aspect_ratio = static_cast<float>(window_width) /
                            static_cast<float>(window_height);
 
@@ -338,8 +333,7 @@ void ShaderEditorState::update(float dt)
         selected_light_index >= 0 &&
         selected_light_index < static_cast<int>(lights.size()))
     {
-      int delta_x, delta_y;
-      input::get_mouse_delta(&delta_x, &delta_y);
+      linalg::vec2i delta = input::mouse_delta();
 
       auto &light = lights[selected_light_index];
       float direction_length = linalg::length(light.direction);
@@ -350,7 +344,7 @@ void ShaderEditorState::update(float dt)
         float camera_distance =
             linalg::length(light.position - camera.position);
         float sensitivity = camera_distance * 0.005f;
-        float move_amount = static_cast<float>(-delta_y) * sensitivity;
+        float move_amount = static_cast<float>(-delta.y) * sensitivity;
         light.position =
             light.position + normalized_direction * move_amount;
       }
@@ -365,7 +359,7 @@ void ShaderEditorState::update(float dt)
   {
     dragging_light = false;
   }
-  mouse_was_down = input::is_mouse_down(SDL_BUTTON_LEFT);
+  mouse_was_down = input::is_mouse_down(input::MouseButton::Left);
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +377,7 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
     look_at(render_camera, render_camera.orbit_target);
   }
 
-  // Set up render_view so DrawLine etc. use the correct VP matrix
+  // Set up render_view so draw_line etc. use the correct VP matrix
   renderer::render_view_t view_def;
   view_def.viewport = {{0, 0}, {1, 1}};
   view_def.camera = render_camera;
@@ -515,20 +509,20 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
   {
     constexpr int half_extent = 8;
     constexpr float step = 32.0f;
-    uint32_t grid_color = 0xFF444444;
-    uint32_t axis_x_color = 0xFF4444CC; // red-ish for X
-    uint32_t axis_z_color = 0xFF44CC44; // green-ish for Z
+    color_t grid_color = colors::grey;
+    color_t axis_x_color = color_t{204, 68, 68}; // red-ish for X
+    color_t axis_z_color = color_t{68, 204, 68}; // green-ish for Z
 
     for (int i = -half_extent; i <= half_extent; i++)
     {
       float offset = static_cast<float>(i) * step;
-      uint32_t color = (i == 0) ? axis_x_color : grid_color;
-      renderer::DrawLine(cmd,
+      color_t color = (i == 0) ? axis_x_color : grid_color;
+      renderer::draw_line(cmd,
                          {static_cast<float>(-half_extent) * step, 0.0f, offset},
                          {static_cast<float>(half_extent) * step, 0.0f, offset},
                          color);
       color = (i == 0) ? axis_z_color : grid_color;
-      renderer::DrawLine(cmd,
+      renderer::draw_line(cmd,
                          {offset, 0.0f, static_cast<float>(-half_extent) * step},
                          {offset, 0.0f, static_cast<float>(half_extent) * step},
                          color);
@@ -539,16 +533,16 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
   for (int i = 0; i < static_cast<int>(lights.size()); i++)
   {
     const auto &light = lights[i];
-    uint32_t light_color =
-        (i == selected_light_index) ? 0xFF00FFFF : 0xFF00FF00; // yellow / green
+    color_t light_color =
+        (i == selected_light_index) ? colors::yellow : colors::green;
 
     float size = 8.0f;
     linalg::vec3f p = light.position;
-    renderer::DrawLine(cmd, {p.x - size, p.y, p.z},
+    renderer::draw_line(cmd, {p.x - size, p.y, p.z},
                        {p.x + size, p.y, p.z}, light_color);
-    renderer::DrawLine(cmd, {p.x, p.y - size, p.z},
+    renderer::draw_line(cmd, {p.x, p.y - size, p.z},
                        {p.x, p.y + size, p.z}, light_color);
-    renderer::DrawLine(cmd, {p.x, p.y, p.z - size},
+    renderer::draw_line(cmd, {p.x, p.y, p.z - size},
                        {p.x, p.y, p.z + size}, light_color);
 
     // Draw frustum / direction visualization
@@ -582,7 +576,7 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
         constexpr int segments = 32;
         constexpr float two_pi = 6.2831853f;
 
-        uint32_t outer_color = light_color;
+        color_t outer_color = light_color;
 
         for (int s = 0; s < segments; s++)
         {
@@ -603,13 +597,13 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
                   (std::sin(angle_next) * outer_radius);
 
           // Base circle
-          renderer::DrawLine(cmd, point_current, point_next,
+          renderer::draw_line(cmd, point_current, point_next,
                              outer_color);
 
           // Cone edge lines from apex (4 lines)
           if (s % 8 == 0)
           {
-            renderer::DrawLine(cmd, p, point_current,
+            renderer::draw_line(cmd, p, point_current,
                                outer_color);
           }
         }
@@ -618,7 +612,7 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
         if (light.spot_inner_degrees > 0.0f &&
             light.spot_inner_degrees < light.spot_outer_degrees)
         {
-          uint32_t inner_color = 0x44FFFFFF;
+          color_t inner_color = with_alpha(colors::white, 0x44);
           float clamped_inner =
               std::min(light.spot_inner_degrees, 89.0f);
           float inner_radius =
@@ -643,7 +637,7 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
                 up_axis *
                     (std::sin(angle_next) * inner_radius);
 
-            renderer::DrawLine(cmd, point_current, point_next,
+            renderer::draw_line(cmd, point_current, point_next,
                                inner_color);
           }
         }

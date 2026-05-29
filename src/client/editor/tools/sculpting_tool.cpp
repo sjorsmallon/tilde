@@ -12,7 +12,7 @@ namespace client
 void Sculpting_Tool::on_enable(editor_context_t &ctx)
 {
   dragging = false;
-  hovered_uid = 0;
+  hovered_uid =  shared::invalid_entity_uid;
 }
 
 void Sculpting_Tool::on_disable(editor_context_t &ctx)
@@ -36,7 +36,7 @@ void Sculpting_Tool::on_disable(editor_context_t &ctx)
 }
 
 void Sculpting_Tool::on_update(editor_context_t &ctx,
-                               const viewport_state_t &view)
+                               const viewport_state_t &view, float /*dt*/)
 {
   last_view = view;
 
@@ -85,7 +85,7 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
 void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
                                    const mouse_event_t &e)
 {
-  if (e.button == 1 && hovered_uid != 0 && ctx.map)
+  if (e.button == input::MouseButton::Left && hovered_uid != 0 && ctx.map)
   {
     dragging = true;
     dragging_uid = hovered_uid;
@@ -259,7 +259,7 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
         else if (axis == 1) size.y = 0;
         else size.z = 0;
 
-        renderer.draw_wire_box(p, size, 0xFF0000FF);
+        renderer.draw_wire_box(p, size, colors::red);
       }
     }
   }

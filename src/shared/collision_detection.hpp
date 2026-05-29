@@ -2,6 +2,7 @@
 #include "bsp.hpp"
 #include "entity.hpp"
 #include "plane.hpp"
+#include <cmath>
 #include <vector>
 
 /*
@@ -35,6 +36,10 @@ struct Collision_Id
   };
 
   Type type;
+  // The meaning of `index` is owned by whoever built the BVH:
+  //   - session BVH (init_session_from_map): a static_entities array position
+  //   - editor BVH (build_editor_bvh):       an entity uid (map.find_by_uid)
+  // Each subsystem only ever queries its own BVH, so there is no ambiguity.
   uint32_t
       index; // Entity generation check happens externally if type == Entity
 };
@@ -92,3 +97,28 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
 
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
                         std::vector<const BVH_Primitive *> &out_primitives);
+
+// Möller–Trumbore ray-triangle intersection. Returns true and sets out_t to the
+// hit distance when the ray crosses the triangle in front of the origin.
+inline bool ray_triangle(const vec3f &origin, const vec3f &dir, const vec3f &v0,
+                         const vec3f &v1, const vec3f &v2, float &out_t)
+{
+  constexpr float epsilon = 1e-6f;
+  vec3f edge1 = v1 - v0;
+  vec3f edge2 = v2 - v0;
+  vec3f h = linalg::cross(dir, edge2);
+  float a = linalg::dot(edge1, h);
+  if (std::abs(a) < epsilon)
+    return false; // ray parallel to triangle
+  float f = 1.0f / a;
+  vec3f s = origin - v0;
+  float u = f * linalg::dot(s, h);
+  if (u < 0.0f || u > 1.0f)
+    return false;
+  vec3f q = linalg::cross(s, edge1);
+  float v = f * linalg::dot(dir, q);
+  if (v < 0.0f || u + v > 1.0f)
+    return false;
+  out_t = f * linalg::dot(edge2, q);
+  return out_t > epsilon;
+}

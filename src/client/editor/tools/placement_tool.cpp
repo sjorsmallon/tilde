@@ -11,7 +11,6 @@
 #include "imgui.h"
 #include "log.hpp"
 #include "renderer.hpp"
-#include <SDL.h>
 
 namespace client
 {
@@ -35,7 +34,7 @@ void Placement_Tool::on_enable(editor_context_t &ctx)
 void Placement_Tool::on_disable(editor_context_t &ctx) { ghost_valid = false; }
 
 void Placement_Tool::on_update(editor_context_t &ctx,
-                               const viewport_state_t &view)
+                               const viewport_state_t &view, float /*dt*/)
 {
   float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
 
@@ -82,7 +81,7 @@ void Placement_Tool::on_update(editor_context_t &ctx,
 void Placement_Tool::on_mouse_down(editor_context_t &ctx,
                                    const mouse_event_t &e)
 {
-  if (e.button == mouse_button::MOUSE_BUTTON_LEFT && ghost_valid && ctx.map && current_entity)
+  if (e.button == input::MouseButton::Left && ghost_valid && ctx.map && current_entity)
   {
     auto new_entity = shared::create_entity_by_type(current_entity->get_type());
     if (!new_entity)
@@ -181,7 +180,8 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
   for (int idx = 0; idx < g_placeable_count && idx < 9; ++idx)
   {
-    if (e.scancode == SDL_SCANCODE_1 + idx)
+    int key_index = static_cast<int>(input::Key::Num1) + idx;
+    if (static_cast<int>(e.key) == key_index)
     {
       select_entity_type(idx);
       return;
