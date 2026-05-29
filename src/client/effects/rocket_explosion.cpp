@@ -2,6 +2,7 @@
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/physics.hpp"
+#include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
 
 namespace client::effects
@@ -17,10 +18,11 @@ namespace client::effects
 // cast from a point stepped out along the normal back into the wall to find
 // the local contact. Airbursts skip the cast entirely (no surface).
 //
-// Phase 1: cast result is logged. Decal renderer / sound bolt in later. The
-// visible explosion particle effect is pushed onto ctx.explosion_effects
-// here — previously inferred from "rocket disappeared from snapshot" in
-// play_state, now produced by the explicit cosmetic dispatch.
+// Phase 1: cast result is logged; decal renderer bolts in later. The visible
+// explosion particle effect is pushed onto ctx.explosion_effects here —
+// previously inferred from "rocket disappeared from snapshot" in play_state,
+// now produced by the explicit cosmetic dispatch. The explosion sound is
+// played spatialized at the detonation origin.
 void on_rocket_explosion(client_context_t &context,
                          const shared::effect_data_t &data)
 {
@@ -84,6 +86,12 @@ void on_rocket_explosion(client_context_t &context,
   fx.time_remaining  = 1.2f;
   fx.explosion_index = context.next_explosion_index++;
   context.explosion_effects.push_back(fx);
+
+  // Spatialized blast at the detonation point. The audio system is borrowed
+  // and may be null (audio init failed / non-play state); play_3d also no-ops
+  // gracefully if the file is missing.
+  if (context.audio)
+    context.audio->play_3d("resources/sounds/rocket_explosion.wav", data.origin);
 }
 
 } // namespace client::effects

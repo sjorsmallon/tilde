@@ -26,6 +26,12 @@ namespace effects
 {
 void on_rocket_explosion(client_context_t &context,
                          const shared::effect_data_t &data);
+void on_footstep(client_context_t &context,
+                 const shared::effect_data_t &data);
+void on_jump(client_context_t &context,
+             const shared::effect_data_t &data);
+void on_land(client_context_t &context,
+             const shared::effect_data_t &data);
 }
 
 void register_effect_handler(shared::effect_type_t type,
@@ -57,7 +63,11 @@ void register_all_effect_handlers()
 
   register_effect_handler(shared::effect_type_t::ROCKET_EXPLOSION,
                           &effects::on_rocket_explosion);
-  // BULLET_IMPACT, FOOTSTEP: handlers land in later PRs.
+  register_effect_handler(shared::effect_type_t::FOOTSTEP,
+                          &effects::on_footstep);
+  register_effect_handler(shared::effect_type_t::JUMP, &effects::on_jump);
+  register_effect_handler(shared::effect_type_t::LAND, &effects::on_land);
+  // BULLET_IMPACT: handler lands in a later PR.
 }
 
 void dispatch_received_effects(client_context_t &context,

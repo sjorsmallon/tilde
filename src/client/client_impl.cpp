@@ -1,9 +1,12 @@
 #include "../shared/entity_system.hpp"
+#include "audio/audio_system.hpp"
 #include "client_api.hpp"
 #include "console.hpp"
 #include "cosmetic_events.hpp"
 #include "renderer.hpp"
 #include "state_manager.hpp"
+
+#include <memory>
 
 #include <chrono>
 #include <iostream>
@@ -23,6 +26,7 @@ namespace client
 static SDL_Window *g_window = nullptr;
 static std::chrono::high_resolution_clock::time_point g_last_tick_time;
 static bool g_tick_time_initialized = false;
+static std::unique_ptr<audio_system_t> g_audio;
 
 bool Init()
 {
@@ -64,6 +68,13 @@ bool Init()
   // one function — registration must happen before the first snapshot can
   // arrive, so it lives in client Init() rather than PlayState::on_enter.
   register_all_effect_handlers();
+
+  // Bring up audio and lend the shared context a borrowed pointer. A failed
+  // audio init is non-fatal — the engine becomes inert and play_* no-op — so
+  // a machine with no sound device still runs.
+  g_audio = std::make_unique<audio_system_t>();
+  g_audio->init();
+  state_manager::get_client_context().audio = g_audio.get();
 
   return true;
 }
@@ -170,6 +181,13 @@ void Shutdown()
 
   state_manager::shutdown();
   renderer::Shutdown();
+
+  if (g_audio)
+  {
+    state_manager::get_client_context().audio = nullptr;
+    g_audio->shutdown();
+    g_audio.reset();
+  }
 
   if (g_window)
   {

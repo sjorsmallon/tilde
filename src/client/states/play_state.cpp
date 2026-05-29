@@ -1,4 +1,5 @@
 #include "play_state.hpp"
+#include "../audio/audio_system.hpp"
 #include "../console.hpp"
 #include "../cosmetic_events.hpp"
 #include "../game_events.hpp"
@@ -386,6 +387,7 @@ void PlayState::update(float dt)
 
         if (static_cast<int32_t>(slot_index) == ctx.my_slot)
         {
+          ctx.my_entity_uid = entity_id;
           ctx.last_server_position = temp.position;
           ctx.last_server_velocity = temp.velocity;
           ctx.last_server_ack_command =
@@ -511,6 +513,11 @@ void PlayState::update(float dt)
   camera.pitch = ctx.player_pitch;
   auto basis = get_orientation_vectors(camera);
 
+  // Keep the audio listener glued to the local player's eye each frame so
+  // spatialized cosmetic sounds pan/attenuate relative to where we're looking.
+  if (ctx.audio)
+    ctx.audio->update(ctx.player_position, basis.forward, basis.up);
+
   // --- Gather move input (suppressed while console is open) ---
   uint64_t buttons = 0;
   if (!console_open)
@@ -541,6 +548,14 @@ void PlayState::update(float dt)
 
   Move_Input move_input = move_input_from_buttons(buttons);
 
+  // Movement cosmetics produced by this frame's predicted tick(s). We play the
+  // local player's jump/land here, immediately, off prediction — no server
+  // round-trip — so our own feedback is zero-latency. The server still
+  // broadcasts these (tagged with our uid) for *other* clients; our own copy is
+  // suppressed there by my_entity_uid. Reconciliation replays below pass no
+  // out-events, so corrections never re-trigger sounds.
+  Move_Events frame_move_events{};
+
   // --- Client-side prediction ---
   // When connected, physics steps at the server tickrate so prediction matches
   // the server. Accumulate real frame time and step in fixed increments.
@@ -562,13 +577,25 @@ void PlayState::update(float dt)
       move_cmd.set_buttons_bitfield(buttons);
       network::send_protobuf_message(conn, move_cmd);
 
+      Move_Events tick_events{};
       auto [new_pos, new_vel] =
           player_move(move_input, ctx.session.bvh, ctx.player_position,
                       ctx.player_velocity, basis.forward, basis.right,
-                      player_half_width, player_half_height, tick_dt);
+                      player_half_width, player_half_height, tick_dt,
+                      &tick_events);
 
       ctx.player_position = new_pos;
       ctx.player_velocity = new_vel;
+
+      // Coalesce across the (possibly multiple) ticks stepped this frame:
+      // jump is a one-shot, landing keeps the hardest impact.
+      frame_move_events.jumped |= tick_events.jumped;
+      if (tick_events.landed &&
+          tick_events.land_impact_speed > frame_move_events.land_impact_speed)
+      {
+        frame_move_events.landed            = true;
+        frame_move_events.land_impact_speed = tick_events.land_impact_speed;
+      }
 
       int idx = ctx.command_number % (int)ctx.pending_commands.size();
       ctx.pending_commands[idx] = {ctx.command_number,    move_input,
@@ -582,10 +609,21 @@ void PlayState::update(float dt)
     auto [new_pos, new_vel] =
         player_move(move_input, ctx.session.bvh, ctx.player_position,
                     ctx.player_velocity, basis.forward, basis.right,
-                    player_half_width, player_half_height, dt);
+                    player_half_width, player_half_height, dt, &frame_move_events);
 
     ctx.player_position = new_pos;
     ctx.player_velocity = new_vel;
+  }
+
+  // Local player's movement sounds — centered (2D), since it's us. Other
+  // players' jumps/lands arrive as spatialized cosmetic effects from the server.
+  if (ctx.audio)
+  {
+    if (frame_move_events.jumped)
+      ctx.audio->play_2d("resources/sounds/player_jump.wav");
+    if (frame_move_events.landed &&
+        frame_move_events.land_impact_speed > MIN_LAND_IMPACT_SPEED)
+      ctx.audio->play_2d("resources/sounds/player_land.wav");
   }
 
   // --- Decay visual error offset (frame-rate independent) ---

@@ -4,6 +4,7 @@
 #include "../../shared/linalg.hpp"
 #include "../../shared/network/network_types.hpp"
 #include "../../shared/physics.hpp"
+#include "../server_context.hpp"
 #include <vector>
 
 namespace server
@@ -64,10 +65,10 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
                     int32_t slot, BotType type = BotType::Regular,
                     BotPersonality personality = {});
 
-// Called once per server tick.
+// Called once per server tick. Takes the full context (matching the other
+// systems) so bots can dispatch movement cosmetics (jump/land) like players do.
 void update_bots(std::vector<Bot_State> &bots,
-                 shared::game_session_t  &session,
-                 physics_state_t         &physics,
+                 server_context_t        &context,
                  float                    dt);
 
 } // namespace server

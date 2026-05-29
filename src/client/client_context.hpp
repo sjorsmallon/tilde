@@ -15,6 +15,8 @@
 namespace client
 {
 
+struct audio_system_t; // owned by client_impl.cpp; see Init()/Shutdown()
+
 struct client_context_t
 {
   // --- Shared game world (entities, BVH, navmesh) ---
@@ -27,6 +29,10 @@ struct client_context_t
   enum class Connection_Phase { Disconnected, Connecting, Connected };
   Connection_Phase connection_phase = Connection_Phase::Disconnected;
   int my_slot = -1;
+  // Local player's entity uid, learned from the first self snapshot. Used to
+  // suppress server-dispatched cosmetic effects attached to our own player
+  // (jump/land), which we already played locally via prediction. 0 until known.
+  shared::entity_uid_t my_entity_uid = 0;
   int command_number = 0;
   uint32_t server_tickrate = 60;
 
@@ -102,6 +108,13 @@ struct client_context_t
   // rocket-explosion handler) cast against this to resolve surface contact
   // locally. Null in editor / menu states and during reconnects.
   physics_state_t *physics_state = nullptr;
+
+  // --- Client audio ---
+  // Borrowed pointer to the client-global audio system (owned in
+  // client_impl.cpp, lives for the whole client session). Cosmetic-effect
+  // handlers play sounds through this. Always non-null after client Init();
+  // handlers guard it anyway in case audio init failed.
+  audio_system_t *audio = nullptr;
 
   // --- Client-side transient visual effects ---
   struct explosion_effect_t

@@ -6,6 +6,7 @@
 #include "../shared/entities/trigger_volume_entity.hpp"
 #include "server_api.hpp"
 #include "trigger_action_registry.hpp"
+#include "cosmetic_events.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/physics_body_system.hpp"
 #include "systems/respawn_system.hpp"
@@ -599,14 +600,36 @@ bool Tick()
 
     float tick_dt = static_cast<float>(get_tick_interval());
 
+    Move_Events move_events{};
     auto [new_pos, new_vel] =
         player_move(input, g_state.session.bvh, player->position,
-                    player->velocity, front, right_dir, 16.f, 36.f, tick_dt);
+                    player->velocity, front, right_dir, 16.f, 36.f, tick_dt,
+                    &move_events);
 
     player->position = new_pos;
     player->velocity = new_vel;
     player->view_angle_yaw = yaw;
     player->view_angle_pitch = pitch;
+
+    // Broadcast movement cosmetics tagged with this player's uid. Every client
+    // receives them, but the player who made the move suppresses their own copy
+    // (already played locally via prediction — see client jump/land handlers),
+    // so only *other* clients hear it, spatialized at the player's position.
+    if (move_events.jumped)
+    {
+      shared::effect_data_t fx{};
+      fx.origin          = new_pos;
+      fx.attached_entity = player->entity_id;
+      dispatch_effect(g_state, shared::effect_type_t::JUMP, fx);
+    }
+    if (move_events.landed && move_events.land_impact_speed > MIN_LAND_IMPACT_SPEED)
+    {
+      shared::effect_data_t fx{};
+      fx.origin          = new_pos;
+      fx.scale           = move_events.land_impact_speed; // for volume scaling
+      fx.attached_entity = player->entity_id;
+      dispatch_effect(g_state, shared::effect_type_t::LAND, fx);
+    }
 
     if (g_state.physics)
     {
@@ -674,7 +697,7 @@ bool Tick()
     log_error("Server tick with no physics state — Init() must have failed");
     return false;
   }
-  update_bots(g_bots, g_state.session, *g_state.physics, tick_dt);
+  update_bots(g_bots, g_state, tick_dt);
   update_rockets(g_state, tick_dt);
   // Respawn drain runs after damage systems so any deaths registered this
   // tick are eligible for the deadline check (delay is >0 ticks, so a

@@ -616,7 +616,8 @@ std::tuple<vec3, vec3> player_move(
     const Move_Input &input,
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
-    const vec3 &right, const float half_width, const float half_height, const float dt)
+    const vec3 &right, const float half_width, const float half_height,
+    const float dt, Move_Events *out_events)
 {
   timed_function();
   // Resolve collisions: push player out of entities and collect contact planes
@@ -775,6 +776,11 @@ std::tuple<vec3, vec3> player_move(
     }
   }
 
+  // A jump impulse is applied exactly when we ran the grounded walk path (not
+  // the step-glide path) with jump held — that's where my_walk_move sets
+  // new_velocity.y = jumpspeed. The step path discards any jump, so exclude it.
+  bool jumped = grounded && input.jump_pressed && !used_step;
+
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.
   Collider_Planes post_planes =
@@ -792,8 +798,14 @@ std::tuple<vec3, vec3> player_move(
   //
   // We do a plain Y=0 snap here, NOT clip_vector — overbounce would push
   // velocity slightly upward, which fails the grounded check (vel_y <= 0).
+  // This snap firing on a downward velocity *is* a landing: the player came in
+  // falling (air_move leaves new_vel.y negative) and the ground arrests it.
+  // Walking/resting on flat ground never trips this — my_walk_move zeroes y, so
+  // new_vel.y is already 0. The arrested speed is the impact magnitude.
+  float land_impact_speed = 0.f;
   if (!post_planes.ground_planes.empty() && new_vel.y < 0.f)
   {
+    land_impact_speed = -new_vel.y;
     new_vel.y = 0.f;
   }
 
@@ -806,6 +818,13 @@ std::tuple<vec3, vec3> player_move(
   {
     if (dot(new_vel, plane.normal) < 0.f)
       new_vel = clip_vector(new_vel, plane.normal, overbounce);
+  }
+
+  if (out_events)
+  {
+    out_events->jumped            = jumped;
+    out_events->landed            = land_impact_speed > 0.f;
+    out_events->land_impact_speed = land_impact_speed;
   }
 
   return {new_pos, new_vel};

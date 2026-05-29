@@ -43,16 +43,12 @@ dispatched_effect_t deserialize_effect(network::Bit_Reader &reader)
   dispatched_effect_t effect{};
   uint32_t type_id = reader.read_bits(16);
 
-  switch (static_cast<effect_type_t>(type_id))
+  // The enum is contiguous from 0, so a range check against COUNT is exactly a
+  // membership test — no per-type allowlist to keep in sync with the enum.
+  if (type_id >= static_cast<uint32_t>(effect_type_t::COUNT))
   {
-    case effect_type_t::ROCKET_EXPLOSION:
-    case effect_type_t::BULLET_IMPACT:
-    case effect_type_t::FOOTSTEP:
-      break;
-    default:
-      log_error("deserialize_effect: unknown effect_type_t {}", type_id);
-      assert(false);
-      break;
+    log_error("deserialize_effect: unknown effect_type_t {}", type_id);
+    assert(false);
   }
   effect.type = static_cast<effect_type_t>(type_id);
 

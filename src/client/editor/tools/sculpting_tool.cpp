@@ -140,6 +140,8 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           {last_view.camera.position.x, last_view.camera.position.y, last_view.camera.position.z},
           last_view.camera.yaw, last_view.camera.pitch);
 
+      // view space meaning the camera is at 0,0,0.
+
       bool valid_projection = true;
       if (!last_view.camera.orthographic && (v0.z > -0.1f || v1.z > -0.1f))
       {
@@ -168,40 +170,22 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           float world_delta = k;
 
           int axis = shared::box_face_axis(dragging_face);
-          bool positive_face = shared::box_face_is_positive(dragging_face);
+          float face_sign =
+              shared::box_face_is_positive(dragging_face) ? 1.0f : -1.0f;
 
-          float *ext = nullptr;
-          float *cen = nullptr;
-          if (axis == 0)
-          {
-            ext = &volume->half_extents.x;
-            cen = &entry->entity->position.x;
-          }
-          else if (axis == 1)
-          {
-            ext = &volume->half_extents.y;
-            cen = &entry->entity->position.y;
-          }
-          else
-          {
-            ext = &volume->half_extents.z;
-            cen = &entry->entity->position.z;
-          }
+          float &extent = volume->half_extents[axis];
+          float &center = entry->entity->position[axis];
 
-          *ext += world_delta * 0.5f;
-          if (positive_face)
-            *cen += world_delta * 0.5f;
-          else
-            *cen -= world_delta * 0.5f;
+          // Grow the box by half the drag, and shift the center by the same
+          // amount toward the dragged face so the opposite face stays put.
+          extent += world_delta * 0.5f;
+          center += face_sign * world_delta * 0.5f;
 
-          if (*ext < editor::MIN_EXTENT)
+          if (extent < editor::MIN_EXTENT)
           {
-            float diff = editor::MIN_EXTENT - *ext;
-            *ext = editor::MIN_EXTENT;
-            if (positive_face)
-              *cen -= diff;
-            else
-              *cen += diff;
+            float diff = editor::MIN_EXTENT - extent;
+            extent = editor::MIN_EXTENT;
+            center -= face_sign * diff;
           }
         }
       }
@@ -211,7 +195,7 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 
 void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 {
-  if (dragging && dragging_uid != 0 && ctx.map && ctx.transaction_system)
+  if (dragging && dragging_uid != shared::invalid_entity_uid && ctx.map && ctx.transaction_system)
   {
     if (!sculpt_start_props.empty())
     {

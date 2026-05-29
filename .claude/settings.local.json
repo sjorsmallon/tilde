@@ -57,7 +57,11 @@
       "Bash(echo \"test_entity_delta_packing: $?\")",
       "Bash(cmake --build \"c:/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build\" -j8 --target game_client)",
       "Bash(cmake --build \"c:/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build\" -j8)",
-      "Bash(git -C \"c:/Users/sjors/Desktop/Projects/tilde/tilde\" rm src/client/editor/editor_entity.hpp)"
+      "Bash(git -C \"c:/Users/sjors/Desktop/Projects/tilde/tilde\" rm src/client/editor/editor_entity.hpp)",
+      "Bash(cmake --build \"c:/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build\" --target game_client -j8)",
+      "Bash(echo \"---exit:$?---\")",
+      "Bash(cmake --build cmake_build -j8 --target MyGame_Server)",
+      "Bash(echo \"exit:$?\")"
     ]
   }
 }

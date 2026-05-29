@@ -1,4 +1,12 @@
 
+## Audio
+- settings menu: at minimum let the player select the audio output device
+  (currently we just open the OS default playback device — see
+  audio_system_t::init). Needs a ma_context + ma_context_get_devices() to
+  enumerate playback devices, then pass the chosen ma_device_id via
+  ma_engine_config.pPlaybackDeviceID. Probably also master/sfx volume sliders
+  and a backend selector (WASAPI/DirectSound) in the same panel.
+
 - orientation is not clear whether it uses euler angles / degrees / radians. we are inconsistent. that's not good
 - nested schemas are annoying. can we clean that code up?
 

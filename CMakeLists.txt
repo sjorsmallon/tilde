@@ -85,6 +85,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(JoltPhysics)
 
+# 6. miniaudio (single-header audio backend)
+# Header-only: we don't use its CMakeLists (it builds tests/examples), just
+# populate the source and compile the implementation in our own TU
+# (src/client/audio/miniaudio_impl.cpp).
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG 0.11.21
+)
+FetchContent_GetProperties(miniaudio)
+if(NOT miniaudio_POPULATED)
+    FetchContent_Populate(miniaudio)
+endif()
+
 # this is to silence a lot of schema warnings.
 if(MSVC)
     add_compile_options(/Zc:preprocessor)
@@ -226,6 +240,10 @@ add_library(game_client SHARED
     src/client/client_impl.cpp
     src/client/cosmetic_events.cpp
     src/client/effects/rocket_explosion.cpp
+    src/client/effects/footstep.cpp
+    src/client/effects/player_movement.cpp
+    src/client/audio/audio_system.cpp
+    src/client/audio/miniaudio_impl.cpp
     src/client/game_events.cpp
     src/client/hud/kill_feed.cpp
     src/client/console.cpp
@@ -247,10 +265,12 @@ add_library(game_client SHARED
     src/client/shader_tool_runtime.cpp
     ${SHADER_HEADERS}
 )
-target_include_directories(game_client PUBLIC 
+target_include_directories(game_client PUBLIC
     src/client
     ${SHADER_OUT_DIR}
 )
+# miniaudio.h lives at the populated source root; only game_client needs it.
+target_include_directories(game_client PRIVATE ${miniaudio_SOURCE_DIR})
 target_link_libraries(game_client PUBLIC 
     game_shared 
     Vulkan::Vulkan 

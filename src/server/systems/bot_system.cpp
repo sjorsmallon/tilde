@@ -1,5 +1,6 @@
 #include "bot_system.hpp"
 
+#include "../cosmetic_events.hpp"
 #include "../../shared/bot_debug.hpp"
 #include "../../shared/entities/player_entity.hpp"
 #include "../../shared/entities/rocket_entity.hpp"
@@ -77,10 +78,12 @@ static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
 }
 
 void update_bots(std::vector<Bot_State> &bots,
-                 shared::game_session_t  &session,
-                 physics_state_t         &physics,
+                 server_context_t        &context,
                  float                    dt)
 {
+  shared::game_session_t &session = context.session;
+  physics_state_t        &physics = *context.physics;
+
   // Refresh debug bridge every tick so the client can visualise bot state.
   bot_debug::clear();
   for (const auto &bot : bots)
@@ -290,13 +293,33 @@ void update_bots(std::vector<Bot_State> &bots,
     float rlen  = linalg::length(right);
     if (rlen > 0.001f) right = right * (1.f / rlen);
 
+    Move_Events move_events{};
     auto [new_pos, new_vel] =
         player_move(input, session.bvh, bot_ent->position, bot_ent->velocity,
                     front, right, bot.personality.move_speed,
-                    network::player_half_height, dt);
+                    network::player_half_height, dt, &move_events);
 
     bot_ent->position = new_pos;
     bot_ent->velocity = new_vel;
+
+    // Movement cosmetics, same as real players. Bots are never the local
+    // player on any client, so no originator-suppression is needed — every
+    // client hears these spatialized at the bot's position.
+    if (move_events.jumped)
+    {
+      shared::effect_data_t fx{};
+      fx.origin          = new_pos;
+      fx.attached_entity = bot_ent->entity_id;
+      dispatch_effect(context, shared::effect_type_t::JUMP, fx);
+    }
+    if (move_events.landed && move_events.land_impact_speed > MIN_LAND_IMPACT_SPEED)
+    {
+      shared::effect_data_t fx{};
+      fx.origin          = new_pos;
+      fx.scale           = move_events.land_impact_speed;
+      fx.attached_entity = bot_ent->entity_id;
+      dispatch_effect(context, shared::effect_type_t::LAND, fx);
+    }
 
     set_kinematic_pose(physics,
                        bot_ent->entity_id,

@@ -11,13 +11,19 @@ namespace shared
 {
 
 // Closed enum of every cosmetic effect the server can dispatch. The set is
-// intentionally finite — grep finds every dispatch site. Add new types here
-// (and a matching client handler in src/client/effects/) as needed.
+// intentionally finite — grep finds every dispatch site. To add a type: add it
+// here (before COUNT) and a matching client handler in src/client/effects/.
+// The wire validator range-checks against COUNT, so a new value is accepted off
+// the wire automatically — no hand-maintained allowlist to forget.
 enum class effect_type_t : uint16_t
 {
   ROCKET_EXPLOSION,
   BULLET_IMPACT,
   FOOTSTEP,
+  JUMP,
+  LAND,
+
+  COUNT // keep last — number of effect types, never serialized as a real value
 };
 
 // One fixed-shape payload for every effect. Handlers read the fields they
