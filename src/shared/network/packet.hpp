@@ -9,7 +9,10 @@
 namespace network
 {
 
-// these map linearly to the protobuf message types.
+// The first block maps linearly to the protobuf message types. The trailing
+// entries (CmdChangeMap onward) are bitstream-native map-transfer control
+// messages with no protobuf equivalent — they carry a hand-serialized payload
+// (see shared/network/map_transfer.hpp) and so have no Packet_Traits mapping.
 enum class Message_Type : uint8
 {
   C2S_PlayerMoveCommand,
@@ -20,6 +23,10 @@ enum class Message_Type : uint8
   C2S_Command,
   S2C_BotDebug,
   S2C_GameEventBatch,
+  CmdChangeMap,       // S2C: switch to a new map (bitstream-native)
+  C2S_MapLoaded,      // C2S: client finished (re)loading the map (bitstream-native)
+  C2S_RequestMapData, // C2S: client lacks the compiled package; stream it
+  S2C_MapData,        // S2C: the compiled map package blob (bitstream-native)
 };
 
 // --------------------------------------------------------------------------------
@@ -95,18 +102,19 @@ template <> struct Packet_Traits<game::S2C_GameEventBatch>
 
 struct Packet_Header
 {
-  uint64 timestamp;     //  when was this sent?
-  uint8 sequence_id;    // is this part of a sequence of packets?
-  uint8 sequence_count; // how many packets in this sequence?
-  uint8 sequence_idx;   // w  hich packet is this in the sequence?
-  uint8 message_type;   // what type of message is this? (enum )
-  uint16 payload_size;  // how big is the payload?
+  uint64 timestamp;      //  when was this sent?
+  // Fragmentation: a message too big for one packet is split into fragments.
+  // ("sequence" is deliberately avoided here — that word is reserved for the
+  // future packet-level ack layer; this axis is message/fragment, not packet.)
+  uint8 message_id;      // which message this fragment belongs to (NOT message_type)
+  uint8 fragment_count;  // how many fragments the message was split into
+  uint8 fragment_index;  // this fragment's index within the message
+  uint8 message_type;    // what KIND of message this is (enum)
+  uint16 payload_size;   // how big is the payload?
 };
 
 // Alignment and sizing
 // 1452 is a common MTU size (Ethernet 1500 - IP 20 - UDP 8 - potential PPPoE 8)
-// User requested: constexpr size_t MAX_BUFFER_SIZE_IN_BYTES = 1452 -
-// sizeof(Packet_Header);
 constexpr size_t MAX_PACKET_SIZE_IN_BYTES = 1200;
 constexpr size_t MAX_PAYLOAD_SIZE_IN_BYTES =
     MAX_PACKET_SIZE_IN_BYTES - sizeof(Packet_Header) -
@@ -115,13 +123,28 @@ constexpr size_t MAX_PAYLOAD_SIZE_IN_BYTES =
 struct Packet
 {
   Packet_Header header;
-  int padding_for_alignment; // User requested padding
+  int padding_for_alignment;
   uint8 buffer[MAX_PAYLOAD_SIZE_IN_BYTES];
 };
 
-// Helper: Chunk a large buffer into serialized packets
+// Helper: Chunk a large buffer into serialized packets (fragments of a message)
+//
+// next_message_id is the sender's rolling counter: every fragment of THIS
+// message shares one id taken from it, then the counter advances so the NEXT
+// message gets a distinct id. The receiver groups fragments via
+// partial_packets[message_id], so distinct ids are what keep two concurrent
+// multi-fragment messages — e.g. a large map stream and the per-tick entity
+// snapshots — from sharing one reassembly bucket and corrupting each other.
+// The id is assigned here rather than by the caller so a fragmented message can
+// never accidentally go out with a zeroed id (all of which alias into one bucket).
+//
+// The counter is a uint8 and wraps at 256. That's safe: a bucket is freed the
+// moment its message completes, and only a handful of messages are ever in
+// flight at once, so a wrap can't alias a still-open bucket in practice. (True
+// reliability — ack/retransmit — is separate future work; see todo.md.)
 inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
-                                              uint8 message_type = 0)
+                                              uint8 message_type,
+                                              uint8 &next_message_id)
 {
   std::vector<Packet> packets;
   size_t total_size = data.size();
@@ -132,22 +155,24 @@ inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
 
   if (packet_count > 255)
   {
-    // Warning: sequence_count is uint8. This simplistic function only supports
-    // 255 fragments. In production, we'd need a larger sequence or flow
-    // control. For now, capping.
-    log_warning("Packet too large for single sequence, capping at 255");
+    // Warning: fragment_count is uint8. This simplistic function only supports
+    // 255 fragments. In production, we'd need a wider count or flow control.
+    // For now, capping.
+    log_error("Message too large to fragment, capping at 255 fragments");
     packet_count = 255;
   }
 
   packets.reserve(packet_count);
 
+  const uint8 message_id = next_message_id++;
+
   for (size_t i = 0; i < packet_count; ++i)
   {
     Packet packet = {};
     packet.header.message_type = message_type;
-    packet.header.sequence_id = 0; // Needs to be set by caller (session logic)
-    packet.header.sequence_count = static_cast<uint8>(packet_count);
-    packet.header.sequence_idx = static_cast<uint8>(i);
+    packet.header.message_id = message_id;
+    packet.header.fragment_count = static_cast<uint8>(packet_count);
+    packet.header.fragment_index = static_cast<uint8>(i);
     // Timestamp should be set by sender just before sending
 
     size_t offset = i * MAX_PAYLOAD_SIZE_IN_BYTES;

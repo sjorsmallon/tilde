@@ -3,8 +3,10 @@
 #include "../shared/cosmetic_events.hpp"
 #include "../shared/game_events.hpp"
 #include "../shared/game_session.hpp"
+#include "../shared/map.hpp"
 #include "../shared/network/server_connection_state.hpp"
 #include "../shared/physics.hpp"
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <set>
@@ -22,6 +24,24 @@ struct server_context_t
 {
   network::Server_Connection_State net;
   shared::game_session_t session;
+
+  // The map the server is currently running, as loaded by load_map_into_state().
+  // current_map is the retained map_t (kept, not discarded after session init) so
+  // we can serialize it for streaming/hashing without re-reading disk.
+  // current_map_path is what we loaded from disk (sent to clients so they can
+  // load the same file); map_content_hash is the FNV-1a of the canonical
+  // serialization (compute_map_content_hash), computed once at load and echoed on
+  // connect so clients can verify a match.
+  shared::map_t current_map;
+  std::string   current_map_path;
+  uint32_t      map_content_hash = 0;
+
+  // Per-slot "has this client finished loading the current map?" gate. Set true
+  // when a client connects (it loads before connecting) and again when it acks
+  // C2S_MapLoaded; set false for every connected client the moment we broadcast
+  // a CmdChangeMap. Snapshots are withheld from a not-ready client so it never
+  // receives entity deltas for a map it isn't running yet.
+  std::array<bool, network::sv_max_player_count> client_map_ready{};
   // Heap-allocated so construction is deferred past static init: physics_state_t
   // contains a JPH::TempAllocatorImpl that calls AlignedAlloc (Jolt's allocator)
   // in its constructor, which crashes if jolt_init() hasn't been called yet.

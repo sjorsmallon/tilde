@@ -13,6 +13,7 @@
 #include "systems/rocket_system.hpp"
 
 #include <cmath>
+#include <filesystem>
 #include <format>
 #include <optional>
 #include <string>
@@ -21,6 +22,7 @@
 #include "log.hpp"
 
 #include "network/bitstream.hpp"
+#include "network/map_transfer.hpp"
 #include "network/quantization.hpp"
 #include "network/server_connection_state.hpp"
 #include "server_context.hpp"
@@ -40,7 +42,8 @@ cvar::CVar<float> sv_tickrate("sv_tickrate", 60.0f, "Server tick rate in Hz");
 // Send a text message to a specific client to display in their console
 static void send_text_message_to_a_specific_client(network::Udp_Socket &socket,
                                 const network::Address &ip,
-                                std::string_view text)
+                                std::string_view text,
+                                network::uint8 &next_message_id)
 {
   game::S2C_ServerMessage msg;
   msg.set_message(std::string(text));
@@ -48,7 +51,8 @@ static void send_text_message_to_a_specific_client(network::Udp_Socket &socket,
   msg.SerializeToArray(buf.data(), static_cast<int>(buf.size()));
   constexpr network::uint8 type_id =
       static_cast<network::uint8>(network::Message_Type::S2C_ServerMessage);
-  for (const auto &pkt : network::convert_to_packets(buf, type_id))
+  auto packets = network::convert_to_packets(buf, type_id, next_message_id);
+  for (const auto &pkt : packets)
     socket.send(pkt, ip);
 }
 
@@ -60,7 +64,8 @@ static void broadcast_server_message(network::Server_Connection_State &net,
   for (int i = 0; i < network::sv_max_player_count; ++i)
   {
     if (net.player_slots[i])
-      send_text_message_to_a_specific_client(socket, net.player_ips[i], text);
+      send_text_message_to_a_specific_client(socket, net.player_ips[i], text,
+                                             net.next_message_id);
   }
 }
 
@@ -68,7 +73,8 @@ static void broadcast_server_message(network::Server_Connection_State &net,
 // register stubs for unknown names. Stubs make server commands appear in
 // autocomplete and let `bind` reference them by name.
 static void send_cvar_sync(network::Udp_Socket &socket,
-                           const network::Address &ip)
+                           const network::Address &ip,
+                           network::uint8 &next_message_id)
 {
   game::S2C_CVarSync msg;
   cvar::CVarSystem::Get().VisitAll(
@@ -92,7 +98,8 @@ static void send_cvar_sync(network::Udp_Socket &socket,
   msg.SerializeToArray(buf.data(), static_cast<int>(buf.size()));
   constexpr network::uint8 type_id =
       static_cast<network::uint8>(network::Message_Type::S2C_CVarSync);
-  for (const auto &pkt : network::convert_to_packets(buf, type_id))
+  auto packets = network::convert_to_packets(buf, type_id, next_message_id);
+  for (const auto &pkt : packets)
     socket.send(pkt, ip);
 }
 
@@ -229,6 +236,45 @@ cvar::Console_Command cmd_spawn_cube(
     "Spawn a physics cube in front of the calling player",
     cvar::flags::Server);
 
+// Switch the running map. Server-flagged so the client console forwards
+// `map <name>` over the network; the server runs reload_map(), which keeps
+// players connected, re-spawns them into the new world, and broadcasts
+// CmdChangeMap so every client follows the switch.
+cvar::Console_Command cmd_map(
+    "map",
+    [](std::span<std::string_view> args, const cvar::command_context_t &)
+    {
+      if (args.empty())
+      {
+        log_error("map: usage: map <path>  (e.g. 'map new_map.source' or "
+                  "'map maps/test')");
+        return;
+      }
+
+      // Resolve a bare name against maps/ as a convenience. Check existence
+      // BEFORE reload_map — reload_map tears down the current world before it
+      // validates the load, so a typo would otherwise wipe everyone into an
+      // empty session.
+      std::string path(args[0]);
+      if (!std::filesystem::exists(path) &&
+          std::filesystem::exists("maps/" + path))
+      {
+        path = "maps/" + path;
+      }
+      if (!std::filesystem::exists(path))
+      {
+        log_error("map: '{}' not found (also tried 'maps/{}'). Not switching.",
+                  std::string(args[0]), std::string(args[0]));
+        return;
+      }
+
+      log_terminal("map: switching to '{}'", path);
+      if (!reload_map(path))
+        log_error("map: failed to load '{}'", path);
+    },
+    "Switch the server to a new map. Usage: map <path>",
+    cvar::flags::Server);
+
 cvar::Console_Command cmd_spawn_sphere(
     "spawn_sphere",
     [](std::span<std::string_view>, const cvar::command_context_t &context)
@@ -297,6 +343,9 @@ static bool load_map_into_state(const std::string &map_path)
   init_physics(*g_state.physics);
 
   g_state.session = {};
+  g_state.current_map = {};
+  g_state.current_map_path.clear();
+  g_state.map_content_hash = 0;
   g_bots.clear();
   g_next_bot_slot = BOT_SLOT_BASE;
   g_state.previous_tick_overlapping_trigger_player_pairs.clear();
@@ -309,16 +358,20 @@ static bool load_map_into_state(const std::string &map_path)
     return false;
   }
 
-  shared::map_t server_map;
   log_terminal("Loading map '{}'...", map_path);
-  if (!shared::load_map(map_path, server_map))
+  if (!shared::load_map(map_path, g_state.current_map))
   {
     log_error("Failed to load map '{}'. Session is empty.", map_path);
     return false;
   }
+  shared::map_t &server_map = g_state.current_map;
 
   shared::init_session_from_map(g_state.session, server_map);
   g_state.session.map_name = server_map.name;
+  g_state.current_map_path = map_path;
+  // Hash the canonical serialization (not the file), so it matches what the
+  // client computes from its own loaded copy and what streaming will embed.
+  g_state.map_content_hash = shared::compute_map_content_hash(server_map);
   shared::populate_static_physics_bodies(*g_state.physics, server_map);
 
   // Spawn bots for any bot-type spawn markers (spawn_type == 1).
@@ -384,25 +437,106 @@ bool Init()
   return true;
 }
 
-bool reload_map(const std::string &map_path)
+// Spawns a Player_Entity for a connected slot into the current session: picks a
+// human spawn transform, sets the combat hitbox, registers the kinematic Jolt
+// body, and fires PLAYER_SPAWNED. Shared by the connect path and the mid-game
+// map switch (reload_map), which both need an identically-initialized player.
+static network::Player_Entity *spawn_player_for_slot(int slot)
 {
-  log_terminal("--- Reloading server map: '{}' ---", map_path);
+  auto *player = g_state.session.entity_system.spawn<network::Player_Entity>(
+      entity_type::PLAYER);
+  if (!player)
+    return nullptr;
 
-  // Disconnect any currently-connected players. The map is changing under them,
-  // so their player entities / kinematic bodies (which we're about to wipe)
-  // would otherwise dangle. Players reconnect normally on the next Connect.
-  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  player->client_slot_index = slot;
+  auto spawns = get_human_spawn_transforms();
+  const human_spawn_transform_t &chosen_spawn = spawns[slot % spawns.size()];
+  player->position         = chosen_spawn.position;
+  player->orientation      = chosen_spawn.orientation;
+  player->view_angle_yaw   = chosen_spawn.orientation.y;
+  player->view_angle_pitch = chosen_spawn.orientation.x;
+  player->health = 100;
+
+  log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
+               slot, player->entity_id, player->position.x,
+               player->position.y, player->position.z);
+
+  // Combat hitbox (capsule: radius 18, half-height 38), slightly larger than
+  // physics collision (16x36) for better hit feedback.
+  player->hitbox.shape_type.set("capsule");
+  player->hitbox.size = {18.f, 38.f, 18.f};  // x/z = radius, y = half_height
+  player->hitbox.offset = {0.f, 38.f, 0.f};  // Offset up so capsule is centered
+
+  // Kinematic Jolt body so rockets and overlap queries can find this player.
+  // Capsule center sits at feet + 38 (matches hitbox offset above).
+  if (g_state.physics)
   {
-    if (g_state.net.player_slots[slot])
-    {
-      g_state.net.player_slots[slot] = false;
-      g_state.net.player_ips[slot] = {};
-      g_state.net.player_byte_buffers[slot] = {};
-      g_player_states[slot] = {};
-    }
+    register_kinematic_capsule(*g_state.physics, player->entity_id,
+                               player->position + vec3f{0.f, 38.f, 0.f},
+                               18.f, 20.f);
   }
 
-  return load_map_into_state(map_path);
+  // Clients can't tell a connect-time spawn from a respawn, by design.
+  fire_player_spawned_event(g_state, player->entity_id,
+                            chosen_spawn.position, chosen_spawn.orientation);
+  return player;
+}
+
+// The map identifier we put on the wire: a maps-relative basename (e.g.
+// "new_map.source"), NOT the server's absolute path. Each client resolves it
+// against its own maps dir (MAPS_DIR), so a client can have the map in a
+// different folder — or not at all, in which case it streams. See
+// shared::resolve_map_path.
+static std::string current_map_wire_id()
+{
+  return std::filesystem::path(g_state.current_map_path).filename().generic_string();
+}
+
+// Sends a bitstream-native CmdChangeMap for the current map to one slot. Payload
+// mirrors CmdAccept (path, name, hash). Idempotent: resent each tick to any
+// connected-but-not-ready client until it acks C2S_MapLoaded — our cheap
+// stand-in for reliable delivery until an ack/retransmit channel exists
+// (see todo.md "reliable bulk transfer").
+static void send_change_map(int slot)
+{
+  shared::change_map_message_t msg;
+  msg.map_path     = current_map_wire_id();
+  msg.map_name     = g_state.session.map_name;
+  msg.content_hash = g_state.map_content_hash;
+
+  network::Bit_Writer writer;
+  shared::serialize_change_map(writer, msg);
+  auto packets = network::convert_to_packets(
+      writer.buffer,
+      static_cast<network::uint8>(network::Message_Type::CmdChangeMap),
+      g_state.net.next_message_id);
+  for (const auto &p : packets)
+    g_socket.send(p, g_state.net.player_ips[slot]);
+}
+
+bool reload_map(const std::string &map_path)
+{
+  log_terminal("--- Changing server map: '{}' ---", map_path);
+
+  // Load the new map. This wipes the session, physics world, bots, and every
+  // client's delta baseline, so the first snapshot after the switch is a full
+  // (non-delta) update.
+  if (!load_map_into_state(map_path))
+    return false;
+
+  // Keep connected players connected across the switch: re-spawn each into the
+  // fresh session and tell them to load the new map. Snapshots are withheld
+  // (client_map_ready=false) until each acks C2S_MapLoaded, so nobody receives
+  // entity deltas for a map they aren't running yet.
+  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  {
+    if (!g_state.net.player_slots[slot])
+      continue;
+    spawn_player_for_slot(slot);
+    g_state.client_map_ready[slot] = false;
+    send_change_map(slot);
+  }
+  return true;
 }
 
 bool Tick()
@@ -443,48 +577,12 @@ bool Tick()
         log_terminal("Player {} joined at slot {}",
                      cmd.connect().player_name(), slot);
 
-        auto *player =
-            g_state.session.entity_system.spawn<network::Player_Entity>(
-                entity_type::PLAYER);
-        if (player)
-        {
-          player->client_slot_index = slot;
-          auto spawns = get_human_spawn_transforms();
-          const human_spawn_transform_t &chosen_spawn = spawns[slot % spawns.size()];
-          player->position         = chosen_spawn.position;
-          player->orientation      = chosen_spawn.orientation;
-          player->view_angle_yaw   = chosen_spawn.orientation.y;
-          player->view_angle_pitch = chosen_spawn.orientation.x;
-          player->health = 100;
+        spawn_player_for_slot(slot);
 
-          log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
-                       slot, player->entity_id, player->position.x,
-                       player->position.y, player->position.z);
-
-          // Initialize combat hitbox (capsule: radius 18, half-height 38)
-          // Slightly larger than physics collision (16x36) for better hit feedback
-          player->hitbox.shape_type.set("capsule");
-          player->hitbox.size = {18.f, 38.f, 18.f};  // x/z = radius, y = half_height
-          player->hitbox.offset = {0.f, 38.f, 0.f};  // Offset up so capsule is centered on player
-
-          // Register a kinematic Jolt body so rockets and overlap queries can find this player.
-          // Capsule center sits at feet + 38 (matches hitbox offset above).
-          if (g_state.physics)
-          {
-            register_kinematic_capsule(*g_state.physics,
-                                       player->entity_id,
-                                       player->position + vec3f{0.f, 38.f, 0.f},
-                                       18.f, 20.f);
-          }
-
-          // Initial-spawn gameplay event. Same shape as the respawn-driven
-          // fire in respawn_system.cpp — clients can't tell whether this is
-          // a connect-time spawn or a respawn, by design.
-          fire_player_spawned_event(g_state,
-                                    player->entity_id,
-                                    chosen_spawn.position,
-                                    chosen_spawn.orientation);
-        }
+        // The client loads its map before connecting, so it's ready to receive
+        // snapshots the moment it's accepted. (A mid-game CmdChangeMap flips this
+        // back to false until the client acks the new map.)
+        g_state.client_map_ready[slot] = true;
 
         // Send Accept
         game::NetCommand reply;
@@ -494,17 +592,20 @@ bool Tick()
                                  ? "start.map"
                                  : g_state.session.map_name);
         accept->set_server_tickrate(static_cast<int>(sv_tickrate.Get()));
+        accept->set_map_path(current_map_wire_id());
+        accept->set_content_hash(g_state.map_content_hash);
 
         std::vector<network::uint8> buffer(reply.ByteSizeLong());
         reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
         auto packets = network::convert_to_packets(
             buffer,
-            static_cast<network::uint8>(network::Message_Type::NetCommand));
+            static_cast<network::uint8>(network::Message_Type::NetCommand),
+            g_state.net.next_message_id);
         for (const auto &p : packets)
           g_socket.send(p, sender);
 
         // Sync replicated cvars to the new client
-        send_cvar_sync(g_socket, sender);
+        send_cvar_sync(g_socket, sender, g_state.net.next_message_id);
 
         // Announce join to all clients (including the new one)
         broadcast_server_message(
@@ -522,7 +623,8 @@ bool Tick()
         reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
         auto packets = network::convert_to_packets(
             buffer,
-            static_cast<network::uint8>(network::Message_Type::NetCommand));
+            static_cast<network::uint8>(network::Message_Type::NetCommand),
+            g_state.net.next_message_id);
         for (const auto &p : packets)
           g_socket.send(p, sender);
       }
@@ -543,13 +645,82 @@ bool Tick()
     {
       log_terminal("Unknown command from slot {}: {}", player_idx, line);
       send_text_message_to_a_specific_client(g_socket, client_ip,
-                          std::string("Unknown command: ") + line);
+                          std::string("Unknown command: ") + line,
+                          g_state.net.next_message_id);
     }
     else
     {
       send_text_message_to_a_specific_client(g_socket, client_ip,
-                          std::string("OK: ") + line);
+                          std::string("OK: ") + line,
+                          g_state.net.next_message_id);
     }
+  }
+
+  // Process C2S_MapLoaded acks: a client finished (re)loading the map. Verify
+  // the echoed hash matches the map we're actually running before we resume
+  // snapshots to it — a mismatch means the client loaded the wrong map, which
+  // we surface loudly rather than papering over by streaming stale deltas.
+  for (const auto &[player_idx, payload] : inbox.map_loaded_acks)
+  {
+    network::Bit_Reader reader(payload.data(), payload.size());
+    shared::map_loaded_message_t ack = shared::deserialize_map_loaded(reader);
+    if (ack.content_hash == g_state.map_content_hash)
+    {
+      g_state.client_map_ready[player_idx] = true;
+      log_terminal("Slot {} loaded map '{}' (hash {:#x}); resuming snapshots.",
+                   player_idx, g_state.session.map_name, ack.content_hash);
+    }
+    else
+    {
+      log_error("Slot {} acked map hash {:#x} but server is running {:#x}. "
+                "Withholding snapshots until it loads the correct map.",
+                player_idx, ack.content_hash, g_state.map_content_hash);
+    }
+  }
+
+  // Stream the compiled map package to any client that asked for it (cache miss
+  // or hash mismatch on its side). We host exactly one map, so the requested
+  // name is only for logging — we always send the current map's package. Mark
+  // the client not-ready so snapshots stay withheld until it acks C2S_MapLoaded
+  // after applying the stream.
+  for (const auto &[player_idx, payload] : inbox.map_data_requests)
+  {
+    network::Bit_Reader reader(payload.data(), payload.size());
+    shared::request_map_data_message_t req =
+        shared::deserialize_request_map_data(reader);
+
+    shared::map_package_t package = shared::build_map_package(g_state.current_map);
+    std::vector<network::uint8> blob = shared::serialize_map_package(package);
+
+    shared::map_data_message_t msg;
+    msg.map_name     = g_state.session.map_name;
+    msg.package_hash = shared::compute_map_package_hash(blob);
+    msg.compressed   = false; // step 6 adds gzip
+    msg.bytes        = std::move(blob);
+
+    network::Bit_Writer writer;
+    shared::serialize_map_data(writer, msg);
+    auto packets = network::convert_to_packets(
+        writer.buffer,
+        static_cast<network::uint8>(network::Message_Type::S2C_MapData),
+        g_state.net.next_message_id);
+    for (const auto &p : packets)
+      g_socket.send(p, g_state.net.player_ips[player_idx]);
+
+    g_state.client_map_ready[player_idx] = false;
+    log_terminal("Streamed map package '{}' ({} bytes, {} packets, hash {:#x}) "
+                 "to slot {} (requested '{}').",
+                 msg.map_name, msg.bytes.size(), packets.size(),
+                 msg.package_hash, player_idx, req.map_name);
+  }
+
+  // Resend CmdChangeMap to any connected-but-not-ready client. UDP has no
+  // ack/retransmit yet, so this idempotent per-tick resend is how a dropped
+  // switch message eventually reaches the client (it stops once acked above).
+  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  {
+    if (g_state.net.player_slots[slot] && !g_state.client_map_ready[slot])
+      send_change_map(slot);
   }
 
   // Sort moves by timestamp
@@ -797,11 +968,13 @@ bool Tick()
     dbg_msg.SerializeToArray(dbg_buf.data(), static_cast<int>(dbg_buf.size()));
     constexpr network::uint8 dbg_type =
         static_cast<network::uint8>(network::Message_Type::S2C_BotDebug);
+    auto dbg_packets =
+        network::convert_to_packets(dbg_buf, dbg_type, g_state.net.next_message_id);
     for (int slot = 0; slot < network::sv_max_player_count; ++slot)
     {
       if (!g_state.net.player_slots[slot])
         continue;
-      for (const auto &pkt : network::convert_to_packets(dbg_buf, dbg_type))
+      for (const auto &pkt : dbg_packets)
         g_socket.send(pkt, g_state.net.player_ips[slot]);
     }
   }
@@ -826,6 +999,11 @@ bool Tick()
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
     if (!g_state.net.player_slots[slot])
+      continue;
+
+    // Withhold snapshots from a client still loading a (new) map — it has no
+    // world to apply entity deltas to yet. Resumes once it acks C2S_MapLoaded.
+    if (!g_state.client_map_ready[slot])
       continue;
 
     network::Bit_Writer writer;
@@ -906,7 +1084,8 @@ bool Tick()
     std::vector<network::uint8> buffer(package.ByteSizeLong());
     package.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
     auto packets = network::convert_to_packets(
-        buffer, static_cast<network::uint8>(network::Message_Type::S2C_EntityPackage));
+        buffer, static_cast<network::uint8>(network::Message_Type::S2C_EntityPackage),
+        g_state.net.next_message_id);
 
     for (const auto &p : packets)
       g_socket.send(p, g_state.net.player_ips[slot]);
@@ -952,7 +1131,8 @@ bool Tick()
                            static_cast<int>(batch_buffer.size()));
     auto event_packets = network::convert_to_packets(
         batch_buffer,
-        static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch));
+        static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch),
+        g_state.net.next_message_id);
 
     for (int slot = 0; slot < network::sv_max_player_count; ++slot)
     {

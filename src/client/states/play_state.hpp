@@ -13,6 +13,11 @@
 #endif
 #include <memory>
 
+namespace shared
+{
+struct map_package_t; // defined in shared/network/map_transfer.hpp
+}
+
 namespace client
 {
 
@@ -27,9 +32,37 @@ public:
   void render_3d(VkCommandBuffer cmd) override;
 
 private:
+  // Loads the map file at `map_path` into `this->map`, then rebuilds the client
+  // world from it via finalize_client_map(). Shared by on_enter (first connect)
+  // and the mid-game CmdChangeMap handler in update(). Returns false if the map
+  // file can't be loaded (leaving the current world untouched). Assumes
+  // jolt_init() has already run.
+  bool load_client_map(const std::string &map_path);
+
+  // Rebuilds the client world from a streamed compiled package (entities from
+  // the canonical text, navmesh from the baked sidecar) instead of a local
+  // file — the map-streaming fallback for a cache miss / hash mismatch. Returns
+  // false if the entity text can't be parsed. Shares finalize_client_map's tail.
+  bool apply_map_package(const shared::map_package_t &package);
+
+  // Shared tail of load_client_map / apply_map_package: drops the previous
+  // map's replication state, then (re)builds the session, static physics world,
+  // content hash, and camera spawn from the already-populated `this->map`.
+  void finalize_client_map();
+
+  // Transitions the connection to Connected: flags it, sets the phase, and
+  // registers the console network-forwarder. Shared by the direct-connect
+  // (hash match) path and the post-download (streamed map) path.
+  void enter_connected_phase();
+
   // Map & session
   shared::map_t map;
-  bool session_loaded = false;
+  // True once finalize_client_map() has built the local runtime world (the
+  // game_session_t `session` + physics_state) from a map. Gates all local
+  // simulation and rendering. Distinct from connection_phase (the network
+  // handshake state): while streaming a map we can be Connecting/Loading with
+  // this still false. False at boot and until the first map is loaded/streamed.
+  bool session_ready_for_simulation_and_rendering = false;
 
   // Camera (first person, follows player)
   camera_t camera;

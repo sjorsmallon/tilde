@@ -22,12 +22,51 @@ struct client_context_t
   // --- Shared game world (entities, BVH, navmesh) ---
   shared::game_session_t session;
 
+  // FNV-1a hash of the canonical serialization of the map the client loaded
+  // locally in PlayState::Enter, computed via shared::compute_map_content_hash().
+  // Verified against the server's CmdAccept.content_hash to detect a
+  // client/server map mismatch. 0 = not computed (verification skipped).
+  uint32_t loaded_map_content_hash = 0;
+
   // --- Network socket and server address ---
   ::network::Client_Connection_State connection_state;
 
-  // --- Connection phase ---
-  enum class Connection_Phase { Disconnected, Connecting, Connected };
+  // --- Connection phase (client network/handshake state machine) ---
+  //
+  // This is the single source of truth for "where are we in the connection
+  // lifecycle". It is orthogonal to PlayState's
+  // session_ready_for_simulation_and_rendering, which tracks "do we have a
+  // renderable/simulatable local world". The two axes differ during a switch:
+  // on a mismatched-map switch we are Loading with a world still present (the
+  // OLD one), whereas a no-map boot is Loading with no session yet.
+  //
+  //   Disconnected ──on_enter: send CmdConnect──▶ Connecting
+  //
+  //   Connecting ──CmdAccept, have matching map──▶ Connected
+  //              ──CmdAccept, no/mismatched map──▶ Loading   (send C2S_RequestMapData)
+  //              ──CmdReject──────────────────────▶ Disconnected
+  //
+  //   Connected ──CmdChangeMap (new map)─────────▶ Loading
+  //             ──on_exit: send CmdDisconnect─────▶ Disconnected
+  //
+  //   Loading ──local copy present & hash matches─▶ Connected (send C2S_MapLoaded)
+  //           ──S2C_MapData arrives & verifies────▶ Connected (send C2S_MapLoaded)
+  //           ──load/verify fails─────────────────▶ (stay Loading; re-request)
+  //
+  // Invariants: we only send move commands / run prediction+reconciliation while
+  // Connected; the server withholds snapshots (client_map_ready) until it sees
+  // our C2S_MapLoaded, so a Loading client receives no entity deltas. See
+  // play_state.cpp update() and awaiting_stream_content_hash below.
+  enum class Connection_Phase { Disconnected, Connecting, Loading, Connected };
   Connection_Phase connection_phase = Connection_Phase::Disconnected;
+
+  // Non-zero while we're in Loading because we lacked (cache miss) or
+  // mismatched the server's map and asked it to stream the compiled package:
+  // holds the content_hash we're waiting to receive. Guards the CmdChangeMap
+  // handler so a resent switch message re-requests the stream (cheap retransmit
+  // stand-in) instead of tearing down and reloading the world every tick.
+  // Cleared once S2C_MapData applies. See map_transfer / play_state.
+  uint32_t awaiting_stream_content_hash = 0;
   int my_slot = -1;
   // Local player's entity uid, learned from the first self snapshot. Used to
   // suppress server-dispatched cosmetic effects attached to our own player

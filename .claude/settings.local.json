@@ -61,7 +61,16 @@
       "Bash(cmake --build \"c:/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build\" --target game_client -j8)",
       "Bash(echo \"---exit:$?---\")",
       "Bash(cmake --build cmake_build -j8 --target MyGame_Server)",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "Bash(cmake --build cmake_build -j8 --target udp_socket_test)",
+      "Bash(./cmake_build/bin/udp_socket_test.exe)",
+      "Bash(echo \"\\(exit $?\\)\")",
+      "Bash(cmake --build cmake_build --target map_migration_test -j8)",
+      "Bash(./cmake_build/bin/server_loop_test.exe)",
+      "Bash(./map_migration_test.exe)",
+      "Bash(./test_udp_socket.exe)",
+      "Bash(./cmake_build/bin/test_udp_socket.exe)",
+      "Bash(grep -iv \"case\\\\|//\")"
     ]
   }
 }

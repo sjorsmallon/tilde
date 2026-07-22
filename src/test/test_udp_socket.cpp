@@ -31,7 +31,8 @@ int main()
     for (size_t i = 0; i < big_data.size(); ++i)
       big_data[i] = (uint8)(i % 255);
 
-    auto packets = convert_to_packets(big_data, 10);
+    uint8 next_message_id = 0;
+    auto packets = convert_to_packets(big_data, 10, next_message_id);
 
     // Expected packets: ceil(3000 / MAX_PAYLOAD_SIZE)
     // MAX_PAYLOAD_SIZE = 1452 - sizeof(Packet_Header) - 4
@@ -40,14 +41,28 @@ int main()
     // 3000 / 1434 = 2.09 -> 3 packets.
 
     assert(packets.size() == 3);
-    assert(packets[0].header.sequence_idx == 0);
-    assert(packets[0].header.sequence_count == 3);
+    assert(packets[0].header.fragment_index == 0);
+    assert(packets[0].header.fragment_count == 3);
     assert(packets[0].header.message_type == 10);
     assert(packets[0].header.payload_size == MAX_PAYLOAD_SIZE_IN_BYTES);
 
-    assert(packets[2].header.sequence_idx == 2);
+    assert(packets[2].header.fragment_index == 2);
     assert(packets[2].header.payload_size ==
            (3000 - MAX_PAYLOAD_SIZE_IN_BYTES * 2));
+
+    // Sequencing invariant: all fragments of one message share a message_id
+    // (the receiver groups on it), and it came from the counter we passed.
+    assert(packets[0].header.message_id == packets[1].header.message_id);
+    assert(packets[1].header.message_id == packets[2].header.message_id);
+    assert(packets[0].header.message_id == 0);   // first id off a fresh counter
+    assert(next_message_id == 1);                 // counter advanced once
+
+    // The NEXT logical message must get a distinct id, so two concurrent
+    // multi-fragment streams can't collide in the receiver's reassembly bucket.
+    auto packets2 = convert_to_packets(big_data, 10, next_message_id);
+    assert(packets2[0].header.message_id == 1);
+    assert(packets2[0].header.message_id != packets[0].header.message_id);
+    assert(next_message_id == 2);
 
     std::cout << "  -> Chunking Success! Created " << packets.size()
               << " packets." << std::endl;

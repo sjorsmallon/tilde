@@ -13,6 +13,7 @@
 #include "../../shared/cvar.hpp"
 #include "../../shared/debug_collision.hpp"
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <print>
 #include "../../shared/entities/player_entity.hpp"
@@ -24,6 +25,7 @@
 #include "../../shared/entities/light_entity.hpp"
 #include "../../shared/entities/physics_body_entity.hpp"
 #include "../../shared/network/quantization.hpp"
+#include "../../shared/network/map_transfer.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
 #include "../shared/linalg.hpp"
@@ -39,12 +41,154 @@ namespace client
 using Connection_Phase  = client_context_t::Connection_Phase;
 using explosion_effect_t = client_context_t::explosion_effect_t;
 
+// Sends a bitstream-native C2S_MapLoaded ack so the server knows this client
+// finished loading the current map and can resume streaming snapshots to it.
+static void send_map_loaded_ack(network::Client_Connection_State &conn,
+                                uint32_t content_hash)
+{
+  shared::map_loaded_message_t msg{content_hash};
+  network::Bit_Writer writer;
+  shared::serialize_map_loaded(writer, msg);
+  auto packets = network::convert_to_packets(
+      writer.buffer,
+      static_cast<network::uint8>(network::Message_Type::C2S_MapLoaded),
+      conn.next_message_id);
+  for (const auto &p : packets)
+    conn.socket.send(p, conn.server_address);
+}
+
+// Directory this client resolves map files against. Defaults to "maps"; the
+// MAPS_DIR environment variable overrides it. This is a local dev/test knob:
+// point it at an empty folder to simulate a "cold" client that lacks the map,
+// so it must stream the compiled package from the server instead of loading a
+// local copy. See scripts/run_client_cold.cmd.
+static std::string client_maps_directory()
+{
+  const char *env = std::getenv("MAPS_DIR");
+  return (env && *env) ? std::string(env) : std::string("maps");
+}
+
+// Asks the server to stream the compiled package for `map_name` because we lack
+// it (cache miss) or our local copy's hash doesn't match. Bitstream-native
+// C2S_RequestMapData; the server replies with S2C_MapData.
+static void send_request_map_data(network::Client_Connection_State &conn,
+                                  const std::string &map_name)
+{
+  shared::request_map_data_message_t msg{map_name};
+  network::Bit_Writer writer;
+  shared::serialize_request_map_data(writer, msg);
+  auto packets = network::convert_to_packets(
+      writer.buffer,
+      static_cast<network::uint8>(network::Message_Type::C2S_RequestMapData),
+      conn.next_message_id);
+  for (const auto &p : packets)
+    conn.socket.send(p, conn.server_address);
+}
+
+bool PlayState::load_client_map(const std::string &map_path)
+{
+  if (map_path.empty() || !shared::load_map(map_path, map))
+  {
+    log_warning("load_client_map: failed to load map '{}'", map_path);
+    return false;
+  }
+
+  finalize_client_map();
+  return true;
+}
+
+bool PlayState::apply_map_package(const shared::map_package_t &package)
+{
+  // Rebuild `this->map` from the streamed package: entities from the canonical
+  // text, navmesh from the baked sidecar the package carries.
+  // parse_map_from_string clears the map (including navmesh), so restore the
+  // navmesh afterward.
+  if (!shared::parse_map_from_string(package.entity_text, map))
+  {
+    log_error("apply_map_package: failed to parse streamed entity text for '{}'",
+              package.map_name);
+    return false;
+  }
+  map.navmesh = package.navmesh;
+
+  finalize_client_map();
+  return true;
+}
+
+void PlayState::finalize_client_map()
+{
+  auto &ctx = state_manager::get_client_context();
+
+  // Drop replication state from any previous map so nothing bleeds across a
+  // switch: remote entities, delta baselines, and transient client effects.
+  ctx.remote_players = {};
+  ctx.last_player_entities.clear();
+  ctx.remote_rockets.clear();
+  ctx.remote_physics_bodies.clear();
+  ctx.explosion_effects.clear();
+  ctx.next_explosion_index = 0;
+  ctx.last_processed_tick = 0;
+
+  shared::init_session_from_map(ctx.session, map);
+  ctx.session.map_name = map.name;
+
+  // Hash the canonical serialization of the map we loaded so the server can
+  // verify (via CmdAccept / C2S_MapLoaded) that both sides are running the same
+  // map. Hashing the canonical form (not the file bytes) means formatting
+  // differences don't cause a false mismatch.
+  ctx.loaded_map_content_hash = shared::compute_map_content_hash(map);
+
+  // Rebuild the client's static physics world — recreating physics_state_t is
+  // the cleanest way to drop the previous map's static bodies. Lend the
+  // borrowed pointer so cosmetic-effect handlers can cast against static world.
+  physics_state = std::make_unique<physics_state_t>();
+  init_physics(*physics_state);
+  shared::populate_static_physics_bodies(*physics_state, map);
+  ctx.physics_state = physics_state.get();
+
+  // Place the camera at a spawn marker for an immediate, non-jarring view; the
+  // server's authoritative position arrives in the next snapshot.
+  auto *spawns = ctx.session.entity_system
+                     .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+  if (spawns && !spawns->empty())
+  {
+    ctx.player_position = spawns->front().position;
+    log_terminal("[CLIENT] Spawn from map: ({:.1f}, {:.1f}, {:.1f})",
+                 ctx.player_position.x, ctx.player_position.y, ctx.player_position.z);
+  }
+  else
+  {
+    ctx.player_position = {0, 36, 0};
+    log_terminal("[CLIENT] Using default spawn: (0, 36, 0)");
+  }
+  camera.position.x = ctx.player_position.x;
+  camera.position.y = ctx.player_position.y + 28.f;
+  camera.position.z = ctx.player_position.z;
+}
+
+void PlayState::enter_connected_phase()
+{
+  auto &ctx  = state_manager::get_client_context();
+  auto &conn = ctx.connection_state;
+
+  conn.connected         = true;
+  ctx.connection_phase   = Connection_Phase::Connected;
+
+  // Forward server-flagged console commands over the network.
+  Console::Get().SetNetworkForwarder([this](std::string_view line) {
+    game::C2S_Command cmd;
+    cmd.set_line(std::string(line));
+    network::send_protobuf_message(*conn_state_, cmd);
+  });
+}
+
 void PlayState::on_enter()
 {
-  session_loaded = false;
+  session_ready_for_simulation_and_rendering = false;
 
   auto &ctx = state_manager::get_client_context();
 
+  // Connection-level reset (world-level reset happens in load_client_map).
   ctx.player_velocity        = {0, 0, 0};
   ctx.player_position        = {0, 36, 0};
   ctx.player_yaw             = 0.0f;
@@ -56,75 +200,51 @@ void PlayState::on_enter()
   ctx.last_server_ack_command = -1;
   ctx.received_server_update = false;
   ctx.interpolation_time     = 0.f;
-  ctx.remote_players         = {};
-  ctx.last_player_entities.clear();
-  ctx.remote_rockets.clear();
-  ctx.last_processed_tick    = 0;
   ctx.pending_commands       = {};
-  ctx.explosion_effects.clear();
-  ctx.next_explosion_index   = 0;
 
-  // Load the same map the editor uses (from last_map.txt)
-  std::ifstream f("last_map.txt");
-  if (f.is_open())
-  {
-    std::string line;
-    std::getline(f, line);
-    if (shared::load_map(line, map))
-    {
-      shared::init_session_from_map(ctx.session, map);
-      ctx.session.map_name = map.name;
-      session_loaded = true;
-    }
-  }
-
-  if (!session_loaded)
-  {
-    renderer::draw_announcement("Play: No map loaded!");
-    return;
-  }
-
-  // Find initial spawn position from Player_Spawn_Entity markers in the map.
-  // The server will send the authoritative position once connected, but we use
-  // this to place the camera immediately so there's no jarring jump on load.
-  auto *spawns = ctx.session.entity_system
-                     .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
-  if (spawns && !spawns->empty())
-  {
-    ctx.player_position = spawns->front().position;
-    log_terminal("[CLIENT] Initial spawn from map: ({:.1f}, {:.1f}, {:.1f})",
-                 ctx.player_position.x, ctx.player_position.y, ctx.player_position.z);
-  }
-  else
-  {
-    ctx.player_position = {0, 36, 0};
-    log_terminal("[CLIENT] Using default spawn: (0, 36, 0)");
-  }
-
-  // Set up camera at player position (eye height)
-  camera.position.x = ctx.player_position.x;
-  camera.position.y = ctx.player_position.y + 28.f;
-  camera.position.z = ctx.player_position.z;
-  camera.yaw = ctx.player_yaw;
-  camera.pitch = ctx.player_pitch;
-  camera.orthographic = false;
-
-  input::set_relative_mouse_mode(true);
-
-  // --- Physics ---
+  // Jolt must be initialized before load_client_map builds a physics_state_t.
   static bool jolt_initialized = false;
   if (!jolt_initialized)
   {
     jolt_init();
     jolt_initialized = true;
   }
-  physics_state = std::make_unique<physics_state_t>();
-  init_physics(*physics_state);
-  if (session_loaded)
-    shared::populate_static_physics_bodies(*physics_state, map);
-  // Lend the client_context_t a borrowed pointer so cosmetic-effect handlers
-  // (e.g. rocket_explosion) can cast against the local static world.
-  ctx.physics_state = physics_state.get();
+
+  // Reference-first fast path: load the same map the editor uses (from
+  // last_map.txt) if we have it. The server is authoritative — a mismatch, or a
+  // missing local map entirely, is recovered by streaming the compiled package
+  // once CmdAccept arrives (see the accept handler in update()). So a failed
+  // local load is NOT fatal: we still connect, then download. This is what lets
+  // a client join a server running a map it has never seen.
+  std::string last_map;
+  {
+    std::ifstream f("last_map.txt");
+    if (f.is_open())
+      std::getline(f, last_map);
+  }
+  // Resolve against this client's maps dir (MAPS_DIR override), not the raw
+  // last_map.txt path, so a cold client pointed at an empty folder misses here
+  // and streams instead.
+  std::string map_path = shared::resolve_map_path(client_maps_directory(), last_map);
+
+  if (load_client_map(map_path))
+  {
+    session_ready_for_simulation_and_rendering = true;
+  }
+  else
+  {
+    log_terminal("No local map '{}' at boot; will request it from the server "
+                 "after connecting.", map_path);
+  }
+
+  // Camera look direction (position was set from a spawn in load_client_map, or
+  // left at the default if we have no map yet and will stream one).
+  camera.yaw = ctx.player_yaw;
+  camera.pitch = ctx.player_pitch;
+  camera.orthographic = false;
+
+  input::set_relative_mouse_mode(true);
+
 #ifdef JPH_DEBUG_RENDERER
   jolt_debug_renderer = std::make_unique<client::jolt_debug_renderer_t>();
 #endif
@@ -211,9 +331,13 @@ void PlayState::update(float dt)
     }
   }
 
-  if (!session_loaded)
-    return;
-
+  // NOTE: no session_ready_for_simulation_and_rendering early-out here. The
+  // network handshake / map handling below must run even when we have no world
+  // yet — that's exactly how a client that lacks the map boots: connect, get
+  // CmdAccept, stream the package, and only then build a session. Local
+  // simulation + rendering-prep (from "Reconciliation" onward) is what's gated
+  // on the flag, further down. See the Connection_Phase state machine in
+  // client_context.hpp.
   auto &conn = ctx.connection_state;
   conn_state_ = &conn;
 
@@ -253,23 +377,154 @@ void PlayState::update(float dt)
       ctx.server_tickrate = cmd.accept().server_tickrate();
       if (ctx.server_tickrate == 0)
         ctx.server_tickrate = 60;
-      conn.connected = true;
-      ctx.connection_phase = Connection_Phase::Connected;
-      log_terminal("Connected to server! Slot {}, map: {}", ctx.my_slot,
-                   cmd.accept().map_name());
 
-      // Forward server-flagged console commands over the network.
-      Console::Get().SetNetworkForwarder([this](std::string_view line) {
-        game::C2S_Command cmd;
-        cmd.set_line(std::string(line));
-        network::send_protobuf_message(*conn_state_, cmd);
-      });
+      // Decide whether we can play immediately or must download the map first.
+      // We need to stream if we have no world at all (no local map at boot) or
+      // if the map we loaded doesn't match the server's. A server hash of 0
+      // means "unknown" (couldn't be computed) — when we DO have a session we
+      // trust it rather than reject; when we have no session we must stream
+      // regardless. The server is authoritative either way.
+      uint32_t server_hash = cmd.accept().content_hash();
+      bool hash_mismatch = server_hash != 0 && ctx.loaded_map_content_hash != 0 &&
+                           server_hash != ctx.loaded_map_content_hash;
+      if (!session_ready_for_simulation_and_rendering || hash_mismatch)
+      {
+        const char *reason = session_ready_for_simulation_and_rendering
+                                 ? "Map mismatch"
+                                 : "No local map";
+        log_terminal("{} on connect (server '{}' hash {:#x}, local {:#x}); "
+                     "requesting map from server.",
+                     reason, cmd.accept().map_name(), server_hash,
+                     ctx.loaded_map_content_hash);
+        ctx.connection_phase = Connection_Phase::Loading;
+        ctx.awaiting_stream_content_hash = server_hash;
+        renderer::draw_announcement("Downloading map...");
+        send_request_map_data(conn, cmd.accept().map_name());
+        continue;
+      }
+
+      log_terminal("Connected to server! Slot {}, map: {} (hash {:#x})",
+                   ctx.my_slot, cmd.accept().map_name(), server_hash);
+      enter_connected_phase();
     }
     else if (cmd.has_reject())
     {
       log_terminal("Connection rejected: {}", cmd.reject().reason());
       ctx.connection_phase = Connection_Phase::Disconnected;
     }
+  }
+
+  // --- Handle server-initiated map switch (CmdChangeMap) ---
+  // Reference-first: try our own local copy of the new map and verify the hash.
+  // If we lack the file (cache miss) or it doesn't match, fall back to streaming
+  // the compiled package from the server (step 5) rather than desyncing.
+  for (const auto &payload : inbox.change_map_messages)
+  {
+    network::Bit_Reader reader(payload.data(), payload.size());
+    shared::change_map_message_t change = shared::deserialize_change_map(reader);
+
+    // Idempotent resends: if we already run this exact map, just re-ack. The
+    // server resends CmdChangeMap each tick until it sees our C2S_MapLoaded.
+    if (ctx.connection_phase == Connection_Phase::Connected &&
+        ctx.loaded_map_content_hash == change.content_hash)
+    {
+      send_map_loaded_ack(conn, change.content_hash);
+      continue;
+    }
+
+    // Already waiting on a stream for this switch: re-send the request (a cheap
+    // stand-in for retransmit — the server streams once per request) and keep
+    // waiting, instead of tearing the world down again on every resent message.
+    if (ctx.connection_phase == Connection_Phase::Loading &&
+        ctx.awaiting_stream_content_hash == change.content_hash)
+    {
+      send_request_map_data(conn, change.map_name);
+      continue;
+    }
+
+    log_terminal("Server switching map to '{}' (path '{}', hash {:#x})",
+                 change.map_name, change.map_path, change.content_hash);
+    ctx.connection_phase = Connection_Phase::Loading;
+    renderer::draw_announcement("Loading map...");
+
+    // Cache miss (file won't load) or hash mismatch → request the package. The
+    // wire id is maps-relative; resolve it against our own maps dir.
+    std::string local_path =
+        shared::resolve_map_path(client_maps_directory(), change.map_path);
+    if (!load_client_map(local_path) ||
+        ctx.loaded_map_content_hash != change.content_hash)
+    {
+      log_terminal("No matching local copy of '{}' (cache miss/mismatch); "
+                   "requesting map from server.", change.map_name);
+      ctx.awaiting_stream_content_hash = change.content_hash;
+      renderer::draw_announcement("Downloading map...");
+      send_request_map_data(conn, change.map_name);
+      continue;
+    }
+
+    // Loaded and verified locally — ack so the server resumes snapshots for us.
+    send_map_loaded_ack(conn, change.content_hash);
+    ctx.awaiting_stream_content_hash = 0;
+    ctx.connection_phase = Connection_Phase::Connected;
+    log_terminal("Map switch to '{}' complete; acked hash {:#x}",
+                 change.map_name, change.content_hash);
+  }
+
+  // --- Handle streamed compiled map package (S2C_MapData) ---
+  // The server's reply to our C2S_RequestMapData. Verify integrity, deserialize
+  // the package, rebuild the world from it, then ack so snapshots resume. We
+  // stay in Connection_Phase::Loading until this completes.
+  for (const auto &payload : inbox.map_data_messages)
+  {
+    // A late or duplicate package after we've already loaded is ignored.
+    if (ctx.connection_phase != Connection_Phase::Loading)
+      break;
+
+    network::Bit_Reader reader(payload.data(), payload.size());
+    shared::map_data_message_t data = shared::deserialize_map_data(reader);
+
+    if (data.compressed)
+    {
+      // gzip decompression lands in step 6; until then the server ships
+      // compressed=false, so a compressed package here is unexpected.
+      log_error("Received compressed S2C_MapData for '{}' but decompression "
+                "isn't implemented yet (step 6); ignoring.", data.map_name);
+      continue;
+    }
+
+    // Integrity check: package_hash is over the uncompressed blob.
+    uint32_t actual_hash = shared::compute_map_package_hash(data.bytes);
+    if (actual_hash != data.package_hash)
+    {
+      log_error("Streamed map package hash mismatch (got {:#x}, expected "
+                "{:#x}); waiting for resend.", actual_hash, data.package_hash);
+      continue;
+    }
+
+    shared::map_package_t package;
+    if (!shared::deserialize_map_package(data.bytes, package))
+    {
+      log_error("Failed to deserialize streamed map package '{}'; waiting for "
+                "resend.", data.map_name);
+      continue;
+    }
+
+    if (!apply_map_package(package))
+    {
+      log_error("Failed to apply streamed map package '{}'.", data.map_name);
+      continue;
+    }
+    session_ready_for_simulation_and_rendering = true;
+
+    // Ack the entities-only content hash the server tracks (set by
+    // apply_map_package), not the package hash, so it matches
+    // g_state.map_content_hash and the server resumes snapshots for us.
+    send_map_loaded_ack(conn, ctx.loaded_map_content_hash);
+    ctx.awaiting_stream_content_hash = 0;
+    enter_connected_phase();
+    log_terminal("Downloaded map '{}' (package hash {:#x}); acked content hash "
+                 "{:#x}", package.map_name, data.package_hash,
+                 ctx.loaded_map_content_hash);
   }
 
   // --- Handle server console messages ---
@@ -433,6 +688,14 @@ void PlayState::update(float dt)
     if (!effects.empty())
       dispatch_received_effects(ctx, effects);
   }
+
+  // Everything below simulates and renders the local world, which only exists
+  // once a map is loaded. While Connecting or while Loading a streamed map we
+  // have no session yet — poll the network (above) but do nothing here. The
+  // renderer draws the "Downloading map..." announcement in the meantime, and
+  // render_3d/pre_render bail on !session_ready_for_simulation_and_rendering too.
+  if (!session_ready_for_simulation_and_rendering)
+    return;
 
   // --- Reconciliation ---
   if (ctx.received_server_update &&
@@ -707,6 +970,8 @@ void PlayState::render_ui()
     const char *conn_str = "Disconnected";
     if (ctx.connection_phase == Connection_Phase::Connecting)
       conn_str = "Connecting...";
+    else if (ctx.connection_phase == Connection_Phase::Loading)
+      conn_str = "Loading map...";
     else if (ctx.connection_phase == Connection_Phase::Connected)
       conn_str = "Connected";
     ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, ctx.my_slot, ctx.command_number);
@@ -830,7 +1095,7 @@ void PlayState::render_ui()
 
 void PlayState::render_3d(VkCommandBuffer cmd)
 {
-  if (!session_loaded)
+  if (!session_ready_for_simulation_and_rendering)
     return;
 
   auto &ctx = state_manager::get_client_context();
@@ -1315,7 +1580,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
 void PlayState::pre_render(VkCommandBuffer cmd)
 {
-  if (!session_loaded) return;
+  if (!session_ready_for_simulation_and_rendering) return;
 
   for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
   {

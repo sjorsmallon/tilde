@@ -13,6 +13,7 @@
 #include "entities/trigger_volume_entity.hpp"
 #include "log.hpp"
 #include "map.hpp"
+#include "network/map_transfer.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -166,8 +167,123 @@ int main()
       return fail("trigger: param_float drift");
   }
 
+  // --- 6. Canonical serialization + content hash --------------------------
+  // serialize_map_to_string / parse_map_from_string are the pure (no-I/O) core
+  // of save_map / load_map, and compute_map_content_hash hashes that canonical
+  // string. Verify: (a) the canonical text round-trips through parse without
+  // entity loss, (b) the hash is stable across serialize->parse->serialize, and
+  // (c) the hash is formatting-independent — reformatting the on-disk text (extra
+  // whitespace/blank lines) must NOT change the hash, since both sides re-derive
+  // it from the canonical form. That last property is the whole reason we hash
+  // the canonical string instead of the raw file bytes.
+  {
+    const uint32_t hash0 = compute_map_content_hash(loaded);
+
+    const std::string canonical = serialize_map_to_string(loaded);
+    map_t from_canonical;
+    if (!parse_map_from_string(canonical, from_canonical))
+      return fail("canonical: parse_map_from_string failed");
+
+    if (count_of<network::AABB_Entity>(from_canonical) != aabbs)
+      return fail("canonical: AABB count drift through string round-trip");
+
+    // Hash must be stable through a full serialize->parse->hash cycle.
+    if (compute_map_content_hash(from_canonical) != hash0)
+      return fail("canonical: hash changed across serialize/parse round-trip");
+
+    // Re-serializing the reparsed map must produce byte-identical text.
+    if (serialize_map_to_string(from_canonical) != canonical)
+      return fail("canonical: re-serialized text is not stable");
+
+    // Formatting-independence: mangle whitespace in the source text (double every
+    // newline, inject blank lines) — the parser tokenizes on whitespace, so this
+    // yields the same entities and therefore the same canonical hash.
+    std::string mangled;
+    for (char c : canonical)
+    {
+      mangled += c;
+      if (c == '\n') mangled += "\n   \n";
+    }
+    map_t from_mangled;
+    if (!parse_map_from_string(mangled, from_mangled))
+      return fail("canonical: parse of reformatted text failed");
+    if (compute_map_content_hash(from_mangled) != hash0)
+      return fail("canonical: hash is not formatting-independent");
+  }
+
+  // --- 7. Compiled map package round-trip ---------------------------------
+  // The compiled package (the wire artifact) bundles the entity text with baked
+  // sidecars (navmesh). Verify: (a) build->serialize->deserialize round-trips
+  // entity_text, map_name, and the navmesh exactly; (b) the package hash is
+  // stable across a serialize cycle; (c) a corrupted magic is rejected rather
+  // than yielding a half-built package.
+  {
+    // Give the map a small hand-built navmesh so we exercise sidecar packing
+    // even though the maps/test fixture ships without one.
+    map_t packaged = loaded;
+    packaged.navmesh.vertices = {
+        {{0.f, 0.f, 0.f}}, {{4.f, 0.f, 0.f}}, {{4.f, 0.f, 4.f}},
+        {{0.f, 0.f, 4.f}}, {{8.f, 1.f, 0.f}}};
+    nav_polygon_t poly0;
+    poly0.verts     = {0, 1, 2, 3};
+    poly0.neighbors = {-1, 1, -1, -1};
+    poly0.island    = 0;
+    nav_polygon_t poly1;
+    poly1.verts     = {1, 4, 2};
+    poly1.neighbors = {-1, -1, 0};
+    poly1.island    = 0;
+    packaged.navmesh.polygons = {poly0, poly1};
+
+    map_package_t package = build_map_package(packaged);
+    if (package.entity_text != serialize_map_to_string(packaged))
+      return fail("package: entity_text is not the canonical serialization");
+
+    std::vector<uint8_t> blob = serialize_map_package(package);
+    const uint32_t package_hash = compute_map_package_hash(blob);
+
+    map_package_t restored;
+    if (!deserialize_map_package(blob, restored))
+      return fail("package: deserialize_map_package failed on a valid blob");
+
+    if (restored.map_name != package.map_name)
+      return fail("package: map_name drift");
+    if (restored.entity_text != package.entity_text)
+      return fail("package: entity_text drift");
+    if (restored.navmesh.vertices.size() != package.navmesh.vertices.size() ||
+        restored.navmesh.polygons.size() != package.navmesh.polygons.size())
+      return fail("package: navmesh size drift");
+    for (size_t i = 0; i < package.navmesh.vertices.size(); ++i)
+    {
+      const auto &a = package.navmesh.vertices[i].pos;
+      const auto &b = restored.navmesh.vertices[i].pos;
+      if (a.x != b.x || a.y != b.y || a.z != b.z)
+        return fail("package: navmesh vertex drift");
+    }
+    for (size_t i = 0; i < package.navmesh.polygons.size(); ++i)
+    {
+      const auto &a = package.navmesh.polygons[i];
+      const auto &b = restored.navmesh.polygons[i];
+      if (a.verts != b.verts || a.neighbors != b.neighbors ||
+          a.island != b.island)
+        return fail("package: navmesh polygon drift");
+    }
+
+    // Re-serializing the restored package must be byte-identical (stable hash).
+    if (compute_map_package_hash(serialize_map_package(restored)) !=
+        package_hash)
+      return fail("package: hash changed across serialize/deserialize cycle");
+
+    // A corrupted magic must be rejected, not silently half-parsed.
+    std::vector<uint8_t> corrupt = blob;
+    corrupt[0] ^= 0xFF;
+    map_package_t should_fail;
+    if (deserialize_map_package(corrupt, should_fail))
+      return fail("package: deserialize accepted a corrupted magic");
+  }
+
   printf("map_migration_test: OK (%zu aabbs, %zu displacements, wedges "
-         "stripped, trigger round-trip OK)\n",
+         "stripped, trigger round-trip OK, canonical hash stable, "
+         "package round-trip OK)\n",
          aabbs, displacements);
   return 0;
 }

@@ -58,12 +58,10 @@ void test_receive_and_reassembly()
   // Convert to packets (Message Type C2S_PlayerMoveCommand = 0 in enum but
   // let's check packet.hpp) packet.hpp: C2S_PlayerMoveCommand is first, so 0.
   // But let's use the enum cast.
+  uint8 next_message_id = 0;
   auto packets = convert_to_packets(
-      serialized_data, static_cast<uint8>(Message_Type::C2S_PlayerMoveCommand));
-
-  // Set sequencing manually if convert_to_packets doesn't do it fully?
-  // convert_to_packets sets sequence_count, sequence_idx. sequence_id is 0.
-  // That's fine for first test.
+      serialized_data, static_cast<uint8>(Message_Type::C2S_PlayerMoveCommand),
+      next_message_id);
 
   // Send packets
   Address server_addr(127, 0, 0, 1, 9001);

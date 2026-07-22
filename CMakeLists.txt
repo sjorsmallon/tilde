@@ -155,6 +155,7 @@ add_library(game_shared STATIC
     src/shared/cosmetic_events.cpp
     src/shared/game_events.hpp
     src/shared/game_events.cpp
+    src/shared/network/map_transfer.cpp
 )
 
 # Protobuf Generation
@@ -323,6 +324,12 @@ target_link_libraries(MyGame PRIVATE game_client game_server game_shared)
 add_executable(MyGame_Server src/launcher/main_dedicated.cpp)
 target_include_directories(MyGame_Server PRIVATE src)
 target_link_libraries(MyGame_Server PRIVATE game_server game_shared)
+
+
+# 5b. Networked Client (Client only, connects to a separate MyGame_Server)
+add_executable(MyGame_Client src/launcher/main_client.cpp)
+target_include_directories(MyGame_Client PRIVATE src)
+target_link_libraries(MyGame_Client PRIVATE game_client game_shared)
 
 
 # 6. Task System Test

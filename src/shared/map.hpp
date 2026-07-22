@@ -119,16 +119,51 @@ struct map_t
   }
 };
 
-// Loads map from VMF-style text file.
+// --- Canonical (pure, no-I/O) serialization ---
+//
+// serialize_map_to_string / parse_map_from_string are the canonical in-memory
+// text form of a map's entities. They do NOT touch the filesystem and do NOT
+// include the .navmesh sidecar (that's derived/baked data, handled separately by
+// the file-level save_map/load_map). This canonical string is what the content
+// hash is taken over and what the future compiled-package streaming embeds — so
+// keep them pure and deterministic.
+
+// Serialize a map's entities to the canonical VMF-style text.
+std::string serialize_map_to_string(const map_t &map);
+
+// Parse canonical VMF-style text into a map_t (entities only; no navmesh).
 // Returns true on success, false on failure.
+bool parse_map_from_string(const std::string &content, map_t &out_map);
+
+// Loads map from VMF-style text file (entities via parse_map_from_string, plus
+// the .navmesh sidecar next to it). Returns true on success, false on failure.
 // usage:
 //   shared::map_t map;
 //   if (shared::load_map("levels/start.map", map)) { ... }
 bool load_map(const std::string &filename, map_t &out_map);
 
-// Saves map to VMF-style text file.
-// Returns true on success, false on failure.
+// Saves map to VMF-style text file (entities via serialize_map_to_string, plus
+// the .navmesh sidecar). Returns true on success, false on failure.
 bool save_map(const std::string &filename, const map_t &map);
+
+// Resolve a map identifier (a bare name, or any path from which only the
+// basename is used) to a loadable file inside `maps_dir`. This is how a
+// maps-relative wire id (sent by the server) or a last_map.txt entry becomes an
+// actual on-disk path — and crucially, it's per-side: a client pointed at a
+// different maps_dir will naturally FAIL to find a map it has no local copy of,
+// which is exactly the cache-miss that triggers streaming. Joins with '/';
+// filename() copes with either path separator.
+std::string resolve_map_path(const std::string &maps_dir,
+                             const std::string &identifier);
+
+// Computes an FNV-1a 32-bit hash of the map's CANONICAL serialization
+// (serialize_map_to_string), NOT the raw on-disk bytes. Hashing the canonical
+// form makes the hash independent of on-disk whitespace/formatting and — once
+// compiled-package streaming lands — byte-for-byte identical to the streamed
+// entity payload. Used to verify that client and server are running the same
+// map: both sides load, serialize, and hash, so a match means identical entity
+// data regardless of how each side's file happened to be formatted.
+uint32_t compute_map_content_hash(const map_t &map);
 
 // Saves only the .navmesh sidecar alongside the given map file path.
 // Returns false if nav is not valid.

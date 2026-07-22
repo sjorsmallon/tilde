@@ -130,8 +130,15 @@ message CmdConnect {
 
 message CmdAccept {
     int32 client_slot = 1;
-    string map_name = 2;       // The map the server is currently running
+    string map_name = 2;        // Logical map name (worldspawn "name"), for display.
     int32 server_tickrate = 3;
+    string map_path = 4;        // Loadable path/identifier the server loaded from.
+                                // TODO(map-stream): replace absolute path with a
+                                // maps-relative id once byte streaming lands; the
+                                // hash below already makes the path advisory, not trusted.
+    uint32 content_hash = 5;    // FNV-1a of the map file bytes. Client verifies its
+                                // locally-loaded map matches; mismatch = hard error
+                                // until S2C_MapData streaming exists.
 }
 
 message CmdReject {

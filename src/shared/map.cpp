@@ -9,6 +9,7 @@
 #include "log.hpp"
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <typeinfo>
@@ -436,19 +437,8 @@ std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const networ
   return compute_face_polygons(t);
 }
 
-bool load_map(const std::string &filename, map_t &out_map)
+bool parse_map_from_string(const std::string &content, map_t &out_map)
 {
-  std::ifstream in(filename);
-  if (!in.is_open())
-  {
-    return false;
-  }
-
-  std::stringstream buffer;
-  buffer << in.rdbuf();
-  std::string content = buffer.str();
-  in.close();
-
   auto entities = parse_map_content(content);
   out_map = {}; // Clear
 
@@ -474,9 +464,8 @@ bool load_map(const std::string &filename, map_t &out_map)
                                    : (ent.properties.count("center")
                                           ? ent.properties.at("center")
                                           : std::string("?"));
-      printf("Info: stripped wedge entity from %s at position %s "
-             "(deferred refactor)\n",
-             filename.c_str(), pos.c_str());
+      printf("Info: stripped wedge entity at position %s (deferred refactor)\n",
+             pos.c_str());
       continue;
     }
 
@@ -503,12 +492,31 @@ bool load_map(const std::string &filename, map_t &out_map)
     }
   }
 
+  return true;
+}
+
+bool load_map(const std::string &filename, map_t &out_map)
+{
+  std::ifstream in(filename);
+  if (!in.is_open())
+  {
+    return false;
+  }
+
+  std::stringstream buffer;
+  buffer << in.rdbuf();
+  std::string content = buffer.str();
+  in.close();
+
+  if (!parse_map_from_string(content, out_map))
+    return false;
+
   load_navmesh(filename, out_map.navmesh);
 
   return true;
 }
 
-bool save_map(const std::string &filename, const map_t &map)
+std::string serialize_map_to_string(const map_t &map)
 {
   std::vector<map_entity_def_t> entities;
 
@@ -556,7 +564,12 @@ bool save_map(const std::string &filename, const map_t &map)
     entities.push_back(def);
   }
 
-  std::string content = serialize_map_entities(entities);
+  return serialize_map_entities(entities);
+}
+
+bool save_map(const std::string &filename, const map_t &map)
+{
+  std::string content = serialize_map_to_string(map);
   std::ofstream out(filename);
   if (!out.is_open())
     return false;
@@ -569,12 +582,36 @@ bool save_map(const std::string &filename, const map_t &map)
   return true;
 }
 
+std::string resolve_map_path(const std::string &maps_dir,
+                             const std::string &identifier)
+{
+  // Only the basename of the identifier matters — the directory part (if any) is
+  // replaced by maps_dir. So a server's maps-relative wire id ("new_map.source")
+  // and a last_map.txt entry (an absolute path) both resolve the same way, into
+  // whatever maps_dir this process was told to use.
+  std::filesystem::path leaf = std::filesystem::path(identifier).filename();
+  return (std::filesystem::path(maps_dir) / leaf).generic_string();
+}
+
 bool save_navmesh_sidecar(const std::string &map_path, const navmesh_t &nav)
 {
   if (!nav.valid())
     return false;
   save_navmesh(map_path, nav);
   return true;
+}
+
+uint32_t compute_map_content_hash(const map_t &map)
+{
+  const std::string content = serialize_map_to_string(map);
+
+  uint32_t hash = 2166136261u; // FNV-1a offset basis
+  for (unsigned char byte : content)
+  {
+    hash ^= byte;
+    hash *= 16777619u; // FNV prime
+  }
+  return hash;
 }
 
 } // namespace shared

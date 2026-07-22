@@ -42,23 +42,25 @@ inline uint32_t read_var_uint(Bit_Reader &r)
   return value;
 }
 
+// Strings are length-prefixed (var_uint) then written as a byte-aligned block
+// via write_bytes/read_bytes. Both of those align() first, so the two sides
+// stay in sync. (The earlier per-char write_byte/read_byte pairing was NOT
+// symmetric — read_byte aligns but write_byte does not — so any string that
+// didn't start byte-aligned, i.e. every string preceded by a var_uint length,
+// decoded to garbage.)
 inline void write_string(Bit_Writer &w, const std::string &value)
 {
   write_var_uint(w, static_cast<uint32_t>(value.size()));
-  for (auto c : value)
-  {
-    w.write_byte(static_cast<uint8_t>(c));
-  }
+  if (!value.empty())
+    w.write_bytes(value.data(), value.size());
 }
 
 inline void read_string(Bit_Reader &r, std::string &value)
 {
   uint32_t size = read_var_uint(r);
   value.resize(size);
-  for (size_t i = 0; i < size; ++i)
-  {
-    value[i] = static_cast<char>(r.read_byte());
-  }
+  if (size)
+    r.read_bytes(value.data(), size);
 }
 
 inline void read_c_string(Bit_Reader &r, char *value, size_t max_size)
@@ -68,20 +70,17 @@ inline void read_c_string(Bit_Reader &r, char *value, size_t max_size)
   {
     size = max_size - 1;
   }
-  for (size_t i = 0; i < size; ++i)
-  {
-    value[i] = static_cast<char>(r.read_byte());
-  }
+  if (size)
+    r.read_bytes(value, size);
   value[size] = '\0';
 }
 
 inline void write_c_string(Bit_Writer &w, const char *value)
 {
-  write_var_uint(w, static_cast<uint32_t>(strlen(value)));
-  for (size_t i = 0; i < strlen(value); ++i)
-  {
-    w.write_byte(static_cast<uint8_t>(value[i]));
-  }
+  uint32_t size = static_cast<uint32_t>(strlen(value));
+  write_var_uint(w, size);
+  if (size)
+    w.write_bytes(value, size);
 }
 
 inline void write_var_int(Bit_Writer &w, int32_t value)
