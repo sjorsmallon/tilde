@@ -1,5 +1,6 @@
 #include "entity.hpp"
 #include "entity_system.hpp" // for classname_to_type / type_to_classname
+#include "log.hpp"
 #include "network/quantization.hpp"
 #include <cstring>
 #include <iostream>
@@ -356,6 +357,40 @@ std::string get_classname_for_entity(const network::Entity *entity)
   if (!entity)
     return "unknown";
   return type_to_classname(entity->get_type());
+}
+
+std::shared_ptr<network::Entity> clone_entity(const network::Entity *entity)
+{
+  if (!entity)
+    return nullptr;
+
+  std::shared_ptr<network::Entity> copy = create_entity_by_type(entity->get_type());
+  if (!copy)
+  {
+    log_error("clone_entity: no factory entry for entity type {}",
+              static_cast<int>(entity->get_type()));
+    return nullptr;
+  }
+
+  const network::Class_Schema *schema = entity->get_schema();
+  if (!schema)
+  {
+    log_error("clone_entity: entity {} has no registered schema",
+              type_to_classname(entity->get_type()));
+    return nullptr;
+  }
+
+  // Field-by-field rather than one memcpy of sizeof(T): the source is only a
+  // base pointer here, and copying whole objects would also stomp the clone's
+  // vtable pointer. The schema covers every field that undo, saving and the
+  // wire care about, which is the whole of the entity's state.
+  const network::uint8 *source_base =
+      reinterpret_cast<const network::uint8 *>(entity);
+  network::uint8 *copy_base = reinterpret_cast<network::uint8 *>(copy.get());
+  for (const network::Field_Prop &field : schema->fields)
+    std::memcpy(copy_base + field.offset, source_base + field.offset, field.size);
+
+  return copy;
 }
 
 } // namespace shared

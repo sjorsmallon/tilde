@@ -7,6 +7,10 @@ Two parts:
   Phase order below is load-bearing; doing them out of order means doing work
   twice or debugging two systems at once. Design rationale lives in
   `entity_def.md` (source of truth) — this file is the work list and the order.
+  **P0, P1 and P2 are done and moved to `done.md`** — the constraints they
+  established (canonical zero-padded strings; geometry out of the entity system;
+  undo as binary field diffs) are still recorded below because later phases lean
+  on them.
 - **EVERYTHING ELSE** — independent work, no ordering constraints.
 
 ---
@@ -18,20 +22,20 @@ Two parts:
 They share four files and each phase changes the ground under the next:
 
 ```
-                    pascal_string set() bug          [P0] independent, do now
+                    pascal_string set() bug          [P0] DONE -> done.md
                             |
                             v  (memcmp == string equality; both undo + wire rely on it)
-  geometry exit  ---------> P1 -----------------------------------------------.
-   . kills is_collision_geometry() routing            (map I/O rewritten)     |
-   . kills the map<->session shared_ptr aliasing on the static path           |
+  geometry exit  ---------> P1  DONE -> done.md ------------------------------.
+   . killed is_collision_geometry() routing           (map I/O rewritten)     |
+   . killed the map<->session shared_ptr aliasing on the static path          |
    . means the DSL never needs [N]T                                           |
-   . adds the 2nd transaction flavor (geometry value-swap)                    |
+   . added the 2nd transaction flavor (geometry value-swap)                   |
                             |                                                 |
                             v                                                 v
-  undo -> binary diffs ---> P2                                    generator finish -> P3
+  undo -> binary diffs ---> P2  DONE -> done.md       generator finish -> P3  <-- YOU ARE HERE
    . transaction_system touched ONCE for both flavors                         |
-   . removes get_all_properties/init_from_map from the hot path               v
-   . shrinks P5's dynamic-dispatch surface                        flag audit -> P4 (blocking)
+   . removed get_all_properties/init_from_map from the hot path               v
+   . shrank P5's dynamic-dispatch surface                         flag audit -> P4 (blocking)
                             |                                                 |
                             '------------------> P5 HARD CUTOVER <------------'
                                  . macro system deleted, network::Entity dies
@@ -78,11 +82,10 @@ The five topics map onto the phases like this:
   That is the point — the compiler is the migration checklist.
 - **P4 (flag audit) is blocking.** `@Networked`/`@Saveable` were decorative in
   the macro system and become real. Skipping it silently changes behavior.
-- **COMMIT BEFORE P1 AND BEFORE P5.** Both are breaking: P1 changes the map file
-  format (and the baked package, and its hash), P5 leaves the tree not building
-  until the last consumer is converted. Land a clean, green, committed tree
-  first, and do each on its own branch — otherwise "is this broken because of
-  the change, or was it already broken?" has no answer.
+- **COMMIT BEFORE P5.** It leaves the tree not building until the last consumer
+  is converted. Land a clean, green, committed tree first and do it on its own
+  branch — otherwise "is this broken because of the change, or was it already
+  broken?" has no answer. (The same rule applied to P1, which is done.)
 
 ## Scale, and where the tree stops building
 
@@ -91,9 +94,9 @@ it tells you which phases you can walk away from mid-way.
 
 | | Phase | Size | Can you stop mid-way with a running game? |
 |---|---|---|---|
-| P0 | string set() bug | ~30 min | yes — one function |
-| P1 | geometry exit | **multi-day, biggest phase** | yes, if you do it in the 4 sub-steps below; the map-format flip is the one atomic moment |
-| P2 | undo → binary diffs | ~a day | yes — per-tool migration is incremental |
+| ~~P0~~ | ~~string set() bug~~ | DONE | — |
+| ~~P1~~ | ~~geometry exit~~ | DONE | — |
+| ~~P2~~ | ~~undo → binary diffs~~ | DONE | — |
 | P3 | finish generator | ~a day | yes — generated code drives nothing yet |
 | P4 | flag audit | ~1–2 hours | yes — it's reading, deciding, and editing one .def file |
 | P5 | hard cutover | **multi-day, tree does NOT build throughout** | **NO — this is the one you cannot abandon halfway** |
@@ -101,214 +104,9 @@ it tells you which phases you can walk away from mid-way.
 | P7 | storage refactor | multi-day | partly — failures here are runtime, not compile-time, so "working" is harder to judge |
 | P8 | protobuf removal | ~a day, spread | yes — message-at-a-time by design |
 
-P1's natural sub-steps, each leaving a working game: (a) geometry value types +
-handwritten map I/O + the converter, (b) session init / static BVH, (c) editor
-seam + the four inspector panels, (d) transaction geometry value-swap flavor.
-
 ---
 
-## P0 — pascal_string_t::set() tail residue bug  *(independent, do now)*
-
-`set()` doesn't zero `data[length..N)` or re-terminate. Shrinking `"hello"` →
-`"hi"` leaves `"hillo"` from `c_str()` (which assumes zero-init termination),
-and logically-equal strings can memcmp-unequal → phantom deltas in baseline
-diffing. This establishes the canonical-zero-padding invariant that both the
-generator's string model (`entity_def.md`, Strings) and P2's binary field
-diffing assume.
-
-- [x] `network_types.hpp` `pascal_string_t::set()`: zero `data[length..N)` after copy
-- [x] While there: silent truncation at capacity violates no-silent-failures —
-      `set()` now returns bool and asserts; added `clear()`
-- [x] Storage widened to `data[N + 1]` so a full-capacity string is still
-      null-terminated — `c_str()` on an exactly-N-char string used to read one
-      byte past the buffer, and the old "always null-terminated" comment was
-      simply false in that case. N is still the usable capacity.
-- [x] **Same invariant was violated on the wire path** (`entity.cpp`,
-      `deserialize_field_from_bits` PascalString branch): it wrote `length`
-      chars and terminated only when `length < max_length()`, never zeroing the
-      tail — so a shorter string deserialized over a longer one left residue and
-      every later baseline memcmp reported a phantom delta. That is the exact
-      bug this phase exists to kill, on the path that matters most. Now memsets
-      the tail.
-- [x] While there: that branch trusted the untrusted uint8 wire length without
-      clamping to capacity, so a corrupt or hostile packet claiming 255 chars
-      wrote up to 5 bytes past a 250-capacity field. Now clamps, still consumes
-      every announced byte (or the bitstream desyncs for all later fields), and
-      logs loudly on overflow.
-- Verified: full build green; `test_entity_delta_packing`, `session_test`,
-  `ecs_test`, `entity_layout_test`, `transaction_system_test`,
-  `map_migration_test` all pass. `network_test` still segfaults exactly as
-  before (pre-existing, see Known failing tests) — unchanged by this work.
-
----
-
-## P1 — Geometry exit (out of the entity system, into the map module)  ✅ DONE
-*landed on branch `p1-geometry-exit`. Full build green; `session_test`,
-`transaction_system_test`, `map_migration_test`, `ecs_test`,
-`entity_layout_test`, `test_entity_delta_packing`, `navmesh_test`,
-`server_loop_test` and the rest pass. `asset_test` and `network_test` still fail
-exactly as before (pre-existing — see "Known failing tests").*
-
-AABB / Wedge / StaticMesh / Displacement become plain map-owned C++ value
-types. They are never networked, so they were paying the schema system's
-blittable/fixed-size/memcmp constraints for nothing — and the `[64]f32` heights
-cap was the format's limitation leaking into what the game can express.
-
-```cpp
-struct displacement_t
-{
-  transform_t transform;
-  material_id material;
-  u32 resolution;
-  std::vector<f32> heights;   // assert(heights.size() == resolution * resolution)
-};
-```
-
-**This phase also disarms half the ownership bug for free.** The static path in
-`init_session_from_map` (`game_session.cpp:10`) is selected by
-`is_collision_geometry()` and does `static_entities.push_back(entry.entity)` —
-copying the *shared_ptr*, so session and map alias the same object. Delete the
-branch and that aliasing (and its lifetime coupling, and the writeback-into-map
-hazard) stops existing, shrinking P7's scope before P7 starts.
-
-- [x] Geometry value types in `shared/map_geometry.{hpp,cpp}`: `box_geometry_t`,
-      `static_mesh_geometry_t`, `displacement_geometry_t` in a
-      `std::variant` (`geometry_value_t`), sharing a `geometry_surface_t`.
-      `std::vector<vec3> displacements` — no cap, no erasure. Displacement math
-      + `generate_displacement_mesh` moved off the entity.
-- [x] Handwritten map save/load per kind (`serialize_geometry` /
-      `parse_geometry`). Three kinds, not four — wedges were already retired
-      before this phase and did not come back. Keys emit in **declaration
-      order** (P5's intent, taken here for free) so the file is git-diffable.
-- [x] Map text I/O rewritten around a generic block parser with the grammar in
-      a header comment: `block := keyword '{' property* '}'`, keyword ∈
-      `entity | box | static_mesh | displacement`. Unknown keywords are skipped
-      and reported rather than derailing the parse.
-- [x] One-time map file conversion (`convert_legacy_geometry_entity`), plus
-      `src/tools/map_convert.cpp` so it can be run deliberately over every map
-      with a report instead of one-at-a-time by opening each in the editor.
-      Killed the `"center"` / `"half_extents"` compat shims by reading them
-      **here, once** — `maps/test` turned out to be older than expected (flat
-      `"half_extents"`, not the `"volume"` blob), which the rewritten
-      `map_migration_test` caught.
-      `maps/new_map.source` + `maps/other.source` converted (`.preconvert.bak`
-      alongside); `maps/test` deliberately left legacy — it's the test fixture.
-- [x] Session init: `is_collision_geometry()` gone from the routing.
-      `game_session_t::static_entities` replaced by
-      `std::vector<map_geometry_t> geometry`, a **copy** of the map's list —
-      `session_test` now asserts the non-aliasing directly (write the session's
-      copy, check the map didn't change).
-- [x] Editor seam, uid-keyed across both regimes: `map_t::has_object` /
-      `remove_object` / `object_count`, and free functions
-      `compute_object_bounds`, `get_object_position` / `set_object_position`,
-      `get_object_box` / `set_object_box`, `collect_object_bounds`. The tools
-      call those and mostly don't branch on regime. (Uniform editing never
-      actually required schemas — confirmed.)
-- [x] Handwritten inspector panels in `editor/geometry_editor.cpp` (~80 lines of
-      ImGui for all three kinds), with widgets that suit each kind: a named
-      `active_face` dropdown, and a subdivision slider that **resamples** the
-      grid instead of flattening it.
-- [x] Transaction system gained the geometry **value-swap** flavor
-      (`diff_geometry_created/removed/modified_t` + `geometry_values_equal`).
-      Bit-exact, so unlike the entity flavor it cannot lose a change too small
-      to survive `%.6f` — `transaction_system_test` asserts exactly that.
-- [x] `build_editor_bvh()` now builds over BOTH lists; `Collision_Id.index` is
-      an object uid resolved through the seam, so a pick doesn't know or care
-      which regime it hit.
-- [x] Answers the loose note "why is AABB a schema? it's not a good decision" — it stopped being one here.
-
-**Bugs found and fixed while in here** (all pre-existing, all in code this phase
-rewrote anyway):
-- `displacement_tool`'s `commit_select_edit()` only *dropped* its snapshot and
-  never pushed a transaction, so Select-mode Q/E height steps were silently not
-  undoable. Now commits as one value swap per run of steps.
-- The subdivision slider called `init_displacement()`, which zeroed the grid —
-  changing subdivision threw away the sculpt. Now `resize_grid_preserving()`.
-- `set_displacement`'s bounds check used `idx + 2 >= count` on a flat float
-  array, i.e. it rejected the last vertex of a correctly-sized grid. Gone with
-  the flat array.
-- The game regenerated every displacement's mesh **every frame** (the editor
-  cached it); both now go through one cached path in
-  `client/geometry_renderer.cpp`.
-
-**Deliberately NOT changed** (each would be a gameplay/scope decision, not part
-of moving geometry out of the entity system):
-- Displacements still aren't registered as Jolt static bodies, exactly as
-  before. Player movement (BVH) collides with a displacement's box bound but
-  projectiles pass through. The real fix is heightmap collision — see the
-  TODO in `get_collision_planes`.
-- `box`/`displacement` lost their `orientation` field. It was a lie: only the
-  draw call read it, so a rotated one rendered rotated and collided unrotated.
-  `static_mesh` keeps it.
-
-**Not done, wants its own pass:** the geometry inspector pushes no undo
-transaction, because ImGui reports "changed" per frame of a drag and that would
-flood the stack. Wants begin/end-edit bracketing
-(`IsItemActivated`/`IsItemDeactivatedAfterEdit`), marked
-`TODO(inspector-undo)` in `selection_tool.cpp`. The entity inspector never
-pushed transactions either, so this is not a regression.
-
----
-
-## P2 — Editor undo: string-map snapshots → binary field diffs
-
-The undo/redo system snapshots entities as `std::map<string,string>` via
-`get_all_properties()` and detects change by STRING comparison
-(`diff_properties`). Wasteful (double text round-trip + map alloc per edit) and
-has a latent bug: formatted-float compare silently drops a real sub-threshold
-change. The network layer already has the clean primitive (`schema.hpp`
-`diff`/`diff_reversible`/`apply_diff`: memcmp/memcpy over `field.size`), so the
-editor should stand on that.
-
-Design: binary field diffs in memory (hot path); a text adapter, name-keyed,
-ONLY at the disk save/load boundary (deferred to P5, where map I/O is rewritten
-anyway).
-
-**Why here and not after the cutover:** the *shape* (clone capture + binary
-field diff) survives P5 unchanged — only the reflection calls get re-pointed
-from `Class_Schema` to the generated tables, which is mechanical and
-compiler-checked. Meanwhile this removes `get_all_properties`/`init_from_map`
-from the undo hot path, which directly shrinks P5's ~94-site dynamic-dispatch
-surface. Doing it after P5 instead means living with the float-compare bug for
-the whole generator project.
-
-- [ ] Add `clone_entity(const Entity*) -> unique_ptr<Entity>` (full-state
-      `serialize(writer, nullptr)` → `create_entity_by_classname` → deserialize).
-      Full-state capture already exists via serialize's `baseline == nullptr` branch.
-- [ ] Rename `diff_reversible` → `capture_field_changes` (keep deprecated alias so
-      networking callers keep compiling in the same commit)
-- [ ] `transaction_system.hpp`: replace `property_change_t{field,before_str,after_str}`
-      with binary `field_change_in_bits_t{id,old_val,new_val}`; `diff_entity_modified_t`
-      gains classname (to resolve schema on apply); delete `diff_properties`
-- [ ] Rewrite `apply_diff`/`revert_diff` modified-branches to memcpy bytes by field
-      index instead of `init_from_map(props)`
-- [ ] created/removed diffs: store full-entity BINARY blob (binary everywhere),
-      reinflate with `create_entity_by_classname` + deserialize
-- [ ] Migrate tool snapshots from `map<string,string>` to `clone_entity` captures +
-      `capture_field_changes` at commit. NOTE: P1 already converted the geometry
-      half of every one of these to value snapshots, so what's left is only the
-      entity half — `sculpting_tool::sculpt_start_props`,
-      `selection_tool::object_snapshot_t::entity_properties`,
-      `editor_gizmo::start_props`. `displacement_tool` is fully converted (it
-      only ever touches geometry). The two-flavor shape is already in place;
-      this phase replaces the *entity* flavor's internals.
-- [ ] `placement_tool.cpp:90` entity duplication: switch `get_all_properties` →
-      `init_from_map` over to `clone_entity`
-- [x] **Batch transactions** — landed in P1. Multi-object delete and the
-      multi-object Ctrl+drag each push ONE transaction now
-      (`Selection_Tool::commit_drag_snapshots`, and the delete handler), and
-      `transaction_system_test::test_mixed_batch_delete` covers a batch spanning
-      both regimes. Note the transaction builder already supported this; the
-      tools just weren't using it.
-- [ ] Leave `get_all_properties`/`init_from_map`/`parse_string_to_field`/
-      `serialize_field_to_string` in place — still used by map file save/load
-      until P5. This pass only removes them from the undo hot path.
-- [ ] Update `test_transaction_system.cpp` (lines ~87/94 call `get_all_properties`)
-      to the new binary API; build + run it green
-
----
-
-## P3 — Finish the entity DSL generator
+## P3 — Finish the entity DSL generator  *(current phase)*
 
 `entities.def` → `src/tools/entity_gen.cpp` → `src/shared/entities/generated/`.
 Replaces the macro schema system. Full design + rationale in `entity_def.md`.
@@ -600,6 +398,11 @@ serialization by then — absorption, not a project.
   and ugly near gimbal-lock. If spinning bodies look bad, add a `vec4f
   rotation_quat` field and replicate that instead. (Doing the units decision
   before P4 is smart — the flag audit is already reading every field.)
+- **Displacements have no real collision** (left as-is by P1, deliberately —
+  it's a gameplay decision, not part of the geometry move). Player movement
+  (BVH) collides with a displacement's box bound, but projectiles pass straight
+  through, and they are never registered as Jolt static bodies. The real fix is
+  heightmap collision — see the TODO in `get_collision_planes`.
 - Is the navmesh only planar, or does A* just need two dimensions? Something
   feels wrong there.
 - Make sure the default mesh is the question mark.
@@ -623,19 +426,15 @@ serialization by then — absorption, not a project.
 - gizmo for selection moving is not finalized
 - particle editor tool — dedicated ImGui panel for live parameter tweaking
 - easing functions — replace linear lerp with ease-in/out curves
-- (multi-entity delete batching: DONE in P1, see the P2 checklist)
-- geometry inspector has no undo bracketing yet — `TODO(inspector-undo)` in
-  `selection_tool.cpp`
+- geometry inspector pushes no undo transaction — ImGui reports "changed" per
+  frame of a drag, which would flood the stack, so it wants begin/end-edit
+  bracketing (`IsItemActivated` / `IsItemDeactivatedAfterEdit`). Marked
+  `TODO(inspector-undo)` in `selection_tool.cpp`. The entity inspector never
+  pushed transactions either, so this is not a regression — fix both together.
 
 ## Physics body / Jolt
-- [x] physics_body_entity (schema + entity_list registration)
-- [x] physics_body_system: `spawn_physics_body` (box/sphere) +
-      `update_physics_bodies` (reads Jolt transforms back)
-- [x] `spawn_cube` / `spawn_sphere` console commands (server-flagged)
-- [x] `step_physics()` + `update_physics_bodies()` wired into `server::Tick()`
-- [x] integrated-mode render path via `server_session` on `client_context_t`
-- [x] networked replication: slot=254 sentinel in serialize/deserialize, delta
-      compression matches the rocket pattern
+*(the finished wiring — entity, system, console commands, tick integration,
+networked replication — is in `done.md`)*
 - [ ] snapshot interpolation for physics bodies on networked clients (currently
       snaps to latest snapshot each tick — visible stutter at server tickrate).
       Pattern to copy: `Remote_Player_State` with `snapshots[2]` + lerp in update.

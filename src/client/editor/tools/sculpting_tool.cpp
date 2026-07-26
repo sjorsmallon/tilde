@@ -27,11 +27,11 @@ void Sculpting_Tool::on_disable(editor_context_t &ctx)
 // through their box_volume_t — so this commits whichever flavor was captured.
 void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
 {
-  const bool had_entity_snapshot = !sculpt_start_props.empty();
+  const entity_snapshot_t entity_snapshot = std::move(sculpt_start_entity);
   const std::optional<shared::geometry_value_t> geometry_snapshot =
       std::move(sculpt_start_geometry);
 
-  sculpt_start_props.clear();
+  sculpt_start_entity.reset();
   sculpt_start_geometry.reset();
 
   if (!dragging || dragging_uid == shared::invalid_entity_uid || !ctx.map ||
@@ -52,13 +52,18 @@ void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
     }
     builder.add_geometry_modified(dragging_uid, *geometry_snapshot, entry->value);
   }
-  else if (had_entity_snapshot)
+  else if (entity_snapshot)
   {
     auto *entry = ctx.map->find_by_uid(dragging_uid);
     if (!entry || !entry->entity)
+    {
+      log_error("sculpting tool: entity uid {} vanished mid-drag — the resize is "
+                "not undoable",
+                dragging_uid);
       return;
-    builder.add_modified_from_diff(dragging_uid, sculpt_start_props,
-                                   entry->entity->get_all_properties());
+    }
+    builder.add_modified_from_diff(dragging_uid, entity_snapshot,
+                                   entry->entity.get());
   }
   else
   {
@@ -118,7 +123,7 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
     dragging = true;
     dragging_uid = hovered_uid;
     dragging_face = hovered_face;
-    sculpt_start_props.clear();
+    sculpt_start_entity.reset();
     sculpt_start_geometry.reset();
 
     if (!shared::get_object_box(*ctx.map, dragging_uid, original_aabb.center,
@@ -130,7 +135,7 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
       sculpt_start_geometry = geometry->value;
     else if (auto *entry = ctx.map->find_by_uid(dragging_uid);
              entry && entry->entity)
-      sculpt_start_props = entry->entity->get_all_properties();
+      sculpt_start_entity = snapshot_entity(entry->entity.get());
   }
 }
 

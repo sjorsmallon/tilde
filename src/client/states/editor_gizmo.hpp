@@ -121,12 +121,12 @@ private:
   // Transaction State.
   //
   // Two start-state snapshots because there are two regimes: an entity is
-  // captured as its property strings (and diffed on commit), a geometry value is
-  // captured whole (and swapped on commit). Exactly one is engaged per
+  // captured as an exact clone (and diffed field-by-field on commit), a geometry
+  // value is captured whole (and swapped on commit). Exactly one is engaged per
   // interaction — which one is decided by which list holds target_uid.
   Transaction_System *transaction_system = nullptr;
   bool interacting_ = false;
-  std::map<std::string, std::string> start_props;
+  entity_snapshot_t start_entity;
   std::optional<shared::geometry_value_t> start_geometry;
 
   shared::map_t *target_map = nullptr;

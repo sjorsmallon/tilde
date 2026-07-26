@@ -11,11 +11,11 @@ namespace client
 {
 
 // One selected object's pre-drag state, whichever regime backs it. Exactly one
-// member is engaged: an entity is captured as its property strings and diffed on
-// commit, a geometry value is captured whole and swapped.
+// member is engaged: an entity is captured as an exact clone and diffed
+// field-by-field on commit, a geometry value is captured whole and swapped.
 struct object_snapshot_t
 {
-  std::map<std::string, std::string> entity_properties;
+  entity_snapshot_t entity;
   std::optional<shared::geometry_value_t> geometry;
 };
 

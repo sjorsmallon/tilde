@@ -340,7 +340,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
     transaction_system = sys;
 
     interacting_ = true;
-    start_props.clear();
+    start_entity.reset();
     start_geometry = geometry_entry->value;
 
     // A static mesh is the one kind with an orientation; the other two are
@@ -372,7 +372,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   // Snapshot entity before modification
   interacting_ = true;
   start_geometry.reset();
-  start_props = entry->entity->get_all_properties();
+  start_entity = snapshot_entity(entry->entity.get());
 
   // Store original for drag calculations
   auto &ent = entry->entity;
@@ -415,8 +415,8 @@ void Editor_Gizmo::end_interaction()
     else if (auto *entry = target_map->find_by_uid(target_uid);
              entry && entry->entity)
     {
-      builder.add_modified_from_diff(target_uid, start_props,
-                                     entry->entity->get_all_properties());
+      builder.add_modified_from_diff(target_uid, start_entity,
+                                     entry->entity.get());
     }
 
     auto txn = builder.take();
@@ -424,7 +424,7 @@ void Editor_Gizmo::end_interaction()
       transaction_system->push(std::move(txn));
   }
 
-  start_props.clear();
+  start_entity.reset();
   start_geometry.reset();
   interacting_ = false;
   target_map = nullptr;

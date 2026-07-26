@@ -101,13 +101,12 @@ void test_modify()
   // 1. Modify via snapshot/diff
   {
     auto *entry = map.find_by_uid(uid);
-    auto before = entry->entity->get_all_properties();
+    entity_snapshot_t before = snapshot_entity(entry->entity.get());
 
     entry->entity->position = {10.0f, 0, 0};
 
     transaction_builder_t builder;
-    builder.add_modified_from_diff(uid, before,
-                                   entry->entity->get_all_properties());
+    builder.add_modified_from_diff(uid, before, entry->entity.get());
     ts.push(builder.take());
   }
 
@@ -123,6 +122,133 @@ void test_modify()
   assert(map.find_by_uid(uid)->entity->position.x == 10.0f);
 
   std::cout << "Modify Passed." << std::endl;
+}
+
+// The reason the entity flavor stopped being string-based. The old
+// diff_properties compared "%.6f"-formatted text, so a change below that
+// threshold produced NO diff at all and the edit silently vanished. memcmp over
+// the field bytes sees it. Same assertion the geometry flavor already makes.
+void test_modify_thresholds()
+{
+  std::cout << "Testing Modify thresholds..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  auto ent = make_test_entity(0.f);
+  entity_uid_t uid = map.add_entity(ent);
+  auto *entry = map.find_by_uid(uid);
+
+  // No change at all -> no transaction.
+  {
+    transaction_builder_t builder;
+    builder.add_modified_from_diff(uid, snapshot_entity(entry->entity.get()),
+                                   entry->entity.get());
+    assert(builder.diffs.empty());
+    ts.push(builder.take());
+  }
+  assert(!ts.can_undo());
+
+  // A change far below what "%.6f" would print is still a real change.
+  const float tiny = 1e-9f;
+  {
+    entity_snapshot_t before = snapshot_entity(entry->entity.get());
+    entry->entity->position = {tiny, 0, 0};
+
+    transaction_builder_t builder;
+    builder.add_modified_from_diff(uid, before, entry->entity.get());
+    assert(builder.diffs.size() == 1);
+    ts.push(builder.take());
+  }
+  assert(ts.can_undo());
+
+  ts.undo(map);
+  assert(map.find_by_uid(uid)->entity->position.x == 0.f);
+  ts.redo(map);
+  assert(map.find_by_uid(uid)->entity->position.x == tiny);
+
+  std::cout << "Modify thresholds Passed." << std::endl;
+}
+
+// A nested-schema field (Trigger_Volume's box_volume_t) is one memcmp/memcpy
+// over the whole nested struct, so it must round-trip like any other field. The
+// string flavor reached it only via init_from_map's "volume" special case.
+void test_modify_nested_field()
+{
+  std::cout << "Testing Modify nested field..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  entity_uid_t uid = map.add_entity(make_test_entity(0.f));
+  auto *entry = map.find_by_uid(uid);
+
+  entity_snapshot_t before = snapshot_entity(entry->entity.get());
+  auto *trigger = shared::entity_as<Trigger_Volume_Entity>(entry->entity.get());
+  assert(trigger != nullptr);
+  trigger->volume.half_extents = {8.f, 9.f, 10.f};
+
+  {
+    transaction_builder_t builder;
+    builder.add_modified_from_diff(uid, before, entry->entity.get());
+    assert(builder.diffs.size() == 1);
+    ts.push(builder.take());
+  }
+
+  ts.undo(map);
+  assert(shared::entity_as<Trigger_Volume_Entity>(map.find_by_uid(uid)->entity.get())
+             ->volume.half_extents.x == 1.f);
+
+  ts.redo(map);
+  assert(shared::entity_as<Trigger_Volume_Entity>(map.find_by_uid(uid)->entity.get())
+             ->volume.half_extents.y == 9.f);
+
+  std::cout << "Modify nested field Passed." << std::endl;
+}
+
+// Created/removed entries store a whole cloned entity. The clone is a byte copy,
+// NOT a serialize/deserialize round trip — write_coord quantizes floats to ~1/32,
+// so a bitstream-based snapshot would snap these values on undo.
+void test_snapshot_is_exact()
+{
+  std::cout << "Testing Snapshot exactness..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  // Deliberately not representable in write_coord's 5-bit fraction.
+  const float awkward = 3.14159265f;
+  auto ent = make_test_entity(0.f);
+  ent->position = {awkward, -awkward, 0.001f};
+  entity_uid_t uid = map.add_entity(ent);
+
+  {
+    transaction_builder_t builder;
+    builder.add_removed(uid, snapshot_entity(map.find_by_uid(uid)->entity.get()));
+    map.remove_entity(uid);
+    ts.push(builder.take());
+  }
+  assert(map.entities.empty());
+
+  ts.undo(map);
+  {
+    const auto *restored = map.find_by_uid(uid);
+    assert(restored && restored->entity);
+    assert(restored->entity->position.x == awkward);
+    assert(restored->entity->position.y == -awkward);
+    assert(restored->entity->position.z == 0.001f);
+    // A fresh object, not the map's original and not the stack's snapshot.
+    assert(restored->entity.get() != ent.get());
+  }
+
+  // Restoring a second time must produce another independent entity, so a
+  // caller editing the restored one can't reach back into the undo stack.
+  ts.redo(map);
+  ts.undo(map);
+  {
+    const auto *restored = map.find_by_uid(uid);
+    assert(restored && restored->entity);
+    assert(restored->entity->position.x == awkward);
+  }
+
+  std::cout << "Snapshot exactness Passed." << std::endl;
 }
 
 void test_batch_delete()
@@ -398,6 +524,9 @@ int main()
 {
   test_add_remove();
   test_modify();
+  test_modify_thresholds();
+  test_modify_nested_field();
+  test_snapshot_is_exact();
   test_batch_delete();
   test_geometry_add_remove();
   test_geometry_modify();

@@ -1,3 +1,235 @@
+# THE ENTITY TRACK — completed phases
+
+Phase order and rationale live in `todo.md`; design rationale in `entity_def.md`.
+This file keeps the finished phases so `todo.md` stays a work list.
+
+## P0 — pascal_string_t::set() tail residue bug  ✅ DONE
+
+`set()` didn't zero `data[length..N)` or re-terminate. Shrinking `"hello"` →
+`"hi"` left `"hillo"` from `c_str()` (which assumes zero-init termination), and
+logically-equal strings could memcmp-unequal → phantom deltas in baseline
+diffing. This established the canonical-zero-padding invariant that both the
+generator's string model (`entity_def.md`, Strings) and P2's binary field
+diffing assume.
+
+- [x] `network_types.hpp` `pascal_string_t::set()`: zero `data[length..N)` after copy
+- [x] While there: silent truncation at capacity violated no-silent-failures —
+      `set()` now returns bool and asserts; added `clear()`
+- [x] Storage widened to `data[N + 1]` so a full-capacity string is still
+      null-terminated — `c_str()` on an exactly-N-char string used to read one
+      byte past the buffer, and the old "always null-terminated" comment was
+      simply false in that case. N is still the usable capacity.
+- [x] **Same invariant was violated on the wire path** (`entity.cpp`,
+      `deserialize_field_from_bits` PascalString branch): it wrote `length`
+      chars and terminated only when `length < max_length()`, never zeroing the
+      tail — so a shorter string deserialized over a longer one left residue and
+      every later baseline memcmp reported a phantom delta. That is the exact
+      bug this phase existed to kill, on the path that matters most. Now memsets
+      the tail.
+- [x] While there: that branch trusted the untrusted uint8 wire length without
+      clamping to capacity, so a corrupt or hostile packet claiming 255 chars
+      wrote up to 5 bytes past a 250-capacity field. Now clamps, still consumes
+      every announced byte (or the bitstream desyncs for all later fields), and
+      logs loudly on overflow.
+- Verified: full build green; `test_entity_delta_packing`, `session_test`,
+  `ecs_test`, `entity_layout_test`, `transaction_system_test`,
+  `map_migration_test` all pass. `network_test` still segfaults exactly as
+  before (pre-existing, see Known failing tests in `todo.md`) — unchanged by
+  this work.
+
+---
+
+## P1 — Geometry exit (out of the entity system, into the map module)  ✅ DONE
+*landed on branch `p1-geometry-exit`. Full build green; `session_test`,
+`transaction_system_test`, `map_migration_test`, `ecs_test`,
+`entity_layout_test`, `test_entity_delta_packing`, `navmesh_test`,
+`server_loop_test` and the rest pass. `asset_test` and `network_test` still fail
+exactly as before (pre-existing — see "Known failing tests" in `todo.md`).*
+
+AABB / Wedge / StaticMesh / Displacement became plain map-owned C++ value
+types. They are never networked, so they were paying the schema system's
+blittable/fixed-size/memcmp constraints for nothing — and the `[64]f32` heights
+cap was the format's limitation leaking into what the game can express.
+
+```cpp
+struct displacement_t
+{
+  transform_t transform;
+  material_id material;
+  u32 resolution;
+  std::vector<f32> heights;   // assert(heights.size() == resolution * resolution)
+};
+```
+
+**This phase also disarmed half the ownership bug for free.** The static path in
+`init_session_from_map` (`game_session.cpp:10`) was selected by
+`is_collision_geometry()` and did `static_entities.push_back(entry.entity)` —
+copying the *shared_ptr*, so session and map aliased the same object. Deleting
+the branch made that aliasing (and its lifetime coupling, and the
+writeback-into-map hazard) stop existing, shrinking P7's scope before P7 starts.
+
+- [x] Geometry value types in `shared/map_geometry.{hpp,cpp}`: `box_geometry_t`,
+      `static_mesh_geometry_t`, `displacement_geometry_t` in a
+      `std::variant` (`geometry_value_t`), sharing a `geometry_surface_t`.
+      `std::vector<vec3> displacements` — no cap, no erasure. Displacement math
+      + `generate_displacement_mesh` moved off the entity.
+- [x] Handwritten map save/load per kind (`serialize_geometry` /
+      `parse_geometry`). Three kinds, not four — wedges were already retired
+      before this phase and did not come back. Keys emit in **declaration
+      order** (P5's intent, taken here for free) so the file is git-diffable.
+- [x] Map text I/O rewritten around a generic block parser with the grammar in
+      a header comment: `block := keyword '{' property* '}'`, keyword ∈
+      `entity | box | static_mesh | displacement`. Unknown keywords are skipped
+      and reported rather than derailing the parse.
+- [x] One-time map file conversion (`convert_legacy_geometry_entity`), plus
+      `src/tools/map_convert.cpp` so it can be run deliberately over every map
+      with a report instead of one-at-a-time by opening each in the editor.
+      Killed the `"center"` / `"half_extents"` compat shims by reading them
+      **here, once** — `maps/test` turned out to be older than expected (flat
+      `"half_extents"`, not the `"volume"` blob), which the rewritten
+      `map_migration_test` caught.
+      `maps/new_map.source` + `maps/other.source` converted (`.preconvert.bak`
+      alongside); `maps/test` deliberately left legacy — it's the test fixture.
+- [x] Session init: `is_collision_geometry()` gone from the routing.
+      `game_session_t::static_entities` replaced by
+      `std::vector<map_geometry_t> geometry`, a **copy** of the map's list —
+      `session_test` now asserts the non-aliasing directly (write the session's
+      copy, check the map didn't change).
+- [x] Editor seam, uid-keyed across both regimes: `map_t::has_object` /
+      `remove_object` / `object_count`, and free functions
+      `compute_object_bounds`, `get_object_position` / `set_object_position`,
+      `get_object_box` / `set_object_box`, `collect_object_bounds`. The tools
+      call those and mostly don't branch on regime. (Uniform editing never
+      actually required schemas — confirmed.)
+- [x] Handwritten inspector panels in `editor/geometry_editor.cpp` (~80 lines of
+      ImGui for all three kinds), with widgets that suit each kind: a named
+      `active_face` dropdown, and a subdivision slider that **resamples** the
+      grid instead of flattening it.
+- [x] Transaction system gained the geometry **value-swap** flavor
+      (`diff_geometry_created/removed/modified_t` + `geometry_values_equal`).
+      Bit-exact, so unlike the entity flavor it cannot lose a change too small
+      to survive `%.6f` — `transaction_system_test` asserts exactly that.
+- [x] `build_editor_bvh()` now builds over BOTH lists; `Collision_Id.index` is
+      an object uid resolved through the seam, so a pick doesn't know or care
+      which regime it hit.
+- [x] **Batch transactions** — multi-object delete and the multi-object Ctrl+drag
+      each push ONE transaction now (`Selection_Tool::commit_drag_snapshots`, and
+      the delete handler), and `transaction_system_test::test_mixed_batch_delete`
+      covers a batch spanning both regimes. The transaction builder already
+      supported this; the tools just weren't using it. (Originally listed under
+      P2.)
+- [x] Answers the loose note "why is AABB a schema? it's not a good decision" — it stopped being one here.
+
+**Bugs found and fixed while in here** (all pre-existing, all in code this phase
+rewrote anyway):
+- `displacement_tool`'s `commit_select_edit()` only *dropped* its snapshot and
+  never pushed a transaction, so Select-mode Q/E height steps were silently not
+  undoable. Now commits as one value swap per run of steps.
+- The subdivision slider called `init_displacement()`, which zeroed the grid —
+  changing subdivision threw away the sculpt. Now `resize_grid_preserving()`.
+- `set_displacement`'s bounds check used `idx + 2 >= count` on a flat float
+  array, i.e. it rejected the last vertex of a correctly-sized grid. Gone with
+  the flat array.
+- The game regenerated every displacement's mesh **every frame** (the editor
+  cached it); both now go through one cached path in
+  `client/geometry_renderer.cpp`.
+
+**Deliberately NOT changed** (each would be a gameplay/scope decision, not part
+of moving geometry out of the entity system) — the live consequences of these
+two are tracked in `todo.md`:
+- Displacements still aren't registered as Jolt static bodies, exactly as
+  before. Player movement (BVH) collides with a displacement's box bound but
+  projectiles pass through. The real fix is heightmap collision — see the
+  TODO in `get_collision_planes`.
+- `box`/`displacement` lost their `orientation` field. It was a lie: only the
+  draw call read it, so a rotated one rendered rotated and collided unrotated.
+  `static_mesh` keeps it.
+
+---
+
+## P2 — Editor undo: string-map snapshots → binary field diffs  ✅ DONE
+*Full build green. `transaction_system_test` (11 subtests, 3 new), `session_test`,
+`ecs_test`, `entity_layout_test`, `test_entity_delta_packing`,
+`map_migration_test`, `navmesh_test`, `server_loop_test`, `udp_socket_test` all
+pass. `network_test` (access violation) and `asset_test` (exit 3) fail exactly as
+before — see "Known failing tests" in `todo.md`.*
+
+Undo snapshotted entities as `std::map<string,string>` via `get_all_properties()`
+and detected change by STRING comparison (`diff_properties`). Wasteful (double
+text round-trip + map alloc per edit) and it had a real bug: comparing
+`%.6f`-formatted text means a sub-threshold change produces NO diff and the edit
+silently vanishes from the stack. Both flavors are binary now, and the entity
+flavor makes the same guarantee the geometry one already did.
+
+**The plan said clone via `serialize(writer, nullptr)` → deserialize. That is
+wrong and was not done.** `write_coord` quantizes floats to a 5-bit fraction
+(~1/32), so a bitstream round trip is LOSSY — snapshotting that way would snap
+every entity position on undo, which is a worse version of the bug the phase
+exists to fix. `clone_entity` copies schema field bytes instead: exact, no
+bitstream, and it is the same representation `capture_field_changes` diffs.
+Field-by-field rather than one `memcpy(sizeof(T))` because the source is only an
+`Entity*` there, and a whole-object copy would also stomp the clone's vtable
+pointer.
+
+- [x] `shared::clone_entity(const Entity*)` (`entity.cpp`) — exact byte copy of
+      every schema field into a fresh instance of the same concrete type.
+      Returns `shared_ptr`, not the planned `unique_ptr`: `map_t` stores
+      `shared_ptr` and the factory returns one, so unique would only add a
+      conversion. Ownership is P7's question anyway.
+- [x] `diff_reversible` → `capture_field_changes` (`schema.hpp`). No deprecated
+      alias — the plan assumed networking callers, but it turned out to have had
+      **no callers at all**, so it was a clean rename.
+- [x] New `network::write_field_changes(target, changes, schema, write_new_value)`
+      — the apply/revert counterpart. Undo and redo differ only in which side of
+      the change is written, so it's one function, not two mirrored ones. Returns
+      false and logs on an unknown field index or a size mismatch rather than
+      writing a wrong-sized value or skipping quietly.
+- [x] `transaction_system.hpp`: `property_change_t` and `diff_properties` deleted.
+      `diff_entity_modified_t` is now `{uid, entity_type, vector<field_change_t>}`
+      — it carries the **enum tag**, not the planned classname string: field
+      indices are per-class, so apply/revert verifies the entity still at that uid
+      is the same type before writing bytes into it, and the closed enum is the
+      cheaper and safer way to ask.
+- [x] created/removed diffs store a whole cloned entity (`entity_snapshot_t` =
+      `shared_ptr<const Entity>`) rather than the planned serialized blob — same
+      "binary everywhere" intent, exact instead of quantized, and it makes the
+      two flavors symmetric (entity clone ↔ geometry value). Restore re-clones,
+      so redoing a delete twice can't hand the map an object the undo stack still
+      owns.
+- [x] Tool snapshots migrated off `map<string,string>`:
+      `sculpting_tool::sculpt_start_entity`,
+      `selection_tool::object_snapshot_t::entity`, `editor_gizmo::start_entity`.
+      `displacement_tool` was already fully geometry-side.
+      `add_modified_from_diff(uid, before_snapshot, live_entity)` is now the
+      entity mirror of `add_geometry_modified` — same shape at every call site.
+- [x] `placement_tool` entity duplication: `create_entity_by_type` +
+      `init_from_map(get_all_properties())` → one `clone_entity` call, matching
+      the geometry branch directly above it.
+- [x] `get_all_properties`/`init_from_map`/`parse_string_to_field`/
+      `serialize_field_to_string` left in place — still used by map file save/load
+      until P5. Verified they now appear ONLY at that disk boundary (`map.cpp`)
+      and `entity.cpp`'s own definition: zero references left anywhere under
+      `src/client/`.
+- [x] `test_transaction_system.cpp` on the binary API, plus three new subtests:
+      * `test_modify_thresholds` — a 1e-9 change is captured and round-trips.
+        This is the bug the phase exists to kill, asserted directly, and mirrors
+        the geometry test P1 added.
+      * `test_modify_nested_field` — a nested-schema field (`volume.half_extents`)
+        is one memcmp/memcpy over the whole nested struct and round-trips like
+        any other field. The string flavor only reached it via `init_from_map`'s
+        `"volume"` special case.
+      * `test_snapshot_is_exact` — values not representable in `write_coord`'s
+        5-bit fraction (3.14159265, 0.001) survive a delete/undo exactly. This is
+        the regression guard against anyone re-introducing the serialize-based
+        clone the plan originally called for.
+
+**Carried into P5 unchanged, as predicted:** the shape (clone capture + binary
+field diff) survives the cutover; only the reflection calls get re-pointed from
+`Class_Schema` to the generated tables. Undo's text adapter is still deferred to
+P5, where map I/O gets rewritten anyway.
+
+---
+
 ## Map transfer / switching
 
 ARTIFACT MODEL (decided 2026-07-21). Two artifacts, two audiences — keep them
@@ -148,6 +380,16 @@ become the package hash before remote clients / streaming are real.
   .ps1 so PowerShell's execution policy doesn't block it). Workflow: start
   MyGame_Server, then run the cold-client script. Normal play is plain
   MyGame_Client.exe (uses ./maps). Still runtime-unverified (needs the GUI).
+
+## Physics body / Jolt (done: basic wiring)
+- [x] physics_body_entity (schema + entity_list registration)
+- [x] physics_body_system: `spawn_physics_body` (box/sphere) +
+      `update_physics_bodies` (reads Jolt transforms back)
+- [x] `spawn_cube` / `spawn_sphere` console commands (server-flagged)
+- [x] `step_physics()` + `update_physics_bodies()` wired into `server::Tick()`
+- [x] integrated-mode render path via `server_session` on `client_context_t`
+- [x] networked replication: slot=254 sentinel in serialize/deserialize, delta
+      compression matches the rocket pattern
 
 ## Multiplayer Networking (done: basic wiring)
 - [x] fixed server tick loop (accumulator-based, sv_tickrate)

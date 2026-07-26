@@ -109,7 +109,21 @@
       "Bash(echo \"--- exit: $? ---\")",
       "Bash(python \"C:/Users/sjors/AppData/Local/Temp/claude/c--Users-sjors-Desktop-Projects-tilde-tilde/7d39ebb2-a9e4-4de8-baa4-a2a90c9604ea/scratchpad/fix_claudemd.py\")",
       "Bash(echo \"map_migration_test: $?\")",
-      "Bash(cmake --build cmake_build --clean-first -j8)"
+      "Bash(cmake --build cmake_build --clean-first -j8)",
+      "Bash(git ls-tree *)",
+      "Bash(git merge *)",
+      "Bash(git stash *)",
+      "Bash(echo \"pop exit: $?\")",
+      "Bash(python -c \"import json;json.load\\(open\\('.claude/settings.local.json'\\)\\);print\\('valid JSON'\\)\")",
+      "Bash(echo \"conflict markers: $?\")",
+      "Bash(git add *)",
+      "Bash(git restore *)",
+      "PowerShell(cmake --build cmake_build --target transaction_system_test -j8 2>&1)",
+      "PowerShell(./cmake_build/bin/transaction_system_test.exe)",
+      "PowerShell(cmake --build cmake_build -j8 2>&1)",
+      "PowerShell(git -C \"c:\\\\Users\\\\sjors\\\\Desktop\\\\Projects\\\\tilde\\\\tilde\" status --short)",
+      "PowerShell(git -C \"c:\\\\Users\\\\sjors\\\\Desktop\\\\Projects\\\\tilde\\\\tilde\" diff --stat)",
+      "PowerShell(\"---\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"

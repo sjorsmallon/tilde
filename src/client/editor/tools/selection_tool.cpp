@@ -29,7 +29,7 @@ void Selection_Tool::capture_drag_snapshots(editor_context_t &ctx)
     }
 
     if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      drag_start_snapshots[uid].entity_properties = entry->entity->get_all_properties();
+      drag_start_snapshots[uid].entity = snapshot_entity(entry->entity.get());
   }
 }
 
@@ -54,8 +54,7 @@ void Selection_Tool::commit_drag_snapshots(editor_context_t &ctx)
     }
 
     if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      builder.add_modified_from_diff(uid, snapshot.entity_properties,
-                                     entry->entity->get_all_properties());
+      builder.add_modified_from_diff(uid, snapshot.entity, entry->entity.get());
   }
   ctx.transaction_system->push(builder.take());
   drag_start_snapshots.clear();

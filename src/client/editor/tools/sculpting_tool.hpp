@@ -37,7 +37,7 @@ private:
 
   // Pre-drag state, one flavor per regime — exactly one is engaged. See
   // commit_sculpt.
-  std::map<std::string, std::string> sculpt_start_props;
+  entity_snapshot_t sculpt_start_entity;
   std::optional<shared::geometry_value_t> sculpt_start_geometry;
 
   void commit_sculpt(editor_context_t &ctx);

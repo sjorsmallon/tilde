@@ -175,6 +175,17 @@ create_entity_by_type(::entity_type type);
 
 std::string get_classname_for_entity(const network::Entity *entity);
 
+// Exact copy of an entity: same concrete type, every schema field byte-for-byte.
+//
+// This is the editor's snapshot primitive — the entity-flavor answer to the way
+// geometry snapshots a whole value. It deliberately does NOT go through
+// serialize/deserialize: write_coord quantizes floats to ~1/32, so a bitstream
+// round trip would snap every position on undo. Copying schema field bytes is
+// exact and is the same representation capture_field_changes() diffs.
+//
+// Returns nullptr (and logs) if the type has no factory entry or no schema.
+std::shared_ptr<network::Entity> clone_entity(const network::Entity *entity);
+
 // Closed-enum replacement for dynamic_cast<T*>(entity).
 // Returns the pointer typed as T* if the entity's concrete type is exactly T,
 // else nullptr. Uses Entity_Of's T::static_type integer compare instead of

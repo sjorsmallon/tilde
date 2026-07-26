@@ -99,11 +99,12 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
 
   if (current_entity)
   {
-    auto new_entity = shared::create_entity_by_type(current_entity->get_type());
+    // Same shape as the geometry branch above: the prototype IS the new object,
+    // so placing one is an exact copy plus a position.
+    auto new_entity = shared::clone_entity(current_entity.get());
     if (!new_entity)
       return;
 
-    new_entity->init_from_map(current_entity->get_all_properties());
     new_entity->position = compute_placement_center(new_entity.get(), ghost_position);
 
     {

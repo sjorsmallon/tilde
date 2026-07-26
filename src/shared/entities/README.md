@@ -149,9 +149,11 @@ To add a new entity: create the class, use `SCHEMA_FIELD` / `DECLARE_SCHEMA` / `
 | Consumer | What it does |
 |----------|-------------|
 | `Entity::serialize` / `deserialize` | Walks schema fields, writes/reads a bitmask + changed field data over the network |
-| `diff` / `diff_reversible` | Compares two entity snapshots field-by-field via `memcmp` at schema offsets |
+| `diff` / `capture_field_changes` | Compares two entity snapshots field-by-field via `memcmp` at schema offsets |
 | `apply_diff` | Patches an entity from a list of `Field_Update`s |
-| `init_from_map` | Parses string key-value pairs from map files into typed fields |
-| `get_all_properties` | Serializes all fields back to string key-value pairs |
-| Transaction system | Uses `diff_reversible` to capture old/new values for undo/redo |
+| `write_field_changes` | Writes one side of a captured change list back — new values to redo, old values to undo |
+| `clone_entity` | Exact copy of an entity by copying schema field bytes (the editor's snapshot primitive) |
+| `init_from_map` | Parses string key-value pairs from map files into typed fields — map file load only |
+| `get_all_properties` | Serializes all fields back to string key-value pairs — map file save only |
+| Transaction system | `clone_entity` to snapshot, `capture_field_changes` / `write_field_changes` for undo/redo. Entirely binary; no text round-trip |
 | Editor inspector | Iterates `Editable` fields to generate ImGui widgets |

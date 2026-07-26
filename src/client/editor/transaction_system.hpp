@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../shared/entity.hpp"
+#include "../../shared/entity_system.hpp" // type_to_classname, for error messages
 #include "../../shared/log.hpp"
 #include "../../shared/map.hpp"
 #include "../../shared/map_geometry.hpp"
@@ -16,19 +17,16 @@ namespace client
 {
 
 // --- Data types ---
+//
+// Both flavors below are BINARY. Nothing here round-trips through text: an
+// entity snapshot is an exact clone and an entity modification is a list of
+// changed field bytes, exactly as geometry is a whole value. Text appears only
+// at the disk save/load boundary, which is map.cpp's business, not undo's.
 
-struct property_change_t
-{
-  std::string field;
-  std::string before;
-  std::string after;
-};
-
-struct entity_snapshot_t
-{
-  std::string classname;
-  std::map<std::string, std::string> properties;
-};
+// One entity's captured state: an exact clone, produced by shared::clone_entity.
+// Held by shared_ptr because that's what map_t stores and what the factory
+// hands back; the transaction never mutates it, hence const.
+using entity_snapshot_t = std::shared_ptr<const network::Entity>;
 
 struct diff_entity_created_t
 {
@@ -45,16 +43,19 @@ struct diff_entity_removed_t
 struct diff_entity_modified_t
 {
   shared::entity_uid_t uid;
-  std::vector<property_change_t> changes;
+  // Carried so apply/revert can verify the entity still at this uid is the same
+  // type the change was captured against. Field indices are per-class, so
+  // writing them into a different class would silently corrupt it.
+  ::entity_type type = ::entity_type::UNKNOWN;
+  std::vector<network::field_change_t> changes;
 };
 
 // --- The second entry flavor: geometry value-swap ---------------------------
 //
 // Geometry doesn't get diffed field-by-field. It's a plain value, so undo IS a
-// whole-value copy — before and after, swap on undo/redo. That is both simpler
-// and strictly more correct than the entity flavor above, which compares
-// FORMATTED FLOAT TEXT and so silently drops a change too small to show at 6
-// decimals. It also needs no schema, no reflection, and no string round-trip.
+// whole-value copy — before and after, swap on undo/redo. It needs no schema and
+// no reflection at all, where the entity flavor needs both to know where the
+// fields are.
 //
 // The cost is memory: a sculpted displacement's snapshot is its whole vertex
 // grid. That's the right trade for an editor — the tools already captured
@@ -97,23 +98,19 @@ template <class... Ts> struct overloaded : Ts...
   using Ts::operator()...;
 };
 
-inline std::vector<property_change_t>
-diff_properties(const std::map<std::string, std::string> &before,
-                const std::map<std::string, std::string> &after)
-{
-  std::vector<property_change_t> changes;
-  for (const auto &[key, old_val] : before)
-  {
-    auto it = after.find(key);
-    if (it != after.end() && it->second != old_val)
-      changes.push_back({key, old_val, it->second});
-  }
-  return changes;
-}
-
+// Capture an entity's whole state for a created/removed entry, or as the
+// "before" side of a modification.
 inline entity_snapshot_t snapshot_entity(const network::Entity *ent)
 {
-  return {shared::get_classname_for_entity(ent), ent->get_all_properties()};
+  return shared::clone_entity(ent);
+}
+
+// Rebuild an entity from a snapshot. The snapshot is already a real entity of
+// the right concrete type, so this is just another exact clone.
+inline std::shared_ptr<network::Entity>
+restore_entity(const entity_snapshot_t &snapshot)
+{
+  return shared::clone_entity(snapshot.get());
 }
 
 // --- transaction_builder_t ---
@@ -132,20 +129,44 @@ struct transaction_builder_t
     diffs.push_back(diff_entity_removed_t{uid, std::move(snapshot)});
   }
 
-  void add_modified(shared::entity_uid_t uid,
-                    std::vector<property_change_t> changes)
+  void add_modified(shared::entity_uid_t uid, ::entity_type type,
+                    std::vector<network::field_change_t> changes)
   {
     if (!changes.empty())
-      diffs.push_back(
-          diff_entity_modified_t{uid, std::move(changes)});
+      diffs.push_back(diff_entity_modified_t{uid, type, std::move(changes)});
   }
 
-  void add_modified_from_diff(
-      shared::entity_uid_t uid,
-      const std::map<std::string, std::string> &before,
-      const std::map<std::string, std::string> &after)
+  // The entity counterpart of add_geometry_modified: hand it the pre-edit
+  // snapshot and the live entity, and it captures the fields that actually
+  // differ. No-op when nothing changed, so a click without a drag doesn't push
+  // an empty transaction.
+  void add_modified_from_diff(shared::entity_uid_t uid,
+                              const entity_snapshot_t &before,
+                              const network::Entity *after)
   {
-    add_modified(uid, diff_properties(before, after));
+    if (!before || !after)
+      return;
+
+    if (before->get_type() != after->get_type())
+    {
+      log_error("transaction: uid {} was captured as {} but is now {} — the edit "
+                "is not undoable",
+                uid, shared::get_classname_for_entity(before.get()),
+                shared::get_classname_for_entity(after));
+      return;
+    }
+
+    const network::Class_Schema *schema = after->get_schema();
+    if (!schema)
+    {
+      log_error("transaction: entity {} has no registered schema — the edit is "
+                "not undoable",
+                shared::get_classname_for_entity(after));
+      return;
+    }
+
+    add_modified(uid, after->get_type(),
+                 network::capture_field_changes(before.get(), after, schema));
   }
 
   // --- geometry ---
@@ -236,28 +257,11 @@ private:
     std::visit(
         overloaded{
             [&](const diff_entity_created_t &d)
-            {
-              auto ent =
-                  shared::create_entity_by_classname(d.snapshot.classname);
-              if (ent)
-              {
-                ent->init_from_map(d.snapshot.properties);
-                map.add_entity_with_uid(d.uid, ent);
-              }
-            },
+            { restore_entity_into_map(map, d.uid, d.snapshot); },
             [&](const diff_entity_removed_t &d)
             { map.remove_entity(d.uid); },
             [&](const diff_entity_modified_t &d)
-            {
-              auto *entry = map.find_by_uid(d.uid);
-              if (entry && entry->entity)
-              {
-                std::map<std::string, std::string> props;
-                for (const auto &c : d.changes)
-                  props[c.field] = c.after;
-                entry->entity->init_from_map(props);
-              }
-            },
+            { write_entity_changes(map, d, /*write_new_value=*/true); },
             [&](const diff_geometry_created_t &d)
             { map.add_geometry_with_uid(d.uid, d.value); },
             [&](const diff_geometry_removed_t &d)
@@ -274,26 +278,9 @@ private:
             [&](const diff_entity_created_t &d)
             { map.remove_entity(d.uid); },
             [&](const diff_entity_removed_t &d)
-            {
-              auto ent =
-                  shared::create_entity_by_classname(d.snapshot.classname);
-              if (ent)
-              {
-                ent->init_from_map(d.snapshot.properties);
-                map.add_entity_with_uid(d.uid, ent);
-              }
-            },
+            { restore_entity_into_map(map, d.uid, d.snapshot); },
             [&](const diff_entity_modified_t &d)
-            {
-              auto *entry = map.find_by_uid(d.uid);
-              if (entry && entry->entity)
-              {
-                std::map<std::string, std::string> props;
-                for (const auto &c : d.changes)
-                  props[c.field] = c.before;
-                entry->entity->init_from_map(props);
-              }
-            },
+            { write_entity_changes(map, d, /*write_new_value=*/false); },
             [&](const diff_geometry_created_t &d)
             { map.remove_geometry(d.uid); },
             [&](const diff_geometry_removed_t &d)
@@ -301,6 +288,60 @@ private:
             [&](const diff_geometry_modified_t &d)
             { set_geometry_value(map, d.uid, d.before); }},
         diff);
+  }
+
+  // Put a snapshotted entity back in the map under its original uid. A fresh
+  // clone each time, so redoing a delete twice can't hand the map an object the
+  // undo stack still owns.
+  static void restore_entity_into_map(shared::map_t &map, shared::entity_uid_t uid,
+                                      const entity_snapshot_t &snapshot)
+  {
+    std::shared_ptr<network::Entity> entity = restore_entity(snapshot);
+    if (!entity)
+    {
+      log_error("transaction: could not rebuild the entity for uid {} — it stays "
+                "missing",
+                uid);
+      return;
+    }
+    map.add_entity_with_uid(uid, entity);
+  }
+
+  // Apply or revert one entity modification: memcpy the captured field bytes
+  // back over the live entity. Undo and redo differ only in which side is
+  // written, which is why there's one function instead of two mirrored ones.
+  static void write_entity_changes(shared::map_t &map,
+                                   const diff_entity_modified_t &diff,
+                                   bool write_new_value)
+  {
+    shared::map_entity_t *entry = map.find_by_uid(diff.uid);
+    if (!entry || !entry->entity)
+    {
+      log_error("transaction: entity uid {} is gone — cannot restore its fields",
+                diff.uid);
+      return;
+    }
+
+    network::Entity *entity = entry->entity.get();
+    if (entity->get_type() != diff.type)
+    {
+      log_error("transaction: uid {} now holds a {} but the change was captured "
+                "against a {} — refusing to write field bytes into it",
+                diff.uid, shared::get_classname_for_entity(entity),
+                shared::type_to_classname(diff.type));
+      return;
+    }
+
+    const network::Class_Schema *schema = entity->get_schema();
+    if (!schema)
+    {
+      log_error("transaction: entity {} has no registered schema — cannot "
+                "restore its fields",
+                shared::get_classname_for_entity(entity));
+      return;
+    }
+
+    network::write_field_changes(entity, diff.changes, schema, write_new_value);
   }
 
   // Write a whole geometry value back over the object with this uid. The entire

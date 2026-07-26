@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../log.hpp"
 #include "network_types.hpp"
 #include <cstddef>
 #include <functional>
@@ -153,11 +154,16 @@ struct field_change_t
   std::vector<uint8_t> new_val;
 };
 
-// Generates a list of reversible changes to transform 'baseline' into 'current'
+// Generates a list of reversible changes to transform 'baseline' into 'current',
 // capturing both old and new values.
-inline std::vector<field_change_t> diff_reversible(const void *baseline,
-                                                   const void *current,
-                                                   const Class_Schema *schema)
+//
+// This is the primitive the editor's undo stack stands on. Change detection is
+// a memcmp over `field.size`, so it sees a change of any magnitude — unlike the
+// formatted-string compare it replaced, which silently dropped anything too
+// small to survive being printed to 6 decimals.
+inline std::vector<field_change_t> capture_field_changes(const void *baseline,
+                                                         const void *current,
+                                                         const Class_Schema *schema)
 {
   std::vector<field_change_t> changes;
   const uint8_t *base_ptr = static_cast<const uint8_t *>(baseline);
@@ -181,6 +187,56 @@ inline std::vector<field_change_t> diff_reversible(const void *baseline,
     }
   }
   return changes;
+}
+
+// Writes one side of a captured change list back into 'target': the new values
+// to apply/redo, the old values to revert/undo. Same memcpy either way — the
+// asymmetry the string flavor had (build a property map, re-parse it) is gone.
+//
+// Returns false and logs if a change doesn't line up with the schema, rather
+// than writing a wrong-sized value or skipping quietly.
+inline bool write_field_changes(void *target,
+                                const std::vector<field_change_t> &changes,
+                                const Class_Schema *schema, bool write_new_value)
+{
+  uint8_t *target_ptr = static_cast<uint8_t *>(target);
+  bool all_written = true;
+
+  for (const field_change_t &change : changes)
+  {
+    const Field_Prop *field = nullptr;
+    for (const Field_Prop &candidate : schema->fields)
+    {
+      if (candidate.index == change.id)
+      {
+        field = &candidate;
+        break;
+      }
+    }
+
+    if (!field)
+    {
+      log_error("schema: class {} has no field with index {} — change not applied",
+                schema->class_name, change.id);
+      all_written = false;
+      continue;
+    }
+
+    const std::vector<uint8_t> &bytes =
+        write_new_value ? change.new_val : change.old_val;
+    if (bytes.size() != field->size)
+    {
+      log_error("schema: field {}.{} is {} bytes but the captured change holds "
+                "{} — change not applied",
+                schema->class_name, field->name, field->size, bytes.size());
+      all_written = false;
+      continue;
+    }
+
+    std::memcpy(target_ptr + field->offset, bytes.data(), bytes.size());
+  }
+
+  return all_written;
 }
 
 // Applies a list of updates to 'target' based on the provided schema.
