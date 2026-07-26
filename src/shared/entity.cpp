@@ -128,11 +128,31 @@ static void deserialize_field_from_bits(Bit_Reader &reader, uint8 *base,
   case Field_Type::PascalString:
   {
     auto *ps = reinterpret_cast<pascal_string *>(base + field.offset);
-    ps->length = static_cast<uint8>(reader.read_bits(8));
-    for (uint8 j = 0; j < ps->length; ++j)
-      ps->data[j] = static_cast<char>(reader.read_bits(8));
-    if (ps->length < ps->max_length())
-      ps->data[ps->length] = '\0';
+
+    // The wire length is untrusted (uint8, so up to 255) and the field's
+    // capacity may be smaller. Store only what fits, but always consume every
+    // announced byte or the bitstream desyncs for every field after this one.
+    const uint8 wire_length = static_cast<uint8>(reader.read_bits(8));
+    const uint8 capacity = ps->max_length();
+    const uint8 stored_length = wire_length < capacity ? wire_length : capacity;
+
+    for (uint16 j = 0; j < wire_length; ++j)
+    {
+      const char c = static_cast<char>(reader.read_bits(8));
+      if (j < stored_length)
+        ps->data[j] = c;
+    }
+    ps->length = stored_length;
+
+    // Restore the canonical zero-padding invariant (see pascal_string_t):
+    // without this, deserializing a shorter string over a longer one leaves
+    // residue and every later baseline memcmp reports a phantom delta.
+    std::memset(ps->data + stored_length, 0, sizeof(ps->data) - stored_length);
+
+    if (wire_length > capacity)
+      std::print("[SCHEMA] ERROR: deserialize: field {} announced {} chars but "
+                 "capacity is {} — value truncated\n",
+                 field.name, wire_length, capacity);
     break;
   }
   case Field_Type::NestedSchema:

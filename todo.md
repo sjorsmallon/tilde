@@ -116,9 +116,29 @@ diffing. This establishes the canonical-zero-padding invariant that both the
 generator's string model (`entity_def.md`, Strings) and P2's binary field
 diffing assume.
 
-- [ ] `network_types.hpp` `pascal_string_t::set()`: zero `data[length..N)` after copy
-- [ ] While there: silent truncation at capacity violates no-silent-failures —
-      assert or return bool
+- [x] `network_types.hpp` `pascal_string_t::set()`: zero `data[length..N)` after copy
+- [x] While there: silent truncation at capacity violates no-silent-failures —
+      `set()` now returns bool and asserts; added `clear()`
+- [x] Storage widened to `data[N + 1]` so a full-capacity string is still
+      null-terminated — `c_str()` on an exactly-N-char string used to read one
+      byte past the buffer, and the old "always null-terminated" comment was
+      simply false in that case. N is still the usable capacity.
+- [x] **Same invariant was violated on the wire path** (`entity.cpp`,
+      `deserialize_field_from_bits` PascalString branch): it wrote `length`
+      chars and terminated only when `length < max_length()`, never zeroing the
+      tail — so a shorter string deserialized over a longer one left residue and
+      every later baseline memcmp reported a phantom delta. That is the exact
+      bug this phase exists to kill, on the path that matters most. Now memsets
+      the tail.
+- [x] While there: that branch trusted the untrusted uint8 wire length without
+      clamping to capacity, so a corrupt or hostile packet claiming 255 chars
+      wrote up to 5 bytes past a 250-capacity field. Now clamps, still consumes
+      every announced byte (or the bitstream desyncs for all later fields), and
+      logs loudly on overflow.
+- Verified: full build green; `test_entity_delta_packing`, `session_test`,
+  `ecs_test`, `entity_layout_test`, `transaction_system_test`,
+  `map_migration_test` all pass. `network_test` still segfaults exactly as
+  before (pre-existing, see Known failing tests) — unchanged by this work.
 
 ---
 
@@ -481,6 +501,16 @@ serialization by then — absorption, not a project.
   Needs its own investigation: run `./cmake_build/bin/network_test` and find
   where in the "Full update" full-serialize subtest it faults. Blocks confidence
   in P6.
+- `asset_test` fails (exit 3) at `test_asset_system.cpp:59` `assert(handle.valid())`.
+  Cause is trivial and already found: the fixture paths at the top of that file
+  are hardcoded POSIX (`/tmp/test_asset_cube.obj`, `/tmp/..tga`), which don't
+  exist on Windows — the `std::ofstream` write goes nowhere and `load_mesh` then
+  has no file. Fix: write fixtures next to the exe or via `std::filesystem::
+  temp_directory_path()`. Note the ofstream failure is itself silent — the test
+  should check the stream state.
+- `map_migration_test` must be run FROM THE PROJECT ROOT (it loads the
+  `maps/test` fixture by relative path) — it fails with a clear error otherwise.
+  Not a bug, just a foot-gun when running tests out of `cmake_build/bin`.
 
 ## Audio
 - settings menu: at minimum let the player select the audio output device

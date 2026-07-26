@@ -1,8 +1,10 @@
 #pragma once
 
 #include "linalg.hpp"
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace network
 {
@@ -23,31 +25,57 @@ using float64 = double;
 using vec3f = linalg::vec3_t<float32>;
 
 // Fixed-capacity inline string, trivially copyable for schema serialization.
-// N is the max number of characters (excluding the length byte).
+// N is the max number of characters (excluding the length byte). Storage is
+// N + 1 bytes so that even a full-capacity string is null-terminated and
+// c_str() never reads past the buffer.
+//
+// CANONICAL ZERO-PADDING INVARIANT: every byte from data[length] to the end of
+// the buffer is zero. Two pascal_string_t holding the same text therefore
+// always compare equal under memcmp — which is exactly what the schema layer
+// uses for baseline diffing, so a violated invariant shows up as a phantom
+// delta (a field replicated every tick because its dead tail bytes differ).
+// Every mutation path must restore it: see set() here, and the PascalString
+// branch of deserialize_field_from_bits() in entity.cpp.
 template <uint8 N = 250> struct pascal_string_t
 {
   uint8 length = 0;
-  char data[N] = {};
+  char data[N + 1] = {};
 
   pascal_string_t() = default;
 
   pascal_string_t(const char *str) { set(str); }
 
-  void set(const char *str)
+  // Copies str, truncating at capacity. Returns false if it did not fit —
+  // truncation is a caller error, not a silently accepted outcome.
+  bool set(const char *str)
   {
     length = 0;
-    if (!str)
-      return;
-    while (length < N && str[length] != '\0')
+    if (str)
     {
-      data[length] = str[length];
-      ++length;
+      while (length < N && str[length] != '\0')
+      {
+        data[length] = str[length];
+        ++length;
+      }
     }
+
+    // Restore the zero-padding invariant: everything past the last character
+    // must be zero, not residue from a previous, longer value. Without this,
+    // "hello" -> "hi" leaves "hi\0lo" and c_str() reads "hi" but memcmp sees a
+    // difference that isn't there.
+    std::memset(data + length, 0, sizeof(data) - length);
+
+    const bool fits = (str == nullptr) || (str[length] == '\0');
+    assert(fits && "pascal_string_t::set(): string exceeds capacity");
+    return fits;
   }
+
+  void clear() { set(nullptr); }
 
   const char *c_str() const
   {
-    // data is always null-terminated within capacity since we zero-init
+    // Always null-terminated: the invariant above zeroes data[length], and the
+    // buffer has a spare byte so that holds even at full capacity.
     return data;
   }
 
