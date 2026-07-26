@@ -122,65 +122,267 @@ DECIDED (do not relitigate — reasoning is in `entity_def.md`):
 
 DONE:
 - [x] Parser + resolver + codegen, single file: `src/tools/entity_gen.cpp`
-- [x] `entities.def`: all 8 non-geometry entities, 4 components, 6 enums
+- [x] `entities.def`: all 8 non-geometry entities, 4 components, 6 enums,
+      2 asset classes
 - [x] CMake custom command → `src/shared/entities/generated/` (checked in, so
       schema changes show up as reviewable diffs; note a build dirties the tree)
-- [x] `entity_layout_test` guards trivial copyability + derived-to-base
+- [x] `entity_layout_test` guards trivial copyability + derived-to-base, and now
+      the factory / placeable / manifest surface too — 36 checks, exits non-zero
+
+**Status 2026-07-26: every P3 build item is done.** What remains under P3 is two
+*decisions* (`@runtime_only` grammar placement; the asset naming flagged below),
+plus Meson (deferred by decision), plus serializers which are P6 by design. The
+phase invariant still holds — generated code drives nothing yet, so this is a
+safe place to stop. One cross-cutting item came out of reviewing the output and
+lives under "API style" below: the generated pointer+count signatures want a
+principled `Array<T>`, ideally settled before P5 adds their callers.
+
+WHAT P2 SETTLED FOR THIS PHASE (checked against the generated output, 2026-07-26):
+- **The P5 re-point of undo really is mechanical.** `field_info_t` already carries
+  `{name, offset, size_in_bytes, flags}`, which is the whole of what
+  `capture_field_changes` / `write_field_changes` read off `Field_Prop`. Nothing
+  new to generate for undo. A `FIELD_TYPE_COMPONENT` field's `size_in_bytes`
+  spans the whole nested struct, so a component diffs as one memcmp exactly as it
+  does today — `test_modify_nested_field` is the guard that this keeps working.
+- **`clone_entity` collapses to one `memcpy` at the cutover.** It walks fields
+  today only because the source is an `Entity*` with a vtable, and a whole-object
+  copy would stomp the clone's vptr. Generated entities are plain structs with a
+  `type` tag and no virtuals, so post-P5 it is
+  `memcpy(dest, src, entity_info(type).size_in_bytes)`. **Do not build a
+  field-walking clone into the generator** — `construct_at` plus `size_in_bytes`
+  is the whole requirement.
+- **Snapshots must never go through the serializers P6 emits.** `write_coord`
+  quantizes floats to a 5-bit fraction, so "serialize to bytes" looks like a
+  snapshot primitive and silently is not — it would snap positions on undo. P2
+  hit this and `test_snapshot_is_exact` guards it. Whatever P6 emits, the exact
+  byte copy stays the snapshot path and the quantized encoder stays the wire
+  path; they must not share a name.
+- **`pascal_string_t<N>`'s memcmp-equality is inherited, not re-established.**
+  The generated strings are the same type P0 fixed, so canonical zero-padding
+  carries over for free. If the asset manifest work below changes the string
+  representation, that invariant has to be re-checked, not assumed.
+
+DECIDED AND DONE (2026-07-26):
+- [x] **Enum sentinels** — policy settled and implemented, documented at the
+      emission site in `entity_gen.cpp`. `Count` is NEVER a member: it's emitted
+      as a sibling `constexpr uint32_t ENTITY_TYPE_COUNT` /
+      `COMPONENT_TYPE_COUNT`, so iteration still works but `switch` over a tag
+      still warns on an unhandled case — the warning P5's lifecycle hooks are
+      designed around. `Invalid = 0` only on the two tag enums, where zeroed
+      memory must not read as valid; domain enums (`Light_Type`, `Fire_Mode`, …)
+      get none, since an `Invalid` light is a state no light can be in and every
+      consumer would have to answer for. Closes `entity_def.md` open q #1.
+- [x] **String capacities** — `param_target_name` stays `string<64>` (matched
+      against spawn names). `param_string` is now `string<128>`: it's
+      player-facing message text, and 250 was never a chosen number, just the
+      `pascal_string_t` default every field inherited. Neither field is
+      `@Networked`, so the size costs struct memory and map bytes, not bandwidth.
+- [x] **Generator now rejects `string<N>` for N > 255.** It bounded capacity
+      below but not above, so `string<256>` parsed cleanly and emitted
+      `pascal_string_t<256>` — whose template parameter is itself a `uint8`, so
+      256 wrapped N to **0** and produced a 1-byte buffer that truncated every
+      value it was ever given, silently. Now a parse error naming the limit and
+      the reason.
 
 STILL TO DECIDE:
-- [ ] **Enum sentinels**: `Invalid = 0` and `Count`. Currently inconsistent by
-      accident (`entity_type` has both, `component_type` has Count only, DSL
-      enums have neither). Leaning: `Count` NEVER inside the enum (it defeats
-      the exhaustive-switch warning the lifecycle-hook design relies on) — emit
-      `ENTITY_TYPE_COUNT` instead; `Invalid` only where "none/unknown" is a real
-      domain state (`entity_type` yes, `Light_Type` no). `entity_def.md` open q #1.
 - [ ] `@runtime_only` placement in the grammar (`X :: entity @runtime_only {`)
       was a grammar-design call, not specified by the doc. Flagged in
       `entities.def` as still under consideration.
-- [ ] **Factory return type: `Entity*` vs a handle.** Decide BEFORE callers
-      exist. *Constrained by ordering*: the phasing rule says generator v1 must
-      work inside today's `shared_ptr<Entity>` session storage, and handles only
-      become meaningful in P7 — so `Entity*` now, handle later, and P7 is where
-      that reverses. Record it as a decision, not an accident.
-- [ ] `Shape_Kind` merge: `hitbox_component_t` said "sphere"/"capsule"/"aabb",
-      `Physics_Body` said "box"/"sphere"/"capsule", and the physics comment
-      claims they're the same interpretation. Merged into one enum on that
-      basis. If "aabb" and "box" were meant to differ, split it back into two.
-- [ ] String capacities are invented: everything was `pascal_string<250>`;
-      `string<64>` chosen for `param_target_name` / `param_string`. Confirm or
-      set real ones.
+      * Note it is now load-bearing, not decorative: `placeable_entity_types()`
+        below is generated by filtering on exactly this bit, so a move has to
+        keep meaning the same thing.
+- [x] **Factory return type: `Entity*`, not a handle.** Not actually open — the
+      phasing rule already forces it: generator v1 must work inside today's
+      `shared_ptr<Entity>` session storage, and handles only become meaningful in
+      P7. So `Entity*` now, handle in P7, and P7 is where that reverses. Recorded
+      here as a decision rather than left to look like an accident.
+- [x] **UTF-8 BOM nit — FIXED.** `read_entire_file` now drops a leading BOM by
+      moving the bytes down (not by skipping past them, so every offset in the
+      buffer still equals the offset an editor shows, which the line/column
+      diagnostics depend on). Verified against a BOM-prefixed copy of
+      `entities.def`: parses identically, exit 0.
+- [x] `Shape_Kind` merge: **RESOLVED — the merge is right, and the split was a
+      live bug.** `physics_body_system.cpp:62-64` sets `body->shape_type` AND
+      `body->hitbox.shape_type` from the *same* string, so `spawn_cube` writes
+      `"box"` into a hitbox. But `test_hitbox_collision`
+      (`components.cpp:109-194`) only branches on `"sphere"`/`"capsule"`/`"aabb"`
+      — there is no `"box"` case, so a cube's hitbox falls through every strcmp
+      to the `return false` default and **never registers a hit**. Two spellings
+      of one concept, diverging silently, exactly as suspected. One enum fixes it.
+      * **This means P5 changes gameplay behavior**: physics cubes become
+        hittable. That's the correct behavior, but it is a behavior change, not a
+        refactor — call it out when the cutover lands so it isn't mistaken for a
+        regression.
+      * `spawn_physics_body` still takes `const char *shape_type` and strcmps it.
+        That's a string-typed API over what is now a closed enum; it should take
+        `Shape_Kind` at the cutover. Its `else` branch already logs loudly, so
+        this one is at least not silent.
 
-STILL TO BUILD:
-- [ ] **Factory / spawning helpers** (`entity_def.md` open q #2, artifact #4 of
-      the output contract). None exist; `entity_type_from_classname` returns only
-      the tag today:
-      * `Entity* entity_from_classname(const char*)` — the editor and map loader
-        both want an instance, not a tag
-      * `create_entity(entity_type)` — heap factory over the same switch
-      * `entity_type_info_t::construct_at(void* memory)` — the type-erased hook
-        undo, baselines and (later) pooled storage need. `size_in_bytes` and
-        `alignment` already exist; this is the missing third piece.
-- [ ] **Placeable-type enumeration for the editor** (open q #3). The
-      `runtime_only` bit exists but nothing enumerates non-runtime types, so the
-      placement menu has no source of truth. Prefer a constexpr filtered array
-      (the menu wants to index it) over a callback — and keep it a free
-      function, since "tables are an implementation detail".
-- [ ] **Asset manifest scanner.** `mesh_asset`/`sprite_asset` are placeholder
-      `using = uint32_t` typedefs; Particle_Emitter's default sprite path
-      (`"resources/sprites/smoke.png"`) currently has NO representation. Kills
-      the hand-maintained `assets::get_mesh_path(asset_id)` mapping.
+BUILT (2026-07-26):
+- [x] **Factory / spawning helpers** (`entity_def.md` open q #2, artifact #4 of
+      the output contract). All three landed, plus one the list missed:
+      * `Entity* entity_from_classname(const char*)` — returns **nullptr** for an
+        unknown classname (a map *data* error the caller must report) rather than
+        asserting, which is what `create_entity` does for a bad tag (a *caller*
+        bug). The two failure modes are deliberately not the same.
+      * `Entity* create_entity(entity_type)` — heap factory
+      * `entity_type_info_t::construct_at(void* memory)` — the type-erased hook,
+        a placement-new thunk per type so `ENTITY_INFOS` stays constexpr (a
+        function address is a constant expression, so still zero static init).
+      * `void destroy_entity(Entity*)` — **not on the original list but required**:
+        entities have no virtual destructor, so `delete` through an `Entity*` is
+        UB. Recovers the concrete type from the tag first. Null safe. This is
+        also what lets a `shared_ptr<Entity>` hold one during P5:
+        `shared_ptr<Entity>(create_entity(t), destroy_entity)`.
+      * `create_entity`/`destroy_entity` are exhaustive **switches**, not tables
+        of thunks — so a new entity type is a `-Wswitch` warning, the same
+        guarantee P5's lifecycle hooks are built on.
+- [x] **Placeable-type enumeration for the editor** (open q #3). Constexpr
+      filtered array as preferred, reached through the free function
+      `placeable_entity_types(uint32_t* out_count)` — count as an out param, not
+      a second call, so the pointer and the count can never be read out of step.
+      Currently 5 of 8: Player Spawn, Particle Emitter, Trigger Volume, Light,
+      Physics Body.
+- [x] `entity_layout_test` now covers all of the above (25 checks) **and
+      actually fails**: it previously printed "FAILED" but still returned 0, so a
+      regression would have been invisible to any script running it.
+- [x] **Asset manifest scanner — BUILT.** `mesh_asset`/`sprite_asset` are no
+      longer `using = uint32_t`; they are declared in `entities.def` as a new
+      `assets` declaration kind and generated as closed enums with a manifest
+      table. `builtin_type_kind` no longer hardcodes their two names — an asset
+      class resolves through the name table like an enum or a component, so the
+      generator no longer knows the name of any asset class in the game.
+      * **The key finding, which changed the design**: `__primitive_<name>` was
+        never a naming scheme, it was a **lazy-initialisation trigger**.
+        `load_mesh` checks the cache by exact key first (`asset.cpp:877`), so
+        `load_mesh("__primitive_box")` already resolves once registered; the 7
+        `strncmp(path, "__primitive_", 12)` sites exist only to reach
+        `get_primitive_mesh`, whose function-local `static bool initialized`
+        (`asset.cpp:1020`) is what actually populates the cache. So the
+        file-vs-procedural split was never inherent — it was an artifact of
+        *when* registration happens. And it fails **silently**: an unregistered
+        lookup returns an invalid handle and nothing renders.
+      * Therefore: the manifest models **identity only**. Source (file path vs
+        generator key) is one column in one generated table, read by
+        `assets::init()` and by nothing else. There is deliberately no
+        `is_procedural()` / `asset_path()` in the public API — a consumer holding
+        a `mesh_asset` has no way to ask, and no reason to.
+      * Entry 0 of every class is `Missing`, resolving to a declared
+        `placeholder`. An unassigned mesh renders the question mark (loudly
+        wrong) instead of whichever asset sorted first (plausible, hides the bug).
+      * **Name collisions within a class are a build error**, naming both sides.
+        This is the feature, not an obstacle — same "two spellings of one concept
+        diverging silently" story as the `Shape_Kind` merge. It fired
+        immediately on `sphere.obj` vs the generated sphere, and on
+        `pyramid.obj` vs the generated pyramid.
+      * **The resolved manifest is mixed into `SCHEMA_HASH`.** Asset ids come
+        from what is on disk, so ids are NOT stable across adding a file. That is
+        only safe because names are the on-disk identity AND a differing asset
+        set now changes the hash — otherwise two builds would silently disagree
+        about what id 3 means, with an identical hash. Do not remove this.
+      * CMake globs the scanned directories with `CONFIGURE_DEPENDS` and lists
+        them in the custom command's `DEPENDS`, so adding a mesh regenerates
+        instead of silently producing a manifest missing it.
+      * Bonus, found while adding the asset-default check: `.Value` defaults were
+        never validated against the enum at all, so a typo produced a C++ error
+        in generated code the author never wrote. Now a generator error naming
+        the field and the type. Covers enums and asset classes alike.
+
+- [ ] **THE ASSET NAMING IS NOT SETTLED — needs a think (flagged 2026-07-26).**
+      The manifest works and the source column is properly hidden, but the two
+      collisions were resolved by inventing `Unit_Sphere` / `Unit_Pyramid` for
+      the generated primitives, because `sphere.obj` and `pyramid.obj` already
+      claim the plain names. That is a naming workaround standing in for an
+      unanswered question: *are these actually two different meshes, or two
+      spellings of one?* If the latter, one of each pair should just be deleted
+      and the name freed up. Related unanswered pieces:
+      * `Box` (procedural) and `Cube` (cube.obj) are the same concept under two
+        names, and did NOT collide, so the generator said nothing. The check only
+        catches identical spellings, not synonyms — it cannot catch this class of
+        thing, and should not be expected to.
+      * `Missing` and `Error` both resolve to `resources/obj/error.obj`. Harmless
+        (the cache is path-keyed, both get one handle) but redundant.
+      * The generators are only ever called with fixed constants
+        (`generate_sphere_mesh(16,16)`, `generate_cylinder_mesh(16)`), i.e. they
+        are constant data pretending to be code. Baking all 7 to `.obj` and
+        deleting `generate_*_mesh` would collapse the manifest to a pure
+        directory scan with no source column at all. **Deliberately deferred, not
+        rejected** — and cheap to revisit precisely because it changes one column
+        and no consumer can observe it.
+      * `sprite_asset` has no `placeholder` (there is no `error.png`), so its
+        slot 0 is `ASSET_SOURCE_MISSING` with an empty source. `assets::init()`
+        must `log_error` when it meets one rather than skipping it quietly.
 - [ ] Serializers are deliberately NOT wired here — they want the
       detection/encoding seam designed first. That's P6.
 - [ ] Meson has no `entity_gen` target (CMake only). Same staleness as the
-      missing `*_entity.cpp` files below.
-- [ ] Loose note to resolve while here: "nested schemas are annoying, can we
-      clean that code up?" — the generator's answer is the recursive schema tree
-      with flat memory (component-typed fields point at the component's own
-      table). Confirm that actually reads better before P5 locks it in.
-- [ ] Loose note: "all components that exist now should define a schema — is
-      that what we want?" Under the DSL, components are field groups with no tag
-      and no factory entry; a component's own field flags are the truth (no
-      per-use masking in v1). Decide if any current component doesn't fit that.
+      missing `*_entity.cpp` files below. **Deferred by decision (2026-07-26):
+      Meson gets fixed later; it is not a P3 blocker.** Note the CMake side now
+      also globs the scanned asset directories with `CONFIGURE_DEPENDS`, so
+      whatever fixes Meson has to reproduce that too or it will silently build
+      against a stale manifest.
+- [x] Loose note RESOLVED: "nested schemas are annoying, can we clean that code
+      up?" — **yes, the recursive-tree-over-flat-memory shape reads better**, and
+      the reason is that a consumer gets to choose its depth. A component-typed
+      field's `size_in_bytes` spans the whole nested struct, so undo's memcmp and
+      any whole-struct copy treat it as one opaque blob and never recurse; only
+      the inspector and the serializers follow `component_id` into the
+      component's own table. The old nested `Class_Schema` gave nobody that
+      choice. The one fact that would otherwise be rediscovered per consumer —
+      **offsets are relative to the struct the field was declared in, so a
+      recursive walk composes them by addition** — is now spelled out with a
+      worked loop above `field_info_t` in the generated header.
+- [x] Loose note RESOLVED: "all components that exist now should define a schema
+      — is that what we want?" **Yes, all four fit with no exception.**
+      Box_Volume, Material, Render and Hitbox are each a plain field group reused
+      across entities, none needs per-use flag masking: the two Hitbox users
+      (Player, Rocket) want identical flags, as do the three Render users. So v1's
+      "the component's own field flags are the truth" costs nothing today. If a
+      future component ever needs different flags at different use sites, that is
+      the signal it was two components, not one needing a masking feature.
+
+### LONG-TERM: generated output file layout  *(deliberately not now)*
+
+Considered 2026-07-26 and **deferred**. Recorded so it isn't re-litigated, and
+so that whoever hits the trigger below splits along the right axis.
+
+**One file per entity is the WRONG cut.** Four reasons, and the first is fatal:
+
+1. **There is no incremental-rebuild win to have.** `CMakeLists.txt:126-131` is
+   `DEPENDS entity_gen ${ENTITY_DEF_FILE}` — the whole `.def` plus the generator
+   binary. The unit of change is the `.def`, not the entity, so editing one field
+   on `Light_Entity` regenerates everything no matter how many files that is.
+   Per-entity files add file count without adding rebuild granularity. (Even with
+   content-compare writes that skip untouched files, the tables in point 2 change
+   on every edit anyway.)
+2. **Half the output cannot be split.** `entity_type`, `ENTITY_INFOS[]`,
+   `COMPONENT_OFFSETS[][]`, `entity_type_from_classname` and `SCHEMA_HASH` are
+   whole-program tables spanning every entity. The result is N+1 files where the
+   +1 churns on every change — the churn isn't removed, just surrounded.
+3. **Declaration order becomes the generator's problem.** Emission order makes
+   correctness free today: enums, then components, then the base, then the
+   entities embedding them. Split across files and the generator must emit
+   correct includes and topologically sort what it currently just writes in
+   sequence. Real complexity, no payoff.
+4. **It scatters the diff the layout exists to produce.** These land in the
+   source tree specifically so a `.def` change reads as one reviewable diff
+   (`CMakeLists.txt:115-119`). Per-entity files fragment one logical change
+   across N files. The navigation argument cuts the same way — the file you
+   actually read is `entities.def`; the generated header says "Do not edit."
+
+**The split that WOULD be right, on a different axis: by ROLE, not by entity.**
+Structs + enums in one header (every consumer needs those) and the reflection
+tables in another (only the serializers, the editor inspector, and undo touch
+those). Today every TU including the generated header pays for tables most of
+them never read.
+
+**Trigger to revisit** — needs BOTH, not either:
+- entity count grows severalfold (8 today; the tables are ~340 lines), AND
+- the generated header shows up in an actual compile-time profile.
+
+Until both hold this is speculation, and the current 310-line header + 340-line
+source is not a problem worth solving. Note P5 weakens the case further: once the
+tables drive map I/O, undo and networking, most entity-touching code wants them
+anyway, so the "who needs what" boundary gets blurrier, not sharper.
 
 ---
 
@@ -188,14 +390,23 @@ STILL TO BUILD:
 
 `@Networked`/`@Saveable` were decorative in the macro system and become real.
 The `.def` transcription is a **mandatory conscious re-audit of every field's
-flags**, not a copy. Two known-bad cases already marked `FIXME(audit)` in
-`entities.def`:
+flags**, not a copy.
 
-- [ ] `Entity::position`/`orientation` have NO `@Saveable` → every map-placed
-      entity would load at the origin
-- [ ] `Light_Entity` has NO `@Saveable` on any field → lights stop persisting
+Both originally-known-bad cases are already fixed (verified 2026-07-26 against
+the generated table, where they carry flags `7u`):
+
+- [x] `Entity::position`/`orientation` — now `@Fully_Serializable`, so map-placed
+      entities keep their transform instead of loading at the origin
+- [x] `Light_Entity` — every field `@Fully_Serializable`, so lights persist
+- [x] No `FIXME(audit)` markers remain in `entities.def`; its header comment
+      claimed they did and has been corrected
+
+Still owed — this is the whole of P4 now:
+
 - [ ] Walk every remaining field in `entities.def` and decide its three flags
-      deliberately
+      deliberately. A flag there currently means "what the old declaration said",
+      not "what we decided". Worth pairing with the orientation-units decision
+      under Correctness, since that pass is already reading every field.
 
 ---
 
@@ -233,9 +444,28 @@ begin it with anything else half-finished.
       `on_entity_spawned(session, entity)` etc. over the closed enum. Replaces
       per-type virtual overrides (e.g. server consuming `Player_Spawn` at load).
       The compiler warns on unhandled cases; a forgotten override never did.
+- [ ] **Retire `__primitive_` and the lazy primitive init** (created by P3's
+      asset manifest — see the finding recorded there). Three parts, in order:
+      1. Make registration **eager**: `assets::init()` walks
+         `mesh_asset_manifest()` / `sprite_asset_manifest()` and registers every
+         entry, loading files and calling generators by their source column.
+         `log_error` on an `ASSET_SOURCE_MISSING` entry rather than skipping it.
+      2. `render.mesh_path` (pascal_string) becomes `render.mesh` (`mesh_asset`).
+      3. Delete the 7 `strncmp(path, "__primitive_", 12)` dispatch sites, which
+         are then pure dead weight: `entity_editor_traits.cpp:420,488,569`,
+         `play_state.cpp:1182,1236`, `map.cpp:507`, `map_geometry.cpp:218`.
+         `get_primitive_mesh` and its function-local `static bool initialized`
+         die with them.
+      Note `static_mesh_geometry_t::mesh_path` is a **std::string on the geometry
+      side** and is NOT an entity field, so it does not follow this path
+      automatically — decide separately whether map geometry also moves to
+      manifest ids or keeps free-form paths.
 - [ ] Update the docs that die with the cutover: `entity_type.hpp`'s "ENTITY
       REGISTRATION GUIDE" comment, and CLAUDE.md's "Schema System" / "Entity
       System" sections (both still accurate for the macro system *today*).
+      CLAUDE.md's "Asset System" paragraph also goes stale here: it documents
+      `assets::get_mesh_path(asset_id)`, which now survives only in `old_ideas/`
+      and is replaced outright by the generated manifest.
       CLAUDE.md is worth doing at the cutover since it loads every session.
 
 ---
@@ -388,6 +618,52 @@ serialization by then — absorption, not a project.
   `ma_engine_config.pPlaybackDeviceID`. Probably also master/sfx volume sliders
   and a backend selector (WASAPI/DirectSound) in the same panel.
 
+## API style: we need a principled `Array<T>`
+
+**Raised 2026-07-26 while reviewing P3's generated output, and it is a real
+inconsistency, not a preference.** The generator hands back "pointer plus count"
+in two different C-shaped spellings:
+
+```cpp
+const entity_type*  placeable_entity_types(uint32_t* out_count);   // out param
+const asset_info_t* mesh_asset_manifest(uint32_t* out_count);      // out param
+const asset_info_t* sprite_asset_manifest(uint32_t* out_count);    // out param
+
+struct entity_type_info_t    { const field_info_t* fields; uint32_t field_count; };
+struct component_type_info_t { const field_info_t* fields; uint32_t field_count; };
+```
+
+Five sites already, and P6's generated visitors will add more. The out-param
+form was chosen so the pointer and the count could not be read out of step —
+which is a real hazard, but the fix for it is a type that carries both, not a
+second parameter that makes every call site three lines.
+
+**This is inconsistent with code we already have.** `input.hpp:113-114` returns
+`std::span<const key_event_t>` for exactly this shape, and `cvar` takes
+`std::span<std::string_view>` for command arguments. So the codebase already has
+a house answer to "a contiguous range of T" and the generated code is the odd
+one out.
+
+Two ways to settle it, and this is the decision to make:
+
+- **Just use `std::span`** (C++23, already in use in three files). Zero new
+  code. Costs a `<span>` include in the generated header, which every entity
+  TU then pays for.
+- **Write a small house `Array<T>`** — `{T* data; uint32_t count;}` plus
+  `begin`/`end`/`operator[]`/`size`, and nothing else. Compiles far faster than
+  `<span>`, matches the codebase's habit of owning its own primitives
+  (`pascal_string_t`, `asset_handle_t`, `linalg`), and can be emitted into the
+  generated header itself so the generated code keeps depending on nothing.
+
+Leaning toward the house type for the generated code specifically, since
+"generated output depends on nothing but `<cstdint>`" is a property worth
+keeping — but this should be ONE type used everywhere, not a third spelling. If
+it lands, convert the five sites above and drop the out params.
+
+Not urgent, but worth doing **before P5**, because P5 is where the generated
+tables acquire most of their callers — converting five signatures now is cheaper
+than converting them plus every call site later.
+
 ## Correctness / consistency
 - **Orientation units are undefined and inconsistent** — euler angles? degrees
   or radians? We're not consistent, and that's not good. Pick one and enforce
@@ -403,9 +679,20 @@ serialization by then — absorption, not a project.
   (BVH) collides with a displacement's box bound, but projectiles pass straight
   through, and they are never registered as Jolt static bodies. The real fix is
   heightmap collision — see the TODO in `get_collision_planes`.
+- **`resources/obj/m4a1_s.obj` DOES NOT EXIST**, but `placement_tool.cpp:173`
+  (static mesh) and `:232` (weapon) both reference it — so placing either in the
+  editor silently loads nothing today. Found while scoping the asset manifest;
+  deliberately left alone so it wasn't bundled into generator work. The manifest
+  turns this into a **compile error** at P5 (there is no `mesh_asset::M4a1_S`),
+  which is the right time to decide: add the model, or repoint both sites at
+  something that exists.
 - Is the navmesh only planar, or does A* just need two dimensions? Something
   feels wrong there.
-- Make sure the default mesh is the question mark.
+- Make sure the default mesh is the question mark. — *partly handled by P3*:
+  `mesh_asset::Missing` is id 0 and resolves to `resources/obj/error.obj`, so an
+  unassigned mesh field is the question mark by construction. Still owed is the
+  runtime half: `assets::init()` honoring that entry, which is P5's eager
+  registration item.
 - Clean up BVH traversal — we now just iterate over entities in the map editor.
 - Meson build (`meson.build`) is out of date: missing `static_entities.cpp`,
   `rocket_entity.cpp`, `particle_emitter_entity.cpp`, `displacement_entity.cpp`,

@@ -123,10 +123,22 @@ set(ENTITY_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entities_generated.hpp)
 set(ENTITY_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entities_generated.cpp)
 file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
 
+# The .def's asset classes scan these directories, so the generated manifest
+# depends on their CONTENTS, not just on the .def. CONFIGURE_DEPENDS re-runs the
+# glob on build, so adding a mesh regenerates rather than silently producing a
+# manifest that is missing it. Paths inside the .def are relative to
+# --asset-root, which is why they can read the same way the game reads them.
+file(GLOB ENTITY_GEN_ASSET_FILES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/obj/*.obj
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/sprites/*.png
+)
+
 add_custom_command(
     OUTPUT ${ENTITY_GEN_HEADER} ${ENTITY_GEN_SOURCE}
-    COMMAND entity_gen ${ENTITY_DEF_FILE} --output-dir ${ENTITY_GEN_OUT_DIR}
-    DEPENDS entity_gen ${ENTITY_DEF_FILE}
+    COMMAND entity_gen ${ENTITY_DEF_FILE}
+            --output-dir ${ENTITY_GEN_OUT_DIR}
+            --asset-root ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS entity_gen ${ENTITY_DEF_FILE} ${ENTITY_GEN_ASSET_FILES}
     COMMENT "Generating entity definitions from entities.def..."
 )
 

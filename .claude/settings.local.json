@@ -123,7 +123,14 @@
       "PowerShell(cmake --build cmake_build -j8 2>&1)",
       "PowerShell(git -C \"c:\\\\Users\\\\sjors\\\\Desktop\\\\Projects\\\\tilde\\\\tilde\" status --short)",
       "PowerShell(git -C \"c:\\\\Users\\\\sjors\\\\Desktop\\\\Projects\\\\tilde\\\\tilde\" diff --stat)",
-      "PowerShell(\"---\")"
+      "PowerShell(\"---\")",
+      "PowerShell(cmake --build cmake_build --target entity_gen -j8 2>&1)",
+      "PowerShell(cmake --build cmake_build --target entity_layout_test -j8 2>&1 | Select-Object -Last 12; if \\($?\\) { .\\\\cmake_build\\\\bin\\\\entity_layout_test.exe; \"exit: $LASTEXITCODE\" })",
+      "Bash(cmake --build cmake_build --target entity_layout_test -j8)",
+      "Bash(./cmake_build/bin/entity_layout_test.exe)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(./cmake_build/bin/entity_gen.exe src/shared/entities/entities.def --asset-root . --dump)",
+      "Bash(cmake --build cmake_build --target MyGame -j8)"
     ],
     "additionalDirectories": [
       "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"

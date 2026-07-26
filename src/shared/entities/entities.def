@@ -20,9 +20,17 @@
 // ---------------------------------------------------------------------------
 // In the macro system only @Editable was ever enforced; @Networked/@Saveable
 // were decorative. The generator makes all three real, so the flags below --
-// copied faithfully from the current declarations -- CHANGE BEHAVIOR. The two
-// known-bad cases are marked FIXME(audit). Do not trust this file's flags
-// until that pass happens.
+// copied faithfully from the current declarations -- CHANGE BEHAVIOR.
+//
+// The two originally known-bad cases ARE now fixed: Entity::position /
+// orientation and every Light_Entity field are @Fully_Serializable, so
+// map-placed entities keep their transform and lights persist. No FIXME(audit)
+// markers remain.
+//
+// What is still owed is the rest of the P4 pass: every OTHER field's three
+// flags, decided deliberately rather than inherited from a macro that only
+// enforced one of them. Until that happens, treat a flag here as "what the old
+// declaration said", not "what we decided".
 
 // ---------------------------------------------------------------------------
 // Base
@@ -36,6 +44,48 @@ Entity :: base {
 }
 
 Fully_Serializable :: [@Networked, @Editable, @Saveable]
+
+// ---------------------------------------------------------------------------
+// Asset classes
+// ---------------------------------------------------------------------------
+//
+// An asset class is a closed set of things the game can reference by name,
+// knowable at build time. `scan` enumerates a directory; `procedural` names an
+// entry whose bytes come from a generator function instead of a file.
+//
+// That distinction is a COLUMN IN THE GENERATED TABLE AND NOTHING ELSE. The
+// generated enum is pure identity: no consumer of a mesh_asset ever asks where
+// the bytes came from, and the public API deliberately gives it no way to. This
+// replaces the `__primitive_` string prefix, which was never a naming scheme --
+// it was a lazy-initialisation trigger (load_mesh already resolved those keys
+// from the cache; the prefix existed so call sites could reach the function
+// that ran the one-time init). Registration becomes eager over this manifest,
+// and the prefix, along with its seven strncmp dispatch sites, goes away.
+//
+// Entry 0 of every class is Missing, so an unassigned field resolves to the
+// placeholder rather than to whichever asset sorted first.
+
+mesh_asset :: assets {
+    placeholder "resources/obj/error.obj"
+    scan        "resources/obj" ".obj"
+
+    // name          generator key (what get_primitive_mesh takes today)
+    procedural Box          "box"
+    procedural Arrow        "arrow"
+    procedural Cylinder     "cylinder"
+    procedural Cone         "cone"
+    procedural Wedge        "wedge"
+    // Unit_ because sphere.obj and pyramid.obj already claim the plain names.
+    // These are the generated unit-sized primitives, which really are different
+    // meshes from the art assets -- see the note in todo.md, this naming is not
+    // settled.
+    procedural Unit_Sphere  "sphere"
+    procedural Unit_Pyramid "pyramid"
+}
+
+sprite_asset :: assets {
+    scan "resources/sprites" ".png"
+}
 
 // ---------------------------------------------------------------------------
 // Enums -- every one of these was a string or a bare int in the macro system
@@ -81,7 +131,7 @@ Material :: component {
 
 // was: network::render_component_t
 Render :: component {
-    mesh:         mesh_asset            @Fully_Serializable
+    mesh:         mesh_asset = .Missing @Fully_Serializable
     visible:      bool = true           @Fully_Serializable
     is_wireframe: bool = false          @Fully_Serializable
     offset:       v3 = {0, 0, 0}        @Fully_Serializable
@@ -137,7 +187,7 @@ Rocket_Entity :: entity @runtime_only {
 }
 
 Particle_Emitter_Entity :: entity {
-    sprite:             sprite_asset          @Editable @Saveable
+    sprite:             sprite_asset = .Smoke @Editable @Saveable
     emit_rate:          f32 = 20.0            @Editable @Saveable
     max_particles:      i32 = 64              @Editable @Saveable
     lifetime_min:       f32 = 0.5             @Editable @Saveable
@@ -163,8 +213,13 @@ Trigger_Volume_Entity :: entity {
     volume:            Box_Volume               @Editable
     action:            Trigger_Action = .Kill   @Editable @Saveable
     fire_mode:         Fire_Mode = .On_Enter    @Editable @Saveable
+    // 64 is enough for a spawn name to match against. param_string is
+    // player-facing message text (Print_Message), so it gets room for a real
+    // sentence -- 250 was never a chosen number, just the pascal_string_t
+    // default every field inherited. Neither is networked, so the size costs
+    // struct memory and map file bytes, not bandwidth. 255 is the hard ceiling.
     param_target_name: string<64>               @Editable @Saveable
-    param_string:      string<64>               @Editable @Saveable
+    param_string:      string<128>              @Editable @Saveable
     param_float:       f32 = 0.0                @Editable @Saveable
 }
 

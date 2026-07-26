@@ -8,10 +8,71 @@
 namespace entities
 {
 
-// The asset manifest is not generated yet. When it is, these become
-// closed id/name/path tables and these typedefs go away.
-using mesh_asset   = uint32_t;
-using sprite_asset = uint32_t;
+// Missing is 0: an asset field that was never assigned resolves to the
+// placeholder, which is loudly wrong, rather than to whichever asset
+// happened to sort first, which would look plausible.
+enum class mesh_asset : uint16_t
+{
+  Missing = 0,
+  Cube = 1,
+  Error = 2,
+  Isosphere = 3,
+  Pyramid = 4,
+  Sphere = 5,
+  Box = 6,
+  Arrow = 7,
+  Cylinder = 8,
+  Cone = 9,
+  Wedge = 10,
+  Unit_Sphere = 11,
+  Unit_Pyramid = 12,
+};
+
+constexpr uint32_t mesh_asset_COUNT = 13;
+
+const char* to_string(mesh_asset value);
+bool from_string(const char* text, mesh_asset* out_value);
+
+// Missing is 0: an asset field that was never assigned resolves to the
+// placeholder, which is loudly wrong, rather than to whichever asset
+// happened to sort first, which would look plausible.
+enum class sprite_asset : uint16_t
+{
+  Missing = 0,
+  Smoke = 1,
+};
+
+constexpr uint32_t sprite_asset_COUNT = 2;
+
+const char* to_string(sprite_asset value);
+bool from_string(const char* text, sprite_asset* out_value);
+
+// Where an asset's bytes come from. This exists for the asset system's
+// init and for nothing else -- if you are reaching for it anywhere
+// else, the code wants an asset id, not a source.
+enum asset_source_kind_t : uint8_t
+{
+  ASSET_SOURCE_MISSING = 0, // no asset assigned; `source` is empty
+  ASSET_SOURCE_FILE,        // `source` is a path, relative to the working dir
+  ASSET_SOURCE_PROCEDURAL,  // `source` is a generator key
+};
+
+struct asset_info_t
+{
+  const char*         name;
+  const char*         source;
+  asset_source_kind_t source_kind;
+};
+
+// The complete mesh_asset manifest, indexed by id. Populate every entry at
+// init: registration must NOT be lazy, or an id resolves to nothing
+// depending on what ran first.
+const asset_info_t* mesh_asset_manifest(uint32_t* out_count);
+
+// The complete sprite_asset manifest, indexed by id. Populate every entry at
+// init: registration must NOT be lazy, or an id resolves to nothing
+// depending on what ran first.
+const asset_info_t* sprite_asset_manifest(uint32_t* out_count);
 
 enum class Light_Type : uint8_t
 {
@@ -83,8 +144,11 @@ enum class entity_type : uint16_t
   Trigger_Volume_Entity = 6,
   Light_Entity = 7,
   Physics_Body_Entity = 8,
-  Count = 9,
 };
+
+// Not a member of the enum above, so `switch` over an
+// entity_type still warns on an unhandled case.
+constexpr uint32_t ENTITY_TYPE_COUNT = 9;
 
 enum class component_type : uint16_t
 {
@@ -92,8 +156,9 @@ enum class component_type : uint16_t
   Material = 1,
   Render = 2,
   Hitbox = 3,
-  Count = 4,
 };
+
+constexpr uint32_t COMPONENT_TYPE_COUNT = 4;
 
 struct Box_Volume
 {
@@ -110,7 +175,7 @@ struct Material
 
 struct Render
 {
-  mesh_asset mesh = {};
+  mesh_asset mesh = mesh_asset::Missing;
   bool visible = true;
   bool is_wireframe = false;
   linalg::vec3f offset = {0.0f, 0.0f, 0.0f};
@@ -185,7 +250,7 @@ struct Particle_Emitter_Entity : Entity
 {
   Particle_Emitter_Entity() { type = entity_type::Particle_Emitter_Entity; }
 
-  sprite_asset sprite = {};
+  sprite_asset sprite = sprite_asset::Smoke;
   float emit_rate = 20.0f;
   int32_t max_particles = 64;
   float lifetime_min = 0.5f;
@@ -215,7 +280,7 @@ struct Trigger_Volume_Entity : Entity
   Trigger_Action action = Trigger_Action::Kill;
   Fire_Mode fire_mode = Fire_Mode::On_Enter;
   network::pascal_string_t<64> param_target_name = {};
-  network::pascal_string_t<64> param_string = {};
+  network::pascal_string_t<128> param_string = {};
   float param_float = 0.0f;
 };
 
@@ -263,6 +328,18 @@ enum field_flags_t : uint32_t
   FIELD_FLAG_SAVEABLE  = 1 << 2,
 };
 
+// A field of one struct. Offsets are relative to THAT struct, so walking
+// into a component composes them:
+//
+//   for (field : entity_info(type).fields)
+//     if (field.type == FIELD_TYPE_COMPONENT)
+//       for (inner : component_info((component_type)field.component_id).fields)
+//         byte_offset = field.offset + inner.offset;
+//
+// A component-typed field's own size_in_bytes spans the whole nested
+// struct, so a consumer that does NOT care about the inside (undo's
+// memcmp diffing, a whole-struct copy) can treat it as one opaque blob
+// and never recurse at all.
 struct field_info_t
 {
   const char*  name;
@@ -272,6 +349,7 @@ struct field_info_t
   uint32_t     flags;
   int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else -1
   uint32_t     string_capacity; // FIELD_TYPE_STRING only, else 0
+  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else -1
 };
 
 struct entity_type_info_t
@@ -284,6 +362,12 @@ struct entity_type_info_t
   uint32_t            alignment;
   uint32_t            component_mask;
   bool                runtime_only;
+
+  // Writes a default constructed entity of this type into `memory`, which
+  // must be at least size_in_bytes wide and `alignment` aligned. Allocates
+  // nothing -- this is the type-erased hook for callers that already own
+  // their storage: undo snapshots, network baselines, pooled storage.
+  Entity* (*construct_at)(void* memory);
 };
 
 struct component_type_info_t
@@ -301,6 +385,26 @@ const component_type_info_t& component_info(component_type component);
 entity_type                  entity_type_from_classname(const char* classname);
 bool has_component(entity_type type, component_type component);
 int32_t component_byte_offset(entity_type type, component_type component);
+
+// Heap factory. Asserts on entity_type::Invalid -- reaching it with an
+// invalid tag is a caller bug, not a data error.
+Entity* create_entity(entity_type type);
+
+// The map loader's entry point: classname off disk to a live instance.
+// Returns nullptr for an unknown classname, which IS a data error -- the
+// caller must report it rather than skipping the entity quietly.
+Entity* entity_from_classname(const char* classname);
+
+// The counterpart to create_entity. Entities have no virtual destructor
+// (they have no virtuals at all), so `delete` through a base pointer is
+// wrong; this recovers the concrete type from the tag first. Null safe.
+void destroy_entity(Entity* entity);
+
+// Every entity type the editor may place: the ones the .def did NOT mark
+// @runtime_only, in declaration order. Contiguous and stable, so a
+// placement menu can index it directly. The count is an out param rather
+// than a second call so the two can never be read out of step.
+const entity_type* placeable_entity_types(uint32_t* out_count);
 
 // Digest of every declaration in the .def. Exchanged at connect; a
 // mismatch means the two sides disagree about the entity layout.
