@@ -27,13 +27,13 @@ void Particle_Editor_Tool::on_disable(editor_context_t &) {}
 void Particle_Editor_Tool::on_update(editor_context_t &ctx,
                                     const viewport_state_t &view, float /*dt*/)
 {
-  m_viewport = view;
+  viewport = view;
 }
 
 void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
-                                        const mouse_event_t &e)
+                                        const input::mouse_event_t &e)
 {
-  if (e.button != input::MouseButton::Left)
+  if (e.button != input::mouse_button_t::Left)
     return;
 
   // Raycast to pick a particle emitter
@@ -47,12 +47,12 @@ void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
   for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
   {
     // Simple sphere pick test (particle emitters are point-like)
-    linalg::vec3 to_emitter = emitter->position - m_viewport.mouse_ray.origin;
-    float t = linalg::dot(to_emitter, m_viewport.mouse_ray.dir);
+    linalg::vec3 to_emitter = emitter->position - viewport.mouse_ray.origin;
+    float t = linalg::dot(to_emitter, viewport.mouse_ray.direction);
     if (t < 0.f)
       continue;
 
-    linalg::vec3 closest = m_viewport.mouse_ray.origin + m_viewport.mouse_ray.dir * t;
+    linalg::vec3 closest = viewport.mouse_ray.origin + viewport.mouse_ray.direction * t;
     linalg::vec3 delta = emitter->position - closest;
     float dist = linalg::length(delta);
 
@@ -68,8 +68,8 @@ void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
     selected_emitter_uid = best_uid;
 }
 
-void Particle_Editor_Tool::on_mouse_drag(editor_context_t &, const mouse_event_t &) {}
-void Particle_Editor_Tool::on_mouse_up(editor_context_t &, const mouse_event_t &) {}
+void Particle_Editor_Tool::on_mouse_drag(editor_context_t &, const input::mouse_event_t &) {}
+void Particle_Editor_Tool::on_mouse_up(editor_context_t &, const input::mouse_event_t &) {}
 void Particle_Editor_Tool::on_key_down(editor_context_t &, const key_event_t &) {}
 
 void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
@@ -109,11 +109,11 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
   {
     auto emitter = std::make_shared<network::Particle_Emitter_Entity>();
     // Place at camera position
-    emitter->position = {m_viewport.camera.position.x, m_viewport.camera.position.y,
-                         m_viewport.camera.position.z};
+    emitter->position = {viewport.camera.position.x, viewport.camera.position.y,
+                         viewport.camera.position.z};
     selected_emitter_uid = ctx.map->add_entity(emitter);
-    if (ctx.geometry_updated)
-      *ctx.geometry_updated = true;
+    if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+      *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
 
   ImGui::Separator();
@@ -251,8 +251,8 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
   {
     ctx.map->remove_entity(selected_emitter_uid);
     selected_emitter_uid = 0;
-    if (ctx.geometry_updated)
-      *ctx.geometry_updated = true;
+    if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+      *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
 
   ImGui::End();

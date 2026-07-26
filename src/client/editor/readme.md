@@ -1,5 +1,10 @@
 # Editor Ramblings
 
+> **⚠ The `SHARED_ENTITIES_LIST` X-macro references below are outgoing.** The
+> entity list is being generated from `entities.def`, so "add your entity to the
+> X-macro" becomes "add it to the .def". The traits/specialization dispatch
+> pattern itself is unaffected. See `entity_def.md` at the repo root.
+
 I ran into issues with an imperative approach to my editor. the long if-else chain of 
 ```
 if (a _pressed)

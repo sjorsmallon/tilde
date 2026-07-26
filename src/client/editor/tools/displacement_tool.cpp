@@ -12,7 +12,7 @@ namespace client
 void Displacement_Tool::on_enable(editor_context_t &ctx)
 {
   mode = Mode::Setup;
-  painting = false;
+  currently_painting = false;
   cursor_valid = false;
   resize_dragging = false;
   resize_moved = false;
@@ -20,7 +20,7 @@ void Displacement_Tool::on_enable(editor_context_t &ctx)
 
 void Displacement_Tool::on_disable(editor_context_t &ctx)
 {
-  painting = false;
+  currently_painting = false;
   cursor_valid = false;
   box_selecting = false;
   commit_select_edit();
@@ -124,7 +124,7 @@ void Displacement_Tool::apply_brush(network::Displacement_Entity &ent,
     for (int i = 0; i < grid_size; ++i)
     {
       linalg::vec3 vpos = ent.get_vertex_world(i, j);
-      linalg::vec3 diff = vpos - cursor_pos;
+      linalg::vec3 diff = vpos - cursor_position;
       float dist = linalg::length(diff);
       if (dist > brush_radius)
         continue;
@@ -201,19 +201,20 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
     // Don't update hover while dragging a face
     if (!resize_dragging)
     {
-      hovered_uid = 0;
+      // reset hover state
+      hovered_uid = shared::invalid_entity_uid;
       hovered_face = shared::box_face_t::Invalid;
 
       if (ctx.bvh)
       {
-        ray_hit_result_t hit;
+        auto hit = ray_hit_result_t{};
         if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin,
-                               view.mouse_ray.dir, hit))
+                               view.mouse_ray.direction, hit))
         {
           if (hit.id.type == Collision_Id::Type::Static_Geometry)
           {
             shared::entity_uid_t uid = hit.id.index;
-            auto *entry = ctx.map->find_by_uid(uid);
+            auto* entry = ctx.map->find_by_uid(uid);
             if (entry && entry->entity)
             {
               if (auto *disp = shared::entity_as<network::Displacement_Entity>(
@@ -228,7 +229,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
                 float t;
                 shared::box_face_t face;
                 if (shared::ray_aabb_face_intersection(view.mouse_ray.origin,
-                                                      view.mouse_ray.dir, aabb,
+                                                      view.mouse_ray.direction, aabb,
                                                       t, face))
                 {
                   hovered_face = face;
@@ -243,27 +244,27 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
   else if (mode == Mode::Paint)
   {
     cursor_valid = false;
-    auto *ent = get_selected(ctx);
+    auto* ent = get_selected(ctx);
     if (!ent)
       return;
 
     float t;
     linalg::vec3 normal;
     if (raycast_displacement_mesh(*ent, view.mouse_ray.origin,
-                                  view.mouse_ray.dir, t, normal))
+                                  view.mouse_ray.direction, t, normal))
     {
-      cursor_pos = view.mouse_ray.origin + view.mouse_ray.dir * t;
+      cursor_position = view.mouse_ray.origin + view.mouse_ray.direction * t;
       cursor_normal = normal;
       cursor_valid = true;
     }
 
-    // If currently painting, apply brush every frame
-    if (painting && cursor_valid)
+    // If currently currently_painting, apply brush every frame
+    if (currently_painting && cursor_valid)
     {
       bool invert = input::current_modifiers().shift;
       apply_brush(*ent, dt, invert);
       regenerate_mesh(*ent, selected_uid);
-      *ctx.geometry_updated = true;
+      *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
   }
 }
@@ -273,9 +274,9 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
 // ===================================================================
 
 void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
-                                      const mouse_event_t &e)
+                                      const input::mouse_event_t &e)
 {
-  if (e.button != input::MouseButton::Left)
+  if (e.button != input::mouse_button_t::Left)
     return;
 
   if (mode == Mode::Setup)
@@ -296,8 +297,8 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
             // Shift+click: initialize displacement on this face
             ent->init_displacement(hovered_face, pending_subdivision);
             regenerate_mesh(*ent, selected_uid);
-            if (ctx.geometry_updated)
-              *ctx.geometry_updated = true;
+            if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+              *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
           }
           else
           {
@@ -319,7 +320,7 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
   }
   else if (mode == Mode::Paint)
   {
-    painting = true;
+    currently_painting = true;
   }
   else if (mode == Mode::Select)
   {
@@ -333,7 +334,7 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
 }
 
 void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
-                                      const mouse_event_t &e)
+                                      const input::mouse_event_t &e)
 {
   if (resize_dragging && selected_uid != 0 && ctx.map)
   {
@@ -416,11 +417,11 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
         }
 
         regenerate_mesh(*ent, selected_uid);
-        *ctx.geometry_updated = true;
+        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
       }
     }
   }
-  // Painting is handled in on_update while painting == true
+  // currently_painting is handled in on_update while currently_painting == true
 
   if (mode == Mode::Select && box_selecting)
   {
@@ -430,9 +431,9 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
 }
 
 void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
-                                    const mouse_event_t &e)
+                                    const input::mouse_event_t &e)
 {
-  painting = false;
+  currently_painting = false;
 
   if (resize_dragging)
   {
@@ -450,8 +451,8 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
         ctx.transaction_system->push(builder.take());
       }
     }
-    if (ctx.geometry_updated)
-      *ctx.geometry_updated = true;
+    if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+      *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     resize_start_props.clear();
   }
 
@@ -490,7 +491,7 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
 void Displacement_Tool::on_key_down(editor_context_t &ctx,
                                     const key_event_t &e)
 {
-  if (e.key == input::Key::P)
+  if (e.key == input::key_t::P)
   {
     auto *ent = get_selected(ctx);
     if (ent && ent->active_face != shared::box_face_t::Invalid)
@@ -499,7 +500,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
       mode = Mode::Paint;
     }
   }
-  else if (e.key == input::Key::S)
+  else if (e.key == input::key_t::S)
   {
     auto *ent = get_selected(ctx);
     if (ent && ent->active_face != shared::box_face_t::Invalid)
@@ -513,7 +514,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
       }
     }
   }
-  else if (e.key == input::Key::Escape)
+  else if (e.key == input::key_t::Escape)
   {
     if (mode == Mode::Paint)
       mode = Mode::Setup;
@@ -527,7 +528,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
     }
   }
   else if (mode == Mode::Select &&
-           (e.key == input::Key::Q || e.key == input::Key::E))
+           (e.key == input::key_t::Q || e.key == input::key_t::E))
   {
     auto *ent = get_selected(ctx);
     if (!ent || ent->active_face == shared::box_face_t::Invalid)
@@ -552,7 +553,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
         select_start_props = entry->entity->get_all_properties();
     }
 
-    float sign = (e.key == input::Key::Q) ? 1.0f : -1.0f;
+    float sign = (e.key == input::key_t::Q) ? 1.0f : -1.0f;
     linalg::vec3 face_normal = ent->get_face_normal();
     linalg::vec3 delta = face_normal * (sign * height_snap);
 
@@ -569,8 +570,8 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
     }
 
     regenerate_mesh(*ent, selected_uid);
-    if (ctx.geometry_updated)
-      *ctx.geometry_updated = true;
+    if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+      *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
 }
 
@@ -641,11 +642,11 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   // In paint mode: draw brush circle and normal arrow
   if (mode == Mode::Paint && cursor_valid)
   {
-    renderer.draw_circle(cursor_pos, brush_radius, cursor_normal, colors::yellow);
+    renderer.draw_circle(cursor_position, brush_radius, cursor_normal, colors::yellow);
 
     // Draw normal arrow
-    linalg::vec3 arrow_end = cursor_pos + cursor_normal * (brush_radius * 0.5f);
-    renderer.draw_line(cursor_pos, arrow_end, colors::red);
+    linalg::vec3 arrow_end = cursor_position + cursor_normal * (brush_radius * 0.5f);
+    renderer.draw_line(cursor_position, arrow_end, colors::red);
   }
 
   // In select mode: highlight selected vertices and draw dragging box
@@ -724,7 +725,7 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
             {
               ent->init_displacement(ent->active_face, pending_subdivision);
               regenerate_mesh(*ent, selected_uid);
-              *ctx.geometry_updated = true;
+              *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
             }
 
             ImGui::Separator();

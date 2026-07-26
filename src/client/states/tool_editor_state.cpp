@@ -295,7 +295,7 @@ void ToolEditorState::switch_tool(int index)
   // Update context
   context.map = &map;
   context.bvh = &bvh;
-  context.geometry_updated = &geometry_updated_flag;
+  context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.grid = &grid_settings;
   context.time = 0; // TODO: Get real time
 
@@ -353,7 +353,7 @@ void ToolEditorState::update(float dt)
 {
   last_dt = dt;
 
-  if (input::is_key_pressed(input::Key::Escape))
+  if (input::is_key_pressed(input::key_t::Escape))
   {
     state_manager::switch_to(GameStateKind::MainMenu);
     return;
@@ -362,7 +362,7 @@ void ToolEditorState::update(float dt)
   // Update Camera
   if (!input::ui_wants_mouse())
   {
-    input::Modifiers mods = input::current_modifiers();
+    input::modifiers_t mods = input::current_modifiers();
 
     float speed = 1200.0f * dt;
     if (mods.shift)
@@ -373,7 +373,7 @@ void ToolEditorState::update(float dt)
     linalg::vec3 R = vectors.right;
     linalg::vec3 U = vectors.up;
 
-    if (input::is_key_pressed(input::Key::Z))
+    if (input::is_key_pressed(input::key_t::Z))
     {
       if (mods.ctrl)
       {
@@ -396,7 +396,7 @@ void ToolEditorState::update(float dt)
       }
     }
 
-    if (input::is_key_pressed(input::Key::Y))
+    if (input::is_key_pressed(input::key_t::Y))
     {
       if (mods.ctrl)
       {
@@ -408,7 +408,7 @@ void ToolEditorState::update(float dt)
       }
     }
 
-    if (input::is_key_pressed(input::Key::O))
+    if (input::is_key_pressed(input::key_t::O))
     {
       camera.orthographic = !camera.orthographic;
       if (camera.orthographic)
@@ -423,7 +423,7 @@ void ToolEditorState::update(float dt)
     }
 
     // Shift+Space: cycle through axis-aligned views
-    if (input::is_key_pressed(input::Key::Space) && mods.shift)
+    if (input::is_key_pressed(input::key_t::Space) && mods.shift)
     {
       switch (view_mode)
       {
@@ -459,20 +459,20 @@ void ToolEditorState::update(float dt)
 
     if (camera.orthographic && view_mode == ViewMode::FreeCam)
     {
-      if (input::is_key_pressed(input::Key::ArrowRight))
+      if (input::is_key_pressed(input::key_t::Arrow_Right))
         camera.yaw = fmodf(camera.yaw + 90.0f, 360.0f);
-      if (input::is_key_pressed(input::Key::ArrowLeft))
+      if (input::is_key_pressed(input::key_t::Arrow_Left))
         camera.yaw = fmodf(camera.yaw - 90.0f + 360.0f, 360.0f);
     }
 
-    if (input::is_key_pressed(input::Key::RightBracket))
+    if (input::is_key_pressed(input::key_t::Right_Bracket))
     {
       grid_settings.increase();
       char buf[64];
       snprintf(buf, sizeof(buf), "Grid: %.0f", grid_settings.step());
       renderer::draw_announcement(buf);
     }
-    if (input::is_key_pressed(input::Key::LeftBracket))
+    if (input::is_key_pressed(input::key_t::Left_Bracket))
     {
       grid_settings.decrease();
       char buf[64];
@@ -480,7 +480,7 @@ void ToolEditorState::update(float dt)
       renderer::draw_announcement(buf);
     }
 
-    if (input::is_key_down(input::Key::W))
+    if (input::is_key_down(input::key_t::W))
     {
       if (camera.orthographic)
       {
@@ -495,7 +495,7 @@ void ToolEditorState::update(float dt)
         camera.position.z += F.z * speed;
       }
     }
-    if (input::is_key_down(input::Key::S))
+    if (input::is_key_down(input::key_t::S))
     {
       if (camera.orthographic)
       {
@@ -510,24 +510,24 @@ void ToolEditorState::update(float dt)
         camera.position.z -= F.z * speed;
       }
     }
-    if (input::is_key_down(input::Key::D))
+    if (input::is_key_down(input::key_t::D))
     {
       camera.position.x += R.x * speed;
       camera.position.z += R.z * speed;
     }
-    if (input::is_key_down(input::Key::A))
+    if (input::is_key_down(input::key_t::A))
     {
       camera.position.x -= R.x * speed;
       camera.position.z -= R.z * speed;
     }
-    if (input::is_key_down(input::Key::Space) && !mods.shift)
+    if (input::is_key_down(input::key_t::Space) && !mods.shift)
     {
       if (camera.orthographic)
         camera.ortho_height += speed;
       else
         camera.position.y += speed;
     }
-    if (input::is_key_down(input::Key::C))
+    if (input::is_key_down(input::key_t::C))
     {
       if (camera.orthographic)
       {
@@ -543,14 +543,14 @@ void ToolEditorState::update(float dt)
     bool tool_captures_kb = active_tool_index >= 0 &&
                             active_tool_index < (int)tools.size() &&
                             tools[active_tool_index]->capture_keyboard();
-    if (!tool_captures_kb && input::is_key_down(input::Key::Q))
+    if (!tool_captures_kb && input::is_key_down(input::key_t::Q))
     {
       if (!camera.orthographic)
         camera.position.y -= speed;
     }
 
     const bool console_open = Console::Get().IsOpen();
-    if (input::is_mouse_down(input::MouseButton::Right) && view_mode == ViewMode::FreeCam && !console_open)
+    if (input::is_mouse_down(input::mouse_button_t::Right) && view_mode == ViewMode::FreeCam && !console_open)
     {
       input::set_relative_mouse_mode(true);
       linalg::vec2i delta = input::mouse_delta();
@@ -573,7 +573,7 @@ void ToolEditorState::update(float dt)
   // Update Viewport
   context.map = &map;
   context.bvh = &bvh;
-  context.geometry_updated = &geometry_updated_flag;
+  context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.transaction_system = &transaction_system;
   context.grid = &grid_settings;
   context.time += dt;
@@ -587,20 +587,20 @@ void ToolEditorState::update(float dt)
     // Use a ray that won't hit anything to prevent hovering
     // Origin far away, direction pointing away
     viewport.mouse_ray.origin = {0, 1e20f, 0};
-    viewport.mouse_ray.dir = {0, 1.0f, 0};
+    viewport.mouse_ray.direction = {0, 1.0f, 0};
   }
 
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
   {
     tools[active_tool_index]->on_update(context, viewport, dt);
 
-    mouse_event_t mouse_e;
-    mouse_e.button = input::MouseButton::Left;
+    input::mouse_event_t mouse_e;
+    mouse_e.button = input::mouse_button_t::Left;
     mouse_e.position = input::mouse_position();
     mouse_e.delta = input::mouse_delta();
     mouse_e.mods = input::current_modifiers();
 
-    bool is_lmb_down = input::is_mouse_down(input::MouseButton::Left);
+    bool is_lmb_down = input::is_mouse_down(input::mouse_button_t::Left);
 
     if (is_lmb_down && !was_lmb_down)
     {
@@ -631,7 +631,7 @@ void ToolEditorState::update(float dt)
     // system collects these from the SDL event pump, so no scancode polling.
     if (!input::ui_wants_keyboard())
     {
-      for (const input::KeyEvent &key_event : input::frame_key_events())
+      for (const input::key_event_t &key_event : input::frame_key_events())
       {
         tools[active_tool_index]->on_key_down(context, key_event);
       }
@@ -723,8 +723,8 @@ void ToolEditorState::render_ui()
   // "Bake CSG" button for that). Goes through commit_map_to_disk so the
   // running server's session is reloaded too.
   {
-    input::Modifiers mods = input::current_modifiers();
-    if (input::is_key_pressed(input::Key::S) && (mods.ctrl || mods.gui))
+    input::modifiers_t mods = input::current_modifiers();
+    if (input::is_key_pressed(input::key_t::S) && (mods.ctrl || mods.gui))
     {
       std::string full_path = get_maps_dir() + map.name;
       if (commit_map_to_disk(map, full_path))

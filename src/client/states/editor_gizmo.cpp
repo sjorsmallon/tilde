@@ -189,7 +189,7 @@ bool hit_test_reshape_gizmo(const linalg::ray_t &ray, reshape_gizmo_t &gizmo)
     bmin = bmin - vec3{.x = pad, .y = pad, .z = pad};
     bmax = bmax + vec3{.x = pad, .y = pad, .z = pad};
 
-    float t = intersect_aabb(ray.origin, ray.dir, bmin, bmax);
+    float t = intersect_aabb(ray.origin, ray.direction, bmin, bmax);
     if (t < min_t)
     {
       min_t = t;
@@ -228,7 +228,7 @@ bool hit_test_transform_gizmo(const linalg::ray_t &ray,
     bmin = bmin - vec3{pad, pad, pad};
     bmax = bmax + vec3{pad, pad, pad};
 
-    float t = intersect_aabb(ray.origin, ray.dir, bmin, bmax);
+    float t = intersect_aabb(ray.origin, ray.direction, bmin, bmax);
     if (t < min_t)
     {
       min_t = t;
@@ -254,11 +254,11 @@ bool hit_test_transform_gizmo(const linalg::ray_t &ray,
     // Z Ring (Roll) -> Plane XY -> Normal Z
 
     float t = 0;
-    if (linalg::intersect_ray_plane(ray.origin, ray.dir, p, normal, t))
+    if (linalg::intersect_ray_plane(ray.origin, ray.direction, p, normal, t))
     {
       if (t > 0 && t < min_t)
       {
-        vec3 hit = ray.origin + ray.dir * t;
+        vec3 hit = ray.origin + ray.direction * t;
         float d = linalg::length(hit - p);
         if (d >= r_radius - thickness && d <= r_radius + thickness)
         {
@@ -493,10 +493,10 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
     plane_normal = linalg::cross(plane_normal, axis_dir);
 
     float t = 0;
-    if (linalg::intersect_ray_plane(ray.origin, ray.dir, handle_pos,
+    if (linalg::intersect_ray_plane(ray.origin, ray.direction, handle_pos,
                                     plane_normal, t))
     {
-      vec3 hit = ray.origin + ray.dir * t;
+      vec3 hit = ray.origin + ray.direction * t;
       float current_proj = linalg::dot(hit, axis_dir);
       float delta = current_proj - drag_start_offset;
 
@@ -584,10 +584,10 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
       plane_normal = linalg::cross(plane_normal, axis_dir);
 
       float t = 0;
-      if (linalg::intersect_ray_plane(ray.origin, ray.dir, orig_pos,
+      if (linalg::intersect_ray_plane(ray.origin, ray.direction, orig_pos,
                                       plane_normal, t))
       {
-        vec3 hit = ray.origin + ray.dir * t;
+        vec3 hit = ray.origin + ray.direction * t;
         float current_proj = linalg::dot(hit, axis_dir);
         float delta = current_proj - drag_start_offset;
 
@@ -621,10 +621,10 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
 
       // Project ray onto plane perpendicular to axis
       float t = 0;
-      if (linalg::intersect_ray_plane(ray.origin, ray.dir,
+      if (linalg::intersect_ray_plane(ray.origin, ray.direction,
                                       transform_state.position, axis_dir, t))
       {
-        vec3 hit = ray.origin + ray.dir * t;
+        vec3 hit = ray.origin + ray.direction * t;
         vec3 local = hit - transform_state.position;
         // Calculate angle?
         // We need start angle.
@@ -702,10 +702,10 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         plane_normal = linalg::cross(plane_normal, axis_dir);
 
         float t = 0;
-        if (linalg::intersect_ray_plane(ray.origin, ray.dir, center,
+        if (linalg::intersect_ray_plane(ray.origin, ray.direction, center,
                                         plane_normal, t))
         {
-          vec3 hit = ray.origin + ray.dir * t;
+          vec3 hit = ray.origin + ray.direction * t;
           drag_start_offset = linalg::dot(hit, axis_dir);
         }
       }
@@ -725,10 +725,10 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
           axis_dir = {0, 0, 1};
 
         float t = 0;
-        if (linalg::intersect_ray_plane(ray.origin, ray.dir,
+        if (linalg::intersect_ray_plane(ray.origin, ray.direction,
                                         transform_state.position, axis_dir, t))
         {
-          vec3 hit = ray.origin + ray.dir * t;
+          vec3 hit = ray.origin + ray.direction * t;
           vec3 local = hit - transform_state.position;
           vec3 u, v;
           if (axis == 0)
@@ -771,10 +771,10 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
         plane_normal = linalg::cross(plane_normal, axis_dir);
         float t = 0;
-        if (linalg::intersect_ray_plane(ray.origin, ray.dir, handles_pos,
+        if (linalg::intersect_ray_plane(ray.origin, ray.direction, handles_pos,
                                         plane_normal, t))
         {
-          vec3 hit = ray.origin + ray.dir * t;
+          vec3 hit = ray.origin + ray.direction * t;
           drag_start_offset = linalg::dot(hit, axis_dir);
         }
       }

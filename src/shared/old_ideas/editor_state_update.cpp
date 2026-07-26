@@ -38,7 +38,7 @@ void EditorState::update_place_mode(float dt)
   // Ray Pick
   linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
   vec3 ray_origin = ray.origin;
-  vec3 ray_dir = ray.dir;
+  vec3 ray_dir = ray.direction;
 
   bool hit = false;
   float t = 0;
@@ -225,7 +225,7 @@ void EditorState::update_entity_mode(float dt)
   // Ray Pick
   linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
   vec3 ray_origin = ray.origin;
-  vec3 ray_dir = ray.dir;
+  vec3 ray_dir = ray.direction;
 
   entity_cursor_valid = false;
   float min_t = 1e9f;
@@ -358,7 +358,7 @@ void EditorState::update_select_mode(float dt)
           float aspect = width / height;
           linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
           ray_origin = ray.origin;
-          ray_dir = ray.dir;
+          ray_dir = ray.direction;
           valid_ray = true;
         }
 
@@ -566,7 +566,7 @@ void EditorState::update_select_mode(float dt)
 
         linalg::ray_t ray = get_pick_ray(camera, x_ndc, y_ndc, aspect);
         float t = 0;
-        if (linalg::intersect_ray_aabb(ray.origin, ray.dir, bmin, bmax, t))
+        if (linalg::intersect_ray_aabb(ray.origin, ray.direction, bmin, bmax, t))
         {
           if (t < min_t_ent)
           {

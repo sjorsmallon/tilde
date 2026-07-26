@@ -70,7 +70,30 @@
       "Bash(./map_migration_test.exe)",
       "Bash(./test_udp_socket.exe)",
       "Bash(./cmake_build/bin/test_udp_socket.exe)",
-      "Bash(grep -iv \"case\\\\|//\")"
+      "Bash(grep -iv \"case\\\\|//\")",
+      "PowerShell($compilers = @\\('g++','clang++','cl'\\); foreach \\($c in $compilers\\) { $found = Get-Command $c -ErrorAction SilentlyContinue; if \\($found\\) { \"$c -> $\\($found.Source\\)\" } })",
+      "PowerShell($out = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\\\\entity_gen.exe\"; & clang++ -std=c++23 -Wall -Wextra -O2 -o $out src/tools/entity_gen.cpp; if \\($?\\) { \"BUILD OK\"; & $out src/shared/entities/entities.def --dump })",
+      "PowerShell($scratch = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\"; & clang++ -std=c++23 -Wall -Wextra -O2 -o \"$scratch\\\\entity_gen.exe\" src/tools/entity_gen.cpp; if \\($?\\) { \"BUILD OK \\(no warnings\\)\"; & \"$scratch\\\\entity_gen.exe\" \"$scratch\\\\broken.def\" --dump; \"exit code: $LASTEXITCODE\" })",
+      "Bash(python -)",
+      "PowerShell($scratch = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\"; & clang++ -std=c++23 -Wall -Wextra -O2 -o \"$scratch\\\\entity_gen.exe\" src/tools/entity_gen.cpp; if \\($?\\) { \"BUILD OK\"; \"--- broken.def ---\"; & \"$scratch\\\\entity_gen.exe\" \"$scratch\\\\broken.def\"; \"exit: $LASTEXITCODE\"; \"--- entities.def ---\"; & \"$scratch\\\\entity_gen.exe\" src/shared/entities/entities.def; \"exit: $LASTEXITCODE\" })",
+      "PowerShell(cmake --build cmake_build --target entity_gen 2>&1)",
+      "PowerShell(& \".\\\\cmake_build\\\\bin\\\\entity_gen.exe\" src/shared/entities/entities.def --dump; \"exit: $LASTEXITCODE\")",
+      "Bash(grep -n \"struct.*_t$\\\\|struct.*_t\\\\b\" src/shared/components/components.hpp)",
+      "PowerShell($scratch = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\"; New-Item -ItemType Directory -Force -Path \"$scratch\\\\gen\" | Out-Null; & clang++ -std=c++23 -Wall -Wextra -O2 -o \"$scratch\\\\entity_gen.exe\" src/tools/entity_gen.cpp; if \\($?\\) { \"BUILD OK\"; & \"$scratch\\\\entity_gen.exe\" src/shared/entities/entities.def --output-dir \"$scratch/gen\"; \"exit: $LASTEXITCODE\" })",
+      "PowerShell($scratch = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\"; & clang++ -std=c++23 -Wall -Wextra -O2 -o \"$scratch\\\\entity_gen.exe\" src/tools/entity_gen.cpp; if \\($?\\) { \"BUILD OK \\(clean\\)\"; & \"$scratch\\\\entity_gen.exe\" src/shared/entities/entities.def --output-dir \"$scratch/gen\" })",
+      "PowerShell($scratch = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\"; & clang++ -std=c++23 -Wall -Wextra -O2 -o \"$scratch\\\\entity_gen.exe\" src/tools/entity_gen.cpp; if \\($?\\) { \"GENERATOR BUILD OK\"; & \"$scratch\\\\entity_gen.exe\" src/shared/entities/entities.def --output-dir \"$scratch/gen\" })",
+      "PowerShell($scratch = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\"; & clang++ -std=c++23 -Wall -Wextra -c -Isrc -I\"$scratch/gen\" -o \"$scratch\\\\gen_test.obj\" \"$scratch\\\\gen\\\\entities_generated.cpp\" 2>&1 | Select-Object -First 40; \"compile exit: $LASTEXITCODE\")",
+      "PowerShell($scratch = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\"; & clang++ -std=c++23 -Wall -Wextra -O2 -o \"$scratch\\\\entity_gen.exe\" src/tools/entity_gen.cpp; if \\($?\\) { \"GENERATOR OK\"; & \"$scratch\\\\entity_gen.exe\" src/shared/entities/entities.def --output-dir \"$scratch/gen\" })",
+      "PowerShell($scratch = \"C:\\\\Users\\\\sjors\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-sjors-Desktop-Projects-tilde-tilde\\\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\\\scratchpad\"; $result = & clang++ -std=c++23 -c -Isrc -I\"$scratch/gen\" -o \"$scratch\\\\gen_test.obj\" \"$scratch\\\\gen\\\\entities_generated.cpp\" 2>&1; $errors = $result | Select-String -Pattern \": error:\"; if \\($errors\\) { \"=== ERRORS ===\"; $errors | Select-Object -First 25 } else { \"COMPILES CLEAN \\(exit $LASTEXITCODE\\)\" })",
+      "Bash(cd \"c:/Users/sjors/Desktop/Projects/tilde/tilde\" && cp \"/c/Users/sjors/AppData/Local/Temp/claude/c--Users-sjors-Desktop-Projects-tilde-tilde/5c2e41f3-47da-4d68-93f0-94a7a6f0015a/scratchpad/layout_test.cpp\" src/test/entity_layout_test.cpp && head -3 src/test/entity_layout_test.cpp)",
+      "PowerShell(cmake --build cmake_build --target entity_layout_test 2>&1 | Select-Object -Last 12; \"--- run ---\"; & \".\\\\cmake_build\\\\bin\\\\entity_layout_test.exe\"; \"exit: $LASTEXITCODE\")",
+      "PowerShell(cmake --build cmake_build --target entity_layout_test 2>&1 | Select-Object -Last 10; \"--- run ---\"; & \".\\\\cmake_build\\\\bin\\\\entity_layout_test.exe\"; \"exit: $LASTEXITCODE\")",
+      "Bash(git check-ignore *)",
+      "PowerShell(cmake --build cmake_build --target entity_layout_test 2>&1 | Select-Object -Last 8; \"--- run ---\"; & \".\\\\cmake_build\\\\bin\\\\entity_layout_test.exe\"; \"exit: $LASTEXITCODE\")",
+      "PowerShell(cmake --build cmake_build --target entity_layout_test 2>&1 | Select-Object -Last 6; \"--- run ---\"; & \".\\\\cmake_build\\\\bin\\\\entity_layout_test.exe\"; \"exit: $LASTEXITCODE\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"
     ]
   }
 }

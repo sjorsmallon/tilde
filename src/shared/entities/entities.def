@@ -1,0 +1,189 @@
+// entities.def -- entity definition DSL.
+//
+// Parsed by src/tools/entity_gen.cpp, which emits generated/entities_generated.*
+//
+// Transcribed 2026-07-26 from the macro declarations in this folder.
+// See entity_def.md at the repo root for the design.
+//
+// ---------------------------------------------------------------------------
+// DELIBERATELY ABSENT: the geometry types
+// ---------------------------------------------------------------------------
+// AABB_Entity, Wedge_Entity, Static_Mesh_Entity and Displacement_Entity are
+// NOT here. Per entity_def.md they leave the entity system entirely and become
+// plain map-owned C++ value types with handwritten map I/O -- they are never
+// networked, so they were paying the blittable/fixed-size constraints for
+// nothing. Displacement's [3267]f32 height array is the only reason the DSL
+// would ever need fixed-capacity arrays; with geometry gone, it doesn't.
+//
+// ---------------------------------------------------------------------------
+// FLAGS ARE TRANSCRIBED, NOT AUDITED
+// ---------------------------------------------------------------------------
+// In the macro system only @Editable was ever enforced; @Networked/@Saveable
+// were decorative. The generator makes all three real, so the flags below --
+// copied faithfully from the current declarations -- CHANGE BEHAVIOR. The two
+// known-bad cases are marked FIXME(audit). Do not trust this file's flags
+// until that pass happens.
+
+// ---------------------------------------------------------------------------
+// Base
+// ---------------------------------------------------------------------------
+
+
+Entity :: base {
+    entity_id:   u32                    @Networked
+    position:    v3                     @Fully_Serializable
+    orientation: v3                     @Fully_Serializable
+}
+
+Fully_Serializable :: [@Networked, @Editable, @Saveable]
+
+// ---------------------------------------------------------------------------
+// Enums -- every one of these was a string or a bare int in the macro system
+// ---------------------------------------------------------------------------
+
+// was: Light_Entity::light_type (int32, mirroring light_type_t)
+Light_Type :: enum { Point, Spot, Directional }
+
+// was: Player_Spawn_Entity::spawn_type (int32, "0 = human, 1 = bot")
+Spawn_Type :: enum { Human, Bot }
+
+// was: material_t::shader_type (pascal_string "lit" / "unlit")
+Shader_Type :: enum { Lit, Unlit }
+
+// was: hitbox_component_t::shape_type ("sphere"/"capsule"/"aabb") AND
+// Physics_Body_Entity::shape_type ("box"/"sphere"/"capsule"). Merged into one
+// enum -- the two spelled the same concept differently ("aabb" vs "box").
+Shape_Kind :: enum { Sphere, Capsule, Box }
+
+// was: Trigger_Volume_Entity::action_name (pascal_string, looked up in the
+// server registry). Values mirror TRIGGER_ACTION_LIST in trigger_action_list.hpp.
+Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn }
+
+// was: Trigger_Volume_Entity::fire_mode (pascal_string "on_enter"/"every_tick")
+Fire_Mode :: enum { On_Enter, Every_Tick }
+
+// ---------------------------------------------------------------------------
+// Components
+// ---------------------------------------------------------------------------
+
+// was: shared::box_volume_t
+Box_Volume :: component {
+    position: v3 = {0, 0, 0}            @Fully_Serializable
+    half_extents: v3 = {1, 1, 1}        @Fully_Serializable
+}
+
+// was: network::material_t
+Material :: component {
+    shader_type: Shader_Type = .Lit     @Fully_Serializable
+    color:       v3 = {1, 1, 1}         @Fully_Serializable
+    roughness:   f32 = 0.5              @Fully_Serializable
+}
+
+// was: network::render_component_t
+Render :: component {
+    mesh:         mesh_asset            @Fully_Serializable
+    visible:      bool = true           @Fully_Serializable
+    is_wireframe: bool = false          @Fully_Serializable
+    offset:       v3 = {0, 0, 0}        @Fully_Serializable
+    scale:        v3 = {1, 1, 1}        @Fully_Serializable
+    rotation:     v3 = {0, 0, 0}        @Fully_Serializable
+    material:     Material
+}
+
+// was: network::hitbox_component_t
+Hitbox :: component {
+    shape:  Shape_Kind = .Sphere        @Fully_Serializable
+    size:   v3 = {8, 8, 8}              @Fully_Serializable
+    offset: v3 = {0, 0, 0}              @Fully_Serializable
+}
+
+// ---------------------------------------------------------------------------
+// Entities
+// ---------------------------------------------------------------------------
+
+// Placed in the editor; the server consumes it at load and removes it.
+Player_Spawn_Entity :: entity {
+    spawn_type: Spawn_Type = .Human     @Editable @Saveable
+}
+
+// I am still thinking about this @runtime_only flag and its position
+Player_Entity :: entity @runtime_only {
+    view_angle_yaw:    f32              @Networked @Editable
+    view_angle_pitch:  f32              @Networked @Editable
+    health:            i32              @Networked @Editable
+    ammo:              i32              @Networked @Editable
+    active_weapon_id:  i32              @Networked
+    client_slot_index: i32              @Networked
+    velocity:          v3               @Networked
+    render:            Render
+    hitbox:            Hitbox
+}
+
+Weapon_Entity :: entity @runtime_only {
+    ammo:             i32               @Networked @Editable
+    active_weapon_id: i32               @Networked
+    render:           Render
+}
+
+Rocket_Entity :: entity @runtime_only {
+    velocity:        v3                 @Networked @Editable
+    lifetime:        f32                @Networked @Editable
+    damage_radius:   f32                @Networked @Editable
+    damage_amount:   f32                @Networked @Editable
+    knockback_force: f32                @Networked @Editable
+    owner_id:        u32                @Networked
+    render:          Render
+    hitbox:          Hitbox
+}
+
+Particle_Emitter_Entity :: entity {
+    sprite:             sprite_asset          @Editable @Saveable
+    emit_rate:          f32 = 20.0            @Editable @Saveable
+    max_particles:      i32 = 64              @Editable @Saveable
+    lifetime_min:       f32 = 0.5             @Editable @Saveable
+    lifetime_max:       f32 = 1.5             @Editable @Saveable
+    velocity_min:       f32 = 2.0             @Editable @Saveable
+    velocity_max:       f32 = 5.0             @Editable @Saveable
+    spread:             f32 = 0.5             @Editable @Saveable
+    gravity:            v3 = {0, 0.5, 0}      @Editable @Saveable
+    drag:               f32 = 0.3             @Editable @Saveable
+    size_start:         f32 = 0.5             @Editable @Saveable
+    size_end:           f32 = 2.0             @Editable @Saveable
+    rotation_speed_min: f32 = -1.0            @Editable @Saveable
+    rotation_speed_max: f32 = 1.0             @Editable @Saveable
+    color_start:        v3 = {1, 1, 1}        @Editable @Saveable
+    color_end:          v3 = {0.5, 0.5, 0.5}  @Editable @Saveable
+    alpha_start:        f32 = 0.8             @Editable @Saveable
+    alpha_end:          f32 = 0.0             @Editable @Saveable
+    emitter_lifetime:   f32 = 0.0             @Networked @Editable
+    parent_entity_id:   u32 = 0               @Networked @Editable
+}
+
+Trigger_Volume_Entity :: entity {
+    volume:            Box_Volume
+    action:            Trigger_Action = .Kill   @Editable @Saveable
+    fire_mode:         Fire_Mode = .On_Enter    @Editable @Saveable
+    param_target_name: string<64>               @Editable @Saveable
+    param_string:      string<64>               @Editable @Saveable
+    param_float:       f32 = 0.0                @Editable @Saveable
+}
+
+
+Light_Entity :: entity {
+    direction:          v3                     @Fully_Serializable
+    color:              v3 = {1, 1, 1}         @Fully_Serializable
+    intensity:          f32 = 1.0              @Fully_Serializable
+    range:              f32                    @Fully_Serializable
+    spot_inner_degrees: f32                    @Fully_Serializable
+    spot_outer_degrees: f32                    @Fully_Serializable
+    kind:               Light_Type = .Point    @Fully_Serializable
+}
+
+Physics_Body_Entity :: entity {
+    shape:    Shape_Kind = .Box         @Fully_Serializable
+    size:     v3                        @Fully_Serializable
+    velocity: v3                        @Networked
+    mass:     f32                       @Editable @Saveable
+    render:   Render
+    hitbox:   Hitbox
+}

@@ -73,7 +73,7 @@ private:
   std::vector<std::unique_ptr<cvar::Console_Entry_Base>> remote_stubs_;
 
   // Key bindings: Key -> command line.
-  std::unordered_map<input::Key, std::string> bindings_;
+  std::unordered_map<input::key_t, std::string> bindings_;
 
   // Commands
   std::vector<const char *> Commands;

@@ -24,9 +24,9 @@ public:
                          const viewport_state_t &view, float dt) = 0;
 
   // Mouse events
-  virtual void on_mouse_down(editor_context_t &ctx, const mouse_event_t &e) = 0;
-  virtual void on_mouse_drag(editor_context_t &ctx, const mouse_event_t &e) = 0;
-  virtual void on_mouse_up(editor_context_t &ctx, const mouse_event_t &e) = 0;
+  virtual void on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e) = 0;
+  virtual void on_mouse_drag(editor_context_t &ctx, const input::mouse_event_t &e) = 0;
+  virtual void on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e) = 0;
 
   // Keyboard Shortcuts
   virtual void on_key_down(editor_context_t &ctx, const key_event_t &e) = 0;

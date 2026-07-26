@@ -1,278 +1,575 @@
+# TODO
 
+Two parts:
 
-## Map transfer / switching
+- **THE ENTITY TRACK** — entity generation, schema, spawning/ownership, map
+  serialization and undo/redo are *one* interlocked chain, not five projects.
+  Phase order below is load-bearing; doing them out of order means doing work
+  twice or debugging two systems at once. Design rationale lives in
+  `entity_def.md` (source of truth) — this file is the work list and the order.
+- **EVERYTHING ELSE** — independent work, no ordering constraints.
 
-ARTIFACT MODEL (decided 2026-07-21). Two artifacts, two audiences — keep them
-separate the way Source keeps .vmf and .bsp separate:
-- SOURCE (.source text + editor state): mapper-only, edited in the editor. It is
-  the INPUT to bake_map. bake_map is an expensive offline step (navmesh today,
-  lighting later) so it is NOT re-run on client load. Source NEVER goes over the
-  wire to players — a player joining a community server has never seen it and
-  shouldn't. serialize_map_to_string / parse_map_from_string are its format.
-- COMPILED MAP PACKAGE (bake_map output): the runtime distributable = the .bsp
-  analogue. Contains runtime entity data + baked sidecars (navmesh, later
-  lightmaps/PVS). THIS is the wire artifact: what the server hosts, what streams
-  to a client, what the client caches under maps/ and loads. init_session_from_map
-  runs off the deserialized package (map_t + its baked data), not off source.
-- WIRE IDENTITY = (map_name, package_hash). The client keys its package cache and
-  its "do I need to stream?" check on this, NOT on source. source_hash +
-  bake_version are BUILD-SIDE inputs (they decide whether the mapper must re-bake)
-  and at most ride inside the package as provenance metadata; they are not the
-  wire key. "Reference-first" survives, but the reference is the cached compiled
-  package, not the source file.
-NOTE: the current step-1 impl hashes the source .source file bytes. That is a
-localhost/listen-server shortcut (host == mapper, so source is present). It must
-become the package hash before remote clients / streaming are real.
+---
 
-- [x] client honors server's map + FNV-1a hash (CmdAccept.map_path/content_hash);
-      mismatch = hard error (no silent desync)
-- [x] mid-game map switch: reload_map broadcasts bitstream CmdChangeMap, keeps
-      players connected + re-spawns them (spawn_player_for_slot), client reloads
-      via load_client_map + Connection_Phase::Loading, acks C2S_MapLoaded;
-      server withholds snapshots (client_map_ready) until acked
-- byte streaming fallback (S2C_MapData) for clients that lack the COMPILED
-  PACKAGE (see ARTIFACT MODEL above — this streams the package, never the source).
-  Today the client hard-errors on a missing/mismatched map (load_client_map
-  fails, or hash != server); streaming is what lets it recover by pulling the
-  package from the server instead. Ordered plan to continue:
+# THE ENTITY TRACK
 
-  0. [x] DONE (distinct message_id). NOTE the terminology cleanup: the
-     fragmentation axis is now message_id / fragment_index / fragment_count (a
-     message is split into fragments); the word "sequence" is reserved for the
-     FUTURE packet-level ack layer (packet_sequence_number) so the two never get
-     confused. convert_to_packets now takes the sender's rolling
-     `uint8 &next_message_id` and stamps every fragment of a message with one id,
-     advancing the counter per message — so it can't be forgotten (there's no
-     un-stamped intermediate state; the old placeholder-0 + separate-stamp API was
-     a footgun). Counter lives on Client_/Server_Connection_State; all send sites
-     pass it. Receiver already keyed partial_packets[message_id], so a map stream
-     and per-tick snapshots no longer share a bucket. Verified by test_udp_socket
-     (fragments share an id; consecutive messages get distinct ids). STILL MISSING
-     for real networks: UDP has no retransmit — a single dropped fragment loses the
-     whole map. Fine on localhost; add ack/retransmit (or resend-until-acked)
-     before remote streaming. See "ack/nack system" under Multiplayer Networking
-     below.
-  1. [x] DONE. Keep the map_t on the server: load_map_into_state loads into
-     server_context_t::current_map (retained, cleared on reload) so we can
-     serialize without re-reading disk.
-  2. [x] DONE. Pure (no-I/O) serialize_map_to_string(map_t) / parse_map_from_
-     string(str, map_t) factored out of save_map/load_map; the file fns are now
-     thin wrappers. This is the canonical payload — no binary/protobuf entity
-     format. (map.cpp/hpp)
-  3. [x] DONE. compute_map_content_hash now takes a map_t and hashes the canonical
-     serialize_map_to_string() output (not file bytes), so it's
-     formatting-independent. Both callers (server_impl load, play_state
-     load_client_map) hash the in-memory map_t. Verified by map_migration_test
-     (stable across serialize/parse; identical under whitespace reformatting).
-     The near-term meaning is the source hash (localhost); the eventual WIRE key
-     is the COMPILED PACKAGE hash (entities + baked sidecars) from step 4 — the
-     field name stays generic (content_hash) so the meaning can shift without a
-     wire change.
-  4. [x] DONE. Compiled package format + streaming messages in map_transfer.
-     {hpp,cpp}: map_package_t { map_name, entity_text, navmesh } with
-     serialize/deserialize_map_package (magic+version container, navmesh floats
-     written as exact raw bytes — write_coord's 5-bit fraction would corrupt
-     A*), build_map_package(map_t), and compute_map_package_hash (FNV-1a over the
-     blob = the eventual WIRE key, unlike content_hash which is entities-only).
-     Messages: request_map_data_message_t { map_name } (C2S_RequestMapData) and
-     map_data_message_t { map_name, package_hash, compressed, bytes } (S2C_MapData);
-     compressed=false for now (step 6 adds gzip; package_hash is over the
-     UNCOMPRESSED blob). New Message_Type entries + reassembly branches on both
-     sides (ServerInbox::map_data_requests, ClientInbox::map_data_messages) that
-     hand raw payloads to the game layer like CmdChangeMap. Verified by
-     map_migration_test (package section 7: entity_text/map_name/navmesh
-     round-trip, stable hash, corrupted-magic rejected).
-     BUG FIXED en route: write_string/read_string (and write/read_c_string) were
-     asymmetric — read_byte aligns but write_byte does not, so every string that
-     followed a var_uint length (i.e. all of them, incl. CmdChangeMap's map_path/
-     map_name) decoded to garbage. Now both use the aligned write_bytes/read_bytes
-     block. This was never unit-tested before (map_migration_test only exercised
-     the var_uint hash path). Wire encoding of strings changed, but both ends
-     share the code and nothing persists it, so it's safe.
-     STILL TODO (step 5+): nothing sends C2S_RequestMapData or responds with
-     S2C_MapData yet — the reassembly plumbing is in place but the request/respond
-     handlers land with the client cache-miss logic in step 5.
-  5. [x] DONE. Cache-miss / mismatch now streams instead of hard-erroring.
-     CLIENT (play_state.cpp): load_client_map split into finalize_client_map()
-     (shared tail: reset replication + init_session + hash + physics + camera,
-     operates on this->map) reused by apply_map_package() (parse_map_from_string
-     + restore package.navmesh). enter_connected_phase() factored out (sets
-     connected/phase + registers console forwarder), shared by the hash-match
-     connect and the post-download path. CmdAccept mismatch and CmdChangeMap
-     (file-load fail = cache miss, OR hash mismatch) now send C2S_RequestMapData
-     via send_request_map_data() and stay in Loading with
-     client_context.awaiting_stream_content_hash set (guards resent CmdChangeMap:
-     re-request cheaply instead of reloading every tick). S2C_MapData handler:
-     verify compute_map_package_hash over the (uncompressed) blob ==
-     msg.package_hash, deserialize_map_package, apply_map_package, then
-     send_map_loaded_ack with the ENTITIES-ONLY content hash (loaded_map_content_
-     hash, set by finalize) so it matches the server's g_state.map_content_hash —
-     NOT the package hash. compressed=true is logged+ignored (step 6). SERVER
-     (server_impl.cpp): inbox.map_data_requests handler builds+serializes the
-     current_map package, streams S2C_MapData (compressed=false, package_hash over
-     the blob), and sets client_map_ready[slot]=false so snapshots stay withheld
-     until the client acks. Builds clean; map_migration_test + udp_socket_test +
-     server_loop_test green.
-  5b. [x] DONE (follow-up, same session). Booting with ZERO local map now works.
-     on_enter no longer hard-requires a local file: a failed load_client_map is
-     non-fatal (logs, session_ready_for_simulation_and_rendering stays false) and we connect anyway. update()
-     dropped its top-level `if (!session_ready_for_simulation_and_rendering) return;` — the network poll +
-     handshake/CmdChangeMap/S2C_MapData handling now runs mapless; the gate moved
-     down to just before Reconciliation so only local sim + rendering-prep are
-     skipped without a world. Accept handler streams when `!session_ready_for_simulation_and_rendering` OR
-     hash mismatch (was mismatch-only). Server already sets client_map_ready=false
-     on the request, so the brief connect→request window of snapshots to a mapless
-     client self-heals (entity_updates just fills maps that finalize_client_map
-     resets). session_ready_for_simulation_and_rendering is now an explicit orthogonal axis to
-     Connection_Phase (world-loaded vs handshake-state); documented on the enum.
-     STATE MACHINE: Connection_Phase { Disconnected, Connecting, Loading,
-     Connected } is the client's connection FSM — full transition diagram now in
-     client_context.hpp. Kept at 4 states (Loading covers both reference-load and
-     streaming); session_ready_for_simulation_and_rendering stays a separate flag because on a mismatch switch
-     you're Loading WITH the old world still live (session_ready_for_simulation_and_rendering true), vs a
-     no-map boot which is Loading with no session.
-     Untested at runtime (needs dedicated server + a client missing the map file —
-     can't drive the graphical app headlessly); builds clean, unit tests green.
-  6. Then add gzip (miniz, header-only): compress in S2C_MapData, set
-     compressed=true, decompress on client. Biggest win is fewer fragments =
-     lower whole-message loss probability on the UDP fragmenter, not just
-     bandwidth. Measure map size before/after to confirm it's worth it.
-  7. Cache received PACKAGES to disk under maps/, keyed by (name, package_hash),
-     so a client only streams a given map+hash once and reference-first hits the
-     cache on rejoin. This cache IS the player-side "do I have the map" store —
-     there is no source involved.
-- CmdChangeMap reliability: currently resent every tick to not-ready clients
-  (idempotent) as a stand-in for the missing ack/retransmit channel. Fold into
-  the reliable channel when it lands.
-- [x] DONE. Wire map identifier is now maps-relative, not an absolute path.
-  Server sends the basename (current_map_wire_id() = filename of
-  current_map_path, e.g. "new_map.source") in both CmdAccept and CmdChangeMap.
-  Each client resolves it against its own maps dir via
-  shared::resolve_map_path(maps_dir, id) (strips to basename, joins under
-  maps_dir). Client maps dir defaults to "maps", overridable by the MAPS_DIR env
-  var (read in play_state::client_maps_directory()) — a local dev knob, NOT a
-  cvar/CLI-arg (getenv sidesteps the per-DLL cvar-singleton duplication). Used at
-  both client resolve sites: on_enter (the last_map.txt entry) and the
-  CmdChangeMap handler. Server still LOADS from its own absolute path; only the
-  wire id changed.
-- TESTING map streaming locally = the "cold client": run MyGame_Client with
-  MAPS_DIR pointed at an empty folder so it lacks the map and must stream.
-  scripts/run_client_cold.cmd sets MAPS_DIR=cold_maps and launches it (.cmd not
-  .ps1 so PowerShell's execution policy doesn't block it). Workflow: start
-  MyGame_Server, then run the cold-client script. Normal play is plain
-  MyGame_Client.exe (uses ./maps). Still runtime-unverified (needs the GUI).
+## Why these five are one track
 
+They share four files and each phase changes the ground under the next:
 
+```
+                    pascal_string set() bug          [P0] independent, do now
+                            |
+                            v  (memcmp == string equality; both undo + wire rely on it)
+  geometry exit  ---------> P1 -----------------------------------------------.
+   . kills is_collision_geometry() routing            (map I/O rewritten)     |
+   . kills the map<->session shared_ptr aliasing on the static path           |
+   . means the DSL never needs [N]T                                           |
+   . adds the 2nd transaction flavor (geometry value-swap)                    |
+                            |                                                 |
+                            v                                                 v
+  undo -> binary diffs ---> P2                                    generator finish -> P3
+   . transaction_system touched ONCE for both flavors                         |
+   . removes get_all_properties/init_from_map from the hot path               v
+   . shrinks P5's dynamic-dispatch surface                        flag audit -> P4 (blocking)
+                            |                                                 |
+                            '------------------> P5 HARD CUTOVER <------------'
+                                 . macro system deleted, network::Entity dies
+                                 . map save/load moves to generated tables
+                                 . undo's text adapter lands here (disk boundary)
+                                                  |
+                                    .-------------+--------------.
+                                    v                            v
+                        serializer v2 -> P6              storage refactor -> P7
+                        (+ snapshot delta compression)   (pools, handles, id unify)
+                                    '-------------+--------------'
+                                                  v
+                                        protobuf removal -> P8
+```
+
+The five topics map onto the phases like this:
+
+| Topic | Touched in |
+|---|---|
+| Entity generation | P3, P4, P5 (P1 shrinks its input from 12 types to 8) |
+| Schema stuff | P1 (geometry stops paying it), P2 (undo stands on it), P5 (deleted) |
+| Entity spawning / ownership | P3 (factory helpers), P5 (virtuals die), P7 (pools + handles) |
+| Map serialization | P1 (geometry I/O + map conversion), P5 (generated, declaration-ordered) |
+| Undo / redo | P1 (2nd flavor), P2 (binary diffs), P5 (re-point + text adapter) |
+
+## Ordering rules that must not be broken
+
+- **Geometry exits before the generator is wired in.** `Displacement_Entity`'s
+  `schema_array_t<float32, 3267>` is the only array-typed field on any entity;
+  if geometry leaves first the DSL never needs `[N]T`, instead of building it
+  and deleting it a phase later.
+- **The storage refactor (P7) never rides along with a reflection change.** Not
+  a compatibility argument: a reflection change breaks *compilation*, so the
+  compiler hands you every site. A storage change mostly compiles and fails at
+  *runtime* with dangling handles. Bundled, a broken game tells you nothing
+  about which half did it.
+- **P2 and P7 both rewrite `transaction_system` — never interleave them.**
+- **Protobuf removal (P8) never overlaps the map-transfer work** (see
+  "Map transfer" below). Two half-finished netcode changes at once is how
+  heisenbugs get in.
+- **No compatibility phase anywhere in P5.** No `Class_Schema` shim, no
+  per-entity migration. The generator emits the end state; the cutover is one
+  hard break and the tree doesn't build until the last consumer is converted.
+  That is the point — the compiler is the migration checklist.
+- **P4 (flag audit) is blocking.** `@Networked`/`@Saveable` were decorative in
+  the macro system and become real. Skipping it silently changes behavior.
+- **COMMIT BEFORE P1 AND BEFORE P5.** Both are breaking: P1 changes the map file
+  format (and the baked package, and its hash), P5 leaves the tree not building
+  until the last consumer is converted. Land a clean, green, committed tree
+  first, and do each on its own branch — otherwise "is this broken because of
+  the change, or was it already broken?" has no answer.
+
+## Scale, and where the tree stops building
+
+Rough sizes, relative not absolute — the useful column is the last one, because
+it tells you which phases you can walk away from mid-way.
+
+| | Phase | Size | Can you stop mid-way with a running game? |
+|---|---|---|---|
+| P0 | string set() bug | ~30 min | yes — one function |
+| P1 | geometry exit | **multi-day, biggest phase** | yes, if you do it in the 4 sub-steps below; the map-format flip is the one atomic moment |
+| P2 | undo → binary diffs | ~a day | yes — per-tool migration is incremental |
+| P3 | finish generator | ~a day | yes — generated code drives nothing yet |
+| P4 | flag audit | ~1–2 hours | yes — it's reading, deciding, and editing one .def file |
+| P5 | hard cutover | **multi-day, tree does NOT build throughout** | **NO — this is the one you cannot abandon halfway** |
+| P6 | serializer v2 | multi-day, open-ended | yes |
+| P7 | storage refactor | multi-day | partly — failures here are runtime, not compile-time, so "working" is harder to judge |
+| P8 | protobuf removal | ~a day, spread | yes — message-at-a-time by design |
+
+P1's natural sub-steps, each leaving a working game: (a) geometry value types +
+handwritten map I/O + the converter, (b) session init / static BVH, (c) editor
+seam + the four inspector panels, (d) transaction geometry value-swap flavor.
+
+---
+
+## P0 — pascal_string_t::set() tail residue bug  *(independent, do now)*
+
+`set()` doesn't zero `data[length..N)` or re-terminate. Shrinking `"hello"` →
+`"hi"` leaves `"hillo"` from `c_str()` (which assumes zero-init termination),
+and logically-equal strings can memcmp-unequal → phantom deltas in baseline
+diffing. This establishes the canonical-zero-padding invariant that both the
+generator's string model (`entity_def.md`, Strings) and P2's binary field
+diffing assume.
+
+- [ ] `network_types.hpp` `pascal_string_t::set()`: zero `data[length..N)` after copy
+- [ ] While there: silent truncation at capacity violates no-silent-failures —
+      assert or return bool
+
+---
+
+## P1 — Geometry exit (out of the entity system, into the map module)
+*multi-day · biggest phase · breaking: changes the map file format — **commit first, branch first***
+
+AABB / Wedge / StaticMesh / Displacement become plain map-owned C++ value
+types. They are never networked, so they were paying the schema system's
+blittable/fixed-size/memcmp constraints for nothing — and the `[64]f32` heights
+cap was the format's limitation leaking into what the game can express.
+
+```cpp
+struct displacement_t
+{
+  transform_t transform;
+  material_id material;
+  u32 resolution;
+  std::vector<f32> heights;   // assert(heights.size() == resolution * resolution)
+};
+```
+
+**This phase also disarms half the ownership bug for free.** The static path in
+`init_session_from_map` (`game_session.cpp:10`) is selected by
+`is_collision_geometry()` and does `static_entities.push_back(entry.entity)` —
+copying the *shared_ptr*, so session and map alias the same object. Delete the
+branch and that aliasing (and its lifetime coupling, and the writeback-into-map
+hazard) stops existing, shrinking P7's scope before P7 starts.
+
+- [ ] Geometry value types in the map module; `std::vector` fine, no caps, no erasure
+- [ ] Handwritten map save/load per geometry type (four small functions —
+      box / wedge / static-mesh-ref / displacement)
+- [ ] One-time map file conversion; kill the `"center"` / `"half_extents"` compat shims
+      in the same conversion
+- [ ] Session init: stop consulting `is_collision_geometry()`, load geometry
+      straight into the static BVH + render batches. Delete `static_entities`'
+      geometry role.
+- [ ] Editor seam that keeps editing uniform across both regimes: *transform +
+      bounds + hit-test + snapshot/restore*. `map_t` holds both lists; tools
+      iterate "editable map objects" and don't care which regime backs them.
+      (Uniform editing never actually required schemas.)
+- [ ] Four small handwritten inspector panels (3–6 properties each)
+- [ ] Transaction system gains the second entry flavor: geometry **value-swap**
+      (whole-value snapshots; structs copy — sculpting already does tool-owned
+      start-state capture). Do this in the same pass as P2 if they land close
+      together — one file, one rewrite.
+- [ ] Re-point `build_editor_bvh()` (`editor/editor_bvh.hpp`) at whatever holds
+      geometry now; its `Collision_Id.index` is an entity uid resolved via
+      `map.find_by_uid()`, which no longer covers brushes.
+- [ ] Answers the loose note "why is AABB a schema? it's not a good decision" — it stops being one here.
+
+---
+
+## P2 — Editor undo: string-map snapshots → binary field diffs
+
+The undo/redo system snapshots entities as `std::map<string,string>` via
+`get_all_properties()` and detects change by STRING comparison
+(`diff_properties`). Wasteful (double text round-trip + map alloc per edit) and
+has a latent bug: formatted-float compare silently drops a real sub-threshold
+change. The network layer already has the clean primitive (`schema.hpp`
+`diff`/`diff_reversible`/`apply_diff`: memcmp/memcpy over `field.size`), so the
+editor should stand on that.
+
+Design: binary field diffs in memory (hot path); a text adapter, name-keyed,
+ONLY at the disk save/load boundary (deferred to P5, where map I/O is rewritten
+anyway).
+
+**Why here and not after the cutover:** the *shape* (clone capture + binary
+field diff) survives P5 unchanged — only the reflection calls get re-pointed
+from `Class_Schema` to the generated tables, which is mechanical and
+compiler-checked. Meanwhile this removes `get_all_properties`/`init_from_map`
+from the undo hot path, which directly shrinks P5's ~94-site dynamic-dispatch
+surface. Doing it after P5 instead means living with the float-compare bug for
+the whole generator project.
+
+- [ ] Add `clone_entity(const Entity*) -> unique_ptr<Entity>` (full-state
+      `serialize(writer, nullptr)` → `create_entity_by_classname` → deserialize).
+      Full-state capture already exists via serialize's `baseline == nullptr` branch.
+- [ ] Rename `diff_reversible` → `capture_field_changes` (keep deprecated alias so
+      networking callers keep compiling in the same commit)
+- [ ] `transaction_system.hpp`: replace `property_change_t{field,before_str,after_str}`
+      with binary `field_change_in_bits_t{id,old_val,new_val}`; `diff_entity_modified_t`
+      gains classname (to resolve schema on apply); delete `diff_properties`
+- [ ] Rewrite `apply_diff`/`revert_diff` modified-branches to memcpy bytes by field
+      index instead of `init_from_map(props)`
+- [ ] created/removed diffs: store full-entity BINARY blob (binary everywhere),
+      reinflate with `create_entity_by_classname` + deserialize
+- [ ] Migrate tool snapshots from `map<string,string>` to `clone_entity` captures +
+      `capture_field_changes` at commit: `displacement_tool` (resize_start_props,
+      select_start_props), `sculpting_tool` (sculpt_start_props), `selection_tool`
+      (drag_start_snapshots → `map<uid, clone>`), `editor_gizmo` (start_props)
+- [ ] `placement_tool.cpp:90` entity duplication: switch `get_all_properties` →
+      `init_from_map` over to `clone_entity`
+- [ ] **Batch transactions** (moved here from the editor section — same file,
+      same pass): multi-entity delete currently creates one transaction per
+      entity, so Ctrl+Z undoes one deletion at a time instead of the whole batch.
+- [ ] Leave `get_all_properties`/`init_from_map`/`parse_string_to_field`/
+      `serialize_field_to_string` in place — still used by map file save/load
+      until P5. This pass only removes them from the undo hot path.
+- [ ] Update `test_transaction_system.cpp` (lines ~87/94 call `get_all_properties`)
+      to the new binary API; build + run it green
+
+---
+
+## P3 — Finish the entity DSL generator
+
+`entities.def` → `src/tools/entity_gen.cpp` → `src/shared/entities/generated/`.
+Replaces the macro schema system. Full design + rationale in `entity_def.md`.
+
+DECIDED (do not relitigate — reasoning is in `entity_def.md`):
+- No compatibility phase, no `Class_Schema` shim, no incremental per-entity
+  migration. The generator emits the end state; the cutover is one hard break.
+- Entities derive from a generated `Entity` base (inheritance, not a flat
+  prefix) so `Entity*` is a legal derived-to-base conversion. Costs standard
+  layout, so `offsetof` is pragma-suppressed UB — the same UB `schema.hpp`
+  already shipped. Trivial copyability is unaffected; `entity_layout_test`
+  guards both.
+
+DONE:
+- [x] Parser + resolver + codegen, single file: `src/tools/entity_gen.cpp`
+- [x] `entities.def`: all 8 non-geometry entities, 4 components, 6 enums
+- [x] CMake custom command → `src/shared/entities/generated/` (checked in, so
+      schema changes show up as reviewable diffs; note a build dirties the tree)
+- [x] `entity_layout_test` guards trivial copyability + derived-to-base
+
+STILL TO DECIDE:
+- [ ] **Enum sentinels**: `Invalid = 0` and `Count`. Currently inconsistent by
+      accident (`entity_type` has both, `component_type` has Count only, DSL
+      enums have neither). Leaning: `Count` NEVER inside the enum (it defeats
+      the exhaustive-switch warning the lifecycle-hook design relies on) — emit
+      `ENTITY_TYPE_COUNT` instead; `Invalid` only where "none/unknown" is a real
+      domain state (`entity_type` yes, `Light_Type` no). `entity_def.md` open q #1.
+- [ ] `@runtime_only` placement in the grammar (`X :: entity @runtime_only {`)
+      was a grammar-design call, not specified by the doc. Flagged in
+      `entities.def` as still under consideration.
+- [ ] **Factory return type: `Entity*` vs a handle.** Decide BEFORE callers
+      exist. *Constrained by ordering*: the phasing rule says generator v1 must
+      work inside today's `shared_ptr<Entity>` session storage, and handles only
+      become meaningful in P7 — so `Entity*` now, handle later, and P7 is where
+      that reverses. Record it as a decision, not an accident.
+- [ ] `Shape_Kind` merge: `hitbox_component_t` said "sphere"/"capsule"/"aabb",
+      `Physics_Body` said "box"/"sphere"/"capsule", and the physics comment
+      claims they're the same interpretation. Merged into one enum on that
+      basis. If "aabb" and "box" were meant to differ, split it back into two.
+- [ ] String capacities are invented: everything was `pascal_string<250>`;
+      `string<64>` chosen for `param_target_name` / `param_string`. Confirm or
+      set real ones.
+
+STILL TO BUILD:
+- [ ] **Factory / spawning helpers** (`entity_def.md` open q #2, artifact #4 of
+      the output contract). None exist; `entity_type_from_classname` returns only
+      the tag today:
+      * `Entity* entity_from_classname(const char*)` — the editor and map loader
+        both want an instance, not a tag
+      * `create_entity(entity_type)` — heap factory over the same switch
+      * `entity_type_info_t::construct_at(void* memory)` — the type-erased hook
+        undo, baselines and (later) pooled storage need. `size_in_bytes` and
+        `alignment` already exist; this is the missing third piece.
+- [ ] **Placeable-type enumeration for the editor** (open q #3). The
+      `runtime_only` bit exists but nothing enumerates non-runtime types, so the
+      placement menu has no source of truth. Prefer a constexpr filtered array
+      (the menu wants to index it) over a callback — and keep it a free
+      function, since "tables are an implementation detail".
+- [ ] **Asset manifest scanner.** `mesh_asset`/`sprite_asset` are placeholder
+      `using = uint32_t` typedefs; Particle_Emitter's default sprite path
+      (`"resources/sprites/smoke.png"`) currently has NO representation. Kills
+      the hand-maintained `assets::get_mesh_path(asset_id)` mapping.
+- [ ] Serializers are deliberately NOT wired here — they want the
+      detection/encoding seam designed first. That's P6.
+- [ ] Meson has no `entity_gen` target (CMake only). Same staleness as the
+      missing `*_entity.cpp` files below.
+- [ ] Loose note to resolve while here: "nested schemas are annoying, can we
+      clean that code up?" — the generator's answer is the recursive schema tree
+      with flat memory (component-typed fields point at the component's own
+      table). Confirm that actually reads better before P5 locks it in.
+- [ ] Loose note: "all components that exist now should define a schema — is
+      that what we want?" Under the DSL, components are field groups with no tag
+      and no factory entry; a component's own field flags are the truth (no
+      per-use masking in v1). Decide if any current component doesn't fit that.
+
+---
+
+## P4 — The flag audit  *(blocking — before generated code drives anything)*
+
+`@Networked`/`@Saveable` were decorative in the macro system and become real.
+The `.def` transcription is a **mandatory conscious re-audit of every field's
+flags**, not a copy. Two known-bad cases already marked `FIXME(audit)` in
+`entities.def`:
+
+- [ ] `Entity::position`/`orientation` have NO `@Saveable` → every map-placed
+      entity would load at the origin
+- [ ] `Light_Entity` has NO `@Saveable` on any field → lights stop persisting
+- [ ] Walk every remaining field in `entities.def` and decide its three flags
+      deliberately
+
+---
+
+## P5 — Hard cutover (delete the macro system)
+*multi-day · tree does NOT build throughout · **commit first, branch first***
+
+The tree does not build from the moment the macros are deleted until the last
+consumer is converted. By design. This is the one phase with no safe stopping
+point, so start it from a clean committed tree on its own branch and don't
+begin it with anything else half-finished.
+
+- [ ] Delete `Class_Schema`/`Field_Prop` and rewrite the ~9 files on them
+- [ ] Delete the X-macro / factory registration (~21 files)
+- [ ] Convert ~94 dynamic-dispatch sites (`entity_as`, `get_schema`,
+      `get_box_volume`, `is_collision_geometry`). `network::Entity` and its
+      virtuals die here.
+- [ ] **Map serialization moves onto generated tables**: `get_all_properties`/
+      `init_from_map`/`parse_string_to_field`/`serialize_field_to_string` die;
+      save/load becomes schema-driven free functions honoring `@Saveable`
+- [ ] **Deterministic save order = declaration order** (today's `std::map`
+      alphabetical order is only accidentally deterministic) — deliberately
+      git-diffable
+- [ ] Versioning has no version numbers: additive changes free (missing key →
+      DSL default), removals ignored with a logged warning, renames via one-time
+      map conversion. `@was` deliberately NOT built.
+- [ ] Schema hash baked in as a constant for the connect handshake; mismatch →
+      refuse loudly with both hashes
+- [ ] **Undo's deferred text adapter lands here**: `to_text`/`from_text`
+      bridging `field_change_t` bytes ↔ name-keyed text. Load side skips
+      unknown/unparseable fields with `log_error` (no silent drop), not a hard fail.
+- [ ] Re-point P2's undo diffs from `Class_Schema` lookups to the generated tables
+- [ ] **Lifecycle hooks become handwritten exhaustive switches** —
+      `on_entity_spawned(session, entity)` etc. over the closed enum. Replaces
+      per-type virtual overrides (e.g. server consuming `Player_Spawn` at load).
+      The compiler warns on unhandled cases; a forgotten override never did.
+- [ ] Update the docs that die with the cutover: `entity_type.hpp`'s "ENTITY
+      REGISTRATION GUIDE" comment, and CLAUDE.md's "Schema System" / "Entity
+      System" sections (both still accurate for the macro system *today*).
+      CLAUDE.md is worth doing at the cutover since it loads every session.
+
+---
+
+## P6 — Serializer v2 (with snapshot delta compression)
+
+One narrow seam: **"give me the changed fields."** Change *detection* stays a
+separate module from wire *encoding*.
+
+- [ ] Recursive generated visitors over the schema tree replace the flat
+      `Field_Prop` walk
+- [ ] Detection side stays memcmp-against-baseline for now (protected by
+      blittability); dirty-bit / change-tick tracking swaps in here later
+- [ ] Encoding side gets snapshot delta compression; field-path encoding could
+      swap in later without touching detection
+- [ ] Shape the change-notification seam: the generated deserializer already
+      knows which fields it wrote — its signature must be able to grow an
+      optional changed-field bitmask out-param ("mesh id changed → reload asset")
+      without restructuring
+- [ ] `@interpolate` (client-side snapshot lerping) is a future field
+      annotation; nothing to reserve except knowing it lands here
+- [ ] Fix `network_test` first or as part of this — see "Known failing tests"
+
+---
+
+## P7 — Storage refactor: one ownership model
+
+Three storage/ownership schemes run at once today and grind against each other.
+P1 removes the worst symptom; this removes the cause.
+
+1. Factory returns `std::shared_ptr<network::Entity>` (heap, refcounted, type-
+   erased base): `create_entity_by_classname`/`create_entity_by_type`
+   (`entity.cpp:328`, `entity.hpp:166`) — every branch is `make_shared<CLASS>()`.
+2. Runtime pools store `std::vector<T>` BY VALUE, per concrete type
+   (`entity_system.hpp:31`). `spawn()` hands back a raw `T*` INTO that vector
+   (`entity_system.hpp:155`) — the next `emplace_back` reallocation invalidates
+   every outstanding pointer, and `remove()`'s swap-and-pop invalidates too.
+   The existing `@FIXME` at `entity_system.hpp:153` already flags
+   `spawn()->T*` / `destroy()->delete` as the wrong shape.
+3. `game_session_t::static_entities` is a THIRD container:
+   `std::vector<std::shared_ptr<network::Entity>>` (`game_session.hpp:31`).
+
+**The map-serialization side-effect.** `map_t` is documented as the inert
+serialized file format, but it's load-bearing runtime storage:
+`init_session_from_map` takes `const map_t&` then does
+`entry.entity->entity_id = entry.uid` (`game_session.cpp:25`), and `add_entity`
+does the same (`entity_system.cpp:32`). The const is a LIE — it protects the
+vector, not the pointees reached through `shared_ptr`. Loading a map for a
+session silently rewrites the map's in-memory entity_ids; init two sessions from
+one map, or re-serialize after init, and the ids are stomped. (P1 removes the
+aliasing half of this; the id-stomping half survives until here.)
+
+**Direction**: commit to ONE model — stable-slot pools keyed by `entity_uid_t`
+with generational handles, no raw `T*`/`shared_ptr` escaping. Session owns
+entities; map owns inert serialized data and hands COPIES (or constructs in
+place), never shared ownership. The unlock is value semantics: after P5,
+entities are blittable structs, so `shared_ptr` has no reason to exist —
+per-type pools make world snapshot = memcpy per pool and make tier-2
+component filtering free.
+
+- [ ] Decide the handle type: generational `{uid, generation}` vs bare
+      `entity_uid_t` index. Generational detects use-after-free of a freed slot;
+      write it up before touching storage.
+- [ ] Make map load non-mutating: stop writing `entity_id` through
+      `map.entities` in `init_session_from_map` / `Entity_System::add_entity`.
+      The session owns the id, set on the session's own copy — restore the
+      meaning of `const map_t&`.
+- [ ] Collapse `static_entities` into the pool model (or a dedicated static
+      pool). Re-point the session BVH at the unified storage/identity — also
+      cleans up the BVH's array-index-vs-uid split
+      (`collision_detection.hpp:40`).
+- [ ] Replace pool `spawn()->T*` / `destroy()->delete` with slot-stable storage
+      (deque / segmented vector / free-list) + handle return; resolve handle→ptr
+      only at point of use. Kills the pointer-invalidation hazard
+      (`entity_system.hpp:102-116`, `155-170`).
+- [ ] Factory stops returning `shared_ptr`: construct-into-pool (runtime) plus a
+      value/blob path for the deserializer (map load) and transaction restore.
+      This is where the P3 `Entity*`-vs-handle decision actually reverses.
+- [ ] **Unify the runtime entity id type**: `entity_uid_t` is uint32 (defined in
+      `map.hpp`) but `Entity::entity_id` is uint64, and `physics_state_t`'s maps
+      are uint32-keyed — `register_dynamic_box(physics, uid, ...)` takes uint32.
+      Safe today only because `next_entity_id` starts at 1 and increments.
+- [ ] Migrate callers: `get_entities<T>`/`spawn<T>` sites (`damage.cpp`,
+      `respawn_system`, `physics_body_system`, `rocket_system`, `bot_system`),
+      transaction_system reinflate (`transaction_system.hpp:184/216`),
+      `session_test` / `map_migration_test` / `test_transaction_system`
+- [ ] Build + run `session_test`, `test_transaction_system`, `ecs_test` green;
+      sanity a map load → play → save cycle to confirm the map file is unchanged
+      by play
+
+---
+
+## P8 — Remove protobuf
+
+Protobuf is overkill here and slow to compile. The hot path
+(`S2C_EntityPackage`) already uses a hand-rolled delta-compressed bitstream;
+protobuf is just an envelope for ~12 tiny control messages. No need for
+cross-language, wire-compat, or reflection (single C++ codebase, both ends
+controlled, own schema system). Cost: builds all of libprotobuf from source +
+protoc codegen; stale committed `src/proto/*.pb.*` cruft isn't even referenced
+by the build (the build regenerates root `proto/game.proto` →
+`cmake_build/generated/`). Landing it last means the generator can emit message
+serialization by then — absorption, not a project.
+
+- [ ] Write NEW messages bitstream-native (copy `serialize_game_event` /
+      `Bit_Writer`). The map-switch messages (`CmdChangeMap` / `C2S_MapLoaded`
+      in `shared/network/map_transfer.cpp`) already do this — use as template.
+- [ ] Convert existing messages one at a time, smallest first (NetCommand
+      handshake, `C2S_Command`). Leave `S2C_EntityPackage`'s payload alone
+      (already bitstream) — swap only its envelope.
+- [ ] Delete the protobuf dep + codegen step once the last message is migrated;
+      the compile-time win only lands at the end.
+- [ ] Do NOT interleave with the map-transfer work below.
+
+---
+
+# EVERYTHING ELSE
+
+## my todo
+- rocket projectile
+- arrow / spear projectile
 
 ## Known failing tests
-- network_test SEGFAULTS (exit 139) in its first subtest, printed right after
+- `network_test` SEGFAULTS (exit 139) in its first subtest, printed right after
   "[Subtest] Full update...", so it dies inside the entity serialization / delta
   path before that subtest finishes. Pre-existing — it was already red before the
   2026-07 map-transfer / sequence-id work (that work is layout-preserving and
-  network_test references none of the renamed fields, so it's not the cause).
-  Needs its own investigation: run ./cmake_build/bin/network_test and find where
-  in the "Full update" full-serialize subtest it faults.
+  `network_test` references none of the renamed fields, so it's not the cause).
+  Needs its own investigation: run `./cmake_build/bin/network_test` and find
+  where in the "Full update" full-serialize subtest it faults. Blocks confidence
+  in P6.
 
 ## Audio
 - settings menu: at minimum let the player select the audio output device
   (currently we just open the OS default playback device — see
-  audio_system_t::init). Needs a ma_context + ma_context_get_devices() to
-  enumerate playback devices, then pass the chosen ma_device_id via
-  ma_engine_config.pPlaybackDeviceID. Probably also master/sfx volume sliders
+  `audio_system_t::init`). Needs a `ma_context` + `ma_context_get_devices()` to
+  enumerate playback devices, then pass the chosen `ma_device_id` via
+  `ma_engine_config.pPlaybackDeviceID`. Probably also master/sfx volume sliders
   and a backend selector (WASAPI/DirectSound) in the same panel.
 
-- orientation is not clear whether it uses euler angles / degrees / radians. we are inconsistent. that's not good
-- nested schemas are annoying. can we clean that code up?
+## Correctness / consistency
+- **Orientation units are undefined and inconsistent** — euler angles? degrees
+  or radians? We're not consistent, and that's not good. Pick one and enforce
+  it. Related: `Entity::orientation` is `vec3f` (euler) but Jolt uses
+  quaternions, so `update_physics_bodies` converts quat→euler each tick — lossy
+  and ugly near gimbal-lock. If spinning bodies look bad, add a `vec4f
+  rotation_quat` field and replicate that instead. (Doing the units decision
+  before P4 is smart — the flag audit is already reading every field.)
+- Is the navmesh only planar, or does A* just need two dimensions? Something
+  feels wrong there.
+- Make sure the default mesh is the question mark.
+- Clean up BVH traversal — we now just iterate over entities in the map editor.
+- Meson build (`meson.build`) is out of date: missing `static_entities.cpp`,
+  `rocket_entity.cpp`, `particle_emitter_entity.cpp`, `displacement_entity.cpp`,
+  `trigger_volume_entity.cpp`, `light_entity.cpp`, `physics_body_entity.cpp`,
+  and the `entity_gen` target. CMake is primary per CLAUDE.md — either fix Meson
+  to match or delete it. (Half of these files die in P5 anyway; deleting Meson is
+  the cheaper answer.)
 
-
+## Rendering
 - irradiance map
 - environment lighting
-- pack PBR textures into one RGB (gltf tdoes occlusion, roughness, metallic (ORM))
-- pack normal maps: store xy in RG (reconstruct Z) and use BA for roughness / height.
-
-
-- is the navmesh only planar? or does A* just need two-dimensional? I think there's something wrong.
-
-
-
-
-- gizmo for selection moving is not finalized.
-- undo/redo: multi-entity delete creates one transaction per entity. Ctrl+Z only undoes one deletion at a time instead of the whole batch.
-
-
-Sprite transparency — smoke.png has opaque backgrounds that need 
-alpha masking
-Particle editor tool — dedicated ImGui panel for live parameter tweaking
-Easing functions — replace linear lerp with ease-in/out curves
-
-
-
-## Remove protobuf (medium-term, its own focused pass)
-Protobuf is overkill here and slow to compile. The hot path (S2C_EntityPackage)
-already uses a hand-rolled delta-compressed bitstream; protobuf is just an
-envelope for ~12 tiny control messages. We don't need cross-language,
-wire-compat, or reflection (single C++ codebase, both ends controlled, own
-schema system exists). Cost: builds all of libprotobuf from source + protoc
-codegen; stale committed `src/proto/*.pb.*` cruft isn't even referenced by the
-build (build regenerates root `proto/game.proto` -> `cmake_build/generated/`).
-Migration plan:
-- write NEW messages bitstream-native (copy `serialize_game_event` /
-  `Bit_Writer` pattern). The map-switch messages (CmdChangeMap / C2S_MapLoaded
-  in shared/network/map_transfer.cpp) already follow this — use as the template.
-- convert existing messages one at a time, smallest first (NetCommand handshake,
-  C2S_Command). Leave S2C_EntityPackage's payload alone (already bitstream) —
-  swap only its envelope.
-- delete the protobuf dep + codegen step once the last message is migrated;
-  the compile-time win only lands at the end.
-Do NOT interleave with the map-transfer work (map streaming below) — two
-half-finished netcode changes at once is the way to introduce heisenbugs.
-
-
-
-
-## Multiplayer Networking (TODO: next steps)
-- delta compression for snapshots (currently full updates every tick)
-- ack/nack system for reliable packet delivery
-- heartbeat / keep-alive / timeout for stale connections
-- configurable server address (currently hardcoded 127.0.0.1)
+- pack PBR textures into one RGB (gltf does occlusion, roughness, metallic — ORM)
+- pack normal maps: store xy in RG (reconstruct Z), use BA for roughness / height
+- sprite transparency — smoke.png has opaque backgrounds that need alpha masking
 - player model rendering for remote players (currently wireframe AABB)
-- lag compensation
-- bandwidth throttling / send rate limiting
-- replicated CVar sync from server to client
-- client-side dynamic-entity prediction. Today the dedicated/networked client's Jolt world contains only static map geometry (via `populate_static_physics_bodies`); rockets / physics cubes / remote players are interpolated from snapshots, not simulated locally. Cosmetic effects sidestep this by only casting against static geometry (`cast_sphere_static`), which is byte-identical on client and server. If we ever want projectile prediction (fake-fire a rocket immediately, reconcile on server confirm) or local cosmetic queries against moving bodies, we'd need to register dynamic bodies into the client's Jolt world and step it. Until then, server-side casts whose result rides in the effect payload is the right shape.
 
-- why is AABB a schema? it's not a good decision.
-- all components that exist now should define a schema. is that what we want?
-- make sure the default mesh is the question mark.
-- clean up BVH traversal because we now just iterate over entities in the map editor.
-
+## Editor
+- gizmo for selection moving is not finalized
+- particle editor tool — dedicated ImGui panel for live parameter tweaking
+- easing functions — replace linear lerp with ease-in/out curves
+- (multi-entity delete batching moved into P2 — same file)
 
 ## Physics body / Jolt
 - [x] physics_body_entity (schema + entity_list registration)
-- [x] physics_body_system: spawn_physics_body (box/sphere) + update_physics_bodies (reads Jolt transforms back)
-- [x] spawn_cube and spawn_sphere console commands (server-flagged)
-- [x] step_physics() + update_physics_bodies() wired into server::Tick()
-- [x] integrated-mode render path via `server_session` pointer on `client_context_t`
-- [x] networked replication: slot=254 sentinel in serialize/deserialize, delta compression matches rocket pattern
-- snapshot interpolation for physics bodies on networked clients (currently snaps to latest snapshot each tick — visible stutter at server tickrate). Pattern to copy: `Remote_Player_State` with `snapshots[2]` + lerp in update.
-- capsule shape: physics_body_system rejects "capsule" today because `register_dynamic_capsule` doesn't exist in physics.cpp. Add it when needed (Jolt has `JPH::CapsuleShape`).
-- destruction: nothing unregisters the Jolt body when a Physics_Body_Entity is destroyed. Currently boxes never get destroyed, but as soon as one does (rocket explosion, kill volume, etc.) the body will leak. Wire `unregister_physics_body` into wherever destruction happens.
+- [x] physics_body_system: `spawn_physics_body` (box/sphere) +
+      `update_physics_bodies` (reads Jolt transforms back)
+- [x] `spawn_cube` / `spawn_sphere` console commands (server-flagged)
+- [x] `step_physics()` + `update_physics_bodies()` wired into `server::Tick()`
+- [x] integrated-mode render path via `server_session` on `client_context_t`
+- [x] networked replication: slot=254 sentinel in serialize/deserialize, delta
+      compression matches the rocket pattern
+- [ ] snapshot interpolation for physics bodies on networked clients (currently
+      snaps to latest snapshot each tick — visible stutter at server tickrate).
+      Pattern to copy: `Remote_Player_State` with `snapshots[2]` + lerp in update.
+- [ ] capsule shape: `physics_body_system` rejects "capsule" because
+      `register_dynamic_capsule` doesn't exist in physics.cpp. Add when needed
+      (Jolt has `JPH::CapsuleShape`).
+- [ ] destruction: nothing unregisters the Jolt body when a
+      `Physics_Body_Entity` is destroyed. Boxes never get destroyed today, but
+      the first rocket explosion / kill volume leaks the body. Wire
+      `unregister_physics_body` into wherever destruction happens — which is P7's
+      lifecycle seam, so it may as well land there.
 
-## Cross-cutting issues surfaced while adding physics_body
-- type mismatch: `register_dynamic_box(physics, uid, ...)` takes `entity_uid_t` (uint32, defined in `map.hpp`), but `Entity::entity_id` is uint64. The maps in `physics_state_t` are uint32-keyed. Currently safe in practice because `next_entity_id` starts at 1 and increments, but it's a latent footgun — unify on one ID type for runtime-spawned entities.
-- orientation precision: `Entity::orientation` is `vec3f` (euler), but Jolt internally uses quaternions. `update_physics_bodies` will need to convert quat→euler each tick, which is lossy and ugly near gimbal-lock. If/when spinning physics bodies look bad, add a `vec4f rotation_quat` schema field and replicate that instead.
-- meson build (`meson.build`) is out of date: it's missing `static_entities.cpp`, `rocket_entity.cpp`, `particle_emitter_entity.cpp`, `displacement_entity.cpp`, `trigger_volume_entity.cpp`, `light_entity.cpp`, and now `physics_body_entity.cpp`. CMake is the primary build per CLAUDE.md, but either fix Meson to match or delete it.
+## Networking (independent of the track)
+- lag compensation
+- replicated CVar sync from server to client
+- client-side dynamic-entity prediction. Today the dedicated/networked client's
+  Jolt world contains only static map geometry (via
+  `populate_static_physics_bodies`); rockets / physics cubes / remote players are
+  interpolated from snapshots, not simulated locally. Cosmetic effects sidestep
+  this by only casting against static geometry (`cast_sphere_static`), which is
+  byte-identical on client and server. Projectile prediction (fake-fire
+  immediately, reconcile on server confirm) or local cosmetic queries against
+  moving bodies would need dynamic bodies registered into the client's Jolt
+  world and stepped. Until then, server-side casts whose result rides in the
+  effect payload is the right shape.
 
-
-
-
-## Multiplayer Networking (done: basic wiring)
-- [x] fixed server tick loop (accumulator-based, sv_tickrate)
-- [x] client connection handshake (CmdConnect/CmdAccept/CmdReject)
-- [x] client sends C2S_PlayerMoveCommand to server each tick
-- [x] server runs player_move() authoritatively on received input
-- [x] server broadcasts S2C_EntityPackage snapshots to all clients
-- [x] client receives and deserializes entity snapshots
-- [x] client-side prediction with server reconciliation
-- [x] remote player interpolation (2-snapshot buffer)
-- player movement is dependent on delta t. that does not seem good.. is the fps too high? should we limit fps?
+## Map transfer
+- [ ] Add gzip (miniz, header-only): compress in `S2C_MapData`, set
+      `compressed=true`, decompress on client. Biggest win is fewer fragments =
+      lower whole-message loss probability on the UDP fragmenter, not just
+      bandwidth. Measure map size before/after to confirm it's worth it.
+- [ ] Cache received PACKAGES to disk under `maps/`, keyed by
+      (name, package_hash), so a client only streams a given map+hash once and
+      reference-first hits the cache on rejoin. This cache IS the player-side
+      "do I have the map" store — no source involved.
+- [ ] `CmdChangeMap` reliability: currently resent every tick to not-ready
+      clients (idempotent) as a stand-in for the missing ack/retransmit channel.
+      Fold into the reliable channel when it lands.
+- Note: P1 changes the map file format (geometry conversion), so a map streamed
+  from a pre-P1 server won't load on a post-P1 client. The package hash catches
+  it, but the failure should be loud.

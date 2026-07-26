@@ -24,8 +24,6 @@ public:
 
 SCHEMA_NAME_FOR_TYPE(Player_Spawn_Entity)
 
-// Runtime networked player entity, created by the server when a client connects.
-// Never saved in map files.
 class Player_Entity : public Entity_Of<::entity_type::PLAYER>
 {
 public:
@@ -43,8 +41,6 @@ public:
   SCHEMA_FIELD(render_component_t, render,
                Schema_Flags::Networked | Schema_Flags::Editable);
 
-  // Combat hitbox (separate from physics collision used in player_move)
-  // Physics uses 16x36 half-extents, combat hitbox can be tuned independently
   SCHEMA_FIELD(hitbox_component_t, hitbox,
                Schema_Flags::Networked | Schema_Flags::Editable);
 

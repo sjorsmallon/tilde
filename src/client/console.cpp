@@ -94,8 +94,8 @@ bool Console::BindKey(std::string_view key, std::string command_line)
     log_error("bind: only lowercase a-z keys are supported, got '{}'", c);
     return false;
   }
-  input::Key bound_key = static_cast<input::Key>(
-      static_cast<int>(input::Key::A) + (c - 'a'));
+  input::key_t bound_key = static_cast<input::key_t>(
+      static_cast<int>(input::key_t::A) + (c - 'a'));
   bindings_[bound_key] = std::move(command_line);
   return true;
 }

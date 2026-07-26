@@ -52,7 +52,7 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
   if (ctx.bvh)
   {
     ray_hit_result_t hit;
-    if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
+    if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.direction,
                           hit))
     {
       if (hit.id.type == Collision_Id::Type::Static_Geometry)
@@ -69,7 +69,7 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
             float t;
             shared::box_face_t face;
             if (shared::ray_aabb_face_intersection(view.mouse_ray.origin,
-                                                   view.mouse_ray.dir, aabb,
+                                                   view.mouse_ray.direction, aabb,
                                                    t, face))
             {
               hovered_uid = uid;
@@ -83,9 +83,9 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
 }
 
 void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
-                                   const mouse_event_t &e)
+                                   const input::mouse_event_t &e)
 {
-  if (e.button == input::MouseButton::Left && hovered_uid != 0 && ctx.map)
+  if (e.button == input::mouse_button_t::Left && hovered_uid != 0 && ctx.map)
   {
     dragging = true;
     dragging_uid = hovered_uid;
@@ -106,7 +106,7 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
 }
 
 void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
-                                   const mouse_event_t &e)
+                                   const input::mouse_event_t &e)
 {
   if (dragging && dragging_uid != 0 && ctx.map)
   {
@@ -193,7 +193,7 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
   }
 }
 
-void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
+void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e)
 {
   if (dragging && dragging_uid != shared::invalid_entity_uid && ctx.map && ctx.transaction_system)
   {
@@ -214,8 +214,8 @@ void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
   dragging = false;
   dragging_uid = 0;
 
-  if (ctx.geometry_updated)
-    *ctx.geometry_updated = true;
+  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Sculpting_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}

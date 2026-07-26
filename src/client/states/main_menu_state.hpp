@@ -13,7 +13,7 @@ class MainMenuState : public IGameState
 public:
   void update(float dt) override
   {
-    if (input::is_key_pressed(input::Key::Escape))
+    if (input::is_key_pressed(input::key_t::Escape))
     {
       state_manager::request_exit();
     }

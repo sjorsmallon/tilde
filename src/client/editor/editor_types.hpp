@@ -12,15 +12,7 @@
 namespace client
 {
 
-struct mouse_event_t
-{
-  input::MouseButton button; // Which button triggered down/up. Undefined for drag dispatches.
-  linalg::vec2i position;
-  linalg::vec2i delta;
-  input::Modifiers mods;
-};
-
-using key_event_t = input::KeyEvent;
+using key_event_t = input::key_event_t;
 
 struct viewport_state_t
 {
@@ -36,16 +28,12 @@ struct viewport_state_t
 // Forward declaration of the editor state or game state if needed
 struct editor_context_t
 {
-  shared::map_t *map;
-
-  // Helper to get global time if needed
+  shared::map_t *map = nullptr;
   float time;
-
-  // BVH for editor picking (built from map entities)
   const Bounding_Volume_Hierarchy *bvh = nullptr;
 
-  // Flag to signal that geometry has been modified and BVH needs rebuild
-  bool *geometry_updated = nullptr;
+  // dirty Flag to signal that geometry has been modified and BVH needs rebuild
+  bool *geometry_updated_so_bvh_rebuild_is_needed = nullptr;
 
   class Transaction_System *transaction_system = nullptr;
 

@@ -16,9 +16,9 @@ public:
   void on_disable(editor_context_t &ctx) override;
   void on_update(editor_context_t &ctx, const viewport_state_t &view, float dt) override;
 
-  void on_mouse_down(editor_context_t &ctx, const mouse_event_t &e) override;
-  void on_mouse_drag(editor_context_t &ctx, const mouse_event_t &e) override;
-  void on_mouse_up(editor_context_t &ctx, const mouse_event_t &e) override;
+  void on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e) override;
+  void on_mouse_drag(editor_context_t &ctx, const input::mouse_event_t &e) override;
+  void on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e) override;
   void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
 
   void on_draw_overlay(editor_context_t &ctx,
@@ -43,8 +43,8 @@ private:
   shared::box_face_t hovered_face = shared::box_face_t::Invalid;
 
   // Paint mode state
-  bool painting = false;
-  linalg::vec3 cursor_pos = {};
+  bool currently_painting = false;
+  linalg::vec3 cursor_position = {};
   linalg::vec3 cursor_normal = {};
   bool cursor_valid = false;
 

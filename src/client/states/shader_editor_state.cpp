@@ -237,7 +237,7 @@ void ShaderEditorState::update(float dt)
   file_watcher.update();
 
   // Escape to return to main menu
-  if (input::is_key_pressed(input::Key::Escape))
+  if (input::is_key_pressed(input::key_t::Escape))
   {
     state_manager::switch_to(GameStateKind::MainMenu);
     return;
@@ -247,7 +247,7 @@ void ShaderEditorState::update(float dt)
   if (!input::ui_wants_mouse())
   {
     // RMB drag = orbit
-    if (input::is_mouse_down(input::MouseButton::Right))
+    if (input::is_mouse_down(input::mouse_button_t::Right))
     {
       linalg::vec2i delta = input::mouse_delta();
       float dy = static_cast<float>(delta.y) * (invert_orbit_y ? -1.0f : 1.0f);
@@ -255,7 +255,7 @@ void ShaderEditorState::update(float dt)
     }
 
     // MMB drag = pan
-    if (input::is_mouse_down(input::MouseButton::Middle))
+    if (input::is_mouse_down(input::mouse_button_t::Middle))
     {
       linalg::vec2i delta = input::mouse_delta();
       orbit_pan(camera, static_cast<float>(delta.x),
@@ -270,7 +270,7 @@ void ShaderEditorState::update(float dt)
     }
 
     // LMB: select light / drag along facing direction
-    bool mouse_down = input::is_mouse_down(input::MouseButton::Left);
+    bool mouse_down = input::is_mouse_down(input::mouse_button_t::Left);
     bool mouse_just_pressed = mouse_down && !mouse_was_down;
 
     if (mouse_just_pressed)
@@ -302,12 +302,12 @@ void ShaderEditorState::update(float dt)
       for (int li = 0; li < static_cast<int>(lights.size()); li++)
       {
         linalg::vec3f to_light = lights[li].position - ray.origin;
-        float t_along_ray = linalg::dot(to_light, ray.dir);
+        float t_along_ray = linalg::dot(to_light, ray.direction);
         if (t_along_ray < 0.0f)
           continue;
 
         linalg::vec3f nearest_point =
-            ray.origin + ray.dir * t_along_ray;
+            ray.origin + ray.direction * t_along_ray;
         float distance =
             linalg::length(nearest_point - lights[li].position);
         if (distance <= pick_radius && t_along_ray < closest_t)
@@ -359,7 +359,7 @@ void ShaderEditorState::update(float dt)
   {
     dragging_light = false;
   }
-  mouse_was_down = input::is_mouse_down(input::MouseButton::Left);
+  mouse_was_down = input::is_mouse_down(input::mouse_button_t::Left);
 }
 
 // ---------------------------------------------------------------------------

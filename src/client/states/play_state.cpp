@@ -316,7 +316,7 @@ void PlayState::update(float dt)
   });
 
   // ESC -> back to editor (works even if no map was loaded)
-  if (input::is_key_pressed(input::Key::Escape))
+  if (input::is_key_pressed(input::key_t::Escape))
   {
     if (Console::Get().IsOpen())
     {
@@ -342,7 +342,7 @@ void PlayState::update(float dt)
   conn_state_ = &conn;
 
   // U -> toggle mouse capture
-  if (input::is_key_pressed(input::Key::U))
+  if (input::is_key_pressed(input::key_t::U))
   {
     mouse_captured = !mouse_captured;
   }
@@ -785,25 +785,25 @@ void PlayState::update(float dt)
   uint64_t buttons = 0;
   if (!console_open)
   {
-    if (input::is_key_down(input::Key::W))                  buttons |= Button::Forward;
-    if (input::is_key_down(input::Key::S))                  buttons |= Button::Backward;
-    if (input::is_key_down(input::Key::A))                  buttons |= Button::Left;
-    if (input::is_key_down(input::Key::D))                  buttons |= Button::Right;
-    if (input::is_key_down(input::Key::Space))              buttons |= Button::Jump;
-    if (input::is_key_down(input::Key::Num1))               buttons |= Button::Key1;
-    if (input::is_key_down(input::Key::Num2))               buttons |= Button::Key2;
-    if (input::is_key_down(input::Key::Num3))               buttons |= Button::Key3;
-    if (input::is_key_down(input::Key::Num4))               buttons |= Button::Key4;
-    if (input::is_key_down(input::Key::Num5))               buttons |= Button::Key5;
-    if (input::is_key_down(input::Key::Num6))               buttons |= Button::Key6;
-    if (input::is_key_down(input::Key::Num7))               buttons |= Button::Key7;
-    if (input::is_key_down(input::Key::Num8))               buttons |= Button::Key8;
-    if (input::is_key_down(input::Key::Num9))               buttons |= Button::Key9;
-    if (input::is_key_down(input::Key::Num0))               buttons |= Button::Key0;
-    if (input::is_mouse_down(input::MouseButton::Left))     buttons |= Button::Fire;
+    if (input::is_key_down(input::key_t::W))                  buttons |= Button::Forward;
+    if (input::is_key_down(input::key_t::S))                  buttons |= Button::Backward;
+    if (input::is_key_down(input::key_t::A))                  buttons |= Button::Left;
+    if (input::is_key_down(input::key_t::D))                  buttons |= Button::Right;
+    if (input::is_key_down(input::key_t::Space))              buttons |= Button::Jump;
+    if (input::is_key_down(input::key_t::Num_1))               buttons |= Button::Key1;
+    if (input::is_key_down(input::key_t::Num_2))               buttons |= Button::Key2;
+    if (input::is_key_down(input::key_t::Num_3))               buttons |= Button::Key3;
+    if (input::is_key_down(input::key_t::Num_4))               buttons |= Button::Key4;
+    if (input::is_key_down(input::key_t::Num_5))               buttons |= Button::Key5;
+    if (input::is_key_down(input::key_t::Num_6))               buttons |= Button::Key6;
+    if (input::is_key_down(input::key_t::Num_7))               buttons |= Button::Key7;
+    if (input::is_key_down(input::key_t::Num_8))               buttons |= Button::Key8;
+    if (input::is_key_down(input::key_t::Num_9))               buttons |= Button::Key9;
+    if (input::is_key_down(input::key_t::Num_0))               buttons |= Button::Key0;
+    if (input::is_mouse_down(input::mouse_button_t::Left))     buttons |= Button::Fire;
   }
 
-  if (input::is_key_pressed(input::Key::P))
+  if (input::is_key_pressed(input::key_t::P))
   {
     // buttons |= Button::P;
     

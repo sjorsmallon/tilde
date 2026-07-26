@@ -4,37 +4,40 @@
 #include <cstdint>
 #include <span>
 
-namespace client::input {
+namespace client::input
+{
 
 // Two complementary APIs:
-//   * Polling (`is_key_down`, `is_mouse_down`, `current_modifiers`) for
-//     continuous state like WASD movement.
-//   * Frame event queues (`frame_key_events`, `frame_mouse_button_events`)
-//     for one-shot actions like shortcuts and clicks. The queues are filled
-//     by `process_sdl_event` and cleared by `new_frame`.
+//   * Polling (is_key_down, is_mouse_down, current_modifiers) for continuous
+//     state like WASD movement.
+//   * Frame event queues (frame_key_events, frame_mouse_button_events) for
+//     one-shot actions like shortcuts and clicks. The queues are filled by
+//     process_sdl_event and cleared by new_frame.
 
-enum class Key : uint16_t {
+enum class key_t : uint16_t
+{
   Unknown = 0,
-  // Letters (kept contiguous so `Key::A + (c - 'a')` works for binds).
+  // Letters (kept contiguous so key_t::A + (c - 'a') works for binds).
   A, B, C, D, E, F, G, H, I, J, K, L, M,
   N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-  // Top-row digits (contiguous so `Key::Num1 + idx` works).
-  Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+  // Top-row digits (contiguous so key_t::Num_1 + index works).
+  Num_0, Num_1, Num_2, Num_3, Num_4, Num_5, Num_6, Num_7, Num_8, Num_9,
   // Function keys.
   F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
   // Whitespace / control.
   Space, Tab, Enter, Backspace, Delete, Escape,
-  // Modifiers, kept L/R-distinct because the code distinguishes them today.
-  LeftShift, RightShift, LeftCtrl, RightCtrl,
-  LeftAlt, RightAlt, LeftGui, RightGui,
+  // Modifiers, kept left/right-distinct because the code distinguishes them.
+  Left_Shift, Right_Shift, Left_Ctrl, Right_Ctrl,
+  Left_Alt, Right_Alt, Left_Gui, Right_Gui,
   // Arrows.
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
+  Arrow_Left, Arrow_Right, Arrow_Up, Arrow_Down,
   // Punctuation.
-  LeftBracket, RightBracket, Tilde,
+  Left_Bracket, Right_Bracket, Tilde,
   Count
 };
 
-enum class MouseButton : uint8_t {
+enum class mouse_button_t : uint8_t
+{
   Left = 0,
   Middle,
   Right,
@@ -43,26 +46,44 @@ enum class MouseButton : uint8_t {
   Count
 };
 
-struct Modifiers {
+enum class mouse_action_t : uint8_t
+{
+  Down,
+  Up
+};
+
+struct modifiers_t
+{
   bool shift;
   bool ctrl;
   bool alt;
   bool gui;
 };
 
-struct KeyEvent {
-  Key key;
-  Modifiers mods;
+struct key_event_t
+{
+  key_t key;
+  modifiers_t mods;
   bool repeat;
 };
 
-enum class MouseAction : uint8_t { Down, Up };
-
-struct MouseButtonEvent {
-  MouseButton button;
-  MouseAction action;
+struct mouse_button_event_t
+{
+  mouse_button_t button;
+  mouse_action_t action;
   linalg::vec2i position;
-  Modifiers mods;
+  modifiers_t mods;
+};
+
+// A processed mouse interaction handed to editor tools. Unlike the raw
+// mouse_button_event_t queue, this carries a movement delta and is dispatched
+// for drags as well as clicks.
+struct mouse_event_t
+{
+  mouse_button_t button; // which button triggered the down/up; unspecified for drags
+  linalg::vec2i position;
+  linalg::vec2i delta;
+  modifiers_t mods;
 };
 
 // --- Lifecycle ---------------------------------------------------------------
@@ -75,10 +96,10 @@ void process_sdl_event(const void *sdl_event);
 
 // --- Polling -----------------------------------------------------------------
 
-bool is_key_down(Key key);
-bool is_key_pressed(Key key); // True only on the frame it became down.
-bool is_mouse_down(MouseButton button);
-Modifiers current_modifiers();
+bool is_key_down(key_t key);
+bool is_key_pressed(key_t key); // true only on the frame it became down
+bool is_mouse_down(mouse_button_t button);
+modifiers_t current_modifiers();
 
 // --- Mouse state -------------------------------------------------------------
 
@@ -87,12 +108,12 @@ linalg::vec2i mouse_delta();
 float scroll_delta();
 void set_relative_mouse_mode(bool enabled);
 
-// --- Frame event queues (one-shot events this frame) ------------------------
+// --- Frame event queues (one-shot events this frame) -------------------------
 
-std::span<const KeyEvent> frame_key_events();
-std::span<const MouseButtonEvent> frame_mouse_button_events();
+std::span<const key_event_t> frame_key_events();
+std::span<const mouse_button_event_t> frame_mouse_button_events();
 
-// --- UI capture (forwarded from ImGui) --------------------------------------
+// --- UI capture (forwarded from ImGui) ---------------------------------------
 
 bool ui_wants_mouse();
 bool ui_wants_keyboard();

@@ -262,7 +262,7 @@ inline vec3 world_to_view(const vec3 &p, const vec3 &cam_pos, float cam_yaw_deg,
 struct ray_t
 {
   vec3 origin;
-  vec3 dir;
+  vec3 direction;
 };
 
 // Ray-Plane Intersection

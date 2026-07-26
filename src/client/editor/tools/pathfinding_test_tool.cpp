@@ -13,8 +13,8 @@ namespace client
 bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &nav,
                                               linalg::vec3 &out_hit) const
 {
-  const linalg::vec3 &orig = m_viewport.mouse_ray.origin;
-  const linalg::vec3 &dir  = m_viewport.mouse_ray.dir;
+  const linalg::vec3& origin = viewport.mouse_ray.origin;
+  const linalg::vec3& dir  = viewport.mouse_ray.direction;
   float best_t = std::numeric_limits<float>::infinity();
   bool hit = false;
 
@@ -28,10 +28,10 @@ bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &nav,
       const linalg::vec3 v1 = nav.vertices[poly.verts[i]].pos;
       const linalg::vec3 v2 = nav.vertices[poly.verts[i + 1]].pos;
       float t;
-      if (ray_triangle(orig, dir, v0, v1, v2, t) && t < best_t)
+      if (ray_triangle(origin, dir, v0, v1, v2, t) && t < best_t)
       {
         best_t  = t;
-        out_hit = orig + dir * best_t;
+        out_hit = origin + dir * best_t;
         hit     = true;
       }
     }
@@ -41,10 +41,10 @@ bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &nav,
 
 void Pathfinding_Test_Tool::recompute_path(const navmesh_t &nav)
 {
-  if (m_start && m_end)
-    m_path = find_path(nav, *m_start, *m_end);
+  if (start && end)
+    path = find_path(nav, *start, *end);
   else
-    m_path.clear();
+    path.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -52,9 +52,9 @@ void Pathfinding_Test_Tool::recompute_path(const navmesh_t &nav)
 
 void Pathfinding_Test_Tool::on_enable(editor_context_t &ctx)
 {
-  m_start.reset();
-  m_end.reset();
-  m_path.clear();
+  start.reset();
+  end.reset();
+  path.clear();
 }
 
 void Pathfinding_Test_Tool::on_disable(editor_context_t &ctx) {}
@@ -65,13 +65,13 @@ void Pathfinding_Test_Tool::on_disable(editor_context_t &ctx) {}
 void Pathfinding_Test_Tool::on_update(editor_context_t &ctx,
                                      const viewport_state_t &view, float /*dt*/)
 {
-  m_viewport = view;
+  viewport = view;
 }
 
 void Pathfinding_Test_Tool::on_mouse_down(editor_context_t &ctx,
-                                         const mouse_event_t &e)
+                                         const input::mouse_event_t &e)
 {
-  if (e.button != input::MouseButton::Left)
+  if (e.button != input::mouse_button_t::Left)
     return;
   if (!ctx.map->navmesh.valid())
     return;
@@ -81,27 +81,27 @@ void Pathfinding_Test_Tool::on_mouse_down(editor_context_t &ctx,
     return;
 
   if (e.mods.shift)
-    m_end = hit;
+    end = hit;
   else
-    m_start = hit;
+    start = hit;
 
   recompute_path(ctx.map->navmesh);
 }
 
 void Pathfinding_Test_Tool::on_mouse_drag(editor_context_t &ctx,
-                                         const mouse_event_t &e) {}
+                                         const input::mouse_event_t &e) {}
 
 void Pathfinding_Test_Tool::on_mouse_up(editor_context_t &ctx,
-                                       const mouse_event_t &e) {}
+                                       const input::mouse_event_t &e) {}
 
 void Pathfinding_Test_Tool::on_key_down(editor_context_t &ctx,
                                        const key_event_t &e)
 {
-  if (e.key == input::Key::R)
+  if (e.key == input::key_t::R)
   {
-    m_start.reset();
-    m_end.reset();
-    m_path.clear();
+    start.reset();
+    end.reset();
+    path.clear();
   }
 }
 
@@ -139,37 +139,37 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
   }
 
   // Start marker — green circle + vertical spike.
-  if (m_start)
+  if (start)
   {
     constexpr color_t start_color = colors::green;
-    linalg::vec3 base = *m_start + linalg::vec3{0, y_lift, 0};
+    linalg::vec3 base = *start + linalg::vec3{0, y_lift, 0};
     renderer.draw_circle(base, 16.f, {0, 1, 0}, start_color);
     renderer.draw_line(base, base + linalg::vec3{0, 48.f, 0}, start_color);
   }
 
   // End marker — red circle + vertical spike.
-  if (m_end)
+  if (end)
   {
     constexpr color_t end_color = colors::red;
-    linalg::vec3 base = *m_end + linalg::vec3{0, y_lift, 0};
+    linalg::vec3 base = *end + linalg::vec3{0, y_lift, 0};
     renderer.draw_circle(base, 16.f, {0, 1, 0}, end_color);
     renderer.draw_line(base, base + linalg::vec3{0, 48.f, 0}, end_color);
   }
 
   // Path: yellow lines connecting waypoints, white boxes at each waypoint.
-  if (!m_path.empty())
+  if (!path.empty())
   {
     constexpr color_t path_color = colors::yellow;
     constexpr color_t node_color = colors::white;
     constexpr linalg::vec3 half{4, 4, 4};
-    for (int i = 0; i < (int)m_path.size(); ++i)
+    for (int i = 0; i < (int)path.size(); ++i)
     {
-      linalg::vec3 wp = m_path[i];
+      linalg::vec3 wp = path[i];
       wp.y += y_lift;
       renderer.draw_wire_box(wp, half, node_color);
-      if (i + 1 < (int)m_path.size())
+      if (i + 1 < (int)path.size())
       {
-        linalg::vec3 next = m_path[i + 1];
+        linalg::vec3 next = path[i + 1];
         next.y += y_lift;
         renderer.draw_line(wp, next, path_color);
       }
@@ -189,24 +189,24 @@ void Pathfinding_Test_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::TextDisabled("LMB = start  |  Shift+LMB = end  |  R = reset");
   ImGui::Separator();
 
-  if (m_start)
-    ImGui::Text("Start: (%.1f, %.1f, %.1f)", m_start->x, m_start->y, m_start->z);
+  if (start)
+    ImGui::Text("Start: (%.1f, %.1f, %.1f)", start->x, start->y, start->z);
   else
     ImGui::TextDisabled("Start: not set");
 
-  if (m_end)
-    ImGui::Text("End:   (%.1f, %.1f, %.1f)", m_end->x, m_end->y, m_end->z);
+  if (end)
+    ImGui::Text("End:   (%.1f, %.1f, %.1f)", end->x, end->y, end->z);
   else
     ImGui::TextDisabled("End:   not set");
 
   ImGui::Separator();
 
-  if (!m_start || !m_end)
+  if (!start || !end)
     ImGui::TextDisabled("Set both points to find a path.");
-  else if (m_path.empty())
+  else if (path.empty())
     ImGui::TextColored({1.f, 0.3f, 0.3f, 1.f}, "No path found.");
   else
-    ImGui::Text("Path: %d waypoints", (int)m_path.size());
+    ImGui::Text("Path: %d waypoints", (int)path.size());
 
   ImGui::End();
 }

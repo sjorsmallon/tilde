@@ -45,10 +45,10 @@ void Placement_Tool::on_update(editor_context_t &ctx,
   if (ctx.bvh && !ctx.bvh->nodes.empty())
   {
     auto hit_result = ray_hit_result_t{};
-    if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
+    if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.direction,
                           hit_result))
     {
-      ghost_position = view.mouse_ray.origin + view.mouse_ray.dir * hit_result.t;
+      ghost_position = view.mouse_ray.origin + view.mouse_ray.direction * hit_result.t;
       ghost_position.x = editor::snap(ghost_position.x, step);
       ghost_position.z = editor::snap(ghost_position.z, step);
       ghost_position.y = editor::snap(ghost_position.y, step);
@@ -63,10 +63,10 @@ void Placement_Tool::on_update(editor_context_t &ctx,
     linalg::vec3 plane_point = {0, 0.0f, 0};
     linalg::vec3 plane_normal = {0, 1.0f, 0};
     float t = 0.0f;
-    if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.dir,
+    if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.direction,
                                     plane_point, plane_normal, t))
     {
-      ghost_position = view.mouse_ray.origin + view.mouse_ray.dir * t;
+      ghost_position = view.mouse_ray.origin + view.mouse_ray.direction * t;
       ghost_position.x = editor::snap(ghost_position.x, step);
       ghost_position.z = editor::snap(ghost_position.z, step);
       ghost_valid = true;
@@ -79,9 +79,9 @@ void Placement_Tool::on_update(editor_context_t &ctx,
 }
 
 void Placement_Tool::on_mouse_down(editor_context_t &ctx,
-                                   const mouse_event_t &e)
+                                   const input::mouse_event_t &e)
 {
-  if (e.button == input::MouseButton::Left && ghost_valid && ctx.map && current_entity)
+  if (e.button == input::mouse_button_t::Left && ghost_valid && ctx.map && current_entity)
   {
     auto new_entity = shared::create_entity_by_type(current_entity->get_type());
     if (!new_entity)
@@ -97,16 +97,16 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
       ctx.transaction_system->push(builder.take());
     }
 
-    *ctx.geometry_updated = true;
+    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
 }
 
 void Placement_Tool::on_mouse_drag(editor_context_t &ctx,
-                                   const mouse_event_t &e)
+                                   const input::mouse_event_t &e)
 {
 }
 
-void Placement_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
+void Placement_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e)
 {
 }
 
@@ -180,7 +180,7 @@ void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
   for (int idx = 0; idx < g_placeable_count && idx < 9; ++idx)
   {
-    int key_index = static_cast<int>(input::Key::Num1) + idx;
+    int key_index = static_cast<int>(input::key_t::Num_1) + idx;
     if (static_cast<int>(e.key) == key_index)
     {
       select_entity_type(idx);

@@ -105,6 +105,32 @@ if(MSVC)
 endif()
 
 
+# --- Host Tools ---
+
+# Entity definition DSL parser and code generator. Standalone, no project
+# dependencies. Inspect the parsed IR with:
+#   ./cmake_build/bin/entity_gen src/shared/entities/entities.def --dump
+add_executable(entity_gen src/tools/entity_gen.cpp)
+
+# Generated entity structs and reflection tables. These land in the source tree
+# rather than the build dir, on purpose: they are meant to be readable, opened
+# without building, and to show up as a reviewable diff when the .def changes.
+# Nothing links them into the game yet -- entity_layout_test is their only
+# consumer so far.
+set(ENTITY_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/entities.def)
+set(ENTITY_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/generated)
+set(ENTITY_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entities_generated.hpp)
+set(ENTITY_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entities_generated.cpp)
+file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
+
+add_custom_command(
+    OUTPUT ${ENTITY_GEN_HEADER} ${ENTITY_GEN_SOURCE}
+    COMMAND entity_gen ${ENTITY_DEF_FILE} --output-dir ${ENTITY_GEN_OUT_DIR}
+    DEPENDS entity_gen ${ENTITY_DEF_FILE}
+    COMMENT "Generating entity definitions from entities.def..."
+)
+
+
 # --- Components ---
 
 # 1. Game Shared (Static Library)
@@ -412,6 +438,13 @@ target_include_directories(navmesh_test PRIVATE src)
 target_link_libraries(navmesh_test PRIVATE game_shared)
 
 # 21. Map migration / round-trip test (box_volume_t refactor + wedge-strip)
+# Guards the generated entity layout: trivial copyability (memcpy snapshots and
+# memcmp diffing) and derived-to-base conversion, which the inheritance layout
+# was chosen to preserve.
+add_executable(entity_layout_test src/test/entity_layout_test.cpp ${ENTITY_GEN_SOURCE})
+target_include_directories(entity_layout_test PRIVATE src/shared)
+
+
 add_executable(map_migration_test src/test/map_migration_test.cpp)
 target_include_directories(map_migration_test PRIVATE src src/shared)
 target_link_libraries(map_migration_test PRIVATE game_shared)

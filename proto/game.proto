@@ -28,7 +28,7 @@ message C2S_PlayerMoveCommand {
 // s2c is server to client.
 message S2C_EntityPackage {
     optional int32 expected_max_entities = 1;
-    optional bool is_delta = 2;
+    optional bool  is_delta = 2;
     optional int32 update_baseline = 3;
     optional bytes entity_data = 4; // this is the reflective snapshot data
     optional int32 server_tick = 5;

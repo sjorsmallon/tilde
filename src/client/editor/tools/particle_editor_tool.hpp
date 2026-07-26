@@ -14,9 +14,9 @@ public:
   void on_disable(editor_context_t &ctx) override;
   void on_update(editor_context_t &ctx, const viewport_state_t &view, float dt) override;
 
-  void on_mouse_down(editor_context_t &ctx, const mouse_event_t &e) override;
-  void on_mouse_drag(editor_context_t &ctx, const mouse_event_t &e) override;
-  void on_mouse_up(editor_context_t &ctx, const mouse_event_t &e) override;
+  void on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e) override;
+  void on_mouse_drag(editor_context_t &ctx, const input::mouse_event_t &e) override;
+  void on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e) override;
   void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
 
   void on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &renderer) override;
@@ -24,7 +24,7 @@ public:
 
 private:
   shared::entity_uid_t selected_emitter_uid = shared::invalid_entity_uid;
-  viewport_state_t m_viewport;
+  viewport_state_t viewport;
 };
 
 } // namespace client

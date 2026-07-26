@@ -113,7 +113,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
     if (ctx.bvh)
     {
       ray_hit_result_t hit;
-      if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.dir,
+      if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.direction,
                             hit))
       {
         if (hit.id.type == Collision_Id::Type::Static_Geometry)
@@ -133,10 +133,10 @@ void Selection_Tool::on_update(editor_context_t &ctx,
       linalg::vec3 plane_point = {0, -2.0f, 0};
       linalg::vec3 plane_normal = {0, 1.0f, 0};
       float t = 0.0f;
-      if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.dir,
+      if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.direction,
                                       plane_point, plane_normal, t))
       {
-        grid_hover_pos = view.mouse_ray.origin + view.mouse_ray.dir * t;
+        grid_hover_pos = view.mouse_ray.origin + view.mouse_ray.direction * t;
         float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
         grid_hover_pos.x = editor::snap(grid_hover_pos.x, step);
         grid_hover_pos.z = editor::snap(grid_hover_pos.z, step);
@@ -155,9 +155,9 @@ void Selection_Tool::on_update(editor_context_t &ctx,
 }
 
 void Selection_Tool::on_mouse_down(editor_context_t &ctx,
-                                   const mouse_event_t &e)
+                                   const input::mouse_event_t &e)
 {
-  if (e.button == input::MouseButton::Left)
+  if (e.button == input::mouse_button_t::Left)
   {
     if (selected_uids.size() == 1)
     {
@@ -200,11 +200,11 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
 
         float t = 0.0f;
         if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
-                                        cached_viewport.mouse_ray.dir,
+                                        cached_viewport.mouse_ray.direction,
                                         center, drag_plane_normal, t) && t > 0)
         {
           drag_plane_hit_start = cached_viewport.mouse_ray.origin +
-                                 cached_viewport.mouse_ray.dir * t;
+                                 cached_viewport.mouse_ray.direction * t;
           is_dragging_object = true;
 
           if (ctx.transaction_system)
@@ -242,7 +242,7 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
 }
 
 void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
-                                   const mouse_event_t &e)
+                                   const input::mouse_event_t &e)
 {
   if (editor_gizmo.is_interacting())
   {
@@ -254,11 +254,11 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
     linalg::vec3 plane_point = drag_start_positions[0].second;
     float t = 0.0f;
     if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
-                                    cached_viewport.mouse_ray.dir,
+                                    cached_viewport.mouse_ray.direction,
                                     plane_point, drag_plane_normal, t) && t > 0)
     {
       linalg::vec3 current_hit = cached_viewport.mouse_ray.origin +
-                                 cached_viewport.mouse_ray.dir * t;
+                                 cached_viewport.mouse_ray.direction * t;
       linalg::vec3 delta = current_hit - drag_plane_hit_start;
 
       float snap_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
@@ -274,8 +274,8 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
         if (entry && entry->entity)
           entry->entity->position = start_pos + delta;
       }
-      if (ctx.geometry_updated)
-        *ctx.geometry_updated = true;
+      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
     return;
   }
@@ -286,9 +286,9 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
   }
 }
 
-void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
+void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e)
 {
-  if (e.button == input::MouseButton::Left)
+  if (e.button == input::mouse_button_t::Left)
   {
     if (editor_gizmo.is_interacting())
     {
@@ -296,8 +296,8 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
                                 {cached_viewport.camera.position.x,
                                  cached_viewport.camera.position.y,
                                  cached_viewport.camera.position.z});
-      if (ctx.geometry_updated)
-        *ctx.geometry_updated = true;
+      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
       return;
     }
 
@@ -319,8 +319,8 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
       }
       drag_start_snapshots.clear();
       drag_start_positions.clear();
-      if (ctx.geometry_updated)
-        *ctx.geometry_updated = true;
+      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
       return;
     }
 
@@ -427,7 +427,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const mouse_event_t &e)
 
 void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
-  if (e.key == input::Key::Delete || e.key == input::Key::Backspace)
+  if (e.key == input::key_t::Delete || e.key == input::key_t::Backspace)
   {
     if (!selected_uids.empty() && ctx.map && ctx.transaction_system)
     {
@@ -443,8 +443,8 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
       }
       ctx.transaction_system->push(builder.take());
 
-      if (ctx.geometry_updated)
-        *ctx.geometry_updated = true;
+      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
     selected_uids.clear();
     hovered_uid = 0;

@@ -35,7 +35,7 @@ int main()
   // Ensure types behave as expected
   client::editor_context_t ctx = {};
   client::viewport_state_t view = {};
-  client::mouse_event_t mouse = {};
+  client::input::mouse_event_t mouse = {};
   client::key_event_t key = {};
   MockRenderer renderer;
 

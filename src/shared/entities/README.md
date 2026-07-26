@@ -1,5 +1,18 @@
 # Entity & Schema System
 
+> **⚠ This describes the OUTGOING macro-based system.** It is still accurate —
+> the macros are still what the game builds against — but the whole thing is
+> being replaced by a text DSL (`entities.def`) plus a build-time generator
+> (`src/tools/entity_gen.cpp`) that emits `generated/entities_generated.*`.
+>
+> Everything below dies at the "hard cutover" step: `SCHEMA_FIELD`,
+> `DEFINE_SCHEMA_CLASS`, `Schema_Registry`, the `SHARED_ENTITIES_LIST` X-macro,
+> `Entity`'s virtuals, and the four geometry entity classes (AABB, Wedge,
+> Static_Mesh, Displacement — those leave the entity system entirely).
+>
+> **Do not extend this system.** New entities go in `entities.def`. See
+> `entity_def.md` at the repo root for the design and the order of operations.
+
 ## Why a Schema?
 
 Entities need to be **serialized** (networking), **diffed** (delta compression, undo/redo), **inspected** (editor UI), and **loaded from map files** — all generically, without writing bespoke code per field per entity. The schema system makes every entity field self-describing at runtime so that a single code path can handle all of these.
