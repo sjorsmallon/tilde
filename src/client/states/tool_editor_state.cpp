@@ -2,12 +2,11 @@
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
 #include "../../shared/entities/player_entity.hpp"
-#include "../../shared/entities/displacement_entity.hpp"
-#include "../../shared/entities/static_entities.hpp"
 #include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/map_baker.hpp"
 #include "../editor/editor_bvh.hpp"
 #include "../editor/entity_editor_traits.hpp"
+#include "../editor/geometry_editor.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
@@ -207,6 +206,17 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
   }
 };
 
+// A new map isn't empty — it gets a floor to stand on, or the first thing you
+// place has nothing to land against.
+static void add_default_floor(shared::map_t &map)
+{
+  shared::box_geometry_t floor;
+  floor.position = {0, editor::DEFAULT_FLOOR_Y, 0};
+  floor.half_extents = {editor::DEFAULT_FLOOR_HALF_W, editor::DEFAULT_FLOOR_HALF_H,
+                        editor::DEFAULT_FLOOR_HALF_W};
+  map.add_geometry(floor);
+}
+
 void ToolEditorState::on_enter()
 {
   log_terminal("Entered ToolEditorState");
@@ -214,7 +224,7 @@ void ToolEditorState::on_enter()
   // Only load from disk on first entry. When returning from play mode the
   // in-memory map is already correct; reloading would discard unsaved edits
   // and could pick up the wrong file if last_map.txt is stale.
-  if (map.entities.empty())
+  if (map.object_count() == 0)
   {
     bool map_loaded = false;
     std::ifstream f("last_map.txt");
@@ -234,12 +244,7 @@ void ToolEditorState::on_enter()
     if (!map_loaded)
     {
       map.name = "Tool Editor Map";
-      auto floor_ent = std::make_shared<::network::AABB_Entity>();
-      floor_ent->position = {0, editor::DEFAULT_FLOOR_Y, 0};
-      floor_ent->volume.half_extents = {editor::DEFAULT_FLOOR_HALF_W,
-                                        editor::DEFAULT_FLOOR_HALF_H,
-                                        editor::DEFAULT_FLOOR_HALF_W};
-      map.add_entity(floor_ent);
+      add_default_floor(map);
       renderer::draw_announcement("Welcome to the Tool Editor!");
     }
   }
@@ -639,8 +644,8 @@ void ToolEditorState::update(float dt)
   }
 }
 
-// Returns a new map with all AABB entities split so no two overlap.
-// Non-AABB entities are copied unchanged.
+// Returns a new map with all BOX geometry split so no two boxes overlap.
+// Everything else — other geometry kinds, and every entity — is copied unchanged.
 // The result map name is "<source_name>_baked".
 static shared::map_t bake_map_csg(const shared::map_t &src)
 {
@@ -654,38 +659,45 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   else
     result.name = base + "_baked";
 
-  // CSG bake is intentionally type-locked to AABB_Entity on both the input
-  // and output side: the output is std::make_shared<AABB_Entity>(...), so
-  // running this on Trigger_Volume_Entity or Displacement_Entity (also
-  // box-volume entities) would silently strip their behavior payload
-  // (action_name, fire_mode, heightmap, ...). Stay per-class here.
+  // CSG is box-only on both the input and the output side, and stays that way:
+  // the output is a box brush, so subtracting a displacement or a trigger volume
+  // through here would silently drop its payload (heightmap, action_name, ...).
   for (const auto &entry : src.entities)
   {
-    if (!entry.entity)
-      continue;
-    if (entry.entity->get_type() != ::entity_type::AABB)
+    if (entry.entity)
       result.add_entity(entry.entity);
   }
 
-  struct InputAABB
+  struct input_box_t
   {
     shared::aabb_t shape;
-    network::render_component_t render;
+    shared::geometry_surface_t surface;
   };
-  std::vector<InputAABB> inputs;
-  for (auto [uid, aabb] : src.entities_of_type<network::AABB_Entity>())
+  std::vector<input_box_t> inputs;
+
+  for (const shared::map_geometry_t &entry : src.geometry)
   {
-    inputs.push_back({shared::to_aabb(aabb->volume, aabb->position), aabb->render});
+    const auto *box = std::get_if<shared::box_geometry_t>(&entry.value);
+    if (!box)
+    {
+      result.add_geometry(entry.value);
+      continue;
+    }
+
+    shared::aabb_t shape;
+    shape.center = box->position;
+    shape.half_extents = box->half_extents;
+    inputs.push_back({shape, box->surface});
   }
 
   // CSG union: each new AABB is clipped against all already-placed ones
   // so the final set has zero overlaps. Earlier AABBs win where they overlap.
-  struct BakedPiece
+  struct baked_piece_t
   {
     shared::aabb_t shape;
-    network::render_component_t render;
+    shared::geometry_surface_t surface;
   };
-  std::vector<BakedPiece> baked;
+  std::vector<baked_piece_t> baked;
 
   for (const auto &inp : inputs)
   {
@@ -701,17 +713,17 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
       pieces = std::move(clipped);
     }
     for (const auto &piece : pieces)
-      baked.push_back({piece, inp.render});
+      baked.push_back({piece, inp.surface});
   }
 
-  // Emit one AABB_Entity per piece
+  // Emit one box brush per piece
   for (const auto &piece : baked)
   {
-    auto ent = std::make_shared<network::AABB_Entity>();
-    ent->position = piece.shape.center;
-    ent->volume.half_extents = piece.shape.half_extents;
-    ent->render = piece.render;
-    result.add_entity(ent);
+    shared::box_geometry_t box;
+    box.position = piece.shape.center;
+    box.half_extents = piece.shape.half_extents;
+    box.surface = piece.surface;
+    result.add_geometry(std::move(box));
   }
 
   return result;
@@ -964,12 +976,7 @@ void ToolEditorState::render_ui()
       // Reset to a new empty map with a default floor
       map = shared::map_t{};
       map.name = "new_map.source";
-      auto floor_ent = std::make_shared<::network::AABB_Entity>();
-      floor_ent->position = {0, editor::DEFAULT_FLOOR_Y, 0};
-      floor_ent->volume.half_extents = {editor::DEFAULT_FLOOR_HALF_W,
-                                        editor::DEFAULT_FLOOR_HALF_H,
-                                        editor::DEFAULT_FLOOR_HALF_W};
-      map.add_entity(floor_ent);
+      add_default_floor(map);
 
       transaction_system = Transaction_System{};
       geometry_updated_flag = true;
@@ -1144,15 +1151,21 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       renderer::draw_line(cmd, {0, -extent, 0}, {0, extent, 0}, axis_color_y);
   }
 
-  // Draw map elements — dispatch through Entity_Editor_Traits.
+  // Draw map elements: geometry through geometry_editor, entities through
+  // Entity_Editor_Traits.
   VulkanOverlayRenderer overlay(cmd);
   if (!hide_geometry)
-  for (const auto &entry : map.entities)
   {
-    if (!entry.entity)
-      continue;
-    draw_entity_in_editor(entry.entity.get(), overlay, entry.uid,
-                          draw_entities_solid);
+    for (const shared::map_geometry_t &entry : map.geometry)
+      draw_geometry_in_editor(entry.value, overlay, entry.uid, draw_entities_solid);
+
+    for (const auto &entry : map.entities)
+    {
+      if (!entry.entity)
+        continue;
+      draw_entity_in_editor(entry.entity.get(), overlay, entry.uid,
+                            draw_entities_solid);
+    }
   }
 
   // Draw navmesh triangle wireframes, colored by island ID.

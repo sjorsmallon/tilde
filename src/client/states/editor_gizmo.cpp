@@ -2,7 +2,6 @@
 #include "../editor/transaction_system.hpp"
 #include "../renderer.hpp"
 #include "../shared/entities/player_entity.hpp"
-#include "../shared/entities/static_entities.hpp"
 #include "../shared/entities/weapon_entity.hpp"
 #include "../shared/map.hpp" // Full definition needed
 #include "../shared/shapes.hpp"
@@ -330,6 +329,38 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   if (!map || uid == 0)
     return;
 
+  // Geometry: capture the whole value. Its transform IS its position plus
+  // half-extents, so there's nothing to route on — no virtual, no dynamic_cast
+  // chain, and the "scale" the reshape gizmo drags is the real field rather than
+  // a render component's multiplier standing in for one.
+  if (const shared::map_geometry_t *geometry_entry = map->find_geometry_by_uid(uid))
+  {
+    target_map = map;
+    target_uid = uid;
+    transaction_system = sys;
+
+    interacting_ = true;
+    start_props.clear();
+    start_geometry = geometry_entry->value;
+
+    // A static mesh is the one kind with an orientation; the other two are
+    // axis-aligned, so their rotation start state is identity.
+    linalg::vec3 start_orientation = {0, 0, 0};
+    if (const auto *static_mesh =
+            std::get_if<shared::static_mesh_geometry_t>(&geometry_entry->value))
+      start_orientation = static_mesh->orientation;
+
+    original_transform.position = shared::get_position(geometry_entry->value);
+    original_transform.scale = shared::get_half_extents(geometry_entry->value);
+    original_transform.orientation = {start_orientation.x, start_orientation.y,
+                                      start_orientation.z, 0};
+
+    transform_state.position = original_transform.position;
+    transform_state.rotation = start_orientation;
+    transform_state.size = 64.0f;
+    return;
+  }
+
   auto *entry = map->find_by_uid(uid);
   if (!entry || !entry->entity)
     return;
@@ -340,6 +371,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
 
   // Snapshot entity before modification
   interacting_ = true;
+  start_geometry.reset();
   start_props = entry->entity->get_all_properties();
 
   // Store original for drag calculations
@@ -352,17 +384,6 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
         volume->half_extents; // Store half-extents as scale
     original_transform.orientation = {0, 0, 0,
                                       1}; // Identity (box has no rotation)
-  }
-  else if (auto *wedge = shared::entity_as<::network::Wedge_Entity>(ent.get()))
-  {
-    original_transform.position = wedge->position;
-    original_transform.scale = wedge->half_extents;
-    original_transform.orientation = {0, 0, 0, 1}; // TODO: Wedge rotation
-  }
-  else if (auto *mesh = shared::entity_as<::network::Static_Mesh_Entity>(ent.get()))
-  {
-    original_transform.position = mesh->position;
-    original_transform.scale = mesh->render.scale;
   }
   else if (auto *player = shared::entity_as<::network::Player_Entity>(ent.get()))
   {
@@ -381,25 +402,51 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
 
 void Editor_Gizmo::end_interaction()
 {
-  if (interacting_ && target_map && target_uid != 0)
+  if (interacting_ && target_map && target_uid != 0 && transaction_system)
   {
-    auto *entry = target_map->find_by_uid(target_uid);
-    if (entry && entry->entity && transaction_system)
+    transaction_builder_t builder;
+
+    if (start_geometry)
     {
-      transaction_builder_t builder;
+      if (const shared::map_geometry_t *entry =
+              target_map->find_geometry_by_uid(target_uid))
+        builder.add_geometry_modified(target_uid, *start_geometry, entry->value);
+    }
+    else if (auto *entry = target_map->find_by_uid(target_uid);
+             entry && entry->entity)
+    {
       builder.add_modified_from_diff(target_uid, start_props,
                                      entry->entity->get_all_properties());
-      auto txn = builder.take();
-      if (!txn.empty())
-        transaction_system->push(std::move(txn));
     }
-    start_props.clear();
+
+    auto txn = builder.take();
+    if (!txn.empty())
+      transaction_system->push(std::move(txn));
   }
 
+  start_props.clear();
+  start_geometry.reset();
   interacting_ = false;
   target_map = nullptr;
   target_uid = 0;
   transaction_system = nullptr;
+}
+
+bool Editor_Gizmo::apply_target_position(const linalg::vec3 &position)
+{
+  if (!target_map || target_uid == 0)
+    return false;
+
+  return shared::set_object_position(*target_map, target_uid, position);
+}
+
+bool Editor_Gizmo::apply_target_box(const linalg::vec3 &center,
+                                    const linalg::vec3 &half_extents)
+{
+  if (!target_map || target_uid == 0)
+    return false;
+
+  return shared::set_object_box(*target_map, target_uid, center, half_extents);
 }
 
 bool Editor_Gizmo::is_interacting() const
@@ -525,32 +572,20 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
       float new_center_val = (new_min_val + new_max_val) * 0.5f;
       float new_half_val = (new_max_val - new_min_val) * 0.5f;
 
-      auto *_entry = target_map->find_by_uid(target_uid);
-      if (!_entry) return;
-      auto &ent = _entry->entity;
-      if (shared::box_volume_t *volume = ent->get_box_volume())
-      {
-        if (axis == 0)
-        {
-          ent->position.x = new_center_val;
-          volume->half_extents.x = new_half_val;
-        }
-        else if (axis == 1)
-        {
-          ent->position.y = new_center_val;
-          volume->half_extents.y = new_half_val;
-        }
-        else
-        {
-          ent->position.z = new_center_val;
-          volume->half_extents.z = new_half_val;
-        }
+      // Only the dragged axis changes; the other two keep the values the drag
+      // started from.
+      vec3 new_center = original_transform.position;
+      vec3 new_half = original_transform.scale;
+      new_center[axis] = new_center_val;
+      new_half[axis] = new_half_val;
 
-        reshape_state.aabb.center = ent->position;
-        reshape_state.aabb.half_extents = volume->half_extents;
+      if (apply_target_box(new_center, new_half))
+      {
+        reshape_state.aabb.center = new_center;
+        reshape_state.aabb.half_extents = new_half;
 
         // Also update transform gizmo
-        transform_state.position = ent->position;
+        transform_state.position = new_center;
       }
     }
   }
@@ -596,9 +631,8 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         new_pos.y = editor::snap(new_pos.y, snap_step);
         new_pos.z = editor::snap(new_pos.z, snap_step);
 
-        auto *te = target_map->find_by_uid(target_uid);
-        if (!te) return;
-        te->entity->position = new_pos;
+        if (!apply_target_position(new_pos))
+          return;
         reshape_state.aabb.center = new_pos;
         transform_state.position = new_pos;
       }
@@ -656,15 +690,6 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
 
         float delta_angle = angle - drag_start_offset;
 
-        // For Wedge: snap to 90 degrees
-        // original orientation + delta?
-        // Wedge orientation is 0,1,2,3 -> 0, 90, 180, 270 around Y axis.
-        // So primarily axis 1 (Y).
-
-        // Apply to any entity's base orientation (euler degrees)
-        auto *re = target_map->find_by_uid(target_uid);
-        if (!re) return;
-        auto &ent = re->entity;
         float delta_degrees = delta_angle * (180.0f / 3.14159f);
         delta_degrees = editor::snap(delta_degrees, editor::ROTATION_SNAP);
 
@@ -672,7 +697,28 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
                            original_transform.orientation.y,
                            original_transform.orientation.z};
         new_orient[axis] = new_orient[axis] + delta_degrees;
-        ent->orientation = new_orient;
+
+        // Rotation applies to an entity's euler orientation, and to a static
+        // mesh — the one geometry kind that has an orientation. Boxes and
+        // displacements are axis-aligned by definition, so the ring does nothing
+        // to them (it silently did nothing before too: their orientation field
+        // was written but only ever read by the draw call).
+        if (shared::map_geometry_t *geometry_entry =
+                target_map->find_geometry_by_uid(target_uid))
+        {
+          if (shared::get_kind(geometry_entry->value) ==
+              shared::geometry_kind_t::Static_Mesh)
+          {
+            std::get<shared::static_mesh_geometry_t>(geometry_entry->value)
+                .orientation = new_orient;
+            transform_state.rotation = new_orient;
+          }
+          return;
+        }
+
+        auto *re = target_map->find_by_uid(target_uid);
+        if (!re || !re->entity) return;
+        re->entity->orientation = new_orient;
         transform_state.rotation = new_orient;
       }
     }

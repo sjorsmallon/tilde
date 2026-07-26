@@ -118,7 +118,7 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
   {"entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Trigger_Volume_Entity, entity_id), (uint32_t)sizeof(Trigger_Volume_Entity::entity_id), 1u, -1, 0},
   {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Trigger_Volume_Entity, position), (uint32_t)sizeof(Trigger_Volume_Entity::position), 7u, -1, 0},
   {"orientation", FIELD_TYPE_V3, (uint32_t)offsetof(Trigger_Volume_Entity, orientation), (uint32_t)sizeof(Trigger_Volume_Entity::orientation), 7u, -1, 0},
-  {"volume", FIELD_TYPE_COMPONENT, (uint32_t)offsetof(Trigger_Volume_Entity, volume), (uint32_t)sizeof(Trigger_Volume_Entity::volume), 0u, 0, 0},
+  {"volume", FIELD_TYPE_COMPONENT, (uint32_t)offsetof(Trigger_Volume_Entity, volume), (uint32_t)sizeof(Trigger_Volume_Entity::volume), 2u, 0, 0},
   {"action", FIELD_TYPE_ENUM, (uint32_t)offsetof(Trigger_Volume_Entity, action), (uint32_t)sizeof(Trigger_Volume_Entity::action), 6u, -1, 0},
   {"fire_mode", FIELD_TYPE_ENUM, (uint32_t)offsetof(Trigger_Volume_Entity, fire_mode), (uint32_t)sizeof(Trigger_Volume_Entity::fire_mode), 6u, -1, 0},
   {"param_target_name", FIELD_TYPE_STRING, (uint32_t)offsetof(Trigger_Volume_Entity, param_target_name), (uint32_t)sizeof(Trigger_Volume_Entity::param_target_name), 6u, -1, 64},
@@ -334,6 +334,6 @@ int32_t component_byte_offset(entity_type type, component_type component)
   return COMPONENT_OFFSETS[(uint16_t)type][(uint16_t)component];
 }
 
-const uint32_t SCHEMA_HASH = 0x31270a38u;
+const uint32_t SCHEMA_HASH = 0x9eb28bceu;
 
 } // namespace entities

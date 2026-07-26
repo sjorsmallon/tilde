@@ -1,7 +1,6 @@
 #define ENTITIES_WANT_INCLUDES
 #include "map_baker.hpp"
 #include "collision_detection.hpp"
-#include "entities/static_entities.hpp"
 #include "player_move.hpp"
 #include <cfloat>
 #include <cmath>
@@ -477,37 +476,23 @@ void bake_map(map_t &map, float cell_size)
 
   // --- 1. Build BVH from static geometry ---
 
+  // Static collision contributors are exactly the map's geometry list. This used
+  // to be an is_collision_geometry() check plus a box-volume-or-wedge-or-static-
+  // mesh type filter, whose whole job was re-deriving "is this geometry?" from
+  // entities — including excluding trigger volumes, which own a box volume but
+  // aren't collision. The map now answers that by construction.
   std::vector<BVH_Input> bvh_inputs;
-  for (const auto &entry : map.entities)
+  bvh_inputs.reserve(map.geometry.size());
+  for (const map_geometry_t &entry : map.geometry)
   {
-    auto *ent = entry.entity.get();
-    if (!ent)
-      continue;
-    // Static collision contributors: any box-volume entity that's marked as
-    // collision geometry, plus the wedge and static-mesh special cases.
-    // Triggers (box volume but is_collision_geometry()==false) are correctly
-    // filtered out by the is_collision_geometry() check.
-    //
-    // Static_Mesh stays an explicit case because its collision shape is the
-    // mesh's axis-aligned bounds (derived from the loaded asset, not from an
-    // edited volume), and compute_entity_collision_planes falls through to the
-    // bounds-based fallback for it. If/when proper triangle-mesh collision
-    // lands (via Jolt or otherwise), this branch goes away.
-    if (!ent->is_collision_geometry())
-      continue;
-    if (!ent->get_box_volume() &&
-        ent->get_type() != ::entity_type::WEDGE &&
-        ent->get_type() != ::entity_type::STATIC_MESH)
-      continue;
-
-    auto bounds = compute_entity_bounds(ent);
+    const aabb_bounds_t bounds = get_bounds(entry.value);
     BVH_Input input;
     input.aabb.min         = bounds.min;
     input.aabb.max         = bounds.max;
     input.id               = {Collision_Id::Type::Static_Geometry,
                                (uint32_t)bvh_inputs.size()};
-    input.collision_planes = compute_entity_collision_planes(ent);
-    input.face_polygons    = compute_entity_face_polygons(ent);
+    input.collision_planes = get_collision_planes(entry.value);
+    input.face_polygons    = get_face_polygons(entry.value);
     bvh_inputs.push_back(std::move(input));
   }
 

@@ -118,13 +118,30 @@ private:
   Gizmo_Mode current_mode =
       Gizmo_Mode::Reshape; // Default to reshape for now since that was behavior
 
-  // Transaction State
+  // Transaction State.
+  //
+  // Two start-state snapshots because there are two regimes: an entity is
+  // captured as its property strings (and diffed on commit), a geometry value is
+  // captured whole (and swapped on commit). Exactly one is engaged per
+  // interaction — which one is decided by which list holds target_uid.
   Transaction_System *transaction_system = nullptr;
   bool interacting_ = false;
   std::map<std::string, std::string> start_props;
+  std::optional<shared::geometry_value_t> start_geometry;
 
   shared::map_t *target_map = nullptr;
   shared::entity_uid_t target_uid = 0;
+
+  // Write the target's transform, whichever regime backs it. These are the only
+  // places the gizmo touches the object, so the entity/geometry split stays out
+  // of the drag math entirely.
+  //
+  // apply_target_box returns false when the target has no resizable volume
+  // (a static mesh, a point entity) so the caller leaves the reshape handles
+  // alone instead of pretending the drag took.
+  bool apply_target_position(const linalg::vec3 &position);
+  bool apply_target_box(const linalg::vec3 &center,
+                        const linalg::vec3 &half_extents);
 
   // Dragging state helper
   linalg::vec3 drag_start_point;

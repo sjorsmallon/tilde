@@ -149,10 +149,8 @@ add_library(game_shared STATIC
     src/shared/task_system.cpp
     src/shared/entities/player_entity.cpp
     src/shared/entities/weapon_entity.cpp
-    src/shared/entities/static_entities.cpp
     src/shared/entities/rocket_entity.cpp
     src/shared/entities/particle_emitter_entity.cpp
-    src/shared/entities/displacement_entity.cpp
     src/shared/entities/trigger_volume_entity.cpp
     src/shared/entities/light_entity.cpp
     src/shared/entities/physics_body_entity.cpp
@@ -165,6 +163,7 @@ add_library(game_shared STATIC
     src/shared/components/components.cpp
     src/shared/shapes.cpp
     src/shared/map.cpp
+    src/shared/map_geometry.cpp
     src/shared/map_baker.cpp
     src/shared/pathfinding.cpp
     src/shared/entity.cpp
@@ -287,7 +286,9 @@ add_library(game_client SHARED
     src/client/editor/tools/displacement_tool.cpp
     src/client/editor/entity_inspector.cpp
     src/client/editor/entity_editor_traits.cpp
+    src/client/editor/geometry_editor.cpp
     src/client/input.cpp
+    src/client/geometry_renderer.cpp
     src/client/renderer.cpp
     src/client/shader_tool_runtime.cpp
     ${SHADER_HEADERS}
@@ -448,3 +449,10 @@ target_include_directories(entity_layout_test PRIVATE src/shared)
 add_executable(map_migration_test src/test/map_migration_test.cpp)
 target_include_directories(map_migration_test PRIVATE src src/shared)
 target_link_libraries(map_migration_test PRIVATE game_shared)
+
+# One-time map converter for the geometry exit (src/tools/map_convert.cpp).
+# Loading a map converts it in memory; this tool makes that deliberate and
+# batchable. Usage: map_convert [--check] maps/*.source
+add_executable(map_convert src/tools/map_convert.cpp)
+target_include_directories(map_convert PRIVATE src src/shared)
+target_link_libraries(map_convert PRIVATE game_shared)

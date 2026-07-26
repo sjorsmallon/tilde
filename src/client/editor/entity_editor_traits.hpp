@@ -55,6 +55,10 @@ linalg::vec3 compute_placement_center(const network::Entity *e,
 void draw_default_ghost(const network::Entity *e, overlay_renderer_t &renderer,
                         const linalg::vec3 &center);
 
+// The selection highlight's pink <-> white pulse at time `time`. Shared so the
+// geometry highlight pulses in lockstep with the entity one.
+color_t compute_selection_pulse_color(float time);
+
 // Draw a pulsating selection highlight wireframe for an entity.
 // Uses the entity's mesh wireframe if available, else per-entity shape,
 // else AABB bounds. Color pulsates between pink and white based on time.

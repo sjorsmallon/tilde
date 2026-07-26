@@ -59,10 +59,10 @@ The five topics map onto the phases like this:
 
 ## Ordering rules that must not be broken
 
-- **Geometry exits before the generator is wired in.** `Displacement_Entity`'s
-  `schema_array_t<float32, 3267>` is the only array-typed field on any entity;
-  if geometry leaves first the DSL never needs `[N]T`, instead of building it
-  and deleting it a phase later.
+- ~~**Geometry exits before the generator is wired in.**~~ SATISFIED by P1.
+  `Displacement_Entity`'s `schema_array_t<float32, 3267>` was the only
+  array-typed field on any entity, and it's gone — so the DSL never needs
+  `[N]T`. Do not add it.
 - **The storage refactor (P7) never rides along with a reflection change.** Not
   a compatibility argument: a reflection change breaks *compilation*, so the
   compiler hands you every site. A storage change mostly compiles and fails at
@@ -142,8 +142,12 @@ diffing assume.
 
 ---
 
-## P1 — Geometry exit (out of the entity system, into the map module)
-*multi-day · biggest phase · breaking: changes the map file format — **commit first, branch first***
+## P1 — Geometry exit (out of the entity system, into the map module)  ✅ DONE
+*landed on branch `p1-geometry-exit`. Full build green; `session_test`,
+`transaction_system_test`, `map_migration_test`, `ecs_test`,
+`entity_layout_test`, `test_entity_delta_packing`, `navmesh_test`,
+`server_loop_test` and the rest pass. `asset_test` and `network_test` still fail
+exactly as before (pre-existing — see "Known failing tests").*
 
 AABB / Wedge / StaticMesh / Displacement become plain map-owned C++ value
 types. They are never networked, so they were paying the schema system's
@@ -167,27 +171,82 @@ copying the *shared_ptr*, so session and map alias the same object. Delete the
 branch and that aliasing (and its lifetime coupling, and the writeback-into-map
 hazard) stops existing, shrinking P7's scope before P7 starts.
 
-- [ ] Geometry value types in the map module; `std::vector` fine, no caps, no erasure
-- [ ] Handwritten map save/load per geometry type (four small functions —
-      box / wedge / static-mesh-ref / displacement)
-- [ ] One-time map file conversion; kill the `"center"` / `"half_extents"` compat shims
-      in the same conversion
-- [ ] Session init: stop consulting `is_collision_geometry()`, load geometry
-      straight into the static BVH + render batches. Delete `static_entities`'
-      geometry role.
-- [ ] Editor seam that keeps editing uniform across both regimes: *transform +
-      bounds + hit-test + snapshot/restore*. `map_t` holds both lists; tools
-      iterate "editable map objects" and don't care which regime backs them.
-      (Uniform editing never actually required schemas.)
-- [ ] Four small handwritten inspector panels (3–6 properties each)
-- [ ] Transaction system gains the second entry flavor: geometry **value-swap**
-      (whole-value snapshots; structs copy — sculpting already does tool-owned
-      start-state capture). Do this in the same pass as P2 if they land close
-      together — one file, one rewrite.
-- [ ] Re-point `build_editor_bvh()` (`editor/editor_bvh.hpp`) at whatever holds
-      geometry now; its `Collision_Id.index` is an entity uid resolved via
-      `map.find_by_uid()`, which no longer covers brushes.
-- [ ] Answers the loose note "why is AABB a schema? it's not a good decision" — it stops being one here.
+- [x] Geometry value types in `shared/map_geometry.{hpp,cpp}`: `box_geometry_t`,
+      `static_mesh_geometry_t`, `displacement_geometry_t` in a
+      `std::variant` (`geometry_value_t`), sharing a `geometry_surface_t`.
+      `std::vector<vec3> displacements` — no cap, no erasure. Displacement math
+      + `generate_displacement_mesh` moved off the entity.
+- [x] Handwritten map save/load per kind (`serialize_geometry` /
+      `parse_geometry`). Three kinds, not four — wedges were already retired
+      before this phase and did not come back. Keys emit in **declaration
+      order** (P5's intent, taken here for free) so the file is git-diffable.
+- [x] Map text I/O rewritten around a generic block parser with the grammar in
+      a header comment: `block := keyword '{' property* '}'`, keyword ∈
+      `entity | box | static_mesh | displacement`. Unknown keywords are skipped
+      and reported rather than derailing the parse.
+- [x] One-time map file conversion (`convert_legacy_geometry_entity`), plus
+      `src/tools/map_convert.cpp` so it can be run deliberately over every map
+      with a report instead of one-at-a-time by opening each in the editor.
+      Killed the `"center"` / `"half_extents"` compat shims by reading them
+      **here, once** — `maps/test` turned out to be older than expected (flat
+      `"half_extents"`, not the `"volume"` blob), which the rewritten
+      `map_migration_test` caught.
+      `maps/new_map.source` + `maps/other.source` converted (`.preconvert.bak`
+      alongside); `maps/test` deliberately left legacy — it's the test fixture.
+- [x] Session init: `is_collision_geometry()` gone from the routing.
+      `game_session_t::static_entities` replaced by
+      `std::vector<map_geometry_t> geometry`, a **copy** of the map's list —
+      `session_test` now asserts the non-aliasing directly (write the session's
+      copy, check the map didn't change).
+- [x] Editor seam, uid-keyed across both regimes: `map_t::has_object` /
+      `remove_object` / `object_count`, and free functions
+      `compute_object_bounds`, `get_object_position` / `set_object_position`,
+      `get_object_box` / `set_object_box`, `collect_object_bounds`. The tools
+      call those and mostly don't branch on regime. (Uniform editing never
+      actually required schemas — confirmed.)
+- [x] Handwritten inspector panels in `editor/geometry_editor.cpp` (~80 lines of
+      ImGui for all three kinds), with widgets that suit each kind: a named
+      `active_face` dropdown, and a subdivision slider that **resamples** the
+      grid instead of flattening it.
+- [x] Transaction system gained the geometry **value-swap** flavor
+      (`diff_geometry_created/removed/modified_t` + `geometry_values_equal`).
+      Bit-exact, so unlike the entity flavor it cannot lose a change too small
+      to survive `%.6f` — `transaction_system_test` asserts exactly that.
+- [x] `build_editor_bvh()` now builds over BOTH lists; `Collision_Id.index` is
+      an object uid resolved through the seam, so a pick doesn't know or care
+      which regime it hit.
+- [x] Answers the loose note "why is AABB a schema? it's not a good decision" — it stopped being one here.
+
+**Bugs found and fixed while in here** (all pre-existing, all in code this phase
+rewrote anyway):
+- `displacement_tool`'s `commit_select_edit()` only *dropped* its snapshot and
+  never pushed a transaction, so Select-mode Q/E height steps were silently not
+  undoable. Now commits as one value swap per run of steps.
+- The subdivision slider called `init_displacement()`, which zeroed the grid —
+  changing subdivision threw away the sculpt. Now `resize_grid_preserving()`.
+- `set_displacement`'s bounds check used `idx + 2 >= count` on a flat float
+  array, i.e. it rejected the last vertex of a correctly-sized grid. Gone with
+  the flat array.
+- The game regenerated every displacement's mesh **every frame** (the editor
+  cached it); both now go through one cached path in
+  `client/geometry_renderer.cpp`.
+
+**Deliberately NOT changed** (each would be a gameplay/scope decision, not part
+of moving geometry out of the entity system):
+- Displacements still aren't registered as Jolt static bodies, exactly as
+  before. Player movement (BVH) collides with a displacement's box bound but
+  projectiles pass through. The real fix is heightmap collision — see the
+  TODO in `get_collision_planes`.
+- `box`/`displacement` lost their `orientation` field. It was a lie: only the
+  draw call read it, so a rotated one rendered rotated and collided unrotated.
+  `static_mesh` keeps it.
+
+**Not done, wants its own pass:** the geometry inspector pushes no undo
+transaction, because ImGui reports "changed" per frame of a drag and that would
+flood the stack. Wants begin/end-edit bracketing
+(`IsItemActivated`/`IsItemDeactivatedAfterEdit`), marked
+`TODO(inspector-undo)` in `selection_tool.cpp`. The entity inspector never
+pushed transactions either, so this is not a regression.
 
 ---
 
@@ -226,14 +285,21 @@ the whole generator project.
 - [ ] created/removed diffs: store full-entity BINARY blob (binary everywhere),
       reinflate with `create_entity_by_classname` + deserialize
 - [ ] Migrate tool snapshots from `map<string,string>` to `clone_entity` captures +
-      `capture_field_changes` at commit: `displacement_tool` (resize_start_props,
-      select_start_props), `sculpting_tool` (sculpt_start_props), `selection_tool`
-      (drag_start_snapshots → `map<uid, clone>`), `editor_gizmo` (start_props)
+      `capture_field_changes` at commit. NOTE: P1 already converted the geometry
+      half of every one of these to value snapshots, so what's left is only the
+      entity half — `sculpting_tool::sculpt_start_props`,
+      `selection_tool::object_snapshot_t::entity_properties`,
+      `editor_gizmo::start_props`. `displacement_tool` is fully converted (it
+      only ever touches geometry). The two-flavor shape is already in place;
+      this phase replaces the *entity* flavor's internals.
 - [ ] `placement_tool.cpp:90` entity duplication: switch `get_all_properties` →
       `init_from_map` over to `clone_entity`
-- [ ] **Batch transactions** (moved here from the editor section — same file,
-      same pass): multi-entity delete currently creates one transaction per
-      entity, so Ctrl+Z undoes one deletion at a time instead of the whole batch.
+- [x] **Batch transactions** — landed in P1. Multi-object delete and the
+      multi-object Ctrl+drag each push ONE transaction now
+      (`Selection_Tool::commit_drag_snapshots`, and the delete handler), and
+      `transaction_system_test::test_mixed_batch_delete` covers a batch spanning
+      both regimes. Note the transaction builder already supported this; the
+      tools just weren't using it.
 - [ ] Leave `get_all_properties`/`init_from_map`/`parse_string_to_field`/
       `serialize_field_to_string` in place — still used by map file save/load
       until P5. This pass only removes them from the undo hot path.
@@ -345,9 +411,11 @@ begin it with anything else half-finished.
 
 - [ ] Delete `Class_Schema`/`Field_Prop` and rewrite the ~9 files on them
 - [ ] Delete the X-macro / factory registration (~21 files)
-- [ ] Convert ~94 dynamic-dispatch sites (`entity_as`, `get_schema`,
-      `get_box_volume`, `is_collision_geometry`). `network::Entity` and its
-      virtuals die here.
+- [ ] Convert the remaining dynamic-dispatch sites (`entity_as`, `get_schema`,
+      `get_box_volume`). `network::Entity` and its virtuals die here.
+      `is_collision_geometry()` is already gone (P1), and the geometry exit took
+      4 of the 12 entity types with it, so this surface is smaller than the ~94
+      originally counted.
 - [ ] **Map serialization moves onto generated tables**: `get_all_properties`/
       `init_from_map`/`parse_string_to_field`/`serialize_field_to_string` die;
       save/load becomes schema-driven free functions honoring `@Saveable`
@@ -409,18 +477,20 @@ P1 removes the worst symptom; this removes the cause.
    every outstanding pointer, and `remove()`'s swap-and-pop invalidates too.
    The existing `@FIXME` at `entity_system.hpp:153` already flags
    `spawn()->T*` / `destroy()->delete` as the wrong shape.
-3. `game_session_t::static_entities` is a THIRD container:
-   `std::vector<std::shared_ptr<network::Entity>>` (`game_session.hpp:31`).
+3. ~~`game_session_t::static_entities` is a THIRD container~~ — GONE (P1). It's
+   `std::vector<map_geometry_t> geometry` now, holding plain values the session
+   owns outright. Scheme 3 is retired and the shared_ptr aliasing with it.
 
 **The map-serialization side-effect.** `map_t` is documented as the inert
-serialized file format, but it's load-bearing runtime storage:
-`init_session_from_map` takes `const map_t&` then does
-`entry.entity->entity_id = entry.uid` (`game_session.cpp:25`), and `add_entity`
-does the same (`entity_system.cpp:32`). The const is a LIE — it protects the
-vector, not the pointees reached through `shared_ptr`. Loading a map for a
-session silently rewrites the map's in-memory entity_ids; init two sessions from
-one map, or re-serialize after init, and the ids are stomped. (P1 removes the
-aliasing half of this; the id-stomping half survives until here.)
+serialized file format, but it's still load-bearing runtime storage for its
+ENTITIES: `init_session_from_map` takes `const map_t&` then does
+`entry.entity->entity_id = entry.uid`, and `add_entity` does the same
+(`entity_system.cpp:32`). The const is a LIE — it protects the vector, not the
+pointees reached through `shared_ptr`. Loading a map for a session silently
+rewrites the map's in-memory entity_ids; init two sessions from one map, or
+re-serialize after init, and the ids are stomped. P1 removed the aliasing half
+AND fixed this outright for geometry (the session copies it), so what's left is
+the entity half only.
 
 **Direction**: commit to ONE model — stable-slot pools keyed by `entity_uid_t`
 with generational handles, no raw `T*`/`shared_ptr` escaping. Session owns
@@ -437,10 +507,10 @@ component filtering free.
       `map.entities` in `init_session_from_map` / `Entity_System::add_entity`.
       The session owns the id, set on the session's own copy — restore the
       meaning of `const map_t&`.
-- [ ] Collapse `static_entities` into the pool model (or a dedicated static
-      pool). Re-point the session BVH at the unified storage/identity — also
-      cleans up the BVH's array-index-vs-uid split
-      (`collision_detection.hpp:40`).
+- [ ] Decide whether `game_session_t::geometry` joins the pool model or stays a
+      plain value vector. It is already exactly that — a flat vector of values
+      the session owns — so this may be a no-op beyond re-pointing the session
+      BVH's array-index-vs-uid split (`collision_detection.hpp:40`).
 - [ ] Replace pool `spawn()->T*` / `destroy()->delete` with slot-stable storage
       (deque / segmented vector / free-list) + handle return; resolve handle→ptr
       only at point of use. Kills the pointer-invalidation hazard
@@ -523,7 +593,9 @@ serialization by then — absorption, not a project.
 ## Correctness / consistency
 - **Orientation units are undefined and inconsistent** — euler angles? degrees
   or radians? We're not consistent, and that's not good. Pick one and enforce
-  it. Related: `Entity::orientation` is `vec3f` (euler) but Jolt uses
+  it. (P1 shrank this: box and displacement geometry no longer have an
+  orientation at all, since theirs was never read by anything but the draw
+  call. `static_mesh_geometry_t::orientation` and `Entity::orientation` remain.) Related: `Entity::orientation` is `vec3f` (euler) but Jolt uses
   quaternions, so `update_physics_bodies` converts quat→euler each tick — lossy
   and ugly near gimbal-lock. If spinning bodies look bad, add a `vec4f
   rotation_quat` field and replicate that instead. (Doing the units decision
@@ -551,7 +623,9 @@ serialization by then — absorption, not a project.
 - gizmo for selection moving is not finalized
 - particle editor tool — dedicated ImGui panel for live parameter tweaking
 - easing functions — replace linear lerp with ease-in/out curves
-- (multi-entity delete batching moved into P2 — same file)
+- (multi-entity delete batching: DONE in P1, see the P2 checklist)
+- geometry inspector has no undo bracketing yet — `TODO(inspector-undo)` in
+  `selection_tool.cpp`
 
 ## Physics body / Jolt
 - [x] physics_body_entity (schema + entity_list registration)
@@ -600,6 +674,9 @@ serialization by then — absorption, not a project.
 - [ ] `CmdChangeMap` reliability: currently resent every tick to not-ready
       clients (idempotent) as a stand-in for the missing ack/retransmit channel.
       Fold into the reliable channel when it lands.
-- Note: P1 changes the map file format (geometry conversion), so a map streamed
-  from a pre-P1 server won't load on a post-P1 client. The package hash catches
-  it, but the failure should be loud.
+- Note: P1 CHANGED the map file format. A map streamed from a pre-P1 server
+  loads on a post-P1 client (the legacy conversion runs on the streamed text
+  too), but NOT the other way round: a pre-P1 client can't read `box` /
+  `static_mesh` / `displacement` blocks and will skip them, i.e. load a map with
+  no geometry in it. The package hash catches the mismatch; verify the failure
+  is loud rather than an empty world.

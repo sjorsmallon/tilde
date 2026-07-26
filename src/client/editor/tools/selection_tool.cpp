@@ -1,9 +1,9 @@
 #include "selection_tool.hpp"
 #include "../../../shared/entities/player_entity.hpp"
-#include "../../../shared/entities/static_entities.hpp"
 #include "../../renderer.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../entity_inspector.hpp"
+#include "../geometry_editor.hpp"
 #include "../transaction_system.hpp"
 #include "imgui.h"
 #include <algorithm>
@@ -11,6 +11,55 @@
 
 namespace client
 {
+
+// Capture the pre-drag state of everything selected. Both regimes go into the
+// same map keyed by uid, so the drag itself never asks which is which.
+void Selection_Tool::capture_drag_snapshots(editor_context_t &ctx)
+{
+  drag_start_snapshots.clear();
+  if (!ctx.map)
+    return;
+
+  for (shared::entity_uid_t uid : selected_uids)
+  {
+    if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
+    {
+      drag_start_snapshots[uid].geometry = geometry->value;
+      continue;
+    }
+
+    if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
+      drag_start_snapshots[uid].entity_properties = entry->entity->get_all_properties();
+  }
+}
+
+// Push one transaction covering the whole drag, so Ctrl+Z undoes the move of all
+// selected objects at once rather than one at a time.
+void Selection_Tool::commit_drag_snapshots(editor_context_t &ctx)
+{
+  if (drag_start_snapshots.empty() || !ctx.transaction_system || !ctx.map)
+  {
+    drag_start_snapshots.clear();
+    return;
+  }
+
+  transaction_builder_t builder;
+  for (const auto &[uid, snapshot] : drag_start_snapshots)
+  {
+    if (snapshot.geometry)
+    {
+      if (const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(uid))
+        builder.add_geometry_modified(uid, *snapshot.geometry, entry->value);
+      continue;
+    }
+
+    if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
+      builder.add_modified_from_diff(uid, snapshot.entity_properties,
+                                     entry->entity->get_all_properties());
+  }
+  ctx.transaction_system->push(builder.take());
+  drag_start_snapshots.clear();
+}
 
 void Selection_Tool::on_enable(editor_context_t &ctx)
 {
@@ -44,13 +93,32 @@ void Selection_Tool::on_draw_ui(editor_context_t &ctx)
     }
   }
 
-  // Inspector
+  // Inspector — geometry gets its handwritten panel, entities the schema-driven one.
   if (selected_uids.size() == 1)
   {
     if (ImGui::Begin("Entity Inspector"))
     {
-      auto *entry = ctx.map->find_by_uid(selected_uids[0]);
-      if (entry && entry->entity)
+      const shared::entity_uid_t uid = selected_uids[0];
+
+      if (shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
+      {
+        // Editing through the inspector is a series of single-frame edits, and
+        // ImGui reports "changed" per frame of a drag, so pushing a transaction
+        // here would flood the undo stack with one entry per frame. The BVH does
+        // need rebuilding though — bounds just moved.
+        //
+        // TODO(inspector-undo): give the inspector the same
+        // begin-edit/end-edit bracketing the gizmo has (ImGui::IsItemActivated /
+        // IsItemDeactivatedAfterEdit) so a drag commits as one transaction.
+        // Pre-existing gap: the entity inspector never pushed transactions
+        // either.
+        if (draw_geometry_inspector(geometry->value))
+        {
+          if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+            *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+        }
+      }
+      else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       {
         render_imgui_entity_fields_in_a_window(entry->entity.get());
       }
@@ -78,13 +146,24 @@ void Selection_Tool::on_update(editor_context_t &ctx,
   }
 
   // Sync Gizmo Geometry if single selection (but not while dragging)
-  if (selected_uids.size() == 1 && !editor_gizmo.is_interacting())
+  if (ctx.map && selected_uids.size() == 1 && !editor_gizmo.is_interacting())
   {
-    auto *entry = ctx.map->find_by_uid(selected_uids[0]);
-    if (entry && entry->entity)
+    const shared::entity_uid_t uid = selected_uids[0];
+
+    if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
     {
-      auto bounds = shared::compute_entity_bounds(entry->entity.get());
-      editor_gizmo.set_geometry(bounds);
+      editor_gizmo.set_geometry(shared::get_bounds(geometry->value));
+
+      // Reshape handles for the kinds that own their extents. A static mesh's
+      // size comes from its asset, so it only translates.
+      const bool resizable =
+          shared::get_kind(geometry->value) != shared::geometry_kind_t::Static_Mesh;
+      editor_gizmo.set_mode(resizable ? Editor_Gizmo::Gizmo_Mode::Unified
+                                      : Editor_Gizmo::Gizmo_Mode::Translate);
+    }
+    else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
+    {
+      editor_gizmo.set_geometry(shared::compute_entity_bounds(entry->entity.get()));
 
       // Only show reshape handles for entities that own a box_volume_t
       // (sculptable via the same code path).
@@ -119,7 +198,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
         if (hit.id.type == Collision_Id::Type::Static_Geometry)
         {
           shared::entity_uid_t uid = hit.id.index;
-          if (ctx.map->find_by_uid(uid))
+          if (ctx.map->has_object(uid))
           {
             hovered_uid = uid;
             hit_bvh = true;
@@ -182,13 +261,13 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
       drag_start_positions.clear();
       for (auto uid : selected_uids)
       {
-        auto *entry = ctx.map->find_by_uid(uid);
-        if (entry && entry->entity)
-        {
-          drag_start_positions.push_back({uid, entry->entity->position});
-          center = center + entry->entity->position;
-          ++count;
-        }
+        linalg::vec3 position;
+        if (!shared::get_object_position(*ctx.map, uid, position))
+          continue;
+
+        drag_start_positions.push_back({uid, position});
+        center = center + position;
+        ++count;
       }
 
       if (count > 0)
@@ -208,15 +287,7 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
           is_dragging_object = true;
 
           if (ctx.transaction_system)
-          {
-            drag_start_snapshots.clear();
-            for (auto uid : selected_uids)
-            {
-              auto *e = ctx.map->find_by_uid(uid);
-              if (e && e->entity)
-                drag_start_snapshots[uid] = e->entity->get_all_properties();
-            }
-          }
+            capture_drag_snapshots(ctx);
           return;
         }
       }
@@ -269,11 +340,7 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
       delta.z = editor::snap(delta.z, snap_step);
 
       for (auto &[uid, start_pos] : drag_start_positions)
-      {
-        auto *entry = ctx.map->find_by_uid(uid);
-        if (entry && entry->entity)
-          entry->entity->position = start_pos + delta;
-      }
+        shared::set_object_position(*ctx.map, uid, start_pos + delta);
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
@@ -305,19 +372,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
     if (is_dragging_object)
     {
       is_dragging_object = false;
-      if (!drag_start_snapshots.empty() && ctx.transaction_system)
-      {
-        transaction_builder_t builder;
-        for (auto &[uid, before_props] : drag_start_snapshots)
-        {
-          auto *e = ctx.map->find_by_uid(uid);
-          if (e && e->entity)
-            builder.add_modified_from_diff(uid, before_props,
-                                           e->entity->get_all_properties());
-        }
-        ctx.transaction_system->push(builder.take());
-      }
-      drag_start_snapshots.clear();
+      commit_drag_snapshots(ctx);
       drag_start_positions.clear();
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -347,20 +402,14 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
 
       const auto &view = cached_viewport;
 
-      for (const auto &entry : ctx.map->entities)
+      for (const auto &[uid, bounds] : shared::collect_object_bounds(*ctx.map))
       {
-        if (!entry.entity)
-          continue;
-        auto bounds = shared::compute_entity_bounds(entry.entity.get());
-
         linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
 
         linalg::vec3 view_pos = linalg::world_to_view(
             p, {view.camera.position.x, view.camera.position.y, view.camera.position.z}, view.camera.yaw,
             view.camera.pitch);
 
-        if (view_pos.z > 0)
-          continue;
         if (view_pos.z >= -0.1f)
           continue;
 
@@ -372,11 +421,11 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
             screen_pos.y >= y_min && screen_pos.y <= y_max)
         {
           bool already_selected = false;
-          for (auto uid : selected_uids)
-            if (uid == entry.uid)
+          for (auto selected : selected_uids)
+            if (selected == uid)
               already_selected = true;
           if (!already_selected)
-            selected_uids.push_back(entry.uid);
+            selected_uids.push_back(uid);
         }
       }
     }
@@ -431,11 +480,19 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
   {
     if (!selected_uids.empty() && ctx.map && ctx.transaction_system)
     {
+      // One transaction for the whole selection, so Ctrl+Z brings back every
+      // deleted object at once.
       transaction_builder_t builder;
       for (auto uid : selected_uids)
       {
-        auto *entry = ctx.map->find_by_uid(uid);
-        if (entry && entry->entity)
+        if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
+        {
+          builder.add_geometry_removed(uid, geometry->value);
+          ctx.map->remove_geometry(uid);
+          continue;
+        }
+
+        if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
         {
           builder.add_removed(uid, snapshot_entity(entry->entity.get()));
           ctx.map->remove_entity(uid);
@@ -457,9 +514,11 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   if (!ctx.map)
     return;
 
-  auto draw_entity_highlight = [&](const network::Entity *ent, color_t color)
+  // Hover / box-select preview only ever needs the bound, so it works off the
+  // uniform bounds accessor and doesn't care which regime an object is in.
+  auto draw_bounds_highlight = [&](shared::entity_uid_t uid, color_t color)
   {
-    auto bounds = shared::compute_entity_bounds(ent);
+    const shared::aabb_bounds_t bounds = shared::compute_object_bounds(*ctx.map, uid);
     renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
                            (bounds.max - bounds.min) * 0.5f, color);
   };
@@ -468,11 +527,10 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   float grid_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
   for (auto uid : selected_uids)
   {
-    auto *entry = ctx.map->find_by_uid(uid);
-    if (entry && entry->entity)
-    {
+    if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
+      draw_geometry_selection_highlight(geometry->value, renderer, ctx.time, grid_step);
+    else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       draw_selection_highlight(entry->entity.get(), renderer, ctx.time, grid_step);
-    }
   }
 
   // 2. Highlight Hovered Item - Yellow
@@ -487,14 +545,8 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
       if (uid == hovered_uid)
         is_selected = true;
 
-    if (!is_selected)
-    {
-      auto *entry = ctx.map->find_by_uid(hovered_uid);
-      if (entry && entry->entity)
-      {
-        draw_entity_highlight(entry->entity.get(), colors::yellow);
-      }
-    }
+    if (!is_selected && ctx.map->has_object(hovered_uid))
+      draw_bounds_highlight(hovered_uid, colors::yellow);
   }
 
   // 3. Highlight Box Selection Candidates (Live Preview) - Yellow
@@ -507,12 +559,8 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 
     const auto &view = cached_viewport;
 
-    for (const auto &entry : ctx.map->entities)
+    for (const auto &[uid, bounds] : shared::collect_object_bounds(*ctx.map))
     {
-      if (!entry.entity)
-        continue;
-      auto bounds = shared::compute_entity_bounds(entry.entity.get());
-
       linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
 
       linalg::vec3 view_pos = linalg::world_to_view(
@@ -530,14 +578,12 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
           screen_pos.y >= y_min && screen_pos.y <= y_max)
       {
         bool already_selected = false;
-        for (auto uid : selected_uids)
-          if (uid == entry.uid)
+        for (auto selected : selected_uids)
+          if (selected == uid)
             already_selected = true;
 
         if (!already_selected)
-        {
-          draw_entity_highlight(entry.entity.get(), colors::yellow);
-        }
+          draw_bounds_highlight(uid, colors::yellow);
       }
     }
   }

@@ -1,15 +1,14 @@
-// Round-trip + migration test for the box_volume_t refactor.
+// Round-trip + migration test for the geometry exit.
 //
-// Verifies on the real `maps/test` fixture (which contains pre-migration
-// `half_extents` properties and at least one `wedge_entity`):
-//   1. Wedge entities are stripped at load.
-//   2. The `half_extents` -> `volume.half_extents` compat shim populates the
-//      new component on AABB / Trigger / Displacement entities.
-//   3. Saving the migrated map and re-loading it is lossless for box entities
-//      (entity count, position, volume.half_extents all match).
+// Verifies on the real `maps/test` fixture (which is a PRE-EXIT map: its
+// geometry is still written as `entity` blocks with classname aabb_entity /
+// displacement_entity, plus one retired wedge_entity):
+//   1. Legacy geometry entities convert into map.geometry at load, and land in
+//      the geometry list rather than the entity list.
+//   2. Wedge entities are dropped at load.
+//   3. Saving the converted map and re-loading it is lossless for geometry, and
+//      the saved file no longer contains the legacy form.
 
-#include "entities/displacement_entity.hpp"
-#include "entities/static_entities.hpp"
 #include "entities/trigger_volume_entity.hpp"
 #include "log.hpp"
 #include "map.hpp"
@@ -34,6 +33,24 @@ template <typename T> static size_t count_of(const map_t &m)
   return n;
 }
 
+static size_t count_geometry_of_kind(const map_t &m, geometry_kind_t kind)
+{
+  size_t n = 0;
+  for (const map_geometry_t &g : m.geometry)
+    if (get_kind(g.value) == kind) ++n;
+  return n;
+}
+
+// The box brushes, in map order.
+static std::vector<const box_geometry_t *> get_boxes(const map_t &m)
+{
+  std::vector<const box_geometry_t *> out;
+  for (const map_geometry_t &g : m.geometry)
+    if (const auto *box = std::get_if<box_geometry_t>(&g.value))
+      out.push_back(box);
+  return out;
+}
+
 int main()
 {
   const std::string fixture = "maps/test";
@@ -45,30 +62,48 @@ int main()
   if (!load_map(fixture, loaded))
     return fail("load_map(maps/test) failed");
 
-  size_t wedges = count_of<network::Wedge_Entity>(loaded);
-  if (wedges != 0)
-    return fail("wedge-strip: expected 0 wedge entities after load");
+  const size_t boxes = count_geometry_of_kind(loaded, geometry_kind_t::Box);
+  if (boxes == 0)
+    return fail("conversion: expected at least 1 box brush from the fixture's "
+                "legacy aabb_entity blocks");
 
-  size_t aabbs = count_of<network::AABB_Entity>(loaded);
-  if (aabbs == 0)
-    return fail("expected at least 1 AABB_Entity in fixture");
+  const size_t displacements =
+      count_geometry_of_kind(loaded, geometry_kind_t::Displacement);
+  if (displacements == 0)
+    return fail("conversion: expected the fixture's displacement_entity to "
+                "become displacement geometry");
 
-  size_t displacements = count_of<network::Displacement_Entity>(loaded);
-
-  // Every AABB must have non-zero volume.half_extents — proves the
-  // half_extents -> volume compat shim populated the new component.
-  size_t aabbs_checked = 0;
+  // Geometry must NOT have landed in the entity list — that's the whole point.
   for (const auto &e : loaded.entities)
   {
-    auto *aabb = entity_as<network::AABB_Entity>(e.entity.get());
-    if (!aabb) continue;
-    const auto &h = aabb->volume.half_extents;
-    if (h.x == 0.f && h.y == 0.f && h.z == 0.f)
-      return fail("compat shim: AABB_Entity loaded with zeroed volume");
-    ++aabbs_checked;
+    const std::string classname = get_classname_for_entity(e.entity.get());
+    if (classname == "aabb_entity" || classname == "displacement_entity" ||
+        classname == "static_mesh_entity" || classname == "wedge_entity")
+      return fail("conversion: geometry is still in the entity list");
   }
-  if (aabbs_checked != aabbs)
-    return fail("compat shim: aabb count mismatch during verify");
+
+  // Every converted box must carry the legacy volume's half_extents, not a
+  // default — a zeroed or default-sized box means the "volume" blob wasn't read.
+  for (const box_geometry_t *box : get_boxes(loaded))
+  {
+    const auto &h = box->half_extents;
+    if (h.x == 0.f && h.y == 0.f && h.z == 0.f)
+      return fail("conversion: box brush loaded with zeroed half_extents");
+    if (h.x == 1.f && h.y == 1.f && h.z == 1.f)
+      return fail("conversion: box brush kept the default half_extents — the "
+                  "legacy \"volume\" blob was not parsed");
+  }
+
+  // The converted displacement's grid must be sized for its subdivision level,
+  // which is the invariant the fixed-size schema array used to guarantee.
+  for (const map_geometry_t &g : loaded.geometry)
+  {
+    const auto *displacement = std::get_if<displacement_geometry_t>(&g.value);
+    if (!displacement) continue;
+    if ((int)displacement->displacements.size() != displacement->vertex_count())
+      return fail("conversion: displacement grid size does not match its "
+                  "subdivision level");
+  }
 
   // --- 2. Save & re-load --------------------------------------------------
   const std::string out = "maps/test.roundtrip";
@@ -84,35 +119,38 @@ int main()
   std::filesystem::remove(out + ".navmesh");
 
   // --- 3. Compare counts --------------------------------------------------
-  if (count_of<network::Wedge_Entity>(reloaded) != 0)
-    return fail("roundtrip: wedges reappeared after save+load");
-  if (count_of<network::AABB_Entity>(reloaded) != aabbs)
-    return fail("roundtrip: AABB count drift");
-  if (count_of<network::Displacement_Entity>(reloaded) != displacements)
-    return fail("roundtrip: Displacement count drift");
+  if (count_geometry_of_kind(reloaded, geometry_kind_t::Box) != boxes)
+    return fail("roundtrip: box count drift");
+  if (count_geometry_of_kind(reloaded, geometry_kind_t::Displacement) != displacements)
+    return fail("roundtrip: displacement count drift");
+  if (reloaded.geometry.size() != loaded.geometry.size())
+    return fail("roundtrip: geometry count drift");
+  if (reloaded.entities.size() != loaded.entities.size())
+    return fail("roundtrip: entity count drift");
 
-  // --- 4. Compare per-AABB geometry (position + volume) -------------------
-  auto get_aabbs = [](const map_t &m) {
-    std::vector<network::AABB_Entity *> out;
-    for (const auto &e : m.entities)
-      if (auto *a = entity_as<network::AABB_Entity>(e.entity.get()))
-        out.push_back(a);
-    return out;
-  };
-  auto a = get_aabbs(loaded);
-  auto b = get_aabbs(reloaded);
-  if (a.size() != b.size())
-    return fail("roundtrip: AABB vector size drift");
-  for (size_t i = 0; i < a.size(); ++i)
+  // --- 4. Compare per-object geometry, value for value -------------------
+  // geometry_values_equal is bit-exact, so this catches any precision lost in
+  // the text form as well as any field the writer forgot to emit.
+  for (size_t i = 0; i < loaded.geometry.size(); ++i)
   {
-    if (a[i]->position.x != b[i]->position.x ||
-        a[i]->position.y != b[i]->position.y ||
-        a[i]->position.z != b[i]->position.z)
-      return fail("roundtrip: AABB position drift");
-    if (a[i]->volume.half_extents.x != b[i]->volume.half_extents.x ||
-        a[i]->volume.half_extents.y != b[i]->volume.half_extents.y ||
-        a[i]->volume.half_extents.z != b[i]->volume.half_extents.z)
-      return fail("roundtrip: AABB volume.half_extents drift");
+    if (loaded.geometry[i].uid != reloaded.geometry[i].uid)
+      return fail("roundtrip: geometry uid drift");
+    if (!geometry_values_equal(loaded.geometry[i].value, reloaded.geometry[i].value))
+      return fail("roundtrip: geometry value drift");
+  }
+
+  // The saved text must be in the NEW form: geometry blocks, no legacy geometry
+  // entity blocks. Otherwise the conversion isn't one-time — it would re-run on
+  // every load forever.
+  {
+    const std::string saved = serialize_map_to_string(loaded);
+    if (saved.find("\"aabb_entity\"") != std::string::npos ||
+        saved.find("\"displacement_entity\"") != std::string::npos ||
+        saved.find("\"wedge_entity\"") != std::string::npos)
+      return fail("roundtrip: saved text still contains legacy geometry "
+                  "entity blocks");
+    if (saved.find("\nbox\n{") == std::string::npos)
+      return fail("roundtrip: saved text has no box geometry block");
   }
 
   // --- 5. Trigger volume round-trip (the "is save losing it?" check) -----
@@ -184,8 +222,8 @@ int main()
     if (!parse_map_from_string(canonical, from_canonical))
       return fail("canonical: parse_map_from_string failed");
 
-    if (count_of<network::AABB_Entity>(from_canonical) != aabbs)
-      return fail("canonical: AABB count drift through string round-trip");
+    if (count_geometry_of_kind(from_canonical, geometry_kind_t::Box) != boxes)
+      return fail("canonical: box count drift through string round-trip");
 
     // Hash must be stable through a full serialize->parse->hash cycle.
     if (compute_map_content_hash(from_canonical) != hash0)
@@ -281,9 +319,9 @@ int main()
       return fail("package: deserialize accepted a corrupted magic");
   }
 
-  printf("map_migration_test: OK (%zu aabbs, %zu displacements, wedges "
-         "stripped, trigger round-trip OK, canonical hash stable, "
-         "package round-trip OK)\n",
-         aabbs, displacements);
+  printf("map_migration_test: OK (%zu boxes, %zu displacements converted from "
+         "legacy entity blocks, wedges dropped, trigger round-trip OK, "
+         "canonical hash stable, package round-trip OK)\n",
+         boxes, displacements);
   return 0;
 }

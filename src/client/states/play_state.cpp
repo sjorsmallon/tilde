@@ -17,8 +17,7 @@
 #include <cstring>
 #include <print>
 #include "../../shared/entities/player_entity.hpp"
-#include "../../shared/entities/static_entities.hpp"
-#include "../../shared/entities/displacement_entity.hpp"
+#include "../geometry_renderer.hpp"
 #include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/entities/weapon_entity.hpp"
 #include "../../shared/entities/trigger_volume_entity.hpp"
@@ -1039,11 +1038,11 @@ void PlayState::render_ui()
         }
       }
 
-      int static_count = (int)ctx.session.static_entities.size();
-      if (static_count > 0)
+      int geometry_count = (int)ctx.session.geometry.size();
+      if (geometry_count > 0)
       {
-        ImGui::Text("%-20s %d", "static (collision)", static_count);
-        total += static_count;
+        ImGui::Text("%-20s %d", "geometry", geometry_count);
+        total += geometry_count;
       }
 
       int remote_count = 0;
@@ -1061,7 +1060,7 @@ void PlayState::render_ui()
         ImGui::Text("%-20s %d", "explosion fx", fx_count);
 
       ImGui::Separator();
-      ImGui::Text("total (pools+static) %d", total);
+      ImGui::Text("total (pools+geometry) %d", total);
     }
     ImGui::End();
   }
@@ -1108,131 +1107,21 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   renderer::render_view(cmd, view_def, reg);
   renderer::set_viewport(cmd, view_def.viewport);
 
-  // Render static entities from session
+  // Render the session's geometry. One call per object — the mesh-path /
+  // primitive / displacement-grid decision lives in draw_geometry, shared with
+  // the editor, instead of being spelled out twice.
   if (!hide_geometry)
-  for (const auto &ent : ctx.session.static_entities)
   {
-    if (!ent)
-      continue;
-
-    const auto *rc = ent->get_component<network::render_component_t>();
-    if (rc && rc->visible)
-    {
-      const char *mesh_path = rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
-
-      if (mesh_path)
-      {
-        assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
-        if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
-        {
-          const char *prim_name = mesh_path + 12;
-          printf("[CLIENT] Loading primitive: %s\n", prim_name);
-          mesh_handle = assets::get_primitive_mesh(prim_name);
-        }
-        else
-        {
-          mesh_handle = assets::load_mesh(mesh_path);
-        }
-
-        if (mesh_handle.valid())
-        {
-          if (rc->is_wireframe)
-          {
-            renderer::draw_mesh(cmd, mesh_handle,
-                               {.position  = ent->position,
-                                .scale     = rc->scale,
-                                .rotation  = ent->orientation + rc->rotation,
-                                .wireframe = true});
-          }
-          else
-          {
-            auto shader = renderer::ShaderType::Lit;
-            if (strcmp(rc->material.shader_type.c_str(), "unlit") == 0)
-              shader = renderer::ShaderType::Unlit;
-            vec3f mat_color = rc->material.color;
-            color_t tint = color_from_vec3(mat_color);
-            renderer::draw_mesh(cmd, mesh_handle,
-                               {.position = ent->position,
-                                .scale    = rc->scale,
-                                .rotation = ent->orientation + rc->rotation,
-                                .color    = tint,
-                                .shader   = shader});
-          }
-          continue;
-        }
-      }
-    }
-
-    // Fallback primitive rendering. Displacement is checked first because it
-    // also reports a box volume (for picking) but renders as a heightmap mesh,
-    // not a solid box. After that, any box-volume entity falls through to the
-    // generic solid-box draw — so any future box-volume collision entity
-    // (clip-brush, hurt-volume, ...) gets visible fallback rendering for free.
-    if (auto *disp = shared::entity_as<network::Displacement_Entity>(ent.get()))
-    {
-      std::string disp_key = "__displacement_" + std::to_string(disp->entity_id);
-      auto mesh = network::generate_displacement_mesh(*disp);
-      auto mesh_handle = assets::register_dynamic_mesh(disp_key.c_str(), std::move(mesh));
-      if (mesh_handle.valid())
-      {
-        renderer::draw_mesh(cmd, mesh_handle,
-                           {.position = disp->position,
-                            .rotation = disp->orientation,
-                            .shader   = renderer::ShaderType::Textured});
-      }
-    }
-    else if (auto *volume = ent->get_box_volume())
-    {
-      renderer::DrawAABB(cmd, ent->position - volume->half_extents,
-                         ent->position + volume->half_extents, colors::white);
-    }
-    else if (auto *wedge = shared::entity_as<network::Wedge_Entity>(ent.get()))
-    {
-      shared::wedge_t w;
-      w.center = wedge->position;
-      w.half_extents = wedge->half_extents;
-      w.orientation = wedge->orientation;
-      renderer::draw_wedge(cmd, w, colors::white);
-    }
-    else if (ent->get_type() == ::entity_type::STATIC_MESH)
-    {
-      auto bounds = shared::compute_entity_bounds(ent.get());
-      renderer::DrawWireAABB(cmd, bounds.min, bounds.max, colors::yellow);
-    }
-
-    if (debug_collision::debug_show_hitboxes.Get())
-    {
-      const auto *hitbox = ent->get_component<network::hitbox_component_t>();
-      if (hitbox)
-      {
-        vec3f hitbox_center = ent->position + hitbox->offset;
-        const char *shape = hitbox->shape_type.c_str();
-
-        if (strcmp(shape, "sphere") == 0)
-          renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, colors::green);
-        else if (strcmp(shape, "capsule") == 0)
-          renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y, colors::green);
-        else if (strcmp(shape, "aabb") == 0)
-        {
-          vec3f min = hitbox_center - hitbox->size;
-          vec3f max = hitbox_center + hitbox->size;
-          renderer::DrawWireAABB(cmd, min, max, colors::green);
-        }
-      }
-    }
+    for (const shared::map_geometry_t &entry : ctx.session.geometry)
+      draw_geometry(cmd, entry.value, entry.uid);
   }
 
-  // Render map entities that aren't static
+  // Render map entities (geometry is not among them any more, so there is
+  // nothing to skip here except the local player).
   for (const auto &entry : map.entities)
   {
     const auto &ent = entry.entity;
     if (!ent)
-      continue;
-
-    // Skip everything that's already been rendered in the static-entities
-    // loop above (AABB, Wedge, Static_Mesh, Displacement all override
-    // is_collision_geometry()==true).
-    if (ent->is_collision_geometry())
       continue;
 
     if (ent->get_type() == ::entity_type::PLAYER)
@@ -1432,9 +1321,10 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     debug_collision::clear_collision_faces();
   }
 
-  // Debug: every entity.get_box_volume() as a wireframe AABB. Color-coded by
-  // classname so triggers (invisible in play state) and clip-style volumes
-  // stand out from regular AABB worldspawn boxes.
+  // Debug: collision volumes as wireframe AABBs. Magenta for trigger volumes
+  // (the only box-volume entity left, and invisible otherwise), white for the
+  // map's geometry, yellow to flag a displacement's box against the heightmap it
+  // actually renders as.
   if (debug_collision::debug_show_box_volumes.Get())
   {
     for (const auto &entry : map.entities)
@@ -1444,17 +1334,18 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       const auto *volume = ent->get_box_volume();
       if (!volume) continue;
 
-      color_t color = colors::yellow; // default
-      switch (ent->get_type())
-      {
-      case ::entity_type::TRIGGER_VOLUME: color = colors::magenta; break; // triggers are invisible otherwise
-      case ::entity_type::AABB:           color = colors::white;   break;
-      case ::entity_type::DISPLACEMENT:   color = colors::yellow;  break; // flag the box vs the heightmap
-      default: break;
-      }
-
       renderer::DrawWireAABB(cmd, ent->position - volume->half_extents,
-                             ent->position + volume->half_extents, color);
+                             ent->position + volume->half_extents, colors::magenta);
+    }
+
+    for (const shared::map_geometry_t &entry : ctx.session.geometry)
+    {
+      const color_t color =
+          (shared::get_kind(entry.value) == shared::geometry_kind_t::Displacement)
+              ? colors::yellow
+              : colors::white;
+      const shared::aabb_bounds_t bounds = shared::get_bounds(entry.value);
+      renderer::DrawWireAABB(cmd, bounds.min, bounds.max, color);
     }
   }
 

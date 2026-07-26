@@ -1,6 +1,8 @@
 #pragma once
 
+#include "../../../shared/map_geometry.hpp"
 #include "../editor_tool.hpp"
+#include <optional>
 
 namespace network
 {
@@ -27,12 +29,17 @@ public:
   void on_draw_ui(editor_context_t &ctx) override;
 
 private:
-  void select_entity_type(int index);
+  // Select from the combined placeable table (geometry kinds first, then entity
+  // types). Sets up exactly one of current_geometry / current_entity.
+  void select_placeable(int index);
 
   linalg::vec3 ghost_position;
   bool ghost_valid = false;
   int selected_type_index = 0;
 
+  // The prototype being placed. Exactly one is engaged at a time — which of the
+  // two regimes the selected placeable belongs to.
+  std::optional<shared::geometry_value_t> current_geometry;
   std::shared_ptr<::network::Entity> current_entity;
 };
 

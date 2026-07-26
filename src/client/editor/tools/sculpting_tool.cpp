@@ -3,6 +3,7 @@
 #include "../../../shared/entity.hpp"
 #include "../../../shared/map.hpp"
 #include "../../../shared/shapes.hpp"
+#include "../../../shared/log.hpp"
 #include "../transaction_system.hpp"
 #include <cmath>
 
@@ -17,22 +18,54 @@ void Sculpting_Tool::on_enable(editor_context_t &ctx)
 
 void Sculpting_Tool::on_disable(editor_context_t &ctx)
 {
-  if (dragging && dragging_uid != 0 && ctx.map && ctx.transaction_system)
-  {
-    if (!sculpt_start_props.empty())
-    {
-      auto *entry = ctx.map->find_by_uid(dragging_uid);
-      if (entry && entry->entity)
-      {
-        transaction_builder_t builder;
-        builder.add_modified_from_diff(dragging_uid, sculpt_start_props,
-                                       entry->entity->get_all_properties());
-        ctx.transaction_system->push(builder.take());
-      }
-      sculpt_start_props.clear();
-    }
-  }
+  commit_sculpt(ctx);
   dragging = false;
+}
+
+// Push the finished face-drag as one transaction. Both regimes are sculptable —
+// box brushes and displacements through their own extents, trigger volumes
+// through their box_volume_t — so this commits whichever flavor was captured.
+void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
+{
+  const bool had_entity_snapshot = !sculpt_start_props.empty();
+  const std::optional<shared::geometry_value_t> geometry_snapshot =
+      std::move(sculpt_start_geometry);
+
+  sculpt_start_props.clear();
+  sculpt_start_geometry.reset();
+
+  if (!dragging || dragging_uid == shared::invalid_entity_uid || !ctx.map ||
+      !ctx.transaction_system)
+    return;
+
+  transaction_builder_t builder;
+
+  if (geometry_snapshot)
+  {
+    const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(dragging_uid);
+    if (!entry)
+    {
+      log_error("sculpting tool: geometry uid {} vanished mid-drag — the resize "
+                "is not undoable",
+                dragging_uid);
+      return;
+    }
+    builder.add_geometry_modified(dragging_uid, *geometry_snapshot, entry->value);
+  }
+  else if (had_entity_snapshot)
+  {
+    auto *entry = ctx.map->find_by_uid(dragging_uid);
+    if (!entry || !entry->entity)
+      return;
+    builder.add_modified_from_diff(dragging_uid, sculpt_start_props,
+                                   entry->entity->get_all_properties());
+  }
+  else
+  {
+    return;
+  }
+
+  ctx.transaction_system->push(builder.take());
 }
 
 void Sculpting_Tool::on_update(editor_context_t &ctx,
@@ -58,23 +91,18 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
       if (hit.id.type == Collision_Id::Type::Static_Geometry)
       {
         shared::entity_uid_t uid = hit.id.index;
-        auto *entry = ctx.map->find_by_uid(uid);
-        if (entry && entry->entity)
-        {
-          if (const shared::box_volume_t *volume =
-                  entry->entity->get_box_volume())
-          {
-            shared::aabb_t aabb = shared::to_aabb(*volume, entry->entity->position);
 
-            float t;
-            shared::box_face_t face;
-            if (shared::ray_aabb_face_intersection(view.mouse_ray.origin,
-                                                   view.mouse_ray.direction, aabb,
-                                                   t, face))
-            {
-              hovered_uid = uid;
-              hovered_face = face;
-            }
+        shared::aabb_t aabb;
+        if (shared::get_object_box(*ctx.map, uid, aabb.center, aabb.half_extents))
+        {
+          float t;
+          shared::box_face_t face;
+          if (shared::ray_aabb_face_intersection(view.mouse_ray.origin,
+                                                 view.mouse_ray.direction, aabb,
+                                                 t, face))
+          {
+            hovered_uid = uid;
+            hovered_face = face;
           }
         }
       }
@@ -90,18 +118,19 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
     dragging = true;
     dragging_uid = hovered_uid;
     dragging_face = hovered_face;
+    sculpt_start_props.clear();
+    sculpt_start_geometry.reset();
 
-    auto *entry = ctx.map->find_by_uid(dragging_uid);
-    if (entry && entry->entity)
-    {
-      if (const shared::box_volume_t *volume =
-              entry->entity->get_box_volume())
-      {
-        original_aabb = shared::to_aabb(*volume, entry->entity->position);
+    if (!shared::get_object_box(*ctx.map, dragging_uid, original_aabb.center,
+                                original_aabb.half_extents))
+      return;
 
-        sculpt_start_props = entry->entity->get_all_properties();
-      }
-    }
+    if (const shared::map_geometry_t *geometry =
+            ctx.map->find_geometry_by_uid(dragging_uid))
+      sculpt_start_geometry = geometry->value;
+    else if (auto *entry = ctx.map->find_by_uid(dragging_uid);
+             entry && entry->entity)
+      sculpt_start_props = entry->entity->get_all_properties();
   }
 }
 
@@ -110,17 +139,12 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 {
   if (dragging && dragging_uid != 0 && ctx.map)
   {
-    auto *entry = ctx.map->find_by_uid(dragging_uid);
-    if (!entry || !entry->entity)
-      return;
+    using namespace linalg;
 
-    if (shared::box_volume_t *volume = entry->entity->get_box_volume())
+    vec3 current_center, current_half_extents;
+    if (shared::get_object_box(*ctx.map, dragging_uid, current_center,
+                               current_half_extents))
     {
-      using namespace linalg;
-
-      vec3 current_center = entry->entity->position;
-      vec3 current_half_extents = volume->half_extents;
-
       vec3 normal = shared::get_box_face_normal(dragging_face);
       vec3 center_offset = {
           normal.x * current_half_extents.x,
@@ -173,20 +197,23 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
           float face_sign =
               shared::box_face_is_positive(dragging_face) ? 1.0f : -1.0f;
 
-          float &extent = volume->half_extents[axis];
-          float &center = entry->entity->position[axis];
+          vec3 new_center = current_center;
+          vec3 new_half_extents = current_half_extents;
 
           // Grow the box by half the drag, and shift the center by the same
           // amount toward the dragged face so the opposite face stays put.
-          extent += world_delta * 0.5f;
-          center += face_sign * world_delta * 0.5f;
+          new_half_extents[axis] += world_delta * 0.5f;
+          new_center[axis] += face_sign * world_delta * 0.5f;
 
-          if (extent < editor::MIN_EXTENT)
+          if (new_half_extents[axis] < editor::MIN_EXTENT)
           {
-            float diff = editor::MIN_EXTENT - extent;
-            extent = editor::MIN_EXTENT;
-            center -= face_sign * diff;
+            float diff = editor::MIN_EXTENT - new_half_extents[axis];
+            new_half_extents[axis] = editor::MIN_EXTENT;
+            new_center[axis] -= face_sign * diff;
           }
+
+          shared::set_object_box(*ctx.map, dragging_uid, new_center,
+                                 new_half_extents);
         }
       }
     }
@@ -195,21 +222,7 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
 
 void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e)
 {
-  if (dragging && dragging_uid != shared::invalid_entity_uid && ctx.map && ctx.transaction_system)
-  {
-    if (!sculpt_start_props.empty())
-    {
-      auto *entry = ctx.map->find_by_uid(dragging_uid);
-      if (entry && entry->entity)
-      {
-        transaction_builder_t builder;
-        builder.add_modified_from_diff(dragging_uid, sculpt_start_props,
-                                       entry->entity->get_all_properties());
-        ctx.transaction_system->push(builder.take());
-      }
-      sculpt_start_props.clear();
-    }
-  }
+  commit_sculpt(ctx);
 
   dragging = false;
   dragging_uid = 0;
@@ -225,26 +238,21 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
 {
   if (hovered_uid != 0 && !dragging && ctx.map)
   {
-    auto *entry = ctx.map->find_by_uid(hovered_uid);
-    if (entry && entry->entity)
+    shared::aabb_t aabb;
+    if (shared::get_object_box(*ctx.map, hovered_uid, aabb.center,
+                               aabb.half_extents))
     {
-      if (const shared::box_volume_t *volume =
-              entry->entity->get_box_volume())
-      {
-        shared::aabb_t aabb = shared::to_aabb(*volume, entry->entity->position);
+      linalg::vec3 e = aabb.half_extents;
+      linalg::vec3 normal = shared::get_box_face_normal(hovered_face);
+      linalg::vec3 p = aabb.center +
+                       linalg::vec3{normal.x * e.x, normal.y * e.y, normal.z * e.z};
+      linalg::vec3 size = e;
+      int axis = shared::box_face_axis(hovered_face);
+      if (axis == 0) size.x = 0;
+      else if (axis == 1) size.y = 0;
+      else size.z = 0;
 
-        linalg::vec3 e = aabb.half_extents;
-        linalg::vec3 normal = shared::get_box_face_normal(hovered_face);
-        linalg::vec3 p = aabb.center +
-                         linalg::vec3{normal.x * e.x, normal.y * e.y, normal.z * e.z};
-        linalg::vec3 size = e;
-        int axis = shared::box_face_axis(hovered_face);
-        if (axis == 0) size.x = 0;
-        else if (axis == 1) size.y = 0;
-        else size.z = 0;
-
-        renderer.draw_wire_box(p, size, colors::red);
-      }
+      renderer.draw_wire_box(p, size, colors::red);
     }
   }
 }

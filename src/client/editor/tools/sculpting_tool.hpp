@@ -34,7 +34,13 @@ private:
   viewport_state_t last_view;
   linalg::vec3 drag_origin_point;
   shared::aabb_t original_aabb;
+
+  // Pre-drag state, one flavor per regime — exactly one is engaged. See
+  // commit_sculpt.
   std::map<std::string, std::string> sculpt_start_props;
+  std::optional<shared::geometry_value_t> sculpt_start_geometry;
+
+  void commit_sculpt(editor_context_t &ctx);
 };
 
 } // namespace client

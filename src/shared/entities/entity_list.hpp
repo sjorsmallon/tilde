@@ -18,8 +18,6 @@
 // re-includes this file with ENTITIES_WANT_INCLUDES newly defined.
 #ifdef ENTITIES_WANT_INCLUDES
 #include "entities/player_entity.hpp"
-#include "entities/static_entities.hpp"
-#include "entities/displacement_entity.hpp"
 #include "entities/weapon_entity.hpp"
 #include "entities/rocket_entity.hpp"
 #include "entities/particle_emitter_entity.hpp"

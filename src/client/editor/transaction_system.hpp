@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../../shared/entity.hpp"
+#include "../../shared/log.hpp"
 #include "../../shared/map.hpp"
+#include "../../shared/map_geometry.hpp"
 #include "../../shared/network/schema.hpp"
 #include <cstdint>
 #include <map>
@@ -46,8 +48,41 @@ struct diff_entity_modified_t
   std::vector<property_change_t> changes;
 };
 
-using edit_diff_t = std::variant<diff_entity_created_t, diff_entity_removed_t,
-                                 diff_entity_modified_t>;
+// --- The second entry flavor: geometry value-swap ---------------------------
+//
+// Geometry doesn't get diffed field-by-field. It's a plain value, so undo IS a
+// whole-value copy — before and after, swap on undo/redo. That is both simpler
+// and strictly more correct than the entity flavor above, which compares
+// FORMATTED FLOAT TEXT and so silently drops a change too small to show at 6
+// decimals. It also needs no schema, no reflection, and no string round-trip.
+//
+// The cost is memory: a sculpted displacement's snapshot is its whole vertex
+// grid. That's the right trade for an editor — the tools already captured
+// whole-grid start states by hand for exactly this reason.
+
+struct diff_geometry_created_t
+{
+  shared::entity_uid_t uid;
+  shared::geometry_value_t value;
+};
+
+struct diff_geometry_removed_t
+{
+  shared::entity_uid_t uid;
+  shared::geometry_value_t value;
+};
+
+struct diff_geometry_modified_t
+{
+  shared::entity_uid_t uid;
+  shared::geometry_value_t before;
+  shared::geometry_value_t after;
+};
+
+using edit_diff_t =
+    std::variant<diff_entity_created_t, diff_entity_removed_t, diff_entity_modified_t,
+                 diff_geometry_created_t, diff_geometry_removed_t,
+                 diff_geometry_modified_t>;
 
 struct transaction_t
 {
@@ -111,6 +146,28 @@ struct transaction_builder_t
       const std::map<std::string, std::string> &after)
   {
     add_modified(uid, diff_properties(before, after));
+  }
+
+  // --- geometry ---
+
+  void add_geometry_created(shared::entity_uid_t uid, shared::geometry_value_t value)
+  {
+    diffs.push_back(diff_geometry_created_t{uid, std::move(value)});
+  }
+
+  void add_geometry_removed(shared::entity_uid_t uid, shared::geometry_value_t value)
+  {
+    diffs.push_back(diff_geometry_removed_t{uid, std::move(value)});
+  }
+
+  // No-op if the value didn't actually change, so a click-without-drag doesn't
+  // push an empty transaction the user then has to undo twice.
+  void add_geometry_modified(shared::entity_uid_t uid, shared::geometry_value_t before,
+                             shared::geometry_value_t after)
+  {
+    if (geometry_values_equal(before, after))
+      return;
+    diffs.push_back(diff_geometry_modified_t{uid, std::move(before), std::move(after)});
   }
 
   transaction_t take()
@@ -200,7 +257,13 @@ private:
                   props[c.field] = c.after;
                 entry->entity->init_from_map(props);
               }
-            }},
+            },
+            [&](const diff_geometry_created_t &d)
+            { map.add_geometry_with_uid(d.uid, d.value); },
+            [&](const diff_geometry_removed_t &d)
+            { map.remove_geometry(d.uid); },
+            [&](const diff_geometry_modified_t &d)
+            { set_geometry_value(map, d.uid, d.after); }},
         diff);
   }
 
@@ -230,8 +293,29 @@ private:
                   props[c.field] = c.before;
                 entry->entity->init_from_map(props);
               }
-            }},
+            },
+            [&](const diff_geometry_created_t &d)
+            { map.remove_geometry(d.uid); },
+            [&](const diff_geometry_removed_t &d)
+            { map.add_geometry_with_uid(d.uid, d.value); },
+            [&](const diff_geometry_modified_t &d)
+            { set_geometry_value(map, d.uid, d.before); }},
         diff);
+  }
+
+  // Write a whole geometry value back over the object with this uid. The entire
+  // apply/revert asymmetry of the entity flavor collapses into this one line.
+  static void set_geometry_value(shared::map_t &map, shared::entity_uid_t uid,
+                                 const shared::geometry_value_t &value)
+  {
+    shared::map_geometry_t *entry = map.find_geometry_by_uid(uid);
+    if (!entry)
+    {
+      log_error("transaction: geometry uid {} is gone — cannot restore its value",
+                uid);
+      return;
+    }
+    entry->value = value;
   }
 };
 

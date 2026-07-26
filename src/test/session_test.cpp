@@ -1,5 +1,4 @@
 #include "entities/player_entity.hpp"
-#include "entities/static_entities.hpp"
 #include "game_session.hpp"
 #include "log.hpp"
 #include "map.hpp" // shared::create_entity_by_classname
@@ -16,14 +15,11 @@ int main()
   map_t test_map;
   test_map.name = "Test Map";
 
-  // Add an AABB Entity instead of static_geometry
-  auto aabb_ent = shared::create_entity_by_classname("aabb_entity");
-  if (auto *e = shared::entity_as<network::AABB_Entity>(aabb_ent.get()))
-  {
-    e->position = {0, 0, 0};
-    e->volume.half_extents = {10, 10, 10};
-  }
-  test_map.add_entity(aabb_ent);
+  // A box brush — map-owned geometry, not an entity.
+  box_geometry_t floor;
+  floor.position = {0, 0, 0};
+  floor.half_extents = {10, 10, 10};
+  const entity_uid_t floor_uid = test_map.add_geometry(floor);
 
   // Add a Player Spawn marker
   auto spawn_ent = shared::create_entity_by_classname("player_start");
@@ -31,7 +27,16 @@ int main()
   {
     p->position = {5, 5, 0};
   }
-  test_map.add_entity(spawn_ent);
+  const entity_uid_t spawn_uid = test_map.add_entity(spawn_ent);
+
+  // Geometry and entities share one uid space, so the two must differ.
+  if (floor_uid != 1 || spawn_uid != 2)
+  {
+    log_error("uids should be allocated from one shared counter; got floor={}, "
+              "spawn={}",
+              floor_uid, spawn_uid);
+    return 1;
+  }
 
   // 2. Initialize Session
   game_session_t session;
@@ -46,32 +51,56 @@ int main()
     return 1;
   }
 
-  // Verify Static Geometry (Entities) and BVH
-  // We expect 1 static entity (AABB) and 1 dynamic (Player) -> handled by
-  // EntitySystem? init_session_from_map likely splits them. We need to check
-  // implementation of init_session_from_map. Assuming it puts AABB in
-  // static_entities.
-  if (session.static_entities.size() != 1)
+  // The session copies the map's geometry; entities go to the entity system.
+  if (session.geometry.size() != 1)
   {
-    log_error("Static Entities Size Mismatch. Expected 1, got {}",
-              session.static_entities.size());
+    log_error("Session geometry size mismatch. Expected 1, got {}",
+              session.geometry.size());
     return 1;
   }
 
-  // Verify map uid propagated into AABB's entity_id field. Pre-fix every
-  // map-loaded entity ended up with entity_id == 0 because the map→runtime
-  // hand-off didn't copy uid → entity_id.
-  network::AABB_Entity *aabb_static =
-      shared::entity_as<network::AABB_Entity>(session.static_entities[0].get());
-  if (!aabb_static || aabb_static->entity_id != 1)
+  if (session.geometry[0].uid != floor_uid)
   {
-    log_error("AABB static entity_id should equal map uid 1, got {}",
-              aabb_static ? aabb_static->entity_id : 0u);
+    log_error("Session geometry uid mismatch. Expected {}, got {}", floor_uid,
+              session.geometry[0].uid);
     return 1;
+  }
+
+  // The session's geometry must be a COPY, not an alias of the map's. Editing
+  // the session must not write through into the map — the old shared_ptr path
+  // did exactly that, and P7's ownership work depends on it staying broken apart.
+  {
+    box_geometry_t *session_box =
+        std::get_if<box_geometry_t>(&session.geometry[0].value);
+    if (!session_box)
+    {
+      log_error("Session geometry 0 should be a box");
+      return 1;
+    }
+    session_box->half_extents = {99, 99, 99};
+
+    const map_geometry_t *map_entry = test_map.find_geometry_by_uid(floor_uid);
+    const box_geometry_t *map_box =
+        map_entry ? std::get_if<box_geometry_t>(&map_entry->value) : nullptr;
+    if (!map_box)
+    {
+      log_error("Map geometry {} should still be a box", floor_uid);
+      return 1;
+    }
+    if (map_box->half_extents.x != 10.f)
+    {
+      log_error("Session aliases the map's geometry: writing the session's copy "
+                "changed the map's half_extents to {}",
+                map_box->half_extents.x);
+      return 1;
+    }
+
+    // Put it back so the BVH check below still describes the real geometry.
+    session_box->half_extents = {10, 10, 10};
   }
 
   // Verify the runtime spawn counter was seeded past the highest map uid.
-  // aabb is uid 1, player is uid 2, so map.next_uid is 3 → entity_system
+  // The box is uid 1, the spawn is uid 2, so map.next_uid is 3 → entity_system
   // next_entity_id must also be 3 so the next spawn() can't collide.
   if (session.entity_system.next_entity_id != 3)
   {
@@ -80,13 +109,11 @@ int main()
     return 1;
   }
 
-  // Verify BVH (should be built from static entities)
-  // If BVH building is implemented for entities, this should pass.
+  // Verify BVH (built over the session's geometry)
   if (session.bvh.nodes.empty())
   {
-    log_warning("BVH Empty (Might be expected if BVH build logic not fully "
-                "updated for entities yet)");
-    // return 1; // Don't fail if BVH build implementation pending
+    log_error("BVH is empty; it should have one leaf for the box brush");
+    return 1;
   }
 
   // Verify Entity System (Player spawn marker).
@@ -114,10 +141,9 @@ int main()
   }
 
   // Verify spawn marker's entity_id matches its map uid (added second, uid = 2).
-  // Same root cause as the AABB check above.
-  if (spawn.entity_id != 2)
+  if (spawn.entity_id != spawn_uid)
   {
-    log_error("Spawn marker entity_id should equal map uid 2, got {}",
+    log_error("Spawn marker entity_id should equal map uid {}, got {}", spawn_uid,
               spawn.entity_id);
     return 1;
   }

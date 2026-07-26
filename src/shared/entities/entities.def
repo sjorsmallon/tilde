@@ -160,7 +160,7 @@ Particle_Emitter_Entity :: entity {
 }
 
 Trigger_Volume_Entity :: entity {
-    volume:            Box_Volume
+    volume:            Box_Volume               @Editable
     action:            Trigger_Action = .Kill   @Editable @Saveable
     fire_mode:         Fire_Mode = .On_Enter    @Editable @Saveable
     param_target_name: string<64>               @Editable @Saveable

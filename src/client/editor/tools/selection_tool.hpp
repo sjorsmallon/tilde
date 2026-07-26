@@ -10,6 +10,15 @@
 namespace client
 {
 
+// One selected object's pre-drag state, whichever regime backs it. Exactly one
+// member is engaged: an entity is captured as its property strings and diffed on
+// commit, a geometry value is captured whole and swapped.
+struct object_snapshot_t
+{
+  std::map<std::string, std::string> entity_properties;
+  std::optional<shared::geometry_value_t> geometry;
+};
+
 class Selection_Tool : public Editor_Tool
 {
 public:
@@ -51,8 +60,11 @@ private:
   std::vector<std::pair<shared::entity_uid_t, linalg::vec3>> drag_start_positions;
   linalg::vec3 drag_plane_hit_start;    // initial plane hit point
   linalg::vec3 drag_plane_normal;       // normal of the drag plane
-  std::map<shared::entity_uid_t, std::map<std::string, std::string>>
-      drag_start_snapshots;
+  std::map<shared::entity_uid_t, object_snapshot_t> drag_start_snapshots;
+
+  // Snapshot / commit for the multi-object drag, regime-agnostic at the call site.
+  void capture_drag_snapshots(editor_context_t &ctx);
+  void commit_drag_snapshots(editor_context_t &ctx);
 };
 
 } // namespace client

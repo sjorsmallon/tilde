@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../../shared/entities/displacement_entity.hpp"
 #include "../../../shared/map.hpp"
+#include "../../../shared/map_geometry.hpp"
 #include "../editor_tool.hpp"
 #include "../transaction_system.hpp"
 #include <optional>
@@ -60,7 +60,13 @@ private:
   bool resize_moved = false;
   shared::box_face_t resize_face = shared::box_face_t::Invalid;
   viewport_state_t resize_last_view;
-  std::map<std::string, std::string> resize_start_props;
+
+  // Whole-value start states for the two multi-frame edits (face resize, and a
+  // run of Q/E height steps in Select mode). Geometry undo is a value swap, so a
+  // snapshot is just a copy of the object — no property map, no text round-trip,
+  // and a sub-threshold height change can no longer vanish on the way through
+  // formatted floats.
+  std::optional<shared::geometry_value_t> resize_start_geometry;
 
   // Select mode state
   std::vector<bool> selected_vertices_bitmask;          // grid_size*grid_size selection bitmask
@@ -69,19 +75,21 @@ private:
   linalg::vec2 box_end_screen;          // pixels, drag current/end
   float height_snap = 128.0f;
   viewport_state_t cached_view;         // updated each on_update
-  std::map<std::string, std::string> select_start_props;
+  std::optional<shared::geometry_value_t> select_start_geometry;
 
   // Helpers
-  network::Displacement_Entity *get_selected(editor_context_t &ctx);
-  bool raycast_displacement_mesh(const network::Displacement_Entity &ent,
+  shared::displacement_geometry_t *get_selected(editor_context_t &ctx);
+  bool raycast_displacement_mesh(const shared::displacement_geometry_t &displacement,
                                  const linalg::vec3 &ray_origin,
                                  const linalg::vec3 &ray_dir, float &out_t,
                                  linalg::vec3 &out_normal);
-  void apply_brush(network::Displacement_Entity &ent, float dt, bool invert);
-  void regenerate_mesh(network::Displacement_Entity &ent,
-                       shared::entity_uid_t uid);
+  void apply_brush(shared::displacement_geometry_t &displacement, float dt, bool invert);
   linalg::vec2 project_to_screen(const linalg::vec3 &world_pos) const;
-  void commit_select_edit();
+
+  // Push a value-swap transaction for a finished multi-frame edit, then drop the
+  // start state. Both take the snapshot member by reference so they clear it.
+  void commit_geometry_edit(editor_context_t &ctx,
+                            std::optional<shared::geometry_value_t> &start_state);
   void clear_selection(int grid_size);
 };
 

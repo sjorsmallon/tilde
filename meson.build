@@ -129,6 +129,7 @@ game_shared_src = [
   'src/shared/game_cvars.cpp',
   'src/shared/network/schema.cpp',
   'src/shared/map.cpp',
+  'src/shared/map_geometry.cpp',
   'src/shared/entity_system.cpp',
   'src/shared/entity.cpp',
   'src/shared/game_session.cpp',

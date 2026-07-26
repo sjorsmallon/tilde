@@ -1,7 +1,9 @@
 #include "displacement_tool.hpp"
 #include "../../../shared/box_face.hpp"
 #include "../../../shared/collision_detection.hpp"
+#include "../../../shared/log.hpp"
 #include "../../../shared/shapes.hpp"
+#include "../../geometry_renderer.hpp"
 #include "imgui.h"
 #include "renderer.hpp"
 #include <cmath>
@@ -23,41 +25,59 @@ void Displacement_Tool::on_disable(editor_context_t &ctx)
   currently_painting = false;
   cursor_valid = false;
   box_selecting = false;
-  commit_select_edit();
-
-  if (resize_dragging && !resize_start_props.empty() && ctx.transaction_system &&
-      ctx.map)
-  {
-    auto *entry = ctx.map->find_by_uid(selected_uid);
-    if (entry && entry->entity)
-    {
-      transaction_builder_t builder;
-      builder.add_modified_from_diff(selected_uid, resize_start_props,
-                                     entry->entity->get_all_properties());
-      ctx.transaction_system->push(builder.take());
-    }
-  }
+  commit_geometry_edit(ctx, select_start_geometry);
+  commit_geometry_edit(ctx, resize_start_geometry);
   resize_dragging = false;
-  resize_start_props.clear();
 }
 
 // ===================================================================
 // Helpers
 // ===================================================================
 
-network::Displacement_Entity *
+shared::displacement_geometry_t *
 Displacement_Tool::get_selected(editor_context_t &ctx)
 {
-  if (selected_uid == shared::invalid_entity_uid|| !ctx.map)
+  if (selected_uid == shared::invalid_entity_uid || !ctx.map)
     return nullptr;
-  auto *entry = ctx.map->find_by_uid(selected_uid);
-  if (!entry || !entry->entity)
+
+  shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(selected_uid);
+  if (!entry)
     return nullptr;
-  return shared::entity_as<network::Displacement_Entity>(entry->entity.get());
+
+  return std::get_if<shared::displacement_geometry_t>(&entry->value);
+}
+
+// Push the accumulated change for a multi-frame edit as one value swap.
+void Displacement_Tool::commit_geometry_edit(
+    editor_context_t &ctx, std::optional<shared::geometry_value_t> &start_state)
+{
+  if (!start_state)
+    return;
+
+  // Take the snapshot regardless of what happens below, so a failed commit
+  // can't leave a stale start state to be diffed against a later edit.
+  const shared::geometry_value_t before = std::move(*start_state);
+  start_state.reset();
+
+  if (!ctx.transaction_system || !ctx.map)
+    return;
+
+  const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(selected_uid);
+  if (!entry)
+  {
+    log_error("displacement tool: geometry uid {} vanished mid-edit — the edit "
+              "is not undoable",
+              selected_uid);
+    return;
+  }
+
+  transaction_builder_t builder;
+  builder.add_geometry_modified(selected_uid, before, entry->value);
+  ctx.transaction_system->push(builder.take());
 }
 
 bool Displacement_Tool::raycast_displacement_mesh(
-    const network::Displacement_Entity &ent, const linalg::vec3 &ray_origin,
+    const shared::displacement_geometry_t &ent, const linalg::vec3 &ray_origin,
     const linalg::vec3 &ray_dir, float &out_t, linalg::vec3 &out_normal)
 {
   if (ent.active_face == shared::box_face_t::Invalid)
@@ -108,7 +128,7 @@ bool Displacement_Tool::raycast_displacement_mesh(
   return hit;
 }
 
-void Displacement_Tool::apply_brush(network::Displacement_Entity &ent,
+void Displacement_Tool::apply_brush(shared::displacement_geometry_t &ent,
                                     float dt, bool invert)
 {
   if (!cursor_valid || ent.active_face == shared::box_face_t::Invalid)
@@ -139,27 +159,6 @@ void Displacement_Tool::apply_brush(network::Displacement_Entity &ent,
   }
 }
 
-void Displacement_Tool::regenerate_mesh(network::Displacement_Entity &ent,
-                                        shared::entity_uid_t uid)
-{
-  std::string key = "__displacement_" + std::to_string(uid);
-  auto handle = assets::find_mesh_in_cache(key.c_str());
-  if (handle.valid())
-  {
-    // Update existing mesh in-place and re-upload to GPU
-    auto *mesh = assets::get_mutable(handle);
-    if (mesh)
-      *mesh = network::generate_displacement_mesh(ent);
-    renderer::invalidate_mesh_gpu(handle);
-  }
-  else
-  {
-    // First time: register the mesh
-    auto mesh = network::generate_displacement_mesh(ent);
-    assets::register_dynamic_mesh(key.c_str(), std::move(mesh));
-  }
-}
-
 linalg::vec2 Displacement_Tool::project_to_screen(const linalg::vec3 &world_pos) const
 {
   linalg::vec3 cam_pos = {cached_view.camera.position.x, cached_view.camera.position.y,
@@ -171,11 +170,6 @@ linalg::vec2 Displacement_Tool::project_to_screen(const linalg::vec3 &world_pos)
                                 cached_view.camera.orthographic,
                                 cached_view.camera.ortho_height,
                                 cached_view.fov);
-}
-
-void Displacement_Tool::commit_select_edit()
-{
-  select_start_props.clear();
 }
 
 void Displacement_Tool::clear_selection(int grid_size)
@@ -214,18 +208,18 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
           if (hit.id.type == Collision_Id::Type::Static_Geometry)
           {
             shared::entity_uid_t uid = hit.id.index;
-            auto* entry = ctx.map->find_by_uid(uid);
-            if (entry && entry->entity)
+            shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(uid);
+            if (entry)
             {
-              if (auto *disp = shared::entity_as<network::Displacement_Entity>(
-                      entry->entity.get()))
+              if (const auto *disp =
+                      std::get_if<shared::displacement_geometry_t>(&entry->value))
               {
                 hovered_uid = uid;
 
                 // Face picking on the AABB bounds
                 shared::aabb_t aabb;
                 aabb.center = disp->position;
-                aabb.half_extents = disp->volume.half_extents;
+                aabb.half_extents = disp->half_extents;
                 float t;
                 shared::box_face_t face;
                 if (shared::ray_aabb_face_intersection(view.mouse_ray.origin,
@@ -263,7 +257,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
     {
       bool invert = input::current_modifiers().shift;
       apply_brush(*ent, dt, invert);
-      regenerate_mesh(*ent, selected_uid);
+      refresh_displacement_mesh(*ent, selected_uid);
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
   }
@@ -294,9 +288,19 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
         {
           if (e.mods.shift)
           {
-            // Shift+click: initialize displacement on this face
-            ent->init_displacement(hovered_face, pending_subdivision);
-            regenerate_mesh(*ent, selected_uid);
+            // Shift+click: initialize displacement on this face. A single-frame
+            // edit, so snapshot and commit right here.
+            const shared::geometry_value_t before = *ent;
+            ent->init_grid(hovered_face, pending_subdivision);
+            refresh_displacement_mesh(*ent, selected_uid);
+
+            if (ctx.transaction_system)
+            {
+              transaction_builder_t builder;
+              builder.add_geometry_modified(selected_uid, before, *ent);
+              ctx.transaction_system->push(builder.take());
+            }
+
             if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
               *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
           }
@@ -306,13 +310,7 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
             resize_dragging = true;
             resize_moved = false;
             resize_face = hovered_face;
-
-            if (ctx.transaction_system && ctx.map)
-            {
-              auto *e = ctx.map->find_by_uid(selected_uid);
-              if (e && e->entity)
-                resize_start_props = e->entity->get_all_properties();
-            }
+            resize_start_geometry = *ent;
           }
         }
       }
@@ -329,7 +327,7 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
     box_start_screen = {(float)e.position.x, (float)e.position.y};
     box_end_screen   = box_start_screen;
     // Commit any pending height edit before starting a new selection
-    commit_select_edit();
+    commit_geometry_edit(ctx, select_start_geometry);
   }
 }
 
@@ -347,7 +345,7 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
     using namespace linalg;
 
     vec3 current_center = ent->position;
-    vec3 current_he = ent->volume.half_extents;
+    vec3 current_he = ent->half_extents;
 
     vec3 normal = shared::get_box_face_normal(resize_face);
     vec3 center_offset = {
@@ -404,11 +402,11 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
         // Grow the box by half the drag along the dragged axis and shift the
         // center by the other half, so the opposite face stays anchored.
         float half_delta = world_delta * 0.5f;
-        ent->volume.half_extents[axis] += half_delta;
+        ent->half_extents[axis] += half_delta;
         ent->position[axis] += half_delta * face_sign;
 
         // Enforce the minimum extent, again keeping the opposite face anchored.
-        float &extent = ent->volume.half_extents[axis];
+        float &extent = ent->half_extents[axis];
         if (extent < editor::MIN_EXTENT)
         {
           float correction = editor::MIN_EXTENT - extent;
@@ -416,7 +414,7 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
           ent->position[axis] -= correction * face_sign;
         }
 
-        regenerate_mesh(*ent, selected_uid);
+        refresh_displacement_mesh(*ent, selected_uid);
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
       }
     }
@@ -438,22 +436,9 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
   if (resize_dragging)
   {
     resize_dragging = false;
-
-    // Commit the resize transaction
-    if (!resize_start_props.empty() && ctx.transaction_system && ctx.map)
-    {
-      auto *entry = ctx.map->find_by_uid(selected_uid);
-      if (entry && entry->entity)
-      {
-        transaction_builder_t builder;
-        builder.add_modified_from_diff(selected_uid, resize_start_props,
-                                       entry->entity->get_all_properties());
-        ctx.transaction_system->push(builder.take());
-      }
-    }
+    commit_geometry_edit(ctx, resize_start_geometry);
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
-    resize_start_props.clear();
   }
 
   if (mode == Mode::Select && box_selecting)
@@ -496,7 +481,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
     auto *ent = get_selected(ctx);
     if (ent && ent->active_face != shared::box_face_t::Invalid)
     {
-      commit_select_edit();
+      commit_geometry_edit(ctx, select_start_geometry);
       mode = Mode::Paint;
     }
   }
@@ -520,7 +505,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
       mode = Mode::Setup;
     else if (mode == Mode::Select)
     {
-      commit_select_edit();
+      commit_geometry_edit(ctx, select_start_geometry);
       auto *ent = get_selected(ctx);
       if (ent)
         clear_selection(ent->grid_size());
@@ -545,13 +530,13 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
     if (sel_count == 0)
       return;
 
-    // Snapshot on first height change (reset each time we enter Select mode)
-    if (select_start_props.empty() && ctx.transaction_system && ctx.map)
-    {
-      auto *entry = ctx.map->find_by_uid(selected_uid);
-      if (entry && entry->entity)
-        select_start_props = entry->entity->get_all_properties();
-    }
+    // Snapshot on the first height step of a run, so a burst of Q/E presses
+    // undoes as one edit. Committed when the run ends (new box-select, mode
+    // change, or the tool going away) — which is also the bug fix: the old
+    // commit_select_edit() only DROPPED the snapshot, so height steps were
+    // silently never undoable.
+    if (!select_start_geometry)
+      select_start_geometry = *ent;
 
     float sign = (e.key == input::key_t::Q) ? 1.0f : -1.0f;
     linalg::vec3 face_normal = ent->get_face_normal();
@@ -569,7 +554,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
       }
     }
 
-    regenerate_mesh(*ent, selected_uid);
+    refresh_displacement_mesh(*ent, selected_uid);
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
@@ -586,13 +571,13 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   if (mode == Mode::Setup && hovered_uid != 0 &&
       hovered_face != shared::box_face_t::Invalid && ctx.map)
   {
-    auto *entry = ctx.map->find_by_uid(hovered_uid);
-    if (entry && entry->entity)
+    const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(hovered_uid);
+    if (entry)
     {
-      if (auto *disp = shared::entity_as<network::Displacement_Entity>(
-              entry->entity.get()))
+      if (const auto *disp =
+              std::get_if<shared::displacement_geometry_t>(&entry->value))
       {
-        linalg::vec3 he = disp->volume.half_extents;
+        linalg::vec3 he = disp->half_extents;
         linalg::vec3 normal = shared::get_box_face_normal(hovered_face);
         // Move plane center to the face by going one half-extent along the
         // face normal, then flatten the box along that same axis (size = 0).
@@ -711,7 +696,7 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
         auto *ent = get_selected(ctx);
         if (ent)
         {
-          ImGui::Text("Entity: %u", selected_uid);
+          ImGui::Text("Displacement: %u", selected_uid);
 
           if (ent->active_face != shared::box_face_t::Invalid)
           {
@@ -720,11 +705,22 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
                         face_names[static_cast<size_t>(ent->active_face)]);
             ImGui::TextDisabled("(resize locked after displacement)");
 
-            // Subdivision slider
-            if (ImGui::SliderInt("Subdivision", &pending_subdivision, 2, 32))
+            // Subdivision slider. Resamples the existing grid instead of
+            // zeroing it, so re-subdividing keeps the sculpt — and the upper
+            // bound is a UI choice now, not the 32 that the old fixed-size
+            // schema_array_t<float32, 3267> could physically hold.
+            if (ImGui::SliderInt("Subdivision", &pending_subdivision, 2, 64))
             {
-              ent->init_displacement(ent->active_face, pending_subdivision);
-              regenerate_mesh(*ent, selected_uid);
+              const shared::geometry_value_t before = *ent;
+              ent->resize_grid_preserving(pending_subdivision);
+              refresh_displacement_mesh(*ent, selected_uid);
+
+              if (ctx.transaction_system)
+              {
+                transaction_builder_t builder;
+                builder.add_geometry_modified(selected_uid, before, *ent);
+                ctx.transaction_system->push(builder.take());
+              }
               *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
             }
 
@@ -743,7 +739,7 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
       }
       else
       {
-        ImGui::Text("Click a Displacement entity");
+        ImGui::Text("Click a displacement");
       }
     }
     else if (mode == Mode::Paint)
@@ -788,7 +784,7 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
       ImGui::SameLine();
       if (ImGui::Button("Back to Setup"))
       {
-        commit_select_edit();
+        commit_geometry_edit(ctx, select_start_geometry);
         auto *ent = get_selected(ctx);
         if (ent) clear_selection(ent->grid_size());
         mode = Mode::Setup;

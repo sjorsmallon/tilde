@@ -1,5 +1,5 @@
 #include "client/editor/transaction_system.hpp"
-#include "shared/entities/static_entities.hpp"
+#include "shared/entities/trigger_volume_entity.hpp"
 #include "shared/map.hpp"
 #include <cassert>
 #include <iostream>
@@ -7,6 +7,26 @@
 using namespace client;
 using namespace shared;
 using namespace network;
+
+// A stand-in entity for the entity-flavor tests. Trigger_Volume_Entity is used
+// because it's the box-volume entity that survived the geometry exit — the box
+// brushes these tests used to build are geometry now, and exercise the OTHER
+// flavor (see the geometry tests below).
+static std::shared_ptr<Trigger_Volume_Entity> make_test_entity(float x)
+{
+  auto entity = std::make_shared<Trigger_Volume_Entity>();
+  entity->position = {x, 0, 0};
+  entity->volume.half_extents = {1, 1, 1};
+  return entity;
+}
+
+static box_geometry_t make_test_box(float x)
+{
+  box_geometry_t box;
+  box.position = {x, 0, 0};
+  box.half_extents = {1, 1, 1};
+  return box;
+}
 
 void test_add_remove()
 {
@@ -18,9 +38,7 @@ void test_add_remove()
   assert(map.entities.empty());
 
   // 1. Add entity and record diff
-  auto ent = std::make_shared<AABB_Entity>();
-  ent->position = {0, 0, 0};
-  ent->volume.half_extents = {1, 1, 1};
+  auto ent = make_test_entity(0.f);
   entity_uid_t added_uid = map.add_entity(ent);
 
   {
@@ -77,8 +95,7 @@ void test_modify()
   map_t map;
 
   // Setup
-  auto ent = std::make_shared<AABB_Entity>();
-  ent->position = {0, 0, 0};
+  auto ent = make_test_entity(0.f);
   entity_uid_t uid = map.add_entity(ent);
 
   // 1. Modify via snapshot/diff
@@ -86,8 +103,7 @@ void test_modify()
     auto *entry = map.find_by_uid(uid);
     auto before = entry->entity->get_all_properties();
 
-    auto *aabb = entity_as<AABB_Entity>(entry->entity.get());
-    aabb->position = {10.0f, 0, 0};
+    entry->entity->position = {10.0f, 0, 0};
 
     transaction_builder_t builder;
     builder.add_modified_from_diff(uid, before,
@@ -95,23 +111,16 @@ void test_modify()
     ts.push(builder.take());
   }
 
-  auto *entry = map.find_by_uid(uid);
-  auto *aabb = entity_as<AABB_Entity>(entry->entity.get());
-  assert(aabb);
-  assert(aabb->position.x == 10.0f);
+  assert(map.find_by_uid(uid)->entity->position.x == 10.0f);
   assert(ts.can_undo());
 
   // 2. Undo Modify
   ts.undo(map);
-  entry = map.find_by_uid(uid);
-  aabb = entity_as<AABB_Entity>(entry->entity.get());
-  assert(aabb->position.x == 0.0f);
+  assert(map.find_by_uid(uid)->entity->position.x == 0.0f);
 
   // 3. Redo Modify
   ts.redo(map);
-  entry = map.find_by_uid(uid);
-  aabb = entity_as<AABB_Entity>(entry->entity.get());
-  assert(aabb->position.x == 10.0f);
+  assert(map.find_by_uid(uid)->entity->position.x == 10.0f);
 
   std::cout << "Modify Passed." << std::endl;
 }
@@ -123,17 +132,9 @@ void test_batch_delete()
   map_t map;
 
   // Add 3 entities
-  auto e1 = std::make_shared<AABB_Entity>();
-  e1->position = {1, 0, 0};
-  entity_uid_t uid1 = map.add_entity(e1);
-
-  auto e2 = std::make_shared<AABB_Entity>();
-  e2->position = {2, 0, 0};
-  entity_uid_t uid2 = map.add_entity(e2);
-
-  auto e3 = std::make_shared<AABB_Entity>();
-  e3->position = {3, 0, 0};
-  entity_uid_t uid3 = map.add_entity(e3);
+  entity_uid_t uid1 = map.add_entity(make_test_entity(1.f));
+  entity_uid_t uid2 = map.add_entity(make_test_entity(2.f));
+  entity_uid_t uid3 = map.add_entity(make_test_entity(3.f));
 
   assert(map.entities.size() == 3);
 
@@ -163,12 +164,9 @@ void test_batch_delete()
   assert(map.find_by_uid(uid3) != nullptr);
 
   // Verify positions are correct
-  auto *r1 = entity_as<AABB_Entity>(map.find_by_uid(uid1)->entity.get());
-  auto *r2 = entity_as<AABB_Entity>(map.find_by_uid(uid2)->entity.get());
-  auto *r3 = entity_as<AABB_Entity>(map.find_by_uid(uid3)->entity.get());
-  assert(r1->position.x == 1.0f);
-  assert(r2->position.x == 2.0f);
-  assert(r3->position.x == 3.0f);
+  assert(map.find_by_uid(uid1)->entity->position.x == 1.0f);
+  assert(map.find_by_uid(uid2)->entity->position.x == 2.0f);
+  assert(map.find_by_uid(uid3)->entity->position.x == 3.0f);
 
   // Redo removes all 3 again
   ts.redo(map);
@@ -177,11 +175,235 @@ void test_batch_delete()
   std::cout << "Batch Delete Passed." << std::endl;
 }
 
+// ===================================================================
+// Geometry value-swap flavor
+// ===================================================================
+
+void test_geometry_add_remove()
+{
+  std::cout << "Testing Geometry Add/Remove..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  assert(map.geometry.empty());
+
+  // 1. Add a box brush
+  const box_geometry_t box = make_test_box(4.f);
+  entity_uid_t uid = map.add_geometry(box);
+  {
+    transaction_builder_t builder;
+    builder.add_geometry_created(uid, box);
+    ts.push(builder.take());
+  }
+
+  assert(map.geometry.size() == 1);
+  assert(map.find_geometry_by_uid(uid) != nullptr);
+  assert(map.has_object(uid));
+
+  // 2. Undo / redo the add
+  ts.undo(map);
+  assert(map.geometry.empty());
+  assert(!map.has_object(uid));
+
+  ts.redo(map);
+  assert(map.geometry.size() == 1);
+  assert(geometry_values_equal(map.find_geometry_by_uid(uid)->value, box));
+
+  // 3. Remove, then undo — the whole value comes back, same uid
+  {
+    transaction_builder_t builder;
+    builder.add_geometry_removed(uid, map.find_geometry_by_uid(uid)->value);
+    map.remove_geometry(uid);
+    ts.push(builder.take());
+  }
+  assert(map.geometry.empty());
+
+  ts.undo(map);
+  assert(map.geometry.size() == 1);
+  assert(geometry_values_equal(map.find_geometry_by_uid(uid)->value, box));
+
+  ts.redo(map);
+  assert(map.geometry.empty());
+
+  std::cout << "Geometry Add/Remove Passed." << std::endl;
+}
+
+void test_geometry_modify()
+{
+  std::cout << "Testing Geometry Modify..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  entity_uid_t uid = map.add_geometry(make_test_box(0.f));
+
+  const geometry_value_t before = map.find_geometry_by_uid(uid)->value;
+  std::get<box_geometry_t>(map.find_geometry_by_uid(uid)->value).position = {10.f, 0, 0};
+
+  {
+    transaction_builder_t builder;
+    builder.add_geometry_modified(uid, before,
+                                  map.find_geometry_by_uid(uid)->value);
+    ts.push(builder.take());
+  }
+  assert(ts.can_undo());
+  assert(get_position(map.find_geometry_by_uid(uid)->value).x == 10.f);
+
+  ts.undo(map);
+  assert(get_position(map.find_geometry_by_uid(uid)->value).x == 0.f);
+
+  ts.redo(map);
+  assert(get_position(map.find_geometry_by_uid(uid)->value).x == 10.f);
+
+  std::cout << "Geometry Modify Passed." << std::endl;
+}
+
+// The value-swap flavor must not push an entry when nothing changed (a click
+// without a drag), and — unlike the entity flavor's formatted-float compare — it
+// must NOT lose a change too small to survive being printed to 6 decimals.
+void test_geometry_modify_thresholds()
+{
+  std::cout << "Testing Geometry Modify thresholds..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  entity_uid_t uid = map.add_geometry(make_test_box(0.f));
+  const geometry_value_t unchanged = map.find_geometry_by_uid(uid)->value;
+
+  // No change at all → no transaction.
+  {
+    transaction_builder_t builder;
+    builder.add_geometry_modified(uid, unchanged, unchanged);
+    assert(builder.diffs.empty());
+    ts.push(builder.take());
+  }
+  assert(!ts.can_undo());
+
+  // A change far below what "%.6f" would print → still a real change.
+  const float tiny = 1e-9f;
+  const geometry_value_t before = map.find_geometry_by_uid(uid)->value;
+  std::get<box_geometry_t>(map.find_geometry_by_uid(uid)->value).position = {tiny, 0, 0};
+
+  {
+    transaction_builder_t builder;
+    builder.add_geometry_modified(uid, before,
+                                  map.find_geometry_by_uid(uid)->value);
+    assert(builder.diffs.size() == 1);
+    ts.push(builder.take());
+  }
+  assert(ts.can_undo());
+
+  ts.undo(map);
+  assert(get_position(map.find_geometry_by_uid(uid)->value).x == 0.f);
+  ts.redo(map);
+  assert(get_position(map.find_geometry_by_uid(uid)->value).x == tiny);
+
+  std::cout << "Geometry Modify thresholds Passed." << std::endl;
+}
+
+// A sculpted displacement's snapshot is its whole vertex grid, so verify the
+// grid actually round-trips through undo/redo rather than just the transform.
+void test_geometry_displacement_grid()
+{
+  std::cout << "Testing Geometry Displacement grid..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  displacement_geometry_t displacement;
+  displacement.half_extents = {64, 16, 64};
+  displacement.init_grid(box_face_t::Plus_Y, 4);
+  entity_uid_t uid = map.add_geometry(displacement);
+
+  const geometry_value_t before = map.find_geometry_by_uid(uid)->value;
+
+  auto &live = std::get<displacement_geometry_t>(map.find_geometry_by_uid(uid)->value);
+  live.set_displacement(2, 2, {0, 32.f, 0});
+
+  {
+    transaction_builder_t builder;
+    builder.add_geometry_modified(uid, before,
+                                  map.find_geometry_by_uid(uid)->value);
+    assert(builder.diffs.size() == 1);
+    ts.push(builder.take());
+  }
+
+  ts.undo(map);
+  {
+    const auto &restored =
+        std::get<displacement_geometry_t>(map.find_geometry_by_uid(uid)->value);
+    assert(restored.get_displacement(2, 2).y == 0.f);
+    assert((int)restored.displacements.size() == restored.vertex_count());
+  }
+
+  ts.redo(map);
+  {
+    const auto &restored =
+        std::get<displacement_geometry_t>(map.find_geometry_by_uid(uid)->value);
+    assert(restored.get_displacement(2, 2).y == 32.f);
+  }
+
+  std::cout << "Geometry Displacement grid Passed." << std::endl;
+}
+
+// A batch delete spanning both regimes is one transaction and one undo. This is
+// the case the editor actually hits: a box select grabs brushes and spawn
+// markers together.
+void test_mixed_batch_delete()
+{
+  std::cout << "Testing Mixed Batch Delete..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  entity_uid_t box_uid = map.add_geometry(make_test_box(1.f));
+  entity_uid_t entity_uid = map.add_entity(make_test_entity(2.f));
+  entity_uid_t box2_uid = map.add_geometry(make_test_box(3.f));
+
+  // uids come from one counter across both lists.
+  assert(box_uid == 1 && entity_uid == 2 && box2_uid == 3);
+  assert(map.object_count() == 3);
+
+  {
+    transaction_builder_t builder;
+    builder.add_geometry_removed(box_uid, map.find_geometry_by_uid(box_uid)->value);
+    builder.add_removed(entity_uid,
+                        snapshot_entity(map.find_by_uid(entity_uid)->entity.get()));
+    builder.add_geometry_removed(box2_uid, map.find_geometry_by_uid(box2_uid)->value);
+
+    assert(map.remove_object(box_uid));
+    assert(map.remove_object(entity_uid));
+    assert(map.remove_object(box2_uid));
+
+    assert(builder.diffs.size() == 3);
+    ts.push(builder.take());
+  }
+
+  assert(map.object_count() == 0);
+
+  // One undo brings back all three, regardless of regime.
+  ts.undo(map);
+  assert(map.object_count() == 3);
+  assert(map.has_object(box_uid));
+  assert(map.has_object(entity_uid));
+  assert(map.has_object(box2_uid));
+  assert(get_position(map.find_geometry_by_uid(box_uid)->value).x == 1.f);
+  assert(map.find_by_uid(entity_uid)->entity->position.x == 2.f);
+  assert(get_position(map.find_geometry_by_uid(box2_uid)->value).x == 3.f);
+
+  ts.redo(map);
+  assert(map.object_count() == 0);
+
+  std::cout << "Mixed Batch Delete Passed." << std::endl;
+}
+
 int main()
 {
   test_add_remove();
   test_modify();
   test_batch_delete();
+  test_geometry_add_remove();
+  test_geometry_modify();
+  test_geometry_modify_thresholds();
+  test_geometry_displacement_grid();
+  test_mixed_batch_delete();
   std::cout << "All Transaction Logic Tests Passed." << std::endl;
   return 0;
 }

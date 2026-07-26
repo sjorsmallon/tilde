@@ -11,23 +11,21 @@ void init_session_from_map(game_session_t &session, const map_t &map)
 {
   session.map_name = map.name;
   session.entity_system.reset();
-  session.static_entities.clear();
 
-  // Route map entities: collision geometry → static_entities (feeds BVH),
-  // everything else → entity_system (includes spawn markers, weapons, etc.).
-  // Collision-geometry uids are stamped onto the Entity directly so static
-  // bodies and dynamic bodies share one ID space.
-  for (const auto &entry : map.entities)
+  // Geometry: take a copy, in map order. No routing decision to make any more —
+  // the map already separates geometry from entities, so this used to be an
+  // is_collision_geometry() virtual call per entity deciding which of two
+  // containers a shared_ptr got aliased into.
+  session.geometry = map.geometry;
+
+  // Entities: everything left is a real entity (spawn markers, weapons, ...).
+  for (const map_entity_t &entry : map.entities)
   {
     if (!entry.entity)
       continue;
 
     entry.entity->entity_id = entry.uid;
-
-    if (entry.entity->is_collision_geometry())
-      session.static_entities.push_back(entry.entity);
-    else
-      session.entity_system.add_entity(entry.uid, entry.entity);
+    session.entity_system.add_entity(entry.uid, entry.entity);
   }
 
   // Seed runtime spawn counter past the highest map uid so subsequent
@@ -35,20 +33,23 @@ void init_session_from_map(game_session_t &session, const map_t &map)
   if (map.next_uid > session.entity_system.next_entity_id)
     session.entity_system.next_entity_id = map.next_uid;
 
-  // 2. Build BVH from Static Entities
+  // Build the BVH over the geometry. Collision_Id.index is the index into
+  // session.geometry, which is frozen for the session's lifetime. (The editor's
+  // BVH keys by uid instead — see build_editor_bvh.)
   std::vector<BVH_Input> bvh_inputs;
-  bvh_inputs.reserve(session.static_entities.size());
+  bvh_inputs.reserve(session.geometry.size());
 
-  for (size_t i = 0; i < session.static_entities.size(); ++i)
+  for (size_t i = 0; i < session.geometry.size(); ++i)
   {
-    auto *ent = session.static_entities[i].get();
-    auto bounds = compute_entity_bounds(ent);
+    const geometry_value_t &geometry = session.geometry[i].value;
+    const aabb_bounds_t bounds = get_bounds(geometry);
+
     BVH_Input input;
     input.aabb.min = bounds.min;
     input.aabb.max = bounds.max;
     input.id = {Collision_Id::Type::Static_Geometry, (uint32_t)i};
-    input.collision_planes = compute_entity_collision_planes(ent);
-    input.face_polygons    = compute_entity_face_polygons(ent);
+    input.collision_planes = get_collision_planes(geometry);
+    input.face_polygons    = get_face_polygons(geometry);
     bvh_inputs.push_back(input);
   }
 
@@ -59,29 +60,33 @@ void init_session_from_map(game_session_t &session, const map_t &map)
 
 void populate_static_physics_bodies(physics_state_t &state, const map_t &map)
 {
-  for (const auto &entry : map.entities)
+  for (const map_geometry_t &entry : map.geometry)
   {
-    if (!entry.entity)
-      continue;
+    switch (get_kind(entry.value))
+    {
+    case geometry_kind_t::Box:
+    {
+      const box_geometry_t &box = std::get<box_geometry_t>(entry.value);
+      register_static_box(state, entry.uid, box.position, box.half_extents);
+      break;
+    }
 
-    switch (entry.entity->get_type())
-    {
-    case ::entity_type::AABB:
-    {
-      auto *aabb = static_cast<network::AABB_Entity *>(entry.entity.get());
-      register_static_box(state, entry.uid, aabb->position, aabb->volume.half_extents);
+    case geometry_kind_t::Displacement:
+      // Skipped, matching pre-exit behavior exactly: Displacement_Entity was
+      // never registered here either.
+      //
+      // This is a real inconsistency, not a decision — player movement (the BVH)
+      // already collides with a displacement's box bound, so Jolt bodies pass
+      // through terrain that the player stands on. Registering the box would
+      // trade that for rockets exploding on an invisible lid above the surface,
+      // which is not obviously better; the actual fix is heightmap collision
+      // (see the TODO in get_collision_planes). Left alone on purpose — changing
+      // it is a gameplay decision, not part of moving geometry out of the entity
+      // system.
       break;
-    }
-    case ::entity_type::WEDGE:
-    {
-      // Approximate the wedge with its bounding box. The BVH handles exact
-      // wedge collision for player movement; Jolt bodies are for projectiles.
-      auto *wedge = static_cast<network::Wedge_Entity *>(entry.entity.get());
-      register_static_box(state, entry.uid, wedge->position, wedge->half_extents);
-      break;
-    }
-    default:
-      // Static_Mesh_Entity: skipped — no shape can be derived from schema fields alone.
+
+    case geometry_kind_t::Static_Mesh:
+      // Skipped on purpose — see the note on the declaration.
       break;
     }
   }
