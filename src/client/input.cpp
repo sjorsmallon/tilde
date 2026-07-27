@@ -280,12 +280,12 @@ void set_relative_mouse_mode(bool enabled)
   SDL_SetRelativeMouseMode(enabled ? SDL_TRUE : SDL_FALSE);
 }
 
-std::span<const key_event_t> frame_key_events()
+Span<const key_event_t> frame_key_events()
 {
   return g_key_events;
 }
 
-std::span<const mouse_button_event_t> frame_mouse_button_events()
+Span<const mouse_button_event_t> frame_mouse_button_events()
 {
   return g_mouse_button_events;
 }

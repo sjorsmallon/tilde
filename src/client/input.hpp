@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../shared/linalg.hpp"
+#include "../shared/span.hpp"
 #include <cstdint>
-#include <span>
 
 namespace client::input
 {
@@ -110,8 +110,8 @@ void set_relative_mouse_mode(bool enabled);
 
 // --- Frame event queues (one-shot events this frame) -------------------------
 
-std::span<const key_event_t> frame_key_events();
-std::span<const mouse_button_event_t> frame_mouse_button_events();
+Span<const key_event_t> frame_key_events();
+Span<const mouse_button_event_t> frame_mouse_button_events();
 
 // --- UI capture (forwarded from ImGui) ---------------------------------------
 

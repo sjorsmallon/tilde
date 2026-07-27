@@ -1,12 +1,12 @@
 #pragma once
 
 #include "log.hpp"
+#include "span.hpp"
 #include <algorithm>
 #include <charconv>
 #include <functional>
 #include <iostream>
 #include <mutex>
-#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -109,7 +109,7 @@ struct Console_Entry_Base
 
   // Overridden by Console_Command; returns false for ordinary CVars.
   virtual bool IsCommand() const { return false; }
-  virtual void Invoke(std::span<std::string_view> /*args*/,
+  virtual void Invoke(Span<std::string_view> /*args*/,
                       const command_context_t & /*context*/) {}
 
   const std::string &GetName() const { return name_; }
@@ -250,7 +250,7 @@ inline bool CVarSystem::Execute(std::string_view line, const command_context_t &
 // Register like a CVar — the name appears in autocomplete and Execute().
 struct Console_Command : Console_Entry_Base
 {
-  using Handler = std::function<void(std::span<std::string_view>, const command_context_t &)>;
+  using Handler = std::function<void(Span<std::string_view>, const command_context_t &)>;
 
   Console_Command(const std::string &name, Handler fn, const std::string &desc = "",
            uint64_t flags = flags::None)
@@ -260,7 +260,7 @@ struct Console_Command : Console_Entry_Base
 
   bool IsCommand() const override { return true; }
 
-  void Invoke(std::span<std::string_view> args, const command_context_t &context) override
+  void Invoke(Span<std::string_view> args, const command_context_t &context) override
   {
     if (handler_)
       handler_(args, context);

@@ -381,6 +381,135 @@ become the package hash before remote clients / streaming are real.
   MyGame_Server, then run the cold-client script. Normal play is plain
   MyGame_Client.exe (uses ./maps). Still runtime-unverified (needs the GUI).
 
+## P3 — Finish the entity DSL generator  ✅ DONE (2026-07-27)
+
+`entities.def` → `src/tools/entity_gen.cpp` → `src/shared/entities/generated/`.
+Full design + rationale in `entity_def.md`. The parser/resolver/codegen, the
+factory helpers, the placeable enumeration and the asset manifest scanner all
+landed 2026-07-26. What closed the phase on 2026-07-27:
+
+- [x] **Range API settled: a house `Span<T>` (`src/shared/span.hpp`), used
+      everywhere.** The generator's five pointer+count signatures
+      (`placeable_entity_types`, both `*_manifest`, and the
+      `fields`/`field_count` pairs in `entity_type_info_t` /
+      `component_type_info_t`) now hand back one value carrying both. The three
+      pre-existing `std::span` sites (`input.hpp`, `cvar.hpp` and its callers)
+      were converted too, so the codebase has ONE spelling for "a contiguous
+      range of T" rather than three.
+      * Iterates like any range: `begin()`/`end()` return raw pointers, which
+        are already contiguous iterators, so range-for and the `std::ranges`
+        algorithms work unchanged.
+      * The "generated output depends on nothing but `<cstdint>`" argument for a
+        house type was ALREADY spent — the generated header includes
+        `linalg.hpp`, which pulls `<algorithm>` and `<cmath>`. The type earns its
+        place on consistency, and on not making every consumer of the entity
+        tables pay for `<ranges>`.
+
+- [x] **`@runtime_only` placement: KEPT as `X :: entity @runtime_only {`.** It is
+      a property of the type, so it sits on the declaration next to the keyword
+      it modifies, the same way a field's flags sit next to the field. Kept as a
+      negative rather than inverted to `@placeable` because "an entity is a thing
+      you put in a level; some are spawned by code instead" is the mental model,
+      the majority case (5 of 8) should be the silent one, and it is the safer
+      one to forget: a forgotten `@runtime_only` puts a junk type in the
+      placement menu where you see it immediately, while a forgotten
+      `@placeable` would make a real type quietly missing from it. The attribute
+      space it opens up (`@no_network`, `@singleton`, `@category("...")` — the
+      first case wanting an argument) is written up in the .def beside it.
+
+- [x] **Asset naming settled, with no qualifiers left.** `Unit_Sphere` /
+      `Unit_Pyramid` are gone, and so is the `Missing`/`Error` duplicate:
+      * `resources/obj/sphere.obj` (3.5 MB) and `cube.obj` were referenced by
+        NOTHING. Deleted — which frees `Sphere` for the generated sphere and
+        leaves `Box` without a `Cube` synonym.
+      * `generate_pyramid_mesh` was registered and never once requested
+        (`__primitive_pyramid` appears at no call site). Deleted, so `Pyramid`
+        is pyramid.obj — the one the editor actually draws.
+      * The scan now SKIPS the placeholder's own file, so error.obj has one id
+        (`Missing`) instead of two under two names. That collision was created
+        by the generator itself, so its duplicate-name check could never fire on
+        it; `entity_layout_test` guards it instead.
+      * Manifest is now: Missing, Isosphere, Pyramid, Box, Arrow, Sphere,
+        Cylinder, Cone, Wedge. Zero collisions, zero invented names.
+      * **`procedural` SURVIVES, and the reason is a real finding.** The clean
+        end state bakes the generators to .obj so "a mesh asset is a .obj in
+        resources/obj" is the whole rule and the source column disappears. That
+        is blocked on `load_obj` NORMALIZING every .obj to a 100-unit max extent
+        while `get_primitive_mesh` returns UNIT meshes that callers scale
+        themselves — the two regimes differ by ~100×, so a baked primitive loads
+        at the wrong size. Recorded at both sites in `asset.cpp`/`asset.hpp`;
+        the migration is in todo.md.
+
+- [x] `entity_layout_test` is at 40 checks and covers all of the above.
+
+## P4 — The flag audit  ✅ DONE (2026-07-27)
+
+`@Networked`/`@Saveable` were decorative in the macro system (only `@Editable`
+was ever read, by `entity_inspector.cpp`) and are now real. Every field in
+`entities.def` was decided rather than transcribed, with the reasoning written
+at each declaration in the .def itself — this is the summary.
+
+The rule that did most of the work: **a map-placed entity's static config does
+not need `@Networked`, because the client loaded the same map.** Replicating it
+spends bandwidth telling the client what it cannot fail to already have.
+
+- [x] **`Light_Entity`: dropped `@Networked` from all seven fields.** Lights are
+      map-placed and read back out of the map. (Also worth knowing: nothing in
+      the renderer reads a `Light_Entity` at all yet — its only consumers are
+      the editor traits and picking bounds.) Dynamic lights are runtime-spawned
+      and would earn it back.
+- [x] **`Box_Volume`: dropped `@Networked`.** Its only user is
+      `Trigger_Volume_Entity`, which is invisible and entirely server-side. It
+      was putting a position and half-extents on the wire for every trigger in
+      the level, for no reader.
+- [x] **`Rocket_Entity`: dropped `@Networked` from `lifetime`, `damage_radius`,
+      `damage_amount`, `knockback_force`, `owner_id`.** `rocket_system.cpp` is
+      the only reader of all five; the client draws a rocket from `render` /
+      `position` / `orientation` / `hitbox` and reads nothing else off it.
+      `velocity` stays — it is what snapshot interpolation will need.
+- [x] **`Physics_Body_Entity`: `shape` and `size` are editor/server config, not
+      wire data.** The visual size rides in `render.scale`, which the spawn path
+      sets from the same extents. `velocity` stays networked for interpolation.
+- [x] **`Render` KEEPS `@Networked`, and it is the case that earns it**: rockets
+      and physics bodies are spawned at runtime, so a client that never had them
+      in its map learns what to draw only from the wire.
+- [x] **Every `@Editable` on a `@runtime_only` type dropped** (Player, Weapon,
+      Rocket). The inspector only ever walks map entities, so they were
+      unreachable.
+- [x] **Particle emitter: `emitter_lifetime` / `parent_entity_id` were
+      `@Networked @Editable` and are read by NOTHING** — grep finds no use
+      outside the schema registration. Emitters are built from the client's own
+      map load (`play_state.cpp:1399`), so nothing on that entity is networked.
+      `emitter_lifetime` is now authorable and persisted; `parent_entity_id` has
+      no flags at all, since a uid in a map file means nothing.
+
+Two contradictions became BUILD ERRORS rather than silently-ignored flags:
+
+- [x] **Flags on a component-typed field.** The component's own field flags are
+      what every consumer reads, so a flag at the use site is read by nobody.
+      That is exactly what `volume: Box_Volume @Editable` was doing, sitting
+      next to four unflagged component fields meaning the same thing.
+- [x] **`@Editable`/`@Saveable` on a `@runtime_only` entity.** Neither can ever
+      be read for such a type. The base's fields are exempt by construction:
+      `Entity` is not itself `@runtime_only`, and its flags describe the
+      map-placed types that inherit them.
+
+Both report file:line:column and name the fix; verified firing against a scratch
+.def. `entity_layout_test` separately checks the emitted tables agree, so the
+decisions cannot be reverted silently.
+
+- [x] **Orientation units DECIDED and documented** (in `entities.def`):
+      canonical is **Euler XYZ in DEGREES**. That is a reading of the code, not
+      a preference — `renderer.cpp:2864` multiplies `draw_mesh`'s rotation by
+      `DEG2RAD` and `physics_body_system.cpp:122` writes `quat_to_euler_degrees`
+      back, so both halves already agreed and the ambiguity was in the
+      documentation. Quaternions deferred until snapshot interpolation makes
+      slerp worth the migration. Also recorded: a Player's heading is
+      `view_angle_yaw`/`view_angle_pitch` and its motion is `velocity`;
+      `orientation` is written once at spawn (`server_impl.cpp:455`) and is
+      vestigial thereafter — which is why there is no orientation/velocity
+      relation to enforce.
+
 ## Physics body / Jolt (done: basic wiring)
 - [x] physics_body_entity (schema + entity_list registration)
 - [x] physics_body_system: `spawn_physics_body` (box/sphere) +

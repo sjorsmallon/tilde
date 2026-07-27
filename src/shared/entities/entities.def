@@ -2,8 +2,9 @@
 //
 // Parsed by src/tools/entity_gen.cpp, which emits generated/entities_generated.*
 //
-// Transcribed 2026-07-26 from the macro declarations in this folder.
-// See entity_def.md at the repo root for the design.
+// Transcribed 2026-07-26 from the macro declarations in this folder; flags
+// audited field by field 2026-07-27 (P4). See entity_def.md at the repo root
+// for the design, todo.md for the phase order.
 //
 // ---------------------------------------------------------------------------
 // DELIBERATELY ABSENT: the geometry types
@@ -16,29 +17,84 @@
 // would ever need fixed-capacity arrays; with geometry gone, it doesn't.
 //
 // ---------------------------------------------------------------------------
-// FLAGS ARE TRANSCRIBED, NOT AUDITED
+// WHAT THE THREE FLAGS MEAN  (P4, 2026-07-27 -- these are now real)
 // ---------------------------------------------------------------------------
-// In the macro system only @Editable was ever enforced; @Networked/@Saveable
-// were decorative. The generator makes all three real, so the flags below --
-// copied faithfully from the current declarations -- CHANGE BEHAVIOR.
+// In the macro system only @Editable was ever enforced, so @Networked and
+// @Saveable could sit on a field and mean nothing. The generator makes all
+// three load-bearing. Every field below has been decided, not inherited:
 //
-// The two originally known-bad cases ARE now fixed: Entity::position /
-// orientation and every Light_Entity field are @Fully_Serializable, so
-// map-placed entities keep their transform and lights persist. No FIXME(audit)
-// markers remain.
+//   @Networked  The server replicates this field to clients in snapshots.
+//               Earn it: the client must READ the field AND have no other way
+//               to get it. A map-placed entity's static config is already on
+//               the client -- it loaded the same map -- so replicating it is
+//               bandwidth spent to tell the client what it already knows.
 //
-// What is still owed is the rest of the P4 pass: every OTHER field's three
-// flags, decided deliberately rather than inherited from a macro that only
-// enforced one of them. Until that happens, treat a flag here as "what the old
-// declaration said", not "what we decided".
+//   @Editable   The editor inspector shows and edits it. The inspector only
+//               ever walks map entities, so this is unreachable on a
+//               @runtime_only type -- and the generator now rejects it there.
+//
+//   @Saveable   Written to and read from the .source map file. Same
+//               reachability rule as @Editable, same generator check.
+//
+// Two structural rules the generator enforces, both added in P4:
+//   * A component-typed field carries NO flags. The flags on the component's
+//     own fields are what every consumer reads; a flag at the use site would
+//     be silently ignored. (`volume: Box_Volume @Editable` used to do exactly
+//     that, sitting next to four unflagged component fields that meant the
+//     same thing.)
+//   * @Editable / @Saveable on a @runtime_only entity is an error, not a
+//     no-op. The base's fields are exempt by construction: `Entity` is not
+//     itself @runtime_only, and its flags describe the map-placed types.
+//
+// ---------------------------------------------------------------------------
+// ORIENTATION UNITS  (decided 2026-07-27; documented here, not yet enforced)
+// ---------------------------------------------------------------------------
+// CANONICAL: `orientation` is Euler XYZ in DEGREES. Not radians, not a
+// quaternion.
+//
+// That is a description of what the code already does, arrived at by reading
+// it rather than by preference:
+//   * renderer.cpp:2864 multiplies draw_mesh's rotation by DEG2RAD, so every
+//     draw site is feeding it degrees.
+//   * physics_body_system.cpp:122 writes `quat_to_euler_degrees(jolt_rotation)`
+//     back into orientation, so the physics bridge agrees.
+// Radians appear nowhere in stored orientation data. So the ambiguity was in
+// the DOCUMENTATION, not in two halves of the code disagreeing.
+//
+// Why not quaternions, given they are the correct storage for a rotation:
+// because switching is a real migration (every draw site, the editor gizmo,
+// the Jolt bridge, map I/O), and because the thing that makes quaternions
+// worth it -- slerping between snapshots -- is not built yet. When snapshot
+// interpolation lands (todo.md, physics bodies), revisit: that is the point at
+// which euler starts costing correctness rather than just elegance.
+//
+// KNOWN INCONSISTENCY, left alone deliberately: editor_gizmo.cpp:385-399 packs
+// euler xyz into a vec4 with w=0 in one branch and writes an identity
+// QUATERNION {0,0,0,1} in another. Those two cannot both be right. It is a
+// gizmo-local bug, not an ambiguity about what `orientation` means, so it is
+// tracked under Correctness in todo.md rather than resolved here.
+//
+// NOT the same thing as heading. A Player's facing direction is
+// view_angle_yaw / view_angle_pitch, and its motion is `velocity`, a vector.
+// `orientation` on a Player is written once at spawn (server_impl.cpp:455) and
+// never updated -- it seeds the view angles and is then vestigial. That is why
+// there is no relation to enforce between orientation and velocity: they
+// answer different questions, and for the entity where both exist, only one is
+// live.
 
 // ---------------------------------------------------------------------------
 // Base
 // ---------------------------------------------------------------------------
 
-
 Entity :: base {
+    // The receiver keys the entity by this, so it must ride the wire. It is
+    // assigned by the session, never by an author: the map file carries its
+    // own uid per entry, so this is neither editable nor saved.
     entity_id:   u32                    @Networked
+
+    // Networked because the types that MOVE (Player, Rocket, Physics_Body) all
+    // inherit it. Editable and saved because the types that DON'T move are all
+    // placed by hand.
     position:    v3                     @Fully_Serializable
     orientation: v3                     @Fully_Serializable
 }
@@ -63,24 +119,36 @@ Fully_Serializable :: [@Networked, @Editable, @Saveable]
 // and the prefix, along with its seven strncmp dispatch sites, goes away.
 //
 // Entry 0 of every class is Missing, so an unassigned field resolves to the
-// placeholder rather than to whichever asset sorted first.
+// placeholder rather than to whichever asset sorted first. The scan skips the
+// placeholder's own file, so it has exactly one name.
+//
+// WHY `procedural` STILL EXISTS (2026-07-27). The cleanest end state deletes
+// it: bake the generators to .obj, and "a mesh asset is a .obj in
+// resources/obj" becomes the whole rule, with no source column at all. That is
+// blocked on one thing, found while settling this -- load_obj NORMALIZES every
+// .obj to a 100-unit max extent (asset.cpp, see the warning there), while
+// get_primitive_mesh returns UNIT-sized meshes that callers scale themselves.
+// So the two regimes differ by ~100x and a baked primitive would load at the
+// wrong size. Fixing that means deleting the normalization, which changes how
+// every mesh in the game is sized. Not bundled into generator work.
+//
+// The NAMING is settled regardless, and needs no qualifiers: sphere.obj (3.5 MB
+// and referenced by nothing) and cube.obj (also unreferenced) are deleted, and
+// generate_pyramid_mesh -- registered but never once requested -- is gone with
+// them. So `Sphere` is the generated sphere, `Box` has no `Cube` twin, and
+// `Pyramid` is pyramid.obj, which is the one the editor actually draws.
 
 mesh_asset :: assets {
     placeholder "resources/obj/error.obj"
     scan        "resources/obj" ".obj"
 
-    // name          generator key (what get_primitive_mesh takes today)
-    procedural Box          "box"
-    procedural Arrow        "arrow"
-    procedural Cylinder     "cylinder"
-    procedural Cone         "cone"
-    procedural Wedge        "wedge"
-    // Unit_ because sphere.obj and pyramid.obj already claim the plain names.
-    // These are the generated unit-sized primitives, which really are different
-    // meshes from the art assets -- see the note in todo.md, this naming is not
-    // settled.
-    procedural Unit_Sphere  "sphere"
-    procedural Unit_Pyramid "pyramid"
+    // name         generator key (what get_primitive_mesh takes today)
+    procedural Box      "box"
+    procedural Arrow    "arrow"
+    procedural Sphere   "sphere"
+    procedural Cylinder "cylinder"
+    procedural Cone     "cone"
+    procedural Wedge    "wedge"
 }
 
 sprite_asset :: assets {
@@ -115,14 +183,25 @@ Fire_Mode :: enum { On_Enter, Every_Tick }
 // ---------------------------------------------------------------------------
 // Components
 // ---------------------------------------------------------------------------
+//
+// A component's flags are shared by every entity that embeds it -- there is no
+// per-use masking, by decision (see todo.md). So a component's flags are the
+// union of what its USERS need, and the audit below reasons about the users.
 
 // was: shared::box_volume_t
+//
+// NOT @Networked. Its only user is Trigger_Volume_Entity, which is invisible
+// and entirely server-side: no client reads a trigger's bounds, and if one
+// ever did it would be reading the map it already loaded. Previously
+// @Fully_Serializable, which put a position and half-extents on the wire for
+// every trigger in the level, for nobody.
 Box_Volume :: component {
-    position: v3 = {0, 0, 0}            @Fully_Serializable
-    half_extents: v3 = {1, 1, 1}        @Fully_Serializable
+    position: v3 = {0, 0, 0}            @Editable @Saveable
+    half_extents: v3 = {1, 1, 1}        @Editable @Saveable
 }
 
 // was: network::material_t
+// Reached only through Render, so it inherits Render's reasoning below.
 Material :: component {
     shader_type: Shader_Type = .Lit     @Fully_Serializable
     color:       v3 = {1, 1, 1}         @Fully_Serializable
@@ -130,6 +209,12 @@ Material :: component {
 }
 
 // was: network::render_component_t
+//
+// @Networked is EARNED here, unlike most static config: Rocket and
+// Physics_Body are spawned at RUNTIME, so a client that never had them in its
+// map learns what to draw only from the wire. play_state.cpp draws both
+// straight out of the snapshot map. Editable/saved because Physics_Body is
+// also map-placeable.
 Render :: component {
     mesh:         mesh_asset = .Missing @Fully_Serializable
     visible:      bool = true           @Fully_Serializable
@@ -141,6 +226,11 @@ Render :: component {
 }
 
 // was: network::hitbox_component_t
+//
+// @Networked for the debug hitbox overlay, which reads rocket.hitbox on the
+// client (play_state.cpp:1207) -- and a rocket is runtime-spawned, so the
+// client has no other source. Cheap: a hitbox never changes after spawn, so
+// delta compression sends it once and never again.
 Hitbox :: component {
     shape:  Shape_Kind = .Sphere        @Fully_Serializable
     size:   v3 = {8, 8, 8}              @Fully_Serializable
@@ -150,42 +240,95 @@ Hitbox :: component {
 // ---------------------------------------------------------------------------
 // Entities
 // ---------------------------------------------------------------------------
+//
+// @runtime_only marks a type the editor never places and the map never stores:
+// it exists only inside a running session. It sits on the declaration, next to
+// the `entity` keyword it modifies, for the same reason a field's flags sit
+// next to the field -- it is a property of the type, not a member of it.
+//
+// Kept as a NEGATIVE (rather than defaulting to runtime-only and requiring
+// @placeable) because "an entity is a thing you put in a level; some are
+// spawned by code instead" is the mental model, and the majority case should
+// be the silent one -- 5 of 8 today. It is also the safer default to forget:
+// forgetting @runtime_only puts a junk type in the placement menu, which you
+// see immediately; forgetting @placeable would make a real type quietly
+// missing from it.
+//
+// It is load-bearing now, not decorative: placeable_entity_types() is
+// generated by filtering on exactly this bit, and the two @Editable/@Saveable
+// checks above key off it.
+//
+// Room to grow, if the need shows up -- same slot, same syntax:
+//   @no_network   nothing about this type is ever replicated; makes @Networked
+//                 on any of its fields an error. Trigger_Volume and
+//                 Player_Spawn would both take it today.
+//   @singleton    at most one per session (a gamemode / world-settings entity).
+//   @category("Lighting")  grouping for the placement menu -- the first case
+//                 that wants an ARGUMENT, which the grammar should be able to
+//                 grow without moving the attribute somewhere else.
 
 // Placed in the editor; the server consumes it at load and removes it.
+// Nothing about a spawn point survives into a snapshot, so nothing is
+// @Networked -- the client never sees one.
 Player_Spawn_Entity :: entity {
     spawn_type: Spawn_Type = .Human     @Editable @Saveable
 }
 
-// I am still thinking about this @runtime_only flag and its position
 Player_Entity :: entity @runtime_only {
-    view_angle_yaw:    f32              @Networked @Editable
-    view_angle_pitch:  f32              @Networked @Editable
-    health:            i32              @Networked @Editable
-    ammo:              i32              @Networked @Editable
+    // The remote player's model is oriented from these, so they replicate.
+    view_angle_yaw:    f32              @Networked
+    view_angle_pitch:  f32              @Networked
+    // The local player's HUD reads these off its own entity. Replicated for
+    // every player because per-recipient field filtering does not exist yet;
+    // when it does, these are the first candidates.
+    health:            i32              @Networked
+    ammo:              i32              @Networked
     active_weapon_id:  i32              @Networked
+    // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
+    // Feeds remote-player interpolation.
     velocity:          v3               @Networked
     render:            Render
     hitbox:            Hitbox
 }
 
+// NOTE (P4): @runtime_only here contradicts placement_tool.cpp:231, which
+// special-cases placing a Weapon_Entity in the editor -- because today's
+// placement menu offers EVERY type from the X-macro, weapons and rockets
+// included. placeable_entity_types() replaces that menu at P5 and weapons drop
+// out of it. Keeping @runtime_only: a gun lying on the ground should be a
+// pickup entity that does not exist yet, and no system spawns or ticks a
+// Weapon_Entity at all right now. Flagged so it reads as a decision at the
+// cutover rather than as something that went missing.
 Weapon_Entity :: entity @runtime_only {
-    ammo:             i32               @Networked @Editable
+    ammo:             i32               @Networked
     active_weapon_id: i32               @Networked
     render:           Render
 }
 
 Rocket_Entity :: entity @runtime_only {
-    velocity:        v3                 @Networked @Editable
-    lifetime:        f32                @Networked @Editable
-    damage_radius:   f32                @Networked @Editable
-    damage_amount:   f32                @Networked @Editable
-    knockback_force: f32                @Networked @Editable
-    owner_id:        u32                @Networked
+    // Straight-line travel at 600 units/s: the client needs this the moment
+    // snapshot interpolation lands, and has nothing else to extrapolate from.
+    velocity:        v3                 @Networked
+    // Server-only gameplay numbers. The client neither computes damage nor
+    // draws a radius -- rocket_system.cpp is the only reader of all four, and
+    // the server despawns on lifetime itself. Previously all @Networked, which
+    // put 16 bytes of numbers on the wire per rocket for no reader.
+    lifetime:        f32
+    damage_radius:   f32
+    damage_amount:   f32
+    knockback_force: f32
+    owner_id:        u32
     render:          Render
     hitbox:          Hitbox
 }
 
+// The client builds emitters from ITS OWN MAP LOAD, not from snapshots --
+// play_state.cpp:1399 iterates map.entities_of_type<Particle_Emitter_Entity>().
+// So nothing here is @Networked, and nothing should become @Networked one
+// field at a time: the day an emitter is spawned at runtime (an explosion
+// puff), the whole entity needs replicating and this block gets revisited as a
+// block.
 Particle_Emitter_Entity :: entity {
     sprite:             sprite_asset = .Smoke @Editable @Saveable
     emit_rate:          f32 = 20.0            @Editable @Saveable
@@ -205,12 +348,25 @@ Particle_Emitter_Entity :: entity {
     color_end:          v3 = {0.5, 0.5, 0.5}  @Editable @Saveable
     alpha_start:        f32 = 0.8             @Editable @Saveable
     alpha_end:          f32 = 0.0             @Editable @Saveable
-    emitter_lifetime:   f32 = 0.0             @Networked @Editable
-    parent_entity_id:   u32 = 0               @Networked @Editable
+
+    // These two are DECLARED AND READ BY NOTHING -- grep finds no use outside
+    // the schema registration itself. They were @Networked @Editable, which
+    // claimed both a wire cost and an inspector row for a feature that does
+    // not exist. Audited as:
+    //   emitter_lifetime  a map author could plausibly want a one-shot emitter,
+    //                     so it stays authorable and persisted.
+    //   parent_entity_id  a uid means nothing in a map file (uids are assigned
+    //                     per session), so it can only ever be runtime state
+    //                     set by whoever spawns the emitter. No flags.
+    emitter_lifetime:   f32 = 0.0             @Editable @Saveable
+    parent_entity_id:   u32 = 0
 }
 
+// Invisible and entirely server-side: the server evaluates triggers, the
+// client is never told one exists. Nothing here is @Networked, and Box_Volume
+// above dropped @Networked for the same reason.
 Trigger_Volume_Entity :: entity {
-    volume:            Box_Volume               @Editable
+    volume:            Box_Volume
     action:            Trigger_Action = .Kill   @Editable @Saveable
     fire_mode:         Fire_Mode = .On_Enter    @Editable @Saveable
     // 64 is enough for a spawn name to match against. param_string is
@@ -223,20 +379,38 @@ Trigger_Volume_Entity :: entity {
     param_float:       f32 = 0.0                @Editable @Saveable
 }
 
-
+// Lights are placed in the editor and read back out of the MAP -- and the
+// client loads the same map, so it already has every one of them.
+// @Networked on all seven fields was inherited from the macro declaration and
+// replicated static config the client could not fail to have.
+//
+// Worth knowing while reading this: nothing in the renderer reads a
+// Light_Entity yet. Its only consumers are the editor traits and picking
+// bounds. When dynamic lights (muzzle flash, explosion) arrive they are
+// runtime-spawned, and that is the change that earns @Networked back -- the
+// same shape of argument as Render above.
 Light_Entity :: entity {
-    direction:          v3                     @Fully_Serializable
-    color:              v3 = {1, 1, 1}         @Fully_Serializable
-    intensity:          f32 = 1.0              @Fully_Serializable
-    range:              f32                    @Fully_Serializable
-    spot_inner_degrees: f32                    @Fully_Serializable
-    spot_outer_degrees: f32                    @Fully_Serializable
-    kind:               Light_Type = .Point    @Fully_Serializable
+    direction:          v3                     @Editable @Saveable
+    color:              v3 = {1, 1, 1}         @Editable @Saveable
+    intensity:          f32 = 1.0              @Editable @Saveable
+    range:              f32                    @Editable @Saveable
+    spot_inner_degrees: f32                    @Editable @Saveable
+    spot_outer_degrees: f32                    @Editable @Saveable
+    kind:               Light_Type = .Point    @Editable @Saveable
 }
 
+// Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console
+// commands), which is why its Render component has to be @Networked while its
+// own configuration does not: play_state.cpp draws a body from
+// body.position / body.orientation / body.render and reads nothing else off it.
 Physics_Body_Entity :: entity {
-    shape:    Shape_Kind = .Box         @Fully_Serializable
-    size:     v3                        @Fully_Serializable
+    // Jolt's shape and the editor's size box. Server-side simulation input;
+    // the visual size rides in render.scale, which the spawn path sets from
+    // the same extents.
+    shape:    Shape_Kind = .Box         @Editable @Saveable
+    size:     v3                        @Editable @Saveable
+    // Kept @Networked for the interpolation item in todo.md: bodies currently
+    // snap to each snapshot, and velocity is what a lerp/extrapolate needs.
     velocity: v3                        @Networked
     mass:     f32                       @Editable @Saveable
     render:   Render

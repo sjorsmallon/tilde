@@ -68,7 +68,7 @@ void Console::RegisterRemoteCVar(const std::string &name,
     // forwards the whole line to the network forwarder.
     remote_stubs_.push_back(std::make_unique<cvar::Console_Command>(
         name,
-        [](std::span<std::string_view>, const cvar::command_context_t &) {},
+        [](Span<std::string_view>, const cvar::command_context_t &) {},
         description, flags));
   }
   else
@@ -118,7 +118,7 @@ void Console::PollBindings()
 // at invocation time (the singleton is local-static, lazily initialised).
 static cvar::Console_Command cmd_bind(
     "bind",
-    [](std::span<std::string_view> args, const cvar::command_context_t &)
+    [](Span<std::string_view> args, const cvar::command_context_t &)
     {
       if (args.size() < 2)
       {

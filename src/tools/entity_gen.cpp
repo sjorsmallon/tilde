@@ -1898,6 +1898,15 @@ static void expand_asset_manifests(program_t* program)
           char path[1024];
           snprintf(path, sizeof(path), "%s/%s", declaration->scan_directory, filename);
 
+          // The placeholder file is already slot 0 (Missing). Scanning it again
+          // would give one file two ids under two names, which is precisely the
+          // "two spellings of one concept" the collision check exists to stop --
+          // it just happens to be a collision the generator itself created, so
+          // the check could never fire on it. Skip it instead.
+          if (declaration->placeholder_path != nullptr &&
+              strcmp(path, declaration->placeholder_path) == 0)
+            continue;
+
           asset_entry_t entry = {};
           entry.name          = arena_copy(program, derived, (int32_t)strlen(derived));
           entry.source        = arena_copy(program, path, (int32_t)strlen(path));
@@ -1948,6 +1957,69 @@ static void expand_asset_manifests(program_t* program)
   memcpy(program->asset_entries, combined, (size_t)combined_count * sizeof(asset_entry_t));
   program->asset_entry_count = combined_count;
   free(combined);
+}
+
+// The three flags become REAL at the cutover -- in the macro system only
+// @Editable was ever enforced, so a flag that cannot mean anything was free to
+// sit there and read as if it did. These two checks close the cases where a
+// flag is not merely unused but self-contradictory, so that "a flag is here"
+// and "this flag has an effect" are the same statement.
+//
+// Both are errors rather than warnings on purpose: each one is a claim about
+// the field that is false, and a false claim in the .def is what the whole
+// generator exists to stop being possible.
+static void check_flag_contradictions(program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENTITY && declaration->kind != DECLARATION_COMPONENT &&
+        declaration->kind != DECLARATION_BASE)
+      continue;
+
+    const bool runtime_only = (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY) != 0;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* field = &program->fields[declaration->first_field + offset];
+
+      // A component-typed field carries no flags of its own: the component's
+      // own field flags are the truth, and a recursive walk reads those. A flag
+      // written here would be silently ignored by every consumer -- which is
+      // how `volume: Box_Volume @Editable` came to sit next to four unflagged
+      // component fields meaning exactly the same thing.
+      if (field->type.kind == TYPE_COMPONENT && field->flags != FIELD_FLAG_NONE)
+      {
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is a component, so it cannot carry flags: the flags on "
+                     "'%.*s''s own fields are what every consumer reads. Move them there, or "
+                     "drop them here",
+                     field->name.length, field->name.data, field->type.name.length,
+                     field->type.name.data);
+        continue;
+      }
+
+      // @runtime_only says the type is never placed in the editor and never
+      // written to a map. @Editable (the editor inspector only ever sees map
+      // entities) and @Saveable (map I/O only ever visits map entities) are
+      // therefore unreachable on such a field, not merely unused.
+      if (runtime_only && (field->flags & (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)) != 0)
+      {
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is %s%s%s, but '%.*s' is @runtime_only -- it is never placed "
+                     "in the editor and never written to a map, so neither flag can ever be "
+                     "read. Drop the flag, or drop @runtime_only",
+                     field->name.length, field->name.data,
+                     (field->flags & FIELD_FLAG_EDITABLE) ? "@Editable" : "",
+                     (field->flags & (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)) ==
+                             (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)
+                         ? " and "
+                         : "",
+                     (field->flags & FIELD_FLAG_SAVEABLE) ? "@Saveable" : "",
+                     declaration->name.length, declaration->name.data);
+      }
+    }
+  }
 }
 
 // `.Something` defaults name a value in a closed set, and the set is only known
@@ -2012,6 +2084,7 @@ static void resolve_program(program_t* program)
   resolve_class_annotations(program);
   resolve_types(program, &table);
   check_component_cycles(program);
+  check_flag_contradictions(program);
   expand_asset_manifests(program);
   check_literal_defaults(program);
 
@@ -2306,6 +2379,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
   // Paths are relative to src/shared, which is game_shared's public include dir.
   fprintf(out, "#include \"linalg.hpp\"\n");
   fprintf(out, "#include \"network/network_types.hpp\"\n");
+  fprintf(out, "#include \"span.hpp\"\n");
   fprintf(out, "#include <cstdint>\n\n");
   fprintf(out, "namespace entities\n{\n\n");
 
@@ -2370,7 +2444,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
               declaration->name.length, declaration->name.data);
       fprintf(out, "// init: registration must NOT be lazy, or an id resolves to nothing\n");
       fprintf(out, "// depending on what ran first.\n");
-      fprintf(out, "const asset_info_t* %.*s_manifest(uint32_t* out_count);\n\n",
+      fprintf(out, "Span<const asset_info_t> %.*s_manifest();\n\n",
               declaration->name.length, declaration->name.data);
     }
   }
@@ -2559,8 +2633,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "struct entity_type_info_t\n{\n");
   fprintf(out, "  const char*         classname;\n");
   fprintf(out, "  const char*         display_name;\n");
-  fprintf(out, "  const field_info_t* fields;\n");
-  fprintf(out, "  uint32_t            field_count;\n");
+  fprintf(out, "  Span<const field_info_t> fields;\n");
   fprintf(out, "  uint32_t            size_in_bytes;\n");
   fprintf(out, "  uint32_t            alignment;\n");
   fprintf(out, "  uint32_t            component_mask;\n");
@@ -2574,8 +2647,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
 
   fprintf(out, "struct component_type_info_t\n{\n");
   fprintf(out, "  const char*         name;\n");
-  fprintf(out, "  const field_info_t* fields;\n");
-  fprintf(out, "  uint32_t            field_count;\n");
+  fprintf(out, "  Span<const field_info_t> fields;\n");
   fprintf(out, "  uint32_t            size_in_bytes;\n");
   fprintf(out, "};\n\n");
 
@@ -2609,9 +2681,8 @@ static void emit_generated_header(FILE* out, const program_t* program)
   // --- placeable types ---
   fprintf(out, "// Every entity type the editor may place: the ones the .def did NOT mark\n");
   fprintf(out, "// @runtime_only, in declaration order. Contiguous and stable, so a\n");
-  fprintf(out, "// placement menu can index it directly. The count is an out param rather\n");
-  fprintf(out, "// than a second call so the two can never be read out of step.\n");
-  fprintf(out, "const entity_type* placeable_entity_types(uint32_t* out_count);\n\n");
+  fprintf(out, "// placement menu can index it directly.\n");
+  fprintf(out, "Span<const entity_type> placeable_entity_types();\n\n");
 
   fprintf(out, "// Digest of every declaration in the .def. Exchanged at connect; a\n");
   fprintf(out, "// mismatch means the two sides disagree about the entity layout.\n");
@@ -2784,7 +2855,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     if (component_ids[index] < 0)
       continue;
     const declaration_t* declaration = &program->declarations[index];
-    fprintf(out, "  {\"%.*s\", %.*s_FIELDS, %d, (uint32_t)sizeof(%.*s)},\n",
+    fprintf(out, "  {\"%.*s\", {%.*s_FIELDS, %d}, (uint32_t)sizeof(%.*s)},\n",
             declaration->name.length, declaration->name.data, declaration->name.length,
             declaration->name.data, declaration->field_count, declaration->name.length,
             declaration->name.data);
@@ -2811,7 +2882,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 
   // --- entity info table, indexed by tag, slot 0 is Invalid ---
   fprintf(out, "constexpr entity_type_info_t ENTITY_INFOS[] = {\n");
-  fprintf(out, "  {\"\", \"\", nullptr, 0, 0, 0, 0, false, nullptr}, // Invalid\n");
+  fprintf(out, "  {\"\", \"\", {}, 0, 0, 0, false, nullptr}, // Invalid\n");
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -2833,7 +2904,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     fprintf(out, "\", \"");
     write_display_name(out, declaration->name);
     fprintf(out,
-            "\", %.*s_FIELDS, %d, (uint32_t)sizeof(%.*s), (uint32_t)alignof(%.*s), %uu, %s, "
+            "\", {%.*s_FIELDS, %d}, (uint32_t)sizeof(%.*s), (uint32_t)alignof(%.*s), %uu, %s, "
             "construct_%.*s},\n",
             declaration->name.length, declaration->name.data, total_field_count,
             declaration->name.length, declaration->name.data, declaration->name.length,
@@ -2957,11 +3028,10 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     if (declaration->kind != DECLARATION_ASSETS)
       continue;
 
-    fprintf(out, "const asset_info_t* %.*s_manifest(uint32_t* out_count)\n{\n",
+    fprintf(out, "Span<const asset_info_t> %.*s_manifest()\n{\n",
             declaration->name.length, declaration->name.data);
-    fprintf(out, "  assert(out_count != nullptr);\n");
-    fprintf(out, "  *out_count = %.*s_COUNT;\n", declaration->name.length, declaration->name.data);
-    fprintf(out, "  return %.*s_MANIFEST;\n}\n\n", declaration->name.length,
+    fprintf(out, "  return {%.*s_MANIFEST, %.*s_COUNT};\n}\n\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
             declaration->name.data);
 
     fprintf(out, "const char* to_string(%.*s value)\n{\n", declaration->name.length,
@@ -3078,10 +3148,8 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
   fprintf(out, "  }\n");
   fprintf(out, "  assert(false && \"destroy_entity: entity carries an invalid tag\");\n}\n\n");
 
-  fprintf(out, "const entity_type* placeable_entity_types(uint32_t* out_count)\n{\n");
-  fprintf(out, "  assert(out_count != nullptr);\n");
-  fprintf(out, "  *out_count = PLACEABLE_ENTITY_TYPE_COUNT;\n");
-  fprintf(out, "  return PLACEABLE_ENTITY_TYPES;\n}\n\n");
+  fprintf(out, "Span<const entity_type> placeable_entity_types()\n{\n");
+  fprintf(out, "  return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};\n}\n\n");
 
   fprintf(out, "const uint32_t SCHEMA_HASH = 0x%08xu;\n\n", compute_schema_hash(program));
 

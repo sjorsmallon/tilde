@@ -3,6 +3,7 @@
 
 #include "linalg.hpp"
 #include "network/network_types.hpp"
+#include "span.hpp"
 #include <cstdint>
 
 namespace entities
@@ -14,21 +15,17 @@ namespace entities
 enum class mesh_asset : uint16_t
 {
   Missing = 0,
-  Cube = 1,
-  Error = 2,
-  Isosphere = 3,
-  Pyramid = 4,
+  Isosphere = 1,
+  Pyramid = 2,
+  Box = 3,
+  Arrow = 4,
   Sphere = 5,
-  Box = 6,
-  Arrow = 7,
-  Cylinder = 8,
-  Cone = 9,
-  Wedge = 10,
-  Unit_Sphere = 11,
-  Unit_Pyramid = 12,
+  Cylinder = 6,
+  Cone = 7,
+  Wedge = 8,
 };
 
-constexpr uint32_t mesh_asset_COUNT = 13;
+constexpr uint32_t mesh_asset_COUNT = 9;
 
 const char* to_string(mesh_asset value);
 bool from_string(const char* text, mesh_asset* out_value);
@@ -67,12 +64,12 @@ struct asset_info_t
 // The complete mesh_asset manifest, indexed by id. Populate every entry at
 // init: registration must NOT be lazy, or an id resolves to nothing
 // depending on what ran first.
-const asset_info_t* mesh_asset_manifest(uint32_t* out_count);
+Span<const asset_info_t> mesh_asset_manifest();
 
 // The complete sprite_asset manifest, indexed by id. Populate every entry at
 // init: registration must NOT be lazy, or an id resolves to nothing
 // depending on what ran first.
-const asset_info_t* sprite_asset_manifest(uint32_t* out_count);
+Span<const asset_info_t> sprite_asset_manifest();
 
 enum class Light_Type : uint8_t
 {
@@ -356,8 +353,7 @@ struct entity_type_info_t
 {
   const char*         classname;
   const char*         display_name;
-  const field_info_t* fields;
-  uint32_t            field_count;
+  Span<const field_info_t> fields;
   uint32_t            size_in_bytes;
   uint32_t            alignment;
   uint32_t            component_mask;
@@ -373,8 +369,7 @@ struct entity_type_info_t
 struct component_type_info_t
 {
   const char*         name;
-  const field_info_t* fields;
-  uint32_t            field_count;
+  Span<const field_info_t> fields;
   uint32_t            size_in_bytes;
 };
 
@@ -402,9 +397,8 @@ void destroy_entity(Entity* entity);
 
 // Every entity type the editor may place: the ones the .def did NOT mark
 // @runtime_only, in declaration order. Contiguous and stable, so a
-// placement menu can index it directly. The count is an out param rather
-// than a second call so the two can never be read out of step.
-const entity_type* placeable_entity_types(uint32_t* out_count);
+// placement menu can index it directly.
+Span<const entity_type> placeable_entity_types();
 
 // Digest of every declaration in the .def. Exchanged at connect; a
 // mismatch means the two sides disagree about the entity layout.

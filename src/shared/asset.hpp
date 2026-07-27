@@ -79,7 +79,12 @@ const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle);
 
 // Get a procedurally generated primitive mesh (cached).
 // Primitives are generated at unit size - use render_component_t scale to size them.
-// Available primitives: "box", "arrow", "sphere", "cylinder", "cone", "wedge", "pyramid"
+// Available primitives: "box", "arrow", "sphere", "cylinder", "cone", "wedge"
+//
+// NOTE: unlike load_mesh, these are NOT normalized to a 100-unit max extent --
+// see the note at the end of load_obj. That difference is why a primitive and
+// an .obj of the same shape are not interchangeable today, and it is what the
+// asset manifest's source column exists to paper over.
 asset_handle_t<mesh_asset_t> get_primitive_mesh(const char *primitive_name);
 
 // --- Dynamic mesh registration (for procedural geometry like displacements) ---

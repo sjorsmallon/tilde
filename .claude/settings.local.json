@@ -130,7 +130,15 @@
       "Bash(./cmake_build/bin/entity_layout_test.exe)",
       "Bash(echo \"exit: $?\")",
       "Bash(./cmake_build/bin/entity_gen.exe src/shared/entities/entities.def --asset-root . --dump)",
-      "Bash(cmake --build cmake_build --target MyGame -j8)"
+      "Bash(cmake --build cmake_build --target MyGame -j8)",
+      "Bash(grep -n \"^namespace\\\\|^} // namespace\\\\|^}$\" src/shared/asset.cpp)",
+      "Bash(cmake --build cmake_build --target entity_gen -j8)",
+      "Bash(./cmake_build/bin/entity_gen.exe src/shared/entities/entities.def --output-dir src/shared/entities/generated --asset-root .)",
+      "Bash(grep -v \"^--\\\\|CMake Warning\\\\|A future Abseil\\\\|3.8 and up\\\\|builds correctly\\\\|^$\\\\|Configuring done\\\\|Generating done\\\\|Build files\")",
+      "Bash(grep -n \"^## P3\\\\|^## P4\\\\|^## P5\\\\|^### LONG-TERM\\\\|^## API style\\\\|^---$\" todo.md)",
+      "Bash(grep -n \"Meson build \\(\\\\`meson.build\\\\`\\)\" todo.md)",
+      "Bash(cd \"C:/Users/sjors/.claude/projects/c--Users-sjors-Desktop-Projects-tilde-tilde/memory\" *)",
+      "Read(//c/Users/sjors/.claude/projects/c--Users-sjors-Desktop-Projects-tilde-tilde/memory/**)"
     ],
     "additionalDirectories": [
       "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"

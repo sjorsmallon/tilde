@@ -188,7 +188,7 @@ spawn_position_in_front_of(int caller_slot)
 // outlive the command object (both are translation-unit statics).
 cvar::Console_Command cmd_spawn_bot(
     "spawn_bot",
-    [](std::span<std::string_view> args, const cvar::command_context_t &)
+    [](Span<std::string_view> args, const cvar::command_context_t &)
     {
       // Parse optional type argument: "idle" | "chase" | "regular" (default: idle)
       BotType type = BotType::Idle;
@@ -213,7 +213,7 @@ cvar::Console_Command cmd_spawn_bot(
 
 cvar::Console_Command cmd_spawn_cube(
     "spawn_cube",
-    [](std::span<std::string_view>, const cvar::command_context_t &context)
+    [](Span<std::string_view>, const cvar::command_context_t &context)
     {
       if (!g_state.physics)
       {
@@ -242,7 +242,7 @@ cvar::Console_Command cmd_spawn_cube(
 // CmdChangeMap so every client follows the switch.
 cvar::Console_Command cmd_map(
     "map",
-    [](std::span<std::string_view> args, const cvar::command_context_t &)
+    [](Span<std::string_view> args, const cvar::command_context_t &)
     {
       if (args.empty())
       {
@@ -277,7 +277,7 @@ cvar::Console_Command cmd_map(
 
 cvar::Console_Command cmd_spawn_sphere(
     "spawn_sphere",
-    [](std::span<std::string_view>, const cvar::command_context_t &context)
+    [](Span<std::string_view>, const cvar::command_context_t &context)
     {
       if (!g_state.physics)
       {

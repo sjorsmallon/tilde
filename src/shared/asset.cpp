@@ -367,6 +367,21 @@ bool load_obj(const char *path, mesh_asset_t &out)
 
   // Normalize OBJ to 100-unit max extent so meshes are game-sized by default.
   // Scale uniformly around the origin so the pivot is preserved.
+  //
+  // WARNING: this discards the authored scale of every .obj, and it is the one
+  // reason a file-backed mesh and a procedurally generated one are not the same
+  // kind of thing. get_primitive_mesh returns UNIT-sized meshes and callers set
+  // render.scale to the real size; a loaded .obj is always 100 across its
+  // longest axis and callers draw it at scale 1. So the two regimes disagree by
+  // a factor of ~100 and cannot be swapped for one another.
+  //
+  // That is what blocks baking the primitives to .obj and collapsing the asset
+  // manifest to a pure directory scan (see todo.md, P3 asset naming). The
+  // migration is mechanical and behavior-preserving: pre-scale each .obj in
+  // resources/obj by its own 100/max_extent, then delete this block, and every
+  // existing draw site renders identically. It is not done here because it
+  // changes how every mesh in the game is sized, which is not a change to
+  // bundle into generator work.
   if (!out.vertices.empty())
   {
     vec3f mesh_min = out.vertices[0].position;
@@ -659,63 +674,6 @@ mesh_asset_t generate_cone_mesh(int segments = 16)
   for (int i = 0; i < segments; i++) {
     mesh.indices.insert(mesh.indices.end(), {
       uint32_t(side_start + i), uint32_t(side_start + i + 1), uint32_t(tip)
-    });
-  }
-
-  return mesh;
-}
-
-mesh_asset_t generate_pyramid_mesh()
-{
-  mesh_asset_t mesh;
-
-  // Pyramid: square base (1x1) at Y=0, tip at (0, 1, 0)
-  const float half_size = 0.5f;
-  const float height = 1.0f;
-
-  // Base vertices
-  vec3f base[4] = {
-    {-half_size, 0, -half_size},
-    { half_size, 0, -half_size},
-    { half_size, 0,  half_size},
-    {-half_size, 0,  half_size}
-  };
-
-  vec3f tip = {0, height, 0};
-
-  // Base (bottom face)
-  int base_start = mesh.vertices.size();
-  for (int i = 0; i < 4; i++) {
-    mesh.vertices.push_back({base[i], {0, -1, 0}, {i & 1 ? 1.0f : 0.0f, i & 2 ? 1.0f : 0.0f}});
-  }
-  mesh.indices.insert(mesh.indices.end(), {
-    uint32_t(base_start), uint32_t(base_start + 2), uint32_t(base_start + 1),
-    uint32_t(base_start), uint32_t(base_start + 3), uint32_t(base_start + 2)
-  });
-
-  // Side faces
-  for (int i = 0; i < 4; i++) {
-    vec3f v0 = base[i];
-    vec3f v1 = base[(i + 1) % 4];
-
-    // Compute face normal
-    vec3f edge1 = v1 - v0;
-    vec3f edge2 = tip - v0;
-    vec3f normal = {
-      edge1.y * edge2.z - edge1.z * edge2.y,
-      edge1.z * edge2.x - edge1.x * edge2.z,
-      edge1.x * edge2.y - edge1.y * edge2.x
-    };
-    float len = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
-    normal = normal * (1.0f / len);
-
-    int tri_start = mesh.vertices.size();
-    mesh.vertices.push_back({v0, normal, {0, 0}});
-    mesh.vertices.push_back({v1, normal, {1, 0}});
-    mesh.vertices.push_back({tip, normal, {0.5f, 1}});
-
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(tri_start), uint32_t(tri_start + 1), uint32_t(tri_start + 2)
     });
   }
 
@@ -1027,7 +985,6 @@ asset_handle_t<mesh_asset_t> get_primitive_mesh(const char *primitive_name)
     g_meshes.add("__primitive_sphere", generate_sphere_mesh(16, 16));
     g_meshes.add("__primitive_cylinder", generate_cylinder_mesh(16));
     g_meshes.add("__primitive_cone", generate_cone_mesh(16));
-    g_meshes.add("__primitive_pyramid", generate_pyramid_mesh());
     g_meshes.add("__primitive_wedge", generate_wedge_mesh());
 
     printf("[assets] Primitive meshes initialized (7 types)\n");

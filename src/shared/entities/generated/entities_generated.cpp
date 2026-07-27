@@ -18,8 +18,8 @@ namespace
 {
 
 constexpr field_info_t Box_Volume_FIELDS[] = {
-  {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Box_Volume, position), (uint32_t)sizeof(Box_Volume::position), 7u, -1, 0, -1},
-  {"half_extents", FIELD_TYPE_V3, (uint32_t)offsetof(Box_Volume, half_extents), (uint32_t)sizeof(Box_Volume::half_extents), 7u, -1, 0, -1},
+  {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Box_Volume, position), (uint32_t)sizeof(Box_Volume::position), 6u, -1, 0, -1},
+  {"half_extents", FIELD_TYPE_V3, (uint32_t)offsetof(Box_Volume, half_extents), (uint32_t)sizeof(Box_Volume::half_extents), 6u, -1, 0, -1},
 };
 
 constexpr field_info_t Material_FIELDS[] = {
@@ -55,10 +55,10 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
   {"entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Player_Entity, entity_id), (uint32_t)sizeof(Player_Entity::entity_id), 1u, -1, 0, -1},
   {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Player_Entity, position), (uint32_t)sizeof(Player_Entity::position), 7u, -1, 0, -1},
   {"orientation", FIELD_TYPE_V3, (uint32_t)offsetof(Player_Entity, orientation), (uint32_t)sizeof(Player_Entity::orientation), 7u, -1, 0, -1},
-  {"view_angle_yaw", FIELD_TYPE_F32, (uint32_t)offsetof(Player_Entity, view_angle_yaw), (uint32_t)sizeof(Player_Entity::view_angle_yaw), 3u, -1, 0, -1},
-  {"view_angle_pitch", FIELD_TYPE_F32, (uint32_t)offsetof(Player_Entity, view_angle_pitch), (uint32_t)sizeof(Player_Entity::view_angle_pitch), 3u, -1, 0, -1},
-  {"health", FIELD_TYPE_I32, (uint32_t)offsetof(Player_Entity, health), (uint32_t)sizeof(Player_Entity::health), 3u, -1, 0, -1},
-  {"ammo", FIELD_TYPE_I32, (uint32_t)offsetof(Player_Entity, ammo), (uint32_t)sizeof(Player_Entity::ammo), 3u, -1, 0, -1},
+  {"view_angle_yaw", FIELD_TYPE_F32, (uint32_t)offsetof(Player_Entity, view_angle_yaw), (uint32_t)sizeof(Player_Entity::view_angle_yaw), 1u, -1, 0, -1},
+  {"view_angle_pitch", FIELD_TYPE_F32, (uint32_t)offsetof(Player_Entity, view_angle_pitch), (uint32_t)sizeof(Player_Entity::view_angle_pitch), 1u, -1, 0, -1},
+  {"health", FIELD_TYPE_I32, (uint32_t)offsetof(Player_Entity, health), (uint32_t)sizeof(Player_Entity::health), 1u, -1, 0, -1},
+  {"ammo", FIELD_TYPE_I32, (uint32_t)offsetof(Player_Entity, ammo), (uint32_t)sizeof(Player_Entity::ammo), 1u, -1, 0, -1},
   {"active_weapon_id", FIELD_TYPE_I32, (uint32_t)offsetof(Player_Entity, active_weapon_id), (uint32_t)sizeof(Player_Entity::active_weapon_id), 1u, -1, 0, -1},
   {"client_slot_index", FIELD_TYPE_I32, (uint32_t)offsetof(Player_Entity, client_slot_index), (uint32_t)sizeof(Player_Entity::client_slot_index), 1u, -1, 0, -1},
   {"velocity", FIELD_TYPE_V3, (uint32_t)offsetof(Player_Entity, velocity), (uint32_t)sizeof(Player_Entity::velocity), 1u, -1, 0, -1},
@@ -70,7 +70,7 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
   {"entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Weapon_Entity, entity_id), (uint32_t)sizeof(Weapon_Entity::entity_id), 1u, -1, 0, -1},
   {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Weapon_Entity, position), (uint32_t)sizeof(Weapon_Entity::position), 7u, -1, 0, -1},
   {"orientation", FIELD_TYPE_V3, (uint32_t)offsetof(Weapon_Entity, orientation), (uint32_t)sizeof(Weapon_Entity::orientation), 7u, -1, 0, -1},
-  {"ammo", FIELD_TYPE_I32, (uint32_t)offsetof(Weapon_Entity, ammo), (uint32_t)sizeof(Weapon_Entity::ammo), 3u, -1, 0, -1},
+  {"ammo", FIELD_TYPE_I32, (uint32_t)offsetof(Weapon_Entity, ammo), (uint32_t)sizeof(Weapon_Entity::ammo), 1u, -1, 0, -1},
   {"active_weapon_id", FIELD_TYPE_I32, (uint32_t)offsetof(Weapon_Entity, active_weapon_id), (uint32_t)sizeof(Weapon_Entity::active_weapon_id), 1u, -1, 0, -1},
   {"render", FIELD_TYPE_COMPONENT, (uint32_t)offsetof(Weapon_Entity, render), (uint32_t)sizeof(Weapon_Entity::render), 0u, 2, 0, -1},
 };
@@ -79,12 +79,12 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
   {"entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Rocket_Entity, entity_id), (uint32_t)sizeof(Rocket_Entity::entity_id), 1u, -1, 0, -1},
   {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Rocket_Entity, position), (uint32_t)sizeof(Rocket_Entity::position), 7u, -1, 0, -1},
   {"orientation", FIELD_TYPE_V3, (uint32_t)offsetof(Rocket_Entity, orientation), (uint32_t)sizeof(Rocket_Entity::orientation), 7u, -1, 0, -1},
-  {"velocity", FIELD_TYPE_V3, (uint32_t)offsetof(Rocket_Entity, velocity), (uint32_t)sizeof(Rocket_Entity::velocity), 3u, -1, 0, -1},
-  {"lifetime", FIELD_TYPE_F32, (uint32_t)offsetof(Rocket_Entity, lifetime), (uint32_t)sizeof(Rocket_Entity::lifetime), 3u, -1, 0, -1},
-  {"damage_radius", FIELD_TYPE_F32, (uint32_t)offsetof(Rocket_Entity, damage_radius), (uint32_t)sizeof(Rocket_Entity::damage_radius), 3u, -1, 0, -1},
-  {"damage_amount", FIELD_TYPE_F32, (uint32_t)offsetof(Rocket_Entity, damage_amount), (uint32_t)sizeof(Rocket_Entity::damage_amount), 3u, -1, 0, -1},
-  {"knockback_force", FIELD_TYPE_F32, (uint32_t)offsetof(Rocket_Entity, knockback_force), (uint32_t)sizeof(Rocket_Entity::knockback_force), 3u, -1, 0, -1},
-  {"owner_id", FIELD_TYPE_U32, (uint32_t)offsetof(Rocket_Entity, owner_id), (uint32_t)sizeof(Rocket_Entity::owner_id), 1u, -1, 0, -1},
+  {"velocity", FIELD_TYPE_V3, (uint32_t)offsetof(Rocket_Entity, velocity), (uint32_t)sizeof(Rocket_Entity::velocity), 1u, -1, 0, -1},
+  {"lifetime", FIELD_TYPE_F32, (uint32_t)offsetof(Rocket_Entity, lifetime), (uint32_t)sizeof(Rocket_Entity::lifetime), 0u, -1, 0, -1},
+  {"damage_radius", FIELD_TYPE_F32, (uint32_t)offsetof(Rocket_Entity, damage_radius), (uint32_t)sizeof(Rocket_Entity::damage_radius), 0u, -1, 0, -1},
+  {"damage_amount", FIELD_TYPE_F32, (uint32_t)offsetof(Rocket_Entity, damage_amount), (uint32_t)sizeof(Rocket_Entity::damage_amount), 0u, -1, 0, -1},
+  {"knockback_force", FIELD_TYPE_F32, (uint32_t)offsetof(Rocket_Entity, knockback_force), (uint32_t)sizeof(Rocket_Entity::knockback_force), 0u, -1, 0, -1},
+  {"owner_id", FIELD_TYPE_U32, (uint32_t)offsetof(Rocket_Entity, owner_id), (uint32_t)sizeof(Rocket_Entity::owner_id), 0u, -1, 0, -1},
   {"render", FIELD_TYPE_COMPONENT, (uint32_t)offsetof(Rocket_Entity, render), (uint32_t)sizeof(Rocket_Entity::render), 0u, 2, 0, -1},
   {"hitbox", FIELD_TYPE_COMPONENT, (uint32_t)offsetof(Rocket_Entity, hitbox), (uint32_t)sizeof(Rocket_Entity::hitbox), 0u, 3, 0, -1},
 };
@@ -111,15 +111,15 @@ constexpr field_info_t Particle_Emitter_Entity_FIELDS[] = {
   {"color_end", FIELD_TYPE_V3, (uint32_t)offsetof(Particle_Emitter_Entity, color_end), (uint32_t)sizeof(Particle_Emitter_Entity::color_end), 6u, -1, 0, -1},
   {"alpha_start", FIELD_TYPE_F32, (uint32_t)offsetof(Particle_Emitter_Entity, alpha_start), (uint32_t)sizeof(Particle_Emitter_Entity::alpha_start), 6u, -1, 0, -1},
   {"alpha_end", FIELD_TYPE_F32, (uint32_t)offsetof(Particle_Emitter_Entity, alpha_end), (uint32_t)sizeof(Particle_Emitter_Entity::alpha_end), 6u, -1, 0, -1},
-  {"emitter_lifetime", FIELD_TYPE_F32, (uint32_t)offsetof(Particle_Emitter_Entity, emitter_lifetime), (uint32_t)sizeof(Particle_Emitter_Entity::emitter_lifetime), 3u, -1, 0, -1},
-  {"parent_entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Particle_Emitter_Entity, parent_entity_id), (uint32_t)sizeof(Particle_Emitter_Entity::parent_entity_id), 3u, -1, 0, -1},
+  {"emitter_lifetime", FIELD_TYPE_F32, (uint32_t)offsetof(Particle_Emitter_Entity, emitter_lifetime), (uint32_t)sizeof(Particle_Emitter_Entity::emitter_lifetime), 6u, -1, 0, -1},
+  {"parent_entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Particle_Emitter_Entity, parent_entity_id), (uint32_t)sizeof(Particle_Emitter_Entity::parent_entity_id), 0u, -1, 0, -1},
 };
 
 constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
   {"entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Trigger_Volume_Entity, entity_id), (uint32_t)sizeof(Trigger_Volume_Entity::entity_id), 1u, -1, 0, -1},
   {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Trigger_Volume_Entity, position), (uint32_t)sizeof(Trigger_Volume_Entity::position), 7u, -1, 0, -1},
   {"orientation", FIELD_TYPE_V3, (uint32_t)offsetof(Trigger_Volume_Entity, orientation), (uint32_t)sizeof(Trigger_Volume_Entity::orientation), 7u, -1, 0, -1},
-  {"volume", FIELD_TYPE_COMPONENT, (uint32_t)offsetof(Trigger_Volume_Entity, volume), (uint32_t)sizeof(Trigger_Volume_Entity::volume), 2u, 0, 0, -1},
+  {"volume", FIELD_TYPE_COMPONENT, (uint32_t)offsetof(Trigger_Volume_Entity, volume), (uint32_t)sizeof(Trigger_Volume_Entity::volume), 0u, 0, 0, -1},
   {"action", FIELD_TYPE_ENUM, (uint32_t)offsetof(Trigger_Volume_Entity, action), (uint32_t)sizeof(Trigger_Volume_Entity::action), 6u, -1, 0, -1},
   {"fire_mode", FIELD_TYPE_ENUM, (uint32_t)offsetof(Trigger_Volume_Entity, fire_mode), (uint32_t)sizeof(Trigger_Volume_Entity::fire_mode), 6u, -1, 0, -1},
   {"param_target_name", FIELD_TYPE_STRING, (uint32_t)offsetof(Trigger_Volume_Entity, param_target_name), (uint32_t)sizeof(Trigger_Volume_Entity::param_target_name), 6u, -1, 64, -1},
@@ -131,21 +131,21 @@ constexpr field_info_t Light_Entity_FIELDS[] = {
   {"entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Light_Entity, entity_id), (uint32_t)sizeof(Light_Entity::entity_id), 1u, -1, 0, -1},
   {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Light_Entity, position), (uint32_t)sizeof(Light_Entity::position), 7u, -1, 0, -1},
   {"orientation", FIELD_TYPE_V3, (uint32_t)offsetof(Light_Entity, orientation), (uint32_t)sizeof(Light_Entity::orientation), 7u, -1, 0, -1},
-  {"direction", FIELD_TYPE_V3, (uint32_t)offsetof(Light_Entity, direction), (uint32_t)sizeof(Light_Entity::direction), 7u, -1, 0, -1},
-  {"color", FIELD_TYPE_V3, (uint32_t)offsetof(Light_Entity, color), (uint32_t)sizeof(Light_Entity::color), 7u, -1, 0, -1},
-  {"intensity", FIELD_TYPE_F32, (uint32_t)offsetof(Light_Entity, intensity), (uint32_t)sizeof(Light_Entity::intensity), 7u, -1, 0, -1},
-  {"range", FIELD_TYPE_F32, (uint32_t)offsetof(Light_Entity, range), (uint32_t)sizeof(Light_Entity::range), 7u, -1, 0, -1},
-  {"spot_inner_degrees", FIELD_TYPE_F32, (uint32_t)offsetof(Light_Entity, spot_inner_degrees), (uint32_t)sizeof(Light_Entity::spot_inner_degrees), 7u, -1, 0, -1},
-  {"spot_outer_degrees", FIELD_TYPE_F32, (uint32_t)offsetof(Light_Entity, spot_outer_degrees), (uint32_t)sizeof(Light_Entity::spot_outer_degrees), 7u, -1, 0, -1},
-  {"kind", FIELD_TYPE_ENUM, (uint32_t)offsetof(Light_Entity, kind), (uint32_t)sizeof(Light_Entity::kind), 7u, -1, 0, -1},
+  {"direction", FIELD_TYPE_V3, (uint32_t)offsetof(Light_Entity, direction), (uint32_t)sizeof(Light_Entity::direction), 6u, -1, 0, -1},
+  {"color", FIELD_TYPE_V3, (uint32_t)offsetof(Light_Entity, color), (uint32_t)sizeof(Light_Entity::color), 6u, -1, 0, -1},
+  {"intensity", FIELD_TYPE_F32, (uint32_t)offsetof(Light_Entity, intensity), (uint32_t)sizeof(Light_Entity::intensity), 6u, -1, 0, -1},
+  {"range", FIELD_TYPE_F32, (uint32_t)offsetof(Light_Entity, range), (uint32_t)sizeof(Light_Entity::range), 6u, -1, 0, -1},
+  {"spot_inner_degrees", FIELD_TYPE_F32, (uint32_t)offsetof(Light_Entity, spot_inner_degrees), (uint32_t)sizeof(Light_Entity::spot_inner_degrees), 6u, -1, 0, -1},
+  {"spot_outer_degrees", FIELD_TYPE_F32, (uint32_t)offsetof(Light_Entity, spot_outer_degrees), (uint32_t)sizeof(Light_Entity::spot_outer_degrees), 6u, -1, 0, -1},
+  {"kind", FIELD_TYPE_ENUM, (uint32_t)offsetof(Light_Entity, kind), (uint32_t)sizeof(Light_Entity::kind), 6u, -1, 0, -1},
 };
 
 constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
   {"entity_id", FIELD_TYPE_U32, (uint32_t)offsetof(Physics_Body_Entity, entity_id), (uint32_t)sizeof(Physics_Body_Entity::entity_id), 1u, -1, 0, -1},
   {"position", FIELD_TYPE_V3, (uint32_t)offsetof(Physics_Body_Entity, position), (uint32_t)sizeof(Physics_Body_Entity::position), 7u, -1, 0, -1},
   {"orientation", FIELD_TYPE_V3, (uint32_t)offsetof(Physics_Body_Entity, orientation), (uint32_t)sizeof(Physics_Body_Entity::orientation), 7u, -1, 0, -1},
-  {"shape", FIELD_TYPE_ENUM, (uint32_t)offsetof(Physics_Body_Entity, shape), (uint32_t)sizeof(Physics_Body_Entity::shape), 7u, -1, 0, -1},
-  {"size", FIELD_TYPE_V3, (uint32_t)offsetof(Physics_Body_Entity, size), (uint32_t)sizeof(Physics_Body_Entity::size), 7u, -1, 0, -1},
+  {"shape", FIELD_TYPE_ENUM, (uint32_t)offsetof(Physics_Body_Entity, shape), (uint32_t)sizeof(Physics_Body_Entity::shape), 6u, -1, 0, -1},
+  {"size", FIELD_TYPE_V3, (uint32_t)offsetof(Physics_Body_Entity, size), (uint32_t)sizeof(Physics_Body_Entity::size), 6u, -1, 0, -1},
   {"velocity", FIELD_TYPE_V3, (uint32_t)offsetof(Physics_Body_Entity, velocity), (uint32_t)sizeof(Physics_Body_Entity::velocity), 1u, -1, 0, -1},
   {"mass", FIELD_TYPE_F32, (uint32_t)offsetof(Physics_Body_Entity, mass), (uint32_t)sizeof(Physics_Body_Entity::mass), 6u, -1, 0, -1},
   {"render", FIELD_TYPE_COMPONENT, (uint32_t)offsetof(Physics_Body_Entity, render), (uint32_t)sizeof(Physics_Body_Entity::render), 0u, 2, 0, -1},
@@ -153,10 +153,10 @@ constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
 };
 
 constexpr component_type_info_t COMPONENT_INFOS[] = {
-  {"Box_Volume", Box_Volume_FIELDS, 2, (uint32_t)sizeof(Box_Volume)},
-  {"Material", Material_FIELDS, 3, (uint32_t)sizeof(Material)},
-  {"Render", Render_FIELDS, 7, (uint32_t)sizeof(Render)},
-  {"Hitbox", Hitbox_FIELDS, 3, (uint32_t)sizeof(Hitbox)},
+  {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
+  {"Material", {Material_FIELDS, 3}, (uint32_t)sizeof(Material)},
+  {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
+  {"Hitbox", {Hitbox_FIELDS, 3}, (uint32_t)sizeof(Hitbox)},
 };
 
 Entity* construct_Player_Spawn_Entity(void* memory) { return new (memory) Player_Spawn_Entity(); }
@@ -169,15 +169,15 @@ Entity* construct_Light_Entity(void* memory) { return new (memory) Light_Entity(
 Entity* construct_Physics_Body_Entity(void* memory) { return new (memory) Physics_Body_Entity(); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
-  {"", "", nullptr, 0, 0, 0, 0, false, nullptr}, // Invalid
-  {"player_spawn_entity", "Player Spawn", Player_Spawn_Entity_FIELDS, 4, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity},
-  {"player_entity", "Player", Player_Entity_FIELDS, 12, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity},
-  {"weapon_entity", "Weapon", Weapon_Entity_FIELDS, 6, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, true, construct_Weapon_Entity},
-  {"rocket_entity", "Rocket", Rocket_Entity_FIELDS, 11, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 12u, true, construct_Rocket_Entity},
-  {"particle_emitter_entity", "Particle Emitter", Particle_Emitter_Entity_FIELDS, 23, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity},
-  {"trigger_volume_entity", "Trigger Volume", Trigger_Volume_Entity_FIELDS, 9, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 1u, false, construct_Trigger_Volume_Entity},
-  {"light_entity", "Light", Light_Entity_FIELDS, 10, (uint32_t)sizeof(Light_Entity), (uint32_t)alignof(Light_Entity), 0u, false, construct_Light_Entity},
-  {"physics_body_entity", "Physics Body", Physics_Body_Entity_FIELDS, 9, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 12u, false, construct_Physics_Body_Entity},
+  {"", "", {}, 0, 0, 0, false, nullptr}, // Invalid
+  {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 12}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity},
+  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 6}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, true, construct_Weapon_Entity},
+  {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 12u, true, construct_Rocket_Entity},
+  {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity},
+  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 1u, false, construct_Trigger_Volume_Entity},
+  {"light_entity", "Light", {Light_Entity_FIELDS, 10}, (uint32_t)sizeof(Light_Entity), (uint32_t)alignof(Light_Entity), 0u, false, construct_Light_Entity},
+  {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 12u, false, construct_Physics_Body_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][4] = {
@@ -203,18 +203,14 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
 
 constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"Missing", "resources/obj/error.obj", ASSET_SOURCE_FILE},
-  {"Cube", "resources/obj/cube.obj", ASSET_SOURCE_FILE},
-  {"Error", "resources/obj/error.obj", ASSET_SOURCE_FILE},
   {"Isosphere", "resources/obj/isosphere.obj", ASSET_SOURCE_FILE},
   {"Pyramid", "resources/obj/pyramid.obj", ASSET_SOURCE_FILE},
-  {"Sphere", "resources/obj/sphere.obj", ASSET_SOURCE_FILE},
   {"Box", "box", ASSET_SOURCE_PROCEDURAL},
   {"Arrow", "arrow", ASSET_SOURCE_PROCEDURAL},
+  {"Sphere", "sphere", ASSET_SOURCE_PROCEDURAL},
   {"Cylinder", "cylinder", ASSET_SOURCE_PROCEDURAL},
   {"Cone", "cone", ASSET_SOURCE_PROCEDURAL},
   {"Wedge", "wedge", ASSET_SOURCE_PROCEDURAL},
-  {"Unit_Sphere", "sphere", ASSET_SOURCE_PROCEDURAL},
-  {"Unit_Pyramid", "pyramid", ASSET_SOURCE_PROCEDURAL},
 };
 
 constexpr asset_info_t sprite_asset_MANIFEST[] = {
@@ -224,11 +220,9 @@ constexpr asset_info_t sprite_asset_MANIFEST[] = {
 
 } // namespace
 
-const asset_info_t* mesh_asset_manifest(uint32_t* out_count)
+Span<const asset_info_t> mesh_asset_manifest()
 {
-  assert(out_count != nullptr);
-  *out_count = mesh_asset_COUNT;
-  return mesh_asset_MANIFEST;
+  return {mesh_asset_MANIFEST, mesh_asset_COUNT};
 }
 
 const char* to_string(mesh_asset value)
@@ -249,11 +243,9 @@ bool from_string(const char* text, mesh_asset* out_value)
   return false;
 }
 
-const asset_info_t* sprite_asset_manifest(uint32_t* out_count)
+Span<const asset_info_t> sprite_asset_manifest()
 {
-  assert(out_count != nullptr);
-  *out_count = sprite_asset_COUNT;
-  return sprite_asset_MANIFEST;
+  return {sprite_asset_MANIFEST, sprite_asset_COUNT};
 }
 
 const char* to_string(sprite_asset value)
@@ -470,13 +462,11 @@ void destroy_entity(Entity* entity)
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
 
-const entity_type* placeable_entity_types(uint32_t* out_count)
+Span<const entity_type> placeable_entity_types()
 {
-  assert(out_count != nullptr);
-  *out_count = PLACEABLE_ENTITY_TYPE_COUNT;
-  return PLACEABLE_ENTITY_TYPES;
+  return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xc8a40000u;
+const uint32_t SCHEMA_HASH = 0x38f5102eu;
 
 } // namespace entities

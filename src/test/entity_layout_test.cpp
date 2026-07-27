@@ -42,7 +42,7 @@ int main()
   // the concrete type without being told what it is.
   const entity_type_info_t& info = entity_info(base->type);
   printf("classname=%s display=\"%s\" fields=%u size=%u runtime_only=%s\n", info.classname,
-         info.display_name, info.field_count, info.size_in_bytes,
+         info.display_name, info.fields.size(), info.size_in_bytes,
          info.runtime_only ? "true" : "false");
   check(strcmp(info.classname, "light_entity") == 0, "classname derived from the declared name");
   check(strcmp(info.display_name, "Light") == 0, "display name strips the _Entity suffix");
@@ -126,19 +126,18 @@ int main()
   // The editor placement menu's source of truth: everything the .def did not
   // mark @runtime_only, contiguous so the menu can index it.
   {
-    uint32_t           placeable_count = 0;
-    const entity_type* placeable       = placeable_entity_types(&placeable_count);
+    Span<const entity_type> placeable = placeable_entity_types();
 
-    check(placeable_count > 0 && placeable_count < ENTITY_TYPE_COUNT,
+    check(!placeable.empty() && placeable.size() < ENTITY_TYPE_COUNT,
           "some but not all entity types are placeable");
 
     bool every_type_is_placeable_and_not_runtime_only = true;
     bool contains_light                               = false;
-    for (uint32_t index = 0; index < placeable_count; ++index)
+    for (entity_type type : placeable)
     {
-      if (entity_info(placeable[index]).runtime_only)
+      if (entity_info(type).runtime_only)
         every_type_is_placeable_and_not_runtime_only = false;
-      if (placeable[index] == entity_type::Light_Entity)
+      if (type == entity_type::Light_Entity)
         contains_light = true;
     }
 
@@ -146,9 +145,9 @@ int main()
           "no @runtime_only type appears in the placeable list");
     check(contains_light, "a map-placed type (Light) does appear in it");
 
-    printf("placeable types (%u):", placeable_count);
-    for (uint32_t index = 0; index < placeable_count; ++index)
-      printf(" %s", entity_info(placeable[index]).display_name);
+    printf("placeable types (%u):", placeable.size());
+    for (entity_type type : placeable)
+      printf(" %s", entity_info(type).display_name);
     printf("\n");
   }
 
@@ -165,33 +164,43 @@ int main()
     Particle_Emitter_Entity emitter;
     check(emitter.sprite == sprite_asset::Smoke, "a declared asset default resolves by name");
 
-    check(strcmp(to_string(mesh_asset::Cube), "Cube") == 0, "asset to_string");
+    check(strcmp(to_string(mesh_asset::Pyramid), "Pyramid") == 0, "asset to_string");
     mesh_asset parsed_mesh = mesh_asset::Missing;
-    check(from_string("Unit_Sphere", &parsed_mesh) && parsed_mesh == mesh_asset::Unit_Sphere,
+    check(from_string("Sphere", &parsed_mesh) && parsed_mesh == mesh_asset::Sphere,
           "asset from_string round trip");
     check(!from_string("No_Such_Mesh", &parsed_mesh),
           "asset from_string rejects an unknown name");
 
-    uint32_t           mesh_count = 0;
-    const asset_info_t* meshes    = mesh_asset_manifest(&mesh_count);
+    Span<const asset_info_t> meshes = mesh_asset_manifest();
 
-    check(mesh_count == mesh_asset_COUNT, "the manifest covers every id in the enum");
+    check(meshes.size() == mesh_asset_COUNT, "the manifest covers every id in the enum");
     check(meshes[0].source_kind == ASSET_SOURCE_FILE &&
               strcmp(meshes[0].source, "resources/obj/error.obj") == 0,
           "slot 0 resolves to the declared placeholder, so nothing renders as a plausible cube");
+
+    // The placeholder's own file must not ALSO be scanned in under its stem, or
+    // one file would hold two ids under two names. That is a collision the
+    // generator creates itself, so its duplicate-name check could never catch
+    // it -- the scan skips the placeholder path instead.
+    uint32_t entries_naming_the_placeholder = 0;
+    for (const asset_info_t& mesh : meshes)
+      if (strcmp(mesh.source, "resources/obj/error.obj") == 0)
+        ++entries_naming_the_placeholder;
+    check(entries_naming_the_placeholder == 1,
+          "the placeholder file has one id, not one as Missing and another as its own stem");
 
     // Both source kinds are present and neither is distinguishable through the
     // id -- only through this table, which is the point.
     bool saw_file       = false;
     bool saw_procedural = false;
     bool every_entry_is_resolvable = true;
-    for (uint32_t index = 0; index < mesh_count; ++index)
+    for (const asset_info_t& mesh : meshes)
     {
-      if (meshes[index].source_kind == ASSET_SOURCE_FILE)
+      if (mesh.source_kind == ASSET_SOURCE_FILE)
         saw_file = true;
-      if (meshes[index].source_kind == ASSET_SOURCE_PROCEDURAL)
+      if (mesh.source_kind == ASSET_SOURCE_PROCEDURAL)
         saw_procedural = true;
-      if (meshes[index].source[0] == '\0')
+      if (mesh.source[0] == '\0')
         every_entry_is_resolvable = false;
     }
 
@@ -204,19 +213,76 @@ int main()
     // being told the class by name.
     const entity_type_info_t& emitter_info = entity_info(entity_type::Particle_Emitter_Entity);
     bool                      sprite_field_names_its_class = false;
-    for (uint32_t index = 0; index < emitter_info.field_count; ++index)
+    for (const field_info_t& field : emitter_info.fields)
     {
-      const field_info_t& field = emitter_info.fields[index];
       if (strcmp(field.name, "sprite") == 0)
         sprite_field_names_its_class =
             field.type == FIELD_TYPE_ASSET && field.asset_class_id >= 0;
     }
     check(sprite_field_names_its_class, "an asset field records which asset class it draws from");
 
-    printf("mesh manifest (%u):", mesh_count);
-    for (uint32_t index = 0; index < mesh_count; ++index)
-      printf(" %s", meshes[index].name);
+    printf("mesh manifest (%u):", meshes.size());
+    for (const asset_info_t& mesh : meshes)
+      printf(" %s", mesh.name);
     printf("\n");
+  }
+
+  // --- flags (P4) ---
+  //
+  // The three flags became real with the generator, so these guard the rules
+  // the audit settled. The generator rejects the first two at build time; these
+  // check that what it emitted actually says what the .def claims, which is the
+  // half a parse error cannot cover.
+  {
+    bool component_fields_are_unflagged = true;
+    bool runtime_only_fields_are_wire_only = true;
+
+    for (uint32_t which = 1; which < ENTITY_TYPE_COUNT; ++which)
+    {
+      const entity_type_info_t& type_info = entity_info((entity_type)which);
+
+      for (const field_info_t& field : type_info.fields)
+      {
+        // A component's own field flags are the truth; a flag at the use site
+        // would be read by nobody.
+        if (field.type == FIELD_TYPE_COMPONENT && field.flags != FIELD_FLAG_NONE)
+          component_fields_are_unflagged = false;
+
+        // The base's position/orientation are @Fully_Serializable and are
+        // inherited by @runtime_only types too -- they describe the map-placed
+        // types, and are simply never read for a runtime one. So exempt them
+        // by name rather than pretending the rule is universal.
+        const bool inherited_from_base = strcmp(field.name, "entity_id") == 0 ||
+                                         strcmp(field.name, "position") == 0 ||
+                                         strcmp(field.name, "orientation") == 0;
+
+        if (type_info.runtime_only && !inherited_from_base &&
+            (field.flags & (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)) != 0)
+          runtime_only_fields_are_wire_only = false;
+      }
+    }
+
+    check(component_fields_are_unflagged,
+          "no component-typed field carries flags of its own");
+    check(runtime_only_fields_are_wire_only,
+          "a @runtime_only type declares no @Editable/@Saveable field of its own");
+
+    // The two decisions most likely to be reverted by accident, pinned so that
+    // reverting them is a test failure rather than a silent bandwidth change.
+    bool any_light_field_is_networked = false;
+    for (const field_info_t& field : entity_info(entity_type::Light_Entity).fields)
+      if (strcmp(field.name, "position") != 0 && strcmp(field.name, "orientation") != 0 &&
+          strcmp(field.name, "entity_id") != 0 && (field.flags & FIELD_FLAG_NETWORKED) != 0)
+        any_light_field_is_networked = true;
+    check(!any_light_field_is_networked,
+          "a light's own config is not replicated -- the client loaded the same map");
+
+    bool every_render_field_is_networked = true;
+    for (const field_info_t& field : component_info(component_type::Render).fields)
+      if (field.type != FIELD_TYPE_COMPONENT && (field.flags & FIELD_FLAG_NETWORKED) == 0)
+        every_render_field_is_networked = false;
+    check(every_render_field_is_networked,
+          "Render IS replicated -- runtime-spawned rockets and bodies have no other source");
   }
 
   printf("schema hash: 0x%08x\n", SCHEMA_HASH);
