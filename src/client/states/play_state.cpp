@@ -257,6 +257,7 @@ void PlayState::on_enter()
   auto *connect = connect_cmd.mutable_connect();
   connect->set_protocol_version(1);
   connect->set_player_name("Player");
+  connect->set_schema_hash(entities::SCHEMA_HASH);
 
   network::send_protobuf_message(conn, connect_cmd);
   ctx.connection_phase = Connection_Phase::Connecting;
@@ -404,6 +405,18 @@ void PlayState::update(float dt)
     }
     else if (cmd.has_reject())
     {
+      // A schema mismatch is a build problem, not a gameplay one, so it gets
+      // log_error and both hashes rather than a one-line terminal notice.
+      const uint32_t server_schema_hash = cmd.reject().server_schema_hash();
+      if (server_schema_hash != 0 && server_schema_hash != entities::SCHEMA_HASH)
+      {
+        log_error("Connection rejected -- schema hash mismatch (client "
+                  "{:#010x}, server {:#010x}). The two builds disagree about "
+                  "entity layout; rebuild both from the same entities.def and "
+                  "asset set. Server said: {}",
+                  entities::SCHEMA_HASH, server_schema_hash,
+                  cmd.reject().reason());
+      }
       log_terminal("Connection rejected: {}", cmd.reject().reason());
       ctx.connection_phase = Connection_Phase::Disconnected;
     }

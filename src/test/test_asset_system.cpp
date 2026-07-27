@@ -2,12 +2,33 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <string>
 
 // --- Helpers ---
 
-static const char *g_test_obj_path = "/tmp/test_asset_cube.obj";
-static const char *g_test_tga_path = "/tmp/test_asset_2x2.tga";
+// Fixtures go in the platform temp dir, not a hardcoded "/tmp" -- on Windows
+// that path does not exist, so every ofstream below wrote nowhere and the
+// loads then failed on a missing file.
+static std::string test_file_path(const char *name)
+{
+  return (std::filesystem::temp_directory_path() / name).string();
+}
+
+static const std::string g_test_obj_path = test_file_path("test_asset_cube.obj");
+static const std::string g_test_tga_path = test_file_path("test_asset_2x2.tga");
+
+// A fixture that silently fails to write turns into a confusing load failure
+// three lines later, so the write is checked at the point it happens.
+static void require_written(const std::ofstream &stream, const std::string &path)
+{
+  if (!stream)
+  {
+    printf("  FAIL: could not write fixture '%s'\n", path.c_str());
+    abort();
+  }
+}
 
 static void write_test_obj()
 {
@@ -23,6 +44,7 @@ static void write_test_obj()
   f << "vt 1.0  1.0\n";
   f << "vt 0.0  1.0\n";
   f << "f 1/1/1 2/2/1 3/3/1 4/4/1\n";
+  require_written(f, g_test_obj_path);
 }
 
 static void write_test_tga()
@@ -47,6 +69,7 @@ static void write_test_tga()
   std::ofstream f(g_test_tga_path, std::ios::binary);
   f.write(reinterpret_cast<char *>(header), sizeof(header));
   f.write(reinterpret_cast<char *>(pixels), sizeof(pixels));
+  require_written(f, g_test_tga_path);
 }
 
 // --- Tests ---
@@ -55,7 +78,7 @@ static int test_load_mesh()
 {
   write_test_obj();
 
-  auto handle = assets::load_mesh(g_test_obj_path);
+  auto handle = assets::load_mesh(g_test_obj_path.c_str());
   assert(handle.valid());
 
   const auto *mesh = assets::get(handle);
@@ -76,15 +99,18 @@ static int test_load_texture()
 {
   write_test_tga();
 
-  auto handle = assets::load_texture(g_test_tga_path);
+  auto handle = assets::load_texture(g_test_tga_path.c_str());
   assert(handle.valid());
 
   const auto *tex = assets::get(handle);
   assert(tex != nullptr);
   assert(tex->width == 2);
   assert(tex->height == 2);
-  assert(tex->channels == 3);
-  assert(tex->pixels.size() == 2 * 2 * 3);
+  // The fixture is 24-bit, but load_texture forces STBI_rgb_alpha so every
+  // texture has a uniform 4-byte stride -- 4 channels is the invariant the
+  // loader promises, not a property of the file.
+  assert(tex->channels == 4);
+  assert(tex->pixels.size() == 2 * 2 * 4);
 
   printf("  PASS: test_load_texture\n");
   return 0;
@@ -94,8 +120,8 @@ static int test_caching()
 {
   write_test_obj();
 
-  auto h1 = assets::load_mesh(g_test_obj_path);
-  auto h2 = assets::load_mesh(g_test_obj_path);
+  auto h1 = assets::load_mesh(g_test_obj_path.c_str());
+  auto h2 = assets::load_mesh(g_test_obj_path.c_str());
   assert(h1 == h2);
 
   printf("  PASS: test_caching\n");
@@ -104,7 +130,7 @@ static int test_caching()
 
 static int test_invalid_path()
 {
-  auto h = assets::load_mesh("/tmp/this_does_not_exist.obj");
+  auto h = assets::load_mesh(test_file_path("this_does_not_exist.obj").c_str());
   assert(!h.valid());
   assert(assets::get(h) == nullptr);
 

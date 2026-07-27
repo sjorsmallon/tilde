@@ -1,10 +1,15 @@
-// One-time map converter for the geometry exit.
+// Map converter: rewrites a map file into the form the current save path emits.
 //
-// Loading a map already performs the conversion in memory (see
-// convert_legacy_geometry_entity in map.cpp), so converting a file is exactly
-// "load it, save it". This tool exists so that can be done deliberately, to
-// every map at once, with a report of what changed — rather than discovered one
-// map at a time by opening each in the editor.
+// Loading a map already performs every conversion in memory — the geometry exit
+// (convert_legacy_geometry_entity) and the P5 entity-text changes (legacy enum
+// spellings, retired keys) — so converting a file is exactly "load it, save
+// it". This tool exists so that can be done deliberately, to every map at once,
+// with a report of what changed, rather than discovered one map at a time by
+// opening each in the editor.
+//
+// "Needs a rewrite" is decided by comparing the file against what save_map
+// would write, so it stays correct as further conversions are added; nothing
+// here enumerates them.
 //
 // Usage:
 //   map_convert <map-file> [<map-file> ...]     convert in place (writes a .bak)
@@ -29,7 +34,8 @@ struct conversion_report_t
   size_t static_meshes = 0;
   size_t displacements = 0;
   size_t entities = 0;
-  bool was_legacy = false; // the file still held geometry as entity blocks
+  bool was_legacy = false;      // the file still held geometry as entity blocks
+  bool needs_rewrite = false;   // the file's text is not what save_map writes
 };
 
 conversion_report_t inspect(const shared::map_t &map, const std::string &original_text)
@@ -59,6 +65,22 @@ conversion_report_t inspect(const shared::map_t &map, const std::string &origina
       break;
     }
   }
+
+  // The geometry exit is no longer the only thing a load converts: the P5
+  // cutover also rewrote entity text (legacy numeric/lowercase enum values,
+  // retired keys like entity_id). Rather than enumerate those, ask the real
+  // question — is the text on disk what save_map would write? Anything that
+  // load_map silently fixed up shows as a difference here.
+  //
+  // Compared with line endings normalized: save_map writes through a text-mode
+  // ofstream, so on Windows the bytes on disk carry \r\n while
+  // serialize_map_to_string emits \n. Without this every map on Windows would
+  // report as needing a rewrite, forever.
+  std::string on_disk = original_text;
+  std::erase(on_disk, '\r');
+  std::string canonical = shared::serialize_map_to_string(map);
+  std::erase(canonical, '\r');
+  report.needs_rewrite = canonical != on_disk;
 
   return report;
 }
@@ -97,27 +119,40 @@ bool convert_one(const std::string &path, bool check_only)
 
   const conversion_report_t report = inspect(map, original_text);
 
+  const char *status = "  [canonical]";
+  if (report.was_legacy)
+    status = "  [was legacy geometry]";
+  else if (report.needs_rewrite)
+    status = "  [not canonical]";
+
   std::printf("%s: %zu box, %zu static_mesh, %zu displacement, %zu entities%s\n",
               path.c_str(), report.boxes, report.static_meshes,
-              report.displacements, report.entities,
-              report.was_legacy ? "  [was legacy]" : "  [already converted]");
+              report.displacements, report.entities, status);
 
   if (check_only)
     return true;
 
-  if (!report.was_legacy)
+  if (!report.needs_rewrite)
     return true; // nothing to rewrite; leave the file (and its mtime) alone
 
   // Keep a copy of the pre-conversion file. The conversion is one-way, and the
   // wedges it drops are real data.
+  //
+  // Never overwrite an existing backup: a map converted once already (the
+  // geometry exit) has a .preconvert.bak holding the ORIGINAL, and clobbering
+  // it with today's content would quietly destroy the only copy of it. Maps are
+  // not in version control, so this is the only safety net there is.
+  std::string backup_path = path + ".preconvert.bak";
+  for (int attempt = 1; std::filesystem::exists(backup_path); ++attempt)
+    backup_path = path + ".preconvert." + std::to_string(attempt) + ".bak";
+
   std::error_code error;
-  std::filesystem::copy_file(path, path + ".preconvert.bak",
-                             std::filesystem::copy_options::overwrite_existing,
-                             error);
+  std::filesystem::copy_file(path, backup_path, error);
   if (error)
   {
-    log_error("map_convert: could not back up '{}' ({}) — refusing to overwrite it",
-              path, error.message());
+    log_error("map_convert: could not back up '{}' to '{}' ({}) — refusing to "
+              "overwrite it",
+              path, backup_path, error.message());
     return false;
   }
 
@@ -127,7 +162,7 @@ bool convert_one(const std::string &path, bool check_only)
     return false;
   }
 
-  std::printf("  converted (backup at %s.preconvert.bak)\n", path.c_str());
+  std::printf("  converted (backup at %s)\n", backup_path.c_str());
   return true;
 }
 

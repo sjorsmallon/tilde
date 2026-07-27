@@ -186,7 +186,11 @@ make_placement_prototype(shared::geometry_kind_t kind)
   case shared::geometry_kind_t::Static_Mesh:
   {
     shared::static_mesh_geometry_t static_mesh;
-    static_mesh.surface.mesh_path = "resources/obj/m4a1_s.obj";
+    // The question-mark placeholder, deliberately: geometry mesh paths are
+    // free-form (no asset id, so no compile-time check), and a prototype
+    // pointing at a file that does not exist places an invisible object. This
+    // one exists and reads as "pick a mesh in the inspector".
+    static_mesh.surface.mesh_path = "resources/obj/error.obj";
     return static_mesh;
   }
 

@@ -105,6 +105,26 @@ static void send_cvar_sync(network::Udp_Socket &socket,
 server_context_t g_state;
 network::Udp_Socket g_socket;
 uint32_t g_tick_number = 0;
+
+// Refuse a pending connection. server_schema_hash is only meaningful for a
+// schema mismatch (0 otherwise) -- it rides alongside the reason so the client
+// can print both hashes without having to parse the sentence.
+static void send_reject(const network::Address &sender, std::string_view reason,
+                        uint32_t server_schema_hash)
+{
+  game::NetCommand reply;
+  auto *reject = reply.mutable_reject();
+  reject->set_reason(std::string(reason));
+  reject->set_server_schema_hash(server_schema_hash);
+
+  std::vector<network::uint8> buffer(reply.ByteSizeLong());
+  reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
+  auto packets = network::convert_to_packets(
+      buffer, static_cast<network::uint8>(network::Message_Type::NetCommand),
+      g_state.net.next_message_id);
+  for (const auto &p : packets)
+    g_socket.send(p, sender);
+}
 // Snapshot of a Player_Spawn_Entity used at (re)spawn time: position +
 // orientation (Euler degrees, .y = yaw, .x = pitch, .z = roll/unused). The
 // respawn_system has its own private picker because it lives in
@@ -554,6 +574,28 @@ bool Tick()
       if (network::get_player_idx(g_state.net, sender) != -1)
         continue;
 
+      // Schema handshake, before a slot is taken. A client built from a
+      // different entities.def (or a different asset manifest) parses the
+      // entity bitstream against different offsets, so everything after this
+      // point would be silently wrong. Refuse, and say both hashes -- the
+      // number is the only thing that identifies which build is stale.
+      const uint32_t client_schema_hash = cmd.connect().schema_hash();
+      if (client_schema_hash != entities::SCHEMA_HASH)
+      {
+        log_error("Refusing connection from {}: schema hash mismatch "
+                  "(client {:#010x}, server {:#010x}). Both sides must be "
+                  "built from the same entities.def and asset set.",
+                  cmd.connect().player_name(), client_schema_hash,
+                  entities::SCHEMA_HASH);
+        send_reject(sender,
+                    std::format("Schema mismatch: client {:#010x}, server "
+                                "{:#010x} -- rebuild against the same "
+                                "entities.def",
+                                client_schema_hash, entities::SCHEMA_HASH),
+                    entities::SCHEMA_HASH);
+        continue;
+      }
+
       int slot = -1;
       for (int i = 0; i < network::sv_max_player_count; ++i)
       {
@@ -614,18 +656,7 @@ bool Tick()
       }
       else
       {
-        // Reject
-        game::NetCommand reply;
-        reply.mutable_reject()->set_reason("Server Full");
-
-        std::vector<network::uint8> buffer(reply.ByteSizeLong());
-        reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-        auto packets = network::convert_to_packets(
-            buffer,
-            static_cast<network::uint8>(network::Message_Type::NetCommand),
-            g_state.net.next_message_id);
-        for (const auto &p : packets)
-          g_socket.send(p, sender);
+        send_reject(sender, "Server Full", 0);
       }
     }
     else if (cmd.has_disconnect())

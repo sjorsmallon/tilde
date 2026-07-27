@@ -13,9 +13,11 @@ Two parts:
   being real and their contradictions being build errors) are still recorded
   below because later phases lean on them.
 
-  **P5's cutover is DONE** (branch `p5-hard-cutover`): the macro system is
-  deleted, every consumer is converted, the tree builds and the tests pass.
-  What remains under P5 is ordinary follow-up work, listed in its section.
+  **P5 is DONE** (branch `p5-hard-cutover`): the macro system is deleted, every
+  consumer is converted, the tree builds, and all 17 test executables pass. The
+  follow-up list in its section is closed too — schema hash in the handshake,
+  `asset_test`, the docs, the map conversion, the dead mesh reference. The one
+  open thing there is a decision, not work: whether `maps/` belongs in git.
   **P6 is next.**
 - **EVERYTHING ELSE** — independent work, no ordering constraints.
 
@@ -107,7 +109,7 @@ it tells you which phases you can walk away from mid-way.
 | ~~P2~~ | ~~undo → binary diffs~~ | DONE | — |
 | ~~P3~~ | ~~finish generator~~ | DONE | — |
 | ~~P4~~ | ~~flag audit~~ | DONE | — |
-| ~~P5~~ | ~~hard cutover~~ | DONE — tree green, tests pass | — (follow-ups are safe to stop in) |
+| ~~P5~~ | ~~hard cutover~~ | DONE — tree green, all tests pass | — |
 | P6 | serializer v2 | multi-day, open-ended | yes |
 | P7 | storage refactor | multi-day | partly — failures here are runtime, not compile-time, so "working" is harder to judge |
 | P8 | protobuf removal | ~a day, spread | yes — message-at-a-time by design |
@@ -154,9 +156,11 @@ Naturally pairs with P5's "retire `__primitive_`" item, which deletes the 7
 first makes that item pure deletion.
 
 - [ ] Steps 1-4 above
-- [ ] `sprite_asset` has no `placeholder` (there is no `error.png`), so its slot
-      0 is `ASSET_SOURCE_MISSING` with an empty source. `assets::init()` must
-      `log_error` when it meets one rather than skipping it quietly.
+- [x] `sprite_asset` has no `placeholder` (there is no `error.png`), so its slot
+      0 is `ASSET_SOURCE_MISSING` with an empty source. `assets::init()` now
+      `log_error`s when it meets one rather than skipping it quietly
+      (`asset.cpp:1062-1068`) — it fires on every launch until a sprite
+      placeholder exists, which is the point.
 
 ---
 
@@ -300,25 +304,39 @@ can be picked up and put down.
 
 ### Left to do (ordinary work, tree is green)
 
-- [ ] **Schema hash in the connect handshake.** `SCHEMA_HASH` is generated and
-      baked; nothing exchanges it yet. Mismatch must refuse loudly with both
-      hashes. This is the last item that was actually in P5's scope.
-- [ ] **`asset_test` still fails (exit 3)** — pre-existing and unrelated, see
-      "Known failing tests". Not touched by the cutover.
-- [ ] Update `CLAUDE.md`: the "Schema System" and "Entity System" sections
-      describe a system that no longer exists, and "Asset System" documents
-      `assets::get_mesh_path(asset_id)` which is now the generated manifest.
-      Worth doing soon since it loads every session.
-- [ ] Convert the maps in `maps/` (run `map_convert`, or just save each in the
-      editor). They load correctly today through the legacy conversion, so this
-      is cleanup rather than a fix. **`maps/` is untracked in git** — worth
-      deciding whether the fixtures should be committed, since
-      `map_migration_test` depends on `maps/test`.
-- [ ] `resources/obj/m4a1_s.obj` still does not exist. The weapon reference is
-      gone with `Weapon_Entity`'s placement entry, but `placement_tool.cpp:189`
-      still points a static-mesh prototype at it. Now a silent no-mesh rather
-      than the compile error the manifest was expected to produce, because
-      geometry paths stayed free-form (decided above).
+- [x] **Schema hash in the connect handshake.** `CmdConnect.schema_hash` carries
+      `entities::SCHEMA_HASH`; the server refuses a mismatch before a slot is
+      taken, `log_error`s both hashes, and echoes the server's in
+      `CmdReject.server_schema_hash` so the client can report both too.
+      Verified against a live `MyGame_Server` with a raw UDP prober: matching
+      hash → CmdAccept, `0xdeadbeef` → CmdReject naming both hashes.
+- [x] **`asset_test` now passes.** Two bugs, both in the test: the fixtures were
+      hardcoded to POSIX `/tmp` (now `std::filesystem::temp_directory_path()`,
+      and the ofstream state is checked instead of failing silently), and it
+      asserted `channels == 3` when `load_texture` deliberately forces RGBA.
+      **All 17 test executables are green.**
+- [x] `CLAUDE.md` rewritten: "Schema System" → the DSL + generator, a new
+      "Entity reflection" section, "Asset System" covers the manifest, the
+      handshake is documented, and the stale port numbers (2020/2024 → the real
+      9999/5001) and test list are fixed. `src/shared/entities/README.md` was
+      worse — it still said the macros were what the game builds against — and
+      is rewritten too.
+- [x] `maps/new_map.source` and `maps/other.source` converted (backups at
+      `*.preconvert.1.bak`). `map_convert` decided "needs conversion" by looking
+      for retired geometry classnames, which is geometry-only and so said
+      "already converted" for maps whose ENTITY text was still pre-cutover; it
+      now compares the file against what `save_map` would write (line endings
+      normalized), so it stays correct as further conversions land. Its backup
+      no longer overwrites an existing `.preconvert.bak` — that held the only
+      copy of the pre-geometry-exit original.
+- [x] `placement_tool.cpp`'s static-mesh prototype pointed at the nonexistent
+      `resources/obj/m4a1_s.obj`; now `error.obj`, the question-mark
+      placeholder. Geometry mesh paths are free-form, so nothing would have
+      caught it at compile time — it just placed an invisible object.
+- [ ] **`maps/` is untracked in git** — still to decide whether the fixtures
+      should be committed, since `map_migration_test` depends on `maps/test`.
+      (`maps/test` and `maps/test_backup` were left in the legacy format on
+      purpose: `test` is the conversion fixture.)
 
 ### Notes for whoever picks this up
 
@@ -489,13 +507,11 @@ furthermore, i'd love if the generated code had designated initializers, I love 
   null-baseline branch and nothing else called `diff()` that way, which is why
   only the test ever hit it. Rewritten against the real serialize/deserialize
   path; passes.
-- `asset_test` fails (exit 3) at `test_asset_system.cpp:59` `assert(handle.valid())`.
-  Cause is trivial and already found: the fixture paths at the top of that file
-  are hardcoded POSIX (`/tmp/test_asset_cube.obj`, `/tmp/..tga`), which don't
-  exist on Windows — the `std::ofstream` write goes nowhere and `load_mesh` then
-  has no file. Fix: write fixtures next to the exe or via `std::filesystem::
-  temp_directory_path()`. Note the ofstream failure is itself silent — the test
-  should check the stream state.
+- ~~`asset_test` fails (exit 3)~~ **FIXED.** Both faults were in the test:
+  hardcoded POSIX `/tmp` fixture paths (so the `std::ofstream` wrote nowhere on
+  Windows, silently, and the load then had no file), and an `assert(channels ==
+  3)` against a loader that deliberately forces RGBA. Now uses
+  `std::filesystem::temp_directory_path()` and checks the stream state.
 - `map_migration_test` must be run FROM THE PROJECT ROOT (it loads the
   `maps/test` fixture by relative path) — it fails with a clear error otherwise.
   Not a bug, just a foot-gun when running tests out of `cmake_build/bin`.
@@ -550,13 +566,11 @@ place on consistency and on not making every entity TU pay for `<ranges>`.
   (BVH) collides with a displacement's box bound, but projectiles pass straight
   through, and they are never registered as Jolt static bodies. The real fix is
   heightmap collision — see the TODO in `get_collision_planes`.
-- **`resources/obj/m4a1_s.obj` DOES NOT EXIST**, but `placement_tool.cpp:173`
-  (static mesh) and `:232` (weapon) both reference it — so placing either in the
-  editor silently loads nothing today. Found while scoping the asset manifest;
-  deliberately left alone so it wasn't bundled into generator work. The manifest
-  turns this into a **compile error** at P5 (there is no `mesh_asset::M4a1_S`),
-  which is the right time to decide: add the model, or repoint both sites at
-  something that exists.
+- ~~**`resources/obj/m4a1_s.obj` DOES NOT EXIST**~~ **RESOLVED in P5.** The
+  weapon site went with `Weapon_Entity`'s placement entry; the static-mesh
+  prototype now points at `resources/obj/error.obj` (the question mark). Note
+  the predicted compile error never materialized — geometry mesh paths stayed
+  free-form by decision, so only reading the code would have caught it.
 - Is the navmesh only planar, or does A* just need two dimensions? Something
   feels wrong there.
 - Make sure the default mesh is the question mark. — *partly handled by P3*:

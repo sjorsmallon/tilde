@@ -115,8 +115,8 @@ add_executable(entity_gen src/tools/entity_gen.cpp)
 # Generated entity structs and reflection tables. These land in the source tree
 # rather than the build dir, on purpose: they are meant to be readable, opened
 # without building, and to show up as a reviewable diff when the .def changes.
-# Nothing links them into the game yet -- entity_layout_test is their only
-# consumer so far.
+# They are the entity system: game_shared compiles the generated source, and
+# map I/O, undo, the wire format and the editor inspector all read the tables.
 set(ENTITY_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/entities.def)
 set(ENTITY_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/generated)
 set(ENTITY_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entities_generated.hpp)

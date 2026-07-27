@@ -1,159 +1,129 @@
-# Entity & Schema System
+# Entity System
 
-> **⚠ This describes the OUTGOING macro-based system.** It is still accurate —
-> the macros are still what the game builds against — but the whole thing is
-> being replaced by a text DSL (`entities.def`) plus a build-time generator
-> (`src/tools/entity_gen.cpp`) that emits `generated/entities_generated.*`.
->
-> Everything below dies at the "hard cutover" step: `SCHEMA_FIELD`,
-> `DEFINE_SCHEMA_CLASS`, `Schema_Registry`, the `SHARED_ENTITIES_LIST` X-macro,
-> `Entity`'s virtuals, and the four geometry entity classes (AABB, Wedge,
-> Static_Mesh, Displacement — those leave the entity system entirely).
->
-> **Do not extend this system.** New entities go in `entities.def`. See
-> `entity_def.md` at the repo root for the design and the order of operations.
-
-## Why a Schema?
-
-Entities need to be **serialized** (networking), **diffed** (delta compression, undo/redo), **inspected** (editor UI), and **loaded from map files** — all generically, without writing bespoke code per field per entity. The schema system makes every entity field self-describing at runtime so that a single code path can handle all of these.
-
-Without it, adding a field to an entity would mean touching serialization, deserialization, the editor inspector, the transaction system, map loading, and saving. With the schema, you just declare the field once and register it once.
-
-## How It Works
-
-### Field Declaration (`SCHEMA_FIELD`)
-
-In the header, each entity field is declared with the `SCHEMA_FIELD` macro:
-
-```cpp
-SCHEMA_FIELD(vec3f, position, Schema_Flags::Networked | Schema_Flags::Editable);
-```
-
-This expands to two things:
-1. The actual member variable (`vec3f position;`)
-2. A `constexpr` metadata entry (`_schema_meta_position`) storing the field's name, size, type, and flags — but **not** the offset, because `offsetof` can't run in a header-only constexpr context across class hierarchies.
-
-### Schema Registration (`.cpp` file)
-
-In the `.cpp` file, fields are registered into a global `Schema_Registry` using one of two macro sets:
-
-**Inheritance-aware (preferred):**
-```cpp
-DEFINE_SCHEMA_CLASS(Player_Entity, Entity)   // class name, parent class
-{
-  BEGIN_SCHEMA_FIELDS()
-  REGISTER_SCHEMA_FIELD(view_angle_yaw);
-  REGISTER_SCHEMA_FIELD(health);
-  END_SCHEMA_FIELDS()
-}
-```
-
-This first copies all parent fields (from `Entity`'s registered schema) into the child, then appends the child's own fields. Each field gets a sequential index and its `offsetof` is computed here.
-
-**Base class (`Entity` itself):**
-Because `Entity` is abstract (pure virtual `get_schema`), it can't use the macros directly. Its fields (`position`, `orientation`) are registered manually via a static-init struct in `entity.cpp`.
-
-### The Registry
-
-`Schema_Registry` is a singleton holding a `std::unordered_map<string, Class_Schema>`. Each `Class_Schema` is just a name + a flat `vector<Field_Prop>`. A `Field_Prop` stores:
-
-| Member  | Purpose                                          |
-|---------|--------------------------------------------------|
-| `name`  | String name (`"position"`, `"health"`, …)        |
-| `index` | Sequential index within this class's schema      |
-| `offset`| `offsetof` — byte offset from the object pointer |
-| `size`  | `sizeof` the field                               |
-| `type`  | `Field_Type` enum (`Int32`, `Float32`, `Vec3f`, …)|
-| `flags` | Bitmask: `Networked`, `Editable`, `Saveable`     |
-
-### Auto-Registration
-
-`END_SCHEMA_FIELDS` (or `END_SCHEMA`) emits a file-scope static object whose constructor calls `ClassName::register_schema()`. This means schemas are registered before `main()` runs, with no manual initialization step required.
-
-## Entity Hierarchy
+Entities are declared once, in a text DSL, and everything else is generated
+from that declaration.
 
 ```
-Entity (abstract base)
-├── position, orientation
-│   └── virtual get_box_volume() -> box_volume_t*  (default: nullptr)
-│
-├── Player_Entity
-│   └── view_angle_yaw, view_angle_pitch, health, ammo, ...
-│
-├── AABB_Entity                       (owns box_volume_t volume)
-│
-├── Trigger_Volume_Entity             (owns box_volume_t volume + action_name, fire_mode, ...)
-│
-├── Displacement_Entity               (owns box_volume_t volume + heightmap)
-│
-├── Wedge_Entity                      (legacy; loose half_extents + orientation — stripped at load, see below)
-│
-├── Static_Mesh_Entity
-│   └── render (mesh bounds drive picking and collision)
-│
-└── Weapon_Entity
-    └── ...
+entities.def  ──entity_gen──▶  generated/entities_generated.{hpp,cpp}
+                                          │
+                    entity_reflection.{hpp,cpp} walks the tables
+                                          │
+         map I/O · undo/redo · wire serialization · editor inspector
 ```
 
-Every derived entity inherits `Entity`'s schema fields (`position`, `orientation`) automatically through `DEFINE_SCHEMA_CLASS(Derived, Entity)`. The flattened schema for e.g. `AABB_Entity` therefore contains: `position`, `orientation`, plus the nested `volume` (a `box_volume_t` whose own fields include `half_extents`).
+| File | What it is |
+|---|---|
+| `entities.def` | **The source of truth.** Every entity, component, enum and asset class. Edit this. |
+| `../../tools/entity_gen.cpp` | The parser + generator. Standalone, no project dependencies. |
+| `generated/entities_generated.hpp` | Structs, enums, `entity_type`, `SCHEMA_HASH`. Generated — do not edit. |
+| `generated/entities_generated.cpp` | `ENTITY_INFOS[]`, `COMPONENT_OFFSETS[][]`, the factory, the asset manifests. Generated — do not edit. |
+| `entity_reflection.{hpp,cpp}` | The hand-written half: everything the tables can *do* that isn't worth generating. |
 
-## Box-Volume Component
+The generated files land in the source tree rather than the build dir on
+purpose: they are meant to be readable and opened without building, and a
+`.def` change should show up as one reviewable diff. CMake regenerates them
+whenever the `.def` *or* the contents of a scanned asset directory change.
 
-`shared::box_volume_t` (in [src/shared/shapes.hpp](../shapes.hpp)) is the geometry primitive that box-shaped entities **own**, rather than **are**. It's a nested-schema component with a single `half_extents` field; world-space `aabb_t` is reconstructed on demand via `to_aabb(volume, entity.position)`. Three entities use it today: `AABB_Entity`, `Trigger_Volume_Entity`, `Displacement_Entity`.
+Inspect the parsed IR without building the game:
 
-### Dispatch — `get_box_volume()`
-
-`Entity` exposes:
-
-```cpp
-virtual shared::box_volume_t *get_box_volume() { return nullptr; }
-virtual const shared::box_volume_t *get_box_volume() const { return nullptr; }
+```bash
+./cmake_build/bin/entity_gen src/shared/entities/entities.def --dump
 ```
 
-Each box-owning entity overrides it as a one-liner: `return &volume;`. Editor tools, picking, collision, fallback rendering all dispatch on this virtual instead of `dynamic_cast<AABB_Entity*>` — any new box-volume entity (clip-brush, hurt-volume, fog-volume, ...) becomes sculptable, pickable, and CSG-aware **for free**, with no edits to the editor or BVH code.
+## The old macro system is gone
 
-The virtual is used for class-level facts ("does this class have a box volume?") that are known at compile time. Don't use `Entity::get_component<box_volume_t>()` for this purpose — that's a runtime schema walk, slower for no gain. `get_component<T>` is fine for generic property access, just not for dispatch.
+`SCHEMA_FIELD`, `DECLARE_SCHEMA`, `DEFINE_SCHEMA_CLASS`, `Schema_Registry`,
+`Class_Schema`, `Field_Prop`, the `SHARED_ENTITIES_LIST` X-macro,
+`create_entity_by_classname`, `network::Entity` and all its virtuals — deleted
+in the P5 hard cutover. There is **no runtime schema registry** and no static
+init registering anything. If you find a reference to any of the above, it is
+a stale comment, not a system.
 
-### How to add a new box-volume entity
+Four types left the entity system entirely at the same time: `AABB_Entity`,
+`Wedge_Entity`, `Static_Mesh_Entity` and `Displacement_Entity` are now plain
+map-owned values (`../map_geometry.hpp`). They are never networked, so they
+were paying the blittable/fixed-size/memcmp constraints for nothing.
 
-1. Add a `SCHEMA_FIELD(shared::box_volume_t, volume, Networked | Editable | Saveable)` member.
-2. Override `get_box_volume()` (const + non-const) to return `&volume`.
-3. Add the entity to `SHARED_ENTITIES_LIST` as usual.
+## Adding an entity
 
-That's it. Sculpting, placement, picking, the BVH path, and runtime fallback rendering all pick the new entity up. Behavior-specific code (drawing tints, action lookups, etc.) stays per-class — only the **geometry** layer flows through the virtual.
+1. Declare it in `entities.def`.
+2. Build. The generator emits the struct, the enum value and the tables.
+3. Fix the compile errors. Every exhaustive `switch` over `entity_type` —
+   `make_entity_pool`, `create_map_entity`, `fire_trigger_action`,
+   `compute_entity_bounds`, the editor's `ENTITY_DISPATCH` — fails to compile
+   until it handles the new case. That is the design: the compiler is the
+   checklist.
 
-### Wedge migration is deferred
+There is no step where you register anything.
 
-`Wedge_Entity` still uses loose `half_extents` + `orientation` fields rather than a component. To keep the box-volume refactor narrow, **all `Wedge_Entity` entries are stripped from maps at load time** (with a non-silent `printf` per stripped wedge — see [map.cpp](../map.cpp)'s `load_map`). The class itself stays in the codebase so existing code compiles; it just stops appearing in any loaded map.
+## Field flags
 
-Future follow-up: introduce `wedge_volume_t` + `virtual wedge_volume_t* get_wedge_volume()` on `Entity`, restore `Wedge_Entity` (or its replacement) as the first user, collapse the existing wedge `dynamic_cast` sites. The pattern is already established by `box_volume_t`.
+`@Networked`, `@Editable`, `@Saveable`. All three are load-bearing (in the
+macro system only `@Editable` was ever enforced, so the other two could sit on
+a field and mean nothing). `entities.def` carries the full definition of each
+and the reasoning behind every field's flags — read it there rather than
+guessing from the name.
 
-## Entity List & Factory
+Two structural rules the generator enforces as **errors**, not warnings:
 
-`entity_list.hpp` is the central registration point. It defines a single X-macro `SHARED_ENTITIES_LIST` that maps:
+- A component-typed field carries no flags. The flags on the component's own
+  fields are what consumers read; a flag at the use site would be ignored.
+- `@Editable` / `@Saveable` on a `@runtime_only` entity is an error. The
+  inspector and the map file only ever see map-placed entities, so those flags
+  are unreachable there.
 
-```
-(EnumName, ClassName, StringName, HeaderPath)
-```
+## Entities are plain structs
 
-This macro is expanded in different contexts to generate:
-- The `entity_type` enum
-- The `create_entity_by_classname` factory function
-- The `get_classname_for_entity` reverse lookup
-- Entity pool registration in `Entity_System`
+No virtuals, no virtual destructor, trivially copyable. That is what makes
+memcmp diffing, memcpy cloning and per-pool snapshotting possible. It also
+changes how you write code against them:
 
-To add a new entity: create the class, use `SCHEMA_FIELD` / `DECLARE_SCHEMA` / `DEFINE_SCHEMA_CLASS`, and add one line to the X-macro.
+| Instead of | Use |
+|---|---|
+| `dynamic_cast<T*>(entity)` | `entities::entity_as<T>(entity)` — exact type match |
+| `entity->get_box_volume()` | `entities::get_box_volume(entity)` — component table lookup |
+| `entity->get_component<T>()` | `get_box_volume` / `get_render` / `get_hitbox` |
+| `delete entity` | `entities::destroy_entity(entity)` — recovers the concrete type from the tag |
+| a virtual override per type | a handwritten exhaustive `switch` over `entity_type` |
 
-## Who Uses the Schema
+The hierarchy is closed and exactly one level deep — every type derives
+straight from `Entity` — which is why exact-match `entity_as` is what every
+call site actually means.
 
-| Consumer | What it does |
-|----------|-------------|
-| `Entity::serialize` / `deserialize` | Walks schema fields, writes/reads a bitmask + changed field data over the network |
-| `diff` / `capture_field_changes` | Compares two entity snapshots field-by-field via `memcmp` at schema offsets |
-| `apply_diff` | Patches an entity from a list of `Field_Update`s |
-| `write_field_changes` | Writes one side of a captured change list back — new values to redo, old values to undo |
-| `clone_entity` | Exact copy of an entity by copying schema field bytes (the editor's snapshot primitive) |
-| `init_from_map` | Parses string key-value pairs from map files into typed fields — map file load only |
-| `get_all_properties` | Serializes all fields back to string key-value pairs — map file save only |
-| Transaction system | `clone_entity` to snapshot, `capture_field_changes` / `write_field_changes` for undo/redo. Entirely binary; no text round-trip |
-| Editor inspector | Iterates `Editable` fields to generate ImGui widgets |
+## What entity_reflection gives you
+
+Three jobs, all of which used to be virtual methods on the entity base class:
+
+- **Text** — `field_to_text` / `field_from_text`. The *only* place entity field
+  bytes become characters; map save and map load are the callers. Floats use
+  the shortest round-tripping representation, so a save/load cycle is exact.
+- **Diffs** — `capture_field_changes` / `write_field_changes`. Binary
+  before/after field bytes, the editor's undo primitive. Detection is a memcmp
+  over the field's own size, so a change of any magnitude is seen — unlike the
+  formatted-float compare it replaced, which silently dropped anything too
+  small to survive being printed.
+- **Copy** — `clone_entity`. Exact copy, deliberately not a
+  serialize/deserialize round-trip: the wire quantizes coordinates to ~1/32, so
+  a round trip would snap every position on undo.
+
+Plus the field walk: `collect_leaf_fields(type, required_flags)` flattens the
+component tree into dotted paths (`"volume.half_extents"`) in **declaration
+order** — that ordering is what makes a saved map diffable. Pass
+`FIELD_FLAG_SAVEABLE` for map I/O, `FIELD_FLAG_EDITABLE` for the inspector.
+`networked_leaf_fields(type)` is the cached, allocation-free variant for the
+wire path.
+
+Consumers that don't care what is *inside* a component — undo's memcmp — treat
+it as one opaque blob and never flatten.
+
+## SCHEMA_HASH
+
+A digest of every declaration in the `.def` plus the resolved asset manifest.
+It rides in `CmdConnect`; the server refuses a client whose hash differs and
+reports both. A mismatch means the two builds disagree about entity layout or
+about what asset id 3 means, so every snapshot after the handshake would be
+misparsed.
+
+That is also why asset ids need not be stable across adding a file to a scanned
+directory: names are the on-disk identity (a map file stores `"Cube"`, never
+`3`), and a build whose ids shifted refuses to talk to one whose didn't.

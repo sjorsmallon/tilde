@@ -1,0 +1,263 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "test"
+}
+entity
+{
+  "classname" "wedge_entity"
+  "_uid" "1"
+  "entity_id" "0"
+  "half_extents" "64.000000 64.000000 64.000000"
+  "orientation" "0"
+  "position" "512.000000 64.000000 768.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "player_start"
+  "_uid" "2"
+  "entity_id" "0"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-640.000000 164.000000 -640.000000"
+  "spawn_type" "0"
+}
+entity
+{
+  "classname" "player_start"
+  "_uid" "3"
+  "entity_id" "0"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-512.000000 164.000000 384.000000"
+  "spawn_type" "0"
+}
+entity
+{
+  "classname" "player_start"
+  "_uid" "4"
+  "entity_id" "0"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-640.000000 164.000000 -768.000000"
+  "spawn_type" "0"
+}
+entity
+{
+  "classname" "player_start"
+  "_uid" "5"
+  "entity_id" "0"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-512.000000 164.000000 256.000000"
+  "spawn_type" "0"
+}
+entity
+{
+  "classname" "player_start"
+  "_uid" "6"
+  "entity_id" "0"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "896.000000 164.000000 768.000000"
+  "spawn_type" "0"
+}
+entity
+{
+  "classname" "displacement_entity"
+  "_uid" "7"
+  "active_face" "2"
+  "displacements" "1323 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.0531101 0 0 0.13872 0 0 0.0190534 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.125289 0 0 1.29616 0 0 3.05768 0 0 3.86752 0 0 2.58863 0 0 0.902278 0 0 0.0275472 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.00341764 0 0 0.235128 0 0 2.09227 0 0 7.60712 0 0 16.4293 0 0 19.8605 0 0 12.9262 0 0 4.48835 0 0 0.846112 0 0 0.0175668 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.00697177 0 0 0.22888 0 0 1.55745 0 0 6.74615 0 0 18.4954 0 0 33.21 0 0 36.261 0 0 22.5903 0 0 7.73644 0 0 1.44223 0 0 0.0705897 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.0823565 0 0 0.763613 0 0 3.71298 0 0 11.6522 0 0 23.9526 0 0 32.2747 0 0 540.399 0 0 535.381 0 0 522.157 0 0 0.814308 0 0 0.024991 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.01192 0 0 0.160984 0 0 1.13752 0 0 4.64861 0 0 12.4882 0 0 21.7159 0 0 22.833 0 0 538.984 0 0 533.799 0 0 521.222 0 0 0.063651 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.166781 0 0 1.26479 0 0 6.24717 0 0 18.5001 0 0 33.5623 0 0 34.5105 0 0 535.2 0 0 530.215 0 0 519.435 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.311624 0 0 2.25736 0 0 11.9552 0 0 37.3213 0 0 72.0764 0 0 78.359 0 0 532.16 0 0 528.081 0 0 518.64 0 0 0.0139138 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.0110135 0 0 0.365539 0 0 2.53359 0 0 12.4468 0 0 38.1048 0 0 73.6748 0 0 80.4895 0 0 45.1693 0 0 12.604 0 0 1.88072 0 0 0.0321301 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.00244726 0 0 0.0170808 0 0 0.0414663 0 0 0.0348215 0 0 0.0131761 0 0 0.00133636 0 0 0 0 0 0.163236 0 0 1.10541 0 0 5.21531 0 0 15.0887 0 0 28.0659 0 0 29.7506 0 0 16.5589 0 0 4.88812 0 0 0.436334 0 0 0.0135112 0 0 0 0 0 0 0 0 0 0 0 0.0115521 0 0 0.107665 0 0 0.31228 0 0 0.547893 0 0 0.569114 0 0 0.348609 0 0 0.121235 0 0 0.00387556 0 0 0.0198216 0 0 0.14318 0 0 0.661187 0 0 2.14164 0 0 4.08449 0 0 4.16621 0 0 2.22667 0 0 0.422634 0 0 0.0265457 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.106719 0 0 0.519233 0 0 2.63391 0 0 5.62176 0 0 6.93904 0 0 4.86573 0 0 1.44729 0 0 0.257455 0 0 0.00657149 0 0 0 0 0 0.0109072 0 0 0.0579177 0 0 0.0893031 0 0 0.0801359 0 0 0.0268795 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.0169146 0 0 0.235698 0 0 2.54594 0 0 10.481 0 0 25.5343 0 0 33.9769 0 0 23.5972 0 0 8.9304 0 0 1.87905 0 0 0.1303 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.0217695 0 0 0.282672 0 0 4.37758 0 0 20.1642 0 0 51.6795 0 0 67.8635 0 0 47.434 0 0 17.4129 0 0 3.6579 0 0 0.258446 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.00701287 0 0 0.135106 0 0 3.09929 0 0 14.7315 0 0 38.1992 0 0 50.9545 0 0 35.3602 0 0 13.1872 0 0 2.87529 0 0 0.233429 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.0345965 0 0 0.663283 0 0 3.96103 0 0 10.1138 0 0 13.7433 0 0 10.0179 0 0 4.08661 0 0 0.609502 0 0 0.0883735 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.033063 0 0 0.166654 0 0 0.986319 0 0 1.54796 0 0 0.988971 0 0 0.38385 0 0 0.10729 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.00351032 0 0 0.0294791 0 0 0.0502254 0 0 0.0431944 0 0 0.0152465 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+  "entity_id" "0"
+  "half_extents" "592.070190 64.000000 751.547668"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-16.070255 64.000000 2991.547607"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+  "subdivision_level" "20"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "8"
+  "entity_id" "0"
+  "half_extents" "1809.264282 31.754147 1935.201050"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "1024.000000 -1.792705 -1152.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "9"
+  "entity_id" "0"
+  "half_extents" "752.954834 124.144287 677.796387"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "1253.488525 -157.691132 997.796387"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "10"
+  "entity_id" "0"
+  "half_extents" "513.905029 2.282509 677.796387"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "1014.438965 32.243950 997.796387"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "11"
+  "entity_id" "0"
+  "half_extents" "513.905029 31.754143 443.401001"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "1014.438965 -1.792702 1232.191772"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "12"
+  "entity_id" "0"
+  "half_extents" "164.739624 568.818848 453.709229"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-1280.000000 -577.729492 896.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "13"
+  "entity_id" "0"
+  "half_extents" "360.605225 556.500732 453.709229"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-424.605103 -590.047607 890.290771"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "14"
+  "entity_id" "0"
+  "half_extents" "360.605225 12.318085 277.604614"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-424.605103 -21.228790 1066.395386"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "15"
+  "entity_id" "0"
+  "half_extents" "440.034607 39.471004 708.293823"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-1280.000000 39.471004 -256.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "16"
+  "entity_id" "0"
+  "half_extents" "296.604858 24.490284 708.293823"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-488.605408 54.451725 -176.932983"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "17"
+  "entity_id" "0"
+  "half_extents" "64.000000 64.000000 64.000000"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-384.000000 192.000000 -512.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "18"
+  "entity_id" "0"
+  "half_extents" "41.782471 27.862099 255.926392"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-1280.000000 57.823540 -1280.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "19"
+  "entity_id" "0"
+  "half_extents" "432.676208 32.779251 255.926392"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-352.534119 62.740692 -1215.926270"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "20"
+  "entity_id" "0"
+  "half_extents" "44.465637 11.942371 595.760925"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-236.466187 90.884384 -49.788940"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "21"
+  "entity_id" "0"
+  "half_extents" "44.465637 24.490288 7.305542"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "-236.466187 54.451729 538.666382"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "22"
+  "entity_id" "0"
+  "half_extents" "64.000000 49.019279 64.000000"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "896.000000 78.980721 -256.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "23"
+  "entity_id" "0"
+  "half_extents" "328.806091 22.940199 264.768921"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "503.193909 22.940199 1963.822021"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "24"
+  "entity_id" "0"
+  "half_extents" "64.000000 64.000000 64.000000"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "1024.000000 64.000000 2176.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "25"
+  "entity_id" "0"
+  "half_extents" "64.000000 64.000000 64.000000"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "896.000000 64.000000 2560.000000"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
+entity
+{
+  "classname" "aabb_entity"
+  "_uid" "26"
+  "entity_id" "0"
+  "half_extents" "109.573326 44.135941 129.463547"
+  "orientation" "0.000000 0.000000 0.000000"
+  "position" "41.290470 44.135941 2110.536133"
+  "render" "mesh_id:-1|mesh_path:|visible:true|is_wireframe:false|offset:0.000000 0.000000 0.000000|scale:1.000000 1.000000 1.000000|rotation:0.000000 0.000000 0.000000|material:shader_type:lit|color:1.000000 1.000000 1.000000|roughness:0.500000"
+}
