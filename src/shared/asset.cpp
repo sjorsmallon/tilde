@@ -1,5 +1,6 @@
 #include "asset.hpp"
 
+#include "log.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -973,34 +974,143 @@ bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_ma
   return true;
 }
 
-asset_handle_t<mesh_asset_t> get_primitive_mesh(const char *primitive_name)
+// --- The manifest ---
+
+namespace
 {
-  static bool initialized = false;
 
-  if (!initialized) {
-    printf("[assets] Initializing primitive meshes...\n");
+// Handles per id, filled by init(). Indexed by the enum's own value, so a
+// lookup is an array read; an id whose entry could not be provided keeps an
+// invalid handle and the accessor falls back to the placeholder.
+asset_handle_t<mesh_asset_t>    g_mesh_handles[entities::mesh_asset_COUNT];
+asset_handle_t<texture_asset_t> g_sprite_handles[entities::sprite_asset_COUNT];
+bool                            g_manifest_initialized = false;
 
-    g_meshes.add("__primitive_box", generate_box_mesh());
-    g_meshes.add("__primitive_arrow", generate_arrow_mesh());
-    g_meshes.add("__primitive_sphere", generate_sphere_mesh(16, 16));
-    g_meshes.add("__primitive_cylinder", generate_cylinder_mesh(16));
-    g_meshes.add("__primitive_cone", generate_cone_mesh(16));
-    g_meshes.add("__primitive_wedge", generate_wedge_mesh());
+// The generator keys for the procedural meshes. This is the ONE place a
+// generator key is still a string, and it is a lookup inside the asset system
+// rather than something a call site says -- which is what killed the
+// "__primitive_" prefix and its seven strncmp dispatch sites.
+mesh_asset_t generate_mesh_for_key(const char *key)
+{
+  if (std::strcmp(key, "box") == 0)      return generate_box_mesh();
+  if (std::strcmp(key, "arrow") == 0)    return generate_arrow_mesh();
+  if (std::strcmp(key, "sphere") == 0)   return generate_sphere_mesh(16, 16);
+  if (std::strcmp(key, "cylinder") == 0) return generate_cylinder_mesh(16);
+  if (std::strcmp(key, "cone") == 0)     return generate_cone_mesh(16);
+  if (std::strcmp(key, "wedge") == 0)    return generate_wedge_mesh();
 
-    printf("[assets] Primitive meshes initialized (7 types)\n");
-    initialized = true;
+  log_error("assets: the manifest names a procedural mesh \"{}\" that no generator "
+            "produces — that id will resolve to the placeholder",
+            key);
+  return {};
+}
+
+} // namespace
+
+void init()
+{
+  if (g_manifest_initialized)
+    return;
+  g_manifest_initialized = true;
+
+  const Span<const entities::asset_info_t> meshes = entities::mesh_asset_manifest();
+  for (uint32_t index = 0; index < meshes.size(); ++index)
+  {
+    const entities::asset_info_t &info = meshes[index];
+
+    switch (info.source_kind)
+    {
+      case entities::ASSET_SOURCE_FILE:
+        g_mesh_handles[index] = load_mesh(info.source);
+        if (!g_mesh_handles[index].valid())
+          log_error("assets: mesh \"{}\" could not be loaded from \"{}\"", info.name, info.source);
+        break;
+
+      case entities::ASSET_SOURCE_PROCEDURAL:
+        g_mesh_handles[index] =
+            g_meshes.add(info.name, generate_mesh_for_key(info.source));
+        break;
+
+      case entities::ASSET_SOURCE_MISSING:
+        // Not a skip: an id with no source is a hole in the manifest, and every
+        // Render field that names it will draw the placeholder instead.
+        log_error("assets: mesh \"{}\" (id {}) has no source in the manifest", info.name, index);
+        break;
+    }
   }
 
-  // Build full path
-  std::string path = std::string("__primitive_") + primitive_name;
-  auto handle = g_meshes.find(path.c_str());
+  const Span<const entities::asset_info_t> sprites = entities::sprite_asset_manifest();
+  for (uint32_t index = 0; index < sprites.size(); ++index)
+  {
+    const entities::asset_info_t &info = sprites[index];
 
-  if (!handle.valid()) {
-    printf("[assets] Unknown primitive: %s\n", primitive_name);
+    switch (info.source_kind)
+    {
+      case entities::ASSET_SOURCE_FILE:
+        g_sprite_handles[index] = load_texture(info.source);
+        if (!g_sprite_handles[index].valid())
+          log_error("assets: sprite \"{}\" could not be loaded from \"{}\"", info.name,
+                    info.source);
+        break;
+
+      case entities::ASSET_SOURCE_PROCEDURAL:
+        log_error("assets: sprite \"{}\" is declared procedural, but no sprite generator "
+                  "exists — that id will resolve to nothing",
+                  info.name);
+        break;
+
+      case entities::ASSET_SOURCE_MISSING:
+        // sprite_asset has no placeholder today (there is no error.png), so
+        // slot 0 legitimately has no source. Reported rather than skipped, per
+        // the rule that nothing here fails silently.
+        log_error("assets: sprite \"{}\" (id {}) has no source in the manifest", info.name,
+                  index);
+        break;
+    }
+  }
+
+  printf("[assets] manifest registered: %u meshes, %u sprites\n", meshes.size(), sprites.size());
+}
+
+asset_handle_t<mesh_asset_t> get_mesh(entities::mesh_asset id)
+{
+  if (!g_manifest_initialized)
+  {
+    log_error("assets: get_mesh called before assets::init() — registration is eager and "
+              "must run first");
     return {};
   }
 
-  return handle;
+  const uint32_t index = (uint32_t)id;
+  if (index >= entities::mesh_asset_COUNT)
+  {
+    log_error("assets: mesh id {} is outside the manifest", index);
+    return g_mesh_handles[(uint32_t)entities::mesh_asset::Missing];
+  }
+
+  if (!g_mesh_handles[index].valid())
+    return g_mesh_handles[(uint32_t)entities::mesh_asset::Missing];
+
+  return g_mesh_handles[index];
+}
+
+asset_handle_t<texture_asset_t> get_sprite(entities::sprite_asset id)
+{
+  if (!g_manifest_initialized)
+  {
+    log_error("assets: get_sprite called before assets::init() — registration is eager and "
+              "must run first");
+    return {};
+  }
+
+  const uint32_t index = (uint32_t)id;
+  if (index >= entities::sprite_asset_COUNT)
+  {
+    log_error("assets: sprite id {} is outside the manifest", index);
+    return {};
+  }
+
+  return g_sprite_handles[index];
 }
 
 } // namespace assets

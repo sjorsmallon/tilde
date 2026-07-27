@@ -1,11 +1,9 @@
 #pragma once
 
-#include "../../shared/entity.hpp"
-#include "../../shared/entity_system.hpp" // type_to_classname, for error messages
+#include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/map.hpp"
 #include "../../shared/map_geometry.hpp"
-#include "../../shared/network/schema.hpp"
 #include <cstdint>
 #include <map>
 #include <stack>
@@ -23,10 +21,10 @@ namespace client
 // changed field bytes, exactly as geometry is a whole value. Text appears only
 // at the disk save/load boundary, which is map.cpp's business, not undo's.
 
-// One entity's captured state: an exact clone, produced by shared::clone_entity.
-// Held by shared_ptr because that's what map_t stores and what the factory
-// hands back; the transaction never mutates it, hence const.
-using entity_snapshot_t = std::shared_ptr<const network::Entity>;
+// One entity's captured state: an exact clone, produced by
+// entities::clone_entity. Held by shared_ptr because that's what map_t stores;
+// the transaction never mutates it, hence const.
+using entity_snapshot_t = std::shared_ptr<const entities::Entity>;
 
 struct diff_entity_created_t
 {
@@ -44,10 +42,10 @@ struct diff_entity_modified_t
 {
   shared::entity_uid_t uid;
   // Carried so apply/revert can verify the entity still at this uid is the same
-  // type the change was captured against. Field indices are per-class, so
-  // writing them into a different class would silently corrupt it.
-  ::entity_type type = ::entity_type::UNKNOWN;
-  std::vector<network::field_change_t> changes;
+  // type the change was captured against. Field indices are per-type, so
+  // writing them into a different type would silently corrupt it.
+  entities::entity_type type = entities::entity_type::Invalid;
+  std::vector<entities::field_change_t> changes;
 };
 
 // --- The second entry flavor: geometry value-swap ---------------------------
@@ -100,17 +98,27 @@ template <class... Ts> struct overloaded : Ts...
 
 // Capture an entity's whole state for a created/removed entry, or as the
 // "before" side of a modification.
-inline entity_snapshot_t snapshot_entity(const network::Entity *ent)
+// clone_entity returns a raw pointer, so ownership is adopted here with
+// destroy_entity as the deleter -- entities have no virtual destructor, and
+// destroy_entity is what recovers the concrete type from the tag before
+// deleting.
+inline entity_snapshot_t snapshot_entity(const entities::Entity *ent)
 {
-  return shared::clone_entity(ent);
+  entities::Entity *copy = entities::clone_entity(ent);
+  if (copy == nullptr)
+    return nullptr;
+  return entity_snapshot_t(copy, &entities::destroy_entity);
 }
 
 // Rebuild an entity from a snapshot. The snapshot is already a real entity of
 // the right concrete type, so this is just another exact clone.
-inline std::shared_ptr<network::Entity>
+inline std::shared_ptr<entities::Entity>
 restore_entity(const entity_snapshot_t &snapshot)
 {
-  return shared::clone_entity(snapshot.get());
+  entities::Entity *copy = entities::clone_entity(snapshot.get());
+  if (copy == nullptr)
+    return nullptr;
+  return std::shared_ptr<entities::Entity>(copy, &entities::destroy_entity);
 }
 
 // --- transaction_builder_t ---
@@ -129,8 +137,8 @@ struct transaction_builder_t
     diffs.push_back(diff_entity_removed_t{uid, std::move(snapshot)});
   }
 
-  void add_modified(shared::entity_uid_t uid, ::entity_type type,
-                    std::vector<network::field_change_t> changes)
+  void add_modified(shared::entity_uid_t uid, entities::entity_type type,
+                    std::vector<entities::field_change_t> changes)
   {
     if (!changes.empty())
       diffs.push_back(diff_entity_modified_t{uid, type, std::move(changes)});
@@ -142,31 +150,21 @@ struct transaction_builder_t
   // an empty transaction.
   void add_modified_from_diff(shared::entity_uid_t uid,
                               const entity_snapshot_t &before,
-                              const network::Entity *after)
+                              const entities::Entity *after)
   {
     if (!before || !after)
       return;
 
-    if (before->get_type() != after->get_type())
+    if (before->type != after->type)
     {
       log_error("transaction: uid {} was captured as {} but is now {} — the edit "
                 "is not undoable",
-                uid, shared::get_classname_for_entity(before.get()),
-                shared::get_classname_for_entity(after));
+                uid, entities::classname_of(before.get()),
+                entities::classname_of(after));
       return;
     }
 
-    const network::Class_Schema *schema = after->get_schema();
-    if (!schema)
-    {
-      log_error("transaction: entity {} has no registered schema — the edit is "
-                "not undoable",
-                shared::get_classname_for_entity(after));
-      return;
-    }
-
-    add_modified(uid, after->get_type(),
-                 network::capture_field_changes(before.get(), after, schema));
+    add_modified(uid, after->type, entities::capture_field_changes(before.get(), after));
   }
 
   // --- geometry ---
@@ -296,7 +294,7 @@ private:
   static void restore_entity_into_map(shared::map_t &map, shared::entity_uid_t uid,
                                       const entity_snapshot_t &snapshot)
   {
-    std::shared_ptr<network::Entity> entity = restore_entity(snapshot);
+    std::shared_ptr<entities::Entity> entity = restore_entity(snapshot);
     if (!entity)
     {
       log_error("transaction: could not rebuild the entity for uid {} — it stays "
@@ -322,26 +320,17 @@ private:
       return;
     }
 
-    network::Entity *entity = entry->entity.get();
-    if (entity->get_type() != diff.type)
+    entities::Entity *entity = entry->entity.get();
+    if (entity->type != diff.type)
     {
       log_error("transaction: uid {} now holds a {} but the change was captured "
                 "against a {} — refusing to write field bytes into it",
-                diff.uid, shared::get_classname_for_entity(entity),
-                shared::type_to_classname(diff.type));
+                diff.uid, entities::classname_of(entity),
+                entities::entity_info(diff.type).classname);
       return;
     }
 
-    const network::Class_Schema *schema = entity->get_schema();
-    if (!schema)
-    {
-      log_error("transaction: entity {} has no registered schema — cannot "
-                "restore its fields",
-                shared::get_classname_for_entity(entity));
-      return;
-    }
-
-    network::write_field_changes(entity, diff.changes, schema, write_new_value);
+    entities::write_field_changes(entity, diff.changes, write_new_value);
   }
 
   // Write a whole geometry value back over the object with this uid. The entire

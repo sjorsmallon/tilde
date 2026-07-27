@@ -1,4 +1,4 @@
-#include "entities/player_entity.hpp"
+#include "../shared/entities/entity_reflection.hpp"
 #include "game_session.hpp"
 #include "log.hpp"
 #include "map.hpp" // shared::create_entity_by_classname
@@ -22,8 +22,8 @@ int main()
   const entity_uid_t floor_uid = test_map.add_geometry(floor);
 
   // Add a Player Spawn marker
-  auto spawn_ent = shared::create_entity_by_classname("player_start");
-  if (auto *p = shared::entity_as<network::Player_Spawn_Entity>(spawn_ent.get()))
+  auto spawn_ent = shared::create_map_entity("player_spawn_entity");
+  if (auto *p = entities::entity_as<entities::Player_Spawn_Entity>(spawn_ent.get()))
   {
     p->position = {5, 5, 0};
   }
@@ -117,11 +117,10 @@ int main()
   }
 
   // Verify Entity System (Player spawn marker).
-  // "player_start" classname maps to Player_Spawn_Entity / entity_type::PLAYER_SPAWN.
-  // Player_Entity (entity_type::PLAYER) is the live player, runtime-spawned
+  // "player_start" classname maps to Player_Spawn_Entity / entities::entity_type::Player_Spawn_Entity.
+  // Player_Entity (entities::entity_type::Player_Entity) is the live player, runtime-spawned
   // when a client connects — not a map-loaded thing.
-  auto *spawns = session.entity_system.get_entities<network::Player_Spawn_Entity>(
-      entity_type::PLAYER_SPAWN);
+  auto *spawns = session.entity_system.get_entities<entities::Player_Spawn_Entity>();
 
   if (!spawns || spawns->empty())
   {

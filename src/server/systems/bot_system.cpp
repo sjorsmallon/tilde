@@ -1,9 +1,9 @@
+#include "../../shared/player_constants.hpp"
+#include "../../shared/entities/entity_reflection.hpp"
 #include "bot_system.hpp"
 
 #include "../cosmetic_events.hpp"
 #include "../../shared/bot_debug.hpp"
-#include "../../shared/entities/player_entity.hpp"
-#include "../../shared/entities/rocket_entity.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/pathfinding.hpp"
 #include "../../shared/player_move.hpp"
@@ -17,8 +17,7 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
                     const vec3f &position,
                     int32_t slot, BotType type, BotPersonality personality)
 {
-  auto *bot = session.entity_system.spawn<network::Player_Entity>(
-      entity_type::PLAYER);
+  auto *bot = session.entity_system.spawn<entities::Player_Entity>();
 
   if (bot)
   {
@@ -26,7 +25,7 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
     bot->client_slot_index = slot;
     bot->health            = 100;
 
-    bot->hitbox.shape_type.set("capsule");
+    bot->hitbox.shape = entities::Shape_Kind::Capsule;
     bot->hitbox.size   = {18.f, 38.f, 18.f};
     bot->hitbox.offset = {0.f,  38.f,  0.f};
 
@@ -97,14 +96,13 @@ void update_bots(std::vector<Bot_State> &bots,
     bot_debug::g_entries.push_back(std::move(e));
   }
 
-  auto *players = session.entity_system.get_entities<network::Player_Entity>(
-      entity_type::PLAYER);
+  auto *players = session.entity_system.get_entities<entities::Player_Entity>();
   if (!players) return;
 
   for (auto &bot : bots)
   {
     // ---- find this bot's entity ----
-    network::Player_Entity *bot_ent = nullptr;
+    entities::Player_Entity *bot_ent = nullptr;
     for (auto &p : *players)
     {
       if (p.client_slot_index == bot.player_slot) { bot_ent = &p; break; }
@@ -112,7 +110,7 @@ void update_bots(std::vector<Bot_State> &bots,
     if (!bot_ent) continue;
 
     // ---- find nearest human target ----
-    network::Player_Entity *target    = nullptr;
+    entities::Player_Entity *target    = nullptr;
     float                   best_dist = std::numeric_limits<float>::max();
     for (auto &p : *players)
     {
@@ -239,8 +237,7 @@ void update_bots(std::vector<Bot_State> &bots,
                                  target->position.z};
           vec3f aim_dir = linalg::normalize(target_center - eye);
 
-          auto *rocket = session.entity_system.spawn<network::Rocket_Entity>(
-              entity_type::ROCKET);
+          auto *rocket = session.entity_system.spawn<entities::Rocket_Entity>();
           if (rocket)
           {
             rocket->position        = eye;
@@ -251,7 +248,7 @@ void update_bots(std::vector<Bot_State> &bots,
             rocket->knockback_force = 600.f;
             rocket->owner_id        = bot_ent->entity_id;
 
-            rocket->hitbox.shape_type.set("sphere");
+            rocket->hitbox.shape = entities::Shape_Kind::Sphere;
             rocket->hitbox.size   = {12.f, 12.f, 12.f};
             rocket->hitbox.offset = {0.f, 0.f, 0.f};
           }
@@ -297,7 +294,7 @@ void update_bots(std::vector<Bot_State> &bots,
     auto [new_pos, new_vel] =
         player_move(input, session.bvh, bot_ent->position, bot_ent->velocity,
                     front, right, bot.personality.move_speed,
-                    network::player_half_height, dt, &move_events);
+                    shared::player_half_height, dt, &move_events);
 
     bot_ent->position = new_pos;
     bot_ent->velocity = new_vel;

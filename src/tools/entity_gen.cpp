@@ -2163,6 +2163,27 @@ static int32_t* build_asset_class_ids(const program_t* program, int32_t* out_cla
   return ids;
 }
 
+// Same shape again, for enums. A field records which enum it draws from so a
+// generic consumer can turn its value into text (map save) and back (map load)
+// without knowing the enum by name -- the one thing the type column alone
+// cannot tell it.
+static int32_t* build_enum_ids(const program_t* program, int32_t* out_enum_count)
+{
+  int32_t* ids  = (int32_t*)malloc((size_t)program->declaration_count * sizeof(int32_t));
+  int32_t  next = 0;
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    if (program->declarations[index].kind == DECLARATION_ENUM)
+      ids[index] = next++;
+    else
+      ids[index] = -1;
+  }
+
+  *out_enum_count = next;
+  return ids;
+}
+
 static void write_cpp_type(FILE* out, const type_reference_t* type)
 {
   switch (type->kind)
@@ -2447,6 +2468,15 @@ static void emit_generated_header(FILE* out, const program_t* program)
       fprintf(out, "Span<const asset_info_t> %.*s_manifest();\n\n",
               declaration->name.length, declaration->name.data);
     }
+
+    // The manifest reached by the id a field carries rather than by the class's
+    // name. This is what makes an asset field convertible to and from text by a
+    // walker that only has a field_info_t: entry `index` of the returned span is
+    // the asset whose numeric value is `index`.
+    fprintf(out, "// The manifest a field_info_t::asset_class_id refers to. Empty span for\n");
+    fprintf(out, "// an id no asset class owns, which is a caller bug -- check the column\n");
+    fprintf(out, "// is not -1 before calling.\n");
+    fprintf(out, "Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);\n\n");
   }
 
   // --- enums ---
@@ -2469,6 +2499,40 @@ static void emit_generated_header(FILE* out, const program_t* program)
             declaration->name.data);
     fprintf(out, "bool from_string(const char* text, %.*s* out_value);\n\n",
             declaration->name.length, declaration->name.data);
+  }
+
+  // --- enum tag + reflection ---
+  //
+  // The typed to_string/from_string pairs above are what hand-written code
+  // calls. This table is for the walkers, which hold a field_info_t and a
+  // pointer and know neither enum by name. Value N is names[N], so the two
+  // directions are an index and a compare.
+  {
+    int32_t enum_count = 0;
+    int32_t* enum_ids  = build_enum_ids(program, &enum_count);
+
+    fprintf(out, "enum class enum_type : uint16_t\n{\n");
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      if (enum_ids[index] < 0)
+        continue;
+      const declaration_t* declaration = &program->declarations[index];
+      fprintf(out, "  %.*s = %d,\n", declaration->name.length, declaration->name.data,
+              enum_ids[index]);
+    }
+    fprintf(out, "};\n\n");
+    fprintf(out, "constexpr uint32_t ENUM_TYPE_COUNT = %d;\n\n", enum_count);
+
+    fprintf(out, "struct enum_type_info_t\n{\n");
+    fprintf(out, "  const char*                 name;\n");
+    fprintf(out, "  // Indexed by the enum's own numeric value; the values are dense and\n");
+    fprintf(out, "  // start at 0, so `size()` is also the count of valid values.\n");
+    fprintf(out, "  Span<const char* const>     value_names;\n");
+    fprintf(out, "};\n\n");
+
+    fprintf(out, "const enum_type_info_t& enum_info(enum_type type);\n\n");
+
+    free(enum_ids);
   }
 
   // --- entity tag ---
@@ -2567,6 +2631,11 @@ static void emit_generated_header(FILE* out, const program_t* program)
 
     if (base_index >= 0)
     {
+      // The compile-time half of the tag. entity_as<T> and entities_of_type<T>
+      // compare it against the runtime `type` member, which is what replaced
+      // dynamic_cast: one integer compare, no RTTI walk.
+      fprintf(out, "  static constexpr entity_type static_type = entity_type::%.*s;\n\n",
+              declaration->name.length, declaration->name.data);
       fprintf(out, "  %.*s() { type = entity_type::%.*s; }\n\n", declaration->name.length,
               declaration->name.data, declaration->name.length, declaration->name.data);
     }
@@ -2618,6 +2687,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "  int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else -1\n");
   fprintf(out, "  uint32_t     string_capacity; // FIELD_TYPE_STRING only, else 0\n");
   fprintf(out, "  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else -1\n");
+  fprintf(out, "  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else -1\n");
   fprintf(out, "};\n\n");
 
   // Entities all derive from the base, so a single pointer type covers every
@@ -2695,8 +2765,8 @@ static void emit_generated_header(FILE* out, const program_t* program)
 
 static void emit_field_table(FILE* out, const program_t* program, const declaration_t* owner,
                              const declaration_t* base, const int32_t* component_ids,
-                             const int32_t* asset_class_ids, const char* struct_name_prefix,
-                             int32_t struct_name_length)
+                             const int32_t* asset_class_ids, const int32_t* enum_ids,
+                             const char* struct_name_prefix, int32_t struct_name_length)
 {
   // The base fields are physically part of every entity struct, so they belong
   // in the entity's own table with real offsets rather than a separate list.
@@ -2718,14 +2788,18 @@ static void emit_field_table(FILE* out, const program_t* program, const declarat
       if (field->type.kind == TYPE_ASSET && field->type.declaration_index >= 0)
         asset_class_id = asset_class_ids[field->type.declaration_index];
 
+      int32_t enum_id = -1;
+      if (field->type.kind == TYPE_ENUM && field->type.declaration_index >= 0)
+        enum_id = enum_ids[field->type.declaration_index];
+
       fprintf(out, "  {\"%.*s\", %s, ", field->name.length, field->name.data,
               field_type_enum_name(field->type.kind));
       fprintf(out, "(uint32_t)offsetof(%.*s, %.*s), ", struct_name_length, struct_name_prefix,
               field->name.length, field->name.data);
       fprintf(out, "(uint32_t)sizeof(%.*s::%.*s), ", struct_name_length, struct_name_prefix,
               field->name.length, field->name.data);
-      fprintf(out, "%uu, %d, %u, %d},\n", field->flags, component_id,
-              (uint32_t)field->type.capacity, asset_class_id);
+      fprintf(out, "%uu, %d, %u, %d, %d},\n", field->flags, component_id,
+              (uint32_t)field->type.capacity, asset_class_id, enum_id);
     }
   }
 }
@@ -2794,6 +2868,8 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
   int32_t* component_ids    = build_component_ids(program, &component_count);
   int32_t  asset_class_count = 0;
   int32_t* asset_class_ids   = build_asset_class_ids(program, &asset_class_count);
+  int32_t  enum_count        = 0;
+  int32_t* enum_ids          = build_enum_ids(program, &enum_count);
 
   const declaration_t* base = base_index >= 0 ? &program->declarations[base_index] : nullptr;
 
@@ -2829,7 +2905,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 
     fprintf(out, "constexpr field_info_t %.*s_FIELDS[] = {\n", declaration->name.length,
             declaration->name.data);
-    emit_field_table(out, program, declaration, nullptr, component_ids, asset_class_ids,
+    emit_field_table(out, program, declaration, nullptr, component_ids, asset_class_ids, enum_ids,
                      declaration->name.data, declaration->name.length);
     fprintf(out, "};\n\n");
   }
@@ -2843,7 +2919,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 
     fprintf(out, "constexpr field_info_t %.*s_FIELDS[] = {\n", declaration->name.length,
             declaration->name.data);
-    emit_field_table(out, program, declaration, base, component_ids, asset_class_ids,
+    emit_field_table(out, program, declaration, base, component_ids, asset_class_ids, enum_ids,
                      declaration->name.data, declaration->name.length);
     fprintf(out, "};\n\n");
   }
@@ -3019,6 +3095,43 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     fprintf(out, "};\n\n");
   }
 
+  // --- enum value-name tables ---
+  //
+  // The same strings the typed to_string returns, in an array a walker can
+  // index. Duplicated rather than shared with the switch above on purpose: the
+  // switch is what an unhandled enumerator warns on, and a table would silence
+  // exactly that.
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    if (enum_ids[index] < 0)
+      continue;
+    const declaration_t* declaration = &program->declarations[index];
+
+    fprintf(out, "constexpr const char* %.*s_VALUE_NAMES[] = {\n", declaration->name.length,
+            declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "  \"%.*s\",\n", value->length, value->data);
+    }
+    fprintf(out, "};\n\n");
+  }
+
+  if (enum_count > 0)
+  {
+    fprintf(out, "constexpr enum_type_info_t ENUM_INFOS[] = {\n");
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      if (enum_ids[index] < 0)
+        continue;
+      const declaration_t* declaration = &program->declarations[index];
+      fprintf(out, "  {\"%.*s\", {%.*s_VALUE_NAMES, %d}},\n", declaration->name.length,
+              declaration->name.data, declaration->name.length, declaration->name.data,
+              declaration->enum_value_count);
+    }
+    fprintf(out, "};\n\n");
+  }
+
   fprintf(out, "} // namespace\n\n");
 
   // --- asset accessors ---
@@ -3052,6 +3165,23 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     fprintf(out, "  return false;\n}\n\n");
   }
 
+  if (has_asset_class(program))
+  {
+    fprintf(out, "Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id)\n{\n");
+    fprintf(out, "  switch (asset_class_id)\n  {\n");
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      if (asset_class_ids[index] < 0)
+        continue;
+      const declaration_t* declaration = &program->declarations[index];
+      fprintf(out, "    case %d: return %.*s_manifest();\n", asset_class_ids[index],
+              declaration->name.length, declaration->name.data);
+    }
+    fprintf(out, "  }\n");
+    fprintf(out, "  assert(false && \"asset_class_manifest: no asset class has this id\");\n");
+    fprintf(out, "  return {};\n}\n\n");
+  }
+
   // --- enum string conversion ---
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
@@ -3080,6 +3210,13 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
               v->data);
     }
     fprintf(out, "  return false;\n}\n\n");
+  }
+
+  if (enum_count > 0)
+  {
+    fprintf(out, "const enum_type_info_t& enum_info(enum_type type)\n{\n");
+    fprintf(out, "  assert((uint32_t)type < ENUM_TYPE_COUNT);\n");
+    fprintf(out, "  return ENUM_INFOS[(uint16_t)type];\n}\n\n");
   }
 
   // --- accessors ---
@@ -3157,6 +3294,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 
   free(component_ids);
   free(asset_class_ids);
+  free(enum_ids);
 }
 
 // ---------------------------------------------------------------------------

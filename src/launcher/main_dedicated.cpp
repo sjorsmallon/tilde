@@ -1,4 +1,5 @@
 #include "server/server_api.hpp"
+#include "shared/asset.hpp"
 #include "shared/crash_handler.hpp"
 #include "shared/cvar.hpp"
 #include "shared/detached_console.hpp"
@@ -18,6 +19,12 @@ int main(int argc, char *argv[])
   timed_function();
 
   log_terminal("=== Starting MyGame SERVER (Dedicated) ===");
+
+  // Asset registration is EAGER and must run before anything resolves an asset
+  // id. The lazy "__primitive_" init this replaced meant an id resolved to a
+  // mesh or to nothing depending on what had run first; get_mesh now reports
+  // loudly if it is called before this.
+  assets::init();
 
   if (!server::Init())
   {

@@ -1,7 +1,6 @@
+#include "../../shared/entities/entity_reflection.hpp"
 #include "respawn_system.hpp"
 
-#include "../../shared/entities/entity_list.hpp"
-#include "../../shared/entities/player_entity.hpp"
 #include "../../shared/log.hpp"
 #include "../game_events.hpp"
 
@@ -34,11 +33,10 @@ void schedule_respawn(server_context_t &context,
   context.death_tick_by_player_uid[player_uid] = death_tick;
 }
 
-static network::Player_Entity *
+static entities::Player_Entity *
 find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
 {
-  auto *players = session.entity_system.get_entities<network::Player_Entity>(
-      entity_type::PLAYER);
+  auto *players = session.entity_system.get_entities<entities::Player_Entity>();
   if (!players) return nullptr;
   for (auto &p : *players)
     if (p.entity_id == uid) return &p;
@@ -46,19 +44,19 @@ find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
 }
 
 // Pick a spawn marker for this player. Right now we always grab the first
-// human spawn (spawn_type == 0); team-based or round-cycled selection lands
+// human spawn (Spawn_Type::Human); team-based or round-cycled selection lands
 // later by changing this function — every (re)spawn path routes through it.
 static bool pick_spawn_marker(shared::game_session_t &session,
                               vec3f &out_position,
                               vec3f &out_orientation)
 {
   auto *spawns = session.entity_system
-                     .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+                     .get_entities<entities::Player_Spawn_Entity>();
   if (!spawns)
     return false;
   for (const auto &sp : *spawns)
   {
-    if (sp.spawn_type != 0) continue;
+    if (sp.spawn_type != entities::Spawn_Type::Human) continue;
     out_position    = sp.position;
     out_orientation = sp.orientation;
     return true;
@@ -89,7 +87,7 @@ void update_respawns(server_context_t &context,
   {
     context.death_tick_by_player_uid.erase(uid);
 
-    network::Player_Entity *player = find_player_by_uid(context.session, uid);
+    entities::Player_Entity *player = find_player_by_uid(context.session, uid);
     if (!player)
     {
       // Player entity vanished between death and respawn (disconnect, map

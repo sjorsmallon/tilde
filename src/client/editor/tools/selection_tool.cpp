@@ -1,5 +1,5 @@
+#include "../../../shared/entities/entity_reflection.hpp"
 #include "selection_tool.hpp"
-#include "../../../shared/entities/player_entity.hpp"
 #include "../../renderer.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../entity_inspector.hpp"
@@ -164,9 +164,9 @@ void Selection_Tool::on_update(editor_context_t &ctx,
     {
       editor_gizmo.set_geometry(shared::compute_entity_bounds(entry->entity.get()));
 
-      // Only show reshape handles for entities that own a box_volume_t
-      // (sculptable via the same code path).
-      if (entry->entity->get_box_volume() != nullptr)
+      // Only show reshape handles for entities that own a Box_Volume
+      // component (sculptable via the same code path).
+      if (entities::get_box_volume(entry->entity.get()) != nullptr)
         editor_gizmo.set_mode(Editor_Gizmo::Gizmo_Mode::Unified);
       else
         editor_gizmo.set_mode(Editor_Gizmo::Gizmo_Mode::Translate);

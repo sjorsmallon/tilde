@@ -1,8 +1,6 @@
+#include "../shared/entities/entity_reflection.hpp"
 #include "damage.hpp"
 
-#include "../shared/entities/entity_list.hpp"
-#include "../shared/entities/physics_body_entity.hpp"
-#include "../shared/entities/player_entity.hpp"
 #include "../shared/log.hpp"
 #include "game_events.hpp"
 #include "server_api.hpp"
@@ -11,23 +9,21 @@
 namespace server
 {
 
-static network::Player_Entity *
+static entities::Player_Entity *
 find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
 {
-  auto *players = session.entity_system.get_entities<network::Player_Entity>(
-      entity_type::PLAYER);
+  auto *players = session.entity_system.get_entities<entities::Player_Entity>();
   if (!players) return nullptr;
   for (auto &p : *players)
     if (p.entity_id == uid) return &p;
   return nullptr;
 }
 
-static network::Physics_Body_Entity *
+static entities::Physics_Body_Entity *
 find_physics_body_by_uid(shared::game_session_t &session,
                          shared::entity_uid_t uid)
 {
-  auto *pool = session.entity_system.get_entities<network::Physics_Body_Entity>(
-      entity_type::PHYSICS_BODY);
+  auto *pool = session.entity_system.get_entities<entities::Physics_Body_Entity>();
   if (!pool) return nullptr;
   for (auto &b : *pool)
     if (b.entity_id == uid) return &b;
@@ -39,7 +35,7 @@ find_physics_body_by_uid(shared::game_session_t &session,
 // clobbered by the next set_kinematic_pose), detect the >0 → <=0 crossing.
 static void apply_damage_to_player(server_context_t &context,
                                    const damage_info_t &info,
-                                   network::Player_Entity &player)
+                                   entities::Player_Entity &player)
 {
   if (player.health <= 0)
     return; // corpses don't take additional damage
@@ -83,7 +79,7 @@ static void apply_damage_to_player(server_context_t &context,
 // use AddLinearVelocity rather than AddImpulse (which would scale by mass).
 static void apply_damage_to_physics_body(server_context_t &context,
                                          const damage_info_t &info,
-                                         network::Physics_Body_Entity &body)
+                                         entities::Physics_Body_Entity &body)
 {
   if (info.knockback_force == 0.f) return;
 

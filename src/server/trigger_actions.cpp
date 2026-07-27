@@ -1,39 +1,20 @@
 // =============================================================================
 // Built-in Trigger Actions
 // =============================================================================
-// Each function below is a leaf action registered into Trigger_Action_Registry
-// via a static-init helper at the bottom of the file. To add a new action:
-//
-//   1. Add one line to TRIGGER_ACTION_LIST in
-//      src/shared/trigger_action_list.hpp.
-//   2. Write a function with signature
-//        void action_<name>(server_context_t&,
-//                           network::Trigger_Volume_Entity&,
-//                           network::Player_Entity&);
-//   3. Register it at the bottom of this file via
-//      Trigger_Action_Registration.
-//
-// Actions read configuration from the trigger's typed param slots (param_float,
-// param_string, param_target_name) and reach into the world via the server
-// context (entity_system queries, physics, the event queue, inflict_damage).
-//
-// Lives in `src/server/` (not `src/shared/`) because actions legitimately
-// touch server-only state — inflict_damage, physics, the gameplay event
-// queue. The editor inspector dropdown reads names from the X-macro in
-// src/shared/trigger_action_list.hpp instead of from this file's registry,
-// so the client never needs to see server_context_t.
+// See trigger_actions.hpp for what this replaced (a string-keyed, static-init
+// registry fed by an X-macro of names) and why the closed enum is the better
+// shape. Each action below reads its configuration from the trigger's typed
+// param slots (param_float, param_string, param_target_name) and reaches into
+// the world through the server context.
 // =============================================================================
 
+#include "../shared/entities/entity_reflection.hpp"
 #include "damage.hpp"
-#include "trigger_action_registry.hpp"
+#include "trigger_actions.hpp"
 
-#include "../shared/entities/entity_list.hpp"
-#include "../shared/entities/player_entity.hpp"
-#include "../shared/entities/trigger_volume_entity.hpp"
 #include "../shared/entity_system.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/log.hpp"
-#include "../shared/trigger_action_list.hpp"
 
 #include <algorithm>
 #include <string>
@@ -45,8 +26,8 @@ namespace
 // respawn timer fire exactly as they do for any other death source. Massive
 // damage amount + zero attacker/inflictor = world kill, suicide convention.
 void action_kill(server::server_context_t &context,
-                 network::Trigger_Volume_Entity & /*trigger*/,
-                 network::Player_Entity &player)
+                 entities::Trigger_Volume_Entity & /*trigger*/,
+                 entities::Player_Entity &player)
 {
   server::damage_info_t info{};
   info.victim_uid      = player.entity_id;
@@ -63,16 +44,16 @@ void action_kill(server::server_context_t &context,
 // helper and thereby fires PLAYER_DIED + schedules respawn. If `set_health`
 // were allowed to set health to 0, it would silently bypass that whole dance.
 void action_set_health(server::server_context_t & /*context*/,
-                       network::Trigger_Volume_Entity &trigger,
-                       network::Player_Entity &player)
+                       entities::Trigger_Volume_Entity &trigger,
+                       entities::Player_Entity &player)
 {
-  const network::int32 requested = static_cast<network::int32>(trigger.param_float);
+  const int32_t requested = static_cast<int32_t>(trigger.param_float);
   player.health = std::max(player.health, requested);
 }
 
 void action_print_message(server::server_context_t & /*context*/,
-                          network::Trigger_Volume_Entity &trigger,
-                          network::Player_Entity &player)
+                          entities::Trigger_Volume_Entity &trigger,
+                          entities::Player_Entity &player)
 {
   log_terminal("trigger fired by player {}: {}", player.entity_id,
                trigger.param_string.c_str());
@@ -82,14 +63,13 @@ void action_print_message(server::server_context_t & /*context*/,
 // param_target_name is non-empty, pick the spawn with a matching entity_id
 // (stringified); otherwise just use the first spawn we find.
 void action_warp_to_spawn(server::server_context_t &context,
-                          network::Trigger_Volume_Entity &trigger,
-                          network::Player_Entity &player)
+                          entities::Trigger_Volume_Entity &trigger,
+                          entities::Player_Entity &player)
 {
   log_terminal("trigger fired by player {}: warping to spawn '{}'",
                player.entity_id, trigger.param_target_name.c_str());
   auto *spawns = context.session.entity_system
-                     .get_entities<network::Player_Spawn_Entity>(
-                         entity_type::PLAYER_SPAWN);
+                     .get_entities<entities::Player_Spawn_Entity>();
   if (!spawns || spawns->empty())
   {
     log_error("warp_to_spawn: no Player_Spawn_Entity in session, cannot warp "
@@ -98,7 +78,7 @@ void action_warp_to_spawn(server::server_context_t &context,
     return;
   }
 
-  const network::Player_Spawn_Entity *target = nullptr;
+  const entities::Player_Spawn_Entity *target = nullptr;
   const char *requested = trigger.param_target_name.c_str();
   if (trigger.param_target_name.length > 0)
   {
@@ -127,15 +107,34 @@ void action_warp_to_spawn(server::server_context_t &context,
   player.position = target->position;
 }
 
-// Static-init registrations. The TRIGGER_ACTION_LIST X-macro lives in
-// src/shared/trigger_action_list.hpp; we expand each entry into a
-// Trigger_Action_Registration object so the linker keeps this TU even when
-// no code outside it references the symbols by name. Names here MUST stay in
-// sync with the X-macro — that's the entire reason both sides read from the
-// same list.
-#define X(symbol, string_name) \
-  static server::Trigger_Action_Registration s_##symbol{string_name, &action_##symbol};
-TRIGGER_ACTION_LIST
-#undef X
-
 } // namespace
+
+namespace server
+{
+
+void fire_trigger_action(server_context_t &context,
+                         entities::Trigger_Volume_Entity &trigger,
+                         entities::Player_Entity &player)
+{
+  switch (trigger.action)
+  {
+    case entities::Trigger_Action::Kill:
+      action_kill(context, trigger, player);
+      return;
+    case entities::Trigger_Action::Set_Health:
+      action_set_health(context, trigger, player);
+      return;
+    case entities::Trigger_Action::Print_Message:
+      action_print_message(context, trigger, player);
+      return;
+    case entities::Trigger_Action::Warp_To_Spawn:
+      action_warp_to_spawn(context, trigger, player);
+      return;
+  }
+
+  log_error("fire_trigger_action: trigger {} carries Trigger_Action value {}, which is not "
+            "in the enum — no action taken",
+            trigger.entity_id, (int)trigger.action);
+}
+
+} // namespace server

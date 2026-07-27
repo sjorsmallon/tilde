@@ -1,11 +1,9 @@
+#include "../shared/player_constants.hpp"
+#include "../shared/entities/entity_reflection.hpp"
 #include "../shared/cosmetic_events.hpp"
 #include "../shared/game_events.hpp"
-#include "../shared/entities/physics_body_entity.hpp"
-#include "../shared/entities/player_entity.hpp"
-#include "../shared/entities/rocket_entity.hpp"
-#include "../shared/entities/trigger_volume_entity.hpp"
 #include "server_api.hpp"
-#include "trigger_action_registry.hpp"
+#include "trigger_actions.hpp"
 #include "cosmetic_events.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/physics_body_system.hpp"
@@ -23,6 +21,7 @@
 
 #include "network/bitstream.hpp"
 #include "network/map_transfer.hpp"
+#include "network/entity_serialization.hpp"
 #include "network/quantization.hpp"
 #include "network/server_connection_state.hpp"
 #include "server_context.hpp"
@@ -116,16 +115,16 @@ struct human_spawn_transform_t
   vec3f orientation;
 };
 
-// Returns all human spawn markers (spawn_type == 0) from the entity_system.
+// Returns all human spawn markers (Spawn_Type::Human) from the entity_system.
 // Used for player join and spawn_bot cycling.
 static std::vector<human_spawn_transform_t> get_human_spawn_transforms()
 {
   auto *pool = g_state.session.entity_system
-                   .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+                   .get_entities<entities::Player_Spawn_Entity>();
   std::vector<human_spawn_transform_t> out;
   if (pool)
     for (const auto &sp : *pool)
-      if (sp.spawn_type == 0)
+      if (sp.spawn_type == entities::Spawn_Type::Human)
         out.push_back({sp.position, sp.orientation});
   if (out.empty())
     out.push_back({{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}}); // safety fallback
@@ -144,9 +143,9 @@ std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
 // Stores the last-sent entity state to each client, used as baseline for next update
 struct Client_Baseline_State
 {
-  std::vector<network::Player_Entity>       players;
-  std::vector<network::Rocket_Entity>       rockets;
-  std::vector<network::Physics_Body_Entity> physics_bodies;
+  std::vector<entities::Player_Entity>       players;
+  std::vector<entities::Rocket_Entity>       rockets;
+  std::vector<entities::Physics_Body_Entity> physics_bodies;
   // Add more entity types here as needed
 };
 
@@ -165,7 +164,7 @@ spawn_position_in_front_of(int caller_slot)
   if (caller_slot < 0) return std::nullopt;
 
   auto *players = g_state.session.entity_system
-                      .get_entities<network::Player_Entity>(entity_type::PLAYER);
+                      .get_entities<entities::Player_Entity>();
   if (!players) return std::nullopt;
 
   for (auto &player : *players)
@@ -228,7 +227,8 @@ cvar::Console_Command cmd_spawn_cube(
       }
       vec3f full_extents = {16.f, 16.f, 16.f};
       auto *body = spawn_physics_body(g_state.session, *g_state.physics,
-                                      "box", full_extents, *drop_position);
+                                      entities::Shape_Kind::Box, full_extents,
+                                      *drop_position);
       if (body)
         log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
                      body->entity_id, drop_position->x, drop_position->y, drop_position->z);
@@ -292,7 +292,8 @@ cvar::Console_Command cmd_spawn_sphere(
       }
       vec3f full_extents = {16.f, 16.f, 16.f}; // x = diameter
       auto *body = spawn_physics_body(g_state.session, *g_state.physics,
-                                      "sphere", full_extents, *drop_position);
+                                      entities::Shape_Kind::Sphere, full_extents,
+                                      *drop_position);
       if (body)
         log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
                      body->entity_id, drop_position->x, drop_position->y, drop_position->z);
@@ -307,8 +308,7 @@ void handle_player_leave(server_context_t &state,
   if (slot == -1)
     return;
 
-  auto *pool = state.session.entity_system.get_entities<network::Player_Entity>(
-      entity_type::PLAYER);
+  auto *pool = state.session.entity_system.get_entities<entities::Player_Entity>();
 
   if (pool)
   {
@@ -318,7 +318,7 @@ void handle_player_leave(server_context_t &state,
       {
         if (g_state.physics)
           unregister_physics_body(*g_state.physics, (*pool)[i].entity_id);
-        state.session.entity_system.destroy(entity_type::PLAYER, &(*pool)[i]);
+        state.session.entity_system.destroy(&(*pool)[i]);
         break;
       }
     }
@@ -374,12 +374,12 @@ static bool load_map_into_state(const std::string &map_path)
   g_state.map_content_hash = shared::compute_map_content_hash(server_map);
   shared::populate_static_physics_bodies(*g_state.physics, server_map);
 
-  // Spawn bots for any bot-type spawn markers (spawn_type == 1).
-  // Human spawn markers (spawn_type == 0) stay in entity_system and are
+  // Spawn bots for any bot-type spawn markers (Spawn_Type::Bot).
+  // Human spawn markers (Spawn_Type::Human) stay in entity_system and are
   // queried directly when players join — no need to extract or clear the pool.
   auto *spawn_pool =
       g_state.session.entity_system
-          .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+          .get_entities<entities::Player_Spawn_Entity>();
 
   int human_spawn_count = 0;
   int bot_spawn_count = 0;
@@ -387,7 +387,7 @@ static bool load_map_into_state(const std::string &map_path)
   {
     for (auto &sp : *spawn_pool)
     {
-      if (sp.spawn_type == 1)
+      if (sp.spawn_type == entities::Spawn_Type::Bot)
       {
         g_bots.push_back(spawn_bot(g_state.session, *g_state.physics, sp.position, g_next_bot_slot++, BotType::Regular));
         ++bot_spawn_count;
@@ -441,10 +441,9 @@ bool Init()
 // human spawn transform, sets the combat hitbox, registers the kinematic Jolt
 // body, and fires PLAYER_SPAWNED. Shared by the connect path and the mid-game
 // map switch (reload_map), which both need an identically-initialized player.
-static network::Player_Entity *spawn_player_for_slot(int slot)
+static entities::Player_Entity *spawn_player_for_slot(int slot)
 {
-  auto *player = g_state.session.entity_system.spawn<network::Player_Entity>(
-      entity_type::PLAYER);
+  auto *player = g_state.session.entity_system.spawn<entities::Player_Entity>();
   if (!player)
     return nullptr;
 
@@ -463,7 +462,7 @@ static network::Player_Entity *spawn_player_for_slot(int slot)
 
   // Combat hitbox (capsule: radius 18, half-height 38), slightly larger than
   // physics collision (16x36) for better hit feedback.
-  player->hitbox.shape_type.set("capsule");
+  player->hitbox.shape = entities::Shape_Kind::Capsule;
   player->hitbox.size = {18.f, 38.f, 18.f};  // x/z = radius, y = half_height
   player->hitbox.offset = {0.f, 38.f, 0.f};  // Offset up so capsule is centered
 
@@ -730,14 +729,14 @@ bool Tick()
 
   // Process moves — run player_move() authoritatively
   auto *pool = g_state.session.entity_system
-                   .get_entities<network::Player_Entity>(entity_type::PLAYER);
+                   .get_entities<entities::Player_Entity>();
 
   for (const auto &[player_idx, tm] : inbox.moves)
   {
     if (!pool)
       continue;
 
-    network::Player_Entity *player = nullptr;
+    entities::Player_Entity *player = nullptr;
     for (auto &p : *pool)
     {
       if (p.client_slot_index == static_cast<int32_t>(player_idx))
@@ -829,8 +828,7 @@ bool Tick()
         float cP = std::cos(pitch_rad), sP = std::sin(pitch_rad);
         vec3f dir = {cY * cP, sP, sY * cP};
 
-        auto *rocket = g_state.session.entity_system.spawn<network::Rocket_Entity>(
-            entity_type::ROCKET);
+        auto *rocket = g_state.session.entity_system.spawn<entities::Rocket_Entity>();
         if (rocket)
         {
           rocket->position        = {player->position.x,
@@ -843,19 +841,19 @@ bool Tick()
           rocket->knockback_force = 600.f;
           rocket->owner_id        = player->entity_id;
           // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
-          rocket->render.mesh_path.set("resources/obj/error.obj"); // or "resources/obj/tinker.obj"
+          rocket->render.mesh = entities::mesh_asset::Missing;
           rocket->render.visible = true;
           rocket->render.scale = vec3{1.f, 1.f, 1.f};
           rocket->render.rotation = vec3{0.f, 0.f, 0.f};
 
           // Initialize hitbox (sphere with 12 unit radius)
-          rocket->hitbox.shape_type.set("sphere");
+          rocket->hitbox.shape = entities::Shape_Kind::Sphere;
           rocket->hitbox.size = {12.f, 12.f, 12.f};  // x = radius
           rocket->hitbox.offset = {0.f, 0.f, 0.f};
 
-          printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh_path='%s', visible=%d\n",
+          printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
                  rocket->position.x, rocket->position.y, rocket->position.z,
-                 rocket->render.mesh_path.c_str(), rocket->render.visible);
+                 entities::to_string(rocket->render.mesh), rocket->render.visible);
         }
       }
     }
@@ -886,33 +884,34 @@ bool Tick()
   // "Spatial query strategy" section in src/client/editor/readme.md for the
   // migration trigger.
   //
-  // For each overlap, we look up trigger.action_name in the global registry
-  // and invoke it. Two fire modes are supported:
-  //   - "on_enter":   fire only on the rising edge (previous tick: no overlap).
-  //   - "every_tick": fire whenever overlap is active.
+  // For each overlap, we dispatch trigger.action through fire_trigger_action.
+  // Two fire modes are supported:
+  //   - On_Enter:   fire only on the rising edge (previous tick: no overlap).
+  //   - Every_Tick: fire whenever overlap is active.
   // Per-(trigger, player) overlap state is kept on g_state across ticks.
   auto *trigger_pool = g_state.session.entity_system
-      .get_entities<network::Trigger_Volume_Entity>(entity_type::TRIGGER_VOLUME);
+      .get_entities<entities::Trigger_Volume_Entity>();
   std::set<std::pair<std::uint64_t, std::uint64_t>> current_tick_overlaps;
   if (pool && trigger_pool)
   {
     for (auto &player : *pool)
     {
       vec3f player_min = {
-        player.position.x - network::player_half_width,
+        player.position.x - shared::player_half_width,
         player.position.y,
-        player.position.z - network::player_half_width
+        player.position.z - shared::player_half_width
       };
       vec3f player_max = {
-        player.position.x + network::player_half_width,
-        player.position.y + network::player_half_height * 2.f,
-        player.position.z + network::player_half_width
+        player.position.x + shared::player_half_width,
+        player.position.y + shared::player_half_height * 2.f,
+        player.position.z + shared::player_half_width
       };
 
       for (auto &trigger : *trigger_pool)
       {
-        vec3f trigger_min = trigger.position - trigger.volume.half_extents;
-        vec3f trigger_max = trigger.position + trigger.volume.half_extents;
+        const vec3f trigger_center = trigger.position + trigger.volume.position;
+        vec3f trigger_min = trigger_center - trigger.volume.half_extents;
+        vec3f trigger_max = trigger_center + trigger.volume.half_extents;
         if (!linalg::intersect_aabb_aabb(player_min, player_max,
                                          trigger_min, trigger_max))
           continue;
@@ -924,21 +923,13 @@ bool Tick()
                 pair_key) > 0;
         current_tick_overlaps.insert(pair_key);
 
-        std::string mode = trigger.fire_mode.c_str();
-        bool should_fire = (mode == "on_enter") ? !was_overlapping : true;
+        const bool should_fire = trigger.fire_mode == entities::Fire_Mode::On_Enter
+                                     ? !was_overlapping
+                                     : true;
         if (!should_fire)
           continue;
 
-        std::string name = trigger.action_name.c_str();
-        auto fn = server::Trigger_Action_Registry::get().find_action(name);
-        if (!fn)
-        {
-          log_error("trigger entity {} references unknown action '{}' (no "
-                    "matching registration in Trigger_Action_Registry)",
-                    trigger.entity_id, name);
-          continue;
-        }
-        fn(g_state, trigger, player);
+        server::fire_trigger_action(g_state, trigger, player);
       }
     }
   }
@@ -982,9 +973,9 @@ bool Tick()
   // --- Broadcast entity state to all connected clients ---
   // Delta compression: serialize per-client with baselines (only send changed fields)
 
-  auto *rocket_pool = g_state.session.entity_system.get_entities<network::Rocket_Entity>(entity_type::ROCKET);
+  auto *rocket_pool = g_state.session.entity_system.get_entities<entities::Rocket_Entity>();
   auto *physics_body_pool = g_state.session.entity_system
-      .get_entities<network::Physics_Body_Entity>(entity_type::PHYSICS_BODY);
+      .get_entities<entities::Physics_Body_Entity>();
 
   int total_entity_count = (pool ? static_cast<int>(pool->size()) : 0) +
                           (rocket_pool ? static_cast<int>(rocket_pool->size()) : 0) +
@@ -1013,19 +1004,19 @@ bool Tick()
     network::write_var_uint(writer, total_entity_count);
 
     // Helper: find baseline entity by entity_id
-    auto find_player_baseline = [&](uint64_t ent_id) -> const network::Player_Entity* {
+    auto find_player_baseline = [&](uint64_t ent_id) -> const entities::Player_Entity* {
       for (const auto &b : baseline.players)
         if (b.entity_id == ent_id) return &b;
       return nullptr;
     };
 
-    auto find_rocket_baseline = [&](uint64_t ent_id) -> const network::Rocket_Entity* {
+    auto find_rocket_baseline = [&](uint64_t ent_id) -> const entities::Rocket_Entity* {
       for (const auto &b : baseline.rockets)
         if (b.entity_id == ent_id) return &b;
       return nullptr;
     };
 
-    auto find_physics_body_baseline = [&](uint64_t ent_id) -> const network::Physics_Body_Entity* {
+    auto find_physics_body_baseline = [&](uint64_t ent_id) -> const entities::Physics_Body_Entity* {
       for (const auto &b : baseline.physics_bodies)
         if (b.entity_id == ent_id) return &b;
       return nullptr;
@@ -1038,8 +1029,8 @@ bool Tick()
       {
         network::write_var_uint(writer, static_cast<uint32_t>(entity.client_slot_index));
         network::write_var_uint(writer, entity.entity_id);  // Send entity_id explicitly
-        const network::Player_Entity* base = find_player_baseline(entity.entity_id);
-        entity.serialize(writer, base);  // Delta compress against baseline
+        const entities::Player_Entity* base = find_player_baseline(entity.entity_id);
+        network::serialize_entity(writer, entity, base);  // Delta compress against baseline
       }
     }
 
@@ -1050,8 +1041,8 @@ bool Tick()
       {
         network::write_var_uint(writer, 255);  // Special slot for non-player entities
         network::write_var_uint(writer, rocket.entity_id);  // Send entity_id explicitly
-        const network::Rocket_Entity* base = find_rocket_baseline(rocket.entity_id);
-        rocket.serialize(writer, base);  // Delta compress against baseline
+        const entities::Rocket_Entity* base = find_rocket_baseline(rocket.entity_id);
+        network::serialize_entity(writer, rocket, base);  // Delta compress against baseline
       }
     }
 
@@ -1062,8 +1053,8 @@ bool Tick()
       {
         network::write_var_uint(writer, 254);
         network::write_var_uint(writer, body.entity_id);
-        const network::Physics_Body_Entity* base = find_physics_body_baseline(body.entity_id);
-        body.serialize(writer, base);
+        const entities::Physics_Body_Entity* base = find_physics_body_baseline(body.entity_id);
+        network::serialize_entity(writer, body, base);
       }
     }
 

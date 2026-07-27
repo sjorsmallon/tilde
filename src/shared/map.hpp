@@ -1,7 +1,6 @@
 #pragma once
 
-#include "entities/entity_list.hpp"
-#include "entity.hpp"
+#include "entities/entity_reflection.hpp"
 #include "entity_uid.hpp"
 #include "linalg.hpp"
 #include "map_geometry.hpp"
@@ -19,10 +18,14 @@
 namespace shared
 {
 
+// An entity is held by shared_ptr as it always was, and that stays correct
+// without a virtual destructor: make_shared<Concrete>() records the concrete
+// type's deleter in the control block, so destruction never goes through the
+// base. (Reworking ownership is P7's job, not the cutover's.)
 struct map_entity_t
 {
   entity_uid_t uid;
-  std::shared_ptr<network::Entity> entity;
+  std::shared_ptr<entities::Entity> entity;
 };
 
 // One piece of map-owned geometry (box / static mesh / displacement). A plain
@@ -49,7 +52,7 @@ struct map_t
   navmesh_t navmesh;
 
   // Add entity with auto-assigned uid
-  entity_uid_t add_entity(std::shared_ptr<network::Entity> ent)
+  entity_uid_t add_entity(std::shared_ptr<entities::Entity> ent)
   {
     entity_uid_t uid = next_uid++;
     entities.push_back({uid, std::move(ent)});
@@ -57,9 +60,7 @@ struct map_t
   }
 
   // Add entity with a specific uid (for undo/redo restore)
-  void add_entity_with_uid(
-      entity_uid_t uid,
-      std::shared_ptr<network::Entity> ent)
+  void add_entity_with_uid(entity_uid_t uid, std::shared_ptr<entities::Entity> ent)
   {
     entities.push_back({uid, std::move(ent)});
     if (uid >= next_uid)
@@ -159,19 +160,16 @@ struct map_t
 
   // Iterate every entity whose concrete type is exactly T.
   // Yields std::pair<entity_uid_t, T*> where the pointer is guaranteed non-null.
-
-  // Iterate every entity whose concrete type is exactly T.
-  // Yields std::pair<entity_uid_t, T*> where the pointer is guaranteed non-null.
   //
   // Usage:
-  //   for (auto [uid, emitter] : map.entities_of_type<network::Particle_Emitter_Entity>())
+  //   for (auto [uid, emitter] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   //     { ... }
   //
-  // The type check uses T::static_type (from the Entity_Of CRTP base) and is a
-  // single integer compare per element — no RTTI walk. Because the comparison
-  // is exact, this only matches concrete T, not subclasses. The entity hierarchy
-  // is closed and one-level (all leaves inherit Entity_Of<...> directly), so
-  // exact-match is the desired behavior.
+  // The type check compares the entity's runtime tag against T::static_type, a
+  // constant the generator puts on every entity struct — one integer compare
+  // per element, no RTTI walk. Because the comparison is exact, this matches
+  // concrete T only. The entity hierarchy is closed and one level deep (every
+  // type derives straight from Entity), so exact match is the desired behavior.
   //
   // The view is invalidated by anything that mutates `entities`, same as a raw
   // iterator.
@@ -180,7 +178,7 @@ struct map_t
   {
     return entities
       | std::views::filter([](const map_entity_t &e) {
-          return e.entity && e.entity->get_type() == T::static_type;
+          return e.entity && e.entity->type == T::static_type;
         })
       | std::views::transform([](map_entity_t &e) {
           return std::pair<entity_uid_t, T *>{e.uid, static_cast<T *>(e.entity.get())};
@@ -192,7 +190,7 @@ struct map_t
   {
     return entities
       | std::views::filter([](const map_entity_t &e) {
-          return e.entity && e.entity->get_type() == T::static_type;
+          return e.entity && e.entity->type == T::static_type;
         })
       | std::views::transform([](const map_entity_t &e) {
           return std::pair<entity_uid_t, const T *>{e.uid, static_cast<const T *>(e.entity.get())};
@@ -208,6 +206,16 @@ struct map_t
 // the file-level save_map/load_map). This canonical string is what the content
 // hash is taken over and what the future compiled-package streaming embeds — so
 // keep them pure and deterministic.
+
+// Construct a map entity from a classname as it appears on disk.
+//
+// Honors the pre-cutover classnames ("player_start", "trigger_volume", ...) for
+// the five types whose generated classname differs, so a map written before P5
+// still loads. The first save rewrites the file with the generated name.
+//
+// Returns nullptr for a classname nothing recognises, which IS a data error --
+// the caller must report it rather than skipping the entity quietly.
+std::shared_ptr<entities::Entity> create_map_entity(const std::string &classname);
 
 // Serialize a map's entities to the canonical VMF-style text.
 std::string serialize_map_to_string(const map_t &map);
@@ -253,15 +261,15 @@ bool save_navmesh_sidecar(const std::string &map_path, const navmesh_t &nav);
 // Compute world-space AABB bounds for an entity.
 // Data-driven: uses mesh bounds if available, else entity-specific shape,
 // else default 1x1x1 box at position.
-aabb_bounds_t compute_entity_bounds(const network::Entity *entity);
+aabb_bounds_t compute_entity_bounds(const entities::Entity *entity);
 
 // Compute outward-facing collision planes for an entity's shape.
 // AABB entities -> 6 planes, Wedge entities -> 5 planes (including slope),
 // Static mesh / fallback -> 6 AABB planes from bounds.
-std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity);
+std::vector<Plane> compute_entity_collision_planes(const entities::Entity *entity);
 
 // Returns polygon vertices for each face, parallel to compute_entity_collision_planes().
-std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const network::Entity *entity);
+std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const entities::Entity *entity);
 
 // --- Uniform per-uid accessors over both regimes -----------------------------
 //

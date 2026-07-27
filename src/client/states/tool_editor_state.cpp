@@ -1,8 +1,7 @@
+#include "../../shared/entities/entity_reflection.hpp"
 #include "tool_editor_state.hpp"
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
-#include "../../shared/entities/player_entity.hpp"
-#include "../../shared/entities/particle_emitter_entity.hpp"
 #include "../../shared/map_baker.hpp"
 #include "../editor/editor_bvh.hpp"
 #include "../editor/entity_editor_traits.hpp"
@@ -1208,7 +1207,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw particle emitters
-  for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
+  for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
     renderer::particle_emitter_params_t p{};
     p.entity_id = pe->entity_id;
@@ -1243,7 +1242,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
 
 void ToolEditorState::pre_render(VkCommandBuffer cmd)
 {
-  for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
+  for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
     renderer::particle_emitter_params_t p{};
     p.entity_id = pe->entity_id;

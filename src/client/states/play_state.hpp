@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../shared/player_constants.hpp"
 #include "../camera.hpp"
 #include "../game_state.hpp"
 #include "../shared/game_session.hpp"
@@ -67,9 +68,9 @@ private:
   // Camera (first person, follows player)
   camera_t camera;
 
-  // Player dimensions — canonical values live in network::player_half_width/height
-  static constexpr float player_half_width  = network::player_half_width;
-  static constexpr float player_half_height = network::player_half_height;
+  // Player dimensions — canonical values live in shared::player_half_width/height
+  static constexpr float player_half_width  = shared::player_half_width;
+  static constexpr float player_half_height = shared::player_half_height;
 
   // UI/debug state
   bool mouse_captured = true;

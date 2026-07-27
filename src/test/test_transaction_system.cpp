@@ -1,5 +1,5 @@
+#include "../shared/entities/entity_reflection.hpp"
 #include "client/editor/transaction_system.hpp"
-#include "shared/entities/trigger_volume_entity.hpp"
 #include "shared/map.hpp"
 #include <cassert>
 #include <iostream>
@@ -12,9 +12,9 @@ using namespace network;
 // because it's the box-volume entity that survived the geometry exit — the box
 // brushes these tests used to build are geometry now, and exercise the OTHER
 // flavor (see the geometry tests below).
-static std::shared_ptr<Trigger_Volume_Entity> make_test_entity(float x)
+static std::shared_ptr<entities::Trigger_Volume_Entity> make_test_entity(float x)
 {
-  auto entity = std::make_shared<Trigger_Volume_Entity>();
+  auto entity = std::make_shared<entities::Trigger_Volume_Entity>();
   entity->position = {x, 0, 0};
   entity->volume.half_extents = {1, 1, 1};
   return entity;
@@ -169,9 +169,9 @@ void test_modify_thresholds()
   std::cout << "Modify thresholds Passed." << std::endl;
 }
 
-// A nested-schema field (Trigger_Volume's box_volume_t) is one memcmp/memcpy
-// over the whole nested struct, so it must round-trip like any other field. The
-// string flavor reached it only via init_from_map's "volume" special case.
+// A component field (Trigger_Volume's Box_Volume) is one memcmp/memcpy over the
+// whole nested struct, so it must round-trip like any other field. The string
+// flavor reached it only via init_from_map's "volume" special case.
 void test_modify_nested_field()
 {
   std::cout << "Testing Modify nested field..." << std::endl;
@@ -182,7 +182,7 @@ void test_modify_nested_field()
   auto *entry = map.find_by_uid(uid);
 
   entity_snapshot_t before = snapshot_entity(entry->entity.get());
-  auto *trigger = shared::entity_as<Trigger_Volume_Entity>(entry->entity.get());
+  auto *trigger = entities::entity_as<entities::Trigger_Volume_Entity>(entry->entity.get());
   assert(trigger != nullptr);
   trigger->volume.half_extents = {8.f, 9.f, 10.f};
 
@@ -194,11 +194,11 @@ void test_modify_nested_field()
   }
 
   ts.undo(map);
-  assert(shared::entity_as<Trigger_Volume_Entity>(map.find_by_uid(uid)->entity.get())
+  assert(entities::entity_as<entities::Trigger_Volume_Entity>(map.find_by_uid(uid)->entity.get())
              ->volume.half_extents.x == 1.f);
 
   ts.redo(map);
-  assert(shared::entity_as<Trigger_Volume_Entity>(map.find_by_uid(uid)->entity.get())
+  assert(entities::entity_as<entities::Trigger_Volume_Entity>(map.find_by_uid(uid)->entity.get())
              ->volume.half_extents.y == 9.f);
 
   std::cout << "Modify nested field Passed." << std::endl;

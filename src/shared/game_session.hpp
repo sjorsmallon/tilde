@@ -30,7 +30,7 @@ struct game_session_t
   // walks.
   //
   // A copy, not a reference: this used to be
-  // std::vector<std::shared_ptr<network::Entity>> holding the very pointers
+  // std::vector<std::shared_ptr<entities::Entity>> holding the very pointers
   // map_t held, which meant map and session aliased one object and editing
   // either wrote through to the other. Geometry values copy, so the aliasing
   // (and its lifetime coupling, and the write-back-into-the-map hazard) simply

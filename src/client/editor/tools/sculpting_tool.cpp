@@ -1,6 +1,6 @@
+#include "../../../shared/entities/entity_reflection.hpp"
 #include "sculpting_tool.hpp"
 #include "../../../shared/box_face.hpp"
-#include "../../../shared/entity.hpp"
 #include "../../../shared/map.hpp"
 #include "../../../shared/shapes.hpp"
 #include "../../../shared/log.hpp"

@@ -1,7 +1,7 @@
 #pragma once
 
+#include "entities/generated/entities_generated.hpp"
 #include "linalg.hpp"
-#include "network/schema.hpp"
 #include "plane.hpp"
 #include <algorithm>
 #include <array>
@@ -11,42 +11,21 @@
 namespace shared
 {
 
+// Plain geometric primitives. They carried schema macros until the cutover,
+// which bought them nothing: none of them is an entity, none is networked, and
+// the one that WAS reachable as an entity field (box_volume_t) is now the
+// generated entities::Box_Volume component.
 struct aabb_t
 {
-  SCHEMA_FIELD_DEFAULT(linalg::vec3, center,
-               network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable, (linalg::vec3{0, 0, 0}));
-  SCHEMA_FIELD_DEFAULT(linalg::vec3, half_extents,
-               network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable, (linalg::vec3{1.f, 1.f, 1.f}));
-  DECLARE_COMPONENT_SCHEMA(aabb_t);
-};
-
-// Local-frame box geometry owned by entities (entity.position is the world-space
-// center). Decoupled from aabb_t (which carries its own center) so entities that
-// also have a position field don't duplicate state.
-struct box_volume_t
-{
-  SCHEMA_FIELD_DEFAULT(linalg::vec3, half_extents,
-               network::Schema_Flags::Networked |
-                   network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable,
-               (linalg::vec3{1.f, 1.f, 1.f}));
-  DECLARE_COMPONENT_SCHEMA(box_volume_t);
+  linalg::vec3 center       = {0, 0, 0};
+  linalg::vec3 half_extents = {1.f, 1.f, 1.f};
 };
 
 struct pyramid_t
 {
-  SCHEMA_FIELD(linalg::vec3, position,
-               network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable);
-  SCHEMA_FIELD(float, size,
-               network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable);
-  SCHEMA_FIELD(float, height,
-               network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable);
-  DECLARE_COMPONENT_SCHEMA(pyramid_t);
+  linalg::vec3 position = {};
+  float        size     = {};
+  float        height   = {};
 };
 
 struct aabb_bounds_t
@@ -63,19 +42,27 @@ inline aabb_bounds_t get_bounds(const aabb_t &aabb)
   };
 }
 
-// Promote a local-frame box volume to a world-space aabb_t at the given center.
-// Lets callers reuse the existing aabb_t-based helpers (get_bounds,
-// compute_collision_planes, compute_face_polygons) without duplicating logic.
-inline aabb_t to_aabb(const box_volume_t &volume, const linalg::vec3 &center)
+// Promote a local-frame box volume to a world-space aabb_t. Lets callers reuse
+// the existing aabb_t-based helpers (get_bounds, compute_collision_planes,
+// compute_face_polygons) without duplicating logic.
+//
+// `entity_position` is the owning entity's world position; the volume's own
+// `position` is a local offset from it. The pre-cutover box_volume_t had no
+// such offset -- the volume was always centered on the entity -- so a volume
+// with a non-zero position is new expressiveness, not a changed meaning for
+// existing data, which loads as {0, 0, 0}.
+inline aabb_t to_aabb(const entities::Box_Volume &volume, const linalg::vec3 &entity_position)
 {
   aabb_t result;
-  result.center = center;
+  result.center       = entity_position + volume.position;
   result.half_extents = volume.half_extents;
   return result;
 }
 
-inline aabb_bounds_t get_bounds(const box_volume_t &volume, const linalg::vec3 &center)
+inline aabb_bounds_t get_bounds(const entities::Box_Volume &volume,
+                                const linalg::vec3 &entity_position)
 {
+  const linalg::vec3 center = entity_position + volume.position;
   return {
       center - volume.half_extents,
       center + volume.half_extents,
@@ -127,16 +114,9 @@ namespace shared
 
 struct wedge_t
 {
-  SCHEMA_FIELD(linalg::vec3, center,
-               network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable);
-  SCHEMA_FIELD(linalg::vec3, half_extents,
-               network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable);
-  SCHEMA_FIELD(int, orientation,
-               network::Schema_Flags::Editable |
-                   network::Schema_Flags::Saveable);
-  DECLARE_COMPONENT_SCHEMA(wedge_t);
+  linalg::vec3 center       = {};
+  linalg::vec3 half_extents = {};
+  int          orientation  = {};
 };
 
 inline aabb_bounds_t get_bounds(const wedge_t &wedge)
@@ -454,19 +434,3 @@ inline std::vector<std::vector<linalg::vec3>> compute_face_polygons(const wedge_
 }
 
 } // namespace shared
-
-// Schema name registrations for shapes (at global scope, with full namespace)
-namespace network {
-  template <> struct Schema_Name_Helper<shared::aabb_t> {
-      static constexpr const char* get() { return "aabb_t"; }
-  };
-  template <> struct Schema_Name_Helper<shared::box_volume_t> {
-      static constexpr const char* get() { return "box_volume_t"; }
-  };
-  template <> struct Schema_Name_Helper<shared::pyramid_t> {
-      static constexpr const char* get() { return "pyramid_t"; }
-  };
-  template <> struct Schema_Name_Helper<shared::wedge_t> {
-      static constexpr const char* get() { return "wedge_t"; }
-  };
-}

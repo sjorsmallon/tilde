@@ -1,6 +1,6 @@
 #pragma once
 #include "bsp.hpp"
-#include "entity.hpp"
+#include "network/network_types.hpp"
 #include "plane.hpp"
 #include <cmath>
 #include <vector>

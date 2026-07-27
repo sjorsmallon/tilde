@@ -1,5 +1,6 @@
 #include "client/client_api.hpp"
 #include "server/server_api.hpp"
+#include "shared/asset.hpp"
 #include "shared/crash_handler.hpp"
 #include "shared/cvar.hpp"
 #include "shared/detached_console.hpp"
@@ -43,6 +44,9 @@ int main(int argc, char *argv[])
   timed_function();
 
   log_terminal("=== Starting MyGame (Integrated) ===");
+
+  // Eager asset registration, before anything resolves an id. See asset.hpp.
+  assets::init();
 
   if (!server::Init())
   {

@@ -1,9 +1,7 @@
+#include "../../shared/entities/entity_reflection.hpp"
 #include "rocket_system.hpp"
 
 #include "../../shared/cosmetic_events.hpp"
-#include "../../shared/entities/physics_body_entity.hpp"
-#include "../../shared/entities/player_entity.hpp"
-#include "../../shared/entities/rocket_entity.hpp"
 #include "../../shared/game_events.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
@@ -19,22 +17,20 @@
 namespace server
 {
 
-static network::Player_Entity *
+static entities::Player_Entity *
 find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
 {
-  auto *players = session.entity_system.get_entities<network::Player_Entity>(
-      entity_type::PLAYER);
+  auto *players = session.entity_system.get_entities<entities::Player_Entity>();
   if (!players) return nullptr;
   for (auto &p : *players)
     if (p.entity_id == uid) return &p;
   return nullptr;
 }
 
-static network::Physics_Body_Entity *
+static entities::Physics_Body_Entity *
 find_physics_body_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
 {
-  auto *pool = session.entity_system.get_entities<network::Physics_Body_Entity>(
-      entity_type::PHYSICS_BODY);
+  auto *pool = session.entity_system.get_entities<entities::Physics_Body_Entity>();
   if (!pool) return nullptr;
   for (auto &b : *pool)
     if (b.entity_id == uid) return &b;
@@ -59,7 +55,7 @@ find_physics_body_by_uid(shared::game_session_t &session, shared::entity_uid_t u
 // contact, or {0,0,0} for an airburst (lifetime expiry, no surface). The
 // client handler uses this to place a decal against the visible surface
 // instead of guessing direction from the origin alone.
-static void detonate(const network::Rocket_Entity &rocket,
+static void detonate(const entities::Rocket_Entity &rocket,
                      server_context_t &context,
                      shared::entity_uid_t direct_hit_uid,
                      vec3f impact_normal)
@@ -86,11 +82,11 @@ static void detonate(const network::Rocket_Entity &rocket,
     // contact point which sits near the explosion origin for direct hits and
     // gives a degenerate direction.
     vec3f entity_center;
-    if (network::Player_Entity *player = find_player_by_uid(session, h.entity_id))
+    if (entities::Player_Entity *player = find_player_by_uid(session, h.entity_id))
     {
       entity_center = player->position + vec3f{0.f, 38.f, 0.f};
     }
-    else if (network::Physics_Body_Entity *body = find_physics_body_by_uid(session, h.entity_id))
+    else if (entities::Physics_Body_Entity *body = find_physics_body_by_uid(session, h.entity_id))
     {
       entity_center = body->position;
     }
@@ -152,8 +148,7 @@ void update_rockets(server_context_t &context, float dt)
   shared::game_session_t &session = context.session;
   physics_state_t        &physics = *context.physics;
 
-  auto *rockets = session.entity_system.get_entities<network::Rocket_Entity>(
-      entity_type::ROCKET);
+  auto *rockets = session.entity_system.get_entities<entities::Rocket_Entity>();
   if (!rockets || rockets->empty())
     return;
 
@@ -196,7 +191,7 @@ void update_rockets(server_context_t &context, float dt)
                   to_remove.end());
 
   for (int idx : to_remove)
-    session.entity_system.destroy(entity_type::ROCKET, &(*rockets)[idx]);
+    session.entity_system.destroy(&(*rockets)[idx]);
 }
 
 } // namespace server

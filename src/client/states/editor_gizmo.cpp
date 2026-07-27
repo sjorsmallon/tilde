@@ -1,8 +1,7 @@
+#include "../../shared/entities/entity_reflection.hpp"
 #include "editor_gizmo.hpp"
 #include "../editor/transaction_system.hpp"
 #include "../renderer.hpp"
-#include "../shared/entities/player_entity.hpp"
-#include "../shared/entities/weapon_entity.hpp"
 #include "../shared/map.hpp" // Full definition needed
 #include "../shared/shapes.hpp"
 #include <algorithm>         // for min/max
@@ -377,7 +376,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   // Store original for drag calculations
   auto &ent = entry->entity;
 
-  if (const shared::box_volume_t *volume = ent->get_box_volume())
+  if (const entities::Box_Volume *volume = entities::get_box_volume(ent.get()))
   {
     original_transform.position = ent->position;
     original_transform.scale =
@@ -385,7 +384,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
     original_transform.orientation = {0, 0, 0,
                                       1}; // Identity (box has no rotation)
   }
-  else if (auto *player = shared::entity_as<::network::Player_Entity>(ent.get()))
+  else if (auto *player = entities::entity_as<::entities::Player_Entity>(ent.get()))
   {
     original_transform.position = player->position;
     original_transform.scale = {1, 1, 1};

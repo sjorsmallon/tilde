@@ -44,8 +44,15 @@ namespace shared
 struct geometry_surface_t
 {
   // Empty means "draw the kind's own primitive": a solid box for box_geometry_t,
-  // the generated heightmap mesh for displacement_geometry_t. A leading
-  // "__primitive_" resolves through assets::get_primitive_mesh instead of disk.
+  // the generated heightmap mesh for displacement_geometry_t. Otherwise a file
+  // path, resolved through assets::load_mesh.
+  //
+  // DECIDED AT THE CUTOVER (P5): geometry keeps free-form paths and does NOT
+  // move to manifest ids the way entity fields did. A static mesh is arbitrary
+  // level art, so the closed set an asset id gives you is the wrong shape here
+  // -- an author adding a prop should not have to touch entities.def. The
+  // "__primitive_" prefix that used to be honoured here is gone with the rest
+  // of it; nothing ever wrote one into a geometry surface.
   std::string mesh_path;
 
   // "lit" (default) or "unlit" — selects the rendering pipeline.
@@ -185,9 +192,8 @@ const geometry_surface_t &get_surface(const geometry_value_t &geometry);
 // to text, which is the bug the entity flavor still has.
 bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &rhs);
 
-// Resolve a surface's mesh_path to a mesh asset, going through
-// assets::get_primitive_mesh for "__primitive_*" paths and assets::load_mesh
-// otherwise. Returns an invalid handle for an empty path.
+// Resolve a surface's mesh_path to a mesh asset through assets::load_mesh.
+// Returns an invalid handle for an empty path.
 assets::asset_handle_t<assets::mesh_asset_t>
 resolve_surface_mesh(const geometry_surface_t &surface);
 

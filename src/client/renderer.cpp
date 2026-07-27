@@ -4006,7 +4006,7 @@ void draw_hitbox_sphere(VkCommandBuffer cmd, const linalg::vec3 &center,
                         float radius, color_t color)
 {
   // Draw sphere using primitive mesh
-  auto sphere_mesh = assets::get_primitive_mesh("sphere");
+  auto sphere_mesh = assets::get_mesh(entities::mesh_asset::Sphere);
   if (!sphere_mesh.valid())
     return;
 
@@ -4024,7 +4024,7 @@ void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
   // Center is at the middle of the capsule
 
   // Draw cylinder body
-  auto cylinder_mesh = assets::get_primitive_mesh("cylinder");
+  auto cylinder_mesh = assets::get_mesh(entities::mesh_asset::Cylinder);
   if (cylinder_mesh.valid())
   {
     // Cylinder primitive is 1 unit tall, scale to full height (2 * half_height)

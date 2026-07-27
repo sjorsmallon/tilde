@@ -9,7 +9,7 @@
 //   3. Saving the converted map and re-loading it is lossless for geometry, and
 //      the saved file no longer contains the legacy form.
 
-#include "entities/trigger_volume_entity.hpp"
+#include "../shared/entities/entity_reflection.hpp"
 #include "log.hpp"
 #include "map.hpp"
 #include "network/map_transfer.hpp"
@@ -76,7 +76,7 @@ int main()
   // Geometry must NOT have landed in the entity list — that's the whole point.
   for (const auto &e : loaded.entities)
   {
-    const std::string classname = get_classname_for_entity(e.entity.get());
+    const std::string classname = entities::classname_of(e.entity.get());
     if (classname == "aabb_entity" || classname == "displacement_entity" ||
         classname == "static_mesh_entity" || classname == "wedge_entity")
       return fail("conversion: geometry is still in the entity list");
@@ -160,13 +160,13 @@ int main()
   {
     map_t trig_map;
     trig_map.name = "trig_roundtrip";
-    auto t = create_entity_by_classname("trigger_volume");
-    auto *trig = entity_as<network::Trigger_Volume_Entity>(t.get());
+    auto t = create_map_entity("trigger_volume_entity");
+    auto *trig = entity_as<entities::Trigger_Volume_Entity>(t.get());
     if (!trig) return fail("trigger: factory returned wrong type");
     trig->position = {7.f, 8.f, 9.f};
     trig->volume.half_extents = {11.f, 12.f, 13.f};
-    trig->action_name.set("warp_to_spawn");
-    trig->fire_mode.set("every_tick");
+    trig->action = entities::Trigger_Action::Warp_To_Spawn;
+    trig->fire_mode = entities::Fire_Mode::Every_Tick;
     trig->param_target_name.set("spawn_a");
     trig->param_string.set("hello");
     trig->param_float = 42.5f;
@@ -183,9 +183,9 @@ int main()
     std::filesystem::remove(trig_path + ".navmesh");
 
     size_t n = 0;
-    network::Trigger_Volume_Entity *rt = nullptr;
+    entities::Trigger_Volume_Entity *rt = nullptr;
     for (const auto &e : reloaded_trig.entities)
-      if (auto *tt = entity_as<network::Trigger_Volume_Entity>(e.entity.get()))
+      if (auto *tt = entity_as<entities::Trigger_Volume_Entity>(e.entity.get()))
       { rt = tt; ++n; }
     if (n != 1) return fail("trigger: expected exactly 1 reloaded trigger");
     if (rt->position.x != 7.f || rt->position.y != 8.f || rt->position.z != 9.f)
@@ -193,9 +193,9 @@ int main()
     if (rt->volume.half_extents.x != 11.f || rt->volume.half_extents.y != 12.f ||
         rt->volume.half_extents.z != 13.f)
       return fail("trigger: volume drift");
-    if (std::string(rt->action_name.c_str()) != "warp_to_spawn")
-      return fail("trigger: action_name drift");
-    if (std::string(rt->fire_mode.c_str()) != "every_tick")
+    if (rt->action != entities::Trigger_Action::Warp_To_Spawn)
+      return fail("trigger: action drift");
+    if (rt->fire_mode != entities::Fire_Mode::Every_Tick)
       return fail("trigger: fire_mode drift");
     if (std::string(rt->param_target_name.c_str()) != "spawn_a")
       return fail("trigger: param_target_name drift");

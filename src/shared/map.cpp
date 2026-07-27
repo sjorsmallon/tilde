@@ -1,16 +1,13 @@
-#define ENTITIES_WANT_INCLUDES
 #include "map.hpp"
 #include "asset.hpp"
-#include "entities/player_entity.hpp"
-#include "entities/trigger_volume_entity.hpp"
-#include "entity_system.hpp"
 #include "log.hpp"
+#include "player_constants.hpp"
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <typeinfo>
 
 namespace shared
 {
@@ -469,61 +466,290 @@ bool convert_legacy_geometry_entity(const std::string &classname,
   return false;
 }
 
+// ============================================================================
+// Entity blocks: classnames and fields
+// ============================================================================
+
+// The classnames the macro system wrote, for the types whose generated
+// classname differs. The generator derives a classname from the declared type
+// name (Light_Entity -> "light_entity"); the X-macro let each entry pick its
+// own string, and five of them picked something else.
+//
+// This is the "renames via one-time map conversion" rule from the phase plan,
+// running on load rather than as a separate pass: a map written before the
+// cutover still loads, and the first save rewrites it with the generated name,
+// after which the alias is never consulted for that file again. No version
+// number is involved, and none is needed -- the old name either appears or it
+// does not.
+struct legacy_classname_t
+{
+  const char *legacy;
+  const char *current;
+};
+
+constexpr legacy_classname_t LEGACY_CLASSNAMES[] = {
+    {"player_start", "player_spawn_entity"},
+    {"weapon_basic", "weapon_entity"},
+    {"particle_emitter", "particle_emitter_entity"},
+    {"trigger_volume", "trigger_volume_entity"},
+    {"physics_body", "physics_body_entity"},
+};
+
+} // namespace
+
+std::shared_ptr<entities::Entity> create_map_entity(const std::string &classname)
+{
+  entities::entity_type type = entities::entity_type_from_classname(classname.c_str());
+
+  if (type == entities::entity_type::Invalid)
+  {
+    for (const legacy_classname_t &alias : LEGACY_CLASSNAMES)
+    {
+      if (classname != alias.legacy)
+        continue;
+      type = entities::entity_type_from_classname(alias.current);
+      break;
+    }
+  }
+
+  if (type == entities::entity_type::Invalid)
+    return nullptr;
+
+  // make_shared of the CONCRETE type, so the control block records the concrete
+  // deleter -- entities have no virtual destructor and never will.
+  switch (type)
+  {
+    case entities::entity_type::Player_Spawn_Entity:
+      return std::make_shared<entities::Player_Spawn_Entity>();
+    case entities::entity_type::Player_Entity:
+      return std::make_shared<entities::Player_Entity>();
+    case entities::entity_type::Weapon_Entity:
+      return std::make_shared<entities::Weapon_Entity>();
+    case entities::entity_type::Rocket_Entity:
+      return std::make_shared<entities::Rocket_Entity>();
+    case entities::entity_type::Particle_Emitter_Entity:
+      return std::make_shared<entities::Particle_Emitter_Entity>();
+    case entities::entity_type::Trigger_Volume_Entity:
+      return std::make_shared<entities::Trigger_Volume_Entity>();
+    case entities::entity_type::Light_Entity:
+      return std::make_shared<entities::Light_Entity>();
+    case entities::entity_type::Physics_Body_Entity:
+      return std::make_shared<entities::Physics_Body_Entity>();
+    case entities::entity_type::Invalid:
+      break;
+  }
+
+  return nullptr;
+}
+
+namespace
+{
+
+// Rewrites a pre-cutover entity block into the shape read_entity_fields expects.
+// The third and last piece of the one-time conversion, after the classname
+// aliases and the numeric-enum fallback. Three transformations, all of them
+// consequences of decisions recorded in entities.def:
+//
+//   1. COMPONENT BLOBS -> DOTTED KEYS. A component used to serialize into one
+//      value ("volume" = "half_extents:1 2 3"); it is now one key per leaf
+//      ("volume.half_extents"). Same split rule as the geometry conversion.
+//   2. RENAMED KEYS. Only where a field's NAME changed, which is the one
+//      versioning case the no-version-numbers rule cannot absorb.
+// A third legacy form -- enum values as lowercase strings -- is handled in
+// read_entity_fields instead; see the note at the bottom of this function.
+//
+// Values already in the new form pass through untouched, so this is idempotent
+// and costs a converted map nothing.
+void rewrite_legacy_entity_properties(std::map<std::string, std::string> &properties)
+{
+  // 1. Component blobs.
+  static constexpr const char *BLOB_KEYS[] = {"volume", "render", "hitbox", "material"};
+  for (const char *blob_key : BLOB_KEYS)
+  {
+    auto it = properties.find(blob_key);
+    if (it == properties.end() || it->second.find(':') == std::string::npos)
+      continue;
+
+    for (const auto &[inner_key, inner_value] : parse_legacy_component_blob(it->second))
+      properties.emplace(std::string(blob_key) + "." + inner_key, inner_value);
+
+    properties.erase(it);
+  }
+
+  // 2. Renamed keys. `action_name` held the string the server looked up in the
+  //    trigger action registry; it is the Trigger_Action enum `action` now.
+  static constexpr legacy_classname_t RENAMED_KEYS[] = {
+      {"action_name", "action"},
+  };
+  for (const legacy_classname_t &rename : RENAMED_KEYS)
+  {
+    auto it = properties.find(rename.legacy);
+    if (it == properties.end())
+      continue;
+    properties.emplace(rename.current, it->second);
+    properties.erase(it);
+  }
+
+  // The third legacy form -- enum values spelled as lowercase strings -- is
+  // deliberately NOT handled here. This function sees keys and text but no
+  // field types, so it cannot tell an enum from a string, and blanket
+  // title-casing turned the string field param_target_name "spawn_a" into
+  // "Spawn_A". It lives in read_entity_fields, which has the field record.
+}
+
+// Reads a block's properties into an already-constructed entity.
+//
+// VERSIONING, which has no version numbers by design:
+//   * a @Saveable key the file does not carry keeps the DSL default, so adding
+//     a field is free and old maps load;
+//   * a key the entity has no field for is ignored with a warning, so removing
+//     a field is free and the warning says what was dropped;
+//   * a key that does not parse is left at its default with an error, never
+//     half-written and never silently zeroed.
+// Renames are the one case that needs a real conversion, which is what the
+// legacy table above is for.
+void read_entity_fields(entities::Entity &entity, const std::string &classname,
+                        std::map<std::string, std::string> properties)
+{
+  // Taken by value: the legacy rewrite below edits it, and the caller's block
+  // is what the map file literally said. One conversion, in one place.
+  rewrite_legacy_entity_properties(properties);
+
+  const std::vector<entities::leaf_field_t> leaves =
+      entities::collect_leaf_fields(entity.type, entities::FIELD_FLAG_SAVEABLE);
+
+  uint8_t *base = reinterpret_cast<uint8_t *>(&entity);
+
+  // Which keys were consumed, so the leftovers can be reported rather than
+  // vanishing. Sized off the block, not the schema: an unknown key is exactly
+  // what this is looking for.
+  std::map<std::string, bool> consumed;
+  for (const auto &[key, value] : properties)
+    consumed[key] = false;
+
+  for (const entities::leaf_field_t &leaf : leaves)
+  {
+    auto it = properties.find(leaf.name);
+    if (it == properties.end())
+      continue; // additive change: keep the DSL default
+
+    consumed[leaf.name] = true;
+
+    if (entities::field_from_text(it->second, *leaf.info, base + leaf.offset))
+      continue;
+
+    // Legacy value form, the second half of the one-time conversion the
+    // classname aliases above are the first half of. Fields that are enums now
+    // were plain ints in the macro system (spawn_type "0", light kind "2"), so
+    // a pre-cutover map spells them as a NUMBER where field_from_text wants the
+    // value's NAME. Accept the number, once, and the next save writes the name.
+    //
+    // Deliberately not in field_from_text: that is the canonical reader, and an
+    // enum whose text is "2" is exactly the sort of thing it should reject.
+    // This is map.cpp's business because only map.cpp is reading a file that
+    // might predate the change.
+    if (leaf.info->type == entities::FIELD_TYPE_ENUM)
+    {
+      const entities::enum_type_info_t &enum_info =
+          entities::enum_info((entities::enum_type)leaf.info->enum_id);
+
+      char *parse_end = nullptr;
+      const long numeric = std::strtol(it->second.c_str(), &parse_end, 10);
+
+      const bool parsed_whole = parse_end != nullptr && *parse_end == '\0' &&
+                                parse_end != it->second.c_str();
+
+      if (parsed_whole && numeric >= 0 && (uint32_t)numeric < enum_info.value_names.size())
+      {
+        base[leaf.offset] = (uint8_t)numeric;
+        log_warning("map parse: {}.{} was the legacy numeric \"{}\"; read as {}. "
+                    "The next save writes the name.",
+                    classname, leaf.name, it->second,
+                    enum_info.value_names[(uint32_t)numeric]);
+        continue;
+      }
+
+      // Legacy form B: the value was a lowercase string ("on_enter",
+      // "warp_to_spawn", "lit", "sphere") where the generated name is
+      // Title_Case. Capitalise the first letter and each one after an
+      // underscore, then look that up.
+      std::string title_case = it->second;
+      bool at_word_start = true;
+      for (char &character : title_case)
+      {
+        if (at_word_start && character >= 'a' && character <= 'z')
+          character = (char)(character - 'a' + 'A');
+        at_word_start = (character == '_');
+      }
+
+      if (entities::field_from_text(title_case, *leaf.info, base + leaf.offset))
+      {
+        log_warning("map parse: {}.{} was the legacy spelling \"{}\"; read as {}. "
+                    "The next save writes the name.",
+                    classname, leaf.name, it->second, title_case);
+        continue;
+      }
+    }
+
+    log_error("map parse: {}.{} could not be read from \"{}\" — left at its default",
+              classname, leaf.name, it->second);
+  }
+
+  for (const auto &[key, was_consumed] : consumed)
+  {
+    if (was_consumed || key == "classname" || key == "_uid")
+      continue;
+
+    // A warning, not an error: this is the documented behavior for a REMOVED
+    // field, and removals are meant to be free. Pre-cutover maps all carry at
+    // least one (entity_id, which the macro system saved because it saved every
+    // field regardless of flags and is @Networked-only now), so treating it as
+    // an error would bury the real errors in expected noise.
+    log_warning("map parse: {} has no saveable field named \"{}\" — key ignored", classname,
+                key);
+  }
+}
+
 } // namespace
 
 // ============================================================================
 // Per-entity picking bounds
 //
-// The primary template is intentionally NOT defined. If a new entity type is
-// added to SHARED_ENTITIES_LIST and the dev forgets to specialize this here,
-// the linker will fail with "undefined reference to
-// compute_picking_bounds_for<Foo_Entity>". That's the point -- forces every
-// entity type to declare its picking shape rather than silently falling back
-// to a tiny default box that makes selection effectively impossible.
-//
-// Mirrors the Entity_Editor_Traits pattern at
-// src/client/editor/entity_editor_traits.hpp.
+// One exhaustive switch over the closed enum, where this used to be a template
+// whose primary was deliberately left undefined so a missing specialization
+// became a link error. The switch is the better version of the same trick: an
+// unhandled entity_type is a -Wswitch warning at COMPILE time, in this file,
+// naming the type -- rather than an undefined symbol at link time.
 // ============================================================================
-
-template <typename EntityClass>
-aabb_bounds_t compute_picking_bounds_for(const EntityClass *e);
 
 namespace
 {
-// Mesh-bounds-or-default-box. Shared helper for entities whose picking shape
-// is "whatever the render_component's mesh tells us, with a small fallback if
-// the mesh hasn't loaded yet".
-aabb_bounds_t mesh_or_point_bounds(const network::Entity *entity,
+
+// Mesh-bounds-or-default-box. Shared by every entity whose picking shape is
+// "whatever the Render component's mesh says, with a small fallback if the mesh
+// has not loaded yet".
+aabb_bounds_t mesh_or_point_bounds(const entities::Entity *entity,
                                    float fallback_half = 0.5f)
 {
-  if (const auto *rc = entity->get_component<network::render_component_t>())
+  if (const entities::Render *render = entities::get_render(entity))
   {
-    const char *mesh_path =
-        rc->mesh_path.length > 0 ? rc->mesh_path.c_str() : nullptr;
-    if (mesh_path)
-    {
-      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
-      if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
-        mesh_handle = assets::get_primitive_mesh(mesh_path + 12);
-      else
-        mesh_handle = assets::load_mesh(mesh_path);
+    assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
+        assets::get_mesh(render->mesh);
 
-      if (mesh_handle.valid())
+    if (mesh_handle.valid())
+    {
+      vec3f mesh_min, mesh_max;
+      if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min, mesh_max))
       {
-        vec3f mesh_min, mesh_max;
-        if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min,
-                                        mesh_max))
-        {
-          vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
-          vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
-          vec3f s = rc->scale;
-          vec3f world_center =
-              entity->position + vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
-                                       mesh_center.z * s.z};
-          vec3f world_half = vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
-                                   mesh_half.z * s.z};
-          return {world_center - world_half, world_center + world_half};
-        }
+        vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
+        vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
+        vec3f s = render->scale;
+        vec3f world_center =
+            entity->position + vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
+                                     mesh_center.z * s.z};
+        vec3f world_half = vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
+                                 mesh_half.z * s.z};
+        return {world_center - world_half, world_center + world_half};
       }
     }
   }
@@ -532,72 +758,17 @@ aabb_bounds_t mesh_or_point_bounds(const network::Entity *entity,
           entity->position +
               vec3f{fallback_half, fallback_half, fallback_half}};
 }
+
+// The player hull, used by both player-shaped types.
+aabb_bounds_t player_hull_bounds(const entities::Entity *entity)
+{
+  const vec3f hull{player_half_width, player_half_height, player_half_width};
+  return {entity->position - hull, entity->position + hull};
+}
+
 } // namespace
 
-template <>
-aabb_bounds_t compute_picking_bounds_for(const network::Player_Spawn_Entity *e)
-{
-  const vec3f hull{network::player_half_width, network::player_half_height,
-                   network::player_half_width};
-  return {e->position - hull, e->position + hull};
-}
-
-template <>
-aabb_bounds_t compute_picking_bounds_for(const network::Player_Entity *e)
-{
-  auto mesh_handle = assets::load_mesh("resources/obj/pyramid.obj");
-  if (mesh_handle.valid())
-  {
-    vec3f mesh_min, mesh_max;
-    if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min,
-                                    mesh_max))
-      return {e->position + mesh_min, e->position + mesh_max};
-  }
-  const vec3f hull{network::player_half_width, network::player_half_height,
-                   network::player_half_width};
-  return {e->position - hull, e->position + hull};
-}
-
-template <>
-aabb_bounds_t compute_picking_bounds_for(const network::Weapon_Entity *e)
-{
-  return mesh_or_point_bounds(e);
-}
-
-template <>
-aabb_bounds_t compute_picking_bounds_for(const network::Rocket_Entity *e)
-{
-  return mesh_or_point_bounds(e);
-}
-
-template <>
-aabb_bounds_t
-compute_picking_bounds_for(const network::Particle_Emitter_Entity *e)
-{
-  return mesh_or_point_bounds(e);
-}
-
-template <>
-aabb_bounds_t
-compute_picking_bounds_for(const network::Trigger_Volume_Entity *e)
-{
-  return get_bounds(e->volume, e->position);
-}
-
-template <>
-aabb_bounds_t compute_picking_bounds_for(const network::Light_Entity *e)
-{
-  return mesh_or_point_bounds(e);
-}
-
-template <>
-aabb_bounds_t
-compute_picking_bounds_for(const network::Physics_Body_Entity *e)
-{
-  return mesh_or_point_bounds(e);
-}
-
-aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
+aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
 {
   if (!entity)
   {
@@ -605,35 +776,57 @@ aabb_bounds_t compute_entity_bounds(const network::Entity *entity)
     return {{0, 0, 0}, {0, 0, 0}};
   }
 
-  // Generic fast-path: any entity that owns a box volume picks through it,
-  // regardless of concrete class. Trigger volumes are the only such entity left
-  // now that geometry is out; the per-class specializations above cover the rest.
-  if (const auto *volume = entity->get_box_volume())
-    return get_bounds(*volume, entity->position);
+  switch (entity->type)
+  {
+    case entities::entity_type::Player_Spawn_Entity:
+      return player_hull_bounds(entity);
 
-#define X(ENUM, CLASS, NAME, PATH)                                             \
-  if (auto *casted = dynamic_cast<const CLASS *>(entity))                      \
-    return compute_picking_bounds_for<CLASS>(casted);
-  SHARED_ENTITIES_LIST(X)
-#undef X
+    case entities::entity_type::Player_Entity:
+    {
+      // Drawn as the pyramid marker, so it picks as one -- the Render component
+      // is not what a player is drawn from.
+      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
+          assets::get_mesh(entities::mesh_asset::Pyramid);
+      if (mesh_handle.valid())
+      {
+        vec3f mesh_min, mesh_max;
+        if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min, mesh_max))
+          return {entity->position + mesh_min, entity->position + mesh_max};
+      }
+      return player_hull_bounds(entity);
+    }
 
-  // Unreachable if every entity type in SHARED_ENTITIES_LIST is handled above
-  // (which the linker enforces). Reaching here means something derived from
-  // network::Entity exists outside the X-macro -- a real bug.
-  log_error("compute_entity_bounds: entity not in SHARED_ENTITIES_LIST "
-            "(typeid={}); register it via the X-macro in entity_list.hpp",
-            typeid(*entity).name());
+    case entities::entity_type::Trigger_Volume_Entity:
+    {
+      const entities::Box_Volume *volume = entities::get_box_volume(entity);
+      assert(volume != nullptr && "Trigger_Volume_Entity lost its Box_Volume component");
+      return get_bounds(*volume, entity->position);
+    }
+
+    case entities::entity_type::Weapon_Entity:
+    case entities::entity_type::Rocket_Entity:
+    case entities::entity_type::Particle_Emitter_Entity:
+    case entities::entity_type::Light_Entity:
+    case entities::entity_type::Physics_Body_Entity:
+      return mesh_or_point_bounds(entity);
+
+    case entities::entity_type::Invalid:
+      break;
+  }
+
+  log_error("compute_entity_bounds: entity carries an invalid type tag ({})",
+            (int)entity->type);
   return {entity->position - vec3f{0.5f, 0.5f, 0.5f},
           entity->position + vec3f{0.5f, 0.5f, 0.5f}};
 }
 
-std::vector<Plane> compute_entity_collision_planes(const network::Entity *entity)
+std::vector<Plane> compute_entity_collision_planes(const entities::Entity *entity)
 {
   // Entities are not collision geometry — that's the map's geometry list now
   // (see get_collision_planes in map_geometry.hpp). What's left here serves the
   // callers that want an entity's shape for overlap tests: a box volume if it
   // has one (trigger volumes), otherwise its picking bounds.
-  if (const auto *volume = entity->get_box_volume())
+  if (const entities::Box_Volume *volume = entities::get_box_volume(entity))
     return compute_collision_planes(to_aabb(*volume, entity->position));
 
   auto bounds = compute_entity_bounds(entity);
@@ -709,9 +902,9 @@ bool get_object_box(const map_t &map, entity_uid_t uid, linalg::vec3 &out_center
 
   if (const map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
   {
-    if (const box_volume_t *volume = entry->entity->get_box_volume())
+    if (const entities::Box_Volume *volume = entities::get_box_volume(entry->entity.get()))
     {
-      out_center = entry->entity->position;
+      out_center = entry->entity->position + volume->position;
       out_half_extents = volume->half_extents;
       return true;
     }
@@ -753,9 +946,11 @@ bool set_object_box(map_t &map, entity_uid_t uid, const linalg::vec3 &center,
 
   if (map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
   {
-    if (box_volume_t *volume = entry->entity->get_box_volume())
+    if (entities::Box_Volume *volume = entities::get_box_volume(entry->entity.get()))
     {
-      entry->entity->position = center;
+      // The entity moves; the volume's local offset is left alone, so a box
+      // authored off-center stays off-center when it is dragged.
+      entry->entity->position = center - volume->position;
       volume->half_extents = half_extents;
       return true;
     }
@@ -800,10 +995,10 @@ bool set_object_position(map_t &map, entity_uid_t uid, const linalg::vec3 &posit
   return false;
 }
 
-std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const network::Entity *entity)
+std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const entities::Entity *entity)
 {
   // Any entity that owns a box volume -> 6 axis-aligned face quads
-  if (const auto *volume = entity->get_box_volume())
+  if (const entities::Box_Volume *volume = entities::get_box_volume(entity))
     return compute_face_polygons(to_aabb(*volume, entity->position));
 
   // Fallback: use entity bounds as an AABB
@@ -906,7 +1101,7 @@ bool parse_map_from_string(const std::string &content, map_t &out_map)
       continue;
     }
 
-    std::shared_ptr<network::Entity> new_entity = create_entity_by_classname(classname);
+    std::shared_ptr<entities::Entity> new_entity = create_map_entity(classname);
     if (!new_entity)
     {
       log_error("map parse: unknown entity classname \"{}\" — entity skipped",
@@ -914,7 +1109,7 @@ bool parse_map_from_string(const std::string &content, map_t &out_map)
       continue;
     }
 
-    new_entity->init_from_map(block.properties);
+    read_entity_fields(*new_entity, classname, block.properties);
 
     if (uid != 0)
       out_map.add_entity_with_uid(uid, new_entity);
@@ -969,37 +1164,42 @@ std::string serialize_map_to_string(const map_t &map)
     blocks.push_back(std::move(block));
   }
 
-  // Entities, still schema-driven (and so still alphabetically ordered) until
-  // the generator cutover takes over map save/load.
+  // Entities, from the generated tables: every @Saveable leaf, in DECLARATION
+  // order. That order is the point — the std::map this replaced sorted keys
+  // alphabetically, so a field's position in the file had nothing to do with
+  // where it sits in entities.def, and reordering the .def produced no diff
+  // while renaming a field reshuffled the whole block.
   for (const map_entity_t &entry : map.entities)
   {
     if (!entry.entity)
       continue;
 
-    const std::string classname = get_classname_for_entity(entry.entity.get());
-    if (classname == "unknown")
+    const entities::Entity *entity = entry.entity.get();
+    if (entity->type == entities::entity_type::Invalid)
     {
-      log_error("map save: entity uid {} has no registered classname — dropped",
-                entry.uid);
+      log_error("map save: entity uid {} carries an invalid type tag — dropped", entry.uid);
       continue;
     }
 
     map_block_out_t block;
     block.keyword = "entity";
-    block.properties.emplace_back("classname", classname);
+    block.properties.emplace_back("classname", entities::classname_of(entity));
     block.properties.emplace_back("_uid", std::to_string(entry.uid));
 
-    const network::Class_Schema *schema = entry.entity->get_schema();
-    if (schema)
-    {
-      const uint8_t *base_ptr = reinterpret_cast<const uint8_t *>(entry.entity.get());
+    const uint8_t *base = reinterpret_cast<const uint8_t *>(entity);
 
-      for (const auto &field : schema->fields)
+    for (const entities::leaf_field_t &leaf :
+         entities::collect_leaf_fields(entity->type, entities::FIELD_FLAG_SAVEABLE))
+    {
+      std::string value;
+      if (!entities::field_to_text(base + leaf.offset, *leaf.info, value))
       {
-        std::string value;
-        if (network::serialize_field_to_string(base_ptr + field.offset, field, value))
-          block.properties.emplace_back(field.name, value);
+        log_error("map save: entity uid {} field {}.{} could not be written as text — "
+                  "the key is omitted and the value will be lost on the next load",
+                  entry.uid, entities::classname_of(entity), leaf.name);
+        continue;
       }
+      block.properties.emplace_back(leaf.name, value);
     }
 
     blocks.push_back(std::move(block));

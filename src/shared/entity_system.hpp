@@ -1,120 +1,77 @@
 #pragma once
 
-#include "map.hpp" // For map_t and entity_type
-#include "network/network_types.hpp"
-#include "network/schema.hpp"
+#include "entities/entity_reflection.hpp"
+#include "log.hpp"
+#include "map.hpp"
 #include <map>
 #include <memory>
-#include <string>
 #include <vector>
 
 namespace shared
 {
 
-struct Spawn_Info
-{
-  linalg::vec3 position = {{0, 0, 0}};
-  float yaw = 0.0f;
-  std::map<std::string, std::string> properties;
-};
-
+// One pool per entity type, each a flat vector of concrete values.
+//
+// UNCHANGED BY THE CUTOVER, deliberately: spawn() still hands back a raw T*
+// into a vector that reallocates, so an outstanding pointer is still
+// invalidated by the next spawn. That is P7's problem (see the storage refactor
+// in todo.md), and bundling a storage change with a reflection change is how
+// you end up unable to tell which half broke the game.
+//
+// What DID change is how a pool is created for a runtime tag: it was a template
+// instantiated per X-macro entry, and is now one switch over the closed enum
+// (make_entity_pool, in the .cpp). A forgotten type is a -Wswitch warning there.
 struct Entity_Pool_Base
 {
   virtual ~Entity_Pool_Base() = default;
   virtual void reset() = 0;
-  virtual void instantiate(const Spawn_Info &spawn) = 0;
-  virtual void add_existing(const network::Entity *entity) = 0;
+  virtual void add_existing(const entities::Entity *entity) = 0;
+
+  // How many entities this pool holds. On the base so a caller that only has a
+  // tag (the entity debug overlay) can ask without knowing T -- which is what
+  // the per-type X-macro expansion it replaced was doing the long way.
+  virtual size_t size() const = 0;
 };
 
-template <typename T> struct EntityPool : Entity_Pool_Base
+template <typename T> struct Entity_Pool : Entity_Pool_Base
 {
   std::vector<T> entities;
 
   void reset() override { entities.clear(); }
 
-  // Instantiates an entity from spawn data.
-  // 1. Calls ent.init_from_map(spawn.properties) to parse generic properties.
-  // 2. "Magically" injects position and yaw if the Entity's schema has matching
-  // fields:
-  //    - Field "position" (Vec3f) <- spawn.position
-  //    - Field "yaw" or "view_angle_yaw" (Float32) <- spawn.yaw
-  //    - Field "yaw" or "view_angle_yaw" (Float32) <- spawn.yaw
-  void instantiate(const Spawn_Info &spawn) override
+  size_t size() const override { return entities.size(); }
+
+  void add_existing(const entities::Entity *entity) override
   {
-    auto &ent = entities.emplace_back();
-
-    // 1. Init properties from map first
-    ent.init_from_map(spawn.properties);
-
-    // 2. "Magic" injection:
-    // If the entity has a "position" field of type Vec3f, set it from
-    // spawn.position If the entity has a "yaw" field of type Float32, set it
-    // from spawn.yaw
-
-    const auto *schema = ent.get_schema();
-    if (schema)
+    const T *typed = entities::entity_as<T>(entity);
+    if (typed == nullptr)
     {
-      network::uint8 *base = reinterpret_cast<network::uint8 *>(&ent);
-
-      for (const auto &field : schema->fields)
-      {
-        if (field.name == "position" &&
-            field.type == network::Field_Type::Vec3f)
-        {
-          // We have a position field!
-          linalg::vec3 *ptr =
-              reinterpret_cast<linalg::vec3 *>(base + field.offset);
-          *ptr = spawn.position;
-        }
-        else if (field.name == "yaw" &&
-                 field.type == network::Field_Type::Float32)
-        {
-          // We have a yaw field!
-          // (Note: player_entity uses view_angle_yaw, so this might need to be
-          // specific or we just rely on standard naming conventions if we want
-          // this to be generic.) BUT, the goal is to map from spawn.yaw if
-          // possible. However, player_entity has "view_angle_yaw". Let's check
-          // for "view_angle_yaw" too? Or maybe we should just set "yaw" if it
-          // exists. For now let's just do "yaw" and "view_angle_yaw" for
-          // convenience? Wait, "yaw" is what we parse from map property "yaw".
-
-          float *ptr = reinterpret_cast<float *>(base + field.offset);
-          *ptr = spawn.yaw;
-        }
-        else if (field.name == "view_angle_yaw" &&
-                 field.type == network::Field_Type::Float32)
-        {
-          float *ptr = reinterpret_cast<float *>(base + field.offset);
-          *ptr = spawn.yaw;
-        }
-      }
+      log_error("Entity_Pool: a {} was handed to the pool for a different type — not added",
+                entities::classname_of(entity));
+      return;
     }
+    entities.push_back(*typed);
   }
 
-  void add_existing(const network::Entity *entity) override
+  void remove(T *pointer)
   {
-    if (const T *cast_ent = dynamic_cast<const T *>(entity))
+    for (size_t index = 0; index < entities.size(); ++index)
     {
-      entities.push_back(*cast_ent);
-    }
-  }
+      if (&entities[index] != pointer)
+        continue;
 
-  void remove(T *ptr)
-  {
-    for (size_t i = 0; i < entities.size(); ++i)
-    {
-      if (&entities[i] == ptr)
-      {
-        if (i != entities.size() - 1)
-        {
-          entities[i] = std::move(entities.back());
-        }
-        entities.pop_back();
-        return;
-      }
+      if (index != entities.size() - 1)
+        entities[index] = std::move(entities.back());
+      entities.pop_back();
+      return;
     }
   }
 };
+
+// Creates the pool that holds `type`. Exhaustive over entity_type, so adding an
+// entity to entities.def and forgetting this is a compile-time warning rather
+// than a runtime "has no matching pool" at map load.
+std::unique_ptr<Entity_Pool_Base> make_entity_pool(entities::entity_type type);
 
 //@NOTE(SJM): while I am mostly opposed to constructors and not default
 // parameters,
@@ -122,74 +79,54 @@ template <typename T> struct EntityPool : Entity_Pool_Base
 // it does not make sense to live in a world where you can forget that.
 struct Entity_System
 {
-
   Entity_System() { register_all_known_entity_types(); }
-  std::map<entity_type, std::unique_ptr<struct Entity_Pool_Base>> pools;
+
+  std::map<entities::entity_type, std::unique_ptr<Entity_Pool_Base>> pools;
 
   // Entity ID generation (simple incrementing counter)
-  shared::entity_uid_t next_entity_id = 1;  // Start at 1 (0 is reserved for null)
+  entity_uid_t next_entity_id = 1; // Start at 1 (0 is reserved for null)
 
-  template <typename T> void register_entity_type(entity_type type)
+  // The tag is no longer a parameter anywhere below: the generator puts
+  // T::static_type on every entity struct, so passing it alongside T was a
+  // second spelling of the same fact that could disagree with the first.
+  template <typename T> std::vector<T> *get_entities()
   {
-#ifdef ENTITIES_WANT_INCLUDES
-    // Check if T is defined?
-    // Wait, T is a template param.
-#endif
-    pools[type] = std::make_unique<EntityPool<T>>();
-    T::register_schema();
-  }
-
-  template <typename T> std::vector<T> *get_entities(entity_type type)
-  {
-    auto it = pools.find(type);
-    if (it != pools.end())
-    {
-      // Safe downcast because we trust the type registration matching
-      return &static_cast<EntityPool<T> *>(it->second.get())->entities;
-    }
-    return nullptr;
+    auto it = pools.find(T::static_type);
+    if (it == pools.end())
+      return nullptr;
+    return &static_cast<Entity_Pool<T> *>(it->second.get())->entities;
   }
 
   //@FIXME(SJM): I don't think this should actually return T* ? and that delete
-  // should not actually delete but just free up a slot.
-  template <typename T> T *spawn(entity_type type, const Spawn_Info &info = {})
+  // should not actually delete but just free up a slot. (P7.)
+  template <typename T> T *spawn()
   {
-    auto it = pools.find(type);
-    if (it != pools.end())
-    {
-      auto *pool = static_cast<EntityPool<T> *>(it->second.get());
-      pool->instantiate(info);
-      T *entity = &pool->entities.back();
+    auto it = pools.find(T::static_type);
+    if (it == pools.end())
+      return nullptr;
 
-      // Assign unique entity ID
-      entity->entity_id = next_entity_id++;
+    auto *pool = static_cast<Entity_Pool<T> *>(it->second.get());
+    pool->entities.emplace_back();
 
-      return entity;
-    }
-    return nullptr;
+    T *entity = &pool->entities.back();
+    entity->entity_id = next_entity_id++;
+    return entity;
   }
 
-  template <typename T> void destroy(entity_type type, T *ptr)
+  template <typename T> void destroy(T *pointer)
   {
-    auto it = pools.find(type);
-    if (it != pools.end())
-    {
-      auto *pool = static_cast<EntityPool<T> *>(it->second.get());
-      pool->remove(ptr);
-    }
+    auto it = pools.find(T::static_type);
+    if (it == pools.end())
+      return;
+    static_cast<Entity_Pool<T> *>(it->second.get())->remove(pointer);
   }
 
   void reset();
   void populate_from_map(const map_t &map);
-  void add_entity(shared::entity_uid_t uid,
-                  const std::shared_ptr<network::Entity> &entity);
+  void add_entity(entity_uid_t uid, const std::shared_ptr<entities::Entity> &entity);
 
   // this is called in the constructor, no need for you to call it.
   void register_all_known_entity_types();
 };
-
-// Helpers migrated from EntityFactory
-entity_type classname_to_type(const std::string &classname);
-std::string type_to_classname(entity_type type);
 
 } // namespace shared

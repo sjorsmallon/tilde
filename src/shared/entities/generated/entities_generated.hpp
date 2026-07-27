@@ -71,6 +71,11 @@ Span<const asset_info_t> mesh_asset_manifest();
 // depending on what ran first.
 Span<const asset_info_t> sprite_asset_manifest();
 
+// The manifest a field_info_t::asset_class_id refers to. Empty span for
+// an id no asset class owns, which is a caller bug -- check the column
+// is not -1 before calling.
+Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);
+
 enum class Light_Type : uint8_t
 {
   Point = 0,
@@ -128,6 +133,28 @@ enum class Fire_Mode : uint8_t
 
 const char* to_string(Fire_Mode value);
 bool from_string(const char* text, Fire_Mode* out_value);
+
+enum class enum_type : uint16_t
+{
+  Light_Type = 0,
+  Spawn_Type = 1,
+  Shader_Type = 2,
+  Shape_Kind = 3,
+  Trigger_Action = 4,
+  Fire_Mode = 5,
+};
+
+constexpr uint32_t ENUM_TYPE_COUNT = 6;
+
+struct enum_type_info_t
+{
+  const char*                 name;
+  // Indexed by the enum's own numeric value; the values are dense and
+  // start at 0, so `size()` is also the count of valid values.
+  Span<const char* const>     value_names;
+};
+
+const enum_type_info_t& enum_info(enum_type type);
 
 // Invalid is 0 so that zeroed memory never looks like a valid entity.
 enum class entity_type : uint16_t
@@ -200,6 +227,8 @@ struct Entity
 
 struct Player_Spawn_Entity : Entity
 {
+  static constexpr entity_type static_type = entity_type::Player_Spawn_Entity;
+
   Player_Spawn_Entity() { type = entity_type::Player_Spawn_Entity; }
 
   Spawn_Type spawn_type = Spawn_Type::Human;
@@ -207,6 +236,8 @@ struct Player_Spawn_Entity : Entity
 
 struct Player_Entity : Entity
 {
+  static constexpr entity_type static_type = entity_type::Player_Entity;
+
   Player_Entity() { type = entity_type::Player_Entity; }
 
   float view_angle_yaw = {};
@@ -222,6 +253,8 @@ struct Player_Entity : Entity
 
 struct Weapon_Entity : Entity
 {
+  static constexpr entity_type static_type = entity_type::Weapon_Entity;
+
   Weapon_Entity() { type = entity_type::Weapon_Entity; }
 
   int32_t ammo = {};
@@ -231,6 +264,8 @@ struct Weapon_Entity : Entity
 
 struct Rocket_Entity : Entity
 {
+  static constexpr entity_type static_type = entity_type::Rocket_Entity;
+
   Rocket_Entity() { type = entity_type::Rocket_Entity; }
 
   linalg::vec3f velocity = {};
@@ -245,6 +280,8 @@ struct Rocket_Entity : Entity
 
 struct Particle_Emitter_Entity : Entity
 {
+  static constexpr entity_type static_type = entity_type::Particle_Emitter_Entity;
+
   Particle_Emitter_Entity() { type = entity_type::Particle_Emitter_Entity; }
 
   sprite_asset sprite = sprite_asset::Smoke;
@@ -271,6 +308,8 @@ struct Particle_Emitter_Entity : Entity
 
 struct Trigger_Volume_Entity : Entity
 {
+  static constexpr entity_type static_type = entity_type::Trigger_Volume_Entity;
+
   Trigger_Volume_Entity() { type = entity_type::Trigger_Volume_Entity; }
 
   Box_Volume volume = {};
@@ -283,6 +322,8 @@ struct Trigger_Volume_Entity : Entity
 
 struct Light_Entity : Entity
 {
+  static constexpr entity_type static_type = entity_type::Light_Entity;
+
   Light_Entity() { type = entity_type::Light_Entity; }
 
   linalg::vec3f direction = {};
@@ -296,6 +337,8 @@ struct Light_Entity : Entity
 
 struct Physics_Body_Entity : Entity
 {
+  static constexpr entity_type static_type = entity_type::Physics_Body_Entity;
+
   Physics_Body_Entity() { type = entity_type::Physics_Body_Entity; }
 
   Shape_Kind shape = Shape_Kind::Box;
@@ -347,6 +390,7 @@ struct field_info_t
   int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else -1
   uint32_t     string_capacity; // FIELD_TYPE_STRING only, else 0
   int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else -1
+  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else -1
 };
 
 struct entity_type_info_t

@@ -1,4 +1,6 @@
+#include "../../../shared/entities/entity_reflection.hpp"
 #include "placement_tool.hpp"
+#include <vector>
 #include "../../../shared/editor_grid.hpp"
 #include "../../../shared/map.hpp"
 #include "../../../shared/shapes.hpp"
@@ -7,7 +9,6 @@
 #include "../transaction_system.hpp"
 
 #define ENTITIES_WANT_INCLUDES
-#include "../../../shared/entities/entity_list.hpp"
 #undef ENTITIES_WANT_INCLUDES
 #include "imgui.h"
 #include "log.hpp"
@@ -101,9 +102,10 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
   {
     // Same shape as the geometry branch above: the prototype IS the new object,
     // so placing one is an exact copy plus a position.
-    auto new_entity = shared::clone_entity(current_entity.get());
-    if (!new_entity)
+    entities::Entity *clone = entities::clone_entity(current_entity.get());
+    if (clone == nullptr)
       return;
+    std::shared_ptr<entities::Entity> new_entity(clone, &entities::destroy_entity);
 
     new_entity->position = compute_placement_center(new_entity.get(), ghost_position);
 
@@ -129,26 +131,40 @@ void Placement_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
 
 // What the placement menu offers, in one table across both regimes: the
 // geometry kinds first (they're what a level is mostly made of, and the number
-// keys should reach them), then every entity type from the X-macro.
+// keys should reach them), then the placeable entity types.
+//
+// The entity half comes from placeable_entity_types(), which is the .def's
+// @runtime_only bit made load-bearing. The X-macro this replaced offered EVERY
+// entity type, so the menu listed rockets, players and weapons -- three things
+// no author can place meaningfully. Weapon_Entity dropping out of the menu is
+// the intended, decided consequence; see the note on it in entities.def.
 struct placeable_t
 {
   const char *label;
   bool is_geometry;
   shared::geometry_kind_t geometry_kind; // meaningful when is_geometry
-  ::entity_type entity_type;             // meaningful otherwise
+  entities::entity_type entity_type;     // meaningful otherwise
 };
 
-static const placeable_t g_placeables[] = {
-    {"BOX", true, shared::geometry_kind_t::Box, ::entity_type::UNKNOWN},
-    {"STATIC_MESH", true, shared::geometry_kind_t::Static_Mesh, ::entity_type::UNKNOWN},
-    {"DISPLACEMENT", true, shared::geometry_kind_t::Displacement, ::entity_type::UNKNOWN},
-#define X(ENUM, CLASS, NAME, PATH)                                             \
-  {#ENUM, false, shared::geometry_kind_t::Box, ::entity_type::ENUM},
-    SHARED_ENTITIES_LIST(X)
-#undef X
-};
-static constexpr int g_placeable_count =
-    sizeof(g_placeables) / sizeof(g_placeables[0]);
+static const std::vector<placeable_t> &placeables()
+{
+  static const std::vector<placeable_t> table = [] {
+    std::vector<placeable_t> result = {
+        {"BOX", true, shared::geometry_kind_t::Box, entities::entity_type::Invalid},
+        {"STATIC_MESH", true, shared::geometry_kind_t::Static_Mesh,
+         entities::entity_type::Invalid},
+        {"DISPLACEMENT", true, shared::geometry_kind_t::Displacement,
+         entities::entity_type::Invalid},
+    };
+
+    for (entities::entity_type type : entities::placeable_entity_types())
+      result.push_back({entities::entity_info(type).display_name, false,
+                        shared::geometry_kind_t::Box, type});
+
+    return result;
+  }();
+  return table;
+}
 
 // A geometry prototype at default size, ready to place.
 static shared::geometry_value_t
@@ -192,11 +208,11 @@ make_placement_prototype(shared::geometry_kind_t kind)
 
 void Placement_Tool::select_placeable(int index)
 {
-  if (index < 0 || index >= g_placeable_count)
+  if (index < 0 || index >= (int)placeables().size())
     return;
 
   selected_type_index = index;
-  const placeable_t &placeable = g_placeables[index];
+  const placeable_t &placeable = placeables()[index];
   renderer::draw_announcement(placeable.label);
 
   // Engage exactly one regime.
@@ -209,34 +225,27 @@ void Placement_Tool::select_placeable(int index)
     return;
   }
 
-  current_entity = shared::create_entity_by_type(placeable.entity_type);
-  if (!current_entity)
+  entities::Entity *prototype = entities::create_entity(placeable.entity_type);
+  if (prototype == nullptr)
   {
     log_error("select_placeable: no entity registered for \"{}\"", placeable.label);
     return;
   }
+  current_entity.reset(prototype, &entities::destroy_entity);
 
   // Set up defaults for entity types that need them. Trigger_Volume is the only
   // box-volume entity left now that geometry has moved out.
-  if (shared::box_volume_t *volume = current_entity->get_box_volume())
+  if (entities::Box_Volume *volume = entities::get_box_volume(current_entity.get()))
   {
     volume->half_extents = {editor::DEFAULT_HALF_EXTENT,
                             editor::DEFAULT_HALF_EXTENT,
                             editor::DEFAULT_HALF_EXTENT};
-    return;
-  }
-
-  if (current_entity->get_type() == ::entity_type::WEAPON)
-  {
-    auto *weapon = static_cast<network::Weapon_Entity *>(current_entity.get());
-    weapon->render.mesh_path.set("resources/obj/m4a1_s.obj");
-    weapon->render.is_wireframe = true;
   }
 }
 
 void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
-  for (int idx = 0; idx < g_placeable_count && idx < 9; ++idx)
+  for (int idx = 0; idx < (int)placeables().size() && idx < 9; ++idx)
   {
     int key_index = static_cast<int>(input::key_t::Num_1) + idx;
     if (static_cast<int>(e.key) == key_index)
@@ -254,13 +263,13 @@ void Placement_Tool::on_draw_ui(editor_context_t &ctx)
   {
     // Geometry and entities in one list, separated so it's obvious which is
     // which — they behave differently once placed (undo flavor, save form).
-    for (int idx = 0; idx < g_placeable_count; ++idx)
+    for (int idx = 0; idx < (int)placeables().size(); ++idx)
     {
-      if (idx > 0 && g_placeables[idx - 1].is_geometry && !g_placeables[idx].is_geometry)
+      if (idx > 0 && placeables()[idx - 1].is_geometry && !placeables()[idx].is_geometry)
         ImGui::Separator();
 
       bool selected = (idx == selected_type_index);
-      if (ImGui::Selectable(g_placeables[idx].label, selected))
+      if (ImGui::Selectable(placeables()[idx].label, selected))
         select_placeable(idx);
     }
   }

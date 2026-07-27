@@ -1,95 +1,114 @@
-#include "../shared/entity.hpp"
+// Wire round-trip for entity snapshots: full update, then delta.
+//
+// REWRITTEN AT THE P5 CUTOVER, and the rewrite explains the crash this test was
+// known to have. It used to declare a synthetic TestPlayer through the schema
+// macros and call network::diff(nullptr, &entity, schema) for the full-update
+// case -- but diff() memcmp'd the baseline unconditionally, so a null baseline
+// was a null dereference. The engine never hit it, because Entity::serialize had
+// its own null-baseline branch and nothing else called diff() that way. The
+// segfault was in this test's contract, not in the delta path it was covering.
+//
+// It now drives the real path (serialize_entity / deserialize_entity) against a
+// real generated entity -- which is also the only option left, since the closed
+// entity_type enum means a test cannot invent an entity type any more.
+
+#include "../shared/entities/entity_reflection.hpp"
+#include "../shared/network/entity_serialization.hpp"
+
 #include <cassert>
 #include <iostream>
-
-using namespace network;
-
-// --- Define an Entity ---
-
-class TestPlayer : public Entity
-{
-public:
-  SCHEMA_FIELD(int32, health, Schema_Flags::Networked);
-  SCHEMA_FIELD(float32, x, Schema_Flags::Networked);
-  SCHEMA_FIELD(float32, y, Schema_Flags::Networked);
-  SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked);
-
-  // Synthetic entity used only by this test — not in the X-macro registry.
-  ::entity_type get_type() const override { return ::entity_type::UNKNOWN; }
-
-  DECLARE_SCHEMA(TestPlayer)
-};
-
-// --- Define Schema ---
-BEGIN_SCHEMA(TestPlayer)
-REGISTER_FIELD(health)
-REGISTER_FIELD(x)
-REGISTER_FIELD(y)
-REGISTER_FIELD(ammo)
-END_SCHEMA(TestPlayer)
 
 int main()
 {
   std::cout << "[TEST] Starting Network Serialization Test..." << std::endl;
 
-  // 1. Register Schema (must be done once)
-  TestPlayer::register_schema();
+  // Values are chosen to survive write_coord, which keeps 5 fractional bits:
+  // integers and multiples of 1/32 round-trip exactly, arbitrary floats do not.
+  entities::Player_Entity server_tick_1;
+  server_tick_1.health   = 100;
+  server_tick_1.position = {10.0f, 20.0f, 0.0f};
+  server_tick_1.ammo     = 30;
 
-  // 2. Create Server Entities
-  TestPlayer server_p1;
-  server_p1.health = 100;
-  server_p1.x = 10.0f;
-  server_p1.y = 20.0f;
-  server_p1.ammo = 30;
+  entities::Player_Entity server_tick_2 = server_tick_1;
+  server_tick_2.health     = 90;    // took damage
+  server_tick_2.position.x = 12.0f; // moved
+  // position.y, position.z and ammo deliberately unchanged.
 
-  TestPlayer server_p2;  // Next tick
-  server_p2.health = 90; // Took damage logic
-  server_p2.x = 12.0f;   // Moved
-  server_p2.y = 20.0f;   // Unchanged
-  server_p2.ammo = 30;   // Unchanged
+  entities::Player_Entity client;
 
-  TestPlayer client_p; // Client representation
-
-  // 3. Test Full Update (Baseline = nullptr)
   {
     std::cout << "  [Subtest] Full update..." << std::endl;
-    auto updates = diff(nullptr, &server_p1, server_p1.get_schema());
 
-    // Full update should produce all fields
-    assert(updates.size() > 0);
+    network::Bit_Writer writer;
+    network::serialize_entity(writer, server_tick_1, nullptr);
 
-    // Apply to client
-    apply_diff(&client_p, updates, client_p.get_schema());
+    network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
+    network::deserialize_entity(reader, client);
 
-    assert(client_p.health == 100);
-    assert(client_p.x == 10.0f);
-    assert(client_p.y == 20.0f);
-    assert(client_p.ammo == 30);
+    assert(client.health == 100);
+    assert(client.position.x == 10.0f);
+    assert(client.position.y == 20.0f);
+    assert(client.ammo == 30);
 
     std::cout << "    PASSED!" << std::endl;
   }
 
-  // 4. Test Delta Update
   {
     std::cout << "  [Subtest] Delta update..." << std::endl;
 
-    // Before: client_p matches server_p1
-    // Now server changed to server_p2
+    // The client already matches tick 1, so tick 2 is sent against it as the
+    // baseline and only the two changed fields ride the wire.
+    network::Bit_Writer writer;
+    network::serialize_entity(writer, server_tick_2, &server_tick_1);
 
-    // Diff from old state to new
-    auto updates = diff(&server_p1, &server_p2, server_p2.get_schema());
+    network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
+    network::deserialize_entity(reader, client);
 
-    // Only changed fields should appear
-    // health changed (100->90), x changed (10->12), y unchanged, ammo unchanged
-    assert(updates.size() == 2); // health and x
+    assert(client.health == 90);
+    assert(client.position.x == 12.0f);
+    assert(client.position.y == 20.0f); // unchanged, so untouched by the delta
+    assert(client.ammo == 30);          // unchanged
 
-    // Apply to client
-    apply_diff(&client_p, updates, client_p.get_schema());
+    std::cout << "    PASSED!" << std::endl;
+  }
 
-    assert(client_p.health == 90);
-    assert(client_p.x == 12.0f);
-    assert(client_p.y == 20.0f); // unchanged
-    assert(client_p.ammo == 30); // unchanged
+  {
+    // A delta is smaller than a full update. That is the property the whole
+    // mechanism exists for, so it is asserted rather than assumed.
+    std::cout << "  [Subtest] Delta is smaller than a full update..." << std::endl;
+
+    network::Bit_Writer full;
+    network::serialize_entity(full, server_tick_2, nullptr);
+
+    network::Bit_Writer delta;
+    network::serialize_entity(delta, server_tick_2, &server_tick_1);
+
+    std::cout << "    full=" << full.buffer.size()
+              << " bytes, delta=" << delta.buffer.size() << " bytes" << std::endl;
+    assert(delta.buffer.size() < full.buffer.size());
+
+    std::cout << "    PASSED!" << std::endl;
+  }
+
+  {
+    // @Networked is real now, so a field without it must never reach the wire.
+    // Rocket's damage numbers are the clearest case: all four were @Networked
+    // under the macro system and lost it in the P4 audit.
+    std::cout << "  [Subtest] Non-networked fields stay off the wire..." << std::endl;
+
+    entities::Rocket_Entity server_rocket;
+    server_rocket.damage_amount = 123.0f;
+    server_rocket.position      = {1.0f, 2.0f, 3.0f};
+
+    network::Bit_Writer writer;
+    network::serialize_entity(writer, server_rocket, nullptr);
+
+    entities::Rocket_Entity client_rocket;
+    network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
+    network::deserialize_entity(reader, client_rocket);
+
+    assert(client_rocket.position.x == 1.0f);    // @Networked, arrives
+    assert(client_rocket.damage_amount == 0.0f); // not @Networked, does not
 
     std::cout << "    PASSED!" << std::endl;
   }

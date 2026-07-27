@@ -1,6 +1,6 @@
+#include "../../../shared/entities/entity_reflection.hpp"
 #include "particle_editor_tool.hpp"
 #include "../entity_inspector.hpp"
-#include "../../../shared/entities/particle_emitter_entity.hpp"
 #include "../../renderer.hpp"
 #include "imgui.h"
 
@@ -14,7 +14,7 @@ void Particle_Editor_Tool::on_enable(editor_context_t &ctx)
   // Auto-select the first particle emitter if there is one
   if (ctx.map)
   {
-    for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
+    for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
     {
       selected_emitter_uid = uid;
       break;
@@ -44,7 +44,7 @@ void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
   float best_dist = 1e18f;
   shared::entity_uid_t best_uid = shared::invalid_entity_uid;
 
-  for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
+  for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
   {
     // Simple sphere pick test (particle emitters are point-like)
     linalg::vec3 to_emitter = emitter->position - viewport.mouse_ray.origin;
@@ -76,7 +76,7 @@ void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
                                           overlay_renderer_t &renderer)
 {
   // Highlight all particle emitters with a circle, selected one brighter
-  for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
+  for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
   {
     color_t color = (uid == selected_emitter_uid) ? colors::yellow : color_t{128, 128, 0};
     renderer.draw_circle(emitter->position, 16.f, {0, 1, 0}, color);
@@ -92,7 +92,7 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
   if (ImGui::BeginCombo("Emitter",
                          selected_emitter_uid ? "Selected" : "None"))
   {
-    for (auto [uid, emitter] : ctx.map->entities_of_type<network::Particle_Emitter_Entity>())
+    for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
     {
       char label[64];
       snprintf(label, sizeof(label), "Emitter #%u (%.0f, %.0f, %.0f)",
@@ -107,7 +107,7 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
 
   if (ImGui::Button("New Emitter"))
   {
-    auto emitter = std::make_shared<network::Particle_Emitter_Entity>();
+    auto emitter = std::make_shared<entities::Particle_Emitter_Entity>();
     // Place at camera position
     emitter->position = {viewport.camera.position.x, viewport.camera.position.y,
                          viewport.camera.position.z};
@@ -119,12 +119,12 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::Separator();
 
   // Find selected emitter
-  network::Particle_Emitter_Entity *pe = nullptr;
+  entities::Particle_Emitter_Entity *pe = nullptr;
   if (selected_emitter_uid != 0)
   {
     auto *entry = ctx.map->find_by_uid(selected_emitter_uid);
     if (entry)
-      pe = shared::entity_as<network::Particle_Emitter_Entity>(entry->entity.get());
+      pe = entities::entity_as<entities::Particle_Emitter_Entity>(entry->entity.get());
   }
 
   if (!pe)

@@ -40,7 +40,7 @@ private:
   // The prototype being placed. Exactly one is engaged at a time — which of the
   // two regimes the selected placeable belongs to.
   std::optional<shared::geometry_value_t> current_geometry;
-  std::shared_ptr<::network::Entity> current_entity;
+  std::shared_ptr<::entities::Entity> current_entity;
 };
 
 } // namespace client

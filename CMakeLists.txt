@@ -159,26 +159,18 @@ add_library(game_shared STATIC
     src/shared/snapshot_system.hpp
     src/shared/task_system.hpp
     src/shared/task_system.cpp
-    src/shared/entities/player_entity.cpp
-    src/shared/entities/weapon_entity.cpp
-    src/shared/entities/rocket_entity.cpp
-    src/shared/entities/particle_emitter_entity.cpp
-    src/shared/entities/trigger_volume_entity.cpp
-    src/shared/entities/light_entity.cpp
-    src/shared/entities/physics_body_entity.cpp
-    src/shared/trigger_action_list.hpp
+    ${ENTITY_GEN_SOURCE}
+    src/shared/entities/entity_reflection.cpp
+    src/shared/network/entity_serialization.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
     src/shared/game_cvars.cpp
-    src/shared/network/schema.cpp
     src/shared/components/components.cpp
-    src/shared/shapes.cpp
     src/shared/map.cpp
     src/shared/map_geometry.cpp
     src/shared/map_baker.cpp
     src/shared/pathfinding.cpp
-    src/shared/entity.cpp
     src/shared/entity_system.cpp
     src/shared/game_session.cpp
     src/shared/asset.hpp
@@ -335,8 +327,7 @@ add_library(game_server SHARED
     src/server/game_events.cpp
     src/server/damage.hpp
     src/server/damage.cpp
-    src/server/trigger_action_registry.hpp
-    src/server/trigger_action_registry.cpp
+    src/server/trigger_actions.hpp
     src/server/trigger_actions.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bot_system.cpp

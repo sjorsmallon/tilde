@@ -1,152 +1,109 @@
-#include "../shared/entity.hpp"
+// Entity deltas as they actually travel: packed into an S2C_EntityPackage.
+//
+// Rewritten at the P5 cutover for the same reason as
+// test_network_serialization.cpp -- the closed entity_type enum means a test can
+// no longer declare its own synthetic entity, so this drives a real generated
+// one through the real pack/unpack path.
+
+#include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
-#include "../shared/network/schema.hpp"
 #include "game.pb.h"
+
 #include <cassert>
+#include <cmath>
 #include <iostream>
-
-using namespace network;
-
-// --- Define an Entity for Testing ---
-
-class TestPlayer : public Entity
-{
-public:
-  SCHEMA_FIELD(int32, health, Schema_Flags::Networked);
-  SCHEMA_FIELD(float32, x, Schema_Flags::Networked);
-  SCHEMA_FIELD(float32, y, Schema_Flags::Networked);
-  SCHEMA_FIELD(int32, ammo, Schema_Flags::Networked);
-
-  // Synthetic entity used only by this test — not in the X-macro registry,
-  // so it has no real entity_type tag. UNKNOWN is the right answer here.
-  ::entity_type get_type() const override { return ::entity_type::UNKNOWN; }
-
-  DECLARE_SCHEMA(TestPlayer)
-};
-
-// --- Define Schema ---
-BEGIN_SCHEMA(TestPlayer)
-REGISTER_FIELD(health)
-REGISTER_FIELD(x)
-REGISTER_FIELD(y)
-REGISTER_FIELD(ammo)
-END_SCHEMA(TestPlayer)
 
 int main()
 {
   std::cout << "[TEST] Starting Entity Delta Packing Test..." << std::endl;
 
-  // 1. Register Schema
-  TestPlayer::register_schema();
+  entities::Player_Entity player;
+  player.health   = 100;
+  player.position = {10.0f, 20.0f, 0.0f};
+  player.ammo     = 30;
 
-  // 2. Create Entity
-  TestPlayer player;
-  player.health = 100;
-  player.x = 10.0f;
-  player.y = 20.0f;
-  player.ammo = 30;
-
-  // 3. Pack Delta (Full update, no baseline)
   {
     std::cout << "  [Subtest] Packing full update..." << std::endl;
+
     game::S2C_EntityPackage packet;
-    pack_entity_delta_for_update(packet, player, (const TestPlayer *)nullptr);
+    network::pack_entity_delta_for_update(packet, player, nullptr);
 
     assert(packet.is_delta() == true);
     assert(packet.has_entity_data());
     assert(packet.entity_data().size() > 0);
 
-    // Verify content by deserializing
-    TestPlayer received_player;
-    // Initialize with different values to ensure overwrite
-    received_player.health = 0;
+    entities::Player_Entity received;
+    received.health = 0; // start different, so an overwrite is observable
 
-    Bit_Reader reader((const uint8 *)packet.entity_data().data(),
-                      packet.entity_data().size());
-    received_player.deserialize(reader);
+    network::Bit_Reader reader((const network::uint8 *)packet.entity_data().data(),
+                               packet.entity_data().size());
+    network::deserialize_entity(reader, received);
 
-    assert(received_player.health == 100);
-    assert(received_player.x == 10.0f);
-    assert(received_player.y == 20.0f);
-    assert(received_player.ammo == 30);
+    assert(received.health == 100);
+    assert(received.position.x == 10.0f);
+    assert(received.position.y == 20.0f);
+    assert(received.ammo == 30);
     std::cout << "    -> Success!" << std::endl;
   }
 
-  // 4. Pack Delta (Partial update with baseline)
   {
     std::cout << "  [Subtest] Packing partial delta..." << std::endl;
-    TestPlayer baseline_player;
-    baseline_player.health = 100; // Same
-    baseline_player.x = 10.0f;    // Same
-    baseline_player.y = 20.0f;    // Same
-    baseline_player.ammo = 30;    // Same
 
-    // Change only health
-    player.health = 90;
+    entities::Player_Entity baseline;
+    baseline.health   = 100;
+    baseline.position = {10.0f, 20.0f, 0.0f};
+    baseline.ammo     = 30;
+
+    player.health = 90; // the only difference from the baseline
 
     game::S2C_EntityPackage packet;
-    pack_entity_delta_for_update(packet, player, &baseline_player);
+    network::pack_entity_delta_for_update(packet, player, &baseline);
 
     assert(packet.is_delta() == true);
     assert(packet.has_entity_data());
 
-    // Size should be smaller than full update + overhead
-    // New format: Mask (4 bits/4 fields) + Data.
-    // 4 fields -> 4 bits mask -> 1 byte (aligned).
-    // Changed Health: 90 -> VarInt (approx 1-2 bytes)
-    // Total approx 2-3 bytes?
     std::cout << "    Delta package size: " << packet.entity_data().size()
               << " bytes" << std::endl;
 
-    // Verify content
-    TestPlayer received_player;
-    received_player.health = 100; // Current client state (baseline)
-    received_player.x = 10.0f;
-    received_player.y = 20.0f;
-    received_player.ammo = 30;
+    // The receiver's current state IS the baseline; the delta only has to carry
+    // what changed on top of it.
+    entities::Player_Entity received = baseline;
 
-    Bit_Reader reader((const uint8 *)packet.entity_data().data(),
-                      packet.entity_data().size());
-    received_player.deserialize(reader); // Apply delta
+    network::Bit_Reader reader((const network::uint8 *)packet.entity_data().data(),
+                               packet.entity_data().size());
+    network::deserialize_entity(reader, received);
 
-    assert(received_player.health == 90);
-    assert(received_player.x == 10.0f); // Should remain same
+    assert(received.health == 90);
+    assert(received.position.x == 10.0f); // unchanged
+    assert(received.ammo == 30);          // unchanged
     std::cout << "    -> Success!" << std::endl;
   }
 
-  // 5. Quantization Check
   {
     std::cout << "  [Subtest] Checking Float Quantization..." << std::endl;
-    TestPlayer q_player;
-    q_player.health = 100;
-    q_player.x = 0.123456f; // Testing this value
-    q_player.y = -0.5f;     // Testing negative 0.5 (exact)
-    q_player.ammo = 0;
+
+    entities::Player_Entity quantized;
+    quantized.position = {0.123456f, -0.5f, 0.0f};
 
     game::S2C_EntityPackage packet;
-    pack_entity_delta_for_update(packet, q_player, (const TestPlayer *)nullptr);
+    network::pack_entity_delta_for_update(packet, quantized, nullptr);
 
-    TestPlayer received;
-    received.health = 0;
-    received.x = 0.0f;
-    received.y = 0.0f;
+    entities::Player_Entity received;
+    network::Bit_Reader reader((const network::uint8 *)packet.entity_data().data(),
+                               packet.entity_data().size());
+    network::deserialize_entity(reader, received);
 
-    Bit_Reader reader((const uint8 *)packet.entity_data().data(),
-                      packet.entity_data().size());
-    received.deserialize(reader);
+    std::cout << "    Input: " << quantized.position.x
+              << ", Output: " << received.position.x << std::endl;
+    std::cout << "    Input: " << quantized.position.y
+              << ", Output: " << received.position.y << std::endl;
 
-    std::cout << "    Input: " << q_player.x << ", Output: " << received.x
-              << std::endl;
-    std::cout << "    Input: " << q_player.y << ", Output: " << received.y
-              << std::endl;
-
-    // 0.123456 * 32 = 3.95 -> round to 4. 4/32 = 0.125.
-    // expected error is within 1/64 = 0.015625
-    float diff = std::abs(received.x - q_player.x);
-    assert(diff < 0.016f);
+    // 0.123456 * 32 = 3.95 -> rounds to 4; 4/32 = 0.125. The error is bounded
+    // by half a step, 1/64 = 0.015625.
+    assert(std::abs(received.position.x - quantized.position.x) < 0.016f);
 
     // -0.5 is exact in 1/32 steps (16/32).
-    assert(received.y == -0.5f);
+    assert(received.position.y == -0.5f);
 
     std::cout << "    -> Success (within precision limits)!" << std::endl;
   }

@@ -1,10 +1,8 @@
 #pragma once
 
+#include "../shared/entities/entity_reflection.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/network/client_connection_state.hpp"
-#include "../shared/entities/physics_body_entity.hpp"
-#include "../shared/entities/player_entity.hpp"
-#include "../shared/entities/rocket_entity.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/player_move.hpp"
 
@@ -126,13 +124,13 @@ struct client_context_t
   float interpolation_time = 0.f;
 
   // --- Delta decompression baselines ---
-  std::unordered_map<int32_t, network::Player_Entity> last_player_entities;
-  std::unordered_map<shared::entity_uid_t, network::Rocket_Entity> remote_rockets;
+  std::unordered_map<int32_t, entities::Player_Entity> last_player_entities;
+  std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> remote_rockets;
   // Physics bodies received from server. State is replaced wholesale each
   // snapshot — no interpolation yet (see todo.md). Renders correctly in
   // integrated mode via server_session; in networked mode this will visibly
   // stutter at server tick boundaries until interpolation is added.
-  std::unordered_map<shared::entity_uid_t, network::Physics_Body_Entity> remote_physics_bodies;
+  std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> remote_physics_bodies;
   uint32_t last_processed_tick = 0;
 
   // --- Integrated-mode session pointer ---

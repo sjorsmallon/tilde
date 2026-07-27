@@ -39,16 +39,15 @@ static vec3f quat_to_euler_degrees(const JPH::Quat &quaternion)
           linalg::to_degrees(yaw)};
 }
 
-network::Physics_Body_Entity *
+entities::Physics_Body_Entity *
 spawn_physics_body(shared::game_session_t &session,
                    physics_state_t &physics,
-                   const char *shape_type,
+                   entities::Shape_Kind shape,
                    vec3f size,
                    vec3f position,
                    vec3f initial_velocity)
 {
-  auto *body = session.entity_system.spawn<network::Physics_Body_Entity>(
-      entity_type::PHYSICS_BODY);
+  auto *body = session.entity_system.spawn<entities::Physics_Body_Entity>();
   if (!body)
   {
     log_error("spawn_physics_body: entity pool exhausted");
@@ -59,9 +58,14 @@ spawn_physics_body(shared::game_session_t &session,
   body->velocity = initial_velocity;
   body->size     = size;
   body->mass     = 10.f;
-  body->shape_type.set(shape_type);
+  body->shape = shape;
 
-  body->hitbox.shape_type.set(shape_type);
+  // The hitbox and the Jolt shape come from the same value, which is the point
+  // of merging the two shape spellings into one enum: this used to write the
+  // string "box" into a hitbox whose collision test only understood
+  // "sphere"/"capsule"/"aabb", so a cube's hitbox matched nothing and could
+  // never be hit. Cubes are hittable now -- correct, but a behavior CHANGE.
+  body->hitbox.shape  = shape;
   body->hitbox.size   = size;
   body->hitbox.offset = {0, 0, 0};
 
@@ -71,23 +75,23 @@ spawn_physics_body(shared::game_session_t &session,
   // `size` is full extents (diameter on each axis), matching render.scale and the
   // diameter-1 primitive meshes. Jolt's BoxShape takes half-extents and SphereShape
   // takes a radius, so halve at this boundary.
-  if (std::strcmp(shape_type, "box") == 0)
+  if (shape == entities::Shape_Kind::Box)
   {
-    body->render.mesh_path.set("__primitive_box");
+    body->render.mesh = entities::mesh_asset::Box;
     register_dynamic_box(physics, body->entity_id,
                          position, size * 0.5f, initial_velocity);
   }
-  else if (std::strcmp(shape_type, "sphere") == 0)
+  else if (shape == entities::Shape_Kind::Sphere)
   {
-    body->render.mesh_path.set("__primitive_sphere");
+    body->render.mesh = entities::mesh_asset::Sphere;
     register_dynamic_sphere(physics, body->entity_id,
                             position, size.x * 0.5f, initial_velocity);
   }
   else
   {
-    log_error("spawn_physics_body: unknown shape_type '{}' (expected box or sphere)",
-              shape_type);
-    session.entity_system.destroy(entity_type::PHYSICS_BODY, body);
+    log_error("spawn_physics_body: physics cannot build a {} body yet",
+              entities::to_string(shape));
+    session.entity_system.destroy(body);
     return nullptr;
   }
 
@@ -98,7 +102,7 @@ void update_physics_bodies(shared::game_session_t &session,
                            physics_state_t &physics)
 {
   auto *pool = session.entity_system
-                   .get_entities<network::Physics_Body_Entity>(entity_type::PHYSICS_BODY);
+                   .get_entities<entities::Physics_Body_Entity>();
   if (!pool || pool->empty())
     return;
 

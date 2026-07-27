@@ -1,154 +1,171 @@
 #include "entity_inspector.hpp"
-#include "../../shared/entity.hpp"
+
+#include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/network/schema.hpp"
 #include "imgui.h"
-#include <algorithm>
 #include <string>
 #include <vector>
 
 namespace client
 {
 
-// Renders a single schema field as ImGui widgets, recursing into nested schemas.
-static void render_field_imgui(uint8_t *base_ptr, const network::Field_Prop &field)
+namespace
 {
-  if (!has_flag(field.flags, network::Schema_Flags::Editable))
-    return;
 
-  void *field_ptr = base_ptr + field.offset;
+// Renders one leaf field. Components are already flattened by the caller, so
+// there is no recursion here and no tree node -- the dotted name carries the
+// nesting ("render.material.color"), which reads the same way the map file
+// spells it.
+//
+// WHAT THE CUTOVER CHANGED HERE, beyond the type names:
+//   * enums and asset ids get a Combo over the closed set the generator knows,
+//     where they were free-form text boxes holding "lit" / "on_enter" /
+//     "__primitive_box" with nothing checking the spelling;
+//   * the string_choices_provider callback is gone with them. It existed so a
+//     pascal_string field could offer a dropdown (the trigger action list); an
+//     enum field offers one by construction.
+void render_leaf_field(uint8_t *base, const entities::leaf_field_t &leaf, int id)
+{
+  const entities::field_info_t &field = *leaf.info;
+  void *field_ptr = base + leaf.offset;
+  const char *label = leaf.name.c_str();
 
-  ImGui::PushID(field.index);
+  ImGui::PushID(id);
 
   switch (field.type)
   {
-  case network::Field_Type::Int32:
-  {
-    int *val = static_cast<int *>(field_ptr);
-    ImGui::InputInt(field.name.c_str(), val);
-    break;
-  }
-  case network::Field_Type::UInt32:
-  {
-    uint32_t *val = static_cast<uint32_t *>(field_ptr);
-    ImGui::InputScalar(field.name.c_str(), ImGuiDataType_U32, val);
-    break;
-  }
-  case network::Field_Type::Float32:
-  {
-    float *val = static_cast<float *>(field_ptr);
-    ImGui::DragFloat(field.name.c_str(), val, 0.1f);
-    break;
-  }
-  case network::Field_Type::Bool:
-  {
-    bool *val = static_cast<bool *>(field_ptr);
-    ImGui::Checkbox(field.name.c_str(), val);
-    break;
-  }
-  case network::Field_Type::Vec3f:
-  {
-    float *val = static_cast<float *>(field_ptr);
-    ImGui::DragFloat3(field.name.c_str(), val, 0.1f);
-    break;
-  }
-  case network::Field_Type::PascalString:
-  {
-    auto *ps = static_cast<network::pascal_string *>(field_ptr);
-    if (field.string_choices_provider)
+    case entities::FIELD_TYPE_I8:
+    case entities::FIELD_TYPE_I16:
+    case entities::FIELD_TYPE_I32:
+      ImGui::InputInt(label, static_cast<int *>(field_ptr));
+      break;
+
+    case entities::FIELD_TYPE_U8:
+      ImGui::InputScalar(label, ImGuiDataType_U8, field_ptr);
+      break;
+    case entities::FIELD_TYPE_U16:
+      ImGui::InputScalar(label, ImGuiDataType_U16, field_ptr);
+      break;
+    case entities::FIELD_TYPE_U32:
+      ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
+      break;
+    case entities::FIELD_TYPE_U64:
+      ImGui::InputScalar(label, ImGuiDataType_U64, field_ptr);
+      break;
+    case entities::FIELD_TYPE_I64:
+      ImGui::InputScalar(label, ImGuiDataType_S64, field_ptr);
+      break;
+
+    case entities::FIELD_TYPE_F32:
+      ImGui::DragFloat(label, static_cast<float *>(field_ptr), 0.1f);
+      break;
+    case entities::FIELD_TYPE_F64:
+      ImGui::InputDouble(label, static_cast<double *>(field_ptr));
+      break;
+
+    case entities::FIELD_TYPE_BOOL:
+      ImGui::Checkbox(label, static_cast<bool *>(field_ptr));
+      break;
+
+    case entities::FIELD_TYPE_V3:
+      ImGui::DragFloat3(label, static_cast<float *>(field_ptr), 0.1f);
+      break;
+    case entities::FIELD_TYPE_V4:
+      ImGui::DragFloat4(label, static_cast<float *>(field_ptr), 0.1f);
+      break;
+    case entities::FIELD_TYPE_V4I:
+      ImGui::InputInt4(label, static_cast<int *>(field_ptr));
+      break;
+
+    case entities::FIELD_TYPE_STRING:
     {
-      // Dropdown rendering: the field declares a callable that returns the
-      // valid value set. Lookup the current value's index, fall back to 0
-      // if absent (and surface that as a warning -- never silently rebind).
-      std::vector<std::string> choices = field.string_choices_provider();
-      if (choices.empty())
-      {
-        // Render visible disabled text rather than nothing — silently
-        // rendering an invisible field was the symptom of the
-        // static-init-in-static-lib drop that emptied the trigger action
-        // registry, and there's no situation where the user benefits from
-        // a totally invisible field. No log here; the inspector ticks every
-        // frame and would spam.
-        ImGui::BeginDisabled();
-        ImGui::Text("%s: (no choices available)", field.name.c_str());
-        ImGui::EndDisabled();
-        break;
-      }
-      int current_index = -1;
-      for (int i = 0; i < static_cast<int>(choices.size()); ++i)
-      {
-        if (choices[i] == ps->c_str())
-        {
-          current_index = i;
-          break;
-        }
-      }
-      if (current_index < 0)
-      {
-        log_warning("inspector: field '{}' has value '{}' that is not in its "
-                    "choices provider; falling back to index 0",
-                    field.name, ps->c_str());
-        current_index = 0;
-      }
-      std::vector<const char *> choice_ptrs;
-      choice_ptrs.reserve(choices.size());
-      for (const auto &choice : choices)
-        choice_ptrs.push_back(choice.c_str());
-      if (ImGui::Combo(field.name.c_str(), &current_index, choice_ptrs.data(),
-                       static_cast<int>(choice_ptrs.size())))
-      {
-        ps->set(choices[current_index].c_str());
-      }
-    }
-    else
-    {
-      if (ImGui::InputText(field.name.c_str(), ps->data, ps->max_length(),
+      // pascal_string_t<N> is `uint8 length; char data[N + 1]`, addressed
+      // generically through the capacity the field record carries.
+      uint8_t *length_byte = static_cast<uint8_t *>(field_ptr);
+      char *data = reinterpret_cast<char *>(length_byte + 1);
+      if (ImGui::InputText(label, data, field.string_capacity + 1,
                            ImGuiInputTextFlags_EnterReturnsTrue))
       {
-        ps->length = static_cast<network::uint8>(strlen(ps->data));
+        *length_byte = (uint8_t)strlen(data);
+        // Restore the canonical zero-padding invariant: ImGui writes a
+        // terminator but leaves whatever was past it, and every baseline
+        // memcmp would then see a delta that is not there.
+        std::memset(data + *length_byte, 0, field.string_capacity + 1 - *length_byte);
       }
+      break;
     }
-    break;
-  }
-  case network::Field_Type::NestedSchema:
-  {
-    const auto *nested_schema = network::Schema_Registry::get().get_nested_schema(field);
-    if (nested_schema && ImGui::TreeNode(field.name.c_str()))
+
+    case entities::FIELD_TYPE_ENUM:
     {
-      uint8_t *nested_base = static_cast<uint8_t *>(field_ptr);
-      for (const auto &nested_field : nested_schema->fields)
-        render_field_imgui(nested_base, nested_field);
-      ImGui::TreePop();
+      const entities::enum_type_info_t &info =
+          entities::enum_info((entities::enum_type)field.enum_id);
+
+      // Enum storage is one byte; the widget wants an int.
+      uint8_t stored = *static_cast<uint8_t *>(field_ptr);
+      int current = (int)stored;
+
+      if (ImGui::Combo(label, &current, info.value_names.data,
+                       (int)info.value_names.size()))
+      {
+        *static_cast<uint8_t *>(field_ptr) = (uint8_t)current;
+      }
+      break;
     }
-    break;
-  }
-  default:
-    ImGui::Text("%s: <Unknown Type>", field.name.c_str());
-    break;
+
+    case entities::FIELD_TYPE_ASSET:
+    {
+      const Span<const entities::asset_info_t> manifest =
+          entities::asset_class_manifest(field.asset_class_id);
+
+      std::vector<const char *> names;
+      names.reserve(manifest.size());
+      for (const entities::asset_info_t &asset : manifest)
+        names.push_back(asset.name);
+
+      uint16_t stored = *static_cast<uint16_t *>(field_ptr);
+      int current = (int)stored;
+
+      if (ImGui::Combo(label, &current, names.data(), (int)names.size()))
+        *static_cast<uint16_t *>(field_ptr) = (uint16_t)current;
+      break;
+    }
+
+    case entities::FIELD_TYPE_COMPONENT:
+    case entities::FIELD_TYPE_INVALID:
+      // Components never reach here: the caller flattens them away.
+      ImGui::Text("%s: <not an editable leaf>", label);
+      break;
   }
 
   ImGui::PopID();
 }
 
-void render_imgui_entity_fields_in_a_window(network::Entity *entity)
+} // namespace
+
+void render_imgui_entity_fields_in_a_window(entities::Entity *entity)
 {
   if (!entity)
     return;
 
-  const auto *schema = entity->get_schema();
-  if (!schema)
+  if (entity->type == entities::entity_type::Invalid)
   {
-    ImGui::Text("No schema available for this entity.");
+    ImGui::Text("This entity carries an invalid type tag.");
     return;
   }
 
-  ImGui::Text("Class: %s", schema->class_name.c_str());
+  const entities::entity_type_info_t &info = entities::entity_info(entity->type);
+  ImGui::Text("Class: %s", info.classname);
   ImGui::Separator();
 
-  uint8_t *base_ptr = reinterpret_cast<uint8_t *>(entity);
+  uint8_t *base = reinterpret_cast<uint8_t *>(entity);
 
-  for (const auto &field : schema->fields)
-    render_field_imgui(base_ptr, field);
+  // @Editable leaves, in declaration order — the same order the map file writes
+  // and the .def declares, so the inspector reads like the source of truth does.
+  const std::vector<entities::leaf_field_t> leaves =
+      entities::collect_leaf_fields(entity->type, entities::FIELD_FLAG_EDITABLE);
+
+  for (size_t index = 0; index < leaves.size(); ++index)
+    render_leaf_field(base, leaves[index], (int)index);
 }
 
 } // namespace client

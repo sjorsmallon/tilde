@@ -1,4 +1,4 @@
-# TODO
+﻿# TODO
 
 Two parts:
 
@@ -13,8 +13,10 @@ Two parts:
   being real and their contradictions being build errors) are still recorded
   below because later phases lean on them.
 
-  **P5 IS NEXT, and it is the one with no safe stopping point.** Commit first,
-  branch first. Read its section before starting anything else in this file.
+  **P5's cutover is DONE** (branch `p5-hard-cutover`): the macro system is
+  deleted, every consumer is converted, the tree builds and the tests pass.
+  What remains under P5 is ordinary follow-up work, listed in its section.
+  **P6 is next.**
 - **EVERYTHING ELSE** — independent work, no ordering constraints.
 
 ---
@@ -42,8 +44,8 @@ They share four files and each phase changes the ground under the next:
    . shrank P5's dynamic-dispatch surface                         flag audit -> P4  DONE
                             |                                                 |
                             '------------------> P5 HARD CUTOVER <------------'
-                                 <-- YOU ARE HERE
-                                 . macro system deleted, network::Entity dies
+                                 DONE
+                                 . macro system deleted, network::Entity died
                                  . map save/load moves to generated tables
                                  . undo's text adapter lands here (disk boundary)
                                                   |
@@ -105,7 +107,7 @@ it tells you which phases you can walk away from mid-way.
 | ~~P2~~ | ~~undo → binary diffs~~ | DONE | — |
 | ~~P3~~ | ~~finish generator~~ | DONE | — |
 | ~~P4~~ | ~~flag audit~~ | DONE | — |
-| P5 | hard cutover | **multi-day, tree does NOT build throughout** | **NO — this is the one you cannot abandon halfway** |
+| ~~P5~~ | ~~hard cutover~~ | DONE — tree green, tests pass | — (follow-ups are safe to stop in) |
 | P6 | serializer v2 | multi-day, open-ended | yes |
 | P7 | storage refactor | multi-day | partly — failures here are runtime, not compile-time, so "working" is harder to judge |
 | P8 | protobuf removal | ~a day, spread | yes — message-at-a-time by design |
@@ -244,62 +246,98 @@ anyway, so the "who needs what" boundary gets blurrier, not sharper.
 ---
 
 ## P5 — Hard cutover (delete the macro system)
-*multi-day · tree does NOT build throughout · **commit first, branch first***
+*branch `p5-hard-cutover` · **the tree builds again and every test but the
+pre-existing `asset_test` passes***
 
-The tree does not build from the moment the macros are deleted until the last
-consumer is converted. By design. This is the one phase with no safe stopping
-point, so start it from a clean committed tree on its own branch and don't
-begin it with anything else half-finished.
+**The dangerous part is DONE.** The macro system is deleted, every consumer is
+converted, and the tree builds. The phase's one hard rule — do not stop while
+the tree is broken — is satisfied, so what is left below is ordinary work that
+can be picked up and put down.
 
-- [ ] Delete `Class_Schema`/`Field_Prop` and rewrite the ~9 files on them
-- [ ] Delete the X-macro / factory registration (~21 files)
-- [ ] Convert the remaining dynamic-dispatch sites (`entity_as`, `get_schema`,
-      `get_box_volume`). `network::Entity` and its virtuals die here.
-      `is_collision_geometry()` is already gone (P1), and the geometry exit took
-      4 of the 12 entity types with it, so this surface is smaller than the ~94
-      originally counted.
-- [ ] **Map serialization moves onto generated tables**: `get_all_properties`/
-      `init_from_map`/`parse_string_to_field`/`serialize_field_to_string` die;
-      save/load becomes schema-driven free functions honoring `@Saveable`
-- [ ] **Deterministic save order = declaration order** (today's `std::map`
-      alphabetical order is only accidentally deterministic) — deliberately
-      git-diffable
-- [ ] Versioning has no version numbers: additive changes free (missing key →
-      DSL default), removals ignored with a logged warning, renames via one-time
-      map conversion. `@was` deliberately NOT built.
-- [ ] Schema hash baked in as a constant for the connect handshake; mismatch →
-      refuse loudly with both hashes
-- [ ] **Undo's deferred text adapter lands here**: `to_text`/`from_text`
-      bridging `field_change_t` bytes ↔ name-keyed text. Load side skips
-      unknown/unparseable fields with `log_error` (no silent drop), not a hard fail.
-- [ ] Re-point P2's undo diffs from `Class_Schema` lookups to the generated tables
-- [ ] **Lifecycle hooks become handwritten exhaustive switches** —
-      `on_entity_spawned(session, entity)` etc. over the closed enum. Replaces
-      per-type virtual overrides (e.g. server consuming `Player_Spawn` at load).
-      The compiler warns on unhandled cases; a forgotten override never did.
-- [ ] **Retire `__primitive_` and the lazy primitive init** (created by P3's
-      asset manifest — see the finding recorded there). Three parts, in order:
-      1. Make registration **eager**: `assets::init()` walks
-         `mesh_asset_manifest()` / `sprite_asset_manifest()` and registers every
-         entry, loading files and calling generators by their source column.
-         `log_error` on an `ASSET_SOURCE_MISSING` entry rather than skipping it.
-      2. `render.mesh_path` (pascal_string) becomes `render.mesh` (`mesh_asset`).
-      3. Delete the 7 `strncmp(path, "__primitive_", 12)` dispatch sites, which
-         are then pure dead weight: `entity_editor_traits.cpp:420,488,569`,
-         `play_state.cpp:1182,1236`, `map.cpp:507`, `map_geometry.cpp:218`.
-         `get_primitive_mesh` and its function-local `static bool initialized`
-         die with them.
-      Note `static_mesh_geometry_t::mesh_path` is a **std::string on the geometry
-      side** and is NOT an entity field, so it does not follow this path
-      automatically — decide separately whether map geometry also moves to
-      manifest ids or keeps free-form paths.
-- [ ] Update the docs that die with the cutover: `entity_type.hpp`'s "ENTITY
-      REGISTRATION GUIDE" comment, and CLAUDE.md's "Schema System" / "Entity
-      System" sections (both still accurate for the macro system *today*).
-      CLAUDE.md's "Asset System" paragraph also goes stale here: it documents
-      `assets::get_mesh_path(asset_id)`, which now survives only in `old_ideas/`
-      and is replaced outright by the generated manifest.
-      CLAUDE.md is worth doing at the cutover since it loads every session.
+### Done
+
+- [x] `Class_Schema`/`Field_Prop` deleted (`network/schema.{hpp,cpp}` gone)
+- [x] X-macro / factory registration deleted (`entity_list.hpp`,
+      `entity_type.hpp`, all 7 `*_entity.{hpp,cpp}`, `entity.{hpp,cpp}`)
+- [x] Dynamic dispatch converted. `network::Entity` and all its virtuals are
+      gone; `entity_as` compares the generated `T::static_type`, `get_schema`
+      is the generated tables, `get_box_volume` is a component-table lookup.
+      The only per-type virtual that actually existed was
+      `Trigger_Volume_Entity::get_box_volume` — see the lifecycle note below.
+- [x] Map serialization on the generated tables, honoring `@Saveable`, in
+      **declaration order**. One key per leaf, dotted for components
+      (`volume.half_extents`) — the old `key:value|key:value` blob could not
+      even represent a component inside a component.
+- [x] Versioning without version numbers, all three cases exercised by the real
+      maps: missing key → DSL default; unknown key → **warning** and ignored
+      (every pre-cutover map carries `entity_id`, which is `@Networked`-only
+      now); renames via one-time conversion in `map.cpp`.
+- [x] Undo re-pointed at the generated tables (`entities::capture_field_changes`
+      / `write_field_changes`), transaction snapshots via `clone_entity`.
+- [x] `__primitive_` retired in full. `assets::init()` walks the manifests
+      eagerly and is called from all three launchers; `render.mesh` is a
+      `mesh_asset` id; all 7 `strncmp` dispatch sites and `get_primitive_mesh`
+      are gone.
+- [x] **Geometry keeps free-form mesh paths** — decided, not deferred. A static
+      mesh is arbitrary level art, so the closed set an asset id gives you is
+      the wrong shape: an author adding a prop should not have to touch
+      `entities.def`. Recorded at `geometry_surface_t::mesh_path`.
+- [x] Generator grew what map I/O and the inspector actually needed: an
+      `enum_type` table + `enum_id` column (a field record could not previously
+      say WHICH enum it was, so no generic walker could read one),
+      `asset_class_manifest(id)`, and `static_type` on every entity struct.
+- [x] `network_test`'s SEGFAULT is **fixed, and it was the test's bug**: it
+      called `diff(nullptr, &entity, schema)`, and `diff()` memcmp'd the
+      baseline unconditionally. `Entity::serialize` had its own null-baseline
+      branch, so only the test ever hit it. It now drives the real
+      serialize/deserialize path — which is also the only option left, since a
+      test cannot invent an entity type against a closed enum.
+- [x] Trigger actions: the string-keyed, static-init `Trigger_Action_Registry`
+      and its X-macro name list are gone, replaced by one exhaustive switch on
+      `entities::Trigger_Action` (`server/trigger_actions.hpp`). The property
+      the registry existed for survives — map files still store the enum by
+      NAME, so reordering rebinds nothing.
+
+### Left to do (ordinary work, tree is green)
+
+- [ ] **Schema hash in the connect handshake.** `SCHEMA_HASH` is generated and
+      baked; nothing exchanges it yet. Mismatch must refuse loudly with both
+      hashes. This is the last item that was actually in P5's scope.
+- [ ] **`asset_test` still fails (exit 3)** — pre-existing and unrelated, see
+      "Known failing tests". Not touched by the cutover.
+- [ ] Update `CLAUDE.md`: the "Schema System" and "Entity System" sections
+      describe a system that no longer exists, and "Asset System" documents
+      `assets::get_mesh_path(asset_id)` which is now the generated manifest.
+      Worth doing soon since it loads every session.
+- [ ] Convert the maps in `maps/` (run `map_convert`, or just save each in the
+      editor). They load correctly today through the legacy conversion, so this
+      is cleanup rather than a fix. **`maps/` is untracked in git** — worth
+      deciding whether the fixtures should be committed, since
+      `map_migration_test` depends on `maps/test`.
+- [ ] `resources/obj/m4a1_s.obj` still does not exist. The weapon reference is
+      gone with `Weapon_Entity`'s placement entry, but `placement_tool.cpp:189`
+      still points a static-mesh prototype at it. Now a silent no-mesh rather
+      than the compile error the manifest was expected to produce, because
+      geometry paths stayed free-form (decided above).
+
+### Notes for whoever picks this up
+
+- **Lifecycle hooks were NOT built, on purpose.** The item assumed per-type
+  virtual overrides to replace; grepping found exactly one
+  (`Trigger_Volume_Entity::get_box_volume`), and it became a component lookup.
+  There is no `on_entity_spawned` caller to write against, so building the hook
+  now would be inventing an interface with no user. The sanctioned pattern —
+  a handwritten exhaustive switch over the closed enum — is used where it does
+  earn its place: `make_entity_pool`, `create_map_entity`, `fire_trigger_action`,
+  `compute_entity_bounds`, and the editor's `ENTITY_DISPATCH`.
+- **Undo's text adapter** landed as `entities::field_to_text` /
+  `field_from_text` rather than as a `field_change_t`-shaped pair. Same seam,
+  and map I/O is its real (and only) caller — a second encoding for undo alone
+  would have had no user either.
+- **Physics cubes are now hittable** (the `Shape_Kind` merge fixed the strcmp
+  fall-through). Correct, but a behavior change, as predicted.
+- **Weapons are out of the placement menu**, as decided in `entities.def`.
+- `spawn_physics_body` now takes `Shape_Kind`, not `const char*`.
 
 ---
 
@@ -419,19 +457,38 @@ serialization by then — absorption, not a project.
 
 # EVERYTHING ELSE
 
+
+## generator stuff
+for field_info_t, there are sentinel values:
+struct field_info_t
+<!-- {
+  const char*  name;
+  field_type_t type;
+  uint32_t     offset;
+  uint32_t     size_in_bytes;
+  uint32_t     flags;
+  int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else -1
+  uint32_t     string_capacity; // FIELD_TYPE_STRING only, else 0
+  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else -1
+  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else -1 -->
+i'd rather they have something like not_a_component, or invalid_component_id, or a better name for sentinel values.
+furthermore, i'd love if the generated code had designated initializers, I love that for construction.
+
+
+
+
 ## my todo
 - rocket projectile
 - arrow / spear projectile
 
 ## Known failing tests
-- `network_test` SEGFAULTS (exit 139) in its first subtest, printed right after
-  "[Subtest] Full update...", so it dies inside the entity serialization / delta
-  path before that subtest finishes. Pre-existing — it was already red before the
-  2026-07 map-transfer / sequence-id work (that work is layout-preserving and
-  `network_test` references none of the renamed fields, so it's not the cause).
-  Needs its own investigation: run `./cmake_build/bin/network_test` and find
-  where in the "Full update" full-serialize subtest it faults. Blocks confidence
-  in P6.
+- ~~`network_test` SEGFAULTS~~ **FIXED in P5.** The fault was in the TEST, not
+  the engine: it called `network::diff(nullptr, &entity, schema)` for its
+  full-update case, and `diff()` memcmp'd the baseline unconditionally, so a
+  null baseline was a null dereference. `Entity::serialize` had its own
+  null-baseline branch and nothing else called `diff()` that way, which is why
+  only the test ever hit it. Rewritten against the real serialize/deserialize
+  path; passes.
 - `asset_test` fails (exit 3) at `test_asset_system.cpp:59` `assert(handle.valid())`.
   Cause is trivial and already found: the fixture paths at the top of that file
   are hardcoded POSIX (`/tmp/test_asset_cube.obj`, `/tmp/..tga`), which don't

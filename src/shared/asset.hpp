@@ -1,5 +1,6 @@
 #pragma once
 
+#include "entities/generated/entities_generated.hpp"
 #include "vertex.hpp"
 #include <cstdint>
 #include <string>
@@ -75,17 +76,27 @@ const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle);
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle);
 const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle);
 
-// --- Primitive mesh generation ---
-
-// Get a procedurally generated primitive mesh (cached).
-// Primitives are generated at unit size - use render_component_t scale to size them.
-// Available primitives: "box", "arrow", "sphere", "cylinder", "cone", "wedge"
+// --- The manifest ---
 //
-// NOTE: unlike load_mesh, these are NOT normalized to a 100-unit max extent --
-// see the note at the end of load_obj. That difference is why a primitive and
-// an .obj of the same shape are not interchangeable today, and it is what the
-// asset manifest's source column exists to paper over.
-asset_handle_t<mesh_asset_t> get_primitive_mesh(const char *primitive_name);
+// init() walks the generated manifests and registers EVERY entry: files are
+// loaded, procedural entries are generated. Registration is eager on purpose --
+// the lazy version it replaced meant an asset id resolved to a mesh or to
+// nothing depending on whether some earlier call had happened to trigger the
+// one-time init.
+//
+// Call once at startup, before anything resolves an id. Calling twice is a
+// no-op. An entry that cannot be provided is logged, not skipped quietly, and
+// leaves that id resolving to the placeholder.
+void init();
+
+// An asset id to its loaded handle. Ids come from the generated enums, so there
+// is no string in this path at all -- and no way to name an asset that does not
+// exist, because there is no name to misspell.
+//
+// mesh_asset::Missing is id 0, so a Render component that was never assigned a
+// mesh draws the question mark rather than nothing.
+asset_handle_t<mesh_asset_t>    get_mesh(entities::mesh_asset id);
+asset_handle_t<texture_asset_t> get_sprite(entities::sprite_asset id);
 
 // --- Dynamic mesh registration (for procedural geometry like displacements) ---
 

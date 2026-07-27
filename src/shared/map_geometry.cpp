@@ -212,12 +212,6 @@ resolve_surface_mesh(const geometry_surface_t &surface)
   if (surface.mesh_path.empty())
     return {};
 
-  constexpr const char *primitive_prefix = "__primitive_";
-  constexpr size_t primitive_prefix_length = 12;
-  if (surface.mesh_path.compare(0, primitive_prefix_length, primitive_prefix) == 0)
-    return assets::get_primitive_mesh(surface.mesh_path.c_str() +
-                                      primitive_prefix_length);
-
   return assets::load_mesh(surface.mesh_path.c_str());
 }
 

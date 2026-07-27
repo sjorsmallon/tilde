@@ -1,3 +1,5 @@
+#include "../../shared/entities/entity_reflection.hpp"
+#include "../../shared/network/entity_serialization.hpp"
 #include "play_state.hpp"
 #include "../audio/audio_system.hpp"
 #include "../console.hpp"
@@ -16,13 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <print>
-#include "../../shared/entities/player_entity.hpp"
 #include "../geometry_renderer.hpp"
-#include "../../shared/entities/particle_emitter_entity.hpp"
-#include "../../shared/entities/weapon_entity.hpp"
-#include "../../shared/entities/trigger_volume_entity.hpp"
-#include "../../shared/entities/light_entity.hpp"
-#include "../../shared/entities/physics_body_entity.hpp"
 #include "../../shared/network/quantization.hpp"
 #include "../../shared/network/map_transfer.hpp"
 #include "../input.hpp"
@@ -148,7 +144,7 @@ void PlayState::finalize_client_map()
   // Place the camera at a spawn marker for an immediate, non-jarring view; the
   // server's authoritative position arrives in the next snapshot.
   auto *spawns = ctx.session.entity_system
-                     .get_entities<network::Player_Spawn_Entity>(entity_type::PLAYER_SPAWN);
+                     .get_entities<entities::Player_Spawn_Entity>();
   if (spawns && !spawns->empty())
   {
     ctx.player_position = spawns->front().position;
@@ -596,8 +592,8 @@ void PlayState::update(float dt)
     uint32_t entity_count = network::read_var_uint(reader);
 
     // Build new rocket map from this snapshot (complete state replacement)
-    std::unordered_map<shared::entity_uid_t, network::Rocket_Entity> new_rockets;
-    std::unordered_map<shared::entity_uid_t, network::Physics_Body_Entity> new_physics_bodies;
+    std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> new_rockets;
+    std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> new_physics_bodies;
 
     for (uint32_t i = 0; i < entity_count; ++i)
     {
@@ -607,36 +603,36 @@ void PlayState::update(float dt)
       {
         shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
-        network::Rocket_Entity rocket;
+        entities::Rocket_Entity rocket;
         auto it = ctx.remote_rockets.find(entity_id);
         if (it != ctx.remote_rockets.end())
           rocket = it->second;
 
-        rocket.deserialize(reader);
+        network::deserialize_entity(reader, rocket);
         new_rockets[entity_id] = rocket;
       }
       else if (slot_index == 254)
       {
         shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
-        network::Physics_Body_Entity body;
+        entities::Physics_Body_Entity body;
         auto it = ctx.remote_physics_bodies.find(entity_id);
         if (it != ctx.remote_physics_bodies.end())
           body = it->second;
 
-        body.deserialize(reader);
+        network::deserialize_entity(reader, body);
         new_physics_bodies[entity_id] = body;
       }
       else
       {
         shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
-        network::Player_Entity temp;
+        entities::Player_Entity temp;
         auto pit = ctx.last_player_entities.find(slot_index);
         if (pit != ctx.last_player_entities.end())
           temp = pit->second;
 
-        temp.deserialize(reader);
+        network::deserialize_entity(reader, temp);
         ctx.last_player_entities[slot_index] = temp;
 
         if (static_cast<int32_t>(slot_index) == ctx.my_slot)
@@ -1019,21 +1015,11 @@ void PlayState::render_ui()
       for (auto &[type, pool_ptr] : ctx.session.entity_system.pools)
       {
         if (!pool_ptr) continue;
-        std::string name = shared::type_to_classname(type);
-        int count = 0;
-#define COUNT_POOL(enum_name, class_name, str_name, header_path)                \
-  if (type == entity_type::enum_name)                                           \
-  {                                                                             \
-    auto *typed = ctx.session.entity_system                                     \
-                      .get_entities<class_name>(entity_type::enum_name);        \
-    if (typed) count = (int)typed->size();                                      \
-  }
-        SHARED_ENTITIES_LIST(COUNT_POOL)
-#undef COUNT_POOL
 
+        const int count = (int)pool_ptr->size();
         if (count > 0)
         {
-          ImGui::Text("%-20s %d", name.c_str(), count);
+          ImGui::Text("%-20s %d", entities::entity_info(type).display_name, count);
           total += count;
         }
       }
@@ -1124,30 +1110,26 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     if (!ent)
       continue;
 
-    if (ent->get_type() == ::entity_type::PLAYER)
+    if (ent->type == entities::entity_type::Player_Entity)
       continue;
 
-    const auto *rc = ent->get_component<network::render_component_t>();
-    if (rc && rc->visible && rc->mesh_path.length > 0)
+    const entities::Render *rc = entities::get_render(ent.get());
+    if (rc && rc->visible)
     {
-      const char *mesh_path = rc->mesh_path.c_str();
-      if (mesh_path)
+      auto mesh_handle = assets::get_mesh(rc->mesh);
+      if (mesh_handle.valid())
       {
-        auto mesh_handle = assets::load_mesh(mesh_path);
-        if (mesh_handle.valid())
-        {
-          auto shader = renderer::ShaderType::Lit;
-          if (strcmp(rc->material.shader_type.c_str(), "unlit") == 0)
-            shader = renderer::ShaderType::Unlit;
-          vec3f mat_color = rc->material.color;
-          color_t tint = color_from_vec3(mat_color);
-          renderer::draw_mesh(cmd, mesh_handle,
-                             {.position = ent->position,
-                              .scale    = rc->scale,
-                              .rotation = ent->orientation + rc->rotation,
-                              .color    = tint,
-                              .shader   = shader});
-        }
+        auto shader = rc->material.shader_type == entities::Shader_Type::Unlit
+                          ? renderer::ShaderType::Unlit
+                          : renderer::ShaderType::Lit;
+        vec3f mat_color = rc->material.color;
+        color_t tint = color_from_vec3(mat_color);
+        renderer::draw_mesh(cmd, mesh_handle,
+                           {.position = ent->position,
+                            .scale    = rc->scale,
+                            .rotation = ent->orientation + rc->rotation,
+                            .color    = tint,
+                            .shader   = shader});
       }
     }
   }
@@ -1175,48 +1157,42 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     if (!rc->visible)
       continue;
 
-    const char *mesh_path = rc->mesh_path.c_str();
-    if (rc->mesh_path.length > 0)
+    auto mesh_handle = assets::get_mesh(rc->mesh);
+    if (mesh_handle.valid())
     {
-      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
-      if (std::strncmp(mesh_path, "__primitive_", 12) == 0)
-        mesh_handle = assets::get_primitive_mesh(mesh_path + 12);
-      else
-        mesh_handle = assets::load_mesh(mesh_path);
-
-      if (mesh_handle.valid())
-      {
-        renderer::draw_mesh(cmd, mesh_handle,
-                           {.position = rocket.position,
-                            .scale    = rc->scale,
-                            .rotation = rocket.orientation,
-                            .color    = colors::cyan});
-      }
-      else
-      {
-        std::print("[CLIENT] Rocket {} mesh_handle INVALID (path='{}')\n", id, mesh_path);
-      }
+      renderer::draw_mesh(cmd, mesh_handle,
+                         {.position = rocket.position,
+                          .scale    = rc->scale,
+                          .rotation = rocket.orientation,
+                          .color    = colors::cyan});
     }
     else
     {
-      std::print("[CLIENT] Rocket {} has no mesh_path set (visible={})\n", id, rc->visible);
+      std::print("[CLIENT] Rocket {} mesh '{}' did not resolve\n", id,
+                 entities::to_string(rc->mesh));
     }
 
     if (debug_collision::debug_show_hitboxes.Get())
     {
       const auto *hitbox = &rocket.hitbox;
       vec3f hitbox_center = rocket.position + hitbox->offset;
-      const char *shape = hitbox->shape_type.c_str();
 
-      if (strcmp(shape, "sphere") == 0)
-        renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, colors::green);
-      else if (strcmp(shape, "capsule") == 0)
-        renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y, colors::green);
-      else if (strcmp(shape, "aabb") == 0)
+      switch (hitbox->shape)
       {
-        vec3f min = hitbox_center - hitbox->size;
-        vec3f max = hitbox_center + hitbox->size;
-        renderer::DrawWireAABB(cmd, min, max, colors::green);
+        case entities::Shape_Kind::Sphere:
+          renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, colors::green);
+          break;
+        case entities::Shape_Kind::Capsule:
+          renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y,
+                                        colors::green);
+          break;
+        case entities::Shape_Kind::Box:
+        {
+          vec3f min = hitbox_center - hitbox->size;
+          vec3f max = hitbox_center + hitbox->size;
+          renderer::DrawWireAABB(cmd, min, max, colors::green);
+          break;
+        }
       }
     }
   }
@@ -1226,18 +1202,11 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   // Networked mode uses the snapshot map (no interpolation yet — see todo.md;
   // visible stutter at tick boundaries is expected for now).
   {
-    auto draw_one = [&](const network::Physics_Body_Entity &body) {
+    auto draw_one = [&](const entities::Physics_Body_Entity &body) {
       const auto &render = body.render;
       if (!render.visible) return;
 
-      const char *mesh_path = render.mesh_path.c_str();
-      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
-      if (render.mesh_path.length > 12 &&
-          std::strncmp(mesh_path, "__primitive_", 12) == 0)
-        mesh_handle = assets::get_primitive_mesh(mesh_path + 12);
-      else if (render.mesh_path.length > 0)
-        mesh_handle = assets::load_mesh(mesh_path);
-
+      auto mesh_handle = assets::get_mesh(render.mesh);
       if (!mesh_handle.valid()) return;
 
       renderer::draw_mesh(cmd, mesh_handle,
@@ -1251,8 +1220,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     {
       auto *physics_pool = const_cast<shared::game_session_t *>(ctx.server_session)
                                ->entity_system
-                               .get_entities<network::Physics_Body_Entity>(
-                                   entity_type::PHYSICS_BODY);
+                               .get_entities<entities::Physics_Body_Entity>();
       if (physics_pool)
         for (const auto &body : *physics_pool)
           draw_one(body);
@@ -1331,7 +1299,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     {
       const auto *ent = entry.entity.get();
       if (!ent) continue;
-      const auto *volume = ent->get_box_volume();
+      const auto *volume = entities::get_box_volume(ent);
       if (!volume) continue;
 
       renderer::DrawWireAABB(cmd, ent->position - volume->half_extents,
@@ -1396,7 +1364,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw particle emitters
-  for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
+  for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
     renderer::particle_emitter_params_t p{};
     p.entity_id          = pe->entity_id;
@@ -1473,7 +1441,7 @@ void PlayState::pre_render(VkCommandBuffer cmd)
 {
   if (!session_ready_for_simulation_and_rendering) return;
 
-  for (auto [uid, pe] : map.entities_of_type<network::Particle_Emitter_Entity>())
+  for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
     renderer::particle_emitter_params_t p{};
     p.entity_id          = pe->entity_id;
