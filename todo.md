@@ -364,19 +364,71 @@ can be picked up and put down.
 One narrow seam: **"give me the changed fields."** Change *detection* stays a
 separate module from wire *encoding*.
 
-- [ ] Recursive generated visitors over the schema tree replace the flat
-      `Field_Prop` walk
-- [ ] Detection side stays memcmp-against-baseline for now (protected by
-      blittability); dirty-bit / change-tick tracking swaps in here later
-- [ ] Encoding side gets snapshot delta compression; field-path encoding could
-      swap in later without touching detection
-- [ ] Shape the change-notification seam: the generated deserializer already
-      knows which fields it wrote — its signature must be able to grow an
-      optional changed-field bitmask out-param ("mesh id changed → reload asset")
-      without restructuring
+- [x] ~~Recursive generated visitors over the schema tree replace the flat
+      `Field_Prop` walk~~ — landed with P5. `networked_leaf_fields(type)` is the
+      flattened, cached walk and both ends build the bit order from it, so bit N
+      means the same leaf on both sides by construction.
+- [x] Detection side stays memcmp-against-baseline (protected by blittability);
+      dirty-bit / change-tick tracking swaps in here later, at
+      `serialize_entity`'s two memcmp passes and nowhere else.
+- [x] **Encoding side got snapshot delta compression, done properly: the
+      baseline is the ACKED snapshot, not the last-sent one.** See below.
+- [x] Change-notification seam: `deserialize_entity` takes an optional
+      `network::changed_fields_t*` out-param, indexed like
+      `networked_leaf_fields(type)`. It is the mask the reader had to buffer
+      anyway, so it costs nothing. No caller yet — the first one is
+      "mesh id changed → reload asset".
 - [ ] `@interpolate` (client-side snapshot lerping) is a future field
       annotation; nothing to reserve except knowing it lands here
-- [ ] Fix `network_test` first or as part of this — see "Known failing tests"
+- [x] ~~Fix `network_test` first~~ — was already fixed in P5.
+
+### What acked baselines actually changed
+
+The delta path existed before this and was **wrong on an unreliable channel**:
+the server deltaed against the snapshot it last SENT and the client applied the
+delta to its CURRENT state. One dropped datagram and every field that then
+stopped changing was permanently wrong on the client — it never learns the value
+it missed, because the server believes it already sent it. Reproduced as a test
+(`snapshot_delta_test`, third subtest) so the reason survives.
+
+Now:
+
+- `C2S_PlayerMoveCommand.acked_server_tick` — the client names the newest
+  snapshot it fully reconstructed. Rides on the move command: same rate, same
+  destination, no extra datagram.
+- `S2C_EntityPackage.delta_from_tick` — the server names what the payload is a
+  delta against. 0 = full update.
+- `shared/network/snapshot_history.hpp` — one ring type used by BOTH ends (32
+  ticks ≈ 530ms at 60Hz). The server stores what it sent so it can delta against
+  the acked tick; the client stores what it reconstructed, because the live
+  world has moved on by the time the server names that tick.
+- A client that no longer holds `delta_from_tick` drops the packet WHOLE and
+  logs it. Its ack does not advance, so the server re-baselines to a full update
+  within a round trip. Self-healing, no reliability layer needed.
+- Server tick numbering now starts at **1**: 0 is the wire sentinel for
+  "no baseline".
+- `net_snapshot_debug` (client cvar, default off) prints `delta_from` and the
+  payload size every 120 ticks. `delta_from 0` every line = the ack loop is
+  broken and everything is a full update.
+
+Still open here:
+
+- [ ] Baseline lookup is a linear scan over the frame's entity vectors, per
+      entity per client per tick. Fine at 8 players; it is the obvious thing to
+      fix first if the tick cost ever shows up, and P7's handle/pool work
+      probably supplies the index for free.
+- [ ] The server stores a full copy of every entity per tick per client
+      (`CAPACITY × clients` frames). Same story: correct first, and the fix is
+      one shared frame ring plus per-client ack cursors, since the frames are
+      identical today (no PVS / relevancy filtering).
+- [ ] Entity REMOVAL is still implicit — every snapshot lists every entity, so
+      "absent means gone". That is why `expected_max_entities` and the full walk
+      exist. An explicit spawn/despawn channel is what makes per-entity deltas
+      (rather than whole-world snapshots) possible later.
+- [ ] Runtime-verify the ack loop live: run `MyGame_Server` + `MyGame_Client`,
+      type `net_snapshot_debug 1` in the client console, confirm `delta_from`
+      tracks a recent tick and the byte count is a fraction of a full update.
+      Unit tests cover the pieces; only a live run covers the wiring.
 
 ---
 
@@ -543,6 +595,28 @@ place on consistency and on not making every entity TU pay for `<ranges>`.
 
 
 ## Correctness / consistency
+- [ ] **The asset registry is duplicated per module, so the networked client
+      renders nothing but placeholders.** Observed live on 2026-07-28 running
+      `MyGame_Client` against `MyGame_Server`: `render_3d` logs
+      `assets: get_mesh called before assets::init() — registration is eager and
+      must run first` (`asset.cpp:1077-1082`) on every frame, even though
+      `main_client.cpp:52` calls `assets::init()` at startup.
+
+      Same root cause as the `spawn_bot` CVarSystem bug: `game_shared` is a
+      STATIC library and is linked into both `MyGame_Client.exe` and
+      `game_client.dll` (`CMakeLists.txt:362`), so `asset.cpp`'s file-scope
+      `g_manifest_initialized` / `g_mesh_handles` / `g_sprite_handles`
+      (`asset.cpp:985-987`) exist TWICE. `init()` fills the launcher's copy;
+      `get_mesh` inside the DLL reads the DLL's copy, which is still empty. The
+      loud log is doing its job — the failure is visible, not silent.
+
+      Not a P6 regression (delta compression never touches assets), and it does
+      not reproduce in `MyGame` (integrated) if the draw calls happen to run on
+      the same side as `init()`. Two possible fixes, and this needs deciding
+      once for the whole codebase rather than per registry: make `game_shared` a
+      shared library so there is one copy of everything, or give every registry
+      an explicit accessor exported from one module. Whatever is chosen also
+      settles the CVarSystem case and any registry added later.
 - **Orientation units: DECIDED (P4, 2026-07-27) — Euler XYZ in DEGREES.**
   Written up in `entities.def`. It turned out to be a documentation gap, not two
   halves of the code disagreeing: `renderer.cpp:2864` multiplies `draw_mesh`'s

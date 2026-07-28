@@ -168,7 +168,15 @@
       "Bash(cmake --build cmake_build -j8 --target map_convert)",
       "Bash(python handshake_probe.py)",
       "Bash(timeout 30 python handshake_probe.py)",
-      "Bash(sed -i 's/probe\\(5101,/probe\\(5111,/; s/probe\\(5102,/probe\\(5112,/' handshake_probe.py)"
+      "Bash(sed -i 's/probe\\(5101,/probe\\(5111,/; s/probe\\(5102,/probe\\(5112,/' handshake_probe.py)",
+      "Bash(cmake --build cmake_build -j8 --target snapshot_delta_test)",
+      "Bash(./cmake_build/bin/snapshot_delta_test.exe)",
+      "Bash(./cmake_build/bin/MyGame_Server.exe)",
+      "PowerShell(Get-Process MyGame_Server -ErrorAction SilentlyContinue | Select-Object Id,ProcessName; \\(Get-NetUDPEndpoint -LocalPort 9999 -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess | Format-Table | Out-String\\))",
+      "Bash(./cmake_build/bin/MyGame_Client.exe)",
+      "PowerShell(Stop-Process -Name MyGame_Server -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Process MyGame_Server -ErrorAction SilentlyContinue)",
+      "PowerShell(\"stopped\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"

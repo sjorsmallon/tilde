@@ -299,37 +299,26 @@ void serialize_entity(Bit_Writer& writer, const entities::Entity& entity,
   }
 }
 
-void deserialize_entity(Bit_Reader& reader, entities::Entity& entity)
+void deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
+                        changed_fields_t* out_changed)
 {
   const Span<const leaf_field_t> leaves = entities::networked_leaf_fields(entity.type);
 
   // The mask has to be read whole before any value, so it is buffered rather
-  // than interleaved. 64 leaves covers every type in the .def with room to
-  // spare; the fallback keeps a future wide type correct rather than silently
-  // truncating its mask.
-  constexpr uint32_t INLINE_MASK_CAPACITY = 64;
-  bool               inline_mask[INLINE_MASK_CAPACITY] = {};
-  std::vector<bool>  overflow_mask;
-
-  const bool use_inline_mask = leaves.size() <= INLINE_MASK_CAPACITY;
-  if (!use_inline_mask)
-    overflow_mask.resize(leaves.size());
+  // than interleaved. That buffer IS the changed-field mask a caller can ask
+  // for, so there is one of them rather than two.
+  changed_fields_t  local_mask;
+  changed_fields_t& mask = out_changed != nullptr ? *out_changed : local_mask;
+  mask.resize((uint32_t)leaves.size());
 
   for (uint32_t index = 0; index < leaves.size(); ++index)
-  {
-    const bool changed = reader.read_bit();
-    if (use_inline_mask)
-      inline_mask[index] = changed;
-    else
-      overflow_mask[index] = changed;
-  }
+    mask.set(index, reader.read_bit());
 
   uint8_t* entity_base = reinterpret_cast<uint8_t*>(&entity);
 
   for (uint32_t index = 0; index < leaves.size(); ++index)
   {
-    const bool changed = use_inline_mask ? inline_mask[index] : (bool)overflow_mask[index];
-    if (!changed)
+    if (!mask.is_set(index))
       continue;
     read_leaf(reader, entity_base, leaves[index]);
   }

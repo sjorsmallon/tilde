@@ -36,6 +36,23 @@ namespace client
 using Connection_Phase  = client_context_t::Connection_Phase;
 using explosion_effect_t = client_context_t::explosion_effect_t;
 
+// How often (in server ticks) `net_snapshot_debug` prints a line. One per two
+// seconds at a 60Hz tickrate -- enough to watch a trend, quiet enough to leave on.
+static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
+
+// Prints what each snapshot cost and what it was deltaed against. The two
+// numbers worth watching: `delta_from` should be a recent tick and not 0 (0
+// every time means the ack loop is broken and every snapshot is a full update),
+// and `bytes` should be a small fraction of a full update's size.
+//
+// Defined here rather than in game_cvars.cpp on purpose: game_shared is a static
+// library, so a cvar defined there and referenced by nothing gets dropped by the
+// linker, and CVarSystem is duplicated per DLL anyway. This TU is client code and
+// is always linked.
+static cvar::CVar<bool> net_snapshot_debug(
+    "net_snapshot_debug", false,
+    "Log each received snapshot's baseline tick and payload size (every 120 ticks)");
+
 // Sends a bitstream-native C2S_MapLoaded ack so the server knows this client
 // finished loading the current map and can resume streaming snapshots to it.
 static void send_map_loaded_ack(network::Client_Connection_State &conn,
@@ -122,7 +139,7 @@ void PlayState::finalize_client_map()
   ctx.remote_physics_bodies.clear();
   ctx.explosion_effects.clear();
   ctx.next_explosion_index = 0;
-  ctx.last_processed_tick = 0;
+  ctx.clear_snapshot_history();
 
   shared::init_session_from_map(ctx.session, map);
   ctx.session.map_name = map.name;
@@ -597,6 +614,27 @@ void PlayState::update(float dt)
     if (snap_tick <= ctx.last_processed_tick && ctx.last_processed_tick != 0)
       continue;
 
+    // Which snapshot this packet is a delta against. 0 = full update, every
+    // networked leaf is present and no baseline is needed.
+    const uint32_t delta_from_tick = pkg.has_delta_from_tick() ? pkg.delta_from_tick() : 0;
+
+    const client_context_t::Snapshot_Frame *baseline = nullptr;
+    if (delta_from_tick != 0)
+    {
+      baseline = ctx.snapshot_history.find(delta_from_tick);
+      if (baseline == nullptr)
+      {
+        // The server deltaed against a tick we no longer hold. Applying it to
+        // anything else would silently produce a wrong world, so the packet is
+        // dropped WHOLE — and because our ack does not advance, the server
+        // falls back to a full update within a round trip.
+        log_error("[CLIENT] Snapshot {} is a delta from tick {}, which is not in our history "
+                  "(acked {}). Dropping the packet; the server will re-baseline.",
+                  snap_tick, delta_from_tick, ctx.snapshot_history.acked_tick);
+        continue;
+      }
+    }
+
     const auto *data = reinterpret_cast<const network::uint8 *>(
         pkg.entity_data().data());
     size_t data_size = pkg.entity_data().size();
@@ -604,9 +642,14 @@ void PlayState::update(float dt)
 
     uint32_t entity_count = network::read_var_uint(reader);
 
-    // Build new rocket map from this snapshot (complete state replacement)
-    std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> new_rockets;
-    std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> new_physics_bodies;
+    if (net_snapshot_debug.Get() && snap_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
+      log_terminal("[net] snapshot {}: delta_from {}, {} entities, {} bytes", snap_tick,
+                   delta_from_tick, entity_count, data_size);
+
+    // The snapshot being reconstructed. Entities absent from it are gone: the
+    // server writes every entity it has every tick, so the packet IS the world.
+    client_context_t::Snapshot_Frame decoded;
+    decoded.tick = snap_tick;
 
     for (uint32_t i = 0; i < entity_count; ++i)
     {
@@ -616,37 +659,52 @@ void PlayState::update(float dt)
       {
         shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
+        // No baseline entry means the server sent this one as a full update
+        // (it did not exist in the acked snapshot either), so a default-
+        // constructed entity is the right starting point.
         entities::Rocket_Entity rocket;
-        auto it = ctx.remote_rockets.find(entity_id);
-        if (it != ctx.remote_rockets.end())
-          rocket = it->second;
+        if (baseline != nullptr)
+        {
+          auto it = baseline->rockets.find(entity_id);
+          if (it != baseline->rockets.end())
+            rocket = it->second;
+        }
 
         network::deserialize_entity(reader, rocket);
-        new_rockets[entity_id] = rocket;
+        decoded.rockets[entity_id] = rocket;
       }
       else if (slot_index == 254)
       {
         shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
         entities::Physics_Body_Entity body;
-        auto it = ctx.remote_physics_bodies.find(entity_id);
-        if (it != ctx.remote_physics_bodies.end())
-          body = it->second;
+        if (baseline != nullptr)
+        {
+          auto it = baseline->physics_bodies.find(entity_id);
+          if (it != baseline->physics_bodies.end())
+            body = it->second;
+        }
 
         network::deserialize_entity(reader, body);
-        new_physics_bodies[entity_id] = body;
+        decoded.physics_bodies[entity_id] = body;
       }
       else
       {
         shared::entity_uid_t entity_id = network::read_var_uint(reader);
 
+        // Players are keyed by slot on this side but by entity_id on the
+        // server's, so a slot that changed occupant must not inherit the
+        // previous player's fields — the entity_id check catches that.
         entities::Player_Entity temp;
-        auto pit = ctx.last_player_entities.find(slot_index);
-        if (pit != ctx.last_player_entities.end())
-          temp = pit->second;
+        if (baseline != nullptr)
+        {
+          auto pit = baseline->players.find(slot_index);
+          if (pit != baseline->players.end() && pit->second.entity_id == entity_id)
+            temp = pit->second;
+        }
 
         network::deserialize_entity(reader, temp);
-        ctx.last_player_entities[slot_index] = temp;
+        decoded.players[slot_index] = temp;
 
         if (static_cast<int32_t>(slot_index) == ctx.my_slot)
         {
@@ -685,9 +743,16 @@ void PlayState::update(float dt)
     // explicit dispatch is authoritative and runs even if a rocket entity
     // delta is dropped or coalesced.
 
-    ctx.remote_rockets = std::move(new_rockets);
-    ctx.remote_physics_bodies = std::move(new_physics_bodies);
+    // Publish: the decoded frame becomes both the world the game reads and the
+    // history entry we will ack. Those must be the same bytes — the server
+    // deltas its next packet against exactly what we store here.
+    ctx.last_player_entities = decoded.players;
+    ctx.remote_rockets = decoded.rockets;
+    ctx.remote_physics_bodies = decoded.physics_bodies;
     ctx.last_processed_tick = snap_tick;
+
+    ctx.snapshot_history.slot_for(snap_tick) = std::move(decoded);
+    ctx.snapshot_history.acknowledge(snap_tick);
 
     // Cosmetic effect batch tails the entity deltas in the same packet.
     // Dispatch immediately — handlers are one-shot, fire-and-forget.
@@ -846,6 +911,10 @@ void PlayState::update(float dt)
       va->set_pitch(ctx.player_pitch);
       va->set_yaw(ctx.player_yaw);
       move_cmd.set_buttons_bitfield(buttons);
+      // The snapshot ack rides on the move command rather than a message of its
+      // own: it is sent at the same rate, to the same place, and a lost move
+      // command already costs us a tick — one more datagram would buy nothing.
+      move_cmd.set_acked_server_tick(ctx.snapshot_history.acked_tick);
       network::send_protobuf_message(conn, move_cmd);
 
       Move_Events tick_events{};

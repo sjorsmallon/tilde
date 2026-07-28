@@ -28,7 +28,7 @@ int main()
     game::S2C_EntityPackage packet;
     network::pack_entity_delta_for_update(packet, player, nullptr);
 
-    assert(packet.is_delta() == true);
+    assert(packet.is_delta() == false); // no baseline -> full update
     assert(packet.has_entity_data());
     assert(packet.entity_data().size() > 0);
 

@@ -22,7 +22,14 @@ message C2S_PlayerMoveCommand {
   optional float upmove = 6;
 
   // The "Buttons" Bitfield
-  optional uint64 buttons_bitfield = 7; 
+  optional uint64 buttons_bitfield = 7;
+
+  // Highest server tick this client has fully reconstructed, i.e. the newest
+  // snapshot it can be deltaed against. 0 = none yet, send a full update.
+  // This is the ONLY thing that makes delta compression correct over UDP: the
+  // server may not delta against what it last SENT (that packet may have been
+  // dropped), only against what the client says it APPLIED.
+  optional uint32 acked_server_tick = 8;
 }
 
 // s2c is server to client.
@@ -33,6 +40,13 @@ message S2C_EntityPackage {
     optional bytes entity_data = 4; // this is the reflective snapshot data
     optional int32 server_tick = 5;
     optional int32 last_processed_command = 6; // per-client ack for reconciliation
+
+    // Which snapshot entity_data is a delta AGAINST. 0 = full update (every
+    // networked leaf present, no baseline needed). Otherwise the client must
+    // still hold its reconstructed snapshot for this tick, or the packet is
+    // undecodable and must be dropped whole -- applying a delta to the wrong
+    // baseline is worse than missing a frame.
+    optional uint32 delta_from_tick = 7;
 }
 
 // --------------------------------------------- things that are uncertain

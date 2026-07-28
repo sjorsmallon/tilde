@@ -28,7 +28,7 @@ Map format conversion (one-time, for maps written before the geometry exit):
 
 `maps/test` is deliberately left in the legacy format — it is `map_migration_test`'s conversion fixture.
 
-Test executables: `task_system_test`, `log_test`, `ecs_test`, `camera_test`, `linalg_test`, `file_watcher_test`, `network_test`, `udp_socket_test`, `server_loop_test`, `session_test`, `transaction_system_test`, `test_entity_delta_packing`, `test_rng`, `asset_test`, `entity_layout_test`, `map_migration_test`, `navmesh_test`.
+Test executables: `task_system_test`, `log_test`, `ecs_test`, `camera_test`, `linalg_test`, `file_watcher_test`, `network_test`, `udp_socket_test`, `server_loop_test`, `session_test`, `transaction_system_test`, `test_entity_delta_packing`, `snapshot_delta_test`, `test_rng`, `asset_test`, `entity_layout_test`, `map_migration_test`, `navmesh_test`.
 
 Run tests **from the project root** — `map_migration_test` loads the `maps/test` fixture by relative path.
 
@@ -137,6 +137,10 @@ Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` s
 Protobuf for message definitions (`proto/game.proto`). Custom UDP with delta-compressed entity serialization via bitstream. Server port 9999, client port 5001, max packet 1200 bytes (`network_types.hpp`).
 
 The connect handshake exchanges `entities::SCHEMA_HASH` (in `CmdConnect`); the server refuses a client whose hash differs, reporting both. A mismatch means the two builds disagree about entity layout or the asset manifest, so every snapshot after it would be misparsed.
+
+**Snapshot deltas are taken against the ACKED snapshot, never the last-sent one.** This is the load-bearing rule of the whole delta path: snapshots are unreliable, so deltaing against what was last sent means one dropped datagram permanently desyncs every field that then stops changing. The client names the newest snapshot it reconstructed in `C2S_PlayerMoveCommand.acked_server_tick`; the server names what it deltaed against in `S2C_EntityPackage.delta_from_tick` (0 = full update). Both ends keep the same 32-tick ring, `network::Snapshot_History` (`shared/network/snapshot_history.hpp`) — the server keeps what it sent, the client keeps what it reconstructed. A client that no longer holds `delta_from_tick` drops the packet whole and logs it; its ack doesn't advance, so the server falls back to a full update within a round trip. Server ticks start at 1 because 0 is the "no baseline" sentinel. Client cvar `net_snapshot_debug` prints the baseline tick and payload size every 120 ticks.
+
+Per-leaf change masks come from `networked_leaf_fields(type)` on both ends, so bit N is the same field by construction; `deserialize_entity` can hand that mask back via an optional `network::changed_fields_t*` out-param.
 
 Geometry is never replicated — clients get it from their own map load or from map streaming, never from snapshots.
 

@@ -3,6 +3,7 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/network/client_connection_state.hpp"
+#include "../shared/network/snapshot_history.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/player_move.hpp"
 
@@ -123,7 +124,10 @@ struct client_context_t
   std::unordered_map<int32_t, Remote_Player_State> remote_players;
   float interpolation_time = 0.f;
 
-  // --- Delta decompression baselines ---
+  // --- Delta decompression: the latest reconstructed snapshot ---
+  // These are what the game reads. They are a copy of the newest frame in the
+  // history below, kept separate because the rest of the client wants "the
+  // current world", not "frame N".
   std::unordered_map<int32_t, entities::Player_Entity> last_player_entities;
   std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> remote_rockets;
   // Physics bodies received from server. State is replaced wholesale each
@@ -132,6 +136,27 @@ struct client_context_t
   // stutter at server tick boundaries until interpolation is added.
   std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> remote_physics_bodies;
   uint32_t last_processed_tick = 0;
+
+  // --- Delta decompression: the snapshot history ---
+  // The server deltas against a tick we ACKED, so we must still be holding the
+  // exact state we reconstructed for that tick — not merely "the current
+  // world", which has moved on. Mirrors the server's ring one for one; see
+  // shared/network/snapshot_history.hpp. `acked_tick` on it is the value echoed
+  // back in every C2S_PlayerMoveCommand.
+  struct Snapshot_Frame
+  {
+    uint32_t tick = 0;
+    std::unordered_map<int32_t, entities::Player_Entity> players; // keyed by client slot
+    std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> rockets;
+    std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> physics_bodies;
+  };
+  ::network::Snapshot_History<Snapshot_Frame> snapshot_history;
+
+  void clear_snapshot_history()
+  {
+    snapshot_history.clear();
+    last_processed_tick = 0;
+  }
 
   // --- Integrated-mode session pointer ---
   // In integrated builds, set to the server's authoritative session so the

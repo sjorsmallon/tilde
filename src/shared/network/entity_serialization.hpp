@@ -22,8 +22,64 @@
 #include "packet.hpp"
 #include "quantization.hpp"
 
+#include <vector>
+
 namespace network
 {
+
+// Which leaves a delta actually wrote, indexed exactly like
+// entities::networked_leaf_fields(entity.type) -- bit N is leaf N.
+//
+// This is the change-notification seam: "mesh id changed -> reload the asset"
+// needs to know WHICH fields a snapshot touched, and the deserializer is the
+// one place that already knows. Handing the mask back costs nothing because it
+// is the mask the reader had to buffer anyway.
+struct changed_fields_t
+{
+  // Every entity in entities.def is far under this; the vector is what keeps a
+  // future wide type correct instead of silently truncating its mask.
+  static constexpr uint32_t INLINE_CAPACITY = 64;
+
+  uint32_t          count        = 0;
+  uint64_t          inline_bits  = 0;
+  std::vector<bool> overflow_bits;
+
+  void resize(uint32_t leaf_count)
+  {
+    count       = leaf_count;
+    inline_bits = 0;
+    overflow_bits.assign(leaf_count > INLINE_CAPACITY ? leaf_count : 0, false);
+  }
+
+  void set(uint32_t index, bool value)
+  {
+    if (count > INLINE_CAPACITY)
+      overflow_bits[index] = value;
+    else if (value)
+      inline_bits |= (uint64_t)1 << index;
+  }
+
+  bool is_set(uint32_t index) const
+  {
+    if (index >= count)
+      return false;
+    if (count > INLINE_CAPACITY)
+      return overflow_bits[index];
+    return (inline_bits & ((uint64_t)1 << index)) != 0;
+  }
+
+  bool any() const
+  {
+    if (count > INLINE_CAPACITY)
+    {
+      for (bool bit : overflow_bits)
+        if (bit)
+          return true;
+      return false;
+    }
+    return inline_bits != 0;
+  }
+};
 
 // Writes `entity` to the stream. With a baseline, only the networked leaves
 // that differ from it; without one, every networked leaf (a full update).
@@ -36,13 +92,18 @@ void serialize_entity(Bit_Writer& writer, const entities::Entity& entity,
 // Reads a stream written by serialize_entity into `entity`, whose type must be
 // the one it was written from. Fields whose mask bit is clear keep their
 // current value, which is what makes a delta a delta.
-void deserialize_entity(Bit_Reader& reader, entities::Entity& entity);
+//
+// `out_changed` is optional; when given it receives the mask this call applied.
+void deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
+                        changed_fields_t* out_changed = nullptr);
 
 inline void pack_entity_delta_for_update(game::S2C_EntityPackage& out_packet,
                                          const entities::Entity& entity,
                                          const entities::Entity* baseline = nullptr)
 {
-  out_packet.set_is_delta(true);
+  // No baseline means every networked leaf is on the wire, which is a full
+  // update, not a delta. The flag says which one the receiver is holding.
+  out_packet.set_is_delta(baseline != nullptr);
 
   Bit_Writer writer;
   serialize_entity(writer, entity, baseline);

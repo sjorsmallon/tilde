@@ -426,6 +426,11 @@ add_executable(test_entity_delta_packing src/test/test_entity_delta_packing.cpp)
 target_include_directories(test_entity_delta_packing PRIVATE src)
 target_link_libraries(test_entity_delta_packing PRIVATE game_shared)
 
+# 17b. Snapshot Delta Test (acked-baseline rule + changed-field mask)
+add_executable(snapshot_delta_test src/test/test_snapshot_delta.cpp)
+target_include_directories(snapshot_delta_test PRIVATE src)
+target_link_libraries(snapshot_delta_test PRIVATE game_shared)
+
 # 18. RNG Test
 add_executable(test_rng src/test/test_rng.cpp)
 target_include_directories(test_rng PRIVATE src)
