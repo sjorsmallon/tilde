@@ -475,6 +475,8 @@ serialization by then — absorption, not a project.
 
 # EVERYTHING ELSE
 
+## logging
+log_error should be log_warning if it's safe? log_error should print stack trace and go to exception handler? what should  w do?
 
 ## generator stuff
 for field_info_t, there are sentinel values:
