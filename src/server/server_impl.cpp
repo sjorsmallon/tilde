@@ -22,6 +22,7 @@
 #include "network/bitstream.hpp"
 #include "network/map_transfer.hpp"
 #include "network/entity_serialization.hpp"
+#include "network/entity_snapshot.hpp"
 #include "network/quantization.hpp"
 #include "network/server_connection_state.hpp"
 #include "network/snapshot_history.hpp"
@@ -163,23 +164,22 @@ struct Player_Server_State
 
 std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
 
-// --- Per-client snapshot history, the baseline store for delta compression ---
+// --- Snapshot history, the baseline store for delta compression ---
 //
 // One snapshot per tick, not one "last sent" state -- see snapshot_history.hpp
-// for why that distinction is the whole of delta correctness over UDP. The
-// server sends each client a delta against the tick THAT client acked, so the
-// history is per client even though the frames are near-identical.
-struct Snapshot_Frame
-{
-  uint32_t                                   tick = 0;
-  std::vector<entities::Player_Entity>       players;
-  std::vector<entities::Rocket_Entity>       rockets;
-  std::vector<entities::Physics_Body_Entity> physics_bodies;
-  // Add more entity types here as needed
-};
+// for why that distinction is the whole of delta correctness over UDP.
+//
+// ONE ring, shared by every client, plus one ack cursor each. There is no PVS
+// or relevancy filtering, so the frame every client is sent is the same frame;
+// storing it per client cost `CAPACITY x sv_max_player_count` copies of the
+// world to hold 32 distinct ones. What is genuinely per client is only which
+// tick that client has acked, which is a uint32.
+//
+// If per-client filtering ever lands, this goes back to per-client frames --
+// the frames stop being identical at that moment, not before.
+network::Snapshot_History<network::snapshot_frame_t> g_snapshot_history{};
 
-std::array<network::Snapshot_History<Snapshot_Frame>, network::sv_max_player_count>
-    g_client_histories{};
+std::array<uint32_t, network::sv_max_player_count> g_client_acked_ticks{};
 
 std::vector<Bot_State> g_bots;
 int g_next_bot_slot = BOT_SLOT_BASE; // increments with each spawned bot
@@ -379,8 +379,11 @@ static bool load_map_into_state(const std::string &map_path)
   g_bots.clear();
   g_next_bot_slot = BOT_SLOT_BASE;
   g_state.previous_tick_overlapping_trigger_player_pairs.clear();
-  for (auto &history : g_client_histories)
-    history.clear();
+  // Every frame in the ring describes the OLD world; a delta against one after
+  // a map switch would be nonsense. Clearing the acks too means every client's
+  // next snapshot is a full update, which is what a new world is.
+  g_snapshot_history.clear();
+  g_client_acked_ticks.fill(0);
 
   if (map_path.empty())
   {
@@ -625,6 +628,11 @@ bool Tick()
         g_state.net.partial_packets[slot].clear();
         g_player_states[slot] = {};
 
+        // A reused slot must not inherit the previous occupant's ack — this
+        // client has reconstructed nothing, so its first snapshot is a full
+        // update.
+        g_client_acked_ticks[slot] = 0;
+
         log_terminal("Player {} joined at slot {}",
                      cmd.connect().player_name(), slot);
 
@@ -856,8 +864,11 @@ bool Tick()
       pstate.last_processed_command = move.command_number();
 
       // Snapshot ack. Never trusted beyond "the client claims it holds this
-      // tick" — baseline() still has to hit a frame we actually kept.
-      g_client_histories[player_idx].acknowledge(move.acked_server_tick());
+      // tick" — the history lookup still has to hit a frame we actually kept.
+      // Only ever moves forward: datagrams reorder, and an older value would
+      // cost bandwidth for nothing.
+      if (move.acked_server_tick() > g_client_acked_ticks[player_idx])
+        g_client_acked_ticks[player_idx] = move.acked_server_tick();
 
       uint64_t cur_buttons  = move.buttons_bitfield();
       bool fire_pressed = (cur_buttons & Button::Fire) &&
@@ -1022,14 +1033,30 @@ bool Tick()
   auto *physics_body_pool = g_state.session.entity_system
       .get_entities<entities::Physics_Body_Entity>();
 
-  int total_entity_count = (pool ? static_cast<int>(pool->size()) : 0) +
-                          (rocket_pool ? static_cast<int>(rocket_pool->size()) : 0) +
-                          (physics_body_pool ? static_cast<int>(physics_body_pool->size()) : 0);
+  // Build this tick's frame ONCE, straight into its slot in the ring. It is
+  // both what gets encoded and what a later ack will name as a baseline, so
+  // there is exactly one copy of the world per tick and the two can't drift.
+  //
+  // Storing it before sending (the old code stored after) is what lets the
+  // encoder read from it: the delta is now frame-vs-frame, not pool-vs-vector.
+  // A client that acked the tick occupying this same ring slot has by
+  // definition aged out — find() checks the tick, so it misses and that client
+  // gets a full update.
+  network::snapshot_frame_t &frame = g_snapshot_history.slot_for(g_tick_number);
+  frame.clear();
+  frame.tick = g_tick_number;
 
-  // printf("[SERVER] Tick %u: Broadcasting %d entities (%zu players + %d rockets)\n",
-  //        g_tick_number, total_entity_count,
-  //        pool ? pool->size() : 0,
-  //        rocket_pool ? static_cast<int>(rocket_pool->size()) : 0);
+  if (pool)
+    for (const auto &entity : *pool)
+      frame.players[entity.entity_id] = entity;
+
+  if (rocket_pool)
+    for (const auto &rocket : *rocket_pool)
+      frame.rockets[rocket.entity_id] = rocket;
+
+  if (physics_body_pool)
+    for (const auto &body : *physics_body_pool)
+      frame.physics_bodies[body.entity_id] = body;
 
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
@@ -1043,76 +1070,15 @@ bool Tick()
       continue;
 
     network::Bit_Writer writer;
-    auto &history = g_client_histories[slot];
 
     // The baseline is the snapshot this client ACKED, not the one last sent.
     // A miss (never acked, or acked so long ago it fell out of the ring) is not
     // an error — it just means this packet is a full update.
-    const Snapshot_Frame *baseline = history.baseline();
-    const uint32_t baseline_tick   = baseline != nullptr ? baseline->tick : 0;
+    const network::snapshot_frame_t *baseline =
+        g_snapshot_history.find(g_client_acked_ticks[slot]);
+    const uint32_t baseline_tick = baseline != nullptr ? baseline->tick : 0;
 
-    // Write entity count
-    network::write_var_uint(writer, total_entity_count);
-
-    // Helper: find baseline entity by entity_id. Absent = this entity did not
-    // exist in the acked snapshot, so it gets a full update, which is exactly
-    // what the client (with no baseline entry of its own) expects to read.
-    auto find_player_baseline = [&](uint64_t ent_id) -> const entities::Player_Entity* {
-      if (!baseline) return nullptr;
-      for (const auto &b : baseline->players)
-        if (b.entity_id == ent_id) return &b;
-      return nullptr;
-    };
-
-    auto find_rocket_baseline = [&](uint64_t ent_id) -> const entities::Rocket_Entity* {
-      if (!baseline) return nullptr;
-      for (const auto &b : baseline->rockets)
-        if (b.entity_id == ent_id) return &b;
-      return nullptr;
-    };
-
-    auto find_physics_body_baseline = [&](uint64_t ent_id) -> const entities::Physics_Body_Entity* {
-      if (!baseline) return nullptr;
-      for (const auto &b : baseline->physics_bodies)
-        if (b.entity_id == ent_id) return &b;
-      return nullptr;
-    };
-
-    // Serialize all players with delta compression
-    if (pool)
-    {
-      for (const auto &entity : *pool)
-      {
-        network::write_var_uint(writer, static_cast<uint32_t>(entity.client_slot_index));
-        network::write_var_uint(writer, entity.entity_id);  // Send entity_id explicitly
-        const entities::Player_Entity* base = find_player_baseline(entity.entity_id);
-        network::serialize_entity(writer, entity, base);  // Delta compress against baseline
-      }
-    }
-
-    // Serialize all rockets with delta compression
-    if (rocket_pool)
-    {
-      for (const auto &rocket : *rocket_pool)
-      {
-        network::write_var_uint(writer, 255);  // Special slot for non-player entities
-        network::write_var_uint(writer, rocket.entity_id);  // Send entity_id explicitly
-        const entities::Rocket_Entity* base = find_rocket_baseline(rocket.entity_id);
-        network::serialize_entity(writer, rocket, base);  // Delta compress against baseline
-      }
-    }
-
-    // Serialize all physics bodies with delta compression (slot=254 sentinel)
-    if (physics_body_pool)
-    {
-      for (const auto &body : *physics_body_pool)
-      {
-        network::write_var_uint(writer, 254);
-        network::write_var_uint(writer, body.entity_id);
-        const entities::Physics_Body_Entity* base = find_physics_body_baseline(body.entity_id);
-        network::serialize_entity(writer, body, base);
-      }
-    }
+    network::serialize_snapshot(writer, frame, baseline);
 
     // Cosmetic effect batch rides in the same packet, after entity deltas.
     // Unreliable by design (lost effect = silently dropped). Identical bytes
@@ -1127,7 +1093,6 @@ bool Tick()
     package.set_delta_from_tick(baseline_tick);
     package.set_is_delta(baseline_tick != 0);
     package.set_entity_data(writer.buffer.data(), writer.buffer.size());
-    package.set_expected_max_entities(total_entity_count);
 
     std::vector<network::uint8> buffer(package.ByteSizeLong());
     package.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
@@ -1137,27 +1102,6 @@ bool Tick()
 
     for (const auto &p : packets)
       g_socket.send(p, g_state.net.player_ips[slot]);
-
-    // Record this tick in the history so it can serve as a baseline once the
-    // client acks it. Whether it arrives is not our business — that is what the
-    // ack answers, and until it does this frame is just stored, never used.
-    Snapshot_Frame &frame = history.slot_for(g_tick_number);
-    frame.tick            = g_tick_number;
-    frame.players.clear();
-    frame.rockets.clear();
-    frame.physics_bodies.clear();
-
-    if (pool)
-      for (const auto &entity : *pool)
-        frame.players.push_back(entity);
-
-    if (rocket_pool)
-      for (const auto &rocket : *rocket_pool)
-        frame.rockets.push_back(rocket);
-
-    if (physics_body_pool)
-      for (const auto &body : *physics_body_pool)
-        frame.physics_bodies.push_back(body);
   }
 
   // Effect queue is drained per tick: every connected client received this

@@ -164,6 +164,10 @@ inline uint16 schema_float_array_max_capacity(size_t field_size)
 
 constexpr auto sv_max_player_count = 32;
 constexpr auto server_port_number = 9999;
-constexpr auto client_port_number = 5001;
+// NOTE: there is deliberately no client_port_number. Clients bind an
+// ephemeral port (open(0)) — a fixed client port made two clients on one
+// machine indistinguishable to the server (both 127.0.0.1:5001) and starved
+// the second of replies. The server keys players by the address recvfrom
+// reports, so the client port never needs to be known in advance.
 
 } // namespace network

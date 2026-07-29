@@ -89,6 +89,16 @@ struct changed_fields_t
 void serialize_entity(Bit_Writer& writer, const entities::Entity& entity,
                       const entities::Entity* baseline);
 
+// True when serialize_entity would write at least one field, i.e. when the
+// change mask for this pair is not empty. Same comparison serialize_entity
+// makes, exposed so a snapshot can OMIT an unchanged entity entirely rather
+// than spend a key and an all-zero mask on it every tick.
+//
+// A type mismatch counts as changed: it forces a full update, which is what
+// serialize_entity falls back to there anyway.
+bool has_networked_changes(const entities::Entity& entity,
+                           const entities::Entity& baseline);
+
 // Reads a stream written by serialize_entity into `entity`, whose type must be
 // the one it was written from. Fields whose mask bit is clear keep their
 // current value, which is what makes a delta a delta.

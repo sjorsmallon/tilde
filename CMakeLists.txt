@@ -107,21 +107,32 @@ endif()
 
 # --- Host Tools ---
 
-# Entity definition DSL parser and code generator. Standalone, no project
-# dependencies. Inspect the parsed IR with:
-#   ./cmake_build/bin/entity_gen src/shared/entities/entities.def --dump
-add_executable(entity_gen src/tools/entity_gen.cpp)
+# The schema compiler: parses every .def file and emits the constexpr tables and
+# plain structs the game reads. Standalone, no project dependencies. Inspect the
+# parsed IR without writing anything with:
+#   ./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --dump
+add_executable(def_gen src/tools/def_gen.cpp)
 
-# Generated entity structs and reflection tables. These land in the source tree
-# rather than the build dir, on purpose: they are meant to be readable, opened
-# without building, and to show up as a reviewable diff when the .def changes.
-# They are the entity system: game_shared compiles the generated source, and
-# map I/O, undo, the wire format and the editor inspector all read the tables.
+# Generated structs and tables. These land in the source tree rather than the
+# build dir, on purpose: they are meant to be readable, opened without building,
+# and to show up as a reviewable diff when a .def changes. Each .def's output
+# goes to a `generated/` directory beside it, which def_gen derives from the
+# input path -- the paths below must match that convention.
 set(ENTITY_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/entities.def)
 set(ENTITY_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/generated)
 set(ENTITY_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entities_generated.hpp)
 set(ENTITY_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entities_generated.cpp)
 file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
+
+set(CVAR_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/cvars/cvars.def)
+set(CVAR_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/cvars/generated)
+set(CVAR_GEN_HEADER ${CVAR_GEN_OUT_DIR}/cvars_generated.hpp)
+set(CVAR_GEN_SOURCE ${CVAR_GEN_OUT_DIR}/cvars_generated.cpp)
+# One binder TU per side, each compiled into the module that owns those
+# handlers, so the client DLL never references a server handler symbol.
+set(CVAR_GEN_SERVER_BINDINGS ${CVAR_GEN_OUT_DIR}/server_command_bindings.cpp)
+set(CVAR_GEN_CLIENT_BINDINGS ${CVAR_GEN_OUT_DIR}/client_command_bindings.cpp)
+file(MAKE_DIRECTORY ${CVAR_GEN_OUT_DIR})
 
 # The .def's asset classes scan these directories, so the generated manifest
 # depends on their CONTENTS, not just on the .def. CONFIGURE_DEPENDS re-runs the
@@ -133,13 +144,18 @@ file(GLOB ENTITY_GEN_ASSET_FILES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/sprites/*.png
 )
 
+# ONE invocation over EVERY .def, not one per file. SCHEMA_HASH is computed
+# across all of them and emitted once, so a per-file run would write a hash that
+# disagrees with a full build.
 add_custom_command(
     OUTPUT ${ENTITY_GEN_HEADER} ${ENTITY_GEN_SOURCE}
-    COMMAND entity_gen ${ENTITY_DEF_FILE}
-            --output-dir ${ENTITY_GEN_OUT_DIR}
+           ${CVAR_GEN_HEADER} ${CVAR_GEN_SOURCE}
+           ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS}
+    COMMAND def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
+            --emit
             --asset-root ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS entity_gen ${ENTITY_DEF_FILE} ${ENTITY_GEN_ASSET_FILES}
-    COMMENT "Generating entity definitions from entities.def..."
+    DEPENDS def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE} ${ENTITY_GEN_ASSET_FILES}
+    COMMENT "Generating definitions from entities.def and cvars.def..."
 )
 
 
@@ -160,8 +176,15 @@ add_library(game_shared STATIC
     src/shared/task_system.hpp
     src/shared/task_system.cpp
     ${ENTITY_GEN_SOURCE}
+    # The cvar tables and text conversion. Holds no reference to any command
+    # handler, so it compiles here without either side being present -- the two
+    # binder TUs are what reference handlers, and they go into the DLLs that
+    # own them (see game_client / game_server below).
+    ${CVAR_GEN_SOURCE}
+    src/shared/cvars/cvar_runtime.hpp
     src/shared/entities/entity_reflection.cpp
     src/shared/network/entity_serialization.cpp
+    src/shared/network/entity_snapshot.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp

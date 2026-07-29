@@ -39,10 +39,16 @@ struct Snapshot_History
 
   std::array<Frame_T, Capacity> frames = {};
 
-  // The tick the far end says it holds. On the server this is what the client
-  // acked; on the client it is what it last reconstructed and is acking.
-  // Only ever moves forward -- datagrams reorder, and an older value would cost
+  // The tick the far end says it holds, for a ring with ONE peer -- which is
+  // the client's case: it keeps what it reconstructed and acks the newest.
+  // Only ever moves forward; datagrams reorder, and an older value would cost
   // bandwidth for nothing.
+  //
+  // A ring shared by SEVERAL peers cannot use this, and the server's does not:
+  // its frames are identical for every client (no PVS), so it keeps one ring
+  // and one ack cursor per client alongside it, calling find() directly.
+  // `acked_tick` / `acknowledge` / `baseline` are the single-peer convenience
+  // on top of that, not the model.
   uint32_t acked_tick = 0;
 
   // The slot `tick` belongs in, to be overwritten with that tick's frame. Any

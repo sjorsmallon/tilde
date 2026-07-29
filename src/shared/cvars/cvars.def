@@ -1,0 +1,192 @@
+// cvars.def -- console variable and command definition DSL.
+//
+// Parsed by src/tools/def_gen.cpp, which emits generated/cvars_generated.*
+//
+// Transcribed 2026-07-29 from the CVar<T> / Console_Command declarations
+// scattered across player_move.cpp, debug_collision.cpp, game_cvars.cpp,
+// audio_system.cpp, play_state.cpp, server_impl.cpp, console.cpp and the three
+// launchers. See cvar_def.md at the repo root for the design, todo.md for the
+// step order. Read entities.def first -- this is its sibling and every
+// principle there carries over.
+//
+// ---------------------------------------------------------------------------
+// BLOCK NAMES MEAN NOTHING
+// ---------------------------------------------------------------------------
+// `Player_Movement ::` is a foldable section comment and nothing else. It is
+// never emitted, never queryable, read by no consumer. It records which .cpp
+// the declaration used to live in, which is the only thing the old layout
+// actually encoded. Any design where a group MEANS something forces an
+// impossible single-membership choice (net_snapshot_debug is network AND debug
+// AND client). The real taxonomy is the NAME PREFIX -- pm_, r_, sv_, cl_,
+// sound_, debug_, net_ -- which composes, and which is what console
+// autocomplete filters on.
+//
+// Declaration order IS the struct layout order and the config-file save order.
+// Diffable, same rule as entities.
+//
+// ---------------------------------------------------------------------------
+// WHAT THE THREE FLAGS MEAN
+// ---------------------------------------------------------------------------
+//   (none)      shared-local: both sides have the value, each process owns its
+//               own. Never synced. This is the default and most cvars want it.
+//
+//   @Client     client-owned; meaningless on a dedicated server. Never synced.
+//
+//   @Server     server-owned. A networked client may INVOKE or INSPECT it
+//               through the console (the line is forwarded), but the value is
+//               never pushed down.
+//
+//   @Mirrored   server-owned, server leads; clients hold a read-only mirror
+//               kept fresh over the wire. Earn it the same way a field earns
+//               @Networked: the client must READ the value AND be required to
+//               agree with the server about it. Today that means exactly one
+//               thing -- movement prediction.
+//
+// The old flag set also had Cheat and Admin. Grep says NO declaration ever used
+// either, and nothing enforces Cheat anywhere (there is no sv_cheats). They are
+// dropped rather than transcribed: decorative flags are precisely what the
+// entity migration purged. They come back the day their enforcement point
+// exists, not before.
+//
+// ---------------------------------------------------------------------------
+// TYPES
+// ---------------------------------------------------------------------------
+// f32 / i32 / u32 / bool / string<N>. The current set is ENTIRELY f32 and bool:
+// `map` was the only string cvar and it becomes a command below, so string<N>
+// has zero users in v1. Noted here so the generator work can decide whether to
+// implement it now or on first use.
+
+// ---------------------------------------------------------------------------
+// Player movement -- was player_move.cpp
+// ---------------------------------------------------------------------------
+//
+// The whole block is @Mirrored, and it is the ONLY @Mirrored block. These are
+// the constants the client's movement prediction feeds into the same
+// player_move() the server runs; if the two sides disagree about pm_maxspeed
+// the client mispredicts every frame. Formerly cvar::flags::Replicated, which
+// meant the same thing.
+
+Player_Movement :: cvars {
+    pm_maxspeed:            f32 = 320.0     @Mirrored  "Maximum player speed"
+    pm_stopspeed:           f32 = 100.0     @Mirrored  "Deceleration threshold"
+    pm_friction:            f32 = 6.0       @Mirrored  "Ground friction"
+    pm_ground_acceleration: f32 = 10.0      @Mirrored  "Ground acceleration"
+    pm_air_acceleration:    f32 = 5.0       @Mirrored  "Air acceleration"
+    pm_overbounce:          f32 = 1.001     @Mirrored  "Plane clip overbounce factor"
+    pm_jumpspeed:           f32 = 270.0     @Mirrored  "Jump velocity"
+    g_gravity:              f32 = 800.0     @Mirrored  "Gravity"
+    pm_speed_threshold:     f32 = 1.0       @Mirrored  "Speed below which friction snaps to zero"
+    pm_step_height:         f32 = 18.0      @Mirrored  "Maximum step height the player can glide up"
+}
+
+// ---------------------------------------------------------------------------
+// Server -- was server_impl.cpp
+// ---------------------------------------------------------------------------
+
+Server :: cvars {
+    // NOT @Mirrored: the
+    // client learns the tickrate once from CmdAccept at handshake time, which
+    // is a handshake fact, not a live-synced value.
+    sv_tickrate:            f32 = 60.0      @Server    "Server tick rate in Hz"
+}
+
+// ---------------------------------------------------------------------------
+// Client -- was the three launcher .cpp files
+// ---------------------------------------------------------------------------
+
+Client :: cvars {
+    r_fov:                  f32 = 90.0      @Client    "Field of view in degrees"
+
+    cl_maxfps:              f32 = 1000.0    @Client    "Maximum client framerate (0 = unlimited)"
+}
+
+// ---------------------------------------------------------------------------
+// Time -- was game_cvars.cpp
+// ---------------------------------------------------------------------------
+
+Time :: cvars {
+    // Deliberately UNFLAGGED, and it is the live proof of the bug this whole
+    // track fixes. cl_timescale has two readers: main_integrated.cpp:92 scales
+    // the SERVER tick accumulator, client_impl.cpp:142 scales the CLIENT frame
+    // dt. Those live in the exe and in game_client.dll, which each link
+    // game_shared statically -- so today they read two DIFFERENT copies, and
+    // setting it from the console only reaches the client's. Slow-mo currently
+    // slows rendering while simulation runs at full speed. One launcher-owned
+    // cvar_state_t makes both readers see one value, which is the behavior the
+    // name always implied. Not @Client despite the cl_ prefix: the prefix is a
+    // taxonomy, the flag is an ownership claim, and a server reader disqualifies
+    // it from being client-owned.
+    cl_timescale:           f32 = 1.0                  "Time scale factor (0.5 = slow-mo, 2.0 = fast)"
+}
+
+// ---------------------------------------------------------------------------
+// Audio -- was audio_system.cpp (file-scope statics, so console-visible only in
+// whichever module happened to link them)
+// ---------------------------------------------------------------------------
+//
+// Read once per voice at ma_sound spawn time, so a change applies to the next
+// sound played, not to sounds already in flight. That is the existing behavior
+// and is the reason no on-change callback is needed here.
+
+Audio :: cvars {
+    sound_reference_distance:  f32 = 150.0  @Client    "Distance (world units) within which a 3D sound is at full volume"
+    sound_max_distance_cutoff: f32 = 4000.0 @Client    "Distance (world units) past which 3D attenuation stops increasing"
+    sound_rolloff_factor:      f32 = 1.0    @Client    "3D distance attenuation rolloff factor"
+}
+
+// ---------------------------------------------------------------------------
+// Debugging -- was debug_collision.cpp and play_state.cpp
+// ---------------------------------------------------------------------------
+
+Debugging :: cvars {
+    // Unflagged on purpose: this one gates RECORDING inside shared collision
+    // code (debug_collision.cpp record_collision), which runs on whichever side
+    // is simulating, while the DRAWING is client-side. Under one shared
+    // cvar_state_t, toggling it from the integrated client console finally
+    // enables the server-side recording it was always meant to -- today the
+    // client toggles its own DLL's copy and the simulating side never sees it.
+    debug_show_collisions:  bool = false                "Show collision faces in green"
+
+    // Pure client-side draws, but left unflagged to match their sibling above:
+    // they are all read through the same debug_collision.hpp seam, and a
+    // per-cvar flag split there would be a distinction with no check site.
+    debug_show_hitboxes:    bool = false                "Show entity hitboxes in wireframe"
+    debug_show_navmesh:     bool = false                "Show baked navmesh as a line grid"
+    debug_show_box_volumes: bool = false                "Draw every entity's box volume as a wireframe AABB (triggers, clip volumes, ...)"
+
+    // Was a play_state.cpp file-scope static with a comment explaining that it
+    // could not live in game_cvars.cpp because the linker would drop it from
+    // the static lib -- exactly the failure mode a generated table removes.
+    net_snapshot_debug:     bool = false    @Client     "Log each received snapshot's baseline tick and payload size (every 120 ticks)"
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+//
+// A command is a VERB: a name and a handler, no value. Declaring one here
+// obligates the owning side to define `commands::<name>` with the canonical
+// handler signature; the generated per-side binder TU references that symbol
+// directly, so a missing or misspelled handler is a LINK ERROR naming the
+// symbol. There is no runtime registration and nothing for the linker to drop.
+//
+// Names share ONE flat namespace with the cvars above -- the console resolves
+// both from the same token, so a collision is a generator error.
+
+Server_Commands :: commands {
+    spawn_bot     @Server  "Spawn a bot. Optional arg: idle (default) | chase | regular"
+    spawn_cube    @Server  "Spawn a physics cube in front of the calling player"
+    spawn_sphere  @Server  "Spawn a physics sphere in front of the calling player"
+
+    // WAS A CVAR: CVar<std::string> map("map", "dm_aabb", ...) with an
+    // on-change callback that loaded the level -- a verb wearing a variable
+    // costume. It is a command here, which also removes the only user of the
+    // callback mechanism, which is why v1 has no callback mechanism at all.
+    // The "current map" question is answered by the server's own state and the
+    // CmdChangeMap broadcast, not by a settable string.
+    map           @Server  "Switch the server to a new map. Usage: map <path>"
+}
+
+Client_Commands :: commands {
+    bind          @Client  "Bind a key (a-z) to a command line. Usage: bind <key> <command...>"
+}

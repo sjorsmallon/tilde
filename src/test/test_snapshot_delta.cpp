@@ -13,6 +13,7 @@
 
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
+#include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
 
 #include <cassert>
@@ -56,6 +57,52 @@ uint32_t leaf_index_of(entities::entity_type type, const char* dotted_name)
   std::cerr << "    !! no networked leaf named '" << dotted_name << "'\n";
   assert(false && "leaf_index_of: unknown field -- did entities.def change?");
   return 0;
+}
+
+// Round-trips a whole frame and reports what the encoder actually put on the
+// wire. `out_record_count` is the var_uint at the head of the stream, which is
+// the thing the "unchanged entities cost nothing" claim is really about.
+size_t transmit_snapshot(const network::snapshot_frame_t& current,
+                         const network::snapshot_frame_t* baseline,
+                         network::snapshot_frame_t&       destination,
+                         uint32_t*                        out_record_count = nullptr)
+{
+  network::Bit_Writer writer;
+  network::serialize_snapshot(writer, current, baseline);
+
+  if (out_record_count != nullptr)
+  {
+    network::Bit_Reader counter(writer.buffer.data(), writer.buffer.size());
+    *out_record_count = network::read_var_uint(counter);
+  }
+
+  // A trailing payload, because the real packet has one: the cosmetic effect
+  // batch rides in the same bitstream directly after the entity records. That
+  // only works if the reader stops on exactly the bit the writer stopped on,
+  // so assert the position AND read the tail back.
+  constexpr uint32_t trailing_sentinel = 0xABCD;
+  const int          writer_end_bit    = writer.bit_index;
+  network::write_var_uint(writer, trailing_sentinel);
+
+  network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
+  const bool          decoded = network::deserialize_snapshot(reader, baseline, destination);
+  assert(decoded && "a snapshot this test wrote must decode");
+  (void)decoded;
+
+  assert(reader.bit_index == writer_end_bit &&
+         "reader and writer disagree on where the snapshot ends -- anything "
+         "appended after it decodes as garbage");
+  assert(network::read_var_uint(reader) == trailing_sentinel);
+
+  return (size_t)((writer_end_bit + 7) / 8);
+}
+
+entities::Rocket_Entity make_rocket(shared::entity_uid_t uid, float x)
+{
+  entities::Rocket_Entity rocket;
+  rocket.entity_id = uid;
+  rocket.position  = {x, 0.f, 0.f};
+  return rocket;
 }
 
 } // namespace
@@ -207,6 +254,172 @@ int main()
     network::changed_fields_t nothing_changed;
     transmit(baseline, &baseline, unchanged_client, &nothing_changed);
     assert(!nothing_changed.any());
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] Absence means UNCHANGED, not gone..." << std::endl;
+
+    // The property the old format could not express. Three rockets exist; one
+    // moves. The wire carries ONE record, and the receiver still ends up with
+    // three -- the other two ride across from the baseline it already holds.
+    network::snapshot_frame_t server_frame;
+    server_frame.tick             = 1;
+    server_frame.rockets[10]      = make_rocket(10, 0.f);
+    server_frame.rockets[11]      = make_rocket(11, 100.f);
+    server_frame.rockets[12]      = make_rocket(12, 200.f);
+
+    network::snapshot_frame_t client_frame;
+    uint32_t                  record_count = 0;
+    const size_t full_size = transmit_snapshot(server_frame, nullptr, client_frame,
+                                               &record_count);
+    assert(record_count == 3); // no baseline: every entity is a full record
+    assert(client_frame.rockets.size() == 3);
+
+    network::snapshot_frame_t acked = client_frame;
+
+    server_frame.tick               = 2;
+    server_frame.rockets[11].position.x = 140.f;
+
+    network::snapshot_frame_t next_client_frame;
+    const size_t delta_size = transmit_snapshot(server_frame, &acked, next_client_frame,
+                                                &record_count);
+
+    assert(record_count == 1); // only the rocket that moved
+    assert(next_client_frame.rockets.size() == 3);
+    assert(next_client_frame.rockets.at(11).position.x == 140.f);
+    assert(next_client_frame.rockets.at(10).position.x == 0.f);   // carried over
+    assert(next_client_frame.rockets.at(12).position.x == 200.f); // carried over
+
+    std::cout << "    Full update: " << full_size << " bytes / 3 records, delta: "
+              << delta_size << " bytes / 1 record" << std::endl;
+    assert(delta_size < full_size);
+
+    // A tick where nothing at all moved writes only the record count.
+    network::snapshot_frame_t idle_client_frame;
+    network::snapshot_frame_t idle_baseline = next_client_frame;
+    transmit_snapshot(server_frame, &idle_baseline, idle_client_frame, &record_count);
+    assert(record_count == 0);
+    assert(idle_client_frame.rockets.size() == 3);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] Removal is explicit, and spawn needs no opcode..." << std::endl;
+
+    network::snapshot_frame_t server_frame;
+    server_frame.tick        = 1;
+    server_frame.rockets[10] = make_rocket(10, 0.f);
+    server_frame.rockets[11] = make_rocket(11, 100.f);
+
+    network::snapshot_frame_t client_frame;
+    transmit_snapshot(server_frame, nullptr, client_frame);
+    assert(client_frame.rockets.size() == 2);
+
+    network::snapshot_frame_t acked = client_frame;
+
+    // Rocket 10 explodes, rocket 12 is fired. One removal record, one full
+    // record -- the spawn needs no opcode of its own, because "no baseline
+    // entry" already means every mask bit is set.
+    server_frame.tick = 2;
+    server_frame.rockets.erase(10);
+    server_frame.rockets[12] = make_rocket(12, 300.f);
+
+    network::snapshot_frame_t next_client_frame;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, &acked, next_client_frame, &record_count);
+
+    assert(record_count == 2);
+    assert(next_client_frame.rockets.count(10) == 0); // gone, and said so
+    assert(next_client_frame.rockets.count(11) == 1); // unchanged, carried over
+    assert(next_client_frame.rockets.at(12).position.x == 300.f);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] A dropped removal re-rides on the next snapshot..."
+              << std::endl;
+
+    // The reason removal belongs IN the delta rather than on its own despawn
+    // channel: it inherits the acked-baseline rule's reliability. Lose the
+    // packet that says "gone" and the client's ack does not advance, so the
+    // next snapshot is computed against a baseline that STILL HAS the entity
+    // and says it again. No retransmit layer involved.
+    network::snapshot_frame_t server_frame;
+    server_frame.tick        = 1;
+    server_frame.rockets[10] = make_rocket(10, 0.f);
+
+    network::snapshot_frame_t client_frame;
+    transmit_snapshot(server_frame, nullptr, client_frame);
+    assert(client_frame.rockets.count(10) == 1);
+
+    // Tick 1 is the newest thing the client reconstructed, so it is what it
+    // acks -- and it keeps acking it, because tick 2 never arrives.
+    const network::snapshot_frame_t acked_tick_1 = client_frame;
+
+    server_frame.tick = 2;
+    server_frame.rockets.erase(10);
+    {
+      network::snapshot_frame_t discarded_by_packet_loss;
+      transmit_snapshot(server_frame, &acked_tick_1, discarded_by_packet_loss);
+      assert(discarded_by_packet_loss.rockets.count(10) == 0); // it was in there
+    }
+
+    // Tick 3: nothing about rocket 10 changed since tick 2 -- it is still
+    // absent. Against the acked tick 1 it is still a removal.
+    server_frame.tick = 3;
+    network::snapshot_frame_t recovered;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, &acked_tick_1, recovered, &record_count);
+
+    assert(record_count == 1);
+    assert(recovered.rockets.count(10) == 0);
+
+    std::cout << "    -> Success (removal survived the loss)!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] Mixed entity types share one record stream..." << std::endl;
+
+    network::snapshot_frame_t server_frame;
+    server_frame.tick = 1;
+
+    entities::Player_Entity player;
+    player.entity_id         = 1;
+    player.client_slot_index = 0;
+    player.health            = 100;
+    server_frame.players[1]  = player;
+
+    entities::Physics_Body_Entity body;
+    body.entity_id                 = 20;
+    body.position                  = {5.f, 6.f, 7.f};
+    server_frame.physics_bodies[20] = body;
+
+    server_frame.rockets[30] = make_rocket(30, 42.f);
+
+    network::snapshot_frame_t client_frame;
+    transmit_snapshot(server_frame, nullptr, client_frame);
+
+    assert(client_frame.players.at(1).health == 100);
+    assert(client_frame.players.at(1).client_slot_index == 0);
+    assert(client_frame.physics_bodies.at(20).position.y == 6.f);
+    assert(client_frame.rockets.at(30).position.x == 42.f);
+
+    // The player leaves; the other two types must be untouched by that.
+    network::snapshot_frame_t acked = client_frame;
+    server_frame.players.clear();
+
+    network::snapshot_frame_t next_client_frame;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, &acked, next_client_frame, &record_count);
+
+    assert(record_count == 1);
+    assert(next_client_frame.players.empty());
+    assert(next_client_frame.physics_bodies.size() == 1);
+    assert(next_client_frame.rockets.size() == 1);
 
     std::cout << "    -> Success!" << std::endl;
   }

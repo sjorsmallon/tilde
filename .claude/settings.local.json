@@ -176,7 +176,22 @@
       "Bash(./cmake_build/bin/MyGame_Client.exe)",
       "PowerShell(Stop-Process -Name MyGame_Server -Force -ErrorAction SilentlyContinue)",
       "PowerShell(Get-Process MyGame_Server -ErrorAction SilentlyContinue)",
-      "PowerShell(\"stopped\")"
+      "PowerShell(\"stopped\")",
+      "PowerShell(\"todo.md: $\\(\\(Get-Content todo.md | Measure-Object -Line\\).Lines\\) lines\"; \"done.md: $\\(\\(Get-Content done.md | Measure-Object -Line\\).Lines\\) lines\")",
+      "Bash(timeout 6 ./cmake_build/bin/MyGame_Server.exe)",
+      "PowerShell(cmake --build cmake_build -j8 --target game_client 2>$null)",
+      "PowerShell(cmake --build cmake_build -j8 2>$null)",
+      "Bash(git mv *)",
+      "Bash(cmake --build cmake_build --target def_gen -j8)",
+      "Bash(./cmake_build/bin/def_gen src/shared/cvars/cvars.def --dump)",
+      "Bash(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --dump)",
+      "Bash(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --emit --asset-root .)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(sed -n 30,50p __TRACKED_VAR__/generated/cvars_generated.hpp)",
+      "Bash(grep -n 'sv_hostname\\\\|sv_motd\\\\|string_capacity' __TRACKED_VAR__/generated/cvars_generated.cpp)",
+      "Bash('C:/Program Files/LLVM/bin/clang++.exe' -std=c++23 -fsyntax-only -I src/shared __TRACKED_VAR__/generated/cvars_generated.cpp)",
+      "Bash(echo \"SYNTAX-CHECK-EXIT=$?\")",
+      "Bash(python3 -)"
     ],
     "additionalDirectories": [
       "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"

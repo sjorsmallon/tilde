@@ -30,7 +30,7 @@ public:
 private:
   enum class Mode
   {
-    Setup,  // Select entity, pick face, set subdivision
+    Setup,  // Select displacement geometry, pick face, set subdivision
     Paint,  // Brush displacement painting
     Select  // Box-select vertices and step height
   };
@@ -78,7 +78,7 @@ private:
   std::optional<shared::geometry_value_t> select_start_geometry;
 
   // Helpers
-  shared::displacement_geometry_t *get_selected(editor_context_t &ctx);
+  shared::displacement_geometry_t *get_displacement_if_it_is_selected(editor_context_t &ctx);
   bool raycast_displacement_mesh(const shared::displacement_geometry_t &displacement,
                                  const linalg::vec3 &ray_origin,
                                  const linalg::vec3 &ray_dir, float &out_t,

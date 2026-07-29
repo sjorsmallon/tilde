@@ -4,7 +4,7 @@ Entities are declared once, in a text DSL, and everything else is generated
 from that declaration.
 
 ```
-entities.def  ──entity_gen──▶  generated/entities_generated.{hpp,cpp}
+entities.def  ──def_gen──▶  generated/entities_generated.{hpp,cpp}
                                           │
                     entity_reflection.{hpp,cpp} walks the tables
                                           │
@@ -14,7 +14,7 @@ entities.def  ──entity_gen──▶  generated/entities_generated.{hpp,cpp}
 | File | What it is |
 |---|---|
 | `entities.def` | **The source of truth.** Every entity, component, enum and asset class. Edit this. |
-| `../../tools/entity_gen.cpp` | The parser + generator. Standalone, no project dependencies. |
+| `../../tools/def_gen.cpp` | The schema compiler: parser + generator for every `.def`. Standalone, no project dependencies. |
 | `generated/entities_generated.hpp` | Structs, enums, `entity_type`, `SCHEMA_HASH`. Generated — do not edit. |
 | `generated/entities_generated.cpp` | `ENTITY_INFOS[]`, `COMPONENT_OFFSETS[][]`, the factory, the asset manifests. Generated — do not edit. |
 | `entity_reflection.{hpp,cpp}` | The hand-written half: everything the tables can *do* that isn't worth generating. |
@@ -24,10 +24,17 @@ purpose: they are meant to be readable and opened without building, and a
 `.def` change should show up as one reviewable diff. CMake regenerates them
 whenever the `.def` *or* the contents of a scanned asset directory change.
 
-Inspect the parsed IR without building the game:
+`def_gen` is not entity-only: `../cvars/cvars.def` is its second input, and one
+run over both produces the single `SCHEMA_HASH` the connect handshake compares.
+Pass every `.def` in one invocation — a partial run with `--emit` writes a hash
+that disagrees with a full build. The two families share the lexer, the
+primitive type table and the hash, and nothing else.
+
+Inspect the parsed IR without building the game (and without writing anything —
+emission is opt-in via `--emit`):
 
 ```bash
-./cmake_build/bin/entity_gen src/shared/entities/entities.def --dump
+./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --dump
 ```
 
 ## The old macro system is gone

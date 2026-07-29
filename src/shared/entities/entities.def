@@ -1,6 +1,6 @@
 // entities.def -- entity definition DSL.
 //
-// Parsed by src/tools/entity_gen.cpp, which emits generated/entities_generated.*
+// Parsed by src/tools/def_gen.cpp, which emits generated/entities_generated.*
 //
 // Transcribed 2026-07-26 from the macro declarations in this folder; flags
 // audited field by field 2026-07-27 (P4). See entity_def.md at the repo root

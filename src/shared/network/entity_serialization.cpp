@@ -299,6 +299,25 @@ void serialize_entity(Bit_Writer& writer, const entities::Entity& entity,
   }
 }
 
+bool has_networked_changes(const entities::Entity& entity,
+                           const entities::Entity& baseline)
+{
+  if (baseline.type != entity.type)
+    return true;
+
+  const Span<const leaf_field_t> leaves = entities::networked_leaf_fields(entity.type);
+
+  const uint8_t* entity_base   = reinterpret_cast<const uint8_t*>(&entity);
+  const uint8_t* baseline_base = reinterpret_cast<const uint8_t*>(&baseline);
+
+  for (const leaf_field_t& leaf : leaves)
+    if (std::memcmp(entity_base + leaf.offset, baseline_base + leaf.offset,
+                    leaf.info->size_in_bytes) != 0)
+      return true;
+
+  return false;
+}
+
 void deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
                         changed_fields_t* out_changed)
 {

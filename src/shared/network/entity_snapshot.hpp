@@ -1,0 +1,117 @@
+#pragma once
+
+// The wire form of a WHOLE SNAPSHOT: the set of replicated entities at one
+// server tick, delta-encoded against the snapshot the receiver acked.
+//
+// `entity_serialization.{hpp,cpp}` handles one entity's FIELDS. This handles
+// the set: which entities exist, which changed, and which are GONE.
+//
+// ---------------------------------------------------------------------------
+// Why removal is a record in here and not a separate spawn/despawn channel
+// ---------------------------------------------------------------------------
+//
+// Membership is a property of "the world at tick N", exactly like a field
+// value, so it is delta-encoded against the acked baseline exactly like one --
+// and it inherits that rule's reliability for free. If the datagram carrying
+// "entity 47 is gone" is lost, the client's ack does not advance past it, so
+// the next snapshot is computed against an older baseline that STILL CONTAINS
+// entity 47, and the removal is emitted again. It self-heals within a round
+// trip for the same reason a changed field does.
+//
+// A separate despawn channel would need its own retransmit layer AND its own
+// ordering against the snapshot stream -- a despawn landing before a snapshot
+// that still lists the entity, or after one that already dropped it, is a
+// second source of truth about world membership disagreeing with the first.
+//
+// ---------------------------------------------------------------------------
+// What explicit removal buys: absence now means UNCHANGED
+// ---------------------------------------------------------------------------
+//
+// The old format wrote every entity every tick, because "absent means gone"
+// was the only way to express a removal. So an entity that had not moved still
+// paid its key and an all-zero change mask, every tick, forever.
+//
+// Now the receiver SEEDS the frame from the baseline and applies records on
+// top, so an entity the server did not mention is simply carried across
+// unchanged. Only spawns, changes and removals are on the wire. That is the
+// step from "whole-world snapshots" to real per-entity deltas.
+//
+// ---------------------------------------------------------------------------
+// Grammar
+// ---------------------------------------------------------------------------
+//
+//   snapshot   := record_count:var_uint  record*
+//   record     := type:var_uint  uid:var_uint  removed:bit  payload?
+//   payload    := <entity_serialization.hpp: leaf change mask + changed values>
+//
+//   `type`      is entities::entity_type. Enum values shift when entities.def
+//               changes, which is exactly what SCHEMA_HASH in the connect
+//               handshake refuses a build over -- so it is safe to send raw.
+//               It replaces the old 255/254 "special slot" sentinels, which
+//               shared a number space with client slots and so would have
+//               collided once bot slots reached 254 (BOT_SLOT_BASE is 32).
+//   `uid`       is entity_id, the key. It has to be readable BEFORE the
+//               payload, because it is what selects the baseline to delta
+//               against.
+//   `removed`   set => the entity was in the baseline and is gone; there is no
+//               payload. Never emitted in a full update (nothing to remove
+//               relative to nothing).
+//   no payload bit is needed for "spawned": an entity with no baseline entry
+//               is written with every mask bit set, which IS a full update,
+//               and the receiver starts it from a default-constructed value.
+//
+// An unknown `type` is unrecoverable rather than skippable -- payload length is
+// only knowable from the type's field table -- so decoding fails and the caller
+// drops the packet whole.
+
+#include "../entities/entity_reflection.hpp"
+#include "../entity_uid.hpp"
+#include "bitstream.hpp"
+#include "entity_serialization.hpp"
+
+#include <unordered_map>
+
+namespace network
+{
+
+// The replicated world at one tick, keyed by entity uid. Both ends hold these
+// and they must agree byte for byte: the server deltas against what it believes
+// the client reconstructed, so the two structures are the same type on purpose.
+//
+// One map per replicated entity type. Adding a networked type means adding a
+// map here plus a case in each of the three switches in the .cpp -- the same
+// exhaustive-switch pattern the rest of the entity code uses, so the compiler
+// names every site.
+struct snapshot_frame_t
+{
+  uint32_t tick = 0;
+
+  std::unordered_map<shared::entity_uid_t, entities::Player_Entity>       players;
+  std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity>       rockets;
+  std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> physics_bodies;
+
+  void clear()
+  {
+    tick = 0;
+    players.clear();
+    rockets.clear();
+    physics_bodies.clear();
+  }
+};
+
+// Writes `current` as a delta against `baseline`, or as a full update when
+// `baseline` is null. Unchanged entities are omitted entirely.
+void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
+                        const snapshot_frame_t* baseline);
+
+// Reconstructs a frame from the stream. `out_frame` is seeded from `baseline`
+// (or emptied when it is null) and then has the records applied to it, so
+// entities the sender omitted survive unchanged.
+//
+// Returns false on an undecodable stream (unknown entity type). The stream
+// position is then meaningless, so the caller must drop the whole packet --
+// including anything appended after the snapshot.
+bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
+                          snapshot_frame_t& out_frame);
+
+} // namespace network

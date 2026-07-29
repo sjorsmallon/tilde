@@ -32,13 +32,15 @@ Test executables: `task_system_test`, `log_test`, `ecs_test`, `camera_test`, `li
 
 Run tests **from the project root** — `map_migration_test` loads the `maps/test` fixture by relative path.
 
-Inspect what the entity DSL parsed, without building the game:
+Inspect what the DSL parsed, without building the game or writing anything:
 
 ```bash
-./cmake_build/bin/entity_gen src/shared/entities/entities.def --dump
+./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --dump
 ```
 
-Meson (`meson.build`) exists but is **out of date** — it has no `entity_gen` target and is missing source files. CMake is primary.
+Pass **every** `.def` in one run — `SCHEMA_HASH` is computed across all of them, so a partial run with `--emit` writes a hash that disagrees with a full build. Emission is opt-in (`--emit`); output goes to a `generated/` directory beside each `.def`.
+
+Meson (`meson.build`) exists but is **out of date** — it has no `def_gen` target and is missing source files. CMake is primary.
 
 ## Architecture
 
@@ -48,12 +50,13 @@ Three libraries: `game_shared` (static lib), `game_client` (shared lib, Vulkan/S
 src/
 ├── shared/           Core logic, networking, entities, map system
 │   ├── entities/     entities.def (the DSL), entity_reflection, generated/
+│   ├── cvars/        cvars.def, cvar_runtime.hpp, generated/
 │   └── network/      Entity wire serialization, bitstream, UDP, map transfer
 ├── client/           Vulkan rendering, SDL2 input, editor
 │   ├── states/       Game state machine (PlayState, ToolEditorState)
 │   └── editor/       Tool-based editor (Selection, Placement, Sculpting)
 ├── server/           Authoritative game server
-├── tools/            entity_gen (the .def parser + code generator)
+├── tools/            def_gen (the schema compiler: .def parser + code generator)
 └── launcher/         main_integrated.cpp, main_dedicated.cpp
 ```
 
@@ -74,10 +77,10 @@ Everything editor-side is keyed by uid and works across both lists through the s
 
 **There is no runtime schema registry and no schema macros.** `SCHEMA_FIELD`, `DEFINE_SCHEMA_CLASS`, `Schema_Registry`, the `SHARED_ENTITIES_LIST` X-macro and `network::Entity` were all deleted. Do not reintroduce them; `src/shared/entities/README.md` has the full picture.
 
-Every entity is declared once in **`src/shared/entities/entities.def`**, a text DSL parsed at build time by `src/tools/entity_gen.cpp`, which emits `src/shared/entities/generated/entities_generated.{hpp,cpp}`. Those land in the source tree on purpose: they are meant to be read, and a `.def` change shows up as a reviewable diff. **Never hand-edit them** — edit the `.def` and rebuild.
+Every entity is declared once in **`src/shared/entities/entities.def`**, a text DSL parsed at build time by `src/tools/def_gen.cpp`, which emits `src/shared/entities/generated/entities_generated.{hpp,cpp}`. Those land in the source tree on purpose: they are meant to be read, and a `.def` change shows up as a reviewable diff. **Never hand-edit them** — edit the `.def` and rebuild.
 
 ```
-entities.def  ──entity_gen──▶  entities_generated.{hpp,cpp}   (structs + tables)
+entities.def  ──def_gen──▶  entities_generated.{hpp,cpp}   (structs + tables)
                                         │
              entity_reflection.{hpp,cpp} walks those tables
                                         │
@@ -108,6 +111,27 @@ Collision geometry is deliberately NOT in that list — boxes, static meshes and
 
 `collect_leaf_fields(type, required_flags)` flattens the component tree into dotted paths (`volume.half_extents`) in declaration order — that ordering is what makes a saved map diffable. `networked_leaf_fields(type)` is the cached hot-path variant for the wire.
 
+### CVars and commands — the second `.def` family
+
+`def_gen` is **the schema compiler**, not the entity generator: `src/shared/cvars/cvars.def` is its second input, declaring every console variable and command. It emits `src/shared/cvars/generated/`:
+
+```
+cvars_generated.hpp            cvar_state_t, cvar_id / command_id, the info
+                               tables, the text conversion, handler declarations
+cvars_generated.cpp            the tables. References NO handler, so it compiles
+                               into game_shared with neither side present
+server_command_bindings.cpp    fills the @Server slots — into game_server
+client_command_bindings.cpp    the @Client slots — into game_client
+```
+
+The two families are fenced: one `.def` holds one family (mixing them is a generator error), a cvar may not reference an entity type, and the flag vocabularies are disjoint — `@Networked` on a cvar and `@Client` on an entity field are both errors, not no-ops. What they share is the lexer, the primitive type table and `SCHEMA_HASH`.
+
+Cvar flags are `@Client` / `@Server` / `@Mirrored`, and **no flag means shared-local** (both sides hold it, each process owns its own). `@Mirrored` is server-owned with a read-only client copy kept fresh over the wire — earned only by movement prediction today. A command must declare `@Client` or `@Server`, because that is which binder TU references its handler.
+
+**There is no registration and no static initializer.** A cvar read is a field access (`cvars.pm_maxspeed`), not a string lookup; names exist at runtime only in the console. Declaring `spawn_bot @Server` obligates server code to define `cvars::commands::spawn_bot` with the canonical signature — the generated binder references that symbol directly, so a missing or misspelled handler is a **link error naming it**. That link step is the assert. `src/shared/cvars/cvar_runtime.hpp` is the small hand-written half: `command_context_t`, `command_handler_t`, `forward_line_fn_t` — the shapes no `.def` declaration implies.
+
+> **Migration in progress.** The old `src/shared/cvar.hpp` (`CVarSystem`, `CVar<T>`, `Console_Command`) is still live and still what the game reads; the generated tables exist but nothing consumes them yet. Ownership cutover, console/wire, and deleting the old classes are steps 3–5 in `todo.md`. `cvar_def.md` is the design.
+
 ### Editor
 
 Tool pattern: `ToolEditorState` dispatches to the active tool (Selection, Placement, Sculpting, Displacement, Particle, Pathfinding). Each tool handles mouse/key events and overlay drawing.
@@ -134,13 +158,17 @@ Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` s
 
 ### Networking
 
-Protobuf for message definitions (`proto/game.proto`). Custom UDP with delta-compressed entity serialization via bitstream. Server port 9999, client port 5001, max packet 1200 bytes (`network_types.hpp`).
+Protobuf for message definitions (`proto/game.proto`). Custom UDP with delta-compressed entity serialization via bitstream. Server port 9999, clients bind an ephemeral port (a fixed client port made two local clients indistinguishable), max packet 1200 bytes (`network_types.hpp`).
 
 The connect handshake exchanges `entities::SCHEMA_HASH` (in `CmdConnect`); the server refuses a client whose hash differs, reporting both. A mismatch means the two builds disagree about entity layout or the asset manifest, so every snapshot after it would be misparsed.
 
 **Snapshot deltas are taken against the ACKED snapshot, never the last-sent one.** This is the load-bearing rule of the whole delta path: snapshots are unreliable, so deltaing against what was last sent means one dropped datagram permanently desyncs every field that then stops changing. The client names the newest snapshot it reconstructed in `C2S_PlayerMoveCommand.acked_server_tick`; the server names what it deltaed against in `S2C_EntityPackage.delta_from_tick` (0 = full update). Both ends keep the same 32-tick ring, `network::Snapshot_History` (`shared/network/snapshot_history.hpp`) — the server keeps what it sent, the client keeps what it reconstructed. A client that no longer holds `delta_from_tick` drops the packet whole and logs it; its ack doesn't advance, so the server falls back to a full update within a round trip. Server ticks start at 1 because 0 is the "no baseline" sentinel. Client cvar `net_snapshot_debug` prints the baseline tick and payload size every 120 ticks.
 
 Per-leaf change masks come from `networked_leaf_fields(type)` on both ends, so bit N is the same field by construction; `deserialize_entity` can hand that mask back via an optional `network::changed_fields_t*` out-param.
+
+Two levels, two files. `entity_serialization.{hpp,cpp}` encodes one entity's **fields**. `entity_snapshot.{hpp,cpp}` encodes the **set** — which entities exist, which changed, which are gone — as `network::snapshot_frame_t` (one type, held by both ends, keyed by entity uid). Its grammar is in the header.
+
+**Absence in a snapshot means UNCHANGED, not gone.** The receiver seeds the frame from the baseline and applies records on top, so only spawns, changes and removals ride the wire. Removal is an explicit per-record bit, and it lives *in* the delta rather than on a separate despawn channel precisely so it inherits the acked-baseline rule: a lost removal is recomputed against the older baseline that still holds the entity, and re-sent. Spawn needs no opcode — an entity with no baseline entry is written with every mask bit set, which is already a full update. An unknown entity type on the wire is undecodable (payload length comes from the type's field table), so the client drops that packet whole.
 
 Geometry is never replicated — clients get it from their own map load or from map streaming, never from snapshots.
 

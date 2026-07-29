@@ -2,7 +2,7 @@
 
 > **⚠ The `SCHEMA_FIELD` / `Schema_Registry` half of this is being replaced.**
 > Entity and component field declarations move to `entities.def` + the
-> `entity_gen` build-time generator; the flat `Field_Prop` walk described below
+> `def_gen` build-time generator; the flat `Field_Prop` walk described below
 > is replaced by generated per-type serializers ("serializer v2"). The bitstream
 > and delta-compression design survives unchanged — it is the encoding side of
 > the detection/encoding seam. See `entity_def.md` at the repo root.

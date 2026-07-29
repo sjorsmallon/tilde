@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by entity_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 #pragma once
 
 #include "linalg.hpp"
@@ -73,7 +73,7 @@ Span<const asset_info_t> sprite_asset_manifest();
 
 // The manifest a field_info_t::asset_class_id refers to. Empty span for
 // an id no asset class owns, which is a caller bug -- check the column
-// is not -1 before calling.
+// is not NOT_AN_ASSET_CLASS before calling.
 Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);
 
 enum class Light_Type : uint8_t
@@ -380,6 +380,15 @@ enum field_flags_t : uint32_t
 // struct, so a consumer that does NOT care about the inside (undo's
 // memcmp diffing, a whole-struct copy) can treat it as one opaque blob
 // and never recurse at all.
+// Four of field_info_t's columns are meaningful only for their own
+// FIELD_TYPE. These name what "not that type" looks like, so a reader
+// never has to remember whether absent is -1 or 0 -- and so a check
+// says what it means rather than testing a magic number.
+constexpr int32_t  NOT_A_COMPONENT    = -1;
+constexpr uint32_t NOT_A_STRING       = 0;
+constexpr int32_t  NOT_AN_ASSET_CLASS = -1;
+constexpr int32_t  NOT_AN_ENUM        = -1;
+
 struct field_info_t
 {
   const char*  name;
@@ -387,10 +396,10 @@ struct field_info_t
   uint32_t     offset;
   uint32_t     size_in_bytes;
   uint32_t     flags;
-  int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else -1
-  uint32_t     string_capacity; // FIELD_TYPE_STRING only, else 0
-  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else -1
-  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else -1
+  int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else NOT_A_COMPONENT
+  uint32_t     string_capacity; // FIELD_TYPE_STRING only, else NOT_A_STRING
+  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else NOT_AN_ASSET_CLASS
+  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else NOT_AN_ENUM
 };
 
 struct entity_type_info_t
@@ -444,8 +453,12 @@ void destroy_entity(Entity* entity);
 // placement menu can index it directly.
 Span<const entity_type> placeable_entity_types();
 
-// Digest of every declaration in the .def. Exchanged at connect; a
-// mismatch means the two sides disagree about the entity layout.
+// Digest of every declaration in EVERY .def of the generator run --
+// entity layout, the resolved asset manifest, and the cvar/command
+// tables. Exchanged at connect; a mismatch means the two sides
+// disagree about what the bytes mean. It lives in this namespace for
+// historical reasons and is the ONE such value -- cvars_generated.hpp
+// deliberately does not emit a second one.
 extern const uint32_t SCHEMA_HASH;
 
 } // namespace entities

@@ -193,7 +193,7 @@ void append_leaf_fields(Span<const field_info_t> fields, const std::string& name
 
     if (field.type == FIELD_TYPE_COMPONENT)
     {
-      assert(field.component_id >= 0 && "component-typed field with no component id");
+      assert(field.component_id != NOT_A_COMPONENT && "component-typed field with no component id");
       append_leaf_fields(component_info((component_type)field.component_id).fields, name, offset,
                          required_flags, out_leaves);
       continue;
@@ -318,7 +318,7 @@ bool field_to_text(const void* field_bytes, const field_info_t& field, std::stri
 
     case FIELD_TYPE_ASSET:
     {
-      assert(field.asset_class_id >= 0 && "asset-typed field with no asset class id");
+      assert(field.asset_class_id != NOT_AN_ASSET_CLASS && "asset-typed field with no asset class id");
       const Span<const asset_info_t> manifest = asset_class_manifest(field.asset_class_id);
       const uint64_t value = (uint64_t)load_integer(field_bytes, field.size_in_bytes, false);
       if (value >= manifest.size())
@@ -329,7 +329,7 @@ bool field_to_text(const void* field_bytes, const field_info_t& field, std::stri
 
     case FIELD_TYPE_ENUM:
     {
-      assert(field.enum_id >= 0 && "enum-typed field with no enum id");
+      assert(field.enum_id != NOT_AN_ENUM && "enum-typed field with no enum id");
       const enum_type_info_t& info  = enum_info((enum_type)field.enum_id);
       const uint64_t          value = (uint64_t)load_integer(field_bytes, field.size_in_bytes, false);
       if (value >= info.value_names.size())
@@ -449,7 +449,7 @@ bool field_from_text(const std::string& text, const field_info_t& field, void* f
 
     case FIELD_TYPE_ASSET:
     {
-      assert(field.asset_class_id >= 0 && "asset-typed field with no asset class id");
+      assert(field.asset_class_id != NOT_AN_ASSET_CLASS && "asset-typed field with no asset class id");
       const Span<const asset_info_t> manifest = asset_class_manifest(field.asset_class_id);
       for (uint32_t index = 0; index < manifest.size(); ++index)
       {
@@ -463,7 +463,7 @@ bool field_from_text(const std::string& text, const field_info_t& field, void* f
 
     case FIELD_TYPE_ENUM:
     {
-      assert(field.enum_id >= 0 && "enum-typed field with no enum id");
+      assert(field.enum_id != NOT_AN_ENUM && "enum-typed field with no enum id");
       const enum_type_info_t& info = enum_info((enum_type)field.enum_id);
       for (uint32_t index = 0; index < info.value_names.size(); ++index)
       {

@@ -1,11 +1,32 @@
 //
-// entity_gen.cpp -- parser for the entity definition DSL (.def files).
+// def_gen.cpp -- the schema compiler. Parses .def files and emits the constexpr
+// tables and plain structs the game reads.
 //
-// A host tool. Reads a .def file, tokenizes it, parses it into a flat IR and
-// resolves names, then dumps the result. Code generation will be appended to
-// this file later; the IR below is the contract between the two halves.
+// A host tool. Reads one or more .def files, tokenizes each, parses it into a
+// flat IR, resolves names, and emits generated C++ next to the .def it came
+// from. One run over every .def produces ONE SCHEMA_HASH, which is the whole
+// reason this is one tool: the connect handshake compares that single value, so
+// two tools would need a hash-combining convention living in C++ plus a
+// duplicated lexer that drifts.
 //
-// Design notes live in entity_def.md at the repo root.
+// Design notes live in entity_def.md (entities) and cvar_def.md (cvars and
+// commands) at the repo root.
+//
+// ---------------------------------------------------------------------------
+// Two families, fenced apart
+// ---------------------------------------------------------------------------
+//
+// The ENTITY family is `base` / `component` / `entity` / `enum` / `assets` /
+// flagsets, and emits entities_generated.{hpp,cpp}. The CVAR family is `cvars`
+// / `commands`, and emits cvars_generated.{hpp,cpp} plus the two per-side
+// command binder TUs.
+//
+// One .def file holds ONE family. They share the lexer, the block parser, the
+// primitive type table and the hash -- nothing else. A cvar may not reference an
+// entity type, an entity field may not reference a command, and the two flag
+// vocabularies are disjoint (@Networked on a cvar and @Client on an entity field
+// are both errors, not no-ops). The day a cross-family reference seems
+// necessary, that is a design discussion, not a parser feature.
 //
 // ---------------------------------------------------------------------------
 // Grammar
@@ -20,6 +41,8 @@
 //                      | 'entity'    annotation* '{' field* '}'
 //                      | 'enum'      '{' enum_value_list '}'
 //                      | 'assets'    '{' asset_entry* '}'
+//                      | 'cvars'     '{' cvar_line* '}'
+//                      | 'commands'  '{' command_line* '}'
 //                      | flagset
 //
 //   flagset           -> '[' annotation (',' annotation)* ']'
@@ -32,6 +55,11 @@
 //
 //   field             -> IDENTIFIER ':' type ('=' default_value)? annotation*
 //
+//   cvar_line         -> IDENTIFIER ':' type ('=' default_value)? annotation*
+//                        STRING_LITERAL
+//
+//   command_line      -> IDENTIFIER annotation* STRING_LITERAL
+//
 //   type              -> 'string' '<' NUMBER '>'
 //                      | IDENTIFIER
 //
@@ -43,9 +71,15 @@
 //
 //   annotation        -> '@' IDENTIFIER
 //
-// A field is newline terminated: its annotations must sit on the same line as
-// its name. There is no newline token -- every token carries its line number
-// and the annotation loop stops when the line changes.
+// A field, a cvar line and a command line are all newline terminated: their
+// annotations and the trailing description must sit on the same line as the
+// name. There is no newline token -- every token carries its line number and
+// the trailing loops stop when the line changes.
+//
+// The description on a cvar/command line is MANDATORY and is data, not a
+// comment: it is what the console prints for help and autocomplete. A missing
+// one is an error. There is no ambiguity with a string DEFAULT -- a default only
+// ever follows '='.
 //
 // ---------------------------------------------------------------------------
 // Memory
@@ -224,6 +258,23 @@ enum field_flags_t : uint32_t
   FIELD_FLAG_SAVEABLE  = 1 << 2,
 };
 
+// The cvar family's flag vocabulary. Stored in the same field_t::flags word as
+// the entity flags above and deliberately overlapping in bit value: which set a
+// word means is decided by the owning declaration's kind, and no code ever sees
+// a word without knowing that. The two vocabularies never mix, because the
+// resolver rejects an entity flag on a cvar and a cvar flag on an entity field
+// rather than quietly ORing it in.
+//
+// No flag at all is the common case and means shared-local: both sides hold the
+// value, each process owns its own, nothing is synced.
+enum cvar_flags_t : uint32_t
+{
+  CVAR_FLAG_NONE     = 0,
+  CVAR_FLAG_CLIENT   = 1 << 0, // client-owned; meaningless on a dedicated server
+  CVAR_FLAG_SERVER   = 1 << 1, // server-owned; clients invoke/inspect via the console only
+  CVAR_FLAG_MIRRORED = 1 << 2, // server-owned, pushed to clients as a read-only mirror
+};
+
 enum class_flags_t : uint32_t
 {
   CLASS_FLAG_NONE         = 0,
@@ -251,6 +302,11 @@ enum type_kind_t : uint8_t
   TYPE_ASSET,     // mesh_asset / sprite_asset, closed sets from the asset manifest
   TYPE_ENUM,      // resolved: declaration_index points at a DECLARATION_ENUM
   TYPE_COMPONENT, // resolved: declaration_index points at a DECLARATION_COMPONENT
+  // A command: a name and a handler, no value. It is written into the same
+  // field array as everything else because it is the same shape minus the type
+  // -- a named, flagged, described member of a block -- and the parser never
+  // produces it outside a `commands` body.
+  TYPE_VOID,
 };
 
 static const char* type_kind_name(type_kind_t kind)
@@ -276,6 +332,7 @@ static const char* type_kind_name(type_kind_t kind)
     case TYPE_ASSET:      return "asset";
     case TYPE_ENUM:       return "enum";
     case TYPE_COMPONENT:  return "component";
+    case TYPE_VOID:       return "void";
   }
   return "unknown";
 }
@@ -348,8 +405,15 @@ struct field_t
   int32_t          first_annotation; // into program_t::annotations
   int32_t          annotation_count;
   uint32_t         flags;            // filled by the resolve pass, not the parser
-  int32_t          offset;
-  int32_t          line;
+
+  // Cvar and command lines only, where it is mandatory: the console's help and
+  // autocomplete text. Zero length on an entity field, which has no such
+  // concept -- an entity field's documentation is a comment, because nothing at
+  // runtime ever shows it to a human.
+  string_view_t description;
+
+  int32_t offset;
+  int32_t line;
 };
 
 enum declaration_kind_t : uint8_t
@@ -360,6 +424,8 @@ enum declaration_kind_t : uint8_t
   DECLARATION_ENUM,
   DECLARATION_FLAGSET,
   DECLARATION_ASSETS,
+  DECLARATION_CVARS,
+  DECLARATION_COMMANDS,
 };
 
 static const char* declaration_kind_name(declaration_kind_t kind)
@@ -372,8 +438,18 @@ static const char* declaration_kind_name(declaration_kind_t kind)
     case DECLARATION_ENUM:      return "enum";
     case DECLARATION_FLAGSET:   return "flagset";
     case DECLARATION_ASSETS:    return "assets";
+    case DECLARATION_CVARS:     return "cvars";
+    case DECLARATION_COMMANDS:  return "commands";
   }
   return "unknown";
+}
+
+// Which half of the tool owns a declaration. A block name in the cvar family
+// carries no meaning beyond this -- it is never emitted, never queryable, and
+// exists so the .def can be folded into readable sections.
+static bool declaration_is_cvar_family(declaration_kind_t kind)
+{
+  return kind == DECLARATION_CVARS || kind == DECLARATION_COMMANDS;
 }
 
 struct declaration_t
@@ -406,11 +482,23 @@ struct declaration_t
   int32_t line;
 };
 
+// Which half of the tool a .def file belongs to. Decided by its contents, not
+// by its name: a file that declares cvars/commands blocks emits the cvar
+// artifacts, one that declares entity-family blocks emits the entity artifacts,
+// and a file that does both is an error (see check_family).
+enum def_family_t : uint8_t
+{
+  DEF_FAMILY_EMPTY = 0,
+  DEF_FAMILY_ENTITY,
+  DEF_FAMILY_CVAR,
+};
+
 struct program_t
 {
-  const char* filename;
-  char*       source;
-  int32_t     source_length;
+  const char*   filename;
+  def_family_t  family; // filled by the resolve pass
+  char*         source;
+  int32_t       source_length;
 
   token_t* tokens;
   int32_t  token_count;
@@ -1069,6 +1157,114 @@ static field_t* parse_field(parser_t* parser)
   return field;
 }
 
+// The trailing description literal shared by cvar and command lines. Mandatory,
+// and it must sit on the same line as the name -- like the annotations before
+// it, and for the same reason: the line IS the terminator.
+static bool parse_description(parser_t* parser, int32_t line, string_view_t* out_description,
+                              const char* what)
+{
+  token_t token = peek(parser);
+
+  if (token.kind != TOKEN_STRING_LITERAL || token.line != line)
+  {
+    parse_error_at(parser, token,
+                   "every %s needs a description string on the same line -- it is what the "
+                   "console prints for help and autocomplete, so it is data, not a comment",
+                   what);
+    return false;
+  }
+
+  advance(parser);
+
+  // The token already spans only what is between the quotes -- the tokenizer
+  // drops them, the same way it does for a string default value.
+  *out_description = token_text(parser->program, token);
+  return true;
+}
+
+// `name: type [= default] [@flags] "description"`
+static field_t* parse_cvar_line(parser_t* parser)
+{
+  token_t name_token = peek(parser);
+  if (!expect(parser, TOKEN_IDENTIFIER, "a cvar name"))
+    return nullptr;
+
+  field_t* field = push_field(parser->program);
+  field->name    = token_text(parser->program, name_token);
+  field->offset  = name_token.offset;
+  field->line    = name_token.line;
+
+  if (!expect(parser, TOKEN_COLON, "':' after the cvar name"))
+    return nullptr;
+
+  if (!parse_type(parser, &field->type))
+    return nullptr;
+
+  if (accept(parser, TOKEN_EQUALS))
+  {
+    if (!parse_default_value(parser, &field->default_value))
+      return nullptr;
+  }
+
+  field->annotation_count = parse_annotations(parser, name_token.line);
+
+  if (!parse_description(parser, name_token.line, &field->description, "cvar"))
+    return nullptr;
+
+  return field;
+}
+
+// `name [@flags] "description"` -- no type, because a command has no value.
+static field_t* parse_command_line(parser_t* parser)
+{
+  token_t name_token = peek(parser);
+  if (!expect(parser, TOKEN_IDENTIFIER, "a command name"))
+    return nullptr;
+
+  field_t* field    = push_field(parser->program);
+  field->name       = token_text(parser->program, name_token);
+  field->offset     = name_token.offset;
+  field->line       = name_token.line;
+  field->type.kind  = TYPE_VOID;
+  field->type.name  = field->name;
+
+  field->annotation_count = parse_annotations(parser, name_token.line);
+
+  if (!parse_description(parser, name_token.line, &field->description, "command"))
+    return nullptr;
+
+  return field;
+}
+
+// Both cvar-family bodies. Same shape as parse_struct_body -- one entry per
+// line, a failed entry rewinds and resynchronizes so the rest of the block
+// still reports its own errors.
+static bool parse_cvar_family_body(parser_t* parser, declaration_t* declaration, bool is_commands)
+{
+  if (!expect(parser, TOKEN_OPEN_BRACE, "'{' to open the declaration body"))
+    return false;
+
+  declaration->first_field = parser->program->field_count;
+
+  while (!check(parser, TOKEN_CLOSE_BRACE) && !check(parser, TOKEN_END_OF_FILE))
+  {
+    int32_t field_mark      = parser->program->field_count;
+    int32_t annotation_mark = parser->program->annotation_count;
+
+    field_t* parsed = is_commands ? parse_command_line(parser) : parse_cvar_line(parser);
+    if (parsed == nullptr)
+    {
+      parser->program->field_count      = field_mark;
+      parser->program->annotation_count = annotation_mark;
+      synchronize_to_next_field(parser);
+    }
+  }
+
+  declaration->field_count = parser->program->field_count - declaration->first_field;
+
+  return expect(parser, TOKEN_CLOSE_BRACE, "'}' to close the declaration body");
+}
+
 static bool parse_struct_body(parser_t* parser, declaration_t* declaration)
 {
   if (!expect(parser, TOKEN_OPEN_BRACE, "'{' to open the declaration body"))
@@ -1324,6 +1520,12 @@ static declaration_t* parse_declaration(parser_t* parser)
     declaration->kind = DECLARATION_ASSETS;
     parsed            = parse_assets_body(parser, declaration);
   }
+  else if (string_view_matches(kind_text, "cvars") || string_view_matches(kind_text, "commands"))
+  {
+    const bool is_commands = string_view_matches(kind_text, "commands");
+    declaration->kind      = is_commands ? DECLARATION_COMMANDS : DECLARATION_CVARS;
+    parsed                 = parse_cvar_family_body(parser, declaration, is_commands);
+  }
   else if (string_view_matches(kind_text, "base") || string_view_matches(kind_text, "component") ||
            string_view_matches(kind_text, "entity"))
   {
@@ -1343,7 +1545,7 @@ static declaration_t* parse_declaration(parser_t* parser)
   {
     parse_error_at(parser, kind_token,
                    "'%.*s' is not a declaration kind; expected 'base', 'component', "
-                   "'entity', 'enum' or 'assets'",
+                   "'entity', 'enum', 'assets', 'cvars' or 'commands'",
                    kind_text.length, kind_text.data);
   }
 
@@ -1463,37 +1665,100 @@ static void resolve_flagsets(program_t* program)
   }
 }
 
-static void resolve_field_flags(program_t* program, const name_table_t* table)
+static uint32_t builtin_cvar_flag(string_view_t name)
 {
-  for (int32_t index = 0; index < program->field_count; ++index)
+  if (string_view_matches(name, "Client"))   return CVAR_FLAG_CLIENT;
+  if (string_view_matches(name, "Server"))   return CVAR_FLAG_SERVER;
+  if (string_view_matches(name, "Mirrored")) return CVAR_FLAG_MIRRORED;
+  return CVAR_FLAG_NONE;
+}
+
+// A cvar/command line's flags. The two vocabularies are disjoint and neither
+// falls back to the other: writing @Networked on a cvar names a real flag from
+// the WRONG family, and silently ORing in its bit would give the cvar a
+// meaningless ownership claim. Flagsets are an entity-family feature and are
+// not consulted here -- three flags do not need an alias mechanism.
+static void resolve_cvar_line_flags(program_t* program, field_t* field)
+{
+  uint32_t flags = CVAR_FLAG_NONE;
+
+  for (int32_t offset = 0; offset < field->annotation_count; ++offset)
   {
-    field_t* field = &program->fields[index];
-    uint32_t flags = FIELD_FLAG_NONE;
+    const annotation_t* annotation = &program->annotations[field->first_annotation + offset];
 
-    for (int32_t offset = 0; offset < field->annotation_count; ++offset)
+    uint32_t builtin = builtin_cvar_flag(annotation->name);
+    if (builtin != CVAR_FLAG_NONE)
     {
-      const annotation_t* annotation = &program->annotations[field->first_annotation + offset];
-
-      uint32_t builtin = builtin_field_flag(annotation->name);
-      if (builtin != FIELD_FLAG_NONE)
-      {
-        flags |= builtin;
-        continue;
-      }
-
-      int32_t flagset_index = find_declaration(table, program, annotation->name);
-      if (flagset_index >= 0 &&
-          program->declarations[flagset_index].kind == DECLARATION_FLAGSET)
-      {
-        flags |= program->declarations[flagset_index].class_flags;
-        continue;
-      }
-
-      report_error(program, annotation->offset, annotation->line, "unknown annotation '@%.*s'",
-                   annotation->name.length, annotation->name.data);
+      flags |= builtin;
+      continue;
     }
 
-    field->flags = flags;
+    report_error(program, annotation->offset, annotation->line,
+                 "'@%.*s' is not a cvar flag; the complete list is @Client, @Server and "
+                 "@Mirrored, and no flag at all means shared-local",
+                 annotation->name.length, annotation->name.data);
+  }
+
+  field->flags = flags;
+}
+
+static void resolve_entity_field_flags(program_t* program, const name_table_t* table,
+                                       field_t* field)
+{
+  uint32_t flags = FIELD_FLAG_NONE;
+
+  for (int32_t offset = 0; offset < field->annotation_count; ++offset)
+  {
+    const annotation_t* annotation = &program->annotations[field->first_annotation + offset];
+
+    uint32_t builtin = builtin_field_flag(annotation->name);
+    if (builtin != FIELD_FLAG_NONE)
+    {
+      flags |= builtin;
+      continue;
+    }
+
+    int32_t flagset_index = find_declaration(table, program, annotation->name);
+    if (flagset_index >= 0 && program->declarations[flagset_index].kind == DECLARATION_FLAGSET)
+    {
+      flags |= program->declarations[flagset_index].class_flags;
+      continue;
+    }
+
+    if (builtin_cvar_flag(annotation->name) != CVAR_FLAG_NONE)
+    {
+      report_error(program, annotation->offset, annotation->line,
+                   "'@%.*s' is a cvar flag, not a field flag -- the two families share no "
+                   "vocabulary. An entity field takes @Networked, @Editable or @Saveable",
+                   annotation->name.length, annotation->name.data);
+      continue;
+    }
+
+    report_error(program, annotation->offset, annotation->line, "unknown annotation '@%.*s'",
+                 annotation->name.length, annotation->name.data);
+  }
+
+  field->flags = flags;
+}
+
+// Which flag vocabulary a line's annotations are read in is decided by the
+// declaration that owns it, so this walks declarations rather than the flat
+// field array.
+static void resolve_field_flags(program_t* program, const name_table_t* table)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    const bool           cvar_family = declaration_is_cvar_family(declaration->kind);
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      field_t* field = &program->fields[declaration->first_field + offset];
+      if (cvar_family)
+        resolve_cvar_line_flags(program, field);
+      else
+        resolve_entity_field_flags(program, table, field);
+    }
   }
 }
 
@@ -1611,6 +1876,11 @@ static void check_duplicate_fields(program_t* program)
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
+
+    // The cvar family has its own duplicate check: its names live in one flat
+    // namespace spanning every block, so a per-block scan would miss most of it.
+    if (declaration_is_cvar_family(declaration->kind))
+      continue;
 
     for (int32_t offset = 0; offset < declaration->field_count; ++offset)
     {
@@ -2022,6 +2292,189 @@ static void check_flag_contradictions(program_t* program)
   }
 }
 
+// ---------------------------------------------------------------------------
+// Cvar family checks
+// ---------------------------------------------------------------------------
+
+// One .def file, one family. The fence is structural rather than stylistic: the
+// two halves emit different artifact sets into different directories, and the
+// output directory is derived from the input path, so a mixed file has no
+// single answer for where its output goes. It would also be the first step
+// toward a cross-family reference, which is exactly what the design forbids.
+static void check_family(program_t* program)
+{
+  const declaration_t* first_entity = nullptr;
+  const declaration_t* first_cvar   = nullptr;
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+
+    if (declaration_is_cvar_family(declaration->kind))
+    {
+      if (first_cvar == nullptr)
+        first_cvar = declaration;
+    }
+    else if (first_entity == nullptr)
+    {
+      first_entity = declaration;
+    }
+  }
+
+  if (first_entity != nullptr && first_cvar != nullptr)
+  {
+    const declaration_t* later = first_cvar->line > first_entity->line ? first_cvar : first_entity;
+    report_error(program, later->offset, later->line,
+                 "this file mixes the two declaration families: '%.*s' (line %d) is %s and "
+                 "'%.*s' (line %d) is %s. One .def file holds one family -- they emit different "
+                 "artifacts into different directories",
+                 first_entity->name.length, first_entity->name.data, first_entity->line,
+                 declaration_kind_name(first_entity->kind), first_cvar->name.length,
+                 first_cvar->name.data, first_cvar->line,
+                 declaration_kind_name(first_cvar->kind));
+    return;
+  }
+
+  if (first_cvar != nullptr)
+    program->family = DEF_FAMILY_CVAR;
+  else if (first_entity != nullptr)
+    program->family = DEF_FAMILY_ENTITY;
+  else
+    program->family = DEF_FAMILY_EMPTY;
+}
+
+// A cvar's value has to survive a memcmp against a retained copy (that is how
+// mirroring detects a change) and has to be one plain member of a trivially
+// copyable struct. That rules out everything but the scalars and the
+// fixed-capacity string; enums and components are entity-family concepts and
+// have no console text form.
+static bool cvar_type_is_allowed(type_kind_t kind)
+{
+  return kind == TYPE_F32 || kind == TYPE_I32 || kind == TYPE_U32 || kind == TYPE_BOOL ||
+         kind == TYPE_STRING;
+}
+
+static void check_cvar_lines(program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (!declaration_is_cvar_family(declaration->kind))
+      continue;
+
+    const bool is_commands = declaration->kind == DECLARATION_COMMANDS;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* field = &program->fields[declaration->first_field + offset];
+      const uint32_t flags = field->flags;
+
+      if (!is_commands && !cvar_type_is_allowed(field->type.kind))
+      {
+        report_error(program, field->offset, field->line,
+                     "cvar '%.*s' has type '%.*s'; a cvar must be f32, i32, u32, bool or "
+                     "string<N> -- it is one member of a trivially copyable struct and has to "
+                     "have a console text form",
+                     field->name.length, field->name.data, field->type.name.length,
+                     field->type.name.data);
+      }
+
+      if ((flags & CVAR_FLAG_CLIENT) && (flags & CVAR_FLAG_SERVER))
+      {
+        report_error(program, field->offset, field->line,
+                     "'%.*s' is both @Client and @Server; ownership is exclusive -- pick the "
+                     "side that owns the value",
+                     field->name.length, field->name.data);
+      }
+
+      if ((flags & CVAR_FLAG_CLIENT) && (flags & CVAR_FLAG_MIRRORED))
+      {
+        report_error(program, field->offset, field->line,
+                     "'%.*s' is both @Client and @Mirrored; @Mirrored means the SERVER owns the "
+                     "value and clients hold a read-only copy, so it cannot also be client-owned",
+                     field->name.length, field->name.data);
+      }
+
+      if ((flags & CVAR_FLAG_SERVER) && (flags & CVAR_FLAG_MIRRORED))
+      {
+        report_error(program, field->offset, field->line,
+                     "'%.*s' is both @Server and @Mirrored; @Mirrored already means "
+                     "server-owned, so @Server adds nothing -- drop one",
+                     field->name.length, field->name.data);
+      }
+
+      if (!is_commands)
+        continue;
+
+      if (flags & CVAR_FLAG_MIRRORED)
+      {
+        report_error(program, field->offset, field->line,
+                     "command '%.*s' is @Mirrored, which is meaningless: a command has no value "
+                     "to mirror. A client invoking a @Server command forwards the line instead",
+                     field->name.length, field->name.data);
+      }
+
+      if ((flags & (CVAR_FLAG_CLIENT | CVAR_FLAG_SERVER)) == 0)
+      {
+        report_error(program, field->offset, field->line,
+                     "command '%.*s' declares neither @Client nor @Server, so neither generated "
+                     "binder would reference its handler and the slot would stay null at "
+                     "runtime. A command must name the side that implements it",
+                     field->name.length, field->name.data);
+      }
+    }
+  }
+}
+
+// Cvars and commands share ONE flat namespace: the console resolves both from
+// the same token, so a name that is a cvar in one block and a command in
+// another has no answer. Blocks are section comments, not scopes, so this
+// spans every block in the file.
+static void check_duplicate_cvar_names(program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (!declaration_is_cvar_family(declaration->kind))
+      continue;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* field = &program->fields[declaration->first_field + offset];
+
+      // Every line declared before this one, across every earlier block and
+      // earlier in this one. Reported once per duplicate, then on to the next
+      // name -- one bad line should not hide the rest.
+      const field_t* first_use = nullptr;
+
+      for (int32_t other_index = 0; other_index <= index && first_use == nullptr; ++other_index)
+      {
+        const declaration_t* other_declaration = &program->declarations[other_index];
+        if (!declaration_is_cvar_family(other_declaration->kind))
+          continue;
+
+        const int32_t limit = other_index == index ? offset : other_declaration->field_count;
+
+        for (int32_t other_offset = 0; other_offset < limit; ++other_offset)
+        {
+          const field_t* other = &program->fields[other_declaration->first_field + other_offset];
+          if (string_views_match(field->name, other->name))
+          {
+            first_use = other;
+            break;
+          }
+        }
+      }
+
+      if (first_use != nullptr)
+        report_error(program, field->offset, field->line,
+                     "'%.*s' is already declared on line %d; cvars and commands share one flat "
+                     "namespace because the console resolves both from the same token",
+                     field->name.length, field->name.data, first_use->line);
+    }
+  }
+}
+
 // `.Something` defaults name a value in a closed set, and the set is only known
 // once assets are expanded. Catching a bad name here beats emitting
 // `mesh_asset::Erorr` and making the C++ compiler explain it against generated
@@ -2075,17 +2528,33 @@ static void resolve_program(program_t* program)
   name_table_t table = {};
   build_name_table(&table, program);
 
+  // First, because everything after it is family-specific.
+  check_family(program);
+
   check_duplicate_declarations(program);
   check_duplicate_fields(program);
-  check_base_declaration(program);
 
   resolve_flagsets(program);
   resolve_field_flags(program, &table);
   resolve_class_annotations(program);
   resolve_types(program, &table);
-  check_component_cycles(program);
-  check_flag_contradictions(program);
-  expand_asset_manifests(program);
+
+  // A file that mixes families is already rejected and stays DEF_FAMILY_EMPTY,
+  // so neither set of checks runs on it -- reporting "no 'base' declaration" on
+  // top of the real error would only bury it.
+  if (program->family == DEF_FAMILY_CVAR)
+  {
+    check_cvar_lines(program);
+    check_duplicate_cvar_names(program);
+  }
+  else if (program->family == DEF_FAMILY_ENTITY)
+  {
+    check_base_declaration(program);
+    check_component_cycles(program);
+    check_flag_contradictions(program);
+    expand_asset_manifests(program);
+  }
+
   check_literal_defaults(program);
 
   free(table.slots);
@@ -2213,6 +2682,7 @@ static void write_cpp_type(FILE* out, const type_reference_t* type)
       fprintf(out, "%.*s", type->name.length, type->name.data);
       return;
 
+    case TYPE_VOID:      // a command, which is emitted as a handler, not a member
     case TYPE_UNRESOLVED:
       break;
   }
@@ -2244,9 +2714,29 @@ static const char* field_type_enum_name(type_kind_t kind)
     case TYPE_ASSET:     return "FIELD_TYPE_ASSET";
     case TYPE_ENUM:      return "FIELD_TYPE_ENUM";
     case TYPE_COMPONENT: return "FIELD_TYPE_COMPONENT";
+    case TYPE_VOID:      break; // cvar family only; never reaches an entity table
     case TYPE_UNRESOLVED: break;
   }
   return "FIELD_TYPE_INVALID";
+}
+
+// The cvar family's own type column. A separate, much smaller closed set than
+// the entity one on purpose: a cvar is a scalar or a fixed string, and giving
+// it the entity vocabulary would invite v3 cvars that no console line can spell.
+static const char* cvar_type_enum_name(type_kind_t kind)
+{
+  switch (kind)
+  {
+    case TYPE_F32:    return "CVAR_TYPE_F32";
+    case TYPE_I32:    return "CVAR_TYPE_I32";
+    case TYPE_U32:    return "CVAR_TYPE_U32";
+    case TYPE_BOOL:   return "CVAR_TYPE_BOOL";
+    case TYPE_STRING: return "CVAR_TYPE_STRING";
+    default:          break;
+  }
+  // check_cvar_lines rejects everything else, so reaching here is a generator bug.
+  assert(false && "cvar carries a type the checks should have rejected");
+  return "CVAR_TYPE_F32";
 }
 
 // Display names are derived, never declared: strip a trailing "_Entity", then
@@ -2395,7 +2885,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
   int32_t component_count = 0;
   int32_t* component_ids  = build_component_ids(program, &component_count);
 
-  fprintf(out, "// Generated from %s by entity_gen. Do not edit.\n", program->filename);
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "#pragma once\n\n");
   // Paths are relative to src/shared, which is game_shared's public include dir.
   fprintf(out, "#include \"linalg.hpp\"\n");
@@ -2475,7 +2965,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
     // the asset whose numeric value is `index`.
     fprintf(out, "// The manifest a field_info_t::asset_class_id refers to. Empty span for\n");
     fprintf(out, "// an id no asset class owns, which is a caller bug -- check the column\n");
-    fprintf(out, "// is not -1 before calling.\n");
+    fprintf(out, "// is not NOT_AN_ASSET_CLASS before calling.\n");
     fprintf(out, "Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);\n\n");
   }
 
@@ -2678,16 +3168,25 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "// struct, so a consumer that does NOT care about the inside (undo's\n");
   fprintf(out, "// memcmp diffing, a whole-struct copy) can treat it as one opaque blob\n");
   fprintf(out, "// and never recurse at all.\n");
+  fprintf(out, "// Four of field_info_t's columns are meaningful only for their own\n");
+  fprintf(out, "// FIELD_TYPE. These name what \"not that type\" looks like, so a reader\n");
+  fprintf(out, "// never has to remember whether absent is -1 or 0 -- and so a check\n");
+  fprintf(out, "// says what it means rather than testing a magic number.\n");
+  fprintf(out, "constexpr int32_t  NOT_A_COMPONENT    = -1;\n");
+  fprintf(out, "constexpr uint32_t NOT_A_STRING       = 0;\n");
+  fprintf(out, "constexpr int32_t  NOT_AN_ASSET_CLASS = -1;\n");
+  fprintf(out, "constexpr int32_t  NOT_AN_ENUM        = -1;\n\n");
+
   fprintf(out, "struct field_info_t\n{\n");
   fprintf(out, "  const char*  name;\n");
   fprintf(out, "  field_type_t type;\n");
   fprintf(out, "  uint32_t     offset;\n");
   fprintf(out, "  uint32_t     size_in_bytes;\n");
   fprintf(out, "  uint32_t     flags;\n");
-  fprintf(out, "  int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else -1\n");
-  fprintf(out, "  uint32_t     string_capacity; // FIELD_TYPE_STRING only, else 0\n");
-  fprintf(out, "  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else -1\n");
-  fprintf(out, "  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else -1\n");
+  fprintf(out, "  int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else NOT_A_COMPONENT\n");
+  fprintf(out, "  uint32_t     string_capacity; // FIELD_TYPE_STRING only, else NOT_A_STRING\n");
+  fprintf(out, "  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else NOT_AN_ASSET_CLASS\n");
+  fprintf(out, "  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else NOT_AN_ENUM\n");
   fprintf(out, "};\n\n");
 
   // Entities all derive from the base, so a single pointer type covers every
@@ -2754,8 +3253,12 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "// placement menu can index it directly.\n");
   fprintf(out, "Span<const entity_type> placeable_entity_types();\n\n");
 
-  fprintf(out, "// Digest of every declaration in the .def. Exchanged at connect; a\n");
-  fprintf(out, "// mismatch means the two sides disagree about the entity layout.\n");
+  fprintf(out, "// Digest of every declaration in EVERY .def of the generator run --\n");
+  fprintf(out, "// entity layout, the resolved asset manifest, and the cvar/command\n");
+  fprintf(out, "// tables. Exchanged at connect; a mismatch means the two sides\n");
+  fprintf(out, "// disagree about what the bytes mean. It lives in this namespace for\n");
+  fprintf(out, "// historical reasons and is the ONE such value -- cvars_generated.hpp\n");
+  fprintf(out, "// deliberately does not emit a second one.\n");
   fprintf(out, "extern const uint32_t SCHEMA_HASH;\n\n");
 
   fprintf(out, "} // namespace entities\n");
@@ -2780,34 +3283,57 @@ static void emit_field_table(FILE* out, const program_t* program, const declarat
     {
       const field_t* field = &program->fields[source->first_field + offset];
 
-      int32_t component_id = -1;
+      // Each of the four type-specific columns is either its own id or the
+      // named sentinel. Emitting the sentinel by NAME is the whole point: a
+      // reader of the table sees "NOT_AN_ENUM", not a -1 they have to decode.
+      char component_id[64] = "NOT_A_COMPONENT";
       if (field->type.kind == TYPE_COMPONENT && field->type.declaration_index >= 0)
-        component_id = component_ids[field->type.declaration_index];
+        snprintf(component_id, sizeof(component_id), "%d",
+                 component_ids[field->type.declaration_index]);
 
-      int32_t asset_class_id = -1;
+      char asset_class_id[64] = "NOT_AN_ASSET_CLASS";
       if (field->type.kind == TYPE_ASSET && field->type.declaration_index >= 0)
-        asset_class_id = asset_class_ids[field->type.declaration_index];
+        snprintf(asset_class_id, sizeof(asset_class_id), "%d",
+                 asset_class_ids[field->type.declaration_index]);
 
-      int32_t enum_id = -1;
+      char enum_id[64] = "NOT_AN_ENUM";
       if (field->type.kind == TYPE_ENUM && field->type.declaration_index >= 0)
-        enum_id = enum_ids[field->type.declaration_index];
+        snprintf(enum_id, sizeof(enum_id), "%d", enum_ids[field->type.declaration_index]);
 
-      fprintf(out, "  {\"%.*s\", %s, ", field->name.length, field->name.data,
-              field_type_enum_name(field->type.kind));
-      fprintf(out, "(uint32_t)offsetof(%.*s, %.*s), ", struct_name_length, struct_name_prefix,
-              field->name.length, field->name.data);
-      fprintf(out, "(uint32_t)sizeof(%.*s::%.*s), ", struct_name_length, struct_name_prefix,
-              field->name.length, field->name.data);
-      fprintf(out, "%uu, %d, %u, %d, %d},\n", field->flags, component_id,
-              (uint32_t)field->type.capacity, asset_class_id, enum_id);
+      char string_capacity[64] = "NOT_A_STRING";
+      if (field->type.kind == TYPE_STRING)
+        snprintf(string_capacity, sizeof(string_capacity), "%u", (uint32_t)field->type.capacity);
+
+      // Designated initializers: the table is read far more often than it is
+      // written, and nine positional values in a row is where a reader starts
+      // counting commas.
+      fprintf(out, "  {.name = \"%.*s\",\n", field->name.length, field->name.data);
+      fprintf(out, "   .type = %s,\n", field_type_enum_name(field->type.kind));
+      fprintf(out, "   .offset = (uint32_t)offsetof(%.*s, %.*s),\n", struct_name_length,
+              struct_name_prefix, field->name.length, field->name.data);
+      fprintf(out, "   .size_in_bytes = (uint32_t)sizeof(%.*s::%.*s),\n", struct_name_length,
+              struct_name_prefix, field->name.length, field->name.data);
+      fprintf(out, "   .flags = %uu,\n", field->flags);
+      fprintf(out, "   .component_id = %s,\n", component_id);
+      fprintf(out, "   .string_capacity = %s,\n", string_capacity);
+      fprintf(out, "   .asset_class_id = %s,\n", asset_class_id);
+      fprintf(out, "   .enum_id = %s},\n", enum_id);
     }
   }
 }
 
-static uint32_t compute_schema_hash(const program_t* program)
+// Folds one program's declarations into a running digest. Every .def in the run
+// goes through here, in the order they were given on the command line, so the
+// result is ONE value covering the entity layout, the resolved asset manifest
+// and the cvar/command tables together. That single value is what the connect
+// handshake compares.
+//
+// What is deliberately NOT mixed: default values and description strings. The
+// hash answers "do the two builds agree about what the bytes mean", and neither
+// changes that -- a differing description would refuse a connection over console
+// help text.
+static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
 {
-  uint32_t hash = 2166136261u;
-
   auto mix = [&hash](const char* bytes, int32_t length) {
     for (int32_t index = 0; index < length; ++index)
     {
@@ -2820,7 +3346,12 @@ static uint32_t compute_schema_hash(const program_t* program)
   {
     const declaration_t* declaration = &program->declarations[index];
 
-    mix(declaration->name.data, declaration->name.length);
+    // A cvar/command BLOCK name is a foldable section comment: never emitted,
+    // read by nothing. Mixing it in would make renaming a section refuse every
+    // connection, which is exactly the kind of meaning the design denies it.
+    if (!declaration_is_cvar_family(declaration->kind))
+      mix(declaration->name.data, declaration->name.length);
+
     mix(declaration_kind_name(declaration->kind),
         (int32_t)strlen(declaration_kind_name(declaration->kind)));
 
@@ -2861,7 +3392,8 @@ static uint32_t compute_schema_hash(const program_t* program)
   return hash;
 }
 
-static void emit_generated_source(FILE* out, const program_t* program, const char* header_name)
+static void emit_generated_source(FILE* out, const program_t* program, const char* header_name,
+                                  uint32_t schema_hash)
 {
   int32_t  base_index       = find_base_declaration(program);
   int32_t  component_count  = 0;
@@ -2880,7 +3412,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
   else
     snprintf(entity_pointer_type, sizeof(entity_pointer_type), "void*");
 
-  fprintf(out, "// Generated from %s by entity_gen. Do not edit.\n", program->filename);
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "#include \"%s\"\n", header_name);
   fprintf(out, "#include <cassert>\n#include <cstddef>\n#include <cstring>\n#include <new>\n\n");
 
@@ -3288,13 +3820,537 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
   fprintf(out, "Span<const entity_type> placeable_entity_types()\n{\n");
   fprintf(out, "  return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};\n}\n\n");
 
-  fprintf(out, "const uint32_t SCHEMA_HASH = 0x%08xu;\n\n", compute_schema_hash(program));
+  fprintf(out, "const uint32_t SCHEMA_HASH = 0x%08xu;\n\n", schema_hash);
 
   fprintf(out, "} // namespace entities\n");
 
   free(component_ids);
   free(asset_class_ids);
   free(enum_ids);
+}
+
+// ---------------------------------------------------------------------------
+// Code generation -- the cvar family
+// ---------------------------------------------------------------------------
+//
+// Four files, because two of them are per-side link-time assertions rather than
+// data:
+//
+//   cvars_generated.hpp        the state struct, the ids, the info tables,
+//                              the text conversion, the handler declarations
+//   cvars_generated.cpp        the tables and the text conversion bodies. Holds
+//                              NO reference to any handler, so it compiles into
+//                              game_shared without needing either side present.
+//   server_command_bindings.cpp  fills the @Server slots; compiled into
+//                              game_server, so a missing or misspelled
+//                              commands::<name> is a link error naming it
+//   client_command_bindings.cpp  the same for @Client
+//
+// There is no registration step anywhere and no static initializer, which is
+// what makes the old failure modes -- a registrar TU dropped from the static
+// lib, a singleton duplicated per DLL -- unrepresentable rather than merely
+// fixed.
+
+// Every cvar/command line in declaration order, flattened across blocks. Blocks
+// are section comments, so the concatenation IS the declaration order the ids,
+// the struct layout and the config-file save order all use.
+static int32_t collect_cvar_lines(const program_t* program, declaration_kind_t kind,
+                                  const field_t** out_lines, int32_t capacity)
+{
+  int32_t count = 0;
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != kind)
+      continue;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      assert(count < capacity);
+      out_lines[count++] = &program->fields[declaration->first_field + offset];
+    }
+  }
+
+  return count;
+}
+
+static bool program_has_string_cvar(const field_t* const* cvars, int32_t cvar_count)
+{
+  for (int32_t index = 0; index < cvar_count; ++index)
+  {
+    if (cvars[index]->type.kind == TYPE_STRING)
+      return true;
+  }
+  return false;
+}
+
+static void write_generated_banner(FILE* out, const program_t* program)
+{
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+}
+
+static void emit_cvars_header(FILE* out, const program_t* program, const field_t* const* cvars,
+                              int32_t cvar_count, const field_t* const* commands,
+                              int32_t command_count)
+{
+  write_generated_banner(out, program);
+  fprintf(out, "#pragma once\n\n");
+
+  fprintf(out, "#include \"cvars/cvar_runtime.hpp\"\n");
+  if (program_has_string_cvar(cvars, cvar_count))
+    fprintf(out, "#include \"network/network_types.hpp\"\n");
+  fprintf(out, "#include \"span.hpp\"\n\n");
+  fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <string>\n");
+  fprintf(out, "#include <string_view>\n");
+  fprintf(out, "#include <type_traits>\n\n");
+
+  fprintf(out, "namespace cvars\n{\n\n");
+
+  // --- flags ---
+  fprintf(out, "// Ownership, and nothing else. No flag at all is the common case and\n");
+  fprintf(out, "// means shared-local: both sides hold the value, each process owns its\n");
+  fprintf(out, "// own, nothing is synced.\n");
+  fprintf(out, "enum cvar_flags : uint32_t\n{\n");
+  fprintf(out, "  CVAR_FLAG_NONE     = 0,\n");
+  fprintf(out, "  CVAR_FLAG_CLIENT   = 1 << 0, // client-owned; meaningless on a dedicated server\n");
+  fprintf(out, "  CVAR_FLAG_SERVER   = 1 << 1, // server-owned; clients forward the console line\n");
+  fprintf(out, "  CVAR_FLAG_MIRRORED = 1 << 2, // server-owned, pushed to clients as a read-only mirror\n");
+  fprintf(out, "};\n\n");
+
+  // --- state ---
+  fprintf(out, "// THE values. One per process, created by the launcher and handed to\n");
+  fprintf(out, "// each module's init -- so the integrated build's client and server\n");
+  fprintf(out, "// share the one instance the old singleton only pretended to be.\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// Reading a cvar is a field access (`cvars.pm_maxspeed`), not a string\n");
+  fprintf(out, "// lookup and not a virtual call. Names exist at runtime only in the\n");
+  fprintf(out, "// console.\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// Declaration order is the .def's order, which is also the config-file\n");
+  fprintf(out, "// save order -- so a saved config is diffable.\n");
+  fprintf(out, "struct cvar_state_t\n{\n");
+  for (int32_t index = 0; index < cvar_count; ++index)
+  {
+    const field_t* cvar = cvars[index];
+    fprintf(out, "  ");
+    write_cpp_type(out, &cvar->type);
+    fprintf(out, " %.*s = ", cvar->name.length, cvar->name.data);
+    write_default_initializer(out, cvar);
+    fprintf(out, ";\n");
+  }
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "// Load-bearing for mirroring: change detection is a member compare\n");
+  fprintf(out, "// against a retained copy of this struct, so a DIRECT field write in\n");
+  fprintf(out, "// game code replicates correctly. There is no \"must call Set()\" trap\n");
+  fprintf(out, "// because there is no Set().\n");
+  fprintf(out, "static_assert(std::is_trivially_copyable_v<cvar_state_t>,\n");
+  fprintf(out, "              \"cvar_state_t must stay trivially copyable: mirroring compares it \"\n");
+  fprintf(out, "              \"against a retained copy\");\n\n");
+
+  // --- ids ---
+  fprintf(out, "enum class cvar_id : uint16_t\n{\n");
+  for (int32_t index = 0; index < cvar_count; ++index)
+    fprintf(out, "  %.*s = %d,\n", cvars[index]->name.length, cvars[index]->name.data, index);
+  fprintf(out, "};\n\n");
+  fprintf(out, "// Not a member of the enum above, so `switch` over a cvar_id still\n");
+  fprintf(out, "// warns on an unhandled case.\n");
+  fprintf(out, "constexpr uint32_t CVAR_COUNT = %d;\n\n", cvar_count);
+
+  fprintf(out, "enum class command_id : uint16_t\n{\n");
+  for (int32_t index = 0; index < command_count; ++index)
+    fprintf(out, "  %.*s = %d,\n", commands[index]->name.length, commands[index]->name.data, index);
+  fprintf(out, "};\n\n");
+  fprintf(out, "constexpr uint32_t COMMAND_COUNT = %d;\n\n", command_count);
+
+  // --- reflection ---
+  fprintf(out, "enum cvar_type : uint8_t\n{\n");
+  fprintf(out, "  CVAR_TYPE_F32 = 0,\n");
+  fprintf(out, "  CVAR_TYPE_I32,\n");
+  fprintf(out, "  CVAR_TYPE_U32,\n");
+  fprintf(out, "  CVAR_TYPE_BOOL,\n");
+  fprintf(out, "  CVAR_TYPE_STRING,\n");
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "// The console's whole view of a cvar. `offset` and `size` locate the\n");
+  fprintf(out, "// value inside cvar_state_t, which is what lets one text-conversion\n");
+  fprintf(out, "// pair serve every cvar without a switch per call site.\n");
+  fprintf(out, "struct cvar_info_t\n{\n");
+  fprintf(out, "  const char* name;\n");
+  fprintf(out, "  const char* description;\n");
+  fprintf(out, "  uint32_t    flags;\n");
+  fprintf(out, "  cvar_type   type;\n");
+  fprintf(out, "  uint16_t    offset;\n");
+  fprintf(out, "  uint16_t    size;\n");
+  fprintf(out, "  uint16_t    string_capacity; // string<N>'s N, otherwise 0\n");
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "struct command_info_t\n{\n");
+  fprintf(out, "  const char* name;\n");
+  fprintf(out, "  const char* description;\n");
+  fprintf(out, "  uint32_t    flags;\n");
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "// Indexed by cvar_id / command_id, in declaration order.\n");
+  fprintf(out, "Span<const cvar_info_t>    cvar_infos();\n");
+  fprintf(out, "Span<const command_info_t> command_infos();\n\n");
+  fprintf(out, "const cvar_info_t&    cvar_info(cvar_id id);\n");
+  fprintf(out, "const command_info_t& command_info(command_id id);\n\n");
+
+  fprintf(out, "// Name lookup. The console is the only place names exist at runtime, so\n");
+  fprintf(out, "// this is a linear scan and stays one -- it runs at typing speed.\n");
+  fprintf(out, "// Cvars and commands share one flat namespace, so a name resolves to at\n");
+  fprintf(out, "// most one of these two.\n");
+  fprintf(out, "bool find_cvar(std::string_view name, cvar_id* out_id);\n");
+  fprintf(out, "bool find_command(std::string_view name, command_id* out_id);\n\n");
+
+  fprintf(out, "// The @Mirrored subset, so both ends agree on the sync set by\n");
+  fprintf(out, "// construction rather than by each filtering on flags and hoping.\n");
+  fprintf(out, "Span<const cvar_id> mirrored_cvars();\n\n");
+
+  // --- text ---
+  fprintf(out, "// The ONLY place cvar bytes become characters: console echo, config\n");
+  fprintf(out, "// files, and the mirrored-value payload all go through this pair.\n");
+  fprintf(out, "// Floats use the shortest representation that round-trips.\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// cvar_from_text returns false and leaves the value ALONE when the text\n");
+  fprintf(out, "// does not parse -- the caller reports it, because only the caller knows\n");
+  fprintf(out, "// whether it came from a console line, a config file or the wire.\n");
+  fprintf(out, "bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text);\n");
+  fprintf(out, "bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text);\n\n");
+
+  // --- commands ---
+  fprintf(out, "// Handler declarations. Declaring a command in the .def OBLIGATES the\n");
+  fprintf(out, "// owning side to define the matching function with exactly this\n");
+  fprintf(out, "// signature: the generated binder TU below references the symbol\n");
+  fprintf(out, "// directly, so a missing or misspelled handler is a link error naming\n");
+  fprintf(out, "// it. Bodies are handwritten -- only the binding is derived.\n");
+  fprintf(out, "namespace commands\n{\n");
+  for (int32_t index = 0; index < command_count; ++index)
+  {
+    const field_t* command = commands[index];
+    fprintf(out, "// %s%.*s\n",
+            (command->flags & CVAR_FLAG_SERVER) ? "@Server  " : "@Client  ",
+            command->description.length, command->description.data);
+    fprintf(out, "void %.*s(Span<std::string_view> args, const command_context_t& context);\n",
+            command->name.length, command->name.data);
+  }
+  fprintf(out, "} // namespace commands\n\n");
+
+  fprintf(out, "// The runtime dispatch surface. A slot is null when its side is not\n");
+  fprintf(out, "// loaded (client commands on a dedicated server), which the execute\n");
+  fprintf(out, "// path treats as an error rather than a silent no-op.\n");
+  fprintf(out, "struct command_table_t\n{\n");
+  fprintf(out, "  command_handler_t handlers[COMMAND_COUNT] = {};\n\n");
+  fprintf(out, "  // Set by a networked client. @Server cvars and commands typed into a\n");
+  fprintf(out, "  // client console are forwarded whole rather than executed locally.\n");
+  fprintf(out, "  forward_line_fn_t forward_to_server = nullptr;\n");
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "// Called once per loaded module, from inside that module -- the binder\n");
+  fprintf(out, "// TU is compiled into the DLL that owns the handlers, so the launcher\n");
+  fprintf(out, "// reaches it through the module's existing init entry point rather than\n");
+  fprintf(out, "// by exporting these symbols.\n");
+  fprintf(out, "void bind_server_commands(command_table_t& table);\n");
+  fprintf(out, "void bind_client_commands(command_table_t& table);\n\n");
+
+  fprintf(out, "// No SCHEMA_HASH here on purpose: there is exactly one, and it lives in\n");
+  fprintf(out, "// entities_generated.hpp. The cvar and command declarations are folded\n");
+  fprintf(out, "// into that same value by the one generator run.\n\n");
+
+  fprintf(out, "} // namespace cvars\n");
+}
+
+// Fixed text -- five types, no per-cvar code. Emitted rather than handwritten
+// so that it sits next to the table whose offsets it reads: the two are one
+// contract, and a type added to the .def grammar has exactly one place to
+// appear here.
+static void emit_cvar_text_conversion(FILE* out)
+{
+  fprintf(out, "bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text)\n");
+  fprintf(out, "{\n");
+  fprintf(out, "  const cvar_info_t& info  = cvar_info(id);\n");
+  fprintf(out, "  const void*        bytes = value_bytes(state, info);\n\n");
+  fprintf(out, "  switch (info.type)\n  {\n");
+
+  fprintf(out, "    case CVAR_TYPE_F32:\n    {\n");
+  fprintf(out, "      float value = 0.0f;\n");
+  fprintf(out, "      std::memcpy(&value, bytes, sizeof(value));\n");
+  fprintf(out, "      // Shortest representation that round-trips, so a config save/load\n");
+  fprintf(out, "      // cycle is exact and a config diff shows only real changes.\n");
+  fprintf(out, "      out_text = std::format(\"{}\", value);\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_I32:\n    {\n");
+  fprintf(out, "      int32_t value = 0;\n");
+  fprintf(out, "      std::memcpy(&value, bytes, sizeof(value));\n");
+  fprintf(out, "      out_text = std::format(\"{}\", value);\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_U32:\n    {\n");
+  fprintf(out, "      uint32_t value = 0;\n");
+  fprintf(out, "      std::memcpy(&value, bytes, sizeof(value));\n");
+  fprintf(out, "      out_text = std::format(\"{}\", value);\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_BOOL:\n    {\n");
+  fprintf(out, "      bool value = false;\n");
+  fprintf(out, "      std::memcpy(&value, bytes, sizeof(value));\n");
+  fprintf(out, "      out_text = value ? \"1\" : \"0\";\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_STRING:\n    {\n");
+  fprintf(out, "      // pascal_string_t<N> is `uint8 length; char data[N + 1]` with\n");
+  fprintf(out, "      // alignment 1, so the bytes are addressed directly -- the table\n");
+  fprintf(out, "      // hands out a void*, not a typed pointer.\n");
+  fprintf(out, "      const uint8_t* raw = static_cast<const uint8_t*>(bytes);\n");
+  fprintf(out, "      out_text.assign(reinterpret_cast<const char*>(raw + 1), raw[0]);\n");
+  fprintf(out, "      return true;\n    }\n");
+
+  fprintf(out, "  }\n\n");
+  fprintf(out, "  assert(false && \"cvar_to_text: cvar carries an invalid type tag\");\n");
+  fprintf(out, "  return false;\n}\n\n");
+
+  // --- from text ---
+  fprintf(out, "namespace\n{\n\n");
+  fprintf(out, "// Requires the WHOLE token to parse. `pm_maxspeed 320abc` is a typo, and\n");
+  fprintf(out, "// accepting 320 from it would set a value the author never wrote.\n");
+  fprintf(out, "template <typename T> bool parse_whole(std::string_view text, T* out_value)\n");
+  fprintf(out, "{\n");
+  fprintf(out, "  const char* begin = text.data();\n");
+  fprintf(out, "  const char* end   = text.data() + text.size();\n");
+  fprintf(out, "  auto        result = std::from_chars(begin, end, *out_value);\n");
+  fprintf(out, "  return result.ec == std::errc{} && result.ptr == end;\n");
+  fprintf(out, "}\n\n");
+  fprintf(out, "} // namespace\n\n");
+
+  fprintf(out, "bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)\n");
+  fprintf(out, "{\n");
+  fprintf(out, "  const cvar_info_t& info  = cvar_info(id);\n");
+  fprintf(out, "  void*              bytes = value_bytes(state, info);\n\n");
+  fprintf(out, "  switch (info.type)\n  {\n");
+
+  fprintf(out, "    case CVAR_TYPE_F32:\n    {\n");
+  fprintf(out, "      float value = 0.0f;\n");
+  fprintf(out, "      if (!parse_whole(text, &value))\n        return false;\n");
+  fprintf(out, "      std::memcpy(bytes, &value, sizeof(value));\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_I32:\n    {\n");
+  fprintf(out, "      int32_t value = 0;\n");
+  fprintf(out, "      if (!parse_whole(text, &value))\n        return false;\n");
+  fprintf(out, "      std::memcpy(bytes, &value, sizeof(value));\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_U32:\n    {\n");
+  fprintf(out, "      uint32_t value = 0;\n");
+  fprintf(out, "      if (!parse_whole(text, &value))\n        return false;\n");
+  fprintf(out, "      std::memcpy(bytes, &value, sizeof(value));\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_BOOL:\n    {\n");
+  fprintf(out, "      // A closed set both ways. The old CVar<bool> mapped anything that\n");
+  fprintf(out, "      // was not \"1/true/yes/on\" to FALSE, so `debug_show_navmesh tru`\n");
+  fprintf(out, "      // silently turned it off. Unrecognised text is now a rejection and\n");
+  fprintf(out, "      // the value is left alone.\n");
+  fprintf(out, "      bool value = false;\n");
+  fprintf(out, "      if (text == \"1\" || text == \"true\" || text == \"yes\" || text == \"on\")\n");
+  fprintf(out, "        value = true;\n");
+  fprintf(out, "      else if (text == \"0\" || text == \"false\" || text == \"no\" || text == \"off\")\n");
+  fprintf(out, "        value = false;\n");
+  fprintf(out, "      else\n        return false;\n");
+  fprintf(out, "      std::memcpy(bytes, &value, sizeof(value));\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_STRING:\n    {\n");
+  fprintf(out, "      if (text.size() > info.string_capacity)\n        return false;\n");
+  fprintf(out, "      uint8_t* raw = static_cast<uint8_t*>(bytes);\n");
+  fprintf(out, "      raw[0]       = (uint8_t)text.size();\n");
+  fprintf(out, "      std::memcpy(raw + 1, text.data(), text.size());\n");
+  fprintf(out, "      // Restore the canonical zero-padding invariant (see\n");
+  fprintf(out, "      // pascal_string_t): every byte past the last character must be\n");
+  fprintf(out, "      // zero, or two equal strings stop comparing equal under memcmp and\n");
+  fprintf(out, "      // the mirror replicates a phantom change every tick.\n");
+  fprintf(out, "      std::memset(raw + 1 + text.size(), 0, info.size - 1 - text.size());\n");
+  fprintf(out, "      return true;\n    }\n");
+
+  fprintf(out, "  }\n\n");
+  fprintf(out, "  assert(false && \"cvar_from_text: cvar carries an invalid type tag\");\n");
+  fprintf(out, "  return false;\n}\n\n");
+}
+
+static void emit_cvars_source(FILE* out, const program_t* program, const char* header_name,
+                              const field_t* const* cvars, int32_t cvar_count,
+                              const field_t* const* commands, int32_t command_count)
+{
+  write_generated_banner(out, program);
+  fprintf(out, "#include \"%s\"\n\n", header_name);
+  fprintf(out, "#include <cassert>\n");
+  fprintf(out, "#include <charconv>\n");
+  fprintf(out, "#include <cstddef>\n");
+  fprintf(out, "#include <cstring>\n");
+  fprintf(out, "#include <format>\n\n");
+
+  fprintf(out, "namespace cvars\n{\n\n");
+
+  // --- tables ---
+  fprintf(out, "namespace\n{\n\n");
+
+  fprintf(out, "const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {\n");
+  for (int32_t index = 0; index < cvar_count; ++index)
+  {
+    const field_t* cvar = cvars[index];
+    fprintf(out, "    {.name = \"%.*s\",\n", cvar->name.length, cvar->name.data);
+    fprintf(out, "     .description = \"%.*s\",\n", cvar->description.length,
+            cvar->description.data);
+    fprintf(out, "     .flags = ");
+
+    if (cvar->flags == CVAR_FLAG_NONE)
+    {
+      fprintf(out, "CVAR_FLAG_NONE");
+    }
+    else
+    {
+      bool wrote = false;
+      if (cvar->flags & CVAR_FLAG_CLIENT)   { fprintf(out, "CVAR_FLAG_CLIENT");   wrote = true; }
+      if (cvar->flags & CVAR_FLAG_SERVER)   { fprintf(out, "%sCVAR_FLAG_SERVER",   wrote ? " | " : ""); wrote = true; }
+      if (cvar->flags & CVAR_FLAG_MIRRORED) { fprintf(out, "%sCVAR_FLAG_MIRRORED", wrote ? " | " : ""); }
+    }
+
+    fprintf(out, ",\n     .type = %s,\n", cvar_type_enum_name(cvar->type.kind));
+    fprintf(out, "     .offset = offsetof(cvar_state_t, %.*s),\n", cvar->name.length,
+            cvar->name.data);
+    fprintf(out, "     .size = sizeof(cvar_state_t::%.*s),\n", cvar->name.length, cvar->name.data);
+    fprintf(out, "     .string_capacity = %d},\n",
+            cvar->type.kind == TYPE_STRING ? cvar->type.capacity : 0);
+  }
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {\n");
+  for (int32_t index = 0; index < command_count; ++index)
+  {
+    const field_t* command = commands[index];
+    fprintf(out, "    {.name = \"%.*s\",\n", command->name.length, command->name.data);
+    fprintf(out, "     .description = \"%.*s\",\n", command->description.length,
+            command->description.data);
+    fprintf(out, "     .flags = %s},\n",
+            (command->flags & CVAR_FLAG_SERVER) ? "CVAR_FLAG_SERVER" : "CVAR_FLAG_CLIENT");
+  }
+  fprintf(out, "};\n\n");
+
+  int32_t mirrored_count = 0;
+  for (int32_t index = 0; index < cvar_count; ++index)
+    mirrored_count += (cvars[index]->flags & CVAR_FLAG_MIRRORED) ? 1 : 0;
+
+  if (mirrored_count > 0)
+  {
+    fprintf(out, "const cvar_id MIRRORED_CVAR_TABLE[%d] = {\n", mirrored_count);
+    for (int32_t index = 0; index < cvar_count; ++index)
+    {
+      if ((cvars[index]->flags & CVAR_FLAG_MIRRORED) == 0)
+        continue;
+      fprintf(out, "    cvar_id::%.*s,\n", cvars[index]->name.length, cvars[index]->name.data);
+    }
+    fprintf(out, "};\n\n");
+  }
+
+  fprintf(out, "// The value's bytes inside the state struct. Every text conversion goes\n");
+  fprintf(out, "// through here rather than naming members, so the pair below is one\n");
+  fprintf(out, "// switch over five types instead of one case per cvar.\n");
+  fprintf(out, "void* value_bytes(cvar_state_t& state, const cvar_info_t& info)\n");
+  fprintf(out, "{\n");
+  fprintf(out, "  return reinterpret_cast<uint8_t*>(&state) + info.offset;\n");
+  fprintf(out, "}\n\n");
+  fprintf(out, "const void* value_bytes(const cvar_state_t& state, const cvar_info_t& info)\n");
+  fprintf(out, "{\n");
+  fprintf(out, "  return reinterpret_cast<const uint8_t*>(&state) + info.offset;\n");
+  fprintf(out, "}\n\n");
+
+  fprintf(out, "} // namespace\n\n");
+
+  // --- accessors ---
+  fprintf(out, "Span<const cvar_info_t> cvar_infos()\n{\n");
+  fprintf(out, "  return {CVAR_INFO_TABLE, CVAR_COUNT};\n}\n\n");
+
+  fprintf(out, "Span<const command_info_t> command_infos()\n{\n");
+  fprintf(out, "  return {COMMAND_INFO_TABLE, COMMAND_COUNT};\n}\n\n");
+
+  fprintf(out, "const cvar_info_t& cvar_info(cvar_id id)\n{\n");
+  fprintf(out, "  assert((uint32_t)id < CVAR_COUNT);\n");
+  fprintf(out, "  return CVAR_INFO_TABLE[(uint32_t)id];\n}\n\n");
+
+  fprintf(out, "const command_info_t& command_info(command_id id)\n{\n");
+  fprintf(out, "  assert((uint32_t)id < COMMAND_COUNT);\n");
+  fprintf(out, "  return COMMAND_INFO_TABLE[(uint32_t)id];\n}\n\n");
+
+  fprintf(out, "bool find_cvar(std::string_view name, cvar_id* out_id)\n{\n");
+  fprintf(out, "  for (uint32_t index = 0; index < CVAR_COUNT; ++index)\n  {\n");
+  fprintf(out, "    if (name == CVAR_INFO_TABLE[index].name)\n    {\n");
+  fprintf(out, "      *out_id = (cvar_id)index;\n      return true;\n    }\n  }\n");
+  fprintf(out, "  return false;\n}\n\n");
+
+  fprintf(out, "bool find_command(std::string_view name, command_id* out_id)\n{\n");
+  fprintf(out, "  for (uint32_t index = 0; index < COMMAND_COUNT; ++index)\n  {\n");
+  fprintf(out, "    if (name == COMMAND_INFO_TABLE[index].name)\n    {\n");
+  fprintf(out, "      *out_id = (command_id)index;\n      return true;\n    }\n  }\n");
+  fprintf(out, "  return false;\n}\n\n");
+
+  fprintf(out, "Span<const cvar_id> mirrored_cvars()\n{\n");
+  if (mirrored_count > 0)
+    fprintf(out, "  return {MIRRORED_CVAR_TABLE, %d};\n}\n\n", mirrored_count);
+  else
+    fprintf(out, "  return {};\n}\n\n");
+
+  // --- text ---
+  emit_cvar_text_conversion(out);
+
+  // --- binder declarations are defined in the per-side TUs, not here ---
+
+  fprintf(out, "} // namespace cvars\n");
+}
+
+// Emitted as one side per file so that the client DLL never references a server
+// handler symbol and vice versa -- the DLL layout stays honest by construction,
+// not by discipline.
+static void emit_command_bindings(FILE* out, const program_t* program, const char* header_name,
+                                  const field_t* const* commands, int32_t command_count,
+                                  bool server_side)
+{
+  const char* side_flag = server_side ? "@Server" : "@Client";
+  const uint32_t wanted = server_side ? CVAR_FLAG_SERVER : CVAR_FLAG_CLIENT;
+
+  write_generated_banner(out, program);
+  fprintf(out, "//\n");
+  fprintf(out, "// Binds every %s command's handler. This TU is compiled into the module\n",
+          side_flag);
+  fprintf(out, "// that owns those handlers, so it references each commands::<name> symbol\n");
+  fprintf(out, "// directly: a missing or misspelled handler fails at LINK time, naming the\n");
+  fprintf(out, "// symbol. That link step is the assert -- there is no runtime \"did\n");
+  fprintf(out, "// everyone register?\" check because there is nothing to register.\n");
+  fprintf(out, "#include \"%s\"\n\n", header_name);
+
+  fprintf(out, "namespace cvars\n{\n\n");
+  fprintf(out, "void bind_%s_commands(command_table_t& table)\n{\n",
+          server_side ? "server" : "client");
+
+  int32_t bound = 0;
+  for (int32_t index = 0; index < command_count; ++index)
+  {
+    if ((commands[index]->flags & wanted) == 0)
+      continue;
+    fprintf(out, "  table.handlers[(uint32_t)command_id::%.*s] = &commands::%.*s;\n",
+            commands[index]->name.length, commands[index]->name.data,
+            commands[index]->name.length, commands[index]->name.data);
+    ++bound;
+  }
+
+  if (bound == 0)
+    fprintf(out, "  (void)table; // no %s commands declared\n", side_flag);
+
+  fprintf(out, "}\n\n");
+  fprintf(out, "} // namespace cvars\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -3350,6 +4406,20 @@ static void print_field_flags(uint32_t flags)
   if (flags & FIELD_FLAG_SAVEABLE)  printf(" @Saveable");
 }
 
+// Same word, the other vocabulary. Which one applies is the owning
+// declaration's kind, never the bits.
+static void print_cvar_flags(uint32_t flags)
+{
+  if (flags == CVAR_FLAG_NONE)
+  {
+    printf(" (shared-local)");
+    return;
+  }
+  if (flags & CVAR_FLAG_CLIENT)   printf(" @Client");
+  if (flags & CVAR_FLAG_SERVER)   printf(" @Server");
+  if (flags & CVAR_FLAG_MIRRORED) printf(" @Mirrored");
+}
+
 static void dump_program(const program_t* program)
 {
   printf("// %s: %d declarations, %d fields, %d tokens\n", program->filename,
@@ -3392,6 +4462,31 @@ static void dump_program(const program_t* program)
                                      : entry->source_kind == ASSET_SOURCE_PROCEDURAL ? "procedural"
                                                                                      : "missing";
         printf("  %d: %-16s %-12s %s\n", offset, entry->name, kind, entry->source);
+      }
+    }
+    else if (declaration->kind == DECLARATION_CVARS)
+    {
+      for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+      {
+        const field_t* field = &program->fields[declaration->first_field + offset];
+
+        printf("  %.*s: ", field->name.length, field->name.data);
+        print_type(&field->type);
+        print_default_value(&field->default_value);
+        print_cvar_flags(field->flags);
+        printf("   \"%.*s\"\n", field->description.length, field->description.data);
+      }
+    }
+    else if (declaration->kind == DECLARATION_COMMANDS)
+    {
+      for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+      {
+        const field_t* field = &program->fields[declaration->first_field + offset];
+
+        printf("  %.*s", field->name.length, field->name.data);
+        print_cvar_flags(field->flags);
+        printf("   \"%.*s\"   // handler: cvars::commands::%.*s\n", field->description.length,
+               field->description.data, field->name.length, field->name.data);
       }
     }
     else
@@ -3503,21 +4598,134 @@ static void allocate_program(program_t* program)
   program->string_arena          = (char*)malloc((size_t)program->string_arena_capacity);
 }
 
+// Generated output lands in a `generated/` subdirectory next to the .def it came
+// from, so the two are read together and a .def change shows up as a reviewable
+// diff beside it. Derived rather than declared: with several inputs in one run
+// there is no single --output-dir that could mean anything.
+static void derive_output_directory(const char* def_path, char* buffer, size_t buffer_size)
+{
+  std::filesystem::path directory = std::filesystem::path(def_path).parent_path() / "generated";
+  snprintf(buffer, buffer_size, "%s", directory.string().c_str());
+}
+
+static FILE* open_generated_file(const char* directory, const char* name, char* out_path,
+                                 size_t path_size)
+{
+  snprintf(out_path, path_size, "%s/%s", directory, name);
+
+  FILE* file = fopen(out_path, "wb");
+  if (file == nullptr)
+    fprintf(stderr, "error: cannot write '%s'\n", out_path);
+  return file;
+}
+
+static bool emit_entity_family(const program_t* program, const char* output_dir,
+                               uint32_t schema_hash)
+{
+  const char* header_name = "entities_generated.hpp";
+  char        path[1024];
+
+  FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
+  if (header_file == nullptr)
+    return false;
+  emit_generated_header(header_file, program);
+  fclose(header_file);
+
+  FILE* source_file = open_generated_file(output_dir, "entities_generated.cpp", path, sizeof(path));
+  if (source_file == nullptr)
+    return false;
+  emit_generated_source(source_file, program, header_name, schema_hash);
+  fclose(source_file);
+
+  fprintf(stderr, "def_gen: wrote %s/entities_generated.{hpp,cpp}\n", output_dir);
+  return true;
+}
+
+static bool emit_cvar_family(const program_t* program, const char* output_dir)
+{
+  // Bounded by the field count, which is bounded by the token count.
+  const field_t** cvars    = (const field_t**)malloc((size_t)program->field_count * sizeof(field_t*) + sizeof(field_t*));
+  const field_t** commands = (const field_t**)malloc((size_t)program->field_count * sizeof(field_t*) + sizeof(field_t*));
+
+  int32_t cvar_count =
+      collect_cvar_lines(program, DECLARATION_CVARS, cvars, program->field_count + 1);
+  int32_t command_count =
+      collect_cvar_lines(program, DECLARATION_COMMANDS, commands, program->field_count + 1);
+
+  const char* header_name = "cvars_generated.hpp";
+  char        path[1024];
+  bool        wrote       = false;
+
+  FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
+  if (header_file != nullptr)
+  {
+    emit_cvars_header(header_file, program, cvars, cvar_count, commands, command_count);
+    fclose(header_file);
+
+    FILE* source_file = open_generated_file(output_dir, "cvars_generated.cpp", path, sizeof(path));
+    if (source_file != nullptr)
+    {
+      emit_cvars_source(source_file, program, header_name, cvars, cvar_count, commands,
+                        command_count);
+      fclose(source_file);
+
+      FILE* server_file =
+          open_generated_file(output_dir, "server_command_bindings.cpp", path, sizeof(path));
+      if (server_file != nullptr)
+      {
+        emit_command_bindings(server_file, program, header_name, commands, command_count, true);
+        fclose(server_file);
+
+        FILE* client_file =
+            open_generated_file(output_dir, "client_command_bindings.cpp", path, sizeof(path));
+        if (client_file != nullptr)
+        {
+          emit_command_bindings(client_file, program, header_name, commands, command_count, false);
+          fclose(client_file);
+          wrote = true;
+        }
+      }
+    }
+  }
+
+  if (wrote)
+    fprintf(stderr,
+            "def_gen: wrote %s/cvars_generated.{hpp,cpp} and the two command binder TUs "
+            "(%d cvars, %d commands)\n",
+            output_dir, cvar_count, command_count);
+
+  free(cvars);
+  free(commands);
+  return wrote;
+}
+
 int main(int argument_count, char** arguments)
 {
-  const char* filename    = nullptr;
-  const char* output_dir  = nullptr;
+  // Eight is far more .def files than the design admits: one per kind, and the
+  // admission test for a new kind is deliberately strict.
+  constexpr int32_t MAX_INPUTS = 8;
+
+  const char* filenames[MAX_INPUTS] = {};
+  int32_t     input_count           = 0;
+
+  const char* output_dir_override = nullptr;
   // Asset scan paths in the .def are written the way the game writes them at
   // runtime ("resources/obj"), so they resolve against the repo root, not
   // against wherever the build invoked the generator from.
   const char* asset_root  = ".";
   bool        should_dump = false;
+  bool        should_emit = false;
 
   for (int index = 1; index < argument_count; ++index)
   {
     if (strcmp(arguments[index], "--dump") == 0)
     {
       should_dump = true;
+      continue;
+    }
+    if (strcmp(arguments[index], "--emit") == 0)
+    {
+      should_emit = true;
       continue;
     }
     if (strcmp(arguments[index], "--output-dir") == 0)
@@ -3527,7 +4735,7 @@ int main(int argument_count, char** arguments)
         fprintf(stderr, "error: --output-dir needs a directory\n");
         return 1;
       }
-      output_dir = arguments[++index];
+      output_dir_override = arguments[++index];
       continue;
     }
     if (strcmp(arguments[index], "--asset-root") == 0)
@@ -3545,78 +4753,119 @@ int main(int argument_count, char** arguments)
       fprintf(stderr, "error: unknown option '%s'\n", arguments[index]);
       return 1;
     }
-    if (filename != nullptr)
+    if (input_count >= MAX_INPUTS)
     {
-      fprintf(stderr, "error: more than one input file given ('%s' and '%s')\n", filename,
-              arguments[index]);
+      fprintf(stderr, "error: more than %d input files\n", MAX_INPUTS);
       return 1;
     }
-    filename = arguments[index];
+    filenames[input_count++] = arguments[index];
   }
 
-  if (filename == nullptr)
+  if (input_count == 0)
   {
-    fprintf(stderr,
-            "usage: entity_gen <file.def> [--dump] [--output-dir <dir>] [--asset-root <dir>]\n");
+    fprintf(stderr, "usage: def_gen <file.def>... [--emit] [--dump] [--output-dir <dir>] "
+                    "[--asset-root <dir>]\n"
+                    "\n"
+                    "  --emit          write the generated files. Output goes to\n"
+                    "                  <dir of the .def>/generated unless --output-dir says\n"
+                    "                  otherwise. Without it the tool only parses and checks.\n"
+                    "  --dump          print the parsed IR\n"
+                    "  --output-dir    override the derived output directory; legal only with\n"
+                    "                  exactly one input\n"
+                    "  --asset-root    resolve the .def's asset scan paths against this\n"
+                    "\n"
+                    "Pass EVERY .def in one run: the schema hash is computed across all of\n"
+                    "them, so a partial run writes a hash that disagrees with a full build.\n");
     return 1;
   }
 
-  program_t program  = {};
-  program.filename   = filename;
-  program.asset_root = asset_root;
-
-  if (!read_entire_file(filename, &program.source, &program.source_length))
-    return 1;
-
-  allocate_program(&program);
-
-  tokenize(&program);
-
-  parser_t parser = {};
-  parser.program  = &program;
-  parse_program(&parser);
-
-  resolve_program(&program);
-
-  if (program.error_count > 0)
+  if (output_dir_override != nullptr && input_count > 1)
   {
-    fprintf(stderr, "%s: %d error%s\n", filename, program.error_count,
-            program.error_count == 1 ? "" : "s");
+    fprintf(stderr, "error: --output-dir takes one input file, but %d were given; each .def's "
+                    "output directory is derived from its own path\n",
+            input_count);
     return 1;
   }
+
+  program_t programs[MAX_INPUTS] = {};
+  int32_t   total_errors         = 0;
+
+  for (int32_t index = 0; index < input_count; ++index)
+  {
+    program_t* program  = &programs[index];
+    program->filename   = filenames[index];
+    program->asset_root = asset_root;
+
+    if (!read_entire_file(program->filename, &program->source, &program->source_length))
+      return 1;
+
+    allocate_program(program);
+    tokenize(program);
+
+    parser_t parser = {};
+    parser.program  = program;
+    parse_program(&parser);
+
+    resolve_program(program);
+
+    if (program->error_count > 0)
+      fprintf(stderr, "%s: %d error%s\n", program->filename, program->error_count,
+              program->error_count == 1 ? "" : "s");
+
+    total_errors += program->error_count;
+  }
+
+  if (total_errors > 0)
+    return 1;
+
+  // ONE digest over every input, in command-line order. This is why the tool
+  // takes all the .def files at once rather than being run per file.
+  uint32_t schema_hash = 2166136261u;
+  for (int32_t index = 0; index < input_count; ++index)
+    schema_hash = mix_schema_hash(schema_hash, &programs[index]);
 
   if (should_dump)
-    dump_program(&program);
-
-  if (output_dir != nullptr)
   {
-    const char* header_name = "entities_generated.hpp";
-    const char* source_name = "entities_generated.cpp";
-
-    char header_path[1024];
-    char source_path[1024];
-    snprintf(header_path, sizeof(header_path), "%s/%s", output_dir, header_name);
-    snprintf(source_path, sizeof(source_path), "%s/%s", output_dir, source_name);
-
-    FILE* header_file = fopen(header_path, "wb");
-    if (header_file == nullptr)
+    for (int32_t index = 0; index < input_count; ++index)
     {
-      fprintf(stderr, "error: cannot write '%s'\n", header_path);
-      return 1;
+      if (index > 0)
+        printf("\n");
+      dump_program(&programs[index]);
     }
-    emit_generated_header(header_file, &program);
-    fclose(header_file);
+    printf("\n// SCHEMA_HASH = 0x%08xu (across %d .def file%s)\n", schema_hash, input_count,
+           input_count == 1 ? "" : "s");
+  }
 
-    FILE* source_file = fopen(source_path, "wb");
-    if (source_file == nullptr)
+  if (!should_emit)
+    return 0;
+
+  for (int32_t index = 0; index < input_count; ++index)
+  {
+    const program_t* program = &programs[index];
+
+    char derived[1024];
+    derive_output_directory(program->filename, derived, sizeof(derived));
+    const char* output_dir = output_dir_override != nullptr ? output_dir_override : derived;
+
+    bool wrote = false;
+    switch (program->family)
     {
-      fprintf(stderr, "error: cannot write '%s'\n", source_path);
-      return 1;
-    }
-    emit_generated_source(source_file, &program, header_name);
-    fclose(source_file);
+      case DEF_FAMILY_ENTITY:
+        wrote = emit_entity_family(program, output_dir, schema_hash);
+        break;
 
-    fprintf(stderr, "entity_gen: wrote %s and %s\n", header_path, source_path);
+      case DEF_FAMILY_CVAR:
+        wrote = emit_cvar_family(program, output_dir);
+        break;
+
+      case DEF_FAMILY_EMPTY:
+        fprintf(stderr, "%s: error: declares nothing, so there is nothing to emit\n",
+                program->filename);
+        return 1;
+    }
+
+    if (!wrote)
+      return 1;
   }
 
   return 0;

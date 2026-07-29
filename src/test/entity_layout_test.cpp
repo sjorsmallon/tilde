@@ -217,7 +217,7 @@ int main()
     {
       if (strcmp(field.name, "sprite") == 0)
         sprite_field_names_its_class =
-            field.type == FIELD_TYPE_ASSET && field.asset_class_id >= 0;
+            field.type == FIELD_TYPE_ASSET && field.asset_class_id != NOT_AN_ASSET_CLASS;
     }
     check(sprite_field_names_its_class, "an asset field records which asset class it draws from");
 

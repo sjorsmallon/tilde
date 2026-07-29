@@ -510,6 +510,410 @@ decisions cannot be reverted silently.
       vestigial thereafter — which is why there is no orientation/velocity
       relation to enforce.
 
+## P5 — Hard cutover (delete the macro system)  ✅ DONE
+*branch `p5-hard-cutover` · the tree builds and **all 17 test executables pass**.*
+
+The macro system is deleted, every consumer is converted, and the tree builds.
+The phase's one hard rule — do not stop while the tree is broken — is satisfied.
+
+- [x] `Class_Schema`/`Field_Prop` deleted (`network/schema.{hpp,cpp}` gone)
+- [x] X-macro / factory registration deleted (`entity_list.hpp`,
+      `entity_type.hpp`, all 7 `*_entity.{hpp,cpp}`, `entity.{hpp,cpp}`)
+- [x] Dynamic dispatch converted. `network::Entity` and all its virtuals are
+      gone; `entity_as` compares the generated `T::static_type`, `get_schema`
+      is the generated tables, `get_box_volume` is a component-table lookup.
+      The only per-type virtual that actually existed was
+      `Trigger_Volume_Entity::get_box_volume` — see the lifecycle note below.
+- [x] Map serialization on the generated tables, honoring `@Saveable`, in
+      **declaration order**. One key per leaf, dotted for components
+      (`volume.half_extents`) — the old `key:value|key:value` blob could not
+      even represent a component inside a component.
+- [x] Versioning without version numbers, all three cases exercised by the real
+      maps: missing key → DSL default; unknown key → **warning** and ignored
+      (every pre-cutover map carries `entity_id`, which is `@Networked`-only
+      now); renames via one-time conversion in `map.cpp`.
+- [x] Undo re-pointed at the generated tables (`entities::capture_field_changes`
+      / `write_field_changes`), transaction snapshots via `clone_entity`.
+- [x] `__primitive_` retired in full. `assets::init()` walks the manifests
+      eagerly and is called from all three launchers; `render.mesh` is a
+      `mesh_asset` id; all 7 `strncmp` dispatch sites and `get_primitive_mesh`
+      are gone.
+- [x] **Geometry keeps free-form mesh paths** — decided, not deferred. A static
+      mesh is arbitrary level art, so the closed set an asset id gives you is
+      the wrong shape: an author adding a prop should not have to touch
+      `entities.def`. Recorded at `geometry_surface_t::mesh_path`.
+- [x] Generator grew what map I/O and the inspector actually needed: an
+      `enum_type` table + `enum_id` column (a field record could not previously
+      say WHICH enum it was, so no generic walker could read one),
+      `asset_class_manifest(id)`, and `static_type` on every entity struct.
+- [x] `network_test`'s SEGFAULT is **fixed, and it was the test's bug**: it
+      called `diff(nullptr, &entity, schema)`, and `diff()` memcmp'd the
+      baseline unconditionally. `Entity::serialize` had its own null-baseline
+      branch, so only the test ever hit it. It now drives the real
+      serialize/deserialize path — which is also the only option left, since a
+      test cannot invent an entity type against a closed enum.
+- [x] Trigger actions: the string-keyed, static-init `Trigger_Action_Registry`
+      and its X-macro name list are gone, replaced by one exhaustive switch on
+      `entities::Trigger_Action` (`server/trigger_actions.hpp`). The property
+      the registry existed for survives — map files still store the enum by
+      NAME, so reordering rebinds nothing.
+- [x] **Schema hash in the connect handshake.** `CmdConnect.schema_hash` carries
+      `entities::SCHEMA_HASH`; the server refuses a mismatch before a slot is
+      taken, `log_error`s both hashes, and echoes the server's in
+      `CmdReject.server_schema_hash` so the client can report both too.
+      Verified against a live `MyGame_Server` with a raw UDP prober: matching
+      hash → CmdAccept, `0xdeadbeef` → CmdReject naming both hashes.
+- [x] **`asset_test` now passes.** Two bugs, both in the test: the fixtures were
+      hardcoded to POSIX `/tmp` (now `std::filesystem::temp_directory_path()`,
+      and the ofstream state is checked instead of failing silently), and it
+      asserted `channels == 3` when `load_texture` deliberately forces RGBA.
+      **All 17 test executables are green.**
+- [x] `CLAUDE.md` rewritten: "Schema System" → the DSL + generator, a new
+      "Entity reflection" section, "Asset System" covers the manifest, the
+      handshake is documented, and the stale port numbers (2020/2024 → the real
+      9999/5001) and test list are fixed. `src/shared/entities/README.md` was
+      worse — it still said the macros were what the game builds against — and
+      is rewritten too.
+- [x] `maps/new_map.source` and `maps/other.source` converted (backups at
+      `*.preconvert.1.bak`). `map_convert` decided "needs conversion" by looking
+      for retired geometry classnames, which is geometry-only and so said
+      "already converted" for maps whose ENTITY text was still pre-cutover; it
+      now compares the file against what `save_map` would write (line endings
+      normalized), so it stays correct as further conversions land. Its backup
+      no longer overwrites an existing `.preconvert.bak` — that held the only
+      copy of the pre-geometry-exit original.
+- [x] `placement_tool.cpp`'s static-mesh prototype pointed at the nonexistent
+      `resources/obj/m4a1_s.obj`; now `error.obj`, the question-mark
+      placeholder. Geometry mesh paths are free-form, so nothing would have
+      caught it at compile time — it just placed an invisible object.
+
+**Notes for whoever reads this later:**
+
+- **Lifecycle hooks were NOT built, on purpose.** The item assumed per-type
+  virtual overrides to replace; grepping found exactly one
+  (`Trigger_Volume_Entity::get_box_volume`), and it became a component lookup.
+  There is no `on_entity_spawned` caller to write against, so building the hook
+  now would be inventing an interface with no user. The sanctioned pattern —
+  a handwritten exhaustive switch over the closed enum — is used where it does
+  earn its place: `make_entity_pool`, `create_map_entity`, `fire_trigger_action`,
+  `compute_entity_bounds`, and the editor's `ENTITY_DISPATCH`.
+- **Undo's text adapter** landed as `entities::field_to_text` /
+  `field_from_text` rather than as a `field_change_t`-shaped pair. Same seam,
+  and map I/O is its real (and only) caller — a second encoding for undo alone
+  would have had no user either.
+- **Physics cubes are now hittable.** The `Shape_Kind` merge fixed a live bug:
+  `physics_body_system.cpp:62-64` set `body->shape_type` AND
+  `body->hitbox.shape_type` from the same string, so `spawn_cube` wrote `"box"`
+  into a hitbox — and `test_hitbox_collision` (`components.cpp:109-194`) only
+  branched on `"sphere"`/`"capsule"`/`"aabb"`, so a cube's hitbox fell through
+  every strcmp to `return false` and never registered a hit. Correct now, but a
+  behavior CHANGE.
+- **Weapons are out of the editor placement menu**, as decided in
+  `entities.def`. The old menu offered EVERY type from the X-macro (rockets and
+  players included) and `placement_tool.cpp:231` special-cased placing a
+  `Weapon_Entity`. `placeable_entity_types()` replaces that menu and
+  `Weapon_Entity` is `@runtime_only`, so it goes: a gun on the ground should be
+  a pickup entity that does not exist yet, and no system spawns or ticks a
+  `Weapon_Entity` at all.
+- `spawn_physics_body` now takes `Shape_Kind`, not `const char*`.
+- **`Light_Entity` is read by nothing in the renderer.** Only the editor traits
+  and picking bounds touch it. Its fields lost `@Networked` in P4 on the
+  map-placed argument; when lights actually light something AND are spawned at
+  runtime, that reverses.
+
+---
+
+## P6 — Serializer v2 (with snapshot delta compression)  ✅ DONE
+*Full build green; all 18 test executables pass. What is still in `todo.md`
+under P6 is the live GUI ack-loop check (needs a running client, can't be done
+headlessly) and `@interpolate`, a future annotation.*
+
+One narrow seam: **"give me the changed fields."** Change *detection* stays a
+separate module from wire *encoding*.
+
+- [x] ~~Recursive generated visitors over the schema tree replace the flat
+      `Field_Prop` walk~~ — landed with P5. `networked_leaf_fields(type)` is the
+      flattened, cached walk and both ends build the bit order from it, so bit N
+      means the same leaf on both sides by construction.
+- [x] Detection side stays memcmp-against-baseline (protected by blittability);
+      dirty-bit / change-tick tracking swaps in later, at `serialize_entity`'s
+      two memcmp passes and nowhere else.
+- [x] **Encoding side got snapshot delta compression, done properly: the
+      baseline is the ACKED snapshot, not the last-sent one.** See below.
+- [x] Change-notification seam: `deserialize_entity` takes an optional
+      `network::changed_fields_t*` out-param, indexed like
+      `networked_leaf_fields(type)`. It is the mask the reader had to buffer
+      anyway, so it costs nothing. No caller yet — the first one is
+      "mesh id changed → reload asset".
+- [x] ~~Fix `network_test` first~~ — was already fixed in P5.
+
+### What acked baselines actually changed
+
+The delta path existed before this and was **wrong on an unreliable channel**:
+the server deltaed against the snapshot it last SENT and the client applied the
+delta to its CURRENT state. One dropped datagram and every field that then
+stopped changing was permanently wrong on the client — it never learns the value
+it missed, because the server believes it already sent it. Reproduced as a test
+(`snapshot_delta_test`, third subtest) so the reason survives.
+
+Now:
+
+- `C2S_PlayerMoveCommand.acked_server_tick` — the client names the newest
+  snapshot it fully reconstructed. Rides on the move command: same rate, same
+  destination, no extra datagram.
+- `S2C_EntityPackage.delta_from_tick` — the server names what the payload is a
+  delta against. 0 = full update.
+- `shared/network/snapshot_history.hpp` — one ring type used by BOTH ends (32
+  ticks ≈ 530ms at 60Hz). The server stores what it sent so it can delta against
+  the acked tick; the client stores what it reconstructed, because the live
+  world has moved on by the time the server names that tick.
+- A client that no longer holds `delta_from_tick` drops the packet WHOLE and
+  logs it. Its ack does not advance, so the server re-baselines to a full update
+  within a round trip. Self-healing, no reliability layer needed.
+- Server tick numbering now starts at **1**: 0 is the wire sentinel for
+  "no baseline".
+- `net_snapshot_debug` (client cvar, default off) prints `delta_from` and the
+  payload size every 120 ticks. `delta_from 0` every line = the ack loop is
+  broken and everything is a full update.
+
+### Explicit entity removal, and what it unlocked
+
+The delta path was field-accurate but **membership-blind**: every snapshot
+listed every entity, because "absent means gone" was the only way to express a
+despawn. So an entity that had not moved still paid its key and an all-zero
+change mask, every tick, forever — these were whole-world snapshots wearing a
+delta's clothes.
+
+**The canonical fix is a removal record INSIDE the snapshot delta, not a
+separate spawn/despawn channel** — Quake 3's `SV_EmitPacketEntities` and
+Source's `EnterPVS/DeltaEnt/PreserveEnt/LeavePVS` are the same idea. Membership
+is a property of "the world at tick N", exactly like a field value, so it is
+deltaed against the acked baseline exactly like one — and it inherits that
+rule's reliability for free. Lose the datagram that says "entity 47 is gone" and
+the client's ack does not advance past it, so the next snapshot is computed
+against an older baseline that STILL CONTAINS 47 and says it again. Self-heals
+within a round trip, no retransmit layer, for the same reason a changed field
+does. `snapshot_delta_test` reproduces exactly that (subtest: "a dropped removal
+re-rides on the next snapshot").
+
+A separate despawn channel was the plan recorded in `todo.md` and it is the
+worse shape: it needs its own retransmit AND its own ordering against the
+snapshot stream. A despawn landing before a snapshot that still lists the
+entity, or after one that already dropped it, is a second source of truth about
+world membership disagreeing with the first.
+
+**The payoff is not the deletes — it is that ABSENCE NOW MEANS UNCHANGED.** The
+receiver seeds the frame from the baseline and applies records on top, so only
+spawns, changes and removals ride the wire. That is the actual step from
+whole-world snapshots to per-entity deltas. Measured in the test: 3 rockets, one
+moving = 63 bytes / 3 records before, 6 bytes / 1 record after; a tick where
+nothing moves is one var_uint.
+
+- [x] **`shared/network/entity_snapshot.{hpp,cpp}`** — the whole-snapshot codec,
+      the set-level counterpart to `entity_serialization`'s field-level one.
+      Grammar in the header:
+      `snapshot := record_count:var_uint record*` /
+      `record := type:var_uint uid:var_uint removed:bit payload?`
+- [x] **Spawn needs no opcode.** An entity with no baseline entry is written
+      with every mask bit set — that IS a full update — and the receiver starts
+      it from a default-constructed value. Only removal needed a bit.
+- [x] **The 255/254 "special slot" sentinels are gone**, replaced by
+      `entities::entity_type` on the wire. They shared a number space with
+      client slots, so they would have collided once bot slots reached 254
+      (`BOT_SLOT_BASE` is 32). Enum values shift when `entities.def` changes,
+      which is exactly what `SCHEMA_HASH` refuses a build over, so sending the
+      raw enum is safe. Adding a replicated type is now a map on
+      `snapshot_frame_t` plus a case in an exhaustive switch, not a hunt for an
+      unused magic number.
+- [x] **An undecodable record fails the whole packet, loudly.** Payload length
+      is only knowable from the type's field table, so an unknown type cannot be
+      skipped — `deserialize_snapshot` returns false, the client drops the
+      packet whole (including the effect batch trailing it), and the unadvanced
+      ack makes the server re-baseline.
+- [x] **ONE frame type shared by both ends** (`network::snapshot_frame_t`,
+      keyed by entity uid). The server deltas against what it believes the
+      client reconstructed, so the two being the same type is the guarantee, not
+      a convenience. The client's by-slot `last_player_entities` is now a VIEW
+      rebuilt from the frame on publish.
+- [x] **Baseline lookup is O(1)** (was a linear scan over the frame's vectors,
+      per entity per client per tick). Fell out for free: the frames had to be
+      keyed by uid for the removal diff anyway. *(Was its own open P6 item.)*
+- [x] **One shared frame ring plus per-client ack cursors** (was
+      `CAPACITY × sv_max_player_count` full copies of the world = 1024 frames to
+      hold 32 distinct ones). The frames are identical for every client because
+      there is no PVS; what is genuinely per client is a uint32.
+      `Snapshot_History::acked_tick`/`acknowledge`/`baseline` are documented as
+      the single-peer convenience — the client uses them, a multi-peer sender
+      keeps its own cursors and calls `find()`. *(Was its own open P6 item.)*
+      Cleared on map switch and on slot reuse, so neither a new world nor a new
+      occupant inherits a stale baseline.
+- [x] **Everything client-side is derived from the RECONSTRUCTED FRAME, not
+      from the records that built it.** Load-bearing now that an unchanged
+      entity produces no record: reconciliation and remote-player interpolation
+      used to be driven from inside the record loop, so they would have stopped
+      happening the moment a player stood still.
+
+**Live bug this fixed:** a disconnected player's green wireframe box rendered
+forever. `Remote_Player_State::active` was set true and never once set false —
+and before explicit removal it *couldn't* be cleared correctly, since "not in
+this packet" didn't mean "gone". `remote_players` entries are now pruned against
+the frame's membership. `Remote_Player_State` also gained `entity_uid` so a slot
+that changes occupant restarts its interpolation buffer instead of lerping the
+new player in from the old one's last position.
+
+**Deleted:** `S2C_EntityPackage.expected_max_entities` and `update_baseline`
+(fields 1 and 3, now `reserved`). The first existed *because* removal was
+implicit; a record count is not an entity count, and the one at the head of
+`entity_data` is the only count that means anything now.
+
+---
+
+## Closed decisions — recorded so they are not re-litigated
+
+### Why the five entity-track topics were one track
+
+They shared four files and each phase changed the ground under the next:
+
+```
+                    pascal_string set() bug          [P0] DONE
+                            |
+                            v  (memcmp == string equality; both undo + wire rely on it)
+  geometry exit  ---------> P1  DONE ---------------------------------------.
+   . killed is_collision_geometry() routing           (map I/O rewritten)   |
+   . killed the map<->session shared_ptr aliasing on the static path        |
+   . means the DSL never needs [N]T                                         |
+   . added the 2nd transaction flavor (geometry value-swap)                 |
+                            |                                               |
+                            v                                               v
+  undo -> binary diffs ---> P2  DONE                  generator finish -> P3 DONE
+   . transaction_system touched ONCE for both flavors                       |
+   . removed get_all_properties/init_from_map from the hot path             v
+   . shrank P5's dynamic-dispatch surface                       flag audit -> P4 DONE
+                            |                                               |
+                            '------------------> P5 HARD CUTOVER <----------'
+                                 DONE
+                                 . macro system deleted, network::Entity died
+                                 . map save/load moved to generated tables
+                                 . undo's text adapter landed here (disk boundary)
+                                                  |
+                                    .-------------+--------------.
+                                    v                            v
+                        serializer v2 -> P6              storage refactor -> P7
+                        (+ snapshot delta compression)   (pools, handles, id unify)
+                                    '-------------+--------------'
+                                                  v
+                                        protobuf removal -> P8
+```
+
+| Topic | Touched in |
+|---|---|
+| Entity generation | P3, P4, P5 (P1 shrank its input from 12 types to 8) |
+| Schema stuff | P1 (geometry stops paying it), P2 (undo stands on it), P5 (deleted) |
+| Entity spawning / ownership | P3 (factory helpers), P5 (virtuals die), P7 (pools + handles) |
+| Map serialization | P1 (geometry I/O + map conversion), P5 (generated, declaration-ordered) |
+| Undo / redo | P1 (2nd flavor), P2 (binary diffs), P5 (re-point + text adapter) |
+
+**Ordering rules that were satisfied** (the P7/P8 ones still live in `todo.md`):
+
+- **Geometry exits before the generator is wired in.** SATISFIED by P1.
+  `Displacement_Entity`'s `schema_array_t<float32, 3267>` was the only
+  array-typed field on any entity, and it's gone — so the DSL never needs
+  `[N]T`. Do not add it.
+- **P4 (flag audit) is blocking.** SATISFIED — see P4 above.
+- **No compatibility phase anywhere in P5.** No `Class_Schema` shim, no
+  per-entity migration. The generator emitted the end state; the cutover was one
+  hard break and the tree didn't build until the last consumer was converted.
+  That was the point — the compiler is the migration checklist.
+- **COMMIT BEFORE P5.** Done on its own branch off a clean, green tree, so
+  "is this broken because of the change, or was it already broken?" had an
+  answer.
+
+### API style: the house `Span<T>`
+
+Settled 2026-07-27 (P3). `src/shared/span.hpp` is the one type for "a contiguous
+range of T": the five generated pointer+count signatures were converted, and so
+were the three pre-existing `std::span` sites (`input.hpp`, `cvar.hpp` and its
+callers), so the codebase has ONE spelling rather than three. The "generated
+output depends on nothing but `<cstdint>`" argument for a house type was already
+spent — the generated header includes `linalg.hpp`, which pulls `<algorithm>`
+and `<cmath>`. It earns its place on consistency and on not making every entity
+TU pay for `<ranges>`.
+
+`Span<T>` deliberately has no `Array<T>` sibling for FIXED-size arrays. Nothing
+needs one; if something does, it is a different type with a different name, not
+an overload of this one.
+
+### Generated output file layout — DEFERRED (considered 2026-07-26)
+
+**One file per entity is the WRONG cut.** Four reasons, and the first is fatal:
+
+1. **There is no incremental-rebuild win to have.** `CMakeLists.txt:126-131` is
+   `DEPENDS entity_gen ${ENTITY_DEF_FILE}` — the whole `.def` plus the generator
+   binary. The unit of change is the `.def`, not the entity, so editing one field
+   on `Light_Entity` regenerates everything no matter how many files that is.
+   Per-entity files add file count without adding rebuild granularity. (Even with
+   content-compare writes that skip untouched files, the tables in point 2 change
+   on every edit anyway.)
+2. **Half the output cannot be split.** `entity_type`, `ENTITY_INFOS[]`,
+   `COMPONENT_OFFSETS[][]`, `entity_type_from_classname` and `SCHEMA_HASH` are
+   whole-program tables spanning every entity. The result is N+1 files where the
+   +1 churns on every change — the churn isn't removed, just surrounded.
+3. **Declaration order becomes the generator's problem.** Emission order makes
+   correctness free today: enums, then components, then the base, then the
+   entities embedding them. Split across files and the generator must emit
+   correct includes and topologically sort what it currently just writes in
+   sequence. Real complexity, no payoff.
+4. **It scatters the diff the layout exists to produce.** These land in the
+   source tree specifically so a `.def` change reads as one reviewable diff
+   (`CMakeLists.txt:115-119`). Per-entity files fragment one logical change
+   across N files. The navigation argument cuts the same way — the file you
+   actually read is `entities.def`; the generated header says "Do not edit."
+
+**The split that WOULD be right, on a different axis: by ROLE, not by entity.**
+Structs + enums in one header (every consumer needs those) and the reflection
+tables in another (only the serializers, the editor inspector, and undo touch
+those). Today every TU including the generated header pays for tables most of
+them never read.
+
+**Trigger to revisit** — needs BOTH, not either: entity count grows severalfold
+(8 today; the tables are ~340 lines), AND the generated header shows up in an
+actual compile-time profile. Until both hold this is speculation. Note P5
+weakens the case further: once the tables drive map I/O, undo and networking,
+most entity-touching code wants them anyway, so the "who needs what" boundary
+gets blurrier, not sharper.
+
+### Sprite asset placeholder
+
+- [x] `sprite_asset` has no `placeholder` (there is no `error.png`), so its slot
+      0 is `ASSET_SOURCE_MISSING` with an empty source. `assets::init()` now
+      `log_error`s when it meets one rather than skipping it quietly
+      (`asset.cpp:1062-1068`) — it fires on every launch until a sprite
+      placeholder exists, which is the point.
+
+### Default mesh is the question mark
+
+`mesh_asset::Missing` is id 0 and resolves to `resources/obj/error.obj`, so an
+unassigned mesh field is the question mark by construction (P3). The runtime
+half — `assets::init()` honoring that entry via eager registration — landed in
+P5.
+
+### Tests that used to fail
+
+- ~~`network_test` SEGFAULTS~~ **FIXED in P5.** The fault was in the TEST, not
+  the engine: it called `network::diff(nullptr, &entity, schema)` for its
+  full-update case, and `diff()` memcmp'd the baseline unconditionally, so a
+  null baseline was a null dereference. `Entity::serialize` had its own
+  null-baseline branch and nothing else called `diff()` that way, which is why
+  only the test ever hit it. Rewritten against the real serialize/deserialize
+  path; passes.
+- ~~`asset_test` fails (exit 3)~~ **FIXED.** Both faults were in the test:
+  hardcoded POSIX `/tmp` fixture paths (so the `std::ofstream` wrote nowhere on
+  Windows, silently, and the load then had no file), and an `assert(channels ==
+  3)` against a loader that deliberately forces RGBA. Now uses
+  `std::filesystem::temp_directory_path()` and checks the stream state.
+
+---
+
 ## Physics body / Jolt (done: basic wiring)
 - [x] physics_body_entity (schema + entity_list registration)
 - [x] physics_body_system: `spawn_physics_body` (box/sphere) +

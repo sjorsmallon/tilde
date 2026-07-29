@@ -3,6 +3,7 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/network/client_connection_state.hpp"
+#include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/player_move.hpp"
@@ -114,6 +115,10 @@ struct client_context_t
   struct Remote_Player_State
   {
     int slot_index = -1;
+    // Which entity currently occupies the slot. A slot can change occupant, and
+    // interpolating across that would lerp the new player in from the old
+    // player's last position.
+    shared::entity_uid_t entity_uid = shared::null_entity_uid;
     bool active = false;
     Remote_Player_Snapshot snapshots[2] = {};
     int snapshot_count = 0;
@@ -143,14 +148,12 @@ struct client_context_t
   // world", which has moved on. Mirrors the server's ring one for one; see
   // shared/network/snapshot_history.hpp. `acked_tick` on it is the value echoed
   // back in every C2S_PlayerMoveCommand.
-  struct Snapshot_Frame
-  {
-    uint32_t tick = 0;
-    std::unordered_map<int32_t, entities::Player_Entity> players; // keyed by client slot
-    std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> rockets;
-    std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> physics_bodies;
-  };
-  ::network::Snapshot_History<Snapshot_Frame> snapshot_history;
+  // The frame type is ::network::snapshot_frame_t, the same one the server
+  // stores — the server deltas against what it believes we reconstructed, so
+  // the two structures being one type is not a convenience, it is the
+  // guarantee. Keyed by entity uid on both ends; `last_player_entities` above
+  // is the by-slot view the rest of the client wants, rebuilt on publish.
+  ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history;
 
   void clear_snapshot_history()
   {

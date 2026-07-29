@@ -265,7 +265,13 @@ void PlayState::on_enter()
   auto &conn = ctx.connection_state;
   if (!conn.socket.is_open())
   {
-    conn.socket.open(network::client_port_number);
+    // Bind an ephemeral port (0 = OS assigns). A fixed client port breaks two
+    // clients on one machine: SO_REUSEADDR lets the second bind(5001) succeed,
+    // the server then sees both as 127.0.0.1:5001, and replies are delivered
+    // to whichever socket bound first — the second client hangs on connect.
+    // The server keys players by the address recvfrom reports, so it never
+    // cares which port a client uses.
+    conn.socket.open(0);
   }
 
   conn.server_address = network::Address(127, 0, 0, 1, network::server_port_number);
@@ -618,7 +624,7 @@ void PlayState::update(float dt)
     // networked leaf is present and no baseline is needed.
     const uint32_t delta_from_tick = pkg.has_delta_from_tick() ? pkg.delta_from_tick() : 0;
 
-    const client_context_t::Snapshot_Frame *baseline = nullptr;
+    const network::snapshot_frame_t *baseline = nullptr;
     if (delta_from_tick != 0)
     {
       baseline = ctx.snapshot_history.find(delta_from_tick);
@@ -640,102 +646,25 @@ void PlayState::update(float dt)
     size_t data_size = pkg.entity_data().size();
     network::Bit_Reader reader(data, data_size);
 
-    uint32_t entity_count = network::read_var_uint(reader);
-
-    if (net_snapshot_debug.Get() && snap_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
-      log_terminal("[net] snapshot {}: delta_from {}, {} entities, {} bytes", snap_tick,
-                   delta_from_tick, entity_count, data_size);
-
-    // The snapshot being reconstructed. Entities absent from it are gone: the
-    // server writes every entity it has every tick, so the packet IS the world.
-    client_context_t::Snapshot_Frame decoded;
+    // The snapshot being reconstructed. It is SEEDED from the baseline: an
+    // entity the server did not mention is unchanged, not gone. What is gone
+    // is what carried an explicit removal record — see entity_snapshot.hpp.
+    network::snapshot_frame_t decoded;
+    if (!network::deserialize_snapshot(reader, baseline, decoded))
+    {
+      // deserialize_snapshot already logged why. The read position is now
+      // meaningless, so the effect batch trailing the records is unreadable
+      // too: drop the packet whole rather than dispatch garbage. Our ack does
+      // not advance, so the server re-baselines to a full update.
+      continue;
+    }
     decoded.tick = snap_tick;
 
-    for (uint32_t i = 0; i < entity_count; ++i)
-    {
-      uint32_t slot_index = network::read_var_uint(reader);
-
-      if (slot_index == 255)
-      {
-        shared::entity_uid_t entity_id = network::read_var_uint(reader);
-
-        // No baseline entry means the server sent this one as a full update
-        // (it did not exist in the acked snapshot either), so a default-
-        // constructed entity is the right starting point.
-        entities::Rocket_Entity rocket;
-        if (baseline != nullptr)
-        {
-          auto it = baseline->rockets.find(entity_id);
-          if (it != baseline->rockets.end())
-            rocket = it->second;
-        }
-
-        network::deserialize_entity(reader, rocket);
-        decoded.rockets[entity_id] = rocket;
-      }
-      else if (slot_index == 254)
-      {
-        shared::entity_uid_t entity_id = network::read_var_uint(reader);
-
-        entities::Physics_Body_Entity body;
-        if (baseline != nullptr)
-        {
-          auto it = baseline->physics_bodies.find(entity_id);
-          if (it != baseline->physics_bodies.end())
-            body = it->second;
-        }
-
-        network::deserialize_entity(reader, body);
-        decoded.physics_bodies[entity_id] = body;
-      }
-      else
-      {
-        shared::entity_uid_t entity_id = network::read_var_uint(reader);
-
-        // Players are keyed by slot on this side but by entity_id on the
-        // server's, so a slot that changed occupant must not inherit the
-        // previous player's fields — the entity_id check catches that.
-        entities::Player_Entity temp;
-        if (baseline != nullptr)
-        {
-          auto pit = baseline->players.find(slot_index);
-          if (pit != baseline->players.end() && pit->second.entity_id == entity_id)
-            temp = pit->second;
-        }
-
-        network::deserialize_entity(reader, temp);
-        decoded.players[slot_index] = temp;
-
-        if (static_cast<int32_t>(slot_index) == ctx.my_slot)
-        {
-          ctx.my_entity_uid = entity_id;
-          ctx.last_server_position = temp.position;
-          ctx.last_server_velocity = temp.velocity;
-          ctx.last_server_ack_command =
-              pkg.has_last_processed_command() ? pkg.last_processed_command() : -1;
-          ctx.received_server_update = true;
-
-          static bool first_update = true;
-          if (first_update) {
-            log_terminal("[CLIENT] First server update: position ({:.1f}, {:.1f}, {:.1f}), entity_id {}",
-                         temp.position.x, temp.position.y, temp.position.z, entity_id);
-            first_update = false;
-          }
-        }
-        else
-        {
-          auto &rp = ctx.remote_players[slot_index];
-          rp.active = true;
-          rp.slot_index = slot_index;
-          rp.snapshots[0] = rp.snapshots[1];
-          rp.snapshots[1] = {temp.position, temp.view_angle_yaw,
-                             temp.view_angle_pitch, snap_tick};
-          if (rp.snapshot_count < 2)
-            rp.snapshot_count++;
-          ctx.interpolation_time = 0.f;
-        }
-      }
-    }
+    if (net_snapshot_debug.Get() && snap_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
+      log_terminal("[net] snapshot {}: delta_from {}, {} players / {} rockets / {} bodies, "
+                   "{} bytes",
+                   snap_tick, delta_from_tick, decoded.players.size(),
+                   decoded.rockets.size(), decoded.physics_bodies.size(), data_size);
 
     // Explosion particle effects are now spawned by the ROCKET_EXPLOSION
     // cosmetic-event handler (src/client/effects/rocket_explosion.cpp).
@@ -746,10 +675,67 @@ void PlayState::update(float dt)
     // Publish: the decoded frame becomes both the world the game reads and the
     // history entry we will ack. Those must be the same bytes — the server
     // deltas its next packet against exactly what we store here.
-    ctx.last_player_entities = decoded.players;
+    //
+    // Everything below is derived from the RECONSTRUCTED FRAME, not from the
+    // records that built it. That distinction is load-bearing now that an
+    // unchanged entity produces no record at all: driving reconciliation or
+    // interpolation off "what was in the packet" would stop happening the
+    // moment a player stood still.
+    ctx.last_player_entities.clear();
+    for (const auto &[uid, player] : decoded.players)
+      ctx.last_player_entities[player.client_slot_index] = player;
+
     ctx.remote_rockets = decoded.rockets;
     ctx.remote_physics_bodies = decoded.physics_bodies;
     ctx.last_processed_tick = snap_tick;
+
+    for (const auto &[slot_index, player] : ctx.last_player_entities)
+    {
+      if (slot_index == ctx.my_slot)
+      {
+        ctx.my_entity_uid = player.entity_id;
+        ctx.last_server_position = player.position;
+        ctx.last_server_velocity = player.velocity;
+        ctx.last_server_ack_command =
+            pkg.has_last_processed_command() ? pkg.last_processed_command() : -1;
+        ctx.received_server_update = true;
+
+        static bool first_update = true;
+        if (first_update) {
+          log_terminal("[CLIENT] First server update: position ({:.1f}, {:.1f}, {:.1f}), entity_id {}",
+                       player.position.x, player.position.y, player.position.z,
+                       player.entity_id);
+          first_update = false;
+        }
+      }
+      else
+      {
+        auto &rp = ctx.remote_players[slot_index];
+        // A slot that changed occupant must not interpolate from the previous
+        // player's position — restart the buffer instead of lerping across the
+        // teleport.
+        if (rp.active && rp.entity_uid != player.entity_id)
+          rp = {};
+        rp.active = true;
+        rp.slot_index = slot_index;
+        rp.entity_uid = player.entity_id;
+        rp.snapshots[0] = rp.snapshots[1];
+        rp.snapshots[1] = {player.position, player.view_angle_yaw,
+                           player.view_angle_pitch, snap_tick};
+        if (rp.snapshot_count < 2)
+          rp.snapshot_count++;
+        ctx.interpolation_time = 0.f;
+      }
+    }
+
+    // A player who left the world has no entry in the frame, so its
+    // interpolation state has to go too — it is what the renderer draws from,
+    // and nothing else ever cleared it. Before explicit removal this could not
+    // be done correctly, which is why disconnected players kept rendering.
+    for (auto it = ctx.remote_players.begin(); it != ctx.remote_players.end();)
+      it = ctx.last_player_entities.count(it->first) == 0
+               ? ctx.remote_players.erase(it)
+               : std::next(it);
 
     ctx.snapshot_history.slot_for(snap_tick) = std::move(decoded);
     ctx.snapshot_history.acknowledge(snap_tick);
