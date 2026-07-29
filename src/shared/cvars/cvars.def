@@ -90,10 +90,6 @@ Server :: cvars {
     sv_tickrate:            f32 = 60.0      @Server    "Server tick rate in Hz"
 }
 
-// ---------------------------------------------------------------------------
-// Client -- was the three launcher .cpp files
-// ---------------------------------------------------------------------------
-
 Client :: cvars {
     r_fov:                  f32 = 90.0      @Client    "Field of view in degrees"
 
@@ -140,11 +136,19 @@ Audio :: cvars {
 
 Debugging :: cvars {
     // Unflagged on purpose: this one gates RECORDING inside shared collision
-    // code (debug_collision.cpp record_collision), which runs on whichever side
-    // is simulating, while the DRAWING is client-side. Under one shared
-    // cvar_state_t, toggling it from the integrated client console finally
-    // enables the server-side recording it was always meant to -- today the
-    // client toggles its own DLL's copy and the simulating side never sees it.
+    // code (player_move -> debug_collision::record_collision), which runs on
+    // whichever side is simulating, while the DRAWING is client-side.
+    //
+    // CORRECTION (2026-07-29, found during the step-3 cutover): one shared
+    // cvar_state_t does make the toggle reach the server's player_move, but
+    // that does NOT make server-side faces visible -- debug_collision.cpp's
+    // g_collision_faces is a game_shared global, and game_shared is a static
+    // lib, so the server DLL records into its own copy that the client's
+    // drawing never reads. The server drains it each tick so it cannot grow
+    // unbounded. What you see is still only the CLIENT's own prediction run.
+    // Fixing that for real means giving the recorder explicit ownership the
+    // same way the cvars just got it (see todo.md, "the asset registry is
+    // duplicated per module" -- same disease).
     debug_show_collisions:  bool = false                "Show collision faces in green"
 
     // Pure client-side draws, but left unflagged to match their sibling above:
@@ -164,19 +168,44 @@ Debugging :: cvars {
 // Commands
 // ---------------------------------------------------------------------------
 //
-// A command is a VERB: a name and a handler, no value. Declaring one here
-// obligates the owning side to define `commands::<name>` with the canonical
-// handler signature; the generated per-side binder TU references that symbol
-// directly, so a missing or misspelled handler is a LINK ERROR naming the
-// symbol. There is no runtime registration and nothing for the linker to drop.
+// A command is a VERB with a SIGNATURE: a name, typed parameters, a handler.
+// Declaring one here obligates the owning side to define `commands::<name>`
+// with exactly the signature the parameter list implies -- spawn_bot's is
+// `void spawn_bot(Bot_Mode mode, const command_context_t&)` -- and the
+// generated per-side binder TU references that symbol directly, so a missing,
+// misspelled or WRONGLY TYPED handler is a LINK ERROR naming the symbol.
+// There is no runtime registration and nothing for the linker to drop.
+//
+// The handler never sees the console tokens. Its generated ARGUMENT BINDER
+// parses them against this signature -- count check, per-type parse, defaults
+// -- and on failure replies with a usage string derived from the same
+// signature, so usage text cannot drift from what is actually accepted. The
+// old shape (every handler takes Span<string_view> and hand-parses) was the
+// same disease the cvar migration cured: N copies of tokenize/validate/convert
+// drifting against N prose "Usage:" strings.
+//
+// Parameter types: f32 / i32 / u32 / bool / string / an enum declared in THIS
+// file (the entity fence stands -- a command may not name an entity type).
+// `string` is bare, no <N>: the value is a view into the console line, not
+// stored bytes. A `= default` makes a parameter optional; optional parameters
+// form a suffix, because arguments bind by position. `string...` (last
+// parameter only) takes the line's untokenized tail, spaces intact.
+//
+// Enum-typed CVARS are deliberately not implemented -- same rule as string<N>
+// above: the machinery exists the day the first declaration needs it.
 //
 // Names share ONE flat namespace with the cvars above -- the console resolves
 // both from the same token, so a collision is a generator error.
 
+// Lowercase values on purpose, unlike the entity family's Pascal_Case: these
+// are console-typed identity ("spawn_bot chase"), and everything the console
+// resolves is lowercase.
+Bot_Mode :: enum { idle, chase, regular }
+
 Server_Commands :: commands {
-    spawn_bot     @Server  "Spawn a bot. Optional arg: idle (default) | chase | regular"
-    spawn_cube    @Server  "Spawn a physics cube in front of the calling player"
-    spawn_sphere  @Server  "Spawn a physics sphere in front of the calling player"
+    spawn_bot(mode: Bot_Mode = .idle)  @Server  "Spawn a bot"
+    spawn_cube()                       @Server  "Spawn a physics cube in front of the calling player"
+    spawn_sphere()                     @Server  "Spawn a physics sphere in front of the calling player"
 
     // WAS A CVAR: CVar<std::string> map("map", "dm_aabb", ...) with an
     // on-change callback that loaded the level -- a verb wearing a variable
@@ -184,9 +213,10 @@ Server_Commands :: commands {
     // callback mechanism, which is why v1 has no callback mechanism at all.
     // The "current map" question is answered by the server's own state and the
     // CmdChangeMap broadcast, not by a settable string.
-    map           @Server  "Switch the server to a new map. Usage: map <path>"
+    map(path: string)                  @Server  "Switch the server to a new map"
+    noclip(enabled: bool = false)      @Server  "Disable movement Vector Clipping"
 }
 
 Client_Commands :: commands {
-    bind          @Client  "Bind a key (a-z) to a command line. Usage: bind <key> <command...>"
+    bind(key: string, command: string...)  @Client  "Bind a key (a-z) to a command line"
 }

@@ -1,5 +1,5 @@
 #include "console.hpp"
-#include "cvar.hpp"
+#include "cvars/cvar_console.hpp"
 #include "input.hpp"
 #include "log.hpp"
 #include <algorithm>
@@ -42,42 +42,11 @@ void Console::Print(const char *fmt, ...)
   ScrollToBottom = true;
 }
 
-void Console::SetNetworkForwarder(std::function<void(std::string_view)> fn)
+void Console::SetCVarState(cvars::cvar_state_t *state,
+                           cvars::command_table_t *table)
 {
-  network_forwarder_ = std::move(fn);
-}
-
-void Console::RegisterRemoteCVar(const std::string &name,
-                                 const std::string &value, uint64_t flags,
-                                 bool is_command,
-                                 const std::string &description)
-{
-  auto &registry = cvar::CVarSystem::Get();
-  if (auto *existing = registry.Find(name))
-  {
-    // Already known locally — keep the value in sync if it's a data cvar.
-    // Commands have no value to mirror.
-    if (!existing->IsCommand() && !is_command)
-      existing->SetFromString(value);
-    return;
-  }
-
-  if (is_command)
-  {
-    // Stub command: empty handler. ExecuteCommand sees the Server flag and
-    // forwards the whole line to the network forwarder.
-    remote_stubs_.push_back(std::make_unique<cvar::Console_Command>(
-        name,
-        [](Span<std::string_view>, const cvar::command_context_t &) {},
-        description, flags));
-  }
-  else
-  {
-    // Stub data cvar: snapshot of server value as a string. Setting it
-    // locally has no effect on the server; the value is just informational.
-    remote_stubs_.push_back(
-        std::make_unique<cvar::CVar<std::string>>(name, value, description, flags));
-  }
+  cvar_state_    = state;
+  command_table_ = table;
 }
 
 bool Console::BindKey(std::string_view key, std::string command_line)
@@ -114,32 +83,6 @@ void Console::PollBindings()
   }
 }
 
-// Register the `bind` command in the client's CVarSystem. Captures Console::Get()
-// at invocation time (the singleton is local-static, lazily initialised).
-static cvar::Console_Command cmd_bind(
-    "bind",
-    [](Span<std::string_view> args, const cvar::command_context_t &)
-    {
-      if (args.size() < 2)
-      {
-        Console::Get().Print("usage: bind <key> <command...>");
-        return;
-      }
-      std::string command_line;
-      for (size_t i = 1; i < args.size(); ++i)
-      {
-        if (i > 1)
-          command_line.push_back(' ');
-        command_line.append(args[i].begin(), args[i].end());
-      }
-      if (Console::Get().BindKey(args[0], command_line))
-        Console::Get().Print("bound '%.*s' to: %s",
-                             static_cast<int>(args[0].size()), args[0].data(),
-                             command_line.c_str());
-    },
-    "Bind a key (a-z) to a command line. Usage: bind <key> <command...>",
-    cvar::flags::Client);
-
 void Console::ExecuteCommand(const char *command_line)
 {
   Print("# %s", command_line);
@@ -156,77 +99,40 @@ void Console::ExecuteCommand(const char *command_line)
   }
   History.push_back(command_line);
 
-  // Parse command
-  std::string line = command_line;
-  std::stringstream ss(line);
-  std::string cmd;
-  ss >> cmd;
-
-  if (cmd.empty())
-    return;
-
-  auto *obj = cvar::CVarSystem::Get().Find(cmd);
-  if (obj)
+  if (!cvar_state_ || !command_table_)
   {
-    if (obj->IsCommand())
-    {
-      // Server-flagged commands are forwarded over the network.
-      if (obj->GetFlags() & cvar::flags::Server)
-      {
-        if (network_forwarder_)
-          network_forwarder_(command_line);
-        else
-          Print("[error] Not connected to a server.");
-      }
-      else
-      {
-        // Local command — execute immediately via the unified dispatcher.
-        cvar::CVarSystem::Get().Execute(command_line);
-      }
-    }
-    else
-    {
-      // CVar: print current value or set it.
-      size_t cmd_end = line.find(cmd) + cmd.length();
-      while (cmd_end < line.length() && std::isspace(line[cmd_end]))
-        cmd_end++;
-
-      if (cmd_end < line.length())
-      {
-        std::string value_str = line.substr(cmd_end);
-        obj->SetFromString(value_str);
-        Print("Set %s to %s", cmd.c_str(), value_str.c_str());
-      }
-      else
-      {
-        std::string flags_str;
-        uint64_t flags = obj->GetFlags();
-        if (flags & cvar::flags::Admin)
-          flags_str += "[ADMIN] ";
-        if (flags & cvar::flags::Client)
-          flags_str += "[CLIENT] ";
-        if (flags & cvar::flags::Cheat)
-          flags_str += "[CHEAT] ";
-
-        Print("%s is %s %s", cmd.c_str(), obj->GetString().c_str(),
-              flags_str.c_str());
-        Print("  %s", obj->GetDescription().c_str());
-      }
-    }
+    // Only reachable if something drove the console before client::Init(),
+    // which would mean the init order broke.
+    Print("[error] Console has no cvar state; client::Init() has not run.");
+    log_error("Console::ExecuteCommand before SetCVarState: '{}'", command_line);
     return;
   }
 
-  // Command not found locally — try forwarding to the server.
-  // Server-only commands (e.g. spawn_bot) live in the server DLL's CVarSystem
-  // and aren't visible to the client, so we forward unknown commands rather
-  // than requiring client-side stubs.
-  if (network_forwarder_)
+  // One dispatcher, shared with the server: a line typed here and the same
+  // line arriving over the wire take identical paths. Ownership (run it here
+  // vs. forward it) is decided inside, from the declared flags plus whether a
+  // forwarder is installed.
+  std::string reply;
+  cvars::console_result_t result = cvars::execute_console_line(
+      *cvar_state_, *command_table_, command_line, cvars::command_context_t{},
+      &reply);
+
+  switch (result)
   {
-    network_forwarder_(command_line);
-  }
-  else
-  {
-    Print("Unknown command: %s", cmd.c_str());
+    case cvars::console_result_t::empty:
+    case cvars::console_result_t::forwarded:
+      // Forwarded lines are answered by the server's S2C_ServerMessage, which
+      // Print()s when it arrives — echoing anything here would double up.
+      break;
+
+    case cvars::console_result_t::ok:
+    case cvars::console_result_t::unknown_name:
+    case cvars::console_result_t::not_connected:
+    case cvars::console_result_t::bad_arguments:
+    case cvars::console_result_t::no_handler:
+      if (!reply.empty())
+        Print("%s", reply.c_str());
+      break;
   }
 }
 
@@ -253,12 +159,21 @@ int Console::TextEditCallback(ImGuiInputTextCallbackData *data)
     Candidates.clear();
     std::string prefix(word_start, word_end - word_start);
 
-    cvar::CVarSystem::Get().VisitAll(
-        [&](const std::string &name, cvar::Console_Entry_Base *)
-        {
-          if (name.compare(0, prefix.size(), prefix) == 0)
-            Candidates.push_back(name);
-        });
+    // Straight off the generated tables — including every @Server name. The
+    // client knows the server's whole cvar/command universe at compile time
+    // (same cvars.def, hash-checked at connect), so autocomplete no longer
+    // needs the server to sync stubs down first.
+    for (const cvars::cvar_info_t &info : cvars::cvar_infos())
+    {
+      if (std::string_view(info.name).starts_with(prefix))
+        Candidates.push_back(info.name);
+    }
+    for (const cvars::command_info_t &info : cvars::command_infos())
+    {
+      if (std::string_view(info.name).starts_with(prefix))
+        Candidates.push_back(info.name);
+    }
+    std::sort(Candidates.begin(), Candidates.end());
 
     if (Candidates.empty())
     {
@@ -388,3 +303,26 @@ void Console::Draw()
 }
 
 } // namespace client
+
+// Declared `bind(key: string, command: string...)` @Client in cvars.def, which
+// obligates game_client to define exactly this symbol with exactly the
+// signature that parameter list implies — client_command_bindings.cpp (a
+// generated TU compiled into this DLL) takes its address, so a rename or a
+// signature drift here is a link error rather than a command that silently
+// stops working. Argument count and the usage reply live in the generated
+// binder, not here; `command` is the line's untokenized tail, interior
+// whitespace intact (the old token re-join collapsed runs of spaces).
+namespace cvars::commands
+{
+
+void bind(std::string_view key, std::string_view command,
+          const command_context_t &)
+{
+  std::string command_line(command);
+  if (client::Console::Get().BindKey(key, command_line))
+    client::Console::Get().Print("bound '%.*s' to: %s",
+                                 static_cast<int>(key.size()), key.data(),
+                                 command_line.c_str());
+}
+
+} // namespace cvars::commands

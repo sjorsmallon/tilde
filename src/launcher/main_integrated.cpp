@@ -2,9 +2,8 @@
 #include "server/server_api.hpp"
 #include "shared/asset.hpp"
 #include "shared/crash_handler.hpp"
-#include "shared/cvar.hpp"
+#include "shared/cvars/generated/cvars_generated.hpp"
 #include "shared/detached_console.hpp"
-#include "shared/game_cvars.hpp"
 #include "shared/log.hpp"
 #include "shared/timed_function.hpp"
 
@@ -13,11 +12,18 @@
 #include <iostream>
 #include <thread>
 
-cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
-cvar::CVar<float> cl_maxfps("cl_maxfps", 1000.0f, "Maximum client framerate (0 = unlimited)");
-cvar::CVar<std::string> map("map", "dm_aabb", "Map to load", cvar::flags::None,
-                            [](const std::string &val)
-                            { log_terminal("Map changed to: {}", val); });
+// THE cvar values and THE command bindings for this process, owned here and
+// lent to both modules. This is the fix the whole CVAR TRACK exists for:
+// game_shared is a STATIC lib linked into game_client.dll and game_server.dll
+// alike, so anything with static storage inside it exists twice. The old
+// CVarSystem singleton was two singletons, which is why `spawn_bot` from the
+// console never reached the server and why cl_timescale slowed rendering but
+// not simulation. One object here, two borrowed pointers, no static init.
+//
+// `map` is no longer a cvar: it is a @Server COMMAND (see cvars.def), and the
+// boot map comes from last_map.txt inside server::Init.
+static cvars::cvar_state_t    g_cvar_state{};
+static cvars::command_table_t g_command_table{};
 
 int main(int argc, char *argv[])
 {
@@ -48,13 +54,13 @@ int main(int argc, char *argv[])
   // Eager asset registration, before anything resolves an id. See asset.hpp.
   assets::init();
 
-  if (!server::Init())
+  if (!server::Init(&g_cvar_state, &g_command_table))
   {
     log_error("Server Init Failed");
     return 1;
   }
 
-  if (!client::Init())
+  if (!client::Init(&g_cvar_state, &g_command_table))
   {
     log_error("Client Init Failed");
     server::Shutdown(); // Cleanup
@@ -88,8 +94,9 @@ int main(int argc, char *argv[])
     if (frame_time > 0.25)
       frame_time = 0.25;
 
-    // Apply time scale
-    double timescale = static_cast<double>(cl_timescale.Get());
+    // Apply time scale. Same object client_impl.cpp scales the client frame dt
+    // from, so slow-mo now slows both halves together.
+    double timescale = static_cast<double>(g_cvar_state.cl_timescale);
     if (timescale < 0.01)
       timescale = 0.01;
     frame_time *= timescale;
@@ -111,7 +118,7 @@ int main(int argc, char *argv[])
     }
 
     // Framerate cap
-    float maxfps = cl_maxfps.Get();
+    float maxfps = g_cvar_state.cl_maxfps;
     if (maxfps > 0.f)
     {
       double min_frame_time = 1.0 / static_cast<double>(maxfps);

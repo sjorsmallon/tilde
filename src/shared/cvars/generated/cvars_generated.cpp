@@ -172,19 +172,28 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
 
 const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
     {.name = "spawn_bot",
-     .description = "Spawn a bot. Optional arg: idle (default) | chase | regular",
+     .description = "Spawn a bot",
+     .usage = "spawn_bot [mode: idle|chase|regular]",
      .flags = CVAR_FLAG_SERVER},
     {.name = "spawn_cube",
      .description = "Spawn a physics cube in front of the calling player",
+     .usage = "spawn_cube",
      .flags = CVAR_FLAG_SERVER},
     {.name = "spawn_sphere",
      .description = "Spawn a physics sphere in front of the calling player",
+     .usage = "spawn_sphere",
      .flags = CVAR_FLAG_SERVER},
     {.name = "map",
-     .description = "Switch the server to a new map. Usage: map <path>",
+     .description = "Switch the server to a new map",
+     .usage = "map <path>",
+     .flags = CVAR_FLAG_SERVER},
+    {.name = "noclip",
+     .description = "Disable movement Vector Clipping",
+     .usage = "noclip [enabled]",
      .flags = CVAR_FLAG_SERVER},
     {.name = "bind",
-     .description = "Bind a key (a-z) to a command line. Usage: bind <key> <command...>",
+     .description = "Bind a key (a-z) to a command line",
+     .usage = "bind <key> <command...>",
      .flags = CVAR_FLAG_CLIENT},
 };
 
@@ -408,6 +417,26 @@ bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)
   }
 
   assert(false && "cvar_from_text: cvar carries an invalid type tag");
+  return false;
+}
+
+const char* to_string(Bot_Mode value)
+{
+  switch (value)
+  {
+    case Bot_Mode::idle: return "idle";
+    case Bot_Mode::chase: return "chase";
+    case Bot_Mode::regular: return "regular";
+  }
+  assert(false && "invalid Bot_Mode");
+  return "";
+}
+
+bool from_string(std::string_view text, Bot_Mode* out_value)
+{
+  if (text == "idle") { *out_value = Bot_Mode::idle; return true; }
+  if (text == "chase") { *out_value = Bot_Mode::chase; return true; }
+  if (text == "regular") { *out_value = Bot_Mode::regular; return true; }
   return false;
 }
 

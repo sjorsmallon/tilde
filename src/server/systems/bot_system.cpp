@@ -292,8 +292,8 @@ void update_bots(std::vector<Bot_State> &bots,
 
     Move_Events move_events{};
     auto [new_pos, new_vel] =
-        player_move(input, session.bvh, bot_ent->position, bot_ent->velocity,
-                    front, right, bot.personality.move_speed,
+        player_move(*context.cvars, input, session.bvh, bot_ent->position,
+                    bot_ent->velocity, front, right, bot.personality.move_speed,
                     shared::player_half_height, dt, &move_events);
 
     bot_ent->position = new_pos;

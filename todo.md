@@ -207,18 +207,56 @@ Step 4 is a netcode change (see the ordering rule): it deletes
       * `SCHEMA_HASH` stays a single symbol in `entities::` — the cvar header
         deliberately does not emit a second one. The namespace is now a
         slight misnomer; renaming it touches the handshake, so it waits.
-- [ ] 3. Ownership cutover — launcher owns the one `cvar_state_t` +
-      `command_table_t`, pointers through module init; delete the `CVar<T>`
-      globals (compiler finds every read site); handlers move to their
-      derived `commands::<name>` signature (linker finds every miss). This
-      step is the structural fix for the spawn_bot cross-DLL bug.
-- [ ] 4. Console + wire — `execute_console_line` replaces
-      `CVarSystem::Execute`; delete the stub machinery and `S2C_CVarSync`;
-      mirrored-values message (`(cvar_id, text)` pairs, compare against
-      last-broadcast copy).
-- [ ] 5. Delete `cvar.hpp`'s classes (`CVarSystem`, `Console_Entry_Base`,
-      `CVar<T>`, `Console_Command`); `command_context_t` and the flag bits
-      survive next to the generated output.
+- [x] ~~3. Ownership cutover~~ — **done 2026-07-29**. All 18 tests green;
+      dedicated server boots. Every `CVar<T>` global is gone, `cvar.hpp` is
+      now included by NOTHING. Launcher owns `cvar_state_t` +
+      `command_table_t` (all three launchers), threaded through
+      `client::Init(state, table)` / `server::Init(state, table)` onto
+      `client_context_t::cvars` / `server_context_t::cvars`. Decisions made
+      while doing it:
+      * **`execute_console_line` was pulled forward from step 4.** Step 3
+        deletes the registry, so leaving `CVarSystem::Execute` in place would
+        have meant a commit where every console command silently resolves
+        nothing. It is also the natural consumer of the cutover: the console
+        and the server's remote-command inbox now call the same function, so a
+        line typed locally and the same line off the wire take one path.
+        Step 4 is now purely the wire half, which is the part the "one netcode
+        change in flight" rule governs.
+      * **Ownership is decided by `forward_to_server`, not by a build flag.**
+        A networked client installs it on connect (`enter_connected_phase`),
+        so `@Server`/`@Mirrored` names forward; a dedicated server and a
+        disconnected client leave it null. The integrated build is a real
+        loopback client, so `spawn_bot` forwards to the in-process server —
+        which is exactly the acceptance path step 6 wants.
+      * **Shared readers take the state as a parameter.**
+        `player_move(const cvar_state_t&, ...)` and
+        `audio_system_t::init(const cvar_state_t&)`. A reference makes
+        client/server agreement about the `pm_*` values a signature obligation
+        rather than a hope about which copy of a static-lib global each module
+        linked — the same argument the `@Mirrored` flag makes.
+      * **`record_collision` no longer checks its own flag** — it records
+        unconditionally and `player_move` gates the call, reading
+        `debug_show_collisions` ONCE per tick so a mid-tick toggle can't
+        record half a frame.
+      * **The `S2C_CVarSync` stub machinery is deleted on both sides** (it
+        could not survive the cutover — there is nothing to register stubs
+        into). `game.proto` still declares the message and nothing sends it;
+        step 4 removes it. **Known gap until step 4: a runtime change to a
+        `pm_*` value on the server does not reach connected clients.** Both
+        sides run the identical `cvars.def` defaults, so this only bites if
+        someone edits a mirrored cvar mid-match.
+      * `PlayState::conn_state_` deleted — it existed only to feed the old
+        capturing forwarder lambda, and a written-never-read member is not
+        something the compiler would have flagged.
+- [ ] 4. Wire — mirrored-values message (`(cvar_id, text)` pairs, compare
+      against a retained last-broadcast copy of `cvar_state_t`; full set on
+      connect). Delete `S2C_CVarSync` + `CvarPair` from `game.proto`, the
+      `Message_Type` entry, `Packet_Traits`, and
+      `client_connection_state.hpp`'s now-unread `cvar_syncs` inbox vector.
+- [ ] 5. Delete `src/shared/cvar.hpp` outright — after step 3 it is included
+      by nothing, and its `command_context_t` / flag bits already have live
+      replacements in `cvars/cvar_runtime.hpp` and the generated header. Drop
+      it from `CMakeLists.txt`'s `game_shared` source list too.
 - [ ] 6. `cvar_test` (parse/emit, text conversion, validation errors) +
       acceptance: **spawn_bot works from the integrated client console**.
 
@@ -274,11 +312,19 @@ behavior-preserving; only 3 art meshes are loaded today):
       `MyGame_Client.exe` and `game_client.dll` (`CMakeLists.txt:362`), so
       `asset.cpp`'s file-scope registries (`asset.cpp:985-987`) exist twice —
       init fills the launcher's copy, the DLL reads its own empty one. The
-      CVarSystem half of this is settled (CVAR TRACK: launcher-owned state
-      through module init); the asset registry needs its own decision — the
-      same explicit-ownership shape is the natural candidate. Options: make
-      `game_shared` a shared lib (one copy of everything) vs an explicit
-      accessor exported from one module.
+      cvar half of this is now **done and in the tree** (CVAR TRACK step 3):
+      launcher-owned state, pointers through module init, shared readers take
+      it as a parameter — copy that shape. Options: make `game_shared` a
+      shared lib (one copy of everything) vs an explicit accessor exported
+      from one module.
+- [ ] **Same disease: `debug_collision::g_collision_faces`.** A `game_shared`
+      global, so each module records into its own copy. Now that
+      `debug_show_collisions` genuinely reaches the server (step 3), the
+      server records faces nothing draws — bounded only by the drain added to
+      `server::Tick`. What you see with the toggle on is still only the
+      client's own prediction run. Same fix shape as the asset registry:
+      explicit ownership, or a face sink handed into `player_move` next to the
+      `cvar_state_t` it already takes.
 - [ ] `editor_gizmo.cpp:385-399` packs euler xyz into a `vec4` with `w=0` in
       one branch and writes an identity QUATERNION `{0,0,0,1}` in another —
       cannot both be right. Gizmo-local bug (orientation is DECIDED: Euler

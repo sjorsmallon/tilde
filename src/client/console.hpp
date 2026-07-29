@@ -1,16 +1,14 @@
 #pragma once
 
+#include "../shared/cvars/cvar_console.hpp"
 #include "input.hpp"
 
 #include <functional>
 #include <imgui.h>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
-
-namespace cvar { struct Console_Entry_Base; }
 
 namespace client
 {
@@ -24,16 +22,17 @@ public:
   void Print(const char *fmt, ...);
   void ExecuteCommand(const char *command_line);
 
-  // Set (or clear with nullptr) a callback that forwards command lines to the
-  // server when the local registry has no matching entry.
-  void SetNetworkForwarder(std::function<void(std::string_view)> fn);
-
-  // Register a client-side stub for a server-declared cvar or command so it
-  // shows up in autocomplete and (for Server-flagged commands) is forwarded
-  // through the existing network path. No-op if name is already registered.
-  void RegisterRemoteCVar(const std::string &name, const std::string &value,
-                          uint64_t flags, bool is_command,
-                          const std::string &description);
+  // Lend the console the launcher's cvar values and command table. Called once
+  // from client::Init(); every line typed afterwards resolves against these.
+  //
+  // There is no RegisterRemoteCVar any more, and nothing left to register: the
+  // client's CVAR_INFOS / COMMAND_INFOS tables are generated from the same
+  // cvars.def as the server's, and the handshake refuses any client whose
+  // SCHEMA_HASH differs — so autocomplete and forwarding both read a local
+  // table that provably matches the server's. Forwarding to a server is a flag
+  // check plus command_table_t::forward_to_server, which PlayState installs
+  // when it connects.
+  void SetCVarState(cvars::cvar_state_t *state, cvars::command_table_t *table);
 
   // Bind a single ASCII key (a-z) to a command line. The bound command is
   // executed via ExecuteCommand when the key transitions to pressed.
@@ -66,11 +65,9 @@ private:
   int HistoryPos; // -1: new line, 0..History.Size-1 browsing history.
   std::vector<std::string> History;
 
-  std::function<void(std::string_view)> network_forwarder_;
-
-  // Heap-owned stubs registered from server cvar sync. Each entry self-registers
-  // with cvar::CVarSystem in its constructor and stays alive for the process.
-  std::vector<std::unique_ptr<cvar::Console_Entry_Base>> remote_stubs_;
+  // Borrowed from the launcher via SetCVarState. Null before client::Init().
+  cvars::cvar_state_t    *cvar_state_    = nullptr;
+  cvars::command_table_t *command_table_ = nullptr;
 
   // Key bindings: Key -> command line.
   std::unordered_map<input::key_t, std::string> bindings_;

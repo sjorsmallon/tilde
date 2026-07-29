@@ -58,7 +58,17 @@
 //   cvar_line         -> IDENTIFIER ':' type ('=' default_value)? annotation*
 //                        STRING_LITERAL
 //
-//   command_line      -> IDENTIFIER annotation* STRING_LITERAL
+//   command_line      -> IDENTIFIER signature? annotation* STRING_LITERAL
+//
+//   signature         -> '(' (parameter (',' parameter)*)? ')'
+//
+//   parameter         -> IDENTIFIER ':' parameter_type ('=' default_value)?
+//
+//   parameter_type    -> 'string' '...'?     -- bare: one token; '...': the
+//                                               untokenized rest of the line,
+//                                               last parameter only
+//                      | IDENTIFIER          -- f32 / i32 / u32 / bool, or an
+//                                               enum declared in the same file
 //
 //   type              -> 'string' '<' NUMBER '>'
 //                      | IDENTIFIER
@@ -212,6 +222,9 @@ enum token_kind_t : uint8_t
   TOKEN_CLOSE_BRACKET,
   TOKEN_LESS,
   TOKEN_GREATER,
+  TOKEN_OPEN_PAREN,
+  TOKEN_CLOSE_PAREN,
+  TOKEN_ELLIPSIS,
 };
 
 struct token_t
@@ -242,6 +255,9 @@ static const char* token_kind_name(token_kind_t kind)
     case TOKEN_CLOSE_BRACKET:  return "']'";
     case TOKEN_LESS:           return "'<'";
     case TOKEN_GREATER:        return "'>'";
+    case TOKEN_OPEN_PAREN:     return "'('";
+    case TOKEN_CLOSE_PAREN:    return "')'";
+    case TOKEN_ELLIPSIS:       return "'...'";
   }
   return "an unknown token";
 }
@@ -397,6 +413,20 @@ struct annotation_t
   int32_t       line;
 };
 
+// One declared parameter of a command's signature. The same shape as a field
+// minus flags and description -- a parameter carries neither. It is a separate
+// array (program_t::parameters) rather than more field_t entries so that a
+// declaration's field range still counts one entry per command.
+struct parameter_t
+{
+  string_view_t    name;
+  type_reference_t type;
+  default_value_t  default_value; // DEFAULT_NONE means the parameter is required
+  bool             is_rest;       // 'string...': the untokenized rest of the line
+  int32_t          offset;
+  int32_t          line;
+};
+
 struct field_t
 {
   string_view_t    name;
@@ -411,6 +441,12 @@ struct field_t
   // concept -- an entity field's documentation is a comment, because nothing at
   // runtime ever shows it to a human.
   string_view_t description;
+
+  // Command lines only: the declared signature, into program_t::parameters.
+  // Zero count for everything else, including a command declared bare or with
+  // an empty '()'.
+  int32_t first_parameter;
+  int32_t parameter_count;
 
   int32_t offset;
   int32_t line;
@@ -512,6 +548,10 @@ struct program_t
   int32_t  field_count;
   int32_t  field_capacity;
 
+  parameter_t* parameters;
+  int32_t      parameter_count;
+  int32_t      parameter_capacity;
+
   annotation_t* annotations;
   int32_t       annotation_count;
   int32_t       annotation_capacity;
@@ -545,6 +585,7 @@ struct program_mark_t
 {
   int32_t declaration_count;
   int32_t field_count;
+  int32_t parameter_count;
   int32_t annotation_count;
   int32_t enum_value_count;
   int32_t asset_entry_count;
@@ -555,6 +596,7 @@ static program_mark_t mark_program(const program_t* program)
   program_mark_t mark;
   mark.declaration_count = program->declaration_count;
   mark.field_count       = program->field_count;
+  mark.parameter_count   = program->parameter_count;
   mark.annotation_count  = program->annotation_count;
   mark.enum_value_count  = program->enum_value_count;
   mark.asset_entry_count = program->asset_entry_count;
@@ -565,6 +607,7 @@ static void rewind_program(program_t* program, program_mark_t mark)
 {
   program->declaration_count = mark.declaration_count;
   program->field_count       = mark.field_count;
+  program->parameter_count   = mark.parameter_count;
   program->annotation_count  = mark.annotation_count;
   program->enum_value_count  = mark.enum_value_count;
   program->asset_entry_count = mark.asset_entry_count;
@@ -592,7 +635,17 @@ static field_t* push_field(program_t* program)
   *field                        = {};
   field->type.declaration_index = -1;
   field->first_annotation       = program->annotation_count;
+  field->first_parameter        = program->parameter_count;
   return field;
+}
+
+static parameter_t* push_parameter(program_t* program)
+{
+  assert(program->parameter_count < program->parameter_capacity);
+  parameter_t* parameter = &program->parameters[program->parameter_count++];
+  *parameter                        = {};
+  parameter->type.declaration_index = -1;
+  return parameter;
 }
 
 static annotation_t* push_annotation(program_t* program)
@@ -776,6 +829,16 @@ static void tokenize(program_t* program)
       continue;
     }
 
+    // Before the single '.' case below: '...' is one token (a rest parameter),
+    // and lexing it as three dots would misreport the error as a bad default.
+    if (character == '.' && cursor + 2 < length && source[cursor + 1] == '.' &&
+        source[cursor + 2] == '.')
+    {
+      program->tokens[program->token_count++] = make_token(TOKEN_ELLIPSIS, cursor, 3, line);
+      cursor += 3;
+      continue;
+    }
+
     token_kind_t punctuation_kind = TOKEN_END_OF_FILE;
     switch (character)
     {
@@ -790,6 +853,8 @@ static void tokenize(program_t* program)
       case ']': punctuation_kind = TOKEN_CLOSE_BRACKET; break;
       case '<': punctuation_kind = TOKEN_LESS;          break;
       case '>': punctuation_kind = TOKEN_GREATER;       break;
+      case '(': punctuation_kind = TOKEN_OPEN_PAREN;    break;
+      case ')': punctuation_kind = TOKEN_CLOSE_PAREN;   break;
       default:  break;
     }
 
@@ -979,7 +1044,11 @@ static bool parse_number(parser_t* parser, double* out_number)
   return true;
 }
 
-static bool parse_type(parser_t* parser, type_reference_t* out_type)
+// `bare_string_allowed`: a command PARAMETER is written plain `string` -- its
+// value is a view into the console line, so a capacity would declare storage
+// that does not exist. Everywhere else `string` is a stored value and the
+// capacity is mandatory.
+static bool parse_type(parser_t* parser, type_reference_t* out_type, bool bare_string_allowed)
 {
   if (check(parser, TOKEN_OPEN_BRACKET))
   {
@@ -998,6 +1067,17 @@ static bool parse_type(parser_t* parser, type_reference_t* out_type)
 
   if (out_type->kind == TYPE_STRING)
   {
+    if (bare_string_allowed)
+    {
+      if (check(parser, TOKEN_LESS))
+      {
+        parse_error(parser, "a parameter is plain 'string' -- its value is a view into the "
+                            "console line, so a capacity would declare storage that does not exist");
+        return false;
+      }
+      return true;
+    }
+
     if (!expect(parser, TOKEN_LESS, "'<' after 'string'"))
       return false;
 
@@ -1144,7 +1224,7 @@ static field_t* parse_field(parser_t* parser)
   if (!expect(parser, TOKEN_COLON, "':' after the field name"))
     return nullptr;
 
-  if (!parse_type(parser, &field->type))
+  if (!parse_type(parser, &field->type, /*bare_string_allowed=*/false))
     return nullptr;
 
   if (accept(parser, TOKEN_EQUALS))
@@ -1197,7 +1277,7 @@ static field_t* parse_cvar_line(parser_t* parser)
   if (!expect(parser, TOKEN_COLON, "':' after the cvar name"))
     return nullptr;
 
-  if (!parse_type(parser, &field->type))
+  if (!parse_type(parser, &field->type, /*bare_string_allowed=*/false))
     return nullptr;
 
   if (accept(parser, TOKEN_EQUALS))
@@ -1214,7 +1294,53 @@ static field_t* parse_cvar_line(parser_t* parser)
   return field;
 }
 
-// `name [@flags] "description"` -- no type, because a command has no value.
+// One `name: type ['...'] ['=' default]` entry of a command signature. The
+// rest marker binds to the type because it IS a type statement: 'string...'
+// means "the untokenized rest of the line", which only text can be.
+static bool parse_parameter(parser_t* parser)
+{
+  token_t name_token = peek(parser);
+  if (!expect(parser, TOKEN_IDENTIFIER, "a parameter name"))
+    return false;
+
+  parameter_t* parameter = push_parameter(parser->program);
+  parameter->name        = token_text(parser->program, name_token);
+  parameter->offset      = name_token.offset;
+  parameter->line        = name_token.line;
+
+  if (!expect(parser, TOKEN_COLON, "':' after the parameter name"))
+    return false;
+
+  if (!parse_type(parser, &parameter->type, /*bare_string_allowed=*/true))
+    return false;
+
+  if (check(parser, TOKEN_ELLIPSIS))
+  {
+    // Checked here rather than in the resolve pass because it is decidable
+    // here: 'string' is a builtin, so any other name -- resolvable or not --
+    // cannot be a rest parameter.
+    if (parameter->type.kind != TYPE_STRING)
+    {
+      parse_error(parser, "'...' only follows 'string': a rest parameter is the untokenized "
+                          "rest of the line, which only text can hold");
+      return false;
+    }
+    advance(parser);
+    parameter->is_rest = true;
+  }
+
+  if (accept(parser, TOKEN_EQUALS))
+  {
+    if (!parse_default_value(parser, &parameter->default_value))
+      return false;
+  }
+
+  return true;
+}
+
+// `name ['(' parameter, ... ')'] [@flags] "description"` -- no value type,
+// because a command has no value; the optional signature declares what its
+// handler takes instead.
 static field_t* parse_command_line(parser_t* parser)
 {
   token_t name_token = peek(parser);
@@ -1227,6 +1353,25 @@ static field_t* parse_command_line(parser_t* parser)
   field->line       = name_token.line;
   field->type.kind  = TYPE_VOID;
   field->type.name  = field->name;
+
+  if (accept(parser, TOKEN_OPEN_PAREN))
+  {
+    field->first_parameter = parser->program->parameter_count;
+
+    if (!check(parser, TOKEN_CLOSE_PAREN))
+    {
+      do
+      {
+        if (!parse_parameter(parser))
+          return nullptr;
+      } while (accept(parser, TOKEN_COMMA));
+    }
+
+    field->parameter_count = parser->program->parameter_count - field->first_parameter;
+
+    if (!expect(parser, TOKEN_CLOSE_PAREN, "')' to close the command signature"))
+      return nullptr;
+  }
 
   field->annotation_count = parse_annotations(parser, name_token.line);
 
@@ -1249,12 +1394,14 @@ static bool parse_cvar_family_body(parser_t* parser, declaration_t* declaration,
   while (!check(parser, TOKEN_CLOSE_BRACE) && !check(parser, TOKEN_END_OF_FILE))
   {
     int32_t field_mark      = parser->program->field_count;
+    int32_t parameter_mark  = parser->program->parameter_count;
     int32_t annotation_mark = parser->program->annotation_count;
 
     field_t* parsed = is_commands ? parse_command_line(parser) : parse_cvar_line(parser);
     if (parsed == nullptr)
     {
       parser->program->field_count      = field_mark;
+      parser->program->parameter_count  = parameter_mark;
       parser->program->annotation_count = annotation_mark;
       synchronize_to_next_field(parser);
     }
@@ -1851,6 +1998,41 @@ static void resolve_types(program_t* program, const name_table_t* table)
       }
     }
   }
+
+  // Command parameters. The only named type a parameter may resolve to is an
+  // enum: components and asset classes are entity-family declarations, so in a
+  // cvar-family file the name simply does not exist -- and if it someday does,
+  // this rejects it rather than quietly crossing the fence.
+  for (int32_t index = 0; index < program->parameter_count; ++index)
+  {
+    parameter_t* parameter = &program->parameters[index];
+
+    if (parameter->type.kind != TYPE_UNRESOLVED)
+      continue;
+
+    int32_t target = find_declaration(table, program, parameter->type.name);
+    if (target < 0)
+    {
+      report_error(program, parameter->offset, parameter->line,
+                   "unknown type '%.*s' on parameter '%.*s'", parameter->type.name.length,
+                   parameter->type.name.data, parameter->name.length, parameter->name.data);
+      continue;
+    }
+
+    const declaration_t* target_declaration = &program->declarations[target];
+    if (target_declaration->kind != DECLARATION_ENUM)
+    {
+      report_error(program, parameter->offset, parameter->line,
+                   "parameter '%.*s' may not have type '%.*s'; a %s cannot be a command "
+                   "parameter -- only f32, i32, u32, bool, string and enums are",
+                   parameter->name.length, parameter->name.data, parameter->type.name.length,
+                   parameter->type.name.data, declaration_kind_name(target_declaration->kind));
+      continue;
+    }
+
+    parameter->type.kind              = TYPE_ENUM;
+    parameter->type.declaration_index = target;
+  }
 }
 
 static void check_duplicate_declarations(program_t* program)
@@ -2310,6 +2492,12 @@ static void check_family(program_t* program)
   {
     const declaration_t* declaration = &program->declarations[index];
 
+    // An enum is family-NEUTRAL: entity fields and command parameters both
+    // take enum types, and each family emits the enums declared beside it. It
+    // claims no family, so a file of cvars plus their enums stays one family.
+    if (declaration->kind == DECLARATION_ENUM)
+      continue;
+
     if (declaration_is_cvar_family(declaration->kind))
     {
       if (first_cvar == nullptr)
@@ -2426,6 +2614,124 @@ static void check_cvar_lines(program_t* program)
   }
 }
 
+// The signature rules the binder generator depends on. Everything here is a
+// promise the emitted argument binder cashes in: "optional parameters form a
+// suffix" is what lets it map token count to parameter count, and "the rest
+// parameter is last" is what lets it hand the remaining line over whole.
+static void check_command_parameters(program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_COMMANDS)
+      continue;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* command = &program->fields[declaration->first_field + offset];
+
+      bool saw_optional = false;
+
+      for (int32_t which = 0; which < command->parameter_count; ++which)
+      {
+        const parameter_t* parameter =
+            &program->parameters[command->first_parameter + which];
+        const type_kind_t kind = parameter->type.kind;
+
+        const bool type_allowed = kind == TYPE_F32 || kind == TYPE_I32 || kind == TYPE_U32 ||
+                                  kind == TYPE_BOOL || kind == TYPE_STRING || kind == TYPE_ENUM;
+        if (!type_allowed && kind != TYPE_UNRESOLVED) // unresolved already reported
+        {
+          report_error(program, parameter->offset, parameter->line,
+                       "parameter '%.*s' has type '%.*s'; a command parameter must be f32, "
+                       "i32, u32, bool, string or an enum -- it has to parse from one console "
+                       "token",
+                       parameter->name.length, parameter->name.data, parameter->type.name.length,
+                       parameter->type.name.data);
+        }
+
+        for (int32_t earlier = 0; earlier < which; ++earlier)
+        {
+          const parameter_t* other = &program->parameters[command->first_parameter + earlier];
+          if (string_views_match(parameter->name, other->name))
+          {
+            report_error(program, parameter->offset, parameter->line,
+                         "command '%.*s' already has a parameter named '%.*s'",
+                         command->name.length, command->name.data, parameter->name.length,
+                         parameter->name.data);
+            break;
+          }
+        }
+
+        // The generated binder declares a local per parameter next to its own
+        // inputs; rejecting the collision here beats a C++ shadowing error
+        // inside code the author never wrote.
+        if (string_view_matches(parameter->name, "args") ||
+            string_view_matches(parameter->name, "context") ||
+            string_view_matches(parameter->name, "out_reply"))
+        {
+          report_error(program, parameter->offset, parameter->line,
+                       "'%.*s' is reserved: the generated argument binder already declares "
+                       "it (its inputs are args, context and out_reply)",
+                       parameter->name.length, parameter->name.data);
+        }
+
+        if (parameter->is_rest)
+        {
+          if (which != command->parameter_count - 1)
+          {
+            report_error(program, parameter->offset, parameter->line,
+                         "rest parameter '%.*s' must be the last parameter: it takes the "
+                         "whole rest of the line, so nothing can follow it",
+                         parameter->name.length, parameter->name.data);
+          }
+          if (parameter->default_value.kind != DEFAULT_NONE)
+          {
+            report_error(program, parameter->offset, parameter->line,
+                         "rest parameter '%.*s' may not have a default; it is required -- an "
+                         "optional rest earns its mechanism with its first user",
+                         parameter->name.length, parameter->name.data);
+          }
+        }
+
+        if (parameter->default_value.kind != DEFAULT_NONE)
+        {
+          saw_optional = true;
+        }
+        else if (saw_optional)
+        {
+          report_error(program, parameter->offset, parameter->line,
+                       "required parameter '%.*s' follows an optional one; optional "
+                       "parameters must form a suffix, because arguments bind by position",
+                       parameter->name.length, parameter->name.data);
+        }
+
+        // A wrong-kind default would otherwise surface as a C++ error inside a
+        // generated binder the author never wrote.
+        const default_kind_t default_kind = parameter->default_value.kind;
+        bool default_matches = true;
+        switch (default_kind)
+        {
+          case DEFAULT_NONE:         break;
+          case DEFAULT_NUMBER:       default_matches = kind == TYPE_F32 || kind == TYPE_I32 ||
+                                                       kind == TYPE_U32;    break;
+          case DEFAULT_BOOL:         default_matches = kind == TYPE_BOOL;   break;
+          case DEFAULT_STRING:       default_matches = kind == TYPE_STRING; break;
+          case DEFAULT_ENUM_LITERAL: default_matches = kind == TYPE_ENUM;   break;
+          case DEFAULT_VECTOR:       default_matches = false;               break;
+        }
+        if (!default_matches)
+        {
+          report_error(program, parameter->offset, parameter->line,
+                       "parameter '%.*s' has a default that is not a value of its type '%.*s'",
+                       parameter->name.length, parameter->name.data, parameter->type.name.length,
+                       parameter->type.name.data);
+        }
+      }
+    }
+  }
+}
+
 // Cvars and commands share ONE flat namespace: the console resolves both from
 // the same token, so a name that is a cvar in one block and a command in
 // another has no answer. Blocks are section comments, not scopes, so this
@@ -2479,8 +2785,38 @@ static void check_duplicate_cvar_names(program_t* program)
 // once assets are expanded. Catching a bad name here beats emitting
 // `mesh_asset::Erorr` and making the C++ compiler explain it against generated
 // code the author never wrote.
+//
+// Runs over fields AND command parameters -- both carry defaults, and a
+// parameter's `.idle` names an enum value the same way a field's does.
+static void check_enum_literal(program_t* program, string_view_t owner_name,
+                               const type_reference_t* type, const default_value_t* value,
+                               int32_t offset, int32_t line)
+{
+  const declaration_t* target = &program->declarations[type->declaration_index];
+  string_view_t        wanted = value->text;
+  bool                 found  = false;
+
+  for (int32_t which = 0; which < target->enum_value_count && !found; ++which)
+    found = string_views_match(program->enum_values[target->first_enum_value + which], wanted);
+
+  if (!found)
+    report_error(program, offset, line,
+                 "'%.*s' is not a value of '%.*s', so '%.*s' cannot default to it",
+                 wanted.length, wanted.data, target->name.length, target->name.data,
+                 owner_name.length, owner_name.data);
+}
+
 static void check_literal_defaults(program_t* program)
 {
+  for (int32_t index = 0; index < program->parameter_count; ++index)
+  {
+    const parameter_t* parameter = &program->parameters[index];
+    if (parameter->default_value.kind == DEFAULT_ENUM_LITERAL &&
+        parameter->type.kind == TYPE_ENUM && parameter->type.declaration_index >= 0)
+      check_enum_literal(program, parameter->name, &parameter->type, &parameter->default_value,
+                         parameter->offset, parameter->line);
+  }
+
   for (int32_t index = 0; index < program->field_count; ++index)
   {
     const field_t* field = &program->fields[index];
@@ -2545,6 +2881,7 @@ static void resolve_program(program_t* program)
   if (program->family == DEF_FAMILY_CVAR)
   {
     check_cvar_lines(program);
+    check_command_parameters(program);
     check_duplicate_cvar_names(program);
   }
   else if (program->family == DEF_FAMILY_ENTITY)
@@ -2771,10 +3108,11 @@ static bool type_has_integer_components(type_kind_t kind)
   return kind == TYPE_V4I;
 }
 
-static void write_default_initializer(FILE* out, const field_t* field)
+// Fields and command parameters both carry defaults, hence the (type, value)
+// pair rather than a field_t.
+static void write_default_value(FILE* out, const type_reference_t* type,
+                                const default_value_t* value)
 {
-  const default_value_t* value = &field->default_value;
-
   if (value->kind == DEFAULT_NONE)
   {
     fprintf(out, "{}");
@@ -2784,7 +3122,7 @@ static void write_default_initializer(FILE* out, const field_t* field)
   switch (value->kind)
   {
     case DEFAULT_NUMBER:
-      switch (field->type.kind)
+      switch (type->kind)
       {
         case TYPE_F32: write_float_literal(out, value->numbers[0], true);  return;
         case TYPE_F64: write_float_literal(out, value->numbers[0], false); return;
@@ -2797,7 +3135,7 @@ static void write_default_initializer(FILE* out, const field_t* field)
       {
         if (index > 0)
           fprintf(out, ", ");
-        if (type_has_integer_components(field->type.kind))
+        if (type_has_integer_components(type->kind))
           fprintf(out, "%lld", (long long)value->numbers[index]);
         else
           write_float_literal(out, value->numbers[index], true);
@@ -2806,7 +3144,7 @@ static void write_default_initializer(FILE* out, const field_t* field)
       return;
 
     case DEFAULT_ENUM_LITERAL:
-      fprintf(out, "%.*s::%.*s", field->type.name.length, field->type.name.data,
+      fprintf(out, "%.*s::%.*s", type->name.length, type->name.data,
               value->text.length, value->text.data);
       return;
 
@@ -2823,6 +3161,11 @@ static void write_default_initializer(FILE* out, const field_t* field)
   }
 
   fprintf(out, "{}");
+}
+
+static void write_default_initializer(FILE* out, const field_t* field)
+{
+  write_default_value(out, &field->type, &field->default_value);
 }
 
 // The classname is the on-disk identity, derived from the declared name rather
@@ -3386,6 +3729,18 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
       char buffer[32];
       int  written = snprintf(buffer, sizeof(buffer), "%u:%d", field->flags, field->type.capacity);
       mix(buffer, written);
+
+      // A command's signature. Arguments ride the wire as forwarded text and
+      // are parsed only by the owning side, so a mismatch would not misparse a
+      // snapshot -- but the same two-builds-disagree situation deserves the
+      // same loud refusal at connect.
+      for (int32_t which = 0; which < field->parameter_count; ++which)
+      {
+        const parameter_t* parameter = &program->parameters[field->first_parameter + which];
+        mix(parameter->name.data, parameter->name.length);
+        mix(parameter->type.name.data, parameter->type.name.length);
+        mix(parameter->is_rest ? "..." : "", parameter->is_rest ? 3 : 0);
+      }
     }
   }
 
@@ -3890,6 +4245,95 @@ static void write_generated_banner(FILE* out, const program_t* program)
   fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
 }
 
+// ---------------------------------------------------------------------------
+// Command signatures
+// ---------------------------------------------------------------------------
+
+// The C++ type a parameter's VALUE has inside a handler. Differs from
+// write_cpp_type in exactly one row: a parameter's string is a view into the
+// console line, not stored pascal_string_t bytes.
+static void write_parameter_cpp_type(FILE* out, const type_reference_t* type)
+{
+  if (type->kind == TYPE_STRING)
+  {
+    fprintf(out, "std::string_view");
+    return;
+  }
+  write_cpp_type(out, type);
+}
+
+// The usage synopsis, derived from the signature so it can never drift from
+// it: `<name>` required, `[name]` optional, `name...` the rest of the line,
+// and an enum parameter carries its value set inline.
+//
+//   spawn_bot [mode: idle|chase|regular]
+//   bind <key> <command...>
+//
+// Printed bare -- the caller decides whether it lands in a C string literal or
+// a comment. Safe for both: names and enum values are identifiers.
+static void write_command_usage(FILE* out, const program_t* program, const field_t* command)
+{
+  fprintf(out, "%.*s", command->name.length, command->name.data);
+
+  for (int32_t which = 0; which < command->parameter_count; ++which)
+  {
+    const parameter_t* parameter = &program->parameters[command->first_parameter + which];
+    const bool optional = parameter->default_value.kind != DEFAULT_NONE;
+
+    fprintf(out, " %c%.*s", optional ? '[' : '<', parameter->name.length, parameter->name.data);
+
+    if (parameter->is_rest)
+      fprintf(out, "...");
+
+    if (parameter->type.kind == TYPE_ENUM && parameter->type.declaration_index >= 0)
+    {
+      const declaration_t* target = &program->declarations[parameter->type.declaration_index];
+      fprintf(out, ": ");
+      for (int32_t value = 0; value < target->enum_value_count; ++value)
+      {
+        const string_view_t* name = &program->enum_values[target->first_enum_value + value];
+        fprintf(out, "%s%.*s", value > 0 ? "|" : "", name->length, name->data);
+      }
+    }
+
+    fputc(optional ? ']' : '>', out);
+  }
+}
+
+// The typed handler's parameter list: the declared parameters, then the
+// per-invocation context. Used for both the declaration in the header and the
+// call from the binder, so the two agree by construction.
+static void write_handler_parameter_list(FILE* out, const program_t* program,
+                                         const field_t* command)
+{
+  for (int32_t which = 0; which < command->parameter_count; ++which)
+  {
+    const parameter_t* parameter = &program->parameters[command->first_parameter + which];
+    write_parameter_cpp_type(out, &parameter->type);
+    fprintf(out, " %.*s, ", parameter->name.length, parameter->name.data);
+  }
+  fprintf(out, "const command_context_t& context");
+}
+
+static bool command_has_rest_parameter(const program_t* program, const field_t* command)
+{
+  return command->parameter_count > 0 &&
+         program->parameters[command->first_parameter + command->parameter_count - 1].is_rest;
+}
+
+// The fewest tokens the line must carry: one per required parameter. The rest
+// parameter counts -- it is required and takes at least one.
+static int32_t command_minimum_arguments(const program_t* program, const field_t* command)
+{
+  int32_t minimum = 0;
+  for (int32_t which = 0; which < command->parameter_count; ++which)
+  {
+    if (program->parameters[command->first_parameter + which].default_value.kind == DEFAULT_NONE)
+      ++minimum;
+  }
+  return minimum;
+}
+
 static void emit_cvars_header(FILE* out, const program_t* program, const field_t* const* cvars,
                               int32_t cvar_count, const field_t* const* commands,
                               int32_t command_count)
@@ -3918,6 +4362,32 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "  CVAR_FLAG_SERVER   = 1 << 1, // server-owned; clients forward the console line\n");
   fprintf(out, "  CVAR_FLAG_MIRRORED = 1 << 2, // server-owned, pushed to clients as a read-only mirror\n");
   fprintf(out, "};\n\n");
+
+  // --- enums ---
+  //
+  // Declared beside the commands that take them as parameter types. Same shape
+  // as the entity family's enums, in namespace cvars; from_string takes a
+  // string_view because the text it parses is a slice of the console line.
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENUM)
+      continue;
+
+    fprintf(out, "enum class %.*s : uint8_t\n{\n", declaration->name.length,
+            declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "  %.*s = %d,\n", value->length, value->data, offset);
+    }
+    fprintf(out, "};\n\n");
+
+    fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "bool from_string(std::string_view text, %.*s* out_value);\n\n",
+            declaration->name.length, declaration->name.data);
+  }
 
   // --- state ---
   fprintf(out, "// THE values. One per process, created by the launcher and handed to\n");
@@ -3990,6 +4460,9 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "struct command_info_t\n{\n");
   fprintf(out, "  const char* name;\n");
   fprintf(out, "  const char* description;\n");
+  fprintf(out, "  // Derived from the declared signature, so it cannot drift from what the\n");
+  fprintf(out, "  // argument binder actually accepts. Just the name for a no-argument command.\n");
+  fprintf(out, "  const char* usage;\n");
   fprintf(out, "  uint32_t    flags;\n");
   fprintf(out, "};\n\n");
 
@@ -4022,11 +4495,15 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text);\n\n");
 
   // --- commands ---
-  fprintf(out, "// Handler declarations. Declaring a command in the .def OBLIGATES the\n");
-  fprintf(out, "// owning side to define the matching function with exactly this\n");
-  fprintf(out, "// signature: the generated binder TU below references the symbol\n");
-  fprintf(out, "// directly, so a missing or misspelled handler is a link error naming\n");
-  fprintf(out, "// it. Bodies are handwritten -- only the binding is derived.\n");
+  fprintf(out, "// Handler declarations, TYPED from each command's declared signature.\n");
+  fprintf(out, "// Declaring a command in the .def OBLIGATES the owning side to define the\n");
+  fprintf(out, "// matching function with exactly this signature: the generated binder TU\n");
+  fprintf(out, "// references the symbol directly, so a missing, misspelled or wrongly\n");
+  fprintf(out, "// typed handler is a link error naming it. The handler never sees the\n");
+  fprintf(out, "// token list -- its generated argument binder has already parsed,\n");
+  fprintf(out, "// validated and defaulted every parameter, or replied with the usage\n");
+  fprintf(out, "// string instead of calling. Bodies are handwritten -- only the parsing\n");
+  fprintf(out, "// and the binding are derived.\n");
   fprintf(out, "namespace commands\n{\n");
   for (int32_t index = 0; index < command_count; ++index)
   {
@@ -4034,16 +4511,22 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
     fprintf(out, "// %s%.*s\n",
             (command->flags & CVAR_FLAG_SERVER) ? "@Server  " : "@Client  ",
             command->description.length, command->description.data);
-    fprintf(out, "void %.*s(Span<std::string_view> args, const command_context_t& context);\n",
-            command->name.length, command->name.data);
+    fprintf(out, "// usage: ");
+    write_command_usage(out, program, command);
+    fprintf(out, "\n");
+    fprintf(out, "void %.*s(", command->name.length, command->name.data);
+    write_handler_parameter_list(out, program, command);
+    fprintf(out, ");\n");
   }
   fprintf(out, "} // namespace commands\n\n");
 
-  fprintf(out, "// The runtime dispatch surface. A slot is null when its side is not\n");
+  fprintf(out, "// The runtime dispatch surface. Each slot holds the command's generated\n");
+  fprintf(out, "// ARGUMENT BINDER, which parses the tokens against the declared signature\n");
+  fprintf(out, "// and calls the typed handler above. A slot is null when its side is not\n");
   fprintf(out, "// loaded (client commands on a dedicated server), which the execute\n");
   fprintf(out, "// path treats as an error rather than a silent no-op.\n");
   fprintf(out, "struct command_table_t\n{\n");
-  fprintf(out, "  command_handler_t handlers[COMMAND_COUNT] = {};\n\n");
+  fprintf(out, "  command_binder_t binders[COMMAND_COUNT] = {};\n\n");
   fprintf(out, "  // Set by a networked client. @Server cvars and commands typed into a\n");
   fprintf(out, "  // client console are forwarded whole rather than executed locally.\n");
   fprintf(out, "  forward_line_fn_t forward_to_server = nullptr;\n");
@@ -4235,6 +4718,9 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
     fprintf(out, "    {.name = \"%.*s\",\n", command->name.length, command->name.data);
     fprintf(out, "     .description = \"%.*s\",\n", command->description.length,
             command->description.data);
+    fprintf(out, "     .usage = \"");
+    write_command_usage(out, program, command);
+    fprintf(out, "\",\n");
     fprintf(out, "     .flags = %s},\n",
             (command->flags & CVAR_FLAG_SERVER) ? "CVAR_FLAG_SERVER" : "CVAR_FLAG_CLIENT");
   }
@@ -4306,14 +4792,177 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
   // --- text ---
   emit_cvar_text_conversion(out);
 
-  // --- binder declarations are defined in the per-side TUs, not here ---
+  // --- enum string conversion ---
+  //
+  // Both directions total over the declared set: to_string of a value outside
+  // it asserts (a corrupted enum is a bug, not input), from_string of unknown
+  // text rejects (console text IS input).
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENUM)
+      continue;
+
+    fprintf(out, "const char* to_string(%.*s value)\n{\n  switch (value)\n  {\n",
+            declaration->name.length, declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "    case %.*s::%.*s: return \"%.*s\";\n", declaration->name.length,
+              declaration->name.data, value->length, value->data, value->length, value->data);
+    }
+    fprintf(out, "  }\n  assert(false && \"invalid %.*s\");\n  return \"\";\n}\n\n",
+            declaration->name.length, declaration->name.data);
+
+    fprintf(out, "bool from_string(std::string_view text, %.*s* out_value)\n{\n",
+            declaration->name.length, declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "  if (text == \"%.*s\") { *out_value = %.*s::%.*s; return true; }\n",
+              value->length, value->data, declaration->name.length, declaration->name.data,
+              value->length, value->data);
+    }
+    fprintf(out, "  return false;\n}\n\n");
+  }
+
+  // --- argument binders are defined in the per-side TUs, not here ---
 
   fprintf(out, "} // namespace cvars\n");
 }
 
+// One command's argument binder: the uniform-signature function the dispatch
+// table holds. It maps the token list onto the declared signature -- count
+// check, per-parameter parse, defaults -- and either calls the typed handler
+// or replies with the generated usage string and calls nothing.
+static void emit_argument_binder(FILE* out, const program_t* program, const field_t* command)
+{
+  const bool    has_rest = command_has_rest_parameter(program, command);
+  const int32_t minimum  = command_minimum_arguments(program, command);
+  const int32_t maximum  = command->parameter_count; // meaningless when has_rest
+
+  fprintf(out, "// ");
+  write_command_usage(out, program, command);
+  fprintf(out, "\n");
+  fprintf(out, "bool invoke_%.*s(Span<std::string_view> args, const command_context_t& context,\n",
+          command->name.length, command->name.data);
+  fprintf(out, "     std::string* out_reply)\n{\n");
+
+  // --- count ---
+  if (has_rest)
+    fprintf(out, "  if (args.size() < %du)\n", minimum);
+  else if (minimum == maximum)
+    fprintf(out, "  if (args.size() != %du)\n", minimum);
+  else if (minimum == 0)
+    fprintf(out, "  if (args.size() > %du)\n", maximum); // unsigned `< 0` is always false
+  else
+    fprintf(out, "  if (args.size() < %du || args.size() > %du)\n", minimum, maximum);
+  fprintf(out, "  {\n");
+  fprintf(out, "    usage_error(out_reply, command_id::%.*s, args.size());\n",
+          command->name.length, command->name.data);
+  fprintf(out, "    return false;\n  }\n\n");
+
+  // --- parameters ---
+  //
+  // Bound by position. Every optional parameter sits behind every required one
+  // (the resolve pass enforces it), so `args.size() > position` is exactly "was
+  // this one given".
+  for (int32_t which = 0; which < command->parameter_count; ++which)
+  {
+    const parameter_t* parameter = &program->parameters[command->first_parameter + which];
+    const bool  optional  = parameter->default_value.kind != DEFAULT_NONE;
+    const char* indent    = optional ? "    " : "  ";
+    const int32_t name_length = parameter->name.length;
+    const char*   name        = parameter->name.data;
+
+    if (parameter->is_rest)
+    {
+      fprintf(out, "  // '%.*s' is 'string...': the untokenized rest of the line. Every view\n",
+              name_length, name);
+      fprintf(out, "  // in args points into ONE contiguous line buffer (see command_binder_t),\n");
+      fprintf(out, "  // so the span from this parameter's first token to the end of the last\n");
+      fprintf(out, "  // token is the original text, interior whitespace intact.\n");
+      fprintf(out, "  std::string_view %.*s(args[%d].data(),\n", name_length, name, which);
+      fprintf(out, "      (size_t)(args[args.size() - 1].data() + args[args.size() - 1].size() -\n");
+      fprintf(out, "               args[%d].data()));\n\n", which);
+      continue;
+    }
+
+    // A required string needs no parse step at all: the count check already
+    // guaranteed the token exists, and any token is a valid string.
+    if (parameter->type.kind == TYPE_STRING && !optional)
+    {
+      fprintf(out, "  std::string_view %.*s = args[%d];\n\n", name_length, name, which);
+      continue;
+    }
+
+    // Declaration, initialized to the default (or empty for a required one,
+    // which the code below always overwrites).
+    fprintf(out, "  ");
+    write_parameter_cpp_type(out, &parameter->type);
+    fprintf(out, " %.*s = ", name_length, name);
+    if (optional)
+      write_default_value(out, &parameter->type, &parameter->default_value);
+    else
+      fprintf(out, "{}");
+    fprintf(out, ";\n");
+
+    if (optional)
+      fprintf(out, "  if (args.size() > %du)\n  {\n", which);
+
+    switch (parameter->type.kind)
+    {
+      case TYPE_STRING:
+        fprintf(out, "%s%.*s = args[%d];\n", indent, name_length, name, which);
+        break;
+
+      case TYPE_BOOL:
+        fprintf(out, "%sif (!parse_bool_token(args[%d], &%.*s))\n", indent, which, name_length,
+                name);
+        fprintf(out, "%s{\n", indent);
+        fprintf(out, "%s  bad_argument(out_reply, command_id::%.*s, \"%.*s\", args[%d]);\n",
+                indent, command->name.length, command->name.data, name_length, name, which);
+        fprintf(out, "%s  return false;\n%s}\n", indent, indent);
+        break;
+
+      case TYPE_ENUM:
+        fprintf(out, "%sif (!from_string(args[%d], &%.*s))\n", indent, which, name_length, name);
+        fprintf(out, "%s{\n", indent);
+        fprintf(out, "%s  bad_argument(out_reply, command_id::%.*s, \"%.*s\", args[%d]);\n",
+                indent, command->name.length, command->name.data, name_length, name, which);
+        fprintf(out, "%s  return false;\n%s}\n", indent, indent);
+        break;
+
+      default: // f32 / i32 / u32; anything else was rejected by the resolve pass
+        fprintf(out, "%sif (!parse_whole(args[%d], &%.*s))\n", indent, which, name_length, name);
+        fprintf(out, "%s{\n", indent);
+        fprintf(out, "%s  bad_argument(out_reply, command_id::%.*s, \"%.*s\", args[%d]);\n",
+                indent, command->name.length, command->name.data, name_length, name, which);
+        fprintf(out, "%s  return false;\n%s}\n", indent, indent);
+        break;
+    }
+
+    if (optional)
+      fprintf(out, "  }\n");
+    fprintf(out, "\n");
+  }
+
+  // --- the call ---
+  fprintf(out, "  commands::%.*s(", command->name.length, command->name.data);
+  for (int32_t which = 0; which < command->parameter_count; ++which)
+  {
+    const parameter_t* parameter = &program->parameters[command->first_parameter + which];
+    fprintf(out, "%.*s, ", parameter->name.length, parameter->name.data);
+  }
+  fprintf(out, "context);\n");
+  fprintf(out, "  return true;\n}\n\n");
+}
+
 // Emitted as one side per file so that the client DLL never references a server
 // handler symbol and vice versa -- the DLL layout stays honest by construction,
-// not by discipline.
+// not by discipline. The argument binders live HERE and not in
+// cvars_generated.cpp for the same reason: each one calls its typed handler,
+// so it must be compiled into the module that defines it.
 static void emit_command_bindings(FILE* out, const program_t* program, const char* header_name,
                                   const field_t* const* commands, int32_t command_count,
                                   bool server_side)
@@ -4321,17 +4970,113 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
   const char* side_flag = server_side ? "@Server" : "@Client";
   const uint32_t wanted = server_side ? CVAR_FLAG_SERVER : CVAR_FLAG_CLIENT;
 
+  // Which helpers this side's binders actually use, so no unused static
+  // function survives to warn.
+  bool any_bound   = false;
+  bool any_numeric = false;
+  bool any_bool    = false;
+  bool any_parsed  = false; // numeric, bool or enum: anything that can fail to parse
+
+  for (int32_t index = 0; index < command_count; ++index)
+  {
+    const field_t* command = commands[index];
+    if ((command->flags & wanted) == 0)
+      continue;
+    any_bound = true;
+
+    for (int32_t which = 0; which < command->parameter_count; ++which)
+    {
+      const type_kind_t kind = program->parameters[command->first_parameter + which].type.kind;
+      if (kind == TYPE_F32 || kind == TYPE_I32 || kind == TYPE_U32)
+        any_numeric = true;
+      if (kind == TYPE_BOOL)
+        any_bool = true;
+      if (kind != TYPE_STRING)
+        any_parsed = true;
+    }
+  }
+
   write_generated_banner(out, program);
   fprintf(out, "//\n");
-  fprintf(out, "// Binds every %s command's handler. This TU is compiled into the module\n",
+  fprintf(out, "// Binds every %s command. Each slot gets the command's generated ARGUMENT\n",
           side_flag);
-  fprintf(out, "// that owns those handlers, so it references each commands::<name> symbol\n");
-  fprintf(out, "// directly: a missing or misspelled handler fails at LINK time, naming the\n");
-  fprintf(out, "// symbol. That link step is the assert -- there is no runtime \"did\n");
-  fprintf(out, "// everyone register?\" check because there is nothing to register.\n");
+  fprintf(out, "// BINDER, which parses the console tokens against the declared signature\n");
+  fprintf(out, "// and calls the typed handler `commands::<name>` -- so this TU references\n");
+  fprintf(out, "// each handler symbol directly, and a missing, misspelled or wrongly typed\n");
+  fprintf(out, "// handler fails at LINK time, naming the symbol. That link step is the\n");
+  fprintf(out, "// assert -- there is no runtime \"did everyone register?\" check because\n");
+  fprintf(out, "// there is nothing to register.\n");
   fprintf(out, "#include \"%s\"\n\n", header_name);
 
+  if (any_numeric)
+    fprintf(out, "#include <charconv>\n");
+  if (any_bound)
+    fprintf(out, "#include <format>\n#include <string>\n");
+  fprintf(out, "\n");
+
   fprintf(out, "namespace cvars\n{\n\n");
+
+  if (any_bound)
+  {
+    fprintf(out, "namespace\n{\n\n");
+
+    fprintf(out, "// Both error replies quote command_info().usage, which is derived from\n");
+    fprintf(out, "// the same signature this binder was generated from -- the message can\n");
+    fprintf(out, "// never drift from what the binder actually accepts.\n");
+    fprintf(out, "void usage_error(std::string* out_reply, command_id id, uint32_t got)\n{\n");
+    fprintf(out, "  if (out_reply)\n");
+    fprintf(out, "    *out_reply = std::format(\"[error] {}: wrong number of arguments (got "
+                 "{})\\nusage: {}\",\n");
+    fprintf(out, "                             command_info(id).name, got, command_info(id).usage);\n");
+    fprintf(out, "}\n\n");
+
+    if (any_parsed)
+    {
+      fprintf(out, "void bad_argument(std::string* out_reply, command_id id, const char* parameter,\n");
+      fprintf(out, "                  std::string_view text)\n{\n");
+      fprintf(out, "  if (out_reply)\n");
+      fprintf(out, "    *out_reply = std::format(\"[error] {}: '{}' is not a valid "
+                   "{}\\nusage: {}\",\n");
+      fprintf(out, "                             command_info(id).name, text, parameter,\n");
+      fprintf(out, "                             command_info(id).usage);\n");
+      fprintf(out, "}\n\n");
+    }
+
+    if (any_numeric)
+    {
+      fprintf(out, "// Requires the WHOLE token to parse, same rule as a cvar write: accepting\n");
+      fprintf(out, "// 320 from '320abc' would pass a value the caller never typed.\n");
+      fprintf(out, "template <typename T> bool parse_whole(std::string_view text, T* out_value)\n");
+      fprintf(out, "{\n");
+      fprintf(out, "  const char* begin  = text.data();\n");
+      fprintf(out, "  const char* end    = text.data() + text.size();\n");
+      fprintf(out, "  auto        result = std::from_chars(begin, end, *out_value);\n");
+      fprintf(out, "  return result.ec == std::errc{} && result.ptr == end;\n");
+      fprintf(out, "}\n\n");
+    }
+
+    if (any_bool)
+    {
+      fprintf(out, "// The same closed set as a bool cvar write: unrecognised text is a\n");
+      fprintf(out, "// rejection, never false.\n");
+      fprintf(out, "bool parse_bool_token(std::string_view text, bool* out_value)\n{\n");
+      fprintf(out, "  if (text == \"1\" || text == \"true\" || text == \"yes\" || text == \"on\")\n");
+      fprintf(out, "  {\n    *out_value = true;\n    return true;\n  }\n");
+      fprintf(out, "  if (text == \"0\" || text == \"false\" || text == \"no\" || text == \"off\")\n");
+      fprintf(out, "  {\n    *out_value = false;\n    return true;\n  }\n");
+      fprintf(out, "  return false;\n}\n\n");
+    }
+
+    for (int32_t index = 0; index < command_count; ++index)
+    {
+      if ((commands[index]->flags & wanted) == 0)
+        continue;
+      emit_argument_binder(out, program, commands[index]);
+    }
+
+    fprintf(out, "} // namespace\n\n");
+  }
+
   fprintf(out, "void bind_%s_commands(command_table_t& table)\n{\n",
           server_side ? "server" : "client");
 
@@ -4340,7 +5085,7 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
   {
     if ((commands[index]->flags & wanted) == 0)
       continue;
-    fprintf(out, "  table.handlers[(uint32_t)command_id::%.*s] = &commands::%.*s;\n",
+    fprintf(out, "  table.binders[(uint32_t)command_id::%.*s] = &invoke_%.*s;\n",
             commands[index]->name.length, commands[index]->name.data,
             commands[index]->name.length, commands[index]->name.data);
     ++bound;
@@ -4361,7 +5106,11 @@ static void print_type(const type_reference_t* type)
 {
   if (type->kind == TYPE_STRING)
   {
-    printf("string<%d>", type->capacity);
+    // Capacity 0 is a command parameter's bare `string` -- a view, no storage.
+    if (type->capacity > 0)
+      printf("string<%d>", type->capacity);
+    else
+      printf("string");
     return;
   }
   printf("%.*s", type->name.length, type->name.data);
@@ -4483,7 +5232,19 @@ static void dump_program(const program_t* program)
       {
         const field_t* field = &program->fields[declaration->first_field + offset];
 
-        printf("  %.*s", field->name.length, field->name.data);
+        printf("  %.*s(", field->name.length, field->name.data);
+        for (int32_t which = 0; which < field->parameter_count; ++which)
+        {
+          const parameter_t* parameter = &program->parameters[field->first_parameter + which];
+          if (which > 0)
+            printf(", ");
+          printf("%.*s: ", parameter->name.length, parameter->name.data);
+          print_type(&parameter->type);
+          if (parameter->is_rest)
+            printf("...");
+          print_default_value(&parameter->default_value);
+        }
+        printf(")");
         print_cvar_flags(field->flags);
         printf("   \"%.*s\"   // handler: cvars::commands::%.*s\n", field->description.length,
                field->description.data, field->name.length, field->name.data);
@@ -4577,6 +5338,10 @@ static void allocate_program(program_t* program)
 
   program->field_capacity = token_bound;
   program->fields         = (field_t*)malloc((size_t)program->field_capacity * sizeof(field_t));
+
+  program->parameter_capacity = token_bound;
+  program->parameters =
+      (parameter_t*)malloc((size_t)program->parameter_capacity * sizeof(parameter_t));
 
   program->annotation_capacity = token_bound;
   program->annotations =

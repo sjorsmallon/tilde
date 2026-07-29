@@ -182,13 +182,14 @@ add_library(game_shared STATIC
     # own them (see game_client / game_server below).
     ${CVAR_GEN_SOURCE}
     src/shared/cvars/cvar_runtime.hpp
+    src/shared/cvars/cvar_console.hpp
+    src/shared/cvars/cvar_console.cpp
     src/shared/entities/entity_reflection.cpp
     src/shared/network/entity_serialization.cpp
     src/shared/network/entity_snapshot.cpp
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
-    src/shared/game_cvars.cpp
     src/shared/components/components.cpp
     src/shared/map.cpp
     src/shared/map_geometry.cpp
@@ -289,6 +290,10 @@ configure_file(
 )
 
 add_library(game_client SHARED
+    # Fills the @Client command slots. Compiled HERE, into the module that owns
+    # those handlers, so this DLL never references a server handler symbol --
+    # and a missing/misspelled @Client handler is a link error on this target.
+    ${CVAR_GEN_CLIENT_BINDINGS}
     src/client/jolt_debug_renderer.cpp
     src/client/client_impl.cpp
     src/client/cosmetic_events.cpp
@@ -345,6 +350,8 @@ endif()
 # 3. Game Server (Shared Library / DLL)
 # Contains Game Logic
 add_library(game_server SHARED
+    # Fills the @Server command slots -- the other half of the split above.
+    ${CVAR_GEN_SERVER_BINDINGS}
     src/server/server_impl.cpp
     src/server/cosmetic_events.cpp
     src/server/game_events.cpp

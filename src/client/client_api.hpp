@@ -13,9 +13,15 @@
 #endif
 
 namespace shared { struct game_session_t; }
+namespace cvars { struct cvar_state_t; struct command_table_t; }
 
 namespace client {
-GAME_CLIENT_API bool Init();
+// `cvar_state` and `command_table` are owned by the LAUNCHER and outlive the
+// client module. Init stashes both on the client context and calls
+// cvars::bind_client_commands(*command_table), which fills the @Client handler
+// slots with symbols that live in this DLL. Neither may be null.
+GAME_CLIENT_API bool Init(cvars::cvar_state_t *cvar_state,
+                          cvars::command_table_t *command_table);
 GAME_CLIENT_API bool Tick(); // Returns false if should quit
 GAME_CLIENT_API void Shutdown();
 

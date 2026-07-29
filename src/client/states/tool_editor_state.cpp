@@ -833,9 +833,8 @@ void ToolEditorState::render_ui()
     ImGui::Text("(step %d)", m_simplify_steps);
   }
 
-  bool show_navmesh = debug_collision::debug_show_navmesh.Get();
-  if (ImGui::Checkbox("Show Navmesh", &show_navmesh))
-    debug_collision::debug_show_navmesh.Set(show_navmesh);
+  ImGui::Checkbox("Show Navmesh",
+                  &state_manager::get_client_context().cvars->debug_show_navmesh);
 
   ImGui::End();
 
@@ -1169,7 +1168,8 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
 
   // Draw navmesh triangle wireframes, colored by island ID.
   // Suppressed when the pathfinding tool is active — it draws the navmesh itself.
-  if (debug_collision::debug_show_navmesh.Get() && map.navmesh.valid() && active_tool_index != 3)
+  if (state_manager::get_client_context().cvars->debug_show_navmesh &&
+      map.navmesh.valid() && active_tool_index != 3)
   {
     const navmesh_t &nav = map.navmesh;
     constexpr float y_lift = 2.f;

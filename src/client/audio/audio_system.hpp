@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../shared/cvars/generated/cvars_generated.hpp"
 #include "../../shared/linalg.hpp"
 
 namespace client
@@ -28,7 +29,13 @@ struct audio_system_t
   // Bring up the audio device + engine. Returns false (and logs) on failure;
   // a failed audio system is inert — play_* become no-ops — so a machine with
   // no audio device still runs the game.
-  bool init();
+  //
+  // `cvars` is the launcher's one cvar_state_t, borrowed for the lifetime of
+  // this object: the sound_* attenuation tunables are read once per voice at
+  // spawn time (so a console change applies to the next sound, not to sounds
+  // already in flight), which is why they are read through here rather than
+  // copied at init.
+  bool init(const cvars::cvar_state_t &cvars);
   void shutdown();
 
   bool ready() const { return impl_ != nullptr; }
@@ -52,6 +59,10 @@ private:
   // Pimpl: miniaudio.h is enormous, so it stays out of this header. Defined in
   // audio_system.cpp.
   struct audio_impl_t *impl_ = nullptr;
+
+  // Borrowed from the launcher via init(). Null until then; play_3d is the
+  // only reader and only runs after a successful init.
+  const cvars::cvar_state_t *cvars_ = nullptr;
 };
 
 } // namespace client

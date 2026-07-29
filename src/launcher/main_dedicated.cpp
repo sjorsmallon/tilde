@@ -1,7 +1,7 @@
 #include "server/server_api.hpp"
 #include "shared/asset.hpp"
 #include "shared/crash_handler.hpp"
-#include "shared/cvar.hpp"
+#include "shared/cvars/generated/cvars_generated.hpp"
 #include "shared/detached_console.hpp"
 #include "shared/log.hpp"
 #include "shared/timed_function.hpp"
@@ -10,7 +10,15 @@
 #include <iostream>
 #include <thread>
 
-cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
+// THE cvar values and command bindings for this process (see the comment in
+// main_integrated.cpp). Only the @Server half of the command table gets
+// filled: no client module is loaded, so the @Client slots stay null and
+// execute_console_line reports that rather than silently doing nothing.
+//
+// r_fov was declared here too, for no reason -- a dedicated server renders
+// nothing. It is one @Client field on the struct now, unread on this side.
+static cvars::cvar_state_t    g_cvar_state{};
+static cvars::command_table_t g_command_table{};
 
 int main(int argc, char *argv[])
 {
@@ -26,7 +34,7 @@ int main(int argc, char *argv[])
   // loudly if it is called before this.
   assets::init();
 
-  if (!server::Init())
+  if (!server::Init(&g_cvar_state, &g_command_table))
   {
     log_error("Server Init Failed");
     return 1;

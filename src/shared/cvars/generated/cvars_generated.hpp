@@ -23,6 +23,16 @@ enum cvar_flags : uint32_t
   CVAR_FLAG_MIRRORED = 1 << 2, // server-owned, pushed to clients as a read-only mirror
 };
 
+enum class Bot_Mode : uint8_t
+{
+  idle = 0,
+  chase = 1,
+  regular = 2,
+};
+
+const char* to_string(Bot_Mode value);
+bool from_string(std::string_view text, Bot_Mode* out_value);
+
 // THE values. One per process, created by the launcher and handed to
 // each module's init -- so the integrated build's client and server
 // share the one instance the old singleton only pretended to be.
@@ -103,10 +113,11 @@ enum class command_id : uint16_t
   spawn_cube = 1,
   spawn_sphere = 2,
   map = 3,
-  bind = 4,
+  noclip = 4,
+  bind = 5,
 };
 
-constexpr uint32_t COMMAND_COUNT = 5;
+constexpr uint32_t COMMAND_COUNT = 6;
 
 enum cvar_type : uint8_t
 {
@@ -135,6 +146,9 @@ struct command_info_t
 {
   const char* name;
   const char* description;
+  // Derived from the declared signature, so it cannot drift from what the
+  // argument binder actually accepts. Just the name for a no-argument command.
+  const char* usage;
   uint32_t    flags;
 };
 
@@ -166,31 +180,45 @@ Span<const cvar_id> mirrored_cvars();
 bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text);
 bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text);
 
-// Handler declarations. Declaring a command in the .def OBLIGATES the
-// owning side to define the matching function with exactly this
-// signature: the generated binder TU below references the symbol
-// directly, so a missing or misspelled handler is a link error naming
-// it. Bodies are handwritten -- only the binding is derived.
+// Handler declarations, TYPED from each command's declared signature.
+// Declaring a command in the .def OBLIGATES the owning side to define the
+// matching function with exactly this signature: the generated binder TU
+// references the symbol directly, so a missing, misspelled or wrongly
+// typed handler is a link error naming it. The handler never sees the
+// token list -- its generated argument binder has already parsed,
+// validated and defaulted every parameter, or replied with the usage
+// string instead of calling. Bodies are handwritten -- only the parsing
+// and the binding are derived.
 namespace commands
 {
-// @Server  Spawn a bot. Optional arg: idle (default) | chase | regular
-void spawn_bot(Span<std::string_view> args, const command_context_t& context);
+// @Server  Spawn a bot
+// usage: spawn_bot [mode: idle|chase|regular]
+void spawn_bot(Bot_Mode mode, const command_context_t& context);
 // @Server  Spawn a physics cube in front of the calling player
-void spawn_cube(Span<std::string_view> args, const command_context_t& context);
+// usage: spawn_cube
+void spawn_cube(const command_context_t& context);
 // @Server  Spawn a physics sphere in front of the calling player
-void spawn_sphere(Span<std::string_view> args, const command_context_t& context);
-// @Server  Switch the server to a new map. Usage: map <path>
-void map(Span<std::string_view> args, const command_context_t& context);
-// @Client  Bind a key (a-z) to a command line. Usage: bind <key> <command...>
-void bind(Span<std::string_view> args, const command_context_t& context);
+// usage: spawn_sphere
+void spawn_sphere(const command_context_t& context);
+// @Server  Switch the server to a new map
+// usage: map <path>
+void map(std::string_view path, const command_context_t& context);
+// @Server  Disable movement Vector Clipping
+// usage: noclip [enabled]
+void noclip(bool enabled, const command_context_t& context);
+// @Client  Bind a key (a-z) to a command line
+// usage: bind <key> <command...>
+void bind(std::string_view key, std::string_view command, const command_context_t& context);
 } // namespace commands
 
-// The runtime dispatch surface. A slot is null when its side is not
+// The runtime dispatch surface. Each slot holds the command's generated
+// ARGUMENT BINDER, which parses the tokens against the declared signature
+// and calls the typed handler above. A slot is null when its side is not
 // loaded (client commands on a dedicated server), which the execute
 // path treats as an error rather than a silent no-op.
 struct command_table_t
 {
-  command_handler_t handlers[COMMAND_COUNT] = {};
+  command_binder_t binders[COMMAND_COUNT] = {};
 
   // Set by a networked client. @Server cvars and commands typed into a
   // client console are forwarded whole rather than executed locally.

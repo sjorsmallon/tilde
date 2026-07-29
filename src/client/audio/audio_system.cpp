@@ -1,6 +1,5 @@
 #include "audio_system.hpp"
 
-#include "../../shared/cvar.hpp"
 #include "../../shared/log.hpp"
 
 #include "miniaudio.h"
@@ -26,14 +25,9 @@ namespace client
 // ma_attenuation_model_linear (via ma_sound_set_attenuation_model) gives a
 // straight ramp that reaches true zero at sound_max_distance_cutoff instead of
 // the inverse model's long tail. Could be exposed as a cvar later.
-static cvar::CVar<float> sound_reference_distance(
-    "sound_reference_distance", 150.f,
-    "Audio: distance (world units) within which a 3D sound is at full volume");
-static cvar::CVar<float> sound_max_distance_cutoff(
-    "sound_max_distance_cutoff", 4000.f,
-    "Audio: distance (world units) past which 3D attenuation stops increasing");
-static cvar::CVar<float> sound_rolloff_factor(
-    "sound_rolloff_factor", 1.f, "Audio: 3D distance attenuation rolloff factor");
+//
+// The three sound_* cvars are declared in cvars.def and read off the
+// launcher's cvar_state_t (cvars_ below).
 
 // One-shot voice. We allocate a ma_sound per active sound rather than reusing a
 // fixed pool: ma_sound_init_from_file is cheap once the resource manager has the
@@ -49,8 +43,10 @@ struct audio_impl_t
 
 audio_system_t::~audio_system_t() { shutdown(); }
 
-bool audio_system_t::init()
+bool audio_system_t::init(const cvars::cvar_state_t &cvars)
 {
+  cvars_ = &cvars;
+
   if (impl_)
     return true; // already initialized
 
@@ -165,9 +161,9 @@ void audio_system_t::play_3d(const char *path, const linalg::vec3f &position,
   // Match attenuation to the game's world scale (see cvar comments above).
   // Without this, miniaudio's default minDistance=1 makes sounds inaudible
   // within a few units.
-  ma_sound_set_min_distance(voice, sound_reference_distance.Get());
-  ma_sound_set_max_distance(voice, sound_max_distance_cutoff.Get());
-  ma_sound_set_rolloff(voice, sound_rolloff_factor.Get());
+  ma_sound_set_min_distance(voice, cvars_->sound_reference_distance);
+  ma_sound_set_max_distance(voice, cvars_->sound_max_distance_cutoff);
+  ma_sound_set_rolloff(voice, cvars_->sound_rolloff_factor);
   ma_sound_set_position(voice, position.x, position.y, position.z);
   ma_sound_set_volume(voice, volume);
   ma_sound_start(voice);

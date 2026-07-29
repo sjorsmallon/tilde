@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../shared/cosmetic_events.hpp"
+#include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/game_events.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/map.hpp"
@@ -22,6 +23,14 @@ namespace server
 // Running, Shutdown) which refers to the FSM state.
 struct server_context_t
 {
+  // Borrowed, never owned: the LAUNCHER owns the one cvar_state_t and the one
+  // command_table_t for the process and hands them to server::Init(). In the
+  // integrated build these are the same two objects the client holds, so a
+  // console toggle finally reaches the simulating side. Non-null from Init()
+  // until Shutdown().
+  cvars::cvar_state_t*    cvars    = nullptr;
+  cvars::command_table_t* commands = nullptr;
+
   network::Server_Connection_State net;
   shared::game_session_t session;
 

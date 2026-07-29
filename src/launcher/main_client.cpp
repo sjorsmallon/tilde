@@ -1,7 +1,7 @@
 #include "client/client_api.hpp"
 #include "shared/asset.hpp"
 #include "shared/crash_handler.hpp"
-#include "shared/cvar.hpp"
+#include "shared/cvars/generated/cvars_generated.hpp"
 #include "shared/detached_console.hpp"
 #include "shared/log.hpp"
 #include "shared/timed_function.hpp"
@@ -20,8 +20,12 @@
 // mismatch path, remove or point last_map.txt at a map this client lacks — it
 // will download the compiled package from the server.
 
-cvar::CVar<float> r_fov("r_fov", 90.0f, "Field of view in degrees");
-cvar::CVar<float> cl_maxfps("cl_maxfps", 1000.0f, "Maximum client framerate (0 = unlimited)");
+// THE cvar values and command bindings for this process (see the comment in
+// main_integrated.cpp). Only the @Client half of the command table gets filled
+// here: no server module is loaded, so @Server names are forwarded over the
+// wire instead of run locally.
+static cvars::cvar_state_t    g_cvar_state{};
+static cvars::command_table_t g_command_table{};
 
 int main(int argc, char *argv[])
 {
@@ -51,7 +55,7 @@ int main(int argc, char *argv[])
   // Eager asset registration, before anything resolves an id. See asset.hpp.
   assets::init();
 
-  if (!client::Init())
+  if (!client::Init(&g_cvar_state, &g_command_table))
   {
     log_error("Client Init Failed");
     return 1;
@@ -79,7 +83,7 @@ int main(int argc, char *argv[])
     }
 
     // Framerate cap
-    float maxfps = cl_maxfps.Get();
+    float maxfps = g_cvar_state.cl_maxfps;
     if (maxfps > 0.f)
     {
       double min_frame_time = 1.0 / static_cast<double>(maxfps);

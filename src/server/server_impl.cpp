@@ -16,7 +16,8 @@
 #include <optional>
 #include <string>
 
-#include "cvar.hpp"
+#include "cvars/cvar_console.hpp"
+#include "debug_collision.hpp"
 #include "log.hpp"
 
 #include "network/bitstream.hpp"
@@ -37,8 +38,6 @@
 
 namespace server
 {
-
-cvar::CVar<float> sv_tickrate("sv_tickrate", 60.0f, "Server tick rate in Hz");
 
 // Send a text message to a specific client to display in their console
 static void send_text_message_to_a_specific_client(network::Udp_Socket &socket,
@@ -70,39 +69,15 @@ static void broadcast_server_message(network::Server_Connection_State &net,
   }
 }
 
-// Send every server-side cvar/command to a specific client so the client can
-// register stubs for unknown names. Stubs make server commands appear in
-// autocomplete and let `bind` reference them by name.
-static void send_cvar_sync(network::Udp_Socket &socket,
-                           const network::Address &ip,
-                           network::uint8 &next_message_id)
-{
-  game::S2C_CVarSync msg;
-  cvar::CVarSystem::Get().VisitAll(
-      [&](const std::string &name, cvar::Console_Entry_Base *cv)
-      {
-        // Skip client-only entries. Because game_shared is a static lib, the
-        // server's CVarSystem also contains every Client-flagged cvar declared
-        // in shared code — propagating those back to the client is pointless.
-        if (cv->GetFlags() & cvar::flags::Client)
-          return;
-        auto *pair = msg.add_cvars();
-        pair->set_name(name);
-        pair->set_value(cv->IsCommand() ? std::string{} : cv->GetString());
-        pair->set_flags(cv->GetFlags());
-        pair->set_is_command(cv->IsCommand());
-        pair->set_description(cv->GetDescription());
-      });
-  if (msg.cvars_size() == 0)
-    return;
-  std::vector<network::uint8> buf(msg.ByteSizeLong());
-  msg.SerializeToArray(buf.data(), static_cast<int>(buf.size()));
-  constexpr network::uint8 type_id =
-      static_cast<network::uint8>(network::Message_Type::S2C_CVarSync);
-  auto packets = network::convert_to_packets(buf, type_id, next_message_id);
-  for (const auto &pkt : packets)
-    socket.send(pkt, ip);
-}
+// NOTE(cvar-mirror): send_cvar_sync is gone. It existed to tell the client what
+// names the server had, because the server's registry was a runtime map the
+// client could not see. Both sides now compile the SAME generated
+// CVAR_INFOS/COMMAND_INFOS out of cvars.def, and the connect handshake refuses
+// any client whose SCHEMA_HASH differs -- so "what names exist" needs no
+// message at all. What still belongs on the wire is @Mirrored VALUES, which is
+// CVAR TRACK step 4 (a (cvar_id, text) diff against a retained last-broadcast
+// copy). Until that lands, both sides simply run the identical cvars.def
+// defaults.
 
 server_context_t g_state;
 network::Udp_Socket g_socket;
@@ -213,123 +188,15 @@ spawn_position_in_front_of(int caller_slot)
   return std::nullopt;
 }
 
-// Registered at static-init time; captured globals are safe because they
-// outlive the command object (both are translation-unit statics).
-cvar::Console_Command cmd_spawn_bot(
-    "spawn_bot",
-    [](Span<std::string_view> args, const cvar::command_context_t &)
-    {
-      // Parse optional type argument: "idle" | "chase" | "regular" (default: idle)
-      BotType type = BotType::Idle;
-      if (!args.empty())
-      {
-        if (args[0] == "chase")   type = BotType::Chase;
-        else if (args[0] == "regular") type = BotType::Regular;
-        // "idle" or unrecognised → BotType::Idle
-      }
-
-      auto spawns = get_human_spawn_transforms();
-      const vec3f &pos = spawns[g_bots.size() % spawns.size()].position;
-      g_bots.push_back(spawn_bot(g_state.session, *g_state.physics, pos, g_next_bot_slot++, type));
-
-      const char *type_str = (type == BotType::Chase)   ? "chase"
-                           : (type == BotType::Regular) ? "regular"
-                                                        : "idle";
-      log_terminal("spawn_bot: spawned {} bot at slot {}", type_str, g_next_bot_slot - 1);
-    },
-    "Spawn a bot. Optional arg: idle (default) | chase | regular",
-    cvar::flags::Server);
-
-cvar::Console_Command cmd_spawn_cube(
-    "spawn_cube",
-    [](Span<std::string_view>, const cvar::command_context_t &context)
-    {
-      if (!g_state.physics)
-      {
-        log_error("spawn_cube: physics state not initialized");
-        return;
-      }
-      auto drop_position = spawn_position_in_front_of(context.caller_slot);
-      if (!drop_position)
-      {
-        log_error("spawn_cube: no Player_Entity for caller_slot {}", context.caller_slot);
-        return;
-      }
-      vec3f full_extents = {16.f, 16.f, 16.f};
-      auto *body = spawn_physics_body(g_state.session, *g_state.physics,
-                                      entities::Shape_Kind::Box, full_extents,
-                                      *drop_position);
-      if (body)
-        log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
-                     body->entity_id, drop_position->x, drop_position->y, drop_position->z);
-    },
-    "Spawn a physics cube in front of the calling player",
-    cvar::flags::Server);
-
-// Switch the running map. Server-flagged so the client console forwards
-// `map <name>` over the network; the server runs reload_map(), which keeps
-// players connected, re-spawns them into the new world, and broadcasts
-// CmdChangeMap so every client follows the switch.
-cvar::Console_Command cmd_map(
-    "map",
-    [](Span<std::string_view> args, const cvar::command_context_t &)
-    {
-      if (args.empty())
-      {
-        log_error("map: usage: map <path>  (e.g. 'map new_map.source' or "
-                  "'map maps/test')");
-        return;
-      }
-
-      // Resolve a bare name against maps/ as a convenience. Check existence
-      // BEFORE reload_map — reload_map tears down the current world before it
-      // validates the load, so a typo would otherwise wipe everyone into an
-      // empty session.
-      std::string path(args[0]);
-      if (!std::filesystem::exists(path) &&
-          std::filesystem::exists("maps/" + path))
-      {
-        path = "maps/" + path;
-      }
-      if (!std::filesystem::exists(path))
-      {
-        log_error("map: '{}' not found (also tried 'maps/{}'). Not switching.",
-                  std::string(args[0]), std::string(args[0]));
-        return;
-      }
-
-      log_terminal("map: switching to '{}'", path);
-      if (!reload_map(path))
-        log_error("map: failed to load '{}'", path);
-    },
-    "Switch the server to a new map. Usage: map <path>",
-    cvar::flags::Server);
-
-cvar::Console_Command cmd_spawn_sphere(
-    "spawn_sphere",
-    [](Span<std::string_view>, const cvar::command_context_t &context)
-    {
-      if (!g_state.physics)
-      {
-        log_error("spawn_sphere: physics state not initialized");
-        return;
-      }
-      auto drop_position = spawn_position_in_front_of(context.caller_slot);
-      if (!drop_position)
-      {
-        log_error("spawn_sphere: no Player_Entity for caller_slot {}", context.caller_slot);
-        return;
-      }
-      vec3f full_extents = {16.f, 16.f, 16.f}; // x = diameter
-      auto *body = spawn_physics_body(g_state.session, *g_state.physics,
-                                      entities::Shape_Kind::Sphere, full_extents,
-                                      *drop_position);
-      if (body)
-        log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
-                     body->entity_id, drop_position->x, drop_position->y, drop_position->z);
-    },
-    "Spawn a physics sphere in front of the calling player",
-    cvar::flags::Server);
+// The four @Server command handlers. Their bodies are handwritten and live
+// here, next to the state they touch; only the BINDING is generated
+// (server_command_bindings.cpp, compiled into this DLL, takes the address of
+// each of these). So a rename or a signature drift is a link error naming the
+// symbol -- there is no registration, and nothing for the linker to drop.
+//
+// They are defined at the bottom of this file, after reload_map and the spawn
+// helpers they call. Declared here only so the reader meets them in the place
+// the old Console_Command objects used to sit.
 
 void handle_player_leave(server_context_t &state,
                          const network::Address &sender)
@@ -435,10 +302,24 @@ static bool load_map_into_state(const std::string &map_path)
   return true;
 }
 
-bool Init()
+bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table)
 {
   log_terminal("--- Initializing Server ---");
   log_terminal("Server port: {}", network::server_port_number);
+
+  if (!cvar_state || !command_table)
+  {
+    log_error("server::Init: the launcher must own and pass a cvar_state_t and "
+              "a command_table_t (see cvar_def.md)");
+    return false;
+  }
+
+  // Before anything reads sv_tickrate or runs a console line. bind_server_commands
+  // fills this DLL's @Server handler slots; the link step already proved every
+  // symbol it names exists, so there is no runtime check to make here.
+  g_state.cvars    = cvar_state;
+  g_state.commands = command_table;
+  cvars::bind_server_commands(*command_table);
 
   static bool jolt_initialized = false;
   if (!jolt_initialized)
@@ -575,6 +456,18 @@ bool Tick()
 {
   timed_function();
 
+  // debug_show_collisions is unflagged (shared-local), so under one
+  // cvar_state_t it now reaches the SERVER's player_move too -- which records
+  // into game_shared's g_collision_faces. That global has exactly the
+  // duplication problem the cvars just escaped: game_shared is a static lib, so
+  // the server DLL has its own copy that the client-side drawing never reads
+  // and the client-side clear never touches. Left unread it would grow without
+  // bound for as long as the toggle is on, so drain it here, once per tick,
+  // matching the client's clear-after-draw. Making those faces actually
+  // VISIBLE would mean giving the recorder explicit ownership the same way the
+  // cvars got it -- see todo.md.
+  debug_collision::clear_collision_faces();
+
   network::ServerInbox inbox;
   network::poll_network(g_state.net, g_socket, 0.005,
                         inbox); // 5ms receive window
@@ -650,7 +543,7 @@ bool Tick()
         accept->set_map_name(g_state.session.map_name.empty()
                                  ? "start.map"
                                  : g_state.session.map_name);
-        accept->set_server_tickrate(static_cast<int>(sv_tickrate.Get()));
+        accept->set_server_tickrate(static_cast<int>(g_state.cvars->sv_tickrate));
         accept->set_map_path(current_map_wire_id());
         accept->set_content_hash(g_state.map_content_hash);
 
@@ -662,9 +555,6 @@ bool Tick()
             g_state.net.next_message_id);
         for (const auto &p : packets)
           g_socket.send(p, sender);
-
-        // Sync replicated cvars to the new client
-        send_cvar_sync(g_socket, sender, g_state.net.next_message_id);
 
         // Announce join to all clients (including the new one)
         broadcast_server_message(
@@ -688,20 +578,23 @@ bool Tick()
   {
     log_terminal("Command from slot {}: {}", player_idx, line);
     const auto &client_ip = g_state.net.player_ips[player_idx];
-    cvar::command_context_t context{ .caller_slot = static_cast<int>(player_idx) };
-    if (!cvar::CVarSystem::Get().Execute(line, context))
-    {
+
+    // The same dispatcher the client console runs, over the same generated
+    // tables. forward_to_server is null here (we ARE the server), so every
+    // name resolves locally or not at all.
+    cvars::command_context_t context{ .caller_slot = static_cast<int>(player_idx) };
+    std::string reply;
+    cvars::console_result_t result = cvars::execute_console_line(
+        *g_state.cvars, *g_state.commands, line, context, &reply);
+
+    if (result == cvars::console_result_t::unknown_name)
       log_terminal("Unknown command from slot {}: {}", player_idx, line);
-      send_text_message_to_a_specific_client(g_socket, client_ip,
-                          std::string("Unknown command: ") + line,
-                          g_state.net.next_message_id);
-    }
-    else
-    {
-      send_text_message_to_a_specific_client(g_socket, client_ip,
-                          std::string("OK: ") + line,
-                          g_state.net.next_message_id);
-    }
+
+    // Echo something back either way: the client printed the line locally and
+    // is waiting to hear what came of it.
+    send_text_message_to_a_specific_client(
+        g_socket, client_ip, reply.empty() ? ("OK: " + line) : reply,
+        g_state.net.next_message_id);
   }
 
   // Process C2S_MapLoaded acks: a client finished (re)loading the map. Verify
@@ -821,7 +714,7 @@ bool Tick()
 
     Move_Events move_events{};
     auto [new_pos, new_vel] =
-        player_move(input, g_state.session.bvh, player->position,
+        player_move(*g_state.cvars, input, g_state.session.bvh, player->position,
                     player->velocity, front, right_dir, 16.f, 36.f, tick_dt,
                     &move_events);
 
@@ -928,7 +821,7 @@ bool Tick()
   // tick are eligible for the deadline check (delay is >0 ticks, so a
   // same-tick death-respawn never happens — but ordering is the intent).
   update_respawns(g_state, g_tick_number,
-                  static_cast<uint32_t>(sv_tickrate.Get()));
+                  static_cast<uint32_t>(g_state.cvars->sv_tickrate));
 
   step_physics(*g_state.physics, tick_dt);
   update_physics_bodies(g_state.session, *g_state.physics);
@@ -1151,7 +1044,12 @@ void Shutdown()
 
 double get_tick_interval()
 {
-  return 1.0 / static_cast<double>(sv_tickrate.Get());
+  // Called by the launcher every frame, including before Init() in a
+  // hypothetical reordering -- fall back to the .def default rather than
+  // dereferencing null.
+  const float tickrate =
+      g_state.cvars ? g_state.cvars->sv_tickrate : cvars::cvar_state_t{}.sv_tickrate;
+  return 1.0 / static_cast<double>(tickrate);
 }
 
 uint32_t get_tick_number() { return g_tick_number; }
@@ -1162,3 +1060,145 @@ const shared::game_session_t *get_session_for_integrated_client()
 }
 
 } // namespace server
+
+// ---------------------------------------------------------------------------
+// @Server command handlers
+// ---------------------------------------------------------------------------
+//
+// Declared in cvars.def, which obligates game_server to define exactly these
+// four symbols, each with the signature its declared parameter list implies:
+// server_command_bindings.cpp (a generated TU compiled into this DLL) takes
+// each one's address, so a rename, a typo or a signature drift is a LINK
+// ERROR naming the symbol. There is no registration step and nothing for the
+// linker to drop -- which is the whole reason spawn_bot used to be broken (it
+// registered into game_server's copy of the CVarSystem singleton while the
+// console executed against game_client's).
+//
+// The console tokens never reach these functions: each command's generated
+// argument binder has already parsed, validated and defaulted every parameter
+// -- an unparseable line got the usage reply instead of a call.
+//
+// `context.caller_slot` is the network player slot that typed the line, or -1
+// when the server itself invoked it (no human caller, hence no "in front of
+// me" position).
+
+namespace cvars::commands
+{
+
+void spawn_bot(Bot_Mode mode, const command_context_t &)
+{
+  using namespace server;
+
+  // cvars::Bot_Mode is the console-facing set, server::BotType the AI's; the
+  // exhaustive switch is the sanctioned bridge -- add a mode to the .def and
+  // this stops compiling, which is the point.
+  BotType type = BotType::Idle;
+  switch (mode)
+  {
+    case Bot_Mode::idle:    type = BotType::Idle;    break;
+    case Bot_Mode::chase:   type = BotType::Chase;   break;
+    case Bot_Mode::regular: type = BotType::Regular; break;
+  }
+
+  auto spawns = get_human_spawn_transforms();
+  const vec3f &position = spawns[g_bots.size() % spawns.size()].position;
+  // Qualified: unqualified lookup would find THIS function (we are inside
+  // cvars::commands::spawn_bot) and never reach server::spawn_bot.
+  g_bots.push_back(server::spawn_bot(g_state.session, *g_state.physics, position,
+                                     g_next_bot_slot++, type));
+
+  log_terminal("spawn_bot: spawned {} bot at slot {}", cvars::to_string(mode),
+               g_next_bot_slot - 1);
+}
+
+void spawn_cube(const command_context_t &context)
+{
+  using namespace server;
+
+  if (!g_state.physics)
+  {
+    log_error("spawn_cube: physics state not initialized");
+    return;
+  }
+  auto drop_position = spawn_position_in_front_of(context.caller_slot);
+  if (!drop_position)
+  {
+    log_error("spawn_cube: no Player_Entity for caller_slot {}",
+              context.caller_slot);
+    return;
+  }
+
+  vec3f full_extents = {16.f, 16.f, 16.f};
+  auto *body = spawn_physics_body(g_state.session, *g_state.physics,
+                                  entities::Shape_Kind::Box, full_extents,
+                                  *drop_position);
+  if (body)
+    log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
+                 body->entity_id, drop_position->x, drop_position->y,
+                 drop_position->z);
+}
+
+void spawn_sphere(const command_context_t &context)
+{
+  using namespace server;
+
+  if (!g_state.physics)
+  {
+    log_error("spawn_sphere: physics state not initialized");
+    return;
+  }
+  auto drop_position = spawn_position_in_front_of(context.caller_slot);
+  if (!drop_position)
+  {
+    log_error("spawn_sphere: no Player_Entity for caller_slot {}",
+              context.caller_slot);
+    return;
+  }
+
+  vec3f full_extents = {16.f, 16.f, 16.f}; // x = diameter
+  auto *body = spawn_physics_body(g_state.session, *g_state.physics,
+                                  entities::Shape_Kind::Sphere, full_extents,
+                                  *drop_position);
+  if (body)
+    log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
+                 body->entity_id, drop_position->x, drop_position->y,
+                 drop_position->z);
+}
+
+// Switch the running map. @Server, so a client console forwards `map <name>`
+// over the network; reload_map() keeps players connected, respawns them into
+// the new world, and broadcasts CmdChangeMap so every client follows.
+//
+// Was a CVar<std::string> with an on-change callback -- a verb wearing a
+// variable costume, and the only user of the callback mechanism, which is why
+// v1 has no callback mechanism at all.
+void map(std::string_view requested_path, const command_context_t &)
+{
+  using namespace server;
+
+  // Resolve a bare name against maps/ as a convenience. Check existence BEFORE
+  // reload_map -- reload_map tears down the current world before it validates
+  // the load, so a typo would otherwise wipe everyone into an empty session.
+  std::string path(requested_path);
+  if (!std::filesystem::exists(path) && std::filesystem::exists("maps/" + path))
+    path = "maps/" + path;
+
+  if (!std::filesystem::exists(path))
+  {
+    log_error("map: '{}' not found (also tried 'maps/{}'). Not switching.",
+              std::string(requested_path), std::string(requested_path));
+    return;
+  }
+
+  log_terminal("map: switching to '{}'", path);
+  if (!reload_map(path))
+    log_error("map: failed to load '{}'", path);
+}
+
+
+ void noclip(bool enabled, struct cvars::command_context_t const &)
+ {
+   log_terminal("noclip: {}abled", enabled ? "en" : "dis");
+ }
+
+} // namespace cvars::commands

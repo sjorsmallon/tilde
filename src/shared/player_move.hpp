@@ -1,21 +1,9 @@
 #pragma once
 #include "collision_detection.hpp"
-#include "cvar.hpp"
+#include "cvars/generated/cvars_generated.hpp"
 #include "plane.hpp"
 #include <tuple>
 #include <vector>
-
-// Movement cvars (defined in player_move.cpp)
-extern cvar::CVar<float> pm_maxspeed;
-extern cvar::CVar<float> pm_stopspeed;
-extern cvar::CVar<float> pm_friction;
-extern cvar::CVar<float> pm_ground_acceleration;
-extern cvar::CVar<float> pm_air_acceleration;
-extern cvar::CVar<float> pm_overbounce;
-extern cvar::CVar<float> pm_jumpspeed;
-extern cvar::CVar<float> g_gravity;
-extern cvar::CVar<float> pm_speed_threshold;
-extern cvar::CVar<float> pm_step_height;
 
 struct Collider_Planes
 {
@@ -98,7 +86,15 @@ inline constexpr float MIN_LAND_IMPACT_SPEED = 150.f;
 
 // new_player_position, new_player_velocity. `out_events`, if non-null, receives
 // the movement cosmetics produced this tick (jump/land).
+//
+// `cvars` is the process's one cvar_state_t (the launcher's), passed by
+// reference rather than read from a global: the pm_* tunables are @Mirrored, so
+// the client's prediction and the server's authoritative run must feed the SAME
+// values into this function or the client mispredicts every frame. A reference
+// makes that a signature obligation instead of a hope about which copy of a
+// static-lib global each module happened to link.
 std::tuple<vec3, vec3> player_move(
+    const cvars::cvar_state_t &cvars,
     const Move_Input &input,
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,

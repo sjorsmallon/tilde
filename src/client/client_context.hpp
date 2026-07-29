@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/network/client_connection_state.hpp"
@@ -19,6 +20,19 @@ struct audio_system_t; // owned by client_impl.cpp; see Init()/Shutdown()
 
 struct client_context_t
 {
+  // --- Console variables and commands ---
+  // Borrowed, never owned: the LAUNCHER owns the one cvar_state_t and the one
+  // command_table_t for the process and hands them to client::Init(). In the
+  // integrated build the server holds these same two pointers, which is the
+  // whole point — game_shared is a static lib linked into both DLLs, so a
+  // cvar that lived in a global would exist twice and the console would only
+  // ever reach one of them (that is the spawn_bot / cl_timescale bug).
+  //
+  // Non-null from client::Init() until Shutdown(); everything that reads a
+  // cvar runs inside that window.
+  cvars::cvar_state_t*    cvars    = nullptr;
+  cvars::command_table_t* commands = nullptr;
+
   // --- Shared game world (entities, BVH, navmesh) ---
   shared::game_session_t session;
 

@@ -5,10 +5,11 @@
 //
 // This is the handwritten half, and it is deliberately tiny. Everything that
 // CAN be derived from the .def is generated (generated/cvars_generated.hpp):
-// the state struct, the ids, the info tables, the text conversion, the handler
-// declarations and command_table_t itself. What is left here is the shape of a
-// handler and the shape of a caller -- facts about how the console CALLS
-// things, which no declaration in the .def implies.
+// the state struct, the ids, the info tables, the text conversion, the typed
+// handler declarations, the argument binders and command_table_t itself. What
+// is left here is the shape of a binder and the shape of a caller -- facts
+// about how the console CALLS things, which no declaration in the .def
+// implies.
 //
 // It cannot include the generated header: the generated header includes THIS
 // one, because it declares handlers taking a command_context_t. That direction
@@ -19,6 +20,7 @@
 
 #include "span.hpp"
 
+#include <string>
 #include <string_view>
 
 namespace cvars
@@ -34,15 +36,25 @@ struct command_context_t
   int caller_slot = -1;
 };
 
-// Every command handler has exactly this signature. Declaring a command in
-// cvars.def obligates the owning side to define `cvars::commands::<name>` with
-// it; the generated per-side binder TU references that symbol directly, so a
-// mismatch is a link error rather than a runtime surprise.
+// What the dispatch table holds per command: not the handler, its generated
+// ARGUMENT BINDER. The handler itself is typed from the command's declared
+// signature in cvars.def (`spawn_bot(Bot_Mode, const command_context_t&)`),
+// so no uniform pointer type can name it; the binder is the uniform face --
+// it parses the token list against the signature, fills defaults, and either
+// calls the typed handler or writes the usage string into out_reply and
+// returns false without calling anything.
 //
-// A plain function pointer, not std::function: a handler is a free function
-// with no captured state, and the table is a fixed array indexed by command_id.
-using command_handler_t = void (*)(Span<std::string_view> args,
-                                   const command_context_t& context);
+// Contract on `args`: every view points into ONE contiguous line buffer, in
+// order. A `string...` rest parameter is recovered as the span from its first
+// token to the end of the last, which is what preserves the line's interior
+// whitespace -- a tokenizer that copied tokens out would silently break it.
+//
+// A plain function pointer, not std::function: a binder is a generated free
+// function with no captured state, and the table is a fixed array indexed by
+// command_id.
+using command_binder_t = bool (*)(Span<std::string_view> args,
+                                  const command_context_t& context,
+                                  std::string* out_reply);
 
 // Set by a networked client. A @Server cvar or command typed into a client
 // console is forwarded as a whole line rather than executed locally -- the

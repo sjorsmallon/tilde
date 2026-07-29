@@ -85,10 +85,6 @@ private:
   int dt_history_index = 0;
   int dt_history_count = 0;
 
-  // Stable pointer to the network connection; set once in update() and used
-  // by the console network-forwarder lambda which outlives the stack frame.
-  network::Client_Connection_State *conn_state_ = nullptr;
-
   std::unique_ptr<physics_state_t> physics_state;
   bool show_physics_debug = false;
 #ifdef JPH_DEBUG_RENDERER

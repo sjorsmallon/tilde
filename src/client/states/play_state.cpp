@@ -12,7 +12,6 @@
 #include <Jolt/Physics/Body/BodyManager.h>
 #endif
 #include "../../shared/asset.hpp"
-#include "../../shared/cvar.hpp"
 #include "../../shared/debug_collision.hpp"
 #include <cmath>
 #include <cstdlib>
@@ -40,18 +39,24 @@ using explosion_effect_t = client_context_t::explosion_effect_t;
 // seconds at a 60Hz tickrate -- enough to watch a trend, quiet enough to leave on.
 static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
 
-// Prints what each snapshot cost and what it was deltaed against. The two
-// numbers worth watching: `delta_from` should be a recent tick and not 0 (0
-// every time means the ack loop is broken and every snapshot is a full update),
-// and `bytes` should be a small fraction of a full update's size.
-//
-// Defined here rather than in game_cvars.cpp on purpose: game_shared is a static
-// library, so a cvar defined there and referenced by nothing gets dropped by the
-// linker, and CVarSystem is duplicated per DLL anyway. This TU is client code and
-// is always linked.
-static cvar::CVar<bool> net_snapshot_debug(
-    "net_snapshot_debug", false,
-    "Log each received snapshot's baseline tick and payload size (every 120 ticks)");
+// `net_snapshot_debug` prints what each snapshot cost and what it was deltaed
+// against. The two numbers worth watching: `delta_from` should be a recent tick
+// and not 0 (0 every time means the ack loop is broken and every snapshot is a
+// full update), and `bytes` should be a small fraction of a full update's size.
+// Declared in cvars.def; read below off the context's cvar_state_t.
+
+// Ships a whole console line to the server. Installed on the command table
+// while connected, which is also the signal execute_console_line uses to decide
+// that @Server names are not ours to run. A plain function rather than a
+// capturing lambda because a command_table_t slot is a raw function pointer —
+// everything it needs is on the client context, which is a singleton anyway.
+static void forward_console_line_to_server(std::string_view line)
+{
+  auto &ctx = state_manager::get_client_context();
+  game::C2S_Command cmd;
+  cmd.set_line(std::string(line));
+  network::send_protobuf_message(ctx.connection_state, cmd);
+}
 
 // Sends a bitstream-native C2S_MapLoaded ack so the server knows this client
 // finished loading the current map and can resume streaming snapshots to it.
@@ -186,12 +191,10 @@ void PlayState::enter_connected_phase()
   conn.connected         = true;
   ctx.connection_phase   = Connection_Phase::Connected;
 
-  // Forward server-flagged console commands over the network.
-  Console::Get().SetNetworkForwarder([this](std::string_view line) {
-    game::C2S_Command cmd;
-    cmd.set_line(std::string(line));
-    network::send_protobuf_message(*conn_state_, cmd);
-  });
+  // Forward @Server cvars and commands over the network. Installing this is
+  // what makes execute_console_line stop running them locally: a connected
+  // client does not own server state.
+  ctx.commands->forward_to_server = &forward_console_line_to_server;
 }
 
 void PlayState::on_enter()
@@ -299,7 +302,10 @@ void PlayState::on_exit()
     disconnect_cmd.mutable_disconnect()->set_reason("Player left");
     network::send_protobuf_message(conn, disconnect_cmd);
     ctx.connection_phase = Connection_Phase::Disconnected;
-    Console::Get().SetNetworkForwarder(nullptr);
+    // Disconnected: @Server names have nowhere to go, and running them locally
+    // would be wrong in a networked build, so execute_console_line reports
+    // "not connected" instead.
+    ctx.commands->forward_to_server = nullptr;
   }
   conn.socket.close();
 
@@ -358,7 +364,6 @@ void PlayState::update(float dt)
   // on the flag, further down. See the Connection_Phase state machine in
   // client_context.hpp.
   auto &conn = ctx.connection_state;
-  conn_state_ = &conn;
 
   // U -> toggle mouse capture
   if (input::is_key_pressed(input::key_t::U))
@@ -562,18 +567,13 @@ void PlayState::update(float dt)
   for (const auto &msg : inbox.server_messages)
     Console::Get().Print("%s", msg.message().c_str());
 
-  // --- Apply server cvar sync ---
-  // Updates local replicated cvar values and registers stubs for any
-  // server-only cvars/commands the client doesn't know about (e.g. spawn_cube).
-  for (const auto &sync : inbox.cvar_syncs)
-  {
-    for (const auto &pair : sync.cvars())
-    {
-      Console::Get().RegisterRemoteCVar(pair.name(), pair.value(),
-                                        pair.flags(), pair.is_command(),
-                                        pair.description());
-    }
-  }
+  // NOTE(cvar-mirror): the S2C_CVarSync stub machinery is gone — the client's
+  // generated CVAR_INFOS/COMMAND_INFOS already describe every server name, and
+  // the handshake refuses a client whose SCHEMA_HASH differs, so there is
+  // nothing left to sync EXCEPT @Mirrored values. That message is CVAR TRACK
+  // step 4; until it lands, both sides simply start from the identical
+  // cvars.def defaults and a runtime change to a pm_* value on the server does
+  // not reach connected clients.
 
   // --- Apply reliable gameplay event batches from server ---
   // Decoded here so consumers (kill feed, score HUD, …) see events the same
@@ -660,7 +660,8 @@ void PlayState::update(float dt)
     }
     decoded.tick = snap_tick;
 
-    if (net_snapshot_debug.Get() && snap_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
+    if (ctx.cvars->net_snapshot_debug &&
+        snap_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
       log_terminal("[net] snapshot {}: delta_from {}, {} players / {} rockets / {} bodies, "
                    "{} bytes",
                    snap_tick, delta_from_tick, decoded.players.size(),
@@ -781,7 +782,7 @@ void PlayState::update(float dt)
       auto saved_basis = get_orientation_vectors(temp_cam);
 
       auto [repredict_pos, repredict_vel] =
-          player_move(saved.input, ctx.session.bvh, reconciled_pos,
+          player_move(*ctx.cvars, saved.input, ctx.session.bvh, reconciled_pos,
                       reconciled_vel, saved_basis.forward, saved_basis.right,
                       player_half_width, player_half_height, prediction_dt);
 
@@ -905,7 +906,7 @@ void PlayState::update(float dt)
 
       Move_Events tick_events{};
       auto [new_pos, new_vel] =
-          player_move(move_input, ctx.session.bvh, ctx.player_position,
+          player_move(*ctx.cvars, move_input, ctx.session.bvh, ctx.player_position,
                       ctx.player_velocity, basis.forward, basis.right,
                       player_half_width, player_half_height, tick_dt,
                       &tick_events);
@@ -933,7 +934,7 @@ void PlayState::update(float dt)
   else
   {
     auto [new_pos, new_vel] =
-        player_move(move_input, ctx.session.bvh, ctx.player_position,
+        player_move(*ctx.cvars, move_input, ctx.session.bvh, ctx.player_position,
                     ctx.player_velocity, basis.forward, basis.right,
                     player_half_width, player_half_height, dt, &frame_move_events);
 
@@ -1053,13 +1054,11 @@ void PlayState::render_ui()
       ImGui::Text("vis offset: %7.3f", vis_offset_mag);
 
     ImGui::Separator();
-    bool show_collisions = debug_collision::debug_show_collisions.Get();
-    if (ImGui::Checkbox("Show Collision Planes", &show_collisions))
-      debug_collision::debug_show_collisions.Set(show_collisions);
-
-    bool show_navmesh = debug_collision::debug_show_navmesh.Get();
-    if (ImGui::Checkbox("Show Navmesh", &show_navmesh))
-      debug_collision::debug_show_navmesh.Set(show_navmesh);
+    // Straight at the launcher's cvar_state_t: no Set(), because there is no
+    // Set() — a cvar is a field, and the mirroring path detects changes by
+    // comparing against a retained copy rather than by intercepting writes.
+    ImGui::Checkbox("Show Collision Planes", &ctx.cvars->debug_show_collisions);
+    ImGui::Checkbox("Show Navmesh", &ctx.cvars->debug_show_navmesh);
 
     ImGui::Checkbox("Hide Geometry", &hide_geometry);
     ImGui::Checkbox("Show Entities", &show_entity_debug);
@@ -1240,7 +1239,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
                  entities::to_string(rc->mesh));
     }
 
-    if (debug_collision::debug_show_hitboxes.Get())
+    if (ctx.cvars->debug_show_hitboxes)
     {
       const auto *hitbox = &rocket.hitbox;
       vec3f hitbox_center = rocket.position + hitbox->offset;
@@ -1301,7 +1300,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   }
 
   // Debug: navmesh as triangle wireframes, colored by island ID
-  if (debug_collision::debug_show_navmesh.Get())
+  if (ctx.cvars->debug_show_navmesh)
   {
     const navmesh_t &nav = ctx.session.navmesh;
     constexpr float y_lift = 2.f;
@@ -1338,7 +1337,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   }
 
   // Debug: collision faces in green
-  if (debug_collision::debug_show_collisions.Get())
+  if (ctx.cvars->debug_show_collisions)
   {
     constexpr color_t green = colors::green;
 
@@ -1361,7 +1360,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   // (the only box-volume entity left, and invisible otherwise), white for the
   // map's geometry, yellow to flag a displacement's box against the heightmap it
   // actually renders as.
-  if (debug_collision::debug_show_box_volumes.Get())
+  if (ctx.cvars->debug_show_box_volumes)
   {
     for (const auto &entry : map.entities)
     {

@@ -14,8 +14,7 @@
 
 #include <SDL.h>
 
-#include "cvar.hpp"
-#include "game_cvars.hpp"
+#include "cvars/generated/cvars_generated.hpp"
 #include "input.hpp"
 #include "log.hpp"
 #include "timed_function.hpp"
@@ -28,10 +27,25 @@ static std::chrono::high_resolution_clock::time_point g_last_tick_time;
 static bool g_tick_time_initialized = false;
 static std::unique_ptr<audio_system_t> g_audio;
 
-bool Init()
+bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table)
 {
   timed_function();
   log_terminal("--- Initializing Client (SDL + Vulkan) ---");
+
+  if (!cvar_state || !command_table)
+  {
+    log_error("client::Init: the launcher must own and pass a cvar_state_t and "
+              "a command_table_t (see cvar_def.md)");
+    return false;
+  }
+
+  // Before anything that could read a cvar or run a console line. The bind call
+  // fills this DLL's @Client handler slots; the linker already proved every
+  // symbol it references exists, so there is nothing to verify at runtime.
+  state_manager::get_client_context().cvars    = cvar_state;
+  state_manager::get_client_context().commands = command_table;
+  cvars::bind_client_commands(*command_table);
+  Console::Get().SetCVarState(cvar_state, command_table);
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
   {
@@ -73,7 +87,7 @@ bool Init()
   // audio init is non-fatal — the engine becomes inert and play_* no-op — so
   // a machine with no sound device still runs.
   g_audio = std::make_unique<audio_system_t>();
-  g_audio->init();
+  g_audio->init(*cvar_state);
   state_manager::get_client_context().audio = g_audio.get();
 
   return true;
@@ -138,8 +152,10 @@ bool Tick()
   if (dt < 0.0001f)
     dt = 0.0001f;
 
-  // Apply time scale
-  float timescale = cl_timescale.Get();
+  // Apply time scale. Same cvar_state_t the integrated launcher scales the
+  // SERVER accumulator from, so slow-mo now slows simulation and rendering
+  // together instead of only the half that happened to link this DLL's copy.
+  float timescale = state_manager::get_client_context().cvars->cl_timescale;
   if (timescale < 0.01f)
     timescale = 0.01f;
   dt *= timescale;

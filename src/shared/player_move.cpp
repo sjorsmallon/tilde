@@ -6,17 +6,7 @@
 
 using namespace network;
 
-// Movement cvars
-cvar::CVar<float> pm_maxspeed("pm_maxspeed", 320.f, "Maximum player speed", cvar::flags::Replicated);
-cvar::CVar<float> pm_stopspeed("pm_stopspeed", 100.f, "Deceleration threshold", cvar::flags::Replicated);
-cvar::CVar<float> pm_friction("pm_friction", 6.f, "Ground friction", cvar::flags::Replicated);
-cvar::CVar<float> pm_ground_acceleration("pm_ground_acceleration", 10.f, "Ground acceleration", cvar::flags::Replicated);
-cvar::CVar<float> pm_air_acceleration("pm_air_acceleration", 5.f, "Air acceleration", cvar::flags::Replicated);
-cvar::CVar<float> pm_overbounce("pm_overbounce", 1.001f, "Plane clip overbounce factor", cvar::flags::Replicated);
-cvar::CVar<float> pm_jumpspeed("pm_jumpspeed", 270.f, "Jump velocity", cvar::flags::Replicated);
-cvar::CVar<float> g_gravity("g_gravity", 800.f, "Gravity", cvar::flags::Replicated);
-cvar::CVar<float> pm_speed_threshold("pm_speed_threshold", 1.f, "Speed below which friction snaps to zero", cvar::flags::Replicated);
-cvar::CVar<float> pm_step_height("pm_step_height", 18.f, "Maximum step height the player can glide up", cvar::flags::Replicated);
+using cvars::cvar_state_t;
 
 namespace
 {
@@ -46,10 +36,11 @@ auto accelerate(vec3 new_velocity, vec3 wish_direction, float wish_speed,
 }
 
 [[nodiscard]]
-auto step_air_move(const vec3 &old_position, vec3 &new_velocity, const float dt)
+auto step_air_move(const cvar_state_t &cvars, const vec3 &old_position,
+                   vec3 &new_velocity, const float dt)
     -> std::tuple<vec3, vec3>
 {
-  const float maxspeed = pm_maxspeed.Get();
+  const float maxspeed = cvars.pm_maxspeed;
 
   // clip the speed in the horizontal plane to maxspeed.
   float speed =
@@ -74,12 +65,13 @@ auto step_air_move(const vec3 &old_position, vec3 &new_velocity, const float dt)
   return std::make_tuple(position, new_velocity);
 }
 
-[[nodiscard]] std::tuple<vec3, vec3> step_slide_move(const vec3 &old_position,
+[[nodiscard]] std::tuple<vec3, vec3> step_slide_move(const cvar_state_t &cvars,
+                                                     const vec3 &old_position,
                                                      vec3 &new_velocity,
                                                      bool ground_collided,
                                                      const float dt)
 {
-  const float maxspeed = pm_maxspeed.Get();
+  const float maxspeed = cvars.pm_maxspeed;
 
   // clip the speed in the horizontal plane to maxspeed.
   float speed =
@@ -118,7 +110,7 @@ auto step_air_move(const vec3 &old_position, vec3 &new_velocity, const float dt)
   return std::make_tuple(position, new_velocity);
 }
 
-auto apply_friction(vec3 old_velocity, float dt) -> vec3
+auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt) -> vec3
 {
   // snap to only planar movement.
   old_velocity.y = 0.f;
@@ -126,16 +118,16 @@ auto apply_friction(vec3 old_velocity, float dt) -> vec3
   float speed = length(old_velocity);
   // if we are very small moving, instead of infinitely applying drag, just snap
   // stop.
-  if (speed < pm_speed_threshold.Get())
+  if (speed < cvars.pm_speed_threshold)
   {
     return vec3{};
   }
 
   float speed_drop = 0.0f;
 
-  float stopspeed = pm_stopspeed.Get();
+  float stopspeed = cvars.pm_stopspeed;
   float control = speed < stopspeed ? stopspeed : speed;
-  speed_drop += control * pm_friction.Get() * dt;
+  speed_drop += control * cvars.pm_friction * dt;
 
   // adjust the speed with the induced speed drop.
   float adjusted_speed = speed - speed_drop;
@@ -221,16 +213,17 @@ vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
   return result;
 }
 
-std::tuple<vec3, vec3> my_walk_move(const Move_Input &input,
+std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
+                                    const Move_Input &input,
                                     bool has_ground, const vec3 &ground_normal,
                                     const Collider_Planes &collider_planes,
                                     const vec3 old_position,
                                     const vec3 old_velocity, const vec3 front,
                                     const vec3 right, const float dt)
 {
-  const float maxspeed = pm_maxspeed.Get();
-  const float overbounce = pm_overbounce.Get();
-  const float jumpspeed = pm_jumpspeed.Get();
+  const float maxspeed = cvars.pm_maxspeed;
+  const float overbounce = cvars.pm_overbounce;
+  const float jumpspeed = cvars.pm_jumpspeed;
 
   // we know we were walking when we got here.
   bool jump_pressed_this_frame = check_jump(input);
@@ -241,7 +234,7 @@ std::tuple<vec3, vec3> my_walk_move(const Move_Input &input,
   {
     // apply friction. this does not fully 'nullify' the velocity (or does it?).
     old_velocity_with_friction_applied = apply_friction(
-        old_velocity, dt); // at this point, y velocity is already gone.
+        cvars, old_velocity, dt); // at this point, y velocity is already gone.
   }
 
   // what inputs did we provide?
@@ -305,7 +298,7 @@ std::tuple<vec3, vec3> my_walk_move(const Move_Input &input,
   }
   else
   {
-    float acceleration = pm_ground_acceleration.Get();
+    float acceleration = cvars.pm_ground_acceleration;
     new_velocity =
         accelerate(old_velocity_with_friction_applied,
                    normalized_wish_direction, wish_speed, acceleration, dt);
@@ -363,19 +356,19 @@ std::tuple<vec3, vec3> my_walk_move(const Move_Input &input,
     new_velocity.y = jumpspeed;
   }
 
-  return step_slide_move(old_position, new_velocity,
+  return step_slide_move(cvars, old_position, new_velocity,
                          has_ground && !jump_pressed_this_frame, dt);
 }
 
-auto my_air_move(const Move_Input &input,
+auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
                  bool has_ground, const vec3 &ground_normal,
                  bool has_ceiling, const vec3 &ceiling_normal,
                  Collider_Planes &collider_planes, const vec3 &old_position,
                  const vec3 &old_velocity, const vec3 &front, const vec3 &right,
                  const float dt) -> std::tuple<vec3, vec3>
 {
-  const float maxspeed = pm_maxspeed.Get();
-  const float overbounce = pm_overbounce.Get();
+  const float maxspeed = cvars.pm_maxspeed;
+  const float overbounce = cvars.pm_overbounce;
   constexpr auto world_down = vec3{0.f, -1.f, 0.f};
 
   vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
@@ -441,7 +434,7 @@ auto my_air_move(const Move_Input &input,
   else
   {
     // if we are in the air, you have less control.
-    float acceleration = pm_air_acceleration.Get();
+    float acceleration = cvars.pm_air_acceleration;
     new_velocity = accelerate(old_velocity_without_y, normalized_wish_direction,
                               wish_speed, acceleration, dt);
   }
@@ -494,15 +487,20 @@ auto my_air_move(const Move_Input &input,
 
   // apply gravity.
   new_velocity.y = new_y_velocity;
-  new_velocity.y -= g_gravity.Get() * dt;
+  new_velocity.y -= cvars.g_gravity * dt;
 
-  return step_air_move(old_position, new_velocity, dt);
+  return step_air_move(cvars, old_position, new_velocity, dt);
 }
 // Resolve collisions against the BVH using hull-plane-based penetration test.
 // Pushes player_pos out of overlapping hulls and classifies contact normals.
+//
+// `record_debug_faces` is debug_show_collisions, read once by the caller: the
+// recording happens in SHARED code but the drawing is client-side, so the flag
+// has to arrive from whichever side is simulating rather than from a global.
 Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
                                    vec3 &player_pos,
-                                   float half_width, float half_height)
+                                   float half_width, float half_height,
+                                   bool record_debug_faces)
 {
   Collider_Planes result;
   constexpr float cos_45 = 0.707f;
@@ -587,7 +585,8 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
     p.point = player_pos - push_normal * 0.01f;
 
     // Record collision for debug visualization
-    if (min_plane_idx >= 0 && min_plane_idx < (int)prim->face_polygons.size())
+    if (record_debug_faces && min_plane_idx >= 0 &&
+        min_plane_idx < (int)prim->face_polygons.size())
       debug_collision::record_collision(p, prim->face_polygons[min_plane_idx]);
 
     // Classify: ground (normal pointing up), ceiling (down), wall (horizontal)
@@ -613,6 +612,7 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
 // Exposed functions
 // new position, new velocity.
 std::tuple<vec3, vec3> player_move(
+    const cvars::cvar_state_t &cvars,
     const Move_Input &input,
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
@@ -620,10 +620,17 @@ std::tuple<vec3, vec3> player_move(
     const float dt, Move_Events *out_events)
 {
   timed_function();
+
+  // Read once for the whole tick: every resolve_collisions call below must
+  // agree about whether it is recording, or a mid-tick console toggle would
+  // record half a frame's faces.
+  const bool record_debug_faces = cvars.debug_show_collisions;
+
   // Resolve collisions: push player out of entities and collect contact planes
   vec3 player_pos = old_position;
   Collider_Planes collider_planes =
-      resolve_collisions(bvh, player_pos, half_width, half_height);
+      resolve_collisions(bvh, player_pos, half_width, half_height,
+                         record_debug_faces);
 
   bool has_ground = !collider_planes.ground_planes.empty();
   bool has_ceiling = !collider_planes.ceiling_planes.empty();
@@ -672,10 +679,11 @@ std::tuple<vec3, vec3> player_move(
 
     if (pressing_into_wall)
     {
-      const float step_height = pm_step_height.Get();
+      const float step_height = cvars.pm_step_height;
       vec3 raised_pos = player_pos + vec3{0.f, step_height, 0.f};
       Collider_Planes raised_planes =
-          resolve_collisions(bvh, raised_pos, half_width, half_height);
+          resolve_collisions(bvh, raised_pos, half_width, half_height,
+                             record_debug_faces);
 
       // Only abort if a raised wall specifically blocks our wish direction.
       // Walls from other nearby obstacles that we're not moving into are ignored.
@@ -701,11 +709,11 @@ std::tuple<vec3, vec3> player_move(
         // the intended running speed so the player carries momentum through
         // the step rather than shuffling across it at ~0 units/s.
         vec3 old_vel_xz = vec3{old_velocity.x, 0.f, old_velocity.z};
-        if (length(old_vel_xz) < pm_speed_threshold.Get())
-          old_vel_xz = wish_dir_xz * pm_maxspeed.Get();
+        if (length(old_vel_xz) < cvars.pm_speed_threshold)
+          old_vel_xz = wish_dir_xz * cvars.pm_maxspeed;
         vec3 step_pos, step_vel;
         std::tie(step_pos, step_vel) =
-            my_walk_move(input, true, raised_ground_normal, raised_planes,
+            my_walk_move(cvars, input, true, raised_ground_normal, raised_planes,
                          raised_pos, old_vel_xz, front, right, dt);
 
         // Drop back down by step_height. resolve_collisions will push the
@@ -724,7 +732,8 @@ std::tuple<vec3, vec3> player_move(
         drop_pos.z += wish_dir_xz.z * step_height;
         drop_pos.y -= step_height;
         Collider_Planes drop_planes =
-            resolve_collisions(bvh, drop_pos, half_width, half_height);
+            resolve_collisions(bvh, drop_pos, half_width, half_height,
+                               record_debug_faces);
 
         // Reject the step if a wall still blocks the wish direction at the
         // drop position — that means we ran into a real obstacle, not just
@@ -747,7 +756,7 @@ std::tuple<vec3, vec3> player_move(
           // inherits that reduced speed after friction — giving the player
           // a visible slowdown on every step. The step bypasses the wall
           // entirely, so carry full speed in the wish direction instead.
-          new_vel = wish_dir_xz * pm_maxspeed.Get();
+          new_vel = wish_dir_xz * cvars.pm_maxspeed;
           new_vel.y = 0.f;
           used_step = true;
         }
@@ -764,13 +773,13 @@ std::tuple<vec3, vec3> player_move(
       // I do not really like that.
       vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
       std::tie(new_pos, new_vel) =
-          my_walk_move(input, has_ground, ground_normal, collider_planes,
+          my_walk_move(cvars, input, has_ground, ground_normal, collider_planes,
                        player_pos, old_velocity_without_y, front, right, dt);
     }
     else
     {
       std::tie(new_pos, new_vel) =
-          my_air_move(input, has_ground, ground_normal, has_ceiling,
+          my_air_move(cvars, input, has_ground, ground_normal, has_ceiling,
                       ceiling_normal, collider_planes, player_pos,
                       old_velocity, front, right, dt);
     }
@@ -784,9 +793,10 @@ std::tuple<vec3, vec3> player_move(
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.
   Collider_Planes post_planes =
-      resolve_collisions(bvh, new_pos, half_width, half_height);
+      resolve_collisions(bvh, new_pos, half_width, half_height,
+                         record_debug_faces);
 
-  const float overbounce = pm_overbounce.Get();
+  const float overbounce = cvars.pm_overbounce;
 
   // Ground: the pre-move resolve uses a penetration test, so the player must
   // be *inside* geometry for has_ground to be true. But this resolve pushes
