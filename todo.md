@@ -14,7 +14,7 @@ Two parts:
           \
            '──▶  P7 storage refactor        (next in the entity chain)
            \        └▶ P8 protobuf removal
-            '──▶ CVAR TRACK (def_gen)       (independent; only step 4 touches wire)
+            '──▶ CVAR TRACK (def_gen)       (DONE — steps 1-6, 2026-07-30)
 ```
 
 ## Ordering rules that must not be broken
@@ -106,12 +106,15 @@ protobuf is an envelope for ~10 tiny control messages, at the cost of
 building all of libprotobuf + protoc codegen. By the time P8 lands, `def_gen`
 emits message serialization — absorption, not a project.
 
-**Live messages (the whole conversion list, audited 2026-07-29):**
+**Live messages (the whole conversion list, audited 2026-07-29; `S2C_CVarSync`
++ `CvarPair` struck off — CVAR TRACK step 4 deleted them 2026-07-30):**
 `NetCommand` + `CmdConnect`/`CmdAccept`/`CmdReject`/`CmdDisconnect`,
 `C2S_PlayerMoveCommand` + `ViewAngle`, `S2C_EntityPackage` (envelope only),
-`C2S_Command`, `S2C_ServerMessage`, `S2C_CVarSync` + `CvarPair` *(dies
-earlier, in CVAR TRACK step 4)*, `S2C_BotDebug` + `BotDebugEntry`,
+`C2S_Command`, `S2C_ServerMessage`, `S2C_BotDebug` + `BotDebugEntry`,
 `S2C_GameEventBatch`, `Vec3` (used only by `BotDebugEntry`).
+
+`S2C_CvarValues` is already bitstream-native and needs no conversion — it is
+the template for the rest, alongside the map-transfer messages.
 
 - [ ] Cheap prep — `game.proto` dead weight:
       * Delete the entire "things that are uncertain" block (`Player`,
@@ -134,16 +137,18 @@ earlier, in CVAR TRACK step 4)*, `S2C_BotDebug` + `BotDebugEntry`,
 - [ ] Delete the protobuf dep + codegen step once the last message migrates —
       the compile-time win only lands at the end.
 
-## CVAR TRACK — def_gen  *(design settled 2026-07-29, `cvar_def.md`)*
+## CVAR TRACK — def_gen  *(DONE 2026-07-30; design in `cvar_def.md`)*
 
 `cvar_def.md` is the design (source of truth); this is the work list. Part of
 this track renames the generator `entity_gen` → **`def_gen`**: its real
 identity is the schema compiler (it already emits the asset manifests, and P8
 has it absorbing messages).
 
-Independent of P7 — no storage overlap. Steps 1–3 are pure compile/link-time.
-Step 4 is a netcode change (see the ordering rule): it deletes
-`S2C_CVarSync`, so it lands either before P8 or as part of it.
+All six steps are done and are kept here (rather than moved to `done.md`) only
+until P8 lands, because step 4's `S2C_CvarValues` is one of the messages P8
+inherits — it is already bitstream-native, so P8 has nothing to convert.
+`S2C_CVarSync` and `CvarPair` are deleted from `game.proto`, so P8's conversion
+list is two messages shorter than it was written.
 
 - [x] ~~1. Write `cvars.def`~~ — **done 2026-07-29**, at
       `src/shared/cvars/cvars.def` (generated pair will land in a sibling
@@ -248,17 +253,89 @@ Step 4 is a netcode change (see the ordering rule): it deletes
       * `PlayState::conn_state_` deleted — it existed only to feed the old
         capturing forwarder lambda, and a written-never-read member is not
         something the compiler would have flagged.
-- [ ] 4. Wire — mirrored-values message (`(cvar_id, text)` pairs, compare
-      against a retained last-broadcast copy of `cvar_state_t`; full set on
-      connect). Delete `S2C_CVarSync` + `CvarPair` from `game.proto`, the
-      `Message_Type` entry, `Packet_Traits`, and
-      `client_connection_state.hpp`'s now-unread `cvar_syncs` inbox vector.
-- [ ] 5. Delete `src/shared/cvar.hpp` outright — after step 3 it is included
-      by nothing, and its `command_context_t` / flag bits already have live
-      replacements in `cvars/cvar_runtime.hpp` and the generated header. Drop
-      it from `CMakeLists.txt`'s `game_shared` source list too.
-- [ ] 6. `cvar_test` (parse/emit, text conversion, validation errors) +
-      acceptance: **spawn_bot works from the integrated client console**.
+- [x] ~~4. Wire — mirrored-values message~~ — **done 2026-07-30**.
+      `S2C_CvarValues`, bitstream-native, in
+      `src/shared/network/cvar_mirror.{hpp,cpp}`: `count` then `(cvar_id, text)`
+      pairs. Full set sent per-client right after `CmdAccept`; the per-tick diff
+      is `collect_changed_mirrored_cvars` (memcmp of the value bytes at each
+      `cvar_info`'s offset/size against `server_context_t::last_broadcast_cvars`)
+      broadcast at the END of `Tick`. `S2C_CVarSync` + `CvarPair` are gone from
+      `game.proto`, along with the `Message_Type` entry, the `Packet_Traits`
+      specialization and the `cvar_syncs` inbox vector. Decisions made while
+      doing it:
+      * **Values ride as TEXT, not raw bytes.** `cvar_to_text`/`cvar_from_text`
+        stay the only place cvar bytes become characters — the same argument
+        `entity_reflection` makes for field text. Floats use the shortest
+        round-tripping representation, which `cvar_test` pins as BIT-exact: a
+        mirrored `pm_*` that decoded to a near value would drift the client's
+        prediction away from the server's simulation one sync at a time.
+      * **The retain happens only after the send.** A change that is never
+        broadcast stays different from the retained copy and is collected again
+        next tick — that IS the lost-update repair, and there is no ack.
+      * **The receiver refuses anything not `@Mirrored`**, and an out-of-range
+        id is `log_error`, not a clamp. Both can only mean the two builds
+        disagree about `cvars.def` despite a matching `SCHEMA_HASH`.
+      * **Not gated on `client_map_ready`** (unlike snapshots): a cvar value is
+        world-independent, and a client mid-download wants the movement
+        constants it will simulate with the moment its map lands.
+      * The broadcast sits at the END of `Tick` so it catches every writer —
+        a console line off the wire, a command handler, gameplay code writing
+        the field directly.
+- [x] ~~5. Delete `src/shared/cvar.hpp` outright~~ — **done 2026-07-30**, and
+      dropped from `CMakeLists.txt` and `meson.build`'s source lists.
+- [x] ~~6. `cvar_test`~~ — **done 2026-07-30**, `src/test/cvar_test.cpp`, all
+      green. Covers the generated tables (name/description/side coverage, the
+      one flat namespace, `mirrored_cvars()` vs the flag), text conversion (bool
+      as a closed set BOTH ways, partial numeric parses rejected, float
+      bit-exact round trip), the console dispatcher (read/write/errors, and
+      forwarding decided by `forward_to_server`), the generated argument binders
+      (defaults, enum by name, the `string...` tail keeping interior
+      whitespace, usage strings), and the mirroring path end to end.
+      * It compiles BOTH generated binder TUs and supplies its own
+        `commands::<name>` handlers — the only way to reach the binders outside
+        the DLLs that own the real ones, and a standing check that a binder TU
+        references nothing but those handler symbols.
+      * Acceptance ran two-process first (a throwaway probe driving the real
+        client network layer against a live `MyGame_Server.exe`): full set at
+        connect, nothing pushed while idle, one pair pushed per change, not
+        resent once retained. That probe **passed while the integrated build
+        was still broken** — see the next item for why, and for what a probe
+        against a dedicated server structurally cannot catch.
+      * **THE INTEGRATED CONSOLE WAS BROKEN, AND HAD BEEN SINCE STEP 3** —
+        found 2026-07-30 from a live report of the server log repeating
+        `Command from slot 0: spawn_bot` forever. `main_integrated.cpp` handed
+        client and server **one** `command_table_t`; the loopback client
+        installs `forward_to_server` on connect; so the server, dispatching a
+        line that had just arrived over loopback UDP, saw a `@Server` command
+        AND a live forwarder and forwarded it back to itself. Infinite
+        ping-pong, handler never ran. Fixed two ways:
+        - **One `command_table_t` PER SIDE** in the integrated launcher. A
+          table is a module's dispatch surface (what it can run, whether it
+          forwards), not shared process state like `cvar_state_t`. The
+          `cvar_state_t` stays shared — that is the thing CVAR TRACK exists to
+          share, and conflating the two is what caused this.
+        - **A line that arrived from the wire is never forwarded again.**
+          `command_context_t::caller_slot >= 0` already means "a network player
+          sent this", so `execute_console_line` refuses to forward it. Makes
+          the loop unrepresentable rather than merely absent.
+        **ACCEPTANCE MET**: typed by hand into `MyGame.exe`'s ImGui console
+        after the fix — `spawn_bot idle` → `spawn_bot: spawned idle bot at
+        slot 32`, each command logged exactly once, no ping-pong. That is the
+        original acceptance criterion for the whole CVAR TRACK (spawn_bot was
+        the bug that started it), and it is the one check no probe here could
+        stand in for. `cvar_test`'s `[console: no forward loop]` section is the
+        regression guard.
+      * Observed in the same session: `spawn_bot 1` is REJECTED with the usage
+        string. Enum parameters bind by NAME only (`idle|chase|regular`), never
+        by ordinal — deliberate (`cvars.def`: lowercase values are the
+        console-typed identity), but it is the first thing a user reaches for.
+        If numeric-or-name is ever wanted, it belongs in the generated binder's
+        enum parse, so every enum parameter gains it at once.
+      * **Lesson for the next wire change**: an out-of-process probe against
+        `MyGame_Server.exe` cannot catch an integrated-build ownership bug,
+        because the dedicated server legitimately has no forwarder. The
+        integrated build is a DIFFERENT topology, not just a convenience —
+        exercise it too.
 
 ## Generator polish  *(folded into CVAR TRACK step 2 — done 2026-07-29)*
 

@@ -19,6 +19,7 @@
 #include <print>
 #include "../geometry_renderer.hpp"
 #include "../../shared/network/quantization.hpp"
+#include "../../shared/network/cvar_mirror.hpp"
 #include "../../shared/network/map_transfer.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -567,13 +568,23 @@ void PlayState::update(float dt)
   for (const auto &msg : inbox.server_messages)
     Console::Get().Print("%s", msg.message().c_str());
 
-  // NOTE(cvar-mirror): the S2C_CVarSync stub machinery is gone — the client's
-  // generated CVAR_INFOS/COMMAND_INFOS already describe every server name, and
-  // the handshake refuses a client whose SCHEMA_HASH differs, so there is
-  // nothing left to sync EXCEPT @Mirrored values. That message is CVAR TRACK
-  // step 4; until it lands, both sides simply start from the identical
-  // cvars.def defaults and a runtime change to a pm_* value on the server does
-  // not reach connected clients.
+  // --- Apply @Mirrored cvar values pushed by the server (S2C_CvarValues) ---
+  // The only cvar traffic there is. Names are compile-time on both sides (the
+  // generated tables) and the handshake refuses a mismatched SCHEMA_HASH, so
+  // what arrives here is values, and only for cvars the server owns —
+  // apply_cvar_values refuses anything not flagged @Mirrored rather than
+  // trusting the sender. The full set arrives at connect; after that only
+  // what changed.
+  for (const auto &payload : inbox.cvar_value_messages)
+  {
+    network::Bit_Reader reader(payload.data(), payload.size());
+    shared::cvar_values_message_t values = shared::deserialize_cvar_values(reader);
+    apply_cvar_values(*ctx.cvars, values);
+
+    for (const shared::cvar_value_t &value : values.values)
+      log_terminal("[CLIENT] mirrored cvar '{}' = {}",
+                   cvars::cvar_info(value.id).name, value.text);
+  }
 
   // --- Apply reliable gameplay event batches from server ---
   // Decoded here so consumers (kill feed, score HUD, …) see events the same

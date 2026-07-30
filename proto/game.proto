@@ -198,19 +198,12 @@ message S2C_ServerMessage {
     string message = 1;
 }
 
-// A single cvar name/value pair
-message CvarPair {
-    string name        = 1;
-    string value       = 2;
-    uint64 flags       = 3;
-    bool   is_command  = 4;
-    string description = 5;
-}
-
-// Server → Client: replicated cvar values (sent on connect)
-message S2C_CVarSync {
-    repeated CvarPair cvars = 1;
-}
+// CvarPair / S2C_CVarSync lived here. They shipped every cvar NAME, description
+// and flag so the client could build stub registry entries for autocomplete and
+// forwarding. Both sides now compile the same generated tables out of cvars.def
+// and the handshake refuses a client whose SCHEMA_HASH differs, so names need no
+// message at all; @Mirrored VALUES ride S2C_CvarValues, which is
+// bitstream-native (src/shared/network/cvar_mirror.hpp).
 
 // Server → Client: bot debug state sent every tick
 message BotDebugEntry {

@@ -346,6 +346,11 @@ bug applies — but it should eventually get the same table treatment.
 
 ## Order of operations
 
+**All six steps landed; the last on 2026-07-30.** `todo.md`'s CVAR TRACK
+records what each one actually decided, including where the implementation
+departed from the plan below (step 4's console rewrite was pulled forward into
+step 3, and `string<N>` was implemented rather than deferred).
+
 Hard cutover, entity-migration style — the compiler is the checklist. The
 tree breaks at step 3 and builds again at step 5; no compatibility layer.
 

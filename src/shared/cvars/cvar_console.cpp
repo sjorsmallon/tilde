@@ -86,6 +86,20 @@ console_result_t execute_console_line(cvar_state_t&            state,
 
   const std::string_view name = tokens[0];
 
+  // A line with a real caller_slot arrived FROM THE WIRE (cvar_runtime.hpp:
+  // >= 0 is a network player slot, -1 means locally invoked). Such a line has
+  // already been forwarded once and must never be forwarded again -- otherwise
+  // a process holding both a forwarder and the authority bounces it back to
+  // itself forever. That is not hypothetical: the integrated build shared ONE
+  // command_table_t between its client and its server, the loopback client
+  // installed forward_to_server on connect, and every @Server line typed into
+  // the console ping-ponged until someone noticed the log. The table split in
+  // main_integrated.cpp is the fix; this check is what makes the loop
+  // unrepresentable rather than merely absent.
+  const bool came_from_remote_caller = context.caller_slot >= 0;
+  const bool may_forward =
+      table.forward_to_server != nullptr && !came_from_remote_caller;
+
   cvar_id id{};
   if (find_cvar(name, &id))
   {
@@ -115,8 +129,7 @@ console_result_t execute_console_line(cvar_state_t&            state,
     // Writing a server-owned value from a networked client is the server's
     // call, so the whole line goes upstream and comes back through this same
     // function on the other side.
-    if ((info.flags & (CVAR_FLAG_SERVER | CVAR_FLAG_MIRRORED)) &&
-        table.forward_to_server)
+    if ((info.flags & (CVAR_FLAG_SERVER | CVAR_FLAG_MIRRORED)) && may_forward)
     {
       table.forward_to_server(line);
       return console_result_t::forwarded;
@@ -159,7 +172,7 @@ console_result_t execute_console_line(cvar_state_t&            state,
   {
     const command_info_t& info = command_info(command);
 
-    if ((info.flags & CVAR_FLAG_SERVER) && table.forward_to_server)
+    if ((info.flags & CVAR_FLAG_SERVER) && may_forward)
     {
       table.forward_to_server(line);
       return console_result_t::forwarded;

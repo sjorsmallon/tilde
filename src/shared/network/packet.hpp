@@ -19,7 +19,6 @@ enum class Message_Type : uint8
   S2C_EntityPackage,
   NetCommand,
   S2C_ServerMessage,
-  S2C_CVarSync,
   C2S_Command,
   S2C_BotDebug,
   S2C_GameEventBatch,
@@ -27,6 +26,7 @@ enum class Message_Type : uint8
   C2S_MapLoaded,      // C2S: client finished (re)loading the map (bitstream-native)
   C2S_RequestMapData, // C2S: client lacks the compiled package; stream it
   S2C_MapData,        // S2C: the compiled map package blob (bitstream-native)
+  S2C_CvarValues,     // S2C: @Mirrored cvar values (bitstream-native)
 };
 
 // --------------------------------------------------------------------------------
@@ -78,11 +78,6 @@ template <> struct Packet_Traits<game::C2S_PlayerMoveCommand>
 template <> struct Packet_Traits<game::S2C_ServerMessage>
 {
   static constexpr Message_Type type = Message_Type::S2C_ServerMessage;
-};
-
-template <> struct Packet_Traits<game::S2C_CVarSync>
-{
-  static constexpr Message_Type type = Message_Type::S2C_CVarSync;
 };
 
 template <> struct Packet_Traits<game::C2S_Command>

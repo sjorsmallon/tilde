@@ -167,7 +167,6 @@ add_library(game_shared STATIC
     src/shared/file_watcher.hpp
     src/shared/file_watcher.cpp
     src/shared/log.hpp
-    src/shared/cvar.hpp
     src/shared/timed_function.hpp
     src/shared/detached_console.hpp
     src/shared/replay_system.hpp
@@ -209,6 +208,7 @@ add_library(game_shared STATIC
     src/shared/game_events.hpp
     src/shared/game_events.cpp
     src/shared/network/map_transfer.cpp
+    src/shared/network/cvar_mirror.cpp
 )
 
 # Protobuf Generation
@@ -487,6 +487,18 @@ target_include_directories(entity_layout_test PRIVATE src/shared)
 add_executable(map_migration_test src/test/map_migration_test.cpp)
 target_include_directories(map_migration_test PRIVATE src src/shared)
 target_link_libraries(map_migration_test PRIVATE game_shared)
+
+# 22. CVar / command test — tables, text conversion, console dispatch,
+# argument binders, and the @Mirrored wire path.
+#
+# It compiles BOTH generated binder TUs and defines its own commands::<name>
+# handlers, which is the only way to exercise the binders outside the DLLs that
+# own the real ones — and a standing check that a binder TU references nothing
+# but those handler symbols.
+add_executable(cvar_test src/test/cvar_test.cpp
+    ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS})
+target_include_directories(cvar_test PRIVATE src src/shared)
+target_link_libraries(cvar_test PRIVATE game_shared)
 
 # One-time map converter for the geometry exit (src/tools/map_convert.cpp).
 # Loading a map converts it in memory; this tool makes that deliberate and

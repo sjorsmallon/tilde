@@ -31,6 +31,13 @@ struct server_context_t
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
 
+  // The @Mirrored values as they were last broadcast. Change detection is a
+  // member compare of *cvars against this (see shared/network/cvar_mirror.hpp),
+  // which is why a direct field write in server code replicates and there is no
+  // Set() to forget to call. Seeded from *cvars in Init(), so the first tick
+  // broadcasts nothing — a joining client gets the full set at connect instead.
+  cvars::cvar_state_t last_broadcast_cvars;
+
   network::Server_Connection_State net;
   shared::game_session_t session;
 

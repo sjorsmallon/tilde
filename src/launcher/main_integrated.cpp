@@ -12,18 +12,36 @@
 #include <iostream>
 #include <thread>
 
-// THE cvar values and THE command bindings for this process, owned here and
-// lent to both modules. This is the fix the whole CVAR TRACK exists for:
-// game_shared is a STATIC lib linked into game_client.dll and game_server.dll
-// alike, so anything with static storage inside it exists twice. The old
-// CVarSystem singleton was two singletons, which is why `spawn_bot` from the
-// console never reached the server and why cl_timescale slowed rendering but
-// not simulation. One object here, two borrowed pointers, no static init.
+// THE cvar values for this process, owned here and lent to both modules. This
+// is the fix the whole CVAR TRACK exists for: game_shared is a STATIC lib
+// linked into game_client.dll and game_server.dll alike, so anything with
+// static storage inside it exists twice. The old CVarSystem singleton was two
+// singletons, which is why `spawn_bot` from the console never reached the
+// server and why cl_timescale slowed rendering but not simulation. One object
+// here, two borrowed pointers, no static init.
 //
 // `map` is no longer a cvar: it is a @Server COMMAND (see cvars.def), and the
 // boot map comes from last_map.txt inside server::Init.
-static cvars::cvar_state_t    g_cvar_state{};
-static cvars::command_table_t g_command_table{};
+static cvars::cvar_state_t g_cvar_state{};
+
+// The command tables, however, are ONE PER SIDE even though this is one
+// process -- and that distinction is load-bearing. A command_table_t is a
+// module's DISPATCH SURFACE (which names it can run, and whether it forwards),
+// not shared process state like the values above.
+//
+// Sharing one table here was a real bug: the loopback client installs
+// forward_to_server on connect, so the server, dispatching a `spawn_bot` line
+// that had just arrived over loopback UDP, saw a @Server command AND a live
+// forwarder and forwarded it straight back to itself. The line ping-ponged
+// forever and the handler never ran.
+//
+// Split, each side gets the shape it actually has: the client's table holds
+// the @Client binders plus a forwarder once connected, the server's holds the
+// @Server binders and never forwards. The integrated client is a real
+// networked client, so `spawn_bot` takes the same path it takes from a remote
+// one -- which is the point of testing against the integrated build at all.
+static cvars::command_table_t g_client_command_table{};
+static cvars::command_table_t g_server_command_table{};
 
 int main(int argc, char *argv[])
 {
@@ -54,13 +72,13 @@ int main(int argc, char *argv[])
   // Eager asset registration, before anything resolves an id. See asset.hpp.
   assets::init();
 
-  if (!server::Init(&g_cvar_state, &g_command_table))
+  if (!server::Init(&g_cvar_state, &g_server_command_table))
   {
     log_error("Server Init Failed");
     return 1;
   }
 
-  if (!client::Init(&g_cvar_state, &g_command_table))
+  if (!client::Init(&g_cvar_state, &g_client_command_table))
   {
     log_error("Client Init Failed");
     server::Shutdown(); // Cleanup

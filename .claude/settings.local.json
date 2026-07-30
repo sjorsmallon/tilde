@@ -195,7 +195,12 @@
       "Bash(timeout 4 ./cmake_build/bin/MyGame_Server.exe)",
       "PowerShell(cmake --build cmake_build --target def_gen -j8 2>&1)",
       "PowerShell(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --dump 2>&1)",
-      "PowerShell(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --emit 2>&1)"
+      "PowerShell(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --emit 2>&1)",
+      "Bash(cmake --build cmake_build --target cvar_test -j8)",
+      "Bash(./cmake_build/bin/cvar_test.exe)",
+      "Bash(./cmake_build/bin/cvar_wire_probe.exe)",
+      "Bash(taskkill //IM MyGame_Server.exe //F)",
+      "Bash(rm -f cmake_build/bin/cvar_wire_probe.exe)"
     ],
     "additionalDirectories": [
       "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"

@@ -29,7 +29,6 @@ struct ClientInbox
   std::vector<game::NetCommand> net_commands;
   std::vector<game::S2C_EntityPackage> entity_updates;
   std::vector<game::S2C_ServerMessage> server_messages;
-  std::vector<game::S2C_CVarSync> cvar_syncs;
   std::vector<game::S2C_BotDebug> bot_debug_updates;
   std::vector<game::S2C_GameEventBatch> game_event_batches;
   // Raw reassembled payloads of bitstream-native CmdChangeMap messages. Decoded
@@ -40,6 +39,12 @@ struct ClientInbox
   // streamed compiled package). Decoded in play_state via
   // shared::deserialize_map_data().
   std::vector<std::vector<uint8>> map_data_messages;
+  // Raw reassembled payloads of bitstream-native S2C_CvarValues messages (the
+  // @Mirrored values push). Decoded in play_state via
+  // shared::deserialize_cvar_values() and applied to the launcher's
+  // cvar_state_t — the network layer stays ignorant of cvars, same division as
+  // the two above.
+  std::vector<std::vector<uint8>> cvar_value_messages;
 };
 
 template <typename T>
@@ -198,7 +203,7 @@ inline void poll_client_network(Client_Connection_State &state,
         }
       }
       else if (packet.header.message_type ==
-               static_cast<uint8>(Message_Type::S2C_CVarSync))
+               static_cast<uint8>(Message_Type::S2C_CvarValues))
       {
         auto &fragments = state.partial_packets[packet.header.message_id];
 
@@ -228,11 +233,9 @@ inline void poll_client_network(Client_Connection_State &state,
             buffer.insert(buffer.end(), f.buffer,
                           f.buffer + f.header.payload_size);
 
-          game::S2C_CVarSync sync;
-          if (sync.ParseFromArray(buffer.data(), buffer.size()))
-          {
-            out_inbox.cvar_syncs.push_back(sync);
-          }
+          // Bitstream-native: hand the raw payload to the game layer, which
+          // decodes it with shared::deserialize_cvar_values().
+          out_inbox.cvar_value_messages.push_back(std::move(buffer));
           state.partial_packets.erase(packet.header.message_id);
         }
       }

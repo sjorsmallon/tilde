@@ -114,7 +114,6 @@ game_shared_src = [
   'src/shared/file_watcher.hpp',
   'src/shared/file_watcher.cpp',
   'src/shared/log.hpp',
-  'src/shared/cvar.hpp',
   'src/shared/timed_function.hpp',
   'src/shared/detached_console.hpp',
   'src/shared/replay_system.hpp',

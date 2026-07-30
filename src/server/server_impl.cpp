@@ -21,6 +21,7 @@
 #include "log.hpp"
 
 #include "network/bitstream.hpp"
+#include "network/cvar_mirror.hpp"
 #include "network/map_transfer.hpp"
 #include "network/entity_serialization.hpp"
 #include "network/entity_snapshot.hpp"
@@ -74,10 +75,8 @@ static void broadcast_server_message(network::Server_Connection_State &net,
 // client could not see. Both sides now compile the SAME generated
 // CVAR_INFOS/COMMAND_INFOS out of cvars.def, and the connect handshake refuses
 // any client whose SCHEMA_HASH differs -- so "what names exist" needs no
-// message at all. What still belongs on the wire is @Mirrored VALUES, which is
-// CVAR TRACK step 4 (a (cvar_id, text) diff against a retained last-broadcast
-// copy). Until that lands, both sides simply run the identical cvars.def
-// defaults.
+// message at all. What rides the wire is @Mirrored VALUES only: see
+// send_cvar_values below.
 
 server_context_t g_state;
 network::Udp_Socket g_socket;
@@ -321,6 +320,11 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   g_state.commands = command_table;
   cvars::bind_server_commands(*command_table);
 
+  // Seed the mirroring baseline from the values we are actually starting with,
+  // so the first tick broadcasts nothing. A client that connects later gets the
+  // full set from the accept handler regardless.
+  g_state.last_broadcast_cvars = *cvar_state;
+
   static bool jolt_initialized = false;
   if (!jolt_initialized)
   {
@@ -425,6 +429,50 @@ static void send_change_map(int slot)
       g_state.net.next_message_id);
   for (const auto &p : packets)
     g_socket.send(p, g_state.net.player_ips[slot]);
+}
+
+// Sends a bitstream-native S2C_CvarValues to one slot. Two callers, two
+// payloads: the whole @Mirrored set at connect (so a client joining mid-match
+// starts from the server's live values, not from cvars.def defaults) and the
+// per-tick diff below.
+static void send_cvar_values(int slot, const shared::cvar_values_message_t &msg)
+{
+  network::Bit_Writer writer;
+  shared::serialize_cvar_values(writer, msg);
+  auto packets = network::convert_to_packets(
+      writer.buffer,
+      static_cast<network::uint8>(network::Message_Type::S2C_CvarValues),
+      g_state.net.next_message_id);
+  for (const auto &p : packets)
+    g_socket.send(p, g_state.net.player_ips[slot]);
+}
+
+// Broadcasts every @Mirrored value that changed since the last broadcast, then
+// retains the new values. The retain happens ONLY here, after the send: a change
+// that is never broadcast stays different from the retained copy and is picked
+// up again next tick, which is the whole lost-update repair story (there is no
+// ack for this message).
+static void broadcast_changed_cvar_values()
+{
+  shared::cvar_values_message_t changed =
+      shared::collect_changed_mirrored_cvars(*g_state.cvars,
+                                             g_state.last_broadcast_cvars);
+  if (changed.values.empty())
+    return;
+
+  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  {
+    if (g_state.net.player_slots[slot])
+      send_cvar_values(slot, changed);
+  }
+
+  // Whole-struct copy, not a per-member one: only the @Mirrored members are
+  // ever compared, so copying the rest costs nothing and cannot go stale.
+  g_state.last_broadcast_cvars = *g_state.cvars;
+
+  for (const shared::cvar_value_t &value : changed.values)
+    log_terminal("Mirroring '{}' = {} to connected clients",
+                 cvars::cvar_info(value.id).name, value.text);
 }
 
 bool reload_map(const std::string &map_path)
@@ -556,6 +604,11 @@ bool Tick()
         for (const auto &p : packets)
           g_socket.send(p, sender);
 
+        // The full @Mirrored set, right after the accept. It must go AFTER the
+        // hash check above: the ids are per-build table indices, so a client
+        // that disagreed about cvars.def would apply them to the wrong cvars.
+        send_cvar_values(slot, shared::collect_mirrored_cvars(*g_state.cvars));
+
         // Announce join to all clients (including the new one)
         broadcast_server_message(
             g_state.net, g_socket,
@@ -580,8 +633,12 @@ bool Tick()
     const auto &client_ip = g_state.net.player_ips[player_idx];
 
     // The same dispatcher the client console runs, over the same generated
-    // tables. forward_to_server is null here (we ARE the server), so every
-    // name resolves locally or not at all.
+    // tables. Two things keep this from bouncing the line straight back: the
+    // server's command_table_t is its OWN (the integrated launcher hands each
+    // side a separate one -- sharing it made every @Server line ping-pong over
+    // loopback forever), and the real caller_slot below marks this line as
+    // having already come from the wire, which execute_console_line refuses to
+    // forward a second time.
     cvars::command_context_t context{ .caller_slot = static_cast<int>(player_idx) };
     std::string reply;
     cvars::console_result_t result = cvars::execute_console_line(
@@ -1031,6 +1088,13 @@ bool Tick()
     }
   }
   g_state.game_event_queue_this_tick.clear();
+
+  // Mirror @Mirrored cvar changes last, so it catches every writer this tick —
+  // a console line off the wire, a command handler, gameplay code writing the
+  // field directly. Not gated on client_map_ready: a cvar value is world-
+  // independent, and a client mid-download still wants the movement constants
+  // it will simulate with the moment its map lands.
+  broadcast_changed_cvar_values();
 
   g_tick_number++;
   return true;
