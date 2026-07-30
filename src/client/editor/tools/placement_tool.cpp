@@ -229,13 +229,12 @@ void Placement_Tool::select_placeable(int index)
     return;
   }
 
-  entities::Entity *prototype = entities::create_entity(placeable.entity_type);
-  if (prototype == nullptr)
+  current_entity = shared::make_entity(placeable.entity_type);
+  if (!current_entity)
   {
     log_error("select_placeable: no entity registered for \"{}\"", placeable.label);
     return;
   }
-  current_entity.reset(prototype, &entities::destroy_entity);
 
   // Set up defaults for entity types that need them. Trigger_Volume is the only
   // box-volume entity left now that geometry has moved out.

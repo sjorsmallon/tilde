@@ -494,13 +494,15 @@ auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
 // Resolve collisions against the BVH using hull-plane-based penetration test.
 // Pushes player_pos out of overlapping hulls and classifies contact normals.
 //
-// `record_debug_faces` is debug_show_collisions, read once by the caller: the
-// recording happens in SHARED code but the drawing is client-side, so the flag
-// has to arrive from whichever side is simulating rather than from a global.
+// `debug_faces` is the caller's sink, already gated on debug_show_collisions by
+// the caller: the recording happens in SHARED code but the drawing is
+// client-side, so both the flag and the destination have to arrive from
+// whichever side is simulating rather than from a global. Null means the caller
+// has no reader for them (the server, every time) -- see debug_collision.hpp.
 Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
                                    vec3 &player_pos,
                                    float half_width, float half_height,
-                                   bool record_debug_faces)
+                                   debug_collision::Face_Sink *debug_faces)
 {
   Collider_Planes result;
   constexpr float cos_45 = 0.707f;
@@ -585,9 +587,10 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
     p.point = player_pos - push_normal * 0.01f;
 
     // Record collision for debug visualization
-    if (record_debug_faces && min_plane_idx >= 0 &&
+    if (debug_faces && min_plane_idx >= 0 &&
         min_plane_idx < (int)prim->face_polygons.size())
-      debug_collision::record_collision(p, prim->face_polygons[min_plane_idx]);
+      debug_collision::record_collision(*debug_faces, p,
+                                        prim->face_polygons[min_plane_idx]);
 
     // Classify: ground (normal pointing up), ceiling (down), wall (horizontal)
     if (push_normal.y > cos_45)
@@ -617,20 +620,23 @@ std::tuple<vec3, vec3> player_move(
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const float half_width, const float half_height,
-    const float dt, Move_Events *out_events)
+    const float dt, Move_Events *out_events,
+    debug_collision::Face_Sink *debug_faces)
 {
   timed_function();
 
-  // Read once for the whole tick: every resolve_collisions call below must
+  // Resolved once for the whole tick: every resolve_collisions call below must
   // agree about whether it is recording, or a mid-tick console toggle would
-  // record half a frame's faces.
-  const bool record_debug_faces = cvars.debug_show_collisions;
+  // record half a frame's faces. A caller with no sink records nothing whatever
+  // the toggle says -- that is how the server opts out (debug_collision.hpp).
+  debug_collision::Face_Sink *recording_sink =
+      cvars.debug_show_collisions ? debug_faces : nullptr;
 
   // Resolve collisions: push player out of entities and collect contact planes
   vec3 player_pos = old_position;
   Collider_Planes collider_planes =
       resolve_collisions(bvh, player_pos, half_width, half_height,
-                         record_debug_faces);
+                         recording_sink);
 
   bool has_ground = !collider_planes.ground_planes.empty();
   bool has_ceiling = !collider_planes.ceiling_planes.empty();
@@ -683,7 +689,7 @@ std::tuple<vec3, vec3> player_move(
       vec3 raised_pos = player_pos + vec3{0.f, step_height, 0.f};
       Collider_Planes raised_planes =
           resolve_collisions(bvh, raised_pos, half_width, half_height,
-                             record_debug_faces);
+                             recording_sink);
 
       // Only abort if a raised wall specifically blocks our wish direction.
       // Walls from other nearby obstacles that we're not moving into are ignored.
@@ -733,7 +739,7 @@ std::tuple<vec3, vec3> player_move(
         drop_pos.y -= step_height;
         Collider_Planes drop_planes =
             resolve_collisions(bvh, drop_pos, half_width, half_height,
-                               record_debug_faces);
+                               recording_sink);
 
         // Reject the step if a wall still blocks the wish direction at the
         // drop position — that means we ran into a real obstacle, not just
@@ -794,7 +800,7 @@ std::tuple<vec3, vec3> player_move(
   // tunneled into, and correct velocity so it doesn't fight the surface.
   Collider_Planes post_planes =
       resolve_collisions(bvh, new_pos, half_width, half_height,
-                         record_debug_faces);
+                         recording_sink);
 
   const float overbounce = cvars.pm_overbounce;
 

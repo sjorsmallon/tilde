@@ -150,6 +150,14 @@ inline float euclidean_distance_between(const vec3 &a, const vec3 &b)
   return length(a - b);
 }
 
+template <typename T> inline vec3_t<T> normalize(const vec3_t<T> &v)
+{
+  T l = length(v);
+  if (l > 1e-6f)
+    return v * (1.0f / l);
+  return {0, 0, 0};
+}
+
 
 template <typename T>
 inline vec3_t<T> cross(const vec3_t<T> &a, const vec3_t<T> &b)

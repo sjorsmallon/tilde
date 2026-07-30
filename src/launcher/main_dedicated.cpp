@@ -20,6 +20,11 @@
 static cvars::cvar_state_t    g_cvar_state{};
 static cvars::command_table_t g_command_table{};
 
+// Owned here for the same static-lib reason as the cvars above: the exe and
+// game_server.dll each hold their own asset state pointer, and both must point
+// at this one object. See the ownership note in asset.hpp.
+static assets::asset_state_t  g_asset_state{};
+
 int main(int argc, char *argv[])
 {
   crash_handler::install();
@@ -31,10 +36,12 @@ int main(int argc, char *argv[])
   // Asset registration is EAGER and must run before anything resolves an asset
   // id. The lazy "__primitive_" init this replaced meant an id resolved to a
   // mesh or to nothing depending on what had run first; get_mesh now reports
-  // loudly if it is called before this.
+  // loudly if it is called before this. set_state comes first: init() fills the
+  // state this module points at, and server::Init points the DLL at the same one.
+  assets::set_state(&g_asset_state);
   assets::init();
 
-  if (!server::Init(&g_cvar_state, &g_command_table))
+  if (!server::Init(&g_cvar_state, &g_command_table, &g_asset_state))
   {
     log_error("Server Init Failed");
     return 1;

@@ -1,6 +1,7 @@
 #pragma once
 #include "collision_detection.hpp"
 #include "cvars/generated/cvars_generated.hpp"
+#include "debug_collision.hpp"
 #include "plane.hpp"
 #include <tuple>
 #include <vector>
@@ -87,6 +88,11 @@ inline constexpr float MIN_LAND_IMPACT_SPEED = 150.f;
 // new_player_position, new_player_velocity. `out_events`, if non-null, receives
 // the movement cosmetics produced this tick (jump/land).
 //
+// `debug_faces`, if non-null AND debug_show_collisions is set, receives the
+// contact face polygons this tick. Null means record nothing. Only the CLIENT
+// passes a sink: recording happens in shared code but the drawing is
+// client-side, so a server-side recording has no reader (see debug_collision.hpp).
+//
 // `cvars` is the process's one cvar_state_t (the launcher's), passed by
 // reference rather than read from a global: the pm_* tunables are @Mirrored, so
 // the client's prediction and the server's authoritative run must feed the SAME
@@ -99,4 +105,5 @@ std::tuple<vec3, vec3> player_move(
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const float half_width, const float half_height,
-    const float dt, Move_Events *out_events = nullptr);
+    const float dt, Move_Events *out_events = nullptr,
+    debug_collision::Face_Sink *debug_faces = nullptr);

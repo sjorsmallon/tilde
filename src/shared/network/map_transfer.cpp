@@ -96,8 +96,8 @@ static void serialize_navmesh(network::Bit_Writer &w, const navmesh_t &nav)
 
   for (const auto &p : nav.polygons)
   {
-    network::write_var_uint(w, static_cast<uint32_t>(p.verts.size()));
-    for (int32_t vert : p.verts)
+    network::write_var_uint(w, static_cast<uint32_t>(p.vertices.size()));
+    for (int32_t vert : p.vertices)
       write_i32(w, vert);
     for (int32_t neighbor : p.neighbors)
       write_i32(w, neighbor);
@@ -122,10 +122,10 @@ static void deserialize_navmesh(network::Bit_Reader &r, navmesh_t &nav)
   for (auto &p : nav.polygons)
   {
     uint32_t n = network::read_var_uint(r);
-    p.verts.resize(n);
+    p.vertices.resize(n);
     p.neighbors.resize(n);
     for (uint32_t k = 0; k < n; ++k)
-      p.verts[k] = read_i32(r);
+      p.vertices[k] = read_i32(r);
     for (uint32_t k = 0; k < n; ++k)
       p.neighbors[k] = read_i32(r);
     p.island = read_i32(r);

@@ -39,33 +39,33 @@ private:
 
   // Setup mode state
   shared::entity_uid_t selected_uid = shared::invalid_entity_uid;
-  shared::entity_uid_t hovered_uid = shared::invalid_entity_uid;
-  shared::box_face_t hovered_face = shared::box_face_t::Invalid;
+  shared::entity_uid_t hovered_uid  = shared::invalid_entity_uid;
+  shared::box_face_t   hovered_face = shared::box_face_t::Invalid;
 
   // Paint mode state
   bool currently_painting = false;
   linalg::vec3 cursor_position = {};
   linalg::vec3 cursor_normal = {};
-  bool cursor_valid = false;
+  bool cursor_is_currently_over_a_displacement_face = false;
 
-  // Brush parameters
-  float brush_radius = 32.0f;
-  float brush_strength = 2.0f;
+  struct brush_t
+  {
+    float radius = 32.0f;
+    float strength = 2.0f;
+  };
 
+  brush_t brush{.radius = 32.f, .strength = 2.f};
+  
   // Subdivision control
   int pending_subdivision = 4;
 
   // Face-drag resize (Setup mode, before displacement)
-  bool resize_dragging = false;
-  bool resize_moved = false;
-  shared::box_face_t resize_face = shared::box_face_t::Invalid;
+  bool currently_dragging_a_face_to_resize = false;
+  bool selected_face_was_actually_resized = false;
+  shared::box_face_t face_to_resize = shared::box_face_t::Invalid;
   viewport_state_t resize_last_view;
 
-  // Whole-value start states for the two multi-frame edits (face resize, and a
-  // run of Q/E height steps in Select mode). Geometry undo is a value swap, so a
-  // snapshot is just a copy of the object — no property map, no text round-trip,
-  // and a sub-threshold height change can no longer vanish on the way through
-  // formatted floats.
+  // optional because..?
   std::optional<shared::geometry_value_t> resize_start_geometry;
 
   // Select mode state
@@ -73,7 +73,8 @@ private:
   bool box_selecting = false;
   linalg::vec2 box_start_screen;        // pixels, drag start
   linalg::vec2 box_end_screen;          // pixels, drag current/end
-  float height_snap = 128.0f;
+
+  float extent_snap = 128.0f;
   viewport_state_t cached_view;         // updated each on_update
   std::optional<shared::geometry_value_t> select_start_geometry;
 
@@ -83,13 +84,16 @@ private:
                                  const linalg::vec3 &ray_origin,
                                  const linalg::vec3 &ray_dir, float &out_t,
                                  linalg::vec3 &out_normal);
+
   void apply_brush(shared::displacement_geometry_t &displacement, float dt, bool invert);
+
   linalg::vec2 project_to_screen(const linalg::vec3 &world_pos) const;
 
   // Push a value-swap transaction for a finished multi-frame edit, then drop the
   // start state. Both take the snapshot member by reference so they clear it.
   void commit_geometry_edit(editor_context_t &ctx,
                             std::optional<shared::geometry_value_t> &start_state);
+
   void clear_selection(int grid_size);
 };
 

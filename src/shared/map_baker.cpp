@@ -38,7 +38,7 @@ static void assert_navmesh_invariants(const navmesh_t &nav, const char *label, b
 
   // Vertex indices in range.
   for (int a = 0; a < np; ++a)
-    for (int vi : polys[a].verts)
+    for (int vi : polys[a].vertices)
       assert(vi >= 0 && vi < nv && "[navmesh] vertex index out of range");
 
   // Neighbor indices valid, no self-neighbors.
@@ -68,12 +68,12 @@ static void assert_navmesh_invariants(const navmesh_t &nav, const char *label, b
   for (int a = 0; a < np; ++a)
   {
     const auto &p = polys[a];
-    const int N = (int)p.verts.size();
+    const int N = (int)p.vertices.size();
     for (int i = 0; i < N; ++i)
     {
-      const auto &prev = verts[p.verts[(i - 1 + N) % N]].pos;
-      const auto &cur  = verts[p.verts[i              ]].pos;
-      const auto &next = verts[p.verts[(i + 1)     % N]].pos;
+      const auto &prev = verts[p.vertices[(i - 1 + N) % N]].pos;
+      const auto &cur  = verts[p.vertices[i              ]].pos;
+      const auto &next = verts[p.vertices[(i + 1)     % N]].pos;
       float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
       if (cross_y < -1e-4f)
       {
@@ -88,7 +88,7 @@ static void assert_navmesh_invariants(const navmesh_t &nav, const char *label, b
     // PRE-1: all quads.
     for (int a = 0; a < np; ++a)
     {
-      assert(polys[a].verts.size() == 4 && "[navmesh-pre] polygon is not a quad");
+      assert(polys[a].vertices.size() == 4 && "[navmesh-pre] polygon is not a quad");
       assert(polys[a].neighbors.size() == 4 && "[navmesh-pre] quad does not have 4 neighbors");
     }
     // PRE-2: 4 private verts per span.
@@ -153,7 +153,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
 
   // Apply remap to all polygon vertex lists.
   for (auto &poly : nav.polygons)
-    for (auto &v : poly.verts)
+    for (auto &v : poly.vertices)
       v = vert_remap[v];
 
   // Build compact vertex list and second remap for used indices.
@@ -171,7 +171,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
 
   // Apply compact remap.
   for (auto &poly : nav.polygons)
-    for (auto &v : poly.verts)
+    for (auto &v : poly.vertices)
       v = compact_remap[vert_remap[v]];
 
   // ---- Step 8b: greedy convex polygon merging ----
@@ -190,7 +190,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
     {
       if (deleted[ai]) continue;
       nav_polygon_t &A = nav.polygons[ai];
-      const int Na = (int)A.verts.size();
+      const int Na = (int)A.vertices.size();
 
       for (int ei = 0; ei < Na; ++ei)
       {
@@ -204,20 +204,20 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
 
         // Must be coplanar: check that all of B's vertices have the same Y
         // as A's vertices (within epsilon — flat geometry assumption).
-        float ay = nav.vertices[A.verts[0]].pos.y;
-        float by = nav.vertices[B.verts[0]].pos.y;
+        float ay = nav.vertices[A.vertices[0]].pos.y;
+        float by = nav.vertices[B.vertices[0]].pos.y;
         if (std::abs(ay - by) > EPS) continue;
 
         // Find the reverse edge in B that shares the same two vertices as
-        // A's edge ei.  A's edge ei runs from A.verts[ei] to A.verts[(ei+1)%Na].
-        // The reverse edge in B must run from A.verts[(ei+1)%Na] to A.verts[ei].
-        const int Nb = (int)B.verts.size();
-        int shared_v0 = A.verts[ei];
-        int shared_v1 = A.verts[(ei + 1) % Na];
+        // A's edge ei.  A's edge ei runs from A.vertices[ei] to A.vertices[(ei+1)%Na].
+        // The reverse edge in B must run from A.vertices[(ei+1)%Na] to A.vertices[ei].
+        const int Nb = (int)B.vertices.size();
+        int shared_v0 = A.vertices[ei];
+        int shared_v1 = A.vertices[(ei + 1) % Na];
         int ej = -1;
         for (int k = 0; k < Nb; ++k)
         {
-          if (B.verts[k] == shared_v1 && B.verts[(k + 1) % Nb] == shared_v0)
+          if (B.vertices[k] == shared_v1 && B.vertices[(k + 1) % Nb] == shared_v0)
           { ej = k; break; }
         }
         if (ej < 0) continue;
@@ -232,8 +232,8 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
           while (shared_count < Na - 1 && shared_count < Nb - 1)
           {
             if (A.neighbors[a_edge] != bi || B.neighbors[b_edge] != ai) break;
-            int av0 = A.verts[a_edge], av1 = A.verts[(a_edge + 1) % Na];
-            int bv0 = B.verts[b_edge], bv1 = B.verts[(b_edge + 1) % Nb];
+            int av0 = A.vertices[a_edge], av1 = A.vertices[(a_edge + 1) % Na];
+            int bv0 = B.vertices[b_edge], bv1 = B.vertices[(b_edge + 1) % Nb];
             if (bv0 != av1 || bv1 != av0) break;
             ++shared_count;
             a_edge = (a_edge + 1) % Na;
@@ -247,9 +247,9 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
         std::vector<int32_t> merged_verts;
         merged_verts.reserve(Na + Nb - 2 * shared_count);
         for (int k = 0; k < Na - shared_count; ++k)
-          merged_verts.push_back(A.verts[(ei + shared_count + k) % Na]);
+          merged_verts.push_back(A.vertices[(ei + shared_count + k) % Na]);
         for (int k = 0; k < Nb - shared_count; ++k)
-          merged_verts.push_back(B.verts[(ej + 1 + k) % Nb]);
+          merged_verts.push_back(B.vertices[(ej + 1 + k) % Nb]);
 
         // Sanity: reject if merged polygon has duplicate vertices.
         {
@@ -272,7 +272,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
           merged_neighbors.push_back(B.neighbors[(ej + 1 + k) % Nb]);
 
         // Commit the merge: A absorbs B.
-        A.verts     = std::move(merged_verts);
+        A.vertices     = std::move(merged_verts);
         A.neighbors = std::move(merged_neighbors);
         deleted[bi] = true;
         any_merged  = true;
@@ -326,8 +326,8 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
     float mn_x = FLT_MAX, mx_x = -FLT_MAX, mn_z = FLT_MAX, mx_z = -FLT_MAX;
     for (const auto &p : nav.polygons)
     {
-      total_verts_ref += (int)p.verts.size();
-      for (int v : p.verts)
+      total_verts_ref += (int)p.vertices.size();
+      for (int v : p.vertices)
       {
         mn_x = std::min(mn_x, nav.vertices[v].pos.x);
         mx_x = std::max(mx_x, nav.vertices[v].pos.x);
@@ -340,7 +340,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
                  mn_x, mx_x, mn_z, mx_z);
     for (int i = 0; i < (int)nav.polygons.size(); ++i)
       std::println("[bake]   poly[{}]: {} verts, island={}", i,
-                   (int)nav.polygons[i].verts.size(), nav.polygons[i].island);
+                   (int)nav.polygons[i].vertices.size(), nav.polygons[i].island);
   }
 
   // ---- Step 8c: collinear vertex removal ----
@@ -363,10 +363,10 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
     {
       auto &p = nav.polygons[pi];
       bool any_removed = true;
-      while (any_removed && (int)p.verts.size() > 3)
+      while (any_removed && (int)p.vertices.size() > 3)
       {
         any_removed = false;
-        const int N = (int)p.verts.size();
+        const int N = (int)p.vertices.size();
         for (int i = 0; i < N; ++i)
         {
           int prev_edge = (i - 1 + N) % N;
@@ -376,30 +376,30 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
           // Both flanking edges must share the same neighbor (or both be -1).
           if (n_prev != n_curr) continue;
 
-          const int vi_b = p.verts[i];
-          const auto &a = nav.vertices[p.verts[prev_edge]].pos;
+          const int vi_b = p.vertices[i];
+          const auto &a = nav.vertices[p.vertices[prev_edge]].pos;
           const auto &b = nav.vertices[vi_b].pos;
-          const auto &c = nav.vertices[p.verts[(i + 1) % N]].pos;
+          const auto &c = nav.vertices[p.vertices[(i + 1) % N]].pos;
           float cross_y = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
           if (std::abs(cross_y) > 1e-3f) continue;
 
           // Erase vertex i from P: remove verts[i] and neighbors[i].
           // The surviving edge at prev_edge now spans A→C with neighbor n_prev.
-          p.verts.erase    (p.verts.begin()     + i);
+          p.vertices.erase    (p.vertices.begin()     + i);
           p.neighbors.erase(p.neighbors.begin() + i);
 
           // Mirror the removal in the neighbor polygon Q.
           if (n_prev >= 0)
           {
             auto &q = nav.polygons[n_prev];
-            if ((int)q.verts.size() > 3)
+            if ((int)q.vertices.size() > 3)
             {
-              const int M = (int)q.verts.size();
+              const int M = (int)q.vertices.size();
               for (int j = 0; j < M; ++j)
               {
-                if (q.verts[j] == vi_b)
+                if (q.vertices[j] == vi_b)
                 {
-                  q.verts.erase    (q.verts.begin()     + j);
+                  q.vertices.erase    (q.vertices.begin()     + j);
                   q.neighbors.erase(q.neighbors.begin() + j);
                   break;
                 }
@@ -419,13 +419,13 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
   for (int pi = 0; pi < (int)nav.polygons.size(); ++pi)
   {
     const auto &p = nav.polygons[pi];
-    const int N = (int)p.verts.size();
+    const int N = (int)p.vertices.size();
     for (int i = 0; i < N; ++i)
     {
       int prev_edge = (i - 1 + N) % N;
-      const auto &a = nav.vertices[p.verts[prev_edge]].pos;
-      const auto &b = nav.vertices[p.verts[i]].pos;
-      const auto &c = nav.vertices[p.verts[(i + 1) % N]].pos;
+      const auto &a = nav.vertices[p.vertices[prev_edge]].pos;
+      const auto &b = nav.vertices[p.vertices[i]].pos;
+      const auto &c = nav.vertices[p.vertices[(i + 1) % N]].pos;
       float cross_y = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
       if (std::abs(cross_y) <= 1e-3f)
       {
@@ -438,7 +438,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
 
         std::println(stderr, "[navmesh] COLLINEAR VERTEX: poly {} vert {} (idx {}), "
                      "pos=({:.2f},{:.2f},{:.2f}), cross_y={:.6f}, neighbors=[{}, {}]",
-                     pi, i, p.verts[i], b.x, b.y, b.z, cross_y,
+                     pi, i, p.vertices[i], b.x, b.y, b.z, cross_y,
                      n_prev, n_curr);
         assert(false && "[navmesh] collinear vertex not removed during simplification");
       }
@@ -450,7 +450,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
     const int nv2 = (int)nav.vertices.size();
     std::vector<bool>    used(nv2, false);
     for (const auto &p : nav.polygons)
-      for (int v : p.verts)
+      for (int v : p.vertices)
         used[v] = true;
 
     std::vector<int32_t> v2_remap(nv2, -1);
@@ -460,7 +460,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
     nav.vertices = std::move(used_verts);
 
     for (auto &p : nav.polygons)
-      for (auto &v : p.verts)
+      for (auto &v : p.vertices)
         v = v2_remap[v];
   }
 
@@ -689,7 +689,7 @@ void bake_map(map_t &map, float cell_size)
     nav.vertices.push_back(nav_vertex_t{{cx - half, y, cz + half}}); // NW
 
     nav_polygon_t quad;
-    quad.verts     = {v0, v0+1, v0+2, v0+3};
+    quad.vertices     = {v0, v0+1, v0+2, v0+3};
     quad.neighbors = {-1, -1, -1, -1}; // filled in step 7
     quad.island = sp.island;
 

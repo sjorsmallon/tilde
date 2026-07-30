@@ -15,7 +15,7 @@ struct nav_vertex_t
 // neighbors[i] is the index of the polygon sharing edge i, or -1 (boundary / no connection).
 struct nav_polygon_t
 {
-  std::vector<int32_t> verts;
+  std::vector<int32_t> vertices;
   std::vector<int32_t> neighbors;
   int32_t island; // connected-component ID
 };
@@ -35,12 +35,12 @@ struct navmesh_t
     for (int i = 0; i < (int)polygons.size(); ++i)
     {
       const auto &p = polygons[i];
-      const int N = (int)p.verts.size();
+      const int N = (int)p.vertices.size();
       bool inside = true;
       for (int e = 0; e < N; ++e)
       {
-        const linalg::vec3f &a = vertices[p.verts[e          ]].pos;
-        const linalg::vec3f &b = vertices[p.verts[(e + 1) % N]].pos;
+        const linalg::vec3f &a = vertices[p.vertices[e          ]].pos;
+        const linalg::vec3f &b = vertices[p.vertices[(e + 1) % N]].pos;
         // For CCW winding, point must be to the left of every edge.
         float cross = (b.x - a.x) * (pz - a.z) - (b.z - a.z) * (px - a.x);
         if (cross < 0.f) { inside = false; break; }

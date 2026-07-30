@@ -23,9 +23,11 @@ public:
   void on_draw_ui(editor_context_t &ctx) override;
 
 private:
+
   std::optional<linalg::vec3> start;
   std::optional<linalg::vec3> end;
   std::vector<linalg::vec3>   path;
+  
   viewport_state_t             viewport; // cached from on_update for mouse picking
 
   // Intersects the current mouse ray against navmesh polygon triangles.

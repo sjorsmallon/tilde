@@ -151,7 +151,12 @@ private:
   {
     linalg::vec3 position;
     linalg::vec3 scale; // or half_extents * 2
-    linalg::vec4 orientation;
+    // Euler XYZ degrees, the one decided orientation representation (see
+    // entities.def). This was a vec4 whose w was written 0 by some paths and 1
+    // by others -- the vec4 shape read as "quaternion" and invited identity
+    // quaternion writes that the euler write below then silently clobbered.
+    // A vec3 makes that mistake unrepresentable.
+    linalg::vec3 orientation;
   } original_transform;
 };
 

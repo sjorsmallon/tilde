@@ -17,14 +17,21 @@
 
 namespace shared { struct game_session_t; }
 namespace cvars { struct cvar_state_t; struct command_table_t; }
+namespace assets { struct asset_state_t; }
 
 namespace server {
-// `cvar_state` and `command_table` are owned by the LAUNCHER and outlive the
-// server module. Init stashes both on the server context and calls
-// cvars::bind_server_commands(*command_table), which fills the @Server handler
-// slots with symbols that live in this DLL. Neither may be null.
+// `cvar_state`, `command_table` and `asset_state` are owned by the LAUNCHER and
+// outlive the server module. Init stashes the first two on the server context
+// and calls cvars::bind_server_commands(*command_table), which fills the
+// @Server handler slots with symbols that live in this DLL. None may be null.
+//
+// `asset_state` is here for the same static-lib reason as on the client (see
+// client_api.hpp): this DLL has its own copy of the asset state pointer. The
+// server resolves meshes when baking map collision, so it needs the launcher's
+// one state too.
 GAME_SERVER_API bool Init(cvars::cvar_state_t *cvar_state,
-                          cvars::command_table_t *command_table);
+                          cvars::command_table_t *command_table,
+                          assets::asset_state_t *asset_state);
 GAME_SERVER_API bool Tick();
 GAME_SERVER_API void Shutdown();
 GAME_SERVER_API double get_tick_interval();

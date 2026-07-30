@@ -23,48 +23,42 @@
 namespace assets
 {
 
-// --- Internal pool for a single asset type ---
+// --- Ownership ---
+//
+// Asset_Pool and asset_state_t live in the header now; see the ownership note
+// there for why. This pointer is the ONE piece of static storage left in this
+// TU, and it is per-module by design: each module points its own copy at the
+// single launcher-owned state.
+static asset_state_t *g_asset_state = nullptr;
 
-template <typename T> struct Asset_Pool
+void set_state(asset_state_t *state)
 {
-  std::vector<T> items;
-  std::unordered_map<std::string, uint32_t> path_to_index;
-
-  asset_handle_t<T> find(const char *path) const
+  if (!state)
   {
-    auto it = path_to_index.find(path);
-    if (it != path_to_index.end())
-      return {it->second};
-    return {};
+    log_error("assets: set_state(nullptr) — the launcher owns the one asset "
+              "state and it must outlive every module");
+    return;
   }
+  g_asset_state = state;
+}
 
-  asset_handle_t<T> add(const char *path, T &&asset)
-  {
-    uint32_t idx = static_cast<uint32_t>(items.size());
-    items.push_back(std::move(asset));
-    path_to_index[path] = idx;
-    return {idx};
-  }
+namespace
+{
 
-  const T *get(asset_handle_t<T> handle) const
-  {
-    if (!handle.valid() || handle.index >= items.size())
-      return nullptr;
-    return &items[handle.index];
-  }
+// Every accessor goes through this. A null state means a module resolved an
+// asset before its Init ran set_state() -- report it rather than crashing on a
+// null deref or, worse, silently resolving to nothing the way the duplicated
+// registries used to.
+asset_state_t *state_for(const char *who)
+{
+  if (!g_asset_state)
+    log_error("assets: {} called before assets::set_state() — this module was "
+              "never pointed at the launcher's asset state",
+              who);
+  return g_asset_state;
+}
 
-  void clear()
-  {
-    items.clear();
-    path_to_index.clear();
-  }
-};
-
-// --- Globals ---
-
-static Asset_Pool<mesh_asset_t> g_meshes;
-static Asset_Pool<texture_asset_t> g_textures;
-static Asset_Pool<pbr_material_asset_t> g_pbr_materials;
+} // namespace
 
 // --- OBJ loader (positions, normals, UVs) ---
 
@@ -833,8 +827,12 @@ static std::string resolve_mesh_path(const char *raw)
 
 asset_handle_t<mesh_asset_t> load_mesh(const char *path)
 {
+  asset_state_t *state = state_for("load_mesh");
+  if (!state)
+    return {};
+
   // Check cache first (by resolved key if previously loaded).
-  auto existing = g_meshes.find(path);
+  auto existing = state->meshes.find(path);
   if (existing.valid())
     return existing;
 
@@ -843,7 +841,7 @@ asset_handle_t<mesh_asset_t> load_mesh(const char *path)
     return {};
 
   // Check cache again by resolved path (covers alias cases).
-  existing = g_meshes.find(resolved.c_str());
+  existing = state->meshes.find(resolved.c_str());
   if (existing.valid())
     return existing;
 
@@ -856,13 +854,17 @@ asset_handle_t<mesh_asset_t> load_mesh(const char *path)
 
   printf("[assets] Loaded mesh '%s': %zu verts, %zu indices\n",
          resolved.c_str(), mesh.vertices.size(), mesh.indices.size());
-  return g_meshes.add(resolved.c_str(), std::move(mesh));
+  return state->meshes.add(resolved.c_str(), std::move(mesh));
 }
 
 asset_handle_t<texture_asset_t> load_texture(const char *path)
 {
+  asset_state_t *state = state_for("load_texture");
+  if (!state)
+    return {};
+
   // Return cached if already loaded
-  auto existing = g_textures.find(path);
+  auto existing = state->textures.find(path);
   if (existing.valid())
     return existing;
 
@@ -885,48 +887,63 @@ asset_handle_t<texture_asset_t> load_texture(const char *path)
   stbi_image_free(pixels);
 
   printf("[assets] loaded texture: %s (%dx%d, %d->4 channels)\n", path, w, h, ch);
-  return g_textures.add(path, std::move(tex));
+  return state->textures.add(path, std::move(tex));
 }
 
 const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle)
 {
-  return g_meshes.get(handle);
+  asset_state_t *state = state_for("get(mesh)");
+  return state ? state->meshes.get(handle) : nullptr;
 }
 
 asset_handle_t<mesh_asset_t> find_mesh_in_cache(const char *path)
 {
-  return g_meshes.find(path);
+  asset_state_t *state = state_for("find_mesh_in_cache");
+  return state ? state->meshes.find(path) : asset_handle_t<mesh_asset_t>{};
 }
 
 mesh_asset_t *get_mutable(asset_handle_t<mesh_asset_t> handle)
 {
-  if (!handle.valid() || handle.index >= g_meshes.items.size())
+  asset_state_t *state = state_for("get_mutable");
+  if (!state)
     return nullptr;
-  return &g_meshes.items[handle.index];
+  if (!handle.valid() || handle.index >= state->meshes.items.size())
+    return nullptr;
+  return &state->meshes.items[handle.index];
 }
 
 asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path,
                                                     mesh_asset_t &&mesh)
 {
-  auto existing = g_meshes.find(path);
+  asset_state_t *state = state_for("register_dynamic_mesh");
+  if (!state)
+    return {};
+
+  auto existing = state->meshes.find(path);
   if (existing.valid())
     return existing;
-  return g_meshes.add(path, std::move(mesh));
+  return state->meshes.add(path, std::move(mesh));
 }
 
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle)
 {
-  return g_textures.get(handle);
+  asset_state_t *state = state_for("get(texture)");
+  return state ? state->textures.get(handle) : nullptr;
 }
 
 const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle)
 {
-  return g_pbr_materials.get(handle);
+  asset_state_t *state = state_for("get(pbr_material)");
+  return state ? state->pbr_materials.get(handle) : nullptr;
 }
 
 asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
 {
-  auto existing = g_pbr_materials.find(folder_path);
+  asset_state_t *state = state_for("load_pbr_material");
+  if (!state)
+    return {};
+
+  auto existing = state->pbr_materials.find(folder_path);
   if (existing.valid())
     return existing;
 
@@ -950,7 +967,7 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
   mat.height            = try_load("height.png");
 
   printf("[assets] loaded pbr_material from folder: %s\n", folder_path);
-  return g_pbr_materials.add(folder_path, std::move(mat));
+  return state->pbr_materials.add(folder_path, std::move(mat));
 }
 
 bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_max)
@@ -979,13 +996,6 @@ bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_ma
 namespace
 {
 
-// Handles per id, filled by init(). Indexed by the enum's own value, so a
-// lookup is an array read; an id whose entry could not be provided keeps an
-// invalid handle and the accessor falls back to the placeholder.
-asset_handle_t<mesh_asset_t>    g_mesh_handles[entities::mesh_asset_COUNT];
-asset_handle_t<texture_asset_t> g_sprite_handles[entities::sprite_asset_COUNT];
-bool                            g_manifest_initialized = false;
-
 // The generator keys for the procedural meshes. This is the ONE place a
 // generator key is still a string, and it is a lookup inside the asset system
 // rather than something a call site says -- which is what killed the
@@ -1009,9 +1019,13 @@ mesh_asset_t generate_mesh_for_key(const char *key)
 
 void init()
 {
-  if (g_manifest_initialized)
+  asset_state_t *state = state_for("init");
+  if (!state)
     return;
-  g_manifest_initialized = true;
+
+  if (state->manifest_initialized)
+    return;
+  state->manifest_initialized = true;
 
   const Span<const entities::asset_info_t> meshes = entities::mesh_asset_manifest();
   for (uint32_t index = 0; index < meshes.size(); ++index)
@@ -1021,14 +1035,14 @@ void init()
     switch (info.source_kind)
     {
       case entities::ASSET_SOURCE_FILE:
-        g_mesh_handles[index] = load_mesh(info.source);
-        if (!g_mesh_handles[index].valid())
+        state->mesh_handles[index] = load_mesh(info.source);
+        if (!state->mesh_handles[index].valid())
           log_error("assets: mesh \"{}\" could not be loaded from \"{}\"", info.name, info.source);
         break;
 
       case entities::ASSET_SOURCE_PROCEDURAL:
-        g_mesh_handles[index] =
-            g_meshes.add(info.name, generate_mesh_for_key(info.source));
+        state->mesh_handles[index] =
+            state->meshes.add(info.name, generate_mesh_for_key(info.source));
         break;
 
       case entities::ASSET_SOURCE_MISSING:
@@ -1047,8 +1061,8 @@ void init()
     switch (info.source_kind)
     {
       case entities::ASSET_SOURCE_FILE:
-        g_sprite_handles[index] = load_texture(info.source);
-        if (!g_sprite_handles[index].valid())
+        state->sprite_handles[index] = load_texture(info.source);
+        if (!state->sprite_handles[index].valid())
           log_error("assets: sprite \"{}\" could not be loaded from \"{}\"", info.name,
                     info.source);
         break;
@@ -1074,7 +1088,11 @@ void init()
 
 asset_handle_t<mesh_asset_t> get_mesh(entities::mesh_asset id)
 {
-  if (!g_manifest_initialized)
+  asset_state_t *state = state_for("get_mesh");
+  if (!state)
+    return {};
+
+  if (!state->manifest_initialized)
   {
     log_error("assets: get_mesh called before assets::init() — registration is eager and "
               "must run first");
@@ -1085,18 +1103,22 @@ asset_handle_t<mesh_asset_t> get_mesh(entities::mesh_asset id)
   if (index >= entities::mesh_asset_COUNT)
   {
     log_error("assets: mesh id {} is outside the manifest", index);
-    return g_mesh_handles[(uint32_t)entities::mesh_asset::Missing];
+    return state->mesh_handles[(uint32_t)entities::mesh_asset::Missing];
   }
 
-  if (!g_mesh_handles[index].valid())
-    return g_mesh_handles[(uint32_t)entities::mesh_asset::Missing];
+  if (!state->mesh_handles[index].valid())
+    return state->mesh_handles[(uint32_t)entities::mesh_asset::Missing];
 
-  return g_mesh_handles[index];
+  return state->mesh_handles[index];
 }
 
 asset_handle_t<texture_asset_t> get_sprite(entities::sprite_asset id)
 {
-  if (!g_manifest_initialized)
+  asset_state_t *state = state_for("get_sprite");
+  if (!state)
+    return {};
+
+  if (!state->manifest_initialized)
   {
     log_error("assets: get_sprite called before assets::init() — registration is eager and "
               "must run first");
@@ -1110,7 +1132,7 @@ asset_handle_t<texture_asset_t> get_sprite(entities::sprite_asset id)
     return {};
   }
 
-  return g_sprite_handles[index];
+  return state->sprite_handles[index];
 }
 
 } // namespace assets

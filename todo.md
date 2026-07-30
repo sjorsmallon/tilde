@@ -1,5 +1,66 @@
 ﻿# TODO
 
+## Correctness / consistency
+
+> **The whole static-lib ownership family is DONE (2026-07-30)** — the asset
+> registry, `debug_collision::g_collision_faces`, `bot_debug::g_entries` and the
+> gizmo's orientation `vec4`. See MODULE OWNERSHIP TRACK in `done.md` for what
+> each one was and why two of the three globals had no visible symptom. The rule
+> that came out of it, worth applying to any new `game_shared` state: **decide
+> whether the modules must AGREE on it (one launcher-owned object, pointer per
+> module) or should DIFFER (one per side, said out loud)** — a global in a static
+> lib silently gives you "differ" whether or not you meant it.
+
+- [ ] Quaternion storage:move to quaternions for orientation. address where things are wrong.
+- [ ] Displacements have no real collision (deliberate P1 leftover): movement
+      collides with the box bound, projectiles pass through, no Jolt static
+      body. Real fix is heightmap collision — see TODO in
+      `get_collision_planes`.
+- [ ] **Navmesh polygon LOOKUP is planar; the mesh and A* are not.** (Answered
+      2026-07-30 — the question was "is the navmesh only planar?", and the
+      answer is no, but something *is* two-dimensional and it is worth fixing.)
+      * The mesh is 3D: `nav_vertex_t::pos` is a `vec3f`, and both the A*
+        heuristic and its edge costs use full 3D `euclidean_distance_between`
+        over polygon centroids (`pathfinding.cpp`). Nothing there drops Y.
+      * The one planar thing is `navmesh_t::find_polygon(px, pz)`
+        (`navmesh.hpp`), which returns the FIRST polygon whose XZ projection
+        contains the point. Stacked walkable surfaces — a walkway over a floor,
+        a ramp crossing under a ledge — are therefore ambiguous at lookup, and
+        which one you get depends on polygon order. That is the thing that
+        "feels wrong": path endpoints can bind to the wrong storey.
+      * Fix shape when it matters: take the query point's Y and pick the
+        containing polygon nearest it in Y, rather than the first XZ match.
+        `find_polygon` is the only caller-visible surface, so this is local.
+- ~~Clean up BVH traversal — the map editor now just iterates entities~~ —
+  **retired 2026-07-30, stale.** The editor does not iterate: `build_editor_bvh`
+  (`editor/editor_bvh.hpp`) builds ONE tree over geometry AND entities, keyed by
+  uid, and four tools traverse it with `bvh_intersect_ray` (selection,
+  placement, sculpting, displacement). The only linear path left is the
+  grid-plane fallback selection uses when the ray misses everything, which is
+  not a traversal.
+- [ ] Debug collision faces include the RECONCILIATION REPLAY's contacts, not
+      just the live tick's. `play_state.cpp` calls `player_move` three times a
+      frame and all three now write the client's `debug_collision_faces` sink —
+      which is exactly what the old global did, so this is preserved behavior,
+      not a regression from the 2026-07-30 ownership fix. Left alone because it
+      is a question about the VISUALIZATION, not about ownership: with
+      `debug_show_collisions` on you are seeing replayed past-tick faces drawn
+      on top of the current one. Decide whether that is informative (it shows
+      what prediction actually re-ran) or just noise; if noise, pass `nullptr`
+      at the replay call site and nothing else changes.
+- [ ] logging: should `log_error` be `log_warning` where recovery is safe?
+      Should `log_error` print a stack trace / hit an exception handler?
+      Decide a policy. Current split is **277 `log_error` to 12 `log_warning`**
+      (counted 2026-07-30), and `log_error` already prints a full stacktrace —
+      so today a benign, expected condition costs 10+ lines of stack. The
+      dedicated server's startup "sprite `Missing` has no source in the
+      manifest" is the clearest example: it is *correct* (there is no
+      `error.png`), it is documented as such at the call site, and it still
+      dumps a stacktrace on every boot. That noise is what makes a real error
+      easy to scroll past.
+
+
+
 Two parts:
 
 - **THE ENTITY TRACK** — generator, schema, storage, wire. One interlocked
@@ -23,28 +84,6 @@ Two parts:
 
 **P8 is the only thing left in the entity track**, and it is independent of
 everything that came before it — see its own section below for why.
-
-## Ordering rules that must not be broken
-
-- **A storage change never rides along with a reflection change.** A reflection
-  change breaks *compilation*, so the compiler hands you every site. A storage
-  change mostly compiles and fails at *runtime*. Bundled, a broken game tells you
-  nothing about which half did it. This governed P7 and then pool retirement,
-  whose step 1 was a reflection change and step 3 a storage swap — which is
-  exactly why they were separate steps, and why step 1 waited for P7 to finish
-  rather than riding along with it.
-- **One netcode change in flight at a time.** P8 (protobuf removal) and the
-  map transfer items each touch the wire — land them serially, never
-  concurrently. (CVAR TRACK step 4 was the third; it landed 2026-07-30.)
-- **A wire change is not verified until the INTEGRATED build has run it.** A
-  probe against `MyGame_Server.exe` and a probe against `MyGame.exe` are
-  different topologies — the dedicated server has no forwarder, no in-process
-  client, and no shared launcher state, so a whole class of ownership bug
-  cannot form there. CVAR TRACK step 4 shipped an out-of-process probe that
-  passed while the integrated console was hard-broken; see `done.md`,
-  "The forward loop".
-
----
 
 # THE ENTITY TRACK
 
@@ -127,59 +166,7 @@ the template for the rest, alongside the map-transfer messages.
 
 # EVERYTHING ELSE
 
-## Correctness / consistency
 
-- [ ] **The asset registry is duplicated per module — every mesh the DLL asks
-      for resolves to nothing.** `game_shared` is a STATIC lib linked into the
-      launcher exe AND both DLLs (`CMakeLists.txt:362`), so `asset.cpp`'s
-      file-scope registries (`asset.cpp:985-987`) exist three times. All three
-      launchers call `assets::init()` from the **exe**, and every `get_mesh`
-      caller lives in **`game_client.dll`** (`renderer.cpp`, `play_state.cpp`,
-      `entity_editor_traits.cpp`), so the copy that gets filled is never the copy
-      that gets read. Same root cause as the spawn_bot bug.
-      * Observed twice, and it is not client-only: `render_3d` logging
-        `assets: get_mesh called before assets::init()` every frame in
-        `MyGame_Client` (2026-07-28), and `spawn_cube` producing an invisible
-        cube in the **integrated** build (2026-07-30, see the bottom of this
-        file). Nothing about it is specific to a launcher — the DLL's copy is
-        empty in all three.
-      * `get_mesh` returns an INVALID handle in this case, not the `Missing`
-        placeholder — the placeholder lookup is downstream of the
-        `g_manifest_initialized` guard. So the symptom is nothing drawn, not a
-        question mark, which is why it reads as "spawn_cube is broken" rather
-        than as an asset problem.
-      * The cvar half of this is **done and in the tree** (CVAR TRACK, see
-        `done.md`): launcher-owned state, pointers through module init, shared
-        readers take it as a parameter — copy that shape, including the part that
-        track learned the hard way: decide per member whether the modules should
-        AGREE on it (share one object) or DIFFER on it (one per side).
-        Options: make `game_shared` a shared lib (one copy of everything) vs an
-        explicit accessor exported from one module.
-- [ ] **Same disease: `debug_collision::g_collision_faces`.** A `game_shared`
-      global, so each module records into its own copy. Now that
-      `debug_show_collisions` genuinely reaches the server (CVAR TRACK), the
-      server records faces nothing draws — bounded only by the drain added to
-      `server::Tick`. What you see with the toggle on is still only the
-      client's own prediction run. Same fix shape as the asset registry:
-      explicit ownership, or a face sink handed into `player_move` next to the
-      `cvar_state_t` it already takes.
-- [ ] `editor_gizmo.cpp:385-399` packs euler xyz into a `vec4` with `w=0` in
-      one branch and writes an identity QUATERNION `{0,0,0,1}` in another —
-      cannot both be right. Gizmo-local bug (orientation is DECIDED: Euler
-      XYZ degrees, per P4 / `entities.def`).
-- [ ] Quaternion storage: deferred, not rejected. `orientation` is euler but
-      Jolt uses quaternions → lossy quat→euler every tick. Worth migrating
-      when snapshot INTERPOLATION lands (slerp is the payoff), not before.
-- [ ] Displacements have no real collision (deliberate P1 leftover): movement
-      collides with the box bound, projectiles pass through, no Jolt static
-      body. Real fix is heightmap collision — see TODO in
-      `get_collision_planes`.
-- [ ] Is the navmesh only planar, or does A* just need two dimensions?
-      Something feels wrong there.
-- [ ] Clean up BVH traversal — the map editor now just iterates entities.
-- [ ] logging: should `log_error` be `log_warning` where recovery is safe?
-      Should `log_error` print a stack trace / hit an exception handler?
-      Decide a policy.
 
 ## Networking
 
@@ -301,10 +288,31 @@ the template for the rest, alongside the map-transfer messages.
 ## Gameplay (my todo)
 
 - [ ] rocket projectile
+      * **A rocket currently renders as the question mark**, newly visible as of
+        2026-07-30: `Rocket_Entity`'s render mesh is unassigned, so it resolves
+        to `mesh_asset::Missing`. This is not a regression — the asset-ownership
+        fix made the `Missing` placeholder *reachable*, where before the lookup
+        returned an invalid handle and drew nothing at all. The content gap was
+        always there; it was hidden by a worse bug. Assign a mesh in
+        `entities.def` (server log line: `Rocket spawned ... mesh='Missing'`).
 - [ ] arrow / spear projectile
 
 ## Footguns
 
+- **The test suite cannot catch a cross-module ownership bug, and a green run
+  is not evidence against one.** All 19 tests link `game_shared` directly and
+  run in ONE module, so they never cross the exe↔DLL boundary where the
+  static-lib duplication lives. All 19 passed for as long as the asset registry
+  was broken. The same shape bit the CVAR TRACK from the other side: an
+  out-of-process probe against `MyGame_Server.exe` passed while the integrated
+  build had an infinite console forward loop, because a dedicated server has no
+  forwarder and the loop could not form there.
+  * The check that actually works is running the **integrated** build and
+    reading its log — it is a different topology, not a convenience wrapper.
+  * When touching anything with static storage in `game_shared`, ask the
+    ownership question (AGREE or DIFFER — see Correctness / consistency) rather
+    than looking for a symptom. Two of the three globals found on 2026-07-30 had
+    no visible symptom at all.
 - ~~`map_migration_test` must run FROM THE PROJECT ROOT~~ — **retired
   2026-07-30.** The 19 tests are registered with CTest at the bottom of
   `CMakeLists.txt` (`GAME_TESTS`), each with `WORKING_DIRECTORY` pinned to the
@@ -322,20 +330,24 @@ the template for the rest, alongside the map-transfer messages.
 Newest last. Symptoms as observed, before diagnosis — so a fix can be checked
 against what was actually on screen rather than against a theory about it.
 
-- [ ] **`spawn_cube` spawns an invisible cube** (2026-07-30, integrated build,
-      found while runtime-checking P7 step 5). Console:
+- [x] **`spawn_cube` spawns an invisible cube** — **FIXED 2026-07-30** (MODULE
+      OWNERSHIP TRACK in `done.md`). It was the duplicated asset registry, as
+      diagnosed below; `game_client.dll` now resolves through the launcher's one
+      `asset_state_t`. Kept here because the symptom-before-diagnosis record is
+      the point of this section. Originally seen in the integrated build while
+      runtime-checking P7 step 5. Console:
 
       ```
       [ERROR] [src/shared/asset.cpp:1080] assets: get_mesh called before
               assets::init() — registration is eager and must run first
       ```
 
-      **This is the duplicated asset registry** (first item under
-      Correctness / consistency — the fix lives there, and it is a build/ownership
+      **This was the duplicated asset registry** (was the first item under
+      Correctness / consistency — it was a build/ownership
       fix, not a `spawn_cube` fix). The entity, the Jolt body and the replication
-      are all fine; `render.mesh` is set to `mesh_asset::Box` correctly and the
-      renderer asks for it correctly. `game_client.dll` just holds its own empty
-      copy of the manifest, so the lookup fails and returns an invalid handle
+      were all fine; `render.mesh` is set to `mesh_asset::Box` correctly and the
+      renderer asked for it correctly. `game_client.dll` just held its own empty
+      copy of the manifest, so the lookup failed and returned an invalid handle
       rather than the `Missing` placeholder — hence nothing drawn.
       * Confirms the bug is not specific to the networked client, which is the
         only place it had been observed before.

@@ -1184,11 +1184,11 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     for (const auto &poly : nav.polygons)
     {
       color_t color = island_colors[poly.island % 4];
-      const int N = (int)poly.verts.size();
+      const int N = (int)poly.vertices.size();
       for (int e = 0; e < N; ++e)
       {
-        vec3f a = nav.vertices[poly.verts[e          ]].pos;
-        vec3f b = nav.vertices[poly.verts[(e + 1) % N]].pos;
+        vec3f a = nav.vertices[poly.vertices[e          ]].pos;
+        vec3f b = nav.vertices[poly.vertices[(e + 1) % N]].pos;
         a.y += y_lift;
         b.y += y_lift;
         renderer::draw_line(cmd, a, b, color);

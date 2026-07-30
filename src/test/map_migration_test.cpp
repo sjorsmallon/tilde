@@ -263,11 +263,11 @@ int main()
         {{0.f, 0.f, 0.f}}, {{4.f, 0.f, 0.f}}, {{4.f, 0.f, 4.f}},
         {{0.f, 0.f, 4.f}}, {{8.f, 1.f, 0.f}}};
     nav_polygon_t poly0;
-    poly0.verts     = {0, 1, 2, 3};
+    poly0.vertices     = {0, 1, 2, 3};
     poly0.neighbors = {-1, 1, -1, -1};
     poly0.island    = 0;
     nav_polygon_t poly1;
-    poly1.verts     = {1, 4, 2};
+    poly1.vertices     = {1, 4, 2};
     poly1.neighbors = {-1, -1, 0};
     poly1.island    = 0;
     packaged.navmesh.polygons = {poly0, poly1};
@@ -301,7 +301,7 @@ int main()
     {
       const auto &a = package.navmesh.polygons[i];
       const auto &b = restored.navmesh.polygons[i];
-      if (a.verts != b.verts || a.neighbors != b.neighbors ||
+      if (a.vertices != b.vertices || a.neighbors != b.neighbors ||
           a.island != b.island)
         return fail("package: navmesh polygon drift");
     }

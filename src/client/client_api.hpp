@@ -14,14 +14,22 @@
 
 namespace shared { struct game_session_t; }
 namespace cvars { struct cvar_state_t; struct command_table_t; }
+namespace assets { struct asset_state_t; }
 
 namespace client {
-// `cvar_state` and `command_table` are owned by the LAUNCHER and outlive the
-// client module. Init stashes both on the client context and calls
-// cvars::bind_client_commands(*command_table), which fills the @Client handler
-// slots with symbols that live in this DLL. Neither may be null.
+// `cvar_state`, `command_table` and `asset_state` are owned by the LAUNCHER and
+// outlive the client module. Init stashes the first two on the client context
+// and calls cvars::bind_client_commands(*command_table), which fills the
+// @Client handler slots with symbols that live in this DLL. None may be null.
+//
+// `asset_state` exists for the same reason cvar_state does: game_shared is a
+// static lib, so this DLL has its OWN copy of the asset accessors' state
+// pointer. Init points it at the launcher's one state via assets::set_state.
+// Without that, every get_mesh here resolved against an empty manifest the
+// launcher's assets::init() never filled -- see the ownership note in asset.hpp.
 GAME_CLIENT_API bool Init(cvars::cvar_state_t *cvar_state,
-                          cvars::command_table_t *command_table);
+                          cvars::command_table_t *command_table,
+                          assets::asset_state_t *asset_state);
 GAME_CLIENT_API bool Tick(); // Returns false if should quit
 GAME_CLIENT_API void Shutdown();
 

@@ -1252,9 +1252,9 @@ ping-pong; the handler never ran. Fixed two ways:
    forwarder, so the loop cannot form there. A probe of exactly that shape
    passed while the integrated build was broken. The integrated build is a
    DIFFERENT topology, not just a convenience; exercise it too.
-2. Same disease still live elsewhere: the asset registry and
-   `debug_collision::g_collision_faces` are `game_shared` globals duplicated
-   per module. See todo.md, "Correctness / consistency".
+2. Same disease was still live elsewhere: the asset registry and
+   `debug_collision::g_collision_faces` were `game_shared` globals duplicated
+   per module. **Both fixed 2026-07-30** — see the MODULE OWNERSHIP TRACK below.
 
 **Known rough edge, deliberately left:** `spawn_bot 1` is rejected with the
 usage string. Enum parameters bind by NAME only (`idle|chase|regular`), never
@@ -1262,6 +1262,112 @@ by ordinal — deliberate (`cvars.def`: lowercase values are the console-typed
 identity), but it is the first thing a user reaches for. If numeric-or-name is
 ever wanted it belongs in the generated binder's enum parse, so every enum
 parameter gains it at once.
+
+---
+
+# MODULE OWNERSHIP TRACK — the rest of the static-lib disease  ✅ DONE (2026-07-30)
+
+The CVAR TRACK fixed cvars but named two survivors of the same root cause. This
+finished them. Nothing here is a new idea: it is the cvar shape applied twice
+more, plus the observation that the shape has **two** correct answers and you
+must pick one per member.
+
+**The root cause, once more.** `game_shared` is a STATIC lib linked into the
+launcher exe AND both DLLs, so a file-scope global in it exists three times.
+The rule that falls out:
+
+> Decide per piece of state whether the modules must **AGREE** on it (one
+> object, launcher-owned, pointer handed to each module) or should **DIFFER**
+> (one per side, and say so). A global in `game_shared` silently gives you
+> "differ" whether or not that is what you meant — which is why every bug in
+> this family looked like something else.
+
+## 1. The asset registry — AGREE
+
+**The bug.** All three launchers called `assets::init()` from the **exe**, and
+every `get_mesh` caller lives in **`game_client.dll`**. The copy that got filled
+was never the copy that got read. Observed twice and not client-specific:
+`render_3d` logging `get_mesh called before assets::init()` every frame in
+`MyGame_Client` (2026-07-28), and `spawn_cube` producing an invisible cube in
+the **integrated** build (2026-07-30).
+
+Worth keeping: `get_mesh` returned an **invalid handle, not the `Missing`
+placeholder** — the placeholder lookup sits downstream of the initialized
+guard. So the symptom was *nothing drawn* rather than a question mark, which is
+exactly why it read as "spawn_cube is broken" for two days instead of as an
+asset problem.
+
+**Why the whole state moved, not just the manifest.** `asset_handle_t` is a
+bare `uint32_t` index into a pool's `items` vector. Sharing the manifest alone
+would hand over handles that index into the *launcher's* pool while the client
+dereferenced its own empty one — a subtler version of the same bug. The pools
+and the manifest are one unit or they are nothing.
+
+- [x] `assets::asset_state_t` (in `asset.hpp`) holds all of it: the three
+      `Asset_Pool`s and the manifest handle arrays. `Asset_Pool` moved into the
+      header so the launcher can own the state **by value**, exactly like
+      `cvars::cvar_state_t`.
+- [x] `assets::set_state(asset_state_t*)` points **this module's** accessors at
+      it. One pointer per module, because that is what a static lib gives you;
+      the point is that all of them aim at the same object.
+- [x] `client::Init` / `server::Init` take an `assets::asset_state_t*` beside
+      the `cvar_state_t*` they already took, and call `set_state` before
+      anything resolves an id. All three launchers own the state and pass it.
+- [x] Every accessor resolves through `state_for(name)`, which **log_errors
+      naming the caller** if the module was never pointed at a state. The old
+      failure mode was silence; this one is loud (no-silent-failures).
+- [x] `asset_test` owns a state like a launcher does — it IS the launcher.
+
+**Verified at runtime, not just by the suite.** The 19 tests link `game_shared`
+directly and never cross a DLL boundary, so they could not have caught this and
+did not: they passed before the fix. The real evidence is the integrated build
+logging `[renderer] Uploaded mesh 0: 540 verts, 3264 indices` and **zero**
+`get_mesh called before assets::init()` across a run that rendered and
+simulated, where that error previously appeared every frame.
+
+Consequence worth noting: the `Missing` placeholder path is *reachable* again,
+so an unassigned mesh field now draws the question mark by construction. This
+is how `Rocket_Entity` renders today (`mesh='Missing'`) — a content gap that
+was previously masked by drawing nothing at all.
+
+## 2. `debug_collision::g_collision_faces` — DIFFER
+
+Same global, opposite answer. Once `debug_show_collisions` genuinely reached the
+server (CVAR TRACK), the server recorded faces into its own copy that nothing
+drew and nothing cleared; `server::Tick` had grown a per-tick drain purely to
+stop it growing without bound.
+
+The faces are **not** shared state — they are one side's view of its own
+simulation run, and the server's were never drawable (the drawing is
+client-side; in a networked build they would have to cross the wire to be seen
+at all). So the sink became a parameter and the global was deleted rather than
+shared.
+
+- [x] `debug_collision::Face_Sink` (a `std::vector<Debug_Collision_Face>`), owned
+      by the client on `client_context_t::debug_collision_faces`.
+- [x] `player_move(..., Move_Events*, Face_Sink*)` — the sink follows the
+      `out_events` side-channel pattern that was already there. Null means record
+      nothing, which is how the server and the bot system opt out.
+- [x] `g_collision_faces` and `clear_collision_faces()` deleted, and with them
+      the drain in `server::Tick` — there is no longer anything to drain.
+
+## 3. `bot_debug::g_entries` — found during the audit, dead
+
+A third `game_shared` global with the same shape. Its header called itself "a
+lightweight debug bridge between game_server and game_client", which a static-lib
+global cannot be. The server's per-tick fill in `bot_system.cpp` was a **pure
+dead store**: `server_impl.cpp` serializes `S2C_BotDebug` from `g_bots`
+directly, and the client fills its own copy from the wire. Nothing was visibly
+broken — the wire was doing the work the global claimed to do.
+
+- [x] Deleted the server-side fill; corrected the header to say what it is
+      (client-owned, wire-fed, works in both integrated and networked builds).
+
+**The lesson to carry.** All three were found by asking one question of every
+`game_shared` global — *must the modules agree on this, or differ?* — rather
+than by observing a symptom. Two of the three had no visible symptom at all.
+The remaining cross-module `extern` data in `game_shared` after this track is
+`bot_debug::g_entries`, which is now correctly client-only.
 
 ---
 

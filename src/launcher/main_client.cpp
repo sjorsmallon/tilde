@@ -27,6 +27,11 @@
 static cvars::cvar_state_t    g_cvar_state{};
 static cvars::command_table_t g_command_table{};
 
+// Owned here for the same static-lib reason as the cvars above: the exe and
+// game_client.dll each hold their own asset state pointer, and both must point
+// at this one object. See the ownership note in asset.hpp.
+static assets::asset_state_t  g_asset_state{};
+
 int main(int argc, char *argv[])
 {
   // Change working directory to the project root (parent of cmake_build/), same
@@ -52,10 +57,12 @@ int main(int argc, char *argv[])
 
   log_terminal("=== Starting MyGame (Networked Client) ===");
 
-  // Eager asset registration, before anything resolves an id. See asset.hpp.
+  // Point this module at the one asset state, then register eagerly before
+  // anything resolves an id. client::Init points the DLL's copy at it too.
+  assets::set_state(&g_asset_state);
   assets::init();
 
-  if (!client::Init(&g_cvar_state, &g_command_table))
+  if (!client::Init(&g_cvar_state, &g_command_table, &g_asset_state))
   {
     log_error("Client Init Failed");
     return 1;

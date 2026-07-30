@@ -795,7 +795,8 @@ void PlayState::update(float dt)
       auto [repredict_pos, repredict_vel] =
           player_move(*ctx.cvars, saved.input, ctx.session.bvh, reconciled_pos,
                       reconciled_vel, saved_basis.forward, saved_basis.right,
-                      player_half_width, player_half_height, prediction_dt);
+                      player_half_width, player_half_height, prediction_dt,
+                      nullptr, &ctx.debug_collision_faces);
 
       reconciled_pos = repredict_pos;
       reconciled_vel = repredict_vel;
@@ -920,7 +921,7 @@ void PlayState::update(float dt)
           player_move(*ctx.cvars, move_input, ctx.session.bvh, ctx.player_position,
                       ctx.player_velocity, basis.forward, basis.right,
                       player_half_width, player_half_height, tick_dt,
-                      &tick_events);
+                      &tick_events, &ctx.debug_collision_faces);
 
       ctx.player_position = new_pos;
       ctx.player_velocity = new_vel;
@@ -947,7 +948,8 @@ void PlayState::update(float dt)
     auto [new_pos, new_vel] =
         player_move(*ctx.cvars, move_input, ctx.session.bvh, ctx.player_position,
                     ctx.player_velocity, basis.forward, basis.right,
-                    player_half_width, player_half_height, dt, &frame_move_events);
+                    player_half_width, player_half_height, dt, &frame_move_events,
+                    &ctx.debug_collision_faces);
 
     ctx.player_position = new_pos;
     ctx.player_velocity = new_vel;
@@ -1326,11 +1328,11 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     for (const auto &poly : nav.polygons)
     {
       color_t color = island_colors[poly.island % 4];
-      const int N = (int)poly.verts.size();
+      const int N = (int)poly.vertices.size();
       for (int e = 0; e < N; ++e)
       {
-        vec3f a = nav.vertices[poly.verts[e          ]].pos;
-        vec3f b = nav.vertices[poly.verts[(e + 1) % N]].pos;
+        vec3f a = nav.vertices[poly.vertices[e          ]].pos;
+        vec3f b = nav.vertices[poly.vertices[(e + 1) % N]].pos;
         a.y += y_lift;
         b.y += y_lift;
         renderer::draw_line(cmd, a, b, color);
@@ -1354,7 +1356,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
     renderer::reset_debug_face_buffer();
 
-    for (const auto &face : debug_collision::g_collision_faces)
+    for (const Debug_Collision_Face &face : ctx.debug_collision_faces)
     {
       if (!face.polygon.empty())
         renderer::DrawFilledPolygon(cmd, face.polygon, green);
@@ -1364,7 +1366,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       renderer::draw_line(cmd, arrow_start, arrow_end, colors::red);
     }
 
-    debug_collision::clear_collision_faces();
+    ctx.debug_collision_faces.clear();
   }
 
   // Debug: collision volumes as wireframe AABBs. Magenta for trigger volumes

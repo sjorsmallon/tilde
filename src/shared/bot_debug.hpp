@@ -3,10 +3,16 @@
 #include <cstdint>
 #include <vector>
 
-// Lightweight debug bridge between game_server and game_client.
-// The server populates g_entries once per tick (via update_bots);
-// the client reads them each render frame.  Integrated mode only —
-// not thread-safe, assumes a single-threaded game loop.
+// Bot debug visualisation state, owned and filled by the CLIENT.
+//
+// This is NOT a memory bridge between game_server and game_client, though it
+// claimed to be one for a long time. It cannot be: game_shared is a static lib,
+// so each module links its own copy of g_entries and the server's writes were
+// never visible here. The server's real path is `g_bots` -> S2C_BotDebug ->
+// this vector, filled from the wire in play_state.cpp, which works in both the
+// integrated (loopback) and networked builds.
+//
+// Not thread-safe; assumes a single-threaded client loop.
 namespace bot_debug {
 
 struct Entry {

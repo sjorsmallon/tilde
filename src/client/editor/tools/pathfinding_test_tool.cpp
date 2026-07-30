@@ -10,23 +10,25 @@
 namespace client
 {
 
-bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &nav,
+bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &navmesh,
                                               linalg::vec3 &out_hit) const
 {
   const linalg::vec3& origin = viewport.mouse_ray.origin;
   const linalg::vec3& dir  = viewport.mouse_ray.direction;
+
   float best_t = std::numeric_limits<float>::infinity();
   bool hit = false;
 
-  for (const auto &poly : nav.polygons)
+  for (const auto &polygon : navmesh.polygons)
   {
-    const int N = (int)poly.verts.size();
+    const int N = (int)polygon.vertices.size();
     // Decompose convex polygon into triangle fan from verts[0].
-    const linalg::vec3 v0 = nav.vertices[poly.verts[0]].pos;
+
+    const linalg::vec3 v0 = navmesh.vertices[polygon.vertices[0]].pos;
     for (int i = 1; i + 1 < N; ++i)
     {
-      const linalg::vec3 v1 = nav.vertices[poly.verts[i]].pos;
-      const linalg::vec3 v2 = nav.vertices[poly.verts[i + 1]].pos;
+      const linalg::vec3 v1 = navmesh.vertices[polygon.vertices[i]].pos;
+      const linalg::vec3 v2 = navmesh.vertices[polygon.vertices[i + 1]].pos;
       float t;
       if (ray_triangle(origin, dir, v0, v1, v2, t) && t < best_t)
       {
@@ -39,10 +41,10 @@ bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &nav,
   return hit;
 }
 
-void Pathfinding_Test_Tool::recompute_path(const navmesh_t &nav)
+void Pathfinding_Test_Tool::recompute_path(const navmesh_t &navmesh)
 {
   if (start && end)
-    path = find_path(nav, *start, *end);
+    path = find_path(navmesh, *start, *end);
   else
     path.clear();
 }
@@ -69,10 +71,11 @@ void Pathfinding_Test_Tool::on_update(editor_context_t &ctx,
 }
 
 void Pathfinding_Test_Tool::on_mouse_down(editor_context_t &ctx,
-                                         const input::mouse_event_t &e)
+                                         const input::mouse_event_t &mouse_event)
 {
-  if (e.button != input::mouse_button_t::Left)
+  if (mouse_event.button != input::mouse_button_t::Left)
     return;
+
   if (!ctx.map->navmesh.valid())
     return;
 
@@ -80,7 +83,7 @@ void Pathfinding_Test_Tool::on_mouse_down(editor_context_t &ctx,
   if (!pick_navmesh_point(ctx.map->navmesh, hit))
     return;
 
-  if (e.mods.shift)
+  if (mouse_event.mods.shift)
     end = hit;
   else
     start = hit;
@@ -95,9 +98,9 @@ void Pathfinding_Test_Tool::on_mouse_up(editor_context_t &ctx,
                                        const input::mouse_event_t &e) {}
 
 void Pathfinding_Test_Tool::on_key_down(editor_context_t &ctx,
-                                       const key_event_t &e)
+                                       const key_event_t &key_event)
 {
-  if (e.key == input::key_t::R)
+  if (key_event.key == input::key_t::R)
   {
     start.reset();
     end.reset();
@@ -111,27 +114,28 @@ void Pathfinding_Test_Tool::on_key_down(editor_context_t &ctx,
 void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
                                            overlay_renderer_t &renderer)
 {
-  const navmesh_t &nav = ctx.map->navmesh;
-  if (!nav.valid())
+  const navmesh_t &navmesh = ctx.map->navmesh;
+  if (!navmesh.valid())
     return;
 
   constexpr float y_lift = 2.f;
 
-  // Navmesh wireframe, colored by island ID.
+  // render the navmesh as a wireframe with each island having a different Color.
   static constexpr color_t island_colors[] = {
     colors::cyan,
     colors::yellow,
     colors::green,
     colors::magenta,
   };
-  for (const auto &poly : nav.polygons)
+
+  for (const auto &polygon : navmesh.polygons)
   {
-    color_t color = island_colors[poly.island % 4];
-    const int N = (int)poly.verts.size();
+    color_t color = island_colors[polygon.island % 4];
+    const int N = (int)polygon.vertices.size();
     for (int e = 0; e < N; ++e)
     {
-      linalg::vec3 a = nav.vertices[poly.verts[e          ]].pos;
-      linalg::vec3 b = nav.vertices[poly.verts[(e + 1) % N]].pos;
+      linalg::vec3 a = navmesh.vertices[polygon.vertices[e          ]].pos;
+      linalg::vec3 b = navmesh.vertices[polygon.vertices[(e + 1) % N]].pos;
       a.y += y_lift;
       b.y += y_lift;
       renderer.draw_line(a, b, color);
@@ -164,14 +168,14 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
     constexpr linalg::vec3 half{4, 4, 4};
     for (int i = 0; i < (int)path.size(); ++i)
     {
-      linalg::vec3 wp = path[i];
-      wp.y += y_lift;
-      renderer.draw_wire_box(wp, half, node_color);
+      linalg::vec3 waypoint = path[i];
+      waypoint.y += y_lift;
+      renderer.draw_wire_box(waypoint, half, node_color);
       if (i + 1 < (int)path.size())
       {
         linalg::vec3 next = path[i + 1];
         next.y += y_lift;
-        renderer.draw_line(wp, next, path_color);
+        renderer.draw_line(waypoint, next, path_color);
       }
     }
   }

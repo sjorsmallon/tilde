@@ -322,17 +322,23 @@ static bool load_map_into_state(const std::string &map_path)
   return true;
 }
 
-bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table)
+bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
+          assets::asset_state_t *asset_state)
 {
   log_terminal("--- Initializing Server ---");
   log_terminal("Server port: {}", network::server_port_number);
 
-  if (!cvar_state || !command_table)
+  if (!cvar_state || !command_table || !asset_state)
   {
-    log_error("server::Init: the launcher must own and pass a cvar_state_t and "
-              "a command_table_t (see cvar_def.md)");
+    log_error("server::Init: the launcher must own and pass a cvar_state_t, a "
+              "command_table_t and an asset_state_t (see cvar_def.md and the "
+              "ownership note in asset.hpp)");
     return false;
   }
+
+  // Before the first map load resolves a mesh. Same static-lib reason as the
+  // client: this DLL has its own asset state pointer and it starts null.
+  assets::set_state(asset_state);
 
   // Before anything reads sv_tickrate or runs a console line. bind_server_commands
   // fills this DLL's @Server handler slots; the link step already proved every
@@ -542,17 +548,12 @@ bool Tick()
 {
   timed_function();
 
-  // debug_show_collisions is unflagged (shared-local), so under one
-  // cvar_state_t it now reaches the SERVER's player_move too -- which records
-  // into game_shared's g_collision_faces. That global has exactly the
-  // duplication problem the cvars just escaped: game_shared is a static lib, so
-  // the server DLL has its own copy that the client-side drawing never reads
-  // and the client-side clear never touches. Left unread it would grow without
-  // bound for as long as the toggle is on, so drain it here, once per tick,
-  // matching the client's clear-after-draw. Making those faces actually
-  // VISIBLE would mean giving the recorder explicit ownership the same way the
-  // cvars got it -- see todo.md.
-  debug_collision::clear_collision_faces();
+  // The per-tick debug_collision drain that used to sit here is gone with the
+  // global it was bounding. debug_show_collisions is unflagged (shared-local),
+  // so it does reach this side's player_move -- but the server now passes no
+  // face sink, so it records nothing to drain. Server-side faces were never
+  // drawable anyway: the drawing is client-side, and in a networked build they
+  // would have to cross the wire to be seen at all. See debug_collision.hpp.
 
   network::ServerInbox inbox;
   network::poll_network(g_state.net, g_socket, 0.005,

@@ -33,6 +33,14 @@ struct client_context_t
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
 
+  // Contact faces recorded by THIS client's prediction run, when
+  // debug_show_collisions is on. Owned here rather than in game_shared because
+  // the client is the only side that can draw them: a server-side recording had
+  // no reader, and as a static-lib global it was a second copy nothing touched
+  // (see debug_collision.hpp). Filled by player_move, drawn and cleared once per
+  // frame in PlayState::Draw.
+  debug_collision::Face_Sink debug_collision_faces;
+
   // --- Shared game world (entities, BVH, navmesh) ---
   shared::game_session_t session;
 

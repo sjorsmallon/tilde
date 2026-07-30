@@ -54,9 +54,9 @@ static void save_navmesh(const std::string &map_path, const navmesh_t &nav)
 
   for (const auto &p : nav.polygons)
   {
-    uint32_t n = (uint32_t)p.verts.size();
+    uint32_t n = (uint32_t)p.vertices.size();
     write(n);
-    for (uint32_t k = 0; k < n; ++k) write(p.verts[k]);
+    for (uint32_t k = 0; k < n; ++k) write(p.vertices[k]);
     for (uint32_t k = 0; k < n; ++k) write(p.neighbors[k]);
     write(p.island);
   }
@@ -95,9 +95,9 @@ static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
   {
     uint32_t n;
     read(n);
-    p.verts.resize(n);
+    p.vertices.resize(n);
     p.neighbors.resize(n);
-    for (uint32_t k = 0; k < n; ++k) read(p.verts[k]);
+    for (uint32_t k = 0; k < n; ++k) read(p.vertices[k]);
     for (uint32_t k = 0; k < n; ++k) read(p.neighbors[k]);
     read(p.island);
   }
@@ -512,34 +512,31 @@ std::shared_ptr<entities::Entity> create_map_entity(const std::string &classname
     }
   }
 
+  return make_entity(type);
+}
+
+std::shared_ptr<entities::Entity> make_entity(entities::entity_type type)
+{
   if (type == entities::entity_type::Invalid)
     return nullptr;
 
-  // make_shared of the CONCRETE type, so the control block records the concrete
-  // deleter -- entities have no virtual destructor and never will.
-  switch (type)
-  {
-    case entities::entity_type::Player_Spawn_Entity:
-      return std::make_shared<entities::Player_Spawn_Entity>();
-    case entities::entity_type::Player_Entity:
-      return std::make_shared<entities::Player_Entity>();
-    case entities::entity_type::Weapon_Entity:
-      return std::make_shared<entities::Weapon_Entity>();
-    case entities::entity_type::Rocket_Entity:
-      return std::make_shared<entities::Rocket_Entity>();
-    case entities::entity_type::Particle_Emitter_Entity:
-      return std::make_shared<entities::Particle_Emitter_Entity>();
-    case entities::entity_type::Trigger_Volume_Entity:
-      return std::make_shared<entities::Trigger_Volume_Entity>();
-    case entities::entity_type::Light_Entity:
-      return std::make_shared<entities::Light_Entity>();
-    case entities::entity_type::Physics_Body_Entity:
-      return std::make_shared<entities::Physics_Body_Entity>();
-    case entities::entity_type::Invalid:
-      break;
-  }
+  // create_entity() gives back the CONCRETE type's raw pointer but erases it
+  // to Entity*, so the deleter has to be attached explicitly here -- entities
+  // have no virtual destructor and never will, and destroy_entity is what
+  // recovers the concrete type from the runtime tag before delete.
+  entities::Entity *entity = entities::create_entity(type);
+  return std::shared_ptr<entities::Entity>(entity, &entities::destroy_entity);
+}
 
-  return nullptr;
+std::pair<entity_uid_t, std::shared_ptr<entities::Entity>>
+spawn_entity(map_t &map, entities::entity_type type)
+{
+  std::shared_ptr<entities::Entity> entity = make_entity(type);
+  if (!entity)
+    return {0, nullptr};
+
+  entity_uid_t uid = map.add_entity(entity);
+  return {uid, entity};
 }
 
 namespace

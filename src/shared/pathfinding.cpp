@@ -53,9 +53,9 @@ namespace
         {
             const nav_polygon_t &poly = nav.polygons[poly_idx];
             linalg::vec3f sum = {};
-            for (int v : poly.verts)
+            for (int v : poly.vertices)
                 sum = sum + nav.vertices[v].pos;
-            float n = (float)poly.verts.size();
+            float n = (float)poly.vertices.size();
             return linalg::vec3f{.x = sum.x / n, .y = sum.y / n, .z = sum.z / n};
         };
 
@@ -142,9 +142,9 @@ std::vector<linalg::vec3> find_path(const navmesh_t &nav, const linalg::vec3 &st
 
     // Build portal list from corridor.
     // Portal i is the shared edge between corridor[i] and corridor[i+1].
-    // For CCW-wound polygons, edge e goes from verts[e] to verts[(e+1)%N]
+    // For CCW-wound polygons, edge e goes from vertices[e] to vertices[(e+1)%N]
     // with the polygon interior to the left of that edge direction.
-    // Looking from cur toward next: right = verts[e], left = verts[(e+1)%N].
+    // Looking from cur toward next: right = vertices[e], left = vertices[(e+1)%N].
     struct Portal { linalg::vec3f left, right; };
     std::vector<Portal> portals;
     portals.reserve(corridor.size() + 1);
@@ -162,8 +162,8 @@ std::vector<linalg::vec3> find_path(const navmesh_t &nav, const linalg::vec3 &st
         {
             if (cur->neighbors[e] == next_idx)
             {
-                linalg::vec3f a = nav.vertices[cur->verts[e          ]].pos;
-                linalg::vec3f b = nav.vertices[cur->verts[(e + 1) % N]].pos;
+                linalg::vec3f a = nav.vertices[cur->vertices[e          ]].pos;
+                linalg::vec3f b = nav.vertices[cur->vertices[(e + 1) % N]].pos;
                 portals.push_back({.left = a, .right = b});
                 break;
             }

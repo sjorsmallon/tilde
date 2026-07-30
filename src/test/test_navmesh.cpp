@@ -31,7 +31,7 @@ static void check_indices(const navmesh_t &nav, const char *label)
   const int nv = (int)nav.vertices.size();
   for (int a = 0; a < np; ++a)
   {
-    for (int v : nav.polygons[a].verts)
+    for (int v : nav.polygons[a].vertices)
     {
       if (v < 0 || v >= nv)
       {
@@ -83,18 +83,18 @@ static void test_single_span()
 
   assert(nav.polygons.size() == 1 && "expected 1 polygon");
   assert(nav.vertices.size() == 4 && "expected 4 vertices");
-  assert(nav.polygons[0].verts.size() == 4 && "polygon must be a quad");
+  assert(nav.polygons[0].vertices.size() == 4 && "polygon must be a quad");
   for (int nb : nav.polygons[0].neighbors)
     assert(nb == -1 && "standalone polygon has no neighbors");
 
   // Verify CCW winding from above.
   const auto &p = nav.polygons[0];
-  const int N = (int)p.verts.size();
+  const int N = (int)p.vertices.size();
   for (int i = 0; i < N; ++i)
   {
-    const auto &prev = nav.vertices[p.verts[(i - 1 + N) % N]].pos;
-    const auto &cur  = nav.vertices[p.verts[i              ]].pos;
-    const auto &next = nav.vertices[p.verts[(i + 1)     % N]].pos;
+    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].pos;
+    const auto &cur  = nav.vertices[p.vertices[i              ]].pos;
+    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].pos;
     float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
     assert(cross_y >= -1e-4f && "winding broken after merge");
   }
@@ -145,27 +145,27 @@ static void test_two_span_strip()
   {
     const auto &p = nav.polygons[i];
     std::println("  poly[{}]: island={} verts={} neighbors={}",
-                 i, p.island, p.verts.size(), p.neighbors.size());
-    for (int k = 0; k < (int)p.verts.size(); ++k)
+                 i, p.island, p.vertices.size(), p.neighbors.size());
+    for (int k = 0; k < (int)p.vertices.size(); ++k)
     {
-      const auto &v = nav.vertices[p.verts[k]].pos;
+      const auto &v = nav.vertices[p.vertices[k]].pos;
       std::println("    [{}] vi={} pos=({:.1f},{:.1f},{:.1f})  nb={}",
-                   k, p.verts[k], v.x, v.y, v.z, p.neighbors[k]);
+                   k, p.vertices[k], v.x, v.y, v.z, p.neighbors[k]);
     }
   }
 
   assert(nav.polygons.size() == 1 && "expected 1 merged polygon for 2-span strip");
   assert(nav.vertices.size() == 4 && "expected 4 corner vertices after collinear pruning");
-  assert(nav.polygons[0].verts.size() == 4 && "merged strip must be a quad after collinear pruning");
+  assert(nav.polygons[0].vertices.size() == 4 && "merged strip must be a quad after collinear pruning");
 
   // Verify convexity.
   const auto &p = nav.polygons[0];
-  const int N = (int)p.verts.size();
+  const int N = (int)p.vertices.size();
   for (int i = 0; i < N; ++i)
   {
-    const auto &prev = nav.vertices[p.verts[(i - 1 + N) % N]].pos;
-    const auto &cur  = nav.vertices[p.verts[i              ]].pos;
-    const auto &next = nav.vertices[p.verts[(i + 1)     % N]].pos;
+    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].pos;
+    const auto &cur  = nav.vertices[p.vertices[i              ]].pos;
+    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].pos;
     float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
     assert(cross_y >= -1e-4f && "winding broken in strip");
   }
@@ -300,30 +300,30 @@ static void test_2x2_grid()
   {
     const auto &p = nav.polygons[i];
     std::println("  poly[{}]: island={} verts={} neighbors={}",
-                 i, p.island, p.verts.size(), p.neighbors.size());
-    for (int k = 0; k < (int)p.verts.size(); ++k)
+                 i, p.island, p.vertices.size(), p.neighbors.size());
+    for (int k = 0; k < (int)p.vertices.size(); ++k)
     {
-      const auto &v = nav.vertices[p.verts[k]].pos;
+      const auto &v = nav.vertices[p.vertices[k]].pos;
       std::println("    [{}] vi={} pos=({:.1f},{:.1f},{:.1f})  nb={}",
-                   k, p.verts[k], v.x, v.y, v.z, p.neighbors[k]);
+                   k, p.vertices[k], v.x, v.y, v.z, p.neighbors[k]);
     }
   }
 
   assert(nav.polygons.size() == 1 && "expected 1 merged polygon for 2x2 grid");
   assert(nav.vertices.size() == 4 && "expected 4 corner vertices");
-  assert(nav.polygons[0].verts.size() == 4 && "merged polygon must be a quad");
+  assert(nav.polygons[0].vertices.size() == 4 && "merged polygon must be a quad");
 
   for (int nb : nav.polygons[0].neighbors)
     assert(nb == -1 && "standalone polygon has no neighbors");
 
   // Verify convexity.
   const auto &p = nav.polygons[0];
-  const int N = (int)p.verts.size();
+  const int N = (int)p.vertices.size();
   for (int i = 0; i < N; ++i)
   {
-    const auto &prev = nav.vertices[p.verts[(i - 1 + N) % N]].pos;
-    const auto &cur  = nav.vertices[p.verts[i              ]].pos;
-    const auto &next = nav.vertices[p.verts[(i + 1)     % N]].pos;
+    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].pos;
+    const auto &cur  = nav.vertices[p.vertices[i              ]].pos;
+    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].pos;
     float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
     assert(cross_y >= -1e-4f && "winding broken in 2x2 grid");
   }
@@ -392,18 +392,18 @@ static void test_3x1_strip()
   {
     const auto &p = nav.polygons[i];
     std::println("  poly[{}]: island={} verts={} neighbors={}",
-                 i, p.island, p.verts.size(), p.neighbors.size());
-    for (int k = 0; k < (int)p.verts.size(); ++k)
+                 i, p.island, p.vertices.size(), p.neighbors.size());
+    for (int k = 0; k < (int)p.vertices.size(); ++k)
     {
-      const auto &v = nav.vertices[p.verts[k]].pos;
+      const auto &v = nav.vertices[p.vertices[k]].pos;
       std::println("    [{}] vi={} pos=({:.1f},{:.1f},{:.1f})  nb={}",
-                   k, p.verts[k], v.x, v.y, v.z, p.neighbors[k]);
+                   k, p.vertices[k], v.x, v.y, v.z, p.neighbors[k]);
     }
   }
 
   assert(nav.polygons.size() == 1 && "expected 1 merged polygon for 3x1 strip");
   assert(nav.vertices.size() == 4 && "expected 4 corner vertices");
-  assert(nav.polygons[0].verts.size() == 4 && "merged polygon must be a quad");
+  assert(nav.polygons[0].vertices.size() == 4 && "merged polygon must be a quad");
 
   for (int nb : nav.polygons[0].neighbors)
     assert(nb == -1 && "standalone polygon has no neighbors");

@@ -15,19 +15,11 @@
 #include <variant>
 #include <vector>
 
+
+
 namespace shared
 {
 
-// An entity is held by shared_ptr as it always was, and that stays correct
-// without a virtual destructor: make_shared<Concrete>() records the concrete
-// type's deleter in the control block, so destruction never goes through the
-// base.
-//
-// P7 decided this STAYS (entity_storage_def.md §4): the editor mutates map
-// entities in place through stable pointers, and a map entity has no session
-// identity to hand a handle against. The session no longer shares these
-// objects — Entity_System::add_entity copies into its pool and stamps the uid
-// on the copy — so `const map_t&` means what it says.
 struct map_entity_t
 {
   entity_uid_t uid;
@@ -222,6 +214,19 @@ struct map_t
 // Returns nullptr for a classname nothing recognises, which IS a data error --
 // the caller must report it rather than skipping the entity quietly.
 std::shared_ptr<entities::Entity> create_map_entity(const std::string &classname);
+
+// Construct a fresh entity of a runtime-chosen `type`, wrapped with the
+// deleter its result requires: entities have no virtual destructor, so a
+// create_entity() pointer must be destroyed through destroy_entity to recover
+// the concrete type, never through a bare `delete`. nullptr for Invalid.
+std::shared_ptr<entities::Entity> make_entity(entities::entity_type type);
+
+// make_entity(type) plus registering the result with the map in one step --
+// the runtime-type counterpart to map_t::add_entity(existing_shared_ptr), for
+// callers that don't already have an entity to hand over (placement by menu
+// selection, "spawn one of these" commands). {0, nullptr} for Invalid.
+std::pair<entity_uid_t, std::shared_ptr<entities::Entity>>
+spawn_entity(map_t &map, entities::entity_type type);
 
 // Serialize a map's entities to the canonical VMF-style text.
 std::string serialize_map_to_string(const map_t &map);

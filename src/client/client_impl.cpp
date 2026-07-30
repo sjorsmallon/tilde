@@ -27,17 +27,24 @@ static std::chrono::high_resolution_clock::time_point g_last_tick_time;
 static bool g_tick_time_initialized = false;
 static std::unique_ptr<audio_system_t> g_audio;
 
-bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table)
+bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
+          assets::asset_state_t *asset_state)
 {
   timed_function();
   log_terminal("--- Initializing Client (SDL + Vulkan) ---");
 
-  if (!cvar_state || !command_table)
+  if (!cvar_state || !command_table || !asset_state)
   {
-    log_error("client::Init: the launcher must own and pass a cvar_state_t and "
-              "a command_table_t (see cvar_def.md)");
+    log_error("client::Init: the launcher must own and pass a cvar_state_t, a "
+              "command_table_t and an asset_state_t (see cvar_def.md and the "
+              "ownership note in asset.hpp)");
     return false;
   }
+
+  // Before the renderer resolves a single mesh. This DLL's copy of the asset
+  // accessors' state pointer is null until now -- that is precisely the bug
+  // that made every get_mesh here return an invalid handle.
+  assets::set_state(asset_state);
 
   // Before anything that could read a cvar or run a console line. The bind call
   // fills this DLL's @Client handler slots; the linker already proved every

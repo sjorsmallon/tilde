@@ -15,33 +15,37 @@ void Displacement_Tool::on_enable(editor_context_t &ctx)
 {
   mode = Mode::Setup;
   currently_painting = false;
-  cursor_valid = false;
-  resize_dragging = false;
-  resize_moved = false;
+  cursor_is_currently_over_a_displacement_face = false;
+  currently_dragging_a_face_to_resize = false;
+  selected_face_was_actually_resized = false;
+
+  // it makes no sense to even assert this in this tool since per definition there _has_ to be a map.
+  assert(ctx.map);
+  assert(ctx.transaction_system);
 }
 
 void Displacement_Tool::on_disable(editor_context_t &ctx)
 {
   currently_painting = false;
-  cursor_valid = false;
+  cursor_is_currently_over_a_displacement_face = false;
   box_selecting = false;
   commit_geometry_edit(ctx, select_start_geometry);
   commit_geometry_edit(ctx, resize_start_geometry);
-  resize_dragging = false;
+  currently_dragging_a_face_to_resize = false;
 }
 
 // ===================================================================
 // Helpers
 // ===================================================================
 
-shared::displacement_geometry_t * Displacement_Tool::get_displacement_if_it_is_selected(editor_context_t &ctx)
+shared::displacement_geometry_t* Displacement_Tool::get_displacement_if_it_is_selected(editor_context_t &ctx)
 {
-  if (selected_uid == shared::invalid_entity_uid || !ctx.map)
-    return nullptr;
+  if (selected_uid == shared::invalid_entity_uid) return nullptr;
 
-  shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(selected_uid);
-  if (!entry)
-    return nullptr;
+
+  shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selected_uid);
+  
+  if (!entry) return nullptr;
 
   return std::get_if<shared::displacement_geometry_t>(&entry->value);
 }
@@ -58,10 +62,8 @@ void Displacement_Tool::commit_geometry_edit(
   const shared::geometry_value_t before = std::move(*start_state);
   start_state.reset();
 
-  if (!ctx.transaction_system || !ctx.map)
-    return;
-
-  const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(selected_uid);
+  const shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selected_uid);
+  
   if (!entry)
   {
     log_error("displacement tool: geometry uid {} vanished mid-edit — the edit "
@@ -70,9 +72,9 @@ void Displacement_Tool::commit_geometry_edit(
     return;
   }
 
-  transaction_builder_t builder;
-  builder.add_geometry_modified(selected_uid, before, entry->value);
-  ctx.transaction_system->push(builder.take());
+  auto transaction_builder = transaction_builder_t{};
+  transaction_builder.add_geometry_modified(selected_uid, before, entry->value);
+  ctx.transaction_system->push(transaction_builder.take());
 }
 
 bool Displacement_Tool::raycast_displacement_mesh(
@@ -82,9 +84,11 @@ bool Displacement_Tool::raycast_displacement_mesh(
   if (displacement.active_face == shared::box_face_t::Invalid)
     return false;
 
-  int grid_size = displacement.grid_size();
+  size_t grid_size = displacement.grid_size();
+
   float best_t = 1e30f;
   linalg::vec3 best_normal = {0, 1, 0};
+
   bool hit = false;
 
   for (int j = 0; j < grid_size - 1; ++j)
@@ -102,18 +106,18 @@ bool Displacement_Tool::raycast_displacement_mesh(
       if (ray_triangle(ray_origin, ray_dir, tl, bl, tr, t) && t < best_t)
       {
         best_t = t;
-        linalg::vec3 n = linalg::cross(bl - tl, tr - tl);
-        float len = linalg::length(n);
-        best_normal = (len > 1e-6f) ? n * (1.0f / len) : displacement.get_face_normal();
+        linalg::vec3 normal = linalg::cross(bl - tl, tr - tl);
+        float length = linalg::length(normal);
+        best_normal = (length > 1e-6f) ? linalg::normalize(normal) : displacement.get_face_normal();
         hit = true;
       }
       // Triangle 2: tr, bl, br
       if (ray_triangle(ray_origin, ray_dir, tr, bl, br, t) && t < best_t)
       {
         best_t = t;
-        linalg::vec3 n = linalg::cross(bl - tr, br - tr);
-        float len = linalg::length(n);
-        best_normal = (len > 1e-6f) ? n * (1.0f / len) : displacement.get_face_normal();
+        linalg::vec3 normal = linalg::cross(bl - tr, br - tr);
+        float length = linalg::length(normal);
+        best_normal = (length > 1e-6f) ? normal * (1.0f / length) : displacement.get_face_normal();
         hit = true;
       }
     }
@@ -130,7 +134,7 @@ bool Displacement_Tool::raycast_displacement_mesh(
 void Displacement_Tool::apply_brush(shared::displacement_geometry_t &displacement,
                                     float dt, bool invert)
 {
-  if (!cursor_valid || displacement.active_face == shared::box_face_t::Invalid)
+  if (!cursor_is_currently_over_a_displacement_face || displacement.active_face == shared::box_face_t::Invalid)
     return;
 
   int grid_size = displacement.grid_size();
@@ -142,18 +146,18 @@ void Displacement_Tool::apply_brush(shared::displacement_geometry_t &displacemen
   {
     for (int i = 0; i < grid_size; ++i)
     {
-      linalg::vec3 vpos = displacement.get_vertex_world(i, j);
-      linalg::vec3 diff = vpos - cursor_position;
-      float dist = linalg::length(diff);
-      if (dist > brush_radius)
+      linalg::vec3 vertex_position = displacement.get_vertex_world(i, j);
+      linalg::vec3 delta = vertex_position - cursor_position;
+      float distance = linalg::length(delta);
+      if (distance > brush.radius)
         continue;
 
-      float t = dist / brush_radius;
+      float t = distance / brush.radius;
       float weight = std::exp(-(t * t) / (2.0f * sigma * sigma));
 
-      linalg::vec3 d = displacement.get_displacement(i, j);
-      d = d + face_normal * (sign * brush_strength * weight * dt);
-      displacement.set_displacement(i, j, d);
+      linalg::vec3 displacement_per_vertex = displacement.get_displacement(i, j);
+      displacement_per_vertex = displacement_per_vertex + face_normal * (sign * brush.strength * weight * dt);
+      displacement.set_displacement(i, j, displacement_per_vertex);
     }
   }
 }
@@ -162,9 +166,11 @@ linalg::vec2 Displacement_Tool::project_to_screen(const linalg::vec3 &world_pos)
 {
   linalg::vec3 camera_position = {cached_view.camera.position.x, cached_view.camera.position.y,
                           cached_view.camera.position.z};
+
   linalg::vec3 view_position = linalg::world_to_view(world_pos, camera_position,
                                                 cached_view.camera.yaw,
                                                 cached_view.camera.pitch);
+
   return linalg::view_to_screen(view_position, cached_view.display_size,
                                 cached_view.camera.orthographic,
                                 cached_view.camera.ortho_height,
@@ -183,16 +189,13 @@ void Displacement_Tool::clear_selection(int grid_size)
 void Displacement_Tool::on_update(editor_context_t &ctx,
                                   const viewport_state_t &view, float dt)
 {
-  if (!ctx.map)
-    return;
-
   resize_last_view = view;
   cached_view = view;
 
   if (mode == Mode::Setup)
   {
     // Don't update hover while dragging a face
-    if (!resize_dragging)
+    if (!currently_dragging_a_face_to_resize)
     {
       // reset hover state
       hovered_uid = shared::invalid_entity_uid;
@@ -201,13 +204,14 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
       if (ctx.bvh)
       {
         auto hit = ray_hit_result_t{};
+
         if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin,
                                view.mouse_ray.direction, hit))
         {
           if (hit.id.type == Collision_Id::Type::Static_Geometry)
           {
             shared::entity_uid_t uid = hit.id.index;
-            shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(uid);
+            shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(uid);
             if (entry)
             {
               if (const auto* displacement_ptr =
@@ -236,7 +240,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
   }
   else if (mode == Mode::Paint)
   {
-    cursor_valid = false;
+    cursor_is_currently_over_a_displacement_face = false;
     auto* displacement_ptr = get_displacement_if_it_is_selected(ctx);
     if (!displacement_ptr)
       return;
@@ -248,11 +252,11 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
     {
       cursor_position = view.mouse_ray.origin + view.mouse_ray.direction * t;
       cursor_normal = normal;
-      cursor_valid = true;
+      cursor_is_currently_over_a_displacement_face = true;
     }
 
     // If currently currently_painting, apply brush every frame
-    if (currently_painting && cursor_valid)
+    if (currently_painting && cursor_is_currently_over_a_displacement_face)
     {
       bool invert = input::current_modifiers().shift;
       apply_brush(*displacement_ptr, dt, invert);
@@ -306,9 +310,9 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
           else
           {
             // Plain click: start face drag (resize)
-            resize_dragging = true;
-            resize_moved = false;
-            resize_face = hovered_face;
+            currently_dragging_a_face_to_resize = true;
+            selected_face_was_actually_resized = false;
+            face_to_resize = hovered_face;
             resize_start_geometry = *displacement_ptr;
           }
         }
@@ -333,20 +337,20 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
 void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
                                       const input::mouse_event_t &e)
 {
-  if (resize_dragging && selected_uid != 0 && ctx.map)
+  if (currently_dragging_a_face_to_resize && selected_uid != 0 && ctx.map)
   {
     auto *displacement_ptr = get_displacement_if_it_is_selected(ctx);
     if (!displacement_ptr)
       return;
 
-    resize_moved = true;
+    selected_face_was_actually_resized = true;
 
     using namespace linalg;
 
     vec3 current_center = displacement_ptr->position;
     vec3 current_he = displacement_ptr->half_extents;
 
-    vec3 normal = shared::get_box_face_normal(resize_face);
+    vec3 normal = shared::get_box_face_normal(face_to_resize);
     vec3 center_offset = {
         normal.x * current_he.x,
         normal.y * current_he.y,
@@ -395,8 +399,8 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
                              mouse_delta.y * face_screen_direction.y) /
                             screen_direction_length_squared;
 
-        int axis = shared::box_face_axis(resize_face);
-        float face_sign = shared::box_face_is_positive(resize_face) ? 1.0f : -1.0f;
+        int axis = shared::box_face_axis(face_to_resize);
+        float face_sign = shared::box_face_is_positive(face_to_resize) ? 1.0f : -1.0f;
 
         // Grow the box by half the drag along the dragged axis and shift the
         // center by the other half, so the opposite face stays anchored.
@@ -432,10 +436,13 @@ void Displacement_Tool::on_mouse_up(editor_context_t &ctx,
 {
   currently_painting = false;
 
-  if (resize_dragging)
+  if (currently_dragging_a_face_to_resize)
   {
-    resize_dragging = false;
-    commit_geometry_edit(ctx, resize_start_geometry);
+    currently_dragging_a_face_to_resize = false;
+    // Only commit if the drag actually moved the face. A click without
+    // movement should not produce an undoable resize operation.
+    if (selected_face_was_actually_resized)
+      commit_geometry_edit(ctx, resize_start_geometry);
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
@@ -539,7 +546,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
 
     float sign = (e.key == input::key_t::Q) ? 1.0f : -1.0f;
     linalg::vec3 face_normal = displacement_ptr->get_face_normal();
-    linalg::vec3 delta = face_normal * (sign * height_snap);
+    linalg::vec3 delta = face_normal * (sign * extent_snap);
 
     for (int j = 0; j < grid_size; ++j)
     {
@@ -624,12 +631,12 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   }
 
   // In paint mode: draw brush circle and normal arrow
-  if (mode == Mode::Paint && cursor_valid)
+  if (mode == Mode::Paint && cursor_is_currently_over_a_displacement_face)
   {
-    renderer.draw_circle(cursor_position, brush_radius, cursor_normal, colors::yellow);
+    renderer.draw_circle(cursor_position, brush.radius, cursor_normal, colors::yellow);
 
     // Draw normal arrow
-    linalg::vec3 arrow_end = cursor_position + cursor_normal * (brush_radius * 0.5f);
+    linalg::vec3 arrow_end = cursor_position + cursor_normal * (brush.radius * 0.5f);
     renderer.draw_line(cursor_position, arrow_end, colors::red);
   }
 
@@ -746,8 +753,8 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
       ImGui::Text("Mode: Paint");
       ImGui::Separator();
 
-      ImGui::SliderFloat("Radius", &brush_radius, 1.0f, 256.0f);
-      ImGui::SliderFloat("Strength", &brush_strength, 0.1f, 20.0f);
+      ImGui::SliderFloat("Radius", &brush.radius, 1.0f, 256.0f);
+      ImGui::SliderFloat("Strength", &brush.strength, 0.1f, 20.0f);
 
       ImGui::Separator();
       ImGui::Text("LMB: displace along normal");
@@ -767,7 +774,7 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
         if (b) ++sel_count;
       ImGui::Text("Selected: %d vertices", sel_count);
 
-      ImGui::SliderFloat("Snap", &height_snap, 1.0f, 512.0f);
+      ImGui::SliderFloat("Snap", &extent_snap, 1.0f, 512.0f);
 
       ImGui::Separator();
       ImGui::Text("Drag: box select");

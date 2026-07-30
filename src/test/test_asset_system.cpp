@@ -138,9 +138,16 @@ static int test_invalid_path()
   return 0;
 }
 
+// This test IS the launcher, so it owns the asset state the way main_*.cpp do.
+// game_shared is a static lib and the accessors resolve through a per-module
+// pointer, so nothing works until something points it at a state -- which is
+// the whole reason the state is explicit rather than a file-scope registry.
+static assets::asset_state_t g_asset_state{};
+
 int main()
 {
   printf("=== Asset System Tests ===\n");
+  assets::set_state(&g_asset_state);
   test_load_mesh();
   test_load_texture();
   test_caching();

@@ -351,8 +351,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
 
     original_transform.position = shared::get_position(geometry_entry->value);
     original_transform.scale = shared::get_half_extents(geometry_entry->value);
-    original_transform.orientation = {start_orientation.x, start_orientation.y,
-                                      start_orientation.z, 0};
+    original_transform.orientation = start_orientation;
 
     transform_state.position = original_transform.position;
     transform_state.rotation = start_orientation;
@@ -381,21 +380,19 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
     original_transform.position = ent->position;
     original_transform.scale =
         volume->half_extents; // Store half-extents as scale
-    original_transform.orientation = {0, 0, 0,
-                                      1}; // Identity (box has no rotation)
   }
   else if (auto *player = entities::entity_as<::entities::Player_Entity>(ent.get()))
   {
     original_transform.position = player->position;
     original_transform.scale = {1, 1, 1};
-    original_transform.orientation = {0, 0, 0, 1};
   }
 
-  // Initialize Transform Gizmo State
+  // Initialize Transform Gizmo State. Orientation is set once here for every
+  // entity kind rather than per branch above -- the per-branch writes it
+  // replaced were dead, since this line ran unconditionally after them.
   transform_state.position = original_transform.position;
   transform_state.rotation = ent->orientation;
-  original_transform.orientation = {ent->orientation.x, ent->orientation.y,
-                                    ent->orientation.z, 0};
+  original_transform.orientation = ent->orientation;
   transform_state.size = 64.0f;
 }
 
@@ -692,9 +689,7 @@ void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
         float delta_degrees = delta_angle * (180.0f / 3.14159f);
         delta_degrees = editor::snap(delta_degrees, editor::ROTATION_SNAP);
 
-        vec3 new_orient = {original_transform.orientation.x,
-                           original_transform.orientation.y,
-                           original_transform.orientation.z};
+        vec3 new_orient = original_transform.orientation;
         new_orient[axis] = new_orient[axis] + delta_degrees;
 
         // Rotation applies to an entity's euler orientation, and to a static

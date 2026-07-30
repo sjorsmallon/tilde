@@ -9,6 +9,7 @@ namespace client
 
 void Particle_Editor_Tool::on_enable(editor_context_t &ctx)
 {
+  assert(ctx.bvh);
   selected_emitter_uid = shared::invalid_entity_uid;
 
   // Auto-select the first particle emitter if there is one
@@ -37,14 +38,13 @@ void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
     return;
 
   // Raycast to pick a particle emitter
-  if (!ctx.bvh)
-    return;
+  if (!ctx.bvh) return;
 
   // Just find the closest particle emitter to the ray
-  float best_dist = 1e18f;
+  float closest_distance_so_far = 1e18f;
   shared::entity_uid_t best_uid = shared::invalid_entity_uid;
 
-  for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
+  for (auto [uid, emitter]: ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
   {
     // Simple sphere pick test (particle emitters are point-like)
     linalg::vec3 to_emitter = emitter->position - viewport.mouse_ray.origin;
@@ -57,9 +57,9 @@ void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
     float dist = linalg::length(delta);
 
     // 32-unit pick radius
-    if (dist < 32.f && t < best_dist)
+    if (dist < 32.f && t < closest_distance_so_far)
     {
-      best_dist = t;
+      closest_distance_so_far = t;
       best_uid = uid;
     }
   }
@@ -94,14 +94,14 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
   {
     for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
     {
-      char label[64];
-      snprintf(label, sizeof(label), "Emitter #%u (%.0f, %.0f, %.0f)",
-               uid, emitter->position.x, emitter->position.y, emitter->position.z);
+
+      auto label = std::format("Emitter #{} ({:.0f}, {:.0f}, {:.0f})", uid, emitter->position.x, emitter->position.y, emitter->position.z);
 
       bool is_selected = (uid == selected_emitter_uid);
-      if (ImGui::Selectable(label, is_selected))
+      if (ImGui::Selectable(label.c_str(), is_selected))
         selected_emitter_uid = uid;
     }
+
     ImGui::EndCombo();
   }
 
@@ -119,15 +119,15 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::Separator();
 
   // Find selected emitter
-  entities::Particle_Emitter_Entity *pe = nullptr;
+  entities::Particle_Emitter_Entity* emitter = nullptr;
   if (selected_emitter_uid != 0)
   {
-    auto *entry = ctx.map->find_by_uid(selected_emitter_uid);
+    auto* entry = ctx.map->find_by_uid(selected_emitter_uid);
     if (entry)
-      pe = entities::entity_as<entities::Particle_Emitter_Entity>(entry->entity.get());
+      emitter = entities::entity_as<entities::Particle_Emitter_Entity>(entry->entity.get());
   }
 
-  if (!pe)
+  if (!emitter)
   {
     ImGui::Text("No particle emitter selected.");
     ImGui::Text("Click an emitter or create one.");
@@ -136,121 +136,123 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
   }
 
   // Use the schema-based inspector for all fields
-  render_imgui_entity_fields_in_a_window(pe);
+  render_imgui_entity_fields_in_a_window(emitter);
 
   ImGui::Separator();
   ImGui::Text("Quick Presets");
 
   if (ImGui::Button("Smoke"))
   {
-    pe->emit_rate = 15.0f;
-    pe->max_particles = 64;
-    pe->lifetime_min = 1.0f;
-    pe->lifetime_max = 3.0f;
-    pe->velocity_min = 2.0f;
-    pe->velocity_max = 5.0f;
-    pe->spread = 0.5f;
-    pe->gravity = {0, 0.5f, 0};
-    pe->drag = 0.3f;
-    pe->size_start = 2.0f;
-    pe->size_end = 8.0f;
-    pe->rotation_speed_min = -1.0f;
-    pe->rotation_speed_max = 1.0f;
-    pe->color_start = {0.6f, 0.6f, 0.6f};
-    pe->color_end = {0.3f, 0.3f, 0.3f};
-    pe->alpha_start = 0.6f;
-    pe->alpha_end = 0.0f;
+    emitter->emit_rate = 15.0f;
+    emitter->max_particles = 64;
+    emitter->lifetime_min = 1.0f;
+    emitter->lifetime_max = 3.0f;
+    emitter->velocity_min = 2.0f;
+    emitter->velocity_max = 5.0f;
+    emitter->spread = 0.5f;
+    emitter->gravity = {0, 0.5f, 0};
+    emitter->drag = 0.3f;
+    emitter->size_start = 2.0f;
+    emitter->size_end = 8.0f;
+    emitter->rotation_speed_min = -1.0f;
+    emitter->rotation_speed_max = 1.0f;
+    emitter->color_start = {0.6f, 0.6f, 0.6f};
+    emitter->color_end = {0.3f, 0.3f, 0.3f};
+    emitter->alpha_start = 0.6f;
+    emitter->alpha_end = 0.0f;
   }
   ImGui::SameLine();
   if (ImGui::Button("Fire"))
   {
-    pe->emit_rate = 40.0f;
-    pe->max_particles = 128;
-    pe->lifetime_min = 0.2f;
-    pe->lifetime_max = 0.6f;
-    pe->velocity_min = 10.0f;
-    pe->velocity_max = 30.0f;
-    pe->spread = 0.8f;
-    pe->gravity = {0, 2.0f, 0};
-    pe->drag = 0.5f;
-    pe->size_start = 1.0f;
-    pe->size_end = 4.0f;
-    pe->rotation_speed_min = -2.0f;
-    pe->rotation_speed_max = 2.0f;
-    pe->color_start = {1.0f, 0.7f, 0.1f};
-    pe->color_end = {0.8f, 0.2f, 0.0f};
-    pe->alpha_start = 0.9f;
-    pe->alpha_end = 0.0f;
+    emitter->emit_rate = 40.0f;
+    emitter->max_particles = 128;
+    emitter->lifetime_min = 0.2f;
+    emitter->lifetime_max = 0.6f;
+    emitter->velocity_min = 10.0f;
+    emitter->velocity_max = 30.0f;
+    emitter->spread = 0.8f;
+    emitter->gravity = {0, 2.0f, 0};
+    emitter->drag = 0.5f;
+    emitter->size_start = 1.0f;
+    emitter->size_end = 4.0f;
+    emitter->rotation_speed_min = -2.0f;
+    emitter->rotation_speed_max = 2.0f;
+    emitter->color_start = {1.0f, 0.7f, 0.1f};
+    emitter->color_end = {0.8f, 0.2f, 0.0f};
+    emitter->alpha_start = 0.9f;
+    emitter->alpha_end = 0.0f;
   }
   ImGui::SameLine();
   if (ImGui::Button("Explosion"))
   {
-    pe->emit_rate = 200.0f;
-    pe->max_particles = 48;
-    pe->lifetime_min = 0.3f;
-    pe->lifetime_max = 0.8f;
-    pe->velocity_min = 40.0f;
-    pe->velocity_max = 120.0f;
-    pe->spread = 2.0f;
-    pe->gravity = {0, -20.0f, 0};
-    pe->drag = 1.5f;
-    pe->size_start = 3.0f;
-    pe->size_end = 8.0f;
-    pe->rotation_speed_min = -3.0f;
-    pe->rotation_speed_max = 3.0f;
-    pe->color_start = {1.0f, 0.8f, 0.3f};
-    pe->color_end = {0.4f, 0.4f, 0.4f};
-    pe->alpha_start = 0.9f;
-    pe->alpha_end = 0.0f;
+    emitter->emit_rate = 200.0f;
+    emitter->max_particles = 48;
+    emitter->lifetime_min = 0.3f;
+    emitter->lifetime_max = 0.8f;
+    emitter->velocity_min = 40.0f;
+    emitter->velocity_max = 120.0f;
+    emitter->spread = 2.0f;
+    emitter->gravity = {0, -20.0f, 0};
+    emitter->drag = 1.5f;
+    emitter->size_start = 3.0f;
+    emitter->size_end = 8.0f;
+    emitter->rotation_speed_min = -3.0f;
+    emitter->rotation_speed_max = 3.0f;
+    emitter->color_start = {1.0f, 0.8f, 0.3f};
+    emitter->color_end = {0.4f, 0.4f, 0.4f};
+    emitter->alpha_start = 0.9f;
+    emitter->alpha_end = 0.0f;
   }
 
   if (ImGui::Button("Sparks"))
   {
-    pe->emit_rate = 30.0f;
-    pe->max_particles = 64;
-    pe->lifetime_min = 0.1f;
-    pe->lifetime_max = 0.4f;
-    pe->velocity_min = 50.0f;
-    pe->velocity_max = 150.0f;
-    pe->spread = 1.5f;
-    pe->gravity = {0, -80.0f, 0};
-    pe->drag = 0.2f;
-    pe->size_start = 0.5f;
-    pe->size_end = 0.2f;
-    pe->rotation_speed_min = 0.0f;
-    pe->rotation_speed_max = 0.0f;
-    pe->color_start = {1.0f, 0.9f, 0.5f};
-    pe->color_end = {1.0f, 0.4f, 0.0f};
-    pe->alpha_start = 1.0f;
-    pe->alpha_end = 0.0f;
+    emitter->emit_rate = 30.0f;
+    emitter->max_particles = 64;
+    emitter->lifetime_min = 0.1f;
+    emitter->lifetime_max = 0.4f;
+    emitter->velocity_min = 50.0f;
+    emitter->velocity_max = 150.0f;
+    emitter->spread = 1.5f;
+    emitter->gravity = {0, -80.0f, 0};
+    emitter->drag = 0.2f;
+    emitter->size_start = 0.5f;
+    emitter->size_end = 0.2f;
+    emitter->rotation_speed_min = 0.0f;
+    emitter->rotation_speed_max = 0.0f;
+    emitter->color_start = {1.0f, 0.9f, 0.5f};
+    emitter->color_end = {1.0f, 0.4f, 0.0f};
+    emitter->alpha_start = 1.0f;
+    emitter->alpha_end = 0.0f;
   }
   ImGui::SameLine();
   if (ImGui::Button("Steam"))
   {
-    pe->emit_rate = 25.0f;
-    pe->max_particles = 96;
-    pe->lifetime_min = 0.5f;
-    pe->lifetime_max = 2.0f;
-    pe->velocity_min = 5.0f;
-    pe->velocity_max = 15.0f;
-    pe->spread = 0.3f;
-    pe->gravity = {0, 3.0f, 0};
-    pe->drag = 0.8f;
-    pe->size_start = 1.0f;
-    pe->size_end = 6.0f;
-    pe->rotation_speed_min = -0.5f;
-    pe->rotation_speed_max = 0.5f;
-    pe->color_start = {1.0f, 1.0f, 1.0f};
-    pe->color_end = {0.9f, 0.9f, 0.9f};
-    pe->alpha_start = 0.4f;
-    pe->alpha_end = 0.0f;
+    emitter->emit_rate = 25.0f;
+    emitter->max_particles = 96;
+    emitter->lifetime_min = 0.5f;
+    emitter->lifetime_max = 2.0f;
+    emitter->velocity_min = 5.0f;
+    emitter->velocity_max = 15.0f;
+    emitter->spread = 0.3f;
+    emitter->gravity = {0, 3.0f, 0};
+    emitter->drag = 0.8f;
+    emitter->size_start = 1.0f;
+    emitter->size_end = 6.0f;
+    emitter->rotation_speed_min = -0.5f;
+    emitter->rotation_speed_max = 0.5f;
+    emitter->color_start = {1.0f, 1.0f, 1.0f};
+    emitter->color_end = {0.9f, 0.9f, 0.9f};
+    emitter->alpha_start = 0.4f;
+    emitter->alpha_end = 0.0f;
   }
 
   ImGui::Separator();
   if (ImGui::Button("Delete Emitter"))
   {
     ctx.map->remove_entity(selected_emitter_uid);
-    selected_emitter_uid = 0;
+
+    selected_emitter_uid = shared::invalid_entity_uid;
+    
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }

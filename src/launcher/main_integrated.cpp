@@ -43,6 +43,14 @@ static cvars::cvar_state_t g_cvar_state{};
 static cvars::command_table_t g_client_command_table{};
 static cvars::command_table_t g_server_command_table{};
 
+// The asset system's whole mutable state -- pools and manifest -- owned here for
+// the same reason the cvars are: game_shared is a static lib, so a file-scope
+// registry inside it exists once per module. Assets are firmly in the AGREE
+// column: an asset_handle_t is a bare index into a pool, so a handle minted
+// against one state is meaningless against another. One object, three borrowed
+// pointers.
+static assets::asset_state_t g_asset_state{};
+
 int main(int argc, char *argv[])
 {
   // Change working directory to the project root (parent of cmake_build/).
@@ -69,16 +77,21 @@ int main(int argc, char *argv[])
 
   log_terminal("=== Starting MyGame (Integrated) ===");
 
-  // Eager asset registration, before anything resolves an id. See asset.hpp.
+  // Point THIS module (the exe) at the one asset state, then register eagerly
+  // before anything resolves an id. Each DLL points its own copy of the state
+  // pointer at the same object inside its Init below -- game_shared is a static
+  // lib, so there is one pointer per module and all three must be set. See the
+  // ownership note in asset.hpp.
+  assets::set_state(&g_asset_state);
   assets::init();
 
-  if (!server::Init(&g_cvar_state, &g_server_command_table))
+  if (!server::Init(&g_cvar_state, &g_server_command_table, &g_asset_state))
   {
     log_error("Server Init Failed");
     return 1;
   }
 
-  if (!client::Init(&g_cvar_state, &g_client_command_table))
+  if (!client::Init(&g_cvar_state, &g_client_command_table, &g_asset_state))
   {
     log_error("Client Init Failed");
     server::Shutdown(); // Cleanup

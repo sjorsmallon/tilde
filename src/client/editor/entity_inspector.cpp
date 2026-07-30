@@ -17,13 +17,6 @@ namespace
 // nesting ("render.material.color"), which reads the same way the map file
 // spells it.
 //
-// WHAT THE CUTOVER CHANGED HERE, beyond the type names:
-//   * enums and asset ids get a Combo over the closed set the generator knows,
-//     where they were free-form text boxes holding "lit" / "on_enter" /
-//     "__primitive_box" with nothing checking the spelling;
-//   * the string_choices_provider callback is gone with them. It existed so a
-//     pascal_string field could offer a dropdown (the trigger action list); an
-//     enum field offers one by construction.
 void render_leaf_field(uint8_t *base, const entities::leaf_field_t &leaf, int id)
 {
   const entities::field_info_t &field = *leaf.info;
@@ -157,7 +150,7 @@ void render_imgui_entity_fields_in_a_window(entities::Entity *entity)
   ImGui::Text("Class: %s", info.classname);
   ImGui::Separator();
 
-  uint8_t *base = reinterpret_cast<uint8_t *>(entity);
+  uint8_t* base = reinterpret_cast<uint8_t *>(entity);
 
   // @Editable leaves, in declaration order — the same order the map file writes
   // and the .def declares, so the inspector reads like the source of truth does.
