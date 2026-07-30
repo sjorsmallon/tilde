@@ -166,11 +166,11 @@ void PlayState::finalize_client_map()
 
   // Place the camera at a spawn marker for an immediate, non-jarring view; the
   // server's authoritative position arrives in the next snapshot.
-  auto *spawns = ctx.session.entity_system
-                     .get_entities<entities::Player_Spawn_Entity>();
-  if (spawns && !spawns->empty())
+  Span<entities::Player_Spawn_Entity> spawns =
+      ctx.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+  if (!spawns.empty())
   {
-    ctx.player_position = spawns->front().position;
+    ctx.player_position = spawns.front().position;
     log_terminal("[CLIENT] Spawn from map: ({:.1f}, {:.1f}, {:.1f})",
                  ctx.player_position.x, ctx.player_position.y, ctx.player_position.z);
   }
@@ -1090,14 +1090,15 @@ void PlayState::render_ui()
     {
       int total = 0;
 
-      for (auto &[type, pool_ptr] : ctx.session.entity_system.pools)
+      // pools is an array indexed by tag now, so `type` is a member rather than
+      // a map key — and index 0 (Invalid) is empty, so the count check skips it
+      // without a special case.
+      for (const shared::Entity_Pool &pool : ctx.session.entity_system.pools)
       {
-        if (!pool_ptr) continue;
-
-        const int count = (int)pool_ptr->size();
+        const int count = (int)pool.count;
         if (count > 0)
         {
-          ImGui::Text("%-20s %d", entities::entity_info(type).display_name, count);
+          ImGui::Text("%-20s %d", entities::entity_info(pool.type).display_name, count);
           total += count;
         }
       }
@@ -1296,12 +1297,11 @@ void PlayState::render_3d(VkCommandBuffer cmd)
 
     if (ctx.server_session)
     {
-      auto *physics_pool = const_cast<shared::game_session_t *>(ctx.server_session)
-                               ->entity_system
-                               .get_entities<entities::Physics_Body_Entity>();
-      if (physics_pool)
-        for (const auto &body : *physics_pool)
-          draw_one(body);
+      Span<entities::Physics_Body_Entity> physics_pool =
+          const_cast<shared::game_session_t *>(ctx.server_session)
+              ->entity_system.entities_of<entities::Physics_Body_Entity>();
+      for (const entities::Physics_Body_Entity &body : physics_pool)
+        draw_one(body);
     }
     else
     {

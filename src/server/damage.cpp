@@ -9,27 +9,6 @@
 namespace server
 {
 
-static entities::Player_Entity *
-find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
-{
-  auto *players = session.entity_system.get_entities<entities::Player_Entity>();
-  if (!players) return nullptr;
-  for (auto &p : *players)
-    if (p.entity_id == uid) return &p;
-  return nullptr;
-}
-
-static entities::Physics_Body_Entity *
-find_physics_body_by_uid(shared::game_session_t &session,
-                         shared::entity_uid_t uid)
-{
-  auto *pool = session.entity_system.get_entities<entities::Physics_Body_Entity>();
-  if (!pool) return nullptr;
-  for (auto &b : *pool)
-    if (b.entity_id == uid) return &b;
-  return nullptr;
-}
-
 // Player_Entity-specific path: subtract HP, write knockback velocity directly
 // (Jolt impulses are no-ops on kinematic capsules, and AddLinearVelocity gets
 // clobbered by the next set_kinematic_pose), detect the >0 → <=0 crossing.
@@ -106,12 +85,16 @@ void inflict_damage(server_context_t &context, const damage_info_t &info)
   // Dispatch on entity type. Two damageable types today; if this grows past
   // ~6 cases or any case past ~50 lines, promote to a registration table
   // keyed by entity_type (see events_plan.md §"Per-entity damage dispatch").
-  if (auto *player = find_player_by_uid(session, info.victim_uid))
+  //
+  // get<T>(uid) returns nullptr for both "no such uid" and "uid names a
+  // different type", so each `if` is simultaneously the lookup and the type
+  // test — and the fallthrough below is the genuine "not damageable" case.
+  if (auto *player = session.entity_system.get<entities::Player_Entity>(info.victim_uid))
   {
     apply_damage_to_player(context, info, *player);
     return;
   }
-  if (auto *body = find_physics_body_by_uid(session, info.victim_uid))
+  if (auto *body = session.entity_system.get<entities::Physics_Body_Entity>(info.victim_uid))
   {
     apply_damage_to_physics_body(context, info, *body);
     return;

@@ -14,9 +14,11 @@ cmake --build cmake_build -j8
 # Run
 ./cmake_build/bin/MyGame
 
-# Run a single test
-./cmake_build/bin/<test_name>
-# e.g. ./cmake_build/bin/session_test, ./cmake_build/bin/network_test
+# Run the whole test suite (~2s, all 19)
+ctest --test-dir cmake_build -j8
+
+# Run one test, or a subset by regex
+ctest --test-dir cmake_build -R session_test --output-on-failure
 ```
 
 Map format conversion (one-time, for maps written before the geometry exit):
@@ -28,9 +30,9 @@ Map format conversion (one-time, for maps written before the geometry exit):
 
 `maps/test` is deliberately left in the legacy format — it is `map_migration_test`'s conversion fixture.
 
-Test executables: `task_system_test`, `log_test`, `ecs_test`, `camera_test`, `linalg_test`, `file_watcher_test`, `network_test`, `udp_socket_test`, `server_loop_test`, `session_test`, `transaction_system_test`, `test_entity_delta_packing`, `snapshot_delta_test`, `test_rng`, `asset_test`, `entity_layout_test`, `map_migration_test`, `navmesh_test`, `cvar_test`.
+The 19 tests are registered with CTest at the bottom of `CMakeLists.txt` (`GAME_TESTS`), each with `WORKING_DIRECTORY` pinned to the project root — `map_migration_test` loads the `maps/test` fixture by relative path, so under `ctest` it no longer matters where you invoke from. The executables are still plain binaries in `cmake_build/bin/` and can be run directly, but **that** form must be run from the project root.
 
-Run tests **from the project root** — `map_migration_test` loads the `maps/test` fixture by relative path.
+Adding a test means adding the target *and* its name to `GAME_TESTS`; the list is written out rather than globbed so `MyGame`, `def_gen` and `map_convert` don't get swept in.
 
 Inspect what the DSL parsed, without building the game or writing anything:
 
@@ -95,7 +97,7 @@ Entities are **plain structs with no virtuals** (hence blittable, hence memcmp-d
 - `entity_as<T>(entity)` replaces `dynamic_cast` (exact type match — the hierarchy is closed and one level deep).
 - `entities::get_box_volume` / `get_render` / `get_hitbox` are component-table lookups, not virtuals.
 - `destroy_entity()`, not `delete` through a base pointer — there is no virtual destructor to dispatch through.
-- Per-type behavior is a handwritten **exhaustive switch** over the closed enum (`make_entity_pool`, `create_map_entity`, `fire_trigger_action`, `compute_entity_bounds`, the editor's `ENTITY_DISPATCH`). That's the sanctioned pattern; adding an entity makes each switch a compile error, which is the point.
+- Per-type behavior is a handwritten **exhaustive switch** over the closed enum (`create_map_entity`, `fire_trigger_action`, `compute_entity_bounds`, the editor's `ENTITY_DISPATCH`). That's the sanctioned pattern; adding an entity makes each switch a compile error, which is the point. **Storage is not on that list** — `Entity_System` sizes one byte pool per tag from `ENTITY_INFOS` directly, so a new entity needs no case anywhere in it (`make_entity_pool` was the fifth switch and is gone; see `entity_system_def.md`).
 
 Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entity`, `Player_Entity`, `Weapon_Entity`, `Rocket_Entity`, `Particle_Emitter_Entity`, `Trigger_Volume_Entity`, `Light_Entity`, `Physics_Body_Entity`.
 

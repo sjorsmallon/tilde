@@ -7,35 +7,15 @@
 #include "../../shared/log.hpp"
 #include "../cosmetic_events.hpp"
 #include "../damage.hpp"
+#include "../entity_lifecycle.hpp"
 #include "../game_events.hpp"
 #include "../server_api.hpp"
 
-#include <algorithm>
 #include <unordered_set>
 #include <vector>
 
 namespace server
 {
-
-static entities::Player_Entity *
-find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
-{
-  auto *players = session.entity_system.get_entities<entities::Player_Entity>();
-  if (!players) return nullptr;
-  for (auto &p : *players)
-    if (p.entity_id == uid) return &p;
-  return nullptr;
-}
-
-static entities::Physics_Body_Entity *
-find_physics_body_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
-{
-  auto *pool = session.entity_system.get_entities<entities::Physics_Body_Entity>();
-  if (!pool) return nullptr;
-  for (auto &b : *pool)
-    if (b.entity_id == uid) return &b;
-  return nullptr;
-}
 
 // Splash query at the detonation point. Linear falloff (1 - dist/radius).
 // Self-damage is NOT filtered: standing in your own blast radius hurts and
@@ -81,12 +61,18 @@ static void detonate(const entities::Rocket_Entity &rocket,
     // Resolve the entity center from network state — h.position is a surface
     // contact point which sits near the explosion origin for direct hits and
     // gives a degenerate direction.
+    //
+    // get<T>(uid) is a uid-index lookup and answers nullptr for "no such
+    // entity" and "wrong type" alike, which is exactly the two-way test this
+    // needs — so the type dispatch below IS the lookup.
     vec3f entity_center;
-    if (entities::Player_Entity *player = find_player_by_uid(session, h.entity_id))
+    if (entities::Player_Entity *player =
+            session.entity_system.get<entities::Player_Entity>(h.entity_id))
     {
       entity_center = player->position + vec3f{0.f, 38.f, 0.f};
     }
-    else if (entities::Physics_Body_Entity *body = find_physics_body_by_uid(session, h.entity_id))
+    else if (entities::Physics_Body_Entity *body =
+                 session.entity_system.get<entities::Physics_Body_Entity>(h.entity_id))
     {
       entity_center = body->position;
     }
@@ -132,7 +118,8 @@ static void detonate(const entities::Rocket_Entity &rocket,
   // direct-hit player only — splash kills get reported via a future
   // PLAYER_DIED event (see plan §"Phase 4"), not back-derived from this one.
   shared::entity_uid_t victim_id = 0;
-  if (direct_hit_uid != 0 && find_player_by_uid(session, direct_hit_uid))
+  if (direct_hit_uid != 0 &&
+      session.entity_system.get<entities::Player_Entity>(direct_hit_uid) != nullptr)
     victim_id = direct_hit_uid;
 
   shared::game_event_t event{};
@@ -148,22 +135,27 @@ void update_rockets(server_context_t &context, float dt)
   shared::game_session_t &session = context.session;
   physics_state_t        &physics = *context.physics;
 
-  auto *rockets = session.entity_system.get_entities<entities::Rocket_Entity>();
-  if (!rockets || rockets->empty())
+  Span<entities::Rocket_Entity> rockets =
+      session.entity_system.entities_of<entities::Rocket_Entity>();
+  if (rockets.empty())
     return;
 
-  std::vector<int> to_remove;
+  // Collected as uids, not slot indices. Removal is swap-and-pop, so a slot
+  // index recorded during the walk names a DIFFERENT rocket after the first
+  // removal -- which is why this used to have to sort descending and dedupe. A
+  // uid names the same entity no matter what moved.
+  std::vector<shared::entity_uid_t> uids_to_remove;
 
-  for (int i = 0; i < static_cast<int>(rockets->size()); ++i)
+  for (uint32_t i = 0; i < rockets.size(); ++i)
   {
-    auto &rocket = (*rockets)[i];
+    entities::Rocket_Entity &rocket = rockets[i];
 
     rocket.lifetime -= dt;
     if (rocket.lifetime <= 0.f)
     {
       detonate(rocket, context, /* direct_hit_uid */ 0,
                /* impact_normal */ {0.f, 0.f, 0.f});
-      to_remove.push_back(i);
+      uids_to_remove.push_back(rocket.entity_id);
       continue;
     }
 
@@ -177,7 +169,7 @@ void update_rockets(server_context_t &context, float dt)
     {
       rocket.position = hit.position;
       detonate(rocket, context, hit.entity_id, hit.normal);
-      to_remove.push_back(i);
+      uids_to_remove.push_back(rocket.entity_id);
     }
     else
     {
@@ -185,13 +177,10 @@ void update_rockets(server_context_t &context, float dt)
     }
   }
 
-  // Sort descending so swap-removes don't invalidate earlier indices.
-  std::sort(to_remove.rbegin(), to_remove.rend());
-  to_remove.erase(std::unique(to_remove.begin(), to_remove.end()),
-                  to_remove.end());
-
-  for (int idx : to_remove)
-    session.entity_system.destroy(&(*rockets)[idx]);
+  // `rockets` (and every reference taken from it above) is dead from here on --
+  // each destroy swap-and-pops the pool it points into.
+  for (shared::entity_uid_t uid : uids_to_remove)
+    destroy_entity(context, uid);
 }
 
 } // namespace server

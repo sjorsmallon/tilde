@@ -3,6 +3,7 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/game_session.hpp"
 #include "../../shared/physics.hpp"
+#include "../server_context.hpp"
 
 namespace server
 {
@@ -15,10 +16,17 @@ namespace server
 // register_dynamic_capsule does not exist in physics.cpp yet -- but that is now
 // one unhandled enumerator rather than an open set of unknown strings.
 //
-// Returns nullptr on failure (pool exhausted, or a shape physics cannot build).
-entities::Physics_Body_Entity *
-spawn_physics_body(shared::game_session_t &session,
-                   physics_state_t &physics,
+// Returns the new body's uid, or null_entity_uid on failure (no pool, or a shape
+// physics cannot build). A uid rather than the Physics_Body_Entity* it used to
+// return, matching Entity_System::spawn -- see the rule there (P7 step 4).
+//
+// Takes the whole context rather than (session, physics) because its failure
+// path has to UNDO the spawn, and undoing a spawn goes through
+// destroy_entity(context, uid) -- the one server-side destruction funnel (P7
+// step 5). Two arguments that happened to be enough for the success path are
+// not enough for the failure path.
+shared::entity_uid_t
+spawn_physics_body(server_context_t &context,
                    entities::Shape_Kind shape,
                    vec3f size,
                    vec3f position,

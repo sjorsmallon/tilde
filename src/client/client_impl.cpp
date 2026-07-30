@@ -75,9 +75,6 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   state_manager::init();
   state_manager::switch_to(GameStateKind::MainMenu);
 
-  // Register Entities (Shared Logic)
-  state_manager::get_entity_system().register_all_known_entity_types();
-
   // Bind every cosmetic-effect handler. Each effect_type_t maps to exactly
   // one function — registration must happen before the first snapshot can
   // arrive, so it lives in client Init() rather than PlayState::on_enter.

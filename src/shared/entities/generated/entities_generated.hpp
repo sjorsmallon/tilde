@@ -5,6 +5,7 @@
 #include "network/network_types.hpp"
 #include "span.hpp"
 #include <cstdint>
+#include <type_traits>
 
 namespace entities
 {
@@ -349,6 +350,90 @@ struct Physics_Body_Entity : Entity
   Hitbox hitbox = {};
 };
 
+// The entity pool is a byte buffer: it copies with memcpy and runs no
+// destructor. A field that breaks either of these corrupts or leaks
+// silently, so the check lives here rather than in a test nobody runs
+// before the pool does.
+static_assert(std::is_trivially_copyable_v<Player_Spawn_Entity>,
+              "Player_Spawn_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Player_Spawn_Entity>,
+              "Player_Spawn_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Player_Spawn_Entity>,
+              "Player_Spawn_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Player_Entity>,
+              "Player_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Player_Entity>,
+              "Player_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Player_Entity>,
+              "Player_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Weapon_Entity>,
+              "Weapon_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Weapon_Entity>,
+              "Weapon_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Weapon_Entity>,
+              "Weapon_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Rocket_Entity>,
+              "Rocket_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Rocket_Entity>,
+              "Rocket_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Rocket_Entity>,
+              "Rocket_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Particle_Emitter_Entity>,
+              "Particle_Emitter_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Particle_Emitter_Entity>,
+              "Particle_Emitter_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Particle_Emitter_Entity>,
+              "Particle_Emitter_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Trigger_Volume_Entity>,
+              "Trigger_Volume_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Trigger_Volume_Entity>,
+              "Trigger_Volume_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Trigger_Volume_Entity>,
+              "Trigger_Volume_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Light_Entity>,
+              "Light_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Light_Entity>,
+              "Light_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Light_Entity>,
+              "Light_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Physics_Body_Entity>,
+              "Physics_Body_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Physics_Body_Entity>,
+              "Physics_Body_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Physics_Body_Entity>,
+              "Physics_Body_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
 enum field_type_t : uint8_t
 {
   FIELD_TYPE_INVALID = 0,
@@ -417,6 +502,17 @@ struct entity_type_info_t
   // nothing -- this is the type-erased hook for callers that already own
   // their storage: undo snapshots, network baselines, pooled storage.
   Entity* (*construct_at)(void* memory);
+
+  // Reaches the base of an ALREADY CONSTRUCTED entity of this type, given
+  // untyped storage. Deliberately not a cast at the call site: an entity
+  // and its base both have data members, so they are not
+  // pointer-interconvertible and `(Entity*)memory` is a bet on a layout
+  // C++ does not promise. This thunk is emitted where the concrete type is
+  // complete, so the compiler applies whatever adjustment the ABI wants.
+  //
+  // For pooled storage, which addresses its elements as bytes. `memory`
+  // must already hold a live entity of this type -- construct_at first.
+  Entity* (*as_base)(void* memory);
 };
 
 struct component_type_info_t

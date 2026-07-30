@@ -56,12 +56,18 @@ were paying the blittable/fixed-size/memcmp constraints for nothing.
 1. Declare it in `entities.def`.
 2. Build. The generator emits the struct, the enum value and the tables.
 3. Fix the compile errors. Every exhaustive `switch` over `entity_type` —
-   `make_entity_pool`, `create_map_entity`, `fire_trigger_action`,
-   `compute_entity_bounds`, the editor's `ENTITY_DISPATCH` — fails to compile
-   until it handles the new case. That is the design: the compiler is the
-   checklist.
+   `create_map_entity`, `fire_trigger_action`, `compute_entity_bounds`, the
+   editor's `ENTITY_DISPATCH` — fails to compile until it handles the new case.
+   That is the design: the compiler is the checklist.
 
-There is no step where you register anything.
+There is no step where you register anything, and **storage is not on that
+list**. `Entity_System` sizes one pool per tag straight from `ENTITY_INFOS`
+(`size_in_bytes`, `construct_at`, `as_base`), so a new entity gets storage with
+no switch case to write. `make_entity_pool` used to be the fifth switch above;
+it existed only to turn a runtime tag into a compile-time `T`, which the table
+answers as data (`../../entity_system.hpp`, `entity_system_def.md` §1).
+The four that remain dispatch *behaviour*, which is the case where a switch
+earns itself.
 
 ## Field flags
 

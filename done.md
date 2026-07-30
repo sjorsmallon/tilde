@@ -1,7 +1,20 @@
-# THE ENTITY TRACK — completed phases
+# Completed tracks
 
-Phase order and rationale live in `todo.md`; design rationale in `entity_def.md`.
-This file keeps the finished phases so `todo.md` stays a work list.
+Phase order and rationale live in `todo.md`; design rationale in
+`entity_def.md` (entities), `entity_storage_def.md` (P7 storage/ownership),
+`entity_system_def.md` (pool retirement) and `cvar_def.md` (cvars). This file
+keeps the finished work so `todo.md` stays a work list.
+
+- **THE ENTITY TRACK, P0–P7 plus pool retirement** — the generator, schema,
+  storage and wire chain. Everything except **P8 (protobuf removal)**, which is
+  the one entity-track item still open and still in `todo.md`.
+- **CVAR TRACK (def_gen), steps 1–6** — cvars and console commands onto the
+  same DSL + generator. Jump to it below; the "forward loop" post-mortem at
+  its end is the part most likely to matter again.
+- **Closed decisions** — the appendix at the bottom, recorded so they are not
+  re-litigated.
+
+# THE ENTITY TRACK — completed phases
 
 ## P0 — pascal_string_t::set() tail residue bug  ✅ DONE
 
@@ -597,6 +610,9 @@ The phase's one hard rule — do not stop while the tree is broken — is satisf
   a handwritten exhaustive switch over the closed enum — is used where it does
   earn its place: `make_entity_pool`, `create_map_entity`, `fire_trigger_action`,
   `compute_entity_bounds`, and the editor's `ENTITY_DISPATCH`.
+  *(`make_entity_pool` is gone as of 2026-07-30 — pool retirement step 3. It was
+  the one on that list dispatching STORAGE rather than behaviour, which the
+  generated table answers as data. The other four stand.)*
 - **Undo's text adapter** landed as `entities::field_to_text` /
   `field_from_text` rather than as a `field_change_t`-shaped pair. Same seam,
   and map I/O is its real (and only) caller — a second encoding for undo alone
@@ -624,9 +640,10 @@ The phase's one hard rule — do not stop while the tree is broken — is satisf
 ---
 
 ## P6 — Serializer v2 (with snapshot delta compression)  ✅ DONE
-*Full build green; all 18 test executables pass. What is still in `todo.md`
-under P6 is the live GUI ack-loop check (needs a running client, can't be done
-headlessly) and `@interpolate`, a future annotation.*
+*Full build green; all 18 test executables pass. The two live-GUI checks that
+could not be done headlessly were verified 2026-07-29 — see "Verified live"
+below. Nothing of P6 remains in `todo.md`; `@interpolate` outlived the phase and
+is now its own entity-track item.*
 
 One narrow seam: **"give me the changed fields."** Change *detection* stays a
 separate module from wire *encoding*.
@@ -766,9 +783,489 @@ new player in from the old one's last position.
 implicit; a record count is not an entity count, and the one at the head of
 `entity_data` is the only count that means anything now.
 
+### Verified live (2026-07-29) — the two checks that needed a running client
+
+- [x] ~~Runtime-verify the ack loop live~~ — a moving player logged
+      `delta_from` at the previous tick for ~20 bytes, dropping to ~3 bytes
+      standing still. Constant while idle is the point: absence-means-unchanged
+      works, and the 3-vs-~1 byte floor is frame framing, not a leak.
+      *(The line came from `net_snapshot_debug`. Its format has since grown the
+      rocket and body counts — `play_state.cpp:676` is the current text, so the
+      original quote no longer reproduces verbatim.)*
+- [x] ~~Disconnect test~~ — two local clients, a disconnect leaves no lingering
+      wireframe. Unblocked by the ephemeral-port fix: clients bind `open(0)`
+      instead of a fixed 5001, so the server can tell two of them apart.
+
 ---
 
-## Closed decisions — recorded so they are not re-litigated
+## P7 — Storage refactor: one ownership model  ✅ DONE (2026-07-30)
+*Full build green; all 19 test executables pass. **Design AND full log:
+`entity_storage_def.md`** — it has the audit, the handle decision, and §6's
+step-by-step record of what each step did and what it turned up. This is the
+summary; that file is the source of truth.*
+
+One ownership model for runtime entities: the uid is the handle, the pools are
+dense, and map load stops writing into the map.
+
+**Decided (§2): the handle is the bare `entity_uid_t`, not a generational pair.**
+A monotonic uid is never reused, so a stale uid resolves to *nothing* rather than
+to a different entity — which is the whole guarantee a generation counter buys.
+And the uid is already the identity at three boundaries that cannot carry
+`{index, generation}`: the map file, the wire (`owner_id: u32 @Networked`,
+`snapshot_frame_t`'s keys) and Jolt's `entity_body_map`. A generational handle
+would have been a *second* identity for the same thing. It stays available as a
+pool-internal optimisation later, because the public name is the uid either way.
+
+**Decided (§3): pools stay DENSE** (swap-and-pop, no tombstones), so a per-type
+snapshot stays a straight copy of the vector. Stability comes from the uid index,
+not from stable slots. **Decided (§5): `game_session_t::geometry` does not join
+the pool model** — already a session-owned value vector since P1, never spawned,
+destroyed or networked.
+
+- [x] **1. Map load stops mutating the map.** `Entity_Pool_Base::add_existing`
+      takes the uid and stamps it on the pool's **copy**; the
+      `entry.entity->entity_id = entry.uid` line in `init_session_from_map` and
+      its twin in `add_entity` are gone. `const map_t&` is true.
+      * The test that matters reads the map entity's `entity_id` **directly**
+        (`session_test`), *not* the content hash — `entity_id` is not
+        `@Saveable`, so the hash comparison §4 originally proposed would have
+        passed against the very bug. Also covered: two sessions from one map,
+        which is the original failure.
+- [x] **2. The uid index.** `Entity_System::locations` (uid →
+      `{entity_type, slot}`) plus `get<T>(uid)`, which answers nullptr for both
+      "no such uid" and "uid names a different type" — that is what lets a caller
+      use it as lookup *and* type test in one `if`. Guarded by
+      `validate_locations()`, which cross-checks index against pools in both
+      directions; verified by deleting the swap-and-pop fixup and confirming
+      `session_test` fails naming the stale uid.
+- [x] **3. Delete the uid linear scans.** Five copies of `find_player_by_uid` /
+      `find_physics_body_by_uid` gone, plus `bot_system`'s per-bot-per-tick scan
+      of the whole player pool (`Bot_State` now carries `entity_uid`).
+- [x] **4. The compile-breaking one:** `spawn<T>()` returns a `entity_uid_t`,
+      `destroy` takes one, `destroy(T*)` and its pointer-range check are gone.
+      Establishes the rule the whole phase exists for: **never store a `T*`
+      across a call that can spawn or destroy in the same pool** — checkable by
+      reading one function, where the old rule was "never store one at all, and
+      also hope".
+      * The slot scans went too, and needed a different answer: "which player is
+        slot N" is a *slot* question the uid index cannot serve, so
+        `Player_Server_State` gained a `player_uid` column.
+- [x] **5. `unregister_physics_body` wired into destruction.**
+      `server::destroy_entity(context, uid)`
+      (`src/server/entity_lifecycle.{hpp,cpp}`) is the one server-side
+      destruction funnel — **a function, not a hook installed on the session.**
+      A `std::function` the server installs so `Entity_System::destroy` could
+      call back into physics is registration wearing a different hat: invisible
+      at the call site, silently absent on any `Entity_System` nobody installed
+      it on, and the exact shape P0–P6 and the CVAR TRACK spent their time
+      deleting. The residual is stated rather than papered over: it is a
+      convention, not a compiler-enforced funnel, accepted because only the
+      server destroys anything.
+      * **The leak this step was written to fix never existed.** Rockets own no
+        Jolt body (moved by hand, hit-tested with `cast_sphere`), and a rocket
+        kill does not destroy the victim — `schedule_respawn` reuses the entity.
+        The step made a future leak unrepresentable; it did not fix a live one.
+      * **The audit found a real bug instead.** `load_map_into_state` cleared
+        `Player_Server_State::player_uid` because a new session restarts
+        `next_entity_id` and a retained uid can be *reissued* — but never cleared
+        `death_tick_by_player_uid`, keyed the same way. A death pending across a
+        map switch would resolve to a real but unrelated `Player_Entity` and
+        reset its position and health when the delay elapsed.
+
+**Step 6 (the runtime cycle) was CLOSED BY DECISION, not by verification —
+2026-07-30, and the distinction matters if something turns up later.** The step
+asked for a hand-driven map load → play → save in the integrated build (connect,
+fire rockets, take a rocket kill, leave, `spawn_cube`, a `map` switch with a
+death pending). That was **not run.** The call was that steps 4–5 fail loudly and
+in-your-face if they are wrong, so ordinary play is a sufficient detector and a
+scripted pass buys little. All 19 tests are green, which is the half that *was*
+verified. If a P7-shaped symptom appears — an entity resolving to the wrong one,
+a stale uid, a body that outlives its entity — this is the unswept corner.
+
+*(One thing found while checking: `spawn_cube` draws nothing. Diagnosed and NOT
+a P7 regression — it is the duplicated asset registry, tracked in `todo.md`.)*
+
+**Left open deliberately when the phase closed:** whether `map_entity_t` should
+hold a value rather than a `shared_ptr`. Real question, but an *editor* refactor
+— the tools assume stable pointers into a live `map_t` — so it moved to the
+Editor list in `todo.md` rather than being bundled here, per P7's own ordering
+rule.
+
+**Two P7 bullets the audit struck off as stale** (§1): *unify the runtime entity
+id type* (already u32 everywhere; the uint64 died with the macro system in P5)
+and *factory stops returning `shared_ptr`* (those symbols no longer exist;
+`create_map_entity` **keeps** returning one, and §4 says why).
+
+---
+
+## Pool retirement — delete the pre-generator `Entity_System`  ✅ DONE (2026-07-30)
+*Full build green; all 19 test executables pass. **Design AND full log:
+`entity_system_def.md`** — §5 records what each step did and what it turned up.
+This is the summary; that file is the source of truth.*
+
+Deliberately **not numbered**: `P8` already means protobuf removal in this file
+and in `entity_def.md`, and renumbering to buy a tidier sequence would have
+stranded those references. It sat between P7 and P8 in the track.
+
+`Entity_System` predated the DSL. Its whole structure — `Entity_Pool_Base` and
+its five virtuals, heap pools behind `unique_ptr`, a `std::map` keyed by tag, and
+`make_entity_pool`'s hand-written switch naming all eight types — existed to
+answer *"runtime tag to compile-time `T`"*. `entity_info(type)` already answered
+it as data (`size_in_bytes`, `alignment`, `construct_at`), and `construct_at`'s
+own doc comment named pooled storage as its intended client. The pool was the one
+caller on that list that never took the hook.
+
+**Decided (§1): the pool becomes a plain struct and the entity type becomes a
+field.** `Entity_Pool<T>` used `T` for four things — `sizeof`, default
+construction, copy-assign, `entity_as<T>`'s tag compare — and the first three are
+table columns while the fourth is a compare against `Entity::type`. Nothing was
+left that needed a template parameter, so nothing needed the switch that existed
+to supply one.
+
+**Storage stays dense.** `entity_storage_def.md` §3 had settled dense vs.
+slot-stable and this reopened nothing. `Stable_Array` (`shared/array.hpp`) was
+re-examined and **declined**: it is itself a template on `Type`, so it would have
+left the switch exactly where it was, and its compile-time `Slot` sizing plus
+address-masking make it the harder of the two to type-erase. It also has zero
+users and zero tests — if it ever ships, not by debuting in the hottest structure
+in the game.
+
+- [x] **1. The invariants, proven before anything rested on them.** `def_gen`
+      emits per entity `static_assert` for `is_trivially_copyable_v` /
+      `is_trivially_destructible_v` / `is_base_of_v<Entity, X>`, plus one new
+      table column `Entity* (*as_base)(void* memory)`. Additive and
+      behaviour-free — nothing called the column yet — so a green build *was*
+      the proof that the rest of the phase was legal at all. 24 asserts (8 × 3),
+      green.
+      * The four **hand-written** stand-in asserts (`entity_layout_test.cpp`,
+        covering four of the eight types) are **deleted**. That hand-maintained
+        per-type list is the exact shape this phase existed to remove; including
+        the generated header is the check now.
+      * Load-bearing afterwards, not decoration: step 3 makes `push_copy` and
+        `remove_at` `memcpy` and the byte pool runs no destructor, so the day a
+        non-trivial field lands the pool leaks and nothing else would say so.
+        **Verified by breaking it**: a `std::string` injected into
+        `Player_Entity` fails the copyable *and* the destructible assert, each
+        naming the type and the reason. An assert nobody has seen fire is a
+        comment.
+      * `as_base` exists so the pool reaches `Entity*` from `std::byte*`
+        **without betting on `Entity` at offset 0** — `Entity` has data members
+        and so does every derived type, so they are not pointer-interconvertible
+        and there is no honest `static_assert` for that layout. The generator
+        emits the `static_cast` where the type is complete instead. Since no
+        assert can cover it, `entity_layout_test` covers it at **runtime**:
+        `as_base` must return the same pointer the language does, and every type
+        must carry both hooks (the pool indexes by tag and cannot see a hole).
+      * **`SCHEMA_HASH` did not change**, so this build still connects to one
+        without it. Expected — the hash is mixed from the parsed `.def`, not the
+        emitted text — but confirmed rather than assumed, since a table-shape
+        change *looks* exactly like what the handshake guards.
+      * Ordering footnote: written to land ahead of P7 step 4, because it is a
+        *reflection* change and the ordering rule forbids those riding along with
+        storage steps — leaving "before P7 step 4 or after P7" as the only legal
+        slots. P7 step 4 landed first, so it took the second slot. The proof
+        still arrived before the storage swap, which is the only place it was
+        load-bearing.
+- [x] **2. Narrow the accessor, keep the storage.** `get_entities<T>()` →
+      `Span<T> entities_of<T>()`, still backed by `std::vector<T>`. 15 call sites
+      (was 17 — P7 step 4 deleted two `get_entities<Player_Entity>()` scans), no
+      storage change. This is the seam that made step 3 a one-file change, and it
+      narrows callers, who could previously `push_back` into a pool behind
+      `locations`' back through the `std::vector<T>*` they were handed.
+      * **Every `if (!pool)` null check went with it** — 9 of them. An empty span
+        answers "no entities of this type" and "this type has no pool" the same
+        way, which is correct: the second was a registration bug, never a
+        condition worth branching on, and step 3 made it unrepresentable.
+      * **The one place it was NOT mechanical**, and the reason to have done this
+        as its own step: `server_impl.cpp`'s per-tick trigger walk grabbed
+        `player_pool` and the snapshot frame build ~100 lines later reused it.
+        That was safe with a `std::vector<T>*` — the pointer survives a
+        reallocation and only its ELEMENTS move — and is not safe with a span,
+        which carries the data pointer *and* the count. It re-fetches now, next to
+        the rocket and physics-body fetches it already did. Latent rather than
+        live (nothing between them spawns a player: `fire_trigger_action` →
+        `inflict_damage` neither spawns nor destroys), but it is the difference
+        between a rule callers are told and a rule the type enforces.
+      * Two long-range holds were audited and kept: `bot_system`'s `players` (the
+        only spawn under it is a Rocket, a different pool) and `server_impl`'s
+        bot-spawn loop over the spawn-marker pool (`spawn_bot` spawns a
+        `Player_Entity`, also a different pool). Both now say so at the site.
+- [x] **3. The storage swap.** `Entity_Pool` is a plain struct over
+      `std::vector<std::byte>` (`type`, `stride`, `count`), pools are
+      `std::array<Entity_Pool, ENTITY_TYPE_COUNT>`, and everything in §3 of the
+      design is deleted — `Entity_Pool_Base` and its five virtuals,
+      `Entity_Pool<T>`, `make_entity_pool`, the `std::map` of `unique_ptr`s,
+      `register_all_known_entity_types`, the `@NOTE(SJM)` constructor apology,
+      `invalid_entity_slot` and `uid_at`. It came in at the predicted size:
+      `entity_system.{hpp,cpp}` plus three one-line outside edits.
+      * `play_state.cpp`'s debug overlay kept working as predicted — `pool.type`
+        is a member rather than a map key, and index 0 (Invalid) is skipped by
+        the count check it already had, with no special case.
+      * `client_impl.cpp`'s duplicate `register_all_known_entity_types()` call
+        went out with the function, as planned. No separate fix needed.
+      * **`add_entity` takes `const entities::Entity*`**, not the map's
+        `shared_ptr`. What it needs is bytes to copy from, and taking the owning
+        handle is what tied session storage to an editor allocation decision — the
+        `map_entity_t` question is now free to move without touching this file.
+        One call site gained a `.get()`.
+      * **The type-mismatch branch could not survive**: `add_entity` picks the
+        pool BY `entity->type`, so the mismatch `add_existing` used to report
+        through `invalid_entity_slot` is unreachable from there. `push_copy`
+        asserts as a backstop rather than as a path.
+      * **One coupling was load-bearing and unchecked**, found while writing it:
+        the pool strides by `entity_info(type).size_in_bytes` while
+        `entities_of<T>()` walks by `sizeof(T)`. They agree by construction — the
+        generated column IS `(uint32_t)sizeof(T)`, read rather than assumed — but
+        a disagreement leaves element 0 correct and everything after it garbage,
+        which is the worst available failure mode. `entities_of<T>()` asserts it
+        now, and the assert was **watched fire**: stride skewed by 4,
+        `session_test` aborts naming the entity and the reason. A second assert
+        covers over-alignment, since the buffer comes from `operator new` and
+        that promises only fundamental alignment.
+      * `validate_locations` lost its whole pool-existence half — an array of
+        values cannot be missing an entry — and kept the half that matters: index
+        vs. pool agreement.
+- [x] **4. The prose.** `make_entity_pool` came off the
+      sanctioned-exhaustive-switch lists in `CLAUDE.md` and
+      `src/shared/entities/README.md`. The other four stay: they dispatch
+      *behaviour*, which is where a switch earns itself.
+      * Both lists now also say **storage is not among them**, which is the
+        useful half — "adding an entity" is exactly when someone goes looking for
+        the place to register it. `README.md`'s "there is no step where you
+        register anything" is now true of storage too, instead of true of
+        everything except storage.
+
+**A stale claim corrected while closing this** (it had been in both `todo.md` and
+`entity_system_def.md` §5): the guard for the storage swap is **`session_test`**,
+which calls `validate_locations()` four times — around the uid index, across a
+swap-and-pop removal, and after `reset()`. It is *not* `ecs_test`, which both
+documents credited. `ecs_test` exercises `shared/old_ideas/ecs.hpp`, an unrelated
+component registry that `Entity_System` does not use and this phase never
+touched.
+
+**The test suite became one command during this phase.** All 19 tests are
+registered with CTest at the bottom of `CMakeLists.txt` (`GAME_TESTS`), each with
+`WORKING_DIRECTORY` pinned to the project root: `ctest --test-dir cmake_build -j8`,
+~2s. That retires the standing "`map_migration_test` must run FROM THE PROJECT
+ROOT" footgun rather than documenting it a third time — verified by running the
+suite from `%TEMP%`. Running the binaries directly out of `cmake_build/bin/` is
+unchanged and still needs the project root. The list is written out rather than
+globbed on purpose: a glob over `bin/` also catches `MyGame`, `def_gen` and
+`map_convert`, and the exclusion list that would keep them out rots faster than
+the inclusion list. Adding a test means adding the target AND its name.
+
+---
+
+# CVAR TRACK — def_gen  ✅ DONE (steps 1–6, 2026-07-29 → 2026-07-30)
+
+Console variables and commands moved to the same DSL + generator the entities
+use. `cvar_def.md` is the design (source of truth). This track also renamed the
+generator `entity_gen` → **`def_gen`**: its real identity is the schema
+compiler (it already emitted the asset manifests, and P8 has it absorbing
+messages).
+
+**What it fixed.** `game_shared` is a STATIC lib linked into both
+`game_client.dll` and `game_server.dll`, so anything with static storage in it
+existed *twice*. The old `CVarSystem` singleton was therefore two singletons:
+`spawn_bot` registered in one registry and executed against another, and
+`cl_timescale` slowed rendering but not simulation. There is now no
+registration and no static initializer at all — a cvar read is a field access
+(`cvars.pm_maxspeed`), names exist at runtime only in the console, and a
+missing or wrongly typed command handler is a **link error naming the symbol**.
+
+**Wire artifact for P8:** `S2C_CvarValues` is already bitstream-native, so P8
+has nothing to convert. `S2C_CVarSync` and `CvarPair` are deleted from
+`game.proto`, making P8's conversion list two messages shorter than written.
+
+- [x] ~~1. Write `cvars.def`~~ — **done 2026-07-29**, at
+      `src/shared/cvars/cvars.def` (generated pair in a sibling `generated/`,
+      mirroring `src/shared/entities/`). 22 cvars + 5 commands.
+      `@Cheat`/`@Admin` dropped (no declaration ever used either); `map`
+      converted from cvar-with-callback to `@Server` command; `Replicated` →
+      `@Mirrored` (the 10 `pm_*`/`g_gravity`, and nothing else). Audit
+      findings recorded in the file:
+      * **`r_fov` is read by nothing** — declared 3× (all launchers, including
+        the dedicated one), every FOV in code is a literal
+        (`renderer.cpp:3034`, `camera.hpp:189`). Kept, unread; wiring it is a
+        one-liner at those two sites.
+      * **`cl_timescale` is a live instance of the cross-DLL bug** — read by
+        `main_integrated.cpp:92` (scales the SERVER accumulator, exe's copy)
+        and `client_impl.cpp:142` (scales client dt, DLL's copy). Console
+        setting reached only the client's, so slow-mo slowed rendering but not
+        simulation. Left unflagged; step 3 fixed it structurally.
+      * `sv_tickrate` was `flags::None` and is now `@Server` (only server code
+        reads it; the client learns tickrate from `CmdAccept`, a handshake
+        fact, not a mirrored value).
+      * `debug_show_collisions` gates recording in SHARED collision code while
+        drawing is client-side — unflagged, and step 3 makes the integrated
+        console toggle finally reach the simulating side.
+      * **`string<N>` has zero users in v1** — `map` was the only string cvar.
+- [x] ~~2. Rename `entity_gen` → `def_gen` and extend~~ — **done 2026-07-29**.
+      `src/tools/def_gen.cpp`, CMake target `def_gen`, all doc refs updated.
+      `cvars`/`commands` block kinds with mandatory description literals;
+      emits `src/shared/cvars/generated/` (`cvars_generated.{hpp,cpp}` +
+      `server_command_bindings.cpp` + `client_command_bindings.cpp`);
+      `--dump` lists cvars/commands. Decisions made while building it:
+      * **One run, every `.def`.** The tool takes N inputs, and `SCHEMA_HASH`
+        is folded across all of them (`mix_schema_hash`). CMake passes both
+        files to one custom command. A partial run writes a hash that
+        disagrees with a full build — that's why `--emit` is opt-in and the
+        usage text says so.
+      * **Output dir is derived** from each input's path
+        (`<def_dir>/generated`), since with N inputs one `--output-dir` means
+        nothing. `--output-dir` survives as a single-input override.
+      * **Families are fenced.** One `.def` holds one family; mixing is a
+        hard error (they emit different artifacts into different
+        directories). Flag vocabularies are disjoint and neither falls back
+        to the other — `@Networked` on a cvar and `@Client` on an entity
+        field both error.
+      * **Block names are excluded from the hash**, so renaming a section
+        doesn't refuse every connection. Descriptions and defaults are
+        excluded too: the hash answers "do the two builds agree about what
+        the bytes mean".
+      * **`string<N>` implemented after all** (not deferred): ~20 lines,
+        `pascal_string_t<N>` with the zero-padding invariant restored on
+        write, verified by compiling a fixture. Still zero users in
+        `cvars.def`.
+      * **Commands are `TYPE_VOID` field records** in the same IR array — a
+        command is the same shape as a cvar line minus the value.
+      * Bool parsing is a **closed set both ways**: the old `CVar<bool>`
+        mapped anything not in `1/true/yes/on` to FALSE, so
+        `debug_show_navmesh tru` silently turned it off. Unrecognised text is
+        a rejection and the value is left alone. Numeric parsing requires the
+        WHOLE token (`pm_maxspeed 320abc` is rejected, not read as 320).
+      * `SCHEMA_HASH` stays a single symbol in `entities::` — the cvar header
+        deliberately does not emit a second one. The namespace is now a
+        slight misnomer; renaming it touches the handshake, so it waits.
+      * Folded in the two **generator polish** items: `field_info_t`'s
+        sentinels are named (`NOT_A_COMPONENT` / `NOT_A_STRING` /
+        `NOT_AN_ASSET_CLASS` / `NOT_AN_ENUM`, compared by name in
+        `entity_reflection.cpp` and `entity_layout_test.cpp` instead of
+        `>= 0`), and all generated tables emit designated initializers.
+- [x] ~~3. Ownership cutover~~ — **done 2026-07-29**. All 18 tests green;
+      dedicated server boots. Every `CVar<T>` global gone, `cvar.hpp` included
+      by NOTHING. Launcher owns `cvar_state_t` + `command_table_t` (all three
+      launchers), threaded through `client::Init(state, table)` /
+      `server::Init(state, table)` onto `client_context_t::cvars` /
+      `server_context_t::cvars`. Decisions made while doing it:
+      * **`execute_console_line` was pulled forward from step 4.** Step 3
+        deletes the registry, so leaving `CVarSystem::Execute` in place would
+        have meant a commit where every console command silently resolves
+        nothing. It is also the natural consumer of the cutover: the console
+        and the server's remote-command inbox call the same function, so a
+        line typed locally and the same line off the wire take one path.
+      * **Ownership is decided by `forward_to_server`, not by a build flag.**
+        A networked client installs it on connect (`enter_connected_phase`),
+        so `@Server`/`@Mirrored` names forward; a dedicated server and a
+        disconnected client leave it null.
+      * **Shared readers take the state as a parameter.**
+        `player_move(const cvar_state_t&, ...)` and
+        `audio_system_t::init(const cvar_state_t&)`. A reference makes
+        client/server agreement about the `pm_*` values a signature obligation
+        rather than a hope about which copy of a static-lib global each module
+        linked — the same argument the `@Mirrored` flag makes.
+      * **`record_collision` no longer checks its own flag** — it records
+        unconditionally and `player_move` gates the call, reading
+        `debug_show_collisions` ONCE per tick so a mid-tick toggle can't
+        record half a frame.
+      * `PlayState::conn_state_` deleted — it existed only to feed the old
+        capturing forwarder lambda, and a written-never-read member is not
+        something the compiler would have flagged.
+- [x] ~~4. Wire — mirrored-values message~~ — **done 2026-07-30**.
+      `S2C_CvarValues`, bitstream-native, in
+      `src/shared/network/cvar_mirror.{hpp,cpp}`: `count` then `(cvar_id, text)`
+      pairs. Full set sent per-client right after `CmdAccept`; the per-tick diff
+      is `collect_changed_mirrored_cvars` (memcmp of the value bytes at each
+      `cvar_info`'s offset/size against `server_context_t::last_broadcast_cvars`)
+      broadcast at the END of `Tick`. `S2C_CVarSync` + `CvarPair` gone from
+      `game.proto`, along with the `Message_Type` entry, the `Packet_Traits`
+      specialization and the `cvar_syncs` inbox vector. Decisions made while
+      doing it:
+      * **Values ride as TEXT, not raw bytes.** `cvar_to_text`/`cvar_from_text`
+        stay the only place cvar bytes become characters — the same argument
+        `entity_reflection` makes for field text. Floats use the shortest
+        round-tripping representation, which `cvar_test` pins as BIT-exact: a
+        mirrored `pm_*` that decoded to a near value would drift the client's
+        prediction away from the server's simulation one sync at a time.
+      * **The retain happens only after the send.** A change that is never
+        broadcast stays different from the retained copy and is collected again
+        next tick — that IS the lost-update repair, and there is no ack.
+      * **The receiver refuses anything not `@Mirrored`**, and an out-of-range
+        id is `log_error`, not a clamp. Both can only mean the two builds
+        disagree about `cvars.def` despite a matching `SCHEMA_HASH`.
+      * **Not gated on `client_map_ready`** (unlike snapshots): a cvar value is
+        world-independent, and a client mid-download wants the movement
+        constants it will simulate with the moment its map lands.
+      * The broadcast sits at the END of `Tick` so it catches every writer —
+        a console line off the wire, a command handler, gameplay code writing
+        the field directly.
+- [x] ~~5. Delete `src/shared/cvar.hpp` outright~~ — **done 2026-07-30**, and
+      dropped from `CMakeLists.txt` and `meson.build`'s source lists.
+- [x] ~~6. `cvar_test`~~ — **done 2026-07-30**, `src/test/cvar_test.cpp`, all
+      green (19 tests overall). Covers the generated tables
+      (name/description/side coverage, the one flat namespace,
+      `mirrored_cvars()` vs the flag), text conversion (bool as a closed set
+      BOTH ways, partial numeric parses rejected, float bit-exact round trip),
+      the console dispatcher (read/write/errors, forwarding decided by
+      `forward_to_server`), the generated argument binders (defaults, enum by
+      name, the `string...` tail keeping interior whitespace, usage strings),
+      and the mirroring path end to end.
+      * It compiles BOTH generated binder TUs and supplies its own
+        `commands::<name>` handlers — the only way to reach the binders outside
+        the DLLs that own the real ones, and a standing check that a binder TU
+        references nothing but those handler symbols.
+      * **ACCEPTANCE MET**: `spawn_bot` typed by hand into `MyGame.exe`'s ImGui
+        console → `spawn_bot: spawned idle bot at slot 32`, each command logged
+        exactly once. `spawn_bot` was the bug that started this whole track, so
+        that was always the criterion.
+
+### The forward loop — found on the last day of the track
+
+The integrated console had been broken **since step 3**, and was found
+2026-07-30 only from a live report of the server log repeating
+`Command from slot 0: spawn_bot` forever after one console entry.
+
+`main_integrated.cpp` handed client and server **one** `command_table_t`. The
+loopback client installs `forward_to_server` on connect. So the server,
+dispatching a line that had just arrived over loopback UDP, saw a `@Server`
+command AND a live forwarder — and forwarded it back to itself. Infinite
+ping-pong; the handler never ran. Fixed two ways:
+
+- **One `command_table_t` PER SIDE** in the integrated launcher. A table is a
+  module's DISPATCH SURFACE (which names it can run, whether it forwards), not
+  shared process state like `cvar_state_t`. The values stay shared — that is
+  the thing this track exists to share, and conflating the two caused this.
+  **The general rule**: when hoisting state into the launcher to escape
+  static-lib duplication, ask per member whether the two modules should AGREE
+  on it (share one object) or DIFFER on it (one per side, even in one process).
+- **A line that arrived from the wire is never forwarded again.**
+  `command_context_t::caller_slot >= 0` already means "a network player sent
+  this", so `execute_console_line` refuses to forward it. Makes the loop
+  unrepresentable rather than merely absent.
+
+`cvar_test`'s `[console: no forward loop]` section is the regression guard.
+
+**Two lessons worth keeping:**
+
+1. An out-of-process probe against `MyGame_Server.exe` **cannot** catch an
+   integrated-build ownership bug — the dedicated server legitimately has no
+   forwarder, so the loop cannot form there. A probe of exactly that shape
+   passed while the integrated build was broken. The integrated build is a
+   DIFFERENT topology, not just a convenience; exercise it too.
+2. Same disease still live elsewhere: the asset registry and
+   `debug_collision::g_collision_faces` are `game_shared` globals duplicated
+   per module. See todo.md, "Correctness / consistency".
+
+**Known rough edge, deliberately left:** `spawn_bot 1` is rejected with the
+usage string. Enum parameters bind by NAME only (`idle|chase|regular`), never
+by ordinal — deliberate (`cvars.def`: lowercase values are the console-typed
+identity), but it is the first thing a user reaches for. If numeric-or-name is
+ever wanted it belongs in the generated binder's enum parse, so every enum
+parameter gains it at once.
+
+---
+
+# Closed decisions — recorded so they are not re-litigated
 
 ### Why the five entity-track topics were one track
 

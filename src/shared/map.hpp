@@ -21,7 +21,13 @@ namespace shared
 // An entity is held by shared_ptr as it always was, and that stays correct
 // without a virtual destructor: make_shared<Concrete>() records the concrete
 // type's deleter in the control block, so destruction never goes through the
-// base. (Reworking ownership is P7's job, not the cutover's.)
+// base.
+//
+// P7 decided this STAYS (entity_storage_def.md §4): the editor mutates map
+// entities in place through stable pointers, and a map entity has no session
+// identity to hand a handle against. The session no longer shares these
+// objects — Entity_System::add_entity copies into its pool and stamps the uid
+// on the copy — so `const map_t&` means what it says.
 struct map_entity_t
 {
   entity_uid_t uid;

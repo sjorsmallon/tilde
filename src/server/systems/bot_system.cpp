@@ -5,6 +5,7 @@
 #include "../cosmetic_events.hpp"
 #include "../../shared/bot_debug.hpp"
 #include "../../shared/linalg.hpp"
+#include "../../shared/log.hpp"
 #include "../../shared/pathfinding.hpp"
 #include "../../shared/player_move.hpp"
 
@@ -17,7 +18,16 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
                     const vec3f &position,
                     int32_t slot, BotType type, BotPersonality personality)
 {
-  auto *bot = session.entity_system.spawn<entities::Player_Entity>();
+  const shared::entity_uid_t bot_uid =
+      session.entity_system.spawn<entities::Player_Entity>();
+
+  entities::Player_Entity *bot =
+      session.entity_system.get<entities::Player_Entity>(bot_uid);
+
+  if (!bot)
+    log_error("spawn_bot: could not spawn a Player_Entity for bot slot {} — the bot "
+              "will have no entity and will do nothing",
+              slot);
 
   if (bot)
   {
@@ -30,12 +40,13 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
     bot->hitbox.offset = {0.f,  38.f,  0.f};
 
     register_kinematic_capsule(physics,
-                               bot->entity_id,
+                               bot_uid,
                                bot->position + vec3f{0.f, 38.f, 0.f},
                                18.f, 20.f);
   }
 
   Bot_State state;
+  state.entity_uid  = bot_uid; // null_entity_uid if the spawn failed
   state.player_slot = slot;
   state.type        = type;
   state.personality = personality;
@@ -96,23 +107,23 @@ void update_bots(std::vector<Bot_State> &bots,
     bot_debug::g_entries.push_back(std::move(e));
   }
 
-  auto *players = session.entity_system.get_entities<entities::Player_Entity>();
-  if (!players) return;
+  Span<entities::Player_Entity> players =
+      session.entity_system.entities_of<entities::Player_Entity>();
 
   for (auto &bot : bots)
   {
     // ---- find this bot's entity ----
-    entities::Player_Entity *bot_ent = nullptr;
-    for (auto &p : *players)
-    {
-      if (p.client_slot_index == bot.player_slot) { bot_ent = &p; break; }
-    }
+    // One uid-index lookup. Safe to hold for the rest of the body: the only
+    // spawn below is a Rocket_Entity, which is a different pool, and nothing
+    // here destroys a player.
+    entities::Player_Entity *bot_ent =
+        session.entity_system.get<entities::Player_Entity>(bot.entity_uid);
     if (!bot_ent) continue;
 
     // ---- find nearest human target ----
     entities::Player_Entity *target    = nullptr;
     float                   best_dist = std::numeric_limits<float>::max();
-    for (auto &p : *players)
+    for (entities::Player_Entity &p : players)
     {
       if (p.client_slot_index >= BOT_SLOT_BASE) continue;
       float d = linalg::distance_between(bot_ent->position, p.position);
@@ -237,7 +248,12 @@ void update_bots(std::vector<Bot_State> &bots,
                                  target->position.z};
           vec3f aim_dir = linalg::normalize(target_center - eye);
 
-          auto *rocket = session.entity_system.spawn<entities::Rocket_Entity>();
+          // bot_ent and target stay valid across this spawn: it lands in the
+          // Rocket_Entity pool, not the Player_Entity one they point into.
+          const shared::entity_uid_t rocket_uid =
+              session.entity_system.spawn<entities::Rocket_Entity>();
+          entities::Rocket_Entity *rocket =
+              session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
           if (rocket)
           {
             rocket->position        = eye;

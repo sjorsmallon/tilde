@@ -552,6 +552,21 @@ inheritance decision (see the 2026-07-26 amendment above) was made to serve.
 Worth confirming the return type is a pointer and not a handle before pooled
 storage lands, since that choice is harder to reverse once callers exist.
 
+**Answered 2026-07-30 (`entity_storage_def.md` §2, §4): both, split by path.**
+There is no single factory return type because there were never one caller's
+worth of callers. The *runtime* path hands out a handle —
+`Entity_System::spawn<T>()` returns an `entity_uid_t`, resolved at point of use
+by `get<T>(uid)`. The *map* path keeps returning a pointer:
+`create_map_entity(classname)` yields a `shared_ptr<entities::Entity>` because a
+map entity is editor-owned storage that has no session identity to hand a handle
+against. The two converge at `Entity_System::add_entity`, which is where the
+copy into the pool happens and where the uid is stamped.
+
+And the handle is the **bare `entity_uid_t`**, not a generational pair — the uid
+is already the identity on the wire, in map files and in Jolt's body map, so a
+generational handle would have been a second identity for one thing. Full
+reasoning in `entity_storage_def.md` §2.
+
 ### 4. ~~Base struct named `entity_base_t`~~ — FIXED 2026-07-26
 
 The emitter hardcoded the name `entity_base_t` while the .def declared

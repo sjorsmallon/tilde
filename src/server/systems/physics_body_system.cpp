@@ -3,6 +3,7 @@
 #include "../../shared/components/components.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
+#include "../entity_lifecycle.hpp"
 
 #include <Jolt/Physics/Body/BodyInterface.h>
 
@@ -39,19 +40,27 @@ static vec3f quat_to_euler_degrees(const JPH::Quat &quaternion)
           linalg::to_degrees(yaw)};
 }
 
-entities::Physics_Body_Entity *
-spawn_physics_body(shared::game_session_t &session,
-                   physics_state_t &physics,
+shared::entity_uid_t
+spawn_physics_body(server_context_t &context,
                    entities::Shape_Kind shape,
                    vec3f size,
                    vec3f position,
                    vec3f initial_velocity)
 {
-  auto *body = session.entity_system.spawn<entities::Physics_Body_Entity>();
+  shared::game_session_t &session = context.session;
+  physics_state_t        &physics = *context.physics;
+
+  const shared::entity_uid_t body_uid =
+      session.entity_system.spawn<entities::Physics_Body_Entity>();
+
+  // Resolved once and held for the rest of this function: nothing below spawns
+  // or destroys a Physics_Body_Entity, which is what makes holding it legal.
+  entities::Physics_Body_Entity *body =
+      session.entity_system.get<entities::Physics_Body_Entity>(body_uid);
   if (!body)
   {
-    log_error("spawn_physics_body: entity pool exhausted");
-    return nullptr;
+    log_error("spawn_physics_body: could not spawn a Physics_Body_Entity");
+    return shared::null_entity_uid;
   }
 
   body->position = position;
@@ -78,37 +87,40 @@ spawn_physics_body(shared::game_session_t &session,
   if (shape == entities::Shape_Kind::Box)
   {
     body->render.mesh = entities::mesh_asset::Box;
-    register_dynamic_box(physics, body->entity_id,
+    register_dynamic_box(physics, body_uid,
                          position, size * 0.5f, initial_velocity);
   }
   else if (shape == entities::Shape_Kind::Sphere)
   {
     body->render.mesh = entities::mesh_asset::Sphere;
-    register_dynamic_sphere(physics, body->entity_id,
+    register_dynamic_sphere(physics, body_uid,
                             position, size.x * 0.5f, initial_velocity);
   }
   else
   {
     log_error("spawn_physics_body: physics cannot build a {} body yet",
               entities::to_string(shape));
-    session.entity_system.destroy(body);
-    return nullptr;
+    // No Jolt body was registered on this path, so the unregister inside
+    // destroy_entity is a no-op -- which is the point of routing through it
+    // anyway rather than reasoning about that at every site.
+    destroy_entity(context, body_uid);
+    return shared::null_entity_uid;
   }
 
-  return body;
+  return body_uid;
 }
 
 void update_physics_bodies(shared::game_session_t &session,
                            physics_state_t &physics)
 {
-  auto *pool = session.entity_system
-                   .get_entities<entities::Physics_Body_Entity>();
-  if (!pool || pool->empty())
+  Span<entities::Physics_Body_Entity> pool =
+      session.entity_system.entities_of<entities::Physics_Body_Entity>();
+  if (pool.empty())
     return;
 
   auto &body_interface = physics.physics_system.GetBodyInterface();
 
-  for (auto &body : *pool)
+  for (entities::Physics_Body_Entity &body : pool)
   {
     auto it = physics.entity_body_map.find(body.entity_id);
     if (it == physics.entity_body_map.end())

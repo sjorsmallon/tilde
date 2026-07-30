@@ -3234,7 +3234,8 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "#include \"linalg.hpp\"\n");
   fprintf(out, "#include \"network/network_types.hpp\"\n");
   fprintf(out, "#include \"span.hpp\"\n");
-  fprintf(out, "#include <cstdint>\n\n");
+  fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <type_traits>\n\n");
   fprintf(out, "namespace entities\n{\n\n");
 
   // --- asset classes ---
@@ -3477,6 +3478,58 @@ static void emit_generated_header(FILE* out, const program_t* program)
     fprintf(out, "};\n\n");
   }
 
+  // --- the invariants pooled storage rests on ---
+  //
+  // Emitted per entity rather than hand-listed, because a hand-maintained list
+  // is exactly what goes stale: the type it forgets is the one that breaks.
+  //
+  // These are load-bearing, not decoration. The entity pool is a byte buffer:
+  // it copies with memcpy and it never runs a destructor. The day a field
+  // arrives that makes either of those wrong -- a std::string, a unique_ptr, a
+  // vector -- the pool corrupts or leaks and nothing else in the build would
+  // say so. Same for the base: the tables hand out Entity*, so a type that
+  // stopped deriving would be reached through a pointer to something it is not.
+  {
+    bool wrote_any = false;
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      const declaration_t* declaration = &program->declarations[index];
+      if (declaration->kind != DECLARATION_ENTITY)
+        continue;
+
+      if (!wrote_any)
+      {
+        fprintf(out, "// The entity pool is a byte buffer: it copies with memcpy and runs no\n");
+        fprintf(out, "// destructor. A field that breaks either of these corrupts or leaks\n");
+        fprintf(out, "// silently, so the check lives here rather than in a test nobody runs\n");
+        fprintf(out, "// before the pool does.\n");
+        wrote_any = true;
+      }
+
+      fprintf(out,
+              "static_assert(std::is_trivially_copyable_v<%.*s>,\n"
+              "              \"%.*s must stay trivially copyable: pooled storage, snapshot \"\n"
+              "              \"baselines and undo all copy entities with memcpy\");\n",
+              declaration->name.length, declaration->name.data, declaration->name.length,
+              declaration->name.data);
+      fprintf(out,
+              "static_assert(std::is_trivially_destructible_v<%.*s>,\n"
+              "              \"%.*s must stay trivially destructible: the entity pool frees a \"\n"
+              "              \"slot by overwriting it and runs no destructor\");\n",
+              declaration->name.length, declaration->name.data, declaration->name.length,
+              declaration->name.data);
+      if (base_index >= 0)
+        fprintf(out,
+                "static_assert(std::is_base_of_v<%.*s, %.*s>,\n"
+                "              \"%.*s must derive from %.*s: the generated tables hand out \"\n"
+                "              \"%.*s* for every entity type\");\n",
+                base_name.length, base_name.data, declaration->name.length, declaration->name.data,
+                declaration->name.length, declaration->name.data, base_name.length, base_name.data,
+                base_name.length, base_name.data);
+      fprintf(out, "\n");
+    }
+  }
+
   // --- reflection record types ---
   fprintf(out, "enum field_type_t : uint8_t\n{\n");
   fprintf(out, "  FIELD_TYPE_INVALID = 0,\n");
@@ -3554,7 +3607,17 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "  // must be at least size_in_bytes wide and `alignment` aligned. Allocates\n");
   fprintf(out, "  // nothing -- this is the type-erased hook for callers that already own\n");
   fprintf(out, "  // their storage: undo snapshots, network baselines, pooled storage.\n");
-  fprintf(out, "  %s (*construct_at)(void* memory);\n", entity_pointer_type);
+  fprintf(out, "  %s (*construct_at)(void* memory);\n\n", entity_pointer_type);
+  fprintf(out, "  // Reaches the base of an ALREADY CONSTRUCTED entity of this type, given\n");
+  fprintf(out, "  // untyped storage. Deliberately not a cast at the call site: an entity\n");
+  fprintf(out, "  // and its base both have data members, so they are not\n");
+  fprintf(out, "  // pointer-interconvertible and `(%s)memory` is a bet on a layout\n", entity_pointer_type);
+  fprintf(out, "  // C++ does not promise. This thunk is emitted where the concrete type is\n");
+  fprintf(out, "  // complete, so the compiler applies whatever adjustment the ABI wants.\n");
+  fprintf(out, "  //\n");
+  fprintf(out, "  // For pooled storage, which addresses its elements as bytes. `memory`\n");
+  fprintf(out, "  // must already hold a live entity of this type -- construct_at first.\n");
+  fprintf(out, "  %s (*as_base)(void* memory);\n", entity_pointer_type);
   fprintf(out, "};\n\n");
 
   fprintf(out, "struct component_type_info_t\n{\n");
@@ -3843,9 +3906,29 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
   }
   fprintf(out, "\n");
 
+  // --- upcast thunks, one per entity type ---
+  //
+  // What entity_type_info_t::as_base points at, and the reason it is a table
+  // column rather than a cast at the call site: the derived-to-base conversion
+  // is written here, where the concrete type is complete, so the compiler
+  // performs whatever offset adjustment the ABI asks for. A caller holding
+  // std::byte* has no way to do that honestly -- entities are not
+  // pointer-interconvertible with their base, both having data members.
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENTITY)
+      continue;
+
+    fprintf(out, "%s as_base_%.*s(void* memory) { return static_cast<%s>((%.*s*)memory); }\n",
+            entity_pointer_type, declaration->name.length, declaration->name.data,
+            entity_pointer_type, declaration->name.length, declaration->name.data);
+  }
+  fprintf(out, "\n");
+
   // --- entity info table, indexed by tag, slot 0 is Invalid ---
   fprintf(out, "constexpr entity_type_info_t ENTITY_INFOS[] = {\n");
-  fprintf(out, "  {\"\", \"\", {}, 0, 0, 0, false, nullptr}, // Invalid\n");
+  fprintf(out, "  {\"\", \"\", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid\n");
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -3868,12 +3951,13 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     write_display_name(out, declaration->name);
     fprintf(out,
             "\", {%.*s_FIELDS, %d}, (uint32_t)sizeof(%.*s), (uint32_t)alignof(%.*s), %uu, %s, "
-            "construct_%.*s},\n",
+            "construct_%.*s, as_base_%.*s},\n",
             declaration->name.length, declaration->name.data, total_field_count,
             declaration->name.length, declaration->name.data, declaration->name.length,
             declaration->name.data, component_mask,
             (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY) ? "true" : "false",
-            declaration->name.length, declaration->name.data);
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
   }
   fprintf(out, "};\n\n");
 

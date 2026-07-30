@@ -68,9 +68,9 @@ void action_warp_to_spawn(server::server_context_t &context,
 {
   log_terminal("trigger fired by player {}: warping to spawn '{}'",
                player.entity_id, trigger.param_target_name.c_str());
-  auto *spawns = context.session.entity_system
-                     .get_entities<entities::Player_Spawn_Entity>();
-  if (!spawns || spawns->empty())
+  Span<entities::Player_Spawn_Entity> spawns =
+      context.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+  if (spawns.empty())
   {
     log_error("warp_to_spawn: no Player_Spawn_Entity in session, cannot warp "
               "player {}",
@@ -82,7 +82,7 @@ void action_warp_to_spawn(server::server_context_t &context,
   const char *requested = trigger.param_target_name.c_str();
   if (trigger.param_target_name.length > 0)
   {
-    for (const auto &spawn : *spawns)
+    for (const entities::Player_Spawn_Entity &spawn : spawns)
     {
       if (std::to_string(spawn.entity_id) == requested)
       {
@@ -98,7 +98,7 @@ void action_warp_to_spawn(server::server_context_t &context,
     }
   }
   if (!target)
-    target = &(*spawns)[0];
+    target = &spawns[0];
 
   log_terminal("warp_to_spawn: warping player {} to spawn {} at position "
                "({}, {}, {})",

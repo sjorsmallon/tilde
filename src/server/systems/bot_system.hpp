@@ -46,6 +46,13 @@ inline BotPersonality defensive_personality()
 
 struct Bot_State
 {
+  // The bot's Player_Entity, by uid. This used to be re-derived every tick by
+  // scanning the whole player pool for a matching client_slot_index — a scan per
+  // bot per tick to answer a question the bot already knew the answer to.
+  // null_entity_uid means the spawn failed or the entity is gone; either way
+  // update_bots skips the bot.
+  shared::entity_uid_t entity_uid = shared::null_entity_uid;
+
   int32_t        player_slot   = -1;
   float          fire_cooldown = 0.f;
   BotGoal        goal          = BotGoal::Idle;

@@ -19,13 +19,18 @@ void init_session_from_map(game_session_t &session, const map_t &map)
   session.geometry = map.geometry;
 
   // Entities: everything left is a real entity (spawn markers, weapons, ...).
+  //
+  // `const map_t&` is now true. This loop used to write `entry.entity->
+  // entity_id = entry.uid` first, through a shared_ptr the MAP owns — so
+  // initializing a session renumbered the caller's map, and re-serializing
+  // afterwards saved runtime ids. add_entity takes the uid and stamps it on the
+  // pool's own copy instead (P7 step 1, entity_storage_def.md §4).
   for (const map_entity_t &entry : map.entities)
   {
     if (!entry.entity)
       continue;
 
-    entry.entity->entity_id = entry.uid;
-    session.entity_system.add_entity(entry.uid, entry.entity);
+    session.entity_system.add_entity(entry.uid, entry.entity.get());
   }
 
   // Seed runtime spawn counter past the highest map uid so subsequent

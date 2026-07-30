@@ -33,16 +33,6 @@ void schedule_respawn(server_context_t &context,
   context.death_tick_by_player_uid[player_uid] = death_tick;
 }
 
-static entities::Player_Entity *
-find_player_by_uid(shared::game_session_t &session, shared::entity_uid_t uid)
-{
-  auto *players = session.entity_system.get_entities<entities::Player_Entity>();
-  if (!players) return nullptr;
-  for (auto &p : *players)
-    if (p.entity_id == uid) return &p;
-  return nullptr;
-}
-
 // Pick a spawn marker for this player. Right now we always grab the first
 // human spawn (Spawn_Type::Human); team-based or round-cycled selection lands
 // later by changing this function — every (re)spawn path routes through it.
@@ -50,11 +40,9 @@ static bool pick_spawn_marker(shared::game_session_t &session,
                               vec3f &out_position,
                               vec3f &out_orientation)
 {
-  auto *spawns = session.entity_system
-                     .get_entities<entities::Player_Spawn_Entity>();
-  if (!spawns)
-    return false;
-  for (const auto &sp : *spawns)
+  Span<entities::Player_Spawn_Entity> spawns =
+      session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+  for (const entities::Player_Spawn_Entity &sp : spawns)
   {
     if (sp.spawn_type != entities::Spawn_Type::Human) continue;
     out_position    = sp.position;
@@ -87,7 +75,8 @@ void update_respawns(server_context_t &context,
   {
     context.death_tick_by_player_uid.erase(uid);
 
-    entities::Player_Entity *player = find_player_by_uid(context.session, uid);
+    entities::Player_Entity *player =
+        context.session.entity_system.get<entities::Player_Entity>(uid);
     if (!player)
     {
       // Player entity vanished between death and respawn (disconnect, map

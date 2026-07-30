@@ -2,6 +2,7 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/cosmetic_events.hpp"
 #include "../shared/game_events.hpp"
+#include "entity_lifecycle.hpp"
 #include "server_api.hpp"
 #include "trigger_actions.hpp"
 #include "cosmetic_events.hpp"
@@ -118,13 +119,12 @@ struct human_spawn_transform_t
 // Used for player join and spawn_bot cycling.
 static std::vector<human_spawn_transform_t> get_human_spawn_transforms()
 {
-  auto *pool = g_state.session.entity_system
-                   .get_entities<entities::Player_Spawn_Entity>();
+  Span<entities::Player_Spawn_Entity> pool =
+      g_state.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
   std::vector<human_spawn_transform_t> out;
-  if (pool)
-    for (const auto &sp : *pool)
-      if (sp.spawn_type == entities::Spawn_Type::Human)
-        out.push_back({sp.position, sp.orientation});
+  for (const entities::Player_Spawn_Entity &sp : pool)
+    if (sp.spawn_type == entities::Spawn_Type::Human)
+      out.push_back({sp.position, sp.orientation});
   if (out.empty())
     out.push_back({{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}}); // safety fallback
   return out;
@@ -134,6 +134,22 @@ struct Player_Server_State
 {
   int      last_processed_command = -1;
   uint64_t last_buttons           = 0;
+
+  // Which Player_Entity belongs to this connection slot.
+  //
+  // P7 step 4 decided this rather than leaving the scans: three places asked
+  // "which player is slot N" by walking the whole player pool comparing
+  // client_slot_index, and that is a SLOT lookup, not a uid one -- the uid index
+  // cannot answer it, so the only way to delete the scan was to record the
+  // answer where the slot already has a home. This array IS the slot table:
+  // it is cleared on join and on leave, which is exactly when the mapping
+  // changes.
+  //
+  // null_entity_uid means the slot has no live entity (unconnected, or spawn
+  // failed). Bots are NOT here: their client_slot_index is >= BOT_SLOT_BASE,
+  // which is out of this array's range by construction, and Bot_State carries
+  // its own uid.
+  shared::entity_uid_t player_uid = shared::null_entity_uid;
 };
 
 std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
@@ -165,26 +181,22 @@ int g_next_bot_slot = BOT_SLOT_BASE; // increments with each spawned bot
 static std::optional<vec3f>
 spawn_position_in_front_of(int caller_slot)
 {
-  if (caller_slot < 0) return std::nullopt;
+  if (caller_slot < 0 || caller_slot >= network::sv_max_player_count)
+    return std::nullopt;
 
-  auto *players = g_state.session.entity_system
-                      .get_entities<entities::Player_Entity>();
-  if (!players) return std::nullopt;
+  const entities::Player_Entity *player =
+      g_state.session.entity_system.get<entities::Player_Entity>(
+          g_player_states[caller_slot].player_uid);
+  if (!player) return std::nullopt;
 
-  for (auto &player : *players)
-  {
-    if (player.client_slot_index != caller_slot) continue;
-
-    float yaw_rad   = linalg::to_radians(player.view_angle_yaw);
-    float pitch_rad = linalg::to_radians(player.view_angle_pitch);
-    vec3f forward = {std::cos(yaw_rad) * std::cos(pitch_rad),
-                     std::sin(pitch_rad),
-                     std::sin(yaw_rad) * std::cos(pitch_rad)};
-    constexpr float forward_offset = 80.f;
-    constexpr float eye_height     = 40.f;
-    return player.position + vec3f{0, eye_height, 0} + forward * forward_offset;
-  }
-  return std::nullopt;
+  float yaw_rad   = linalg::to_radians(player->view_angle_yaw);
+  float pitch_rad = linalg::to_radians(player->view_angle_pitch);
+  vec3f forward = {std::cos(yaw_rad) * std::cos(pitch_rad),
+                   std::sin(pitch_rad),
+                   std::sin(yaw_rad) * std::cos(pitch_rad)};
+  constexpr float forward_offset = 80.f;
+  constexpr float eye_height     = 40.f;
+  return player->position + vec3f{0, eye_height, 0} + forward * forward_offset;
 }
 
 // The four @Server command handlers. Their bodies are handwritten and live
@@ -204,21 +216,9 @@ void handle_player_leave(server_context_t &state,
   if (slot == -1)
     return;
 
-  auto *pool = state.session.entity_system.get_entities<entities::Player_Entity>();
-
-  if (pool)
-  {
-    for (size_t i = 0; i < pool->size(); ++i)
-    {
-      if ((*pool)[i].client_slot_index == slot)
-      {
-        if (g_state.physics)
-          unregister_physics_body(*g_state.physics, (*pool)[i].entity_id);
-        state.session.entity_system.destroy(&(*pool)[i]);
-        break;
-      }
-    }
-  }
+  const shared::entity_uid_t player_uid = g_player_states[slot].player_uid;
+  if (player_uid != shared::null_entity_uid)
+    destroy_entity(state, player_uid);
 
   g_player_states[slot] = {};
   broadcast_server_message(state.net, g_socket,
@@ -245,6 +245,28 @@ static bool load_map_into_state(const std::string &map_path)
   g_bots.clear();
   g_next_bot_slot = BOT_SLOT_BASE;
   g_state.previous_tick_overlapping_trigger_player_pairs.clear();
+
+  // Every player uid in the slot table named an entity in the session we just
+  // dropped. This must be cleared HERE, not left to the caller's respawn loop:
+  // a fresh session restarts next_entity_id, so a retained uid is not merely
+  // dangling — it can be REISSUED to an unrelated entity, and then a slot
+  // resolves to someone else's player. The "a stale uid resolves to nothing"
+  // guarantee (entity_storage_def.md §2) holds within one session's monotonic
+  // counter, and a map load is where that counter restarts.
+  //
+  // Only the uid column: last_processed_command / last_buttons describe the
+  // client's command stream, which survives a map change.
+  for (Player_Server_State &player_state : g_player_states)
+    player_state.player_uid = shared::null_entity_uid;
+
+  // Same argument, same restarted counter, and this one was genuinely missing:
+  // a pending death entry keyed by an old uid would be REISSUED to an unrelated
+  // entity in the new session, and update_respawns would then teleport it to a
+  // spawn marker and set its health to 100 when the delay elapsed. The
+  // "no longer exists, skipping" branch there does not save us, because after
+  // reissue the uid resolves to a real Player_Entity -- just the wrong one.
+  g_state.death_tick_by_player_uid.clear();
+
   // Every frame in the ring describes the OLD world; a delta against one after
   // a map switch would be nonsense. Clearing the acks too means every client's
   // next snapshot is a full update, which is what a new world is.
@@ -276,24 +298,23 @@ static bool load_map_into_state(const std::string &map_path)
   // Spawn bots for any bot-type spawn markers (Spawn_Type::Bot).
   // Human spawn markers (Spawn_Type::Human) stay in entity_system and are
   // queried directly when players join — no need to extract or clear the pool.
-  auto *spawn_pool =
-      g_state.session.entity_system
-          .get_entities<entities::Player_Spawn_Entity>();
+  Span<entities::Player_Spawn_Entity> spawn_pool =
+      g_state.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
 
   int human_spawn_count = 0;
   int bot_spawn_count = 0;
-  if (spawn_pool)
+  // The span survives the spawn_bot calls inside the loop: what those spawn is a
+  // Player_Entity, and this is the Player_Spawn_Entity pool. Only a spawn into
+  // THIS pool would invalidate it, and nothing here does one.
+  for (const entities::Player_Spawn_Entity &sp : spawn_pool)
   {
-    for (auto &sp : *spawn_pool)
+    if (sp.spawn_type == entities::Spawn_Type::Bot)
     {
-      if (sp.spawn_type == entities::Spawn_Type::Bot)
-      {
-        g_bots.push_back(spawn_bot(g_state.session, *g_state.physics, sp.position, g_next_bot_slot++, BotType::Regular));
-        ++bot_spawn_count;
-      }
-      else
-        ++human_spawn_count;
+      g_bots.push_back(spawn_bot(g_state.session, *g_state.physics, sp.position, g_next_bot_slot++, BotType::Regular));
+      ++bot_spawn_count;
     }
+    else
+      ++human_spawn_count;
   }
 
   log_terminal("Loaded map='{}', {} human spawns, {} bot spawns",
@@ -359,11 +380,28 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
 // human spawn transform, sets the combat hitbox, registers the kinematic Jolt
 // body, and fires PLAYER_SPAWNED. Shared by the connect path and the mid-game
 // map switch (reload_map), which both need an identically-initialized player.
-static entities::Player_Entity *spawn_player_for_slot(int slot)
+// Records the new player's uid in g_player_states[slot], which is what every
+// "which player is slot N" lookup now reads instead of scanning the pool.
+// Returns that uid, or null_entity_uid if the spawn failed.
+static shared::entity_uid_t spawn_player_for_slot(int slot)
 {
-  auto *player = g_state.session.entity_system.spawn<entities::Player_Entity>();
+  if (slot < 0 || slot >= network::sv_max_player_count)
+  {
+    log_error("spawn_player_for_slot: slot {} is out of range", slot);
+    return shared::null_entity_uid;
+  }
+
+  const shared::entity_uid_t player_uid =
+      g_state.session.entity_system.spawn<entities::Player_Entity>();
+
+  // Held for the rest of this function: nothing below spawns or destroys a
+  // Player_Entity, so nothing can move the pool out from under it.
+  entities::Player_Entity *player =
+      g_state.session.entity_system.get<entities::Player_Entity>(player_uid);
   if (!player)
-    return nullptr;
+    return shared::null_entity_uid;
+
+  g_player_states[slot].player_uid = player_uid;
 
   player->client_slot_index = slot;
   auto spawns = get_human_spawn_transforms();
@@ -388,15 +426,15 @@ static entities::Player_Entity *spawn_player_for_slot(int slot)
   // Capsule center sits at feet + 38 (matches hitbox offset above).
   if (g_state.physics)
   {
-    register_kinematic_capsule(*g_state.physics, player->entity_id,
+    register_kinematic_capsule(*g_state.physics, player_uid,
                                player->position + vec3f{0.f, 38.f, 0.f},
                                18.f, 20.f);
   }
 
   // Clients can't tell a connect-time spawn from a respawn, by design.
-  fire_player_spawned_event(g_state, player->entity_id,
+  fire_player_spawned_event(g_state, player_uid,
                             chosen_spawn.position, chosen_spawn.orientation);
-  return player;
+  return player_uid;
 }
 
 // The map identifier we put on the wire: a maps-relative basename (e.g.
@@ -727,23 +765,25 @@ bool Tick()
             { return a.second.timestamp < b.second.timestamp; });
 
   // Process moves — run player_move() authoritatively
-  auto *pool = g_state.session.entity_system
-                   .get_entities<entities::Player_Entity>();
-
   for (const auto &[player_idx, tm] : inbox.moves)
   {
-    if (!pool)
-      continue;
-
-    entities::Player_Entity *player = nullptr;
-    for (auto &p : *pool)
+    if (player_idx < 0 || player_idx >= network::sv_max_player_count)
     {
-      if (p.client_slot_index == static_cast<int32_t>(player_idx))
-      {
-        player = &p;
-        break;
-      }
+      log_error("Tick: a move arrived tagged with slot {}, which is out of range "
+                "— dropped",
+                player_idx);
+      continue;
     }
+
+    // One uid-index lookup, held for this iteration only. The rocket spawn below
+    // lands in a different pool, so it cannot move this player.
+    entities::Player_Entity *player =
+        g_state.session.entity_system.get<entities::Player_Entity>(
+            g_player_states[player_idx].player_uid);
+    // Silent on purpose, unlike the range check above: a connected client keeps
+    // sending moves across a map switch, between the session reset and its
+    // respawn, and that window has no entity to move. Ordinary, and per-tick, so
+    // logging it would be noise.
     if (!player)
       continue;
 
@@ -808,59 +848,61 @@ bool Tick()
                          new_vel);
     }
 
-    if (player_idx >= 0 && player_idx < network::sv_max_player_count)
+    // player_idx was range-checked at the top of the loop, so this indexes
+    // freely from here on.
+    auto &pstate = g_player_states[player_idx];
+    pstate.last_processed_command = move.command_number();
+
+    // Snapshot ack. Never trusted beyond "the client claims it holds this
+    // tick" — the history lookup still has to hit a frame we actually kept.
+    // Only ever moves forward: datagrams reorder, and an older value would
+    // cost bandwidth for nothing.
+    if (move.acked_server_tick() > g_client_acked_ticks[player_idx])
+      g_client_acked_ticks[player_idx] = move.acked_server_tick();
+
+    uint64_t cur_buttons  = move.buttons_bitfield();
+    bool fire_pressed = (cur_buttons & Button::Fire) &&
+                        !(pstate.last_buttons & Button::Fire);
+    pstate.last_buttons = cur_buttons;
+
+    if (fire_pressed)
     {
-      auto &pstate = g_player_states[player_idx];
-      pstate.last_processed_command = move.command_number();
+      log_terminal("Player {} fired a rocket!", player_idx);
+      float yaw_rad   = linalg::to_radians(yaw);
+      float pitch_rad = linalg::to_radians(pitch);
+      float cY = std::cos(yaw_rad),   sY = std::sin(yaw_rad);
+      float cP = std::cos(pitch_rad), sP = std::sin(pitch_rad);
+      vec3f dir = {cY * cP, sP, sY * cP};
 
-      // Snapshot ack. Never trusted beyond "the client claims it holds this
-      // tick" — the history lookup still has to hit a frame we actually kept.
-      // Only ever moves forward: datagrams reorder, and an older value would
-      // cost bandwidth for nothing.
-      if (move.acked_server_tick() > g_client_acked_ticks[player_idx])
-        g_client_acked_ticks[player_idx] = move.acked_server_tick();
-
-      uint64_t cur_buttons  = move.buttons_bitfield();
-      bool fire_pressed = (cur_buttons & Button::Fire) &&
-                          !(pstate.last_buttons & Button::Fire);
-      pstate.last_buttons = cur_buttons;
-
-      if (fire_pressed)
+      const shared::entity_uid_t rocket_uid =
+          g_state.session.entity_system.spawn<entities::Rocket_Entity>();
+      entities::Rocket_Entity *rocket =
+          g_state.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
+      if (rocket)
       {
-        log_terminal("Player {} fired a rocket!", player_idx);
-        float yaw_rad   = linalg::to_radians(yaw);
-        float pitch_rad = linalg::to_radians(pitch);
-        float cY = std::cos(yaw_rad),   sY = std::sin(yaw_rad);
-        float cP = std::cos(pitch_rad), sP = std::sin(pitch_rad);
-        vec3f dir = {cY * cP, sP, sY * cP};
+        rocket->position        = {player->position.x,
+                                   player->position.y + 28.f,
+                                   player->position.z};
+        rocket->velocity        = dir * 600.f;
+        rocket->lifetime        = 20.f;
+        rocket->damage_amount   = 50.f;
+        rocket->damage_radius   = 120.f;
+        rocket->knockback_force = 600.f;
+        rocket->owner_id        = player->entity_id;
+        // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
+        rocket->render.mesh = entities::mesh_asset::Missing;
+        rocket->render.visible = true;
+        rocket->render.scale = vec3{1.f, 1.f, 1.f};
+        rocket->render.rotation = vec3{0.f, 0.f, 0.f};
 
-        auto *rocket = g_state.session.entity_system.spawn<entities::Rocket_Entity>();
-        if (rocket)
-        {
-          rocket->position        = {player->position.x,
-                                     player->position.y + 28.f,
-                                     player->position.z};
-          rocket->velocity        = dir * 600.f;
-          rocket->lifetime        = 20.f;
-          rocket->damage_amount   = 50.f;
-          rocket->damage_radius   = 120.f;
-          rocket->knockback_force = 600.f;
-          rocket->owner_id        = player->entity_id;
-          // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
-          rocket->render.mesh = entities::mesh_asset::Missing;
-          rocket->render.visible = true;
-          rocket->render.scale = vec3{1.f, 1.f, 1.f};
-          rocket->render.rotation = vec3{0.f, 0.f, 0.f};
+        // Initialize hitbox (sphere with 12 unit radius)
+        rocket->hitbox.shape = entities::Shape_Kind::Sphere;
+        rocket->hitbox.size = {12.f, 12.f, 12.f};  // x = radius
+        rocket->hitbox.offset = {0.f, 0.f, 0.f};
 
-          // Initialize hitbox (sphere with 12 unit radius)
-          rocket->hitbox.shape = entities::Shape_Kind::Sphere;
-          rocket->hitbox.size = {12.f, 12.f, 12.f};  // x = radius
-          rocket->hitbox.offset = {0.f, 0.f, 0.f};
-
-          printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
-                 rocket->position.x, rocket->position.y, rocket->position.z,
-                 entities::to_string(rocket->render.mesh), rocket->render.visible);
-        }
+        printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
+               rocket->position.x, rocket->position.y, rocket->position.z,
+               entities::to_string(rocket->render.mesh), rocket->render.visible);
       }
     }
   }
@@ -895,48 +937,52 @@ bool Tick()
   //   - On_Enter:   fire only on the rising edge (previous tick: no overlap).
   //   - Every_Tick: fire whenever overlap is active.
   // Per-(trigger, player) overlap state is kept on g_state across ticks.
-  auto *trigger_pool = g_state.session.entity_system
-      .get_entities<entities::Trigger_Volume_Entity>();
+  //
+  // Both pools are fetched HERE rather than reused from earlier in the tick:
+  // this is a walk over every player, not a lookup of one, so it wants the pool
+  // — but a pool pointer grabbed hundreds of lines ago would have survived every
+  // spawn and destroy in between.
+  Span<entities::Player_Entity> player_pool =
+      g_state.session.entity_system.entities_of<entities::Player_Entity>();
+  Span<entities::Trigger_Volume_Entity> trigger_pool =
+      g_state.session.entity_system.entities_of<entities::Trigger_Volume_Entity>();
   std::set<std::pair<std::uint64_t, std::uint64_t>> current_tick_overlaps;
-  if (pool && trigger_pool)
+  for (entities::Player_Entity &player : player_pool)
   {
-    for (auto &player : *pool)
+    vec3f player_min = {
+      player.position.x - shared::player_half_width,
+      player.position.y,
+      player.position.z - shared::player_half_width
+    };
+    vec3f player_max = {
+      player.position.x + shared::player_half_width,
+      player.position.y + shared::player_half_height * 2.f,
+      player.position.z + shared::player_half_width
+    };
+
+    for (entities::Trigger_Volume_Entity &trigger : trigger_pool)
     {
-      vec3f player_min = {
-        player.position.x - shared::player_half_width,
-        player.position.y,
-        player.position.z - shared::player_half_width
-      };
-      vec3f player_max = {
-        player.position.x + shared::player_half_width,
-        player.position.y + shared::player_half_height * 2.f,
-        player.position.z + shared::player_half_width
-      };
+      const vec3f trigger_center = trigger.position + trigger.volume.position;
+      vec3f trigger_min = trigger_center - trigger.volume.half_extents;
+      vec3f trigger_max = trigger_center + trigger.volume.half_extents;
+      if (!linalg::intersect_aabb_aabb(player_min, player_max,
+                                       trigger_min, trigger_max))
+        continue;
 
-      for (auto &trigger : *trigger_pool)
-      {
-        const vec3f trigger_center = trigger.position + trigger.volume.position;
-        vec3f trigger_min = trigger_center - trigger.volume.half_extents;
-        vec3f trigger_max = trigger_center + trigger.volume.half_extents;
-        if (!linalg::intersect_aabb_aabb(player_min, player_max,
-                                         trigger_min, trigger_max))
-          continue;
+      std::pair<std::uint64_t, std::uint64_t> pair_key{trigger.entity_id,
+                                                        player.entity_id};
+      bool was_overlapping =
+          g_state.previous_tick_overlapping_trigger_player_pairs.count(
+              pair_key) > 0;
+      current_tick_overlaps.insert(pair_key);
 
-        std::pair<std::uint64_t, std::uint64_t> pair_key{trigger.entity_id,
-                                                          player.entity_id};
-        bool was_overlapping =
-            g_state.previous_tick_overlapping_trigger_player_pairs.count(
-                pair_key) > 0;
-        current_tick_overlaps.insert(pair_key);
+      const bool should_fire = trigger.fire_mode == entities::Fire_Mode::On_Enter
+                                   ? !was_overlapping
+                                   : true;
+      if (!should_fire)
+        continue;
 
-        const bool should_fire = trigger.fire_mode == entities::Fire_Mode::On_Enter
-                                     ? !was_overlapping
-                                     : true;
-        if (!should_fire)
-          continue;
-
-        server::fire_trigger_action(g_state, trigger, player);
-      }
+      server::fire_trigger_action(g_state, trigger, player);
     }
   }
   g_state.previous_tick_overlapping_trigger_player_pairs =
@@ -979,9 +1025,18 @@ bool Tick()
   // --- Broadcast entity state to all connected clients ---
   // Delta compression: serialize per-client with baselines (only send changed fields)
 
-  auto *rocket_pool = g_state.session.entity_system.get_entities<entities::Rocket_Entity>();
-  auto *physics_body_pool = g_state.session.entity_system
-      .get_entities<entities::Physics_Body_Entity>();
+  // All three re-fetched here, `player_pool` included: the trigger walk above got
+  // its own and a span does not survive what a `std::vector<T>*` did. The pointer
+  // form stayed valid across a reallocation and only its ELEMENTS moved, so a
+  // pointer grabbed a hundred lines ago silently kept working; a span carries the
+  // data pointer and the count, so the same reuse would read freed memory. Fetch
+  // at the point of use, per entities_of()'s contract.
+  Span<entities::Player_Entity> snapshot_player_pool =
+      g_state.session.entity_system.entities_of<entities::Player_Entity>();
+  Span<entities::Rocket_Entity> rocket_pool =
+      g_state.session.entity_system.entities_of<entities::Rocket_Entity>();
+  Span<entities::Physics_Body_Entity> physics_body_pool =
+      g_state.session.entity_system.entities_of<entities::Physics_Body_Entity>();
 
   // Build this tick's frame ONCE, straight into its slot in the ring. It is
   // both what gets encoded and what a later ack will name as a baseline, so
@@ -996,17 +1051,14 @@ bool Tick()
   frame.clear();
   frame.tick = g_tick_number;
 
-  if (pool)
-    for (const auto &entity : *pool)
-      frame.players[entity.entity_id] = entity;
+  for (const entities::Player_Entity &entity : snapshot_player_pool)
+    frame.players[entity.entity_id] = entity;
 
-  if (rocket_pool)
-    for (const auto &rocket : *rocket_pool)
-      frame.rockets[rocket.entity_id] = rocket;
+  for (const entities::Rocket_Entity &rocket : rocket_pool)
+    frame.rockets[rocket.entity_id] = rocket;
 
-  if (physics_body_pool)
-    for (const auto &body : *physics_body_pool)
-      frame.physics_bodies[body.entity_id] = body;
+  for (const entities::Physics_Body_Entity &body : physics_body_pool)
+    frame.physics_bodies[body.entity_id] = body;
 
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
@@ -1193,12 +1245,12 @@ void spawn_cube(const command_context_t &context)
   }
 
   vec3f full_extents = {16.f, 16.f, 16.f};
-  auto *body = spawn_physics_body(g_state.session, *g_state.physics,
-                                  entities::Shape_Kind::Box, full_extents,
-                                  *drop_position);
-  if (body)
+  const shared::entity_uid_t body_uid =
+      spawn_physics_body(g_state, entities::Shape_Kind::Box, full_extents,
+                         *drop_position);
+  if (body_uid != shared::null_entity_uid)
     log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
-                 body->entity_id, drop_position->x, drop_position->y,
+                 body_uid, drop_position->x, drop_position->y,
                  drop_position->z);
 }
 
@@ -1220,12 +1272,12 @@ void spawn_sphere(const command_context_t &context)
   }
 
   vec3f full_extents = {16.f, 16.f, 16.f}; // x = diameter
-  auto *body = spawn_physics_body(g_state.session, *g_state.physics,
-                                  entities::Shape_Kind::Sphere, full_extents,
-                                  *drop_position);
-  if (body)
+  const shared::entity_uid_t body_uid =
+      spawn_physics_body(g_state, entities::Shape_Kind::Sphere, full_extents,
+                         *drop_position);
+  if (body_uid != shared::null_entity_uid)
     log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
-                 body->entity_id, drop_position->x, drop_position->y,
+                 body_uid, drop_position->x, drop_position->y,
                  drop_position->z);
 }
 

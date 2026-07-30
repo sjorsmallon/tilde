@@ -7,15 +7,13 @@
 
 using namespace entities;
 
-// Trivial copyability is what blesses memcpy snapshots and memcmp diffing.
-// This is the property inheritance was NOT supposed to cost us.
-static_assert(std::is_trivially_copyable_v<Light_Entity>);
-static_assert(std::is_trivially_copyable_v<Trigger_Volume_Entity>);
-static_assert(std::is_trivially_copyable_v<Player_Entity>);
-static_assert(std::is_trivially_copyable_v<Entity>);
-
-// Derived-to-base conversion, the thing we traded standard-layout to get.
-static_assert(std::is_base_of_v<Entity, Light_Entity>);
+// Trivial copyability, trivial destructibility and derivation from the base
+// used to be asserted here, by hand, for four of the eight types. They are now
+// emitted by def_gen for EVERY type, so including the generated header is the
+// check -- and the type that gets forgotten is no longer the one a hand-kept
+// list forgets. The one property left worth testing here is that a base
+// pointer recovered from untyped memory is the same pointer the language
+// would produce, which no static_assert can say (see "as_base" below).
 static_assert(std::is_convertible_v<Light_Entity*, Entity*>);
 
 static int32_t failure_count = 0;
@@ -98,6 +96,41 @@ int main()
     Particle_Emitter_Entity* emitter = static_cast<Particle_Emitter_Entity*>(constructed);
     check(emitter->emit_rate == 20.0f && emitter->max_particles == 64,
           "construct_at writes the .def defaults over whatever was in the memory");
+  }
+
+  // --- as_base ---
+  //
+  // construct_at's counterpart for storage that already holds a live entity.
+  // Pooled storage addresses its elements as bytes and has to reach Entity*
+  // from a std::byte* WITHOUT betting that Entity sits at offset 0 -- an entity
+  // and its base both have data members, so they are not pointer-
+  // interconvertible and no static_assert can vouch for that layout. The check
+  // that means something is therefore a runtime one: the table's answer must be
+  // the pointer the language itself produces.
+  {
+    Rocket_Entity rocket;
+    rocket.position = {4.0f, 5.0f, 6.0f};
+
+    const entity_type_info_t& rocket_info = entity_info(entity_type::Rocket_Entity);
+    Entity* through_the_table    = rocket_info.as_base(&rocket);
+    Entity* through_the_language = &rocket;
+
+    check(through_the_table == through_the_language,
+          "as_base agrees with a real derived-to-base conversion");
+    check(through_the_table->type == entity_type::Rocket_Entity &&
+              through_the_table->position.x == 4.0f,
+          "the entity is readable through the base pointer as_base returned");
+
+    // The pool indexes this table by tag and has no way to notice a hole, so a
+    // missing hook would be a null call rather than a lookup failure.
+    bool every_type_carries_both_hooks = true;
+    for (uint32_t which = 1; which < ENTITY_TYPE_COUNT; ++which)
+    {
+      const entity_type_info_t& type_info = entity_info((entity_type)which);
+      if (type_info.construct_at == nullptr || type_info.as_base == nullptr)
+        every_type_carries_both_hooks = false;
+    }
+    check(every_type_carries_both_hooks, "every entity type carries construct_at and as_base");
   }
 
   // Heap factory over the same switch. The map loader and the editor both want

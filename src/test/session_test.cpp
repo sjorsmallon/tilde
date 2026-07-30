@@ -38,6 +38,10 @@ int main()
     return 1;
   }
 
+  // Taken BEFORE any session exists, so the checks at the bottom of this test
+  // can compare against a map nothing has had a chance to touch.
+  const uint32_t map_hash_before_init = compute_map_content_hash(test_map);
+
   // 2. Initialize Session
   game_session_t session;
   init_session_from_map(session, test_map);
@@ -120,15 +124,16 @@ int main()
   // "player_start" classname maps to Player_Spawn_Entity / entities::entity_type::Player_Spawn_Entity.
   // Player_Entity (entities::entity_type::Player_Entity) is the live player, runtime-spawned
   // when a client connects — not a map-loaded thing.
-  auto *spawns = session.entity_system.get_entities<entities::Player_Spawn_Entity>();
+  Span<entities::Player_Spawn_Entity> spawns =
+      session.entity_system.entities_of<entities::Player_Spawn_Entity>();
 
-  if (!spawns || spawns->empty())
+  if (spawns.empty())
   {
     log_error("No Player Spawn markers found");
     return 1;
   }
 
-  const auto &spawn = (*spawns)[0];
+  const entities::Player_Spawn_Entity &spawn = spawns[0];
 
   // Check if properties were applied correctly
   if (spawn.position.x != 5.0f || spawn.position.y != 5.0f)
@@ -145,6 +150,188 @@ int main()
     log_error("Spawn marker entity_id should equal map uid {}, got {}", spawn_uid,
               spawn.entity_id);
     return 1;
+  }
+
+  // --- P7 step 1: init_session_from_map does not mutate the map ---------------
+  //
+  // The load-bearing assertion is the DIRECT field read below, not the hash.
+  // `entity_id` is deliberately not @Saveable (it is runtime identity, not map
+  // data), so it does not appear in the canonical text at all and a content-hash
+  // comparison cannot see it being stomped. The hash check is kept anyway
+  // because it covers everything that IS saveable, but on its own it would have
+  // passed against the very bug this test exists for.
+  if (spawn_ent->entity_id != 0)
+  {
+    log_error("init_session_from_map wrote entity_id {} into the MAP's entity. The map "
+              "owns that object; the session is supposed to stamp the uid on its own "
+              "copy. `const map_t&` is a lie again.",
+              spawn_ent->entity_id);
+    return 1;
+  }
+
+  const uint32_t hash_after_init = compute_map_content_hash(test_map);
+  if (hash_after_init != map_hash_before_init)
+  {
+    log_error("Map content hash changed across init_session_from_map: {} -> {}",
+              map_hash_before_init, hash_after_init);
+    return 1;
+  }
+
+  // Two sessions from one map. This is the failure the const lie produced: the
+  // second init used to renumber the entity the first was already using.
+  {
+    game_session_t second_session;
+    init_session_from_map(second_session, test_map);
+
+    Span<entities::Player_Spawn_Entity> second_spawns =
+        second_session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+    if (second_spawns.size() != 1 || second_spawns[0].entity_id != spawn_uid)
+    {
+      log_error("Second session from the same map did not get uid {} on its spawn marker",
+                spawn_uid);
+      return 1;
+    }
+
+    // ...and the first session is still intact, because neither wrote through
+    // the map.
+    if (spawns[0].entity_id != spawn_uid)
+    {
+      log_error("Initializing a second session disturbed the first session's uid: {}",
+                spawns[0].entity_id);
+      return 1;
+    }
+
+    if (spawn_ent->entity_id != 0)
+    {
+      log_error("Two inits later, the map's entity_id is {} instead of 0",
+                spawn_ent->entity_id);
+      return 1;
+    }
+  }
+
+  // --- P7 step 2: the uid index -----------------------------------------------
+  {
+    Entity_System &entity_system = session.entity_system;
+
+    if (entity_system.get<entities::Player_Spawn_Entity>(spawn_uid) != &spawns[0])
+    {
+      log_error("get<Player_Spawn_Entity>({}) did not resolve to the pooled spawn marker",
+                spawn_uid);
+      return 1;
+    }
+
+    // Right uid, wrong type: nullptr, not the entity. This is what lets the
+    // damage and rocket dispatch use get<T> as both lookup AND type test.
+    if (entity_system.get<entities::Player_Entity>(spawn_uid) != nullptr)
+    {
+      log_error("get<Player_Entity>({}) resolved, but that uid names a Player_Spawn_Entity",
+                spawn_uid);
+      return 1;
+    }
+
+    // A uid that was never issued.
+    if (entity_system.get<entities::Player_Spawn_Entity>(9999) != nullptr)
+    {
+      log_error("get<Player_Spawn_Entity>(9999) resolved something; no such uid exists");
+      return 1;
+    }
+
+    if (!entity_system.validate_locations())
+    {
+      log_error("uid index disagrees with the pools right after map load");
+      return 1;
+    }
+
+    // Spawn churn, then remove from the MIDDLE so the swap-and-pop actually
+    // moves an entity and the index has to be repaired. Removing only the tail
+    // would exercise nothing.
+    entity_uid_t rocket_uids[5] = {};
+    for (int index = 0; index < 5; ++index)
+    {
+      // spawn() hands back the uid, and get<T>() is how the fields get written.
+      // The pointer is used and dropped inside this iteration: the next loop
+      // iteration spawns into the same pool and would invalidate it.
+      rocket_uids[index] = entity_system.spawn<entities::Rocket_Entity>();
+      entities::Rocket_Entity *rocket =
+          entity_system.get<entities::Rocket_Entity>(rocket_uids[index]);
+      if (!rocket)
+      {
+        log_error("Could not spawn rocket {}", index);
+        return 1;
+      }
+      rocket->damage_amount = (float)index; // a per-entity marker to identify it by
+      if (rocket->entity_id != rocket_uids[index])
+      {
+        log_error("spawn() returned uid {} but the entity carries {}",
+                  rocket_uids[index], rocket->entity_id);
+        return 1;
+      }
+    }
+
+    if (!entity_system.destroy(rocket_uids[1]))
+    {
+      log_error("destroy({}) found nothing to destroy", rocket_uids[1]);
+      return 1;
+    }
+
+    if (entity_system.get<entities::Rocket_Entity>(rocket_uids[1]) != nullptr)
+    {
+      log_error("uid {} still resolves after being destroyed", rocket_uids[1]);
+      return 1;
+    }
+
+    // Every survivor must still resolve, and resolve to ITSELF — the swap moved
+    // the last rocket into slot 1, so a broken fixup shows up here as a uid
+    // pointing at the wrong entity rather than as a crash.
+    for (int index = 0; index < 5; ++index)
+    {
+      if (index == 1)
+        continue;
+
+      entities::Rocket_Entity *rocket =
+          entity_system.get<entities::Rocket_Entity>(rocket_uids[index]);
+      if (!rocket)
+      {
+        log_error("Rocket uid {} (spawn #{}) stopped resolving after an unrelated removal",
+                  rocket_uids[index], index);
+        return 1;
+      }
+      if (rocket->entity_id != rocket_uids[index] || rocket->damage_amount != (float)index)
+      {
+        log_error("Rocket uid {} resolved to the wrong entity (got uid {}, marker {})",
+                  rocket_uids[index], rocket->entity_id, rocket->damage_amount);
+        return 1;
+      }
+    }
+
+    if (!entity_system.validate_locations())
+    {
+      log_error("uid index disagrees with the pools after spawn/destroy churn");
+      return 1;
+    }
+
+    // Destroying a uid nobody holds is an ordinary "already gone", not an error.
+    if (entity_system.destroy(rocket_uids[1]))
+    {
+      log_error("destroy({}) reported success on an already-destroyed uid",
+                rocket_uids[1]);
+      return 1;
+    }
+
+    // reset() has to clear the index too, or every stale uid keeps resolving
+    // into a pool that no longer holds it.
+    entity_system.reset();
+    if (entity_system.get<entities::Rocket_Entity>(rocket_uids[0]) != nullptr ||
+        entity_system.get<entities::Player_Spawn_Entity>(spawn_uid) != nullptr)
+    {
+      log_error("A uid still resolves after Entity_System::reset()");
+      return 1;
+    }
+    if (!entity_system.validate_locations())
+    {
+      log_error("uid index disagrees with the pools after reset");
+      return 1;
+    }
   }
 
   log_error("Session Test Passed!");

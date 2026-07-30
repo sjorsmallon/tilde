@@ -357,6 +357,8 @@ add_library(game_server SHARED
     src/server/game_events.cpp
     src/server/damage.hpp
     src/server/damage.cpp
+    src/server/entity_lifecycle.hpp
+    src/server/entity_lifecycle.cpp
     src/server/trigger_actions.hpp
     src/server/trigger_actions.cpp
     src/server/systems/rocket_system.cpp
@@ -506,3 +508,43 @@ target_link_libraries(cvar_test PRIVATE game_shared)
 add_executable(map_convert src/tools/map_convert.cpp)
 target_include_directories(map_convert PRIVATE src src/shared)
 target_link_libraries(map_convert PRIVATE game_shared)
+
+# --- The test suite, as one command ------------------------------------------
+#
+# `ctest --test-dir cmake_build` runs everything below. The list is written out
+# rather than globbed on purpose: a glob over bin/ would also catch MyGame,
+# def_gen and map_convert, and the exclusion list needed to keep them out rots
+# faster than this does.
+#
+# WORKING_DIRECTORY is the load-bearing part. map_migration_test loads
+# `maps/test` by a path relative to the project root, so running it from
+# anywhere else failed — a standing footgun that this pins shut for every test
+# at once, rather than documenting it again.
+enable_testing()
+
+set(GAME_TESTS
+    task_system_test
+    log_test
+    ecs_test
+    camera_test
+    linalg_test
+    file_watcher_test
+    network_test
+    udp_socket_test
+    server_loop_test
+    session_test
+    transaction_system_test
+    test_entity_delta_packing
+    snapshot_delta_test
+    test_rng
+    asset_test
+    entity_layout_test
+    map_migration_test
+    navmesh_test
+    cvar_test)
+
+foreach(test_target IN LISTS GAME_TESTS)
+  add_test(NAME ${test_target} COMMAND ${test_target})
+  set_tests_properties(${test_target} PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endforeach()
