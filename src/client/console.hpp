@@ -30,7 +30,7 @@ public:
   // cvars.def as the server's, and the handshake refuses any client whose
   // SCHEMA_HASH differs — so autocomplete and forwarding both read a local
   // table that provably matches the server's. Forwarding to a server is a flag
-  // check plus command_table_t::forward_to_server, which PlayState installs
+  // check plus command_table_t::forward_to_server, which Play_State installs
   // when it connects.
   void SetCVarState(cvars::cvar_state_t *state, cvars::command_table_t *table);
 

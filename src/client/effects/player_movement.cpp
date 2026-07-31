@@ -6,12 +6,8 @@
 namespace client::effects
 {
 
-// JUMP / LAND handlers — the spatialized, "other players" half of movement
-// sound. The local player plays its own jump/land off prediction in
-// PlayState::update (centered, zero-latency); the server broadcasts the same
-// events tagged with the originating player's uid. We skip the effect whose
-// attached_entity is our own player so we don't double-hear it.
-
+//FIXME(SMIA): this sounds like a footgun waiting to happen, the discontinuity
+// between 
 void on_jump(client_context_t &context, const shared::effect_data_t &data)
 {
   if (data.attached_entity == context.my_entity_uid)

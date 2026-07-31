@@ -454,7 +454,7 @@ persist the schema entity itself across reloads.
 `camera_t` already supports `orthographic = true` and `orbit = true`,
 with helpers `update_orbit` / `orbit_rotate` / `orbit_pan` /
 `orbit_zoom`. To add isometric mode, change is entirely client-side:
-`PlayState::on_enter` sets `orbit = true`, `orthographic = true`,
+`Play_State::on_enter` sets `orbit = true`, `orthographic = true`,
 picks `orbit_target` / `orbit_distance`. Input handling routes to
 `orbit_*` helpers instead of writing `view_angle_yaw/pitch`.
 

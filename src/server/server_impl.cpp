@@ -832,7 +832,8 @@ bool Tick()
       fx.attached_entity = player->entity_id;
       dispatch_effect(g_state, shared::effect_type_t::JUMP, fx);
     }
-    if (move_events.landed && move_events.land_impact_speed > MIN_LAND_IMPACT_SPEED)
+    if (move_events.landed && move_events.land_impact_speed >
+                                  g_state.cvars->pm_minimum_land_impact_speed)
     {
       shared::effect_data_t fx{};
       fx.origin          = new_pos;

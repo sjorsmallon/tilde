@@ -8,7 +8,7 @@
 namespace client
 {
 
-class MainMenuState : public IGameState
+class Main_Menu_State : public Game_State
 {
 public:
   void update(float dt) override

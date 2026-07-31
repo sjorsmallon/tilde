@@ -39,8 +39,8 @@ namespace
         //@FIXME(SMIA): we need to add the navmesh to the bvh for fast polygon queries, 
         // then we can do A* on the polygon graph to find a corridor of polygons from start to end.
         // which polygon contains the start and end points?
-        int start_poly_idx = nav.find_polygon(start.x, start.z);
-        int end_poly_idx = nav.find_polygon(end.x, end.z);
+        int start_poly_idx = nav.maybe_find_polygon_idx_that_contains_this_position(start.x, start.z);
+        int end_poly_idx = nav.maybe_find_polygon_idx_that_contains_this_position(end.x, end.z);
         if (start_poly_idx == -1 || end_poly_idx == -1)
         {
             // no path if start or end is outside the navmesh
@@ -54,7 +54,7 @@ namespace
             const nav_polygon_t &poly = nav.polygons[poly_idx];
             linalg::vec3f sum = {};
             for (int v : poly.vertices)
-                sum = sum + nav.vertices[v].pos;
+                sum = sum + nav.vertices[v].position;
             float n = (float)poly.vertices.size();
             return linalg::vec3f{.x = sum.x / n, .y = sum.y / n, .z = sum.z / n};
         };
@@ -162,8 +162,8 @@ std::vector<linalg::vec3> find_path(const navmesh_t &nav, const linalg::vec3 &st
         {
             if (cur->neighbors[e] == next_idx)
             {
-                linalg::vec3f a = nav.vertices[cur->vertices[e          ]].pos;
-                linalg::vec3f b = nav.vertices[cur->vertices[(e + 1) % N]].pos;
+                linalg::vec3f a = nav.vertices[cur->vertices[e          ]].position;
+                linalg::vec3f b = nav.vertices[cur->vertices[(e + 1) % N]].position;
                 portals.push_back({.left = a, .right = b});
                 break;
             }

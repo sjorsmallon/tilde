@@ -33,6 +33,11 @@ FetchContent_MakeAvailable(SDL2)
 # this is to silence a shitload of float normalization warnings that are super annoying.
 add_compile_definitions(_SILENCE_CXX23_DENORM_DEPRECATION_WARNING)
 
+# CRT flags strncpy/getenv/sprintf etc. as deprecated in favor of the _s variants;
+# this codebase uses the plain C functions deliberately, so silence that warning
+# rather than adding _s calls or per-file pragmas.
+add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+
 set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
@@ -207,6 +212,10 @@ add_library(game_shared STATIC
     src/shared/cosmetic_events.cpp
     src/shared/game_events.hpp
     src/shared/game_events.cpp
+    src/shared/weapons.hpp
+    src/shared/player_hitboxes.hpp
+    src/shared/hitscan.hpp
+    src/shared/hitscan.cpp
     src/shared/network/map_transfer.cpp
     src/shared/network/cvar_mirror.cpp
 )

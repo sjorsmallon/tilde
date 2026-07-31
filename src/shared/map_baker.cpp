@@ -71,9 +71,9 @@ static void assert_navmesh_invariants(const navmesh_t &nav, const char *label, b
     const int N = (int)p.vertices.size();
     for (int i = 0; i < N; ++i)
     {
-      const auto &prev = verts[p.vertices[(i - 1 + N) % N]].pos;
-      const auto &cur  = verts[p.vertices[i              ]].pos;
-      const auto &next = verts[p.vertices[(i + 1)     % N]].pos;
+      const auto &prev = verts[p.vertices[(i - 1 + N) % N]].position;
+      const auto &cur  = verts[p.vertices[i              ]].position;
+      const auto &next = verts[p.vertices[(i + 1)     % N]].position;
       float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
       if (cross_y < -1e-4f)
       {
@@ -112,9 +112,9 @@ static bool is_convex_candidate(const navmesh_t &nav,
   const int N = (int)verts.size();
   for (int i = 0; i < N; ++i)
   {
-    const auto &prev = nav.vertices[verts[(i - 1 + N) % N]].pos;
-    const auto &cur  = nav.vertices[verts[i              ]].pos;
-    const auto &next = nav.vertices[verts[(i + 1)     % N]].pos;
+    const auto &prev = nav.vertices[verts[(i - 1 + N) % N]].position;
+    const auto &cur  = nav.vertices[verts[i              ]].position;
+    const auto &next = nav.vertices[verts[(i + 1)     % N]].position;
     float edge1x = cur.x  - prev.x, edge1z = cur.z  - prev.z;
     float edge2x = next.x - cur.x,  edge2z = next.z - cur.z;
     float cross_y = edge1x * edge2z - edge1z * edge2x;
@@ -140,11 +140,11 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
   for (int i = 0; i < nv; ++i)
   {
     if (vert_remap[i] != i) continue; // already remapped
-    const auto &pi = nav.vertices[i].pos;
+    const auto &pi = nav.vertices[i].position;
     for (int j = i + 1; j < nv; ++j)
     {
       if (vert_remap[j] != j) continue;
-      const auto &pj = nav.vertices[j].pos;
+      const auto &pj = nav.vertices[j].position;
       float dx = pi.x - pj.x, dy = pi.y - pj.y, dz = pi.z - pj.z;
       if (dx*dx + dy*dy + dz*dz < EPS*EPS)
         vert_remap[j] = i;
@@ -204,8 +204,8 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
 
         // Must be coplanar: check that all of B's vertices have the same Y
         // as A's vertices (within epsilon — flat geometry assumption).
-        float ay = nav.vertices[A.vertices[0]].pos.y;
-        float by = nav.vertices[B.vertices[0]].pos.y;
+        float ay = nav.vertices[A.vertices[0]].position.y;
+        float by = nav.vertices[B.vertices[0]].position.y;
         if (std::abs(ay - by) > EPS) continue;
 
         // Find the reverse edge in B that shares the same two vertices as
@@ -329,10 +329,10 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
       total_verts_ref += (int)p.vertices.size();
       for (int v : p.vertices)
       {
-        mn_x = std::min(mn_x, nav.vertices[v].pos.x);
-        mx_x = std::max(mx_x, nav.vertices[v].pos.x);
-        mn_z = std::min(mn_z, nav.vertices[v].pos.z);
-        mx_z = std::max(mx_z, nav.vertices[v].pos.z);
+        mn_x = std::min(mn_x, nav.vertices[v].position.x);
+        mx_x = std::max(mx_x, nav.vertices[v].position.x);
+        mn_z = std::min(mn_z, nav.vertices[v].position.z);
+        mx_z = std::max(mx_z, nav.vertices[v].position.z);
       }
     }
     std::println("[bake] After merge: {} polys, {} unique verts, {} vert refs, bounds x=[{},{}] z=[{},{}]",
@@ -377,9 +377,9 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
           if (n_prev != n_curr) continue;
 
           const int vi_b = p.vertices[i];
-          const auto &a = nav.vertices[p.vertices[prev_edge]].pos;
-          const auto &b = nav.vertices[vi_b].pos;
-          const auto &c = nav.vertices[p.vertices[(i + 1) % N]].pos;
+          const auto &a = nav.vertices[p.vertices[prev_edge]].position;
+          const auto &b = nav.vertices[vi_b].position;
+          const auto &c = nav.vertices[p.vertices[(i + 1) % N]].position;
           float cross_y = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
           if (std::abs(cross_y) > 1e-3f) continue;
 
@@ -423,9 +423,9 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
     for (int i = 0; i < N; ++i)
     {
       int prev_edge = (i - 1 + N) % N;
-      const auto &a = nav.vertices[p.vertices[prev_edge]].pos;
-      const auto &b = nav.vertices[p.vertices[i]].pos;
-      const auto &c = nav.vertices[p.vertices[(i + 1) % N]].pos;
+      const auto &a = nav.vertices[p.vertices[prev_edge]].position;
+      const auto &b = nav.vertices[p.vertices[i]].position;
+      const auto &c = nav.vertices[p.vertices[(i + 1) % N]].position;
       float cross_y = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
       if (std::abs(cross_y) <= 1e-3f)
       {
@@ -437,7 +437,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
         if (n_prev != n_curr) continue;
 
         std::println(stderr, "[navmesh] COLLINEAR VERTEX: poly {} vert {} (idx {}), "
-                     "pos=({:.2f},{:.2f},{:.2f}), cross_y={:.6f}, neighbors=[{}, {}]",
+                     "position=({:.2f},{:.2f},{:.2f}), cross_y={:.6f}, neighbors=[{}, {}]",
                      pi, i, p.vertices[i], b.x, b.y, b.z, cross_y,
                      n_prev, n_curr);
         assert(false && "[navmesh] collinear vertex not removed during simplification");

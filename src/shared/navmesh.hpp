@@ -6,7 +6,7 @@
 // A single vertex in the navmesh polygon soup.
 struct nav_vertex_t
 {
-  linalg::vec3f pos;
+  linalg::vec3f position;
 };
 
 // A convex polygon in the navmesh (may have 3 or more vertices after simplification).
@@ -30,7 +30,7 @@ struct navmesh_t
   // Find the index of the polygon whose XZ projection contains (px, pz).
   // Returns -1 if no polygon covers that point.
   // Assumes all polygons are convex and wound CCW from above.
-  int find_polygon(float px, float pz) const
+  int maybe_find_polygon_idx_that_contains_this_position(float px, float pz) const
   {
     for (int i = 0; i < (int)polygons.size(); ++i)
     {
@@ -39,8 +39,8 @@ struct navmesh_t
       bool inside = true;
       for (int e = 0; e < N; ++e)
       {
-        const linalg::vec3f &a = vertices[p.vertices[e          ]].pos;
-        const linalg::vec3f &b = vertices[p.vertices[(e + 1) % N]].pos;
+        const linalg::vec3f &a = vertices[p.vertices[e          ]].position;
+        const linalg::vec3f &b = vertices[p.vertices[(e + 1) % N]].position;
         // For CCW winding, point must be to the left of every edge.
         float cross = (b.x - a.x) * (pz - a.z) - (b.z - a.z) * (px - a.x);
         if (cross < 0.f) { inside = false; break; }

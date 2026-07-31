@@ -12,6 +12,7 @@ namespace client
 
 void Sculpting_Tool::on_enable(editor_context_t &ctx)
 {
+  assert(ctx.map);
   dragging = false;
   hovered_uid =  shared::invalid_entity_uid;
 }
@@ -34,7 +35,7 @@ void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
   sculpt_start_entity.reset();
   sculpt_start_geometry.reset();
 
-  if (!dragging || dragging_uid == shared::invalid_entity_uid || !ctx.map ||
+  if (!dragging || dragging_uid == shared::invalid_entity_uid ||
       !ctx.transaction_system)
     return;
 
@@ -78,18 +79,14 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
 {
   last_view = view;
 
-  if (dragging)
-    return;
+  if (dragging) return;
 
-  if (!ctx.map)
-    return;
-
-  hovered_uid = 0;
+  hovered_uid = shared::invalid_entity_uid;
   hovered_face = shared::box_face_t::Invalid;
 
   if (ctx.bvh)
   {
-    ray_hit_result_t hit;
+    auto hit = ray_hit_result_t{};
     if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.direction,
                           hit))
     {
@@ -146,7 +143,9 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
   {
     using namespace linalg;
 
-    vec3 current_center, current_half_extents;
+    vec3 current_center;
+    vec3 current_half_extents;
+
     if (shared::get_object_box(*ctx.map, dragging_uid, current_center,
                                current_half_extents))
     {
@@ -186,15 +185,17 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
                                  last_view.camera.orthographic,
                                  last_view.camera.ortho_height, last_view.fov);
 
-        vec2 screen_dir = {s1.x - s0.x, s1.y - s0.y};
+                                
+        vec2 drag_direction_in_screen_space = {s1.x - s0.x, s1.y - s0.y};
         float screen_len_sq =
-            screen_dir.x * screen_dir.x + screen_dir.y * screen_dir.y;
+            drag_direction_in_screen_space.x * drag_direction_in_screen_space.x + drag_direction_in_screen_space.y * drag_direction_in_screen_space.y;
 
         if (screen_len_sq > 1e-4f)
         {
           vec2 mouse_delta = {(float)e.delta.x, (float)e.delta.y};
+          // calculate how far we moved the mouse in the direction of the face normal
           float dot_prod =
-              mouse_delta.x * screen_dir.x + mouse_delta.y * screen_dir.y;
+              mouse_delta.x * drag_direction_in_screen_space.x + mouse_delta.y * drag_direction_in_screen_space.y;
           float k = dot_prod / screen_len_sq;
           float world_delta = k;
 
@@ -241,21 +242,20 @@ void Sculpting_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}
 void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
                                      overlay_renderer_t &renderer)
 {
-  if (hovered_uid != 0 && !dragging && ctx.map)
+  if (hovered_uid != 0 && !dragging)
   {
     shared::aabb_t aabb;
     if (shared::get_object_box(*ctx.map, hovered_uid, aabb.center,
                                aabb.half_extents))
     {
-      linalg::vec3 e = aabb.half_extents;
+      linalg::vec3 extents = aabb.half_extents;
       linalg::vec3 normal = shared::get_box_face_normal(hovered_face);
       linalg::vec3 p = aabb.center +
-                       linalg::vec3{normal.x * e.x, normal.y * e.y, normal.z * e.z};
-      linalg::vec3 size = e;
+                       linalg::vec3{normal.x * extents.x, normal.y * extents.y, normal.z * extents.z};
+      linalg::vec3 size = extents;
+      // [0,1,2] -> [x,y,z].
       int axis = shared::box_face_axis(hovered_face);
-      if (axis == 0) size.x = 0;
-      else if (axis == 1) size.y = 0;
-      else size.z = 0;
+      size[axis] = 0;
 
       renderer.draw_wire_box(p, size, colors::red);
     }

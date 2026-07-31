@@ -292,8 +292,8 @@ int main()
       return fail("package: navmesh size drift");
     for (size_t i = 0; i < package.navmesh.vertices.size(); ++i)
     {
-      const auto &a = package.navmesh.vertices[i].pos;
-      const auto &b = restored.navmesh.vertices[i].pos;
+      const auto &a = package.navmesh.vertices[i].position;
+      const auto &b = restored.navmesh.vertices[i].position;
       if (a.x != b.x || a.y != b.y || a.z != b.z)
         return fail("package: navmesh vertex drift");
     }

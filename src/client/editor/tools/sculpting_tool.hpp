@@ -31,6 +31,7 @@ private:
   bool dragging = false;
   shared::entity_uid_t dragging_uid = shared::invalid_entity_uid;
   shared::box_face_t dragging_face = shared::box_face_t::Invalid;
+  
   viewport_state_t last_view;
   linalg::vec3 drag_origin_point;
   shared::aabb_t original_aabb;

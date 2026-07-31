@@ -10,9 +10,6 @@
 namespace client
 {
 
-// One selected object's pre-drag state, whichever regime backs it. Exactly one
-// member is engaged: an entity is captured as an exact clone and diffed
-// field-by-field on commit, a geometry value is captured whole and swapped.
 struct object_snapshot_t
 {
   entity_snapshot_t entity;
@@ -37,20 +34,20 @@ public:
   void on_draw_ui(editor_context_t &ctx) override;
 
 private:
-  shared::entity_uid_t hovered_uid = 0; // 0 = none
+  shared::entity_uid_t hovered_uid = 0;
   std::vector<shared::entity_uid_t> selected_uids;
 
   // Drag box selection
   bool is_dragging_box = false;
-  linalg::vec2i drag_start_pos;
-  linalg::vec2i drag_current_pos;
+  linalg::vec2i drag_start_position;
+  linalg::vec2i drag_current_position;
 
   // Cached viewport for projection in on_draw_ui / selection logic
   viewport_state_t cached_viewport;
 
   // Grid indication
   bool grid_hover_valid = false;
-  linalg::vec3 grid_hover_pos;
+  linalg::vec3 grid_hover_position;
 
   // Gizmo
   Editor_Gizmo editor_gizmo;

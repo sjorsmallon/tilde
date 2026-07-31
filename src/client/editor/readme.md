@@ -1,9 +1,10 @@
 # Editor Ramblings
 
-> **⚠ The `SHARED_ENTITIES_LIST` X-macro references below are outgoing.** The
-> entity list is being generated from `entities.def`, so "add your entity to the
-> X-macro" becomes "add it to the .def". The traits/specialization dispatch
-> pattern itself is unaffected. See `entity_def.md` at the repo root.
+> **⚠ Entities now come from `entities.def`, not a `SHARED_ENTITIES_LIST`
+> X-macro.** See `entity_def.md` at the repo root. The "Entity Editor Traits"
+> section below was rewritten (2026-07-31) once the generated `entity_type`
+> enum made the old per-type template specialization mechanism redundant —
+> see `entity_editor_traits.cpp` for the current shape.
 
 I ran into issues with an imperative approach to my editor. the long if-else chain of 
 ```
@@ -29,78 +30,42 @@ now the next problem to fix is the undo / redo stack. The previous solution uses
 
 ## Entity Editor Traits
 
-The editor needs per-entity-type behavior (ghost rendering, placement Y-offset) but entities live in `shared/` and must not know about the editor. The solution is `entity_editor_traits.hpp` — a template specialization pattern that keeps all editor-specific knowledge in client code.
+The editor needs per-entity-type behavior (ghost rendering, placement Y-offset) but entities live in `shared/` and must not know about the editor. `entities.def` generates a closed `entity_type` enum and plain structs; `entity_editor_traits.cpp` holds the editor-specific knowledge as one exhaustive switch over that enum per function, in the same style as `get_box_volume`, `create_map_entity`, `compute_entity_bounds`, etc. elsewhere in the codebase.
 
-```cpp
-// Primary template — deliberately unimplemented.
-template <typename EntityClass>
-struct Entity_Editor_Traits {
-  static linalg::vec3 get_half_extents(const EntityClass *e);
-  static bool draw_ghost(const EntityClass *e, overlay_renderer_t &renderer,
-                         const linalg::vec3 &center);
-};
-```
+This used to be a per-type template specialization pattern (`Entity_Editor_Traits<EntityClass>`, four specializations required per entity). It was retired because the generated enum already made `-Wswitch` the exhaustiveness check — the template's linker-error-on-missing-specialization was solving a problem the switch solved for free, at the cost of ceremony (32 mandatory specializations for 8 types, most of them `return false;`) and hidden duplication (several types drew the exact same shape in both their ghost and in-editor specializations, just at a different position, because the mechanism gave no way to share that).
 
-Every entity type in `SHARED_ENTITIES_LIST` must have a specialization. If you add a new entity to the X-macro and forget to specialize, the linker will error telling you exactly which instantiation is missing (because the dispatch functions in `entity_editor_traits.cpp` use the X-macro to call every specialization).
+### How to add editor behavior for a new entity
 
-### How to add traits for a new entity
+Add the entity to `entities.def` as usual (see `entity_def.md`). Then in `entity_editor_traits.cpp`, `-Wswitch` will flag every switch (`get_placement_half_extents`, `draw_entity_ghost`, `draw_entity_in_editor`, `dispatch_selection_wireframe`) that needs a new case. Add one:
 
-1. Add your entity to `SHARED_ENTITIES_LIST` in `entity_list.hpp` (as usual).
-2. Open `entity_editor_traits.cpp` and add two template specializations:
-
-```cpp
-template <>
-linalg::vec3
-Entity_Editor_Traits<network::My_New_Entity>::get_half_extents(
-    const network::My_New_Entity *e)
-{
-  // Return the half-extents used for Y-offset placement.
-  // {0,0,0} for point entities, actual extents for geometry.
-  return {editor::DEFAULT_HALF_EXTENT, editor::DEFAULT_HALF_EXTENT,
-          editor::DEFAULT_HALF_EXTENT};
-}
-
-template <>
-bool Entity_Editor_Traits<network::My_New_Entity>::draw_ghost(
-    const network::My_New_Entity *e, overlay_renderer_t &renderer,
-    const linalg::vec3 &center)
-{
-  // Return false to use the default path (render component mesh wireframe,
-  // then wire box fallback). Return true if you drew something custom.
-  return false;
-}
-```
-
-### What each function does
-
-- **`get_half_extents`**: Returns the half-size used to compute the Y-offset when placing an entity so it sits on the surface rather than clipping through it. For example, AABB returns its actual `half_extents`, Player_Spawn returns the player hull dimensions, and Particle_Emitter returns `{0,0,0}` because it's a point.
-
-- **`draw_ghost`**: Custom ghost/preview drawing for the placement tool. Return `true` if you handled drawing (e.g. wedge wireframe, emitter cross icon). Return `false` to fall through to the default path which tries the entity's render component mesh as a wireframe, then falls back to a wire box using `get_half_extents`.
+- **`get_placement_half_extents`**: the half-size used for the Y-offset when placing, so the entity sits on the surface instead of clipping through it. Point entities (e.g. Particle_Emitter) return `{0,0,0}`. Entities with a `Box_Volume` component don't need a case here at all — that's handled generically before the switch.
+- **`draw_entity_ghost`** / **`draw_entity_in_editor`**: return `true` if you drew something (most shapes are shared between the two, via a small static `draw_x_shape` helper — see `draw_player_spawn_shape` for the pattern), `false` to fall through to the default path (render component mesh wireframe, then wire box).
+- **`dispatch_selection_wireframe`**: return `true` for a shape-specific selection outline, `false` to fall back to the AABB bounds wireframe.
 
 ### Runtime dispatch
 
-Since placement works with `shared_ptr<Entity>` at runtime, the X-macro generates a dispatch table in `entity_editor_traits.cpp`:
+Since placement works with `shared_ptr<Entity>` at runtime, `entity_editor_traits.cpp` exposes:
 
 ```cpp
-linalg::vec3 get_placement_half_extents(const network::Entity *e);
-bool draw_entity_ghost(const network::Entity *e, ...);
-linalg::vec3 compute_placement_center(const network::Entity *e, const linalg::vec3 &ghost_position);
+linalg::vec3 get_placement_half_extents(const entities::Entity *e);
+bool draw_entity_ghost(const entities::Entity *e, ...);
+linalg::vec3 compute_placement_center(const entities::Entity *e, const linalg::vec3 &ghost_position);
 ```
 
-These use `dynamic_cast` internally (one per entity type, generated by the X-macro) to route to the correct specialization. The placement tool just calls these and never needs to know about specific entity types.
+Each is a plain switch on `e->type` (no RTTI, no `dynamic_cast`). The placement tool just calls these and never needs to know about specific entity types.
 
 ## Box-Volume Dispatch (geometry layer)
 
 The editor has two parallel dispatch mechanisms — pick the right one when adding an entity:
 
-| Dispatch              | Used for                                                | Mechanism                                                                       |
-|-----------------------|---------------------------------------------------------|---------------------------------------------------------------------------------|
-| `Entity_Editor_Traits` | **Behavior-layer** facts (ghost icon, custom wireframe tint, placement Y-offset for entities without a box) | Per-class template specialization, X-macro dispatch                            |
-| `get_box_volume()`     | **Geometry-layer** facts (sculpting, picking, gizmo reshape, default placement extents)                     | Virtual on `Entity`; one-line override on box-owning entity                    |
+| Dispatch                              | Used for                                                | Mechanism                                                                       |
+|-----------------------------------------|-----------------------------------------------------------|---------------------------------------------------------------------------------|
+| `entity_editor_traits.cpp`'s switches | **Behavior-layer** facts (ghost icon, custom wireframe tint, placement Y-offset for entities without a box) | One exhaustive switch over `entity_type` per function                          |
+| `get_box_volume()`                    | **Geometry-layer** facts (sculpting, picking, gizmo reshape, default placement extents)                     | Component-table lookup; one-line entry on box-owning entity                    |
 
-Sculpting, the selection-tool gizmo-mode decision (Unified-reshape vs Translate-only), the gizmo's start-interaction / reshape-drag paths, the placement-tool default-extents seeding, and the trait fast-path in `get_placement_half_extents` all dispatch through `entity->get_box_volume()` (returning `box_volume_t*` defined in [src/shared/shapes.hpp](../../shared/shapes.hpp)). Adding a new box-volume entity (clip-brush, hurt-volume, ...) requires zero edits in the editor — sculpting and picking come for free.
+Sculpting, the selection-tool gizmo-mode decision (Unified-reshape vs Translate-only), the gizmo's start-interaction / reshape-drag paths, the placement-tool default-extents seeding, and the fast-path in `get_placement_half_extents` all dispatch through `entities::get_box_volume(entity)` (returning `Box_Volume*`, generated from `entities.def`). Adding a new box-volume entity (clip-brush, hurt-volume, ...) requires zero edits in the editor — sculpting and picking come for free.
 
-What stays per-class via the trait specializations: **behavior-specific drawing only.** Trigger volumes get a red selection wireframe, AABBs get a random-colored solid fill, displacements draw their heightmap mesh. Those are class-level visual decisions, not geometry — they don't migrate to the virtual.
+What stays per-type in `entity_editor_traits.cpp`: **behavior-specific drawing only.** Trigger volumes get a red selection wireframe, Lights get a cross gizmo. Those are type-level visual decisions, not geometry — they don't migrate to the component lookup.
 
 The wedge dispatch sites in the gizmo and BVH go through `shared::entity_as<Wedge_Entity>` (closed-enum tag compare, no RTTI walk). Wedges will eventually grow their own `wedge_volume_t` + virtual following the same pattern as box-volume entities, at which point those `entity_as` calls collapse into the virtual too. See [src/shared/entities/README.md](../../shared/entities/README.md#box-volume-component) for the entity-side story.
 

@@ -84,6 +84,13 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, pm_step_height),
      .size = sizeof(cvar_state_t::pm_step_height),
      .string_capacity = 0},
+    {.name = "pm_minimum_land_impact_speed",
+     .description = "Threshold for speed to cause audio to play when landing",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_minimum_land_impact_speed),
+     .size = sizeof(cvar_state_t::pm_minimum_land_impact_speed),
+     .string_capacity = 0},
     {.name = "sv_tickrate",
      .description = "Server tick rate in Hz",
      .flags = CVAR_FLAG_SERVER,
@@ -104,6 +111,13 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, cl_maxfps),
      .size = sizeof(cvar_state_t::cl_maxfps),
+     .string_capacity = 0},
+    {.name = "editor_speed",
+     .description = "default movement speed of the camera in the editor",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, editor_speed),
+     .size = sizeof(cvar_state_t::editor_speed),
      .string_capacity = 0},
     {.name = "cl_timescale",
      .description = "Time scale factor (0.5 = slow-mo, 2.0 = fast)",
@@ -197,7 +211,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[10] = {
+const cvar_id MIRRORED_CVAR_TABLE[11] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -208,6 +222,7 @@ const cvar_id MIRRORED_CVAR_TABLE[10] = {
     cvar_id::g_gravity,
     cvar_id::pm_speed_threshold,
     cvar_id::pm_step_height,
+    cvar_id::pm_minimum_land_impact_speed,
 };
 
 // The value's bytes inside the state struct. Every text conversion goes
@@ -275,7 +290,7 @@ bool find_command(std::string_view name, command_id* out_id)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 10};
+  return {MIRRORED_CVAR_TABLE, 11};
 }
 
 bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text)

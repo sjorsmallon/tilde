@@ -84,7 +84,7 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
 
   // Bind every cosmetic-effect handler. Each effect_type_t maps to exactly
   // one function — registration must happen before the first snapshot can
-  // arrive, so it lives in client Init() rather than PlayState::on_enter.
+  // arrive, so it lives in client Init() rather than Play_State::on_enter.
   register_all_effect_handlers();
 
   // Bring up audio and lend the shared context a borrowed pointer. A failed

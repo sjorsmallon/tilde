@@ -22,7 +22,7 @@
       * The mesh is 3D: `nav_vertex_t::pos` is a `vec3f`, and both the A*
         heuristic and its edge costs use full 3D `euclidean_distance_between`
         over polygon centroids (`pathfinding.cpp`). Nothing there drops Y.
-      * The one planar thing is `navmesh_t::find_polygon(px, pz)`
+      * The one planar thing is `navmesh_t::maybe_find_polygon_idx_that_contains_this_position(px, pz)`
         (`navmesh.hpp`), which returns the FIRST polygon whose XZ projection
         contains the point. Stacked walkable surfaces — a walkway over a floor,
         a ramp crossing under a ledge — are therefore ambiguous at lookup, and
@@ -30,7 +30,7 @@
         "feels wrong": path endpoints can bind to the wrong storey.
       * Fix shape when it matters: take the query point's Y and pick the
         containing polygon nearest it in Y, rather than the first XZ match.
-        `find_polygon` is the only caller-visible surface, so this is local.
+        `maybe_find_polygon_idx_that_contains_this_position` is the only caller-visible surface, so this is local.
 - ~~Clean up BVH traversal — the map editor now just iterates entities~~ —
   **retired 2026-07-30, stale.** The editor does not iterate: `build_editor_bvh`
   (`editor/editor_bvh.hpp`) builds ONE tree over geometry AND entities, keyed by
@@ -221,6 +221,52 @@ the template for the rest, alongside the map-transfer messages.
       snaps per snapshot** — and lerping euler angles would look wrong anyway
       once it passes 180° on an axis. Positions smooth, rotations snap. Revisit
       only if a rotating body becomes something the player watches closely.
+- [ ] **Cosmetic effects as a third `.def` family — long-term.** *(decided in
+      principle 2026-07-31; do NOT start until the trigger below fires.)* The
+      right mental model: an effect is a **`@Client` command fired by the
+      server** — typed per-effect signature (`footstep(origin: vec3,
+      surface_material: u16) @Client`), generated bitstream binder instead of
+      token parsing, binder TU references `effects::on_footstep` so a missing
+      handler is a link error naming the symbol. NOT shaped like cvars: cvars
+      are state (memcmp + resend), effects are events (fire once, ordered, no
+      baseline) — the command machinery fits, `@Mirrored` doesn't.
+
+      Three gaps in the hand-rolled version (`shared/cosmetic_events.hpp`,
+      `client/cosmetic_events.cpp`) that the schema treatment closes:
+      1. **`effect_data_t` crosses the wire but is not in `SCHEMA_HASH`** —
+         hand-written C++, invisible to the handshake. Reorder/add a field and
+         mismatched builds misparse snapshot riders with no refusal at connect.
+         Likely the only wire-crossing payload outside the hash's protection.
+      2. **One-size-fits-all payload**: "handlers read the fields they care
+         about" means the compiler can't check a dispatch site set the right
+         fields, and a footstep ships `normal`/`color`/`scale` it never reads.
+      3. **`g_handlers` is a runtime registry, assert-on-missing at dispatch
+         time** — `BULLET_IMPACT` is unregistered today and you find out when
+         one arrives, not when you link.
+
+      Honest costs: five effects, small payload — wire waste is bytes; and a
+      third family means a new fence in `def_gen`, plus an answer for the queue
+      (per-effect payload types end `std::vector<dispatched_effect_t>` being
+      one type — generated tagged union, or serialize-at-dispatch into a byte
+      buffer).
+
+      **Trigger: the first effect that doesn't fit the fixed struct** — a
+      per-effect string, an array, a field only one effect wants. Until then
+      the one gap worth closing cheaply is #1: fold a manual `effect_data_t`
+      version constant into the handshake so layout skew refuses to connect.
+- [ ] **Self-echo suppression for cosmetic effects is client-side and fragile.**
+      `player_movement.cpp:9-10` already flags it (`FIXME(SMIA)`): jump/land
+      sounds play twice — once locally off prediction (`play_state.cpp:875-880`),
+      once again when the server broadcasts the same event back to us, filtered
+      only by comparing `attached_entity` against `client_context_t::my_entity_uid`
+      (`player_movement.cpp:13,21`). The server already sends identical effect
+      bytes to every client and documents per-client filtering as a "future
+      addition if PVS/relevancy ever lands" (`server_impl.cpp:1088`) — when that
+      lands, exclude the originating client from an event's recipient list there
+      instead, and delete the `my_entity_uid` check entirely. Until then, a
+      misprediction (reconciliation overrides a locally-played jump/land) has no
+      correction path: the sound already played for something that didn't
+      happen server-side.
 - [ ] lag compensation
 - [ ] Client-side dynamic-entity prediction. The networked client's Jolt
       world holds only static geometry; remote players are snapshot-interpolated

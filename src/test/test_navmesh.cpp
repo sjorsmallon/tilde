@@ -92,9 +92,9 @@ static void test_single_span()
   const int N = (int)p.vertices.size();
   for (int i = 0; i < N; ++i)
   {
-    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].pos;
-    const auto &cur  = nav.vertices[p.vertices[i              ]].pos;
-    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].pos;
+    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].position;
+    const auto &cur  = nav.vertices[p.vertices[i              ]].position;
+    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].position;
     float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
     assert(cross_y >= -1e-4f && "winding broken after merge");
   }
@@ -148,8 +148,8 @@ static void test_two_span_strip()
                  i, p.island, p.vertices.size(), p.neighbors.size());
     for (int k = 0; k < (int)p.vertices.size(); ++k)
     {
-      const auto &v = nav.vertices[p.vertices[k]].pos;
-      std::println("    [{}] vi={} pos=({:.1f},{:.1f},{:.1f})  nb={}",
+      const auto &v = nav.vertices[p.vertices[k]].position;
+      std::println("    [{}] vi={} position=({:.1f},{:.1f},{:.1f})  nb={}",
                    k, p.vertices[k], v.x, v.y, v.z, p.neighbors[k]);
     }
   }
@@ -163,9 +163,9 @@ static void test_two_span_strip()
   const int N = (int)p.vertices.size();
   for (int i = 0; i < N; ++i)
   {
-    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].pos;
-    const auto &cur  = nav.vertices[p.vertices[i              ]].pos;
-    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].pos;
+    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].position;
+    const auto &cur  = nav.vertices[p.vertices[i              ]].position;
+    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].position;
     float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
     assert(cross_y >= -1e-4f && "winding broken in strip");
   }
@@ -174,8 +174,8 @@ static void test_two_span_strip()
   float min_x = 1e9f, max_x = -1e9f, min_z = 1e9f, max_z = -1e9f;
   for (const auto &v : nav.vertices)
   {
-    min_x = std::min(min_x, v.pos.x); max_x = std::max(max_x, v.pos.x);
-    min_z = std::min(min_z, v.pos.z); max_z = std::max(max_z, v.pos.z);
+    min_x = std::min(min_x, v.position.x); max_x = std::max(max_x, v.position.x);
+    min_z = std::min(min_z, v.position.z); max_z = std::max(max_z, v.position.z);
   }
   assert(std::abs(min_x - (-8.f)) < 0.01f && "min_x changed");
   assert(std::abs(max_x - 24.f)   < 0.01f && "max_x changed");
@@ -224,8 +224,8 @@ static void test_vertex_dedup()
   for (int i = 0; i < nv; ++i)
     for (int j = i + 1; j < nv; ++j)
     {
-      const auto &a = nav.vertices[i].pos;
-      const auto &b = nav.vertices[j].pos;
+      const auto &a = nav.vertices[i].position;
+      const auto &b = nav.vertices[j].position;
       float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
       float dist2 = dx*dx + dy*dy + dz*dz;
       if (dist2 < EPS * EPS)
@@ -303,8 +303,8 @@ static void test_2x2_grid()
                  i, p.island, p.vertices.size(), p.neighbors.size());
     for (int k = 0; k < (int)p.vertices.size(); ++k)
     {
-      const auto &v = nav.vertices[p.vertices[k]].pos;
-      std::println("    [{}] vi={} pos=({:.1f},{:.1f},{:.1f})  nb={}",
+      const auto &v = nav.vertices[p.vertices[k]].position;
+      std::println("    [{}] vi={} position=({:.1f},{:.1f},{:.1f})  nb={}",
                    k, p.vertices[k], v.x, v.y, v.z, p.neighbors[k]);
     }
   }
@@ -321,9 +321,9 @@ static void test_2x2_grid()
   const int N = (int)p.vertices.size();
   for (int i = 0; i < N; ++i)
   {
-    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].pos;
-    const auto &cur  = nav.vertices[p.vertices[i              ]].pos;
-    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].pos;
+    const auto &prev = nav.vertices[p.vertices[(i - 1 + N) % N]].position;
+    const auto &cur  = nav.vertices[p.vertices[i              ]].position;
+    const auto &next = nav.vertices[p.vertices[(i + 1)     % N]].position;
     float cross_y = (cur.x - prev.x) * (next.z - cur.z) - (cur.z - prev.z) * (next.x - cur.x);
     assert(cross_y >= -1e-4f && "winding broken in 2x2 grid");
   }
@@ -332,8 +332,8 @@ static void test_2x2_grid()
   float min_x = 1e9f, max_x = -1e9f, min_z = 1e9f, max_z = -1e9f;
   for (const auto &v : nav.vertices)
   {
-    min_x = std::min(min_x, v.pos.x); max_x = std::max(max_x, v.pos.x);
-    min_z = std::min(min_z, v.pos.z); max_z = std::max(max_z, v.pos.z);
+    min_x = std::min(min_x, v.position.x); max_x = std::max(max_x, v.position.x);
+    min_z = std::min(min_z, v.position.z); max_z = std::max(max_z, v.position.z);
   }
   assert(std::abs(min_x - (-8.f)) < 0.01f && "min_x changed");
   assert(std::abs(max_x - 24.f)   < 0.01f && "max_x changed");
@@ -395,8 +395,8 @@ static void test_3x1_strip()
                  i, p.island, p.vertices.size(), p.neighbors.size());
     for (int k = 0; k < (int)p.vertices.size(); ++k)
     {
-      const auto &v = nav.vertices[p.vertices[k]].pos;
-      std::println("    [{}] vi={} pos=({:.1f},{:.1f},{:.1f})  nb={}",
+      const auto &v = nav.vertices[p.vertices[k]].position;
+      std::println("    [{}] vi={} position=({:.1f},{:.1f},{:.1f})  nb={}",
                    k, p.vertices[k], v.x, v.y, v.z, p.neighbors[k]);
     }
   }
@@ -412,8 +412,8 @@ static void test_3x1_strip()
   float min_x = 1e9f, max_x = -1e9f, min_z = 1e9f, max_z = -1e9f;
   for (const auto &v : nav.vertices)
   {
-    min_x = std::min(min_x, v.pos.x); max_x = std::max(max_x, v.pos.x);
-    min_z = std::min(min_z, v.pos.z); max_z = std::max(max_z, v.pos.z);
+    min_x = std::min(min_x, v.position.x); max_x = std::max(max_x, v.position.x);
+    min_z = std::min(min_z, v.position.z); max_z = std::max(max_z, v.position.z);
   }
   assert(std::abs(min_x - (-8.f)) < 0.01f && "min_x changed");
   assert(std::abs(max_x - 40.f)   < 0.01f && "max_x changed");

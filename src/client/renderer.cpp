@@ -3040,13 +3040,13 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
   float cz = view.camera.position.z;
 
   // Direction from Yaw/Pitch
-  float radYaw = view.camera.yaw * 0.0174533f;
-  float radPitch = view.camera.pitch * 0.0174533f;
+  float yaw_in_radians = view.camera.yaw * 0.0174533f;
+  float pitch_in_radians = view.camera.pitch * 0.0174533f;
 
-  float cY = cos(radYaw);
-  float sY = sin(radYaw);
-  float cP = cos(radPitch);
-  float sP = sin(radPitch);
+  float cY = cos(yaw_in_radians);
+  float sY = sin(yaw_in_radians);
+  float cP = cos(pitch_in_radians);
+  float sP = sin(pitch_in_radians);
 
   float fx = cY * cP;
   float fy = sP;

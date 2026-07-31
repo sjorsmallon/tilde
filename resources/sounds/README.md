@@ -14,8 +14,8 @@ FLAC are supported. A missing file logs an error once (see
 |-----------------------------------|---------------------------------------------|-------------|
 | `rocket_explosion.wav`            | `effects/rocket_explosion.cpp` (3D, origin) | yes         |
 | `footstep.wav`                    | `effects/footstep.cpp` (3D, foot position)  | yes         |
-| `player_jump.wav`                 | local: PlayState (2D); remote: `effects/player_movement.cpp` (3D) | mixed |
-| `player_land.wav`                 | local: PlayState (2D); remote: `effects/player_movement.cpp` (3D) | mixed |
+| `player_jump.wav`                 | local: Play_State (2D); remote: `effects/player_movement.cpp` (3D) | mixed |
+| `player_land.wav`                 | local: Play_State (2D); remote: `effects/player_movement.cpp` (3D) | mixed |
 
 `footstep.wav` will only be heard once the server actually dispatches the
 `FOOTSTEP` cosmetic effect; the handler is wired and waiting.

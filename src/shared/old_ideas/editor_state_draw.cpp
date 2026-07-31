@@ -54,14 +54,14 @@ void EditorState::render_ui()
       if (ImGui::MenuItem("Add AABB"))
       {
         float dist = 5.0f;
-        float radYaw = to_radians(camera.yaw);
+        float yaw_in_radians = to_radians(camera.yaw);
 
         // Create AABB Entity
         auto ent = shared::create_entity_by_classname("aabb_entity");
         if (auto *e = dynamic_cast<::network::AABB_Entity *>(ent.get()))
         {
-          e->center = {camera.position.x + cos(radYaw) * dist, camera.position.y,
-                       camera.position.z + sin(radYaw) * dist};
+          e->center = {camera.position.x + cos(yaw_in_radians) * dist, camera.position.y,
+                       camera.position.z + sin(yaw_in_radians) * dist};
           e->half_extents = {1.0f, 1.0f, 1.0f};
         }
         map_source.entities.push_back(ent);
@@ -423,9 +423,9 @@ void EditorState::render_3d(VkCommandBuffer cmd)
             col = color_white;
         }
 
-        float radYaw = to_radians(yaw);
-        float cY = cos(radYaw);
-        float sY = sin(radYaw);
+        float yaw_in_radians = to_radians(yaw);
+        float cY = cos(yaw_in_radians);
+        float sY = sin(yaw_in_radians);
 
         shared::pyramid_t pyramid;
         pyramid.size = s;
@@ -487,7 +487,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
                        .z = p.z + sin(angle2) * radius};
             renderer::draw_line(cmd, p1, p2, 0xFF00A5FF);
           }
-          vec3 forward = {.x = cos(radYaw), .y = 0.0f, .z = sin(radYaw)};
+          vec3 forward = {.x = cos(yaw_in_radians), .y = 0.0f, .z = sin(yaw_in_radians)};
           renderer::draw_line(cmd, p, p + forward * radius, 0xFF0000FF);
 
           active_transform_gizmo.position =

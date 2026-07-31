@@ -3,7 +3,8 @@
 #include "editor_types.hpp"
 
 //@NOTE(SJM):
-// full virtual root tool interface. the tool_editor state contains a list of all tools, and forwards input/events to the active one.
+// full virtual root tool interface. the tool_editor state contains a list of all tools, 
+// and forwards input/events to the active one.
 // tools can also choose to capture keyboard input for shortcuts.
 
 namespace client

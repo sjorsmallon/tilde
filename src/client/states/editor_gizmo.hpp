@@ -7,6 +7,8 @@
 #include <optional>
 #include <vulkan/vulkan.h> // For VkCommandBuffer
 
+//@NOTE(SJM): axis indices should be a canonical enum , since now here's mixing of 1 being -x or y.
+
 namespace client
 {
 
@@ -31,10 +33,6 @@ struct transform_gizmo_t
   linalg::vec3 rotation = {{0, 0, 0}}; // Euler angles in degrees
   float size = 1.0f;
 
-  // -1: None
-  // 0: X Arrow
-  // 1: Y Arrow
-  // 2: Z Arrow
   // -1: None
   // 0: X Arrow
   // 1: Y Arrow

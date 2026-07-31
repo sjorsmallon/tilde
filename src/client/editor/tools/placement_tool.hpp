@@ -29,18 +29,17 @@ public:
   void on_draw_ui(editor_context_t &ctx) override;
 
 private:
-  // Select from the combined placeable table (geometry kinds first, then entity
-  // types). Sets up exactly one of current_geometry / current_entity.
+
   void select_placeable(int index);
+  int get_index_of_placeable(const std::string &label);
 
   linalg::vec3 ghost_position;
-  bool ghost_valid = false;
+  bool cursor_is_currently_over_surface = false;
   int selected_type_index = 0;
 
-  // The prototype being placed. Exactly one is engaged at a time — which of the
-  // two regimes the selected placeable belongs to.
-  std::optional<shared::geometry_value_t> current_geometry;
-  std::shared_ptr<::entities::Entity> current_entity;
+  // one or the other is populated.
+  std::optional<shared::geometry_value_t> geometry_to_place;
+  std::shared_ptr<::entities::Entity> entity_to_place;
 };
 
 } // namespace client

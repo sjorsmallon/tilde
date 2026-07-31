@@ -317,7 +317,7 @@ void update_bots(std::vector<Bot_State> &bots,
       fx.attached_entity = bot_ent->entity_id;
       dispatch_effect(context, shared::effect_type_t::JUMP, fx);
     }
-    if (move_events.landed && move_events.land_impact_speed > MIN_LAND_IMPACT_SPEED)
+    if (move_events.landed && move_events.land_impact_speed > context.cvars->pm_minimum_land_impact_speed)
     {
       shared::effect_data_t fx{};
       fx.origin          = new_pos;

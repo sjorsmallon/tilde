@@ -55,7 +55,7 @@ src/
 │   ├── cvars/        cvars.def, cvar_runtime.hpp, generated/
 │   └── network/      Entity wire serialization, bitstream, UDP, map transfer
 ├── client/           Vulkan rendering, SDL2 input, editor
-│   ├── states/       Game state machine (PlayState, ToolEditorState)
+│   ├── states/       Game state machine (Play_State, ToolEditorState)
 │   └── editor/       Tool-based editor (Selection, Placement, Sculpting)
 ├── server/           Authoritative game server
 ├── tools/            def_gen (the schema compiler: .def parser + code generator)

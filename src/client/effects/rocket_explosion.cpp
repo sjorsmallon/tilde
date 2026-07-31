@@ -9,27 +9,13 @@ namespace client::effects
 {
 
 // ROCKET_EXPLOSION handler. The server tells us:
-//   - data.origin: world-space detonation point
-//   - data.normal: surface normal at impact (zero = airburst, no surface)
-//   - data.scale:  splash radius (used as decal probe distance)
-//
-// For a surface hit we want a decal anchored to the surface the *client* sees,
-// not the server's view — they can drift slightly under reconciliation. We
-// cast from a point stepped out along the normal back into the wall to find
-// the local contact. Airbursts skip the cast entirely (no surface).
-//
-// Phase 1: cast result is logged; decal renderer bolts in later. The visible
-// explosion particle effect is pushed onto ctx.explosion_effects here —
-// previously inferred from "rocket disappeared from snapshot" in play_state,
-// now produced by the explicit cosmetic dispatch. The explosion sound is
-// played spatialized at the detonation origin.
 void on_rocket_explosion(client_context_t &context,
                          const shared::effect_data_t &data)
 {
   if (!context.physics_state)
   {
     log_error("rocket_explosion handler invoked with no client physics_state — "
-              "PlayState should set context.physics_state on entry");
+              "Play_State should set context.physics_state on entry");
     return;
   }
 
@@ -87,9 +73,6 @@ void on_rocket_explosion(client_context_t &context,
   fx.explosion_index = context.next_explosion_index++;
   context.explosion_effects.push_back(fx);
 
-  // Spatialized blast at the detonation point. The audio system is borrowed
-  // and may be null (audio init failed / non-play state); play_3d also no-ops
-  // gracefully if the file is missing.
   if (context.audio)
     context.audio->play_3d("resources/sounds/rocket_explosion.wav", data.origin);
 }

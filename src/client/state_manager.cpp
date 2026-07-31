@@ -13,10 +13,10 @@ namespace client
 namespace state_manager
 {
 
-static IGameState *g_active_state = nullptr;
+static Game_State *g_active_state = nullptr;
 static bool g_should_exit = false;
 
-static std::unordered_map<GameStateKind, std::unique_ptr<IGameState>> g_states;
+static std::unordered_map<GameStateKind, std::unique_ptr<Game_State>> g_states;
 static client_context_t g_client_context;
 
 void shutdown()
@@ -32,16 +32,16 @@ void shutdown()
 
 void init()
 {
-  g_states[GameStateKind::MainMenu] = std::make_unique<MainMenuState>();
-  g_states[GameStateKind::Play] = std::make_unique<PlayState>();
+  g_states[GameStateKind::MainMenu] = std::make_unique<Main_Menu_State>();
+  g_states[GameStateKind::Play] = std::make_unique<Play_State>();
   g_states[GameStateKind::ToolEditor] = std::make_unique<ToolEditorState>();
-  g_states[GameStateKind::ShaderEditor] = std::make_unique<ShaderEditorState>();
+  g_states[GameStateKind::ShaderEditor] = std::make_unique<Shader_Editor_State>();
 }
 
 void switch_to(GameStateKind kind)
 {
   log_terminal("Switching to state: {}", to_string(kind));
-  IGameState *next_state = g_states[kind].get();
+  Game_State *next_state = g_states[kind].get();
   if (g_active_state)
   {
     g_active_state->on_exit();
@@ -57,7 +57,7 @@ void switch_to(GameStateKind kind)
 
 // set_state removed.
 
-IGameState *get_current_state() { return g_active_state; }
+Game_State *get_current_state() { return g_active_state; }
 
 bool update(float dt)
 {

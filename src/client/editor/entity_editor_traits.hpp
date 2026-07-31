@@ -7,42 +7,26 @@
 namespace client
 {
 
-// Primary template — deliberately left undefined.
-// Specializations must be provided for every entity type in the X-macro.
-// If you forget one, you get a linker error pointing at exactly which type.
-template <typename EntityClass>
-struct Entity_Editor_Traits
-{
-  // Half-extents for Y-offset when placing (so entity sits on surface).
-  static linalg::vec3 get_half_extents(const EntityClass *e);
+// Editor-side drawing and UI for entities. The entity counterpart to
+// geometry_editor.hpp: entity_editor_traits.cpp holds one exhaustive switch
+// over entities::entity_type per function below, rather than a per-type
+// specialization mechanism — see entity_editor_traits.cpp's file comment for
+// why the earlier trait-template version was retired.
 
-  // Custom ghost/preview drawing during placement. Return true if you drew
-  // something, false to fall back to default (render component -> wire box).
-  static bool draw_ghost(const EntityClass *e, overlay_renderer_t &renderer,
-                         const linalg::vec3 &center);
-
-  // Draw this entity in the editor viewport. Return true if you drew something,
-  // false to try the default render-component path.
-  // uid: map entity uid (for cache keys and random-color seeding).
-  // solid: true when the user has "Solid Entities" checked.
-  static bool draw_in_editor(const EntityClass *e, overlay_renderer_t &renderer,
-                             uint32_t uid, bool solid);
-
-  // Draw a selection wireframe for this entity. Return true if you drew a
-  // shape-specific wireframe, false to fall back to AABB bounds wireframe.
-  // grid_step: current editor grid step for grid-aligned face overlays.
-  static bool draw_selection_wireframe(const EntityClass *e,
-                                       overlay_renderer_t &renderer,
-                                       color_t color, float grid_step);
-};
-
-// Runtime dispatch wrappers (resolve entity type via the X-macro table).
+// Half-extents for Y-offset when placing (so entity sits on a surface).
+// Box-volume entities (Trigger_Volume) report through get_box_volume(); the
+// rest is a switch over entity_type.
 linalg::vec3 get_placement_half_extents(const entities::Entity *e);
+
+// Placement preview at `center`. Returns false to fall back to the default
+// path (render component mesh wireframe, then wire box).
 bool draw_entity_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
                        const linalg::vec3 &center);
 
-// Draw an entity in the editor. Tries render-component first, then the
-// per-entity trait specialization. Returns true if something was drawn.
+// Draw an entity in the editor. Tries the render component first, then a
+// per-type gizmo. Returns true if something was drawn.
+// uid: map entity uid (for cache keys and random-color seeding).
+// solid: true when the user has "Solid Entities" checked.
 bool draw_entity_in_editor(const entities::Entity *e,
                            overlay_renderer_t &renderer, uint32_t uid,
                            bool solid);
@@ -60,7 +44,7 @@ void draw_default_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
 color_t compute_selection_pulse_color(float time);
 
 // Draw a pulsating selection highlight wireframe for an entity.
-// Uses the entity's mesh wireframe if available, else per-entity shape,
+// Uses the entity's mesh wireframe if available, else a per-type shape,
 // else AABB bounds. Color pulsates between pink and white based on time.
 // grid_step: current editor grid step (used for AABB face grid overlay).
 void draw_selection_highlight(const entities::Entity *e,

@@ -26,7 +26,7 @@ void init();
 void switch_to(GameStateKind kind);
 
 // Get the current state (unsafe, can be null)
-IGameState *get_current_state();
+Game_State *get_current_state();
 
 // Update the current state. Returns false if the game should exit.
 bool update(float dt);

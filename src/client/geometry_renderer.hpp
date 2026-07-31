@@ -10,7 +10,7 @@ namespace client
 // Draw one piece of map geometry.
 //
 // One implementation for both regimes that used to draw geometry: the in-game
-// static pass in PlayState::render_3d and the editor's per-entity traits. Both
+// static pass in Play_State::render_3d and the editor's per-entity traits. Both
 // had grown their own copy of "resolve the mesh path, else fall back to the
 // kind's primitive", and they had already drifted (the editor cached generated
 // displacement meshes, the game regenerated one every frame).

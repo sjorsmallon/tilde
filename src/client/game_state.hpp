@@ -34,10 +34,10 @@ static std::string_view to_string(GameStateKind kind)
   }
 }
 
-class IGameState
+class Game_State
 {
 public:
-  virtual ~IGameState() = default;
+  virtual ~Game_State() = default;
 
   // Called when this state becomes the active state
   virtual void on_enter() {}

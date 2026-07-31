@@ -22,7 +22,7 @@ struct map_package_t; // defined in shared/network/map_transfer.hpp
 namespace client
 {
 
-class PlayState : public IGameState
+class Play_State : public Game_State
 {
 public:
   void on_enter() override;
@@ -40,10 +40,9 @@ private:
   // jolt_init() has already run.
   bool load_client_map(const std::string &map_path);
 
-  // Rebuilds the client world from a streamed compiled package (entities from
-  // the canonical text, navmesh from the baked sidecar) instead of a local
-  // file — the map-streaming fallback for a cache miss / hash mismatch. Returns
-  // false if the entity text can't be parsed. Shares finalize_client_map's tail.
+  // Rebuilds the client world from a streamed compiled package instead of a local
+  // file. Returns false if the entity text can't be parsed.
+  // Shares finalize_client_map's tail.
   bool apply_map_package(const shared::map_package_t &package);
 
   // Shared tail of load_client_map / apply_map_package: drops the previous

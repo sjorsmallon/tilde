@@ -54,7 +54,7 @@ static void draw_ring(VkCommandBuffer cmd, const vec3 &center, float radius,
 
     renderer::draw_line(cmd, p1, p2, color);
 
-    // Debug: Draw AABBs along the ring
+    // draw a box every 8 segments
     if (i % 8 == 0)
     {
       float s = radius * 0.05f;
@@ -76,7 +76,7 @@ void draw_reshape_gizmo(VkCommandBuffer cmd, const reshape_gizmo_t &gizmo)
   struct handle_def_t
   {
     vec3 origin;
-    vec3 dir;
+    vec3 direction;
     int index;
   };
 
@@ -89,23 +89,23 @@ void draw_reshape_gizmo(VkCommandBuffer cmd, const reshape_gizmo_t &gizmo)
       {{c.x, c.y, c.z - e.z}, {0, 0, -1}, 5}  // -Z
   };
 
-  for (const auto &h : handles)
+  for (const auto &handle : handles)
   {
-    color_t col = colors::white;
-    if (gizmo.hovered_handle_index == h.index ||
-        gizmo.dragging_handle_index == h.index)
+    color_t color = colors::white;
+    if (gizmo.hovered_handle_index == handle.index ||
+        gizmo.dragging_handle_index == handle.index)
     {
-      col = colors::green;
+      color = colors::green;
     }
 
-    vec3 end = h.origin + h.dir * handle_length;
-    renderer::draw_arrow(cmd, h.origin, end, col);
+    vec3 end = handle.origin + handle.direction * handle_length;
+    renderer::draw_arrow(cmd, handle.origin, end, color);
   }
 }
 
 void draw_transform_gizmo(VkCommandBuffer cmd, const transform_gizmo_t &gizmo)
 {
-  vec3 p = gizmo.position;
+  vec3 position = gizmo.position;
   float s = gizmo.size;
 
   // Standard Axis Colors: X=Red, Y=Green, Z=Blue
@@ -116,13 +116,13 @@ void draw_transform_gizmo(VkCommandBuffer cmd, const transform_gizmo_t &gizmo)
 
   // Draw Arrows
   // X Axis
-  renderer::draw_arrow(cmd, p, p + vec3{s, 0, 0},
+  renderer::draw_arrow(cmd, position, position + vec3{s, 0, 0},
                        (gizmo.hovered_axis_index == 0) ? col_sel : col_x);
   // Y Axis
-  renderer::draw_arrow(cmd, p, p + vec3{0, s, 0},
+  renderer::draw_arrow(cmd, position, position + vec3{0, s, 0},
                        (gizmo.hovered_axis_index == 1) ? col_sel : col_y);
   // Z Axis
-  renderer::draw_arrow(cmd, p, p + vec3{0, 0, s},
+  renderer::draw_arrow(cmd, position, position + vec3{0, 0, s},
                        (gizmo.hovered_axis_index == 2) ? col_sel : col_z);
 
   // Draw Rings
@@ -132,21 +132,21 @@ void draw_transform_gizmo(VkCommandBuffer cmd, const transform_gizmo_t &gizmo)
 
   float r_radius = s * 0.8f;
 
-  draw_ring(cmd, p, r_radius, 0,
+  draw_ring(cmd, position, r_radius, 0,
             (gizmo.hovered_ring_index == 0) ? col_sel : col_x);
-  draw_ring(cmd, p, r_radius, 1,
+  draw_ring(cmd, position, r_radius, 1,
             (gizmo.hovered_ring_index == 1) ? col_sel : col_y);
-  draw_ring(cmd, p, r_radius, 2,
+  draw_ring(cmd, position, r_radius, 2,
             (gizmo.hovered_ring_index == 2) ? col_sel : col_z);
 }
 
 // --- Logic ---
 
-static float intersect_aabb(const vec3 &origin, const vec3 &dir,
+static float intersect_aabb(const vec3 &origin, const vec3 &direction,
                             const vec3 &min, const vec3 &max)
 {
   float t = 0;
-  if (linalg::intersect_ray_aabb(origin, dir, min, max, t))
+  if (linalg::intersect_ray_aabb(origin, direction, min, max, t))
     return t;
   return 1e9f;
 }
@@ -161,28 +161,36 @@ bool hit_test_reshape_gizmo(const linalg::ray_t &ray, reshape_gizmo_t &gizmo)
   vec3 e = gizmo.aabb.half_extents;
 
   // Normals for indices 0..5
-  vec3 normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
-                     {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+  constexpr int axis_count = 6;
+  vec3 normals[axis_count] = {
+      {1, 0, 0},  // +X
+      {-1, 0, 0}, // -X
+      {0, 1, 0},  // +Y
+      {0, -1, 0}, // -Y
+      {0, 0, 1},  // +Z
+      {0, 0, -1}  // -Z
+  };
 
   // Position offsets for indices 0..5
-  vec3 pos[6] = {{c.x + e.x, c.y, c.z}, {c.x - e.x, c.y, c.z},
+  vec3 pos[axis_count] = 
+  {{c.x + e.x, c.y, c.z}, {c.x - e.x, c.y, c.z},
                  {c.x, c.y + e.y, c.z}, {c.x, c.y - e.y, c.z},
                  {c.x, c.y, c.z + e.z}, {c.x, c.y, c.z - e.z}};
 
-  for (int i = 0; i < 6; ++i)
+  for (int i = 0; i < axis_count; ++i)
   {
-    vec3 p = pos[i];
+    vec3 position = pos[i];
     vec3 n = normals[i];
-    vec3 end = p + n * handle_length;
+    vec3 end = position + n * handle_length;
 
     // Approximate arrow with AABB for picking
     // Standard logic from previous editor_state_update
-    vec3 bmin = {.x = std::min(p.x, end.x),
-                 .y = std::min(p.y, end.y),
-                 .z = std::min(p.z, end.z)};
-    vec3 bmax = {.x = std::max(p.x, end.x),
-                 .y = std::max(p.y, end.y),
-                 .z = std::max(p.z, end.z)};
+    vec3 bmin = {.x = std::min(position.x, end.x),
+                 .y = std::min(position.y, end.y),
+                 .z = std::min(position.z, end.z)};
+    vec3 bmax = {.x = std::max(position.x, end.x),
+                 .y = std::max(position.y, end.y),
+                 .z = std::max(position.z, end.z)};
     float pad = 0.2f;
     bmin = bmin - vec3{.x = pad, .y = pad, .z = pad};
     bmax = bmax + vec3{.x = pad, .y = pad, .z = pad};
@@ -205,23 +213,24 @@ bool hit_test_transform_gizmo(const linalg::ray_t &ray,
   gizmo.hovered_ring_index = -1;
   float min_t = 1e9f;
 
-  vec3 p = gizmo.position;
+  vec3 position = gizmo.position;
   float s = gizmo.size;
 
   // Axis Picking (Arrows)
   // X (0), Y (1), Z (2)
-  vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+  const int axes_count = 3;
+  vec3 axes[axes_count] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
 
-  for (int i = 0; i < 3; ++i)
+  for (int axis_idx = 0; axis_idx < axes_count; ++axis_idx)
   {
-    vec3 end = p + axes[i] * s;
+    vec3 end = position + axes[axis_idx] * s;
     // Approximating arrow as AABB
-    vec3 bmin = {.x = std::min(p.x, end.x),
-                 .y = std::min(p.y, end.y),
-                 .z = std::min(p.z, end.z)};
-    vec3 bmax = {.x = std::max(p.x, end.x),
-                 .y = std::max(p.y, end.y),
-                 .z = std::max(p.z, end.z)};
+    vec3 bmin = {.x = std::min(position.x, end.x),
+                 .y = std::min(position.y, end.y),
+                 .z = std::min(position.z, end.z)};
+    vec3 bmax = {.x = std::max(position.x, end.x),
+                 .y = std::max(position.y, end.y),
+                 .z = std::max(position.z, end.z)};
     float pad = s * 0.1f;
     bmin = bmin - vec3{pad, pad, pad};
     bmax = bmax + vec3{pad, pad, pad};
@@ -230,7 +239,7 @@ bool hit_test_transform_gizmo(const linalg::ray_t &ray,
     if (t < min_t)
     {
       min_t = t;
-      gizmo.hovered_axis_index = i;
+      gizmo.hovered_axis_index = axis_idx;
     }
   }
 
@@ -243,25 +252,25 @@ bool hit_test_transform_gizmo(const linalg::ray_t &ray,
   float thickness = s * 0.1f;
 
   // Check if we hit closer than current min_t
-  for (int i = 0; i < 3; ++i)
+  for (int axes_idx = 0; axes_idx < axes_count; ++axes_idx)
   {
-    vec3 normal = axes[i]; // Ring i lies in plane perpendicular to axis i?
+    vec3 normal = axes[axes_idx]; // Ring axes_idx lies in plane perpendicular to axis axes_idx?
     // Convention:
     // X Ring (Pitch) -> Plane YZ -> Normal X
     // Y Ring (Yaw) -> Plane XZ -> Normal Y
     // Z Ring (Roll) -> Plane XY -> Normal Z
 
     float t = 0;
-    if (linalg::intersect_ray_plane(ray.origin, ray.direction, p, normal, t))
+    if (linalg::intersect_ray_plane(ray.origin, ray.direction, position, normal, t))
     {
       if (t > 0 && t < min_t)
       {
         vec3 hit = ray.origin + ray.direction * t;
-        float d = linalg::length(hit - p);
+        float d = linalg::length(hit - position);
         if (d >= r_radius - thickness && d <= r_radius + thickness)
         {
           min_t = t;
-          gizmo.hovered_ring_index = i;
+          gizmo.hovered_ring_index = axes_idx;
           gizmo.hovered_axis_index = -1; // Ring overrides Axis if closer
         }
       }
@@ -282,10 +291,10 @@ bool update_reshape_gizmo(reshape_gizmo_t &gizmo, const linalg::ray_t &ray,
     return false;
   }
 
-  // If dragging...
+  // If wanting to drag..
   if (gizmo.dragging_handle_index == -1)
   {
-    // Start Drag
+    // start dragging.
     if (gizmo.hovered_handle_index != -1)
     {
       gizmo.dragging_handle_index = gizmo.hovered_handle_index;
@@ -296,33 +305,13 @@ bool update_reshape_gizmo(reshape_gizmo_t &gizmo, const linalg::ray_t &ray,
     }
   }
 
-  // Calculate drag delta
-  // This requires state (start point, original aabb).
-  // The function signature might be insufficient for full stateless update
-  // without passing in the drag start/original context.
-  // For now, let's assume the caller handles the dragging logic using the
-  // indices, or we expand this function. The prompt asked for "refactoring to
-  // gizmos", pushing logic here is good. But we need the context.
-
-  // Let's rely on the caller for the actual modification for now, keeping this
-  // simple or pass in the necessary context.
-
-  // Actually, to fully refactor, we should move the math here.
-  // But `update_reshape_gizmo` needs `drag_start_point` and `original_aabb`.
-  // Maybe we keep `dragging_handle_index` in the gizmo struct, but the
-  // interaction state (start point) needs to be managed.
-
-  // The user wants "simplest solutions".
-  // Keeping the math in `editor_state_update` but using the struct for
-  // state/drawing is a good step. Or we can add a `drag_context` struct.
-
   return false;
 }
 
 // Editor_Gizmo Implementation
 
-void Editor_Gizmo::start_interaction(Transaction_System *sys,
-                                     shared::map_t *map,
+void Editor_Gizmo::start_interaction(Transaction_System* transaction_system,
+                                     shared::map_t* map,
                                      shared::entity_uid_t uid)
 {
   if (!map || uid == 0)
@@ -336,7 +325,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
   {
     target_map = map;
     target_uid = uid;
-    transaction_system = sys;
+    transaction_system = transaction_system;
 
     interacting_ = true;
     start_entity.reset();
@@ -365,7 +354,7 @@ void Editor_Gizmo::start_interaction(Transaction_System *sys,
 
   target_map = map;
   target_uid = uid;
-  transaction_system = sys;
+  transaction_system = transaction_system;
 
   // Snapshot entity before modification
   interacting_ = true;

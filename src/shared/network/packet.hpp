@@ -27,6 +27,10 @@ enum class Message_Type : uint8
   C2S_RequestMapData, // C2S: client lacks the compiled package; stream it
   S2C_MapData,        // S2C: the compiled map package blob (bitstream-native)
   S2C_CvarValues,     // S2C: @Mirrored cvar values (bitstream-native)
+
+  // Not a wire value: one past the last type, so a table indexed by
+  // Message_Type sizes itself (see the client's handler table).
+  Count,
 };
 
 // --------------------------------------------------------------------------------

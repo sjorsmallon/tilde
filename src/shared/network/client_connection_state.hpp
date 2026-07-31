@@ -1,9 +1,14 @@
 #pragma once
 
+#include "../log.hpp"
 #include "game.pb.h"
 #include "network_types.hpp"
 #include "udp_socket.hpp"
+#include <array>
+#include <chrono>
+#include <cstddef>
 #include <map>
+#include <utility>
 #include <vector>
 
 namespace network
@@ -24,7 +29,7 @@ struct Client_Connection_State
   uint8 next_message_id = 0;
 };
 
-struct ClientInbox
+struct Client_Inbox
 {
   std::vector<game::NetCommand> net_commands;
   std::vector<game::S2C_EntityPackage> entity_updates;
@@ -64,334 +69,168 @@ inline void send_protobuf_message(Client_Connection_State &state, const T &msg)
   }
 }
 
+namespace detail
+{
+
+// Files one completed message's payload into the inbox. Every accepted message
+// type names one of these in CLIENT_MESSAGE_HANDLERS; reassembly happens once,
+// before dispatch, so a handler only decides where the bytes go.
+using client_message_handler_fn = void (*)(std::vector<uint8> &&payload,
+                                           Client_Inbox &out_inbox);
+
+// Protobuf-backed message: parse and append to Target.
+template <typename Message_T, std::vector<Message_T> Client_Inbox::*Target>
+void deliver_protobuf_message(std::vector<uint8> &&payload,
+                              Client_Inbox &out_inbox)
+{
+  Message_T message;
+  if (!message.ParseFromArray(payload.data(),
+                              static_cast<int>(payload.size())))
+  {
+    log_error("dropping malformed {} payload ({} bytes)",
+              Message_T::descriptor()->full_name(), payload.size());
+    return;
+  }
+
+  (out_inbox.*Target).push_back(std::move(message));
+}
+
+// Bitstream-native message: the network layer stays ignorant of what the bytes
+// mean and hands them to the game layer. The Client_Inbox member's comment names
+// the decoder for each.
+template <std::vector<std::vector<uint8>> Client_Inbox::*Target>
+void deliver_raw_payload(std::vector<uint8> &&payload, Client_Inbox &out_inbox)
+{
+  (out_inbox.*Target).push_back(std::move(payload));
+}
+
+using client_message_handler_table_t =
+    std::array<client_message_handler_fn,
+               static_cast<size_t>(Message_Type::Count)>;
+
+// The client's accept list. A slot left null is a type the client is never
+// supposed to receive — the C2S half of the protocol — and one arriving anyway
+// is reported rather than dropped on the floor.
+constexpr client_message_handler_table_t make_client_message_handlers()
+{
+  client_message_handler_table_t handlers{};
+
+  handlers[static_cast<size_t>(Message_Type::S2C_EntityPackage)] =
+      &deliver_protobuf_message<game::S2C_EntityPackage,
+                                &Client_Inbox::entity_updates>;
+  handlers[static_cast<size_t>(Message_Type::NetCommand)] =
+      &deliver_protobuf_message<game::NetCommand, &Client_Inbox::net_commands>;
+  handlers[static_cast<size_t>(Message_Type::S2C_ServerMessage)] =
+      &deliver_protobuf_message<game::S2C_ServerMessage,
+                                &Client_Inbox::server_messages>;
+  handlers[static_cast<size_t>(Message_Type::S2C_BotDebug)] =
+      &deliver_protobuf_message<game::S2C_BotDebug,
+                                &Client_Inbox::bot_debug_updates>;
+  handlers[static_cast<size_t>(Message_Type::S2C_GameEventBatch)] =
+      &deliver_protobuf_message<game::S2C_GameEventBatch,
+                                &Client_Inbox::game_event_batches>;
+  handlers[static_cast<size_t>(Message_Type::CmdChangeMap)] =
+      &deliver_raw_payload<&Client_Inbox::change_map_messages>;
+  handlers[static_cast<size_t>(Message_Type::S2C_MapData)] =
+      &deliver_raw_payload<&Client_Inbox::map_data_messages>;
+  handlers[static_cast<size_t>(Message_Type::S2C_CvarValues)] =
+      &deliver_raw_payload<&Client_Inbox::cvar_value_messages>;
+
+  return handlers;
+}
+
+inline constexpr client_message_handler_table_t CLIENT_MESSAGE_HANDLERS =
+    make_client_message_handlers();
+
+// Null when the type is out of range (garbage, or a newer build's message) or
+// has no slot in the table.
+inline client_message_handler_fn find_client_message_handler(uint8 message_type)
+{
+  if (message_type >= CLIENT_MESSAGE_HANDLERS.size())
+    return nullptr;
+
+  return CLIENT_MESSAGE_HANDLERS[message_type];
+}
+
+// Files one fragment into its message's bucket and, once every fragment has
+// arrived, concatenates them into out_payload and frees the bucket. Returns
+// false while the message is still incomplete.
+inline bool reassemble_fragment(Client_Connection_State &state,
+                                const Packet &packet,
+                                std::vector<uint8> &out_payload)
+{
+  std::vector<Packet> &fragments =
+      state.partial_packets[packet.header.message_id];
+
+  if (fragments.empty())
+    fragments.resize(packet.header.fragment_count);
+
+  // A fragment_index past the end means this packet disagrees with the
+  // fragment_count the bucket was sized from — corrupt or forged. Ignore the
+  // stray rather than writing out of bounds.
+  if (packet.header.fragment_index >= fragments.size())
+    return false;
+
+  fragments[packet.header.fragment_index] = packet;
+
+  // A slot still zeroed by resize() has fragment_count == 0, so it has not
+  // arrived yet. convert_to_packets() never emits an empty chunk, so a zero
+  // payload_size means the same thing.
+  size_t total_size = 0;
+  for (const Packet &fragment : fragments)
+  {
+    if (fragment.header.fragment_count == 0 ||
+        fragment.header.payload_size == 0)
+      return false;
+
+    total_size += fragment.header.payload_size;
+  }
+
+  out_payload.clear();
+  out_payload.reserve(total_size);
+  for (const Packet &fragment : fragments)
+    out_payload.insert(out_payload.end(), fragment.buffer,
+                       fragment.buffer + fragment.header.payload_size);
+
+  state.partial_packets.erase(packet.header.message_id);
+  return true;
+}
+
+} // namespace detail
+
 inline void poll_client_network(Client_Connection_State &state,
-                                double time_window, ClientInbox &out_inbox)
+                                double time_window, Client_Inbox &out_inbox)
 {
   using clock = std::chrono::high_resolution_clock;
-  auto start_time = clock::now();
-  auto timeout = std::chrono::duration<double>(time_window);
+  const clock::time_point start_time = clock::now();
+  const std::chrono::duration<double> timeout(time_window);
 
-  while (true)
+  // Reused across iterations so a completed message costs at most one
+  // allocation, and usually none.
+  std::vector<uint8> payload;
+
+  while (clock::now() - start_time < timeout)
   {
-    auto now = clock::now();
-    if (now - start_time >= timeout)
-      break;
-
     Packet packet;
     Address sender;
-    if (state.socket.receive(packet, sender))
+    if (!state.socket.receive(packet, sender))
+      continue;
+
+    if (sender != state.server_address)
+      continue;
+
+    const detail::client_message_handler_fn handler =
+        detail::find_client_message_handler(packet.header.message_type);
+    if (handler == nullptr)
     {
-      if (sender != state.server_address)
-        continue;
-
-      if (packet.header.message_type ==
-          static_cast<uint8>(Message_Type::NetCommand))
-      {
-        auto &fragments = state.partial_packets[packet.header.message_id];
-
-        if (fragments.empty())
-          fragments.resize(packet.header.fragment_count);
-
-        // Safety check
-        if (packet.header.fragment_index < fragments.size())
-          fragments[packet.header.fragment_index] = packet;
-
-        bool complete = true;
-        size_t total_size = 0;
-        for (const auto &f : fragments)
-        {
-          if (f.header.fragment_count == 0 || f.header.payload_size == 0)
-          {
-            complete = false;
-            break;
-          }
-          total_size += f.header.payload_size;
-        }
-
-        if (complete)
-        {
-          std::vector<uint8> buffer;
-          buffer.reserve(total_size);
-          for (const auto &f : fragments)
-            buffer.insert(buffer.end(), f.buffer,
-                          f.buffer + f.header.payload_size);
-
-          game::NetCommand cmd;
-          if (cmd.ParseFromArray(buffer.data(), buffer.size()))
-          {
-            out_inbox.net_commands.push_back(cmd);
-          }
-          state.partial_packets.erase(packet.header.message_id);
-        }
-      }
-      else if (packet.header.message_type ==
-               static_cast<uint8>(Message_Type::S2C_EntityPackage))
-      {
-        auto &fragments = state.partial_packets[packet.header.message_id];
-
-        if (fragments.empty())
-          fragments.resize(packet.header.fragment_count);
-
-        if (packet.header.fragment_index < fragments.size())
-          fragments[packet.header.fragment_index] = packet;
-
-        bool complete = true;
-        size_t total_size = 0;
-        for (const auto &f : fragments)
-        {
-          if (f.header.fragment_count == 0 || f.header.payload_size == 0)
-          {
-            complete = false;
-            break;
-          }
-          total_size += f.header.payload_size;
-        }
-
-        if (complete)
-        {
-          std::vector<uint8> buffer;
-          buffer.reserve(total_size);
-          for (const auto &f : fragments)
-            buffer.insert(buffer.end(), f.buffer,
-                          f.buffer + f.header.payload_size);
-
-          game::S2C_EntityPackage pkg;
-          if (pkg.ParseFromArray(buffer.data(), buffer.size()))
-          {
-            out_inbox.entity_updates.push_back(pkg);
-          }
-          state.partial_packets.erase(packet.header.message_id);
-        }
-      }
-      else if (packet.header.message_type ==
-               static_cast<uint8>(Message_Type::S2C_ServerMessage))
-      {
-        auto &fragments = state.partial_packets[packet.header.message_id];
-
-        if (fragments.empty())
-          fragments.resize(packet.header.fragment_count);
-
-        if (packet.header.fragment_index < fragments.size())
-          fragments[packet.header.fragment_index] = packet;
-
-        bool complete = true;
-        size_t total_size = 0;
-        for (const auto &f : fragments)
-        {
-          if (f.header.fragment_count == 0 || f.header.payload_size == 0)
-          {
-            complete = false;
-            break;
-          }
-          total_size += f.header.payload_size;
-        }
-
-        if (complete)
-        {
-          std::vector<uint8> buffer;
-          buffer.reserve(total_size);
-          for (const auto &f : fragments)
-            buffer.insert(buffer.end(), f.buffer,
-                          f.buffer + f.header.payload_size);
-
-          game::S2C_ServerMessage msg;
-          if (msg.ParseFromArray(buffer.data(), buffer.size()))
-          {
-            out_inbox.server_messages.push_back(msg);
-          }
-          state.partial_packets.erase(packet.header.message_id);
-        }
-      }
-      else if (packet.header.message_type ==
-               static_cast<uint8>(Message_Type::S2C_CvarValues))
-      {
-        auto &fragments = state.partial_packets[packet.header.message_id];
-
-        if (fragments.empty())
-          fragments.resize(packet.header.fragment_count);
-
-        if (packet.header.fragment_index < fragments.size())
-          fragments[packet.header.fragment_index] = packet;
-
-        bool complete = true;
-        size_t total_size = 0;
-        for (const auto &f : fragments)
-        {
-          if (f.header.fragment_count == 0 || f.header.payload_size == 0)
-          {
-            complete = false;
-            break;
-          }
-          total_size += f.header.payload_size;
-        }
-
-        if (complete)
-        {
-          std::vector<uint8> buffer;
-          buffer.reserve(total_size);
-          for (const auto &f : fragments)
-            buffer.insert(buffer.end(), f.buffer,
-                          f.buffer + f.header.payload_size);
-
-          // Bitstream-native: hand the raw payload to the game layer, which
-          // decodes it with shared::deserialize_cvar_values().
-          out_inbox.cvar_value_messages.push_back(std::move(buffer));
-          state.partial_packets.erase(packet.header.message_id);
-        }
-      }
-      else if (packet.header.message_type ==
-               static_cast<uint8>(Message_Type::S2C_BotDebug))
-      {
-        auto &fragments = state.partial_packets[packet.header.message_id];
-
-        if (fragments.empty())
-          fragments.resize(packet.header.fragment_count);
-
-        if (packet.header.fragment_index < fragments.size())
-          fragments[packet.header.fragment_index] = packet;
-
-        bool complete = true;
-        size_t total_size = 0;
-        for (const auto &f : fragments)
-        {
-          if (f.header.fragment_count == 0 || f.header.payload_size == 0)
-          {
-            complete = false;
-            break;
-          }
-          total_size += f.header.payload_size;
-        }
-
-        if (complete)
-        {
-          std::vector<uint8> buffer;
-          buffer.reserve(total_size);
-          for (const auto &f : fragments)
-            buffer.insert(buffer.end(), f.buffer,
-                          f.buffer + f.header.payload_size);
-
-          game::S2C_BotDebug msg;
-          if (msg.ParseFromArray(buffer.data(), buffer.size()))
-          {
-            out_inbox.bot_debug_updates.push_back(std::move(msg));
-          }
-          state.partial_packets.erase(packet.header.message_id);
-        }
-      }
-      else if (packet.header.message_type ==
-               static_cast<uint8>(Message_Type::S2C_GameEventBatch))
-      {
-        auto &fragments = state.partial_packets[packet.header.message_id];
-
-        if (fragments.empty())
-          fragments.resize(packet.header.fragment_count);
-
-        if (packet.header.fragment_index < fragments.size())
-          fragments[packet.header.fragment_index] = packet;
-
-        bool complete = true;
-        size_t total_size = 0;
-        for (const auto &f : fragments)
-        {
-          if (f.header.fragment_count == 0 || f.header.payload_size == 0)
-          {
-            complete = false;
-            break;
-          }
-          total_size += f.header.payload_size;
-        }
-
-        if (complete)
-        {
-          std::vector<uint8> buffer;
-          buffer.reserve(total_size);
-          for (const auto &f : fragments)
-            buffer.insert(buffer.end(), f.buffer,
-                          f.buffer + f.header.payload_size);
-
-          game::S2C_GameEventBatch msg;
-          if (msg.ParseFromArray(buffer.data(), buffer.size()))
-          {
-            out_inbox.game_event_batches.push_back(std::move(msg));
-          }
-          state.partial_packets.erase(packet.header.message_id);
-        }
-      }
-      else if (packet.header.message_type ==
-               static_cast<uint8>(Message_Type::CmdChangeMap))
-      {
-        auto &fragments = state.partial_packets[packet.header.message_id];
-
-        if (fragments.empty())
-          fragments.resize(packet.header.fragment_count);
-
-        if (packet.header.fragment_index < fragments.size())
-          fragments[packet.header.fragment_index] = packet;
-
-        bool complete = true;
-        size_t total_size = 0;
-        for (const auto &f : fragments)
-        {
-          if (f.header.fragment_count == 0 || f.header.payload_size == 0)
-          {
-            complete = false;
-            break;
-          }
-          total_size += f.header.payload_size;
-        }
-
-        if (complete)
-        {
-          std::vector<uint8> buffer;
-          buffer.reserve(total_size);
-          for (const auto &f : fragments)
-            buffer.insert(buffer.end(), f.buffer,
-                          f.buffer + f.header.payload_size);
-
-          // Bitstream-native: hand the raw payload to the game layer, which
-          // decodes it with shared::deserialize_change_map().
-          out_inbox.change_map_messages.push_back(std::move(buffer));
-          state.partial_packets.erase(packet.header.message_id);
-        }
-      }
-      else if (packet.header.message_type ==
-               static_cast<uint8>(Message_Type::S2C_MapData))
-      {
-        auto &fragments = state.partial_packets[packet.header.message_id];
-
-        if (fragments.empty())
-          fragments.resize(packet.header.fragment_count);
-
-        if (packet.header.fragment_index < fragments.size())
-          fragments[packet.header.fragment_index] = packet;
-
-        bool complete = true;
-        size_t total_size = 0;
-        for (const auto &f : fragments)
-        {
-          if (f.header.fragment_count == 0 || f.header.payload_size == 0)
-          {
-            complete = false;
-            break;
-          }
-          total_size += f.header.payload_size;
-        }
-
-        if (complete)
-        {
-          std::vector<uint8> buffer;
-          buffer.reserve(total_size);
-          for (const auto &f : fragments)
-            buffer.insert(buffer.end(), f.buffer,
-                          f.buffer + f.header.payload_size);
-
-          // Bitstream-native: hand the raw payload to the game layer, which
-          // decodes it with shared::deserialize_map_data().
-          out_inbox.map_data_messages.push_back(std::move(buffer));
-          state.partial_packets.erase(packet.header.message_id);
-        }
-      }
+      log_error("dropping packet with message type {}, which the client does "
+                "not accept",
+                static_cast<int>(packet.header.message_type));
+      continue;
     }
+
+    if (detail::reassemble_fragment(state, packet, payload))
+      handler(std::move(payload), out_inbox);
   }
 }
 

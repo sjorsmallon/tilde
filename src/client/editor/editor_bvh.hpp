@@ -40,7 +40,10 @@ build_editor_bvh(const shared::map_t &map)
   for (const shared::map_entity_t &entry : map.entities)
   {
     if (!entry.entity)
+    {
+      log_error("wile iterating over map entities, encountered a non_entity?");
       continue;
+    }
     add_leaf(entry.uid, shared::compute_entity_bounds(entry.entity.get()));
   }
 

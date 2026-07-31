@@ -40,17 +40,7 @@ using explosion_effect_t = client_context_t::explosion_effect_t;
 // seconds at a 60Hz tickrate -- enough to watch a trend, quiet enough to leave on.
 static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
 
-// `net_snapshot_debug` prints what each snapshot cost and what it was deltaed
-// against. The two numbers worth watching: `delta_from` should be a recent tick
-// and not 0 (0 every time means the ack loop is broken and every snapshot is a
-// full update), and `bytes` should be a small fraction of a full update's size.
-// Declared in cvars.def; read below off the context's cvar_state_t.
-
-// Ships a whole console line to the server. Installed on the command table
-// while connected, which is also the signal execute_console_line uses to decide
-// that @Server names are not ours to run. A plain function rather than a
-// capturing lambda because a command_table_t slot is a raw function pointer —
-// everything it needs is on the client context, which is a singleton anyway.
+// Ships a whole console line to the server.
 static void forward_console_line_to_server(std::string_view line)
 {
   auto &ctx = state_manager::get_client_context();
@@ -67,6 +57,7 @@ static void send_map_loaded_ack(network::Client_Connection_State &conn,
   shared::map_loaded_message_t msg{content_hash};
   network::Bit_Writer writer;
   shared::serialize_map_loaded(writer, msg);
+
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::C2S_MapLoaded),
@@ -76,10 +67,8 @@ static void send_map_loaded_ack(network::Client_Connection_State &conn,
 }
 
 // Directory this client resolves map files against. Defaults to "maps"; the
-// MAPS_DIR environment variable overrides it. This is a local dev/test knob:
-// point it at an empty folder to simulate a "cold" client that lacks the map,
-// so it must stream the compiled package from the server instead of loading a
-// local copy. See scripts/run_client_cold.cmd.
+// MAPS_DIR environment variable overrides it.
+// See scripts/run_client_cold.cmd where map transfer is tested.
 static std::string client_maps_directory()
 {
   const char *env = std::getenv("MAPS_DIR");
@@ -103,7 +92,7 @@ static void send_request_map_data(network::Client_Connection_State &conn,
     conn.socket.send(p, conn.server_address);
 }
 
-bool PlayState::load_client_map(const std::string &map_path)
+bool Play_State::load_client_map(const std::string &map_path)
 {
   if (map_path.empty() || !shared::load_map(map_path, map))
   {
@@ -115,7 +104,7 @@ bool PlayState::load_client_map(const std::string &map_path)
   return true;
 }
 
-bool PlayState::apply_map_package(const shared::map_package_t &package)
+bool Play_State::apply_map_package(const shared::map_package_t &package)
 {
   // Rebuild `this->map` from the streamed package: entities from the canonical
   // text, navmesh from the baked sidecar the package carries.
@@ -133,7 +122,7 @@ bool PlayState::apply_map_package(const shared::map_package_t &package)
   return true;
 }
 
-void PlayState::finalize_client_map()
+void Play_State::finalize_client_map()
 {
   auto &ctx = state_manager::get_client_context();
 
@@ -184,7 +173,7 @@ void PlayState::finalize_client_map()
   camera.position.z = ctx.player_position.z;
 }
 
-void PlayState::enter_connected_phase()
+void Play_State::enter_connected_phase()
 {
   auto &ctx  = state_manager::get_client_context();
   auto &conn = ctx.connection_state;
@@ -198,7 +187,7 @@ void PlayState::enter_connected_phase()
   ctx.commands->forward_to_server = &forward_console_line_to_server;
 }
 
-void PlayState::on_enter()
+void Play_State::on_enter()
 {
   session_ready_for_simulation_and_rendering = false;
 
@@ -292,7 +281,7 @@ void PlayState::on_enter()
   renderer::draw_announcement("Play Mode");
 }
 
-void PlayState::on_exit()
+void Play_State::on_exit()
 {
   auto &ctx = state_manager::get_client_context();
   auto &conn = ctx.connection_state;
@@ -322,7 +311,7 @@ void PlayState::on_exit()
   physics_state.reset();
 }
 
-void PlayState::update(float dt)
+void Play_State::update(float dt)
 {
   last_dt = dt;
 
@@ -375,23 +364,24 @@ void PlayState::update(float dt)
   // Falling edge: console just closed -> recapture the mouse for play.
   // This also overrides any prior U-toggle so closing the console always
   // returns the player to "playing" with a captured cursor.
-  const bool console_open = Console::Get().IsOpen();
-  if (console_was_open && !console_open)
-    mouse_captured = true;
-  console_was_open = console_open;
+    const bool console_open = Console::Get().IsOpen();
+    if (console_was_open && !console_open)
+      mouse_captured = true;
+    console_was_open = console_open;
 
-  // Re-assert relative mouse mode every frame so the console can transparently
-  // release the cursor while it's open. Without this, SDL stays in relative
-  // mode (cursor hidden and warped to center) even when the console is up,
-  // making the console unusable with the mouse.
-  input::set_relative_mouse_mode(mouse_captured && !console_open);
+    // Re-assert relative mouse mode every frame so the console can transparently
+    // release the cursor while it's open. Without this, SDL stays in relative
+    // mode (cursor hidden and warped to center) even when the console is up,
+    // making the console unusable with the mouse.
+    input::set_relative_mouse_mode(mouse_captured && !console_open);
 
-  // Dispatch key bindings configured via the `bind` command. PollBindings is
-  // a no-op when the console is open, so we don't have to gate it here.
-  Console::Get().PollBindings();
+    // Dispatch key bindings configured via the `bind` command. PollBindings is
+    // a no-op when the console is open, so we don't have to gate it here.
+    Console::Get().PollBindings();
+
 
   // --- Poll network ---
-  network::ClientInbox inbox;
+  network::Client_Inbox inbox;
   network::poll_client_network(conn, 0.001, inbox); // 1ms receive window
 
   for (const auto &cmd : inbox.net_commands)
@@ -962,7 +952,8 @@ void PlayState::update(float dt)
     if (frame_move_events.jumped)
       ctx.audio->play_2d("resources/sounds/player_jump.wav");
     if (frame_move_events.landed &&
-        frame_move_events.land_impact_speed > MIN_LAND_IMPACT_SPEED)
+        frame_move_events.land_impact_speed >
+            ctx.cvars->pm_minimum_land_impact_speed)
       ctx.audio->play_2d("resources/sounds/player_land.wav");
   }
 
@@ -1019,7 +1010,7 @@ void PlayState::update(float dt)
   ctx.interpolation_time += dt;
 }
 
-void PlayState::render_ui()
+void Play_State::render_ui()
 {
   auto &ctx = state_manager::get_client_context();
 
@@ -1033,7 +1024,7 @@ void PlayState::render_ui()
   {
     ImGui::Text("PLAY MODE  [ESC] to return to editor");
     ImGui::Text("Uncapture mouse [U]");
-    ImGui::Text("pos: %.1f, %.1f, %.1f", ctx.player_position.x, ctx.player_position.y,
+    ImGui::Text("position: %.1f, %.1f, %.1f", ctx.player_position.x, ctx.player_position.y,
                 ctx.player_position.z);
     ImGui::Text("vel: %.1f, %.1f, %.1f", ctx.player_velocity.x, ctx.player_velocity.y,
                 ctx.player_velocity.z);
@@ -1159,7 +1150,7 @@ void PlayState::render_ui()
   }
 }
 
-void PlayState::render_3d(VkCommandBuffer cmd)
+void Play_State::render_3d(VkCommandBuffer cmd)
 {
   if (!session_ready_for_simulation_and_rendering)
     return;
@@ -1331,8 +1322,8 @@ void PlayState::render_3d(VkCommandBuffer cmd)
       const int N = (int)poly.vertices.size();
       for (int e = 0; e < N; ++e)
       {
-        vec3f a = nav.vertices[poly.vertices[e          ]].pos;
-        vec3f b = nav.vertices[poly.vertices[(e + 1) % N]].pos;
+        vec3f a = nav.vertices[poly.vertices[e          ]].position;
+        vec3f b = nav.vertices[poly.vertices[(e + 1) % N]].position;
         a.y += y_lift;
         b.y += y_lift;
         renderer::draw_line(cmd, a, b, color);
@@ -1343,7 +1334,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
     constexpr color_t vert_color = colors::white;
     for (const auto &v : nav.vertices)
     {
-      vec3f p = v.pos; p.y += y_lift;
+      vec3f p = v.position; p.y += y_lift;
       renderer::draw_line(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
       renderer::draw_line(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
     }
@@ -1517,7 +1508,7 @@ void PlayState::render_3d(VkCommandBuffer cmd)
   }
 }
 
-void PlayState::pre_render(VkCommandBuffer cmd)
+void Play_State::pre_render(VkCommandBuffer cmd)
 {
   if (!session_ready_for_simulation_and_rendering) return;
 

@@ -13,7 +13,7 @@
 namespace client
 {
 
-enum class DebugFlag : int32_t
+enum class debug_flag : int32_t
 {
   RenderNormals = (1 << 0),
   RenderUV = (1 << 1),
@@ -37,7 +37,7 @@ struct editor_light_t
   int light_type = 0; // 0=point, 1=spot, 2=directional
 };
 
-class ShaderEditorState : public IGameState
+class Shader_Editor_State : public Game_State
 {
 public:
   void on_enter() override;

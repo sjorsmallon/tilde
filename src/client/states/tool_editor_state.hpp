@@ -14,7 +14,7 @@
 namespace client
 {
 
-class ToolEditorState : public IGameState
+class ToolEditorState : public Game_State
 {
 public:
   void on_enter() override;
@@ -25,8 +25,9 @@ public:
   void render_3d(VkCommandBuffer cmd) override;
 
 private:
+  const int no_tool_selected_index = -1;
   std::vector<std::unique_ptr<Editor_Tool>> tools;
-  int active_tool_index = -1;
+  int active_tool_index = no_tool_selected_index;
 
   // Own state
   shared::map_t map;
@@ -37,6 +38,7 @@ private:
   float z_far = 16000.0f;
   const float iso_yaw = 315.0f;
   const float iso_pitch = -35.264f;
+
   editor_context_t context; // Reused context info
   viewport_state_t viewport;
 

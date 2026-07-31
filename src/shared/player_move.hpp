@@ -71,19 +71,13 @@ inline uint64_t buttons_from_move_input(const Move_Input &input)
 // This is an optional side-channel: callers that don't care (e.g. client
 // reconciliation replays, bots) pass nullptr. The simulation only reports raw
 // facts — whether a landing is loud enough to bother playing is a presentation
-// decision left to consumers (gated by MIN_LAND_IMPACT_SPEED below).
+// decision left to consumers (gated by a cvar).
 struct Move_Events
 {
   bool  jumped = false;          // a jump impulse was applied this tick
   bool  landed = false;          // touched down from the air this tick
   float land_impact_speed = 0.f; // downward speed (units/s) arrested on landing
 };
-
-// Below this landing impact speed, a touchdown is too gentle to be worth a
-// sound (stepping off a curb vs. dropping from height). Gravity is 800, so a
-// jump (jumpspeed 270) lands at ~270 and clears this easily. Shared so the
-// client (local prediction) and server (remote dispatch) gate identically.
-inline constexpr float MIN_LAND_IMPACT_SPEED = 150.f;
 
 // new_player_position, new_player_velocity. `out_events`, if non-null, receives
 // the movement cosmetics produced this tick (jump/land).

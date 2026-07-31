@@ -77,15 +77,15 @@ void Selection_Tool::on_draw_ui(editor_context_t &ctx)
   {
     ImDrawList *draw_list = ImGui::GetForegroundDrawList();
     ImVec2 mouse_pos = ImGui::GetMousePos();
-    drag_current_pos.x = (int)mouse_pos.x;
-    drag_current_pos.y = (int)mouse_pos.y;
+    drag_current_position.x = (int)mouse_pos.x;
+    drag_current_position.y = (int)mouse_pos.y;
 
-    int dx = drag_current_pos.x - drag_start_pos.x;
-    int dy = drag_current_pos.y - drag_start_pos.y;
+    int dx = drag_current_position.x - drag_start_position.x;
+    int dy = drag_current_position.y - drag_start_position.y;
 
     if (dx * dx + dy * dy > 25)
     { // 5px threshold
-      ImVec2 p1 = ImVec2((float)drag_start_pos.x, (float)drag_start_pos.y);
+      ImVec2 p1 = ImVec2((float)drag_start_position.x, (float)drag_start_position.y);
       ImVec2 p2 = mouse_pos;
       draw_list->AddRect(p1, p2, IM_COL32(0, 255, 0, 255));
       draw_list->AddRectFilled(p1, p2, IM_COL32(0, 255, 0, 50));
@@ -119,7 +119,7 @@ void Selection_Tool::on_draw_ui(editor_context_t &ctx)
       }
       else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       {
-        render_imgui_entity_fields_in_a_window(entry->entity.get());
+        render_entity_fields_in_an_imgui_window(entry->entity.get());
       }
     }
     ImGui::End();
@@ -214,10 +214,10 @@ void Selection_Tool::on_update(editor_context_t &ctx,
       if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.direction,
                                       plane_point, plane_normal, t))
       {
-        grid_hover_pos = view.mouse_ray.origin + view.mouse_ray.direction * t;
+        grid_hover_position = view.mouse_ray.origin + view.mouse_ray.direction * t;
         float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
-        grid_hover_pos.x = editor::snap(grid_hover_pos.x, step);
-        grid_hover_pos.z = editor::snap(grid_hover_pos.z, step);
+        grid_hover_position.x = editor::snap(grid_hover_position.x, step);
+        grid_hover_position.z = editor::snap(grid_hover_position.z, step);
         grid_hover_valid = true;
       }
       else
@@ -293,8 +293,8 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
     }
 
     is_dragging_box = false;
-    drag_start_pos = e.position;
-    drag_current_pos = e.position;
+    drag_start_position = e.position;
+    drag_current_position = e.position;
 
     ImVec2 m = ImGui::GetMousePos();
     if (std::abs(m.x - e.position.x) < 20 && std::abs(m.y - e.position.y) < 20)
@@ -302,8 +302,8 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
     }
     else
     {
-      drag_start_pos = {(int)m.x, (int)m.y};
-      drag_current_pos = drag_start_pos;
+      drag_start_position = {(int)m.x, (int)m.y};
+      drag_current_position = drag_start_position;
     }
 
     is_dragging_box = true;
@@ -348,7 +348,7 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
 
   if (is_dragging_box)
   {
-    drag_current_pos = e.position;
+    drag_current_position = e.position;
   }
 }
 
@@ -380,8 +380,8 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
 
     is_dragging_box = false;
 
-    int dx = e.position.x - drag_start_pos.x;
-    int dy = e.position.y - drag_start_pos.y;
+    int dx = e.position.x - drag_start_position.x;
+    int dy = e.position.y - drag_start_position.y;
     bool moved_significantly = (dx * dx + dy * dy) > 25;
 
     if (moved_significantly)
@@ -389,10 +389,10 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
       if (!ctx.map)
         return;
 
-      int x_min = std::min(drag_start_pos.x, drag_current_pos.x);
-      int x_max = std::max(drag_start_pos.x, drag_current_pos.x);
-      int y_min = std::min(drag_start_pos.y, drag_current_pos.y);
-      int y_max = std::max(drag_start_pos.y, drag_current_pos.y);
+      int x_min = std::min(drag_start_position.x, drag_current_position.x);
+      int x_max = std::max(drag_start_position.x, drag_current_position.x);
+      int y_min = std::min(drag_start_position.y, drag_current_position.y);
+      int y_max = std::max(drag_start_position.y, drag_current_position.y);
 
       if (!e.mods.shift)
       {
@@ -533,8 +533,8 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   }
 
   // 2. Highlight Hovered Item - Yellow
-  int dx = drag_current_pos.x - drag_start_pos.x;
-  int dy = drag_current_pos.y - drag_start_pos.y;
+  int dx = drag_current_position.x - drag_start_position.x;
+  int dy = drag_current_position.y - drag_start_position.y;
   bool is_dragging_significantly = is_dragging_box && (dx * dx + dy * dy > 25);
 
   if (!is_dragging_significantly && hovered_uid != 0)
@@ -551,10 +551,10 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   // 3. Highlight Box Selection Candidates (Live Preview) - Yellow
   if (is_dragging_significantly)
   {
-    int x_min = std::min(drag_start_pos.x, drag_current_pos.x);
-    int x_max = std::max(drag_start_pos.x, drag_current_pos.x);
-    int y_min = std::min(drag_start_pos.y, drag_current_pos.y);
-    int y_max = std::max(drag_start_pos.y, drag_current_pos.y);
+    int x_min = std::min(drag_start_position.x, drag_current_position.x);
+    int x_max = std::max(drag_start_position.x, drag_current_position.x);
+    int y_min = std::min(drag_start_position.y, drag_current_position.y);
+    int y_max = std::max(drag_start_position.y, drag_current_position.y);
 
     const auto &view = cached_viewport;
 
@@ -591,7 +591,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   if (grid_hover_valid && hovered_uid == 0 &&
       !is_dragging_significantly && !editor_gizmo.is_interacting())
   {
-    linalg::vec3 center = grid_hover_pos;
+    linalg::vec3 center = grid_hover_position;
     linalg::vec3 half_extents = {editor::GRID_INDICATOR_HALF_W,
                                   editor::GRID_INDICATOR_HALF_H,
                                   editor::GRID_INDICATOR_HALF_W};

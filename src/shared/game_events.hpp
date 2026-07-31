@@ -20,6 +20,7 @@ enum class game_event_kind_t : uint16_t
   ROCKET_DETONATED,
   PLAYER_DIED,
   PLAYER_SPAWNED,
+  PLAYER_DAMAGED,
 };
 
 // Per-kind payload structs. Kept trivially copyable; each variant participates
@@ -30,6 +31,13 @@ struct rocket_detonated_payload_t
   shared::entity_uid_t attacker_id;
   shared::entity_uid_t victim_id;
   uint16_t             weapon_id;
+};
+
+struct player_damaged_payload_t
+{
+  shared::entity_uid_t attacker_id;
+  shared::entity_uid_t victim_id;
+  uint16_t damage_amount;
 };
 
 // Fired once at the tick a player's health crosses from >0 to <=0. Carries
@@ -90,6 +98,7 @@ struct game_event_t
     rocket_detonated_payload_t rocket_detonated;
     player_died_payload_t      player_died;
     player_spawned_payload_t   player_spawned;
+    player_damaged_payload_t   player_damaged;
   };
 };
 

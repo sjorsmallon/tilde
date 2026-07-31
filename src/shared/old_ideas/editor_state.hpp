@@ -38,7 +38,7 @@ constexpr const float default_floor_half_height = 0.5f;
 namespace client
 {
 
-class EditorState : public IGameState
+class EditorState : public Game_State
 {
 public:
   void on_enter() override;

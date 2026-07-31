@@ -321,7 +321,7 @@ become the package hash before remote clients / streaming are real.
      map_data_message_t { map_name, package_hash, compressed, bytes } (S2C_MapData);
      compressed=false for now (step 6 adds gzip; package_hash is over the
      UNCOMPRESSED blob). New Message_Type entries + reassembly branches on both
-     sides (ServerInbox::map_data_requests, ClientInbox::map_data_messages) that
+     sides (ServerInbox::map_data_requests, Client_Inbox::map_data_messages) that
      hand raw payloads to the game layer like CmdChangeMap. Verified by
      map_migration_test (package section 7: entity_text/map_name/navmesh
      round-trip, stable hash, corrupted-magic rejected).
@@ -1168,7 +1168,7 @@ has nothing to convert. `S2C_CVarSync` and `CvarPair` are deleted from
         unconditionally and `player_move` gates the call, reading
         `debug_show_collisions` ONCE per tick so a mid-tick toggle can't
         record half a frame.
-      * `PlayState::conn_state_` deleted — it existed only to feed the old
+      * `Play_State::conn_state_` deleted — it existed only to feed the old
         capturing forwarder lambda, and a written-never-read member is not
         something the compiler would have flagged.
 - [x] ~~4. Wire — mirrored-values message~~ — **done 2026-07-30**.

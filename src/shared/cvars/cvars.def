@@ -67,16 +67,17 @@
 // meant the same thing.
 
 Player_Movement :: cvars {
-    pm_maxspeed:            f32 = 320.0     @Mirrored  "Maximum player speed"
-    pm_stopspeed:           f32 = 100.0     @Mirrored  "Deceleration threshold"
-    pm_friction:            f32 = 6.0       @Mirrored  "Ground friction"
-    pm_ground_acceleration: f32 = 10.0      @Mirrored  "Ground acceleration"
-    pm_air_acceleration:    f32 = 5.0       @Mirrored  "Air acceleration"
-    pm_overbounce:          f32 = 1.001     @Mirrored  "Plane clip overbounce factor"
-    pm_jumpspeed:           f32 = 270.0     @Mirrored  "Jump velocity"
-    g_gravity:              f32 = 800.0     @Mirrored  "Gravity"
-    pm_speed_threshold:     f32 = 1.0       @Mirrored  "Speed below which friction snaps to zero"
-    pm_step_height:         f32 = 18.0      @Mirrored  "Maximum step height the player can glide up"
+    pm_maxspeed:            f32 = 320.0       @Mirrored  "Maximum player speed"
+    pm_stopspeed:           f32 = 100.0       @Mirrored  "Deceleration threshold"
+    pm_friction:            f32 = 6.0         @Mirrored  "Ground friction"
+    pm_ground_acceleration: f32 = 10.0        @Mirrored  "Ground acceleration"
+    pm_air_acceleration:    f32 = 5.0         @Mirrored  "Air acceleration"
+    pm_overbounce:          f32 = 1.001       @Mirrored  "Plane clip overbounce factor"
+    pm_jumpspeed:           f32 = 270.0       @Mirrored  "Jump velocity"
+    g_gravity:              f32 = 800.0       @Mirrored  "Gravity"
+    pm_speed_threshold:     f32 = 1.0         @Mirrored  "Speed below which friction snaps to zero"
+    pm_step_height:         f32 = 18.0        @Mirrored  "Maximum step height the player can glide up"
+    pm_minimum_land_impact_speed: f32 = 150.0 @Mirrored  "Threshold for speed to cause audio to play when landing"
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +94,12 @@ Server :: cvars {
 Client :: cvars {
     r_fov:                  f32 = 90.0      @Client    "Field of view in degrees"
 
+
     cl_maxfps:              f32 = 1000.0    @Client    "Maximum client framerate (0 = unlimited)"
+}
+
+Editor ::cvars {
+    editor_speed: f32 = 1600.0              @Client    "default movement speed of the camera in the editor"
 }
 
 // ---------------------------------------------------------------------------

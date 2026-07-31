@@ -47,9 +47,9 @@ static void save_navmesh(const std::string &map_path, const navmesh_t &nav)
 
   for (const auto &v : nav.vertices)
   {
-    write(v.pos.x);
-    write(v.pos.y);
-    write(v.pos.z);
+    write(v.position.x);
+    write(v.position.y);
+    write(v.position.z);
   }
 
   for (const auto &p : nav.polygons)
@@ -85,9 +85,9 @@ static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
   nav.vertices.resize(num_verts);
   for (auto &v : nav.vertices)
   {
-    read(v.pos.x);
-    read(v.pos.y);
-    read(v.pos.z);
+    read(v.position.x);
+    read(v.position.y);
+    read(v.position.z);
   }
 
   nav.polygons.resize(num_polys);

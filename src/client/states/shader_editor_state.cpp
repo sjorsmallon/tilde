@@ -46,7 +46,7 @@ struct preview_scene_ubo_t
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-void ShaderEditorState::on_enter()
+void Shader_Editor_State::on_enter()
 {
   log_terminal("[ShaderEditor] Entering shader editor state");
 
@@ -151,7 +151,7 @@ void ShaderEditorState::on_enter()
   log_terminal("[ShaderEditor] Initialization complete");
 }
 
-void ShaderEditorState::on_exit()
+void Shader_Editor_State::on_exit()
 {
   log_terminal("[ShaderEditor] Exiting shader editor state");
   VkDevice device = renderer::GetDevice();
@@ -166,7 +166,7 @@ void ShaderEditorState::on_exit()
 // Shader compilation
 // ---------------------------------------------------------------------------
 
-void ShaderEditorState::recompile_preview_shaders()
+void Shader_Editor_State::recompile_preview_shaders()
 {
   std::string shader_dir = std::filesystem::path(PREVIEW_SHADER_DIR).parent_path().string();
   std::string cache_dir  = SHADER_TOOL_CACHE_DIR;
@@ -212,7 +212,7 @@ void ShaderEditorState::recompile_preview_shaders()
 // Mesh loading
 // ---------------------------------------------------------------------------
 
-void ShaderEditorState::load_preview_mesh()
+void Shader_Editor_State::load_preview_mesh()
 {
   mesh_handle = assets::load_mesh(mesh_path.c_str());
   if (!mesh_handle.valid())
@@ -229,7 +229,7 @@ void ShaderEditorState::load_preview_mesh()
 // Update
 // ---------------------------------------------------------------------------
 
-void ShaderEditorState::update(float dt)
+void Shader_Editor_State::update(float dt)
 {
   elapsed_time += dt;
 
@@ -366,7 +366,7 @@ void ShaderEditorState::update(float dt)
 // 3D Rendering
 // ---------------------------------------------------------------------------
 
-void ShaderEditorState::render_3d(VkCommandBuffer cmd)
+void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
 {
   // In orbit mode, yaw/pitch encode the offset direction (target → camera),
   // so get_orientation_vectors returns a forward that points AWAY from the
@@ -450,9 +450,9 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
 
   ubo.light_count  = static_cast<int32_t>(std::min(lights.size(), static_cast<size_t>(MAX_LIGHTS)));
   ubo.debug_flags  = 0;
-  if (render_normals) ubo.debug_flags |= static_cast<int32_t>(DebugFlag::RenderNormals);
-  if (render_uv) ubo.debug_flags |= static_cast<int32_t>(DebugFlag::RenderUV);
-  if (render_parallax_uv) ubo.debug_flags |= static_cast<int32_t>(DebugFlag::RenderParallaxUV);
+  if (render_normals) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderNormals);
+  if (render_uv) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderUV);
+  if (render_parallax_uv) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderParallaxUV);
   for (int i = 0; i < ubo.light_count; i++)
   {
     const auto &light = lights[i];
@@ -660,7 +660,7 @@ void ShaderEditorState::render_3d(VkCommandBuffer cmd)
 // ImGui UI
 // ---------------------------------------------------------------------------
 
-void ShaderEditorState::render_ui()
+void Shader_Editor_State::render_ui()
 {
   // --- Main shader editor panel ---
   ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);

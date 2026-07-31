@@ -287,6 +287,29 @@ inline bool intersect_ray_plane(const vec3 &ray_origin, const vec3 &ray_dir,
   }
   return false;
 }
+// Ray-Sphere Intersection
+inline bool intersect_ray_sphere(const vec3 &ray_origin, const vec3 &ray_dir,
+                                 const vec3 &sphere_center, float sphere_radius,
+                                 float &t)
+{
+  vec3 oc = ray_origin - sphere_center;
+  float a = dot(ray_dir, ray_dir);
+  float b = 2.0f * dot(oc, ray_dir);
+  float c = dot(oc, oc) - sphere_radius * sphere_radius;
+  float discriminant = b * b - 4 * a * c;
+
+  if (discriminant < 0)
+    return false;
+
+  float sqrt_discriminant = std::sqrt(discriminant);
+  float t1 = (-b - sqrt_discriminant) / (2.0f * a);
+  float t2 = (-b + sqrt_discriminant) / (2.0f * a);
+
+  // Return the closest intersection point
+  t = (t1 >= 0) ? t1 : t2;
+  return (t >= 0);
+}
+
 
 // Ray-AABB Intersection (Slab Method)
 inline bool intersect_ray_aabb(const vec3 &ray_origin, const vec3 &ray_dir,

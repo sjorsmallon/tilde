@@ -91,30 +91,30 @@ inline camera_basis_t get_orientation_vectors(const camera_t &cam,
                                               const linalg::vec3 &world_up = {
                                                   {0, 1, 0}})
 {
-  float radYaw = linalg::to_radians(cam.yaw);
-  float radPitch = linalg::to_radians(cam.pitch);
+  float yaw_in_radians = linalg::to_radians(cam.yaw);
+  float pitch_in_radians = linalg::to_radians(cam.pitch);
 
-  float cY = std::cos(radYaw);
-  float sY = std::sin(radYaw);
-  float cP = std::cos(radPitch);
-  float sP = std::sin(radPitch);
+  float cY = std::cos(yaw_in_radians);
+  float sY = std::sin(yaw_in_radians);
+  float cP = std::cos(pitch_in_radians);
+  float sP = std::sin(pitch_in_radians);
 
-  linalg::vec3 F = {cY * cP, sP, sY * cP};
-  linalg::vec3 R = linalg::cross(F, world_up);
+  linalg::vec3 forward = {cY * cP, sP, sY * cP};
+  linalg::vec3 right = linalg::cross(forward, world_up);
 
-  float lenR = linalg::length(R);
+  float lenR = linalg::length(right);
   if (lenR < 0.001f)
   {
-    R = {{1, 0, 0}};
+    right = {{1, 0, 0}};
   }
   else
   {
-    R = R * (1.0f / lenR);
+    right = right * (1.0f / lenR);
   }
 
-  linalg::vec3 U = linalg::cross(R, F);
+  linalg::vec3 up = linalg::cross(right, forward);
 
-  return camera_basis_t{F, R, U};
+  return camera_basis_t{forward, right, up};
 }
 
 // --- Orbit mode helpers ---
@@ -177,9 +177,8 @@ inline linalg::ray_t get_pick_ray(const camera_t &cam, float ndc_x, float ndc_y,
     float ox = ndc_x * (w * 0.5f);
     float oy = ndc_y * (h * 0.5f);
     vec3 origin = {cam.position.x, cam.position.y, cam.position.z};
-    // In editor, we usually start ray far back for orthographic picking?
-    // The original code did: ray_origin = cam - F * 1000 + R*ox + U*oy
-    // Let's replicate that behavior.
+    
+    // In editor, we usually start ray far back for orthographic picking
     origin = origin - F * 1000.0f;
     origin = origin + R * ox + U * oy;
     return {origin, F};

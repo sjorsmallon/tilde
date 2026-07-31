@@ -355,7 +355,7 @@ log fires with resolved cast position). Files added: `src/shared/cosmetic_events
    - Registered at client startup in `client::Init()`
      (`register_all_effect_handlers()`).
    - Added a borrowed `physics_state_t *physics_state` to `client_context_t`;
-     `PlayState::on_enter` sets it from its own physics body, `on_exit`
+     `Play_State::on_enter` sets it from its own physics body, `on_exit`
      clears it. The handler casts against this pointer.
    - Wrote `src/client/effects/rocket_explosion.cpp`:
      - Local `cast_sphere_static` from `data.origin` downward by `data.scale`.
@@ -607,7 +607,7 @@ hardcoded in `respawn_system.hpp`.
     `S2C_EntityPackage` (~line 774+).
   - Client reader: fragment reassembly in
     `src/shared/network/client_connection_state.hpp`, parsed into
-    `ClientInbox::entity_updates`. The actual entity decode site is
+    `Client_Inbox::entity_updates`. The actual entity decode site is
     downstream — needs locating once we start Phase 1.
 
 - **Does `dispatch_effect` / `fire_game_event` need to be safe to call from
@@ -670,7 +670,7 @@ class.
 helpers `update_orbit`, `orbit_rotate`, `orbit_pan`, `orbit_zoom`. To add
 an isometric mode, the change is entirely client-side:
 
-- `PlayState::on_enter` sets `orbit = true`, `orthographic = true`, and
+- `Play_State::on_enter` sets `orbit = true`, `orthographic = true`, and
   picks an `orbit_target` / `orbit_distance` (typically following the
   player position).
 - Input handling routes mouse/keyboard to `orbit_*` helpers instead of
@@ -684,7 +684,7 @@ through `Player_Entity` schema fields. Camera and player-facing are
 allowed to be the same value in FPS mode and decoupled in isometric mode,
 but the schema field is the single source of truth for the server.
 [src/client/camera.hpp](src/client/camera.hpp) already encodes this; the
-extension is just wiring `PlayState` to use the existing modes.
+extension is just wiring `Play_State` to use the existing modes.
 
 For click-to-move-style input (isometric, top-down ARPG, etc.), the right
 shape is a *second* C2S command alongside `C2S_PlayerMoveCommand` — not a

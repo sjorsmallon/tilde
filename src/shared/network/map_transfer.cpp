@@ -89,9 +89,9 @@ static void serialize_navmesh(network::Bit_Writer &w, const navmesh_t &nav)
 
   for (const auto &v : nav.vertices)
   {
-    write_f32(w, v.pos.x);
-    write_f32(w, v.pos.y);
-    write_f32(w, v.pos.z);
+    write_f32(w, v.position.x);
+    write_f32(w, v.position.y);
+    write_f32(w, v.position.z);
   }
 
   for (const auto &p : nav.polygons)
@@ -113,9 +113,9 @@ static void deserialize_navmesh(network::Bit_Reader &r, navmesh_t &nav)
   nav.vertices.resize(vertex_count);
   for (auto &v : nav.vertices)
   {
-    v.pos.x = read_f32(r);
-    v.pos.y = read_f32(r);
-    v.pos.z = read_f32(r);
+    v.position.x = read_f32(r);
+    v.position.y = read_f32(r);
+    v.position.z = read_f32(r);
   }
 
   nav.polygons.resize(polygon_count);

@@ -15,10 +15,14 @@
 #include <variant>
 #include <vector>
 
-
-
 namespace shared
 {
+//@NOTE(SJM): Conceptually, the map is a collection of entities and of geometry. all of them are keyed by entity_uid_it,
+// sorry for the misnomer. This means that everything in the editors mostly deals with these uids to retrieve the correct object.
+// it simplifies a lot of interaction with the map from the editor side.
+// this is _not_ the artifact that is played on. this is the "map" that is used to build the artifact.
+
+
 
 struct map_entity_t
 {

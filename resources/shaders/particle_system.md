@@ -117,7 +117,7 @@ All parameters are schema fields with `Editable | Saveable` flags, so they show 
 ## Where It Gets Called
 
 - **ToolEditorState** (tool_editor_state.cpp): iterates map entities, calls Update/Draw for each Particle_Emitter_Entity.
-- **PlayState** (play_state.cpp): same pattern for map emitters, plus client-side explosion effects stored in `explosion_effects` vector (spawned when a rocket disappears from the network snapshot).
+- **Play_State** (play_state.cpp): same pattern for map emitters, plus client-side explosion effects stored in `explosion_effects` vector (spawned when a rocket disappears from the network snapshot).
 
 ## Adding a New Emitter Type
 

@@ -25,6 +25,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include "../../shared/cvars/generated/cvars_generated.hpp"
 
 namespace client
 {
@@ -226,12 +227,12 @@ void ToolEditorState::on_enter()
   if (map.object_count() == 0)
   {
     bool map_loaded = false;
-    std::ifstream f("last_map.txt");
-    if (f.is_open())
+    std::ifstream forward("last_map.txt");
+    if (forward.is_open())
     {
       log_terminal("Loading map from last_map.txt");
       std::string line;
-      std::getline(f, line);
+      std::getline(forward, line);
       log_terminal(line);
       map_loaded = load_map(line, map);
       if (!map_loaded)
@@ -314,25 +315,14 @@ viewport_state_t ToolEditorState::transform_viewport_state()
   viewport_state_t view;
   view.camera = camera;
   view.camera.orthographic = camera.orthographic; // Redundant if simple copy
-  // Wait, camera copy copies everything.
-  // But camera struct doesn't have `camera_forward` etc. It has x,y,z, yaw,
-  // pitch. Basis vectors were calculated manually in `transform_viewport_state`
-  // before. `viewport_state_t` had `camera_forward` etc. I REMOVED
-  // `camera_forward` etc from `viewport_state_t` in previous step. So I don't
-  // need to assign them. But wait, if tools NEED forward/right/up, they must
-  // call `get_orientation_vectors(view.camera)`. My plan said "Update usages
-  // ... and helper functions".
-
-  // So here just copy camera.
-  view.camera = camera;
 
   linalg::vec2i mouse = input::mouse_position();
 
-  // Ray construct
-  // Normalized Device Coordinates
   ImGuiIO &io = ImGui::GetIO();
+
   float width = io.DisplaySize.x;
   float height = io.DisplaySize.y;
+
   if (width == 0 || height == 0)
   {
     width = 1280;
@@ -343,8 +333,6 @@ viewport_state_t ToolEditorState::transform_viewport_state()
   float y_ndc = 1.0f - (2.0f * mouse.y) / height;
 
   view.mouse_ray = client::get_pick_ray(camera, x_ndc, y_ndc, width / height);
-  // view.orthographic etc were removed from struct.
-  // view.camera has them.
 
   view.display_size = {width, height};
   view.aspect_ratio = width / height;
@@ -368,14 +356,14 @@ void ToolEditorState::update(float dt)
   {
     input::modifiers_t mods = input::current_modifiers();
 
-    float speed = 1200.0f * dt;
+    float speed = state_manager::get_client_context().cvars->editor_speed * dt;
     if (mods.shift)
       speed *= 2.0f;
 
     auto vectors = client::get_orientation_vectors(camera);
-    linalg::vec3 F = vectors.forward;
-    linalg::vec3 R = vectors.right;
-    linalg::vec3 U = vectors.up;
+    linalg::vec3 forward = vectors.forward;
+    linalg::vec3 right = vectors.right;
+    linalg::vec3 up = vectors.up;
 
     if (input::is_key_pressed(input::key_t::Z))
     {
@@ -488,41 +476,41 @@ void ToolEditorState::update(float dt)
     {
       if (camera.orthographic)
       {
-        camera.position.x += U.x * speed;
-        camera.position.y += U.y * speed;
-        camera.position.z += U.z * speed;
+        camera.position.x += up.x * speed;
+        camera.position.y += up.y * speed;
+        camera.position.z += up.z * speed;
       }
       else
       {
-        camera.position.x += F.x * speed;
-        camera.position.y += F.y * speed;
-        camera.position.z += F.z * speed;
+        camera.position.x += forward.x * speed;
+        camera.position.y += forward.y * speed;
+        camera.position.z += forward.z * speed;
       }
     }
     if (input::is_key_down(input::key_t::S))
     {
       if (camera.orthographic)
       {
-        camera.position.x -= U.x * speed;
-        camera.position.y -= U.y * speed;
-        camera.position.z -= U.z * speed;
+        camera.position.x -= up.x * speed;
+        camera.position.y -= up.y * speed;
+        camera.position.z -= up.z * speed;
       }
       else
       {
-        camera.position.x -= F.x * speed;
-        camera.position.y -= F.y * speed;
-        camera.position.z -= F.z * speed;
+        camera.position.x -= forward.x * speed;
+        camera.position.y -= forward.y * speed;
+        camera.position.z -= forward.z * speed;
       }
     }
     if (input::is_key_down(input::key_t::D))
     {
-      camera.position.x += R.x * speed;
-      camera.position.z += R.z * speed;
+      camera.position.x += right.x * speed;
+      camera.position.z += right.z * speed;
     }
     if (input::is_key_down(input::key_t::A))
     {
-      camera.position.x -= R.x * speed;
-      camera.position.z -= R.z * speed;
+      camera.position.x -= right.x * speed;
+      camera.position.z -= right.z * speed;
     }
     if (input::is_key_down(input::key_t::Space) && !mods.shift)
     {
@@ -782,6 +770,8 @@ void ToolEditorState::render_ui()
   ImGui::Checkbox("Solid Entities", &draw_entities_solid);
   ImGui::Checkbox("Hide Geometry", &hide_geometry);
   ImGui::Checkbox("Show Grid", &show_grid);
+  ImGui::SliderFloat("Camera Speed", &state_manager::get_client_context().cvars->editor_speed,
+                     100.0f, 5000.0f, "%.0f");
 
   ImGui::Separator();
 
@@ -1014,7 +1004,7 @@ void ToolEditorState::render_ui()
   if (ImGui::Button("Play"))
   {
     // Commit current edits to disk before switching. This is the same code
-    // path as Ctrl+S, so PlayState's last_map.txt reload and the server's
+    // path as Ctrl+S, so Play_State's last_map.txt reload and the server's
     // reload_map both see exactly what's in the editor right now — no more
     // "I clicked save AND play and it still ran the old map" surprises.
     std::string full_path = get_maps_dir() + map.name;
@@ -1150,7 +1140,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 
   // Draw map elements: geometry through geometry_editor, entities through
-  // Entity_Editor_Traits.
+  // entity_editor_traits.
   VulkanOverlayRenderer overlay(cmd);
   if (!hide_geometry)
   {
@@ -1187,8 +1177,8 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
       const int N = (int)poly.vertices.size();
       for (int e = 0; e < N; ++e)
       {
-        vec3f a = nav.vertices[poly.vertices[e          ]].pos;
-        vec3f b = nav.vertices[poly.vertices[(e + 1) % N]].pos;
+        vec3f a = nav.vertices[poly.vertices[e          ]].position;
+        vec3f b = nav.vertices[poly.vertices[(e + 1) % N]].position;
         a.y += y_lift;
         b.y += y_lift;
         renderer::draw_line(cmd, a, b, color);
@@ -1196,13 +1186,13 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
     }
 
     // Draw each vertex as a small cross so winding/deduplication is visible.
-    constexpr float r = 2.f;
+    constexpr float right = 2.f;
     constexpr color_t vert_color = colors::white;
     for (const auto &v : nav.vertices)
     {
-      vec3f p = v.pos; p.y += y_lift;
-      renderer::draw_line(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
-      renderer::draw_line(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
+      vec3f p = v.position; p.y += y_lift;
+      renderer::draw_line(cmd, {p.x - right, p.y, p.z}, {p.x + right, p.y, p.z}, vert_color);
+      renderer::draw_line(cmd, {p.x, p.y, p.z - right}, {p.x, p.y, p.z + right}, vert_color);
     }
   }
 
