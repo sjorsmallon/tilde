@@ -6,29 +6,29 @@
 namespace client
 {
 
-enum class GameStateKind
+enum class game_state
 {
-  MainMenu,
-  Play,
-  Editor,
-  ToolEditor,
-  ShaderEditor,
+  main_menu,
+  play,
+  editor,
+  tool_editor,
+  shader_editor,
 };
 
-static std::string_view to_string(GameStateKind kind)
+static std::string_view to_string(game_state kind)
 {
   switch (kind)
   {
-  case GameStateKind::MainMenu:
+  case game_state::main_menu:
     return "Main Menu";
-  case GameStateKind::Play:
+  case game_state::play:
     return "Play";
-  case GameStateKind::Editor:
+  case game_state::editor:
     return "Editor";
-  case GameStateKind::ToolEditor:
-    return "ToolEditor";
-  case GameStateKind::ShaderEditor:
-    return "ShaderEditor";
+  case game_state::tool_editor:
+    return "Tool Editor";
+  case game_state::shader_editor:
+    return "Shader Editor";
   default:
     return "Unknown";
   }

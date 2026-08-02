@@ -52,11 +52,28 @@ bool invoke_bind(Span<std::string_view> args, const command_context_t& context,
   return true;
 }
 
+// connect <address>
+bool invoke_connect(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 1u)
+  {
+    usage_error(out_reply, command_id::connect, args.size());
+    return false;
+  }
+
+  std::string_view address = args[0];
+
+  commands::connect(address, context);
+  return true;
+}
+
 } // namespace
 
 void bind_client_commands(command_table_t& table)
 {
   table.binders[(uint32_t)command_id::bind] = &invoke_bind;
+  table.binders[(uint32_t)command_id::connect] = &invoke_connect;
 }
 
 } // namespace cvars

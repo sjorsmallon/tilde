@@ -41,7 +41,7 @@ struct FunctionStats {
 
 class Registry {
 public:
-  static Registry &Get() {
+  static Registry &get() {
     static Registry instance;
     return instance;
   }
@@ -159,8 +159,8 @@ private:
 
 #define timed_function()                                                       \
   static ::timing::FunctionStats *UNIQUE_STATS_NAME =                          \
-      ::timing::Registry::Get().GetOrRegister(                                 \
+      ::timing::Registry::get().GetOrRegister(                                 \
           std::source_location::current());                                    \
   ::timing::ScopedTimer UNIQUE_TIMER_NAME(UNIQUE_STATS_NAME)
 
-#define print_timing_stats() ::timing::Registry::Get().LogStats()
+#define print_timing_stats() ::timing::Registry::get().LogStats()

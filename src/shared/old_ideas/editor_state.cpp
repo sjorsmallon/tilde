@@ -134,13 +134,13 @@ void EditorState::set_mode(editor_mode mode)
 
 void EditorState::update(float dt)
 {
-  if (client::Console::Get().IsOpen())
+  if (client::console::get().is_open())
     return;
 
   if (exit_requested)
   {
     exit_requested = false;
-    state_manager::switch_to(GameStateKind::MainMenu);
+    state_manager::switch_to(game_state::main_menu);
     return;
   }
 

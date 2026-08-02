@@ -13,10 +13,10 @@
 namespace client
 {
 
-class Console
+class console
 {
 public:
-  static Console &Get();
+  static console &get();
 
   void Draw();
   void Print(const char *fmt, ...);
@@ -43,13 +43,13 @@ public:
   // for skipping this while the console or any ImGui text input is focused.
   void PollBindings();
 
-  bool IsOpen() const { return should_draw; }
+  bool is_open() const { return should_draw; }
   void Toggle() { should_draw = !should_draw; }
-  void Close() { should_draw = false; }
+  void close() { should_draw = false; }
 
 private:
-  Console();
-  ~Console();
+  console();
+  ~console();
 
   bool should_draw;
   bool is_folded_open;

@@ -79,11 +79,12 @@ call_record_t g_spawn_sphere;
 call_record_t g_map;
 call_record_t g_noclip;
 call_record_t g_bind;
+call_record_t g_connect;
 
 void reset_records()
 {
   g_spawn_bot = g_spawn_cube = g_spawn_sphere = {};
-  g_map = g_noclip = g_bind = {};
+  g_map = g_noclip = g_bind = g_connect = {};
 }
 
 // The line buffer a console command's argument views point into must outlive
@@ -152,6 +153,13 @@ void bind(std::string_view key, std::string_view command,
   g_bind.first_string = std::string(key);
   g_bind.rest_string  = std::string(command);
   g_bind.caller_slot  = context.caller_slot;
+}
+
+void connect(std::string_view address, const command_context_t& context)
+{
+  ++g_connect.count;
+  g_connect.first_string = std::string(address);
+  g_connect.caller_slot  = context.caller_slot;
 }
 
 } // namespace cvars::commands

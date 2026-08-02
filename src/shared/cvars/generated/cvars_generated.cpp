@@ -91,6 +91,13 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, pm_minimum_land_impact_speed),
      .size = sizeof(cvar_state_t::pm_minimum_land_impact_speed),
      .string_capacity = 0},
+    {.name = "game_rocket_speed",
+     .description = "Rocket velocity",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, game_rocket_speed),
+     .size = sizeof(cvar_state_t::game_rocket_speed),
+     .string_capacity = 0},
     {.name = "sv_tickrate",
      .description = "Server tick rate in Hz",
      .flags = CVAR_FLAG_SERVER,
@@ -209,9 +216,13 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .description = "Bind a key (a-z) to a command line",
      .usage = "bind <key> <command...>",
      .flags = CVAR_FLAG_CLIENT},
+    {.name = "connect",
+     .description = "Connect to a server (ip or ip:port) and enter play",
+     .usage = "connect <address>",
+     .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[11] = {
+const cvar_id MIRRORED_CVAR_TABLE[12] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -223,6 +234,7 @@ const cvar_id MIRRORED_CVAR_TABLE[11] = {
     cvar_id::pm_speed_threshold,
     cvar_id::pm_step_height,
     cvar_id::pm_minimum_land_impact_speed,
+    cvar_id::game_rocket_speed,
 };
 
 // The value's bytes inside the state struct. Every text conversion goes
@@ -290,7 +302,7 @@ bool find_command(std::string_view name, command_id* out_id)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 11};
+  return {MIRRORED_CVAR_TABLE, 12};
 }
 
 bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text)

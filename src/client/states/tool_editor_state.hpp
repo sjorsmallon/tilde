@@ -14,7 +14,7 @@
 namespace client
 {
 
-class ToolEditorState : public Game_State
+class Tool_Editor_State : public Game_State
 {
 public:
   void on_enter() override;

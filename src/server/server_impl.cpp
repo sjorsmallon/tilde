@@ -7,6 +7,7 @@
 #include "trigger_actions.hpp"
 #include "cosmetic_events.hpp"
 #include "systems/bot_system.hpp"
+#include "systems/game_rules_system.hpp"
 #include "systems/physics_body_system.hpp"
 #include "systems/respawn_system.hpp"
 #include "systems/rocket_system.hpp"
@@ -79,7 +80,7 @@ static void broadcast_server_message(network::Server_Connection_State &net,
 // message at all. What rides the wire is @Mirrored VALUES only: see
 // send_cvar_values below.
 
-server_context_t g_state;
+server_context_t ctx;
 network::Udp_Socket g_socket;
 // Starts at 1, not 0: tick 0 is the "no baseline / full update" sentinel in
 // S2C_EntityPackage.delta_from_tick and in the client's snapshot ack, so no
@@ -101,7 +102,7 @@ static void send_reject(const network::Address &sender, std::string_view reason,
   reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
   auto packets = network::convert_to_packets(
       buffer, static_cast<network::uint8>(network::Message_Type::NetCommand),
-      g_state.net.next_message_id);
+      ctx.net.next_message_id);
   for (const auto &p : packets)
     g_socket.send(p, sender);
 }
@@ -120,7 +121,7 @@ struct human_spawn_transform_t
 static std::vector<human_spawn_transform_t> get_human_spawn_transforms()
 {
   Span<entities::Player_Spawn_Entity> pool =
-      g_state.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      ctx.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
   std::vector<human_spawn_transform_t> out;
   for (const entities::Player_Spawn_Entity &sp : pool)
     if (sp.spawn_type == entities::Spawn_Type::Human)
@@ -185,7 +186,7 @@ spawn_position_in_front_of(int caller_slot)
     return std::nullopt;
 
   const entities::Player_Entity *player =
-      g_state.session.entity_system.get<entities::Player_Entity>(
+      ctx.session.entity_system.get<entities::Player_Entity>(
           g_player_states[caller_slot].player_uid);
   if (!player) return std::nullopt;
 
@@ -227,7 +228,7 @@ void handle_player_leave(server_context_t &state,
   log_terminal("Player left slot {}: {}", slot, sender.to_string());
 }
 
-// Load a map file into g_state, replacing any existing session. Resets the
+// Load a map file into ctx, replacing any existing session. Resets the
 // physics world, bot list, trigger-overlap set, and per-client delta baselines
 // so nothing from the prior map leaks into the new one.
 // Returns true on successful load. On failure the session is left empty.
@@ -235,16 +236,16 @@ static bool load_map_into_state(const std::string &map_path)
 {
   // Tear down previous world. Recreating physics_state_t is the cleanest way to
   // drop all static/dynamic bodies — there's no bulk-clear API on physics_state_t.
-  g_state.physics = std::make_unique<physics_state_t>();
-  init_physics(*g_state.physics);
+  ctx.physics = std::make_unique<physics_state_t>();
+  init_physics(*ctx.physics);
 
-  g_state.session = {};
-  g_state.current_map = {};
-  g_state.current_map_path.clear();
-  g_state.map_content_hash = 0;
+  ctx.session = {};
+  ctx.current_map = {};
+  ctx.current_map_path.clear();
+  ctx.map_content_hash = 0;
   g_bots.clear();
   g_next_bot_slot = BOT_SLOT_BASE;
-  g_state.previous_tick_overlapping_trigger_player_pairs.clear();
+  ctx.previous_tick_overlapping_trigger_player_pairs.clear();
 
   // Every player uid in the slot table named an entity in the session we just
   // dropped. This must be cleared HERE, not left to the caller's respawn loop:
@@ -265,7 +266,14 @@ static bool load_map_into_state(const std::string &map_path)
   // spawn marker and set its health to 100 when the delay elapsed. The
   // "no longer exists, skipping" branch there does not save us, because after
   // reissue the uid resolves to a real Player_Entity -- just the wrong one.
-  g_state.death_tick_by_player_uid.clear();
+  ctx.death_tick_by_player_uid.clear();
+
+  // A map change restarts the match: round 1, Warmup, fresh deadline. Same
+  // argument as the two clears above — rules state describes the world we just
+  // dropped, and a retained round counter would make the new map look like it
+  // resumed mid-match.
+  reset_game_rules(ctx, g_tick_number,
+                   static_cast<uint32_t>(ctx.cvars->sv_tickrate));
 
   // Every frame in the ring describes the OLD world; a delta against one after
   // a map switch would be nonsense. Clearing the acks too means every client's
@@ -280,26 +288,26 @@ static bool load_map_into_state(const std::string &map_path)
   }
 
   log_terminal("Loading map '{}'...", map_path);
-  if (!shared::load_map(map_path, g_state.current_map))
+  if (!shared::load_map(map_path, ctx.current_map))
   {
     log_error("Failed to load map '{}'. Session is empty.", map_path);
     return false;
   }
-  shared::map_t &server_map = g_state.current_map;
+  shared::map_t &server_map = ctx.current_map;
 
-  shared::init_session_from_map(g_state.session, server_map);
-  g_state.session.map_name = server_map.name;
-  g_state.current_map_path = map_path;
+  shared::init_session_from_map(ctx.session, server_map);
+  ctx.session.map_name = server_map.name;
+  ctx.current_map_path = map_path;
   // Hash the canonical serialization (not the file), so it matches what the
   // client computes from its own loaded copy and what streaming will embed.
-  g_state.map_content_hash = shared::compute_map_content_hash(server_map);
-  shared::populate_static_physics_bodies(*g_state.physics, server_map);
+  ctx.map_content_hash = shared::compute_map_content_hash(server_map);
+  shared::populate_static_physics_bodies(*ctx.physics, server_map);
 
   // Spawn bots for any bot-type spawn markers (Spawn_Type::Bot).
   // Human spawn markers (Spawn_Type::Human) stay in entity_system and are
   // queried directly when players join — no need to extract or clear the pool.
   Span<entities::Player_Spawn_Entity> spawn_pool =
-      g_state.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      ctx.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
 
   int human_spawn_count = 0;
   int bot_spawn_count = 0;
@@ -310,7 +318,7 @@ static bool load_map_into_state(const std::string &map_path)
   {
     if (sp.spawn_type == entities::Spawn_Type::Bot)
     {
-      g_bots.push_back(spawn_bot(g_state.session, *g_state.physics, sp.position, g_next_bot_slot++, BotType::Regular));
+      g_bots.push_back(spawn_bot(ctx.session, *ctx.physics, sp.position, g_next_bot_slot++, BotType::Regular));
       ++bot_spawn_count;
     }
     else
@@ -318,7 +326,7 @@ static bool load_map_into_state(const std::string &map_path)
   }
 
   log_terminal("Loaded map='{}', {} human spawns, {} bot spawns",
-               g_state.session.map_name, human_spawn_count, bot_spawn_count);
+               ctx.session.map_name, human_spawn_count, bot_spawn_count);
   return true;
 }
 
@@ -343,14 +351,14 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   // Before anything reads sv_tickrate or runs a console line. bind_server_commands
   // fills this DLL's @Server handler slots; the link step already proved every
   // symbol it names exists, so there is no runtime check to make here.
-  g_state.cvars    = cvar_state;
-  g_state.commands = command_table;
+  ctx.cvars    = cvar_state;
+  ctx.commands = command_table;
   cvars::bind_server_commands(*command_table);
 
   // Seed the mirroring baseline from the values we are actually starting with,
   // so the first tick broadcasts nothing. A client that connects later gets the
   // full set from the accept handler regardless.
-  g_state.last_broadcast_cvars = *cvar_state;
+  ctx.last_broadcast_cvars = *cvar_state;
 
   static bool jolt_initialized = false;
   if (!jolt_initialized)
@@ -398,12 +406,12 @@ static shared::entity_uid_t spawn_player_for_slot(int slot)
   }
 
   const shared::entity_uid_t player_uid =
-      g_state.session.entity_system.spawn<entities::Player_Entity>();
+      ctx.session.entity_system.spawn<entities::Player_Entity>();
 
   // Held for the rest of this function: nothing below spawns or destroys a
   // Player_Entity, so nothing can move the pool out from under it.
   entities::Player_Entity *player =
-      g_state.session.entity_system.get<entities::Player_Entity>(player_uid);
+      ctx.session.entity_system.get<entities::Player_Entity>(player_uid);
   if (!player)
     return shared::null_entity_uid;
 
@@ -430,15 +438,15 @@ static shared::entity_uid_t spawn_player_for_slot(int slot)
 
   // Kinematic Jolt body so rockets and overlap queries can find this player.
   // Capsule center sits at feet + 38 (matches hitbox offset above).
-  if (g_state.physics)
+  if (ctx.physics)
   {
-    register_kinematic_capsule(*g_state.physics, player_uid,
+    register_kinematic_capsule(*ctx.physics, player_uid,
                                player->position + vec3f{0.f, 38.f, 0.f},
                                18.f, 20.f);
   }
 
   // Clients can't tell a connect-time spawn from a respawn, by design.
-  fire_player_spawned_event(g_state, player_uid,
+  fire_player_spawned_event(ctx, player_uid,
                             chosen_spawn.position, chosen_spawn.orientation);
   return player_uid;
 }
@@ -450,7 +458,7 @@ static shared::entity_uid_t spawn_player_for_slot(int slot)
 // shared::resolve_map_path.
 static std::string current_map_wire_id()
 {
-  return std::filesystem::path(g_state.current_map_path).filename().generic_string();
+  return std::filesystem::path(ctx.current_map_path).filename().generic_string();
 }
 
 // Sends a bitstream-native CmdChangeMap for the current map to one slot. Payload
@@ -462,17 +470,17 @@ static void send_change_map(int slot)
 {
   shared::change_map_message_t msg;
   msg.map_path     = current_map_wire_id();
-  msg.map_name     = g_state.session.map_name;
-  msg.content_hash = g_state.map_content_hash;
+  msg.map_name     = ctx.session.map_name;
+  msg.content_hash = ctx.map_content_hash;
 
   network::Bit_Writer writer;
   shared::serialize_change_map(writer, msg);
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::CmdChangeMap),
-      g_state.net.next_message_id);
+      ctx.net.next_message_id);
   for (const auto &p : packets)
-    g_socket.send(p, g_state.net.player_ips[slot]);
+    g_socket.send(p, ctx.net.player_ips[slot]);
 }
 
 // Sends a bitstream-native S2C_CvarValues to one slot. Two callers, two
@@ -486,9 +494,9 @@ static void send_cvar_values(int slot, const shared::cvar_values_message_t &msg)
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::S2C_CvarValues),
-      g_state.net.next_message_id);
+      ctx.net.next_message_id);
   for (const auto &p : packets)
-    g_socket.send(p, g_state.net.player_ips[slot]);
+    g_socket.send(p, ctx.net.player_ips[slot]);
 }
 
 // Broadcasts every @Mirrored value that changed since the last broadcast, then
@@ -499,20 +507,20 @@ static void send_cvar_values(int slot, const shared::cvar_values_message_t &msg)
 static void broadcast_changed_cvar_values()
 {
   shared::cvar_values_message_t changed =
-      shared::collect_changed_mirrored_cvars(*g_state.cvars,
-                                             g_state.last_broadcast_cvars);
+      shared::collect_changed_mirrored_cvars(*ctx.cvars,
+                                             ctx.last_broadcast_cvars);
   if (changed.values.empty())
     return;
 
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (g_state.net.player_slots[slot])
+    if (ctx.net.player_slots[slot])
       send_cvar_values(slot, changed);
   }
 
   // Whole-struct copy, not a per-member one: only the @Mirrored members are
   // ever compared, so copying the rest costs nothing and cannot go stale.
-  g_state.last_broadcast_cvars = *g_state.cvars;
+  ctx.last_broadcast_cvars = *ctx.cvars;
 
   for (const shared::cvar_value_t &value : changed.values)
     log_terminal("Mirroring '{}' = {} to connected clients",
@@ -535,10 +543,10 @@ bool reload_map(const std::string &map_path)
   // entity deltas for a map they aren't running yet.
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (!g_state.net.player_slots[slot])
+    if (!ctx.net.player_slots[slot])
       continue;
     spawn_player_for_slot(slot);
-    g_state.client_map_ready[slot] = false;
+    ctx.client_map_ready[slot] = false;
     send_change_map(slot);
   }
   return true;
@@ -547,24 +555,19 @@ bool reload_map(const std::string &map_path)
 bool Tick()
 {
   timed_function();
-
-  // The per-tick debug_collision drain that used to sit here is gone with the
-  // global it was bounding. debug_show_collisions is unflagged (shared-local),
-  // so it does reach this side's player_move -- but the server now passes no
-  // face sink, so it records nothing to drain. Server-side faces were never
-  // drawable anyway: the drawing is client-side, and in a networked build they
-  // would have to cross the wire to be seen at all. See debug_collision.hpp.
-
+  //@Todo: Yikes, reallocating the inbox is wasteful. 
   network::ServerInbox inbox;
-  network::poll_network(g_state.net, g_socket, 0.005,
+
+  network::poll_network(ctx.net, g_socket, 0.005,
                         inbox); // 5ms receive window
 
   // Handle Net Commands (Handshake)
   for (const auto &[sender, cmd] : inbox.net_commands)
   {
+
     if (cmd.has_connect())
     {
-      if (network::get_player_idx(g_state.net, sender) != -1)
+      if (network::get_player_idx(ctx.net, sender) != -1)
         continue;
 
       // Schema handshake, before a slot is taken. A client built from a
@@ -589,23 +592,24 @@ bool Tick()
         continue;
       }
 
-      int slot = -1;
-      for (int i = 0; i < network::sv_max_player_count; ++i)
+      constexpr const int32_t invalid_slot_idx = -1;
+      int slot = invalid_slot_idx;
+      for (int player_idx = 0; player_idx < network::sv_max_player_count; ++player_idx)
       {
-        if (!g_state.net.player_slots[i])
+        if (!ctx.net.player_slots[player_idx])
         {
-          slot = i;
+          slot = player_idx;
           break;
         }
       }
 
-      if (slot != -1)
+      if (slot != invalid_slot_idx)
       {
         // Accept
-        g_state.net.player_slots[slot] = true;
-        g_state.net.player_ips[slot] = sender;
-        g_state.net.player_byte_buffers[slot] = {};
-        g_state.net.partial_packets[slot].clear();
+        ctx.net.player_slots[slot] = true;
+        ctx.net.player_ips[slot] = sender;
+        ctx.net.player_byte_buffers[slot] = {};
+        ctx.net.partial_packets[slot].clear();
         g_player_states[slot] = {};
 
         // A reused slot must not inherit the previous occupant's ack — this
@@ -621,38 +625,62 @@ bool Tick()
         // The client loads its map before connecting, so it's ready to receive
         // snapshots the moment it's accepted. (A mid-game CmdChangeMap flips this
         // back to false until the client acks the new map.)
-        g_state.client_map_ready[slot] = true;
+        ctx.client_map_ready[slot] = true;
 
         // Send Accept
-        game::NetCommand reply;
-        auto *accept = reply.mutable_accept();
-        accept->set_client_slot(slot);
-        accept->set_map_name(g_state.session.map_name.empty()
-                                 ? "start.map"
-                                 : g_state.session.map_name);
-        accept->set_server_tickrate(static_cast<int>(g_state.cvars->sv_tickrate));
-        accept->set_map_path(current_map_wire_id());
-        accept->set_content_hash(g_state.map_content_hash);
+        {
+          game::NetCommand reply;
+          auto *accept = reply.mutable_accept();
+          accept->set_client_slot(slot);
+          accept->set_map_name(ctx.session.map_name.empty()
+                                  ? "start.map"
+                                  : ctx.session.map_name);
+          accept->set_server_tickrate(static_cast<int>(ctx.cvars->sv_tickrate));
+          accept->set_map_path(current_map_wire_id());
+          accept->set_content_hash(ctx.map_content_hash);
 
-        std::vector<network::uint8> buffer(reply.ByteSizeLong());
-        reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-        auto packets = network::convert_to_packets(
-            buffer,
-            static_cast<network::uint8>(network::Message_Type::NetCommand),
-            g_state.net.next_message_id);
-        for (const auto &p : packets)
-          g_socket.send(p, sender);
+          std::vector<network::uint8> buffer(reply.ByteSizeLong());
+          reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
+          auto packets = network::convert_to_packets(
+              buffer,
+              static_cast<network::uint8>(network::Message_Type::NetCommand),
+              ctx.net.next_message_id);
+          for (const auto &p : packets)
+            g_socket.send(p, sender);
+        }
 
         // The full @Mirrored set, right after the accept. It must go AFTER the
         // hash check above: the ids are per-build table indices, so a client
         // that disagreed about cvars.def would apply them to the wrong cvars.
-        send_cvar_values(slot, shared::collect_mirrored_cvars(*g_state.cvars));
+        send_cvar_values(slot, shared::collect_mirrored_cvars(*ctx.cvars));
 
         // Announce join to all clients (including the new one)
         broadcast_server_message(
-            g_state.net, g_socket,
+            ctx.net, g_socket,
             std::format("{} joined the server (slot {})",
                         cmd.connect().player_name(), slot));
+
+        //@FIXME(SMIA): this is just a placeholder for now, 
+        // for fun coop games.
+        // count active players. if 4 players, start countdown?
+        size_t player_count = 0;
+        for (int i = 0; i < network::sv_max_player_count; ++i)
+        {
+          if (ctx.net.player_slots[i])
+            player_count++;
+        }
+
+        if (player_count == 4)
+        {
+          log_terminal("4 players connected, starting countdown to start match.");
+          start_match(ctx, g_tick_number,
+                      static_cast<uint32_t>(ctx.cvars->sv_tickrate));
+          broadcast_server_message(
+              ctx.net, g_socket,
+              std::format("Entering Countdown phase. Match will start in {:.0f} "
+                          "seconds.",
+                          countdown_duration_seconds));
+        }
       }
       else
       {
@@ -661,7 +689,7 @@ bool Tick()
     }
     else if (cmd.has_disconnect())
     {
-      handle_player_leave(g_state, sender);
+      handle_player_leave(ctx, sender);
     }
   }
 
@@ -669,7 +697,7 @@ bool Tick()
   for (const auto &[player_idx, line] : inbox.commands)
   {
     log_terminal("Command from slot {}: {}", player_idx, line);
-    const auto &client_ip = g_state.net.player_ips[player_idx];
+    const auto &client_ip = ctx.net.player_ips[player_idx];
 
     // The same dispatcher the client console runs, over the same generated
     // tables. Two things keep this from bouncing the line straight back: the
@@ -681,7 +709,7 @@ bool Tick()
     cvars::command_context_t context{ .caller_slot = static_cast<int>(player_idx) };
     std::string reply;
     cvars::console_result_t result = cvars::execute_console_line(
-        *g_state.cvars, *g_state.commands, line, context, &reply);
+        *ctx.cvars, *ctx.commands, line, context, &reply);
 
     if (result == cvars::console_result_t::unknown_name)
       log_terminal("Unknown command from slot {}: {}", player_idx, line);
@@ -690,7 +718,7 @@ bool Tick()
     // is waiting to hear what came of it.
     send_text_message_to_a_specific_client(
         g_socket, client_ip, reply.empty() ? ("OK: " + line) : reply,
-        g_state.net.next_message_id);
+        ctx.net.next_message_id);
   }
 
   // Process C2S_MapLoaded acks: a client finished (re)loading the map. Verify
@@ -701,17 +729,17 @@ bool Tick()
   {
     network::Bit_Reader reader(payload.data(), payload.size());
     shared::map_loaded_message_t ack = shared::deserialize_map_loaded(reader);
-    if (ack.content_hash == g_state.map_content_hash)
+    if (ack.content_hash == ctx.map_content_hash)
     {
-      g_state.client_map_ready[player_idx] = true;
+      ctx.client_map_ready[player_idx] = true;
       log_terminal("Slot {} loaded map '{}' (hash {:#x}); resuming snapshots.",
-                   player_idx, g_state.session.map_name, ack.content_hash);
+                   player_idx, ctx.session.map_name, ack.content_hash);
     }
     else
     {
       log_error("Slot {} acked map hash {:#x} but server is running {:#x}. "
                 "Withholding snapshots until it loads the correct map.",
-                player_idx, ack.content_hash, g_state.map_content_hash);
+                player_idx, ack.content_hash, ctx.map_content_hash);
     }
   }
 
@@ -726,11 +754,11 @@ bool Tick()
     shared::request_map_data_message_t req =
         shared::deserialize_request_map_data(reader);
 
-    shared::map_package_t package = shared::build_map_package(g_state.current_map);
+    shared::map_package_t package = shared::build_map_package(ctx.current_map);
     std::vector<network::uint8> blob = shared::serialize_map_package(package);
 
     shared::map_data_message_t msg;
-    msg.map_name     = g_state.session.map_name;
+    msg.map_name     = ctx.session.map_name;
     msg.package_hash = shared::compute_map_package_hash(blob);
     msg.compressed   = false; // step 6 adds gzip
     msg.bytes        = std::move(blob);
@@ -740,11 +768,11 @@ bool Tick()
     auto packets = network::convert_to_packets(
         writer.buffer,
         static_cast<network::uint8>(network::Message_Type::S2C_MapData),
-        g_state.net.next_message_id);
+        ctx.net.next_message_id);
     for (const auto &p : packets)
-      g_socket.send(p, g_state.net.player_ips[player_idx]);
+      g_socket.send(p, ctx.net.player_ips[player_idx]);
 
-    g_state.client_map_ready[player_idx] = false;
+    ctx.client_map_ready[player_idx] = false;
     log_terminal("Streamed map package '{}' ({} bytes, {} packets, hash {:#x}) "
                  "to slot {} (requested '{}').",
                  msg.map_name, msg.bytes.size(), packets.size(),
@@ -756,7 +784,7 @@ bool Tick()
   // switch message eventually reaches the client (it stops once acked above).
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (g_state.net.player_slots[slot] && !g_state.client_map_ready[slot])
+    if (ctx.net.player_slots[slot] && !ctx.client_map_ready[slot])
       send_change_map(slot);
   }
 
@@ -778,8 +806,8 @@ bool Tick()
 
     // One uid-index lookup, held for this iteration only. The rocket spawn below
     // lands in a different pool, so it cannot move this player.
-    entities::Player_Entity *player =
-        g_state.session.entity_system.get<entities::Player_Entity>(
+    entities::Player_Entity* player =
+        ctx.session.entity_system.get<entities::Player_Entity>(
             g_player_states[player_idx].player_uid);
     // Silent on purpose, unlike the range check above: a connected client keeps
     // sending moves across a map switch, between the session reset and its
@@ -810,9 +838,18 @@ bool Tick()
 
     float tick_dt = static_cast<float>(get_tick_interval());
 
+    if (!is_movement_allowed(ctx)) 
+    {
+      // Movement is disallowed (e.g. countdown phase). Zero out velocity and
+      // keep the player at their current position.
+      player->velocity = {0.f, 0.f, 0.f};
+      // No need to update position: it stays where it is.
+      continue;
+    }
+      // Authoritative move. Updates position and velocity in place.
     Move_Events move_events{};
     auto [new_pos, new_vel] =
-        player_move(*g_state.cvars, input, g_state.session.bvh, player->position,
+        player_move(*ctx.cvars, input, ctx.session.bvh, player->position,
                     player->velocity, front, right_dir, 16.f, 36.f, tick_dt,
                     &move_events);
 
@@ -830,21 +867,21 @@ bool Tick()
       shared::effect_data_t fx{};
       fx.origin          = new_pos;
       fx.attached_entity = player->entity_id;
-      dispatch_effect(g_state, shared::effect_type_t::JUMP, fx);
+      dispatch_effect(ctx, shared::effect_type_t::JUMP, fx);
     }
     if (move_events.landed && move_events.land_impact_speed >
-                                  g_state.cvars->pm_minimum_land_impact_speed)
+                                  ctx.cvars->pm_minimum_land_impact_speed)
     {
       shared::effect_data_t fx{};
       fx.origin          = new_pos;
       fx.scale           = move_events.land_impact_speed; // for volume scaling
       fx.attached_entity = player->entity_id;
-      dispatch_effect(g_state, shared::effect_type_t::LAND, fx);
+      dispatch_effect(ctx, shared::effect_type_t::LAND, fx);
     }
 
-    if (g_state.physics)
+    if (ctx.physics)
     {
-      set_kinematic_pose(*g_state.physics,
+      set_kinematic_pose(*ctx.physics,
                          player->entity_id,
                          new_pos + vec3f{0.f, 38.f, 0.f},
                          new_vel);
@@ -877,19 +914,20 @@ bool Tick()
       vec3f dir = {cY * cP, sP, sY * cP};
 
       const shared::entity_uid_t rocket_uid =
-          g_state.session.entity_system.spawn<entities::Rocket_Entity>();
+          ctx.session.entity_system.spawn<entities::Rocket_Entity>();
       entities::Rocket_Entity *rocket =
-          g_state.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
+          ctx.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
       if (rocket)
       {
         rocket->position        = {player->position.x,
                                    player->position.y + 28.f,
                                    player->position.z};
-        rocket->velocity        = dir * 600.f;
-        rocket->lifetime        = 20.f;
-        rocket->damage_amount   = 50.f;
-        rocket->damage_radius   = 120.f;
-        rocket->knockback_force = 600.f;
+        rocket->velocity        = dir * ctx.cvars->game_rocket_speed;
+         
+        // rocket->lifetime        = 20.f;
+        // rocket->damage_amount   = 50.f;
+        // rocket->damage_radius   = 120.f;
+        // rocket->knockback_force = 600.f;
         rocket->owner_id        = player->entity_id;
         // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
         rocket->render.mesh = entities::mesh_asset::Missing;
@@ -911,21 +949,28 @@ bool Tick()
 
   // --- Simulate server-side entities ---
   float tick_dt = static_cast<float>(get_tick_interval());
-  if (!g_state.physics)
+  if (!ctx.physics)
   {
     log_error("Server tick with no physics state — Init() must have failed");
     return false;
   }
-  update_bots(g_bots, g_state, tick_dt);
-  update_rockets(g_state, tick_dt);
+  update_bots(g_bots, ctx, tick_dt);
+  update_rockets(ctx, tick_dt);
   // Respawn drain runs after damage systems so any deaths registered this
   // tick are eligible for the deadline check (delay is >0 ticks, so a
   // same-tick death-respawn never happens — but ordering is the intent).
-  update_respawns(g_state, g_tick_number,
-                  static_cast<uint32_t>(g_state.cvars->sv_tickrate));
+  update_respawns(ctx, g_tick_number,
+                  static_cast<uint32_t>(ctx.cvars->sv_tickrate));
 
-  step_physics(*g_state.physics, tick_dt);
-  update_physics_bodies(g_state.session, *g_state.physics);
+  // Match-level phase FSM, after the gameplay systems so a win condition
+  // firing this tick (once win conditions exist) is reflected before the
+  // deadline check runs. Purely bookkeeping today — see the wiring list in
+  // enter_phase().
+  update_game_rules(ctx, g_tick_number,
+                    static_cast<uint32_t>(ctx.cvars->sv_tickrate));
+
+  step_physics(*ctx.physics, tick_dt);
+  update_physics_bodies(ctx.session, *ctx.physics);
 
   // --- Check trigger volumes against players ---
   //
@@ -938,16 +983,16 @@ bool Tick()
   // Two fire modes are supported:
   //   - On_Enter:   fire only on the rising edge (previous tick: no overlap).
   //   - Every_Tick: fire whenever overlap is active.
-  // Per-(trigger, player) overlap state is kept on g_state across ticks.
+  // Per-(trigger, player) overlap state is kept on ctx across ticks.
   //
   // Both pools are fetched HERE rather than reused from earlier in the tick:
   // this is a walk over every player, not a lookup of one, so it wants the pool
   // — but a pool pointer grabbed hundreds of lines ago would have survived every
   // spawn and destroy in between.
   Span<entities::Player_Entity> player_pool =
-      g_state.session.entity_system.entities_of<entities::Player_Entity>();
+      ctx.session.entity_system.entities_of<entities::Player_Entity>();
   Span<entities::Trigger_Volume_Entity> trigger_pool =
-      g_state.session.entity_system.entities_of<entities::Trigger_Volume_Entity>();
+      ctx.session.entity_system.entities_of<entities::Trigger_Volume_Entity>();
   std::set<std::pair<std::uint64_t, std::uint64_t>> current_tick_overlaps;
   for (entities::Player_Entity &player : player_pool)
   {
@@ -974,7 +1019,7 @@ bool Tick()
       std::pair<std::uint64_t, std::uint64_t> pair_key{trigger.entity_id,
                                                         player.entity_id};
       bool was_overlapping =
-          g_state.previous_tick_overlapping_trigger_player_pairs.count(
+          ctx.previous_tick_overlapping_trigger_player_pairs.count(
               pair_key) > 0;
       current_tick_overlaps.insert(pair_key);
 
@@ -984,10 +1029,10 @@ bool Tick()
       if (!should_fire)
         continue;
 
-      server::fire_trigger_action(g_state, trigger, player);
+      server::fire_trigger_action(ctx, trigger, player);
     }
   }
-  g_state.previous_tick_overlapping_trigger_player_pairs =
+  ctx.previous_tick_overlapping_trigger_player_pairs =
       std::move(current_tick_overlaps);
 
   // --- Broadcast bot debug state to all connected clients ---
@@ -1014,13 +1059,13 @@ bool Tick()
     constexpr network::uint8 dbg_type =
         static_cast<network::uint8>(network::Message_Type::S2C_BotDebug);
     auto dbg_packets =
-        network::convert_to_packets(dbg_buf, dbg_type, g_state.net.next_message_id);
+        network::convert_to_packets(dbg_buf, dbg_type, ctx.net.next_message_id);
     for (int slot = 0; slot < network::sv_max_player_count; ++slot)
     {
-      if (!g_state.net.player_slots[slot])
+      if (!ctx.net.player_slots[slot])
         continue;
       for (const auto &pkt : dbg_packets)
-        g_socket.send(pkt, g_state.net.player_ips[slot]);
+        g_socket.send(pkt, ctx.net.player_ips[slot]);
     }
   }
 
@@ -1034,11 +1079,11 @@ bool Tick()
   // data pointer and the count, so the same reuse would read freed memory. Fetch
   // at the point of use, per entities_of()'s contract.
   Span<entities::Player_Entity> snapshot_player_pool =
-      g_state.session.entity_system.entities_of<entities::Player_Entity>();
+      ctx.session.entity_system.entities_of<entities::Player_Entity>();
   Span<entities::Rocket_Entity> rocket_pool =
-      g_state.session.entity_system.entities_of<entities::Rocket_Entity>();
+      ctx.session.entity_system.entities_of<entities::Rocket_Entity>();
   Span<entities::Physics_Body_Entity> physics_body_pool =
-      g_state.session.entity_system.entities_of<entities::Physics_Body_Entity>();
+      ctx.session.entity_system.entities_of<entities::Physics_Body_Entity>();
 
   // Build this tick's frame ONCE, straight into its slot in the ring. It is
   // both what gets encoded and what a later ack will name as a baseline, so
@@ -1065,12 +1110,12 @@ bool Tick()
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (!g_state.net.player_slots[slot])
+    if (!ctx.net.player_slots[slot])
       continue;
 
     // Withhold snapshots from a client still loading a (new) map — it has no
     // world to apply entity deltas to yet. Resumes once it acks C2S_MapLoaded.
-    if (!g_state.client_map_ready[slot])
+    if (!ctx.client_map_ready[slot])
       continue;
 
     network::Bit_Writer writer;
@@ -1088,7 +1133,7 @@ bool Tick()
     // Unreliable by design (lost effect = silently dropped). Identical bytes
     // sent to every client; per-client filtering is a future addition if PVS
     // / relevancy ever lands.
-    shared::serialize_effect_batch(writer, g_state.effect_queue_this_tick);
+    shared::serialize_effect_batch(writer, ctx.effect_queue_this_tick);
 
     // Create and send package
     game::S2C_EntityPackage package;
@@ -1102,25 +1147,25 @@ bool Tick()
     package.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
     auto packets = network::convert_to_packets(
         buffer, static_cast<network::uint8>(network::Message_Type::S2C_EntityPackage),
-        g_state.net.next_message_id);
+        ctx.net.next_message_id);
 
     for (const auto &p : packets)
-      g_socket.send(p, g_state.net.player_ips[slot]);
+      g_socket.send(p, ctx.net.player_ips[slot]);
   }
 
   // Effect queue is drained per tick: every connected client received this
   // tick's batch in the loop above, so the next tick starts empty.
-  g_state.effect_queue_this_tick.clear();
+  ctx.effect_queue_this_tick.clear();
 
   // Reliable gameplay event batch. Sent on its own protobuf message (not
   // bolted onto the snapshot) because gameplay events are reliable while
   // snapshots are unreliable — different reliability guarantees, different
   // wire path. The encoded body is identical for every client, so we encode
   // once and send to each connected client.
-  if (!g_state.game_event_queue_this_tick.empty())
+  if (!ctx.game_event_queue_this_tick.empty())
   {
     network::Bit_Writer event_writer;
-    shared::serialize_game_event_batch(event_writer, g_state.game_event_queue_this_tick);
+    shared::serialize_game_event_batch(event_writer, ctx.game_event_queue_this_tick);
 
     game::S2C_GameEventBatch batch;
     batch.set_event_data(event_writer.buffer.data(), event_writer.buffer.size());
@@ -1132,16 +1177,16 @@ bool Tick()
     auto event_packets = network::convert_to_packets(
         batch_buffer,
         static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch),
-        g_state.net.next_message_id);
+        ctx.net.next_message_id);
 
     for (int slot = 0; slot < network::sv_max_player_count; ++slot)
     {
-      if (!g_state.net.player_slots[slot]) continue;
+      if (!ctx.net.player_slots[slot]) continue;
       for (const auto &p : event_packets)
-        g_socket.send(p, g_state.net.player_ips[slot]);
+        g_socket.send(p, ctx.net.player_ips[slot]);
     }
   }
-  g_state.game_event_queue_this_tick.clear();
+  ctx.game_event_queue_this_tick.clear();
 
   // Mirror @Mirrored cvar changes last, so it catches every writer this tick —
   // a console line off the wire, a command handler, gameplay code writing the
@@ -1166,7 +1211,7 @@ double get_tick_interval()
   // hypothetical reordering -- fall back to the .def default rather than
   // dereferencing null.
   const float tickrate =
-      g_state.cvars ? g_state.cvars->sv_tickrate : cvars::cvar_state_t{}.sv_tickrate;
+      ctx.cvars ? ctx.cvars->sv_tickrate : cvars::cvar_state_t{}.sv_tickrate;
   return 1.0 / static_cast<double>(tickrate);
 }
 
@@ -1174,7 +1219,7 @@ uint32_t get_tick_number() { return g_tick_number; }
 
 const shared::game_session_t *get_session_for_integrated_client()
 {
-  return &g_state.session;
+  return &ctx.session;
 }
 
 } // namespace server
@@ -1222,7 +1267,7 @@ void spawn_bot(Bot_Mode mode, const command_context_t &)
   const vec3f &position = spawns[g_bots.size() % spawns.size()].position;
   // Qualified: unqualified lookup would find THIS function (we are inside
   // cvars::commands::spawn_bot) and never reach server::spawn_bot.
-  g_bots.push_back(server::spawn_bot(g_state.session, *g_state.physics, position,
+  g_bots.push_back(server::spawn_bot(ctx.session, *ctx.physics, position,
                                      g_next_bot_slot++, type));
 
   log_terminal("spawn_bot: spawned {} bot at slot {}", cvars::to_string(mode),
@@ -1233,7 +1278,7 @@ void spawn_cube(const command_context_t &context)
 {
   using namespace server;
 
-  if (!g_state.physics)
+  if (!ctx.physics)
   {
     log_error("spawn_cube: physics state not initialized");
     return;
@@ -1248,7 +1293,7 @@ void spawn_cube(const command_context_t &context)
 
   vec3f full_extents = {16.f, 16.f, 16.f};
   const shared::entity_uid_t body_uid =
-      spawn_physics_body(g_state, entities::Shape_Kind::Box, full_extents,
+      spawn_physics_body(ctx, entities::Shape_Kind::Box, full_extents,
                          *drop_position);
   if (body_uid != shared::null_entity_uid)
     log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
@@ -1260,7 +1305,7 @@ void spawn_sphere(const command_context_t &context)
 {
   using namespace server;
 
-  if (!g_state.physics)
+  if (!ctx.physics)
   {
     log_error("spawn_sphere: physics state not initialized");
     return;
@@ -1275,7 +1320,7 @@ void spawn_sphere(const command_context_t &context)
 
   vec3f full_extents = {16.f, 16.f, 16.f}; // x = diameter
   const shared::entity_uid_t body_uid =
-      spawn_physics_body(g_state, entities::Shape_Kind::Sphere, full_extents,
+      spawn_physics_body(ctx, entities::Shape_Kind::Sphere, full_extents,
                          *drop_position);
   if (body_uid != shared::null_entity_uid)
     log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",

@@ -2,6 +2,9 @@
 #include "cvars/cvar_console.hpp"
 #include "input.hpp"
 #include "log.hpp"
+#include "state_manager.hpp"
+#include "../shared/network/network_types.hpp"
+#include "../shared/network/udp_socket.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -11,7 +14,7 @@
 namespace client
 {
 
-Console::Console()
+console::console()
 {
   memset(InputBuf, 0, sizeof(InputBuf));
   HistoryPos = -1;
@@ -19,18 +22,18 @@ Console::Console()
   is_folded_open = true;
   should_draw = false;
 
-  Print("Console Initialized.");
+  Print("console Initialized.");
 }
 
-Console::~Console() = default;
+console::~console() = default;
 
-Console &Console::Get()
+console &console::get()
 {
-  static Console instance;
+  static console instance;
   return instance;
 }
 
-void Console::Print(const char *fmt, ...)
+void console::Print(const char *fmt, ...)
 {
   char buf[1024];
   va_list args;
@@ -42,14 +45,14 @@ void Console::Print(const char *fmt, ...)
   ScrollToBottom = true;
 }
 
-void Console::SetCVarState(cvars::cvar_state_t *state,
+void console::SetCVarState(cvars::cvar_state_t *state,
                            cvars::command_table_t *table)
 {
   cvar_state_    = state;
   command_table_ = table;
 }
 
-bool Console::BindKey(std::string_view key, std::string command_line)
+bool console::BindKey(std::string_view key, std::string command_line)
 {
   if (key.size() != 1)
   {
@@ -69,9 +72,9 @@ bool Console::BindKey(std::string_view key, std::string command_line)
   return true;
 }
 
-void Console::ClearBindings() { bindings_.clear(); }
+void console::ClearBindings() { bindings_.clear(); }
 
-void Console::PollBindings()
+void console::PollBindings()
 {
   if (should_draw)
     return; // never fire bindings while the console is open
@@ -83,7 +86,7 @@ void Console::PollBindings()
   }
 }
 
-void Console::ExecuteCommand(const char *command_line)
+void console::ExecuteCommand(const char *command_line)
 {
   Print("# %s", command_line);
 
@@ -103,8 +106,8 @@ void Console::ExecuteCommand(const char *command_line)
   {
     // Only reachable if something drove the console before client::Init(),
     // which would mean the init order broke.
-    Print("[error] Console has no cvar state; client::Init() has not run.");
-    log_error("Console::ExecuteCommand before SetCVarState: '{}'", command_line);
+    Print("[error] console has no cvar state; client::Init() has not run.");
+    log_error("console::ExecuteCommand before SetCVarState: '{}'", command_line);
     return;
   }
 
@@ -136,12 +139,12 @@ void Console::ExecuteCommand(const char *command_line)
   }
 }
 
-int Console::TextEditCallbackStub(ImGuiInputTextCallbackData *data)
+int console::TextEditCallbackStub(ImGuiInputTextCallbackData *data)
 {
-  return Console::Get().TextEditCallback(data);
+  return console::get().TextEditCallback(data);
 }
 
-int Console::TextEditCallback(ImGuiInputTextCallbackData *data)
+int console::TextEditCallback(ImGuiInputTextCallbackData *data)
 {
   if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion)
   {
@@ -225,13 +228,13 @@ int Console::TextEditCallback(ImGuiInputTextCallbackData *data)
   return 0;
 }
 
-void Console::Draw()
+void console::Draw()
 {
   if (!should_draw)
     return;
 
   ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Console", &is_folded_open))
+  if (!ImGui::Begin("console", &is_folded_open))
   {
     ImGui::End();
     return;
@@ -319,10 +322,31 @@ void bind(std::string_view key, std::string_view command,
           const command_context_t &)
 {
   std::string command_line(command);
-  if (client::Console::Get().BindKey(key, command_line))
-    client::Console::Get().Print("bound '%.*s' to: %s",
+  if (client::console::get().BindKey(key, command_line))
+    client::console::get().Print("bound '%.*s' to: %s",
                                  static_cast<int>(key.size()), key.data(),
                                  command_line.c_str());
+}
+
+// `connect(address: string)` @Client. Same contract as bind() above.
+void connect(std::string_view address, const command_context_t &)
+{
+  network::Address server_address;
+  std::string parse_error;
+  if (!network::Address::parse_endpoint(std::string(address),
+                                        network::server_port_number,
+                                        server_address, parse_error))
+  {
+    client::console::get().Print("connect: %s", parse_error.c_str());
+    return;
+  }
+
+  // Play_State::on_enter reads this and connects; see client_context.hpp.
+  client::state_manager::get_client_context().requested_server_address =
+      server_address;
+  client::console::get().Print("connecting to %s...",
+                               server_address.to_string().c_str());
+  client::state_manager::switch_to(client::game_state::play);
 }
 
 } // namespace cvars::commands

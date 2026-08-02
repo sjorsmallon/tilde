@@ -52,7 +52,7 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   state_manager::get_client_context().cvars    = cvar_state;
   state_manager::get_client_context().commands = command_table;
   cvars::bind_client_commands(*command_table);
-  Console::Get().SetCVarState(cvar_state, command_table);
+  console::get().SetCVarState(cvar_state, command_table);
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
   {
@@ -80,7 +80,7 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
 
   // Set initial state
   state_manager::init();
-  state_manager::switch_to(GameStateKind::MainMenu);
+  state_manager::switch_to(game_state::main_menu);
 
   // Bind every cosmetic-effect handler. Each effect_type_t maps to exactly
   // one function — registration must happen before the first snapshot can
@@ -179,12 +179,12 @@ bool Tick()
 
   state_manager::render_ui();
 
-  // Global Console Overlay
+  // Global console Overlay
   if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false))
   {
-    client::Console::Get().Toggle();
+    client::console::get().Toggle();
   }
-  client::Console::Get().Draw();
+  client::console::get().Draw();
 
   state_manager::pre_render(cmd);
   renderer::BeginRenderPass(cmd);

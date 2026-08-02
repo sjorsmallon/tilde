@@ -96,6 +96,16 @@ enum class Spawn_Type : uint8_t
 const char* to_string(Spawn_Type value);
 bool from_string(const char* text, Spawn_Type* out_value);
 
+enum class Team_Allegiance : uint8_t
+{
+  Red = 0,
+  Blu = 1,
+  Free_For_All = 2,
+};
+
+const char* to_string(Team_Allegiance value);
+bool from_string(const char* text, Team_Allegiance* out_value);
+
 enum class Shader_Type : uint8_t
 {
   Lit = 0,
@@ -139,13 +149,14 @@ enum class enum_type : uint16_t
 {
   Light_Type = 0,
   Spawn_Type = 1,
-  Shader_Type = 2,
-  Shape_Kind = 3,
-  Trigger_Action = 4,
-  Fire_Mode = 5,
+  Team_Allegiance = 2,
+  Shader_Type = 3,
+  Shape_Kind = 4,
+  Trigger_Action = 5,
+  Fire_Mode = 6,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 6;
+constexpr uint32_t ENUM_TYPE_COUNT = 7;
 
 struct enum_type_info_t
 {
@@ -233,6 +244,7 @@ struct Player_Spawn_Entity : Entity
   Player_Spawn_Entity() { type = entity_type::Player_Spawn_Entity; }
 
   Spawn_Type spawn_type = Spawn_Type::Human;
+  Team_Allegiance team_allegiance = Team_Allegiance::Free_For_All;
 };
 
 struct Player_Entity : Entity
@@ -250,6 +262,7 @@ struct Player_Entity : Entity
   linalg::vec3f velocity = {};
   Render render = {};
   Hitbox hitbox = {};
+  Team_Allegiance team_allegiance = Team_Allegiance::Free_For_All;
 };
 
 struct Weapon_Entity : Entity
@@ -270,10 +283,10 @@ struct Rocket_Entity : Entity
   Rocket_Entity() { type = entity_type::Rocket_Entity; }
 
   linalg::vec3f velocity = {};
-  float lifetime = {};
-  float damage_radius = {};
-  float damage_amount = {};
-  float knockback_force = {};
+  float lifetime = 20.0f;
+  float damage_amount = 50.0f;
+  float damage_radius = 120.0f;
+  float knockback_force = 600.0f;
   uint32_t owner_id = {};
   Render render = {};
   Hitbox hitbox = {};

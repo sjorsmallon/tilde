@@ -372,6 +372,7 @@ add_library(game_server SHARED
     src/server/trigger_actions.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bot_system.cpp
+    src/server/systems/game_rules_system.cpp
     src/server/systems/physics_body_system.cpp
     src/server/systems/respawn_system.cpp
 )

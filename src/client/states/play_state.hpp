@@ -76,6 +76,8 @@ private:
   bool console_was_open = false;
   bool hide_geometry = false;
   bool show_entity_debug = false;
+  bool show_menu_overlay = false;
+  bool menu_overlay_was_open = false;
   float last_dt = 0.016f;
 
   // FPS averaging ring buffer

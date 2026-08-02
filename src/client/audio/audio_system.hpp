@@ -47,12 +47,12 @@ struct audio_system_t
               const linalg::vec3f &listener_forward,
               const linalg::vec3f &listener_up);
 
-  // Play a spatialized one-shot at a world-space position. `volume` is linear
+  // play a spatialized one-shot at a world-space position. `volume` is linear
   // (1.0 = unattenuated source gain). Missing/unreadable files log once and are
   // otherwise ignored (never silently — see feedback_no_silent_failures).
   void play_3d(const char *path, const linalg::vec3f &position, float volume = 1.0f);
 
-  // Play a non-spatialized one-shot (UI, announcer, 2D feedback).
+  // play a non-spatialized one-shot (UI, announcer, 2D feedback).
   void play_2d(const char *path, float volume = 1.0f);
 
 private:

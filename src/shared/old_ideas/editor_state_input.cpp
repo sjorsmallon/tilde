@@ -150,7 +150,7 @@ void EditorState::action_delete()
 
 void EditorState::handle_input(float dt)
 {
-  if (client::Console::Get().IsOpen())
+  if (client::console::get().is_open())
     return;
 
   struct key_mapping_t

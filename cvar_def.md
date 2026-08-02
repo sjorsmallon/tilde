@@ -275,7 +275,7 @@ dedicated server) simply leaves its slots null, and the execute path treats a
 null slot for a present side as a `log_error` + assert (unreachable in
 practice, by the above).
 
-## Console execution semantics
+## console execution semantics
 
 `execute_console_line(cvar_state, command_table, line, context)` — one shared
 free function replacing `CVarSystem::Execute`:
@@ -296,7 +296,7 @@ name/description/flag so the client can register stub entries for
 autocomplete and forwarding. Under a shared hash-checked table the client
 already knows every server cvar and command at compile time — autocomplete
 reads `CVAR_INFOS`/`COMMAND_INFOS` locally, and forwarding is a flag check.
-`Console::RegisterRemoteCVar` and `remote_stubs_` go with it. What remains on
+`console::RegisterRemoteCVar` and `remote_stubs_` go with it. What remains on
 the wire is *values*, and only for `@Mirrored`:
 
 ## Mirroring (values only)
@@ -370,7 +370,7 @@ tree breaks at step 3 and builds again at step 5; no compatibility layer.
    port reads to field access, and move each command handler to its derived
    `commands::<name>` signature — the generated binders reference them, so
    the linker finds every miss.
-4. **Console + wire** — rewrite `Execute` as `execute_console_line`, delete
+4. **console + wire** — rewrite `Execute` as `execute_console_line`, delete
    the stub machinery, replace `S2C_CVarSync` with the replicated-values
    message.
 5. **Delete `cvar.hpp`'s classes** — `CVarSystem`, `Console_Entry_Base`,

@@ -4,6 +4,7 @@
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/game_events.hpp"
 #include "../shared/game_session.hpp"
+#include "game_rules.hpp"
 #include "../shared/map.hpp"
 #include "../shared/network/server_connection_state.hpp"
 #include "../shared/physics.hpp"
@@ -40,6 +41,13 @@ struct server_context_t
 
   network::Server_Connection_State net;
   shared::game_session_t session;
+
+  // Match-level rules: which round we're in, which phase, when the phase ends.
+  // Server-authoritative and server-only — see the placement argument at the
+  // top of game_rules.hpp for why this is not on game_session_t. Driven by
+  // update_game_rules() (systems/game_rules_system.hpp) once per tick and
+  // reset by load_map_into_state().
+  game_rules_state_t rules;
 
   // The map the server is currently running, as loaded by load_map_into_state().
   // current_map is the retained map_t (kept, not discarded after session init) so

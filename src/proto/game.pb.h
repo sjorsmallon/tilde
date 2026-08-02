@@ -259,7 +259,7 @@ class Vec3 final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -473,7 +473,7 @@ class Player final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -692,7 +692,7 @@ class EntityState final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -916,7 +916,7 @@ class CmdSpawn final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -1135,7 +1135,7 @@ class CmdMove final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -1342,7 +1342,7 @@ class AABB final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -1554,7 +1554,7 @@ class Snapshot final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -1787,7 +1787,7 @@ class MapSource final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -2001,7 +2001,7 @@ class GameTick final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -2229,7 +2229,7 @@ class Replay final : public ::google::protobuf::Message
       ::uint8_t* PROTOBUF_NONNULL target,
       ::google::protobuf::io::EpsCopyOutputStream* PROTOBUF_NONNULL stream) const final;
   #endif  // PROTOBUF_CUSTOM_VTABLE
-  int GetCachedSize() const { return _impl_._cached_size_.Get(); }
+  int GetCachedSize() const { return _impl_._cached_size_.get(); }
 
   private:
   void SharedCtor(::google::protobuf::Arena* PROTOBUF_NULLABLE arena);
@@ -2400,7 +2400,7 @@ inline ::std::string* PROTOBUF_NONNULL Player::mutable_name()
 }
 inline const ::std::string& Player::_internal_name() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.name_.Get();
+  return _impl_.name_.get();
 }
 inline void Player::_internal_set_name(const ::std::string& value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
@@ -3020,7 +3020,7 @@ inline ::std::string* PROTOBUF_NONNULL Replay::mutable_server_name()
 }
 inline const ::std::string& Replay::_internal_server_name() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.server_name_.Get();
+  return _impl_.server_name_.get();
 }
 inline void Replay::_internal_set_server_name(const ::std::string& value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
@@ -3815,7 +3815,7 @@ inline ::std::string* PROTOBUF_NONNULL MapSource::mutable_name()
 }
 inline const ::std::string& MapSource::_internal_name() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.name_.Get();
+  return _impl_.name_.get();
 }
 inline void MapSource::_internal_set_name(const ::std::string& value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);

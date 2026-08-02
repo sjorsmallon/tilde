@@ -23,6 +23,39 @@ int main()
     assert(addr.to_string() == "127.0.0.1:8080");
   }
 
+  // 1b. Test Address::parse_endpoint -- what the Join Game field and the
+  //     `connect` console command run typed text through.
+  {
+    Address addr;
+    std::string error;
+
+    // Bare IP takes the default port.
+    assert(Address::parse_endpoint("192.168.1.7", 9999, addr, error));
+    assert(addr.ip_v4 == 0xC0A80107);
+    assert(addr.port == 9999);
+    assert(error.empty());
+
+    // An explicit port wins over the default.
+    assert(Address::parse_endpoint("127.0.0.1:7777", 9999, addr, error));
+    assert(addr.ip_v4 == 0x7F000001);
+    assert(addr.port == 7777);
+
+    // Every rejection reports why, and leaves the caller nothing to misuse.
+    assert(!Address::parse_endpoint("127.0.0.1:", 9999, addr, error) &&
+           !error.empty());
+    assert(!Address::parse_endpoint("127.0.0.1:abc", 9999, addr, error) &&
+           !error.empty());
+    assert(!Address::parse_endpoint("127.0.0.1:0", 9999, addr, error) &&
+           !error.empty());
+    assert(!Address::parse_endpoint("127.0.0.1:70000", 9999, addr, error) &&
+           !error.empty());
+    assert(!Address::parse_endpoint("not.an.ip", 9999, addr, error) &&
+           !error.empty());
+    assert(!Address::parse_endpoint("", 9999, addr, error) && !error.empty());
+
+    std::cout << "  -> Endpoint parsing Success!" << std::endl;
+  }
+
   // 2. Test Packet Chunking
   {
     std::cout << "  -> Testing packet chunking..." << std::endl;

@@ -52,6 +52,58 @@ bool Address::parse(const std::string &str, Address &out_addr)
     return false;
 }
 
+bool Address::parse_endpoint(const std::string &str, uint16 default_port,
+                             Address &out_address, std::string &out_error)
+{
+    std::string host = str;
+    uint16 port = default_port;
+
+    // Split on the last ':' so the port is whatever follows it. There is exactly
+    // one colon in an IPv4 endpoint; searching from the back costs nothing and
+    // keeps this honest if IPv6 ever shows up.
+    size_t colon = str.find_last_of(':');
+    if (colon != std::string::npos)
+    {
+        host = str.substr(0, colon);
+        std::string port_text = str.substr(colon + 1);
+        if (port_text.empty())
+        {
+            out_error = "missing port after ':'";
+            return false;
+        }
+
+        unsigned long parsed_port = 0;
+        for (char c : port_text)
+        {
+            if (c < '0' || c > '9')
+            {
+                out_error = "'" + port_text + "' is not a port number";
+                return false;
+            }
+            parsed_port = parsed_port * 10 + static_cast<unsigned long>(c - '0');
+            if (parsed_port > 65535)
+                break; // stop before overflowing; the range check below reports it
+        }
+
+        if (parsed_port == 0 || parsed_port > 65535)
+        {
+            out_error = "port " + port_text + " is out of range (1-65535)";
+            return false;
+        }
+        port = static_cast<uint16>(parsed_port);
+    }
+
+    if (!Address::parse(host, out_address))
+    {
+        out_error = "'" + host + "' is not an IPv4 address";
+        return false;
+    }
+
+    out_address.port = port; // parse() zeroes it; we own the endpoint's port.
+    out_error.clear();
+    return true;
+}
+
 std::string Address::to_string() const
 {
     char buffer[128];

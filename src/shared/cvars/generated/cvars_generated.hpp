@@ -56,6 +56,7 @@ struct cvar_state_t
   float pm_speed_threshold = 1.0f;
   float pm_step_height = 18.0f;
   float pm_minimum_land_impact_speed = 150.0f;
+  float game_rocket_speed = 600.0f;
   float sv_tickrate = 60.0f;
   float r_fov = 90.0f;
   float cl_maxfps = 1000.0f;
@@ -92,24 +93,25 @@ enum class cvar_id : uint16_t
   pm_speed_threshold = 8,
   pm_step_height = 9,
   pm_minimum_land_impact_speed = 10,
-  sv_tickrate = 11,
-  r_fov = 12,
-  cl_maxfps = 13,
-  editor_speed = 14,
-  cl_timescale = 15,
-  sound_reference_distance = 16,
-  sound_max_distance_cutoff = 17,
-  sound_rolloff_factor = 18,
-  debug_show_collisions = 19,
-  debug_show_hitboxes = 20,
-  debug_show_navmesh = 21,
-  debug_show_box_volumes = 22,
-  net_snapshot_debug = 23,
+  game_rocket_speed = 11,
+  sv_tickrate = 12,
+  r_fov = 13,
+  cl_maxfps = 14,
+  editor_speed = 15,
+  cl_timescale = 16,
+  sound_reference_distance = 17,
+  sound_max_distance_cutoff = 18,
+  sound_rolloff_factor = 19,
+  debug_show_collisions = 20,
+  debug_show_hitboxes = 21,
+  debug_show_navmesh = 22,
+  debug_show_box_volumes = 23,
+  net_snapshot_debug = 24,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 24;
+constexpr uint32_t CVAR_COUNT = 25;
 
 enum class command_id : uint16_t
 {
@@ -119,9 +121,10 @@ enum class command_id : uint16_t
   map = 3,
   noclip = 4,
   bind = 5,
+  connect = 6,
 };
 
-constexpr uint32_t COMMAND_COUNT = 6;
+constexpr uint32_t COMMAND_COUNT = 7;
 
 enum cvar_type : uint8_t
 {
@@ -213,6 +216,9 @@ void noclip(bool enabled, const command_context_t& context);
 // @Client  Bind a key (a-z) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);
+// @Client  Connect to a server (ip or ip:port) and enter play
+// usage: connect <address>
+void connect(std::string_view address, const command_context_t& context);
 } // namespace commands
 
 // The runtime dispatch surface. Each slot holds the command's generated

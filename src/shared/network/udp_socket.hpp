@@ -19,6 +19,15 @@ struct Address
   // Parses "127.0.0.1" string, returns true if success
   static bool parse(const std::string &str, Address &out_addr);
 
+  // Parses "127.0.0.1:9999" or a bare "127.0.0.1" (which takes default_port).
+  // Unlike parse() above this always yields a usable endpoint -- parse() leaves
+  // port at 0, which is fine for a bind but never for a destination. On failure
+  // returns false and fills out_error with something showable in a UI; the
+  // caller must not use out_address in that case.
+  // IPv4 literals only, no hostname resolution (no DNS anywhere in the stack).
+  static bool parse_endpoint(const std::string &str, uint16 default_port,
+                             Address &out_address, std::string &out_error);
+
   std::string to_string() const;
 
   bool operator==(const Address &other) const

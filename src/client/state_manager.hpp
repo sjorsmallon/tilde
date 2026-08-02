@@ -23,7 +23,7 @@ void shutdown();
 void init();
 
 // Switch to a new state by Enum
-void switch_to(GameStateKind kind);
+void switch_to(game_state kind);
 
 // Get the current state (unsafe, can be null)
 Game_State *get_current_state();

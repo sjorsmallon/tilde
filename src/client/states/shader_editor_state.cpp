@@ -239,7 +239,7 @@ void Shader_Editor_State::update(float dt)
   // Escape to return to main menu
   if (input::is_key_pressed(input::key_t::Escape))
   {
-    state_manager::switch_to(GameStateKind::MainMenu);
+    state_manager::switch_to(game_state::main_menu);
     return;
   }
 

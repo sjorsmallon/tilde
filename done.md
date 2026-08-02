@@ -1058,7 +1058,7 @@ the inclusion list. Adding a test means adding the target AND its name.
 
 # CVAR TRACK — def_gen  ✅ DONE (steps 1–6, 2026-07-29 → 2026-07-30)
 
-Console variables and commands moved to the same DSL + generator the entities
+console variables and commands moved to the same DSL + generator the entities
 use. `cvar_def.md` is the design (source of truth). This track also renamed the
 generator `entity_gen` → **`def_gen`**: its real identity is the schema
 compiler (it already emitted the asset manifests, and P8 has it absorbing
@@ -1090,7 +1090,7 @@ has nothing to convert. `S2C_CVarSync` and `CvarPair` are deleted from
         one-liner at those two sites.
       * **`cl_timescale` is a live instance of the cross-DLL bug** — read by
         `main_integrated.cpp:92` (scales the SERVER accumulator, exe's copy)
-        and `client_impl.cpp:142` (scales client dt, DLL's copy). Console
+        and `client_impl.cpp:142` (scales client dt, DLL's copy). console
         setting reached only the client's, so slow-mo slowed rendering but not
         simulation. Left unflagged; step 3 fixed it structurally.
       * `sv_tickrate` was `flags::None` and is now `@Server` (only server code

@@ -164,6 +164,7 @@ Light_Type :: enum { Point, Spot, Directional }
 
 // was: Player_Spawn_Entity::spawn_type (int32, "0 = human, 1 = bot")
 Spawn_Type :: enum { Human, Bot }
+Team_Allegiance :: enum {Red, Blu, Free_For_All}
 
 // was: material_t::shader_type (pascal_string "lit" / "unlit")
 Shader_Type :: enum { Lit, Unlit }
@@ -272,6 +273,7 @@ Hitbox :: component {
 // @Networked -- the client never sees one.
 Player_Spawn_Entity :: entity {
     spawn_type: Spawn_Type = .Human     @Editable @Saveable
+    team_allegiance: Team_Allegiance = .Free_For_All @Editable @Saveable 
 }
 
 Player_Entity :: entity @runtime_only {
@@ -290,6 +292,7 @@ Player_Entity :: entity @runtime_only {
     velocity:          v3               @Networked
     render:            Render
     hitbox:            Hitbox
+    team_allegiance: Team_Allegiance = .Free_For_All @Networked  
 }
 
 // NOTE (P4): @runtime_only here contradicts placement_tool.cpp:231, which
@@ -314,10 +317,10 @@ Rocket_Entity :: entity @runtime_only {
     // draws a radius -- rocket_system.cpp is the only reader of all four, and
     // the server despawns on lifetime itself. Previously all @Networked, which
     // put 16 bytes of numbers on the wire per rocket for no reader.
-    lifetime:        f32
-    damage_radius:   f32
-    damage_amount:   f32
-    knockback_force: f32
+    lifetime: f32 = 20.0
+    damage_amount: f32 = 50.0
+    damage_radius: f32 = 120.0
+    knockback_force: f32 = 600.0
     owner_id:        u32
     render:          Render
     hitbox:          Hitbox

@@ -46,6 +46,7 @@ entity
   "position" "-1024 36 -896"
   "orientation" "0 0 0"
   "spawn_type" "Human"
+  "team_allegiance" "Free_For_All"
 }
 entity
 {

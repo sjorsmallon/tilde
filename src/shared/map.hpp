@@ -49,6 +49,8 @@ struct map_t
 
   std::vector<map_entity_t> entities;
   std::vector<map_geometry_t> geometry;
+  std::vector<std::string> attached_cvars;
+  
 
   // Populated by bake_map(). Loaded from a .navmesh sidecar alongside the map file.
   navmesh_t navmesh;

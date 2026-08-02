@@ -300,7 +300,7 @@ damage-routing migration intersects with it.
 `game_shared` is a **static** lib linked into both `game_client.dll`
 and `game_server.dll`. Two real bugs come from this:
 - Singletons declared in shared code get duplicated per DLL (the
-  cvar bug — `CVarSystem::Get()` returns different instances per
+  cvar bug — `CVarSystem::get()` returns different instances per
   DLL, breaking server-side `spawn_bot` from client console).
 - Anonymous-namespace static-init TUs in game_shared get linker-
   dropped, producing silent empty registries; worked around with

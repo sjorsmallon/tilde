@@ -91,7 +91,7 @@ static void rotate_backup_file(const std::string &path)
 }
 
 // Single funnel for getting an editor map onto disk and into the running
-// server's session. Used by Ctrl+S, "Save Map As...", and the Play button so
+// server's session. Used by Ctrl+S, "Save Map As...", and the play button so
 // all three paths produce the same on-disk + in-memory state.
 //
 // Steps:
@@ -217,9 +217,9 @@ static void add_default_floor(shared::map_t &map)
   map.add_geometry(floor);
 }
 
-void ToolEditorState::on_enter()
+void Tool_Editor_State::on_enter()
 {
-  log_terminal("Entered ToolEditorState");
+  log_terminal("Entered Tool_Editor_State");
 
   // Only load from disk on first entry. When returning from play mode the
   // in-memory map is already correct; reloading would discard unsaved edits
@@ -277,7 +277,7 @@ void ToolEditorState::on_enter()
   update_bvh();
 }
 
-void ToolEditorState::on_exit()
+void Tool_Editor_State::on_exit()
 {
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
   {
@@ -285,7 +285,7 @@ void ToolEditorState::on_exit()
   }
 }
 
-void ToolEditorState::switch_tool(int index)
+void Tool_Editor_State::switch_tool(int index)
 {
   if (active_tool_index == index)
     return;
@@ -310,7 +310,7 @@ void ToolEditorState::switch_tool(int index)
   }
 }
 
-viewport_state_t ToolEditorState::transform_viewport_state()
+viewport_state_t Tool_Editor_State::transform_viewport_state()
 {
   viewport_state_t view;
   view.camera = camera;
@@ -341,13 +341,13 @@ viewport_state_t ToolEditorState::transform_viewport_state()
   return view;
 }
 
-void ToolEditorState::update(float dt)
+void Tool_Editor_State::update(float dt)
 {
   last_dt = dt;
 
   if (input::is_key_pressed(input::key_t::Escape))
   {
-    state_manager::switch_to(GameStateKind::MainMenu);
+    state_manager::switch_to(game_state::main_menu);
     return;
   }
 
@@ -541,7 +541,7 @@ void ToolEditorState::update(float dt)
         camera.position.y -= speed;
     }
 
-    const bool console_open = Console::Get().IsOpen();
+    const bool console_open = console::get().is_open();
     if (input::is_mouse_down(input::mouse_button_t::Right) && view_mode == ViewMode::FreeCam && !console_open)
     {
       input::set_relative_mouse_mode(true);
@@ -716,7 +716,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   return result;
 }
 
-void ToolEditorState::render_ui()
+void Tool_Editor_State::render_ui()
 {
   // Ctrl+S / Cmd+S — save current map to disk (no implicit CSG bake; use the
   // "Bake CSG" button for that). Goes through commit_map_to_disk so the
@@ -1001,7 +1001,7 @@ void ToolEditorState::render_ui()
   ImGui::Text("Active Tool: %d", active_tool_index);
 
   ImGui::Separator();
-  if (ImGui::Button("Play"))
+  if (ImGui::Button("play"))
   {
     // Commit current edits to disk before switching. This is the same code
     // path as Ctrl+S, so Play_State's last_map.txt reload and the server's
@@ -1010,17 +1010,17 @@ void ToolEditorState::render_ui()
     std::string full_path = get_maps_dir() + map.name;
     if (!commit_map_to_disk(map, full_path))
     {
-      renderer::draw_announcement("Save before Play failed!");
+      renderer::draw_announcement("Save before play failed!");
     }
     else
     {
-      state_manager::switch_to(GameStateKind::Play);
+      state_manager::switch_to(game_state::play);
     }
   }
 
   if (ImGui::Button("Back to Menu"))
   {
-    state_manager::switch_to(GameStateKind::MainMenu);
+    state_manager::switch_to(game_state::main_menu);
   }
 
   ImGui::End();
@@ -1049,7 +1049,7 @@ void ToolEditorState::render_ui()
   }
 }
 
-void ToolEditorState::render_3d(VkCommandBuffer cmd)
+void Tool_Editor_State::render_3d(VkCommandBuffer cmd)
 {
   renderer::render_view_t view_def;
   view_def.viewport = {{0, 0}, {1, 1}};
@@ -1230,7 +1230,7 @@ void ToolEditorState::render_3d(VkCommandBuffer cmd)
   }
 }
 
-void ToolEditorState::pre_render(VkCommandBuffer cmd)
+void Tool_Editor_State::pre_render(VkCommandBuffer cmd)
 {
   for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
@@ -1259,7 +1259,7 @@ void ToolEditorState::pre_render(VkCommandBuffer cmd)
   }
 }
 
-void ToolEditorState::update_bvh()
+void Tool_Editor_State::update_bvh()
 {
   bvh = build_editor_bvh(map);
 }

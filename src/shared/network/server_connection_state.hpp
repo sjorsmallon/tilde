@@ -33,7 +33,7 @@ struct ServerInbox
   std::vector<Address> potential_joins;
   // Handshake commands from players (or potential players)
   std::vector<std::pair<Address, game::NetCommand>> net_commands;
-  // Console commands: player_idx + raw command line
+  // console commands: player_idx + raw command line
   std::vector<std::pair<int, std::string>> commands;
   // Bitstream-native C2S_MapLoaded acks: player_idx + raw reassembled payload,
   // decoded in server_impl via shared::deserialize_map_loaded().

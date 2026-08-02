@@ -80,6 +80,10 @@ Player_Movement :: cvars {
     pm_minimum_land_impact_speed: f32 = 150.0 @Mirrored  "Threshold for speed to cause audio to play when landing"
 }
 
+Gameplay :: cvars {
+    game_rocket_speed:      f32 = 600.0       @Mirrored "Rocket velocity"
+}
+
 // ---------------------------------------------------------------------------
 // Server -- was server_impl.cpp
 // ---------------------------------------------------------------------------
@@ -225,4 +229,9 @@ Server_Commands :: commands {
 
 Client_Commands :: commands {
     bind(key: string, command: string...)  @Client  "Bind a key (a-z) to a command line"
+
+    // @Client even though it is about the server: it picks WHICH server, so it
+    // must run on the side that isn't connected to one yet. Forwarding it would
+    // be nonsense -- there is nowhere to forward it to.
+    connect(address: string)               @Client  "Connect to a server (ip or ip:port) and enter play"
 }

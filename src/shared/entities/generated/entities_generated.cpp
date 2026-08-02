@@ -47,7 +47,7 @@ constexpr field_info_t Material_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 2},
+   .enum_id = 3},
   {.name = "color",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Material, color),
@@ -143,7 +143,7 @@ constexpr field_info_t Hitbox_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 3},
+   .enum_id = 4},
   {.name = "size",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Hitbox, size),
@@ -201,6 +201,15 @@ constexpr field_info_t Player_Spawn_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_id = 1},
+  {.name = "team_allegiance",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Player_Spawn_Entity, team_allegiance),
+   .size_in_bytes = (uint32_t)sizeof(Player_Spawn_Entity::team_allegiance),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_id = 2},
 };
 
 constexpr field_info_t Player_Entity_FIELDS[] = {
@@ -312,6 +321,15 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_id = NOT_AN_ENUM},
+  {.name = "team_allegiance",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Player_Entity, team_allegiance),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::team_allegiance),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_id = 2},
 };
 
 constexpr field_info_t Weapon_Entity_FIELDS[] = {
@@ -417,19 +435,19 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_id = NOT_AN_ENUM},
-  {.name = "damage_radius",
+  {.name = "damage_amount",
    .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Rocket_Entity, damage_radius),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::damage_radius),
+   .offset = (uint32_t)offsetof(Rocket_Entity, damage_amount),
+   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::damage_amount),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_id = NOT_AN_ENUM},
-  {.name = "damage_amount",
+  {.name = "damage_radius",
    .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Rocket_Entity, damage_amount),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::damage_amount),
+   .offset = (uint32_t)offsetof(Rocket_Entity, damage_radius),
+   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::damage_radius),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -728,7 +746,7 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 4},
+   .enum_id = 5},
   {.name = "fire_mode",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Trigger_Volume_Entity, fire_mode),
@@ -737,7 +755,7 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 5},
+   .enum_id = 6},
   {.name = "param_target_name",
    .type = FIELD_TYPE_STRING,
    .offset = (uint32_t)offsetof(Trigger_Volume_Entity, param_target_name),
@@ -896,7 +914,7 @@ constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 3},
+   .enum_id = 4},
   {.name = "size",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Physics_Body_Entity, size),
@@ -971,8 +989,8 @@ Entity* as_base_Physics_Body_Entity(void* memory) { return static_cast<Entity*>(
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
-  {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 12}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity, as_base_Player_Entity},
+  {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 13}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 6}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, true, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 12u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
@@ -1030,6 +1048,12 @@ constexpr const char* Spawn_Type_VALUE_NAMES[] = {
   "Bot",
 };
 
+constexpr const char* Team_Allegiance_VALUE_NAMES[] = {
+  "Red",
+  "Blu",
+  "Free_For_All",
+};
+
 constexpr const char* Shader_Type_VALUE_NAMES[] = {
   "Lit",
   "Unlit",
@@ -1056,6 +1080,7 @@ constexpr const char* Fire_Mode_VALUE_NAMES[] = {
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Light_Type", {Light_Type_VALUE_NAMES, 3}},
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
+  {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
   {"Shader_Type", {Shader_Type_VALUE_NAMES, 2}},
   {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 3}},
   {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 4}},
@@ -1156,6 +1181,26 @@ bool from_string(const char* text, Spawn_Type* out_value)
 {
   if (strcmp(text, "Human") == 0) { *out_value = Spawn_Type::Human; return true; }
   if (strcmp(text, "Bot") == 0) { *out_value = Spawn_Type::Bot; return true; }
+  return false;
+}
+
+const char* to_string(Team_Allegiance value)
+{
+  switch (value)
+  {
+    case Team_Allegiance::Red: return "Red";
+    case Team_Allegiance::Blu: return "Blu";
+    case Team_Allegiance::Free_For_All: return "Free_For_All";
+  }
+  assert(false && "invalid Team_Allegiance");
+  return "";
+}
+
+bool from_string(const char* text, Team_Allegiance* out_value)
+{
+  if (strcmp(text, "Red") == 0) { *out_value = Team_Allegiance::Red; return true; }
+  if (strcmp(text, "Blu") == 0) { *out_value = Team_Allegiance::Blu; return true; }
+  if (strcmp(text, "Free_For_All") == 0) { *out_value = Team_Allegiance::Free_For_All; return true; }
   return false;
 }
 
@@ -1328,6 +1373,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xc561c00cu;
+const uint32_t SCHEMA_HASH = 0xce3bccaau;
 
 } // namespace entities

@@ -7,6 +7,21 @@
 > and delta-compression design survives unchanged — it is the encoding side of
 > the detection/encoding seam. See `entity_def.md` at the repo root.
 
+# DELTA COMPRESSION SIDENOTE
+The baseline decides *which fields get written*, never *what value is written*. Every value on the wire is absolute. write_records walks networked_leaf_fields(type), compares each leaf against the baseline's copy, sets a mask bit where they differ, and then writes that field's current content in full. There's no subtraction anywhere.
+
+Two things fall out of that, and both are load-bearing:
+
+Errors can't accumulate. Since values are absolute, applying a packet to the correct baseline gives you the server's exact bytes, full stop. If deltas were arithmetic, position is quantized to 1/32 per axis by write_coord — that rounding error would compound every single tick and you'd drift away from the server forever with no mechanism to notice.
+
+
+
+
+
+
+
+
+
 This directory contains a custom network serialization system inspired by Source 2's design. It focuses on bandwidth efficiency and ease of use for gameplay programmers.
 
 ## Core Concepts

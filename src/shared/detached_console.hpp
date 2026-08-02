@@ -34,7 +34,7 @@ inline void SpawnNew() {
     // but standard console behavior is usually desired.
 
     // Set title
-    SetConsoleTitle(TEXT("Detached Console"));
+    SetConsoleTitle(TEXT("Detached console"));
   }
 #elif defined(__APPLE__)
   // On macOS, creating a *new* Terminal window attached to this specific

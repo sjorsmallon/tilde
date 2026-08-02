@@ -40,6 +40,17 @@ struct client_context_t
   // --- Network socket and server address ---
   ::network::Client_Connection_State connection_state;
 
+  // --- Requested server endpoint ---
+  // Written by whoever initiates a join (the main menu's Join Game field, the
+  // `connect` console command) and read exactly once, by Play_State::on_enter,
+  // which is the only place that sets connection_state.server_address above.
+  // state_manager::switch_to() carries no payload and the states are long-lived
+  // singletons, so the context is the seam between "who picked the server" and
+  // "who connects to it". Defaults to loopback, which is what the integrated
+  // launcher and the menu's plain Start Game want.
+  ::network::Address requested_server_address =
+      ::network::Address(127, 0, 0, 1, ::network::server_port_number);
+
   // --- Connection phase (client network/handshake state machine) ---
   //   Disconnected ──on_enter: send CmdConnect──▶ Connecting
   //
@@ -102,13 +113,13 @@ struct client_context_t
   std::array<Saved_Command, MAX_PENDING_COMMANDS> pending_commands = {};
 
   // --- Server reconciliation ---
-  vec3f last_server_position = {0, 0, 0};
-  vec3f last_server_velocity = {0, 0, 0};
-  int last_server_ack_command = -1;
+  vec3f latest_server_position = {0, 0, 0};
+  vec3f latest_server_velocity = {0, 0, 0};
+  int latest_server_ack_command = -1;
   bool received_server_update = false;
   vec3f visual_error_offset = {0, 0, 0};
-  vec3f reconc_error = {0, 0, 0};
-  float reconc_error_mag = 0.0f;
+  vec3f reconciliation_error = {0, 0, 0};
+  float reconciliation_error_magnitude = 0.0f;
 
   // --- Remote player interpolation ---
   struct Remote_Player_Snapshot
@@ -141,14 +152,14 @@ struct client_context_t
   // These are what the game reads. They are a copy of the newest frame in the
   // history below, kept separate because the rest of the client wants "the
   // current world", not "frame N".
-  std::unordered_map<int32_t, entities::Player_Entity> last_player_entities;
+  std::unordered_map<int32_t, entities::Player_Entity> latest_player_entities;
   std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> remote_rockets;
   // Physics bodies received from server. State is replaced wholesale each
   // snapshot — no interpolation yet (see todo.md). Renders correctly in
   // integrated mode via server_session; in networked mode this will visibly
   // stutter at server tick boundaries until interpolation is added.
   std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> remote_physics_bodies;
-  uint32_t last_processed_tick = 0;
+  uint32_t latest_processed_tick = 0;
 
   // --- Delta decompression: the snapshot history ---
   // The server deltas against a tick we ACKED, so we must still be holding the
@@ -159,14 +170,14 @@ struct client_context_t
   // The frame type is ::network::snapshot_frame_t, the same one the server
   // stores — the server deltas against what it believes we reconstructed, so
   // the two structures being one type is not a convenience, it is the
-  // guarantee. Keyed by entity uid on both ends; `last_player_entities` above
+  // guarantee. Keyed by entity uid on both ends; `latest_player_entities` above
   // is the by-slot view the rest of the client wants, rebuilt on publish.
   ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history;
 
   void clear_snapshot_history()
   {
     snapshot_history.clear();
-    last_processed_tick = 0;
+    latest_processed_tick = 0;
   }
 
   // --- Integrated-mode session pointer ---

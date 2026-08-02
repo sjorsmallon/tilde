@@ -381,7 +381,7 @@ against what was actually on screen rather than against a theory about it.
       diagnosed below; `game_client.dll` now resolves through the launcher's one
       `asset_state_t`. Kept here because the symptom-before-diagnosis record is
       the point of this section. Originally seen in the integrated build while
-      runtime-checking P7 step 5. Console:
+      runtime-checking P7 step 5. console:
 
       ```
       [ERROR] [src/shared/asset.cpp:1080] assets: get_mesh called before
