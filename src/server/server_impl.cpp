@@ -1,4 +1,8 @@
 #include "../shared/player_constants.hpp"
+#include "../shared/hitscan.hpp"
+#include "../shared/weapons.hpp"
+#include "../shared/collision_detection.hpp"
+#include "damage.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/cosmetic_events.hpp"
 #include "../shared/game_events.hpp"
@@ -11,17 +15,18 @@
 #include "systems/physics_body_system.hpp"
 #include "systems/respawn_system.hpp"
 #include "systems/rocket_system.hpp"
+#include "../shared/hitscan.hpp"
+#include "../shared/weapons.hpp"
 
 #include <cmath>
 #include <filesystem>
 #include <format>
 #include <optional>
 #include <string>
-
+#include "game_session.hpp"
 #include "cvars/cvar_console.hpp"
 #include "debug_collision.hpp"
 #include "log.hpp"
-
 #include "network/bitstream.hpp"
 #include "network/cvar_mirror.hpp"
 #include "network/map_transfer.hpp"
@@ -30,10 +35,9 @@
 #include "network/quantization.hpp"
 #include "network/server_connection_state.hpp"
 #include "network/snapshot_history.hpp"
+
 #include "server_context.hpp"
 #include "timed_function.hpp"
-
-#include "game_session.hpp"
 #include "map.hpp"
 #include "player_move.hpp"
 
@@ -50,26 +54,48 @@ static void send_text_message_to_a_specific_client(network::Udp_Socket &socket,
 {
   game::S2C_ServerMessage msg;
   msg.set_message(std::string(text));
-  std::vector<network::uint8> buf(msg.ByteSizeLong());
-  msg.SerializeToArray(buf.data(), static_cast<int>(buf.size()));
+  std::vector<network::uint8> buffer(msg.ByteSizeLong());
+  msg.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
   constexpr network::uint8 type_id =
       static_cast<network::uint8>(network::Message_Type::S2C_ServerMessage);
-  auto packets = network::convert_to_packets(buf, type_id, next_message_id);
+  auto packets = network::convert_to_packets(buffer, type_id, next_message_id);
+  // sendto()'s return value used to be discarded here, which made a message that
+  // never left the box indistinguishable from one the client chose not to
+  // display — exactly the ambiguity that made this path hard to diagnose.
   for (const auto &pkt : packets)
-    socket.send(pkt, ip);
+  {
+    if (!socket.send(pkt, ip))
+      log_error("S2C_ServerMessage to {} failed to send (fragment {}/{}, {} "
+                "bytes): {}",
+                ip.to_string(), pkt.header.fragment_index + 1,
+                pkt.header.fragment_count, pkt.header.payload_size, text);
+  }
 }
 
-// Broadcast a text message to all currently connected clients
+// Broadcast a text message to all currently connected clients.
+//
+// Also echoed to the server's own terminal: on a dedicated server nobody is
+// looking at a client console, and in the integrated launcher this is the line
+// that says the server *decided* to say something, independent of whether any
+// client received it. Recipient count included for the same reason — a
+// broadcast with no connected slots is a message that died in the slot table
+// rather than on the wire, and that reads as "the client never got it".
 static void broadcast_server_message(network::Server_Connection_State &net,
                                      network::Udp_Socket &socket,
                                      std::string_view text)
 {
+  int recipient_count = 0;
   for (int i = 0; i < network::sv_max_player_count; ++i)
   {
     if (net.player_slots[i])
+    {
+      ++recipient_count;
       send_text_message_to_a_specific_client(socket, net.player_ips[i], text,
                                              net.next_message_id);
+    }
   }
+
+  log_terminal("[BROADCAST -> {} client(s)] {}", recipient_count, text);
 }
 
 // NOTE(cvar-mirror): send_cvar_sync is gone. It existed to tell the client what
@@ -151,6 +177,11 @@ struct Player_Server_State
   // which is out of this array's range by construction, and Bot_State carries
   // its own uid.
   shared::entity_uid_t player_uid = shared::null_entity_uid;
+
+  // Tick of this slot's last shot, for the per-weapon fire-rate gate. 0 means
+  // "never fired" -- server ticks start at 1, so the first shot always passes
+  // the interval check without needing a sentinel.
+  uint32_t last_fire_tick = 0;
 };
 
 std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
@@ -818,8 +849,52 @@ bool Tick()
 
     const auto &move = tm.move;
 
+    // --- Per-command bookkeeping and button edges ---
+    //
+    // ABOVE the is_movement_allowed gate below, on purpose. That gate
+    // `continue`s, so anything left underneath it silently stops happening
+    // during a countdown — and last_buttons going stale there is a real bug,
+    // not merely lost bookkeeping: a client that presses fire mid-countdown and
+    // keeps holding it would still look like a fresh rising edge on the first
+    // live tick and get a free shot. Decoding here keeps the edges honest
+    // whether or not the phase lets the player act on them.
+    //
+    // player_idx was range-checked at the top of the loop, so this indexes
+    // freely from here on.
+    Player_Server_State &pstate   = g_player_states[player_idx];
+    pstate.last_processed_command = move.command_number();
+
+    // Snapshot ack. Never trusted beyond "the client claims it holds this
+    // tick" — the history lookup still has to hit a frame we actually kept.
+    // Only ever moves forward: datagrams reorder, and an older value would
+    // cost bandwidth for nothing.
+    if (move.acked_server_tick() > g_client_acked_ticks[player_idx])
+      g_client_acked_ticks[player_idx] = move.acked_server_tick();
+
+      
+    const uint64_t current_buttons       = move.buttons_bitfield();
+    const uint64_t pressed_this_tick = current_buttons & ~pstate.last_buttons;
+    pstate.last_buttons              = current_buttons;
+
+    // weapon switching is allowed even though moving isn't.
+    if (pressed_this_tick & Button::Key1)
+      player->active_weapon_id = entities::Weapon::Scout;
+    if (pressed_this_tick & Button::Key3)
+      player->active_weapon_id = entities::Weapon::Knife;
+
+    if (pressed_this_tick & Button::Key1 || pressed_this_tick & Button::Key2 ||
+        pressed_this_tick & Button::Key3)
+    {
+      // log_terminal("Slot {} equipped this weapon: {}", player_idx, to_string(player->active_weapon_id));
+      broadcast_server_message(ctx.net, g_socket,
+                             std::format("Slot {} equipped this weapon: {}",
+                                         player_idx, to_string(player->active_weapon_id)));
+    }
+
+    const bool fire_pressed = (pressed_this_tick & Button::Fire) != 0;
+
     // Decode Move_Input from the button bitfield
-    Move_Input input = move_input_from_buttons(move.buttons_bitfield());
+    Move_Input input = move_input_from_buttons(current_buttons);
 
     // Compute front/right from viewangles
     float yaw = move.viewangles().yaw();
@@ -887,62 +962,128 @@ bool Tick()
                          new_vel);
     }
 
-    // player_idx was range-checked at the top of the loop, so this indexes
-    // freely from here on.
-    auto &pstate = g_player_states[player_idx];
-    pstate.last_processed_command = move.command_number();
-
-    // Snapshot ack. Never trusted beyond "the client claims it holds this
-    // tick" — the history lookup still has to hit a frame we actually kept.
-    // Only ever moves forward: datagrams reorder, and an older value would
-    // cost bandwidth for nothing.
-    if (move.acked_server_tick() > g_client_acked_ticks[player_idx])
-      g_client_acked_ticks[player_idx] = move.acked_server_tick();
-
-    uint64_t cur_buttons  = move.buttons_bitfield();
-    bool fire_pressed = (cur_buttons & Button::Fire) &&
-                        !(pstate.last_buttons & Button::Fire);
-    pstate.last_buttons = cur_buttons;
-
+    // fire_pressed was decoded above the movement gate; acting on it is what
+    // stays gated.
     if (fire_pressed)
     {
-      log_terminal("Player {} fired a rocket!", player_idx);
-      float yaw_rad   = linalg::to_radians(yaw);
-      float pitch_rad = linalg::to_radians(pitch);
-      float cY = std::cos(yaw_rad),   sY = std::sin(yaw_rad);
-      float cP = std::cos(pitch_rad), sP = std::sin(pitch_rad);
-      vec3f dir = {cY * cP, sP, sY * cP};
+      // Every weapon fires along the view ray from the eye, so both are
+      // computed once above the branch. direction is already normalized --
+      // resolve_hitscan requires that.
+      const vec3f direction = linalg::direction_from_angles(yaw, pitch);
+      const vec3f eye = player->position + vec3f{0.f, shared::player_eye_height, 0.f};
 
-      const shared::entity_uid_t rocket_uid =
-          ctx.session.entity_system.spawn<entities::Rocket_Entity>();
-      entities::Rocket_Entity *rocket =
-          ctx.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
-      if (rocket)
+      const shared::weapon_definition_t &weapon =
+          shared::get_weapon_definition(player->active_weapon_id);
+
+      // Rate limit. Measured in ticks against the tick clock rather than an
+      // accumulated float, so it cannot drift and a paused/countdown phase
+      // cannot bank up shots.
+      const float seconds_since_last_fire =
+          static_cast<float>(g_tick_number - pstate.last_fire_tick) *
+          static_cast<float>(get_tick_interval());
+      if (seconds_since_last_fire < weapon.fire_interval_seconds)
+        continue;
+      pstate.last_fire_tick = g_tick_number;
+
+      // Switch on KIND, not on Weapon: the fire path cares how a shot
+      // resolves, and Knife and Scout resolve identically (they differ only in
+      // range and damage, both of which come off the table above).
+      switch (weapon.kind)
       {
-        rocket->position        = {player->position.x,
-                                   player->position.y + 28.f,
-                                   player->position.z};
-        rocket->velocity        = dir * ctx.cvars->game_rocket_speed;
-         
-        // rocket->lifetime        = 20.f;
-        // rocket->damage_amount   = 50.f;
-        // rocket->damage_radius   = 120.f;
-        // rocket->knockback_force = 600.f;
-        rocket->owner_id        = player->entity_id;
-        // network::set_primitive_render(rocket->render, "sphere", {25.0f, 25.0f, 25.0f});;
-        rocket->render.mesh = entities::mesh_asset::Missing;
-        rocket->render.visible = true;
-        rocket->render.scale = vec3{1.f, 1.f, 1.f};
-        rocket->render.rotation = vec3{0.f, 0.f, 0.f};
+      case entities::Weapon_Kind::Melee:
+      case entities::Weapon_Kind::Hitscan:
+      case entities::Weapon_Kind::Sniper:
+      {
+        // The world clamp casts against the session BVH, NOT Jolt. Jolt is
+        // missing static meshes and displacements (see the skips in
+        // populate_static_physics_bodies), so a bullet cast against it would
+        // fly through terrain the player is standing on. The BVH holds every
+        // geometry kind and holds no players at all, which is exactly the
+        // split we want: geometry clamps the range, resolve_hitscan owns
+        // players.
+        float range = weapon.range;
 
-        // Initialize hitbox (sphere with 12 unit radius)
-        rocket->hitbox.shape = entities::Shape_Kind::Sphere;
-        rocket->hitbox.size = {12.f, 12.f, 12.f};  // x = radius
-        rocket->hitbox.offset = {0.f, 0.f, 0.f};
+        ray_hit_result_t world_hit{};
+        const bool world_blocked =
+            bvh_intersect_ray(ctx.session.bvh, eye, direction, world_hit) &&
+            world_hit.hit;
+        if (world_blocked)
+          range = std::min(range, world_hit.t);
 
-        printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
-               rocket->position.x, rocket->position.y, rocket->position.z,
-               entities::to_string(rocket->render.mesh), rocket->render.visible);
+        // Alive players only, never the shooter. Corpses keep their Jolt
+        // capsule (it still blocks movement) but are invisible to hitscan,
+        // which is the decided corpse policy.
+        std::vector<shared::hitscan_target_t> targets;
+        for (const entities::Player_Entity &other :
+             ctx.session.entity_system.entities_of<entities::Player_Entity>())
+        {
+          if (other.entity_id == player->entity_id) continue;
+          if (other.health <= 0) continue;
+          targets.push_back({other.entity_id, other.position});
+        }
+
+        const shared::hitscan_result_t hit =
+            shared::resolve_hitscan(eye, direction, range, targets);
+
+        if (hit.hit_uid != shared::null_entity_uid)
+        {
+          const bool was_headshot = hit.region == shared::hit_region_t::Head;
+
+          damage_info_t info{};
+          info.victim_uid      = hit.hit_uid;
+          info.attacker_uid    = player->entity_id;
+          info.inflictor_uid   = player->entity_id;
+          info.weapon_id       = static_cast<uint16_t>(player->active_weapon_id);
+          info.amount          = weapon.damage *
+                                 (was_headshot ? weapon.headshot_multiplier : 1.f);
+          info.source_position = eye;
+          info.was_headshot    = was_headshot;
+          inflict_damage(ctx, info);
+        }
+        else if (world_blocked && weapon.kind != entities::Weapon_Kind::Melee)
+        {
+          // Melee deliberately produces no impact effect: a knife swing that
+          // reaches a wall should not spray a bullet decal.
+          shared::effect_data_t fx{};
+          fx.origin = eye + direction * world_hit.t;
+          dispatch_effect(ctx, shared::effect_type_t::BULLET_IMPACT, fx);
+        }
+        break;
+      }
+
+      case entities::Weapon_Kind::Projectile:
+      {
+        log_terminal("Player {} fired a rocket!", player_idx);
+
+        const shared::entity_uid_t rocket_uid =
+            ctx.session.entity_system.spawn<entities::Rocket_Entity>();
+        entities::Rocket_Entity *rocket =
+            ctx.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
+        if (rocket)
+        {
+          // Muzzle is the eye, same as the hitscan origin -- a rocket that
+          // spawns somewhere other than where the crosshair is aimed from is
+          // the same class of bug as a mismatched hitscan origin.
+          rocket->position = eye;
+          rocket->velocity = direction * ctx.cvars->game_rocket_speed;
+          rocket->owner_id = player->entity_id;
+
+          rocket->render.mesh     = entities::mesh_asset::Missing;
+          rocket->render.visible  = true;
+          rocket->render.scale    = vec3{1.f, 1.f, 1.f};
+          rocket->render.rotation = vec3{0.f, 0.f, 0.f};
+
+          // Initialize hitbox (sphere with 12 unit radius)
+          rocket->hitbox.shape  = entities::Shape_Kind::Sphere;
+          rocket->hitbox.size   = {12.f, 12.f, 12.f}; // x = radius
+          rocket->hitbox.offset = {0.f, 0.f, 0.f};
+
+          printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
+                 rocket->position.x, rocket->position.y, rocket->position.z,
+                 entities::to_string(rocket->render.mesh), rocket->render.visible);
+        }
+        break;
+      }
       }
     }
   }

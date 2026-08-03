@@ -23,12 +23,18 @@ enum cvar_flags : uint32_t
   CVAR_FLAG_MIRRORED = 1 << 2, // server-owned, pushed to clients as a read-only mirror
 };
 
+// Every enum below is DENSE and starts at 0, so its _COUNT is both the
+// number of declared names and one past the largest value -- which is
+// what makes it safe as an array size.
+
 enum class Bot_Mode : uint8_t
 {
   idle = 0,
   chase = 1,
   regular = 2,
 };
+
+constexpr uint32_t Bot_Mode_COUNT = 3;
 
 const char* to_string(Bot_Mode value);
 bool from_string(std::string_view text, Bot_Mode* out_value);

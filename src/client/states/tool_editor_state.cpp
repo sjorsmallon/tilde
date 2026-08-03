@@ -460,16 +460,16 @@ void Tool_Editor_State::update(float dt)
     if (input::is_key_pressed(input::key_t::Right_Bracket))
     {
       grid_settings.increase();
-      char buf[64];
-      snprintf(buf, sizeof(buf), "Grid: %.0f", grid_settings.step());
-      renderer::draw_announcement(buf);
+      char buffer[64];
+      snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
+      renderer::draw_announcement(buffer);
     }
     if (input::is_key_pressed(input::key_t::Left_Bracket))
     {
       grid_settings.decrease();
-      char buf[64];
-      snprintf(buf, sizeof(buf), "Grid: %.0f", grid_settings.step());
-      renderer::draw_announcement(buf);
+      char buffer[64];
+      snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
+      renderer::draw_announcement(buffer);
     }
 
     if (input::is_key_down(input::key_t::W))

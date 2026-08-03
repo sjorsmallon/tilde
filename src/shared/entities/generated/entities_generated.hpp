@@ -77,12 +77,20 @@ Span<const asset_info_t> sprite_asset_manifest();
 // is not NOT_AN_ASSET_CLASS before calling.
 Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);
 
+// Every enum below is DENSE and starts at 0, so its _COUNT is both the
+// number of declared names and one past the largest value -- which is
+// what makes it safe as an array size. The DSL has no explicit or
+// sparse enum values today; the day it grows them, every _COUNT user
+// has to be revisited.
+
 enum class Light_Type : uint8_t
 {
   Point = 0,
   Spot = 1,
   Directional = 2,
 };
+
+constexpr uint32_t Light_Type_COUNT = 3;
 
 const char* to_string(Light_Type value);
 bool from_string(const char* text, Light_Type* out_value);
@@ -92,6 +100,8 @@ enum class Spawn_Type : uint8_t
   Human = 0,
   Bot = 1,
 };
+
+constexpr uint32_t Spawn_Type_COUNT = 2;
 
 const char* to_string(Spawn_Type value);
 bool from_string(const char* text, Spawn_Type* out_value);
@@ -103,14 +113,43 @@ enum class Team_Allegiance : uint8_t
   Free_For_All = 2,
 };
 
+constexpr uint32_t Team_Allegiance_COUNT = 3;
+
 const char* to_string(Team_Allegiance value);
 bool from_string(const char* text, Team_Allegiance* out_value);
+
+enum class Weapon : uint8_t
+{
+  Knife = 0,
+  Scout = 1,
+  Rocket_Launcher = 2,
+};
+
+constexpr uint32_t Weapon_COUNT = 3;
+
+const char* to_string(Weapon value);
+bool from_string(const char* text, Weapon* out_value);
+
+enum class Weapon_Kind : uint8_t
+{
+  Melee = 0,
+  Hitscan = 1,
+  Projectile = 2,
+  Sniper = 3,
+};
+
+constexpr uint32_t Weapon_Kind_COUNT = 4;
+
+const char* to_string(Weapon_Kind value);
+bool from_string(const char* text, Weapon_Kind* out_value);
 
 enum class Shader_Type : uint8_t
 {
   Lit = 0,
   Unlit = 1,
 };
+
+constexpr uint32_t Shader_Type_COUNT = 2;
 
 const char* to_string(Shader_Type value);
 bool from_string(const char* text, Shader_Type* out_value);
@@ -121,6 +160,8 @@ enum class Shape_Kind : uint8_t
   Capsule = 1,
   Box = 2,
 };
+
+constexpr uint32_t Shape_Kind_COUNT = 3;
 
 const char* to_string(Shape_Kind value);
 bool from_string(const char* text, Shape_Kind* out_value);
@@ -133,6 +174,8 @@ enum class Trigger_Action : uint8_t
   Warp_To_Spawn = 3,
 };
 
+constexpr uint32_t Trigger_Action_COUNT = 4;
+
 const char* to_string(Trigger_Action value);
 bool from_string(const char* text, Trigger_Action* out_value);
 
@@ -142,6 +185,8 @@ enum class Fire_Mode : uint8_t
   Every_Tick = 1,
 };
 
+constexpr uint32_t Fire_Mode_COUNT = 2;
+
 const char* to_string(Fire_Mode value);
 bool from_string(const char* text, Fire_Mode* out_value);
 
@@ -150,13 +195,15 @@ enum class enum_type : uint16_t
   Light_Type = 0,
   Spawn_Type = 1,
   Team_Allegiance = 2,
-  Shader_Type = 3,
-  Shape_Kind = 4,
-  Trigger_Action = 5,
-  Fire_Mode = 6,
+  Weapon = 3,
+  Weapon_Kind = 4,
+  Shader_Type = 5,
+  Shape_Kind = 6,
+  Trigger_Action = 7,
+  Fire_Mode = 8,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 7;
+constexpr uint32_t ENUM_TYPE_COUNT = 9;
 
 struct enum_type_info_t
 {
@@ -257,7 +304,7 @@ struct Player_Entity : Entity
   float view_angle_pitch = {};
   int32_t health = {};
   int32_t ammo = {};
-  int32_t active_weapon_id = {};
+  Weapon active_weapon_id = Weapon::Knife;
   int32_t client_slot_index = {};
   linalg::vec3f velocity = {};
   Render render = {};
@@ -272,7 +319,7 @@ struct Weapon_Entity : Entity
   Weapon_Entity() { type = entity_type::Weapon_Entity; }
 
   int32_t ammo = {};
-  int32_t active_weapon_id = {};
+  Weapon weapon_id = {};
   Render render = {};
 };
 

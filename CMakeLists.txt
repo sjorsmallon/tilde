@@ -426,6 +426,10 @@ target_include_directories(camera_test PRIVATE src)
 # for now camera.hpp is header only.
 
 # 10. Linalg Test
+add_executable(hitscan_test src/test/hitscan_test.cpp)
+target_include_directories(hitscan_test PRIVATE src)
+target_link_libraries(hitscan_test PRIVATE game_shared)
+
 add_executable(linalg_test src/test/linalg_test.cpp)
 target_include_directories(linalg_test PRIVATE src)
  target_link_libraries(linalg_test PRIVATE game_shared)
@@ -551,7 +555,8 @@ set(GAME_TESTS
     entity_layout_test
     map_migration_test
     navmesh_test
-    cvar_test)
+    cvar_test
+    hitscan_test)
 
 foreach(test_target IN LISTS GAME_TESTS)
   add_test(NAME ${test_target} COMMAND ${test_target})

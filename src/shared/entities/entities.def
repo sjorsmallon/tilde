@@ -165,6 +165,8 @@ Light_Type :: enum { Point, Spot, Directional }
 // was: Player_Spawn_Entity::spawn_type (int32, "0 = human, 1 = bot")
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum {Red, Blu, Free_For_All}
+Weapon :: enum {Knife, Scout, Rocket_Launcher}
+Weapon_Kind :: enum { Melee, Hitscan, Projectile, Sniper }
 
 // was: material_t::shader_type (pascal_string "lit" / "unlit")
 Shader_Type :: enum { Lit, Unlit }
@@ -180,6 +182,8 @@ Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn }
 
 // was: Trigger_Volume_Entity::fire_mode (pascal_string "on_enter"/"every_tick")
 Fire_Mode :: enum { On_Enter, Every_Tick }
+
+
 
 // ---------------------------------------------------------------------------
 // Components
@@ -276,6 +280,8 @@ Player_Spawn_Entity :: entity {
     team_allegiance: Team_Allegiance = .Free_For_All @Editable @Saveable 
 }
 
+
+
 Player_Entity :: entity @runtime_only {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
@@ -285,7 +291,7 @@ Player_Entity :: entity @runtime_only {
     // when it does, these are the first candidates.
     health:            i32              @Networked
     ammo:              i32              @Networked
-    active_weapon_id:  i32              @Networked
+    active_weapon_id:  Weapon = .Knife  @Networked
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
     // Feeds remote-player interpolation.
@@ -295,17 +301,10 @@ Player_Entity :: entity @runtime_only {
     team_allegiance: Team_Allegiance = .Free_For_All @Networked  
 }
 
-// NOTE (P4): @runtime_only here contradicts placement_tool.cpp:231, which
-// special-cases placing a Weapon_Entity in the editor -- because today's
-// placement menu offers EVERY type from the X-macro, weapons and rockets
-// included. placeable_entity_types() replaces that menu at P5 and weapons drop
-// out of it. Keeping @runtime_only: a gun lying on the ground should be a
-// pickup entity that does not exist yet, and no system spawns or ticks a
-// Weapon_Entity at all right now. Flagged so it reads as a decision at the
-// cutover rather than as something that went missing.
-Weapon_Entity :: entity @runtime_only {
+// this is supposed to be a thing you pick up.
+Weapon_Entity :: entity {
     ammo:             i32               @Networked
-    active_weapon_id: i32               @Networked
+weapon_id:        Weapon            @Networked
     render:           Render
 }
 

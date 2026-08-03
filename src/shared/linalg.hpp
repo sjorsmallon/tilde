@@ -220,6 +220,26 @@ inline float to_radians(float degrees) { return degrees * (PI / 180.0f); }
 
 inline float to_degrees(float radians) { return radians * (180.0f / PI); }
 
+// View angles (DEGREES, the form they take at every boundary -- the proto
+// viewangles, Player_Entity::view_angle_*, camera_t) to a forward direction.
+// Y-up: yaw sweeps from +X toward +Z, positive pitch looks up.
+//
+// The result is UNIT LENGTH by construction -- (cos*cos)^2 + sin^2 +
+// (sin*cos)^2 == 1 identically -- so callers that need a normalized ray
+// (resolve_hitscan) can use it directly without a normalize.
+inline vec3f direction_from_angles(float yaw_degrees, float pitch_degrees)
+{
+  const float yaw_radians   = to_radians(yaw_degrees);
+  const float pitch_radians = to_radians(pitch_degrees);
+
+  const float cos_yaw   = std::cos(yaw_radians);
+  const float sin_yaw   = std::sin(yaw_radians);
+  const float cos_pitch = std::cos(pitch_radians);
+  const float sin_pitch = std::sin(pitch_radians);
+
+  return {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
+}
+
 template <typename T> inline T mix(T a, T b, float t)
 {
   return a * (1.0f - t) + b * t;
@@ -348,9 +368,9 @@ inline vec2 view_to_screen(const vec3 &p, const vec2 &display_size, bool ortho,
 {
   if (ortho)
   {
-    float aspect = display_size.x / display_size.y;
+    float aspect_ratio = display_size.x / display_size.y;
     float h = ortho_h;
-    float w = h * aspect;
+    float w = h * aspect_ratio;
 
     // Map p.x, p.y to [-1, 1] based on ortho rect
     float x_ndc = p.x / (w * 0.5f);
@@ -361,12 +381,12 @@ inline vec2 view_to_screen(const vec3 &p, const vec2 &display_size, bool ortho,
   }
   else
   {
-    float aspect = display_size.x / display_size.y;
-    float tanHalf = std::tan(to_radians(fov_degrees) * 0.5f);
+    float aspect_ratio = display_size.x / display_size.y;
+    float tan_half = std::tan(to_radians(fov_degrees) * 0.5f);
 
     // Looking down -Z.
-    float x_ndc = p.x / (-p.z * tanHalf * aspect);
-    float y_ndc = p.y / (-p.z * tanHalf);
+    float x_ndc = p.x / (-p.z * tan_half * aspect_ratio);
+    float y_ndc = p.y / (-p.z * tan_half);
 
     return {(x_ndc * 0.5f + 0.5f) * display_size.x,
             (1.0f - (y_ndc * 0.5f + 0.5f)) * display_size.y};

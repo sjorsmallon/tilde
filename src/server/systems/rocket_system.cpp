@@ -102,7 +102,7 @@ static void detonate(const entities::Rocket_Entity &rocket,
 
   // Cosmetic explosion: announce the detonation through the cosmetic-events
   // channel. The server reports the world-space origin; the client handler
-  // does its own cast_sphere_static against its local static geometry to
+  // does its own Static_Only cast_sphere against its local static geometry to
   // resolve a surface contact for the decal — see plan §"Server emits, client
   // traces locally."
   shared::effect_data_t fx{};
@@ -162,10 +162,16 @@ void update_rockets(server_context_t &context, float dt)
     vec3f next_pos = rocket.position + rocket.velocity * dt;
 
     hit_result_t hit;
-    shared::entity_uid_t ignore_uid = rocket.owner_id;
+    // Everything is a valid target except the player who fired: a rocket that
+    // clips its own owner's capsule on the first tick would detonate in their
+    // face. Back faces collide so a rocket spawned barely inside geometry
+    // still stops rather than sailing through it.
+    const query_filter_t filter{.layers     = query_layers_t::All,
+                                .ignore_uid = rocket.owner_id,
+                                .back_faces = back_face_mode_t::Collide};
 
     if (cast_sphere(physics, rocket.position, next_pos,
-                    rocket.hitbox.size.x, ignore_uid, hit))
+                    rocket.hitbox.size.x, filter, hit))
     {
       rocket.position = hit.position;
       detonate(rocket, context, hit.entity_id, hit.normal);

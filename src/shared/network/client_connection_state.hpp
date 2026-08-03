@@ -231,6 +231,18 @@ inline void poll_client_network(Client_Connection_State &state,
 
     if (detail::reassemble_fragment(state, packet, payload))
       handler(std::move(payload), out_inbox);
+    else if (packet.header.fragment_count == 1)
+      // An unfragmented message must complete the instant it arrives — the
+      // bucket it lands in is created and freed inside that one call. Not
+      // completing means the bucket was already occupied by a stale, never
+      // completed message that reused this message_id (the counter is a uint8
+      // and wraps every 256 sends), so the whole message was just eaten. Say so
+      // rather than dropping it on the floor.
+      log_error("message type {} (id {}) arrived unfragmented but did not "
+                "reassemble — its message_id bucket still holds an incomplete "
+                "message; the payload was dropped",
+                static_cast<int>(packet.header.message_type),
+                packet.header.message_id);
   }
 }
 

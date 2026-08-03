@@ -358,7 +358,7 @@ whether the DSL already knows the answer statically.
 
 ## Geometry: outside the DSL entirely
 
-**History**: brushes became entities to get one editor object model. That
+**history**: brushes became entities to get one editor object model. That
 bundled two decisions — (A) geometry as uniform editable objects: correct,
 kept; (B) geometry as runtime entities: a mistake, whose scar tissue was
 `is_collision_geometry()` routing entities *out* of the entity system at

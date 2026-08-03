@@ -12,6 +12,9 @@
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 
 #include "log.hpp"
 
@@ -208,8 +211,16 @@ void unregister_physics_body(physics_state_t &state, shared::entity_uid_t uid)
     state.entity_body_map.erase(it);
 }
 
-// Body filter that skips a single ignored body — used for projectiles so the
-// firing player isn't hit by their own rocket on the direct-hit cast.
+// --- query_filter_t -> Jolt's three filter objects ---
+//
+// Jolt takes the two axes separately too (an ObjectLayerFilter for category, a
+// BodyFilter for identity), so these are thin adapters rather than a
+// translation. Each is a no-op in its permissive setting, which is what lets
+// one pair of cast functions serve every combination.
+
+// Identity axis. A default-constructed BodyID is invalid and equals no real
+// body, so "ignore nothing" needs no branch in the hot ShouldCollide -- this is
+// called once per candidate body in the narrow phase.
 class Ignore_Single_Body_Filter final : public JPH::BodyFilter
 {
 public:
@@ -218,9 +229,110 @@ public:
     bool ShouldCollide(const JPH::BodyID &id) const override { return id != ignore_id; }
 };
 
+// Category axis, broad phase. `static_only == false` admits everything.
+class Layer_Broad_Phase_Filter final : public JPH::BroadPhaseLayerFilter
+{
+public:
+    bool static_only;
+    explicit Layer_Broad_Phase_Filter(bool static_only) : static_only(static_only) {}
+    bool ShouldCollide(JPH::BroadPhaseLayer layer) const override
+    {
+        return !static_only || layer == Broad_Phase_Layers::STATIC;
+    }
+};
+
+// Category axis, narrow phase. Must agree with Layer_Broad_Phase_Filter: the
+// broad phase only prunes, so a body in a STATIC broad-phase bucket is still
+// re-checked here.
+class Layer_Object_Filter final : public JPH::ObjectLayerFilter
+{
+public:
+    bool static_only;
+    explicit Layer_Object_Filter(bool static_only) : static_only(static_only) {}
+    bool ShouldCollide(JPH::ObjectLayer layer) const override
+    {
+        return !static_only || layer == Physics_Layers::STATIC;
+    }
+};
+
+static JPH::BodyID resolve_ignored_body(physics_state_t &state,
+                                        shared::entity_uid_t ignore_uid)
+{
+    if (ignore_uid == shared::null_entity_uid) return {};
+    auto it = state.entity_body_map.find(ignore_uid);
+    return (it != state.entity_body_map.end()) ? it->second : JPH::BodyID{};
+}
+
+static JPH::EBackFaceMode to_jolt_back_face_mode(back_face_mode_t mode)
+{
+    return mode == back_face_mode_t::Collide ? JPH::EBackFaceMode::CollideWithBackFaces
+                                             : JPH::EBackFaceMode::IgnoreBackFaces;
+}
+
+// entity_id is 0 when the hit body has no entity mapping -- static world
+// geometry legitimately has none, so this is not an error path.
+static shared::entity_uid_t entity_for_body(physics_state_t &state, JPH::BodyID body_id)
+{
+    auto it = state.body_entity_map.find(body_id);
+    return (it != state.body_entity_map.end()) ? it->second : shared::null_entity_uid;
+}
+
+bool cast_ray(physics_state_t &state,
+              vec3f from, vec3f to,
+              const query_filter_t &filter,
+              hit_result_t &out)
+{
+    const vec3f    segment = to - from;
+    JPH::RRayCast  ray{to_jolt_r(from), to_jolt(segment)};
+
+    // Direction carries the full segment, so mFraction is already 0..1 across
+    // it and needs no division by a length.
+    JPH::RayCastSettings settings;
+    settings.SetBackFaceMode(to_jolt_back_face_mode(filter.back_faces));
+    // A ray starting inside a convex body reports fraction 0 rather than
+    // sailing through it -- a muzzle already overlapping a crate must not shoot
+    // out the far side.
+    settings.mTreatConvexAsSolid = true;
+
+    JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
+
+    const bool static_only = filter.layers == query_layers_t::Static_Only;
+    Layer_Broad_Phase_Filter   broad_phase_filter(static_only);
+    Layer_Object_Filter        object_layer_filter(static_only);
+    Ignore_Single_Body_Filter  body_filter(resolve_ignored_body(state, filter.ignore_uid));
+
+    state.physics_system.GetNarrowPhaseQuery().CastRay(
+        ray, settings, collector,
+        broad_phase_filter, object_layer_filter, body_filter);
+
+    if (!collector.HadHit()) return false;
+
+    const JPH::BodyID hit_id = collector.mHit.mBodyID;
+    out.entity_id = entity_for_body(state, hit_id);
+    out.fraction  = collector.mHit.mFraction;
+    out.position  = from + segment * collector.mHit.mFraction;
+
+    // Unlike a shape cast there is no penetration axis to fall back on: the
+    // surface normal has to come off the body, which means locking it.
+    out.normal = {0.f, 0.f, 0.f};
+    JPH::BodyLockRead lock(state.physics_system.GetBodyLockInterface(), hit_id);
+    if (lock.Succeeded())
+    {
+        out.normal = from_jolt(lock.GetBody().GetWorldSpaceSurfaceNormal(
+            collector.mHit.mSubShapeID2, to_jolt_r(out.position)));
+    }
+    else
+    {
+        log_error("cast_ray hit body {} but could not lock it for a surface "
+                  "normal; reporting a zero normal",
+                  hit_id.GetIndex());
+    }
+    return true;
+}
+
 bool cast_sphere(physics_state_t &state,
                  vec3f from, vec3f to, float radius,
-                 shared::entity_uid_t ignore_uid,
+                 const query_filter_t &filter,
                  hit_result_t &out)
 {
     JPH::SphereShape sphere(radius);
@@ -232,94 +344,29 @@ bool cast_sphere(physics_state_t &state,
                          motion);
 
     JPH::ShapeCastSettings settings;
-    settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
-    settings.mBackFaceModeConvex    = JPH::EBackFaceMode::CollideWithBackFaces;
+    const JPH::EBackFaceMode back_face_mode = to_jolt_back_face_mode(filter.back_faces);
+    settings.mBackFaceModeTriangles = back_face_mode;
+    settings.mBackFaceModeConvex    = back_face_mode;
 
     JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
 
-    JPH::BodyID ignore_body_id;
-    if (ignore_uid != 0)
-    {
-        auto it = state.entity_body_map.find(ignore_uid);
-        if (it != state.entity_body_map.end()) ignore_body_id = it->second;
-    }
-    Ignore_Single_Body_Filter body_filter(ignore_body_id);
+    const bool static_only = filter.layers == query_layers_t::Static_Only;
+    Layer_Broad_Phase_Filter   broad_phase_filter(static_only);
+    Layer_Object_Filter        object_layer_filter(static_only);
+    Ignore_Single_Body_Filter  body_filter(resolve_ignored_body(state, filter.ignore_uid));
 
     state.physics_system.GetNarrowPhaseQuery().CastShape(
         cast, settings, JPH::RVec3::sZero(), collector,
-        {}, {}, body_filter);
+        broad_phase_filter, object_layer_filter, body_filter);
 
     if (!collector.HadHit()) return false;
 
     JPH::BodyID hit_id = collector.mHit.mBodyID2;
-    auto e_it = state.body_entity_map.find(hit_id);
-    out.entity_id = (e_it != state.body_entity_map.end()) ? e_it->second : 0;
+    out.entity_id = entity_for_body(state, hit_id);
     out.fraction  = collector.mHit.mFraction;
     out.position  = from + (to - from) * collector.mHit.mFraction;
     // ContactPointOn2 + surface normal need the body to be locked; the closest-hit
     // collector stores mPenetrationAxis which points from body2 into body1 (the cast).
-    JPH::Vec3 n = collector.mHit.mPenetrationAxis.Normalized();
-    out.normal = from_jolt(n);
-    return true;
-}
-
-// Broad-phase filter that only admits the STATIC broad-phase layer. Pairs with
-// Static_Only_Object_Layer_Filter to skip every dynamic / kinematic body
-// (players, rockets, physics props) in a cast — used by client-side effect
-// handlers that only care about world-geometry surface contact.
-class Static_Only_Broad_Phase_Layer_Filter final : public JPH::BroadPhaseLayerFilter
-{
-public:
-    bool ShouldCollide(JPH::BroadPhaseLayer layer) const override
-    {
-        return layer == Broad_Phase_Layers::STATIC;
-    }
-};
-
-class Static_Only_Object_Layer_Filter final : public JPH::ObjectLayerFilter
-{
-public:
-    bool ShouldCollide(JPH::ObjectLayer layer) const override
-    {
-        return layer == Physics_Layers::STATIC;
-    }
-};
-
-bool cast_sphere_static(physics_state_t &state,
-                        vec3f from, vec3f to, float radius,
-                        hit_result_t &out)
-{
-    JPH::SphereShape sphere(radius);
-    sphere.SetEmbedded();
-
-    JPH::Vec3 motion = to_jolt(to - from);
-    JPH::RShapeCast cast(&sphere, JPH::Vec3::sReplicate(1.0f),
-                         JPH::RMat44::sTranslation(to_jolt_r(from)),
-                         motion);
-
-    // Ignore back faces so a cast that starts inside (or barely inside) a
-    // static body doesn't return fraction-0 with a flipped normal. Callers
-    // are decal-style: they want the front face the surface is showing them.
-    JPH::ShapeCastSettings settings;
-    settings.mBackFaceModeTriangles = JPH::EBackFaceMode::IgnoreBackFaces;
-    settings.mBackFaceModeConvex    = JPH::EBackFaceMode::IgnoreBackFaces;
-
-    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
-
-    Static_Only_Broad_Phase_Layer_Filter broad_phase_filter;
-    Static_Only_Object_Layer_Filter      object_layer_filter;
-
-    state.physics_system.GetNarrowPhaseQuery().CastShape(
-        cast, settings, JPH::RVec3::sZero(), collector,
-        broad_phase_filter, object_layer_filter, {});
-
-    if (!collector.HadHit()) return false;
-
-    JPH::BodyID hit_id = collector.mHit.mBodyID2;
-    auto e_it = state.body_entity_map.find(hit_id);
-    out.entity_id = (e_it != state.body_entity_map.end()) ? e_it->second : 0;
-    out.fraction  = collector.mHit.mFraction;
-    out.position  = from + (to - from) * collector.mHit.mFraction;
     JPH::Vec3 n = collector.mHit.mPenetrationAxis.Normalized();
     out.normal = from_jolt(n);
     return true;

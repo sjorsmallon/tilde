@@ -60,7 +60,7 @@ hitscan_result_t resolve_hitscan(vec3f origin, vec3f direction,
 
         normal = linalg::normalize((origin + direction * distance) - center);
       }
-      else
+      else if (hitbox.shape == entities::Shape_Kind::Box)
       {
         const vec3f box_min = center - hitbox.size;
         const vec3f box_max = center + hitbox.size;

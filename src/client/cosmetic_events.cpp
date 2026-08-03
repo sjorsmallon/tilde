@@ -79,7 +79,7 @@ void dispatch_received_effects(client_context_t &context,
     if (index >= g_handlers.size() || g_handlers[index] == nullptr)
     {
       log_error("dispatch_received_effects: no handler registered for effect_type_t {}",
-                static_cast<int>(effect.type));
+                shared::to_string(effect.type));
       assert(false);
       continue;
     }

@@ -775,7 +775,7 @@ static std::string resolve_mesh_path(const char *raw)
   if (stem.size() >= 4 && stem.substr(stem.size() - 4) == ".obj")
     stem = stem.substr(0, stem.size() - 4);
 
-  // Candidates in priority order (deduplicated below).
+  // candidates in priority order (deduplicated below).
   std::string candidates[] = {
     s,                                // exactly as given
     stem + ".obj",                    // ensure .obj extension

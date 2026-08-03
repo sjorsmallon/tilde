@@ -8,6 +8,7 @@
 #include "../../shared/cosmetic_events.hpp"
 #include "../../shared/game_events.hpp"
 #include "../../shared/physics.hpp"
+#include "../../shared/player_constants.hpp"
 #ifdef JPH_DEBUG_RENDERER
 #include <Jolt/Physics/Body/BodyManager.h>
 #endif
@@ -201,7 +202,7 @@ void Play_State::finalize_client_map()
   }
 
   camera.position.x = ctx.player_position.x;
-  camera.position.y = ctx.player_position.y + 28.f;
+  camera.position.y = ctx.player_position.y + shared::player_eye_height;
   camera.position.z = ctx.player_position.z;
 }
 
@@ -437,9 +438,9 @@ void Play_State::update(float dt)
     // for the same reason — its buttons need a real cursor to click.
     input::set_relative_mouse_mode(mouse_captured && !console_open && !show_menu_overlay);
 
-    // Dispatch key bindings configured via the `bind` command. PollBindings is
+    // Dispatch key bindings configured via the `bind` command. poll_bindings is
     // a no-op when the console is open, so we don't have to gate it here.
-    console::get().PollBindings();
+    console::get().poll_bindings();
 
   
   // --- Poll network ---
@@ -556,7 +557,6 @@ void Play_State::update(float dt)
     log_terminal("Map switch to '{}' complete; acked hash {:#x}",
                  change.map_name, change.content_hash);
   }
-
   // --- Handle streamed compiled map package (S2C_MapData) ---
   // The server's reply to our C2S_RequestMapData. Verify integrity, deserialize
   // the package, rebuild the world from it, then ack so snapshots resume. We
@@ -615,8 +615,17 @@ void Play_State::update(float dt)
   }
 
   // --- Handle server console messages ---
+  // Both sinks, deliberately. The in-game console is the one the player reads,
+  // but it is only visible while it is toggled open — and holding it open
+  // suppresses the button bitfield (see the input gather below), so anything the
+  // server says *in response to input* can never be watched live there. The
+  // terminal has no such problem, and is where you are looking when you are
+  // debugging rather than playing.
   for (const auto &msg : inbox.server_messages)
-    console::get().Print("%s", msg.message().c_str());
+  {
+    log_terminal("[SERVER] {}", msg.message());
+    console::get().print("%s", msg.message().c_str());
+  }
 
   // --- Apply @Mirrored cvar values pushed by the server (S2C_CvarValues) ---
   for (const auto &payload : inbox.cvar_value_messages)
@@ -629,7 +638,6 @@ void Play_State::update(float dt)
       log_terminal("[CLIENT] mirrored cvar '{}' = {}",
                    cvars::cvar_info(value.id).name, value.text);
   }
-
   // --- Apply reliable gameplay event batches from server ---
   // Decoded here so consumers (kill feed, score HUD, …) see events the same
   // tick they arrive, regardless of snapshot ordering.
@@ -722,12 +730,6 @@ void Play_State::update(float dt)
                    snapshot_tick, delta_from_tick, latest_snapshot.players.size(),
                    latest_snapshot.rockets.size(), latest_snapshot.physics_bodies.size(), data_size);
 
-    // Publish: this same frame becomes both the world the game reads and the
-    // history entry we will ack. Those must be the same bytes — the server
-    // deltas its next packet against exactly what we store here, so publishing
-    // one thing and filing another desyncs silently, in the fields nobody
-    // mentioned rather than the ones they did.
-
     ctx.latest_player_entities.clear();
     for (const auto &[uid, player] : latest_snapshot.players)
       ctx.latest_player_entities[player.client_slot_index] = player;
@@ -817,18 +819,18 @@ void Play_State::update(float dt)
 
     float prediction_dt = 1.0f / static_cast<float>(ctx.server_tickrate);
 
-    for (int cmd_num = ctx.latest_server_ack_command + 1; cmd_num < ctx.command_number;
-         ++cmd_num)
+    for (int command_count = ctx.latest_server_ack_command + 1; command_count < ctx.command_number;
+         ++command_count)
     {
-      int idx = cmd_num % (int)ctx.pending_commands.size();
+      int idx = command_count % (int)ctx.pending_commands.size();
       const auto &saved = ctx.pending_commands[idx];
-      if (saved.command_number != cmd_num)
+      if (saved.command_number != command_count)
         break;
 
-      camera_t temp_cam;
-      temp_cam.yaw = saved.yaw;
-      temp_cam.pitch = saved.pitch;
-      auto saved_basis = get_orientation_vectors(temp_cam);
+      camera_t temporary_camera;
+      temporary_camera.yaw = saved.yaw;
+      temporary_camera.pitch = saved.pitch;
+      auto saved_basis = get_orientation_vectors(temporary_camera);
 
       std::tie(reconciled_position, reconciled_velocity) =
           player_move(*ctx.cvars, saved.input, ctx.session.bvh, reconciled_position,
@@ -871,13 +873,7 @@ void Play_State::update(float dt)
   }
 
   // before input handling, render the menu overlay (done in render_ui)
-  if (show_menu_overlay)
-  {
- 
-    return;
-  }
-
-
+  if (show_menu_overlay) return;
 
   // --- Mouse look ---
   if (mouse_captured && !console_open)
@@ -906,7 +902,7 @@ void Play_State::update(float dt)
     if (input::is_key_down(input::key_t::A))                  buttons |= Button::Left;
     if (input::is_key_down(input::key_t::D))                  buttons |= Button::Right;
     if (input::is_key_down(input::key_t::Space))              buttons |= Button::Jump;
-    if (input::is_key_down(input::key_t::Num_1))               buttons |= Button::Key1;
+    if (input::is_key_down(input::key_t::Num_1))              buttons |= Button::Key1;
     if (input::is_key_down(input::key_t::Num_2))               buttons |= Button::Key2;
     if (input::is_key_down(input::key_t::Num_3))               buttons |= Button::Key3;
     if (input::is_key_down(input::key_t::Num_4))               buttons |= Button::Key4;
@@ -917,12 +913,6 @@ void Play_State::update(float dt)
     if (input::is_key_down(input::key_t::Num_9))               buttons |= Button::Key9;
     if (input::is_key_down(input::key_t::Num_0))               buttons |= Button::Key0;
     if (input::is_mouse_down(input::mouse_button_t::Left))     buttons |= Button::Fire;
-  }
-
-  if (input::is_key_pressed(input::key_t::P))
-  {
-    // buttons |= Button::P;
-    
   }
 
   Move_Input move_input = move_input_from_buttons(buttons);
@@ -1025,11 +1015,11 @@ void Play_State::update(float dt)
 
   // --- Update camera ---
   // Extrapolate by the leftover accumulator for smooth inter-tick camera motion.
-  float extrap = (ctx.connection_phase == Connection_Phase::Connected)
+  float extrapolation_factor = (ctx.connection_phase == Connection_Phase::Connected)
                      ? ctx.physics_accumulator : 0.f;
-  camera.position.x = ctx.player_position.x + ctx.player_velocity.x * extrap + ctx.visual_error_offset.x;
-  camera.position.y = ctx.player_position.y + ctx.player_velocity.y * extrap + ctx.visual_error_offset.y + 28.f;
-  camera.position.z = ctx.player_position.z + ctx.player_velocity.z * extrap + ctx.visual_error_offset.z;
+  camera.position.x = ctx.player_position.x + ctx.player_velocity.x * extrapolation_factor + ctx.visual_error_offset.x;
+  camera.position.y = ctx.player_position.y + ctx.player_velocity.y * extrapolation_factor + ctx.visual_error_offset.y + shared::player_eye_height;
+  camera.position.z = ctx.player_position.z + ctx.player_velocity.z * extrapolation_factor + ctx.visual_error_offset.z;
 
   // --- Interpolate remote players ---
   float tick_interval = 1.0f / static_cast<float>(ctx.server_tickrate);
@@ -1046,11 +1036,11 @@ void Play_State::update(float dt)
       continue;
     }
 
-    uint32_t tick_diff = remote_player.snapshots[1].server_tick - remote_player.snapshots[0].server_tick;
-    if (tick_diff == 0)
-      tick_diff = 1;
+    uint32_t tick_count_between_latest_two_snapshots = remote_player.snapshots[1].server_tick - remote_player.snapshots[0].server_tick;
+    if (tick_count_between_latest_two_snapshots == 0)
+      tick_count_between_latest_two_snapshots = 1;
 
-    float interp_duration = tick_interval * static_cast<float>(tick_diff);
+    float interp_duration = tick_interval * static_cast<float>(tick_count_between_latest_two_snapshots);
     float t = ctx.interpolation_time / interp_duration;
     if (t > 1.f)
       t = 1.f;

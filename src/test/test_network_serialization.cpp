@@ -96,8 +96,15 @@ int main()
     // under the macro system and lost it in the P4 audit.
     std::cout << "  [Subtest] Non-networked fields stay off the wire..." << std::endl;
 
+    // What "does not arrive" means is UNTOUCHED, i.e. still whatever the .def
+    // declares as the default -- not zero. Compared against a pristine entity
+    // rather than a literal so that editing the default in entities.def cannot
+    // make this test wrong again (it asserted == 0.0f while the .def said
+    // = 50.0, so it failed on the default rather than on the wire behaviour).
+    const entities::Rocket_Entity pristine_rocket;
+
     entities::Rocket_Entity server_rocket;
-    server_rocket.damage_amount = 123.0f;
+    server_rocket.damage_amount = pristine_rocket.damage_amount + 73.0f;
     server_rocket.position      = {1.0f, 2.0f, 3.0f};
 
     network::Bit_Writer writer;
@@ -107,8 +114,12 @@ int main()
     network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
     network::deserialize_entity(reader, client_rocket);
 
-    assert(client_rocket.position.x == 1.0f);    // @Networked, arrives
-    assert(client_rocket.damage_amount == 0.0f); // not @Networked, does not
+    assert(client_rocket.position.x == 1.0f); // @Networked, arrives
+    // not @Networked, so the sender's 123 never lands and the receiver keeps
+    // its own default. Both halves matter: the first catches the field riding
+    // the wire, the second catches deserialize zeroing what it did not write.
+    assert(client_rocket.damage_amount != server_rocket.damage_amount);
+    assert(client_rocket.damage_amount == pristine_rocket.damage_amount);
 
     std::cout << "    PASSED!" << std::endl;
   }

@@ -18,9 +18,9 @@ class console
 public:
   static console &get();
 
-  void Draw();
-  void Print(const char *fmt, ...);
-  void ExecuteCommand(const char *command_line);
+  void draw();
+  void print(const char *fmt, ...);
+  void execute_command(const char *command_line);
 
   // Lend the console the launcher's cvar values and command table. Called once
   // from client::Init(); every line typed afterwards resolves against these.
@@ -32,19 +32,19 @@ public:
   // table that provably matches the server's. Forwarding to a server is a flag
   // check plus command_table_t::forward_to_server, which Play_State installs
   // when it connects.
-  void SetCVarState(cvars::cvar_state_t *state, cvars::command_table_t *table);
+  void set_cvar_state(cvars::cvar_state_t *state, cvars::command_table_t *table);
 
   // Bind a single ASCII key (a-z) to a command line. The bound command is
-  // executed via ExecuteCommand when the key transitions to pressed.
-  bool BindKey(std::string_view key, std::string command_line);
-  void ClearBindings();
+  // executed via execute_command when the key transitions to pressed.
+  bool bind_key(std::string_view key, std::string command_line);
+  void clear_bindings();
 
   // Poll all bound keys and execute on rising edge. The caller is responsible
   // for skipping this while the console or any ImGui text input is focused.
-  void PollBindings();
+  void poll_bindings();
 
   bool is_open() const { return should_draw; }
-  void Toggle() { should_draw = !should_draw; }
+  void toggle() { should_draw = !should_draw; }
   void close() { should_draw = false; }
 
 private:
@@ -59,13 +59,13 @@ private:
   static int TextEditCallbackStub(ImGuiInputTextCallbackData *data);
 
   char InputBuf[256];
-  std::vector<char *> Items;
-  bool ScrollToBottom;
-  std::vector<std::string> Candidates;
-  int HistoryPos; // -1: new line, 0..History.Size-1 browsing history.
-  std::vector<std::string> History;
+  std::vector<char *> items;
+  bool scroll_to_bottom;
+  std::vector<std::string> candidates;
+  int history_position; // -1: new line, 0..history.Size-1 browsing history.
+  std::vector<std::string> history;
 
-  // Borrowed from the launcher via SetCVarState. Null before client::Init().
+  // Borrowed from the launcher via set_cvar_state. Null before client::Init().
   cvars::cvar_state_t    *cvar_state_    = nullptr;
   cvars::command_table_t *command_table_ = nullptr;
 

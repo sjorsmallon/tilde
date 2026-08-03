@@ -85,7 +85,7 @@ public:
   size_t size;
   int bit_index = 0;
 
-  Bit_Reader(const uint8 *buf, size_t sz) : buffer(buf), size(sz) {}
+  Bit_Reader(const uint8 *buffer, size_t sz) : buffer(buffer), size(sz) {}
 
   void align()
   {

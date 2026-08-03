@@ -153,20 +153,52 @@ struct hit_result_t
     float fraction;                 // 0..1 along swept path (for casts)
 };
 
-// Swept sphere from `from` to `to`. Returns true on first hit. `ignore_uid` skips
-// the firing player's own body for projectiles. Pass 0 to ignore nothing.
+// Which CATEGORY of body a query may touch. Filtered in the broad phase, so
+// Static_Only is strictly cheaper than All rather than a post-filter.
+enum class query_layers_t
+{
+  All,         // world geometry + dynamic/kinematic bodies (players, props, projectiles)
+  Static_Only, // Physics_Layers::STATIC only
+};
+
+// Whether a query reports a surface it is LEAVING as well as one it is
+// entering. Collide is what a projectile wants (a cast that starts barely
+// inside a body still stops); Ignore is what decal placement wants (the front
+// face the surface is showing, never a fraction-0 hit with a flipped normal).
+enum class back_face_mode_t
+{
+  Collide,
+  Ignore,
+};
+
+// The two filtering axes are deliberately SEPARATE parameters rather than
+// separate functions. `layers` is a category ("what kind of thing"), `ignore_uid`
+// is an identity ("which specific body") -- the shooter is the same category as
+// everyone else, so no layer can express it. Encoding either in the function
+// name gives a cross-product of near-identical overloads, which is what the old
+// cast_sphere / cast_sphere_static pair was; note that pair also silently tied
+// back-face mode to the layer choice, which is why it is a field here.
+struct query_filter_t
+{
+  query_layers_t       layers     = query_layers_t::All;
+  shared::entity_uid_t ignore_uid = shared::null_entity_uid; // null = ignore nothing
+  back_face_mode_t     back_faces = back_face_mode_t::Collide;
+};
+
+// Ray from `from` to `to`. Returns true on first hit; `out.fraction` is along
+// that segment, so the caller multiplies by the segment length to get a
+// distance. Hitscan uses this to find the surface a bullet stops at, then
+// clamps resolve_hitscan's max_range to it.
+bool cast_ray(physics_state_t &state,
+              linalg::vec3f from, linalg::vec3f to,
+              const query_filter_t &filter,
+              hit_result_t &out);
+
+// Swept sphere from `from` to `to`. Returns true on first hit.
 bool cast_sphere(physics_state_t &state,
                  linalg::vec3f from, linalg::vec3f to, float radius,
-                 shared::entity_uid_t ignore_uid,
+                 const query_filter_t &filter,
                  hit_result_t &out);
-
-// Swept sphere from `from` to `to` filtered to only hit Physics_Layers::STATIC
-// (world geometry). Skips all dynamic / kinematic bodies. Used by client-side
-// effect handlers that want to land a decal against the surface the server
-// described, ignoring everything else in the local scene.
-bool cast_sphere_static(physics_state_t &state,
-                        linalg::vec3f from, linalg::vec3f to, float radius,
-                        hit_result_t &out);
 
 // All bodies overlapping a sphere. Used for explosion splash queries.
 std::vector<hit_result_t> find_all_bodies_overlapping_sphere(physics_state_t &state,

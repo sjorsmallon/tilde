@@ -3314,25 +3314,46 @@ static void emit_generated_header(FILE* out, const program_t* program)
   }
 
   // --- enums ---
-  for (int32_t index = 0; index < program->declaration_count; ++index)
+  //
+  // Each gets a _COUNT beside it, matching the asset classes above. The
+  // runtime path to the same number is enum_info(type).value_names.size(),
+  // which is an out-of-line call and so cannot size a std::array or feed a
+  // static_assert -- which is exactly what a table indexed by the enum needs.
   {
-    const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_ENUM)
-      continue;
-
-    fprintf(out, "enum class %.*s : uint8_t\n{\n", declaration->name.length,
-            declaration->name.data);
-    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    bool wrote_count_note = false;
+    for (int32_t index = 0; index < program->declaration_count; ++index)
     {
-      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
-      fprintf(out, "  %.*s = %d,\n", value->length, value->data, offset);
-    }
-    fprintf(out, "};\n\n");
+      const declaration_t* declaration = &program->declarations[index];
+      if (declaration->kind != DECLARATION_ENUM)
+        continue;
 
-    fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
-            declaration->name.data);
-    fprintf(out, "bool from_string(const char* text, %.*s* out_value);\n\n",
-            declaration->name.length, declaration->name.data);
+      if (!wrote_count_note)
+      {
+        fprintf(out, "// Every enum below is DENSE and starts at 0, so its _COUNT is both the\n");
+        fprintf(out, "// number of declared names and one past the largest value -- which is\n");
+        fprintf(out, "// what makes it safe as an array size. The DSL has no explicit or\n");
+        fprintf(out, "// sparse enum values today; the day it grows them, every _COUNT user\n");
+        fprintf(out, "// has to be revisited.\n\n");
+        wrote_count_note = true;
+      }
+
+      fprintf(out, "enum class %.*s : uint8_t\n{\n", declaration->name.length,
+              declaration->name.data);
+      for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+      {
+        const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+        fprintf(out, "  %.*s = %d,\n", value->length, value->data, offset);
+      }
+      fprintf(out, "};\n\n");
+
+      fprintf(out, "constexpr uint32_t %.*s_COUNT = %d;\n\n", declaration->name.length,
+              declaration->name.data, declaration->enum_value_count);
+
+      fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
+              declaration->name.data);
+      fprintf(out, "bool from_string(const char* text, %.*s* out_value);\n\n",
+              declaration->name.length, declaration->name.data);
+    }
   }
 
   // --- enum tag + reflection ---
@@ -4452,25 +4473,41 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   // Declared beside the commands that take them as parameter types. Same shape
   // as the entity family's enums, in namespace cvars; from_string takes a
   // string_view because the text it parses is a slice of the console line.
-  for (int32_t index = 0; index < program->declaration_count; ++index)
+  // _COUNT is emitted here for the same reason, so the two families stay the
+  // same shape rather than diverging by omission.
   {
-    const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_ENUM)
-      continue;
-
-    fprintf(out, "enum class %.*s : uint8_t\n{\n", declaration->name.length,
-            declaration->name.data);
-    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    bool wrote_count_note = false;
+    for (int32_t index = 0; index < program->declaration_count; ++index)
     {
-      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
-      fprintf(out, "  %.*s = %d,\n", value->length, value->data, offset);
-    }
-    fprintf(out, "};\n\n");
+      const declaration_t* declaration = &program->declarations[index];
+      if (declaration->kind != DECLARATION_ENUM)
+        continue;
 
-    fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
-            declaration->name.data);
-    fprintf(out, "bool from_string(std::string_view text, %.*s* out_value);\n\n",
-            declaration->name.length, declaration->name.data);
+      if (!wrote_count_note)
+      {
+        fprintf(out, "// Every enum below is DENSE and starts at 0, so its _COUNT is both the\n");
+        fprintf(out, "// number of declared names and one past the largest value -- which is\n");
+        fprintf(out, "// what makes it safe as an array size.\n\n");
+        wrote_count_note = true;
+      }
+
+      fprintf(out, "enum class %.*s : uint8_t\n{\n", declaration->name.length,
+              declaration->name.data);
+      for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+      {
+        const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+        fprintf(out, "  %.*s = %d,\n", value->length, value->data, offset);
+      }
+      fprintf(out, "};\n\n");
+
+      fprintf(out, "constexpr uint32_t %.*s_COUNT = %d;\n\n", declaration->name.length,
+              declaration->name.data, declaration->enum_value_count);
+
+      fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
+              declaration->name.data);
+      fprintf(out, "bool from_string(std::string_view text, %.*s* out_value);\n\n",
+              declaration->name.length, declaration->name.data);
+    }
   }
 
   // --- state ---

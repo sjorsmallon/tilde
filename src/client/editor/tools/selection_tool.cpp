@@ -548,7 +548,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
       draw_bounds_highlight(hovered_uid, colors::yellow);
   }
 
-  // 3. Highlight Box Selection Candidates (Live Preview) - Yellow
+  // 3. Highlight Box Selection candidates (Live Preview) - Yellow
   if (is_dragging_significantly)
   {
     int x_min = std::min(drag_start_position.x, drag_current_position.x);

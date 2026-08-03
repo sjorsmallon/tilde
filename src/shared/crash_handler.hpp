@@ -42,8 +42,8 @@ inline LONG WINAPI exception_handler(EXCEPTION_POINTERS *ex)
                          SymFunctionTableAccess64, SymGetModuleBase64, NULL))
             break;
 
-        char buf[sizeof(SYMBOL_INFO) + 256];
-        SYMBOL_INFO *sym = reinterpret_cast<SYMBOL_INFO *>(buf);
+        char buffer[sizeof(SYMBOL_INFO) + 256];
+        SYMBOL_INFO *sym = reinterpret_cast<SYMBOL_INFO *>(buffer);
         sym->SizeOfStruct = sizeof(SYMBOL_INFO);
         sym->MaxNameLen = 255;
 
@@ -82,8 +82,8 @@ inline void abort_handler(int)
 
     for (USHORT i = 0; i < frames; i++)
     {
-        char buf[sizeof(SYMBOL_INFO) + 256];
-        SYMBOL_INFO *sym = reinterpret_cast<SYMBOL_INFO *>(buf);
+        char buffer[sizeof(SYMBOL_INFO) + 256];
+        SYMBOL_INFO *sym = reinterpret_cast<SYMBOL_INFO *>(buffer);
         sym->SizeOfStruct = sizeof(SYMBOL_INFO);
         sym->MaxNameLen = 255;
 

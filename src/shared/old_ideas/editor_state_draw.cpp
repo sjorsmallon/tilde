@@ -147,26 +147,26 @@ void EditorState::render_ui()
   if (ImGui::BeginPopupModal("Set Map Name", NULL,
                              ImGuiWindowFlags_AlwaysAutoResize))
   {
-    static char buf[128] = "";
+    static char buffer[128] = "";
     if (ImGui::IsWindowAppearing())
     {
       std::string current_name = map_source.name;
-      if (current_name.length() < sizeof(buf))
+      if (current_name.length() < sizeof(buffer))
       {
-        strcpy(buf, current_name.c_str());
+        strcpy(buffer, current_name.c_str());
       }
       else
       {
-        strncpy(buf, current_name.c_str(), sizeof(buf) - 1);
-        buf[sizeof(buf) - 1] = '\0';
+        strncpy(buffer, current_name.c_str(), sizeof(buffer) - 1);
+        buffer[sizeof(buffer) - 1] = '\0';
       }
     }
 
-    ImGui::InputText("Name", buf, sizeof(buf));
+    ImGui::InputText("Name", buffer, sizeof(buffer));
 
     if (ImGui::Button("Save", ImVec2(120, 0)))
     {
-      map_source.name = buf;
+      map_source.name = buffer;
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();

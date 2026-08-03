@@ -52,7 +52,7 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   state_manager::get_client_context().cvars    = cvar_state;
   state_manager::get_client_context().commands = command_table;
   cvars::bind_client_commands(*command_table);
-  console::get().SetCVarState(cvar_state, command_table);
+  console::get().set_cvar_state(cvar_state, command_table);
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
   {
@@ -182,9 +182,9 @@ bool Tick()
   // Global console Overlay
   if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false))
   {
-    client::console::get().Toggle();
+    client::console::get().toggle();
   }
-  client::console::get().Draw();
+  client::console::get().draw();
 
   state_manager::pre_render(cmd);
   renderer::BeginRenderPass(cmd);

@@ -33,7 +33,8 @@ constexpr uint64_t Key8     = 1 << 12;
 constexpr uint64_t Key9     = 1 << 13;
 constexpr uint64_t Key0     = 1 << 14;
 constexpr uint64_t Fire     = 1 << 15;
-constexpr uint64_t P        = 1 << 16; // Placeholder that you can use to hijack.
+constexpr uint64_t Zoom     = 1 << 16;
+constexpr uint64_t P        = 1 << 17; // Placeholder that you can use to hijack.
 } // namespace Button
 
 struct Move_Input

@@ -233,7 +233,7 @@ void update_bots(std::vector<Bot_State> &bots,
           bot.fire_cooldown = bot.personality.fire_rate;
 
           vec3f eye = {bot_ent->position.x,
-                       bot_ent->position.y + 28.f,
+                       bot_ent->position.y + shared::player_eye_height,
                        bot_ent->position.z};
           vec3f target_center = {target->position.x,
                                  target->position.y + 36.f,

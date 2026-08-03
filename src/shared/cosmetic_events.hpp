@@ -26,6 +26,22 @@ enum class effect_type_t : uint16_t
   COUNT // keep last — number of effect types, never serialized as a real value
 };
 
+inline const char* to_string(effect_type_t type)
+{
+  switch (type)
+  {
+    case effect_type_t::ROCKET_EXPLOSION: return "ROCKET_EXPLOSION";
+    case effect_type_t::BULLET_IMPACT:    return "BULLET_IMPACT";
+    case effect_type_t::FOOTSTEP:         return "FOOTSTEP";
+    case effect_type_t::JUMP:             return "JUMP";
+    case effect_type_t::LAND:             return "LAND";
+    default:
+      assert(false && "to_string(effect_type_t): unknown type");
+      return "<unknown>";
+  }
+}
+
+
 // One fixed-shape payload for every effect. Handlers read the fields they
 // care about and ignore the rest. Sentinel values: zero vectors / zero
 // entity / zero material id mean "not applicable" for that effect.

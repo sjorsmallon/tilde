@@ -17,12 +17,12 @@ namespace client
 console::console()
 {
   memset(InputBuf, 0, sizeof(InputBuf));
-  HistoryPos = -1;
-  ScrollToBottom = false;
+  history_position = -1;
+  scroll_to_bottom = false;
   is_folded_open = true;
   should_draw = false;
 
-  Print("console Initialized.");
+  print("console Initialized.");
 }
 
 console::~console() = default;
@@ -33,26 +33,26 @@ console &console::get()
   return instance;
 }
 
-void console::Print(const char *fmt, ...)
+void console::print(const char *fmt, ...)
 {
-  char buf[1024];
+  char buffer[1024];
   va_list args;
   va_start(args, fmt);
-  vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
-  buf[IM_ARRAYSIZE(buf) - 1] = 0;
+  vsnprintf(buffer, IM_ARRAYSIZE(buffer), fmt, args);
+  buffer[IM_ARRAYSIZE(buffer) - 1] = 0;
   va_end(args);
-  Items.push_back(strdup(buf));
-  ScrollToBottom = true;
+  items.push_back(strdup(buffer));
+  scroll_to_bottom = true;
 }
 
-void console::SetCVarState(cvars::cvar_state_t *state,
+void console::set_cvar_state(cvars::cvar_state_t *state,
                            cvars::command_table_t *table)
 {
   cvar_state_    = state;
   command_table_ = table;
 }
 
-bool console::BindKey(std::string_view key, std::string command_line)
+bool console::bind_key(std::string_view key, std::string command_line)
 {
   if (key.size() != 1)
   {
@@ -72,9 +72,9 @@ bool console::BindKey(std::string_view key, std::string command_line)
   return true;
 }
 
-void console::ClearBindings() { bindings_.clear(); }
+void console::clear_bindings() { bindings_.clear(); }
 
-void console::PollBindings()
+void console::poll_bindings()
 {
   if (should_draw)
     return; // never fire bindings while the console is open
@@ -82,32 +82,32 @@ void console::PollBindings()
   for (const auto &[key, line] : bindings_)
   {
     if (input::is_key_pressed(key))
-      ExecuteCommand(line.c_str());
+      execute_command(line.c_str());
   }
 }
 
-void console::ExecuteCommand(const char *command_line)
+void console::execute_command(const char *command_line)
 {
-  Print("# %s", command_line);
+  print("# %s", command_line);
 
   // Insert into history (if new)
-  HistoryPos = -1;
-  for (int i = (int)History.size() - 1; i >= 0; i--)
+  history_position = -1;
+  for (int i = (int)history.size() - 1; i >= 0; i--)
   {
-    if (History[i] == command_line)
+    if (history[i] == command_line)
     {
-      History.erase(History.begin() + i);
+      history.erase(history.begin() + i);
       break;
     }
   }
-  History.push_back(command_line);
+  history.push_back(command_line);
 
   if (!cvar_state_ || !command_table_)
   {
     // Only reachable if something drove the console before client::Init(),
     // which would mean the init order broke.
-    Print("[error] console has no cvar state; client::Init() has not run.");
-    log_error("console::ExecuteCommand before SetCVarState: '{}'", command_line);
+    print("[error] console has no cvar state; client::Init() has not run.");
+    log_error("console::execute_command before set_cvar_state: '{}'", command_line);
     return;
   }
 
@@ -125,7 +125,7 @@ void console::ExecuteCommand(const char *command_line)
     case cvars::console_result_t::empty:
     case cvars::console_result_t::forwarded:
       // Forwarded lines are answered by the server's S2C_ServerMessage, which
-      // Print()s when it arrives — echoing anything here would double up.
+      // print()s when it arrives — echoing anything here would double up.
       break;
 
     case cvars::console_result_t::ok:
@@ -134,7 +134,7 @@ void console::ExecuteCommand(const char *command_line)
     case cvars::console_result_t::bad_arguments:
     case cvars::console_result_t::no_handler:
       if (!reply.empty())
-        Print("%s", reply.c_str());
+        print("%s", reply.c_str());
       break;
   }
 }
@@ -159,7 +159,7 @@ int console::TextEditCallback(ImGuiInputTextCallbackData *data)
       word_start--;
     }
 
-    Candidates.clear();
+    candidates.clear();
     std::string prefix(word_start, word_end - word_start);
 
     // Straight off the generated tables — including every @Server name. The
@@ -169,26 +169,26 @@ int console::TextEditCallback(ImGuiInputTextCallbackData *data)
     for (const cvars::cvar_info_t &info : cvars::cvar_infos())
     {
       if (std::string_view(info.name).starts_with(prefix))
-        Candidates.push_back(info.name);
+        candidates.push_back(info.name);
     }
     for (const cvars::command_info_t &info : cvars::command_infos())
     {
       if (std::string_view(info.name).starts_with(prefix))
-        Candidates.push_back(info.name);
+        candidates.push_back(info.name);
     }
-    std::sort(Candidates.begin(), Candidates.end());
+    std::sort(candidates.begin(), candidates.end());
 
-    if (Candidates.empty())
+    if (candidates.empty())
     {
-      Print("No match for \"%.*s\"!", (int)(word_end - word_start), word_start);
+      print("No match for \"%.*s\"!", (int)(word_end - word_start), word_start);
     }
-    else if (Candidates.size() == 1)
+    else if (candidates.size() == 1)
     {
       // Single match. Delete the beginning of the word and replace it entirely
       // so we've got nice casing
       data->DeleteChars((int)(word_start - data->Buf),
                         (int)(word_end - word_start));
-      data->InsertChars(data->CursorPos, Candidates[0].c_str());
+      data->InsertChars(data->CursorPos, candidates[0].c_str());
       data->InsertChars(data->CursorPos, " ");
     }
     else
@@ -199,11 +199,11 @@ int console::TextEditCallback(ImGuiInputTextCallbackData *data)
       {
         int c = 0;
         bool all_candidates_matches = true;
-        for (int i = 0; i < Candidates.size() && all_candidates_matches; i++)
+        for (int i = 0; i < candidates.size() && all_candidates_matches; i++)
         {
           if (i == 0)
-            c = toupper(Candidates[i][match_len]);
-          else if (c == 0 || c != toupper(Candidates[i][match_len]))
+            c = toupper(candidates[i][match_len]);
+          else if (c == 0 || c != toupper(candidates[i][match_len]))
             all_candidates_matches = false;
         }
         if (!all_candidates_matches)
@@ -215,20 +215,20 @@ int console::TextEditCallback(ImGuiInputTextCallbackData *data)
       {
         data->DeleteChars((int)(word_start - data->Buf),
                           (int)(word_end - word_start));
-        data->InsertChars(data->CursorPos, Candidates[0].c_str(),
-                          Candidates[0].c_str() + match_len);
+        data->InsertChars(data->CursorPos, candidates[0].c_str(),
+                          candidates[0].c_str() + match_len);
       }
 
       // List matches
-      Print("Possible matches:");
-      for (const auto &cand : Candidates)
-        Print("- %s", cand.c_str());
+      print("Possible matches:");
+      for (const auto &cand : candidates)
+        print("- %s", cand.c_str());
     }
   }
   return 0;
 }
 
-void console::Draw()
+void console::draw()
 {
   if (!should_draw)
     return;
@@ -249,7 +249,7 @@ void console::Draw()
     // Display items
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
                         ImVec2(4, 1)); // Tighten spacing
-    for (const char *item : Items)
+    for (const char *item : items)
     {
       ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
       if (strncmp(item, "[error]", 7) == 0)
@@ -263,9 +263,9 @@ void console::Draw()
     }
     ImGui::PopStyleVar();
 
-    if (ScrollToBottom || (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()))
+    if (scroll_to_bottom || (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()))
       ImGui::SetScrollHereY(1.0f);
-    ScrollToBottom = false;
+    scroll_to_bottom = false;
   }
   ImGui::EndChild();
 
@@ -290,7 +290,7 @@ void console::Draw()
     while (*s && isspace(*s))
       s++;
     if (*s)
-      ExecuteCommand(s);
+      execute_command(s);
 
     memset(InputBuf, 0, sizeof(InputBuf));
     reclaim_focus = true;
@@ -322,8 +322,8 @@ void bind(std::string_view key, std::string_view command,
           const command_context_t &)
 {
   std::string command_line(command);
-  if (client::console::get().BindKey(key, command_line))
-    client::console::get().Print("bound '%.*s' to: %s",
+  if (client::console::get().bind_key(key, command_line))
+    client::console::get().print("bound '%.*s' to: %s",
                                  static_cast<int>(key.size()), key.data(),
                                  command_line.c_str());
 }
@@ -337,14 +337,14 @@ void connect(std::string_view address, const command_context_t &)
                                         network::server_port_number,
                                         server_address, parse_error))
   {
-    client::console::get().Print("connect: %s", parse_error.c_str());
+    client::console::get().print("connect: %s", parse_error.c_str());
     return;
   }
 
   // Play_State::on_enter reads this and connects; see client_context.hpp.
   client::state_manager::get_client_context().requested_server_address =
       server_address;
-  client::console::get().Print("connecting to %s...",
+  client::console::get().print("connecting to %s...",
                                server_address.to_string().c_str());
   client::state_manager::switch_to(client::game_state::play);
 }

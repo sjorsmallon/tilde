@@ -2211,12 +2211,12 @@ void invalidate_mesh_gpu(assets::asset_handle_t<assets::mesh_asset_t> handle)
   auto it = g_mesh_buffers.find(handle.index);
   if (it != g_mesh_buffers.end())
   {
-    mesh_gpu_buffer_t &buf = it->second;
+    mesh_gpu_buffer_t &buffer = it->second;
     vkDeviceWaitIdle(g_device);
-    vkDestroyBuffer(g_device, buf.vertex_buffer, nullptr);
-    vkFreeMemory(g_device, buf.vertex_memory, nullptr);
-    vkDestroyBuffer(g_device, buf.index_buffer, nullptr);
-    vkFreeMemory(g_device, buf.index_memory, nullptr);
+    vkDestroyBuffer(g_device, buffer.vertex_buffer, nullptr);
+    vkFreeMemory(g_device, buffer.vertex_memory, nullptr);
+    vkDestroyBuffer(g_device, buffer.index_buffer, nullptr);
+    vkFreeMemory(g_device, buffer.index_memory, nullptr);
     g_mesh_buffers.erase(it);
   }
 }
@@ -2225,11 +2225,11 @@ static void cleanup_mesh_buffers()
 {
   for (auto &pair : g_mesh_buffers)
   {
-    mesh_gpu_buffer_t &buf = pair.second;
-    vkDestroyBuffer(g_device, buf.vertex_buffer, nullptr);
-    vkFreeMemory(g_device, buf.vertex_memory, nullptr);
-    vkDestroyBuffer(g_device, buf.index_buffer, nullptr);
-    vkFreeMemory(g_device, buf.index_memory, nullptr);
+    mesh_gpu_buffer_t &buffer = pair.second;
+    vkDestroyBuffer(g_device, buffer.vertex_buffer, nullptr);
+    vkFreeMemory(g_device, buffer.vertex_memory, nullptr);
+    vkDestroyBuffer(g_device, buffer.index_buffer, nullptr);
+    vkFreeMemory(g_device, buffer.index_memory, nullptr);
   }
   g_mesh_buffers.clear();
 }

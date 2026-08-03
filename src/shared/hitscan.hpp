@@ -28,11 +28,11 @@ struct hitscan_result_t
 
 // Closest player hitbox along the ray, or a zeroed result if none.
 //
-// Deliberately knows nothing about the world: the CALLER casts against static
-// geometry first (cast_ray_static) and passes the wall distance as `max_range`,
-// so "a wall blocks the shot" is a clamp rather than a second comparison in
-// here. That keeps this a pure function -- no physics_state_t, no Jolt headers,
-// and the test needs neither.
+// Deliberately knows nothing about the world: the CALLER casts against the
+// world first (cast_ray) and passes the resulting distance as `max_range`, so
+// "a wall blocks the shot" is a clamp rather than a second comparison in here.
+// That keeps this a pure function -- no physics_state_t, no Jolt headers, and
+// the test needs neither.
 //
 // PRECONDITION: `direction` is normalized. Distances are measured in units of
 // its length and compared against `max_range` directly.

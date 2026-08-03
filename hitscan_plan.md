@@ -139,10 +139,14 @@ code path. `hit_world` left the result struct for the same reason: the
 caller knows whether its own cast hit.
 
 So, two casts at the call site, closest wins:
-- **World**: new `cast_ray_static` in physics.{hpp,cpp} beside
-  `cast_sphere_static` — same STATIC-layer filter, Jolt RayCast
-  instead of a shape sweep. **Not written yet** — this is the one
-  piece of §3 still outstanding.
+- **World**: `cast_ray` in physics.{hpp,cpp} beside `cast_sphere` —
+  Jolt RayCast instead of a shape sweep, filtered by a
+  `query_filter_t`. **Landed 2026-08-03.** The `_static` suffix is
+  gone: layer choice, ignored body and back-face mode are three
+  independent fields on the filter rather than variants baked into
+  function names. Hitscan passes `{.layers = All, .ignore_uid =
+  shooter}` — bullets stop on crates and other players' capsules, not
+  just world geometry.
 - **Players**: `resolve_hitscan`. Analytic ray-vs-sphere /
   ray-vs-AABB against `player_hitboxes` offset from each target's
   position, closest distance across *all* targets and *all* regions
@@ -150,12 +154,17 @@ So, two casts at the call site, closest wins:
   overlapping a player misses rather than reporting an impact behind
   the shooter. No Jolt involvement.
 
-**Corpse policy, decided:** the server builds `targets` from
-*alive* players only, and the world cast is static-only — so corpses
-are invisible to hitscan by construction while their Jolt capsules
-keep blocking movement. Closes the "corpses: air or walls?" question
-in events_plan.md for the hitscan case without touching physics
-registration.
+**Corpse policy — REOPENED by the `cast_ray` landing.** The server
+builds `targets` from *alive* players only, so corpses can never be
+*damaged*. But the original reasoning ("the world cast is static-only,
+so corpses are invisible by construction") no longer holds: with
+`layers = All` the clamp cast hits any registered capsule, corpses
+included, so a corpse would silently *block* shots without ever taking
+one. That is the same open question as the player-capsule clamp above
+and wants the same answer — if the clamp ignores live player capsules
+it must ignore dead ones too. Resolve both together in §5; the
+"corpses: air or walls?" question in events_plan.md is not closed for
+hitscan after all.
 
 ## 4. Weapon switching — server_impl.cpp
 
@@ -174,17 +183,27 @@ The `fire_pressed` block (server_impl.cpp:866) becomes a switch on
   or move behind Key3 — keep them, they're the regression test).
 - **Scout / Knife**: gate on `fire_interval_seconds` via a
   `last_fire_tick` in the per-player state (`g_player_states`), build
-  the eye position and view direction (reuse the yaw/pitch→dir math
-  already in the rocket block), then the two casts from §3:
+  the eye position and view direction
+  (`linalg::direction_from_angles(yaw, pitch)` — already hoisted above
+  the weapon branch), then the two casts from §3:
 
   ```cpp
   hit_result_t world_hit{};
   float range = weapon.range;
-  if (cast_ray_static(*g_state.physics, eye, eye + direction * range, world_hit))
+  const query_filter_t world_filter{.layers     = query_layers_t::All,
+                                    .ignore_uid = player->entity_id};
+  if (cast_ray(*g_state.physics, eye, eye + direction * range, world_filter, world_hit))
     range = world_hit.fraction * weapon.range;   // clamp to the wall
-
   const hitscan_result_t hit = resolve_hitscan(eye, direction, range, targets);
   ```
+
+  **Open question this raises:** with `layers = All`, the clamp cast
+  also stops on other players' kinematic capsules, which are coarser
+  than the three regions in `player_hitboxes`. A shot that grazes a
+  capsule but would miss every region gets its range truncated early.
+  Either exclude player capsules from the clamp cast, or only clamp
+  when `world_hit.entity_id` is not a live player. Decide before §5
+  lands.
 
   - `hit.hit_uid != 0` → `inflict_damage` with
     `amount = damage * (hit.region == Head ? headshot_multiplier : 1)`,
@@ -223,7 +242,7 @@ no server, and (since §3's split) no `physics_state_t` either:
   wins" instead of nearest
 - two targets in line → nearer uid wins
 - wall between origin and target → a `max_range` shorter than the
-  target distance, so `hit_uid == 0`. The caller's `cast_ray_static`
+  target distance, so `hit_uid == 0`. The caller's `cast_ray`
   is what produces that clamp in the real path; the test supplies it
   directly.
 - target beyond `max_range` → miss
@@ -240,4 +259,4 @@ no server, and (since §3's split) no `physics_state_t` either:
 **Status (2026-07-31):** 1, 2 and 3 have landed —
 `src/shared/weapons.hpp`, `src/shared/player_hitboxes.hpp` and
 `src/shared/hitscan.{hpp,cpp}`, all in `game_shared`. Outstanding:
-§3's `cast_ray_static`, §7 the test, then 4 → 5 → 6.
+§7 the test, then 4 → 5 → 6. (§3's `cast_ray` landed 2026-08-03.)

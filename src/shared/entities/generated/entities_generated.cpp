@@ -47,7 +47,7 @@ constexpr field_info_t Material_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 3},
+   .enum_id = 5},
   {.name = "color",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Material, color),
@@ -143,7 +143,7 @@ constexpr field_info_t Hitbox_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 4},
+   .enum_id = 6},
   {.name = "size",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Hitbox, size),
@@ -277,14 +277,14 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_id = NOT_AN_ENUM},
   {.name = "active_weapon_id",
-   .type = FIELD_TYPE_I32,
+   .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Player_Entity, active_weapon_id),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::active_weapon_id),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = NOT_AN_ENUM},
+   .enum_id = 3},
   {.name = "client_slot_index",
    .type = FIELD_TYPE_I32,
    .offset = (uint32_t)offsetof(Player_Entity, client_slot_index),
@@ -369,15 +369,15 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_id = NOT_AN_ENUM},
-  {.name = "active_weapon_id",
-   .type = FIELD_TYPE_I32,
-   .offset = (uint32_t)offsetof(Weapon_Entity, active_weapon_id),
-   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::active_weapon_id),
+  {.name = "weapon_id",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Weapon_Entity, weapon_id),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::weapon_id),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = NOT_AN_ENUM},
+   .enum_id = 3},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Weapon_Entity, render),
@@ -746,7 +746,7 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 5},
+   .enum_id = 7},
   {.name = "fire_mode",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Trigger_Volume_Entity, fire_mode),
@@ -755,7 +755,7 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 6},
+   .enum_id = 8},
   {.name = "param_target_name",
    .type = FIELD_TYPE_STRING,
    .offset = (uint32_t)offsetof(Trigger_Volume_Entity, param_target_name),
@@ -914,7 +914,7 @@ constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_id = 4},
+   .enum_id = 6},
   {.name = "size",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Physics_Body_Entity, size),
@@ -991,7 +991,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_entity", "Player", {Player_Entity_FIELDS, 13}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity, as_base_Player_Entity},
-  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 6}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, true, construct_Weapon_Entity, as_base_Weapon_Entity},
+  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 6}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 12u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
   {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 1u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
@@ -1011,9 +1011,10 @@ constexpr int32_t COMPONENT_OFFSETS[][4] = {
   {-1, -1, (int32_t)offsetof(Physics_Body_Entity, render), (int32_t)offsetof(Physics_Body_Entity, hitbox)}, // Physics_Body_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 5;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 6;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
+  entity_type::Weapon_Entity,
   entity_type::Particle_Emitter_Entity,
   entity_type::Trigger_Volume_Entity,
   entity_type::Light_Entity,
@@ -1054,6 +1055,19 @@ constexpr const char* Team_Allegiance_VALUE_NAMES[] = {
   "Free_For_All",
 };
 
+constexpr const char* Weapon_VALUE_NAMES[] = {
+  "Knife",
+  "Scout",
+  "Rocket_Launcher",
+};
+
+constexpr const char* Weapon_Kind_VALUE_NAMES[] = {
+  "Melee",
+  "Hitscan",
+  "Projectile",
+  "Sniper",
+};
+
 constexpr const char* Shader_Type_VALUE_NAMES[] = {
   "Lit",
   "Unlit",
@@ -1081,6 +1095,8 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Light_Type", {Light_Type_VALUE_NAMES, 3}},
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
+  {"Weapon", {Weapon_VALUE_NAMES, 3}},
+  {"Weapon_Kind", {Weapon_Kind_VALUE_NAMES, 4}},
   {"Shader_Type", {Shader_Type_VALUE_NAMES, 2}},
   {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 3}},
   {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 4}},
@@ -1201,6 +1217,48 @@ bool from_string(const char* text, Team_Allegiance* out_value)
   if (strcmp(text, "Red") == 0) { *out_value = Team_Allegiance::Red; return true; }
   if (strcmp(text, "Blu") == 0) { *out_value = Team_Allegiance::Blu; return true; }
   if (strcmp(text, "Free_For_All") == 0) { *out_value = Team_Allegiance::Free_For_All; return true; }
+  return false;
+}
+
+const char* to_string(Weapon value)
+{
+  switch (value)
+  {
+    case Weapon::Knife: return "Knife";
+    case Weapon::Scout: return "Scout";
+    case Weapon::Rocket_Launcher: return "Rocket_Launcher";
+  }
+  assert(false && "invalid Weapon");
+  return "";
+}
+
+bool from_string(const char* text, Weapon* out_value)
+{
+  if (strcmp(text, "Knife") == 0) { *out_value = Weapon::Knife; return true; }
+  if (strcmp(text, "Scout") == 0) { *out_value = Weapon::Scout; return true; }
+  if (strcmp(text, "Rocket_Launcher") == 0) { *out_value = Weapon::Rocket_Launcher; return true; }
+  return false;
+}
+
+const char* to_string(Weapon_Kind value)
+{
+  switch (value)
+  {
+    case Weapon_Kind::Melee: return "Melee";
+    case Weapon_Kind::Hitscan: return "Hitscan";
+    case Weapon_Kind::Projectile: return "Projectile";
+    case Weapon_Kind::Sniper: return "Sniper";
+  }
+  assert(false && "invalid Weapon_Kind");
+  return "";
+}
+
+bool from_string(const char* text, Weapon_Kind* out_value)
+{
+  if (strcmp(text, "Melee") == 0) { *out_value = Weapon_Kind::Melee; return true; }
+  if (strcmp(text, "Hitscan") == 0) { *out_value = Weapon_Kind::Hitscan; return true; }
+  if (strcmp(text, "Projectile") == 0) { *out_value = Weapon_Kind::Projectile; return true; }
+  if (strcmp(text, "Sniper") == 0) { *out_value = Weapon_Kind::Sniper; return true; }
   return false;
 }
 
@@ -1373,6 +1431,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xce3bccaau;
+const uint32_t SCHEMA_HASH = 0x8bb2283cu;
 
 } // namespace entities

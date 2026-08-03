@@ -41,9 +41,15 @@ void on_rocket_explosion(client_context_t &context,
     vec3f probe_to   = data.origin - surface_normal * probe_depth;
 
     hit_result_t hit;
-    bool surface_hit = cast_sphere_static(*context.physics_state,
-                                          probe_from, probe_to,
-                                          probe_radius, hit);
+    // World geometry only -- the decal belongs on the surface the server
+    // described, not on whatever player happens to be standing in front of it.
+    // Front faces only, so a probe starting inside a wall doesn't return a
+    // fraction-0 hit with a flipped normal.
+    const query_filter_t filter{.layers     = query_layers_t::Static_Only,
+                                .back_faces = back_face_mode_t::Ignore};
+    bool surface_hit = cast_sphere(*context.physics_state,
+                                   probe_from, probe_to,
+                                   probe_radius, filter, hit);
 
     if (surface_hit)
     {

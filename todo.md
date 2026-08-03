@@ -12,10 +12,36 @@
 > lib silently gives you "differ" whether or not you meant it.
 
 - [ ] Quaternion storage:move to quaternions for orientation. address where things are wrong.
+- [ ] **The player is three different sizes depending on who is asking.**
+      (Found 2026-08-03 while unifying eye height.)
+      * Movement hull — `player_half_width = 16`, `player_half_height = 36`
+        (`player_constants.hpp`), i.e. **32 x 72**. This one is HL/Source
+        exact and is almost certainly the value to standardize on.
+      * Jolt kinematic capsule — radius 18, half-height 38
+        (`register_kinematic_capsule` at connect, and the `+ 38.f` centering
+        in `set_kinematic_pose`), i.e. **36 x 76**.
+      * Hitbox table — `player_hitboxes.hpp` tiles 0..76 (legs 0-30, torso
+        30-56, head sphere centered 66 r10), derived from the 76 capsule.
+      Consequence: a shot can land on the Jolt capsule but outside the
+      movement hull, and the head region sits above where a 72-tall player's
+      head actually is. Standardizing on 72 means **re-tiling the hitbox
+      regions** — roughly legs 0-30, torso 30-54, head sphere centered ~63
+      r9 — which moves where headshots land, so it is a gameplay change and
+      wants its own pass rather than riding along with something else.
+      `player_eye_height = 64` (landed 2026-08-03) is already sized for the
+      72 hull.
 - [ ] Displacements have no real collision (deliberate P1 leftover): movement
       collides with the box bound, projectiles pass through, no Jolt static
       body. Real fix is heightmap collision — see TODO in
       `get_collision_planes`.
+      * **Static meshes are skipped in Jolt too** (confirmed 2026-08-03 —
+        `populate_static_physics_bodies` registers ONLY `Box` geometry). So
+        the general statement is: the BVH holds all three geometry kinds and
+        Jolt holds one. Anything querying Jolt for level geometry — rockets
+        today — passes through meshes and displacements alike. Hitscan
+        deliberately clamps against the BVH instead for exactly this reason.
+        This only becomes load-bearing when a `Physics_Body_Entity` has to
+        rest on terrain; no map contains one yet.
 - [ ] **Navmesh polygon LOOKUP is planar; the mesh and A* are not.** (Answered
       2026-07-30 — the question was "is the navmesh only planar?", and the
       answer is no, but something *is* two-dimensional and it is worth fixing.)
@@ -271,8 +297,10 @@ the template for the rest, alongside the map-transfer messages.
 - [ ] Client-side dynamic-entity prediction. The networked client's Jolt
       world holds only static geometry; remote players are snapshot-interpolated
       and rockets / cubes snap, but none of them are simulated. Cosmetic effects
-      sidestep this by casting against static geometry only (`cast_sphere_static`,
-      byte-identical both sides). Projectile prediction would need dynamic
+      sidestep this by casting against static geometry only (`cast_sphere` with
+      `query_layers_t::Static_Only` — was `cast_sphere_static` before the
+      2026-08-03 filter refactor; byte-identical both sides). Projectile
+      prediction would need dynamic
       bodies in the client's Jolt world; until then, server-side casts whose
       results ride in the effect payload are the right shape.
 
@@ -342,6 +370,12 @@ the template for the rest, alongside the map-transfer messages.
         always there; it was hidden by a worse bug. Assign a mesh in
         `entities.def` (server log line: `Rocket spawned ... mesh='Missing'`).
 - [ ] arrow / spear projectile
+- [ ] `entities::Weapon_Kind::Hitscan` has no weapon using it. Knife is
+      `Melee` and Scout is `Sniper`, and both are handled by the same case
+      in the fire path (they resolve identically — see the switch in
+      `server_impl.cpp`), so `Hitscan` is currently a value nothing selects.
+      Either give it to a weapon (a plain rifle) or drop it from the .def;
+      leaving it is a third name for a resolution path that has two.
 
 ## Footguns
 

@@ -251,7 +251,7 @@ events declared and wired end-to-end: `ROCKET_DETONATED`, `PLAYER_DIED`,
 ### More cosmetic effects
 
 Each is a single small PR: enum value + dispatch site(s) on the server
-+ client handler file + registration line. Candidates in roughly
++ client handler file + registration line. candidates in roughly
 ascending complexity:
 
 - `BULLET_IMPACT` — already declared in the enum, no dispatch site.
