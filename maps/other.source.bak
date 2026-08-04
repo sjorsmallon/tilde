@@ -58,10 +58,9 @@ entity
 {
   "classname" "player_spawn_entity"
   "_uid" "2"
-  "position" "0 -384 0"
+  "position" "-1024 0 -896"
   "orientation" "0 0 0"
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
 }
 entity
 {
@@ -76,22 +75,4 @@ entity
   "param_target_name" ""
   "param_string" ""
   "param_float" "0"
-}
-entity
-{
-  "classname" "player_spawn_entity"
-  "_uid" "7"
-  "position" "-1024 0 -1024"
-  "orientation" "0 0 0"
-  "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
-}
-entity
-{
-  "classname" "player_spawn_entity"
-  "_uid" "8"
-  "position" "-1024 0 -640"
-  "orientation" "0 0 0"
-  "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
 }

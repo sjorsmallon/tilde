@@ -30,10 +30,11 @@ static void check(bool condition, const char* what)
   }
 }
 
-// The hitbox table is measured from the FEET, so a target at the origin has
-// legs 0..30, torso 30..56 and a head sphere centered at 66 with radius 10.
-constexpr float torso_y = 43.f;
-constexpr float head_y  = 66.f;
+// The hitbox table is measured from the FEET and tiles the 72-tall movement
+// hull, so a target at the origin has legs 0..30, torso 30..54 and a head
+// sphere centered at 63 with radius 9.
+constexpr float torso_y = 42.f;
+constexpr float head_y  = 63.f;
 constexpr float legs_y  = 15.f;
 
 int main()
@@ -49,11 +50,11 @@ int main()
 
     const hitscan_result_t head =
         resolve_hitscan({0.f, head_y, 0.f}, {1.f, 0.f, 0.f}, 1000.f, targets);
-    check(head.hit_uid == 1 && head.region == hit_region_t::Head, "ray at 66 hits Head");
+    check(head.hit_uid == 1 && head.region == hit_region_t::Head, "ray at 63 hits Head");
 
     const hitscan_result_t torso =
         resolve_hitscan({0.f, torso_y, 0.f}, {1.f, 0.f, 0.f}, 1000.f, targets);
-    check(torso.hit_uid == 1 && torso.region == hit_region_t::Torso, "ray at 43 hits Torso");
+    check(torso.hit_uid == 1 && torso.region == hit_region_t::Torso, "ray at 42 hits Torso");
 
     const hitscan_result_t legs =
         resolve_hitscan({0.f, legs_y, 0.f}, {1.f, 0.f, 0.f}, 1000.f, targets);

@@ -38,7 +38,8 @@ This used to be a per-type template specialization pattern (`Entity_Editor_Trait
 
 Add the entity to `entities.def` as usual (see `entity_def.md`). Then in `entity_editor_traits.cpp`, `-Wswitch` will flag every switch (`get_placement_half_extents`, `draw_entity_ghost`, `draw_entity_in_editor`, `dispatch_selection_wireframe`) that needs a new case. Add one:
 
-- **`get_placement_half_extents`**: the half-size used for the Y-offset when placing, so the entity sits on the surface instead of clipping through it. Point entities (e.g. Particle_Emitter) return `{0,0,0}`. Entities with a `Box_Volume` component don't need a case here at all — that's handled generically before the switch.
+- **`get_placement_half_extents`**: the entity's half-size, used for the fallback wire box. Point entities (e.g. Particle_Emitter) return `{0,0,0}`. Entities with a `Box_Volume` component don't need a case here at all — that's handled generically before the switch.
+- **`get_placement_origin_height`**: how far above the clicked surface the entity's **origin** goes, so it sits on that surface instead of clipping through it. Defaults to `get_placement_half_extents(e).y` — correct for the usual centered origin — but is **0** for the player-shaped types, whose origin is at the FEET (`player_constants.hpp`). Get this wrong and the entity is stored at a position the runtime reads differently than the editor drew it; that is exactly how spawns ended up 36 units in the air. If a new entity's origin is not at the center of its shape, it needs a case here.
 - **`draw_entity_ghost`** / **`draw_entity_in_editor`**: return `true` if you drew something (most shapes are shared between the two, via a small static `draw_x_shape` helper — see `draw_player_spawn_shape` for the pattern), `false` to fall through to the default path (render component mesh wireframe, then wire box).
 - **`dispatch_selection_wireframe`**: return `true` for a shape-specific selection outline, `false` to fall back to the AABB bounds wireframe.
 
@@ -48,8 +49,9 @@ Since placement works with `shared_ptr<Entity>` at runtime, `entity_editor_trait
 
 ```cpp
 linalg::vec3 get_placement_half_extents(const entities::Entity *e);
-bool draw_entity_ghost(const entities::Entity *e, ...);
-linalg::vec3 compute_placement_center(const entities::Entity *e, const linalg::vec3 &ghost_position);
+float        get_placement_origin_height(const entities::Entity *e);
+bool         draw_entity_ghost(const entities::Entity *e, ...);
+linalg::vec3 compute_placement_origin(const entities::Entity *e, const linalg::vec3 &ghost_position);
 ```
 
 Each is a plain switch on `e->type` (no RTTI, no `dynamic_cast`). The placement tool just calls these and never needs to know about specific entity types.

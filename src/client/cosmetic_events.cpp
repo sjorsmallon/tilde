@@ -32,6 +32,8 @@ void on_jump(client_context_t &context,
              const shared::effect_data_t &data);
 void on_land(client_context_t &context,
              const shared::effect_data_t &data);
+void on_bullet_impact(client_context_t &context,
+                      const shared::effect_data_t &data);
 }
 
 void register_effect_handler(shared::effect_type_t type,
@@ -67,6 +69,7 @@ void register_all_effect_handlers()
                           &effects::on_footstep);
   register_effect_handler(shared::effect_type_t::JUMP, &effects::on_jump);
   register_effect_handler(shared::effect_type_t::LAND, &effects::on_land);
+  register_effect_handler(shared::effect_type_t::BULLET_IMPACT, &effects::on_bullet_impact);
   // BULLET_IMPACT: handler lands in a later PR.
 }
 

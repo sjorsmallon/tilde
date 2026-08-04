@@ -757,10 +757,18 @@ aabb_bounds_t mesh_or_point_bounds(const entities::Entity *entity,
 }
 
 // The player hull, used by both player-shaped types.
+//
+// The origin is at the FEET -- the same convention as `player_eye_height`, the
+// hitbox table and the runtime's `player->position = spawn_position` -- so the
+// hull rises from position rather than straddling it.
 aabb_bounds_t player_hull_bounds(const entities::Entity *entity)
 {
-  const vec3f hull{player_half_width, player_half_height, player_half_width};
-  return {entity->position - hull, entity->position + hull};
+  return {{entity->position.x - player_half_width,
+           entity->position.y,
+           entity->position.z - player_half_width},
+          {entity->position.x + player_half_width,
+           entity->position.y + 2.f * player_half_height,
+           entity->position.z + player_half_width}};
 }
 
 } // namespace

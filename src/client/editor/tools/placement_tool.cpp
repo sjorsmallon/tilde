@@ -156,7 +156,7 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
 
     std::shared_ptr<entities::Entity> new_entity(clone, &entities::destroy_entity);
 
-    new_entity->position = compute_placement_center(new_entity.get(), ghost_position);
+    new_entity->position = compute_placement_origin(new_entity.get(), ghost_position);
  
     {
       auto uid = ctx.map->add_entity(new_entity);
@@ -308,11 +308,13 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
 
   if (entity_to_place)
   {
-    linalg::vec3 center =
-        compute_placement_center(entity_to_place.get(), ghost_position);
+    // The ghost is drawn at the ORIGIN the entity would be placed at, so what
+    // you see previews exactly what gets stored.
+    const linalg::vec3 origin =
+        compute_placement_origin(entity_to_place.get(), ghost_position);
 
-    if (!draw_entity_ghost(entity_to_place.get(), renderer, center))
-      draw_default_ghost(entity_to_place.get(), renderer, center);
+    if (!draw_entity_ghost(entity_to_place.get(), renderer, origin))
+      draw_default_ghost(entity_to_place.get(), renderer, origin);
   }
 }
 

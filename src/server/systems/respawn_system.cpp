@@ -2,6 +2,7 @@
 #include "respawn_system.hpp"
 
 #include "../../shared/log.hpp"
+#include "../../shared/player_constants.hpp"
 #include "../game_events.hpp"
 
 #include <algorithm>
@@ -112,7 +113,8 @@ void update_respawns(server_context_t &context,
     if (context.physics)
     {
       set_kinematic_pose(*context.physics, uid,
-                         spawn_position + vec3f{0.f, 38.f, 0.f},
+                         spawn_position +
+                             vec3f{0.f, shared::player_capsule_center_offset, 0.f},
                          vec3f{0.f, 0.f, 0.f});
     }
 

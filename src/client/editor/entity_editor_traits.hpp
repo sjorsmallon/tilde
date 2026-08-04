@@ -18,10 +18,11 @@ namespace client
 // rest is a switch over entity_type.
 linalg::vec3 get_placement_half_extents(const entities::Entity *e);
 
-// Placement preview at `center`. Returns false to fall back to the default
-// path (render component mesh wireframe, then wire box).
+// Placement preview at `origin` — the entity's position, NOT necessarily the
+// center of the drawn shape. Returns false to fall back to the default path
+// (render component mesh wireframe, then wire box).
 bool draw_entity_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
-                       const linalg::vec3 &center);
+                       const linalg::vec3 &origin);
 
 // Draw an entity in the editor. Tries the render component first, then a
 // per-type gizmo. Returns true if something was drawn.
@@ -31,13 +32,20 @@ bool draw_entity_in_editor(const entities::Entity *e,
                            overlay_renderer_t &renderer, uint32_t uid,
                            bool solid);
 
-// Convenience: ghost_position -> center with Y-offset applied.
-linalg::vec3 compute_placement_center(const entities::Entity *e,
+// How far above a surface the entity's ORIGIN sits when placed on it. Half the
+// entity's height for the usual centered origin, ZERO for the player-shaped
+// types whose origin is at the feet.
+float get_placement_origin_height(const entities::Entity *e);
+
+// Convenience: surface point under the cursor -> where entity->position goes.
+// This is the ORIGIN, not the center of the drawn shape -- the two differ for
+// feet-origin types, and draw_entity_ghost takes the origin as well.
+linalg::vec3 compute_placement_origin(const entities::Entity *e,
                                       const linalg::vec3 &ghost_position);
 
 // Default ghost drawing: tries render component mesh wireframe, then wire box.
 void draw_default_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
-                        const linalg::vec3 &center);
+                        const linalg::vec3 &origin);
 
 // The selection highlight's pink <-> white pulse at time `time`. Shared so the
 // geometry highlight pulses in lockstep with the entity one.

@@ -309,6 +309,7 @@ add_library(game_client SHARED
     src/client/effects/rocket_explosion.cpp
     src/client/effects/footstep.cpp
     src/client/effects/player_movement.cpp
+    src/client/effects/bullet_impact.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
     src/client/game_events.cpp

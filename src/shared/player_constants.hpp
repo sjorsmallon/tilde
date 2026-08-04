@@ -13,6 +13,23 @@ namespace shared
 constexpr float player_half_width  = 16.f;
 constexpr float player_half_height = 36.f;
 
+// The player's Jolt kinematic body, DERIVED from the hull above rather than
+// written out -- writing it out is exactly how it drifted to 36 x 76 while the
+// hull was 32 x 72, which made a player hittable by rocket splash two units
+// outside the box they collide with.
+//
+// Jolt's CapsuleShape takes the CYLINDER half-height and adds a hemispherical
+// cap of `radius` at each end, so the total height is 2*(half_height + radius)
+// -- 2*(20 + 16) = 72, matching the hull. The cylinder half-height is NOT
+// `player_half_height`; subtracting the cap radius is the whole point.
+constexpr float player_capsule_radius               = player_half_width;
+constexpr float player_capsule_cylinder_half_height = player_half_height - player_half_width;
+
+// A Jolt capsule is centered on its body position; the player origin is at the
+// FEET. Every register_kinematic_capsule / set_kinematic_pose call for a player
+// or bot adds this, so they must all add the same thing.
+constexpr float player_capsule_center_offset = player_half_height;
+
 // Eye offset above the player's origin, which sits at the FEET.
 //
 // This is Source's VEC_VIEW and it must be ONE constant: the client draws the

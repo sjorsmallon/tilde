@@ -34,14 +34,20 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
     bot->client_slot_index = slot;
     bot->health            = 100;
 
-    bot->hitbox.shape = entities::Shape_Kind::Capsule;
-    bot->hitbox.size   = {18.f, 38.f, 18.f};
-    bot->hitbox.offset = {0.f,  38.f,  0.f};
+    // Identical to a human player's -- a bot IS a Player_Entity, and a bot
+    // that was hittable where a player is not would make every aim test a lie.
+    bot->hitbox.shape  = entities::Shape_Kind::Capsule;
+    bot->hitbox.size   = {shared::player_capsule_radius,
+                          shared::player_capsule_cylinder_half_height,
+                          shared::player_capsule_radius};
+    bot->hitbox.offset = {0.f, shared::player_capsule_center_offset, 0.f};
 
     register_kinematic_capsule(physics,
                                bot_uid,
-                               bot->position + vec3f{0.f, 38.f, 0.f},
-                               18.f, 20.f);
+                               bot->position +
+                                   vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                               shared::player_capsule_radius,
+                               shared::player_capsule_cylinder_half_height);
   }
 
   Bot_State state;
@@ -328,7 +334,7 @@ void update_bots(std::vector<Bot_State> &bots,
 
     set_kinematic_pose(physics,
                        bot_ent->entity_id,
-                       new_pos + vec3f{0.f, 38.f, 0.f},
+                       new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
                        new_vel);
 
     // Update facing direction so the client can visualise it.

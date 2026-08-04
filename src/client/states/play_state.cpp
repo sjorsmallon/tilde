@@ -9,6 +9,7 @@
 #include "../../shared/game_events.hpp"
 #include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
+#include "../../shared/player_hitboxes.hpp"
 #ifdef JPH_DEBUG_RENDERER
 #include <Jolt/Physics/Body/BodyManager.h>
 #endif
@@ -1262,14 +1263,44 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     if (!remote_player.active || remote_player.slot_index == ctx.my_slot)
       continue;
 
-    vec3f half = {player_half_width, player_half_height, player_half_width};
-    vec3f rmin = {remote_player.render_position.x - half.x,
-                  remote_player.render_position.y - half.y,
-                  remote_player.render_position.z - half.z};
-    vec3f rmax = {remote_player.render_position.x + half.x,
-                  remote_player.render_position.y + half.y,
-                  remote_player.render_position.z + half.z};
+    // The player origin is at the FEET -- same convention as
+    // `player_eye_height` and the hitbox table -- so the hull sits entirely
+    // ABOVE render_position rather than centered on it. Centering it was the
+    // bug: half the box was underground and its top capped out at the waist,
+    // which made every remote player look like they were standing in a hole.
+    const vec3f rmin = {remote_player.render_position.x - player_half_width,
+                        remote_player.render_position.y,
+                        remote_player.render_position.z - player_half_width};
+    const vec3f rmax = {remote_player.render_position.x + player_half_width,
+                        remote_player.render_position.y + 2.f * player_half_height,
+                        remote_player.render_position.z + player_half_width};
     renderer::DrawAABB(cmd, rmin, rmax, colors::green);
+
+    // The regions hitscan actually resolves against, drawn from the SAME table
+    // the server tests against (`shared::player_hitboxes`) so a disagreement
+    // between what you see and what you hit is visible rather than inferred.
+    // The green hull above is where the player collides; these are where they
+    // get shot, and the two are not the same shape.
+    if (ctx.cvars->debug_show_hitboxes)
+    {
+      for (const shared::player_hitbox_t &region : shared::player_hitboxes)
+      {
+        const vec3f center = remote_player.render_position + region.offset;
+
+        color_t color = colors::white;
+        switch (region.region)
+        {
+          case shared::hit_region_t::Head:  color = colors::red;    break;
+          case shared::hit_region_t::Torso: color = colors::yellow; break;
+          case shared::hit_region_t::Legs:  color = colors::cyan;   break;
+        }
+
+        if (region.shape == entities::Shape_Kind::Sphere)
+          renderer::draw_hitbox_sphere(cmd, center, region.size.x, color);
+        else
+          renderer::DrawWireAABB(cmd, center - region.size, center + region.size, color);
+      }
+    }
   }
 
   // Render rockets received from server

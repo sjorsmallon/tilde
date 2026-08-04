@@ -461,19 +461,27 @@ static shared::entity_uid_t spawn_player_for_slot(int slot)
                slot, player->entity_id, player->position.x,
                player->position.y, player->position.z);
 
-  // Combat hitbox (capsule: radius 18, half-height 38), slightly larger than
-  // physics collision (16x36) for better hit feedback.
-  player->hitbox.shape = entities::Shape_Kind::Capsule;
-  player->hitbox.size = {18.f, 38.f, 18.f};  // x/z = radius, y = half_height
-  player->hitbox.offset = {0.f, 38.f, 0.f};  // Offset up so capsule is centered
+  // Coarse whole-body capsule, sized to the movement hull. It is NOT what
+  // hitscan resolves against -- that is the per-region table in
+  // `player_hitboxes.hpp`. This one exists so rockets and overlap queries have
+  // something cheap to find the player with.
+  // x/z = radius, y = CYLINDER half-height -- the same convention Jolt's
+  // CapsuleShape and the debug renderer both use (caps sit at +/- y and add
+  // radius beyond), so all three read these bytes the same way.
+  player->hitbox.shape  = entities::Shape_Kind::Capsule;
+  player->hitbox.size   = {shared::player_capsule_radius,
+                           shared::player_capsule_cylinder_half_height,
+                           shared::player_capsule_radius};
+  player->hitbox.offset = {0.f, shared::player_capsule_center_offset, 0.f};
 
   // Kinematic Jolt body so rockets and overlap queries can find this player.
-  // Capsule center sits at feet + 38 (matches hitbox offset above).
   if (ctx.physics)
   {
     register_kinematic_capsule(*ctx.physics, player_uid,
-                               player->position + vec3f{0.f, 38.f, 0.f},
-                               18.f, 20.f);
+                               player->position +
+                                   vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                               shared::player_capsule_radius,
+                               shared::player_capsule_cylinder_half_height);
   }
 
   // Clients can't tell a connect-time spawn from a respawn, by design.
@@ -958,7 +966,7 @@ bool Tick()
     {
       set_kinematic_pose(*ctx.physics,
                          player->entity_id,
-                         new_pos + vec3f{0.f, 38.f, 0.f},
+                         new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
                          new_vel);
     }
 
@@ -1027,6 +1035,10 @@ bool Tick()
 
         if (hit.hit_uid != shared::null_entity_uid)
         {
+          broadcast_server_message(ctx.net, g_socket,
+                                 std::format("Player {} hit player {} in the {}",
+                                             player_idx, hit.hit_uid,
+                                             to_string(hit.region)));
           const bool was_headshot = hit.region == shared::hit_region_t::Head;
 
           damage_info_t info{};

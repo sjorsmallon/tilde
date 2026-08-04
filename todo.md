@@ -12,24 +12,39 @@
 > lib silently gives you "differ" whether or not you meant it.
 
 - [ ] Quaternion storage:move to quaternions for orientation. address where things are wrong.
-- [ ] **The player is three different sizes depending on who is asking.**
-      (Found 2026-08-03 while unifying eye height.)
-      * Movement hull — `player_half_width = 16`, `player_half_height = 36`
-        (`player_constants.hpp`), i.e. **32 x 72**. This one is HL/Source
-        exact and is almost certainly the value to standardize on.
-      * Jolt kinematic capsule — radius 18, half-height 38
-        (`register_kinematic_capsule` at connect, and the `+ 38.f` centering
-        in `set_kinematic_pose`), i.e. **36 x 76**.
-      * Hitbox table — `player_hitboxes.hpp` tiles 0..76 (legs 0-30, torso
-        30-56, head sphere centered 66 r10), derived from the 76 capsule.
-      Consequence: a shot can land on the Jolt capsule but outside the
-      movement hull, and the head region sits above where a 72-tall player's
-      head actually is. Standardizing on 72 means **re-tiling the hitbox
-      regions** — roughly legs 0-30, torso 30-54, head sphere centered ~63
-      r9 — which moves where headshots land, so it is a gameplay change and
-      wants its own pass rather than riding along with something else.
-      `player_eye_height = 64` (landed 2026-08-03) is already sized for the
-      72 hull.
+- [x] ~~**The player is three different sizes depending on who is asking.**~~
+      **FIXED 2026-08-04.** All three now derive from the movement hull —
+      `player_half_width = 16`, `player_half_height = 36`
+      (`player_constants.hpp`), i.e. **32 x 32 x 72**, HL/Source exact.
+      * Hitbox table — `player_hitboxes.hpp` tiles 0..72 exactly: legs 0-30,
+        torso 30-54, head sphere centered 63 r9. Half-widths stay inset from
+        the hull's 16 and never exceed it. `hitscan_test` moved with it (its
+        region probe heights are the table's centers).
+      * Jolt kinematic capsule — was radius 18 / cylinder half-height 20
+        (36 x 76) written out at five call sites. Now three derived constants
+        (`player_capsule_radius`, `player_capsule_cylinder_half_height`,
+        `player_capsule_center_offset`) that all five use, giving 32 x 72.
+        Note Jolt's `CapsuleShape` takes the CYLINDER half-height and adds a
+        cap of `radius` at each end, so the cylinder half is
+        `player_half_height - player_half_width` = 20, NOT 36 — writing 36
+        there would give a 104-tall player.
+      * The **bot** capsule was a fourth size (18/38 with a `{18,38,18}`
+        hitbox where a human player got `{16,36,16}`) and is now the same
+        expression as the player's. A bot hittable where a player is not
+        would have made every aim test a lie.
+      * `Hitbox.size.y` on a Capsule now means the CYLINDER half-height on
+        every writer, which is what its two readers — Jolt and
+        `draw_hitbox_capsule` — already assumed. Both old values were total
+        half-heights, so drawing a player's debug capsule would have shown a
+        104-tall one. Nothing draws players today; this closes it before
+        something does.
+      * `player_eye_height = 64` (landed 2026-08-03) needed no change: it was
+        already sized for the 72 hull, has one definition and three consumers
+        (server hitscan origin, bot aim, client camera), and now sits just
+        above the head sphere's center rather than near its lower edge.
+      Gameplay consequences to watch, since this is a real behaviour change:
+      rocket splash and direct hits now use a body 4 units narrower and 4
+      shorter, and headshots land lower.
 - [ ] Displacements have no real collision (deliberate P1 leftover): movement
       collides with the box bound, projectiles pass through, no Jolt static
       body. Real fix is heightmap collision — see TODO in
@@ -339,6 +354,37 @@ the template for the rest, alongside the map-transfer messages.
 ## Editor
 
 - [ ] gizmo for selection moving is not finalized
+- [ ] **Selecting an entity makes it disappear** (seen in play testing
+      2026-08-04). Distinct from the item above: that one is about the move
+      handles, this is the entity vanishing on click, so it is a draw problem
+      rather than a transform one. Suspect the selection path swaps the normal
+      draw for a highlight that then draws nothing —
+      `dispatch_selection_wireframe` / `draw_entity_in_editor` in
+      `entity_editor_traits.cpp` are where those two meet.
+- [x] ~~**The editor stored `player_spawn_entity` positions as the hull CENTER
+      while the runtime read them as the player's FEET.**~~ **FIXED
+      2026-08-04, code and map data both.** `compute_placement_center` added
+      `half_extents.y` to the clicked surface point and stored that as
+      `position`, so every editor-placed spawn was written 36 units — exactly
+      `player_half_height` — above the floor, and players spawned in the air
+      and fell. The editor was self-consistent (it also *drew* and *picked*
+      centered), which is why it looked right and only the runtime disagreed.
+      * Code: `player_hull_bounds` (`map.cpp`) and `draw_player_spawn_shape`
+        are now feet-based, and placement gained
+        `get_placement_origin_height` — half the height for a centered
+        origin, **0** for the player-shaped types.
+        `compute_placement_center` → `compute_placement_origin`, since it no
+        longer returns a center; `draw_entity_ghost` / `draw_default_ghost`
+        take the origin for the same reason.
+      * Data: both maps' spawns were at `-1024 36 -896`. Set to the floor top
+        beneath each — `other.source` box `_uid 4` tops out at exactly **0**
+        (confirming 36 = 0 + `player_half_height`), `new_map.source`'s at
+        **2.586742**. `maps/test` and `maps/test_backup` have no spawns, so
+        the migration fixture was untouched.
+      * The general rule this leaves: an entity whose origin is not at the
+        center of its shape needs a `get_placement_origin_height` case, or
+        the editor and the runtime will disagree about where it is. Recorded
+        in `src/client/editor/readme.md`.
 - [ ] particle editor tool — dedicated ImGui panel for live tweaking
 - [ ] easing functions — replace linear lerp with ease-in/out curves
 - [ ] inspector edits push no undo transaction (ImGui "changed" fires per

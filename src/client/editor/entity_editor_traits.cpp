@@ -32,11 +32,21 @@ namespace
 void draw_player_spawn_shape(overlay_renderer_t &renderer,
                              const linalg::vec3 &position, color_t color)
 {
+  // `position` is the entity ORIGIN, which for a spawn is where the player's
+  // FEET go -- the same convention as player_eye_height and the hitbox table.
+  // draw_wire_box takes a CENTER, so the hull is lifted half its height; it is
+  // not centered on the origin.
   const linalg::vec3 hull{shared::player_half_width,
                           shared::player_half_height,
                           shared::player_half_width};
-  renderer.draw_wire_box(position, hull, color);
-  renderer.draw_line(position, position + linalg::vec3{0, 48, 0}, color);
+  renderer.draw_wire_box(position + linalg::vec3{0, shared::player_half_height, 0},
+                         hull, color);
+
+  // Marker spike, drawn from the top of the hull upward so it stays visible
+  // instead of being buried inside the box.
+  const float hull_top = 2.f * shared::player_half_height;
+  renderer.draw_line(position + linalg::vec3{0, hull_top, 0},
+                     position + linalg::vec3{0, hull_top + 24.f, 0}, color);
 }
 
 void draw_particle_emitter_shape(overlay_renderer_t &renderer,
@@ -132,25 +142,25 @@ linalg::vec3 get_placement_half_extents(const entities::Entity *e)
 }
 
 bool draw_entity_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
-                       const linalg::vec3 &center)
+                       const linalg::vec3 &origin)
 {
   switch (e->type)
   {
     case entities::entity_type::Player_Spawn_Entity:
-      draw_player_spawn_shape(renderer, center, colors::pink);
+      draw_player_spawn_shape(renderer, origin, colors::pink);
       return true;
     case entities::entity_type::Particle_Emitter_Entity:
-      draw_particle_emitter_shape(renderer, center, colors::gold);
+      draw_particle_emitter_shape(renderer, origin, colors::gold);
       return true;
     case entities::entity_type::Trigger_Volume_Entity:
       draw_trigger_volume_shape(
-          renderer, center,
+          renderer, origin,
           static_cast<const entities::Trigger_Volume_Entity *>(e)
               ->volume.half_extents,
           colors::red);
       return true;
     case entities::entity_type::Light_Entity:
-      draw_light_cross(renderer, center, colors::yellow, 0.3f);
+      draw_light_cross(renderer, origin, colors::yellow, 0.3f);
       return true;
     case entities::entity_type::Weapon_Entity:   // has render component
     case entities::entity_type::Player_Entity:   // falls back to default box
@@ -345,7 +355,7 @@ void draw_selection_highlight(const entities::Entity *e,
 // ===================================================================
 
 void draw_default_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
-                        const linalg::vec3 &center)
+                        const linalg::vec3 &origin)
 {
   if (const entities::Render *rc = entities::get_render(e))
   {
@@ -353,28 +363,57 @@ void draw_default_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
     if (mesh_handle.valid())
     {
       renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
-                         {.position  = center,
+                         {.position  = origin,
                           .color     = colors::yellow,
                           .wireframe = true});
       return;
     }
   }
 
-  // Fallback: wire box
-  linalg::vec3 he = get_placement_half_extents(e);
-  renderer.draw_wire_box(center, he, colors::yellow);
+  // Fallback: wire box. draw_wire_box takes a CENTER, which is the origin only
+  // for centered-origin types -- a feet-origin one sits half a hull lower.
+  const linalg::vec3 half_extents = get_placement_half_extents(e);
+  const float lift = half_extents.y - get_placement_origin_height(e);
+  renderer.draw_wire_box(origin + linalg::vec3{0, lift, 0}, half_extents,
+                         colors::yellow);
 }
 
 // ===================================================================
 // Convenience
 // ===================================================================
 
-linalg::vec3 compute_placement_center(const entities::Entity *e,
+float get_placement_origin_height(const entities::Entity *e)
+{
+  switch (e->type)
+  {
+    // Feet origin: the entity's position IS the surface point, no lift. Adding
+    // half a hull here is what left editor-placed spawns 36 units in the air,
+    // since the runtime reads a spawn's position as the player's feet.
+    case entities::entity_type::Player_Spawn_Entity:
+    case entities::entity_type::Player_Entity:
+      return 0.f;
+
+    // Centered origin: lift by half the height so the shape rests on the
+    // surface rather than sinking half-way through it.
+    case entities::entity_type::Particle_Emitter_Entity:
+    case entities::entity_type::Trigger_Volume_Entity:
+    case entities::entity_type::Physics_Body_Entity:
+    case entities::entity_type::Weapon_Entity:
+    case entities::entity_type::Rocket_Entity:
+    case entities::entity_type::Light_Entity:
+    case entities::entity_type::Invalid:
+      break;
+  }
+
+  return get_placement_half_extents(e).y;
+}
+
+linalg::vec3 compute_placement_origin(const entities::Entity *e,
                                       const linalg::vec3 &ghost_position)
 {
-  linalg::vec3 center = ghost_position;
-  center.y += get_placement_half_extents(e).y;
-  return center;
+  linalg::vec3 origin = ghost_position;
+  origin.y += get_placement_origin_height(e);
+  return origin;
 }
 
 } // namespace client

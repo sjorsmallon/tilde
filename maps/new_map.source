@@ -43,7 +43,7 @@ entity
 {
   "classname" "player_spawn_entity"
   "_uid" "2"
-  "position" "-1024 36 -896"
+  "position" "-1024 2.586742 -896"
   "orientation" "0 0 0"
   "spawn_type" "Human"
   "team_allegiance" "Free_For_All"
