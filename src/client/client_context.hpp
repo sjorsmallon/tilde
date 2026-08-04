@@ -16,11 +16,11 @@
 namespace client
 {
 
-struct audio_system_t; // owned by client_impl.cpp; see Init()/Shutdown()
+struct audio_system_t; // owned by client_impl.cpp; see init()/shutdown()
 
 struct client_context_t
 {
-   // launcher hands these off to the client module on Init().
+   // launcher hands these off to the client module on init().
   // They are owned by the launcher and outlive the client module.
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
@@ -196,7 +196,7 @@ struct client_context_t
   // --- Client audio ---
   // Borrowed pointer to the client-global audio system (owned in
   // client_impl.cpp, lives for the whole client session). Cosmetic-effect
-  // handlers play sounds through this. Always non-null after client Init();
+  // handlers play sounds through this. Always non-null after client init();
   // handlers guard it anyway in case audio init failed.
   audio_system_t* audio = nullptr;
 

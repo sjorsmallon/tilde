@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
   assets::set_state(&g_asset_state);
   assets::init();
 
-  if (!server::Init(&g_cvar_state, &g_command_table, &g_asset_state))
+  if (!server::init(&g_cvar_state, &g_command_table, &g_asset_state))
   {
     log_error("Server Init Failed");
     return 1;
@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
     }
   }
 
-  server::Shutdown();
+  server::shutdown();
   print_timing_stats();
 
   return 0;

@@ -174,7 +174,7 @@ linalg::vec2 Displacement_Tool::project_to_screen(const linalg::vec3 &world_pos)
   return linalg::view_to_screen(view_position, cached_view.display_size,
                                 cached_view.camera.orthographic,
                                 cached_view.camera.ortho_height,
-                                cached_view.fov);
+                                cached_view.camera.fov_degrees);
 }
 
 void Displacement_Tool::clear_selection(int grid_size)
@@ -378,11 +378,11 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
       vec2 screen_start = view_to_screen(v0, resize_last_view.display_size,
                                          resize_last_view.camera.orthographic,
                                          resize_last_view.camera.ortho_height,
-                                         resize_last_view.fov);
+                                         resize_last_view.camera.fov_degrees);
       vec2 screen_end = view_to_screen(v1, resize_last_view.display_size,
                                        resize_last_view.camera.orthographic,
                                        resize_last_view.camera.ortho_height,
-                                       resize_last_view.fov);
+                                       resize_last_view.camera.fov_degrees);
 
       // v0..v1 spans exactly one world unit along the face normal, so projecting
       // the mouse movement onto the face's on-screen direction gives the drag

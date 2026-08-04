@@ -23,7 +23,7 @@ public:
   void execute_command(const char *command_line);
 
   // Lend the console the launcher's cvar values and command table. Called once
-  // from client::Init(); every line typed afterwards resolves against these.
+  // from client::init(); every line typed afterwards resolves against these.
   //
   // There is no RegisterRemoteCVar any more, and nothing left to register: the
   // client's CVAR_INFOS / COMMAND_INFOS tables are generated from the same
@@ -65,7 +65,7 @@ private:
   int history_position; // -1: new line, 0..history.Size-1 browsing history.
   std::vector<std::string> history;
 
-  // Borrowed from the launcher via set_cvar_state. Null before client::Init().
+  // Borrowed from the launcher via set_cvar_state. Null before client::init().
   cvars::cvar_state_t    *cvar_state_    = nullptr;
   cvars::command_table_t *command_table_ = nullptr;
 

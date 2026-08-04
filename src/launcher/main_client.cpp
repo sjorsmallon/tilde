@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
   assets::set_state(&g_asset_state);
   assets::init();
 
-  if (!client::Init(&g_cvar_state, &g_command_table, &g_asset_state))
+  if (!client::init(&g_cvar_state, &g_command_table, &g_asset_state))
   {
     log_error("Client Init Failed");
     return 1;
@@ -106,8 +106,8 @@ int main(int argc, char *argv[])
     }
   }
 
-  log_terminal("=== Shutdown Initiated ===");
-  client::Shutdown();
+  log_terminal("=== shutdown Initiated ===");
+  client::shutdown();
 
   print_timing_stats();
 

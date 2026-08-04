@@ -98,6 +98,20 @@ Server :: cvars {
 Client :: cvars {
     r_fov:                  f32 = 90.0      @Client    "Field of view in degrees"
 
+    // Zoom is presentation, so all of it is @Client. The server learns only
+    // that the zoom button is held, via Button::Zoom in the move command --
+    // which is what it would need to apply a movement or accuracy penalty. It
+    // never needs the angle.
+    r_zoom_fov:             f32 = 30.0      @Client    "Field of view in degrees while zoomed"
+    r_zoom_time:            f32 = 0.00      @Client    "Seconds to ease between normal and zoomed FOV (0 = instant)"
+
+    // Degrees of view rotation per mouse count. Was a bare 0.1 literal in
+    // play_state.
+    m_sensitivity:          f32 = 0.1       @Client    "Mouse look sensitivity"
+    // 1.0 keeps the felt sensitivity constant across the zoom: the same hand
+    // movement sweeps the same distance across the screen at any FOV. 0 makes
+    // zoom not slow the mouse down at all.
+    m_zoom_sensitivity_ratio: f32 = 1.0     @Client    "How much zoom scales mouse sensitivity (1 = constant feel, 0 = none)"
 
     cl_maxfps:              f32 = 1000.0    @Client    "Maximum client framerate (0 = unlimited)"
 }

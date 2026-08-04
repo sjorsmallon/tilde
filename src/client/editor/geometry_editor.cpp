@@ -66,7 +66,7 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
     const shared::box_geometry_t &box = std::get<shared::box_geometry_t>(geometry);
     if (box.surface.mesh_path.empty())
     {
-      renderer::DrawAABB(renderer.get_command_buffer(),
+      renderer::draw_AABB(renderer.get_command_buffer(),
                          box.position - box.half_extents,
                          box.position + box.half_extents, colors::white,
                          /*as_wireframe=*/!solid,
@@ -159,7 +159,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
   const color_t color = compute_selection_pulse_color(time);
 
   // Strong depth bias so the highlight renders in front of the solid surface.
-  renderer::SetLineDepthBias(-200.0f, -10.0f);
+  renderer::set_line_depth_bias(-200.0f, -10.0f);
 
   switch (shared::get_kind(geometry))
   {
@@ -204,7 +204,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
   }
   }
 
-  renderer::SetLineDepthBias(-2.0f, -1.0f);
+  renderer::set_line_depth_bias(-2.0f, -1.0f);
 }
 
 // ============================================================================

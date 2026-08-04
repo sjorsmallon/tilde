@@ -17,10 +17,10 @@ std::string displacement_cache_key(shared::entity_uid_t uid)
   return "__displacement_" + std::to_string(uid);
 }
 
-renderer::ShaderType shader_for(const shared::geometry_surface_t &surface)
+renderer:: shader_type shader_for(const shared::geometry_surface_t &surface)
 {
-  return (surface.shader_type == "unlit") ? renderer::ShaderType::Unlit
-                                          : renderer::ShaderType::Lit;
+  return (surface.shader_type == "unlit") ? renderer:: shader_type::Unlit
+                                          : renderer:: shader_type::Lit;
 }
 
 // Draw a surface's mesh if it resolves. False means "no mesh — use the kind's
@@ -72,7 +72,7 @@ void draw_geometry(VkCommandBuffer cmd, const shared::geometry_value_t &geometry
       return;
 
     // No mesh: a box draws as a box.
-    renderer::DrawAABB(cmd, box.position - box.half_extents,
+    renderer::draw_AABB(cmd, box.position - box.half_extents,
                        box.position + box.half_extents,
                        color_from_vec3(surface.color));
     return;
@@ -89,7 +89,7 @@ void draw_geometry(VkCommandBuffer cmd, const shared::geometry_value_t &geometry
     // A static mesh with no resolvable mesh has nothing to draw but its bound —
     // show it in yellow so a broken/missing asset is visible rather than absent.
     const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
-    renderer::DrawWireAABB(cmd, bounds.min, bounds.max, colors::yellow);
+    renderer::draw__wire_AABB(cmd, bounds.min, bounds.max, colors::yellow);
     return;
   }
 
@@ -121,7 +121,7 @@ void draw_geometry(VkCommandBuffer cmd, const shared::geometry_value_t &geometry
 
     renderer::draw_mesh(cmd, mesh_handle,
                         {.position = displacement.position,
-                         .shader = renderer::ShaderType::Textured});
+                         .shader = renderer:: shader_type::Textured});
     return;
   }
   }

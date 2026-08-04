@@ -16,7 +16,7 @@ namespace client
 namespace state_manager
 {
 
-// Shutdown and cleanup all states
+// shutdown and cleanup all states
 void shutdown();
 
 // Initialize all states

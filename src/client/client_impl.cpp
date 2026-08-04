@@ -27,7 +27,7 @@ static std::chrono::high_resolution_clock::time_point g_last_tick_time;
 static bool g_tick_time_initialized = false;
 static std::unique_ptr<audio_system_t> g_audio;
 
-bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
+bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
           assets::asset_state_t *asset_state)
 {
   timed_function();
@@ -72,7 +72,7 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
     return false;
   }
 
-  if (!renderer::Init(g_window))
+  if (!renderer::init(g_window))
   {
     log_error("Renderer Init Failed");
     return false;
@@ -84,7 +84,7 @@ bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
 
   // Bind every cosmetic-effect handler. Each effect_type_t maps to exactly
   // one function — registration must happen before the first snapshot can
-  // arrive, so it lives in client Init() rather than Play_State::on_enter.
+  // arrive, so it lives in client init() rather than Play_State::on_enter.
   register_all_effect_handlers();
 
   // Bring up audio and lend the shared context a borrowed pointer. A failed
@@ -106,17 +106,17 @@ bool Tick()
   SDL_Event event;
   while (SDL_PollEvent(&event))
   {
-    renderer::ProcessEvent(&event);
+    renderer::process_event(&event);
     input::process_sdl_event(&event);
 
     if (event.type == SDL_QUIT)
     {
       return false;
     }
-    // Resize handling is done inside renderer::BeginFrame via queries usually,
+    // Resize handling is done inside renderer::begin_frame via queries usually,
     // or we can pass it.
     // NOTE: In the previous code, resize triggered `g_swapchain_rebuild =
-    // true`. In our new `renderer.cpp`, `BeginFrame` handles checking for
+    // true`. In our new `renderer.cpp`, `begin_frame` handles checking for
     // `VK_ERROR_OUT_OF_DATE`. Explicit resize event handling might be needed if
     // we want to be proactive.
     // However, `renderer.cpp` as written checks `vkAcquireNextImage` result and
@@ -131,14 +131,14 @@ bool Tick()
     //
     // I need to tell renderer to rebuild!
     // Or add `renderer::HandleResize()`.
-    // Or just `renderer::ProcessEvent` should handle it?
-    // YES, `renderer::ProcessEvent` should probably handle it if we move that
+    // Or just `renderer::process_event` should handle it?
+    // YES, `renderer::process_event` should probably handle it if we move that
     // logic there.
-    // OR we just rely on `BeginFrame` failing to acquire and rebuilding.
+    // OR we just rely on `begin_frame` failing to acquire and rebuilding.
     // But SDL might not trigger "OutOfDate" immediately on all platforms?
     // Let's assume proactive is better.
     // I'll add `renderer::RequestSwapchainRebuild()` or similar?
-    // Or just let `ProcessEvent` handle it.
+    // Or just let `process_event` handle it.
   }
 
   // Compute real dt
@@ -171,7 +171,7 @@ bool Tick()
   }
 
   // Render
-  VkCommandBuffer cmd = renderer::BeginFrame();
+  VkCommandBuffer cmd = renderer::begin_frame();
   if (cmd == VK_NULL_HANDLE)
   {
     return true; // Skip frame
@@ -187,20 +187,20 @@ bool Tick()
   client::console::get().draw();
 
   state_manager::pre_render(cmd);
-  renderer::BeginRenderPass(cmd);
+  renderer::begin_render_pass(cmd);
   state_manager::render_3d(cmd);
-  renderer::EndFrame(cmd);
+  renderer::end_frame(cmd);
 
   return true;
 }
 
-void Shutdown()
+void shutdown()
 {
   timed_function();
   log_terminal("--- Shutting down Client ---");
 
   state_manager::shutdown();
-  renderer::Shutdown();
+  renderer::shutdown();
 
   if (g_audio)
   {

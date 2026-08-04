@@ -65,6 +65,10 @@ struct cvar_state_t
   float game_rocket_speed = 600.0f;
   float sv_tickrate = 60.0f;
   float r_fov = 90.0f;
+  float r_zoom_fov = 30.0f;
+  float r_zoom_time = 0.0f;
+  float m_sensitivity = 0.1f;
+  float m_zoom_sensitivity_ratio = 1.0f;
   float cl_maxfps = 1000.0f;
   float editor_speed = 1600.0f;
   float cl_timescale = 1.0f;
@@ -102,22 +106,26 @@ enum class cvar_id : uint16_t
   game_rocket_speed = 11,
   sv_tickrate = 12,
   r_fov = 13,
-  cl_maxfps = 14,
-  editor_speed = 15,
-  cl_timescale = 16,
-  sound_reference_distance = 17,
-  sound_max_distance_cutoff = 18,
-  sound_rolloff_factor = 19,
-  debug_show_collisions = 20,
-  debug_show_hitboxes = 21,
-  debug_show_navmesh = 22,
-  debug_show_box_volumes = 23,
-  net_snapshot_debug = 24,
+  r_zoom_fov = 14,
+  r_zoom_time = 15,
+  m_sensitivity = 16,
+  m_zoom_sensitivity_ratio = 17,
+  cl_maxfps = 18,
+  editor_speed = 19,
+  cl_timescale = 20,
+  sound_reference_distance = 21,
+  sound_max_distance_cutoff = 22,
+  sound_rolloff_factor = 23,
+  debug_show_collisions = 24,
+  debug_show_hitboxes = 25,
+  debug_show_navmesh = 26,
+  debug_show_box_volumes = 27,
+  net_snapshot_debug = 28,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 25;
+constexpr uint32_t CVAR_COUNT = 29;
 
 enum class command_id : uint16_t
 {

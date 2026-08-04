@@ -104,9 +104,9 @@ void console::execute_command(const char *command_line)
 
   if (!cvar_state_ || !command_table_)
   {
-    // Only reachable if something drove the console before client::Init(),
+    // Only reachable if something drove the console before client::init(),
     // which would mean the init order broke.
-    print("[error] console has no cvar state; client::Init() has not run.");
+    print("[error] console has no cvar state; client::init() has not run.");
     log_error("console::execute_command before set_cvar_state: '{}'", command_line);
     return;
   }

@@ -21,21 +21,21 @@ namespace server
 
 // 'Context' refers to the bundle of data required for the active game session
 // (entities, network state). This is distinct from 'State' (e.g. Initializing,
-// Running, Shutdown) which refers to the FSM state.
+// Running, shutdown) which refers to the FSM state.
 struct server_context_t
 {
   // Borrowed, never owned: the LAUNCHER owns the one cvar_state_t and the one
-  // command_table_t for the process and hands them to server::Init(). In the
+  // command_table_t for the process and hands them to server::init(). In the
   // integrated build these are the same two objects the client holds, so a
-  // console toggle finally reaches the simulating side. Non-null from Init()
-  // until Shutdown().
+  // console toggle finally reaches the simulating side. Non-null from init()
+  // until shutdown().
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
 
   // The @Mirrored values as they were last broadcast. Change detection is a
   // member compare of *cvars against this (see shared/network/cvar_mirror.hpp),
   // which is why a direct field write in server code replicates and there is no
-  // Set() to forget to call. Seeded from *cvars in Init(), so the first tick
+  // Set() to forget to call. Seeded from *cvars in init(), so the first tick
   // broadcasts nothing — a joining client gets the full set at connect instead.
   cvars::cvar_state_t last_broadcast_cvars;
 

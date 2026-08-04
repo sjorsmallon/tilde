@@ -32,7 +32,6 @@ private:
   // Own state
   shared::map_t map;
   camera_t camera;
-  float fov = 60.0f;
   float aspect = 1.77f;
   float z_near = 0.1f;
   float z_far = 16000.0f;

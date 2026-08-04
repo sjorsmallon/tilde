@@ -414,7 +414,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
 
         linalg::vec2 screen_pos = linalg::view_to_screen(
             view_pos, view.display_size, view.camera.orthographic,
-            view.camera.ortho_height, view.fov);
+            view.camera.ortho_height, view.camera.fov_degrees);
 
         if (screen_pos.x >= x_min && screen_pos.x <= x_max &&
             screen_pos.y >= y_min && screen_pos.y <= y_max)
@@ -571,7 +571,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 
       linalg::vec2 screen_pos = linalg::view_to_screen(
           view_pos, view.display_size, view.camera.orthographic,
-          view.camera.ortho_height, view.fov);
+          view.camera.ortho_height, view.camera.fov_degrees);
 
       if (screen_pos.x >= x_min && screen_pos.x <= x_max &&
           screen_pos.y >= y_min && screen_pos.y <= y_max)

@@ -28,11 +28,11 @@ namespace client {
 // Without that, every get_mesh here resolved against an empty manifest the
 // launcher's assets::init() never filled -- see the ownership note in asset.hpp.
 
-GAME_CLIENT_API bool Init(cvars::cvar_state_t *cvar_state,
+GAME_CLIENT_API bool init(cvars::cvar_state_t *cvar_state,
                           cvars::command_table_t *command_table,
                           assets::asset_state_t *asset_state);
 GAME_CLIENT_API bool Tick(); // Returns false if should quit
-GAME_CLIENT_API void Shutdown();
+GAME_CLIENT_API void shutdown();
 
 // Integrated build only: hand the client a pointer to the server's session
 // so the renderer can read entity pools directly. Pass nullptr in

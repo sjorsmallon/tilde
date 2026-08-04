@@ -22,7 +22,8 @@ struct viewport_state_t
   // New fields for projection
   linalg::vec2 display_size;
   float aspect_ratio;
-  float fov;
+  // FOV is not duplicated here — it belongs to `camera`, and a second copy is a
+  // second thing that can disagree with the projection the frame was drawn with.
 };
 
 // Forward declaration of the editor state or game state if needed

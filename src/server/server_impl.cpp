@@ -361,7 +361,7 @@ static bool load_map_into_state(const std::string &map_path)
   return true;
 }
 
-bool Init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
+bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
           assets::asset_state_t *asset_state)
 {
   log_terminal("--- Initializing Server ---");
@@ -1104,7 +1104,7 @@ bool Tick()
   float tick_dt = static_cast<float>(get_tick_interval());
   if (!ctx.physics)
   {
-    log_error("Server tick with no physics state — Init() must have failed");
+    log_error("Server tick with no physics state — init() must have failed");
     return false;
   }
   update_bots(g_bots, ctx, tick_dt);
@@ -1352,7 +1352,7 @@ bool Tick()
   return true;
 }
 
-void Shutdown()
+void shutdown()
 {
   timed_function();
   log_terminal("--- Shutting down Server ---");
@@ -1360,7 +1360,7 @@ void Shutdown()
 
 double get_tick_interval()
 {
-  // Called by the launcher every frame, including before Init() in a
+  // Called by the launcher every frame, including before init() in a
   // hypothetical reordering -- fall back to the .def default rather than
   // dereferencing null.
   const float tickrate =

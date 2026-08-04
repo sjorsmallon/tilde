@@ -58,7 +58,7 @@ static void draw_ring(VkCommandBuffer cmd, const vec3 &center, float radius,
     if (i % 8 == 0)
     {
       float s = radius * 0.05f;
-      renderer::DrawAABB(cmd, p1 - vec3{s, s, s}, p1 + vec3{s, s, s}, color);
+      renderer::draw_AABB(cmd, p1 - vec3{s, s, s}, p1 + vec3{s, s, s}, color);
     }
   }
 }

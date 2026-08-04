@@ -180,10 +180,12 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
       {
         vec2 s0 = view_to_screen(v0, last_view.display_size,
                                  last_view.camera.orthographic,
-                                 last_view.camera.ortho_height, last_view.fov);
+                                 last_view.camera.ortho_height,
+                                 last_view.camera.fov_degrees);
         vec2 s1 = view_to_screen(v1, last_view.display_size,
                                  last_view.camera.orthographic,
-                                 last_view.camera.ortho_height, last_view.fov);
+                                 last_view.camera.ortho_height,
+                                 last_view.camera.fov_degrees);
 
                                 
         vec2 drag_direction_in_screen_space = {s1.x - s0.x, s1.y - s0.y};

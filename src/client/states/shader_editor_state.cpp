@@ -112,8 +112,8 @@ void Shader_Editor_State::on_enter()
   load_preview_mesh();
 
   // Create Vulkan resources (descriptor set, UBO, pipeline layout)
-  VkDevice device = renderer::GetDevice();
-  VkPhysicalDevice physical_device = renderer::GetPhysicalDevice();
+  VkDevice device = renderer::get_VkDevice();;
+  VkPhysicalDevice physical_device = renderer::get_VkPhysicalDevice();
 
   if (!create_preview_resources(device, physical_device, preview_pipeline))
   {
@@ -154,7 +154,7 @@ void Shader_Editor_State::on_enter()
 void Shader_Editor_State::on_exit()
 {
   log_terminal("[ShaderEditor] Exiting shader editor state");
-  VkDevice device = renderer::GetDevice();
+  VkDevice device = renderer::get_VkDevice();;
   vkDeviceWaitIdle(device);
   destroy_preview_resources(device, preview_pipeline);
   pipeline_ready = false;
@@ -191,10 +191,10 @@ void Shader_Editor_State::recompile_preview_shaders()
     return;
   }
 
-  VkDevice device = renderer::GetDevice();
+  VkDevice device = renderer::get_VkDevice();;
   vkDeviceWaitIdle(device);
 
-  if (create_preview_pipeline_from_spv(device, renderer::GetRenderPass(),
+  if (create_preview_pipeline_from_spv(device, renderer::get_VkRenderPass(),
                                        vert_spv, frag_spv, preview_pipeline))
   {
     pipeline_ready = true;
@@ -377,13 +377,11 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
     look_at(render_camera, render_camera.orbit_target);
   }
 
-  // Set up render_view so draw_line etc. use the correct VP matrix
+  // Set the view so draw_line etc. use the correct VP matrix
   renderer::render_view_t view_def;
   view_def.viewport = {{0, 0}, {1, 1}};
   view_def.camera = render_camera;
-  ecs::Registry reg;
-  renderer::render_view(cmd, view_def, reg);
-  renderer::set_viewport(cmd, view_def.viewport);
+  renderer::set_view(cmd, view_def);
 
   if (!pipeline_ready || preview_pipeline.pipeline == VK_NULL_HANDLE)
     return;
@@ -392,11 +390,11 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
     return;
 
   renderer::mesh_gpu_info_t mesh_info;
-  if (!renderer::GetMeshGPUInfo(mesh_handle, mesh_info))
+  if (!renderer::get_mesh_gpu_info(mesh_handle, mesh_info))
     return;
 
   // Build UBO data — reconstruct view/proj from camera the same way
-  // render_view does, but using linalg::mat4f for the UBO layout.
+  // set_view does, but using linalg::mat4f for the UBO layout.
   auto [forward, right, up] = get_orientation_vectors(render_camera);
   linalg::vec3f eye = render_camera.position;
 
@@ -413,8 +411,9 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
   view[3] = {-linalg::dot(r, eye), -linalg::dot(u, eye),
              linalg::dot(f, eye), 1.0f};
 
-  // Projection — match render_view's perspective (90 deg fov, Vulkan Y-flip)
-  float fov_rad = 1.5708f; // 90 degrees
+  // Projection — match set_view's perspective (Vulkan Y-flip). Same camera
+  // FOV the pick ray uses, so clicking a light lands where it is drawn.
+  float fov_rad = linalg::to_radians(render_camera.fov_degrees);
   float aspect = 16.0f / 9.0f;
   {
     int window_width, window_height;
@@ -482,7 +481,7 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
   memcpy(ubo.param_float, param_floats.data(), sizeof(float) * PARAM_FLOAT_COUNT);
 
   // Upload UBO to the current frame's buffer to avoid GPU/CPU races.
-  uint32_t frame = renderer::GetCurrentFrame();
+  uint32_t frame = renderer::get_current_frame_idx_in_swapchain();
   memcpy(preview_pipeline.ubo_mapped[frame], &ubo, sizeof(ubo));
 
   // Bind pipeline
@@ -740,8 +739,8 @@ void Shader_Editor_State::render_ui()
           const assets::pbr_material_asset_t *mat = assets::get(pbr_material_handle);
           if (mat)
           {
-            vkDeviceWaitIdle(renderer::GetDevice());
-            bind_pbr_textures(renderer::GetDevice(), preview_pipeline, *mat);
+            vkDeviceWaitIdle(renderer::get_VkDevice());
+            bind_pbr_textures(renderer::get_VkDevice(), preview_pipeline, *mat);
           }
         }
       }

@@ -29,17 +29,17 @@ namespace server {
 // client_api.hpp): this DLL has its own copy of the asset state pointer. The
 // server resolves meshes when baking map collision, so it needs the launcher's
 // one state too.
-GAME_SERVER_API bool Init(cvars::cvar_state_t *cvar_state,
+GAME_SERVER_API bool init(cvars::cvar_state_t *cvar_state,
                           cvars::command_table_t *command_table,
                           assets::asset_state_t *asset_state);
 GAME_SERVER_API bool Tick();
-GAME_SERVER_API void Shutdown();
+GAME_SERVER_API void shutdown();
 GAME_SERVER_API double get_tick_interval();
 GAME_SERVER_API uint32_t get_tick_number();
 
 // Integrated-mode only: returns a pointer to the server's authoritative session
 // so the client can render directly from it instead of going through the
-// snapshot/interpolation pipeline. Returns nullptr if Init() has not run.
+// snapshot/interpolation pipeline. Returns nullptr if init() has not run.
 GAME_SERVER_API const shared::game_session_t *get_session_for_integrated_client();
 
 // Reload the server with a different map. Wipes the current session, physics

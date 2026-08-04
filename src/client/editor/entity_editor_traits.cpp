@@ -326,19 +326,19 @@ void draw_selection_highlight(const entities::Entity *e,
   // Push a very strong depth bias so the selection wireframe renders in front
   // of the solid barycentric mesh. The constant factor dominates for
   // flat-facing surfaces; the slope factor helps for oblique angles.
-  renderer::SetLineDepthBias(-200.0f, -10.0f);
+  renderer::set_line_depth_bias(-200.0f, -10.0f);
 
   // 1. Try mesh wireframe from render component
   if (try_draw_mesh_selection_wireframe(e, renderer.get_command_buffer(), color))
   {
-    renderer::SetLineDepthBias(-2.0f, -1.0f);
+    renderer::set_line_depth_bias(-2.0f, -1.0f);
     return;
   }
 
   // 2. Try per-entity shape wireframe (wedge, AABB, trigger volume, etc.)
   if (dispatch_selection_wireframe(e, renderer, color, grid_step))
   {
-    renderer::SetLineDepthBias(-2.0f, -1.0f);
+    renderer::set_line_depth_bias(-2.0f, -1.0f);
     return;
   }
 
@@ -347,7 +347,7 @@ void draw_selection_highlight(const entities::Entity *e,
   renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
                          (bounds.max - bounds.min) * 0.5f, color);
 
-  renderer::SetLineDepthBias(-2.0f, -1.0f);
+  renderer::set_line_depth_bias(-2.0f, -1.0f);
 }
 
 // ===================================================================

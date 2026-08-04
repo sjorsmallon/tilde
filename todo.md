@@ -344,6 +344,92 @@ the template for the rest, alongside the map-transfer messages.
 
 ## Rendering
 
+> **Renderer API audit, 2026-08-04.** Read-through of `renderer.{hpp,cpp}`
+> looking for low-hanging fruit before adding the scope overlay. Two items were
+> fixed on the spot (below); the rest are recorded here rather than done,
+> because none of them is currently costing a frame or a bug. The through-line:
+> the renderer is half immediate-mode and half deferred, and **the header does
+> not say which call is which**. `draw_line` takes a `VkCommandBuffer` it
+> ignores; ` draw_filled_polygon` next to it draws immediately. Every remaining
+> item below is a consequence of that seam.
+
+- [x] ~~**`set_line_depth_bias` was per-frame, not per-call.**~~ **FIXED
+      2026-08-04.** The header promised "bias for subsequent draw_line calls",
+      but `draw_line` batches and `flush_lines` drew the whole frame with one
+      `vkCmdSetDepthBias` taken from the globals at flush time — so the LAST
+      value set in a frame applied to every line in it.
+      * Live consequence: `entity_editor_traits.cpp:329` set `-200` to pull a
+        selection outline in front of the solid mesh, then restored `-2` before
+        returning at :334/:341/:350. The restore always won, so **the -200 never
+        took effect once** and selection outlines z-fought.
+      * It was half-working in a way that hid it: `draw_mesh(wireframe=true)`
+        is immediate and applies the bias correctly at call time
+        (`renderer.cpp:2840`). So a selected entity WITH a mesh outlined
+        correctly and one falling back to wire boxes/wedges did not — the same
+        feature behaving two ways depending on the entity.
+      * Fix: the line batch is now a list of `line_run_t` split at each bias
+        change (`renderer.cpp:907`), one `vkCmdDraw` per run. Splitting happens
+        at first `draw_line` after a change, not in `set_line_depth_bias`, so a
+        bias set with no lines after it costs nothing. Typically 1–2 draws.
+- [x] ~~**`render_view` did not render a view.**~~ **FIXED 2026-08-04.** It set
+      three globals (`g_current_view_proj`, `g_camera_right/up`) and returned;
+      its `ecs::Registry` parameter was entirely unused (`(void)registry` under
+      a TODO) and all three call sites built an empty `ecs::Registry reg;` just
+      to feed it. Renamed `set_view(cmd, view)`, registry parameter dropped,
+      three dead locals and the `old_ideas/ecs.hpp` include deleted. This also
+      explains a redundancy the name had been causing: `set_view` already calls
+      `set_viewport`, and two call sites called it again immediately after —
+      nobody does that on purpose, they do it because the name made the first
+      call invisible.
+- [ ] **` draw_filled_polygon` fails silently on overflow.** `renderer.cpp:1197`
+      just `return`s when its ring buffer is full — geometry vanishes with no
+      word. `draw_line` two functions away does `log_error` for the same
+      condition. Two ring buffers, two overflow policies, one of them against
+      the house rule.
+- [ ] **`reset_debug_face_buffer()` is a remember-or-lose API.** One caller
+      (`play_state.cpp:1477`); the editor never calls it. Latent only because
+      the editor does not use ` draw_filled_polygon` yet. The line batch clears
+      itself at flush and the face buffer does not — same problem, two
+      solutions, inconsistently applied. Make it self-resetting at flush like
+      the lines, and the call site disappears.
+- [ ] **One global VP matrix means one camera, ever.** Every draw reads
+      `g_current_view_proj`. Fine today, but picture-in-picture scopes,
+      mirrors, shadow maps and a render-to-texture minimap each need surgery in
+      the draw layer rather than a parameter. Worth knowing before promising
+      any of them; it is a live reason to prefer the single-render scope over
+      PiP (see the scope overlay item).
+- [ ] **PascalCase / snake_case split down the middle, tracking nothing.**
+      `draw_AABB`, `draw__wire_AABB`, ` draw_filled_polygon`, `set_line_depth_bias`,
+      `WireframeSupported`, `upload_texture`, `update_particles`, `begin_frame` vs
+      `draw_line`, `draw_mesh`, `draw_arrow`, `draw_wedge`, `draw_particles`,
+      `set_view`, `set_viewport`, `invalidate_mesh_gpu`. A frozen half
+      migration. Cheap now, and the kind of thing that only gets more expensive.
+- [ ] **`renderer.hpp:128` documents its own confusion.** The `begin_render_pass`
+      comment says "this is a bit 'leaky' regarding RenderPass state", then
+      trails off into an unfinished "A cleaner way for this simple app:". The
+      real contract is simple and worth stating: `pre_render` outside the pass,
+      `render_3d` inside it, ImGui appended in `end_frame`. That header is where
+      anyone goes to learn frame order.
+- [ ] **`update_particles` / `draw_particles` take the same 20-field struct
+      twice** — once before the pass, once inside, keyed by `entity_id`, with
+      nothing checking the two match or that the order was respected.
+- [ ] **Scope overlay** (stage 2 of right-click zoom; stage 1 landed
+      2026-08-04). Needs a `draw_fullscreen_texture(cmd, texture, tint)`
+      primitive: screen space, no camera, no depth, alpha blended. Deliberately
+      must NOT route through `set_view`/`g_current_view_proj` — it wants raw
+      NDC and its own small pipeline. Drop `scope.png` in `resources/sprites`
+      and it is a manifest id for free. Draw it last in `Play_State::render_3d`
+      (over the world, under all ImGui) and gate on `zoom_fraction`. Note
+      `r_zoom_time` is 0 today, so overlay and FOV snap together; if it becomes
+      non-zero, fade the overlay's tint alpha with `zoom_fraction` or it pops in
+      late and reads as a bug.
+- [ ] **Post-process pass** (stage 3, and the prerequisite for any glass/lens
+      deformation around the scope border). Refraction has to RESAMPLE the
+      rendered scene, which an overlay cannot do, so the scene must render to an
+      offscreen colour target first: extra render pass, image + sampler,
+      descriptor set, fullscreen-triangle pipeline. Not on the critical path for
+      zoom, but it is also what bloom, damage vignette and colour grading all
+      want, so it pays for itself the second time.
 - [ ] irradiance map
 - [ ] environment lighting
 - [ ] pack PBR textures into one RGB (ORM: occlusion, roughness, metallic)

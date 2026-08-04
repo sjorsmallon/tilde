@@ -311,10 +311,10 @@ static std::vector<VkSemaphore> g_image_available_semaphores;
 static std::vector<VkSemaphore> g_render_finished_semaphores;
 static std::vector<VkFence> g_in_flight_fences;
 
-static uint32_t g_current_frame = 0;
+static uint32_t g_current_frame_idx_in_swapchain = 0;
 const int MAX_FRAMES_IN_FLIGHT = 2;
 static bool g_swapchain_rebuild = false;
-static uint32_t g_image_index = 0; // Stored between BeginFrame and EndFrame
+static uint32_t g_image_index = 0; // Stored between begin_frame and end_frame
 
 // --- Particle System ---
 
@@ -905,8 +905,23 @@ static float g_line_depth_bias_slope = -1.0f;
 static VkPipeline g_line_pipeline = VK_NULL_HANDLE;
 
 // Batched line draw list — accumulated via draw_line(), flushed once per frame.
+//
+// Split into RUNS at every depth-bias change. Depth bias is pipeline dynamic
+// state, so one flat batch can only carry one value, and the whole frame would
+// silently take whichever bias happened to be set last — which is exactly what
+// used to happen: the editor's -200 selection-outline bias was always undone by
+// its own restore before the single flush, so it never once took effect.
+struct line_run_t
+{
+  float    depth_bias_constant;
+  float    depth_bias_slope;
+  uint32_t first_vertex;
+  uint32_t vertex_count;
+};
+
 static constexpr uint32_t LINE_BATCH_MAX_VERTICES = 131072; // 64k lines
 static std::vector<Vertex> g_line_batch;
+static std::vector<line_run_t> g_line_runs;
 static VkBuffer g_line_batch_buffer = VK_NULL_HANDLE;
 static VkDeviceMemory g_line_batch_memory = VK_NULL_HANDLE;
 static void *g_line_batch_mapped = nullptr;
@@ -1184,7 +1199,7 @@ void reset_debug_face_buffer()
   g_debug_face_write_offset = 0;
 }
 
-void DrawFilledPolygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &verts,
+void  draw_filled_polygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &verts,
                        color_t color)
 {
   if (g_debug_face_pipeline == VK_NULL_HANDLE || verts.size() < 3)
@@ -1237,10 +1252,26 @@ void DrawFilledPolygon(VkCommandBuffer cmd, const std::vector<linalg::vec3> &ver
   vkCmdDraw(cmd, (uint32_t)(tri_count * 3), 1, first_vertex, 0);
 }
 
-void SetLineDepthBias(float constant_factor, float slope_factor)
+void set_line_depth_bias(float constant_factor, float slope_factor)
 {
   g_line_depth_bias_constant = constant_factor;
   g_line_depth_bias_slope = slope_factor;
+}
+
+// The run these vertices belong to: the last one if its bias still matches the
+// current setting, otherwise a fresh one starting here. Splitting at first USE
+// rather than in set_line_depth_bias means a bias set with no lines after it costs
+// nothing.
+static line_run_t &open_line_run()
+{
+  if (g_line_runs.empty() ||
+      g_line_runs.back().depth_bias_constant != g_line_depth_bias_constant ||
+      g_line_runs.back().depth_bias_slope != g_line_depth_bias_slope)
+  {
+    g_line_runs.push_back({g_line_depth_bias_constant, g_line_depth_bias_slope,
+                           (uint32_t)g_line_batch.size(), 0});
+  }
+  return g_line_runs.back();
 }
 
 void draw_line(VkCommandBuffer /*cmd*/, const linalg::vec3 &start,
@@ -1258,9 +1289,12 @@ void draw_line(VkCommandBuffer /*cmd*/, const linalg::vec3 &start,
   float g = color.g / 255.0f;
   float b = color.b / 255.0f;
 
+  line_run_t &run = open_line_run();
+
   // bary = {1,1,1} so the frag shader outputs full colour with no edge mixing
   g_line_batch.push_back({{start.x, start.y, start.z}, {r, g, b}, {1.f, 1.f, 1.f}});
   g_line_batch.push_back({{end.x, end.y, end.z}, {r, g, b}, {1.f, 1.f, 1.f}});
+  run.vertex_count += 2;
 }
 
 static void flush_lines(VkCommandBuffer cmd)
@@ -1272,7 +1306,6 @@ static void flush_lines(VkCommandBuffer cmd)
   memcpy(g_line_batch_mapped, g_line_batch.data(), vertex_count * sizeof(Vertex));
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_line_pipeline);
-  vkCmdSetDepthBias(cmd, g_line_depth_bias_constant, 0.0f, g_line_depth_bias_slope);
 
   VkBuffer buffers[] = {g_line_batch_buffer};
   VkDeviceSize offsets[] = {0};
@@ -1288,9 +1321,19 @@ static void flush_lines(VkCommandBuffer cmd)
 
   vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                      sizeof(PushConstants), &pc);
-  vkCmdDraw(cmd, vertex_count, 1, 0, 0);
+
+  // One draw per bias run. Typically one or two — the split only happens where
+  // a caller actually asked for a different bias.
+  for (const line_run_t &run : g_line_runs)
+  {
+    if (run.vertex_count == 0)
+      continue;
+    vkCmdSetDepthBias(cmd, run.depth_bias_constant, 0.0f, run.depth_bias_slope);
+    vkCmdDraw(cmd, run.vertex_count, 1, run.first_vertex, 0);
+  }
 
   g_line_batch.clear();
+  g_line_runs.clear();
 }
 
 static void create_aabb_mesh()
@@ -1952,13 +1995,13 @@ static void cleanup_displacement_texture()
 // Public GPU texture upload / destroy
 // ---------------------------------------------------------------------------
 
-gpu_texture_t UploadTexture(const assets::texture_asset_t *texture)
+gpu_texture_t upload_texture(const assets::texture_asset_t *texture)
 {
   gpu_texture_t result{};
 
   if (!texture || texture->pixels.empty() || texture->width <= 0 || texture->height <= 0)
   {
-    log_error("[renderer] UploadTexture: invalid texture_asset_t");
+    log_error("[renderer] upload_texture: invalid texture_asset_t");
     return result;
   }
 
@@ -1991,7 +2034,7 @@ gpu_texture_t UploadTexture(const assets::texture_asset_t *texture)
   img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   if (vkCreateImage(g_device, &img_info, nullptr, &result.image) != VK_SUCCESS)
   {
-    log_error("[renderer] UploadTexture: vkCreateImage failed");
+    log_error("[renderer] upload_texture: vkCreateImage failed");
     vkDestroyBuffer(g_device, staging_buf, nullptr);
     vkFreeMemory(g_device, staging_mem, nullptr);
     return {};
@@ -2058,7 +2101,7 @@ gpu_texture_t UploadTexture(const assets::texture_asset_t *texture)
   return result;
 }
 
-void DestroyTexture(gpu_texture_t &tex)
+void destroy_texture(gpu_texture_t &tex)
 {
   if (tex.sampler) { vkDestroySampler(g_device, tex.sampler, nullptr);    tex.sampler = VK_NULL_HANDLE; }
   if (tex.view)    { vkDestroyImageView(g_device, tex.view, nullptr);     tex.view    = VK_NULL_HANDLE; }
@@ -2655,7 +2698,7 @@ static void init_font()
 // Draw grid subdivision lines on each face of an AABB.
 // Each face is subdivided into cells_per_face x cells_per_face cells.
 // perimeter_color for the 12 outer edges, inner_color for inner lines.
-static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
+static void draw_AABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
                                 const linalg::vec3 &max,
                                 color_t perimeter_color, color_t inner_color,
                                 int cells_per_face = 8)
@@ -2724,7 +2767,7 @@ static void DrawAABBGridOverlay(VkCommandBuffer cmd, const linalg::vec3 &min,
   draw_face_grid(1, 2, 0, min.x, max.x); // YZ faces
 }
 
-void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
+void draw_AABB(VkCommandBuffer cmd, const linalg::vec3 &min,
               const linalg::vec3 &max, color_t color, bool as_wireframe,
               bool random_color, uint32_t random_seed)
 {
@@ -2732,7 +2775,7 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
   {
     // Draw grid overlay (perimeter + inner subdivision lines).
     // Use the caller's colour for the perimeter; dim only the alpha for inner lines.
-    DrawAABBGridOverlay(cmd, min, max, color, with_alpha(color, 0x44));
+    draw_AABBGridOverlay(cmd, min, max, color, with_alpha(color, 0x44));
     return;
   }
 
@@ -2790,7 +2833,7 @@ void DrawAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
   vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
 }
 
-void DrawWireAABB(VkCommandBuffer cmd, const linalg::vec3 &min,
+void draw__wire_AABB(VkCommandBuffer cmd, const linalg::vec3 &min,
                   const linalg::vec3 &max, color_t color)
 {
   // Just the 12 outer edges — no inner grid.
@@ -2822,10 +2865,10 @@ void draw_mesh(VkCommandBuffer cmd,
 
   if (params.wireframe && g_mesh_wireframe_pipeline == VK_NULL_HANDLE)
     return;
-  if (!params.wireframe && params.shader == ShaderType::Textured &&
+  if (!params.wireframe && params.shader ==  shader_type::Textured &&
       g_disp_textured_pipeline == VK_NULL_HANDLE)
     return;
-  if (!params.wireframe && params.shader != ShaderType::Textured &&
+  if (!params.wireframe && params.shader !=  shader_type::Textured &&
       g_mesh_pipeline == VK_NULL_HANDLE)
     return;
 
@@ -2839,13 +2882,13 @@ void draw_mesh(VkCommandBuffer cmd,
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_wireframe_pipeline);
     vkCmdSetDepthBias(cmd, g_line_depth_bias_constant, 0.0f, g_line_depth_bias_slope);
   }
-  else if (params.shader == ShaderType::Textured)
+  else if (params.shader ==  shader_type::Textured)
   {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_layout,
                             0, 1, &g_disp_texture_ds, 0, nullptr);
   }
-  else if (params.shader == ShaderType::Lit)
+  else if (params.shader ==  shader_type::Lit)
   {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_lit_pipeline);
   }
@@ -2890,7 +2933,7 @@ void draw_mesh(VkCommandBuffer cmd,
   mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
 
   // Textured displacement path — no color, just MVP
-  if (params.shader == ShaderType::Textured && !params.wireframe)
+  if (params.shader ==  shader_type::Textured && !params.wireframe)
   {
     DispTexturedPC pc{};
     memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
@@ -2927,7 +2970,7 @@ void draw_mesh(VkCommandBuffer cmd,
 
   auto push_and_draw = [&](const vec3f &draw_color, uint32_t index_count, uint32_t first_index)
   {
-    if (params.shader == ShaderType::Lit)
+    if (params.shader ==  shader_type::Lit)
     {
       LitPushConstants lpc{};
       memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
@@ -3001,8 +3044,7 @@ void set_viewport(VkCommandBuffer cmd, const viewport_t &vp)
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
-void render_view(VkCommandBuffer cmd, const render_view_t &view,
-                 const ecs::Registry &registry)
+void set_view(VkCommandBuffer cmd, const render_view_t &view)
 {
   set_viewport(cmd, view.viewport);
 
@@ -3031,7 +3073,8 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
   }
   else
   {
-    proj = mat4_t::perspective(1.5708f, aspect, 1.0f, 50000.0f); // 90 deg fov
+    proj = mat4_t::perspective(linalg::to_radians(view.camera.fov_degrees),
+                               aspect, 1.0f, 50000.0f);
   }
 
   // View Matrix from Camera
@@ -3064,13 +3107,9 @@ void render_view(VkCommandBuffer cmd, const render_view_t &view,
   g_camera_up[0] = viewMat.m[1];
   g_camera_up[1] = viewMat.m[5];
   g_camera_up[2] = viewMat.m[9];
-
-  // TODO: Use view.camera and render entities from registry
-  // logic to iterate and draw would go here
-  (void)registry; // unused for now
 }
 
-void ProcessEvent(const SDL_Event *event)
+void process_event(const SDL_Event *event)
 {
   ImGui_ImplSDL2_ProcessEvent(event);
   if (event->type == SDL_WINDOWEVENT &&
@@ -3103,7 +3142,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
 }
 #endif
 
-bool Init(SDL_Window *window)
+bool init(SDL_Window *window)
 {
   g_window = window;
 
@@ -3486,7 +3525,7 @@ bool Init(SDL_Window *window)
   return true;
 }
 
-void Shutdown()
+void shutdown()
 {
   vkDeviceWaitIdle(g_device);
 
@@ -3569,7 +3608,7 @@ void Shutdown()
   // Our Init took SDL_Window*, so we don't own it.
 }
 
-VkCommandBuffer BeginFrame()
+VkCommandBuffer begin_frame()
 {
   if (g_swapchain_rebuild)
   {
@@ -3577,12 +3616,12 @@ VkCommandBuffer BeginFrame()
     g_swapchain_rebuild = false;
   }
 
-  vkWaitForFences(g_device, 1, &g_in_flight_fences[g_current_frame], VK_TRUE,
+  vkWaitForFences(g_device, 1, &g_in_flight_fences[g_current_frame_idx_in_swapchain], VK_TRUE,
                   UINT64_MAX);
 
   VkResult result =
       vkAcquireNextImageKHR(g_device, g_swapchain, UINT64_MAX,
-                            g_image_available_semaphores[g_current_frame],
+                            g_image_available_semaphores[g_current_frame_idx_in_swapchain],
                             VK_NULL_HANDLE, &g_image_index);
 
   if (result == VK_ERROR_OUT_OF_DATE_KHR)
@@ -3596,10 +3635,10 @@ VkCommandBuffer BeginFrame()
     return VK_NULL_HANDLE;
   }
 
-  vkResetFences(g_device, 1, &g_in_flight_fences[g_current_frame]);
+  vkResetFences(g_device, 1, &g_in_flight_fences[g_current_frame_idx_in_swapchain]);
 
-  vkResetCommandBuffer(g_command_buffers[g_current_frame], 0);
-  VkCommandBuffer cmdbuf = g_command_buffers[g_current_frame];
+  vkResetCommandBuffer(g_command_buffers[g_current_frame_idx_in_swapchain], 0);
+  VkCommandBuffer cmdbuf = g_command_buffers[g_current_frame_idx_in_swapchain];
 
   VkCommandBufferBeginInfo begin_info{};
   begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -3616,7 +3655,7 @@ VkCommandBuffer BeginFrame()
   return cmdbuf;
 }
 
-void BeginRenderPass(VkCommandBuffer cmd)
+void begin_render_pass(VkCommandBuffer cmd)
 {
   VkRenderPassBeginInfo render_pass_info{};
   render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3670,7 +3709,7 @@ static void render_announcement(VkCommandBuffer cmd)
   ImGui::End();
 }
 
-void EndFrame(VkCommandBuffer cmd)
+void end_frame(VkCommandBuffer cmd)
 {
   flush_lines(cmd);
   render_announcement(cmd);
@@ -3691,7 +3730,7 @@ void EndFrame(VkCommandBuffer cmd)
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
   VkSemaphore wait_semaphores[] = {
-      g_image_available_semaphores[g_current_frame]};
+      g_image_available_semaphores[g_current_frame_idx_in_swapchain]};
   VkPipelineStageFlags wait_stages[] = {
       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
   submit_info.waitSemaphoreCount = 1;
@@ -3702,12 +3741,12 @@ void EndFrame(VkCommandBuffer cmd)
   submit_info.pCommandBuffers = &cmd;
 
   VkSemaphore signal_semaphores[] = {
-      g_render_finished_semaphores[g_current_frame]};
+      g_render_finished_semaphores[g_current_frame_idx_in_swapchain]};
   submit_info.signalSemaphoreCount = 1;
   submit_info.pSignalSemaphores = signal_semaphores;
 
   if (vkQueueSubmit(g_graphics_queue, 1, &submit_info,
-                    g_in_flight_fences[g_current_frame]) != VK_SUCCESS)
+                    g_in_flight_fences[g_current_frame_idx_in_swapchain]) != VK_SUCCESS)
   {
     log_error("Failed to submit draw command buffer!");
     return;
@@ -3734,16 +3773,16 @@ void EndFrame(VkCommandBuffer cmd)
     log_error("Failed to present swap chain image!");
   }
 
-  g_current_frame = (g_current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+  g_current_frame_idx_in_swapchain = (g_current_frame_idx_in_swapchain + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-VkDevice GetDevice() { return g_device; }
-VkRenderPass GetRenderPass() { return g_render_pass; }
-VkPhysicalDevice GetPhysicalDevice() { return g_physical_device; }
-uint32_t GetCurrentFrame() { return g_current_frame; }
-int GetMaxFramesInFlight() { return MAX_FRAMES_IN_FLIGHT; }
+VkDevice get_VkDevice() { return g_device; }
+VkRenderPass get_VkRenderPass() { return g_render_pass; }
+VkPhysicalDevice get_VkPhysicalDevice() { return g_physical_device; }
+uint32_t get_current_frame_idx_in_swapchain() { return g_current_frame_idx_in_swapchain; }
+int get_max_frames_in_flight() { return MAX_FRAMES_IN_FLIGHT; }
 
-bool GetMeshGPUInfo(assets::asset_handle_t<assets::mesh_asset_t> handle,
+bool get_mesh_gpu_info(assets::asset_handle_t<assets::mesh_asset_t> handle,
                     mesh_gpu_info_t &out)
 {
   if (!handle.valid())
@@ -3757,7 +3796,7 @@ bool GetMeshGPUInfo(assets::asset_handle_t<assets::mesh_asset_t> handle,
   return true;
 }
 
-void UpdateParticles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
+void update_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
 {
   if (g_particle_compute_pipeline == VK_NULL_HANDLE) return;
   if (params.max_particles == 0) return;
@@ -3843,7 +3882,7 @@ void draw_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params
   // Extract camera right and up from the view-projection matrix's inverse
   // Actually, we need these from the view matrix. The view matrix rows give us
   // camera axes. g_current_view_proj = proj * view, so we can't easily extract.
-  // Instead, we'll store camera vectors when set_viewport / render_view is called.
+  // Instead, we'll store camera vectors when set_viewport / set_view is called.
   // For now, extract from the view-proj matrix inverse... or better, we just
   // store the camera vectors as static globals.
   pc.camera_right[0] = g_camera_right[0];
@@ -4002,46 +4041,68 @@ void draw_wedge(VkCommandBuffer cmd, const shared::wedge_t &wedge,
   }
 }
 
+// Debug hitbox shapes are LINE primitives, not wireframe-mode meshes. The mesh
+// path needed the Sphere/Cylinder assets to resolve AND the device to support
+// fillModeNonSolid, and draw_mesh returns silently when either is missing --
+// so on a device without it the head hitbox simply never appeared. Lines go
+// through the same batch as every other debug draw and have no such dependency.
+
+// One circle of `segment_count` segments on the plane spanned by `axis_u` and
+// `axis_v`, both expected to be unit vectors.
+static void draw_circle(VkCommandBuffer cmd, const linalg::vec3 &center,
+                        const linalg::vec3 &axis_u, const linalg::vec3 &axis_v,
+                        float radius, color_t color, int segment_count)
+{
+  linalg::vec3 previous = center + axis_u * radius;
+  for (int segment = 1; segment <= segment_count; ++segment)
+  {
+    const float angle = (2.0f * 3.14159265f * segment) / segment_count;
+    const linalg::vec3 current =
+        center + axis_u * (std::cos(angle) * radius) + axis_v * (std::sin(angle) * radius);
+    draw_line(cmd, previous, current, color);
+    previous = current;
+  }
+}
+
 void draw_hitbox_sphere(VkCommandBuffer cmd, const linalg::vec3 &center,
                         float radius, color_t color)
 {
-  // Draw sphere using primitive mesh
-  auto sphere_mesh = assets::get_mesh(entities::mesh_asset::Sphere);
-  if (!sphere_mesh.valid())
-    return;
+  constexpr int SEGMENTS = 20;
+  const linalg::vec3 x{1, 0, 0};
+  const linalg::vec3 y{0, 1, 0};
+  const linalg::vec3 z{0, 0, 1};
 
-  // Scale by radius * 2 (primitive sphere has diameter 1.0, radius 0.5)
-  draw_mesh(cmd, sphere_mesh, {.position = center,
-                               .scale = {radius * 2.0f, radius * 2.0f, radius * 2.0f},
-                               .color = color,
-                               .wireframe = true});
+  // Three great circles — enough to read as a sphere from any angle.
+  draw_circle(cmd, center, x, z, radius, color, SEGMENTS); // horizontal
+  draw_circle(cmd, center, x, y, radius, color, SEGMENTS); // vertical, facing Z
+  draw_circle(cmd, center, z, y, radius, color, SEGMENTS); // vertical, facing X
 }
 
 void draw_hitbox_capsule(VkCommandBuffer cmd, const linalg::vec3 &center,
                          float radius, float half_height, color_t color)
 {
-  // Capsule = cylinder + sphere on top + sphere on bottom
-  // Center is at the middle of the capsule
+  constexpr int SEGMENTS = 20;
+  const linalg::vec3 x{1, 0, 0};
+  const linalg::vec3 z{0, 0, 1};
 
-  // Draw cylinder body
-  auto cylinder_mesh = assets::get_mesh(entities::mesh_asset::Cylinder);
-  if (cylinder_mesh.valid())
-  {
-    // Cylinder primitive is 1 unit tall, scale to full height (2 * half_height)
-    // and radius * 2 for diameter
-    draw_mesh(cmd, cylinder_mesh, {.position = center,
-                                   .scale = {radius * 2.0f, half_height * 2.0f, radius * 2.0f},
-                                   .color = color,
-                                   .wireframe = true});
-  }
+  // `center` is the middle of the capsule; half_height is the CYLINDER half,
+  // so the caps sit at +/- half_height and the total height is
+  // 2 * (half_height + radius).
+  const linalg::vec3 top{center.x, center.y + half_height, center.z};
+  const linalg::vec3 bottom{center.x, center.y - half_height, center.z};
 
-  // Draw top hemisphere (full sphere for simplicity)
-  linalg::vec3 top_center = {center.x, center.y + half_height, center.z};
-  draw_hitbox_sphere(cmd, top_center, radius, color);
+  draw_circle(cmd, top, x, z, radius, color, SEGMENTS);
+  draw_circle(cmd, bottom, x, z, radius, color, SEGMENTS);
 
-  // Draw bottom hemisphere
-  linalg::vec3 bottom_center = {center.x, center.y - half_height, center.z};
-  draw_hitbox_sphere(cmd, bottom_center, radius, color);
+  // Four side lines at the cardinal points.
+  for (const linalg::vec3 &offset : {linalg::vec3{radius, 0, 0}, linalg::vec3{-radius, 0, 0},
+                                     linalg::vec3{0, 0, radius}, linalg::vec3{0, 0, -radius}})
+    draw_line(cmd, bottom + offset, top + offset, color);
+
+  // Full spheres for the caps rather than hemispheres — the extra half is
+  // inside the cylinder, which reads fine and keeps this short.
+  draw_hitbox_sphere(cmd, top, radius, color);
+  draw_hitbox_sphere(cmd, bottom, radius, color);
 }
 
 } // namespace renderer

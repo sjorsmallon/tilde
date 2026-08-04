@@ -352,7 +352,7 @@ log fires with resolved cast position). Files added: `src/shared/cosmetic_events
    - Implemented `register_effect_handler` / `dispatch_received_effects` with
      a fixed-size table keyed by the enum. Unknown / unregistered type =
      `log_error` + assert (no silent drops).
-   - Registered at client startup in `client::Init()`
+   - Registered at client startup in `client::init()`
      (`register_all_effect_handlers()`).
    - Added a borrowed `physics_state_t *physics_state` to `client_context_t`;
      `Play_State::on_enter` sets it from its own physics body, `on_exit`

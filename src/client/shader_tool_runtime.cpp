@@ -298,7 +298,7 @@ bool create_preview_resources(VkDevice device,
     white.height   = 1;
     white.channels = 4;
     white.pixels   = {0xFF, 0xFF, 0xFF, 0xFF};
-    out.fallback_white_texture = renderer::UploadTexture(&white);
+    out.fallback_white_texture = renderer::upload_texture(&white);
     if (!out.fallback_white_texture.valid())
     {
       log_error("[shader_tool] Failed to create fallback white texture");
@@ -568,8 +568,8 @@ void destroy_preview_resources(VkDevice device, preview_pipeline_t &pipeline)
 
   // Destroy PBR textures and fallback
   for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
-    renderer::DestroyTexture(pipeline.pbr_textures[i]);
-  renderer::DestroyTexture(pipeline.fallback_white_texture);
+    renderer::destroy_texture(pipeline.pbr_textures[i]);
+  renderer::destroy_texture(pipeline.fallback_white_texture);
 }
 
 // ---------------------------------------------------------------------------
@@ -587,11 +587,11 @@ void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
   // Upload each texture; destroy any previously-held GPU texture first.
   for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
   {
-    renderer::DestroyTexture(pipeline.pbr_textures[i]);
+    renderer::destroy_texture(pipeline.pbr_textures[i]);
 
     const assets::texture_asset_t *tex = assets::get(slots[i]);
     if (tex)
-      pipeline.pbr_textures[i] = renderer::UploadTexture(tex);
+      pipeline.pbr_textures[i] = renderer::upload_texture(tex);
   }
 
   // Write descriptor set bindings 1–6 for every frame in flight.
@@ -626,7 +626,7 @@ void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
 
 VkPhysicalDevice get_physical_device()
 {
-  return renderer::GetPhysicalDevice();
+  return renderer::get_VkPhysicalDevice();
 }
 
 } // namespace client

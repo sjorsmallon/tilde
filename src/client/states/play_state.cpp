@@ -873,15 +873,50 @@ void Play_State::update(float dt)
     // leave visual_error_offset alone so it can decay to zero.
   }
 
+  // --- Zoom ---
+  // Ahead of the menu-overlay bail below, so an open menu eases the zoom back
+  // out instead of freezing it, and so an `r_fov` change from the console
+  // always reaches the projection. Ahead of mouse look because the sensitivity
+  // scale there depends on the FOV this frame is actually drawn with.
+  const bool zoom_held =
+      mouse_captured && !console_open && !show_menu_overlay &&
+      input::is_mouse_down(input::mouse_button_t::Right);
+
+  const float zoom_target = zoom_held ? 1.0f : 0.0f;
+  if (ctx.cvars->r_zoom_time <= 0.0f)
+  {
+    zoom_fraction = zoom_target;
+  }
+  else
+  {
+    float step = dt / ctx.cvars->r_zoom_time;
+    zoom_fraction += shared::clamp(zoom_target - zoom_fraction, -step, step);
+  }
+
+  camera.fov_degrees = shared::lerp(ctx.cvars->r_fov, ctx.cvars->r_zoom_fov,
+                                    zoom_fraction);
+
   // before input handling, render the menu overlay (done in render_ui)
   if (show_menu_overlay) return;
 
   // --- Mouse look ---
   if (mouse_captured && !console_open)
   {
+    // Scale by tan(fov/2) so a given hand movement sweeps the same distance
+    // across the screen at any FOV — otherwise zooming multiplies your aim
+    // error by the zoom factor. m_zoom_sensitivity_ratio 0 opts out.
+    float tan_half_current = std::tan(linalg::to_radians(camera.fov_degrees) * 0.5f);
+    float tan_half_base    = std::tan(linalg::to_radians(ctx.cvars->r_fov) * 0.5f);
+    float zoom_scale       = (tan_half_base > 1e-6f)
+                                 ? (tan_half_current / tan_half_base)
+                                 : 1.0f;
+    float sensitivity =
+        ctx.cvars->m_sensitivity *
+        shared::lerp(1.0f, zoom_scale, ctx.cvars->m_zoom_sensitivity_ratio);
+
     linalg::vec2i delta = input::mouse_delta();
-    ctx.player_yaw += delta.x * 0.1f;
-    ctx.player_pitch -= delta.y * 0.1f;
+    ctx.player_yaw += delta.x * sensitivity;
+    ctx.player_pitch -= delta.y * sensitivity;
     shared::clamp_this(ctx.player_pitch, -89.0f, 89.0f);
   }
 
@@ -914,6 +949,10 @@ void Play_State::update(float dt)
     if (input::is_key_down(input::key_t::Num_9))               buttons |= Button::Key9;
     if (input::is_key_down(input::key_t::Num_0))               buttons |= Button::Key0;
     if (input::is_mouse_down(input::mouse_button_t::Left))     buttons |= Button::Fire;
+    // Sent even though zoom is drawn client-side: the server needs it the
+    // moment scoping costs movement speed or accuracy, and it has to arrive
+    // through the predicted button bitfield to do so.
+    if (zoom_held)                                             buttons |= Button::Zoom;
   }
 
   Move_Input move_input = move_input_from_buttons(buttons);
@@ -1114,6 +1153,8 @@ void Play_State::render_ui()
     // comparing against a retained copy rather than by intercepting writes.
     ImGui::Checkbox("Show Collision Planes", &ctx.cvars->debug_show_collisions);
     ImGui::Checkbox("Show Navmesh", &ctx.cvars->debug_show_navmesh);
+    ImGui::Checkbox("Show Hitboxes", &ctx.cvars->debug_show_hitboxes);
+    ImGui::Checkbox("Show Box Volumes", &ctx.cvars->debug_show_box_volumes);
 
     ImGui::Checkbox("Hide Geometry", &hide_geometry);
     ImGui::Checkbox("Show Entities", &show_entity_debug);
@@ -1212,9 +1253,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
   view_def.viewport = {{0, 0}, {1, 1}};
   view_def.camera = camera;
 
-  ecs::Registry reg;
-  renderer::render_view(cmd, view_def, reg);
-  renderer::set_viewport(cmd, view_def.viewport);
+  renderer::set_view(cmd, view_def);
 
   // Render the session's geometry. One call per object — the mesh-path /
   // primitive / displacement-grid decision lives in draw_geometry, shared with
@@ -1243,8 +1282,8 @@ void Play_State::render_3d(VkCommandBuffer cmd)
       if (mesh_handle.valid())
       {
         auto shader = rc->material.shader_type == entities::Shader_Type::Unlit
-                          ? renderer::ShaderType::Unlit
-                          : renderer::ShaderType::Lit;
+                          ? renderer:: shader_type::Unlit
+                          : renderer:: shader_type::Lit;
         vec3f mat_color = rc->material.color;
         color_t tint = color_from_vec3(mat_color);
         renderer::draw_mesh(cmd, mesh_handle,
@@ -1274,14 +1313,21 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     const vec3f rmax = {remote_player.render_position.x + player_half_width,
                         remote_player.render_position.y + 2.f * player_half_height,
                         remote_player.render_position.z + player_half_width};
-    renderer::DrawAABB(cmd, rmin, rmax, colors::green);
+    // Solid normally, WIREFRAME while hitbox debugging is on: the regions below
+    // live inside this hull, so a filled hull writes depth over every one of
+    // them and all you see is a green box.
+    const bool show_hitboxes = ctx.cvars->debug_show_hitboxes;
+    if (show_hitboxes)
+      renderer::draw__wire_AABB(cmd, rmin, rmax, colors::green);
+    else
+      renderer::draw_AABB(cmd, rmin, rmax, colors::green);
 
     // The regions hitscan actually resolves against, drawn from the SAME table
     // the server tests against (`shared::player_hitboxes`) so a disagreement
     // between what you see and what you hit is visible rather than inferred.
     // The green hull above is where the player collides; these are where they
     // get shot, and the two are not the same shape.
-    if (ctx.cvars->debug_show_hitboxes)
+    if (show_hitboxes)
     {
       for (const shared::player_hitbox_t &region : shared::player_hitboxes)
       {
@@ -1298,7 +1344,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
         if (region.shape == entities::Shape_Kind::Sphere)
           renderer::draw_hitbox_sphere(cmd, center, region.size.x, color);
         else
-          renderer::DrawWireAABB(cmd, center - region.size, center + region.size, color);
+          renderer::draw__wire_AABB(cmd, center - region.size, center + region.size, color);
       }
     }
   }
@@ -1343,7 +1389,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
         {
           vec3f min = hitbox_center - hitbox->size;
           vec3f max = hitbox_center + hitbox->size;
-          renderer::DrawWireAABB(cmd, min, max, colors::green);
+          renderer::draw__wire_AABB(cmd, min, max, colors::green);
           break;
         }
       }
@@ -1366,7 +1412,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
                          {.position = body.position,
                           .scale    = render.scale,
                           .rotation = body.orientation + render.rotation,
-                          .shader   = renderer::ShaderType::Lit});
+                          .shader   = renderer:: shader_type::Lit});
     };
 
     if (ctx.server_session)
@@ -1431,7 +1477,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     for (const Debug_Collision_Face &face : ctx.debug_collision_faces)
     {
       if (!face.polygon.empty())
-        renderer::DrawFilledPolygon(cmd, face.polygon, green);
+        renderer:: draw_filled_polygon(cmd, face.polygon, green);
 
       vec3 arrow_start = face.plane.point + face.plane.normal * 0.5f;
       vec3 arrow_end = arrow_start + face.plane.normal * 5.0f;
@@ -1454,7 +1500,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
       const auto *volume = entities::get_box_volume(ent);
       if (!volume) continue;
 
-      renderer::DrawWireAABB(cmd, ent->position - volume->half_extents,
+      renderer::draw__wire_AABB(cmd, ent->position - volume->half_extents,
                              ent->position + volume->half_extents, colors::magenta);
     }
 
@@ -1465,7 +1511,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
               ? colors::yellow
               : colors::white;
       const shared::aabb_bounds_t bounds = shared::get_bounds(entry.value);
-      renderer::DrawWireAABB(cmd, bounds.min, bounds.max, color);
+      renderer::draw__wire_AABB(cmd, bounds.min, bounds.max, color);
     }
   }
 
@@ -1616,7 +1662,7 @@ void Play_State::pre_render(VkCommandBuffer cmd)
     p.color_end          = pe->color_end;
     p.alpha_start        = pe->alpha_start;
     p.alpha_end          = pe->alpha_end;
-    renderer::UpdateParticles(cmd, p);
+    renderer::update_particles(cmd, p);
   }
 
   auto &ctx = state_manager::get_client_context();
@@ -1643,7 +1689,7 @@ void Play_State::pre_render(VkCommandBuffer cmd)
     p.color_end          = {0.4f, 0.4f, 0.4f};
     p.alpha_start        = 0.9f;
     p.alpha_end          = 0.0f;
-    renderer::UpdateParticles(cmd, p);
+    renderer::update_particles(cmd, p);
   }
 }
 

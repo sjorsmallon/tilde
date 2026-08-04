@@ -16,6 +16,12 @@ struct camera_t
   bool orthographic = false;
   float ortho_height = 10.0f; // Scale/Zoom factor for ortho
 
+  // Vertical FOV used by the perspective projection. Lives on the camera rather
+  // than being read from r_fov at each use site: zoom varies it per frame, and
+  // picking must agree with whatever the projection actually used this frame.
+  // Owners seed it from r_fov; ignored when orthographic.
+  float fov_degrees = 90.0f;
+
   // Orbit mode fields — when orbit is true, position is derived from
   // orbit_target + orbit_distance + yaw/pitch each frame via update_orbit().
   bool orbit = false;
@@ -185,8 +191,7 @@ inline linalg::ray_t get_pick_ray(const camera_t &cam, float ndc_x, float ndc_y,
   }
   else
   {
-    float fov = 90.0f; // Hardcoded default from editor_state.cpp for now
-    float tanHalf = std::tan(to_radians(fov) * 0.5f);
+    float tanHalf = std::tan(to_radians(cam.fov_degrees) * 0.5f);
     float vx = ndc_x * aspect_ratio * tanHalf;
     float vy = ndc_y * tanHalf;
     vec3 dir = normalize(R * vx + U * vy + F);

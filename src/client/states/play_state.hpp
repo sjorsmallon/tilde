@@ -67,6 +67,11 @@ private:
   // Camera (first person, follows player)
   camera_t camera;
 
+  // Zoom is purely local presentation: 0 = r_fov, 1 = r_zoom_fov, eased over
+  // r_zoom_time. Not predicted and not reconciled — nothing about it feeds
+  // player_move, and the server is told only that the button is held.
+  float zoom_fraction = 0.0f;
+
   // Player dimensions — canonical values live in shared::player_half_width/height
   static constexpr float player_half_width  = shared::player_half_width;
   static constexpr float player_half_height = shared::player_half_height;

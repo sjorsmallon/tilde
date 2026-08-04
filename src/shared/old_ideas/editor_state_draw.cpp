@@ -284,7 +284,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
       {
         vec3 min = aabb.center - aabb.half_extents;
         vec3 max = aabb.center + aabb.half_extents;
-        renderer::DrawAABB(cmd, min, max, col);
+        renderer::draw_AABB(cmd, min, max, col);
       }
       else
       {
@@ -355,7 +355,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
           // Fallback to AABB if mesh fails to load
           vec3 min = p - s * 0.5f;
           vec3 max = p + s * 0.5f;
-          renderer::DrawAABB(cmd, min, max, col);
+          renderer::draw_AABB(cmd, min, max, col);
         }
       }
       else
@@ -363,7 +363,7 @@ void EditorState::render_3d(VkCommandBuffer cmd)
         // Fallback to AABB if no asset path mapped
         vec3 min = p - s * 0.5f;
         vec3 max = p + s * 0.5f;
-        renderer::DrawAABB(cmd, min, max, col);
+        renderer::draw_AABB(cmd, min, max, col);
       }
     }
     else

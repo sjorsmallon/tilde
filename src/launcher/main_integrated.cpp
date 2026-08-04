@@ -85,16 +85,16 @@ int main(int argc, char *argv[])
   assets::set_state(&g_asset_state);
   assets::init();
 
-  if (!server::Init(&g_cvar_state, &g_server_command_table, &g_asset_state))
+  if (!server::init(&g_cvar_state, &g_server_command_table, &g_asset_state))
   {
     log_error("Server Init Failed");
     return 1;
   }
 
-  if (!client::Init(&g_cvar_state, &g_client_command_table, &g_asset_state))
+  if (!client::init(&g_cvar_state, &g_client_command_table, &g_asset_state))
   {
     log_error("Client Init Failed");
-    server::Shutdown(); // Cleanup
+    server::shutdown(); // Cleanup
     return 1;
   }
 
@@ -165,9 +165,9 @@ int main(int argc, char *argv[])
     }
   }
 
-  log_terminal("=== Shutdown Initiated ===");
-  client::Shutdown();
-  server::Shutdown();
+  log_terminal("=== shutdown Initiated ===");
+  client::shutdown();
+  server::shutdown();
 
   print_timing_stats();
 

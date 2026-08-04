@@ -158,7 +158,7 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
   {
     linalg::vec3 min = center - half_extents;
     linalg::vec3 max = center + half_extents;
-    renderer::DrawWireAABB(cmd, min, max, color);
+    renderer::draw__wire_AABB(cmd, min, max, color);
   }
 
   void draw_solid_box(const linalg::vec3 &center,
@@ -166,7 +166,7 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
   {
     linalg::vec3 min = center - half_extents;
     linalg::vec3 max = center + half_extents;
-    renderer::DrawAABB(cmd, min, max, color);
+    renderer::draw_AABB(cmd, min, max, color);
   }
 
   void draw_circle(const linalg::vec3 &center, float radius,
@@ -255,7 +255,7 @@ void Tool_Editor_State::on_enter()
   camera.position.z = 10;
   camera.pitch = -30.0f;
   camera.yaw = 0.0f;
-  fov = 90.0f;
+  camera.fov_degrees = state_manager::get_client_context().cvars->r_fov;
   aspect = 1.77f; // Will update
   z_near = 0.1f;
   z_far = 16000.0f;
@@ -336,7 +336,6 @@ viewport_state_t Tool_Editor_State::transform_viewport_state()
 
   view.display_size = {width, height};
   view.aspect_ratio = width / height;
-  view.fov = fov;
 
   return view;
 }
@@ -344,6 +343,10 @@ viewport_state_t Tool_Editor_State::transform_viewport_state()
 void Tool_Editor_State::update(float dt)
 {
   last_dt = dt;
+
+  // Re-read every frame so `r_fov` from the console takes effect immediately,
+  // and so picking and rendering can never be a frame apart on it.
+  camera.fov_degrees = state_manager::get_client_context().cvars->r_fov;
 
   if (input::is_key_pressed(input::key_t::Escape))
   {
@@ -1055,19 +1058,8 @@ void Tool_Editor_State::render_3d(VkCommandBuffer cmd)
   view_def.viewport = {{0, 0}, {1, 1}};
   view_def.camera = camera;
 
-  // We need to bind pipeline/viewport first?
-  // renderer::render_view probably does a lot.
-  // We can just rely on `BeginFrame` having set up stuff or use `DrawAABB`
-  // directly. `DrawAABB` likely binds pipeline if needed? No, usually handled
-  // by caller or specific flow. `EditorState::render_3d` calls `draw_grid` etc.
-
-  // Setup render view (binds pipeline, updates matrices, etc.)
-  ecs::Registry reg; // Empty registry for now
-  renderer::render_view(cmd, view_def, reg);
-
-  // Set viewport explicitly if needed (render_view might do it, but good to be
-  // sure for overlay)
-  renderer::set_viewport(cmd, view_def.viewport);
+  // Applies the viewport and the view-projection every draw_* below reads.
+  renderer::set_view(cmd, view_def);
 
   // Draw Grid
   if (show_grid)
@@ -1255,7 +1247,7 @@ void Tool_Editor_State::pre_render(VkCommandBuffer cmd)
     p.color_end = pe->color_end;
     p.alpha_start = pe->alpha_start;
     p.alpha_end = pe->alpha_end;
-    renderer::UpdateParticles(cmd, p);
+    renderer::update_particles(cmd, p);
   }
 }
 

@@ -1145,8 +1145,8 @@ has nothing to convert. `S2C_CVarSync` and `CvarPair` are deleted from
 - [x] ~~3. Ownership cutover~~ — **done 2026-07-29**. All 18 tests green;
       dedicated server boots. Every `CVar<T>` global gone, `cvar.hpp` included
       by NOTHING. Launcher owns `cvar_state_t` + `command_table_t` (all three
-      launchers), threaded through `client::Init(state, table)` /
-      `server::Init(state, table)` onto `client_context_t::cvars` /
+      launchers), threaded through `client::init(state, table)` /
+      `server::init(state, table)` onto `client_context_t::cvars` /
       `server_context_t::cvars`. Decisions made while doing it:
       * **`execute_console_line` was pulled forward from step 4.** Step 3
         deletes the registry, so leaving `CVarSystem::Execute` in place would
