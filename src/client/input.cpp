@@ -20,6 +20,7 @@ namespace
 // from this list at compile time, so they can never drift.
 
 constexpr size_t key_count = static_cast<size_t>(key_t::Count);
+constexpr size_t mouse_button_count = static_cast<size_t>(mouse_button_t::Count);
 
 struct key_mapping_t
 {
@@ -160,6 +161,9 @@ modifiers_t modifiers_from_sdl_keymod(uint16_t sdl_mod)
 std::array<bool, key_count> g_prev_key_down{};
 std::array<bool, key_count> g_curr_key_down{};
 
+std::array<bool, mouse_button_count> g_prev_mouse_down{};
+std::array<bool, mouse_button_count> g_curr_mouse_down{};
+
 int g_mouse_delta_x = 0;
 int g_mouse_delta_y = 0;
 float g_scroll_delta = 0.0f;
@@ -181,6 +185,17 @@ void new_frame()
   {
     int scancode = g_key_to_scancode[i];
     g_curr_key_down[i] = (scancode > 0) && (sdl_state[scancode] != 0);
+  }
+
+  // Same treatment for the mouse buttons, so is_mouse_pressed can answer
+  // "became down this frame" without every caller keeping its own last-frame
+  // copy. is_mouse_down stays a live SDL query — this pair is only the edge.
+  uint32_t mouse_state = SDL_GetMouseState(nullptr, nullptr);
+  g_prev_mouse_down = g_curr_mouse_down;
+  for (size_t i = 0; i < mouse_button_count; ++i)
+  {
+    uint32_t mask = mouse_button_to_sdl_mask(static_cast<mouse_button_t>(i));
+    g_curr_mouse_down[i] = (mask != 0) && ((mouse_state & mask) != 0);
   }
 
   g_key_events.clear();
@@ -250,6 +265,14 @@ bool is_mouse_down(mouse_button_t button)
   if (mask == 0)
     return false;
   return (SDL_GetMouseState(nullptr, nullptr) & mask) != 0;
+}
+
+bool is_mouse_pressed(mouse_button_t button)
+{
+  size_t index = static_cast<size_t>(button);
+  if (index >= mouse_button_count)
+    return false;
+  return g_curr_mouse_down[index] && !g_prev_mouse_down[index];
 }
 
 modifiers_t current_modifiers()

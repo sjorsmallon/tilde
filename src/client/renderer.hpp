@@ -60,7 +60,7 @@ bool WireframeSupported();
 
 enum class  shader_type : uint8_t { Lit, Unlit, Textured };
 
-struct mesh_draw_params_t
+struct mesh_draw_parameters_t
 {
   linalg::vec3 position  = {0, 0, 0};
   linalg::vec3 scale     = {1, 1, 1};
@@ -74,7 +74,7 @@ struct mesh_draw_params_t
 
 void draw_mesh(VkCommandBuffer cmd,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-              const mesh_draw_params_t &params = {});
+              const mesh_draw_parameters_t &parameters = {});
 
 // Invalidate a cached GPU mesh buffer so it gets re-uploaded on next draw.
 // Used for dynamic meshes (e.g. displacement surfaces) that change at runtime.
@@ -184,7 +184,7 @@ bool get_mesh_gpu_info(assets::asset_handle_t<assets::mesh_asset_t> handle,
 
 // --- Particle System ---
 
-struct particle_emitter_params_t
+struct particle_emitter_parameters_t
 {
   uint64_t entity_id;
   linalg::vec3 position;
@@ -204,10 +204,10 @@ struct particle_emitter_params_t
 
 // Dispatch compute shader to update particles for one emitter.
 // Call BEFORE begin_render_pass.
-void update_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params);
+void update_particles(VkCommandBuffer cmd, const particle_emitter_parameters_t &parameters);
 
 // Draw particles for one emitter. Call INSIDE render pass.
-void draw_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params);
+void draw_particles(VkCommandBuffer cmd, const particle_emitter_parameters_t &parameters);
 
 } // namespace renderer
 } // namespace client

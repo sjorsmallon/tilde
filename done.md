@@ -11,6 +11,12 @@ keeps the finished work so `todo.md` stays a work list.
 - **CVAR TRACK (def_gen), steps 1–6** — cvars and console commands onto the
   same DSL + generator. Jump to it below; the "forward loop" post-mortem at
   its end is the part most likely to matter again.
+- **MODULE OWNERSHIP TRACK** — the rest of the static-lib duplication after the
+  cvars: the asset registry, `debug_collision::g_collision_faces`,
+  `bot_debug::g_entries`.
+- **PLAYER DIMENSIONS + RENDERER PASS (2026-08-04)** — the player's three
+  conflicting sizes collapsed onto one hull, the editor/runtime spawn-origin
+  mismatch, and two renderer API fixes.
 - **Closed decisions** — the appendix at the bottom, recorded so they are not
   re-litigated.
 
@@ -1368,6 +1374,104 @@ broken — the wire was doing the work the global claimed to do.
 than by observing a symptom. Two of the three had no visible symptom at all.
 The remaining cross-module `extern` data in `game_shared` after this track is
 `bot_debug::g_entries`, which is now correctly client-only.
+
+---
+
+# PLAYER DIMENSIONS + RENDERER PASS  ✅ DONE (2026-08-04)
+
+Four unrelated fixes that landed the same day, moved out of `todo.md`.
+
+## The player was three different sizes depending on who was asking
+
+All three now derive from the movement hull — `player_half_width = 16`,
+`player_half_height = 36` (`player_constants.hpp`), i.e. **32 x 32 x 72**,
+HL/Source exact.
+
+- **Hitbox table** — `player_hitboxes.hpp` tiles 0..72 exactly: legs 0-30,
+  torso 30-54, head sphere centered 63 r9. Half-widths stay inset from the
+  hull's 16 and never exceed it. `hitscan_test` moved with it (its region
+  probe heights are the table's centers).
+- **Jolt kinematic capsule** — was radius 18 / cylinder half-height 20
+  (36 x 76) written out at five call sites. Now three derived constants
+  (`player_capsule_radius`, `player_capsule_cylinder_half_height`,
+  `player_capsule_center_offset`) that all five use, giving 32 x 72. Note
+  Jolt's `CapsuleShape` takes the CYLINDER half-height and adds a cap of
+  `radius` at each end, so the cylinder half is
+  `player_half_height - player_half_width` = 20, NOT 36 — writing 36 there
+  would give a 104-tall player.
+- The **bot** capsule was a fourth size (18/38 with a `{18,38,18}` hitbox
+  where a human player got `{16,36,16}`) and is now the same expression as
+  the player's. A bot hittable where a player is not would have made every
+  aim test a lie.
+- `Hitbox.size.y` on a Capsule now means the CYLINDER half-height on every
+  writer, which is what its two readers — Jolt and `draw_hitbox_capsule` —
+  already assumed. Both old values were total half-heights, so drawing a
+  player's debug capsule would have shown a 104-tall one. Nothing draws
+  players today; this closed it before something does.
+- `player_eye_height = 64` (landed 2026-08-03) needed no change: already
+  sized for the 72 hull, one definition and three consumers (server hitscan
+  origin, bot aim, client camera), and now sits just above the head sphere's
+  center rather than near its lower edge.
+
+Real behaviour change: rocket splash and direct hits use a body 4 units
+narrower and 4 shorter, and headshots land lower.
+
+## The editor stored `Player_Spawn_Entity` positions as the hull CENTER while the runtime read them as FEET
+
+Code and map data both fixed. `compute_placement_center` added
+`half_extents.y` to the clicked surface point and stored that as `position`,
+so every editor-placed spawn was written 36 units — exactly
+`player_half_height` — above the floor, and players spawned in the air and
+fell. The editor was self-consistent (it also *drew* and *picked* centered),
+which is why it looked right and only the runtime disagreed.
+
+- Code: `player_hull_bounds` (`map.cpp`) and `draw_player_spawn_shape` are now
+  feet-based, and placement gained `get_placement_origin_height` — half the
+  height for a centered origin, **0** for the player-shaped types.
+  `compute_placement_center` → `compute_placement_origin`, since it no longer
+  returns a center; `draw_entity_ghost` / `draw_default_ghost` take the origin
+  for the same reason.
+- Data: both maps' spawns were at `-1024 36 -896`. Set to the floor top
+  beneath each — `other.source` box `_uid 4` tops out at exactly **0**
+  (confirming 36 = 0 + `player_half_height`), `new_map.source`'s at
+  **2.586742**. `maps/test` and `maps/test_backup` have no spawns, so the
+  migration fixture was untouched.
+- **The rule this leaves:** an entity whose origin is not at the center of its
+  shape needs a `get_placement_origin_height` case, or the editor and the
+  runtime will disagree about where it is. Recorded in
+  `src/client/editor/readme.md`.
+
+## `set_line_depth_bias` was per-frame, not per-call
+
+The header promised "bias for subsequent draw_line calls", but `draw_line`
+batches and `flush_lines` drew the whole frame with one `vkCmdSetDepthBias`
+taken from the globals at flush time — so the LAST value set in a frame
+applied to every line in it.
+
+- Live consequence: `entity_editor_traits.cpp:329` set `-200` to pull a
+  selection outline in front of the solid mesh, then restored `-2` before
+  returning. The restore always won, so **the -200 never took effect once**
+  and selection outlines z-fought.
+- Half-working in a way that hid it: `draw_mesh(wireframe=true)` is immediate
+  and applies the bias correctly at call time, so a selected entity WITH a
+  mesh outlined correctly and one falling back to wire boxes/wedges did not —
+  the same feature behaving two ways depending on the entity.
+- Fix: the line batch is a list of `line_run_t` split at each bias change
+  (`renderer.cpp:907`), one `vkCmdDraw` per run. Splitting happens at first
+  `draw_line` after a change, not in `set_line_depth_bias`, so a bias set with
+  no lines after it costs nothing. Typically 1–2 draws.
+
+## `render_view` did not render a view
+
+It set three globals (`g_current_view_proj`, `g_camera_right/up`) and
+returned; its `ecs::Registry` parameter was entirely unused (`(void)registry`
+under a TODO) and all three call sites built an empty `ecs::Registry reg;`
+just to feed it. Renamed `set_view(cmd, view)`, registry parameter dropped,
+three dead locals and the `old_ideas/ecs.hpp` include deleted. This also
+explains a redundancy the name had been causing: `set_view` already calls
+`set_viewport`, and two call sites called it again immediately after — nobody
+does that on purpose, they do it because the name made the first call
+invisible.
 
 ---
 

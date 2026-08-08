@@ -161,6 +161,12 @@ struct client_context_t
   std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> remote_physics_bodies;
   uint32_t latest_processed_tick = 0;
 
+  // Per-player Player_Entity::last_fire_tick as of the last snapshot we looked
+  // at, keyed by entity uid. An advance means that player fired; see
+  // weapon_fire_audio.hpp. Keyed by uid rather than slot so a slot changing
+  // occupant cannot inherit the previous player's stamp.
+  std::unordered_map<shared::entity_uid_t, uint32_t> last_seen_fire_tick;
+
   // --- Delta decompression: the snapshot history ---
   // The server deltas against a tick we ACKED, so we must still be holding the
   // exact state we reconstructed for that tick — not merely "the current
@@ -178,6 +184,9 @@ struct client_context_t
   {
     snapshot_history.clear();
     latest_processed_tick = 0;
+    // Stale stamps against a fresh tick counter would read as a burst of
+    // ancient gunfire on the first snapshot after a map switch.
+    last_seen_fire_tick.clear();
   }
 
   // --- Integrated-mode session pointer ---

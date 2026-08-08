@@ -99,6 +99,7 @@ void process_sdl_event(const void *sdl_event);
 bool is_key_down(key_t key);
 bool is_key_pressed(key_t key); // true only on the frame it became down
 bool is_mouse_down(mouse_button_t button);
+bool is_mouse_pressed(mouse_button_t button); // true only on the frame it became down
 modifiers_t current_modifiers();
 
 // --- Mouse state -------------------------------------------------------------

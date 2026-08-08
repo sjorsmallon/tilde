@@ -66,17 +66,27 @@ struct cvar_state_t
   float sv_tickrate = 60.0f;
   float r_fov = 90.0f;
   float r_zoom_fov = 30.0f;
-  float r_zoom_time = 0.0f;
+  float r_zoom_easing_time_between_fovs = 0.0f;
   float m_sensitivity = 0.1f;
   float m_zoom_sensitivity_ratio = 1.0f;
   float cl_maxfps = 1000.0f;
+  bool cl_draw_player_hull = false;
+  bool cl_crosshair = true;
+  bool cl_crosshair_dot = true;
+  float cl_crosshair_size = 7.0f;
+  float cl_crosshair_gap = 5.0f;
+  float cl_crosshair_thickness = 2.0f;
+  uint32_t cl_crosshair_r = 0;
+  uint32_t cl_crosshair_g = 255;
+  uint32_t cl_crosshair_b = 0;
+  uint32_t cl_crosshair_a = 255;
   float editor_speed = 1600.0f;
   float cl_timescale = 1.0f;
   float sound_reference_distance = 150.0f;
   float sound_max_distance_cutoff = 4000.0f;
   float sound_rolloff_factor = 1.0f;
   bool debug_show_collisions = false;
-  bool debug_show_hitboxes = false;
+  bool debug_show_hitboxes = true;
   bool debug_show_navmesh = false;
   bool debug_show_box_volumes = false;
   bool net_snapshot_debug = false;
@@ -107,25 +117,35 @@ enum class cvar_id : uint16_t
   sv_tickrate = 12,
   r_fov = 13,
   r_zoom_fov = 14,
-  r_zoom_time = 15,
+  r_zoom_easing_time_between_fovs = 15,
   m_sensitivity = 16,
   m_zoom_sensitivity_ratio = 17,
   cl_maxfps = 18,
-  editor_speed = 19,
-  cl_timescale = 20,
-  sound_reference_distance = 21,
-  sound_max_distance_cutoff = 22,
-  sound_rolloff_factor = 23,
-  debug_show_collisions = 24,
-  debug_show_hitboxes = 25,
-  debug_show_navmesh = 26,
-  debug_show_box_volumes = 27,
-  net_snapshot_debug = 28,
+  cl_draw_player_hull = 19,
+  cl_crosshair = 20,
+  cl_crosshair_dot = 21,
+  cl_crosshair_size = 22,
+  cl_crosshair_gap = 23,
+  cl_crosshair_thickness = 24,
+  cl_crosshair_r = 25,
+  cl_crosshair_g = 26,
+  cl_crosshair_b = 27,
+  cl_crosshair_a = 28,
+  editor_speed = 29,
+  cl_timescale = 30,
+  sound_reference_distance = 31,
+  sound_max_distance_cutoff = 32,
+  sound_rolloff_factor = 33,
+  debug_show_collisions = 34,
+  debug_show_hitboxes = 35,
+  debug_show_navmesh = 36,
+  debug_show_box_volumes = 37,
+  net_snapshot_debug = 38,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 29;
+constexpr uint32_t CVAR_COUNT = 39;
 
 enum class command_id : uint16_t
 {

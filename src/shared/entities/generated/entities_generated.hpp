@@ -305,6 +305,8 @@ struct Player_Entity : Entity
   int32_t health = {};
   int32_t ammo = {};
   Weapon active_weapon_id = Weapon::Knife;
+  uint32_t last_fire_tick = {};
+  Weapon last_fire_weapon = Weapon::Knife;
   int32_t client_slot_index = {};
   linalg::vec3f velocity = {};
   Render render = {};

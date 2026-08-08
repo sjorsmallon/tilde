@@ -177,11 +177,6 @@ struct Player_Server_State
   // which is out of this array's range by construction, and Bot_State carries
   // its own uid.
   shared::entity_uid_t player_uid = shared::null_entity_uid;
-
-  // Tick of this slot's last shot, for the per-weapon fire-rate gate. 0 means
-  // "never fired" -- server ticks start at 1, so the first shot always passes
-  // the interval check without needing a sentinel.
-  uint32_t last_fire_tick = 0;
 };
 
 std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
@@ -987,11 +982,19 @@ bool Tick()
       // accumulated float, so it cannot drift and a paused/countdown phase
       // cannot bank up shots.
       const float seconds_since_last_fire =
-          static_cast<float>(g_tick_number - pstate.last_fire_tick) *
+          static_cast<float>(g_tick_number - player->last_fire_tick) *
           static_cast<float>(get_tick_interval());
       if (seconds_since_last_fire < weapon.fire_interval_seconds)
         continue;
-      pstate.last_fire_tick = g_tick_number;
+
+      // The gate and the announcement are ONE write. Clients watch
+      // last_fire_tick advance to know a shot happened; last_fire_weapon
+      // tells them which gun it came from even if this player has switched
+      // by the time the snapshot lands. Both live on the entity so they
+      // replicate -- see entities.def for why this is state and not an
+      // effect. Above the kind switch so every weapon is covered once.
+      player->last_fire_tick   = g_tick_number;
+      player->last_fire_weapon = player->active_weapon_id;
 
       // Switch on KIND, not on Weapon: the fire path cares how a shot
       // resolves, and Knife and Scout resolve identically (they differ only in
@@ -1107,7 +1110,7 @@ bool Tick()
     log_error("Server tick with no physics state — init() must have failed");
     return false;
   }
-  update_bots(g_bots, ctx, tick_dt);
+  update_bots(g_bots, ctx, g_tick_number, tick_dt);
   update_rockets(ctx, tick_dt);
   // Respawn drain runs after damage systems so any deaths registered this
   // tick are eligible for the deadline check (delay is >0 ticks, so a

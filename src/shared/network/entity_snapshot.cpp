@@ -88,14 +88,16 @@ void write_records(Bit_Writer& writer, const entity_map_t<Entity_T>& current,
 // the baseline's entry for this uid (the frame was seeded from it), so an
 // absent entry means the sender is spawning this entity and a default-
 // constructed value is the right thing to decode a full update into.
+// Returns false if the record could not be decoded, which leaves the stream
+// unreadable from that point — see deserialize_entity.
 template <typename Entity_T>
-void apply_record(Bit_Reader& reader, entity_map_t<Entity_T>& target,
+bool apply_record(Bit_Reader& reader, entity_map_t<Entity_T>& target,
                   shared::entity_uid_t uid, bool removed)
 {
   if (removed)
   {
     target.erase(uid);
-    return;
+    return true;
   }
 
   Entity_T   entity;
@@ -103,13 +105,15 @@ void apply_record(Bit_Reader& reader, entity_map_t<Entity_T>& target,
   if (found != target.end())
     entity = found->second;
 
-  deserialize_entity(reader, entity);
+  if (!deserialize_entity(reader, entity))
+    return false;
 
   // The record's uid is what keys the map, and entity_id is also a networked
   // field, so pin them together rather than leaving two answers to "which
   // entity is this".
   entity.entity_id = uid;
   target[uid]      = entity;
+  return true;
 }
 
 } // namespace
@@ -159,16 +163,22 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
 
     switch (type)
     {
+      // A record that fails to decode has already logged why, and the read
+      // position is mid-record — the same unreadable-stream situation as an
+      // unknown entity type below, so it takes the same exit.
       case entities::entity_type::Player_Entity:
-        apply_record(reader, out_frame.players, uid, removed);
+        if (!apply_record(reader, out_frame.players, uid, removed))
+          return false;
         continue;
 
       case entities::entity_type::Rocket_Entity:
-        apply_record(reader, out_frame.rockets, uid, removed);
+        if (!apply_record(reader, out_frame.rockets, uid, removed))
+          return false;
         continue;
 
       case entities::entity_type::Physics_Body_Entity:
-        apply_record(reader, out_frame.physics_bodies, uid, removed);
+        if (!apply_record(reader, out_frame.physics_bodies, uid, removed))
+          return false;
         continue;
 
       // Everything below is a real entity type that is simply never

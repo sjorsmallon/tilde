@@ -99,11 +99,12 @@ Client :: cvars {
     r_fov:                  f32 = 90.0      @Client    "Field of view in degrees"
 
     // Zoom is presentation, so all of it is @Client. The server learns only
-    // that the zoom button is held, via Button::Zoom in the move command --
+    // that the client is zoomed, via Button::Zoom in the move command --
+    // right-click toggles that state, and the toggle edge stays client-side.
     // which is what it would need to apply a movement or accuracy penalty. It
     // never needs the angle.
     r_zoom_fov:             f32 = 30.0      @Client    "Field of view in degrees while zoomed"
-    r_zoom_time:            f32 = 0.00      @Client    "Seconds to ease between normal and zoomed FOV (0 = instant)"
+    r_zoom_easing_time_between_fovs:            f32 = 0.00      @Client    "Seconds to ease between normal and zoomed FOV (0 = instant)"
 
     // Degrees of view rotation per mouse count. Was a bare 0.1 literal in
     // play_state.
@@ -114,6 +115,27 @@ Client :: cvars {
     m_zoom_sensitivity_ratio: f32 = 1.0     @Client    "How much zoom scales mouse sensitivity (1 = constant feel, 0 = none)"
 
     cl_maxfps:              f32 = 1000.0    @Client    "Maximum client framerate (0 = unlimited)"
+
+    // Defaults ON because this box is not a debug overlay -- it is the ONLY
+    // thing drawn for a remote player. There is no player model yet (todo.md
+    // item 2), and nothing assigns Player_Entity.render.mesh, so turning this
+    // off makes enemies invisible. It is a cvar so that is a deliberate choice
+    // rather than a code edit. Retire it when a real model lands.
+    cl_draw_player_hull:    bool = false     @Client    "Draw remote players as their collision hull (the only enemy visual until a player model exists)"
+
+    // Crosshair. All pixel units, unscaled -- there is no UI scale factor in
+    // the client yet, so these are literal framebuffer pixels.
+    cl_crosshair:           bool = true      @Client    "Draw the crosshair"
+    cl_crosshair_dot:       bool = true      @Client    "Draw the crosshair's center dot"
+    cl_crosshair_size:      f32 = 7.0        @Client    "Length of each crosshair line in pixels"
+    cl_crosshair_gap:       f32 = 5.0        @Client    "Pixels between the center and where each line starts"
+    cl_crosshair_thickness: f32 = 2.0        @Client    "Crosshair line thickness in pixels"
+    // Colour as four u32 channels rather than one packed value: the console
+    // edits one number at a time, and there is no colour cvar type.
+    cl_crosshair_r:         u32 = 0          @Client    "Crosshair red (0-255)"
+    cl_crosshair_g:         u32 = 255        @Client    "Crosshair green (0-255)"
+    cl_crosshair_b:         u32 = 0          @Client    "Crosshair blue (0-255)"
+    cl_crosshair_a:         u32 = 255        @Client    "Crosshair alpha (0-255)"
 }
 
 Editor ::cvars {
@@ -178,7 +200,7 @@ Debugging :: cvars {
     // Pure client-side draws, but left unflagged to match their sibling above:
     // they are all read through the same debug_collision.hpp seam, and a
     // per-cvar flag split there would be a distinction with no check site.
-    debug_show_hitboxes:    bool = false                "Show entity hitboxes in wireframe"
+    debug_show_hitboxes:    bool = true                "Show entity hitboxes in wireframe"
     debug_show_navmesh:     bool = false                "Show baked navmesh as a line grid"
     debug_show_box_volumes: bool = false                "Draw every entity's box volume as a wireframe AABB (triggers, clip volumes, ...)"
 

@@ -132,7 +132,17 @@ void write_leaf(Bit_Writer& writer, const uint8_t* base, const leaf_field_t& lea
   assert(false && "write_leaf: field type cannot ride the wire");
 }
 
-void read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
+// Returns false if the field's value is not representable in this build's
+// tables — an enum value or asset id outside the declared set. Nothing else
+// can fail: every other type accepts its whole bit pattern.
+//
+// Why reject rather than clamp: the receiving side dispatches on these. An
+// out-of-range enum reaches an exhaustive switch with no matching case, and an
+// out-of-range asset id indexes a manifest — so accepting one is choosing a
+// wrong-but-plausible value over a loud stop. The caller drops the packet
+// whole, its ack does not advance, and the sender re-baselines within a round
+// trip, which is the same recovery an undecodable entity type already uses.
+bool read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
 {
   const field_info_t& field = *leaf.info;
   uint8_t*            bytes = base + leaf.offset;
@@ -143,39 +153,74 @@ void read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
     {
       float value = read_coord(reader);
       std::memcpy(bytes, &value, sizeof(value));
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_F64:
     {
       uint64_t value = read_var_uint64(reader);
       std::memcpy(bytes, &value, sizeof(value));
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_BOOL:
     {
       bool value = reader.read_bit();
       std::memcpy(bytes, &value, sizeof(value));
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_U8:
     case entities::FIELD_TYPE_U16:
     case entities::FIELD_TYPE_U32:
-    case entities::FIELD_TYPE_ASSET:
-    case entities::FIELD_TYPE_ENUM:
     {
       uint32_t value = read_var_uint(reader);
       std::memcpy(bytes, &value, field.size_in_bytes);
-      return;
+      return true;
+    }
+
+    case entities::FIELD_TYPE_ENUM:
+    {
+      // Values are dense from 0 (see the note above the generated enums), so
+      // the name table's size IS the valid range.
+      const uint32_t value = read_var_uint(reader);
+      const entities::enum_type_info_t& info =
+          entities::enum_info((entities::enum_type)field.enum_id);
+      if (value >= info.value_names.size())
+      {
+        log_error("entity wire: field {} carries {} for enum {}, which has {} values. "
+                  "The sender disagrees with our tables, or the packet is corrupt.",
+                  field.name, value, info.name, info.value_names.size());
+        return false;
+      }
+      std::memcpy(bytes, &value, field.size_in_bytes);
+      return true;
+    }
+
+    case entities::FIELD_TYPE_ASSET:
+    {
+      // Same shape as the enum case: an asset id is an index into its class's
+      // manifest, and SCHEMA_HASH already refuses a peer whose manifest
+      // differs, so anything out of range here is corruption rather than skew.
+      const uint32_t value = read_var_uint(reader);
+      const Span<const entities::asset_info_t> manifest =
+          entities::asset_class_manifest(field.asset_class_id);
+      if (value >= manifest.size())
+      {
+        log_error("entity wire: field {} carries asset id {}, but its class has {} entries. "
+                  "The sender disagrees with our manifest, or the packet is corrupt.",
+                  field.name, value, manifest.size());
+        return false;
+      }
+      std::memcpy(bytes, &value, field.size_in_bytes);
+      return true;
     }
 
     case entities::FIELD_TYPE_U64:
     {
       uint64_t value = read_var_uint64(reader);
       std::memcpy(bytes, &value, sizeof(value));
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_I8:
@@ -184,14 +229,14 @@ void read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
     {
       int32_t value = read_var_int(reader);
       std::memcpy(bytes, &value, field.size_in_bytes);
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_I64:
     {
       int64_t value = read_var_int64(reader);
       std::memcpy(bytes, &value, sizeof(value));
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_V3:
@@ -201,7 +246,7 @@ void read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
       values[1]       = read_coord(reader);
       values[2]       = read_coord(reader);
       std::memcpy(bytes, values, sizeof(values));
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_V4:
@@ -210,7 +255,7 @@ void read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
       for (float& value : values)
         value = read_coord(reader);
       std::memcpy(bytes, values, sizeof(values));
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_V4I:
@@ -219,7 +264,7 @@ void read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
       for (int32_t& value : values)
         value = read_var_int(reader);
       std::memcpy(bytes, values, sizeof(values));
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_STRING:
@@ -248,7 +293,7 @@ void read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
         log_error("entity wire: field {} announced {} characters but its capacity is {} — "
                   "value truncated",
                   field.name, wire_length, capacity);
-      return;
+      return true;
     }
 
     case entities::FIELD_TYPE_COMPONENT:
@@ -257,6 +302,7 @@ void read_leaf(Bit_Reader& reader, uint8_t* base, const leaf_field_t& leaf)
   }
 
   assert(false && "read_leaf: field type cannot ride the wire");
+  return false;
 }
 
 } // namespace
@@ -318,7 +364,7 @@ bool has_networked_changes(const entities::Entity& entity,
   return false;
 }
 
-void deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
+bool deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
                         changed_fields_t* out_changed)
 {
   const Span<const leaf_field_t> leaves = entities::networked_leaf_fields(entity.type);
@@ -339,8 +385,14 @@ void deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
   {
     if (!mask.is_set(index))
       continue;
-    read_leaf(reader, entity_base, leaves[index]);
+    // A rejected field leaves the read position mid-record, so there is
+    // nothing to salvage: the entity is half-applied and every later field in
+    // the stream is misaligned. Stop here and let the caller drop the packet.
+    if (!read_leaf(reader, entity_base, leaves[index]))
+      return false;
   }
+
+  return true;
 }
 
 } // namespace network

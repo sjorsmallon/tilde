@@ -14,7 +14,7 @@ namespace server
 
 // Convert a Jolt quaternion to euler angles in degrees (XYZ extrinsic order).
 // The rest of the codebase treats Entity::orientation as degrees (see renderer.cpp
-// DEG2RAD usage on params.rotation), so we convert here at the boundary.
+// DEG2RAD usage on parameters.rotation), so we convert here at the boundary.
 //
 // Known issue: euler is lossy near gimbal-lock. See todo.md — when this bites,
 // add a vec4f rotation_quat schema field and replicate the quaternion instead.

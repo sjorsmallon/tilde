@@ -92,15 +92,15 @@ bool draw_player_entity_mesh(overlay_renderer_t &renderer,
   if (tinted && !renderer::WireframeSupported())
     return false;
 
-  renderer::mesh_draw_params_t params{
+  renderer::mesh_draw_parameters_t parameters{
       .position  = e->position,
       .rotation  = e->orientation,
       .wireframe = true,
   };
   if (tinted)
-    params.color = color;
+    parameters.color = color;
 
-  renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle, params);
+  renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle, parameters);
   return true;
 }
 

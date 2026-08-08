@@ -14,7 +14,7 @@ cmake --build cmake_build -j8
 # Run
 ./cmake_build/bin/MyGame
 
-# Run the whole test suite (~2s, all 19)
+# Run the whole test suite (~2s, all 20)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -30,7 +30,7 @@ Map format conversion (one-time, for maps written before the geometry exit):
 
 `maps/test` is deliberately left in the legacy format — it is `map_migration_test`'s conversion fixture.
 
-The 19 tests are registered with CTest at the bottom of `CMakeLists.txt` (`GAME_TESTS`), each with `WORKING_DIRECTORY` pinned to the project root — `map_migration_test` loads the `maps/test` fixture by relative path, so under `ctest` it no longer matters where you invoke from. The executables are still plain binaries in `cmake_build/bin/` and can be run directly, but **that** form must be run from the project root.
+The tests are registered with CTest at the bottom of `CMakeLists.txt` (`GAME_TESTS` — that list is the count), each with `WORKING_DIRECTORY` pinned to the project root — `map_migration_test` loads the `maps/test` fixture by relative path, so under `ctest` it no longer matters where you invoke from. The executables are still plain binaries in `cmake_build/bin/` and can be run directly, but **that** form must be run from the project root.
 
 Adding a test means adding the target *and* its name to `GAME_TESTS`; the list is written out rather than globbed so `MyGame`, `def_gen` and `map_convert` don't get swept in.
 

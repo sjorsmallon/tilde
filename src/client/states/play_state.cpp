@@ -5,16 +5,20 @@
 #include "../console.hpp"
 #include "../cosmetic_events.hpp"
 #include "../game_events.hpp"
+#include "../hud/crosshair.hpp"
+#include "../weapon_fire_audio.hpp"
 #include "../../shared/cosmetic_events.hpp"
 #include "../../shared/game_events.hpp"
 #include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../../shared/player_hitboxes.hpp"
+#include "../../shared/weapons.hpp"
 #ifdef JPH_DEBUG_RENDERER
 #include <Jolt/Physics/Body/BodyManager.h>
 #endif
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -43,6 +47,13 @@ using explosion_effect_t = client_context_t::explosion_effect_t;
 // How often (in server ticks) `net_snapshot_debug` prints a line. One per two
 // seconds at a 60Hz tickrate -- enough to watch a trend, quiet enough to leave on.
 static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
+
+// The cl_crosshair_* channels are unclamped u32 -- the console will happily set
+// one to 9999 -- so narrow through a clamp instead of letting it wrap.
+static uint8_t crosshair_color_channel(uint32_t value)
+{
+  return uint8_t(std::min<uint32_t>(value, 255));
+}
 
 static void render_menu_overlay(bool* show_menu_overlay)
 {
@@ -739,6 +750,13 @@ void Play_State::update(float dt)
     ctx.remote_physics_bodies = latest_snapshot.physics_bodies;
     ctx.latest_processed_tick = snapshot_tick;
 
+    // Gunshots are read off replicated state, not dispatched as effects — a
+    // player whose last_fire_tick advanced since the previous snapshot fired.
+    // Runs here, once per snapshot, which is also the sample rate of the thing
+    // it watches. The integrated client connects over loopback and receives
+    // real snapshots, so this covers both topologies.
+    update_weapon_fire_audio(ctx);
+
     for (const auto &[slot_index, player] : ctx.latest_player_entities)
     {
       if (slot_index == ctx.my_slot)
@@ -878,18 +896,31 @@ void Play_State::update(float dt)
   // out instead of freezing it, and so an `r_fov` change from the console
   // always reaches the projection. Ahead of mouse look because the sensitivity
   // scale there depends on the FOV this frame is actually drawn with.
-  const bool zoom_held =
-      mouse_captured && !console_open && !show_menu_overlay &&
-      input::is_mouse_down(input::mouse_button_t::Right);
+  // Right-click TOGGLES: zoom_active persists until clicked off, so
+  // zoom_fraction eases toward a state rather than tracking a held button.
+  const bool zoom_input_allowed =
+      mouse_captured && !console_open && !show_menu_overlay;
 
-  const float zoom_target = zoom_held ? 1.0f : 0.0f;
-  if (ctx.cvars->r_zoom_time <= 0.0f)
+  if (!zoom_input_allowed)
+  {
+    // Losing the mouse cancels the zoom rather than parking it: returning from
+    // a menu still zoomed, with no click to explain it, reads as a bug. Also
+    // keeps the old behavior that opening a menu eases the zoom back out.
+    zoom_active = false;
+  }
+  else if (input::is_mouse_pressed(input::mouse_button_t::Right))
+  {
+    zoom_active = !zoom_active;
+  }
+
+  const float zoom_target = zoom_active ? 1.0f : 0.0f;
+  if (ctx.cvars->r_zoom_easing_time_between_fovs <= 0.0f)
   {
     zoom_fraction = zoom_target;
   }
   else
   {
-    float step = dt / ctx.cvars->r_zoom_time;
+    float step = dt / ctx.cvars->r_zoom_easing_time_between_fovs;
     zoom_fraction += shared::clamp(zoom_target - zoom_fraction, -step, step);
   }
 
@@ -951,8 +982,47 @@ void Play_State::update(float dt)
     if (input::is_mouse_down(input::mouse_button_t::Left))     buttons |= Button::Fire;
     // Sent even though zoom is drawn client-side: the server needs it the
     // moment scoping costs movement speed or accuracy, and it has to arrive
-    // through the predicted button bitfield to do so.
-    if (zoom_held)                                             buttons |= Button::Zoom;
+    // through the predicted button bitfield to do so. It is the zoom STATE,
+    // not the click — the toggle edge never leaves this machine.
+    if (zoom_active)                                           buttons |= Button::Zoom;
+  }
+
+  // --- Predicted local gunshot ---
+  // Our own shot plays here rather than off the server's last_fire_tick stamp,
+  // which would arrive a round trip late — the one sound where that is most
+  // audible. The watcher skips our uid for exactly this reason.
+  //
+  // It re-runs the server's rate limit (weapons.hpp is shared, so it is the
+  // same number) or we would bang on every click while the server discards the
+  // ones inside the interval. Two things it does NOT reproduce: the server also
+  // gates firing on is_movement_allowed(), which is game-rules state the client
+  // does not have, so during a countdown this plays a shot the server drops;
+  // and a shot fired while dead is not filtered here either. Both are audible
+  // only, and neither can desync anything — no state is predicted, just audio.
+  seconds_since_local_fire += dt;
+  if ((buttons & Button::Fire) != 0 && ctx.audio)
+  {
+    auto my_entity = ctx.latest_player_entities.find(ctx.my_slot);
+    if (my_entity != ctx.latest_player_entities.end())
+    {
+      // active_weapon_id came off the wire, and enum fields are deserialized
+      // without a range check, so it is looked up through fire_sound_for
+      // FIRST — that bounds-checks and logs. get_weapon_definition only
+      // asserts, which is nothing in a release build, so it is reached only
+      // once the id is known good.
+      const entities::Weapon my_weapon = my_entity->second.active_weapon_id;
+      const char *sound = fire_sound_for(my_weapon);
+      if (sound)
+      {
+        const shared::weapon_definition_t &weapon =
+            shared::get_weapon_definition(my_weapon);
+        if (seconds_since_local_fire >= weapon.fire_interval_seconds)
+        {
+          seconds_since_local_fire = 0.f;
+          ctx.audio->play_2d(sound);
+        }
+      }
+    }
   }
 
   Move_Input move_input = move_input_from_buttons(buttons);
@@ -1102,6 +1172,22 @@ void Play_State::render_ui()
   {
     render_menu_overlay(&show_menu_overlay);
     return;
+  }
+
+  // Only while actually looking around: an uncaptured cursor is the player's
+  // aiming device at that point, and a second one in the middle reads as a bug.
+  if (mouse_captured && ctx.cvars->cl_crosshair)
+  {
+    hud::crosshair_settings_t crosshair;
+    crosshair.arm_length = ctx.cvars->cl_crosshair_size;
+    crosshair.gap        = ctx.cvars->cl_crosshair_gap;
+    crosshair.thickness  = ctx.cvars->cl_crosshair_thickness;
+    crosshair.draw_dot   = ctx.cvars->cl_crosshair_dot;
+    crosshair.color      = {crosshair_color_channel(ctx.cvars->cl_crosshair_r),
+                            crosshair_color_channel(ctx.cvars->cl_crosshair_g),
+                            crosshair_color_channel(ctx.cvars->cl_crosshair_b),
+                            crosshair_color_channel(ctx.cvars->cl_crosshair_a)};
+    hud::draw_crosshair(crosshair);
   }
 
   ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
@@ -1316,11 +1402,17 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     // Solid normally, WIREFRAME while hitbox debugging is on: the regions below
     // live inside this hull, so a filled hull writes depth over every one of
     // them and all you see is a green box.
+    //
+    // cl_draw_player_hull turns it off entirely, which leaves remote players
+    // INVISIBLE -- nothing else draws them. See the cvar's comment.
     const bool show_hitboxes = ctx.cvars->debug_show_hitboxes;
-    if (show_hitboxes)
-      renderer::draw__wire_AABB(cmd, rmin, rmax, colors::green);
-    else
-      renderer::draw_AABB(cmd, rmin, rmax, colors::green);
+    if (ctx.cvars->cl_draw_player_hull)
+    {
+      if (show_hitboxes)
+        renderer::draw__wire_AABB(cmd, rmin, rmax, colors::green);
+      else
+        renderer::draw_AABB(cmd, rmin, rmax, colors::green);
+    }
 
     // The regions hitscan actually resolves against, drawn from the SAME table
     // the server tests against (`shared::player_hitboxes`) so a disagreement
@@ -1564,7 +1656,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
   // Draw particle emitters
   for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
-    renderer::particle_emitter_params_t p{};
+    renderer::particle_emitter_parameters_t p{};
     p.entity_id          = pe->entity_id;
     p.position           = pe->position;
     p.delta_time         = last_dt;
@@ -1610,7 +1702,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
   // entity_id uses high bit to guarantee no collision with real entity IDs
   for (const auto &fx : ctx.explosion_effects)
   {
-    renderer::particle_emitter_params_t p{};
+    renderer::particle_emitter_parameters_t p{};
     p.entity_id          = 0x8000000000000000ULL | fx.explosion_index;
     p.position           = fx.position;
     p.delta_time         = last_dt;
@@ -1641,7 +1733,7 @@ void Play_State::pre_render(VkCommandBuffer cmd)
 
   for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
-    renderer::particle_emitter_params_t p{};
+    renderer::particle_emitter_parameters_t p{};
     p.entity_id          = pe->entity_id;
     p.position           = pe->position;
     p.delta_time         = last_dt;
@@ -1668,7 +1760,7 @@ void Play_State::pre_render(VkCommandBuffer cmd)
   auto &ctx = state_manager::get_client_context();
   for (const auto &fx : ctx.explosion_effects)
   {
-    renderer::particle_emitter_params_t p{};
+    renderer::particle_emitter_parameters_t p{};
     p.entity_id          = 0x8000000000000000ULL | fx.explosion_index;
     p.position           = fx.position;
     p.delta_time         = last_dt;

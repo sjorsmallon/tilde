@@ -68,9 +68,16 @@ private:
   camera_t camera;
 
   // Zoom is purely local presentation: 0 = r_fov, 1 = r_zoom_fov, eased over
-  // r_zoom_time. Not predicted and not reconciled — nothing about it feeds
-  // player_move, and the server is told only that the button is held.
+  // r_zoom_easing_time_between_fovs. Not predicted and not reconciled — nothing about it feeds
+  // player_move, and the server is told only that we are zoomed.
+  // Right-click TOGGLES zoom_active; zoom_fraction is the eased follower.
+  bool zoom_active = false;
   float zoom_fraction = 0.0f;
+
+  // Real seconds since our own last predicted gunshot, for re-running the
+  // server's fire-rate gate locally. Audio only — nothing else reads it, and
+  // the authoritative rate limit is still the server's last_fire_tick.
+  float seconds_since_local_fire = 0.0f;
 
   // Player dimensions — canonical values live in shared::player_half_width/height
   static constexpr float player_half_width  = shared::player_half_width;

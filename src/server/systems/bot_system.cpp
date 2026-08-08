@@ -94,6 +94,7 @@ static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
 
 void update_bots(std::vector<Bot_State> &bots,
                  server_context_t        &context,
+                 uint32_t                 current_tick,
                  float                    dt)
 {
   shared::game_session_t &session = context.session;
@@ -237,6 +238,14 @@ void update_bots(std::vector<Bot_State> &bots,
         if (bot.fire_cooldown <= 0.f)
         {
           bot.fire_cooldown = bot.personality.fire_rate;
+
+          // Bots never reach the human fire path in server_impl.cpp, so they
+          // have to stamp the shot themselves or a bot shoots silently on
+          // every client. The weapon is written out rather than read from
+          // active_weapon_id because a bot's is whatever it spawned with while
+          // this path always launches a rocket -- latch what actually fired.
+          bot_ent->last_fire_tick   = current_tick;
+          bot_ent->last_fire_weapon = entities::Weapon::Rocket_Launcher;
 
           vec3f eye = {bot_ent->position.x,
                        bot_ent->position.y + shared::player_eye_height,

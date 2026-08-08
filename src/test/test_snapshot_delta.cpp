@@ -62,11 +62,20 @@ uint32_t leaf_index_of(entities::entity_type type, const char* dotted_name)
 // Round-trips a whole frame and reports what the encoder actually put on the
 // wire. `out_record_count` is the var_uint at the head of the stream, which is
 // the thing the "unchanged entities cost nothing" claim is really about.
+//
+// `decode_baseline` is what the RECEIVER reconstructs against, and it defaults
+// to the sender's. Passing a different one models the two ends disagreeing --
+// which is the bug the acked rule prevents, so a subtest reproducing that bug
+// has to be able to express it.
 size_t transmit_snapshot(const network::snapshot_frame_t& current,
                          const network::snapshot_frame_t* baseline,
                          network::snapshot_frame_t&       destination,
-                         uint32_t*                        out_record_count = nullptr)
+                         uint32_t*                        out_record_count = nullptr,
+                         const network::snapshot_frame_t* decode_baseline  = nullptr)
 {
+  if (decode_baseline == nullptr)
+    decode_baseline = baseline;
+
   network::Bit_Writer writer;
   network::serialize_snapshot(writer, current, baseline);
 
@@ -85,7 +94,7 @@ size_t transmit_snapshot(const network::snapshot_frame_t& current,
   network::write_var_uint(writer, trailing_sentinel);
 
   network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
-  const bool          decoded = network::deserialize_snapshot(reader, baseline, destination);
+  const bool decoded = network::deserialize_snapshot(reader, decode_baseline, destination);
   assert(decoded && "a snapshot this test wrote must decode");
   (void)decoded;
 
@@ -379,6 +388,75 @@ int main()
     assert(recovered.rockets.count(10) == 0);
 
     std::cout << "    -> Success (removal survived the loss)!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] A dropped fire stamp re-rides on the next snapshot..."
+              << std::endl;
+
+    // The claim the gunshot audio rests on (client/weapon_fire_audio.cpp):
+    // firing is replicated STATE, not a cosmetic effect, so losing the packet
+    // that carries a shot costs a tick of latency instead of the sound. A
+    // cosmetic effect rides its packet once with no resend; last_fire_tick is
+    // a field like any other, so it inherits the acked-baseline rule.
+    //
+    // What makes it worth its own subtest rather than being covered by the
+    // health one above: a fire stamp is written ONCE and then sits still. That
+    // is precisely the shape that a last-sent baseline loses forever, and the
+    // second half here shows it doing so.
+    network::snapshot_frame_t server_frame;
+    server_frame.tick = 1;
+
+    entities::Player_Entity shooter;
+    shooter.entity_id         = 1;
+    shooter.client_slot_index = 0;
+    shooter.last_fire_tick    = 0; // never fired
+    server_frame.players[1]   = shooter;
+
+    network::snapshot_frame_t client_frame;
+    transmit_snapshot(server_frame, nullptr, client_frame);
+    assert(client_frame.players.at(1).last_fire_tick == 0);
+
+    // Tick 1 is the newest frame the client reconstructed, so it is what it
+    // acks -- and it goes on acking it, because tick 2 is lost.
+    const network::snapshot_frame_t acked_tick_1 = client_frame;
+
+    server_frame.tick                        = 2;
+    server_frame.players[1].last_fire_tick   = 2;
+    server_frame.players[1].last_fire_weapon = entities::Weapon::Scout;
+    {
+      network::snapshot_frame_t discarded_by_packet_loss;
+      transmit_snapshot(server_frame, &acked_tick_1, discarded_by_packet_loss);
+      assert(discarded_by_packet_loss.players.at(1).last_fire_tick == 2);
+    }
+
+    // Tick 3: the shot is over and nothing about the shooter has moved since,
+    // so the stamp is a field that has stopped changing. Against the acked
+    // tick 1 it still differs, so it rides again and the gunshot plays one
+    // tick late.
+    server_frame.tick = 3;
+    network::snapshot_frame_t recovered;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, &acked_tick_1, recovered, &record_count);
+
+    assert(record_count == 1);
+    assert(recovered.players.at(1).last_fire_tick == 2);
+    assert(recovered.players.at(1).last_fire_weapon == entities::Weapon::Scout);
+
+    // The same loss deltaed against what was last SENT. The server believes
+    // the client saw the stamp, so tick 3 says nothing about it -- while the
+    // client is still reconstructing against tick 1, where it is 0. The
+    // watcher never sees it advance and that shot is silent forever.
+    network::snapshot_frame_t last_sent = server_frame; // tick 2, assumed landed
+    last_sent.tick                      = 2;
+
+    network::snapshot_frame_t deaf_client;
+    transmit_snapshot(server_frame, &last_sent, deaf_client, &record_count,
+                      &acked_tick_1);
+    assert(record_count == 0);
+    assert(deaf_client.players.at(1).last_fire_tick == 0); // shot never heard
+
+    std::cout << "    -> Success (fire stamp survived the loss)!" << std::endl;
   }
 
   {

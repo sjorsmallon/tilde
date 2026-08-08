@@ -24,6 +24,10 @@ namespace shared
 // sniper later would share Scout's resolution and need its own id).
 struct weapon_definition_t
 {
+  // Which weapon this row is for. Present so the row can be checked against
+  // its own index (see the static_assert below) rather than trusting that
+  // whoever last edited this list counted correctly.
+  entities::Weapon      weapon;
   const char*           display_name;
   float                 damage;
   float                 headshot_multiplier; // Knife / Rocket: 1.0, no headshots
@@ -35,19 +39,22 @@ struct weapon_definition_t
 // Indexed by entities::Weapon, so entry N is the weapon whose enum value is N
 // and the order here must track the .def's, not Weapon_Kind's.
 inline constexpr std::array WEAPON_DEFINITIONS = std::to_array<weapon_definition_t>({
-    {.display_name          = "Knife",
+    {.weapon               = entities::Weapon::Knife,
+     .display_name          = "Knife",
      .damage                = 50.f,
      .headshot_multiplier   = 1.0f,
      .fire_interval_seconds = 0.5f,
      .range                 = 50.f,
      .kind                  = entities::Weapon_Kind::Melee},
-    {.display_name          = "Scout",
+    {.weapon               = entities::Weapon::Scout,
+     .display_name          = "Scout",
      .damage                = 60.f,
      .headshot_multiplier   = 2.0f,
      .fire_interval_seconds = 1.25f,
      .range                 = 10000.f,
      .kind                  = entities::Weapon_Kind::Sniper},
-    {.display_name          = "Rocket Launcher",
+    {.weapon               = entities::Weapon::Rocket_Launcher,
+     .display_name          = "Rocket Launcher",
      .damage                = 100.f,
      .headshot_multiplier   = 1.0f,
      .fire_interval_seconds = 1.0f,
@@ -64,6 +71,22 @@ inline constexpr std::array WEAPON_DEFINITIONS = std::to_array<weapon_definition
 static_assert(WEAPON_DEFINITIONS.size() == entities::Weapon_COUNT,
               "WEAPON_DEFINITIONS is out of sync with the Weapon enum in entities.def: "
               "every weapon needs exactly one row, in enum order.");
+
+// Size alone does not catch a REORDER, which is the failure that actually
+// looks fine: swap two rows, or insert a weapon in the middle of the .def
+// enum, and the count still matches while every lookup returns a neighbour's
+// stats. Each row names its own weapon, so this compares the list against
+// itself.
+static_assert(
+    []
+    {
+      for (size_t index = 0; index < WEAPON_DEFINITIONS.size(); ++index)
+        if (WEAPON_DEFINITIONS[index].weapon != static_cast<entities::Weapon>(index))
+          return false;
+      return true;
+    }(),
+    "WEAPON_DEFINITIONS rows are not in Weapon enum order: get_weapon_definition "
+    "indexes by enum value, so a row out of place returns another weapon's stats.");
 
 constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 {

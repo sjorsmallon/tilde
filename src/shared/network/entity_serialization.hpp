@@ -104,7 +104,15 @@ bool has_networked_changes(const entities::Entity& entity,
 // current value, which is what makes a delta a delta.
 //
 // `out_changed` is optional; when given it receives the mask this call applied.
-void deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
+//
+// Returns false if a field's value is not representable in this build's tables
+// — an enum value or asset id outside the declared set. `entity` is then
+// half-applied and the read position is mid-record, so the only correct
+// response is to drop the whole packet: the ack does not advance and the
+// sender re-baselines. Everything a well-formed peer sends decodes, so a false
+// here means corruption or a hostile sender, not version skew (SCHEMA_HASH
+// catches that at connect).
+bool deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
                         changed_fields_t* out_changed = nullptr);
 
 inline void pack_entity_delta_for_update(game::S2C_EntityPackage& out_packet,

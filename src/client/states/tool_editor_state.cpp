@@ -1191,7 +1191,7 @@ void Tool_Editor_State::render_3d(VkCommandBuffer cmd)
   // Draw particle emitters
   for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
-    renderer::particle_emitter_params_t p{};
+    renderer::particle_emitter_parameters_t p{};
     p.entity_id = pe->entity_id;
     p.position = pe->position;
     p.delta_time = last_dt;
@@ -1226,7 +1226,7 @@ void Tool_Editor_State::pre_render(VkCommandBuffer cmd)
 {
   for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
   {
-    renderer::particle_emitter_params_t p{};
+    renderer::particle_emitter_parameters_t p{};
     p.entity_id = pe->entity_id;
     p.position = pe->position;
     p.delta_time = last_dt;

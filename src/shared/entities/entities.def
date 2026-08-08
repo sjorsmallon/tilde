@@ -281,7 +281,8 @@ Player_Spawn_Entity :: entity {
 }
 
 
-
+// last_fire_weapon required because yhou need to know what you had equipped
+// when firing in case weapon is switched
 Player_Entity :: entity @runtime_only {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
@@ -292,6 +293,15 @@ Player_Entity :: entity @runtime_only {
     health:            i32              @Networked
     ammo:              i32              @Networked
     active_weapon_id:  Weapon = .Knife  @Networked
+    // The shot itself, latched where it resolves: this pair IS the fire event,
+    // and clients play the gunshot off last_fire_tick advancing. Replicated
+    // STATE rather than a cosmetic effect because a gunshot you never hear is
+    // lost information, not lost decoration -- effects ride their packet once
+    // with no resend, these ride the delta against the ACKED baseline, so a
+    // dropped packet costs a tick of latency instead of the sound.
+    // 0 = never fired (server ticks start at 1).
+    last_fire_tick:    u32              @Networked
+    last_fire_weapon:  Weapon = .Knife  @Networked
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
     // Feeds remote-player interpolation.

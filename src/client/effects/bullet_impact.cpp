@@ -12,7 +12,7 @@ void on_bullet_impact(client_context_t &context,
                       const shared::effect_data_t &data)
 {
     (void)context;
-    
+    (void)data;
 }
 
-}
+} // namespace client::effects

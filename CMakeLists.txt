@@ -310,10 +310,12 @@ add_library(game_client SHARED
     src/client/effects/footstep.cpp
     src/client/effects/player_movement.cpp
     src/client/effects/bullet_impact.cpp
+    src/client/weapon_fire_audio.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
     src/client/game_events.cpp
     src/client/hud/kill_feed.cpp
+    src/client/hud/crosshair.cpp
     src/client/console.cpp
     src/client/state_manager.cpp
     src/client/states/play_state.cpp

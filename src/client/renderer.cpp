@@ -2858,17 +2858,17 @@ bool WireframeSupported()
 
 void draw_mesh(VkCommandBuffer cmd,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
-              const mesh_draw_params_t &params)
+              const mesh_draw_parameters_t &parameters)
 {
   if (!mesh_handle.valid())
     return;
 
-  if (params.wireframe && g_mesh_wireframe_pipeline == VK_NULL_HANDLE)
+  if (parameters.wireframe && g_mesh_wireframe_pipeline == VK_NULL_HANDLE)
     return;
-  if (!params.wireframe && params.shader ==  shader_type::Textured &&
+  if (!parameters.wireframe && parameters.shader ==  shader_type::Textured &&
       g_disp_textured_pipeline == VK_NULL_HANDLE)
     return;
-  if (!params.wireframe && params.shader !=  shader_type::Textured &&
+  if (!parameters.wireframe && parameters.shader !=  shader_type::Textured &&
       g_mesh_pipeline == VK_NULL_HANDLE)
     return;
 
@@ -2877,18 +2877,18 @@ void draw_mesh(VkCommandBuffer cmd,
     return;
 
   // Bind pipeline
-  if (params.wireframe)
+  if (parameters.wireframe)
   {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_wireframe_pipeline);
     vkCmdSetDepthBias(cmd, g_line_depth_bias_constant, 0.0f, g_line_depth_bias_slope);
   }
-  else if (params.shader ==  shader_type::Textured)
+  else if (parameters.shader ==  shader_type::Textured)
   {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_disp_textured_layout,
                             0, 1, &g_disp_texture_ds, 0, nullptr);
   }
-  else if (params.shader ==  shader_type::Lit)
+  else if (parameters.shader ==  shader_type::Lit)
   {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_lit_pipeline);
   }
@@ -2904,36 +2904,36 @@ void draw_mesh(VkCommandBuffer cmd,
 
   // Build model matrix: T * Rz * Ry * Rx * S
   constexpr float DEG2RAD = 3.14159265358979f / 180.0f;
-  float rx = params.rotation.x * DEG2RAD;
-  float ry = params.rotation.y * DEG2RAD;
-  float rz = params.rotation.z * DEG2RAD;
+  float rx = parameters.rotation.x * DEG2RAD;
+  float ry = parameters.rotation.y * DEG2RAD;
+  float rz = parameters.rotation.z * DEG2RAD;
 
   float cx = cosf(rx), sx = sinf(rx);
   float cy = cosf(ry), sy = sinf(ry);
   float cz = cosf(rz), sz = sinf(rz);
 
   mat4_t model = {};
-  model.m[0]  = (cz * cy) * params.scale.x;
-  model.m[1]  = (sz * cy) * params.scale.x;
-  model.m[2]  = (-sy)     * params.scale.x;
+  model.m[0]  = (cz * cy) * parameters.scale.x;
+  model.m[1]  = (sz * cy) * parameters.scale.x;
+  model.m[2]  = (-sy)     * parameters.scale.x;
   model.m[3]  = 0;
-  model.m[4]  = (cz * sy * sx - sz * cx) * params.scale.y;
-  model.m[5]  = (sz * sy * sx + cz * cx) * params.scale.y;
-  model.m[6]  = (cy * sx)                * params.scale.y;
+  model.m[4]  = (cz * sy * sx - sz * cx) * parameters.scale.y;
+  model.m[5]  = (sz * sy * sx + cz * cx) * parameters.scale.y;
+  model.m[6]  = (cy * sx)                * parameters.scale.y;
   model.m[7]  = 0;
-  model.m[8]  = (cz * sy * cx + sz * sx) * params.scale.z;
-  model.m[9]  = (sz * sy * cx - cz * sx) * params.scale.z;
-  model.m[10] = (cy * cx)                * params.scale.z;
+  model.m[8]  = (cz * sy * cx + sz * sx) * parameters.scale.z;
+  model.m[9]  = (sz * sy * cx - cz * sx) * parameters.scale.z;
+  model.m[10] = (cy * cx)                * parameters.scale.z;
   model.m[11] = 0;
-  model.m[12] = params.position.x;
-  model.m[13] = params.position.y;
-  model.m[14] = params.position.z;
+  model.m[12] = parameters.position.x;
+  model.m[13] = parameters.position.y;
+  model.m[14] = parameters.position.z;
   model.m[15] = 1;
 
   mat4_t mvp = mat4_t::mult(g_current_view_proj, model);
 
   // Textured displacement path — no color, just MVP
-  if (params.shader ==  shader_type::Textured && !params.wireframe)
+  if (parameters.shader ==  shader_type::Textured && !parameters.wireframe)
   {
     DispTexturedPC pc{};
     memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
@@ -2944,14 +2944,14 @@ void draw_mesh(VkCommandBuffer cmd,
   }
 
   // Wireframe path — flat color, no lighting
-  if (params.wireframe)
+  if (parameters.wireframe)
   {
     PushConstants pc{};
     memcpy(pc.mvp, mvp.m, sizeof(float) * 16);
-    pc.color[0] = params.color.r / 255.0f;
-    pc.color[1] = params.color.g / 255.0f;
-    pc.color[2] = params.color.b / 255.0f;
-    pc.color[3] = params.color.a / 255.0f;
+    pc.color[0] = parameters.color.r / 255.0f;
+    pc.color[1] = parameters.color.g / 255.0f;
+    pc.color[2] = parameters.color.b / 255.0f;
+    pc.color[3] = parameters.color.a / 255.0f;
     pc.use_random_color = 2;
     pc.use_2d_bary = 2;
     vkCmdPushConstants(cmd, g_aabb_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
@@ -2964,13 +2964,13 @@ void draw_mesh(VkCommandBuffer cmd,
   const assets::mesh_asset_t *mesh_data = assets::get(mesh_handle);
   const bool use_submeshes = mesh_data && mesh_data->has_materials();
 
-  // Tint color from params (used as fallback when no submesh materials)
-  vec3f tint_rgb = {params.color.r / 255.0f, params.color.g / 255.0f,
-                    params.color.b / 255.0f};
+  // Tint color from parameters (used as fallback when no submesh materials)
+  vec3f tint_rgb = {parameters.color.r / 255.0f, parameters.color.g / 255.0f,
+                    parameters.color.b / 255.0f};
 
   auto push_and_draw = [&](const vec3f &draw_color, uint32_t index_count, uint32_t first_index)
   {
-    if (params.shader ==  shader_type::Lit)
+    if (parameters.shader ==  shader_type::Lit)
     {
       LitPushConstants lpc{};
       memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
@@ -3796,15 +3796,15 @@ bool get_mesh_gpu_info(assets::asset_handle_t<assets::mesh_asset_t> handle,
   return true;
 }
 
-void update_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
+void update_particles(VkCommandBuffer cmd, const particle_emitter_parameters_t &parameters)
 {
   if (g_particle_compute_pipeline == VK_NULL_HANDLE) return;
-  if (params.max_particles == 0) return;
+  if (parameters.max_particles == 0) return;
 
-  particle_emitter_gpu_t *gpu = get_or_create_emitter_gpu(params.entity_id, params.max_particles);
+  particle_emitter_gpu_t *gpu = get_or_create_emitter_gpu(parameters.entity_id, parameters.max_particles);
   if (!gpu)
   {
-    log_warning("Skipping particle emitter {} — GPU allocation failed", params.entity_id);
+    log_warning("Skipping particle emitter {} — GPU allocation failed", parameters.entity_id);
     return;
   }
 
@@ -3815,39 +3815,39 @@ void update_particles(VkCommandBuffer cmd, const particle_emitter_params_t &para
   g_particle_frame_counter++;
 
   ParticleComputePC pc{};
-  pc.emitter_pos[0] = params.position.x;
-  pc.emitter_pos[1] = params.position.y;
-  pc.emitter_pos[2] = params.position.z;
-  pc.delta_time = params.delta_time;
-  pc.gravity[0] = params.gravity.x;
-  pc.gravity[1] = params.gravity.y;
-  pc.gravity[2] = params.gravity.z;
-  pc.drag = params.drag;
-  pc.color_start[0] = params.color_start.x;
-  pc.color_start[1] = params.color_start.y;
-  pc.color_start[2] = params.color_start.z;
-  pc.color_start[3] = params.alpha_start;
-  pc.color_end[0] = params.color_end.x;
-  pc.color_end[1] = params.color_end.y;
-  pc.color_end[2] = params.color_end.z;
-  pc.color_end[3] = params.alpha_end;
-  pc.size_start = params.size_start;
-  pc.size_end = params.size_end;
-  pc.rot_speed_min = params.rotation_speed_min;
-  pc.rot_speed_max = params.rotation_speed_max;
-  pc.vel_min = params.velocity_min;
-  pc.vel_max = params.velocity_max;
-  pc.lifetime_min = params.lifetime_min;
-  pc.lifetime_max = params.lifetime_max;
-  pc.frame_seed = g_particle_frame_counter * 7919 + params.entity_id * 104729;
-  pc.max_particles = params.max_particles;
-  pc.spread_x1000 = (uint32_t)(params.spread * 1000.0f);
-  pc.emit_rate_x100 = (uint32_t)(params.emit_rate * 100.0f);
+  pc.emitter_pos[0] = parameters.position.x;
+  pc.emitter_pos[1] = parameters.position.y;
+  pc.emitter_pos[2] = parameters.position.z;
+  pc.delta_time = parameters.delta_time;
+  pc.gravity[0] = parameters.gravity.x;
+  pc.gravity[1] = parameters.gravity.y;
+  pc.gravity[2] = parameters.gravity.z;
+  pc.drag = parameters.drag;
+  pc.color_start[0] = parameters.color_start.x;
+  pc.color_start[1] = parameters.color_start.y;
+  pc.color_start[2] = parameters.color_start.z;
+  pc.color_start[3] = parameters.alpha_start;
+  pc.color_end[0] = parameters.color_end.x;
+  pc.color_end[1] = parameters.color_end.y;
+  pc.color_end[2] = parameters.color_end.z;
+  pc.color_end[3] = parameters.alpha_end;
+  pc.size_start = parameters.size_start;
+  pc.size_end = parameters.size_end;
+  pc.rot_speed_min = parameters.rotation_speed_min;
+  pc.rot_speed_max = parameters.rotation_speed_max;
+  pc.vel_min = parameters.velocity_min;
+  pc.vel_max = parameters.velocity_max;
+  pc.lifetime_min = parameters.lifetime_min;
+  pc.lifetime_max = parameters.lifetime_max;
+  pc.frame_seed = g_particle_frame_counter * 7919 + parameters.entity_id * 104729;
+  pc.max_particles = parameters.max_particles;
+  pc.spread_x1000 = (uint32_t)(parameters.spread * 1000.0f);
+  pc.emit_rate_x100 = (uint32_t)(parameters.emit_rate * 100.0f);
 
   vkCmdPushConstants(cmd, g_particle_compute_layout, VK_SHADER_STAGE_COMPUTE_BIT,
                      0, sizeof(ParticleComputePC), &pc);
 
-  uint32_t groups = (params.max_particles + 63) / 64;
+  uint32_t groups = (parameters.max_particles + 63) / 64;
   vkCmdDispatch(cmd, groups, 1, 1);
 
   // Memory barrier: compute write -> vertex read
@@ -3864,12 +3864,12 @@ void update_particles(VkCommandBuffer cmd, const particle_emitter_params_t &para
                        0, 0, nullptr, 1, &barrier, 0, nullptr);
 }
 
-void draw_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params)
+void draw_particles(VkCommandBuffer cmd, const particle_emitter_parameters_t &parameters)
 {
   if (g_particle_graphics_pipeline == VK_NULL_HANDLE) return;
-  if (params.max_particles == 0) return;
+  if (parameters.max_particles == 0) return;
 
-  auto it = g_particle_emitters.find(params.entity_id);
+  auto it = g_particle_emitters.find(parameters.entity_id);
   if (it == g_particle_emitters.end()) return;
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_particle_graphics_pipeline);
@@ -3896,7 +3896,7 @@ void draw_particles(VkCommandBuffer cmd, const particle_emitter_params_t &params
                      0, sizeof(ParticleGraphicsPC), &pc);
 
   // 6 vertices per quad, one instance per particle
-  vkCmdDraw(cmd, 6, params.max_particles, 0, 0);
+  vkCmdDraw(cmd, 6, parameters.max_particles, 0, 0);
 }
 
 } // namespace renderer

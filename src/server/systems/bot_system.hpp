@@ -74,8 +74,12 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
 
 // Called once per server tick. Takes the full context (matching the other
 // systems) so bots can dispatch movement cosmetics (jump/land) like players do.
+// current_tick is what a bot stamps onto Player_Entity::last_fire_tick when it
+// shoots, the same value the human fire path writes — passed explicitly like
+// update_respawns takes it, since the tick counter lives in server_impl.cpp.
 void update_bots(std::vector<Bot_State> &bots,
                  server_context_t        &context,
+                 uint32_t                 current_tick,
                  float                    dt);
 
 } // namespace server
