@@ -413,6 +413,116 @@ static void test_bind_pose_skinning_is_identity()
             (&round_trip[column].x)[row]);
 }
 
+// --- Multi-frame clips -----------------------------------------------------
+
+// Every animation test above this line reads a ONE-frame file, so between them
+// they never execute the interpolating half of sample_animation_clip_at, nor any
+// of the exporter's clip path. `Death.animation` is the first real multi-frame
+// export -- 7 frames at 24 fps out of a 4-key Blender action -- and the two ends
+// meet here the same way the skeleton and mesh readers meet the exporter above.
+static const char *CLIP_PATH = "resources/models/Death.animation";
+
+static void test_real_clip()
+{
+  printf("test_real_clip\n");
+
+  assets::asset_handle_t<assets::animation_clip_t> handle = assets::load_animation(CLIP_PATH);
+  const assets::animation_clip_t                  *clip   = assets::get(handle);
+  CHECK(clip != nullptr, "'%s' must load", CLIP_PATH);
+
+  const uint32_t frame_count = clip->frame_count();
+  CHECK(frame_count > 1, "a clip must have more than the one frame a pose has, got %u",
+        frame_count);
+  CHECK(clip->fps > 0.0f, "fps was %f", clip->fps);
+  CHECK(clip->frames.size() == (size_t)frame_count * clip->bone_count,
+        "%zu transforms for %u frames x %u bones", clip->frames.size(), frame_count,
+        clip->bone_count);
+
+  // The engine-side half of the exporter's verify_clip_animates. Stated as an
+  // invariant of the FILE rather than trusting the tool that wrote it: a clip
+  // that does not move is well-formed, and this is the only place that notices.
+  bool moves = false;
+  for (uint32_t frame = 1; frame < frame_count && !moves; ++frame)
+  {
+    for (uint32_t bone = 0; bone < clip->bone_count && !moves; ++bone)
+    {
+      const assets::transform_t &first = clip->frames[bone];
+      const assets::transform_t &later = clip->frames[(size_t)frame * clip->bone_count + bone];
+      moves = linalg::length(later.translation - first.translation) > 1e-3f ||
+              std::fabs(later.rotation.x - first.rotation.x) > 1e-4f ||
+              std::fabs(later.rotation.y - first.rotation.y) > 1e-4f ||
+              std::fabs(later.rotation.z - first.rotation.z) > 1e-4f ||
+              std::fabs(later.rotation.w - first.rotation.w) > 1e-4f;
+    }
+  }
+  CHECK(moves, "'%s' has %u frames that are all identical", CLIP_PATH, frame_count);
+}
+
+// The two numbers a player is built out of: where phase lands, and how long a
+// pass takes. They are derived in different functions and MUST agree, or a clip
+// played on a clock drifts against the pose it draws.
+static void test_clip_sampling_and_duration()
+{
+  printf("test_clip_sampling_and_duration\n");
+
+  const assets::animation_clip_t *clip = assets::get(assets::load_animation(CLIP_PATH));
+  CHECK(clip != nullptr, "'%s' must load", CLIP_PATH);
+  const uint32_t frame_count = clip->frame_count();
+
+  // Both sides of these are a small integer over the same fps, so the only slack
+  // needed is float division's.
+  constexpr float TOLERANCE = 1e-5f;
+
+  // A one-shot spans frame_count-1 intervals and stops ON the last frame; a loop
+  // spans frame_count, because frame n-1 interpolates back into frame 0.
+  CHECK(std::fabs(assets::clip_duration_seconds(*clip, false) -
+                  (float)(frame_count - 1) / clip->fps) < TOLERANCE,
+        "one-shot duration disagrees with the sampler's frame span");
+  CHECK(std::fabs(assets::clip_duration_seconds(*clip, true) -
+                  (float)frame_count / clip->fps) < TOLERANCE,
+        "looping duration disagrees with the sampler's frame span");
+
+  assets::pose_t sampled;
+
+  // Sampling AT a frame boundary must reproduce that frame exactly rather than
+  // land a blend epsilon away from it -- otherwise a paused scrub never shows an
+  // authored pose, only something near one.
+  for (uint32_t frame = 0; frame < frame_count; ++frame)
+  {
+    const float phase = (float)frame / (float)(frame_count - 1);
+    assets::sample_animation_clip_at(sampled, *clip, phase, /*looping*/ false);
+    CHECK(sampled.local.size() == clip->bone_count, "sampled %zu of %u bones",
+          sampled.local.size(), clip->bone_count);
+
+    for (uint32_t bone = 0; bone < clip->bone_count; ++bone)
+    {
+      const assets::transform_t &stored = clip->frames[(size_t)frame * clip->bone_count + bone];
+      CHECK(linalg::length(sampled.local[bone].translation - stored.translation) < 1e-3f,
+            "frame %u bone %u sampled away from the stored translation", frame, bone);
+    }
+  }
+
+  // Past either end a one-shot CLAMPS: it holds the last frame rather than
+  // wrapping to the first, which is the difference between a death animation
+  // that stays down and one that stands back up.
+  assets::pose_t beyond;
+  assets::sample_animation_clip_at(sampled, *clip, 1.0f, /*looping*/ false);
+  assets::sample_animation_clip_at(beyond, *clip, 4.5f, /*looping*/ false);
+  for (uint32_t bone = 0; bone < clip->bone_count; ++bone)
+    CHECK(linalg::length(beyond.local[bone].translation - sampled.local[bone].translation) < 1e-4f,
+          "a one-shot past the end did not clamp at bone %u", bone);
+
+  // Looping, phase 1.0 and phase 0.0 are the SAME pose -- that is what makes a
+  // loop seamless instead of hitching by one frame every cycle.
+  assets::pose_t at_zero;
+  assets::pose_t at_one;
+  assets::sample_animation_clip_at(at_zero, *clip, 0.0f, /*looping*/ true);
+  assets::sample_animation_clip_at(at_one, *clip, 1.0f, /*looping*/ true);
+  for (uint32_t bone = 0; bone < clip->bone_count; ++bone)
+    CHECK(linalg::length(at_one.local[bone].translation - at_zero.local[bone].translation) < 1e-4f,
+          "looping phase 1.0 is not phase 0.0 at bone %u", bone);
+}
+
 // --- Poses, blending and the aim space -------------------------------------
 
 // Keyed by the pose, so a sixth aim pose resizes this and the missing row shows
@@ -767,6 +877,8 @@ int main()
   test_static_mesh();
   test_bind_pose_skinning_is_identity();
   test_real_aim_poses();
+  test_real_clip();
+  test_clip_sampling_and_duration();
   test_posed_skinning_stays_a_person();
   test_blend_and_aim_space();
   test_rejects_bad_animations();

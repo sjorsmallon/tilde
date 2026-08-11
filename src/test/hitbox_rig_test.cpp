@@ -17,10 +17,13 @@
 #include "animation.hpp"
 #include "asset.hpp"
 #include "hitbox_rig.hpp"
+#include "hitscan.hpp"
 #include "model_format.hpp"
+#include "player_rig.hpp"
 #include "player_constants.hpp"
 #include "skinning.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -245,6 +248,112 @@ static void test_hull_excursion(const model_t &model)
           "'%s' puts volume '%s' %.2f units outside a 32-wide player -- that is a broken matrix, "
           "not a lean",
           pose_path, worst, excursion.distance);
+  }
+}
+
+// The whole path a shot takes, against the REAL rig: player_rig() loads it,
+// compute_player_hitboxes poses and places it, resolve_hitscan tests it. Every
+// piece has its own unit test above or in hitscan_test; this is the one place
+// they are wired together, so "the volumes exist and pose correctly, but a
+// bullet still goes through them" cannot pass.
+static void test_hitscan_against_the_real_rig()
+{
+  printf("test_hitscan_against_the_real_rig\n");
+
+  // player_rig() goes through the asset cache, which the rest of this file
+  // bypasses (it parses files directly). One state for this test.
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+
+  const shared::player_rig_t &rig = shared::player_rig();
+  const aim_settings_t        settings;
+
+  // A target 200 units down +X, facing back at the shooter.
+  constexpr float TARGET_X = 200.0f;
+  const shared::player_pose_t facing_the_shooter{.feet_position = {TARGET_X, 0.0f, 0.0f},
+                                                 .body_yaw      = 180.0f,
+                                                 .view_yaw      = 180.0f,
+                                                 .view_pitch    = 0.0f};
+
+  std::vector<assets::posed_hitbox_t> volumes(rig.volume_count());
+  shared::compute_player_hitboxes(rig, facing_the_shooter, settings, volumes);
+
+  const std::vector<shared::hitscan_target_t> targets{{1, volumes}};
+
+  // Fire horizontally through the centre of one volume per region. Reading the
+  // heights off the posed volumes rather than hard-coding them keeps this a
+  // test of the path and not of the authored numbers.
+  for (uint32_t region_index = 0; region_index < 3; ++region_index)
+  {
+    const shared::hit_region_t region = (shared::hit_region_t)region_index;
+
+    const assets::posed_hitbox_t *volume = nullptr;
+    for (const assets::posed_hitbox_t &candidate : volumes)
+      if (candidate.region == region)
+      {
+        volume = &candidate;
+        break;
+      }
+    CHECK(volume != nullptr, "the rig has no %s volume", shared::to_string(region));
+
+    const linalg::vec3f centre = volume->center();
+    const shared::hitscan_result_t hit =
+        shared::resolve_hitscan({0.0f, centre.y, centre.z}, {1.0f, 0.0f, 0.0f}, 1000.0f, targets);
+
+    CHECK(hit.hit_uid == 1, "a ray through the centre of a %s volume (%.1f, %.1f, %.1f) missed the "
+                            "player entirely",
+          shared::to_string(region), centre.x, centre.y, centre.z);
+    CHECK(hit.distance > 0.0f && hit.distance < TARGET_X,
+          "hit distance %.1f is not between the shooter and the target", hit.distance);
+  }
+
+  // Above the crown is a clean miss -- the volumes are a player, not a column
+  // to the sky.
+  {
+    const shared::hitscan_result_t over =
+        shared::resolve_hitscan({0.0f, shared::player_half_height * 2.0f + 12.0f, 0.0f},
+                                {1.0f, 0.0f, 0.0f}, 1000.0f, targets);
+    CHECK(over.hit_uid == 0, "a ray a foot over the player's head hit something");
+  }
+
+  // The claim the whole change rests on: the volumes MOVE with the pose. Turn
+  // the body 90 degrees and the arms are somewhere else -- if this passes with
+  // a zero maximum, hitscan is testing a pose-independent shape again.
+  {
+    shared::player_pose_t turned = facing_the_shooter;
+    turned.body_yaw              = 90.0f;
+    turned.view_yaw              = 90.0f;
+
+    std::vector<assets::posed_hitbox_t> turned_volumes(rig.volume_count());
+    shared::compute_player_hitboxes(rig, turned, settings, turned_volumes);
+
+    float largest_shift = 0.0f;
+    for (uint32_t index = 0; index < rig.volume_count(); ++index)
+      largest_shift =
+          std::max(largest_shift, linalg::length(turned_volumes[index].start - volumes[index].start));
+
+    printf("  turning the body 90 degrees moves the furthest volume %.1f units\n", largest_shift);
+    CHECK(largest_shift > 1.0f, "turning the body moved no volume: the hit volumes are not "
+                                "following the pose");
+  }
+
+  // And the same for the aim blend, which is the input that has no analogue in
+  // the old static table: looking up must move the head volume.
+  {
+    shared::player_pose_t looking_up = facing_the_shooter;
+    looking_up.view_pitch            = settings.max_pitch_degrees;
+
+    std::vector<assets::posed_hitbox_t> raised(rig.volume_count());
+    shared::compute_player_hitboxes(rig, looking_up, settings, raised);
+
+    float largest_shift = 0.0f;
+    for (uint32_t index = 0; index < rig.volume_count(); ++index)
+      largest_shift =
+          std::max(largest_shift, linalg::length(raised[index].start - volumes[index].start));
+
+    printf("  aiming %.0f degrees up moves the furthest volume %.1f units\n",
+           settings.max_pitch_degrees, largest_shift);
+    CHECK(largest_shift > 1.0f, "the aim pitch pose moved no volume");
   }
 }
 
@@ -568,6 +677,7 @@ int main(int argument_count, char **arguments)
   test_sizes_against_derived(model);
   test_hull_excursion(model);
   test_coverage(model);
+  test_hitscan_against_the_real_rig();
   test_round_trip(model);
   test_every_shape_round_trips(model);
   test_malformed(model);

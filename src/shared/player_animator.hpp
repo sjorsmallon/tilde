@@ -1,7 +1,16 @@
 #pragma once
 
+// The player's aim pose blend, and the feet-chase-the-view integrator that
+// feeds it.
+//
+// In `game_shared`, not in the client, because BOTH SIDES run it: the client
+// draws the pose and the server poses the hit volumes out of the same blend
+// (`player_rig.hpp`). One implementation is what makes the silhouette you shoot
+// at the volume that gets tested -- animation_def.md §4, "the two guarantees".
+
 #include "animation.hpp"
 #include "asset.hpp"
+#include "cvars/generated/cvars_generated.hpp"
 #include "linalg.hpp"
 #include "skeleton.hpp"
 
@@ -26,6 +35,18 @@ struct aim_settings_t
   // unreachable by construction.
   float body_turn_rate_degrees_per_second = 540.0f;
 };
+
+// The one translation from cvars to the values. Here rather than at each call
+// site because there are now three of them -- the client's draw path, the
+// server's hitbox pose and the Animation tool -- and three copies of a
+// three-field struct literal is three chances to read a different cvar. The
+// values are @Mirrored, so both sides read the same numbers.
+inline aim_settings_t aim_settings_from(const cvars::cvar_state_t &cvars)
+{
+  return aim_settings_t{.max_pitch_degrees = cvars.sv_aim_max_pitch,
+                        .max_yaw_degrees   = cvars.sv_aim_max_yaw,
+                        .body_turn_rate_degrees_per_second = cvars.sv_aim_body_turn_rate};
+}
 
 // Loads `<directory>/{forward,upward,downward,left,right}_<suffix>.animation`.
 // ANY of the five missing is fatal and names the file. The set is meaningless
@@ -56,6 +77,12 @@ const aim_pose_set_t &holding_gun_aim_poses();
 // torso simply twists, and past it the body turns to keep the deviation inside
 // what the poses cover. Both angles are degrees and the difference is wrapped
 // to (-180, 180], so crossing the 0/360 seam does not spin the model.
+//
+// THE SERVER IS THE ONLY CALLER THAT ADVANCES. It runs this once per player per
+// fixed tick off the replicated view yaw and writes the result to
+// `Player_Entity::body_yaw`; clients read that field. A client calling this
+// would be a second integrator on the render clock, which is exactly the
+// three-way disagreement the field exists to end.
 float advance_body_yaw(float &body_yaw, float view_yaw, float delta_time,
                        const aim_settings_t &settings);
 

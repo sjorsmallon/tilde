@@ -493,8 +493,28 @@ def find_pose_files(pose_directory):
     # Absolute, because bpy.data.libraries.load resolves a relative path against
     # the BLEND's directory rather than the working directory -- which silently
     # became C:\resources\... the first time this was tried.
-    pattern = os.path.join(pose_directory, "**", "*.blend")
-    return [os.path.abspath(p) for p in sorted(glob.glob(pattern, recursive=True))]
+    #
+    # NOT recursive, and that is the contract: the pose set is the files the
+    # author put in this directory, nothing else. Blender's asset browser saves
+    # into `Saved/Actions/` underneath it, so a recursive glob swept up every
+    # pose ever marked as an asset -- including the four source poses of the
+    # `Death` CLIP, which would then have exported as four extra `.animation`
+    # files and, being near-rest, tripped verify_poses_differ and failed an
+    # export that had nothing wrong with it.
+    pattern = os.path.join(pose_directory, "*.blend")
+    files = [os.path.abspath(p) for p in sorted(glob.glob(pattern))]
+
+    # Named rather than ignored: a pose the author saved into a subdirectory is
+    # invisible in the output either way, and silence is how they would go
+    # looking for it in the exporter.
+    nested = sorted(glob.glob(os.path.join(pose_directory, "*", "**", "*.blend"),
+                              recursive=True))
+    if nested:
+        log(f"ignoring {len(nested)} .blend file(s) below '{pose_directory}'; "
+            f"poses are the files directly IN it: "
+            f"{[os.path.basename(p) for p in nested[:6]]}"
+            f"{' ...' if len(nested) > 6 else ''}")
+    return files
 
 
 def check_pose_position(armature_object):
@@ -541,8 +561,35 @@ def warn_on_loose_pose(armature_object):
 
 
 def reset_pose_to_rest(armature_object):
+    """Back to rest, which means UNASSIGNING the action as well as zeroing the
+    bones -- rest is "nothing is driving this rig", and clearing only half of it
+    does not survive the next depsgraph evaluation.
+
+    Zeroing alone was enough while poses were the only thing exported, because
+    every pose reassigns an action immediately afterwards. It stopped being
+    enough the moment a clip ran first: `export_clips` left `Death` assigned, so
+    the pose path's rest baseline re-evaluated straight back into Death's last
+    frame and `verify_poses_differ` was comparing every pose against that
+    instead of against rest -- still a check, but of the wrong thing.
+    """
+    if armature_object.animation_data:
+        armature_object.animation_data.action = None
     for pose_bone in armature_object.pose.bones:
         pose_bone.matrix_basis.identity()
+
+
+def prepare_pose_evaluation(armature_object):
+    """Everything that must be true before ANY pose is read back.
+
+    Shared by the clip and pose paths rather than done by each: both read
+    `pose_bone.matrix`, and every trap below produces a well-formed file full of
+    plausible numbers instead of an error. Call it once, after the skeleton and
+    meshes are written -- `enter_pose_mode` invalidates the `Bone` datablocks
+    those need (see read_pose_locals).
+    """
+    check_pose_position(armature_object)
+    warn_on_loose_pose(armature_object)
+    enter_pose_mode(armature_object)
 
 
 def append_pose_actions(path):
@@ -746,6 +793,153 @@ def channels_equal(left, right, epsilon=1e-4):
     return True
 
 
+def frames_equal(left, right):
+    return (len(left) == len(right)
+            and all(channels_equal(a, b) for a, b in zip(left, right)))
+
+
+# --- Clips --------------------------------------------------------------
+#
+# A clip is an Action that lives in the .blend BEING EXPORTED, sampled at every
+# integer frame of its range. Poses come from separate .blend files, so the two
+# are disjoint by SOURCE and no flag has to distinguish them -- the clip list is
+# taken before any pose file is appended, and appending is the only thing that
+# adds an action.
+#
+# Two things about this are worth stating, because both look like choices and
+# neither is.
+#
+# EVERY frame is sampled, not just the keyed ones. Blender interpolates between
+# keys with bezier handles; the engine lerps linearly between file frames
+# (sample_animation_clip_at). Writing only the keys would replay as straight
+# lines between them -- a visibly different curve from the authored one. The
+# file is a fixed-rate resampling of Blender's curve, which is exactly the shape
+# the engine's sampler expects.
+#
+# The read is `pose_bone.matrix`, not the fcurves. On a Rigify rig an action
+# keys the CONTROL bones and the DEF- bones follow through constraints:
+# `Death` keys 72 bones, of which zero are DEF-. Reading the curves would export
+# a clip in which nothing moves.
+
+
+def scene_frame_rate():
+    render = bpy.context.scene.render
+    return render.fps / render.fps_base
+
+
+def collect_stashed_actions(armature_object):
+    """Actions Blender is holding onto, as opposed to actions the author wrote.
+
+    Unlinking an action does not drop it: Blender STASHES it into a MUTED NLA
+    track called `[Action Stash]` so the work is not lost. actual_with_poses.blend
+    holds `Death` assigned and its stashed predecessor `rigAction` beside it,
+    byte-identical -- so exporting every action in the file writes a junk clip
+    that nobody would ever notice was junk.
+
+    Filtered on the same terms as `WGT-` widget meshes and `.001` name suffixes:
+    it is bookkeeping, and the exporter drops bookkeeping without asking. But on
+    the RELATIONSHIP rather than on the name -- an action is stashed when
+    something MUTED refers to it and nothing live does. Matching `<object>Action`
+    instead would be a guess, and would eat a clip that happened to be named that.
+
+    An action with no NLA strip at all is NOT stashed and is exported. That is
+    the ordinary way a file keeps several clips, and it must keep working.
+    """
+    animation_data = armature_object.animation_data
+    if animation_data is None:
+        return set()
+
+    live = set()
+    muted = set()
+    if animation_data.action:
+        live.add(animation_data.action.name)
+    for track in animation_data.nla_tracks:
+        for strip in track.strips:
+            if strip.action is None:
+                continue
+            destination = muted if (track.mute or strip.mute) else live
+            destination.add(strip.action.name)
+    return muted - live
+
+
+def read_clip_frames(armature_object, action, deform_bone_names, parents):
+    first, last = (int(round(v)) for v in action.frame_range)
+    if last < first:
+        fail(f"action '{action.name}' has an inverted frame range "
+             f"{first}..{last}")
+
+    # Reset FIRST, same reason as a pose: bones the action does not key would
+    # otherwise hold whatever the previous action left behind. Once, not per
+    # frame -- the action re-evaluates its own channels on every frame_set, and
+    # the bones it does not key must stay at rest for the whole clip rather than
+    # being re-zeroed underneath an evaluation.
+    reset_pose_to_rest(armature_object)
+    apply_action(armature_object, action, first)
+
+    frames = []
+    for frame in range(first, last + 1):
+        bpy.context.scene.frame_set(frame)
+        frames.append(read_pose_locals(armature_object, deform_bone_names, parents))
+    return frames
+
+
+def verify_clip_animates(name, frames):
+    """A clip whose frames are all identical did not evaluate.
+
+    This is verify_poses_differ's job on the clip side, and it cannot be the
+    same check: a pose is compared against REST, but a clip may legitimately
+    start at rest and is only wrong if it never leaves. What an unevaluated
+    action produces is a CONSTANT clip -- well-formed, plausible, and silent.
+    """
+    if len(frames) < 2:
+        return
+    if all(channels_equal(frames[0], channels) for channels in frames[1:]):
+        fail(f"clip '{name}' exported {len(frames)} identical frames. Either the "
+             f"rig did not re-evaluate per frame -- see enter_pose_mode -- or "
+             f"nothing the action drives reaches a deform bone")
+
+
+def verify_clips_differ(exported):
+    for index in range(len(exported)):
+        for other in range(index + 1, len(exported)):
+            if frames_equal(exported[index][1], exported[other][1]):
+                fail(f"clips '{exported[index][0]}' and '{exported[other][0]}' "
+                     f"exported identical, so one would be a junk asset nobody "
+                     f"notices. Blender's own stashed copies are already filtered "
+                     f"(collect_stashed_actions), so this is two real actions "
+                     f"holding the same animation -- delete one in Blender")
+
+
+def export_clips(output_directory, actions, armature_object, deform_bone_names,
+                 parents, skeleton_name, skeleton_hash):
+    if not actions:
+        log("no actions in this .blend; skipping clip export")
+        return
+
+    frame_rate = scene_frame_rate()
+
+    # BUILD EVERYTHING BEFORE WRITING ANYTHING, same rule as the meshes and the
+    # poses: a set that fails a check below must not leave half its clips on disk.
+    exported = []
+    for action in actions:
+        frames = read_clip_frames(armature_object, action, deform_bone_names, parents)
+        verify_clip_animates(action.name, frames)
+        exported.append((sanitize(action.name), frames))
+
+    verify_clips_differ(exported)
+
+    for name, frames in exported:
+        # No `stride`: it is the forward travel of the planted foot over one
+        # cycle, and it exists to drive a locomotion clip's phase from SPEED
+        # instead of from time. Nothing here measures it yet, and a clip without
+        # it is time-driven, which is right for everything authored so far.
+        write_animation(os.path.join(output_directory, f"{name}.animation"),
+                        name, skeleton_name, skeleton_hash, frame_rate, frames)
+
+    reset_pose_to_rest(armature_object)
+    log(f"exported {len(exported)} clip(s) at {frame_rate:g} fps")
+
+
 def verify_poses_differ(rest_channels, exported):
     """Every pose must differ from rest, and no two may be identical.
 
@@ -774,12 +968,8 @@ def export_poses(output_directory, pose_directory, armature_object,
                  deform_bone_names, parents, skeleton_name, skeleton_hash):
     pose_files = find_pose_files(pose_directory)
     if not pose_files:
-        log(f"no pose .blend files under '{pose_directory}'; skipping pose export")
+        log(f"no pose .blend files in '{pose_directory}'; skipping pose export")
         return
-
-    check_pose_position(armature_object)
-    warn_on_loose_pose(armature_object)
-    enter_pose_mode(armature_object)
 
     # The baseline every exported pose is checked against. Read AFTER the reset
     # and through the same path, so it is rest as this exporter sees it rather
@@ -887,6 +1077,21 @@ def main():
     deform_bones = collect_deform_bones(armature_object)
     parents = reconstruct_parents(deform_bones)
 
+    # The clip list, taken HERE and not at the point of use: appending a pose
+    # file adds its Action to bpy.data.actions, so after export_poses has run
+    # there is no longer any way to tell an authored clip from an appended pose.
+    # This is also the entire mechanism that keeps the two families disjoint.
+    stashed_actions = collect_stashed_actions(armature_object)
+    if stashed_actions:
+        log(f"skipping {len(stashed_actions)} stashed action(s) -- Blender's "
+            f"muted [Action Stash], not authored clips: {sorted(stashed_actions)}")
+    scene_actions = [a for a in bpy.data.actions if a.name not in stashed_actions]
+    log(f"clips: {[a.name for a in scene_actions]}")
+
+    # By NAME, because entering Pose mode below rebuilds the armature's bone
+    # datablocks and a `Bone` collected beforehand dangles (read_pose_locals).
+    deform_bone_names = [b.name for b in deform_bones]
+
     skeleton_name = armature_object.name
     ordered_names = [engine_bone_name(b.name) for b in deform_bones]
     skeleton_hash = fnv1a_64("\n".join(ordered_names))
@@ -933,13 +1138,16 @@ def main():
                    mesh_object.name, skeleton_name, skeleton_hash,
                    mesh_object, vertices, triangles_by_material, textures)
 
-    # Poses come LAST because they are the only step that mutates the scene --
-    # assigning actions and moving pose bones. The vertex buffer is read from the
-    # original mesh data rather than the evaluated one, so it would survive
-    # either order; doing it last means nothing has to rely on that.
+    # Clips and poses come LAST because they are the only steps that mutate the
+    # scene -- assigning actions, entering Pose mode and moving pose bones. The
+    # vertex buffer is read from the original mesh data rather than the evaluated
+    # one, so it would survive either order; doing it last means nothing has to
+    # rely on that. Nothing above may touch `deform_bones` after this point.
+    prepare_pose_evaluation(armature_object)
+    export_clips(output_directory, scene_actions, armature_object,
+                 deform_bone_names, parents, skeleton_name, skeleton_hash)
     export_poses(output_directory, pose_directory, armature_object,
-                 [b.name for b in deform_bones], parents, skeleton_name,
-                 skeleton_hash)
+                 deform_bone_names, parents, skeleton_name, skeleton_hash)
 
     log("done")
 

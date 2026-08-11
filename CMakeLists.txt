@@ -225,6 +225,10 @@ add_library(game_shared STATIC
     src/shared/animation.cpp
     src/shared/hitbox_rig.hpp
     src/shared/hitbox_rig.cpp
+    src/shared/player_animator.hpp
+    src/shared/player_animator.cpp
+    src/shared/player_rig.hpp
+    src/shared/player_rig.cpp
     src/shared/player_move.cpp
     src/shared/physics.hpp
     src/shared/physics.cpp
@@ -235,7 +239,7 @@ add_library(game_shared STATIC
     src/shared/game_events.hpp
     src/shared/game_events.cpp
     src/shared/weapons.hpp
-    src/shared/player_hitboxes.hpp
+    src/shared/hit_region.hpp
     src/shared/hitscan.hpp
     src/shared/hitscan.cpp
     src/shared/network/map_transfer.cpp
@@ -362,8 +366,7 @@ add_library(game_client SHARED
     src/client/editor/geometry_editor.cpp
     src/client/input.cpp
     src/client/geometry_renderer.cpp
-    src/client/player_animator.hpp
-    src/client/player_animator.cpp
+    src/client/hitbox_debug_draw.hpp
     src/client/renderer.cpp
     src/client/shader_tool_runtime.cpp
     ${SHADER_HEADERS}

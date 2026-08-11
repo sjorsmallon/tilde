@@ -306,6 +306,19 @@ Player_Entity :: entity @runtime_only {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
     view_angle_pitch:  f32              @Networked
+    // Where the FEET point, which LAGS view_angle_yaw; the difference between
+    // the two is the torso twist that drives the left/right aim poses.
+    //
+    // Server-owned and on the wire because it is an ACCUMULATOR -- it
+    // integrates over time and cannot be recovered from one frame, so
+    // "replicate accumulators, derive everything else" puts it here next to the
+    // angles it is derived from. It was a client-local integrator until the
+    // server started posing hit volumes: with every client integrating its own
+    // copy and the server holding none, the silhouette you shoot at was up to
+    // sv_aim_max_yaw away from the volumes being tested. Clients now read this
+    // and never write it (animation_def.md, "body_yaw is a tier-1
+    // accumulator").
+    body_yaw:          f32              @Networked
     // The local player's HUD reads these off its own entity. Replicated for
     // every player because per-recipient field filtering does not exist yet;
     // when it does, these are the first candidates.

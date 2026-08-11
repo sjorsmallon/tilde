@@ -107,14 +107,18 @@ is a statement about a whole stride.
       data.
 - [ ] **Scrub, layers, masks, crossfade** — this part really is blocked, because
       Blender cannot preview any of it and neither can we without a clip.
-- [ ] **~~`rig.hitboxes`~~ + hitscan against capsules** — the mapping half landed
-      2026-08-10 (`resources/models/rig.hitboxes`, ten volumes over three
-      regions, read by `game_shared`). What remains is `hitscan.cpp` testing
-      against the posed capsules instead of `player_hitboxes`'s three static
-      boxes, which means the server sampling the pose it already has the assets
-      for. NOT `hb_*` bones, NOT placement gizmos, NOT baked. `todo.md` §2e.
+- [x] **`rig.hitboxes` + hitscan against capsules** — the mapping half landed
+      2026-08-10 (`resources/models/rig.hitboxes`, thirteen volumes over three
+      regions, read by `game_shared`); the hit test landed 2026-08-11.
+      `resolve_hitscan` takes each target's posed volumes in world space,
+      `shared/player_rig.{hpp,cpp}` places them out of the aim blend, and both
+      the server's fire path and the client's `debug_show_hitboxes` overlay go
+      through that one function. The static table is deleted. NOT `hb_*` bones,
+      NOT placement gizmos, NOT baked.
 - [ ] **`locomotion_phase` replicated**, and **posed endpoints rewound** in
       `Snapshot_History` (not `{clip, phase, stance}` — see §4 and §6).
+      `body_yaw` is already replicated (it came early, with the hit test); this
+      is the rewind half plus the second accumulator.
 - [ ] **Crossfades + the locomotion blendspace.** Smaller than it looks; aim
       builds the primitives.
 
@@ -214,14 +218,16 @@ server will test. Anything that moves the silhouette meaningfully has to become
 tier 1 or be bounded (see "The hull invariant weakens" below, which is the same
 argument applied to limbs).
 
-**Today's live instance of exactly that gap**: `player_hitboxes` is three
+~~**Today's live instance of exactly that gap**: `player_hitboxes` is three
 axis-aligned volumes at fixed offsets from the feet, not rotated and not posed,
 while the model is drawn with up to `cl_aim_max_yaw` (45°) of torso twist plus a
-full aim pose. The table's own comment states its precondition — head is a
-sphere on the vertical axis, torso and legs are square columns on that axis — and
-that holds for a neutral pose but stops holding once the torso twists relative
-to the feet, because the shoulders leave the axis. Shooting a visibly leaning
-torso and missing is a present bug, not a future one.
+full aim pose.~~
+
+**CLOSED 2026-08-11.** The static table is deleted and `resolve_hitscan` tests
+the posed volumes, placed by `shared::compute_player_hitboxes` — the same
+function, off the same replicated inputs, that the client's debug overlay draws
+from. What is left of the gap is the tick offset, which is lag compensation
+(guarantee 2 below), not this.
 
 **`body_yaw` is the odd input out, and this is the thing to remember.** Every
 other pose input is replicated or server-derivable from replicated state:
@@ -237,7 +243,7 @@ state.
 ahead of the server, so some disagreement remains. That residue is the lag
 compensation / rewind problem, not this one, and it is solved later.
 
-### RESOLVED (2026-08-09): `body_yaw` is a tier-1 accumulator, and the server owns it
+### RESOLVED (2026-08-09), BUILT (2026-08-11): `body_yaw` is a tier-1 accumulator, and the server owns it
 
 Decided rather than left open, because the interim state — every client
 integrating its own copy while the server holds none — is a three-way
@@ -288,10 +294,20 @@ Two details that are easy to get wrong:
 
 Cost is one delta-compressed float per player, changing only while turning.
 
-**When: with step 5, not before.** `locomotion_phase` replicated-and-rewound is
-the same machinery — same wire field, same `Snapshot_History` slot, same
-server-side animstate update — and building it twice would be silly. Until then
-the twist stays cosmetic-only and the gap is the bounded one described above.
+~~**When: with step 5, not before.**~~ **It came earlier — 2026-08-11, with
+hitscan against the capsules,** because posing the server's volumes needs the
+twist and there was no server-side value to read. All four points above are
+built as written, with one addition the plan did not mention: the tick pass runs
+over every `Player_Entity` rather than over the move inbox, because a bot sends
+no moves and a bot with a frozen `body_yaw` would be drawn and hit-tested
+permanently untwisted. Point 3 (`Snapshot_History`) is the piece still
+outstanding and stays with step 5 — replication is guarantee 1, rewind is
+guarantee 2. The velocity term is also still missing: the feet chase only where
+you look.
+
+The three extents moved with it: `cl_aim_max_pitch` / `_max_yaw` /
+`_body_turn_rate` are now `sv_aim_*` and `@Mirrored`. They stopped being
+presentation the moment a hit decision read them.
 
 ## Pipeline
 
@@ -1217,16 +1233,15 @@ of this file is the live work list** — this is the reasoning behind the sequen
    walking player, no layers. The format, the reader and `sample_animation_clip_at` all
    landed with step 7; what is left is authoring the clip and measuring
    `stride_distance`.
-4. **`.hitboxes` export + `hitbox_track_t` + hitscan against baked volumes**,
-   debug-drawn over the skinned mesh. Still one clip, so phase is local — this
-   step is about geometry being right, not netcode.
-5. **`locomotion_phase` AND `body_yaw` replicated + rewound in
+4. ✅ **`rig.hitboxes` + hitscan against the POSED volumes** (not baked — see the
+   reversal in §4), debug-drawn over the skinned mesh. Still no clip, so phase is
+   local — this step was about geometry being right, not netcode. Done
+   2026-08-11, and it dragged `body_yaw`'s replication forward out of step 5
+   because posing the volumes needs the twist.
+5. **`locomotion_phase` replicated, and both accumulators rewound in
    `Snapshot_History`.** Remote players' hitboxes now match what the shooter
-   saw. Both accumulators land together on purpose — same wire field pattern,
-   same history slot, same server-side animstate update. This is also where
-   `body_yaw` stops being a client-local integrator and the server becomes its
-   owner; see "RESOLVED: `body_yaw` is a tier-1 accumulator" under The
-   principle.
+   saw. `body_yaw`'s replication already landed with step 4; what is left here
+   is `locomotion_phase` and the history slot that makes rewind possible.
 6. **`blend_into`, masks, crossfade, the locomotion blendspace.**
 7. ✅ **Aim from the authored pose set (tier 2).** Promoted out of order and run
    before 3–6, because it was the only step whose data already existed and it

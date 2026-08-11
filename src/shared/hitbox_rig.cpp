@@ -55,6 +55,192 @@ float distance_to_segment(const linalg::vec3f &point, const linalg::vec3f &start
   return linalg::length(point - (start + axis * parameter));
 }
 
+// --- Ray casting, one function per surface -------------------------------
+//
+// Every one of these reports the ENTRY point and rejects a negative distance,
+// so "the ray starts inside" is a miss everywhere rather than in three of four
+// shapes. They are written as surfaces (a sphere, a cylinder's side, one disc,
+// a box) and composed into the four hitbox kinds by intersect_ray_hitbox --
+// which is why a capsule is not a fourth copy of the quadratic.
+
+// The NEAR root, unlike linalg::intersect_ray_sphere, which hands back the far
+// one when the origin is inside. Here that is a miss, not an exit point.
+std::optional<hitbox_ray_hit_t> intersect_ray_sphere_entry(const linalg::vec3f &origin,
+                                                           const linalg::vec3f &direction,
+                                                           const linalg::vec3f &center,
+                                                           float                radius)
+{
+  const linalg::vec3f to_origin = origin - center;
+  const float         half_b    = linalg::dot(to_origin, direction); // |direction| == 1
+  const float         c         = linalg::dot(to_origin, to_origin) - radius * radius;
+
+  const float discriminant = half_b * half_b - c;
+  if (discriminant < 0.0f)
+    return std::nullopt;
+
+  const float distance = -half_b - std::sqrt(discriminant);
+  if (distance < 0.0f)
+    return std::nullopt;
+
+  const linalg::vec3f point = origin + direction * distance;
+  return hitbox_ray_hit_t{distance, (point - center) * (1.0f / radius)};
+}
+
+// The SIDE only -- the tube between the two endpoints, open at both ends. A
+// capsule caps it with hemispheres and a cylinder with discs; neither wants the
+// other's ends, so neither is in here.
+std::optional<hitbox_ray_hit_t> intersect_ray_cylinder_side(const linalg::vec3f &origin,
+                                                            const linalg::vec3f &direction,
+                                                            const linalg::vec3f &start,
+                                                            const linalg::vec3f &end, float radius)
+{
+  const linalg::vec3f axis          = end - start;
+  const float         axis_length_2 = linalg::dot(axis, axis);
+  if (axis_length_2 <= 1e-8f)
+    return std::nullopt; // degenerate span: it is all caps
+
+  const linalg::vec3f to_origin = origin - start;
+
+  const float axis_dot_direction = linalg::dot(axis, direction);
+  const float axis_dot_origin    = linalg::dot(axis, to_origin);
+
+  // The quadratic for the components PERPENDICULAR to the axis, scaled through
+  // by axis_length_2 so there is no division and no normalize.
+  const float a = axis_length_2 - axis_dot_direction * axis_dot_direction;
+  const float b = axis_length_2 * linalg::dot(to_origin, direction) -
+                  axis_dot_origin * axis_dot_direction;
+  const float c = axis_length_2 * linalg::dot(to_origin, to_origin) -
+                  axis_dot_origin * axis_dot_origin - radius * radius * axis_length_2;
+
+  if (a <= 1e-8f)
+    return std::nullopt; // the ray runs along the axis; only the ends can be hit
+
+  const float discriminant = b * b - a * c;
+  if (discriminant < 0.0f)
+    return std::nullopt;
+
+  const float distance = (-b - std::sqrt(discriminant)) / a;
+  if (distance < 0.0f)
+    return std::nullopt;
+
+  // Where along the span the hit landed, in units of axis_length_2. Outside
+  // [0, 1] the ray passed the open tube and whatever caps it has has to answer.
+  const float along = (axis_dot_origin + distance * axis_dot_direction) / axis_length_2;
+  if (along < 0.0f || along > 1.0f)
+    return std::nullopt;
+
+  const linalg::vec3f point  = origin + direction * distance;
+  const linalg::vec3f normal = (point - (start + axis * along)) * (1.0f / radius);
+  return hitbox_ray_hit_t{distance, normal};
+}
+
+// One flat end of a cylinder: the plane at that endpoint, cropped to the
+// radius.
+std::optional<hitbox_ray_hit_t> intersect_ray_cylinder_cap(const linalg::vec3f &origin,
+                                                           const linalg::vec3f &direction,
+                                                           const linalg::vec3f &start,
+                                                           const linalg::vec3f &end, float radius,
+                                                           bool at_start)
+{
+  const linalg::vec3f axis        = end - start;
+  const float         axis_length = linalg::length(axis);
+  if (axis_length <= 1e-4f)
+    return std::nullopt;
+
+  const linalg::vec3f unit_axis = axis * (1.0f / axis_length);
+  const linalg::vec3f normal    = at_start ? unit_axis * -1.0f : unit_axis;
+  const linalg::vec3f center    = at_start ? start : end;
+
+  // FRONT-facing only. A cylinder is convex, so the ray enters through the disc
+  // it meets head-on; accepting the far one would let a ray fired from inside,
+  // straight down the axis, exit through the back cap and report that as a hit
+  // (the side test cannot catch it -- a ray along the axis never meets the
+  // tube). Parallel rays fall out of the same test.
+  const float denominator = linalg::dot(direction, normal);
+  if (denominator >= -1e-6f)
+    return std::nullopt;
+
+  const float distance = linalg::dot(center - origin, normal) / denominator;
+  if (distance < 0.0f)
+    return std::nullopt;
+
+  const linalg::vec3f offset = (origin + direction * distance) - center;
+  if (linalg::dot(offset, offset) > radius * radius)
+    return std::nullopt;
+
+  return hitbox_ray_hit_t{distance, normal};
+}
+
+// The slab test, run in the box's OWN frame. A box hitbox turns with its bone,
+// so testing it as an AABB would mean re-deriving a world-axis box every pose --
+// bigger than the volume it stands for, and bigger by a different amount every
+// frame.
+std::optional<hitbox_ray_hit_t> intersect_ray_oriented_box(const linalg::vec3f  &origin,
+                                                           const linalg::vec3f  &direction,
+                                                           const linalg::vec3f  &center,
+                                                           const hitbox_frame_t &frame,
+                                                           const linalg::vec3f  &half_extents)
+{
+  const linalg::vec3f relative = origin - center;
+  const linalg::vec3f axes[3]  = {frame.right, frame.up, frame.forward};
+
+  const float local_origin[3]    = {linalg::dot(relative, axes[0]), linalg::dot(relative, axes[1]),
+                                    linalg::dot(relative, axes[2])};
+  const float local_direction[3] = {linalg::dot(direction, axes[0]),
+                                    linalg::dot(direction, axes[1]),
+                                    linalg::dot(direction, axes[2])};
+  const float extent[3] = {half_extents.x, half_extents.y, half_extents.z};
+
+  float nearest       = -std::numeric_limits<float>::infinity();
+  float furthest      = std::numeric_limits<float>::infinity();
+  int   entry_axis    = 0;
+  float entry_sign    = 1.0f;
+
+  for (int axis = 0; axis < 3; ++axis)
+  {
+    if (std::fabs(local_direction[axis]) <= 1e-6f)
+    {
+      // Parallel to this slab: either already between its planes forever, or
+      // never.
+      if (std::fabs(local_origin[axis]) > extent[axis])
+        return std::nullopt;
+      continue;
+    }
+
+    const float inverse = 1.0f / local_direction[axis];
+    float       low     = (-extent[axis] - local_origin[axis]) * inverse;
+    float       high    = (extent[axis] - local_origin[axis]) * inverse;
+    float       sign    = -1.0f;
+    if (low > high)
+    {
+      std::swap(low, high);
+      sign = 1.0f;
+    }
+
+    if (low > nearest)
+    {
+      nearest    = low;
+      entry_axis = axis;
+      entry_sign = sign;
+    }
+    furthest = std::min(furthest, high);
+
+    if (nearest > furthest)
+      return std::nullopt;
+  }
+
+  if (nearest < 0.0f)
+    return std::nullopt; // entry behind the origin, or the origin is inside
+
+  return hitbox_ray_hit_t{nearest, axes[entry_axis] * entry_sign};
+}
+
+void keep_nearer(std::optional<hitbox_ray_hit_t> &best, std::optional<hitbox_ray_hit_t> candidate)
+{
+  if (candidate && (!best || candidate->distance < best->distance))
+    best = candidate;
+}
+
 // The influence that decides which volume a vertex belongs to. Dominant rather
 // than any-influence: a vertex on the elbow is weighted to both bones, and
 // counting it for both sizes each volume from the other's flesh.
@@ -322,6 +508,50 @@ float distance_outside_hitbox(const posed_hitbox_t &hitbox, const linalg::vec3f 
 
     default:
       fatal_error("distance_outside_hitbox: shape {} is not a shape", (uint32_t)hitbox.shape);
+  }
+}
+
+std::optional<hitbox_ray_hit_t> intersect_ray_hitbox(const posed_hitbox_t &hitbox,
+                                                     const linalg::vec3f  &origin,
+                                                     const linalg::vec3f  &direction)
+{
+  switch (hitbox.shape)
+  {
+    case hitbox_shape_t::Sphere:
+      return intersect_ray_sphere_entry(origin, direction, hitbox.start, hitbox.radius);
+
+    case hitbox_shape_t::Capsule:
+    {
+      // A capsule is the infinite cylinder cropped to the span, plus a
+      // hemisphere at each end -- so it is literally those three tests, nearest
+      // wins. The cropped body is tested first only because it is the common
+      // case, not because it is nearer.
+      std::optional<hitbox_ray_hit_t> nearest =
+          intersect_ray_cylinder_side(origin, direction, hitbox.start, hitbox.end, hitbox.radius);
+      keep_nearer(nearest,
+                  intersect_ray_sphere_entry(origin, direction, hitbox.start, hitbox.radius));
+      keep_nearer(nearest,
+                  intersect_ray_sphere_entry(origin, direction, hitbox.end, hitbox.radius));
+      return nearest;
+    }
+
+    case hitbox_shape_t::Cylinder:
+    {
+      std::optional<hitbox_ray_hit_t> nearest =
+          intersect_ray_cylinder_side(origin, direction, hitbox.start, hitbox.end, hitbox.radius);
+      keep_nearer(nearest, intersect_ray_cylinder_cap(origin, direction, hitbox.start, hitbox.end,
+                                                      hitbox.radius, /*at_start=*/true));
+      keep_nearer(nearest, intersect_ray_cylinder_cap(origin, direction, hitbox.start, hitbox.end,
+                                                      hitbox.radius, /*at_start=*/false));
+      return nearest;
+    }
+
+    case hitbox_shape_t::Box:
+      return intersect_ray_oriented_box(origin, direction, hitbox.center(), hitbox.frame,
+                                        hitbox.half_extents);
+
+    default:
+      fatal_error("intersect_ray_hitbox: shape {} is not a shape", (uint32_t)hitbox.shape);
   }
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <type_traits>
 
 // A non-owning view over a contiguous range: pointer and length carried as ONE
 // value, so they cannot be read out of step.
@@ -50,6 +51,16 @@ template <typename T> struct Span
     }
   constexpr Span(Container &container)
       : data(container.data()), count((uint32_t)container.size())
+  {
+  }
+
+  // A view of mutable Ts is also a view of const Ts. Without this, a caller
+  // holding the writable span and calling something that only reads has to
+  // rebuild the view out of .data() and .size() -- the pointer-plus-count
+  // spelling this type exists to delete.
+  template <typename Mutable_T>
+    requires(std::is_const_v<T> && std::is_same_v<const Mutable_T, T>)
+  constexpr Span(Span<Mutable_T> other) : data(other.data), count(other.count)
   {
   }
 

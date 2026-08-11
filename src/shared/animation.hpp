@@ -65,6 +65,17 @@ using bone_mask_t = std::vector<float>;
 // clamps at both ends. A single-frame clip ignores phase entirely.
 void sample_animation_clip_at(pose_t &out, const animation_clip_t &clip, float phase, bool looping);
 
+// How long one pass through the clip lasts, in seconds -- i.e. what a caller
+// advancing `phase` on a clock must divide by.
+//
+// It depends on `looping` for the same reason the sampler does, and the two
+// numbers have to be derived from one place or playback drifts against the pose
+// it draws: a loop spans `frames` intervals because frame n-1 interpolates back
+// into frame 0, while a one-shot spans `frames - 1` because it stops ON the last
+// frame. Returns 0 for a clip with nothing to play (one frame, one-shot), which
+// is a caller's cue to skip the advance rather than divide by it.
+float clip_duration_seconds(const animation_clip_t &clip, bool looping);
+
 // destination = lerp(destination, source, per_bone_weight[bone] * layer_weight),
 void blend_into(pose_t &destination, const pose_t &source, Span<const float> per_bone_weight,
                 float layer_weight = 1.0f);

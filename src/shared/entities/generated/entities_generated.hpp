@@ -323,6 +323,7 @@ struct Player_Entity : Entity
 
   float view_angle_yaw = {};
   float view_angle_pitch = {};
+  float body_yaw = {};
   int32_t health = {};
   int32_t ammo = {};
   Weapon active_weapon_id = Weapon::Knife;

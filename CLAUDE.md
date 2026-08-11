@@ -148,6 +148,18 @@ Tool pattern: `Tool_Editor_State` dispatches to the active tool (Selection, Plac
 
 The Animation tool is the odd one — it edits no map, it looks at the skinned player: a pose picker over bind and the five aim poses through the *real* `compute_aim_blend` / `sample_aim_pose` path, the skeleton, and the `rig.hitboxes` capsules posed under it with their derived-radius seed and the coverage / hull-excursion readouts. `shared/hitbox_rig.hpp` is the shared half (both sides evaluate the volumes; only the tool derives radii, since derivation needs the mesh). See `animation_def.md` §4.
 
+### Player hit volumes
+
+A player is hit-tested against the **posed skeletal volumes**, not a static box table. Three files, in order of who calls whom:
+
+- `shared/hitbox_rig.hpp` — the bone→volume mapping (`resources/models/rig.hitboxes`), the shape math, and `intersect_ray_hitbox`. Four shapes composed out of a sphere, a cylinder side and a disc; every one reports the ENTRY point, so a ray starting inside a volume misses.
+- `shared/player_rig.hpp` — `compute_player_hitboxes(rig, pose, settings, out)`: the aim blend, the hierarchy walk and the world placement, from a `player_pose_t` of `{feet, body_yaw, view_yaw, view_pitch}`. **Both the server's fire path and the client's `debug_show_hitboxes` overlay call this one function**, which is what makes the silhouette you shoot at the volume that gets tested.
+- `shared/hitscan.hpp` — `resolve_hitscan` over targets that each carry a `Span<const posed_hitbox_t>` in world space. It only ranks; it knows nothing about skeletons, and neither does its test.
+
+`Player_Entity::body_yaw` (where the feet point, lagging the view yaw) is **server-owned and `@Networked`**: the server advances it once per fixed tick over every player entity, and clients read it. A client integrating its own copy would draw a pose the server is not testing. The three `sv_aim_*` extents are `@Mirrored` for the same reason.
+
+Not built yet: lag compensation. The server tests where the target is now.
+
 Geometry drawing, inspector panels and placement ghosts live in `editor/geometry_editor.{hpp,cpp}` — the geometry counterpart to `entity_editor_traits`, and much smaller (three kinds, all boxes, so it's switches rather than a trait template per type). `client/geometry_renderer.{hpp,cpp}` is the one geometry draw path shared by the game and the editor.
 
 The transaction system (`editor/transaction_system.hpp`) has **two diff flavors**:

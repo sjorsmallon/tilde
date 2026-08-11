@@ -128,6 +128,8 @@ struct client_context_t
     vec3f position = {0, 0, 0};
     float yaw = 0.f;
     float pitch = 0.f;
+    // Server-owned; see Remote_Player_State::body_yaw below.
+    float body_yaw = 0.f;
     uint32_t server_tick = 0;
   };
   struct Remote_Player_State
@@ -143,33 +145,19 @@ struct client_context_t
     vec3f render_position = {0, 0, 0};
     float render_yaw = 0.f;
     float render_pitch = 0.f;
-    // Where the FEET point, which lags render_yaw. The difference between the
+    // Where the FEET point, which lags the view yaw. The difference between the
     // two is the torso twist, and it is what drives the left/right aim poses --
-    // drawing the body at render_yaw would make that difference zero forever
+    // drawing the body at the view yaw would make that difference zero forever
     // and leave two of the five poses unreachable.
     //
-    // INTERIM, AND KNOWN WRONG -- moves to the server at animation step 5.
-    //
-    // Client-local, and the only pose input that is: velocity, stance and
-    // view_angle_pitch are all replicated, while this integrates over
-    // render_yaw and cannot be recovered from one frame. That makes it an
-    // ACCUMULATOR, and "replicate accumulators, derive everything else" puts it
-    // on the wire next to locomotion_phase -- it was filed as tier-2 cosmetic
-    // because "aim" reads that way, not because the rule put it there.
-    //
-    // What is wrong with it meanwhile, so nobody mistakes it for settled: every
-    // client integrates its own copy and the server holds none, and the server
-    // tests unposed axis-aligned volumes anyway, so up to cl_aim_max_yaw of
-    // twist is silhouette the hitbox does not have. Do not "fix" that by
-    // replicating THIS value -- syncing clients to each other still leaves all
-    // of them disagreeing with the server. The server has to own it.
-    //
-    // Also note it integrates on the RENDER clock from the INTERPOLATED yaw,
-    // which is what makes it unreproducible; the server version is a fixed tick
-    // off the snapshot value. See animation_def.md, "RESOLVED: body_yaw is a
-    // tier-1 accumulator".
+    // READ FROM THE SNAPSHOT, never integrated here. The server owns this: it
+    // advances the accumulator on the fixed tick and poses the hit volumes with
+    // it, so a client integrating its own copy would draw a silhouette the
+    // server is not testing. Interpolated between the two snapshots like the
+    // view yaw beside it, and that interpolated value never feeds the next
+    // frame -- the moment it did, the local integrator would be back. See
+    // animation_def.md, "RESOLVED: body_yaw is a tier-1 accumulator".
     float body_yaw = 0.f;
-    bool  body_yaw_initialized = false;
   };
 
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../player_animator.hpp"
+#include "../../../shared/player_animator.hpp"
 #include "../../../shared/animation.hpp"
 #include "../../../shared/asset.hpp"
 #include "../../../shared/hitbox_rig.hpp"
@@ -35,9 +35,10 @@ private:
   // was skinned in, and it is the reference every other view is judged against.
   enum class Pose_Source
   {
-    Bind,        // T-Pose, 
+    Bind,        // T-Pose,
     Single_Pose, // one authored aim pose at full weight, no blending
-    Aim_Blend    // the live (pitch, yaw) blend, exactly as the game drives it
+    Aim_Blend,   // the live (pitch, yaw) blend, exactly as the game drives it
+    Clip         // one `.animation` played on a clock, scrubbable
   };
 
   // Resolves the mesh and its skeleton, samples the current pose, and fills
@@ -50,8 +51,7 @@ private:
   // Model-space bone positions: the head of bone i, i.e. the origin of its
   // model-space matrix. Bone `tail` is not stored in the skeleton, so a bone's
   // segment is drawn to each CHILD's head, and a leaf gets a short stub along
-  // `assets::bone_direction`. That is the same reconstruction a hitbox span
-  // needs, which is why it lives here rather than in the draw call.
+  // `assets::bone_direction`. 
   linalg::vec3f bone_head(uint32_t bone_index) const;
 
   // Model space -> world, which here is the model-yaw slider and nothing else.
@@ -73,6 +73,24 @@ private:
   // The volume table and the audit readouts, i.e. all of phase B's UI.
   void draw_hitbox_panel();
 
+  // The transport: clip picker, play/pause, loop, speed and the scrub bar.
+  void draw_clip_panel();
+
+  // Every `.animation` beside the skeleton, by path. Called on enable and by
+  // Rescan, so a clip exported while the tool is open shows up in the list. It
+  // does NOT re-read a clip already loaded -- see the note at the button.
+  void scan_clips();
+
+  // Loads `clip_paths[selected_clip]` and rewinds. A clip whose skeleton hash
+  // disagrees is refused by the loader, so a failure here is already explained
+  // in the console.
+  void load_selected_clip();
+
+  // Moves `clip_phase` by `dt`. Separate from update_pose because the pose is
+  // sampled every frame and the clock only advances when playing -- folding them
+  // together would make a paused scrub advance on its own.
+  void advance_clip(float dt);
+
   Pose_Source        pose_source = Pose_Source::Aim_Blend;
   entities::Aim_Pose single_pose = entities::Aim_Pose::Forward;
 
@@ -87,6 +105,22 @@ private:
   // coordinates they are actually written in (offsets from the FEET).
   float model_yaw_degrees = 0.0f;
 
+  // --- Clip playback ---
+  //
+  // `clip_phase` is 0..1 over the whole clip, the same parameter
+  // sample_animation_clip_at takes -- NOT a frame index and not seconds. Keeping
+  // the tool's state in the sampler's own parameter is what stops the scrub bar
+  // and the clock disagreeing about where "the end" is when looping is toggled.
+  static constexpr int NO_CLIP_SELECTED = -1;
+  std::vector<std::string> clip_paths;
+  int                      selected_clip = NO_CLIP_SELECTED;
+
+  assets::asset_handle_t<assets::animation_clip_t> clip_handle;
+  float clip_phase          = 0.0f;
+  bool  clip_playing        = false;
+  bool  clip_looping        = true;
+  float clip_playback_speed = 1.0f;
+
   bool show_mesh            = true;
   bool show_hitboxes        = true;
   // Posed wireframe, through the skinned wireframe pipeline -- so the surface
@@ -96,7 +130,6 @@ private:
   bool show_skeleton        = true;
   bool show_bone_names      = false;
   bool show_movement_hull   = true;
-  bool show_static_hitboxes = true;
   bool unlit                = false;
 
   // Highlighted in the overlay and named in the panel. -1 is none.
@@ -124,14 +157,13 @@ private:
   // --- The hitbox rig ---
   //
   // `rig` is the authored file and is what Save writes back; `seeds` is the
-  // derived column beside it, and the two are deliberately never merged.
+  // derived column beside it.
   std::string                      rig_path;
   assets::hitbox_rig_t             rig;
   assets::resolved_hitbox_rig_t    resolved_rig;
   std::vector<assets::hitbox_seed_t> seeds;
 
-  // Refilled every frame from the live pose, which is the point: a volume that
-  // does not follow a raised arm is the bug this tool exists to make visible.
+  // Refilled every frame from the live pose
   std::vector<assets::posed_hitbox_t> hitboxes;
 
   // Audit readouts. Coverage is a bind-pose property and is computed at load;

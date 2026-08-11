@@ -1,5 +1,7 @@
 #include "../shared/player_constants.hpp"
 #include "../shared/hitscan.hpp"
+#include "../shared/player_animator.hpp"
+#include "../shared/player_rig.hpp"
 #include "../shared/weapons.hpp"
 #include "../shared/collision_detection.hpp"
 #include "damage.hpp"
@@ -388,6 +390,12 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   // so the first tick broadcasts nothing. A client that connects later gets the
   // full set from the accept handler regardless.
   ctx.last_broadcast_cvars = *cvar_state;
+
+  // The hit volumes, eagerly. Loading them either succeeds or kills the
+  // process, and "the server dies at boot naming the file" beats "the server
+  // dies on the first shot of a live match" -- the lazy first use would
+  // otherwise be inside the fire path.
+  shared::player_rig();
 
   static bool jolt_initialized = false;
   if (!jolt_initialized)
@@ -1017,13 +1025,45 @@ bool Tick()
         // Alive players only, never the shooter. Corpses keep their Jolt
         // capsule (it still blocks movement) but are invisible to hitscan,
         // which is the decided corpse policy.
+        //
+        // Each target is POSED here: the skeletal volumes evaluated through the
+        // same aim blend the client draws that player with, so the silhouette
+        // you shot at is the thing being tested. `volumes` owns the storage the
+        // targets' spans point into, and it is sized up front -- a push_back
+        // reallocating it would leave every earlier span dangling.
+        const shared::player_rig_t &rig      = shared::player_rig();
+        const aim_settings_t        settings = aim_settings_from(*ctx.cvars);
+
         std::vector<shared::hitscan_target_t> targets;
-        for (const entities::Player_Entity &other :
-             ctx.session.entity_system.entities_of<entities::Player_Entity>())
+        std::vector<assets::posed_hitbox_t>   volumes;
         {
-          if (other.entity_id == player->entity_id) continue;
-          if (other.health <= 0) continue;
-          targets.push_back({other.entity_id, other.position});
+          std::vector<const entities::Player_Entity *> victims;
+          for (const entities::Player_Entity &other :
+               ctx.session.entity_system.entities_of<entities::Player_Entity>())
+          {
+            if (other.entity_id == player->entity_id) continue;
+            if (other.health <= 0) continue;
+            victims.push_back(&other);
+          }
+
+          volumes.resize(victims.size() * rig.volume_count());
+          targets.reserve(victims.size());
+
+          for (uint32_t index = 0; index < (uint32_t)victims.size(); ++index)
+          {
+            const entities::Player_Entity &victim = *victims[index];
+            const Span<assets::posed_hitbox_t> slice{volumes.data() + index * rig.volume_count(),
+                                                     rig.volume_count()};
+
+            shared::compute_player_hitboxes(rig,
+                                            {.feet_position = victim.position,
+                                             .body_yaw      = victim.body_yaw,
+                                             .view_yaw      = victim.view_angle_yaw,
+                                             .view_pitch    = victim.view_angle_pitch},
+                                            settings, slice);
+
+            targets.push_back({victim.entity_id, Span<const assets::posed_hitbox_t>{slice}});
+          }
         }
 
         const shared::hitscan_result_t hit =
@@ -1123,6 +1163,21 @@ bool Tick()
     return false;
   }
   update_bots(g_bots, ctx, g_tick_number, tick_dt);
+
+  // The feet chase the view, on the FIXED tick, for every player -- after
+  // update_bots because a bot's view yaw is written in there and this reads it.
+  //
+  // Over every Player_Entity rather than over the move inbox: a bot sends no
+  // moves, and a bot whose body_yaw never advanced would be drawn and hit-tested
+  // permanently untwisted. This is the one writer of the field
+  // (animation_def.md, "body_yaw is a tier-1 accumulator") -- clients read it.
+  {
+    const aim_settings_t settings = aim_settings_from(*ctx.cvars);
+    for (entities::Player_Entity &player :
+         ctx.session.entity_system.entities_of<entities::Player_Entity>())
+      advance_body_yaw(player.body_yaw, player.view_angle_yaw, tick_dt, settings);
+  }
+
   update_rockets(ctx, tick_dt);
   // Respawn drain runs after damage systems so any deaths registered this
   // tick are eligible for the deadline check (delay is >0 ticks, so a

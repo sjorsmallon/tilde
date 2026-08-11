@@ -150,13 +150,32 @@ void sample_animation_clip_at(pose_t &out, const animation_clip_t &clip, const f
     second = first + 1;
   }
 
-  const float blend = position - std::floor(position);
+  // Relative to `first`, NOT to floor(position), and the two differ in exactly
+  // one place: the non-looping branch above clamps `first` down to
+  // frame_count-2 so that `second` stays in range, and at phase 1.0 position is
+  // frame_count-1, one whole interval past it. floor() reported a blend of 0
+  // there and handed back the SECOND-TO-LAST frame -- so the last frame of a
+  // one-shot was unreachable, and a death animation ended one frame early
+  // holding a pose nobody authored as the end.
+  const float blend = position - (float)first;
 
   const transform_t* a = frames + (size_t)first  * clip.bone_count;
   const transform_t* b = frames + (size_t)second * clip.bone_count;
 
   for (uint32_t bone = 0; bone < clip.bone_count; ++bone)
     out.local[bone] = lerp_transform(a[bone], b[bone], blend);
+}
+
+float clip_duration_seconds(const animation_clip_t &clip, const bool looping)
+{
+  const uint32_t frame_count = clip.frame_count();
+  if (frame_count == 0 || !(clip.fps > 0.0f))
+    return 0.0f;
+
+  // The interval count, not the frame count -- see the header. Mirrors
+  // sample_animation_clip_at's two branches exactly.
+  const uint32_t intervals = looping ? frame_count : frame_count - 1;
+  return (float)intervals / clip.fps;
 }
 
 void blend_into(pose_t &destination, const pose_t &source, Span<const float> per_bone_weight,

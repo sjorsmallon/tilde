@@ -5,15 +5,20 @@
 #include "../../../shared/log.hpp"
 #include "../../../shared/model_format.hpp"
 #include "../../../shared/player_constants.hpp"
-#include "../../../shared/player_hitboxes.hpp"
+#include "../../../shared/hit_region.hpp"
+#include "../../../shared/player_animator.hpp"
 #include "../../../shared/skinning.hpp"
+#include "../../hitbox_debug_draw.hpp"
 #include "../../renderer.hpp"
 #include "../../state_manager.hpp"
 #include "../entity_editor_traits.hpp"
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <system_error>
 
 namespace client
 {
@@ -27,108 +32,16 @@ constexpr entities::mesh_asset PREVIEW_MESH = entities::mesh_asset::Leet_Full;
 constexpr float LEAF_BONE_STUB_LENGTH = 4.0f;
 
 
-color_t region_color(shared::hit_region_t region)
-{
-  switch (region)
-  {
-    case shared::hit_region_t::Head:  return colors::red;
-    case shared::hit_region_t::Torso: return colors::yellow;
-    case shared::hit_region_t::Legs:  return colors::cyan;
-    default:                          return colors::grey;
-  }
-}
-
 // used to resolve all subitems for this mesh. the animations / hitboxes / armature.
 constexpr const char *MODELS_DIRECTORY = "resources/models/";
 
-// A capsule or a cylinder: a ring at each end and four lines down the sides. The
-// two differ only in the caps -- a capsule gets rings THROUGH the ends so they
-// read as rounded, a cylinder does not, which is the whole visible difference
-// and also the whole difference in the hit test.
-void draw_wire_tube(overlay_renderer_t &renderer, const linalg::vec3f &start,
-                    const linalg::vec3f &end, float radius, bool rounded_caps, color_t color)
+// The bare filename of a clip path, for a combo label. Returns a pointer INTO
+// `path`, so it lives exactly as long as the `clip_paths` entry it came from --
+// which is every use here, since ImGui copies the label it is handed.
+const char *clip_name_of(const std::string &path)
 {
-  const linalg::vec3f along  = end - start;
-  const float         length = linalg::length(along);
-  if (length < 1e-4f)
-  {
-    renderer.draw_wire_sphere(start, radius, color);
-    return;
-  }
-
-  const linalg::vec3f axis = along * (1.0f / length);
-
-  // Any vector not parallel to the axis works; picking the world axis the tube
-  // is least aligned with keeps the cross product well conditioned.
-  const linalg::vec3f seed = std::fabs(axis.y) < 0.9f ? linalg::vec3f{0, 1, 0}
-                                                      : linalg::vec3f{1, 0, 0};
-  const linalg::vec3f side = linalg::normalize(linalg::cross(axis, seed));
-  const linalg::vec3f up   = linalg::cross(axis, side);
-
-  renderer.draw_circle(start, radius, axis, color);
-  renderer.draw_circle(end, radius, axis, color);
-
-  for (const linalg::vec3f &offset : {side * radius, side * -radius, up * radius, up * -radius})
-    renderer.draw_line(start + offset, end + offset, color);
-
-  if (rounded_caps)
-  {
-    renderer.draw_circle(start, radius, side, color);
-    renderer.draw_circle(end, radius, up, color);
-  }
-}
-
-// An ORIENTED box: twelve edges built from the volume's own axes. 
-void draw_wire_oriented_box(overlay_renderer_t &renderer, const linalg::vec3f &center,
-                            const assets::hitbox_frame_t &frame,
-                            const linalg::vec3f &half_extents, color_t color)
-{
-  linalg::vec3f corners[8];
-
-  //@NOTE(SJM): in my life I have never seen this trick. why not just write it out?
-  for (uint32_t index = 0; index < 8; ++index)
-  {
-    const float x = (index & 1) ? half_extents.x : -half_extents.x;
-    const float y = (index & 2) ? half_extents.y : -half_extents.y;
-    const float z = (index & 4) ? half_extents.z : -half_extents.z;
-    corners[index] = center + frame.right * x + frame.up * y + frame.forward * z;
-  }
-
-  for (uint32_t from = 0; from < 8; ++from)
-    for (uint32_t bit = 1; bit <= 4; bit <<= 1)
-      if ((from & bit) == 0)
-        renderer.draw_line(corners[from], corners[from | bit], color);
-}
-
-void draw_posed_hitbox(overlay_renderer_t &renderer, const assets::posed_hitbox_t &hitbox,
-                       const linalg::vec3f &start, const linalg::vec3f &end,
-                       const assets::hitbox_frame_t &frame, color_t color)
-{
-  switch (hitbox.shape)
-  {
-    case assets::hitbox_shape_t::Sphere:
-      renderer.draw_wire_sphere(start, hitbox.radius, color);
-      break;
-    case assets::hitbox_shape_t::Capsule:
-      draw_wire_tube(renderer, start, end, hitbox.radius, true, color);
-      break;
-    case assets::hitbox_shape_t::Cylinder:
-      draw_wire_tube(renderer, start, end, hitbox.radius, false, color);
-      break;
-    case assets::hitbox_shape_t::Box:
-      draw_wire_oriented_box(renderer, (start + end) * 0.5f, frame, hitbox.half_extents, color);
-      break;
-    default:
-      log_warning("[hitbox] unknown shape %d", (int)hitbox.shape);
-      break;
-  }
-}
-
-aim_settings_t aim_settings_from(const cvars::cvar_state_t &cvars)
-{
-  return aim_settings_t{.max_pitch_degrees = cvars.cl_aim_max_pitch,
-                        .max_yaw_degrees   = cvars.cl_aim_max_yaw,
-                        .body_turn_rate_degrees_per_second = cvars.cl_aim_body_turn_rate};
+  const size_t slash = path.find_last_of('/');
+  return path.c_str() + (slash == std::string::npos ? 0 : slash + 1);
 }
 
 } // namespace
@@ -143,18 +56,114 @@ void Animation_Tool::on_enable(editor_context_t &ctx)
   // order, not one.
   if (update_pose())
     load_rig();
+
+  scan_clips();
 }
 
 void Animation_Tool::on_disable(editor_context_t &ctx) {}
 
 void Animation_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, float dt)
 {
+  // Before update_pose, so the pose drawn this frame is the phase the clock just
+  // produced rather than the previous frame's.
+  advance_clip(dt);
+
   const bool posed = update_pose();
 
   // The rig resolves bone names against the skeleton, so the frame the model
   // first becomes available is also the first frame the rig can load.
   if (posed && rig.volumes.empty() && !rig_load_attempted)
     load_rig();
+}
+
+void Animation_Tool::scan_clips()
+{
+  const std::string previous =
+      (selected_clip != NO_CLIP_SELECTED) ? clip_paths[selected_clip] : std::string();
+
+  clip_paths.clear();
+  selected_clip = NO_CLIP_SELECTED;
+
+  std::error_code error_code;
+  std::filesystem::directory_iterator directory(MODELS_DIRECTORY, error_code);
+  if (error_code)
+  {
+    log_error("[animation] could not list '{}' for clips: {}", MODELS_DIRECTORY,
+              error_code.message());
+    return;
+  }
+
+  for (const std::filesystem::directory_entry &entry : directory)
+  {
+    if (entry.is_regular_file() && entry.path().extension() == ".animation")
+      clip_paths.push_back(entry.path().generic_string());
+  }
+  std::sort(clip_paths.begin(), clip_paths.end());
+
+  // Hold the selection across a rescan. Re-exporting the clip you are watching
+  // is the normal loop, and dropping back to clip 0 every time would make the
+  // Reload button useless for the one thing it exists for.
+  for (size_t index = 0; index < clip_paths.size(); ++index)
+  {
+    if (clip_paths[index] == previous)
+    {
+      selected_clip = (int)index;
+      break;
+    }
+  }
+  if (selected_clip == NO_CLIP_SELECTED && !clip_paths.empty())
+    selected_clip = 0;
+
+  if (selected_clip != NO_CLIP_SELECTED)
+    load_selected_clip();
+}
+
+void Animation_Tool::load_selected_clip()
+{
+  clip_handle = {};
+  clip_phase  = 0.0f;
+
+  if (selected_clip == NO_CLIP_SELECTED)
+    return;
+
+  clip_handle = assets::load_animation(clip_paths[selected_clip].c_str());
+}
+
+void Animation_Tool::advance_clip(float dt)
+{
+  if (pose_source != Pose_Source::Clip || !clip_playing)
+    return;
+
+  const assets::animation_clip_t *clip = assets::get(clip_handle);
+  if (!clip)
+    return;
+
+  // A one-frame clip one-shot has no duration, so there is nothing to advance
+  // and nothing to divide by -- it is already showing its only pose.
+  const float duration = assets::clip_duration_seconds(*clip, clip_looping);
+  if (!(duration > 0.0f))
+    return;
+
+  clip_phase += dt * clip_playback_speed / duration;
+
+  if (clip_looping)
+  {
+    clip_phase -= std::floor(clip_phase);
+    return;
+  }
+
+  // A one-shot stops ON the last frame rather than snapping back, so what you
+  // are left looking at is the pose the clip ends in.
+  if (clip_phase >= 1.0f)
+  {
+    clip_phase   = 1.0f;
+    clip_playing = false;
+  }
+  else if (clip_phase < 0.0f) // reachable with a negative speed
+  {
+    clip_phase   = 0.0f;
+    clip_playing = false;
+  }
 }
 
 void Animation_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e) {}
@@ -320,6 +329,25 @@ bool Animation_Tool::update_pose()
       compute_aim_pose(holding_gun_aim_poses(), *skeleton, pitch_degrees, yaw_deviation_degrees,
                        aim_settings_from(*state_manager::get_client_context().cvars), pose);
       break;
+
+    case Pose_Source::Clip:
+    {
+      // Unlike the aim poses -- which are a build the process cannot run without
+      // -- a clip is something you point the tool at, so a missing one is a
+      // state the panel reports rather than a reason to die.
+      const assets::animation_clip_t *clip = assets::get(clip_handle);
+      if (!clip)
+      {
+        if (report)
+          log_error("[animation] no clip is loaded; pick one in the Clip panel");
+        return false;
+      }
+
+      // The clip's bone count is checked against the skeleton below, on the same
+      // path every other source takes.
+      assets::sample_animation_clip_at(pose, *clip, clip_phase, clip_looping);
+      break;
+    }
   }
 
   if (pose.local.size() != bone_count)
@@ -454,6 +482,11 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
   // row is gold -- the table and the overlay are the same view.
   if (posed && show_hitboxes)
   {
+    // Through the same wireframes the in-game overlay uses, so the tool cannot
+    // show a shape the game does not.
+    const auto line = [&](const linalg::vec3f &start, const linalg::vec3f &end, color_t color)
+    { renderer.draw_line(start, end, color); };
+
     for (uint32_t index = 0; index < (uint32_t)hitboxes.size(); ++index)
     {
       // The same hot-pink/white pulse the Selection tool highlights with, from
@@ -463,27 +496,28 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
       const assets::posed_hitbox_t &hitbox = hitboxes[index];
       const color_t                 color  = (int)index == selected_volume
                                                  ? compute_selection_pulse_color(ctx.time)
-                                                 : region_color(hitbox.region);
+                                                 : hit_region_color(hitbox.region);
 
-      // The model-yaw slider turns the overlay with the mesh, so the frame a box
-      // is drawn in has to turn with it too.
-      const assets::hitbox_frame_t frame{to_world_direction(hitbox.frame.right),
-                                         to_world_direction(hitbox.frame.up),
-                                         to_world_direction(hitbox.frame.forward)};
+      // The model-yaw slider turns the overlay with the mesh, so the volume
+      // turns with it too -- endpoints and, for a box, the frame its extents are
+      // read in.
+      assets::posed_hitbox_t placed = hitbox;
+      placed.start                  = to_world(hitbox.start);
+      placed.end                    = to_world(hitbox.end);
+      placed.frame                  = {to_world_direction(hitbox.frame.right),
+                                       to_world_direction(hitbox.frame.up),
+                                       to_world_direction(hitbox.frame.forward)};
 
-      draw_posed_hitbox(renderer, hitbox, to_world(hitbox.start), to_world(hitbox.end), frame,
-                        color);
+      draw_posed_hitbox(line, placed, color);
 
       if ((int)index == selected_volume)
-        renderer.draw_text_in_world(to_world(hitbox.start), rig.volumes[index].name.c_str(),
-                                    colors::white);
+        renderer.draw_text_in_world(placed.start, rig.volumes[index].name.c_str(), colors::white);
     }
   }
 
-  // The hull and the static table are drawn in the coordinates they are written
-  // in: offsets from the FEET, which is the world origin here. This is the audit
-  // view -- today's three axis-aligned volumes against a model that is visibly
-  // posed, which is exactly the gap phase B closes.
+  // The movement hull, in the coordinates it is written in: offsets from the
+  // FEET, which is the world origin here. It is what the volumes are audited
+  // against -- see the hull excursion readout.
   if (show_movement_hull)
   {
     renderer.draw_wire_aabb({0, shared::player_half_height, 0},
@@ -491,27 +525,8 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
                             shared::player_half_width},
                            colors::white);
   }
-
-  if (show_static_hitboxes)
-  {
-    for (const shared::player_hitbox_t &hitbox : shared::player_hitboxes)
-    {
-      const color_t color = region_color(hitbox.region);
-      if (hitbox.shape == entities::Shape_Kind::Sphere)
-      {
-        renderer.draw_wire_sphere(hitbox.offset, hitbox.size.x, color);
-      }
-      else
-      {
-        renderer.draw_wire_aabb(hitbox.offset, hitbox.size, color);
-      }
-    }
-  }
 }
 
-// The volume table and the two audit readouts. Split out of on_draw_ui because
-// it is the whole of phase B and the pose controls above it are the whole of
-// phase A -- they share a window, not a subject.
 void Animation_Tool::draw_hitbox_panel()
 {
   ImGui::Text("Hit volumes");
@@ -522,8 +537,7 @@ void Animation_Tool::draw_hitbox_panel()
                        rig_load_attempted ? "no volumes -- see the console" : "no volumes");
     ImGui::TextDisabled("%s", rig_path.c_str());
 
-    // Authoring a rig is then deleting lines rather than knowing which bone
-    // names exist -- every deform bone, with its radius already derived.
+
     const assets::mesh_asset_t *mesh = assets::get(mesh_handle);
     if (skeleton && mesh && ImGui::Button("Write template"))
     {
@@ -540,8 +554,6 @@ void Animation_Tool::draw_hitbox_panel()
     return;
   }
 
-  // Excursion is live, so it moves as you drag the pitch slider -- which is how
-  // you find the pose that pushes a volume out of the hull (§4).
   const char *worst_volume = excursion.volume_index < 0
                                  ? "none"
                                  : rig.volumes[(size_t)excursion.volume_index].name.c_str();
@@ -559,10 +571,7 @@ void Animation_Tool::draw_hitbox_panel()
                 worst_bone);
   }
 
-  // Authored size and derived size, side by side with a button between them:
-  // derivation SEEDS, the file KEEPS (todo.md §2e amendment A). Fill writes into
-  // the in-memory rig; Save is what touches the file, so a fill you did not mean
-  // costs nothing.
+  // list all hitboxes and allow modification. changes in the file can still reflect.
   if (ImGui::BeginTable("volumes", 6, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg))
   {
     ImGui::TableSetupColumn("volume");
@@ -719,6 +728,92 @@ void Animation_Tool::draw_hitbox_panel()
   ImGui::TextDisabled("%s", rig_path.c_str());
 }
 
+void Animation_Tool::draw_clip_panel()
+{
+  const char *preview = (selected_clip == NO_CLIP_SELECTED)
+                            ? "(no clips found)"
+                            : clip_name_of(clip_paths[selected_clip]);
+
+  if (ImGui::BeginCombo("Clip", preview))
+  {
+    for (size_t index = 0; index < clip_paths.size(); ++index)
+    {
+      const bool chosen = ((int)index == selected_clip);
+      if (ImGui::Selectable(clip_name_of(clip_paths[index]), chosen))
+      {
+        selected_clip = (int)index;
+        load_selected_clip();
+      }
+    }
+    ImGui::EndCombo();
+  }
+
+  ImGui::SameLine();
+  // Picks up clips that APPEARED since the tool was opened. It cannot re-read one
+  // already loaded: load_animation caches by path and Asset_Pool has no eviction
+  // -- handles are deque indices, so removing one would dangle every handle
+  // already handed out. Re-exporting a clip you are watching needs a restart
+  // until assets get a real reload path. Labelled for what it does, because a
+  // button called Reload that silently showed you the old file is the exact
+  // failure this tool exists to catch.
+  if (ImGui::Button("Rescan directory"))
+    scan_clips();
+
+  const assets::animation_clip_t *clip = assets::get(clip_handle);
+  if (!clip)
+  {
+    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "No clip loaded -- see the console");
+    return;
+  }
+
+  const uint32_t frame_count = clip->frame_count();
+  const float    duration    = assets::clip_duration_seconds(*clip, clip_looping);
+
+  // A single-frame clip is every authored aim pose, and it is legitimate to look
+  // at one here -- it just has no transport, because phase means nothing to it.
+  if (frame_count < 2)
+  {
+    ImGui::Text("%s -- 1 frame, nothing to play", clip->name.c_str());
+    return;
+  }
+
+  if (ImGui::Button(clip_playing ? "Pause" : "Play"))
+  {
+    // Pressing Play on a finished one-shot restarts it rather than doing
+    // nothing, which is what the button appears to promise.
+    if (!clip_playing && !clip_looping && clip_phase >= 1.0f)
+      clip_phase = 0.0f;
+    clip_playing = !clip_playing;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Rewind"))
+  {
+    clip_phase   = 0.0f;
+    clip_playing = false;
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("Loop", &clip_looping);
+
+  ImGui::SliderFloat("Speed", &clip_playback_speed, -2.0f, 4.0f, "%.2fx");
+
+  // Scrubbing IS pausing: a slider that fought the clock for the same value
+  // would snap back the instant you let go.
+  if (ImGui::SliderFloat("Phase", &clip_phase, 0.0f, 1.0f, "%.3f"))
+    clip_playing = false;
+
+  // Where the sampler actually is, in the clip's own terms. Two adjacent frames
+  // and a blend is the whole of what it does, so showing the fractional frame is
+  // showing the interpolation rather than describing it.
+  const float wrapped = clip_looping ? clip_phase - std::floor(clip_phase) : clip_phase;
+  const float frame_position =
+      clip_looping ? wrapped * (float)frame_count : wrapped * (float)(frame_count - 1);
+
+  ImGui::Text("frame %.2f / %u   %.2f s / %.2f s   @ %.4g fps", frame_position, frame_count,
+              wrapped * duration, duration, clip->fps);
+  ImGui::Text("%s -- %u bones%s", clip->name.c_str(), clip->bone_count,
+              clip->stride_distance > 0.0f ? "  (locomotion)" : "");
+}
+
 void Animation_Tool::on_draw_ui(editor_context_t &ctx)
 {
   ImGui::Begin("Animation");
@@ -746,6 +841,7 @@ void Animation_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::RadioButton("Bind (rest, a.k.a T-Pose)", &source, (int)Pose_Source::Bind);
   ImGui::RadioButton("Single authored pose", &source, (int)Pose_Source::Single_Pose);
   ImGui::RadioButton("Aim blend_weights", &source, (int)Pose_Source::Aim_Blend);
+  ImGui::RadioButton("Clip playback", &source, (int)Pose_Source::Clip);
   pose_source = (Pose_Source)source;
 
   if (pose_source == Pose_Source::Single_Pose)
@@ -762,14 +858,17 @@ void Animation_Tool::on_draw_ui(editor_context_t &ctx)
     }
   }
 
+  if (pose_source == Pose_Source::Clip)
+    draw_clip_panel();
+
   if (pose_source == Pose_Source::Aim_Blend)
   {
     const cvars::cvar_state_t &cvars = *state_manager::get_client_context().cvars;
-    ImGui::SliderFloat("Pitch", &pitch_degrees, -cvars.cl_aim_max_pitch, cvars.cl_aim_max_pitch);
+    ImGui::SliderFloat("Pitch", &pitch_degrees, -cvars.sv_aim_max_pitch, cvars.sv_aim_max_pitch);
     // Deviation, not absolute yaw: it is the twist between the feet and the
     // view, which is what the left/right poses were authored against.
-    ImGui::SliderFloat("Yaw deviation", &yaw_deviation_degrees, -cvars.cl_aim_max_yaw,
-                       cvars.cl_aim_max_yaw);
+    ImGui::SliderFloat("Yaw deviation", &yaw_deviation_degrees, -cvars.sv_aim_max_yaw,
+                       cvars.sv_aim_max_yaw);
     if (ImGui::Button("Centre"))
     {
       pitch_degrees         = 0.0f;
@@ -777,8 +876,8 @@ void Animation_Tool::on_draw_ui(editor_context_t &ctx)
     }
 
     const assets::aim_poses_blend_weights_t blend_weights =
-        assets::compute_aim_blend(pitch_degrees, yaw_deviation_degrees, cvars.cl_aim_max_pitch,
-                                  cvars.cl_aim_max_yaw);
+        assets::compute_aim_blend(pitch_degrees, yaw_deviation_degrees, cvars.sv_aim_max_pitch,
+                                  cvars.sv_aim_max_yaw);
     ImGui::Separator();
     ImGui::Text("blend_weights weights");
     for (uint32_t index = 0; index < entities::Aim_Pose_COUNT; ++index)
@@ -805,8 +904,6 @@ void Animation_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::Checkbox("Bone names", &show_bone_names);
   ImGui::Checkbox("Hitbox volumes", &show_hitboxes);
   ImGui::Checkbox("Movement hull", &show_movement_hull);
-  ImGui::SameLine();
-  ImGui::Checkbox("Static hitboxes", &show_static_hitboxes);
 
   ImGui::Separator();
   draw_hitbox_panel();

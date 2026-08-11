@@ -101,6 +101,27 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, game_rocket_speed),
      .size = sizeof(cvar_state_t::game_rocket_speed),
      .string_capacity = 0},
+    {.name = "sv_aim_max_pitch",
+     .description = "Pitch extent of the authored aim pose set, in degrees",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, sv_aim_max_pitch),
+     .size = sizeof(cvar_state_t::sv_aim_max_pitch),
+     .string_capacity = 0},
+    {.name = "sv_aim_max_yaw",
+     .description = "Yaw extent of the authored aim pose set, in degrees",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, sv_aim_max_yaw),
+     .size = sizeof(cvar_state_t::sv_aim_max_yaw),
+     .string_capacity = 0},
+    {.name = "sv_aim_body_turn_rate",
+     .description = "How fast a player model's feet chase their view yaw, degrees/second",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, sv_aim_body_turn_rate),
+     .size = sizeof(cvar_state_t::sv_aim_body_turn_rate),
+     .string_capacity = 0},
     {.name = "sv_tickrate",
      .description = "Server tick rate in Hz",
      .flags = CVAR_FLAG_SERVER,
@@ -163,27 +184,6 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_I32,
      .offset = offsetof(cvar_state_t, cl_spectate_slot),
      .size = sizeof(cvar_state_t::cl_spectate_slot),
-     .string_capacity = 0},
-    {.name = "cl_aim_max_pitch",
-     .description = "Pitch extent of the authored aim pose set, in degrees",
-     .flags = CVAR_FLAG_CLIENT,
-     .type = CVAR_TYPE_F32,
-     .offset = offsetof(cvar_state_t, cl_aim_max_pitch),
-     .size = sizeof(cvar_state_t::cl_aim_max_pitch),
-     .string_capacity = 0},
-    {.name = "cl_aim_max_yaw",
-     .description = "Yaw extent of the authored aim pose set, in degrees",
-     .flags = CVAR_FLAG_CLIENT,
-     .type = CVAR_TYPE_F32,
-     .offset = offsetof(cvar_state_t, cl_aim_max_yaw),
-     .size = sizeof(cvar_state_t::cl_aim_max_yaw),
-     .string_capacity = 0},
-    {.name = "cl_aim_body_turn_rate",
-     .description = "How fast a player model's feet chase their view yaw, degrees/second",
-     .flags = CVAR_FLAG_CLIENT,
-     .type = CVAR_TYPE_F32,
-     .offset = offsetof(cvar_state_t, cl_aim_body_turn_rate),
-     .size = sizeof(cvar_state_t::cl_aim_body_turn_rate),
      .string_capacity = 0},
     {.name = "cl_player_unlit",
      .description = "Draw player models unlit -- easier to read a pose than under the sun",
@@ -379,7 +379,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[12] = {
+const cvar_id MIRRORED_CVAR_TABLE[15] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -392,6 +392,9 @@ const cvar_id MIRRORED_CVAR_TABLE[12] = {
     cvar_id::pm_step_height,
     cvar_id::pm_minimum_land_impact_speed,
     cvar_id::game_rocket_speed,
+    cvar_id::sv_aim_max_pitch,
+    cvar_id::sv_aim_max_yaw,
+    cvar_id::sv_aim_body_turn_rate,
 };
 
 // The value's bytes inside the state struct. Every text conversion goes
@@ -453,7 +456,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 12};
+  return {MIRRORED_CVAR_TABLE, 15};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)

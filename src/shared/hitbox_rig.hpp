@@ -23,7 +23,7 @@
 
 #include "asset.hpp"
 #include "linalg.hpp"
-#include "player_hitboxes.hpp"
+#include "hit_region.hpp"
 #include "skeleton.hpp"
 #include "span.hpp"
 
@@ -143,8 +143,6 @@ struct hitbox_frame_t
   linalg::vec3f forward = {0, 0, 1};
 };
 
-// One posed volume, in model space. This is what the client draws and what the
-// server will ray-test.
 struct posed_hitbox_t
 {
   hitbox_shape_t       shape  = hitbox_shape_t::Capsule;
@@ -171,9 +169,20 @@ void compute_posed_hitboxes(const hitbox_rig_t &rig, const resolved_hitbox_rig_t
 void compute_bind_model_matrices(const skeleton_t &skeleton, Span<linalg::mat4f> out);
 
 // How far OUTSIDE the volume a point is; 0 anywhere inside it. The one place a
-// shape's geometry is written down -- coverage, derivation and (later) the hit
-// test all ask this rather than each switching over the kinds.
+// shape's geometry is written down -- coverage, derivation and the hit test all
+// ask this rather than each switching over the kinds.
 float distance_outside_hitbox(const posed_hitbox_t &hitbox, const linalg::vec3f &point);
+
+struct hitbox_ray_hit_t
+{
+  float         distance = 0.0f;  // along `direction`, which is unit length
+  linalg::vec3f normal{};         // outward surface normal at the impact point
+};
+
+
+[[nodiscard]] std::optional<hitbox_ray_hit_t> intersect_ray_hitbox(const posed_hitbox_t &hitbox,
+                                                                   const linalg::vec3f  &origin,
+                                                                   const linalg::vec3f &direction);
 
 // --- Tool-time: seeding and auditing ---------------------------------------
 
@@ -187,31 +196,17 @@ struct hitbox_seed_t
   linalg::vec3f half_extents = {0, 0, 0};
 };
 
-// A high percentile of the distance from the volume's axis (radius) and of the
-// absolute projection onto each of its own axes (half-extents), over the
-// vertices whose DOMINANT influence is one of `span_bones`. A volume no vertex
-// is dominated by derives zeros, which the caller reports -- a zero-sized volume
-// is one that can never be hit.
 hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
                                  const hitbox_volume_t          &volume,
                                  const resolved_hitbox_volume_t &resolved);
 
-// Every volume's seed, in rig order. `out` must be rig.volumes.size() long.
-// Logs the table -- an override only reads as a correction when the number it
-// corrects is visible.
 void derive_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
                          const hitbox_rig_t &rig, const resolved_hitbox_rig_t &resolved,
                          Span<hitbox_seed_t> out);
 
-// Every deform bone as a one-bone capsule with its derived radius, so authoring
-// a rig is deleting lines rather than knowing which bone names exist. Regions
-// are guessed from the bone name and are meant to be corrected -- the guess is
-// there to be edited, not trusted.
 hitbox_rig_t make_hitbox_rig_template(const mesh_asset_t &mesh, const skeleton_t &skeleton);
 
-// Vertices no volume reaches, in the bind pose. Bind rather than posed on
-// purpose: skinning moves the skin and the volumes together, so a gap is a
-// property of the rig, not of the frame you happen to be looking at.
+// how many vertices in the bind pose are unreached, and what's the worstg bone?
 struct hitbox_coverage_t
 {
   uint32_t vertex_count           = 0;

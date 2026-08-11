@@ -12,7 +12,7 @@
 #include "../../shared/game_events.hpp"
 #include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
-#include "../../shared/player_hitboxes.hpp"
+#include "../../shared/hit_region.hpp"
 #include "../../shared/weapons.hpp"
 #ifdef JPH_DEBUG_RENDERER
 #include <Jolt/Physics/Body/BodyManager.h>
@@ -29,8 +29,10 @@
 #include "../../shared/network/quantization.hpp"
 #include "../../shared/network/cvar_mirror.hpp"
 #include "../../shared/network/map_transfer.hpp"
+#include "../hitbox_debug_draw.hpp"
 #include "../input.hpp"
-#include "../player_animator.hpp"
+#include "../../shared/player_animator.hpp"
+#include "../../shared/player_rig.hpp"
 #include "../renderer.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/math.hpp"
@@ -55,35 +57,6 @@ static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
 static uint8_t crosshair_color_channel(uint32_t value)
 {
   return uint8_t(std::min<uint32_t>(value, 255));
-}
-
-// cvars -> the values the animator actually needs. Translating here rather than
-// passing cvar_state_t down keeps player_animator.cpp a pure function of angles.
-static aim_settings_t aim_settings_from(const cvars::cvar_state_t &cvars)
-{
-  return aim_settings_t{.max_pitch_degrees      = cvars.cl_aim_max_pitch,
-          .max_yaw_degrees        = cvars.cl_aim_max_yaw,
-          .body_turn_rate_degrees_per_second = cvars.cl_aim_body_turn_rate};
-}
-
-// The feet chase the view; the leftover twist is what the left/right poses
-// cover. Called from the interpolation pass, so it runs once per frame per
-// player whether or not that player is on screen -- the alternative is a body
-// yaw that only advances while visible, which snaps when one comes into view.
-static void update_remote_player_body_yaw(client_context_t::Remote_Player_State &remote_player,
-                                          float dt, const cvars::cvar_state_t &cvars)
-{
-  // A player who just appeared faces where they are looking. Easing in from 0
-  // would spin every newly-visible model up from due east.
-  if (!remote_player.body_yaw_initialized)
-  {
-    remote_player.body_yaw             = remote_player.render_yaw;
-    remote_player.body_yaw_initialized = true;
-    return;
-  }
-
-  advance_body_yaw(remote_player.body_yaw, remote_player.render_yaw, dt,
-                   aim_settings_from(cvars));
 }
 
 static void render_menu_overlay(bool* show_menu_overlay)
@@ -826,7 +799,7 @@ void Play_State::update(float dt)
         remote_player.entity_uid = player.entity_id;
         remote_player.snapshots[0] = remote_player.snapshots[1];
         remote_player.snapshots[1] = {player.position, player.view_angle_yaw,
-                           player.view_angle_pitch, snapshot_tick};
+                           player.view_angle_pitch, player.body_yaw, snapshot_tick};
         if (remote_player.snapshot_count < 2)
           remote_player.snapshot_count++;
 
@@ -1180,7 +1153,7 @@ void Play_State::update(float dt)
         remote_player.render_position = remote_player.snapshots[1].position;
         remote_player.render_yaw = remote_player.snapshots[1].yaw;
         remote_player.render_pitch = remote_player.snapshots[1].pitch;
-        update_remote_player_body_yaw(remote_player, dt, *ctx.cvars);
+        remote_player.body_yaw = remote_player.snapshots[1].body_yaw;
       }
       continue;
     }
@@ -1205,7 +1178,14 @@ void Play_State::update(float dt)
     remote_player.render_yaw   = linalg::wrap_degrees(remote_player.snapshots[0].yaw + yaw_delta * t);
     remote_player.render_pitch = remote_player.snapshots[0].pitch * (1.f - t) + remote_player.snapshots[1].pitch * t;
 
-    update_remote_player_body_yaw(remote_player, dt, *ctx.cvars);
+    // The feet take the short way round for the same reason the view yaw does,
+    // and off the same two snapshots -- this is a smoothed READ of a
+    // server-owned value, not an integration. Nothing downstream writes it
+    // back.
+    const float body_yaw_delta = linalg::wrap_degrees(remote_player.snapshots[1].body_yaw -
+                                                      remote_player.snapshots[0].body_yaw);
+    remote_player.body_yaw =
+        linalg::wrap_degrees(remote_player.snapshots[0].body_yaw + body_yaw_delta * t);
   }
   ctx.interpolation_time += dt;
 
@@ -1408,7 +1388,7 @@ void Play_State::render_ui()
       ImGui::SliderFloat("pitch", &ctx.cvars->cl_aim_debug_pitch, -90.f, 90.f, "%.1f deg");
       ImGui::SliderFloat("yaw dev", &ctx.cvars->cl_aim_debug_yaw, -90.f, 90.f, "%.1f deg");
       ImGui::TextDisabled("authored extent: +/-%.0f pitch, +/-%.0f yaw",
-                          ctx.cvars->cl_aim_max_pitch, ctx.cvars->cl_aim_max_yaw);
+                          ctx.cvars->sv_aim_max_pitch, ctx.cvars->sv_aim_max_yaw);
     }
     ImGui::End();
   }
@@ -1567,30 +1547,33 @@ void Play_State::render_3d(VkCommandBuffer cmd)
         renderer::draw__wire_AABB(cmd, rmin, rmax, colors::green);
     }
 
-    // The regions hitscan actually resolves against, drawn from the SAME table
-    // the server tests against (`shared::player_hitboxes`) so a disagreement
-    // between what you see and what you hit is visible rather than inferred.
-    // The green hull above is where the player collides; these are where they
-    // get shot, and the two are not the same shape.
+    // The volumes hitscan actually resolves against, placed by the SAME
+    // function the server places them with (shared::compute_player_hitboxes)
+    // off the SAME replicated inputs -- so a disagreement between what you see
+    // and what you hit is visible rather than inferred. The green hull above is
+    // where the player collides; these are where they get shot, and the two are
+    // not the same shape.
+    //
+    // What this cannot show is the tick gap: the server tests these against
+    // where the player was when the shot arrived, and lag compensation is still
+    // to come (animation_def.md §4, guarantee 2).
     if (show_hitboxes)
     {
-      for (const shared::player_hitbox_t &region : shared::player_hitboxes)
-      {
-        const vec3f center = remote_player.render_position + region.offset;
+      const shared::player_rig_t &rig = shared::player_rig();
 
-        color_t color = colors::white;
-        switch (region.region)
-        {
-          case shared::hit_region_t::Head:  color = colors::red;    break;
-          case shared::hit_region_t::Torso: color = colors::yellow; break;
-          case shared::hit_region_t::Legs:  color = colors::cyan;   break;
-        }
+      std::vector<assets::posed_hitbox_t> volumes(rig.volume_count());
+      shared::compute_player_hitboxes(rig,
+                                      {.feet_position = remote_player.render_position,
+                                       .body_yaw      = remote_player.body_yaw,
+                                       .view_yaw      = remote_player.render_yaw,
+                                       .view_pitch    = remote_player.render_pitch},
+                                      aim_settings_from(*ctx.cvars), volumes);
 
-        if (region.shape == entities::Shape_Kind::Sphere)
-          renderer::draw_hitbox_sphere(cmd, center, region.size.x, color);
-        else
-          renderer::draw__wire_AABB(cmd, center - region.size, center + region.size, color);
-      }
+      const auto line = [&](const vec3f &start, const vec3f &end, color_t color)
+      { renderer::draw_line(cmd, start, end, color); };
+
+      for (const assets::posed_hitbox_t &hitbox : volumes)
+        client::draw_posed_hitbox(line, hitbox, client::hit_region_color(hitbox.region));
     }
   }
 

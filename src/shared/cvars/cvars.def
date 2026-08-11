@@ -60,11 +60,10 @@
 // Player movement -- was player_move.cpp
 // ---------------------------------------------------------------------------
 //
-// The whole block is @Mirrored, and it is the ONLY @Mirrored block. These are
-// the constants the client's movement prediction feeds into the same
-// player_move() the server runs; if the two sides disagree about pm_maxspeed
-// the client mispredicts every frame. Formerly cvar::flags::Replicated, which
-// meant the same thing.
+// The whole block is @Mirrored. These are the constants the client's movement
+// prediction feeds into the same player_move() the server runs; if the two
+// sides disagree about pm_maxspeed the client mispredicts every frame. Formerly
+// cvar::flags::Replicated, which meant the same thing.
 
 Player_Movement :: cvars {
     pm_maxspeed:            f32 = 320.0       @Mirrored  "Maximum player speed"
@@ -82,6 +81,31 @@ Player_Movement :: cvars {
 
 Gameplay :: cvars {
     game_rocket_speed:      f32 = 600.0       @Mirrored "Rocket velocity"
+}
+
+// ---------------------------------------------------------------------------
+// Aim pose geometry -- animation_def.md §4/§5
+// ---------------------------------------------------------------------------
+//
+// @Mirrored, and they used to be cl_aim_* @Client. What moved them: the server
+// now poses the hit volumes through the same aim blend the client draws, so
+// these three are inputs to a HIT DECISION. Two sides disagreeing about
+// sv_aim_max_yaw is two sides disagreeing about where a twisted torso is.
+// Server-owned with a read-only client copy is the same shape as pm_*, for the
+// same reason.
+//
+// The two extents describe the AUTHORED pose set, so they are not free tuning
+// -- they should match how far the `upward`/`downward`/`left`/`right` poses
+// actually reach. Aiming further clamps to the extreme rather than
+// extrapolating past a pose nobody authored.
+
+Aim :: cvars {
+    sv_aim_max_pitch:       f32 = 45.0        @Mirrored  "Pitch extent of the authored aim pose set, in degrees"
+    sv_aim_max_yaw:         f32 = 45.0        @Mirrored  "Yaw extent of the authored aim pose set, in degrees"
+    // The feet lag the view and catch up at this rate, and the difference is
+    // what drives the left/right poses. At 0 the feet only ever move when the
+    // view passes sv_aim_max_yaw, so the torso stays twisted.
+    sv_aim_body_turn_rate:  f32 = 540.0       @Mirrored  "How fast a player model's feet chase their view yaw, degrees/second"
 }
 
 // ---------------------------------------------------------------------------
@@ -125,22 +149,10 @@ Client :: cvars {
     // judder. Bots occupy slots from sv_max_player_count (32) up.
     cl_spectate_slot:       i32 = -1         @Client    "Spectate a player slot through its eyes (-1 = off; bots start at 32)"
 
-    // Aim poses (animation_def.md §5). All @Client: this is tier-2 cosmetic
-    // animation, derived on each client from view angles that are already
-    // replicated, and two clients disagreeing about it is invisible because it
-    // cannot change a hit decision.
+    // The aim pose EXTENTS moved to the @Mirrored `Aim` block above when the
+    // server started posing hit volumes with them. What is left here is the
+    // scrub rig, which is presentation only.
     //
-    // The two extents describe the AUTHORED pose set, so they are not free
-    // tuning -- they should match how far the `upward`/`downward`/`left`/`right`
-    // poses actually reach. Aiming further clamps to the extreme rather than
-    // extrapolating past a pose nobody authored.
-    cl_aim_max_pitch:       f32 = 45.0       @Client    "Pitch extent of the authored aim pose set, in degrees"
-    cl_aim_max_yaw:         f32 = 45.0       @Client    "Yaw extent of the authored aim pose set, in degrees"
-    // The feet lag the view and catch up at this rate, and the difference is
-    // what drives the left/right poses. At 0 the feet only ever move when the
-    // view passes cl_aim_max_yaw, so the torso stays twisted.
-    cl_aim_body_turn_rate:  f32 = 540.0      @Client    "How fast a player model's feet chase their view yaw, degrees/second"
-
     // Aim blend rig. The blend is a pure function of (pitch, yaw deviation),
     // and NEITHER input is reachable by watching a live player: a bot's pitch
     // is always 0, and the feet chase its view yaw fast enough that the

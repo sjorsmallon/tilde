@@ -27,6 +27,11 @@ keeps the finished work so `todo.md` stays a work list.
   `rig.hitboxes` bone-span volumes drawn under it with the derived-radius seed
   and the two audit readouts. The bone-axis correction in it (a bone points down
   minus its THIRD column) is the part most likely to matter again.
+- **SKELETAL HITBOXES IN GAMEPLAY (2026-08-11)** — animation step 4: hitscan
+  against the posed volumes instead of three static boxes, `body_yaw` pulled
+  forward into server ownership to make it possible, and one placement function
+  shared by the server's hit test and the client's overlay. Lag compensation is
+  what is still missing.
 - **HIT FEEDBACK + AIM DEBUG RIG (2026-08-09)** — the bot yaw convention fix,
   the aim-pose debug rig (the blend turned out to be unreachable from any
   gameplay state), `unlit_textured_skinned`, `-Werror=switch`, and hit sounds
@@ -2140,6 +2145,103 @@ them is churn: they are indexed by keys the code produced, they want zero-fill,
 and there is no key column to check. Existing `std::array` uses that are not
 enum-indexed (`snapshot_history`, the input tables, `player_slots`) were left
 alone too; prefer the house types in new code rather than sweeping old ones.
+
+---
+
+# SKELETAL HITBOXES IN GAMEPLAY  ✅ DONE (2026-08-11)
+
+Animation build-order step 4. The volumes had existed and posed correctly since
+2026-08-10, and nothing shot at them: `hitscan.cpp` still resolved regions
+against `player_hitboxes`'s three axis-aligned boxes. So the model leaned, an arm
+swung out, and the bullet went through a column.
+
+## `resolve_hitscan` takes VOLUMES, not a position
+
+`hitscan_target_t` was `{uid, position}` and the function walked a static table
+of three boxes. It is now `{uid, Span<const posed_hitbox_t>}` in world space,
+and the function only ranks — every shape's geometry lives in
+`intersect_ray_hitbox` (`hitbox_rig.cpp`), beside `distance_outside_hitbox`,
+which is where that header always said the hit test would go.
+
+Passing placed volumes rather than pose inputs is what keeps lag compensation
+from needing a second entry point: §4 stores OUTPUTS in `Snapshot_History`
+precisely so nothing is re-derived at rewind, and those arrive as exactly this
+span.
+
+## `shared/player_rig.{hpp,cpp}` is the new join
+
+Three things existed separately — the aim blend, the bone→volume mapping, and a
+player's gameplay state. `compute_player_hitboxes(rig, pose, settings, out)`
+joins them: sample the five-pose blend, walk the hierarchy, place the volumes,
+rotate by `body_yaw` and translate to the feet. The server calls it per target
+per shot; the client's `debug_show_hitboxes` overlay calls it to draw. **One
+function, so the overlay cannot show a volume the server is not testing** —
+guarantee 1 of §4, bought the way that section says to buy it.
+
+The world transform matches the RENDERER's (`Ry` sweeping +X toward −Z), not
+`direction_from_angles`' (+X toward +Z). The drawn mesh decides where a limb
+looks like it is; if the model faces the wrong way (`todo.md`, "Does the model
+face the right way?") both move together and the fix stays in the exporter.
+
+The rig loads eagerly in `server::init` rather than on first use. Loading it is
+fatal-on-failure, and dying at boot naming the file beats dying inside the fire
+path of a live match.
+
+## `body_yaw` came forward out of step 5
+
+Not optional: posing the volumes needs the torso twist, and the twist was a
+client-local integrator with no server-side value to read. Every client held its
+own copy and the server held none. So `body_yaw: f32 @Networked` on
+`Player_Entity`, advanced once per fixed tick by the server, read (and
+short-way-round interpolated) by clients.
+
+Two details worth keeping:
+
+- **The tick pass is over the ENTITY POOL, not the move inbox.** A bot sends no
+  moves. Hanging the update off the move loop would leave every bot drawn and
+  hit-tested permanently untwisted.
+- **`cl_aim_max_pitch` / `_max_yaw` / `_body_turn_rate` became `sv_aim_*`
+  `@Mirrored`.** They stopped being presentation the moment a hit decision read
+  them: two sides disagreeing about `sv_aim_max_yaw` is two sides disagreeing
+  about where a twisted torso is. Same argument as `pm_*`.
+
+## Ray casting: four shapes out of three surfaces
+
+`intersect_ray_hitbox` composes a sphere, a cylinder SIDE (the open tube) and a
+disc. A capsule is the tube plus two spheres; a cylinder is the tube plus two
+discs; a box is a slab test in its own frame. Writing the surfaces rather than
+the solids is why the capsule is not a fourth copy of the quadratic.
+
+**Every surface reports the ENTRY point and rejects a negative distance**, so "a
+muzzle already inside a volume misses" holds uniformly instead of in three
+shapes out of four. The one that needed thought: a ray fired from inside a
+cylinder straight down its own axis never meets the tube, so the disc test had
+to become front-facing-only or it would happily report the far cap from behind.
+`hitscan_test` has that case; it caught it.
+
+## What went away
+
+- `player_hitboxes.hpp` → `hit_region.hpp`. The three static boxes are deleted;
+  `hit_region_t` is all that was worth keeping. Ten-plus volumes over three
+  regions is the point — the old comment conflated the two counts because with
+  three boxes they happened to be equal.
+- The Animation tool's "Static hitboxes" audit toggle, and its private copies of
+  the wireframe helpers. Those moved to `client/hitbox_debug_draw.hpp`,
+  templated on a line sink so the tool (`overlay_renderer_t`) and the game
+  (`renderer::draw_line`) share one implementation without sharing a base class.
+- `client/player_animator.{hpp,cpp}` → `shared/`. Both sides run the aim blend
+  now, which is the whole reason the pose the client draws is the pose the
+  server tests.
+
+`Span<T>` gained a converting constructor to `Span<const T>` — a real hole, hit
+the first time a caller held the writable span and needed the read-only one.
+
+## What is left, and it is the honest remainder
+
+**Lag compensation.** The server tests where the target is NOW; a shooter on
+80 ms aimed at where it was. That is guarantee 2 of §4 (`Snapshot_History`
+carrying endpoints per tick), it is the same machinery as replicating
+`locomotion_phase`, and the two land together at step 5.
 
 ---
 

@@ -153,22 +153,26 @@ section at the top is the ordered checklist and supersedes any ordering implied
 here.** This section carries the reasoning behind individual decisions; finished
 steps are in `done.md` under ANIMATION TRACK.
 
-**Step 5 grew a second accumulator (decided 2026-08-09).** It is now
-`locomotion_phase` AND `body_yaw` replicated + rewound, landing together. The
-torso twist that drives the left/right aim poses is currently a client-local
-integrator, which means every client holds its own value while the server holds
-none — a three-way disagreement, and the server tests unposed axis-aligned
-volumes regardless, so the drawn silhouette is already up to `cl_aim_max_yaw`
-(45°) away from what hitscan sees. `body_yaw` is an accumulator, so
-"replicate accumulators, derive everything else" puts it on the wire; the server
-becomes its owner and `advance_body_yaw` moves to `shared/` so one
-implementation serves both. Doing it with step 5 rather than before is
-deliberate — same wire field pattern, same `Snapshot_History` slot, same
-server-side animstate update, and building that twice would be silly. Full
-reasoning, the CS:GO precedent and the two easy-to-get-wrong details (integrate
-on the TICK clock from the snapshot value, not the render clock from the
-interpolated one; velocity is an input and is currently missing entirely) are in
-`animation_def.md` under "RESOLVED: `body_yaw` is a tier-1 accumulator".
+~~**Step 5 grew a second accumulator (decided 2026-08-09).** It is now
+`locomotion_phase` AND `body_yaw` replicated + rewound, landing together.~~
+
+**`body_yaw` landed EARLY, on 2026-08-11, with hitscan-against-the-capsules.**
+Not by choice: posing the server's hit volumes needs the torso twist, and the
+twist had no server-side value to read. So `body_yaw: f32 @Networked` is on
+`Player_Entity`, the server advances it once per fixed tick over every player
+(bots included — they send no moves, so the pass is over the entity pool rather
+than the move inbox), `advance_body_yaw` moved to `shared/player_animator.hpp`,
+and clients read the field and interpolate it the short way round instead of
+integrating. `cl_aim_max_pitch`/`_max_yaw`/`_body_turn_rate` became
+`sv_aim_*` `@Mirrored` in the same change: they are inputs to a hit decision
+now, so two sides disagreeing about them is two sides disagreeing about where a
+twisted torso is.
+
+What step 5 still owns: `locomotion_phase`, and putting BOTH accumulators into
+`Snapshot_History` for rewind. Replication is guarantee 1 (two machines agree
+now); rewind is guarantee 2 (one machine agrees with its own past), and
+`animation_def.md` §4 keeps them separate on purpose. The velocity term in the
+feet-chase is still missing — the feet chase only where you look.
 
 **Ordering headline (2026-08-08): AIM JUMPED THE QUEUE — and landed 2026-08-09.**
 No walk cycle existed and steps 3–6 all sat behind one. Aim's data was already
@@ -469,11 +473,28 @@ tool.
       4.6, is now under it), and those poses are still being authored, so a
       per-pose ceiling in the test would be a test about content. The across-a-whole-stride version
       still waits on a clip.
-- [ ] **Hitscan against the capsules.** The volumes exist and pose correctly;
-      `hitscan.cpp` still resolves regions against `player_hitboxes`'s three
-      static boxes. This is the step that makes any of it matter, and it needs no
-      new data — the server links `game_shared` and has the skeleton and the
-      poses.
+- [x] **Hitscan against the capsules — done 2026-08-11.** `resolve_hitscan` now
+      takes each target's POSED VOLUMES (a `Span<const posed_hitbox_t>` in world
+      space) rather than a position, and `shared/player_rig.{hpp,cpp}` is what
+      places them: the aim blend, the bone→volume mapping and a player's
+      position/angles joined in one function that both sides call. The server
+      calls it per target per shot; the client's `debug_show_hitboxes` overlay
+      calls it to draw, so the overlay cannot show a volume the server is not
+      testing. `player_hitboxes.hpp`'s three static boxes are deleted and the
+      file is now `hit_region.hpp` (the damage regions were the only part worth
+      keeping).
+      Two things it needed that the note did not anticipate: `body_yaw` had to
+      become server-owned first (see above), and the ray-vs-shape math had to be
+      written — `intersect_ray_hitbox` in `hitbox_rig.cpp`, four shapes composed
+      out of a sphere, a cylinder side and a disc, every one of them reporting
+      the ENTRY point so "the muzzle is already inside a volume" is a miss
+      uniformly. `hitbox_rig_test` gained the end-to-end guard (real rig →
+      posed → shot).
+- [ ] **Lag compensation.** What is left of the gap: the server tests where the
+      target is NOW, and a shooter on 80 ms aimed at where it was. That is
+      guarantee 2 in `animation_def.md` §4 — `Snapshot_History` carrying the
+      endpoints per tick, so nothing has to be re-derived — and it is the same
+      machinery as replicating `locomotion_phase`.
 
 ## Unverified, needs eyes
 
