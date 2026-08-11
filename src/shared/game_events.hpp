@@ -20,7 +20,6 @@ enum class game_event_kind_t : uint16_t
   ROCKET_DETONATED,
   PLAYER_DIED,
   PLAYER_SPAWNED,
-  PLAYER_DAMAGED,
 };
 
 // Per-kind payload structs. Kept trivially copyable; each variant participates
@@ -33,12 +32,12 @@ struct rocket_detonated_payload_t
   uint16_t             weapon_id;
 };
 
-struct player_damaged_payload_t
-{
-  shared::entity_uid_t attacker_id;
-  shared::entity_uid_t victim_id;
-  uint16_t damage_amount;
-};
+// PLAYER_DAMAGED was declared here with a payload and a union member but never
+// a codec case and never a consumer, so firing it would have written a bare
+// kind id and desynced the rest of the batch. Removed rather than completed:
+// per-hit feedback rides the FLESH_IMPACT cosmetic effect (everyone, lossy) and
+// Player_Entity::last_hit_tick (the shooter, replicated). Neither needs a
+// reliable gameplay event.
 
 // Fired once at the tick a player's health crosses from >0 to <=0. Carries
 // enough context for kill feed / score / sound consumers; "world/suicide"
@@ -98,7 +97,6 @@ struct game_event_t
     rocket_detonated_payload_t rocket_detonated;
     player_died_payload_t      player_died;
     player_spawned_payload_t   player_spawned;
-    player_damaged_payload_t   player_damaged;
   };
 };
 

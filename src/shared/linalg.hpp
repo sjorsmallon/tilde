@@ -1,5 +1,7 @@
 #pragma once
 
+#include "log.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -213,12 +215,155 @@ inline mat4f operator*(const mat4f &a, const mat4f &b)
   return res;
 }
 
+// Inverse of an AFFINE mat4 -- one whose bottom row is (0,0,0,1). Bone matrices,
+// model matrices and view matrices are all of that shape, and the general 4x4
+// inverse costs several times as much to compute nothing extra.
+//
+//   M = [ A t ]        M^-1 = [ A^-1   -A^-1 * t ]
+//       [ 0 1 ]               [ 0       1        ]
+//
+// A singular A (an axis scaled to nothing) has no inverse, and there is no
+// sensible value to hand back: identity is a lie that surfaces far downstream as
+// a mangled pose rather than as the degenerate matrix it actually is. So this is
+// fatal. It runs once per bone, so a recoverable version would also mean a
+// stacktrace per bone per frame -- and a bone scaled to zero is a broken asset,
+// which is exactly the case fatal_error exists for.
+inline mat4f inverse_affine(const mat4f &m)
+{
+  const vec3 a0 = {m[0].x, m[0].y, m[0].z};
+  const vec3 a1 = {m[1].x, m[1].y, m[1].z};
+  const vec3 a2 = {m[2].x, m[2].y, m[2].z};
+  const vec3 translation = {m[3].x, m[3].y, m[3].z};
+
+  // Cofactors of A, which are also the ROWS of the adjugate.
+  const vec3 r0 = cross(a1, a2);
+  const vec3 r1 = cross(a2, a0);
+  const vec3 r2 = cross(a0, a1);
+
+  const float determinant = dot(a0, r0);
+  if (determinant > -1e-12f && determinant < 1e-12f)
+    fatal_error("inverse_affine: singular 3x3, determinant {}. Column lengths are ({}, {}, {}) -- "
+                "a zero one is the axis scaled to nothing.",
+                determinant, length(a0), length(a1), length(a2));
+
+  const float inverse_determinant = 1.0f / determinant;
+
+  // A^-1 = adjugate / det, and the adjugate's rows above become its columns.
+  mat4f result = mat4f::identity();
+  result[0] = {r0.x * inverse_determinant, r1.x * inverse_determinant,
+               r2.x * inverse_determinant, 0.0f};
+  result[1] = {r0.y * inverse_determinant, r1.y * inverse_determinant,
+               r2.y * inverse_determinant, 0.0f};
+  result[2] = {r0.z * inverse_determinant, r1.z * inverse_determinant,
+               r2.z * inverse_determinant, 0.0f};
+
+  const vec4 inverse_translation = result * vec4{translation.x, translation.y, translation.z, 0.0f};
+  result[3] = {-inverse_translation.x, -inverse_translation.y, -inverse_translation.z, 1.0f};
+  return result;
+}
+
+// --- Quaternions ---
+//
+// The rotation half of a `transform_t` (src/shared/animation.hpp). A pose is
+// stored as TRS rather than as a matrix for exactly one reason: two rotations
+// have to be BLENDED, and lerping matrices shears them. Nothing else in the
+// engine needs a quaternion, which is why this is the whole of it.
+//
+// Storage order is x y z w -- the wire/file order too, so the `.animation`
+// channel line reads left to right into this struct.
+struct quatf
+{
+  float x = 0.0f, y = 0.0f, z = 0.0f, w = 1.0f;
+
+  static quatf identity() { return {0.0f, 0.0f, 0.0f, 1.0f}; }
+};
+
+inline float dot(const quatf &a, const quatf &b)
+{
+  return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+
+inline quatf normalize(const quatf &q)
+{
+  const float l = std::sqrt(dot(q, q));
+  if (l < 1e-8f)
+    return quatf::identity();
+  const float inverse = 1.0f / l;
+  return {q.x * inverse, q.y * inverse, q.z * inverse, q.w * inverse};
+}
+
+// Hamilton product: `a * b` rotates by b FIRST, then a -- the same reading order
+// as matrix multiply, so composing a pose is the same shape either way.
+inline quatf operator*(const quatf &a, const quatf &b)
+{
+  return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+          a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+          a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+          a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+
+// Normalized lerp with a HEMISPHERE FIX. q and -q are the same rotation, so
+// without the dot-sign flip a blend between two poses that happen to have been
+// decomposed onto opposite hemispheres takes the long way round -- a limb
+// snapping through the body on its way to a pose 10 degrees away.
+//
+// slerp is deliberately not here: it is a real per-bone cost (an acos, a sin and
+// two divides) and at the weights an animator actually blends at, the angular
+// error against nlerp is under a degree. See animation_def.md §5.
+inline quatf nlerp(const quatf &from, const quatf &to, float t)
+{
+  const float sign = dot(from, to) < 0.0f ? -1.0f : 1.0f;
+  return normalize(quatf{from.x + (to.x * sign - from.x) * t,
+                         from.y + (to.y * sign - from.y) * t,
+                         from.z + (to.z * sign - from.z) * t,
+                         from.w + (to.w * sign - from.w) * t});
+}
+
+// Rotation matrix for a UNIT quaternion, column-major to match mat4f.
+inline mat4f to_mat4(const quatf &q)
+{
+  const float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
+  const float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
+  const float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
+
+  mat4f result = mat4f::identity();
+  result[0]    = {1.0f - 2.0f * (yy + zz), 2.0f * (xy + wz), 2.0f * (xz - wy), 0.0f};
+  result[1]    = {2.0f * (xy - wz), 1.0f - 2.0f * (xx + zz), 2.0f * (yz + wx), 0.0f};
+  result[2]    = {2.0f * (xz + wy), 2.0f * (yz - wx), 1.0f - 2.0f * (xx + yy), 0.0f};
+  return result;
+}
+
+// Compose translation, rotation and scale into the local matrix the hierarchy
+// walk consumes: T * R * S, so scale applies in the bone's own frame and the
+// translation is untouched by it.
+inline mat4f compose_transform(const vec3f &translation, const quatf &rotation, const vec3f &scale)
+{
+  mat4f result = to_mat4(rotation);
+  result[0]    = result[0] * scale.x;
+  result[1]    = result[1] * scale.y;
+  result[2]    = result[2] * scale.z;
+  result[3]    = {translation.x, translation.y, translation.z, 1.0f};
+  return result;
+}
+
 // Math Helpers
 constexpr float PI = 3.14159265359f;
 
 inline float to_radians(float degrees) { return degrees * (PI / 180.0f); }
 
 inline float to_degrees(float radians) { return radians * (180.0f / PI); }
+
+// An angle difference folded into (-180, 180]. Yaws are stored unwrapped, so a
+// player turning past the 0/360 seam produces a raw difference near 360 that
+// reads as "turned almost all the way round" -- which is how a smoothly turning
+// model ends up spinning the long way.
+inline float wrap_degrees(float degrees)
+{
+  degrees = std::fmod(degrees + 180.0f, 360.0f);
+  if (degrees < 0.0f)
+    degrees += 360.0f;
+  return degrees - 180.0f;
+}
 
 // View angles (DEGREES, the form they take at every boundary -- the proto
 // viewangles, Player_Entity::view_angle_*, camera_t) to a forward direction.

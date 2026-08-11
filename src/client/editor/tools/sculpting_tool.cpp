@@ -259,7 +259,7 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
       int axis = shared::box_face_axis(hovered_face);
       size[axis] = 0;
 
-      renderer.draw_wire_box(p, size, colors::red);
+      renderer.draw_wire_aabb(p, size, colors::red);
     }
   }
 }

@@ -52,15 +52,9 @@ cvar_values_message_t collect_mirrored_cvars(const cvars::cvar_state_t& state)
   cvar_values_message_t message;
   for (cvars::cvar_id id : cvars::mirrored_cvars())
   {
-    std::string text;
-    if (!cvars::cvar_to_text(state, id, text))
-    {
-      log_error("collect_mirrored_cvars: cvar_to_text failed for '{}' -- the "
-                "generated table and cvar_state_t disagree about its type",
-                cvars::cvar_info(id).name);
-      continue;
-    }
-    message.values.push_back({id, std::move(text)});
+    // A formatting failure is a corrupted type tag, which try_cvar_to_text
+    // treats as fatal -- so every mirrored cvar reaches the wire or nothing does.
+    message.values.push_back({id, *cvars::try_cvar_to_text(state, id)});
   }
   return message;
 }
@@ -77,16 +71,7 @@ collect_changed_mirrored_cvars(const cvars::cvar_state_t& current,
                     value_bytes(last_broadcast, info), info.size) == 0)
       continue;
 
-    std::string text;
-    if (!cvars::cvar_to_text(current, id, text))
-    {
-      log_error("collect_changed_mirrored_cvars: cvar_to_text failed for '{}' "
-                "-- the generated table and cvar_state_t disagree about its "
-                "type",
-                info.name);
-      continue;
-    }
-    message.values.push_back({id, std::move(text)});
+    message.values.push_back({id, *cvars::try_cvar_to_text(current, id)});
   }
   return message;
 }
@@ -123,7 +108,7 @@ bool apply_cvar_values(cvars::cvar_state_t&         state,
       continue;
     }
 
-    if (!cvars::cvar_from_text(state, value.id, value.text))
+    if (!cvars::try_cvar_from_text(state, value.id, value.text))
     {
       log_error("apply_cvar_values: '{}' is not a valid value for '{}'; left "
                 "unchanged",

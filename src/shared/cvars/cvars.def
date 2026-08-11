@@ -116,12 +116,45 @@ Client :: cvars {
 
     cl_maxfps:              f32 = 1000.0    @Client    "Maximum client framerate (0 = unlimited)"
 
-    // Defaults ON because this box is not a debug overlay -- it is the ONLY
-    // thing drawn for a remote player. There is no player model yet (todo.md
-    // item 2), and nothing assigns Player_Entity.render.mesh, so turning this
-    // off makes enemies invisible. It is a cvar so that is a deliberate choice
-    // rather than a code edit. Retire it when a real model lands.
-    cl_draw_player_hull:    bool = false     @Client    "Draw remote players as their collision hull (the only enemy visual until a player model exists)"
+
+    cl_draw_player_hull:    bool = false     @Client    "Draw remote players as their collision hull, over the model"
+
+    // Ride another player's eye. Purely a debug view: it reads the same
+    // INTERPOLATED position/angles the remote model is drawn from, so a
+    // spinning idle bot turns any interpolation stall into visible camera
+    // judder. Bots occupy slots from sv_max_player_count (32) up.
+    cl_spectate_slot:       i32 = -1         @Client    "Spectate a player slot through its eyes (-1 = off; bots start at 32)"
+
+    // Aim poses (animation_def.md §5). All @Client: this is tier-2 cosmetic
+    // animation, derived on each client from view angles that are already
+    // replicated, and two clients disagreeing about it is invisible because it
+    // cannot change a hit decision.
+    //
+    // The two extents describe the AUTHORED pose set, so they are not free
+    // tuning -- they should match how far the `upward`/`downward`/`left`/`right`
+    // poses actually reach. Aiming further clamps to the extreme rather than
+    // extrapolating past a pose nobody authored.
+    cl_aim_max_pitch:       f32 = 45.0       @Client    "Pitch extent of the authored aim pose set, in degrees"
+    cl_aim_max_yaw:         f32 = 45.0       @Client    "Yaw extent of the authored aim pose set, in degrees"
+    // The feet lag the view and catch up at this rate, and the difference is
+    // what drives the left/right poses. At 0 the feet only ever move when the
+    // view passes cl_aim_max_yaw, so the torso stays twisted.
+    cl_aim_body_turn_rate:  f32 = 540.0      @Client    "How fast a player model's feet chase their view yaw, degrees/second"
+
+    // Aim blend rig. The blend is a pure function of (pitch, yaw deviation),
+    // and NEITHER input is reachable by watching a live player: a bot's pitch
+    // is always 0, and the feet chase its view yaw fast enough that the
+    // deviation collapses to 0 every frame. So there is no gameplay situation
+    // that sweeps the pose space -- these force the pair directly, for every
+    // remote model drawn, and an ImGui panel scrubs them.
+    // Skips the directional sun on player models: albedo straight to the
+    // screen, via the unlit skinned pipeline. Half a character sitting in 0.15
+    // ambient is the wrong light to judge a pose by.
+    cl_player_unlit:        bool = false     @Client    "Draw player models unlit -- easier to read a pose than under the sun"
+
+    cl_aim_debug:           bool = false     @Client    "Force every remote player's aim blend to cl_aim_debug_pitch/_yaw and show the scrub panel"
+    cl_aim_debug_pitch:     f32 = 0.0        @Client    "Aim blend pitch forced while cl_aim_debug is on, degrees"
+    cl_aim_debug_yaw:       f32 = 0.0        @Client    "Aim blend yaw DEVIATION forced while cl_aim_debug is on, degrees"
 
     // Crosshair. All pixel units, unscaled -- there is no UI scale factor in
     // the client yet, so these are literal framebuffer pixels.
@@ -181,32 +214,12 @@ Audio :: cvars {
 // ---------------------------------------------------------------------------
 
 Debugging :: cvars {
-    // Unflagged on purpose: this one gates RECORDING inside shared collision
-    // code (player_move -> debug_collision::record_collision), which runs on
-    // whichever side is simulating, while the DRAWING is client-side.
-    //
-    // CORRECTION (2026-07-29, found during the step-3 cutover): one shared
-    // cvar_state_t does make the toggle reach the server's player_move, but
-    // that does NOT make server-side faces visible -- debug_collision.cpp's
-    // g_collision_faces is a game_shared global, and game_shared is a static
-    // lib, so the server DLL records into its own copy that the client's
-    // drawing never reads. The server drains it each tick so it cannot grow
-    // unbounded. What you see is still only the CLIENT's own prediction run.
-    // Fixing that for real means giving the recorder explicit ownership the
-    // same way the cvars just got it (see todo.md, "the asset registry is
-    // duplicated per module" -- same disease).
-    debug_show_collisions:  bool = false                "Show collision faces in green"
 
-    // Pure client-side draws, but left unflagged to match their sibling above:
-    // they are all read through the same debug_collision.hpp seam, and a
-    // per-cvar flag split there would be a distinction with no check site.
+    debug_show_collisions:  bool = false                "Show collision faces in green"
     debug_show_hitboxes:    bool = true                "Show entity hitboxes in wireframe"
     debug_show_navmesh:     bool = false                "Show baked navmesh as a line grid"
     debug_show_box_volumes: bool = false                "Draw every entity's box volume as a wireframe AABB (triggers, clip volumes, ...)"
 
-    // Was a play_state.cpp file-scope static with a comment explaining that it
-    // could not live in game_cvars.cpp because the linker would drop it from
-    // the static lib -- exactly the failure mode a generated table removes.
     net_snapshot_debug:     bool = false    @Client     "Log each received snapshot's baseline tick and payload size (every 120 ticks)"
 }
 

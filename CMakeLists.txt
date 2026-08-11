@@ -109,6 +109,21 @@ if(MSVC)
     add_compile_options(/Zc:preprocessor)
 endif()
 
+# The exhaustive switch over a closed enum is this codebase's main safety net --
+# adding an entity, an event or an effect is SUPPOSED to break the build at
+# every site that has to learn about it (CLAUDE.md leans on this repeatedly). As
+# a mere warning it was not that: PLAYER_DAMAGED sat half-serialized with this
+# firing twice on every build and nobody reading it.
+#
+# Deliberately BELOW the FetchContent blocks: add_compile_options only reaches
+# targets declared after it, so SDL2 / protobuf / miniaudio keep their own
+# warning policy and a third-party switch cannot break our build.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-Werror=switch)
+elseif(MSVC)
+    add_compile_options(/we4062) # enumerator not handled in switch
+endif()
+
 
 # --- Host Tools ---
 
@@ -175,8 +190,6 @@ add_library(game_shared STATIC
     src/shared/timed_function.hpp
     src/shared/detached_console.hpp
     src/shared/replay_system.hpp
-    src/shared/old_ideas/ecs.hpp
-    src/shared/snapshot_system.hpp
     src/shared/task_system.hpp
     src/shared/task_system.cpp
     ${ENTITY_GEN_SOURCE}
@@ -203,6 +216,15 @@ add_library(game_shared STATIC
     src/shared/game_session.cpp
     src/shared/asset.hpp
     src/shared/asset.cpp
+    src/shared/skeleton.hpp
+    src/shared/model_format.hpp
+    src/shared/model_format.cpp
+    src/shared/skinning.hpp
+    src/shared/skinning.cpp
+    src/shared/animation.hpp
+    src/shared/animation.cpp
+    src/shared/hitbox_rig.hpp
+    src/shared/hitbox_rig.cpp
     src/shared/player_move.cpp
     src/shared/physics.hpp
     src/shared/physics.cpp
@@ -267,6 +289,10 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/unlit.frag
     ${SHADER_SRC_DIR}/lit.vert
     ${SHADER_SRC_DIR}/lit.frag
+    ${SHADER_SRC_DIR}/lit_textured.vert
+    ${SHADER_SRC_DIR}/lit_textured.frag
+    ${SHADER_SRC_DIR}/lit_textured_skinned.vert
+    ${SHADER_SRC_DIR}/unlit_textured.frag
     ${SHADER_SRC_DIR}/particle.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
@@ -310,7 +336,9 @@ add_library(game_client SHARED
     src/client/effects/footstep.cpp
     src/client/effects/player_movement.cpp
     src/client/effects/bullet_impact.cpp
+    src/client/effects/flesh_impact.cpp
     src/client/weapon_fire_audio.cpp
+    src/client/hit_confirm_audio.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
     src/client/game_events.cpp
@@ -328,11 +356,14 @@ add_library(game_client SHARED
     src/client/editor/tools/pathfinding_test_tool.cpp
     src/client/editor/tools/particle_editor_tool.cpp
     src/client/editor/tools/displacement_tool.cpp
+    src/client/editor/tools/animation_tool.cpp
     src/client/editor/entity_inspector.cpp
     src/client/editor/entity_editor_traits.cpp
     src/client/editor/geometry_editor.cpp
     src/client/input.cpp
     src/client/geometry_renderer.cpp
+    src/client/player_animator.hpp
+    src/client/player_animator.cpp
     src/client/renderer.cpp
     src/client/shader_tool_runtime.cpp
     ${SHADER_HEADERS}
@@ -418,10 +449,6 @@ add_executable(log_test src/test/log_test.cpp)
 target_include_directories(log_test PRIVATE src)
 target_link_libraries(log_test PRIVATE game_shared)
 
-# 8. ECS Test
-add_executable(ecs_test src/test/ecs_test.cpp)
-target_include_directories(ecs_test PRIVATE src)
-target_link_libraries(ecs_test PRIVATE game_shared)
 # 9. Camera Test
 add_executable(camera_test src/test/camera_test.cpp)
 target_include_directories(camera_test PRIVATE src)
@@ -519,6 +546,30 @@ add_executable(cvar_test src/test/cvar_test.cpp
 target_include_directories(cvar_test PRIVATE src src/shared)
 target_link_libraries(cvar_test PRIVATE game_shared)
 
+# 23. Model format test — the .skeleton / .mesh readers against the REAL
+# exporter output in resources/models, plus malformed fixtures. This is where
+# blender_export.py's promises (parent-before-child, name hash, normalized
+# weights, engine-unit scale) and model_format.cpp's checks meet.
+add_executable(model_format_test src/test/test_model_format.cpp)
+target_include_directories(model_format_test PRIVATE src src/shared)
+target_link_libraries(model_format_test PRIVATE game_shared)
+
+# 24. Hitbox rig test — the `.hitboxes` reader/writer and the bone-span math,
+# against the authored resources/models/rig.hitboxes. Holds the two §4 numbers
+# that stopped being structural guarantees: hull excursion under the aim poses,
+# and skin coverage. `hitbox_rig_test --dump` prints the derived radii the
+# authored ones were seeded from.
+add_executable(hitbox_rig_test src/test/hitbox_rig_test.cpp)
+target_include_directories(hitbox_rig_test PRIVATE src src/shared)
+target_link_libraries(hitbox_rig_test PRIVATE game_shared)
+
+# 25. Array test — Array<T, N> and Enum_Array<Enum_T, T> (src/shared/array.hpp).
+# Header-only, so it links nothing: almost every promise these types make is a
+# static_assert, and the executable exists to prove the header compiles and to
+# hold the handful of checks that need real indexing.
+add_executable(array_test src/test/array_test.cpp)
+target_include_directories(array_test PRIVATE src src/shared)
+
 # One-time map converter for the geometry exit (src/tools/map_convert.cpp).
 # Loading a map converts it in memory; this tool makes that deliberate and
 # batchable. Usage: map_convert [--check] maps/*.source
@@ -542,7 +593,6 @@ enable_testing()
 set(GAME_TESTS
     task_system_test
     log_test
-    ecs_test
     camera_test
     linalg_test
     file_watcher_test
@@ -559,7 +609,10 @@ set(GAME_TESTS
     map_migration_test
     navmesh_test
     cvar_test
-    hitscan_test)
+    hitscan_test
+    model_format_test
+    hitbox_rig_test
+    array_test)
 
 foreach(test_target IN LISTS GAME_TESTS)
   add_test(NAME ${test_target} COMMAND ${test_target})

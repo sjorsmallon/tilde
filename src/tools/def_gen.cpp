@@ -49,8 +49,8 @@
 //
 //   enum_value_list   -> IDENTIFIER (',' IDENTIFIER)* ','?
 //
-//   asset_entry       -> 'placeholder' STRING_LITERAL
-//                      | 'scan'        STRING_LITERAL STRING_LITERAL
+//   asset_entry       -> 'placeholder' STRING_LITERAL          // at most one
+//                      | 'scan'        STRING_LITERAL STRING_LITERAL  // repeatable
 //                      | 'procedural'  IDENTIFIER STRING_LITERAL
 //
 //   field             -> IDENTIFIER ':' type ('=' default_value)? annotation*
@@ -403,6 +403,18 @@ struct asset_entry_t
   int32_t             line;
 };
 
+// One `scan <directory> <extension>` directive. Several may appear in one asset
+// class; see declaration_t::scans.
+constexpr int32_t MAX_ASSET_SCANS = 4;
+
+struct asset_scan_t
+{
+  const char* directory;
+  const char* extension;
+  int32_t     offset; // the directive's own token, for diagnostics
+  int32_t     line;
+};
+
 // Every node keeps the source offset and line of the token it started at, so
 // the resolve pass can point at real file positions long after the tokens are
 // behind it.
@@ -503,16 +515,20 @@ struct declaration_t
   int32_t first_annotation; // into program_t::annotations, the class level ones
   int32_t annotation_count;
 
-  // DECLARATION_ASSETS only. The scan directive is kept unexpanded until the
+  // DECLARATION_ASSETS only. Scan directives are kept unexpanded until the
   // resolve pass, so parsing stays a pure function of the .def text and only
   // one clearly marked pass ever touches the filesystem.
-  int32_t     first_asset_entry; // into program_t::asset_entries
-  int32_t     asset_entry_count;
-  const char* scan_directory; // nullptr if the class declares no scan
-  const char* scan_extension;
-  const char* placeholder_path; // nullptr if the class declares no placeholder
-  int32_t     scan_offset;      // diagnostics for the scan directive itself
-  int32_t     scan_line;
+  //
+  // A class may declare SEVERAL scans, because one asset kind can have more than
+  // one on-disk form: a mesh is a .obj in resources/obj or a .mesh (skinned,
+  // exported from Blender) in resources/models, and a call site that resolves a
+  // mesh_asset must not have to know which. They expand in declaration order,
+  // files sorted within each, so ids stay deterministic.
+  int32_t      first_asset_entry; // into program_t::asset_entries
+  int32_t      asset_entry_count;
+  asset_scan_t scans[MAX_ASSET_SCANS];
+  int32_t      scan_count;
+  const char*  placeholder_path; // nullptr if the class declares no placeholder
 
   int32_t offset;
   int32_t line;
@@ -1513,11 +1529,11 @@ static bool parse_assets_body(parser_t* parser, declaration_t* declaration)
 
     if (string_view_matches(keyword, "scan"))
     {
-      if (declaration->scan_directory != nullptr)
+      if (declaration->scan_count >= MAX_ASSET_SCANS)
       {
         parse_error_at(parser, keyword_token,
-                       "'%.*s' already declares a scan directory; one per asset class",
-                       declaration->name.length, declaration->name.data);
+                       "'%.*s' declares more than %d scan directives",
+                       declaration->name.length, declaration->name.data, MAX_ASSET_SCANS);
         return false;
       }
 
@@ -1532,13 +1548,33 @@ static bool parse_assets_body(parser_t* parser, declaration_t* declaration)
       string_view_t directory = token_text(parser->program, directory_token);
       string_view_t extension = token_text(parser->program, extension_token);
 
-      declaration->scan_directory = arena_copy(parser->program, directory.data, directory.length);
-      declaration->scan_extension = arena_copy(parser->program, extension.data, extension.length);
-      declaration->scan_offset    = keyword_token.offset;
-      declaration->scan_line      = keyword_token.line;
+      asset_scan_t* scan = &declaration->scans[declaration->scan_count];
+      scan->directory    = arena_copy(parser->program, directory.data, directory.length);
+      scan->extension    = arena_copy(parser->program, extension.data, extension.length);
+      scan->offset       = keyword_token.offset;
+      scan->line         = keyword_token.line;
 
-      if (declaration->scan_directory == nullptr || declaration->scan_extension == nullptr)
+      if (scan->directory == nullptr || scan->extension == nullptr)
         return false;
+
+      // Two scans of the same directory AND extension would give every file two
+      // ids under one name, which the uniqueness check below reports as a
+      // collision -- but pointing at the duplicate directive is the more useful
+      // diagnostic, and it is free here.
+      for (int32_t which = 0; which < declaration->scan_count; ++which)
+      {
+        if (strcmp(declaration->scans[which].directory, scan->directory) == 0 &&
+            strcmp(declaration->scans[which].extension, scan->extension) == 0)
+        {
+          parse_error_at(parser, keyword_token,
+                         "'%.*s' already scans '%s' for '%s'",
+                         declaration->name.length, declaration->name.data, scan->directory,
+                         scan->extension);
+          return false;
+        }
+      }
+
+      declaration->scan_count += 1;
       continue;
     }
 
@@ -2178,20 +2214,20 @@ static void check_component_cycles(program_t* program)
 // "cube" -> "Cube", "smoke_puff" -> "Smoke_Puff". Anything that cannot become a
 // C++ identifier is an error rather than a silent mangling: the file is in a
 // scanned directory, so somebody meant it to be an asset.
-static bool derive_asset_name(program_t* program, const declaration_t* declaration,
+static bool derive_asset_name(program_t* program, const asset_scan_t* scan,
                               const char* stem, char* buffer, int32_t buffer_size)
 {
   int32_t length = (int32_t)strlen(stem);
   if (length == 0 || length >= buffer_size)
   {
-    report_error(program, declaration->scan_offset, declaration->scan_line,
+    report_error(program, scan->offset, scan->line,
                  "asset file name '%s' is empty or too long to become an identifier", stem);
     return false;
   }
 
   if (character_has_class(stem[0], CHAR_CLASS_DIGIT))
   {
-    report_error(program, declaration->scan_offset, declaration->scan_line,
+    report_error(program, scan->offset, scan->line,
                  "asset file name '%s' starts with a digit, so it cannot become an identifier; "
                  "rename the file",
                  stem);
@@ -2212,7 +2248,7 @@ static bool derive_asset_name(program_t* program, const declaration_t* declarati
 
     if (!character_has_class(character, CHAR_CLASS_IDENTIFIER_BODY))
     {
-      report_error(program, declaration->scan_offset, declaration->scan_line,
+      report_error(program, scan->offset, scan->line,
                    "asset file name '%s' contains '%c', which cannot appear in an identifier; "
                    "rename the file",
                    stem, character);
@@ -2278,17 +2314,19 @@ static void expand_asset_manifests(program_t* program)
       combined[combined_count++] = entry;
     }
 
-    // --- scanned files ---
-    if (declaration->scan_directory != nullptr)
+    // --- scanned files, one directive at a time, in declaration order ---
+    for (int32_t scan_index = 0; scan_index < declaration->scan_count; ++scan_index)
     {
+      const asset_scan_t* scan = &declaration->scans[scan_index];
+
       std::filesystem::path directory =
-          std::filesystem::path(program->asset_root) / declaration->scan_directory;
+          std::filesystem::path(program->asset_root) / scan->directory;
 
       std::error_code                     error_code;
       std::filesystem::directory_iterator iterator(directory, error_code);
       if (error_code)
       {
-        report_error(program, declaration->scan_offset, declaration->scan_line,
+        report_error(program, scan->offset, scan->line,
                      "cannot scan asset directory '%s': %s",
                      directory.string().c_str(), error_code.message().c_str());
       }
@@ -2306,19 +2344,19 @@ static void expand_asset_manifests(program_t* program)
             continue;
 
           std::string extension = file.path().extension().string();
-          if (extension.size() != strlen(declaration->scan_extension))
+          if (extension.size() != strlen(scan->extension))
             continue;
 #if defined(_WIN32)
-          if (_stricmp(extension.c_str(), declaration->scan_extension) != 0)
+          if (_stricmp(extension.c_str(), scan->extension) != 0)
             continue;
 #else
-          if (strcasecmp(extension.c_str(), declaration->scan_extension) != 0)
+          if (strcasecmp(extension.c_str(), scan->extension) != 0)
             continue;
 #endif
 
           if (filename_count >= 4096)
           {
-            report_error(program, declaration->scan_offset, declaration->scan_line,
+            report_error(program, scan->offset, scan->line,
                          "more than 4096 assets in '%s'", directory.string().c_str());
             break;
           }
@@ -2337,18 +2375,18 @@ static void expand_asset_manifests(program_t* program)
           const char* filename = filenames[which];
 
           char    stem[512];
-          int32_t stem_length = (int32_t)strlen(filename) - (int32_t)strlen(declaration->scan_extension);
+          int32_t stem_length = (int32_t)strlen(filename) - (int32_t)strlen(scan->extension);
           if (stem_length <= 0 || stem_length >= (int32_t)sizeof(stem))
             continue;
           memcpy(stem, filename, (size_t)stem_length);
           stem[stem_length] = '\0';
 
           char derived[512];
-          if (!derive_asset_name(program, declaration, stem, derived, (int32_t)sizeof(derived)))
+          if (!derive_asset_name(program, scan, stem, derived, (int32_t)sizeof(derived)))
             continue;
 
           char path[1024];
-          snprintf(path, sizeof(path), "%s/%s", declaration->scan_directory, filename);
+          snprintf(path, sizeof(path), "%s/%s", scan->directory, filename);
 
           // The placeholder file is already slot 0 (Missing). Scanning it again
           // would give one file two ids under two names, which is precisely the
@@ -2363,8 +2401,8 @@ static void expand_asset_manifests(program_t* program)
           entry.name          = arena_copy(program, derived, (int32_t)strlen(derived));
           entry.source        = arena_copy(program, path, (int32_t)strlen(path));
           entry.source_kind   = ASSET_SOURCE_FILE;
-          entry.offset        = declaration->scan_offset;
-          entry.line          = declaration->scan_line;
+          entry.offset        = scan->offset;
+          entry.line          = scan->line;
 
           if (entry.name == nullptr || entry.source == nullptr)
             break;
@@ -3222,6 +3260,50 @@ static void emit_component_struct(FILE* out, const program_t* program, int32_t i
   states[index] = VISIT_DONE;
 }
 
+// enum_traits<E> specializations -- the compile-time count Enum_Array reads,
+// emitted at GLOBAL scope because the primary template lives there
+// (shared/array.hpp). So this must be called after the namespace closes.
+//
+// `enum_ids` is the declaration-index -> enum_type id map for the entity
+// family, or NULL for the cvar family, which has no enum_type reflection enum.
+// When it is present each specialization also carries the id, which is the only
+// compile-time link between a C++ enum type and its runtime reflection tag --
+// hand-written code otherwise picks `enum_type::Foo` by eye with nothing
+// checking it matched.
+static void emit_enum_traits(FILE* out, const program_t* program, const char* namespace_name,
+                             const int32_t* enum_ids)
+{
+  bool wrote_any = false;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENUM)
+      continue;
+
+    if (!wrote_any)
+    {
+      fprintf(out, "\n// --- Enum_Array support ---------------------------------------------\n");
+      fprintf(out, "//\n");
+      fprintf(out, "// Global scope on purpose: enum_traits is declared in shared/array.hpp,\n");
+      fprintf(out, "// which knows nothing about this namespace. `count` is what sizes an\n");
+      fprintf(out, "// Enum_Array<%s::Foo, T>, so adding a value to the .def resizes\n",
+              namespace_name);
+      fprintf(out, "// every table over that enum. It does not fill the new row -- see\n");
+      fprintf(out, "// rows_in_enum_order in array.hpp for the check that catches that.\n\n");
+      wrote_any = true;
+    }
+
+    fprintf(out, "template <> struct enum_traits<%s::%.*s>\n{\n", namespace_name,
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "  static constexpr uint32_t count = %s::%.*s_COUNT;\n", namespace_name,
+            declaration->name.length, declaration->name.data);
+    if (enum_ids && enum_ids[index] >= 0)
+      fprintf(out, "  static constexpr %s::enum_type type = %s::enum_type::%.*s;\n",
+              namespace_name, namespace_name, declaration->name.length, declaration->name.data);
+    fprintf(out, "};\n\n");
+  }
+}
+
 static void emit_generated_header(FILE* out, const program_t* program)
 {
   int32_t base_index      = find_base_declaration(program);
@@ -3231,12 +3313,26 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "#pragma once\n\n");
   // Paths are relative to src/shared, which is game_shared's public include dir.
+  fprintf(out, "#include \"array.hpp\"\n");
   fprintf(out, "#include \"linalg.hpp\"\n");
   fprintf(out, "#include \"network/network_types.hpp\"\n");
   fprintf(out, "#include \"span.hpp\"\n");
   fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <optional>\n");
+  fprintf(out, "#include <string_view>\n");
   fprintf(out, "#include <type_traits>\n\n");
   fprintf(out, "namespace entities\n{\n\n");
+
+  // The inverse of to_string, for every enum and asset class below. It cannot
+  // overload the way to_string does -- there is no argument to dispatch on --
+  // so it is a template the caller names the type on:
+  //
+  //   if (std::optional<Weapon> weapon = try_from_string<Weapon>(text))
+  //
+  // `try_` and the optional are the house rule for a fallible call (CLAUDE.md,
+  // "Failure: try_, fatal_error, or nothing"): unknown text is INPUT, not a
+  // bug, so it is the caller's business rather than a fatal_error.
+  fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
 
   // --- asset classes ---
   //
@@ -3268,8 +3364,9 @@ static void emit_generated_header(FILE* out, const program_t* program)
 
     fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
             declaration->name.data);
-    fprintf(out, "bool from_string(const char* text, %.*s* out_value);\n\n",
-            declaration->name.length, declaration->name.data);
+    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text);\n\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
   }
 
   if (has_asset_class(program))
@@ -3351,8 +3448,10 @@ static void emit_generated_header(FILE* out, const program_t* program)
 
       fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
               declaration->name.data);
-      fprintf(out, "bool from_string(const char* text, %.*s* out_value);\n\n",
-              declaration->name.length, declaration->name.data);
+      fprintf(out,
+              "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text);\n\n",
+              declaration->name.length, declaration->name.data, declaration->name.length,
+              declaration->name.data);
     }
   }
 
@@ -3689,6 +3788,13 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "extern const uint32_t SCHEMA_HASH;\n\n");
 
   fprintf(out, "} // namespace entities\n");
+
+  {
+    int32_t enum_count = 0;
+    int32_t* enum_ids  = build_enum_ids(program, &enum_count);
+    emit_enum_traits(out, program, "entities", enum_ids);
+    free(enum_ids);
+  }
 
   free(component_ids);
 }
@@ -4146,15 +4252,16 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     fprintf(out, "  return %.*s_MANIFEST[(uint16_t)value].name;\n}\n\n", declaration->name.length,
             declaration->name.data);
 
-    fprintf(out, "bool from_string(const char* text, %.*s* out_value)\n{\n",
-            declaration->name.length, declaration->name.data);
+    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text)\n{\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
     fprintf(out, "  for (uint32_t index = 0; index < %.*s_COUNT; ++index)\n  {\n",
             declaration->name.length, declaration->name.data);
-    fprintf(out, "    if (strcmp(%.*s_MANIFEST[index].name, text) != 0)\n      continue;\n",
+    fprintf(out, "    if (text != %.*s_MANIFEST[index].name)\n      continue;\n",
             declaration->name.length, declaration->name.data);
-    fprintf(out, "    *out_value = (%.*s)index;\n    return true;\n  }\n",
-            declaration->name.length, declaration->name.data);
-    fprintf(out, "  return false;\n}\n\n");
+    fprintf(out, "    return (%.*s)index;\n  }\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "  return std::nullopt;\n}\n\n");
   }
 
   if (has_asset_class(program))
@@ -4192,16 +4299,16 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     fprintf(out, "  }\n  assert(false && \"invalid %.*s\");\n  return \"\";\n}\n\n",
             declaration->name.length, declaration->name.data);
 
-    fprintf(out, "bool from_string(const char* text, %.*s* out_value)\n{\n",
-            declaration->name.length, declaration->name.data);
+    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text)\n{\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
     for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
     {
       const string_view_t* v = &program->enum_values[declaration->first_enum_value + offset];
-      fprintf(out, "  if (strcmp(text, \"%.*s\") == 0) { *out_value = %.*s::%.*s; return true; }\n",
-              v->length, v->data, declaration->name.length, declaration->name.data, v->length,
-              v->data);
+      fprintf(out, "  if (text == \"%.*s\") return %.*s::%.*s;\n", v->length, v->data,
+              declaration->name.length, declaration->name.data, v->length, v->data);
     }
-    fprintf(out, "  return false;\n}\n\n");
+    fprintf(out, "  return std::nullopt;\n}\n\n");
   }
 
   if (enum_count > 0)
@@ -4446,16 +4553,22 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   write_generated_banner(out, program);
   fprintf(out, "#pragma once\n\n");
 
+  fprintf(out, "#include \"array.hpp\"\n");
   fprintf(out, "#include \"cvars/cvar_runtime.hpp\"\n");
   if (program_has_string_cvar(cvars, cvar_count))
     fprintf(out, "#include \"network/network_types.hpp\"\n");
   fprintf(out, "#include \"span.hpp\"\n\n");
   fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <optional>\n");
   fprintf(out, "#include <string>\n");
   fprintf(out, "#include <string_view>\n");
   fprintf(out, "#include <type_traits>\n\n");
 
   fprintf(out, "namespace cvars\n{\n\n");
+
+  // Same shape and same reasoning as the entities family's: to_string overloads
+  // on its argument, its inverse has none, so the caller names the type.
+  fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
 
   // --- flags ---
   fprintf(out, "// Ownership, and nothing else. No flag at all is the common case and\n");
@@ -4505,8 +4618,10 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
 
       fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
               declaration->name.data);
-      fprintf(out, "bool from_string(std::string_view text, %.*s* out_value);\n\n",
-              declaration->name.length, declaration->name.data);
+      fprintf(out,
+              "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text);\n\n",
+              declaration->name.length, declaration->name.data, declaration->name.length,
+              declaration->name.data);
     }
   }
 
@@ -4597,8 +4712,9 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "// this is a linear scan and stays one -- it runs at typing speed.\n");
   fprintf(out, "// Cvars and commands share one flat namespace, so a name resolves to at\n");
   fprintf(out, "// most one of these two.\n");
-  fprintf(out, "bool find_cvar(std::string_view name, cvar_id* out_id);\n");
-  fprintf(out, "bool find_command(std::string_view name, command_id* out_id);\n\n");
+  fprintf(out, "[[nodiscard]] std::optional<cvar_id>    try_find_cvar(std::string_view name);\n");
+  fprintf(out,
+          "[[nodiscard]] std::optional<command_id> try_find_command(std::string_view name);\n\n");
 
   fprintf(out, "// The @Mirrored subset, so both ends agree on the sync set by\n");
   fprintf(out, "// construction rather than by each filtering on flags and hoping.\n");
@@ -4609,11 +4725,16 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "// files, and the mirrored-value payload all go through this pair.\n");
   fprintf(out, "// Floats use the shortest representation that round-trips.\n");
   fprintf(out, "//\n");
-  fprintf(out, "// cvar_from_text returns false and leaves the value ALONE when the text\n");
+  fprintf(out, "// try_cvar_from_text returns false and leaves the value ALONE when the text\n");
   fprintf(out, "// does not parse -- the caller reports it, because only the caller knows\n");
-  fprintf(out, "// whether it came from a console line, a config file or the wire.\n");
-  fprintf(out, "bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text);\n");
-  fprintf(out, "bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text);\n\n");
+  fprintf(out, "// whether it came from a console line, a config file or the wire. It keeps\n");
+  fprintf(out, "// a bool rather than an optional because it has no value to hand back, but\n");
+  fprintf(out, "// it still carries the try_ prefix: the prefix tracks FALLIBILITY, and a\n");
+  fprintf(out, "// bare name has to keep meaning \"this cannot quietly fail\".\n");
+  fprintf(out, "[[nodiscard]] std::optional<std::string> try_cvar_to_text(const cvar_state_t& "
+               "state, cvar_id id);\n");
+  fprintf(out, "[[nodiscard]] bool try_cvar_from_text(cvar_state_t& state, cvar_id id, "
+               "std::string_view text);\n\n");
 
   // --- commands ---
   fprintf(out, "// Handler declarations, TYPED from each command's declared signature.\n");
@@ -4665,6 +4786,10 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "// into that same value by the one generator run.\n\n");
 
   fprintf(out, "} // namespace cvars\n");
+
+  // No enum_type id here: the cvar family has no reflection tag enum, so these
+  // carry `count` alone. That is all Enum_Array reads.
+  emit_enum_traits(out, program, "cvars", nullptr);
 }
 
 // Fixed text -- five types, no per-cvar code. Emitted rather than handwritten
@@ -4673,7 +4798,8 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
 // appear here.
 static void emit_cvar_text_conversion(FILE* out)
 {
-  fprintf(out, "bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text)\n");
+  fprintf(out, "std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id "
+               "id)\n");
   fprintf(out, "{\n");
   fprintf(out, "  const cvar_info_t& info  = cvar_info(id);\n");
   fprintf(out, "  const void*        bytes = value_bytes(state, info);\n\n");
@@ -4684,74 +4810,75 @@ static void emit_cvar_text_conversion(FILE* out)
   fprintf(out, "      std::memcpy(&value, bytes, sizeof(value));\n");
   fprintf(out, "      // Shortest representation that round-trips, so a config save/load\n");
   fprintf(out, "      // cycle is exact and a config diff shows only real changes.\n");
-  fprintf(out, "      out_text = std::format(\"{}\", value);\n");
-  fprintf(out, "      return true;\n    }\n\n");
+  fprintf(out, "      return std::format(\"{}\", value);\n    }\n\n");
 
   fprintf(out, "    case CVAR_TYPE_I32:\n    {\n");
   fprintf(out, "      int32_t value = 0;\n");
   fprintf(out, "      std::memcpy(&value, bytes, sizeof(value));\n");
-  fprintf(out, "      out_text = std::format(\"{}\", value);\n");
-  fprintf(out, "      return true;\n    }\n\n");
+  fprintf(out, "      return std::format(\"{}\", value);\n    }\n\n");
 
   fprintf(out, "    case CVAR_TYPE_U32:\n    {\n");
   fprintf(out, "      uint32_t value = 0;\n");
   fprintf(out, "      std::memcpy(&value, bytes, sizeof(value));\n");
-  fprintf(out, "      out_text = std::format(\"{}\", value);\n");
-  fprintf(out, "      return true;\n    }\n\n");
+  fprintf(out, "      return std::format(\"{}\", value);\n    }\n\n");
 
   fprintf(out, "    case CVAR_TYPE_BOOL:\n    {\n");
   fprintf(out, "      bool value = false;\n");
   fprintf(out, "      std::memcpy(&value, bytes, sizeof(value));\n");
-  fprintf(out, "      out_text = value ? \"1\" : \"0\";\n");
-  fprintf(out, "      return true;\n    }\n\n");
+  fprintf(out, "      return std::string(value ? \"1\" : \"0\");\n    }\n\n");
 
   fprintf(out, "    case CVAR_TYPE_STRING:\n    {\n");
   fprintf(out, "      // pascal_string_t<N> is `uint8 length; char data[N + 1]` with\n");
   fprintf(out, "      // alignment 1, so the bytes are addressed directly -- the table\n");
   fprintf(out, "      // hands out a void*, not a typed pointer.\n");
   fprintf(out, "      const uint8_t* raw = static_cast<const uint8_t*>(bytes);\n");
-  fprintf(out, "      out_text.assign(reinterpret_cast<const char*>(raw + 1), raw[0]);\n");
-  fprintf(out, "      return true;\n    }\n");
+  fprintf(out, "      return std::string(reinterpret_cast<const char*>(raw + 1), raw[0]);\n");
+  fprintf(out, "    }\n");
 
   fprintf(out, "  }\n\n");
-  fprintf(out, "  assert(false && \"cvar_to_text: cvar carries an invalid type tag\");\n");
-  fprintf(out, "  return false;\n}\n\n");
+  // An invalid type tag is a corrupted table, not input: nothing the caller can
+  // do with a nullopt here, so it dies rather than looking like a miss.
+  fprintf(out, "  fatal_error(\"try_cvar_to_text: cvar '{}' carries an invalid type tag {}\",\n");
+  fprintf(out, "              info.name, (int)info.type);\n}\n\n");
 
   // --- from text ---
   fprintf(out, "namespace\n{\n\n");
   fprintf(out, "// Requires the WHOLE token to parse. `pm_maxspeed 320abc` is a typo, and\n");
   fprintf(out, "// accepting 320 from it would set a value the author never wrote.\n");
-  fprintf(out, "template <typename T> bool parse_whole(std::string_view text, T* out_value)\n");
+  fprintf(out, "template <typename T> std::optional<T> try_parse_whole(std::string_view text)\n");
   fprintf(out, "{\n");
-  fprintf(out, "  const char* begin = text.data();\n");
-  fprintf(out, "  const char* end   = text.data() + text.size();\n");
-  fprintf(out, "  auto        result = std::from_chars(begin, end, *out_value);\n");
-  fprintf(out, "  return result.ec == std::errc{} && result.ptr == end;\n");
+  fprintf(out, "  T           value  = {};\n");
+  fprintf(out, "  const char* begin  = text.data();\n");
+  fprintf(out, "  const char* end    = text.data() + text.size();\n");
+  fprintf(out, "  auto        result = std::from_chars(begin, end, value);\n");
+  fprintf(out, "  if (result.ec != std::errc{} || result.ptr != end)\n");
+  fprintf(out, "    return std::nullopt;\n");
+  fprintf(out, "  return value;\n");
   fprintf(out, "}\n\n");
   fprintf(out, "} // namespace\n\n");
 
-  fprintf(out, "bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)\n");
+  fprintf(out, "bool try_cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)\n");
   fprintf(out, "{\n");
   fprintf(out, "  const cvar_info_t& info  = cvar_info(id);\n");
   fprintf(out, "  void*              bytes = value_bytes(state, info);\n\n");
   fprintf(out, "  switch (info.type)\n  {\n");
 
   fprintf(out, "    case CVAR_TYPE_F32:\n    {\n");
-  fprintf(out, "      float value = 0.0f;\n");
-  fprintf(out, "      if (!parse_whole(text, &value))\n        return false;\n");
-  fprintf(out, "      std::memcpy(bytes, &value, sizeof(value));\n");
+  fprintf(out, "      const std::optional<float> value = try_parse_whole<float>(text);\n");
+  fprintf(out, "      if (!value)\n        return false;\n");
+  fprintf(out, "      std::memcpy(bytes, &*value, sizeof(*value));\n");
   fprintf(out, "      return true;\n    }\n\n");
 
   fprintf(out, "    case CVAR_TYPE_I32:\n    {\n");
-  fprintf(out, "      int32_t value = 0;\n");
-  fprintf(out, "      if (!parse_whole(text, &value))\n        return false;\n");
-  fprintf(out, "      std::memcpy(bytes, &value, sizeof(value));\n");
+  fprintf(out, "      const std::optional<int32_t> value = try_parse_whole<int32_t>(text);\n");
+  fprintf(out, "      if (!value)\n        return false;\n");
+  fprintf(out, "      std::memcpy(bytes, &*value, sizeof(*value));\n");
   fprintf(out, "      return true;\n    }\n\n");
 
   fprintf(out, "    case CVAR_TYPE_U32:\n    {\n");
-  fprintf(out, "      uint32_t value = 0;\n");
-  fprintf(out, "      if (!parse_whole(text, &value))\n        return false;\n");
-  fprintf(out, "      std::memcpy(bytes, &value, sizeof(value));\n");
+  fprintf(out, "      const std::optional<uint32_t> value = try_parse_whole<uint32_t>(text);\n");
+  fprintf(out, "      if (!value)\n        return false;\n");
+  fprintf(out, "      std::memcpy(bytes, &*value, sizeof(*value));\n");
   fprintf(out, "      return true;\n    }\n\n");
 
   fprintf(out, "    case CVAR_TYPE_BOOL:\n    {\n");
@@ -4781,8 +4908,8 @@ static void emit_cvar_text_conversion(FILE* out)
   fprintf(out, "      return true;\n    }\n");
 
   fprintf(out, "  }\n\n");
-  fprintf(out, "  assert(false && \"cvar_from_text: cvar carries an invalid type tag\");\n");
-  fprintf(out, "  return false;\n}\n\n");
+  fprintf(out, "  fatal_error(\"try_cvar_from_text: cvar '{}' carries an invalid type tag {}\",\n");
+  fprintf(out, "              info.name, (int)info.type);\n}\n\n");
 }
 
 static void emit_cvars_source(FILE* out, const program_t* program, const char* header_name,
@@ -4791,11 +4918,13 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
 {
   write_generated_banner(out, program);
   fprintf(out, "#include \"%s\"\n\n", header_name);
+  fprintf(out, "#include \"log.hpp\"\n\n");
   fprintf(out, "#include <cassert>\n");
   fprintf(out, "#include <charconv>\n");
   fprintf(out, "#include <cstddef>\n");
   fprintf(out, "#include <cstring>\n");
-  fprintf(out, "#include <format>\n\n");
+  fprintf(out, "#include <format>\n");
+  fprintf(out, "#include <optional>\n\n");
 
   fprintf(out, "namespace cvars\n{\n\n");
 
@@ -4892,17 +5021,17 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
   fprintf(out, "  assert((uint32_t)id < COMMAND_COUNT);\n");
   fprintf(out, "  return COMMAND_INFO_TABLE[(uint32_t)id];\n}\n\n");
 
-  fprintf(out, "bool find_cvar(std::string_view name, cvar_id* out_id)\n{\n");
+  fprintf(out, "std::optional<cvar_id> try_find_cvar(std::string_view name)\n{\n");
   fprintf(out, "  for (uint32_t index = 0; index < CVAR_COUNT; ++index)\n  {\n");
-  fprintf(out, "    if (name == CVAR_INFO_TABLE[index].name)\n    {\n");
-  fprintf(out, "      *out_id = (cvar_id)index;\n      return true;\n    }\n  }\n");
-  fprintf(out, "  return false;\n}\n\n");
+  fprintf(out, "    if (name == CVAR_INFO_TABLE[index].name)\n");
+  fprintf(out, "      return (cvar_id)index;\n  }\n");
+  fprintf(out, "  return std::nullopt;\n}\n\n");
 
-  fprintf(out, "bool find_command(std::string_view name, command_id* out_id)\n{\n");
+  fprintf(out, "std::optional<command_id> try_find_command(std::string_view name)\n{\n");
   fprintf(out, "  for (uint32_t index = 0; index < COMMAND_COUNT; ++index)\n  {\n");
-  fprintf(out, "    if (name == COMMAND_INFO_TABLE[index].name)\n    {\n");
-  fprintf(out, "      *out_id = (command_id)index;\n      return true;\n    }\n  }\n");
-  fprintf(out, "  return false;\n}\n\n");
+  fprintf(out, "    if (name == COMMAND_INFO_TABLE[index].name)\n");
+  fprintf(out, "      return (command_id)index;\n  }\n");
+  fprintf(out, "  return std::nullopt;\n}\n\n");
 
   fprintf(out, "Span<const cvar_id> mirrored_cvars()\n{\n");
   if (mirrored_count > 0)
@@ -4935,16 +5064,16 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
     fprintf(out, "  }\n  assert(false && \"invalid %.*s\");\n  return \"\";\n}\n\n",
             declaration->name.length, declaration->name.data);
 
-    fprintf(out, "bool from_string(std::string_view text, %.*s* out_value)\n{\n",
-            declaration->name.length, declaration->name.data);
+    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text)\n{\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
     for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
     {
       const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
-      fprintf(out, "  if (text == \"%.*s\") { *out_value = %.*s::%.*s; return true; }\n",
-              value->length, value->data, declaration->name.length, declaration->name.data,
-              value->length, value->data);
+      fprintf(out, "  if (text == \"%.*s\") return %.*s::%.*s;\n", value->length, value->data,
+              declaration->name.length, declaration->name.data, value->length, value->data);
     }
-    fprintf(out, "  return false;\n}\n\n");
+    fprintf(out, "  return std::nullopt;\n}\n\n");
   }
 
   // --- argument binders are defined in the per-side TUs, not here ---
@@ -5038,28 +5167,42 @@ static void emit_argument_binder(FILE* out, const program_t* program, const fiel
         break;
 
       case TYPE_BOOL:
-        fprintf(out, "%sif (!parse_bool_token(args[%d], &%.*s))\n", indent, which, name_length,
-                name);
+        fprintf(out, "%sconst std::optional<bool> parsed_%.*s = try_parse_bool_token(args[%d]);\n",
+                indent, name_length, name, which);
+        fprintf(out, "%sif (!parsed_%.*s)\n", indent, name_length, name);
         fprintf(out, "%s{\n", indent);
         fprintf(out, "%s  bad_argument(out_reply, command_id::%.*s, \"%.*s\", args[%d]);\n",
                 indent, command->name.length, command->name.data, name_length, name, which);
         fprintf(out, "%s  return false;\n%s}\n", indent, indent);
+        fprintf(out, "%s%.*s = *parsed_%.*s;\n", indent, name_length, name, name_length, name);
         break;
 
       case TYPE_ENUM:
-        fprintf(out, "%sif (!from_string(args[%d], &%.*s))\n", indent, which, name_length, name);
+        fprintf(out, "%sconst std::optional<", indent);
+        write_parameter_cpp_type(out, &parameter->type);
+        fprintf(out, "> parsed_%.*s = try_from_string<", name_length, name);
+        write_parameter_cpp_type(out, &parameter->type);
+        fprintf(out, ">(args[%d]);\n", which);
+        fprintf(out, "%sif (!parsed_%.*s)\n", indent, name_length, name);
         fprintf(out, "%s{\n", indent);
         fprintf(out, "%s  bad_argument(out_reply, command_id::%.*s, \"%.*s\", args[%d]);\n",
                 indent, command->name.length, command->name.data, name_length, name, which);
         fprintf(out, "%s  return false;\n%s}\n", indent, indent);
+        fprintf(out, "%s%.*s = *parsed_%.*s;\n", indent, name_length, name, name_length, name);
         break;
 
       default: // f32 / i32 / u32; anything else was rejected by the resolve pass
-        fprintf(out, "%sif (!parse_whole(args[%d], &%.*s))\n", indent, which, name_length, name);
+        fprintf(out, "%sconst std::optional<", indent);
+        write_parameter_cpp_type(out, &parameter->type);
+        fprintf(out, "> parsed_%.*s = try_parse_whole<", name_length, name);
+        write_parameter_cpp_type(out, &parameter->type);
+        fprintf(out, ">(args[%d]);\n", which);
+        fprintf(out, "%sif (!parsed_%.*s)\n", indent, name_length, name);
         fprintf(out, "%s{\n", indent);
         fprintf(out, "%s  bad_argument(out_reply, command_id::%.*s, \"%.*s\", args[%d]);\n",
                 indent, command->name.length, command->name.data, name_length, name, which);
         fprintf(out, "%s  return false;\n%s}\n", indent, indent);
+        fprintf(out, "%s%.*s = *parsed_%.*s;\n", indent, name_length, name, name_length, name);
         break;
     }
 
@@ -5133,6 +5276,8 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
     fprintf(out, "#include <charconv>\n");
   if (any_bound)
     fprintf(out, "#include <format>\n#include <string>\n");
+  if (any_parsed)
+    fprintf(out, "#include <optional>\n");
   fprintf(out, "\n");
 
   fprintf(out, "namespace cvars\n{\n\n");
@@ -5167,12 +5312,16 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
     {
       fprintf(out, "// Requires the WHOLE token to parse, same rule as a cvar write: accepting\n");
       fprintf(out, "// 320 from '320abc' would pass a value the caller never typed.\n");
-      fprintf(out, "template <typename T> bool parse_whole(std::string_view text, T* out_value)\n");
+      fprintf(out, "template <typename T> std::optional<T> try_parse_whole(std::string_view "
+                   "text)\n");
       fprintf(out, "{\n");
+      fprintf(out, "  T           value  = {};\n");
       fprintf(out, "  const char* begin  = text.data();\n");
       fprintf(out, "  const char* end    = text.data() + text.size();\n");
-      fprintf(out, "  auto        result = std::from_chars(begin, end, *out_value);\n");
-      fprintf(out, "  return result.ec == std::errc{} && result.ptr == end;\n");
+      fprintf(out, "  auto        result = std::from_chars(begin, end, value);\n");
+      fprintf(out, "  if (result.ec != std::errc{} || result.ptr != end)\n");
+      fprintf(out, "    return std::nullopt;\n");
+      fprintf(out, "  return value;\n");
       fprintf(out, "}\n\n");
     }
 
@@ -5180,12 +5329,12 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
     {
       fprintf(out, "// The same closed set as a bool cvar write: unrecognised text is a\n");
       fprintf(out, "// rejection, never false.\n");
-      fprintf(out, "bool parse_bool_token(std::string_view text, bool* out_value)\n{\n");
+      fprintf(out, "std::optional<bool> try_parse_bool_token(std::string_view text)\n{\n");
       fprintf(out, "  if (text == \"1\" || text == \"true\" || text == \"yes\" || text == \"on\")\n");
-      fprintf(out, "  {\n    *out_value = true;\n    return true;\n  }\n");
+      fprintf(out, "    return true;\n");
       fprintf(out, "  if (text == \"0\" || text == \"false\" || text == \"no\" || text == \"off\")\n");
-      fprintf(out, "  {\n    *out_value = false;\n    return true;\n  }\n");
-      fprintf(out, "  return false;\n}\n\n");
+      fprintf(out, "    return false;\n");
+      fprintf(out, "  return std::nullopt;\n}\n\n");
     }
 
     for (int32_t index = 0; index < command_count; ++index)

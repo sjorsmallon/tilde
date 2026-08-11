@@ -70,10 +70,10 @@ int main()
         "an unknown classname resolves to Invalid rather than a wrong type");
 
   check(strcmp(to_string(Fire_Mode::Every_Tick), "Every_Tick") == 0, "enum to_string");
-  Fire_Mode parsed = Fire_Mode::On_Enter;
-  check(from_string("Every_Tick", &parsed) && parsed == Fire_Mode::Every_Tick,
-        "enum from_string round trip");
-  check(!from_string("Sometimes", &parsed), "enum from_string rejects an unknown name");
+  check(try_from_string<Fire_Mode>("Every_Tick") == Fire_Mode::Every_Tick,
+        "enum try_from_string round trip");
+  check(!try_from_string<Fire_Mode>("Sometimes"),
+        "enum try_from_string rejects an unknown name");
 
   // --- construction ---
   //
@@ -198,11 +198,10 @@ int main()
     check(emitter.sprite == sprite_asset::Smoke, "a declared asset default resolves by name");
 
     check(strcmp(to_string(mesh_asset::Pyramid), "Pyramid") == 0, "asset to_string");
-    mesh_asset parsed_mesh = mesh_asset::Missing;
-    check(from_string("Sphere", &parsed_mesh) && parsed_mesh == mesh_asset::Sphere,
-          "asset from_string round trip");
-    check(!from_string("No_Such_Mesh", &parsed_mesh),
-          "asset from_string rejects an unknown name");
+    check(try_from_string<mesh_asset>("Sphere") == mesh_asset::Sphere,
+          "asset try_from_string round trip");
+    check(!try_from_string<mesh_asset>("No_Such_Mesh"),
+          "asset try_from_string rejects an unknown name");
 
     Span<const asset_info_t> meshes = mesh_asset_manifest();
 

@@ -1,11 +1,14 @@
 // Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
 #include "cvars_generated.hpp"
 
+#include "log.hpp"
+
 #include <cassert>
 #include <charconv>
 #include <cstddef>
 #include <cstring>
 #include <format>
+#include <optional>
 
 namespace cvars
 {
@@ -148,11 +151,67 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::cl_maxfps),
      .string_capacity = 0},
     {.name = "cl_draw_player_hull",
-     .description = "Draw remote players as their collision hull (the only enemy visual until a player model exists)",
+     .description = "Draw remote players as their collision hull, over the model",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_BOOL,
      .offset = offsetof(cvar_state_t, cl_draw_player_hull),
      .size = sizeof(cvar_state_t::cl_draw_player_hull),
+     .string_capacity = 0},
+    {.name = "cl_spectate_slot",
+     .description = "Spectate a player slot through its eyes (-1 = off; bots start at 32)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, cl_spectate_slot),
+     .size = sizeof(cvar_state_t::cl_spectate_slot),
+     .string_capacity = 0},
+    {.name = "cl_aim_max_pitch",
+     .description = "Pitch extent of the authored aim pose set, in degrees",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, cl_aim_max_pitch),
+     .size = sizeof(cvar_state_t::cl_aim_max_pitch),
+     .string_capacity = 0},
+    {.name = "cl_aim_max_yaw",
+     .description = "Yaw extent of the authored aim pose set, in degrees",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, cl_aim_max_yaw),
+     .size = sizeof(cvar_state_t::cl_aim_max_yaw),
+     .string_capacity = 0},
+    {.name = "cl_aim_body_turn_rate",
+     .description = "How fast a player model's feet chase their view yaw, degrees/second",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, cl_aim_body_turn_rate),
+     .size = sizeof(cvar_state_t::cl_aim_body_turn_rate),
+     .string_capacity = 0},
+    {.name = "cl_player_unlit",
+     .description = "Draw player models unlit -- easier to read a pose than under the sun",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, cl_player_unlit),
+     .size = sizeof(cvar_state_t::cl_player_unlit),
+     .string_capacity = 0},
+    {.name = "cl_aim_debug",
+     .description = "Force every remote player's aim blend to cl_aim_debug_pitch/_yaw and show the scrub panel",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, cl_aim_debug),
+     .size = sizeof(cvar_state_t::cl_aim_debug),
+     .string_capacity = 0},
+    {.name = "cl_aim_debug_pitch",
+     .description = "Aim blend pitch forced while cl_aim_debug is on, degrees",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, cl_aim_debug_pitch),
+     .size = sizeof(cvar_state_t::cl_aim_debug_pitch),
+     .string_capacity = 0},
+    {.name = "cl_aim_debug_yaw",
+     .description = "Aim blend yaw DEVIATION forced while cl_aim_debug is on, degrees",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, cl_aim_debug_yaw),
+     .size = sizeof(cvar_state_t::cl_aim_debug_yaw),
      .string_capacity = 0},
     {.name = "cl_crosshair",
      .description = "Draw the crosshair",
@@ -372,30 +431,24 @@ const command_info_t& command_info(command_id id)
   return COMMAND_INFO_TABLE[(uint32_t)id];
 }
 
-bool find_cvar(std::string_view name, cvar_id* out_id)
+std::optional<cvar_id> try_find_cvar(std::string_view name)
 {
   for (uint32_t index = 0; index < CVAR_COUNT; ++index)
   {
     if (name == CVAR_INFO_TABLE[index].name)
-    {
-      *out_id = (cvar_id)index;
-      return true;
-    }
+      return (cvar_id)index;
   }
-  return false;
+  return std::nullopt;
 }
 
-bool find_command(std::string_view name, command_id* out_id)
+std::optional<command_id> try_find_command(std::string_view name)
 {
   for (uint32_t index = 0; index < COMMAND_COUNT; ++index)
   {
     if (name == COMMAND_INFO_TABLE[index].name)
-    {
-      *out_id = (command_id)index;
-      return true;
-    }
+      return (command_id)index;
   }
-  return false;
+  return std::nullopt;
 }
 
 Span<const cvar_id> mirrored_cvars()
@@ -403,7 +456,7 @@ Span<const cvar_id> mirrored_cvars()
   return {MIRRORED_CVAR_TABLE, 12};
 }
 
-bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text)
+std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)
 {
   const cvar_info_t& info  = cvar_info(id);
   const void*        bytes = value_bytes(state, info);
@@ -416,32 +469,28 @@ bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text)
       std::memcpy(&value, bytes, sizeof(value));
       // Shortest representation that round-trips, so a config save/load
       // cycle is exact and a config diff shows only real changes.
-      out_text = std::format("{}", value);
-      return true;
+      return std::format("{}", value);
     }
 
     case CVAR_TYPE_I32:
     {
       int32_t value = 0;
       std::memcpy(&value, bytes, sizeof(value));
-      out_text = std::format("{}", value);
-      return true;
+      return std::format("{}", value);
     }
 
     case CVAR_TYPE_U32:
     {
       uint32_t value = 0;
       std::memcpy(&value, bytes, sizeof(value));
-      out_text = std::format("{}", value);
-      return true;
+      return std::format("{}", value);
     }
 
     case CVAR_TYPE_BOOL:
     {
       bool value = false;
       std::memcpy(&value, bytes, sizeof(value));
-      out_text = value ? "1" : "0";
-      return true;
+      return std::string(value ? "1" : "0");
     }
 
     case CVAR_TYPE_STRING:
@@ -450,13 +499,12 @@ bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text)
       // alignment 1, so the bytes are addressed directly -- the table
       // hands out a void*, not a typed pointer.
       const uint8_t* raw = static_cast<const uint8_t*>(bytes);
-      out_text.assign(reinterpret_cast<const char*>(raw + 1), raw[0]);
-      return true;
+      return std::string(reinterpret_cast<const char*>(raw + 1), raw[0]);
     }
   }
 
-  assert(false && "cvar_to_text: cvar carries an invalid type tag");
-  return false;
+  fatal_error("try_cvar_to_text: cvar '{}' carries an invalid type tag {}",
+              info.name, (int)info.type);
 }
 
 namespace
@@ -464,17 +512,20 @@ namespace
 
 // Requires the WHOLE token to parse. `pm_maxspeed 320abc` is a typo, and
 // accepting 320 from it would set a value the author never wrote.
-template <typename T> bool parse_whole(std::string_view text, T* out_value)
+template <typename T> std::optional<T> try_parse_whole(std::string_view text)
 {
-  const char* begin = text.data();
-  const char* end   = text.data() + text.size();
-  auto        result = std::from_chars(begin, end, *out_value);
-  return result.ec == std::errc{} && result.ptr == end;
+  T           value  = {};
+  const char* begin  = text.data();
+  const char* end    = text.data() + text.size();
+  auto        result = std::from_chars(begin, end, value);
+  if (result.ec != std::errc{} || result.ptr != end)
+    return std::nullopt;
+  return value;
 }
 
 } // namespace
 
-bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)
+bool try_cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)
 {
   const cvar_info_t& info  = cvar_info(id);
   void*              bytes = value_bytes(state, info);
@@ -483,28 +534,28 @@ bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)
   {
     case CVAR_TYPE_F32:
     {
-      float value = 0.0f;
-      if (!parse_whole(text, &value))
+      const std::optional<float> value = try_parse_whole<float>(text);
+      if (!value)
         return false;
-      std::memcpy(bytes, &value, sizeof(value));
+      std::memcpy(bytes, &*value, sizeof(*value));
       return true;
     }
 
     case CVAR_TYPE_I32:
     {
-      int32_t value = 0;
-      if (!parse_whole(text, &value))
+      const std::optional<int32_t> value = try_parse_whole<int32_t>(text);
+      if (!value)
         return false;
-      std::memcpy(bytes, &value, sizeof(value));
+      std::memcpy(bytes, &*value, sizeof(*value));
       return true;
     }
 
     case CVAR_TYPE_U32:
     {
-      uint32_t value = 0;
-      if (!parse_whole(text, &value))
+      const std::optional<uint32_t> value = try_parse_whole<uint32_t>(text);
+      if (!value)
         return false;
-      std::memcpy(bytes, &value, sizeof(value));
+      std::memcpy(bytes, &*value, sizeof(*value));
       return true;
     }
 
@@ -541,8 +592,8 @@ bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)
     }
   }
 
-  assert(false && "cvar_from_text: cvar carries an invalid type tag");
-  return false;
+  fatal_error("try_cvar_from_text: cvar '{}' carries an invalid type tag {}",
+              info.name, (int)info.type);
 }
 
 const char* to_string(Bot_Mode value)
@@ -557,12 +608,12 @@ const char* to_string(Bot_Mode value)
   return "";
 }
 
-bool from_string(std::string_view text, Bot_Mode* out_value)
+template <> std::optional<Bot_Mode> try_from_string<Bot_Mode>(std::string_view text)
 {
-  if (text == "idle") { *out_value = Bot_Mode::idle; return true; }
-  if (text == "chase") { *out_value = Bot_Mode::chase; return true; }
-  if (text == "regular") { *out_value = Bot_Mode::regular; return true; }
-  return false;
+  if (text == "idle") return Bot_Mode::idle;
+  if (text == "chase") return Bot_Mode::chase;
+  if (text == "regular") return Bot_Mode::regular;
+  return std::nullopt;
 }
 
 } // namespace cvars

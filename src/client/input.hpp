@@ -33,6 +33,12 @@ enum class key_t : uint16_t
   Arrow_Left, Arrow_Right, Arrow_Up, Arrow_Down,
   // Punctuation.
   Left_Bracket, Right_Bracket, Tilde,
+  // Keypad digits, contiguous like the top row so key_t::Keypad_0 + digit
+  // works. DISTINCT from Num_*: the editor's axis views are on the keypad
+  // specifically, Blender-style, and binding them to the top row would collide
+  // with the tool hotkeys.
+  Keypad_0, Keypad_1, Keypad_2, Keypad_3, Keypad_4,
+  Keypad_5, Keypad_6, Keypad_7, Keypad_8, Keypad_9,
   Count
 };
 

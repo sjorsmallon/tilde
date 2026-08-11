@@ -2,6 +2,8 @@
 
 #include "editor_types.hpp"
 
+#include <optional>
+
 //@NOTE(SJM):
 // full virtual root tool interface. the tool_editor state contains a list of all tools, 
 // and forwards input/events to the active one.
@@ -35,6 +37,11 @@ public:
   // Return true when the tool wants exclusive keyboard focus (suppresses
   // camera movement keys in tool_editor_state).
   virtual bool capture_keyboard() const { return false; }
+
+  // What the keypad axis views (1/3/7) should centre and frame on. `nullopt`
+  // means "no opinion" and the editor falls back to the world origin at map
+  // scale -- which is an ANSWER, not a failure, so this takes no `try_` prefix.
+  virtual std::optional<view_focus_t> view_focus() const { return std::nullopt; }
 
   // Visuals
   virtual void on_draw_overlay(editor_context_t &ctx,

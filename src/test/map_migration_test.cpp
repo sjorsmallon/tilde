@@ -58,9 +58,10 @@ int main()
     return fail("fixture 'maps/test' missing — run from project root");
 
   // --- 1. Load pre-migration fixture --------------------------------------
-  map_t loaded;
-  if (!load_map(fixture, loaded))
-    return fail("load_map(maps/test) failed");
+  std::optional<map_t> loaded_opt = try_load_map(fixture);
+  if (!loaded_opt)
+    return fail("try_load_map(maps/test) failed");
+  map_t &loaded = *loaded_opt;
 
   const size_t boxes = count_geometry_of_kind(loaded, geometry_kind_t::Box);
   if (boxes == 0)
@@ -110,9 +111,10 @@ int main()
   if (!save_map(out, loaded))
     return fail("save_map(maps/test.roundtrip) failed");
 
-  map_t reloaded;
-  if (!load_map(out, reloaded))
-    return fail("load_map(maps/test.roundtrip) failed");
+  std::optional<map_t> reloaded_opt = try_load_map(out);
+  if (!reloaded_opt)
+    return fail("try_load_map(maps/test.roundtrip) failed");
+  map_t &reloaded = *reloaded_opt;
 
   // Cleanup the temp file immediately (also any .navmesh sidecar).
   std::filesystem::remove(out);
@@ -176,9 +178,10 @@ int main()
     if (!save_map(trig_path, trig_map))
       return fail("trigger: save_map failed");
 
-    map_t reloaded_trig;
-    if (!load_map(trig_path, reloaded_trig))
-      return fail("trigger: load_map failed");
+    std::optional<map_t> reloaded_trig_opt = try_load_map(trig_path);
+    if (!reloaded_trig_opt)
+      return fail("trigger: try_load_map failed");
+    map_t &reloaded_trig = *reloaded_trig_opt;
     std::filesystem::remove(trig_path);
     std::filesystem::remove(trig_path + ".navmesh");
 
@@ -218,9 +221,7 @@ int main()
     const uint32_t hash0 = compute_map_content_hash(loaded);
 
     const std::string canonical = serialize_map_to_string(loaded);
-    map_t from_canonical;
-    if (!parse_map_from_string(canonical, from_canonical))
-      return fail("canonical: parse_map_from_string failed");
+    const map_t from_canonical = parse_map_from_string(canonical);
 
     if (count_geometry_of_kind(from_canonical, geometry_kind_t::Box) != boxes)
       return fail("canonical: box count drift through string round-trip");
@@ -242,9 +243,7 @@ int main()
       mangled += c;
       if (c == '\n') mangled += "\n   \n";
     }
-    map_t from_mangled;
-    if (!parse_map_from_string(mangled, from_mangled))
-      return fail("canonical: parse of reformatted text failed");
+    const map_t from_mangled = parse_map_from_string(mangled);
     if (compute_map_content_hash(from_mangled) != hash0)
       return fail("canonical: hash is not formatting-independent");
   }

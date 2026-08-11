@@ -2,6 +2,8 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
+#include <optional>
 
 #include "entities/generated/entities_generated.hpp"
 #include "linalg.hpp"
@@ -22,6 +24,16 @@ inline const char* to_string(hit_region_t region)
         case hit_region_t::Legs:  return "Legs";
         default:                  return "Unknown";
     }
+}
+
+// The inverse, for the `.hitboxes` reader. Names are what the file spells, so
+// this and to_string above must stay each other's inverse.
+[[nodiscard]] inline std::optional<hit_region_t> try_hit_region_from_string(const char* text)
+{
+    for (hit_region_t region : {hit_region_t::Head, hit_region_t::Torso, hit_region_t::Legs})
+        if (std::strcmp(to_string(region), text) == 0)
+            return region;
+    return std::nullopt;
 }
 // Three regions, identical for every player, so a static table -- NOT schema
 // fields. They never change and never need the wire: hit decisions are

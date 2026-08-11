@@ -65,15 +65,28 @@ private:
   bool hide_geometry = false;
   float last_dt = 0.016f;
 
-  // Axis-aligned view mode (Shift+Space cycles through these)
+  // Axis-aligned view mode. Shift+Space cycles the first four; the keypad snaps
+  // to any of them directly (1/3/7, Ctrl for the opposite side), Blender-style.
+  //
+  // Named by the direction the CAMERA LOOKS, not by which face of the subject
+  // you end up seeing -- "Front" is the camera looking along +X. The two agree
+  // only once the model's facing is settled, which is still open
+  // (animation_def.md LOOSE ENDS, "Does the model face the right way?").
   enum class ViewMode
   {
     FreeCam,  // Normal perspective free camera
-    TopDown,  // Looking down -Y axis (XZ plane)
-    Front,    // Looking along +X axis (YZ plane)
-    Side      // Looking along +Z axis (XY plane)
+    TopDown,  // Looking down  -Y  (XZ plane)
+    Front,    // Looking along +X  (YZ plane)
+    Side,     // Looking along +Z  (XY plane)
+    Bottom,   // Looking up    +Y
+    Back,     // Looking along -X
+    Left      // Looking along -Z
   };
   ViewMode view_mode = ViewMode::FreeCam;
+
+  // Points the camera down an axis, orthographic, centred on the active tool's
+  // `view_focus` (world origin at map scale when it has no opinion).
+  void snap_to_axis_view(ViewMode mode);
 
   float navmesh_cell_size = 256.f;
 

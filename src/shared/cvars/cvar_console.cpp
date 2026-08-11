@@ -100,9 +100,9 @@ console_result_t execute_console_line(cvar_state_t&            state,
   const bool may_forward =
       table.forward_to_server != nullptr && !came_from_remote_caller;
 
-  cvar_id id{};
-  if (find_cvar(name, &id))
+  if (const std::optional<cvar_id> found_cvar = try_find_cvar(name))
   {
+    const cvar_id      id   = *found_cvar;
     const cvar_info_t& info = cvar_info(id);
 
     // A bare read is always local, even for a @Server cvar: the client's copy
@@ -110,16 +110,9 @@ console_result_t execute_console_line(cvar_state_t&            state,
     // local value costs no round trip. Only a WRITE has to respect ownership.
     if (tokens.size() == 1)
     {
-      std::string value;
-      if (!cvar_to_text(state, id, value))
-      {
-        set_reply(out_reply,
-                  std::format("[error] {}: value could not be formatted", name));
-        log_error("cvar_to_text failed for '{}' -- the generated table and "
-                  "cvar_state_t disagree about its type",
-                  info.name);
-        return console_result_t::bad_arguments;
-      }
+      // try_cvar_to_text only fails on a corrupted type tag, which it treats as
+      // fatal -- so there is no formatting-failure branch left to write here.
+      const std::string value = *try_cvar_to_text(state, id);
       set_reply(out_reply, std::format("{} is {} {}\n  {}", info.name, value,
                                        describe_cvar_flags(info.flags),
                                        info.description));
@@ -152,9 +145,9 @@ console_result_t execute_console_line(cvar_state_t&            state,
       value_text = tokens[1];
     }
 
-    if (!cvar_from_text(state, id, value_text))
+    if (!try_cvar_from_text(state, id, value_text))
     {
-      // cvar_from_text leaves the value ALONE on a parse failure, so the
+      // try_cvar_from_text leaves the value ALONE on a parse failure, so the
       // previous value is still live -- say so, rather than letting the user
       // assume the set landed.
       set_reply(out_reply, std::format("[error] {}: '{}' is not a valid value; "
@@ -167,10 +160,10 @@ console_result_t execute_console_line(cvar_state_t&            state,
     return console_result_t::ok;
   }
 
-  command_id command{};
-  if (find_command(name, &command))
+  if (const std::optional<command_id> found_command = try_find_command(name))
   {
-    const command_info_t& info = command_info(command);
+    const command_id      command = *found_command;
+    const command_info_t& info    = command_info(command);
 
     if ((info.flags & CVAR_FLAG_SERVER) && may_forward)
     {

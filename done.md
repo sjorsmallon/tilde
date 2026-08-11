@@ -17,6 +17,25 @@ keeps the finished work so `todo.md` stays a work list.
 - **PLAYER DIMENSIONS + RENDERER PASS (2026-08-04)** — the player's three
   conflicting sizes collapsed onto one hull, the editor/runtime spawn-origin
   mismatch, and two renderer API fixes.
+- **ANIMATION TRACK, build-order steps 1–2 and 7 (2026-08-08 → 2026-08-09)** —
+  the Blender exporter, the `.skeleton`/`.mesh` loader, textures, GPU skinning in
+  bind pose, and the authored aim pose set driven by view angles. Remaining
+  animation work is in `animation_def.md` under "WHAT'S LEFT". The Blender
+  gotchas at the end of that section are the part most likely to matter again —
+  especially that a rig's pose is never evaluated headless in Object mode.
+- **THE ANIMATION TOOL, PHASES A + B (2026-08-10)** — the pose preview, and the
+  `rig.hitboxes` bone-span volumes drawn under it with the derived-radius seed
+  and the two audit readouts. The bone-axis correction in it (a bone points down
+  minus its THIRD column) is the part most likely to matter again.
+- **HIT FEEDBACK + AIM DEBUG RIG (2026-08-09)** — the bot yaw convention fix,
+  the aim-pose debug rig (the blend turned out to be unreachable from any
+  gameplay state), `unlit_textured_skinned`, `-Werror=switch`, and hit sounds
+  split across the two event channels. The cosmetic-effect vs replicated-state
+  rule at the end of it is the part most likely to matter again.
+- **THE HOUSE FIXED-SIZE ARRAYS (2026-08-11)** — `Array<T, N>`,
+  `Enum_Array<Enum_T, T>` and `rows_in_enum_order` in `shared/array.hpp`, closing
+  `todo.md`'s items A and B in one go. Jump to it below; the thing most likely to
+  matter again is that `Enum_Array` does NOT catch a short initializer.
 - **Closed decisions** — the appendix at the bottom, recorded so they are not
   re-litigated.
 
@@ -1472,6 +1491,655 @@ explains a redundancy the name had been causing: `set_view` already calls
 `set_viewport`, and two call sites called it again immediately after — nobody
 does that on purpose, they do it because the name made the first call
 invisible.
+
+---
+
+# ANIMATION TRACK — build-order steps 1–2  ✅ DONE (2026-08-08 → 2026-08-09)
+
+Design and the remaining work are in `animation_def.md`; its "WHAT'S LEFT"
+section is the live list. This is what landed and the reasoning worth keeping.
+
+## Step 1 — exporter, loader, model on screen  (2026-08-08)
+
+`src/tools/blender_export.py` emits `.skeleton` + `.mesh`;
+`src/shared/model_format.{hpp,cpp}` reads both; `src/shared/skeleton.hpp` holds
+`skeleton_t` / `bone_t` / `vertex_skin_t`. `assets::load_mesh` dispatches on the
+`.mesh` extension — it must, because `load_obj` normalizes to a 100-unit max
+extent and a `.mesh` is already in engine units.
+
+**`model_format_test` checks the REAL exporter output, not only fixtures.** The
+exporter's promises and the reader's assertions are the same list, so that is
+where the two are made to meet.
+
+**The axis conversion and the scale were proven without a renderer**, which was
+the point of doing it this way: a standing humanoid is not an ambiguous shape.
+Vertical span 68.6 units against a depth span of 12.8 (so Y is up — Blender's
+Z-up would have swapped those), feet near the ground plane, ~67 units against
+the 72-unit player hull (so the 39.37 metres→units factor survived). Asserted in
+`test_real_mesh`, deliberately as ranges rather than exact values, so legitimate
+model edits do not turn the test red.
+
+`mesh_asset` in `entities.def` declares TWO scans — `resources/obj/*.obj` and
+`resources/models/*.mesh` — so a skinned model is an ordinary manifest id that
+the editor can place and `draw_mesh` renders. `def_gen`'s `scan` directive
+became repeatable for this; scans expand in declaration order, files sorted
+within each, so ids stay deterministic.
+
+**Players and bots draw the model — the missing half of the original plan.**
+`Player_Entity::render` was declared, `@Networked`, and completely reader-less,
+so remote players were a green collision AABB and nothing else.
+`server::initialize_player_body` (`entity_lifecycle.{hpp,cpp}`) now assigns the
+hitbox and the model in ONE place called by both `spawn_player_for_slot` and
+`spawn_bot` — a bot IS a `Player_Entity`, and the hitbox half of that setup had
+already drifted across the two before the model gave it a second reason to.
+
+The client draws it in `play_state.cpp` from `latest_player_entities` (where the
+snapshot puts the Render component) at `Remote_Player_State::render_position`
+(where interpolation happens) — neither container has both. `cl_draw_player_hull`
+survives as a debug overlay rather than being retired: the hull is where a player
+COLLIDES and the model is only what you see, so drawing both is how you catch a
+model that has left its own hull.
+
+**Bots are the test vehicle for every step after this** — the only way to see a
+third-person model without a second machine.
+
+## Step 1a — texture rendering  (2026-08-09)
+
+`material_t` gained a resolved `asset_handle_t<texture_asset_t>`, filled by
+`load_mesh`. The parser stays a pure function over a file with no pools, so the
+path remains the on-disk identity and the handle is what the renderer binds.
+
+**Textured-ness is a property of the MATERIAL, not of the draw call.** A caller
+asks for `shader_type::Lit` and each submesh gets whichever lit pipeline its
+material earned, so one mesh mixes them. That is why no new `shader_type` was
+added — the caller has nothing to say about it.
+
+Three cases, resolved in ONE place (`material_albedo_descriptor_set`) so the
+skinned and unskinned paths cannot drift on what a broken material looks like:
+
+- a resolved texture binds it;
+- **a material that NAMES a texture that failed to load binds a magenta/black
+  checkerboard** — the `mesh_asset::Missing` treatment;
+- a material that names none is legitimate (flat colour) and takes the
+  untextured pipeline.
+
+Descriptor sets are per TEXTURE ASSET, not per material, so two materials naming
+one image share the upload. Textures upload as `R8G8B8A8_SRGB`: the swapchain is
+`B8G8R8A8_SRGB`, so the hardware encodes on write and a colour texture sampled as
+UNORM would be gamma-corrected twice. `upload_texture` took an `srgb` parameter;
+data maps (roughness, metallic, normals) keep UNORM.
+
+**The UV V-flip.** Blender's UV origin is bottom-left with V up; stb_image hands
+back the top PNG row first and nothing calls `stbi_set_flip_vertically_on_load`,
+so the sampler's V=0 is the top with V down. Fixed in the exporter's
+`to_engine_uv`, per the same rule as the axis conversion. **It is NOT the axis
+conversion** — a UV has no third component to rotate. It survived this long
+because nothing had ever sampled a texture with mesh UVs: `lit.vert` bound `inUV`
+and called it unused, and the displacement path generates its own worldspace UVs.
+
+**Exporter: texture copying became unconditional.** It used to branch on whether
+the image was packed (copy into `<out>/textures/`) or linked (reference it where
+it sits), which is how a shipped `.mesh` came to name
+`resources/blender/textures/Image_8.png`. Two things wrong: a runtime asset must
+not point into the Blender source tree, and `Image_8` is not a name. Worse, WHICH
+branch you got depended on an incidental property of the `.blend`, so one model
+exported from two files produced two path regimes silently. `TextureWriter` now
+holds both caches — by image pointer (two materials sharing an image share one
+file) and by output filename (the collision check). Deriving the output name from
+the material means two materials colliding on one filename is a hard `fail()`
+naming both, because only the author knows which was meant.
+
+## Step 2 — GPU skinning, bind pose  (2026-08-09)
+
+`src/shared/skinning.{hpp,cpp}` holds the hierarchy walk, in `game_shared` rather
+than the renderer for one reason: it is the half of GPU skinning that can be
+checked without a GPU. `model_format_test` runs the real 35-bone rig through it
+and asserts every skinning matrix comes out identity.
+
+**A correction to the plan's own rationale, worth keeping because it was stated
+confidently and was wrong.** `todo.md` and `animation_def.md` both said that
+filling the UBO properly — deriving locals from `inverse_bind`, walking the
+hierarchy, `model_space[i] * inverse_bind[i]` — would be "the ONLY thing that
+will ever check the loader's row-major→column-major transpose". **It does not,
+and cannot.** Every matrix in that computation descends from `inverse_bind`, so a
+uniformly transposed skeleton telescopes to identity exactly as cleanly as a
+correct one: `local[i] = IB[parent] * inverse(IB[i])` makes `model_space[i]`
+collapse to `inverse(IB[i])` whichever convention `IB` is in, and the final
+multiply cancels it. **Only a pose from OUTSIDE the skeleton can test it** — a
+clip or an authored aim pose — so that check belongs to the aim step.
+
+Deriving rather than uploading identity is still right, just for a smaller
+reason: it runs the same walk a real pose will. What it does prove is the
+multiply order, the hierarchy walk, `inverse_affine`, the second vertex binding
+decoding at stride 20, the dynamic-offset UBO, and the descriptor sets.
+
+**Per-draw uniform data got a general mechanism, not a bone-specific one.** Bone
+matrices are the renderer's first GPU-resident per-draw data — 8 KB against a
+128-byte push constant budget — and `frame_uniform_allocator_t` serves them. Two
+policies, deliberately different, and the naming matters because the codebase has
+both:
+
+- **WITHIN a frame: a bump allocator.** Draws take blocks off a rising offset,
+  nothing is freed individually, the whole region resets at frame start.
+- **ACROSS frames: double buffered, NOT a ring.** One region per frame-in-flight;
+  `begin_frame` has already waited on that index's fence, which is what makes the
+  reset safe. (The line batch and the debug face buffer are the actual ring
+  buffers here — head/tail with wraparound. This is deliberately not one.)
+
+**One skinned pipeline, not two.** Skinned × textured is a permutation axis, and
+a fourth pipeline would buy a case no asset has — a skinned mesh is a character
+and characters are textured. An untextured material on a skinned mesh binds a 1×1
+white texture instead. Albedo stays at set 0 and bones take set 1, so
+`lit_textured.frag` is reused byte for byte by both pipelines: only the vertex
+half of a skinned draw differs, and the set numbering says so.
+
+**`skinning_matrices == nullptr` on a skinned mesh means BIND POSE**, derived from
+the skeleton and cached per skeleton handle. A real default rather than a failure:
+no call site changed for this step, so the animation work can reach them one at a
+time.
+
+## Step 7 — aim: the authored pose set, driven by view angles  (2026-08-09)
+
+Promoted out of order (it is build-order step 7) because it was the only step
+whose data already existed and it needs no animation authoring skill. Design in
+`animation_def.md` §5.
+
+**The pipeline.** `blender_export.py` gained `--poses`, which appends every
+Action out of `resources/blender/asset_library/*.blend`, evaluates the rig and
+writes a **single-frame `.animation`** per pose. One format, one loader, one hash
+check — there is deliberately no `.pose`. `models::parse_animation_file` reads
+them; `assets::load_animation` resolves the sibling `.skeleton` and refuses a
+hash or bone-count mismatch, the same shape as the `.mesh` check.
+
+`src/shared/animation.{hpp,cpp}` is the runtime: `transform_t` / `pose_t`,
+`sample_animation_clip_at`, `blend_into` with float per-bone masks, `get_local_transforms_of_bones_from_pose`,
+`compute_bind_pose`, `build_bone_mask`, and the aim blend. `linalg` gained
+`quatf` (nlerp with the hemisphere fix, `to_mat4`, `compose_transform`) — the
+rotation half of a pose, and the only reason a pose is TRS rather than a matrix.
+
+`src/client/player_animator.{hpp,cpp}` is the client half; `play_state.cpp`
+drives it from `render_pitch` and the torso twist.
+
+**Three things worth keeping:**
+
+**1. Headless, an armature's pose is NEVER EVALUATED in Object mode.** Assigning
+the five actions in turn produced five `.animation` files that differed only in
+their name line — a whole set of well-formed files full of plausible numbers,
+the same failure shape as the Rest Position trap through a different door. Set
+`pose_bone.location`, then `update_tag()`, `view_layer.update()`, `frame_set()`
+and `depsgraph.update()` in every combination: `pose_bone.matrix` does not move,
+on the original OR on `evaluated_get()`, though `matrix_basis` plainly carries
+the change and the rig is in the depsgraph. Toggling through **Pose mode** is
+what makes the recompute happen. The exporter now enters it and then
+`verify_poses_differ` refuses to write a set where any pose equals rest or two
+poses are identical; `model_format_test` checks the same thing on the shipped
+files, because the failure is silent everywhere else.
+
+**2. Entering Pose mode invalidates every `Bone` reference collected before it.**
+Reading `.name` off one afterwards comes back as a `UnicodeDecodeError` on
+whatever now occupies that memory. The pose path takes bone NAMES, which are
+already the stable identity `skeleton_hash` is built on.
+
+**3. `Asset_Pool::items` became a `std::deque`.** `assets::get` hands out a
+pointer INTO it, so with a vector
+
+```cpp
+const animation_clip_t *first  = get(load_animation(a));
+const animation_clip_t *second = get(load_animation(b));   // `first` dangles
+```
+
+was UB with no symptom at the call site — the freed memory still reads as a
+plausible asset. It surfaced as five aim poses comparing equal to each other
+after loading in a loop. A deque never moves an element already in it, which
+makes the natural way to write that correct. Nothing removes from a pool, so the
+other invalidation rule cannot arise.
+
+**Aim is a PLUS, not a square, so "bilinear" was not achievable literally.**
+There is no up-left pose, hence no four corners. `compute_aim_blend` is
+barycentric on the plus: one vertical neighbour, one horizontal neighbour, and
+Forward taking the remainder, then normalized. It degrades to a plain two-pose
+lerp on either axis alone (the common case) and at a full diagonal splits both
+extremes evenly — which two sequential `blend_into` calls would not, since the
+second would overwrite the first.
+
+**The body is drawn at `body_yaw`, which LAGS the view yaw.** Not in the design
+doc's bullet list, and load-bearing: with the model drawn at the view yaw the
+torso can never be turned relative to it, so the left/right poses are
+unreachable by construction and half the pose space is dead. The feet chase the
+view at `cl_aim_body_turn_rate` and are pushed round once the twist would exceed
+`cl_aim_max_yaw`; the leftover deviation is what the poses cover. Purely local
+tier-2 state, never replicated.
+
+**The transpose finally got tested.** `test_bind_pose_skinning_is_identity`
+cannot see a uniformly transposed `inverse_bind` — every matrix in it is derived
+from `inverse_bind`, so a wrong transpose telescopes to identity just as
+cleanly. A pose arrives as TRS, where translation is translation with no
+row/column ambiguity to cancel against, so
+`test_posed_skinning_stays_a_person` skins the real mesh through each of the
+five poses on the CPU and checks the result is still person-sized and on the
+ground. That is the check `animation_def.md` §7 said only an authored pose could
+make.
+
+**Found while verifying, not fixed:** `left_holding_gun` has the legs swapped —
+`DEF-foot.L` sits where `foot.R` is in the other four poses. Confirmed against
+Blender directly, so it is authoring (a paste-X-flipped pose that caught the leg
+controls), not export. Blending toward it swings the legs around.
+
+## Blender facts that cost real time — don't rediscover them
+
+- **A `.blend` saved in EDIT MODE** has stale flat arrays and can have an EMPTY
+  UV layer while looking fine on screen. Every downstream symptom is
+  unrecognisable as that cause. The exporter now refuses by name.
+- **What the viewport shows is not what the exporter reads.** The viewport draws
+  the EVALUATED mesh (rest geometry + modifiers + the armature's current pose);
+  the exporter reads `mesh.vertices[i].co`, which is rest. A model can stand on
+  the floor on screen while its rest geometry sits below it, with every object
+  transform at zero — the displacement lives entirely in bone pose, which the
+  Object properties panel does not report. Toggle Pose Position → Rest Position
+  to see what the exporter sees.
+- **The mesh and skeleton export is entirely pose-independent** (verified by
+  diffing exports across a pose change: mesh byte-identical, skeleton identical
+  to 1e-5 rounding). Positions, normals, UVs, weights and `bone.matrix_local`
+  are all rest data. Pose export is the part that is not, which is why it
+  asserts `pose_position == 'POSE'`.
+- **A rig's POSE IS NOT EVALUATED headless while the object is in Object mode**,
+  and nothing about that fails loudly — see Step 7 above. `mode_set('POSE')`
+  first; every `Bone` reference collected before it is then dangling.
+- **Blender is not on PATH:**
+  `& "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" <file>.blend --background --python <script>.py -- --out resources/models`
+  Run it from the project root — texture paths are relativised against cwd.
+
+---
+
+# HIT FEEDBACK + AIM DEBUG RIG  ✅ DONE (2026-08-09)
+
+Started as "make an idle bot rotate so I can see whether interpolation works"
+and turned into three unrelated fixes plus the damage-feedback pass. Grouped
+here because it is one sitting, not because it is one subject.
+
+## The bot yaw convention was wrong in two ways at once
+
+`update_bots` ended every tick with `view_angle_yaw = atan2(front.x, front.z)`.
+Two bugs stacked:
+
+- **Radians into a degrees field.** `view_angle_yaw` is DEGREES everywhere else
+  — `direction_from_angles`, the proto viewangles, `advance_body_yaw`, the aim
+  poses. A bot was writing raw radians, so every bot model rendered facing about
+  1.57° off +X instead of 90°.
+- **Transposed arguments.** `direction_from_angles` sweeps yaw from +X toward
+  +Z, so the inverse is `atan2(z, x)`, not `atan2(x, z)`.
+
+The client's bot debug arrow read the field back with raw `sin`/`cos`, i.e. in
+the same wrong convention, which is why the arrow looked right while the model
+did not. Both now go through `direction_from_angles`. `front` also defaults to
+the bot's CURRENT heading rather than `{1,0,0}`, so a bot dropping to the Idle
+goal holds its facing instead of snapping to +X.
+
+An idle-bot spin was added here and then removed once it turned out not to test
+what it looked like it tested (below). The convention fixes are the part that
+stayed.
+
+## Remote player yaw lerped the long way round the seam
+
+`render_yaw = a*(1-t) + b*t` on an angle. Crossing ±180 whips the model a full
+turn backwards over one snapshot interval. Now lerps the wrapped delta
+(shortest arc). Found while building a spinning bot, which crosses the seam once
+per revolution — it would have read as an interpolation bug that wasn't one.
+
+**Still open, deliberately not fixed:** `ctx.interpolation_time = 0.f` is reset
+INSIDE the per-player loop in `play_state.cpp` but the timer is shared across all
+remote players. With several players the last one processed wins and everyone
+else's `t` restarts mid-interval. Test interpolation with exactly one remote
+player until that is sorted.
+
+## The aim pose blend was unreachable from gameplay
+
+The blend takes exactly two inputs, and both were structurally pinned at 0:
+
+- **Pitch** — nothing in the bot path ever writes `view_angle_pitch`. The
+  up/down poses could not be reached at all.
+- **Yaw deviation** — `advance_body_yaw` creeps the feet toward the view and
+  SNAPS the deviation to exactly zero once it is within one step. At 60fps the
+  step is `cl_aim_body_turn_rate/60` = 9°, so anything turning slower than
+  540°/s has its deviation zeroed every single frame. Turning faster does not
+  help either: past `cl_aim_max_yaw` the clamp branch drags `body_yaw` along and
+  pins the deviation at a static ±45°, which is one frozen extreme, not a sweep.
+
+So there is no gameplay situation that sweeps the pose space, and no amount of
+bot behaviour would have produced one. `cl_aim_debug` forces the pair directly
+for every remote model, with an ImGui panel of two sliders — the question is
+whether the interpolation is SMOOTH, which only a continuous sweep answers.
+Slider range runs to ±90 against an authored extent of ±45 on purpose: past the
+extent the blend should clamp to the extreme pose, and watching it stop moving
+is the second thing worth confirming.
+
+`cl_spectate_slot <n>` rides a remote player's eye, reading the same
+`render_position`/`render_yaw` the model is drawn from so there is no separate
+camera path to smooth over a stall. `cl_player_unlit` skips the sun on player
+models — half a character sitting in 0.15 ambient is the wrong light to judge a
+pose by.
+
+## `unlit_textured_skinned`
+
+A new FRAGMENT shader only: `lit_textured.frag` with the sun removed, declaring
+a subset of the vertex stage's outputs (legal, and it lets
+`lit_textured_skinned.vert` pair with both frags byte for byte). Two pipelines
+now share one layout — same sets, same push constants — hence
+`g_lit_textured_skinned_pipeline_layout` → `g_skinned_pipeline_layout` and
+`create_lit_textured_skinned_pipeline` → `create_skinned_pipelines`.
+
+**The bug it exposed:** the `skinned` predicate in `draw_mesh` accepted only
+`shader_type::Lit`, so a skinned mesh asked for Unlit silently fell to the
+unskinned pipeline and drew in BIND POSE. Unlit now takes the Lit branch of
+`push_and_draw`, because its vertex stage is `lit_textured_skinned.vert` and it
+needs `LitPushConstants` and the skinned layout, not the flat aabb pair.
+
+## `-Werror=switch`, and the half-added event it would have caught
+
+`PLAYER_DAMAGED` was in `game_event_kind_t` with a payload struct and a union
+member, but **no serialize case, no deserialize case and no consumer**. Firing
+it would have written a bare 16-bit kind and desynced the read cursor for every
+event after it in that batch — silently. Clang had been warning twice on every
+build for months; nothing made anyone read it.
+
+Removed rather than completed (the damage feedback below needs neither half),
+and `-Werror=switch` / `/we4062` added so the next one cannot get that far. The
+exhaustive switch is the safety net CLAUDE.md leans on repeatedly; as a warning
+it was not one.
+
+**Placement matters:** the flag sits BELOW the FetchContent blocks.
+`add_compile_options` only reaches targets declared after it, so SDL2, protobuf
+and miniaudio keep their own warning policy and a third-party switch cannot
+break our build. Putting it at the top of the file does poison them.
+
+## Damage feedback: which channel, and why not `inflict_damage`
+
+The question was whether damage should dispatch a cosmetic event. Answer: the
+two sounds want DIFFERENT channels, and neither belongs in `inflict_damage`.
+
+**Not in `inflict_damage`,** for three reasons that are all still true:
+
+1. It does not know where the hit landed. `damage_info_t.source_position` is the
+   shooter's EYE, so a spatialized sound from there plays at the shooter.
+   `hitscan_result_t` has `impact_point` and `impact_normal`; the call site was
+   dropping both.
+2. Fan-out. One rocket detonation is N `inflict_damage` calls, so a blast in a
+   crowd would stack N flesh sounds. `damage.hpp` had already made this exact
+   call for `ROCKET_EXPLOSION`.
+3. It loses the region — only the `was_headshot` bool survives, not
+   `hit_region_t`.
+
+**The world thud is a cosmetic effect.** `FLESH_IMPACT`, dispatched at the
+hitscan site — the branch that previously produced nothing at all, so hitting a
+wall made a noise and hitting a person made none. Appended to `effect_type_t`
+rather than slotted next to `BULLET_IMPACT`: the wire id IS the enum value and
+nothing hashes that enum, so reordering silently remaps every effect for a peer
+on another build. A headshot is louder, not different — a distinct headshot
+sound broadcast to everyone announces to the whole server that someone just got
+clipped in the head.
+
+**The hitmarker is replicated state.** `Player_Entity::last_hit_tick` +
+`last_hit_was_headshot`, latched on the SHOOTER, watched by
+`hit_confirm_audio.cpp` exactly the way `weapon_fire_audio.cpp` watches
+`last_fire_tick`. Two reasons it is not an effect, and the second is the one
+that generalises:
+
+- **Audience.** The cosmetic queue is drained into EVERY outgoing snapshot. A
+  hitmarker is per-viewer by definition; the channel cannot express that.
+- **Loss.** Effects ride their packet once with no resend. A confirmation you
+  never got is lost information, not lost decoration, so it rides the delta
+  against the acked baseline instead. Same argument as `last_fire_tick`.
+
+That pair — audience and loss tolerance — is the decision rule for every future
+feedback question. It is restated at the top of `hit_confirm_audio.hpp`.
+
+**Content placeholders:** the flesh sounds are `knife_hit1-4.wav`, the only wet
+impacts in `resources/sounds`. Only headshots ding; a body hit is already
+audible as `FLESH_IMPACT` at the victim, and a second sound on every body shot
+turns the common case into noise. The hook for a body hitmarker is one `else`.
+
+**Parked:** generating both event families from an `events.def` — todo.md item
+D. The trigger is wanting per-kind cosmetic payloads or the event count roughly
+doubling, NOT the enum bookkeeping, which `-Werror=switch` now covers.
+
+---
+
+# THE ANIMATION TOOL, PHASES A AND B  ✅ DONE (2026-08-10)
+
+Phase A is the preview: the model at the origin, a pose picker over bind and the
+five aim poses, pitch/yaw sliders through the *real* `compute_aim_blend` /
+`sample_aim_pose` path, the skeleton as bone lines. Phase B is the hit volumes
+on top of it. Design in `animation_def.md` §4 and `todo.md` §2e; both were
+unblocked when aim shipped, because five authored poses that move the spine,
+arms and head are the posed content the tool needed to be judged against.
+
+## What phase B actually added
+
+`resources/models/rig.hitboxes` — ten volumes, three damage regions — plus
+`shared/hitbox_rig.{hpp,cpp}` (types, resolution, endpoints, derivation, audit),
+the reader/writer beside the `.skeleton` and `.mesh` ones in `model_format.cpp`,
+and `hitbox_rig_test`.
+
+**A volume is a bone SPAN, and its endpoints are the two named bones' HEADS.**
+That is the decision worth keeping: the skeleton stores no tail, so any rule
+involving one is a reconstruction that can be wrong, while "name the far joint"
+cannot be.
+
+**The shape is named, and the header declares no count.** Both were corrections
+to the first cut of the format, and both are the same mistake in opposite
+directions. A sphere was originally spelled `start == end` — inference, which
+means the format can only express what someone thought of first and which reads
+as a typo rather than as a decision; there are now four named kinds (Sphere,
+Capsule, Cylinder, Box) in `assets::hitbox_shape_t`. And the file declared a
+volume count copied from the `.mesh` and `.skeleton` formats, where it is load
+bearing because those are GENERATED and a truncated one would pass silently.
+This file is handwritten, so the count was a second thing to keep in step that
+could only ever fall out of it. Volumes now run to end of file.
+
+`assets::hitbox_shape_t` is deliberately not `entities::Shape_Kind`. That enum is
+the vocabulary of entity hitbox components and Jolt bodies, it has no Cylinder,
+and it is switched over exhaustively in the physics and collision paths — adding
+a member to serve the rig would oblige four unrelated systems to handle a shape
+they cannot make. A Box's half-extents are in the volume's OWN frame (across the
+bone, across it, along it), so it turns with the limb rather than being an AABB
+that grows whenever the pose rotates.
+
+**The one column the design did not anticipate: `offset`.** The skull is a
+single bone whose HEAD sits at the jaw line, so a sphere there covers the neck
+and misses the crown; the hands have the same problem at the wrist. `offset` slides both endpoints along the start bone's own
+axis, in bone space so it rotates with the pose and the server can reproduce it
+from the pose alone — a model-space offset would be a different volume every
+time the head turns.
+
+**That axis is minus the THIRD column, not the second.** A Blender bone points
+down its own +Y, and `blender_export.py`'s `AXIS_CONVERSION` maps Blender
+(x, y, z) to engine (x, z, -y) by conjugation, so +Y arrives here as -Z. The
+tool had been drawing leaf-bone stubs along the second column since phase A —
+sideways, and never noticed, because a stub pointing the wrong way still looks
+like a stub. `assets::bone_direction` is now the one spelling.
+`hitbox_rig_test --dump` prints all three columns per bone, which is how it was
+caught: every bone's -Z column points at its child's head.
+
+**Derive to seed, author to keep.** The tool is the only place a size is derived
+(90th percentile of distance from the axis for the round shapes, and of the
+projection onto each of the volume's own axes for a box, over the vertices a
+span's bones dominate — end bone excluded so an elbow is not derived twice),
+because derivation needs the mesh and the server has none. The table shows both
+columns with a fill button between them; Save writes the file. A derived size is
+never silently adopted.
+
+## The audit found two things, and neither is a code bug
+
+Both are printed by `hitbox_rig_test` and shown live in the tool, and both are
+recorded as loose ends in `animation_def.md` rather than fixed here:
+
+- **`downward_holding_gun` leaves the movement hull.** It bends the spine until
+  the head volume sits at chest height, 20 units in front — 9.1 outside, against
+  §4's budget of 6. `upward` had the same problem and is now at 4.6.
+- **The hands were outside every volume** — 296 of 1216 vertices, because §4's
+  volume list stops at the wrist and hands are where the polygons are. Authoring
+  two offset hand spheres took coverage to 12 uncovered vertices, all toes. That
+  round trip, from a readout to a fix in the same session, is the tool working.
+
+**The tests report these rather than enforcing them.** A per-pose excursion
+ceiling would be a test about content that is actively being re-authored, and it
+would go red on an improvement as readily as on a regression. What the test does
+assert is the shape of the answer: that every volume resolves, that an authored
+radius has not drifted into a different order of magnitude from its derived one,
+and that nothing lands 40 units off a 32-wide player — which is a broken matrix,
+not a lean.
+
+**Still open:** `hitscan.cpp` resolves regions against `player_hitboxes`'s three
+static boxes. The capsules pose correctly and the server already links
+`game_shared`; wiring them up is the next step and needs no new data.
+
+---
+
+# THE HOUSE FIXED-SIZE ARRAYS  ✅ DONE (2026-08-11)
+
+`todo.md` items A (`rows_in_enum_order`) and B (`Enum_Array`) landed together,
+because A turned out to be the thing that makes B safe rather than a piece of
+duplication B would absorb.
+
+## What shipped
+
+`src/shared/array.hpp` — three things, no dynamic array:
+
+- `Array<T, N>` — aggregate over `T data[N]`. `uint32_t` size and index, so it
+  no longer needs a cast to meet `Span`. Implicit `operator Span<T>` /
+  `operator Span<const T>`, because `Span`'s container constructor requires
+  `data()` as a CALL and here `data` is a member variable.
+- `Enum_Array<Enum_T, Value_T>` — length from `enum_traits<Enum_T>::count`,
+  indexed by the enum. `operator[]` unchecked for a key your own code produced,
+  `try_get` returning a pointer for one off the wire.
+- `rows_in_enum_order<&row_t::key>(table)` — the order check, for a
+  `static_assert`.
+
+`def_gen` emits `enum_traits<E>` at global scope after each generated
+namespace closes, for every enum in both `.def` families. Entity enums also
+carry `type` (the `enum_type` reflection id), which is the first compile-time
+link between a C++ enum type and its runtime tag — that was previously written
+by eye with nothing checking it. Cvar enums get `count` alone; that family has
+no reflection enum. `SCHEMA_HASH` is computed from parsed `.def` content, not
+emitted text, so none of this touched the wire handshake.
+
+Converted: `WEAPON_DEFINITIONS` (`shared/weapons.hpp`) and `WEAPON_FIRE_SOUNDS`
+(`client/weapon_fire_audio.cpp`), whose hand-rolled `fire_sound_for` range check
+became `try_get`. New test `array_test` (22nd in `GAME_TESTS`, links nothing —
+almost all of it is `static_assert`).
+
+## Why no POD/class split
+
+Considered and rejected. That distinction earns its keep in a DYNAMIC array,
+where growth forces a `memcpy`-vs-move choice. A fixed-size array never
+reallocates, so there is nothing to specialize on: a bare aggregate is trivially
+copyable exactly when `T` is, and the compiler makes the call. It is also what
+lets one sit inside an entity struct without breaking the blittable /
+memcmp-diffable contract — a variant with hand-written copy semantics would be
+the one shape that quietly breaks `capture_field_changes`.
+
+## The part most likely to matter again
+
+**`Enum_Array` fixes the LENGTH of the storage, not that you filled it.** A
+short initializer value-initializes the tail, like any aggregate. So adding a
+value to a `.def` enum does not fail the build at every table over it — the
+table grows a zeroed row, which is precisely the silence the old
+`std::to_array` "deduce the size from the rows, then compare against `_COUNT`"
+spelling existed to prevent.
+
+That is why A survives. `rows_in_enum_order` catches BOTH failures, because a
+zeroed tail row reads as enum value 0 and so is not at its own index:
+
+- reorder — swap two rows, every lookup returns a neighbour's data;
+- short list — the new enum value arrives as a zeroed row.
+
+So an enum-indexed table of hand-written DATA is not finished without the
+`static_assert`, and its row type needs a member naming its own enum value in
+order to have one. Runtime STORAGE (caches, handle arrays) has no key member,
+wants the zero-fill, and needs none of this. `array_test` pins the short-list
+behaviour so it stays a known property rather than a rediscovery.
+
+Verified the way the 2026-08-05 hand-rolled version was: swapped two rows in
+`WEAPON_DEFINITIONS` and watched the build fail with the assert's own message.
+
+## Two things in item B's write-up that did not survive contact
+
+- **B's third conversion target does not exist.** `trigger_action_list.hpp` and
+  its X-macro were deleted at some earlier point. `Trigger_Action` in
+  `entities.def` is now the only list and `fire_trigger_action`'s exhaustive
+  switch is the obligation; the stale "Values mirror TRIGGER_ACTION_LIST"
+  comment in the `.def` is fixed.
+- **`find` is spelled `try_get`.** A nullable-pointer return is a failure
+  channel, and the `try_` convention is total.
+
+## Follow-up: the aim poses (same day)
+
+`aim_pose_clips_t` was the first real conversion outside the `Weapon` tables,
+and the first HAND-WRITTEN enum to specialize `enum_traits`. `animation.hpp`
+closes `namespace assets` around the one specialization and reopens it, since
+`enum_traits` is at global scope.
+
+- `aim_pose_clips_t` is now a **type alias** for
+  `Enum_Array<aim_pose_t, const animation_clip_t*>`. That is all it ever was: an
+  array plus the two enum-indexing operators.
+- `aim_poses_blend_weights_t::weights` and `aim_pose_set_t::poses` became
+  `Enum_Array`s, so every `weights[(uint32_t)aim_pose_t::Forward]` lost its cast.
+- `AIM_POSE_PATHS` in both `model_format_test` and `hitbox_rig_test` is keyed by
+  the pose, which ties the fixture list to the enum's count.
+- **`AIM_POSE_PREFIXES` is gone.** It was a second table of "forward", "upward",
+  … carrying a comment asking it not to drift from the enum; `to_string` already
+  returns exactly those strings, so `load_aim_pose_set` builds the filename from
+  it and there is one list again.
+
+**`assets::aim_pose_t` is gone; the enum is `entities::Aim_Pose` in
+`entities.def`.** The intermediate step kept the hand-written enum and its
+`Count` sentinel, on the reasoning that a hand-written enum has no other source
+for its size — drop the sentinel and `AIM_POSE_COUNT` becomes a hand-maintained
+`5`, and since it sizes every `Enum_Array` over the enum, a sixth pose arrives as
+a zeroed row. Moving the declaration into the `.def` dissolves that instead of
+trading against it: the generator emits `Aim_Pose_COUNT`, the `enum_traits`
+specialization, `to_string` and `try_from_string`, so both the sentinel and the
+hand-written `to_string` switch in `animation.cpp` were deleted.
+
+Worth knowing about this move:
+
+- **No entity field has this type and no id rides the wire.** It is in the `.def`
+  purely for what the generator emits around an enum. That is a use of the file
+  the existing entries did not have — every other enum there replaced a string or
+  int on an entity field — so it is a precedent, not an instance of one.
+- **It changes `SCHEMA_HASH`**, so builds either side of it refuse each other at
+  connect. Bounded and deliberate (an enum only changes when someone edits the
+  `.def`), unlike the scanned-directory manifest problem that keeps sounds out of
+  the hash — see todo.md item C.
+- **`entities::to_string` returns the `.def` spelling, `"Forward"`, but the
+  exporter writes `forward_holding_gun.animation`.** So `load_aim_pose_set` now
+  lowercases it in `filename_prefix_of`. That is a DERIVATION where
+  `AIM_POSE_PREFIXES` was a second list; a transformation cannot drift. No test
+  covers `load_aim_pose_set` (it is client-side), so the five derived paths were
+  checked against the files on disk by hand.
+- `animation.hpp` now includes `entities/generated/entities_generated.hpp`. No
+  cycle: the generated header pulls in `array.hpp`, `linalg.hpp`, `span.hpp` and
+  `network_types.hpp`, none of which reach animation.
+- The unqualified `to_string(pose)` calls in `animation_tool.cpp` kept working
+  untouched — ADL follows the argument type from `assets` to `entities`.
+
+**This is what made `Array`/`Enum_Array` default to zeroed.** `aim_pose_clips_t`
+was a struct with `= {}` on its member, so `aim_pose_clips_t clips;` gave five
+nulls, and `sample_aim_pose`'s missing-extreme path depends on that. A bare
+aggregate would have made those four call sites indeterminate. Both house types
+now carry a `= {}` default member initializer: still aggregates, still trivially
+copyable, and an explicit initializer replaces it so a constexpr table pays
+nothing.
+
+## Scope deliberately not taken
+
+Runtime-storage sites — `mesh_handles` / `sprite_handles` (`shared/asset.hpp`),
+the reflection caches in `entities/entity_reflection.cpp`,
+`Entity_System::pools` — were left as raw arrays sized by `_COUNT`. Converting
+them is churn: they are indexed by keys the code produced, they want zero-fill,
+and there is no key column to check. Existing `std::array` uses that are not
+enum-indexed (`snapshot_history`, the input tables, `player_slots`) were left
+alone too; prefer the house types in new code rather than sweeping old ones.
 
 ---
 

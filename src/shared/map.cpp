@@ -1014,10 +1014,10 @@ std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const entiti
   return compute_face_polygons(t);
 }
 
-bool parse_map_from_string(const std::string &content, map_t &out_map)
+map_t parse_map_from_string(const std::string &content)
 {
   const std::vector<map_block_t> blocks = parse_map_content(content);
-  out_map = {}; // Clear
+  map_t out_map;
 
   // "_uid" is written by both regimes; absent (a hand-authored map) means
   // auto-assign. Returns 0 for "not present".
@@ -1122,28 +1122,24 @@ bool parse_map_from_string(const std::string &content, map_t &out_map)
       out_map.add_entity(new_entity);
   }
 
-  return true;
+  return out_map;
 }
 
-bool load_map(const std::string &filename, map_t &out_map)
+std::optional<map_t> try_load_map(const std::string &filename)
 {
   std::ifstream in(filename);
   if (!in.is_open())
-  {
-    return false;
-  }
+    return std::nullopt;
 
   std::stringstream buffer;
   buffer << in.rdbuf();
   std::string content = buffer.str();
   in.close();
 
-  if (!parse_map_from_string(content, out_map))
-    return false;
+  map_t map = parse_map_from_string(content);
+  load_navmesh(filename, map.navmesh);
 
-  load_navmesh(filename, out_map.navmesh);
-
-  return true;
+  return map;
 }
 
 std::string serialize_map_to_string(const map_t &map)

@@ -117,8 +117,6 @@ game_shared_src = [
   'src/shared/timed_function.hpp',
   'src/shared/detached_console.hpp',
   'src/shared/replay_system.hpp',
-  'src/shared/old_ideas/ecs.hpp',
-  'src/shared/snapshot_system.hpp',
   'src/shared/task_system.hpp',
   'src/shared/task_system.cpp',
   'src/shared/entities/player_entity.cpp',
@@ -246,13 +244,6 @@ executable('log_test',
   dependencies : [game_shared_dep],
   include_directories : include_directories('src')
 )
-
-executable('ecs_test',
-  'src/test/ecs_test.cpp',
-  dependencies : [game_shared_dep],
-  include_directories : include_directories('src')
-)
-
 
 executable('camera_test',
   'src/test/camera_test.cpp',

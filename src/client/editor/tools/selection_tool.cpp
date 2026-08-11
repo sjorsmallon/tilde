@@ -518,7 +518,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   auto draw_bounds_highlight = [&](shared::entity_uid_t uid, color_t color)
   {
     const shared::aabb_bounds_t bounds = shared::compute_object_bounds(*ctx.map, uid);
-    renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
+    renderer.draw_wire_aabb((bounds.min + bounds.max) * 0.5f,
                            (bounds.max - bounds.min) * 0.5f, color);
   };
 
@@ -595,7 +595,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
     linalg::vec3 half_extents = {editor::GRID_INDICATOR_HALF_W,
                                   editor::GRID_INDICATOR_HALF_H,
                                   editor::GRID_INDICATOR_HALF_W};
-    renderer.draw_wire_box(center, half_extents, with_alpha(colors::white, 0x88));
+    renderer.draw_wire_aabb(center, half_extents, with_alpha(colors::white, 0x88));
   }
 
   // 5. Draw Gizmo

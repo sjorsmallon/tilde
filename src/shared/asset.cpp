@@ -1,6 +1,7 @@
 #include "asset.hpp"
 
 #include "log.hpp"
+#include "model_format.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -142,9 +143,9 @@ obj_index_t parse_face_vertex(const char *token)
 }
 
 // Parse a .mtl file and return materials keyed by name.
-std::unordered_map<std::string, obj_material_t> load_mtl(const char *path)
+std::unordered_map<std::string, material_t> load_mtl(const char *path)
 {
-  std::unordered_map<std::string, obj_material_t> materials;
+  std::unordered_map<std::string, material_t> materials;
   std::ifstream file(path);
   if (!file.is_open())
   {
@@ -156,7 +157,7 @@ std::unordered_map<std::string, obj_material_t> load_mtl(const char *path)
     return materials;
   }
 
-  obj_material_t *current = nullptr;
+  material_t *current = nullptr;
   std::string line;
   while (std::getline(file, line))
   {
@@ -208,7 +209,7 @@ bool load_obj(const char *path, mesh_asset_t &out)
   std::vector<vec2f> uvs;
 
   std::unordered_map<obj_index_t, uint32_t, obj_index_hash> vertex_cache;
-  std::unordered_map<std::string, obj_material_t> mtl_lib;
+  std::unordered_map<std::string, material_t> mtl_lib;
 
   // Track current material and submesh building
   int current_material = -1; // index into out.materials
@@ -267,7 +268,7 @@ bool load_obj(const char *path, mesh_asset_t &out)
       if (current_material < 0)
       {
         // Add new material from mtl_lib or default
-        obj_material_t mat;
+        material_t mat;
         auto it = mtl_lib.find(mat_name);
         if (it != mtl_lib.end())
         {
@@ -763,12 +764,38 @@ mesh_asset_t generate_wedge_mesh()
 
 // --- Path resolution ---
 
+static bool path_has_extension(const std::string &path, const char *extension)
+{
+  size_t length = strlen(extension);
+  return path.size() >= length && path.compare(path.size() - length, length, extension) == 0;
+}
+
 // Resolves a raw mesh path to an actual file on disk.
 // Handles missing "resources/obj/" prefix and missing ".obj" extension.
 // Returns the resolved path, or empty string if no candidate was found.
 static std::string resolve_mesh_path(const char *raw)
 {
   std::string s = raw;
+
+  // A .mesh lives in resources/models and is a different format entirely, so it
+  // gets its own candidates rather than being run through the OBJ ones -- an
+  // "almost resolved" .mesh would land in load_obj and parse as an empty mesh.
+  if (path_has_extension(s, ".mesh"))
+  {
+    std::string models_relative = "resources/models/" + s;
+    if (std::filesystem::exists(s))
+      return s;
+    if (std::filesystem::exists(models_relative))
+    {
+      printf("[assets] Resolved mesh '%s' -> '%s'\n", raw, models_relative.c_str());
+      return models_relative;
+    }
+
+    printf("[assets] ERROR: Cannot find mesh file for '%s'. Tried:\n", raw);
+    printf("[assets]   '%s'\n", s.c_str());
+    printf("[assets]   '%s'\n", models_relative.c_str());
+    return {};
+  }
 
   // Strip trailing .obj to get the stem, so we can try combinations.
   std::string stem = s;
@@ -825,6 +852,185 @@ static std::string resolve_mesh_path(const char *raw)
 
 // --- Public API ---
 
+namespace
+{
+
+// The cache key is CANONICAL, not as-spelled. A skeleton reached two ways --
+// "resources/models/rig.skeleton" from a call site and
+// "resources/models\rig.skeleton" from the sibling lookup in load_skinned_mesh
+// -- would otherwise land in the pool twice, and two copies means two handles
+// means bone 7 is no longer one bone. That is the exact failure sharing the pool
+// exists to prevent, so it is fixed here rather than by asking every caller to
+// spell paths the same way.
+std::string canonical_cache_key(const char *path)
+{
+  std::error_code       error_code;
+  std::filesystem::path canonical = std::filesystem::weakly_canonical(path, error_code);
+  return error_code ? std::filesystem::path(path).lexically_normal().generic_string()
+                    : canonical.generic_string();
+}
+
+} // namespace
+
+asset_handle_t<skeleton_t> load_skeleton(const char *path)
+{
+  asset_state_t *state = state_for("load_skeleton");
+  if (!state)
+    return {};
+
+  std::string key = canonical_cache_key(path);
+
+  asset_handle_t<skeleton_t> existing = state->skeletons.find(key.c_str());
+  if (existing.valid())
+    return existing;
+
+  skeleton_t skeleton;
+  if (!models::parse_skeleton_file(path, skeleton))
+    return {};
+
+  printf("[assets] Loaded skeleton '%s': %zu bones, hash %016llx\n", path,
+         skeleton.bones.size(), (unsigned long long)skeleton.hash);
+  return state->skeletons.add(key.c_str(), std::move(skeleton));
+}
+
+asset_handle_t<animation_clip_t> load_animation(const char *path)
+{
+  asset_state_t *state = state_for("load_animation");
+  if (!state)
+    return {};
+
+  std::string key = canonical_cache_key(path);
+
+  asset_handle_t<animation_clip_t> existing = state->animations.find(key.c_str());
+  if (existing.valid())
+    return existing;
+
+  animation_clip_t clip;
+  if (!models::parse_animation_file(path, clip))
+    return {};
+
+  // Same sibling-by-bare-name rule as a `.mesh`, and the same reason to check:
+  // the clip's bone index IS the skeleton's, so a clip played against the wrong
+  // skeleton revision does not fail, it animates the wrong limbs.
+  std::filesystem::path skeleton_path =
+      std::filesystem::path(path).parent_path() / (clip.skeleton_name + ".skeleton");
+
+  asset_handle_t<skeleton_t> skeleton_handle = load_skeleton(skeleton_path.string().c_str());
+  const skeleton_t          *skeleton        = get(skeleton_handle);
+  if (!skeleton)
+  {
+    log_error("animation '{}' names skeleton '{}', which did not load from '{}'", path,
+              clip.skeleton_name, skeleton_path.string());
+    return {};
+  }
+
+  if (skeleton->hash != clip.skeleton_hash)
+  {
+    log_error("animation '{}' was authored against skeleton hash {:016x}, but '{}' hashes to "
+              "{:016x}; re-export the clip, or the two disagree about which bone is bone 7",
+              path, clip.skeleton_hash, skeleton_path.string(), skeleton->hash);
+    return {};
+  }
+
+  // The parser bounds the bone count by MAX_BONES; the real bound is this
+  // skeleton's, and a clip that poses a different number of bones cannot be
+  // walked against it at all.
+  if (clip.bone_count != skeleton->bones.size())
+  {
+    log_error("animation '{}' poses {} bones but skeleton '{}' has {}", path, clip.bone_count,
+              clip.skeleton_name, skeleton->bones.size());
+    return {};
+  }
+
+  printf("[assets] Loaded animation '%s': %u frame(s) over %u bones, skeleton '%s'\n", path,
+         clip.frame_count(), clip.bone_count, clip.skeleton_name.c_str());
+  return state->animations.add(key.c_str(), std::move(clip));
+}
+
+namespace
+{
+
+// Loads a `.mesh`, resolves the skeleton it names, and refuses the pair if they
+// disagree. The mesh names its skeleton by BARE NAME and the file sits beside
+// it, which is the whole resolution rule -- a skeleton is shared by the meshes
+// bound to it, so it is a sibling, not a path a level author types.
+bool load_skinned_mesh(const char *path, mesh_asset_t &out)
+{
+  models::skeleton_reference_t reference;
+  if (!models::parse_mesh_file(path, out, reference))
+    return false;
+
+  if (reference.skeleton_name.empty())
+    return true; // static .mesh: no skin, nothing to agree with
+
+  std::filesystem::path skeleton_path =
+      std::filesystem::path(path).parent_path() / (reference.skeleton_name + ".skeleton");
+
+  asset_handle_t<skeleton_t> skeleton_handle = load_skeleton(skeleton_path.string().c_str());
+  const skeleton_t          *skeleton        = get(skeleton_handle);
+  if (!skeleton)
+  {
+    log_error("mesh '{}' names skeleton '{}', which did not load from '{}'", path,
+              reference.skeleton_name, skeleton_path.string());
+    return false;
+  }
+
+  // Same shape as the SCHEMA_HASH connect handshake: report BOTH, because the
+  // question is always "which of these two is stale".
+  if (skeleton->hash != reference.skeleton_hash)
+  {
+    log_error("mesh '{}' was skinned against skeleton hash {:016x}, but '{}' hashes to {:016x}; "
+              "re-export the mesh, or the two disagree about which bone is bone 7",
+              path, reference.skeleton_hash, skeleton_path.string(), skeleton->hash);
+    return false;
+  }
+
+  // The parser can only bound bone indices by MAX_BONES; the real bound is this
+  // skeleton's bone count, and it is only knowable here.
+  size_t bone_count = skeleton->bones.size();
+  for (size_t vertex_index = 0; vertex_index < out.skin.size(); ++vertex_index)
+  {
+    const vertex_skin_t &influences = out.skin[vertex_index];
+    for (uint32_t slot = 0; slot < MAX_BONE_INFLUENCES_PER_VERTEX; ++slot)
+    {
+      if (influences.bone_indices[slot] >= bone_count)
+      {
+        log_error("mesh '{}' vertex {} names bone {}, but skeleton '{}' has {} bones", path,
+                  vertex_index, influences.bone_indices[slot], reference.skeleton_name,
+                  bone_count);
+        return false;
+      }
+    }
+  }
+
+  out.skeleton = skeleton_handle;
+  return true;
+}
+
+// material_t::texture_path is the on-disk identity written by the exporter;
+// material_t::texture is what the renderer binds. This is the one place the
+// first becomes the second, so a texture is loaded once per mesh load rather
+// than looked up per draw.
+//
+// A material that names no texture is legitimate (a flat-colour material), so
+// it is silent. A material that names one that does not load is NOT -- that is
+// a broken asset, and it says so here rather than quietly drawing untextured.
+void resolve_material_textures(const char *mesh_path, mesh_asset_t &mesh)
+{
+  for (material_t &material : mesh.materials)
+  {
+    if (material.texture_path.empty())
+      continue;
+
+    material.texture = load_texture(material.texture_path.c_str());
+    if (!material.texture.valid())
+      log_error("mesh '{}' material '{}' names texture '{}', which failed to load", mesh_path,
+                material.name, material.texture_path);
+  }
+}
+
+} // namespace
+
 asset_handle_t<mesh_asset_t> load_mesh(const char *path)
 {
   asset_state_t *state = state_for("load_mesh");
@@ -846,14 +1052,22 @@ asset_handle_t<mesh_asset_t> load_mesh(const char *path)
     return existing;
 
   mesh_asset_t mesh;
-  if (!load_obj(resolved.c_str(), mesh))
+  if (path_has_extension(resolved, ".mesh"))
+  {
+    if (!load_skinned_mesh(resolved.c_str(), mesh))
+      return {};
+  }
+  else if (!load_obj(resolved.c_str(), mesh))
   {
     printf("[assets] ERROR: File exists but failed to parse OBJ: '%s'\n", resolved.c_str());
     return {};
   }
 
-  printf("[assets] Loaded mesh '%s': %zu verts, %zu indices\n",
-         resolved.c_str(), mesh.vertices.size(), mesh.indices.size());
+  resolve_material_textures(resolved.c_str(), mesh);
+
+  printf("[assets] Loaded mesh '%s': %zu verts, %zu indices%s\n",
+         resolved.c_str(), mesh.vertices.size(), mesh.indices.size(),
+         mesh.is_skinned() ? " (skinned)" : "");
   return state->meshes.add(resolved.c_str(), std::move(mesh));
 }
 
@@ -925,10 +1139,41 @@ asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path,
   return state->meshes.add(path, std::move(mesh));
 }
 
+asset_handle_t<texture_asset_t> find_texture_in_cache(const char *path)
+{
+  asset_state_t *state = state_for("find_texture_in_cache");
+  return state ? state->textures.find(path) : asset_handle_t<texture_asset_t>{};
+}
+
+asset_handle_t<texture_asset_t> register_dynamic_texture(const char *path,
+                                                         texture_asset_t &&texture)
+{
+  asset_state_t *state = state_for("register_dynamic_texture");
+  if (!state)
+    return {};
+
+  auto existing = state->textures.find(path);
+  if (existing.valid())
+    return existing;
+  return state->textures.add(path, std::move(texture));
+}
+
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle)
 {
   asset_state_t *state = state_for("get(texture)");
   return state ? state->textures.get(handle) : nullptr;
+}
+
+const animation_clip_t *get(asset_handle_t<animation_clip_t> handle)
+{
+  asset_state_t *state = state_for("get(animation)");
+  return state ? state->animations.get(handle) : nullptr;
+}
+
+const skeleton_t *get(asset_handle_t<skeleton_t> handle)
+{
+  asset_state_t *state = state_for("get(skeleton)");
+  return state ? state->skeletons.get(handle) : nullptr;
 }
 
 const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle)

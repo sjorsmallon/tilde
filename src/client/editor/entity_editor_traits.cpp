@@ -34,12 +34,12 @@ void draw_player_spawn_shape(overlay_renderer_t &renderer,
 {
   // `position` is the entity ORIGIN, which for a spawn is where the player's
   // FEET go -- the same convention as player_eye_height and the hitbox table.
-  // draw_wire_box takes a CENTER, so the hull is lifted half its height; it is
+  // draw_wire_aabb takes a CENTER, so the hull is lifted half its height; it is
   // not centered on the origin.
   const linalg::vec3 hull{shared::player_half_width,
                           shared::player_half_height,
                           shared::player_half_width};
-  renderer.draw_wire_box(position + linalg::vec3{0, shared::player_half_height, 0},
+  renderer.draw_wire_aabb(position + linalg::vec3{0, shared::player_half_height, 0},
                          hull, color);
 
   // Marker spike, drawn from the top of the hull upward so it stays visible
@@ -64,7 +64,7 @@ void draw_trigger_volume_shape(overlay_renderer_t &renderer,
                                const linalg::vec3 &position,
                                const linalg::vec3 &half_extents, color_t color)
 {
-  renderer.draw_wire_box(position, half_extents, color);
+  renderer.draw_wire_aabb(position, half_extents, color);
 }
 
 void draw_light_cross(overlay_renderer_t &renderer, const linalg::vec3 &position,
@@ -344,7 +344,7 @@ void draw_selection_highlight(const entities::Entity *e,
 
   // 3. Fallback: AABB bounds wireframe
   auto bounds = shared::compute_entity_bounds(e);
-  renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
+  renderer.draw_wire_aabb((bounds.min + bounds.max) * 0.5f,
                          (bounds.max - bounds.min) * 0.5f, color);
 
   renderer::set_line_depth_bias(-2.0f, -1.0f);
@@ -370,11 +370,11 @@ void draw_default_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
     }
   }
 
-  // Fallback: wire box. draw_wire_box takes a CENTER, which is the origin only
+  // Fallback: wire box. draw_wire_aabb takes a CENTER, which is the origin only
   // for centered-origin types -- a feet-origin one sits half a hull lower.
   const linalg::vec3 half_extents = get_placement_half_extents(e);
   const float lift = half_extents.y - get_placement_origin_height(e);
-  renderer.draw_wire_box(origin + linalg::vec3{0, lift, 0}, half_extents,
+  renderer.draw_wire_aabb(origin + linalg::vec3{0, lift, 0}, half_extents,
                          colors::yellow);
 }
 

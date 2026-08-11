@@ -34,6 +34,8 @@ void on_land(client_context_t &context,
              const shared::effect_data_t &data);
 void on_bullet_impact(client_context_t &context,
                       const shared::effect_data_t &data);
+void on_flesh_impact(client_context_t &context,
+                     const shared::effect_data_t &data);
 }
 
 void register_effect_handler(shared::effect_type_t type,
@@ -71,6 +73,8 @@ void register_all_effect_handlers()
   register_effect_handler(shared::effect_type_t::LAND, &effects::on_land);
   register_effect_handler(shared::effect_type_t::BULLET_IMPACT,
                           &effects::on_bullet_impact);
+  register_effect_handler(shared::effect_type_t::FLESH_IMPACT,
+                          &effects::on_flesh_impact);
 }
 
 void dispatch_received_effects(client_context_t &context,

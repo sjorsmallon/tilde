@@ -11,6 +11,7 @@
 
 #include <format>
 #include <string>
+#include <optional>
 
 namespace cvars
 {
@@ -39,19 +40,13 @@ void bad_argument(std::string* out_reply, command_id id, const char* parameter,
 
 // The same closed set as a bool cvar write: unrecognised text is a
 // rejection, never false.
-bool parse_bool_token(std::string_view text, bool* out_value)
+std::optional<bool> try_parse_bool_token(std::string_view text)
 {
   if (text == "1" || text == "true" || text == "yes" || text == "on")
-  {
-    *out_value = true;
     return true;
-  }
   if (text == "0" || text == "false" || text == "no" || text == "off")
-  {
-    *out_value = false;
-    return true;
-  }
-  return false;
+    return false;
+  return std::nullopt;
 }
 
 // spawn_bot [mode: idle|chase|regular]
@@ -67,11 +62,13 @@ bool invoke_spawn_bot(Span<std::string_view> args, const command_context_t& cont
   Bot_Mode mode = Bot_Mode::idle;
   if (args.size() > 0u)
   {
-    if (!from_string(args[0], &mode))
+    const std::optional<Bot_Mode> parsed_mode = try_from_string<Bot_Mode>(args[0]);
+    if (!parsed_mode)
     {
       bad_argument(out_reply, command_id::spawn_bot, "mode", args[0]);
       return false;
     }
+    mode = *parsed_mode;
   }
 
   commands::spawn_bot(mode, context);
@@ -135,11 +132,13 @@ bool invoke_noclip(Span<std::string_view> args, const command_context_t& context
   bool enabled = false;
   if (args.size() > 0u)
   {
-    if (!parse_bool_token(args[0], &enabled))
+    const std::optional<bool> parsed_enabled = try_parse_bool_token(args[0]);
+    if (!parsed_enabled)
     {
       bad_argument(out_reply, command_id::noclip, "enabled", args[0]);
       return false;
     }
+    enabled = *parsed_enabled;
   }
 
   commands::noclip(enabled, context);

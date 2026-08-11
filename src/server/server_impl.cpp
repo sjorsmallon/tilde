@@ -314,12 +314,15 @@ static bool load_map_into_state(const std::string &map_path)
   }
 
   log_terminal("Loading map '{}'...", map_path);
-  if (!shared::load_map(map_path, ctx.current_map))
+  std::optional<shared::map_t> loaded = shared::try_load_map(map_path);
+  if (!loaded)
   {
     log_error("Failed to load map '{}'. Session is empty.", map_path);
     return false;
   }
-  shared::map_t &server_map = ctx.current_map;
+
+  ctx.current_map              = std::move(*loaded);
+  shared::map_t &server_map    = ctx.current_map;
 
   shared::init_session_from_map(ctx.session, server_map);
   ctx.session.map_name = server_map.name;
@@ -456,18 +459,8 @@ static shared::entity_uid_t spawn_player_for_slot(int slot)
                slot, player->entity_id, player->position.x,
                player->position.y, player->position.z);
 
-  // Coarse whole-body capsule, sized to the movement hull. It is NOT what
-  // hitscan resolves against -- that is the per-region table in
-  // `player_hitboxes.hpp`. This one exists so rockets and overlap queries have
-  // something cheap to find the player with.
-  // x/z = radius, y = CYLINDER half-height -- the same convention Jolt's
-  // CapsuleShape and the debug renderer both use (caps sit at +/- y and add
-  // radius beyond), so all three read these bytes the same way.
-  player->hitbox.shape  = entities::Shape_Kind::Capsule;
-  player->hitbox.size   = {shared::player_capsule_radius,
-                           shared::player_capsule_cylinder_half_height,
-                           shared::player_capsule_radius};
-  player->hitbox.offset = {0.f, shared::player_capsule_center_offset, 0.f};
+  // Hitbox and model: the same for every player, human or bot.
+  initialize_player_body(*player);
 
   // Kinematic Jolt body so rockets and overlap queries can find this player.
   if (ctx.physics)
@@ -1054,6 +1047,25 @@ bool Tick()
           info.source_position = eye;
           info.was_headshot    = was_headshot;
           inflict_damage(ctx, info);
+
+          // The wet thud, for everyone, at the VICTIM. Dispatched here rather
+          // than inside inflict_damage because this is the only place that
+          // knows where the shot landed -- damage_info_t carries the shooter's
+          // eye, not the impact point -- and because one rocket is N damage
+          // calls but should still be one noise.
+          shared::effect_data_t impact_fx{};
+          impact_fx.origin           = hit.impact_point;
+          impact_fx.normal           = hit.impact_normal;
+          impact_fx.attached_entity  = hit.hit_uid;
+          impact_fx.surface_material = static_cast<uint16_t>(hit.region);
+          dispatch_effect(ctx, shared::effect_type_t::FLESH_IMPACT, impact_fx);
+
+          // The hitmarker, for the shooter only, as replicated state. Their
+          // own client plays it off this stamp advancing -- see
+          // Player_Entity::last_hit_tick in entities.def for why it is not an
+          // effect.
+          player->last_hit_tick         = g_tick_number;
+          player->last_hit_was_headshot = was_headshot;
         }
         else if (world_blocked && weapon.kind != entities::Weapon_Kind::Melee)
         {

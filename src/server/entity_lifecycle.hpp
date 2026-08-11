@@ -1,10 +1,22 @@
 #pragma once
 
+#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/entity_uid.hpp"
 #include "server_context.hpp"
 
 namespace server
 {
+
+// What a Player_Entity IS, physically and visually. Called at spawn by BOTH
+// spawn_player_for_slot and spawn_bot, because **a bot IS a Player_Entity** --
+// one that was shaped or drawn differently from a human would make every aim
+// test a lie, and the hitbox half of this was already written out twice before
+// the render half gave it a second reason to drift.
+//
+// Does NOT touch position, orientation, slot or health: those differ per spawn
+// and are the caller's business. This is only the part that is the same for
+// every player in the game.
+void initialize_player_body(entities::Player_Entity &player);
 
 // Destroy a server-side entity: its Jolt body, its server-side side-table
 // entries, and finally the entity itself. Returns what

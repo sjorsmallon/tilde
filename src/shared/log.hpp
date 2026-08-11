@@ -5,6 +5,7 @@
 #include <source_location>
 #include <string>
 #include <string_view>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <type_traits>
@@ -88,6 +89,30 @@ void log_error_impl(const std::source_location &loc,
 #endif
 }
 
+// For failures with no recovery: a missing asset the game cannot run without, a
+// buffer the caller sized wrong. Logs like log_error and then aborts, so the
+// crash carries the reason instead of arriving as a bare access violation.
+//
+// Deliberately not assert(): this stays live in release, where a broken install
+// is exactly as unrecoverable as it is in a debug build.
+template <typename... Args>
+[[noreturn]] void fatal_error_impl(const std::source_location &loc,
+                                   std::format_string<Args...> fmt, Args &&...args)
+{
+  std::println(stderr, "\033[1;31m[FATAL] [{}:{}] {}\033[0m", loc.file_name(),
+               loc.line(), std::format(fmt, std::forward<Args>(args)...));
+
+#if HAS_STACKTRACE
+  std::println(stderr, "Stacktrace:\n{}",
+               std::to_string(std::stacktrace::current()));
+#else
+  std::println(stderr, "Stacktrace: (Not supported by this compiler/standard)");
+#endif
+
+  std::fflush(stderr);
+  std::abort();
+}
+
 template <typename... Args>
 void log_warning_impl(const std::source_location &loc,
                       std::format_string<Args...> fmt, Args &&...args)
@@ -109,4 +134,8 @@ void log_warning_impl(const std::source_location &loc,
 
 #define log_warning(fmt, ...)                                                  \
   ::logging::detail::log_warning_impl(std::source_location::current(), fmt,    \
+                                      ##__VA_ARGS__)
+
+#define fatal_error(fmt, ...)                                                  \
+  ::logging::detail::fatal_error_impl(std::source_location::current(), fmt,    \
                                       ##__VA_ARGS__)

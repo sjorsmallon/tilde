@@ -1,14 +1,19 @@
 // Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 #pragma once
 
+#include "array.hpp"
 #include "linalg.hpp"
 #include "network/network_types.hpp"
 #include "span.hpp"
 #include <cstdint>
+#include <optional>
+#include <string_view>
 #include <type_traits>
 
 namespace entities
 {
+
+template <typename T> std::optional<T> try_from_string(std::string_view text);
 
 // Missing is 0: an asset field that was never assigned resolves to the
 // placeholder, which is loudly wrong, rather than to whichever asset
@@ -18,18 +23,19 @@ enum class mesh_asset : uint16_t
   Missing = 0,
   Isosphere = 1,
   Pyramid = 2,
-  Box = 3,
-  Arrow = 4,
-  Sphere = 5,
-  Cylinder = 6,
-  Cone = 7,
-  Wedge = 8,
+  Leet_Full = 3,
+  Box = 4,
+  Arrow = 5,
+  Sphere = 6,
+  Cylinder = 7,
+  Cone = 8,
+  Wedge = 9,
 };
 
-constexpr uint32_t mesh_asset_COUNT = 9;
+constexpr uint32_t mesh_asset_COUNT = 10;
 
 const char* to_string(mesh_asset value);
-bool from_string(const char* text, mesh_asset* out_value);
+template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_view text);
 
 // Missing is 0: an asset field that was never assigned resolves to the
 // placeholder, which is loudly wrong, rather than to whichever asset
@@ -43,7 +49,7 @@ enum class sprite_asset : uint16_t
 constexpr uint32_t sprite_asset_COUNT = 2;
 
 const char* to_string(sprite_asset value);
-bool from_string(const char* text, sprite_asset* out_value);
+template <> std::optional<sprite_asset> try_from_string<sprite_asset>(std::string_view text);
 
 // Where an asset's bytes come from. This exists for the asset system's
 // init and for nothing else -- if you are reaching for it anywhere
@@ -93,7 +99,7 @@ enum class Light_Type : uint8_t
 constexpr uint32_t Light_Type_COUNT = 3;
 
 const char* to_string(Light_Type value);
-bool from_string(const char* text, Light_Type* out_value);
+template <> std::optional<Light_Type> try_from_string<Light_Type>(std::string_view text);
 
 enum class Spawn_Type : uint8_t
 {
@@ -104,7 +110,7 @@ enum class Spawn_Type : uint8_t
 constexpr uint32_t Spawn_Type_COUNT = 2;
 
 const char* to_string(Spawn_Type value);
-bool from_string(const char* text, Spawn_Type* out_value);
+template <> std::optional<Spawn_Type> try_from_string<Spawn_Type>(std::string_view text);
 
 enum class Team_Allegiance : uint8_t
 {
@@ -116,7 +122,7 @@ enum class Team_Allegiance : uint8_t
 constexpr uint32_t Team_Allegiance_COUNT = 3;
 
 const char* to_string(Team_Allegiance value);
-bool from_string(const char* text, Team_Allegiance* out_value);
+template <> std::optional<Team_Allegiance> try_from_string<Team_Allegiance>(std::string_view text);
 
 enum class Weapon : uint8_t
 {
@@ -128,7 +134,7 @@ enum class Weapon : uint8_t
 constexpr uint32_t Weapon_COUNT = 3;
 
 const char* to_string(Weapon value);
-bool from_string(const char* text, Weapon* out_value);
+template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
 
 enum class Weapon_Kind : uint8_t
 {
@@ -141,7 +147,7 @@ enum class Weapon_Kind : uint8_t
 constexpr uint32_t Weapon_Kind_COUNT = 4;
 
 const char* to_string(Weapon_Kind value);
-bool from_string(const char* text, Weapon_Kind* out_value);
+template <> std::optional<Weapon_Kind> try_from_string<Weapon_Kind>(std::string_view text);
 
 enum class Shader_Type : uint8_t
 {
@@ -152,7 +158,7 @@ enum class Shader_Type : uint8_t
 constexpr uint32_t Shader_Type_COUNT = 2;
 
 const char* to_string(Shader_Type value);
-bool from_string(const char* text, Shader_Type* out_value);
+template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_view text);
 
 enum class Shape_Kind : uint8_t
 {
@@ -164,7 +170,7 @@ enum class Shape_Kind : uint8_t
 constexpr uint32_t Shape_Kind_COUNT = 3;
 
 const char* to_string(Shape_Kind value);
-bool from_string(const char* text, Shape_Kind* out_value);
+template <> std::optional<Shape_Kind> try_from_string<Shape_Kind>(std::string_view text);
 
 enum class Trigger_Action : uint8_t
 {
@@ -177,7 +183,7 @@ enum class Trigger_Action : uint8_t
 constexpr uint32_t Trigger_Action_COUNT = 4;
 
 const char* to_string(Trigger_Action value);
-bool from_string(const char* text, Trigger_Action* out_value);
+template <> std::optional<Trigger_Action> try_from_string<Trigger_Action>(std::string_view text);
 
 enum class Fire_Mode : uint8_t
 {
@@ -188,7 +194,21 @@ enum class Fire_Mode : uint8_t
 constexpr uint32_t Fire_Mode_COUNT = 2;
 
 const char* to_string(Fire_Mode value);
-bool from_string(const char* text, Fire_Mode* out_value);
+template <> std::optional<Fire_Mode> try_from_string<Fire_Mode>(std::string_view text);
+
+enum class Aim_Pose : uint8_t
+{
+  Forward = 0,
+  Upward = 1,
+  Downward = 2,
+  Left = 3,
+  Right = 4,
+};
+
+constexpr uint32_t Aim_Pose_COUNT = 5;
+
+const char* to_string(Aim_Pose value);
+template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view text);
 
 enum class enum_type : uint16_t
 {
@@ -201,9 +221,10 @@ enum class enum_type : uint16_t
   Shape_Kind = 6,
   Trigger_Action = 7,
   Fire_Mode = 8,
+  Aim_Pose = 9,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 9;
+constexpr uint32_t ENUM_TYPE_COUNT = 10;
 
 struct enum_type_info_t
 {
@@ -307,6 +328,8 @@ struct Player_Entity : Entity
   Weapon active_weapon_id = Weapon::Knife;
   uint32_t last_fire_tick = {};
   Weapon last_fire_weapon = Weapon::Knife;
+  uint32_t last_hit_tick = {};
+  bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};
   linalg::vec3f velocity = {};
   Render render = {};
@@ -620,3 +643,72 @@ Span<const entity_type> placeable_entity_types();
 extern const uint32_t SCHEMA_HASH;
 
 } // namespace entities
+
+// --- Enum_Array support ---------------------------------------------
+//
+// Global scope on purpose: enum_traits is declared in shared/array.hpp,
+// which knows nothing about this namespace. `count` is what sizes an
+// Enum_Array<entities::Foo, T>, so adding a value to the .def resizes
+// every table over that enum. It does not fill the new row -- see
+// rows_in_enum_order in array.hpp for the check that catches that.
+
+template <> struct enum_traits<entities::Light_Type>
+{
+  static constexpr uint32_t count = entities::Light_Type_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Light_Type;
+};
+
+template <> struct enum_traits<entities::Spawn_Type>
+{
+  static constexpr uint32_t count = entities::Spawn_Type_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Spawn_Type;
+};
+
+template <> struct enum_traits<entities::Team_Allegiance>
+{
+  static constexpr uint32_t count = entities::Team_Allegiance_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Team_Allegiance;
+};
+
+template <> struct enum_traits<entities::Weapon>
+{
+  static constexpr uint32_t count = entities::Weapon_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Weapon;
+};
+
+template <> struct enum_traits<entities::Weapon_Kind>
+{
+  static constexpr uint32_t count = entities::Weapon_Kind_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Weapon_Kind;
+};
+
+template <> struct enum_traits<entities::Shader_Type>
+{
+  static constexpr uint32_t count = entities::Shader_Type_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Shader_Type;
+};
+
+template <> struct enum_traits<entities::Shape_Kind>
+{
+  static constexpr uint32_t count = entities::Shape_Kind_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Shape_Kind;
+};
+
+template <> struct enum_traits<entities::Trigger_Action>
+{
+  static constexpr uint32_t count = entities::Trigger_Action_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Trigger_Action;
+};
+
+template <> struct enum_traits<entities::Fire_Mode>
+{
+  static constexpr uint32_t count = entities::Fire_Mode_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Fire_Mode;
+};
+
+template <> struct enum_traits<entities::Aim_Pose>
+{
+  static constexpr uint32_t count = entities::Aim_Pose_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Aim_Pose;
+};
+

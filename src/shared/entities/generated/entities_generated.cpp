@@ -303,6 +303,24 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_id = 3},
+  {.name = "last_hit_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Player_Entity, last_hit_tick),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::last_hit_tick),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_id = NOT_AN_ENUM},
+  {.name = "last_hit_was_headshot",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Player_Entity, last_hit_was_headshot),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::last_hit_was_headshot),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_id = NOT_AN_ENUM},
   {.name = "client_slot_index",
    .type = FIELD_TYPE_I32,
    .offset = (uint32_t)offsetof(Player_Entity, client_slot_index),
@@ -1008,7 +1026,7 @@ Entity* as_base_Physics_Body_Entity(void* memory) { return static_cast<Entity*>(
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 15}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity, as_base_Player_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 17}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 6}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 12u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
@@ -1043,6 +1061,7 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"Missing", "resources/obj/error.obj", ASSET_SOURCE_FILE},
   {"Isosphere", "resources/obj/isosphere.obj", ASSET_SOURCE_FILE},
   {"Pyramid", "resources/obj/pyramid.obj", ASSET_SOURCE_FILE},
+  {"Leet_Full", "resources/models/Leet_Full.mesh", ASSET_SOURCE_FILE},
   {"Box", "box", ASSET_SOURCE_PROCEDURAL},
   {"Arrow", "arrow", ASSET_SOURCE_PROCEDURAL},
   {"Sphere", "sphere", ASSET_SOURCE_PROCEDURAL},
@@ -1109,6 +1128,14 @@ constexpr const char* Fire_Mode_VALUE_NAMES[] = {
   "Every_Tick",
 };
 
+constexpr const char* Aim_Pose_VALUE_NAMES[] = {
+  "Forward",
+  "Upward",
+  "Downward",
+  "Left",
+  "Right",
+};
+
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Light_Type", {Light_Type_VALUE_NAMES, 3}},
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
@@ -1119,6 +1146,7 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 3}},
   {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 4}},
   {"Fire_Mode", {Fire_Mode_VALUE_NAMES, 2}},
+  {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
 };
 
 } // namespace
@@ -1134,16 +1162,15 @@ const char* to_string(mesh_asset value)
   return mesh_asset_MANIFEST[(uint16_t)value].name;
 }
 
-bool from_string(const char* text, mesh_asset* out_value)
+template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_view text)
 {
   for (uint32_t index = 0; index < mesh_asset_COUNT; ++index)
   {
-    if (strcmp(mesh_asset_MANIFEST[index].name, text) != 0)
+    if (text != mesh_asset_MANIFEST[index].name)
       continue;
-    *out_value = (mesh_asset)index;
-    return true;
+    return (mesh_asset)index;
   }
-  return false;
+  return std::nullopt;
 }
 
 Span<const asset_info_t> sprite_asset_manifest()
@@ -1157,16 +1184,15 @@ const char* to_string(sprite_asset value)
   return sprite_asset_MANIFEST[(uint16_t)value].name;
 }
 
-bool from_string(const char* text, sprite_asset* out_value)
+template <> std::optional<sprite_asset> try_from_string<sprite_asset>(std::string_view text)
 {
   for (uint32_t index = 0; index < sprite_asset_COUNT; ++index)
   {
-    if (strcmp(sprite_asset_MANIFEST[index].name, text) != 0)
+    if (text != sprite_asset_MANIFEST[index].name)
       continue;
-    *out_value = (sprite_asset)index;
-    return true;
+    return (sprite_asset)index;
   }
-  return false;
+  return std::nullopt;
 }
 
 Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id)
@@ -1192,12 +1218,12 @@ const char* to_string(Light_Type value)
   return "";
 }
 
-bool from_string(const char* text, Light_Type* out_value)
+template <> std::optional<Light_Type> try_from_string<Light_Type>(std::string_view text)
 {
-  if (strcmp(text, "Point") == 0) { *out_value = Light_Type::Point; return true; }
-  if (strcmp(text, "Spot") == 0) { *out_value = Light_Type::Spot; return true; }
-  if (strcmp(text, "Directional") == 0) { *out_value = Light_Type::Directional; return true; }
-  return false;
+  if (text == "Point") return Light_Type::Point;
+  if (text == "Spot") return Light_Type::Spot;
+  if (text == "Directional") return Light_Type::Directional;
+  return std::nullopt;
 }
 
 const char* to_string(Spawn_Type value)
@@ -1211,11 +1237,11 @@ const char* to_string(Spawn_Type value)
   return "";
 }
 
-bool from_string(const char* text, Spawn_Type* out_value)
+template <> std::optional<Spawn_Type> try_from_string<Spawn_Type>(std::string_view text)
 {
-  if (strcmp(text, "Human") == 0) { *out_value = Spawn_Type::Human; return true; }
-  if (strcmp(text, "Bot") == 0) { *out_value = Spawn_Type::Bot; return true; }
-  return false;
+  if (text == "Human") return Spawn_Type::Human;
+  if (text == "Bot") return Spawn_Type::Bot;
+  return std::nullopt;
 }
 
 const char* to_string(Team_Allegiance value)
@@ -1230,12 +1256,12 @@ const char* to_string(Team_Allegiance value)
   return "";
 }
 
-bool from_string(const char* text, Team_Allegiance* out_value)
+template <> std::optional<Team_Allegiance> try_from_string<Team_Allegiance>(std::string_view text)
 {
-  if (strcmp(text, "Red") == 0) { *out_value = Team_Allegiance::Red; return true; }
-  if (strcmp(text, "Blu") == 0) { *out_value = Team_Allegiance::Blu; return true; }
-  if (strcmp(text, "Free_For_All") == 0) { *out_value = Team_Allegiance::Free_For_All; return true; }
-  return false;
+  if (text == "Red") return Team_Allegiance::Red;
+  if (text == "Blu") return Team_Allegiance::Blu;
+  if (text == "Free_For_All") return Team_Allegiance::Free_For_All;
+  return std::nullopt;
 }
 
 const char* to_string(Weapon value)
@@ -1250,12 +1276,12 @@ const char* to_string(Weapon value)
   return "";
 }
 
-bool from_string(const char* text, Weapon* out_value)
+template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
 {
-  if (strcmp(text, "Knife") == 0) { *out_value = Weapon::Knife; return true; }
-  if (strcmp(text, "Scout") == 0) { *out_value = Weapon::Scout; return true; }
-  if (strcmp(text, "Rocket_Launcher") == 0) { *out_value = Weapon::Rocket_Launcher; return true; }
-  return false;
+  if (text == "Knife") return Weapon::Knife;
+  if (text == "Scout") return Weapon::Scout;
+  if (text == "Rocket_Launcher") return Weapon::Rocket_Launcher;
+  return std::nullopt;
 }
 
 const char* to_string(Weapon_Kind value)
@@ -1271,13 +1297,13 @@ const char* to_string(Weapon_Kind value)
   return "";
 }
 
-bool from_string(const char* text, Weapon_Kind* out_value)
+template <> std::optional<Weapon_Kind> try_from_string<Weapon_Kind>(std::string_view text)
 {
-  if (strcmp(text, "Melee") == 0) { *out_value = Weapon_Kind::Melee; return true; }
-  if (strcmp(text, "Hitscan") == 0) { *out_value = Weapon_Kind::Hitscan; return true; }
-  if (strcmp(text, "Projectile") == 0) { *out_value = Weapon_Kind::Projectile; return true; }
-  if (strcmp(text, "Sniper") == 0) { *out_value = Weapon_Kind::Sniper; return true; }
-  return false;
+  if (text == "Melee") return Weapon_Kind::Melee;
+  if (text == "Hitscan") return Weapon_Kind::Hitscan;
+  if (text == "Projectile") return Weapon_Kind::Projectile;
+  if (text == "Sniper") return Weapon_Kind::Sniper;
+  return std::nullopt;
 }
 
 const char* to_string(Shader_Type value)
@@ -1291,11 +1317,11 @@ const char* to_string(Shader_Type value)
   return "";
 }
 
-bool from_string(const char* text, Shader_Type* out_value)
+template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_view text)
 {
-  if (strcmp(text, "Lit") == 0) { *out_value = Shader_Type::Lit; return true; }
-  if (strcmp(text, "Unlit") == 0) { *out_value = Shader_Type::Unlit; return true; }
-  return false;
+  if (text == "Lit") return Shader_Type::Lit;
+  if (text == "Unlit") return Shader_Type::Unlit;
+  return std::nullopt;
 }
 
 const char* to_string(Shape_Kind value)
@@ -1310,12 +1336,12 @@ const char* to_string(Shape_Kind value)
   return "";
 }
 
-bool from_string(const char* text, Shape_Kind* out_value)
+template <> std::optional<Shape_Kind> try_from_string<Shape_Kind>(std::string_view text)
 {
-  if (strcmp(text, "Sphere") == 0) { *out_value = Shape_Kind::Sphere; return true; }
-  if (strcmp(text, "Capsule") == 0) { *out_value = Shape_Kind::Capsule; return true; }
-  if (strcmp(text, "Box") == 0) { *out_value = Shape_Kind::Box; return true; }
-  return false;
+  if (text == "Sphere") return Shape_Kind::Sphere;
+  if (text == "Capsule") return Shape_Kind::Capsule;
+  if (text == "Box") return Shape_Kind::Box;
+  return std::nullopt;
 }
 
 const char* to_string(Trigger_Action value)
@@ -1331,13 +1357,13 @@ const char* to_string(Trigger_Action value)
   return "";
 }
 
-bool from_string(const char* text, Trigger_Action* out_value)
+template <> std::optional<Trigger_Action> try_from_string<Trigger_Action>(std::string_view text)
 {
-  if (strcmp(text, "Kill") == 0) { *out_value = Trigger_Action::Kill; return true; }
-  if (strcmp(text, "Set_Health") == 0) { *out_value = Trigger_Action::Set_Health; return true; }
-  if (strcmp(text, "Print_Message") == 0) { *out_value = Trigger_Action::Print_Message; return true; }
-  if (strcmp(text, "Warp_To_Spawn") == 0) { *out_value = Trigger_Action::Warp_To_Spawn; return true; }
-  return false;
+  if (text == "Kill") return Trigger_Action::Kill;
+  if (text == "Set_Health") return Trigger_Action::Set_Health;
+  if (text == "Print_Message") return Trigger_Action::Print_Message;
+  if (text == "Warp_To_Spawn") return Trigger_Action::Warp_To_Spawn;
+  return std::nullopt;
 }
 
 const char* to_string(Fire_Mode value)
@@ -1351,11 +1377,35 @@ const char* to_string(Fire_Mode value)
   return "";
 }
 
-bool from_string(const char* text, Fire_Mode* out_value)
+template <> std::optional<Fire_Mode> try_from_string<Fire_Mode>(std::string_view text)
 {
-  if (strcmp(text, "On_Enter") == 0) { *out_value = Fire_Mode::On_Enter; return true; }
-  if (strcmp(text, "Every_Tick") == 0) { *out_value = Fire_Mode::Every_Tick; return true; }
-  return false;
+  if (text == "On_Enter") return Fire_Mode::On_Enter;
+  if (text == "Every_Tick") return Fire_Mode::Every_Tick;
+  return std::nullopt;
+}
+
+const char* to_string(Aim_Pose value)
+{
+  switch (value)
+  {
+    case Aim_Pose::Forward: return "Forward";
+    case Aim_Pose::Upward: return "Upward";
+    case Aim_Pose::Downward: return "Downward";
+    case Aim_Pose::Left: return "Left";
+    case Aim_Pose::Right: return "Right";
+  }
+  assert(false && "invalid Aim_Pose");
+  return "";
+}
+
+template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view text)
+{
+  if (text == "Forward") return Aim_Pose::Forward;
+  if (text == "Upward") return Aim_Pose::Upward;
+  if (text == "Downward") return Aim_Pose::Downward;
+  if (text == "Left") return Aim_Pose::Left;
+  if (text == "Right") return Aim_Pose::Right;
+  return std::nullopt;
 }
 
 const enum_type_info_t& enum_info(enum_type type)
@@ -1449,6 +1499,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xbacb2378u;
+const uint32_t SCHEMA_HASH = 0x604b5da8u;
 
 } // namespace entities

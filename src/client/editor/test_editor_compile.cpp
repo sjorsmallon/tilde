@@ -12,7 +12,7 @@ struct MockRenderer : public client::overlay_renderer_t
                  color_t color) override
   {
   }
-  void draw_wire_box(const linalg::vec3 &center,
+  void draw_wire_aabb(const linalg::vec3 &center,
                      const linalg::vec3 &half_extents, color_t color) override
   {
   }
@@ -24,8 +24,8 @@ struct MockRenderer : public client::overlay_renderer_t
                    const linalg::vec3 &normal, color_t color) override
   {
   }
-  void draw_text(const linalg::vec3 &pos, const char *text,
-                 color_t color) override
+  void draw_text_in_world(const linalg::vec3 &pos, const char *text,
+                          color_t color) override
   {
   }
 };

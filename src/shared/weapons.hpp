@@ -1,9 +1,9 @@
 #pragma once
 
-#include <array>
 #include <cassert>
 #include <cstdint>
 
+#include "array.hpp"
 #include "entities/generated/entities_generated.hpp"
 
 namespace shared
@@ -38,7 +38,7 @@ struct weapon_definition_t
 
 // Indexed by entities::Weapon, so entry N is the weapon whose enum value is N
 // and the order here must track the .def's, not Weapon_Kind's.
-inline constexpr std::array WEAPON_DEFINITIONS = std::to_array<weapon_definition_t>({
+inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS = {{
     {.weapon               = entities::Weapon::Knife,
      .display_name          = "Knife",
      .damage                = 50.f,
@@ -60,39 +60,29 @@ inline constexpr std::array WEAPON_DEFINITIONS = std::to_array<weapon_definition
      .fire_interval_seconds = 1.0f,
      .range                 = 150.f,
      .kind                  = entities::Weapon_Kind::Projectile},
-});
+}};
 
-// The whole point of the generated _COUNT. The array's size is DEDUCED rather
-// than declared as Weapon_COUNT, because a std::array declared at the larger
-// size would accept a short initializer list and value-initialize the tail --
-// a new weapon would silently get 0 damage and a null display_name instead of
-// failing the build. Deduce, then compare: adding a value to the .def enum
-// breaks here, by name, until the row is written.
-static_assert(WEAPON_DEFINITIONS.size() == entities::Weapon_COUNT,
-              "WEAPON_DEFINITIONS is out of sync with the Weapon enum in entities.def: "
-              "every weapon needs exactly one row, in enum order.");
-
-// Size alone does not catch a REORDER, which is the failure that actually
-// looks fine: swap two rows, or insert a weapon in the middle of the .def
-// enum, and the count still matches while every lookup returns a neighbour's
-// stats. Each row names its own weapon, so this compares the list against
-// itself.
-static_assert(
-    []
-    {
-      for (size_t index = 0; index < WEAPON_DEFINITIONS.size(); ++index)
-        if (WEAPON_DEFINITIONS[index].weapon != static_cast<entities::Weapon>(index))
-          return false;
-      return true;
-    }(),
-    "WEAPON_DEFINITIONS rows are not in Weapon enum order: get_weapon_definition "
-    "indexes by enum value, so a row out of place returns another weapon's stats.");
+// The one check, and it has to carry both failures.
+//
+// Enum_Array sizes the storage from Weapon_COUNT, so the size can no longer
+// disagree -- but it does not fill it. Add a weapon to the .def and this
+// initializer is one row short, which value-initializes the tail rather than
+// failing: the new weapon gets 0 damage and a null display_name, exactly the
+// silence the old deduce-the-size-then-compare spelling was avoiding. And a
+// REORDER -- swap two rows, or insert a weapon in the middle -- keeps every
+// count right while every lookup returns a neighbour's stats.
+//
+// Each row names its own weapon, so both show up as a row that is not at its
+// own index (a zeroed tail row reads as Knife, which is not where it sits).
+static_assert(rows_in_enum_order<&weapon_definition_t::weapon>(WEAPON_DEFINITIONS),
+              "WEAPON_DEFINITIONS rows are not in Weapon enum order: get_weapon_definition "
+              "indexes by enum value, so a row out of place returns another weapon's stats.");
 
 constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 {
-  assert(static_cast<size_t>(id) < WEAPON_DEFINITIONS.size() &&
+  assert(static_cast<uint32_t>(id) < WEAPON_DEFINITIONS.size() &&
          "get_weapon_definition on an id with no table entry");
-  return WEAPON_DEFINITIONS[static_cast<size_t>(id)];
+  return WEAPON_DEFINITIONS[id];
 }
 
 } // namespace shared

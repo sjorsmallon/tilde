@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -238,15 +239,19 @@ spawn_entity(map_t &map, entities::entity_type type);
 std::string serialize_map_to_string(const map_t &map);
 
 // Parse canonical VMF-style text into a map_t (entities only; no navmesh).
-// Returns true on success, false on failure.
-bool parse_map_from_string(const std::string &content, map_t &out_map);
+// CANNOT FAIL, hence no `try_` and no optional: the block parser skips what it
+// does not recognise, so malformed text yields a map with fewer objects in it
+// rather than an error. An empty string parses to an empty map.
+map_t parse_map_from_string(const std::string &content);
 
 // Loads map from VMF-style text file (entities via parse_map_from_string, plus
-// the .navmesh sidecar next to it). Returns true on success, false on failure.
+// the .navmesh sidecar next to it). Empty means the file could not be opened —
+// a missing map is an ordinary cache miss here, not a broken install, which is
+// exactly why this one is fallible where the aim poses are fatal.
 // usage:
-//   shared::map_t map;
-//   if (shared::load_map("levels/start.map", map)) { ... }
-bool load_map(const std::string &filename, map_t &out_map);
+//   if (std::optional<shared::map_t> map = shared::try_load_map("levels/start.map"))
+//     ... use *map ...
+[[nodiscard]] std::optional<map_t> try_load_map(const std::string &filename);
 
 // Saves map to VMF-style text file (entities via serialize_map_to_string, plus
 // the .navmesh sidecar). Returns true on success, false on failure.

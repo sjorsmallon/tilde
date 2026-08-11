@@ -1,12 +1,11 @@
 #include "weapon_fire_audio.hpp"
 
+#include "../shared/array.hpp"
 #include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/log.hpp"
 #include "../shared/player_constants.hpp"
 #include "audio/audio_system.hpp"
 #include "client_context.hpp"
-
-#include <array>
 
 namespace client
 {
@@ -29,11 +28,12 @@ constexpr uint32_t max_fire_stamp_age_ticks = 12;
 // enumerator appears (-Wswitch, and nothing here is built -Werror) — it would
 // compile and fail at runtime instead.
 //
-// Each row NAMES its weapon, and the second static_assert checks that row i is
-// weapon i. Size alone is not enough: reordering the enum in entities.def, or
-// inserting a weapon in the middle, keeps the count right and silently hands
-// the knife the scout's sound. The name in the row is what makes that a build
-// error instead of a wrong noise.
+// Each row NAMES its weapon, and the static_assert below checks that row i is
+// weapon i. Enum_Array covers the count on its own; it cannot see a REORDER,
+// and reordering the enum in entities.def or inserting a weapon in the middle
+// keeps the count right while silently handing the knife the scout's sound.
+// The name in the row is what makes that a build error instead of a wrong
+// noise.
 //
 // When a second per-weapon client asset shows up — view model, deploy or
 // reload sound (knife_deploy1.wav and scout_clipin/clipout/bolt.wav are
@@ -45,49 +45,37 @@ struct weapon_fire_sound_t
   const char*      path;
 };
 
-constexpr std::array WEAPON_FIRE_SOUNDS = std::to_array<weapon_fire_sound_t>({
+constexpr Enum_Array<entities::Weapon, weapon_fire_sound_t> WEAPON_FIRE_SOUNDS = {{
     {entities::Weapon::Knife, "resources/sounds/knife_slash1.wav"},
     {entities::Weapon::Scout, "resources/sounds/scout_fire-1.wav"},
     // No launch sound on disk — rocket_explosion.wav is the detonation, not
     // the firing. play_3d logs the missing file once, which is the content gap
     // saying so out loud rather than silently playing nothing.
     {entities::Weapon::Rocket_Launcher, "resources/sounds/rocket_fire.wav"},
-});
+}};
 
-static_assert(WEAPON_FIRE_SOUNDS.size() == entities::Weapon_COUNT,
-              "WEAPON_FIRE_SOUNDS is out of sync with the Weapon enum in "
-              "entities.def: every weapon needs exactly one sound.");
-
-static_assert(
-    []
-    {
-      for (size_t index = 0; index < WEAPON_FIRE_SOUNDS.size(); ++index)
-        if (WEAPON_FIRE_SOUNDS[index].weapon != (entities::Weapon)index)
-          return false;
-      return true;
-    }(),
-    "WEAPON_FIRE_SOUNDS rows are not in Weapon enum order — the lookup indexes "
-    "by enum value, so a row out of place plays the wrong weapon's sound.");
+static_assert(rows_in_enum_order<&weapon_fire_sound_t::weapon>(WEAPON_FIRE_SOUNDS),
+              "WEAPON_FIRE_SOUNDS rows are not in Weapon enum order — the lookup indexes "
+              "by enum value, so a row out of place plays the wrong weapon's sound.");
 
 } // namespace
 
 const char *fire_sound_for(entities::Weapon weapon)
 {
-  // NOT redundant with the static_assert above, and this is the part the
-  // switch was quietly doing for us. Enum fields are deserialized with no
-  // range validation at all -- entity_serialization.cpp's FIELD_TYPE_ENUM
-  // memcpys the varint straight into the field -- so last_fire_weapon holds
-  // whatever arrived on the wire. Indexing on that unchecked is an
-  // out-of-bounds read driven by a network packet.
-  const size_t index = static_cast<size_t>(weapon);
-  if (index >= WEAPON_FIRE_SOUNDS.size())
+  // try_get rather than operator[], and this is the part the switch was quietly
+  // doing for us. Enum fields are deserialized with no range validation at all
+  // -- entity_serialization.cpp's FIELD_TYPE_ENUM memcpys the varint straight
+  // into the field -- so last_fire_weapon holds whatever arrived on the wire.
+  // Indexing on that unchecked is an out-of-bounds read driven by a packet.
+  const weapon_fire_sound_t* sound = WEAPON_FIRE_SOUNDS.try_get(weapon);
+  if (sound == nullptr)
   {
     log_error("fire_sound_for: weapon id {} is outside the Weapon enum "
               "(count {}) -- corrupt or hostile snapshot",
-              index, WEAPON_FIRE_SOUNDS.size());
+              (uint32_t)weapon, WEAPON_FIRE_SOUNDS.size());
     return nullptr;
   }
-  return WEAPON_FIRE_SOUNDS[index].path;
+  return sound->path;
 }
 
 void update_weapon_fire_audio(client_context_t &context)
@@ -98,7 +86,7 @@ void update_weapon_fire_audio(client_context_t &context)
     // player already in the world when we join arrives with a non-zero stamp
     // that reads as "just fired", and connecting sets off a volley.
     auto [entry, inserted] =
-        context.last_seen_fire_tick.try_emplace(player.entity_id,
+        context.snapshot_state.last_seen_fire_tick_per_player.try_emplace(player.entity_id,
                                                 player.last_fire_tick);
     if (inserted)
       continue;
@@ -113,9 +101,9 @@ void update_weapon_fire_audio(client_context_t &context)
 
     // Guard the subtraction as well as the age: a stamp ahead of the snapshot
     // tick would wrap and read as ancient.
-    if (player.last_fire_tick > context.latest_processed_tick)
+    if (player.last_fire_tick > context.snapshot_state.latest_processed_tick)
       continue;
-    if (context.latest_processed_tick - player.last_fire_tick >
+    if (context.snapshot_state.latest_processed_tick - player.last_fire_tick >
         max_fire_stamp_age_ticks)
       continue;
 
@@ -134,8 +122,8 @@ void update_weapon_fire_audio(client_context_t &context)
 
   // Drop players who left, or the map grows for the life of the session and a
   // slot's new occupant inherits the old one's stamp.
-  for (auto it = context.last_seen_fire_tick.begin();
-       it != context.last_seen_fire_tick.end();)
+  for (auto it = context.snapshot_state.last_seen_fire_tick_per_player.begin();
+       it != context.snapshot_state.last_seen_fire_tick_per_player.end();)
   {
     bool still_present = false;
     for (const auto &[slot_index, player] : context.latest_player_entities)
@@ -146,7 +134,7 @@ void update_weapon_fire_audio(client_context_t &context)
         break;
       }
     }
-    it = still_present ? std::next(it) : context.last_seen_fire_tick.erase(it);
+    it = still_present ? std::next(it) : context.snapshot_state.last_seen_fire_tick_per_player.erase(it);
   }
 }
 

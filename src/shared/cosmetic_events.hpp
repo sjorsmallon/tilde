@@ -22,6 +22,15 @@ enum class effect_type_t : uint16_t
   FOOTSTEP,
   JUMP,
   LAND,
+  // A shot that landed on a player. BULLET_IMPACT's missing twin: until this
+  // existed, hitting the world made a noise and hitting a person made none.
+  // `surface_material` carries the shared::hit_region_t, `normal` the surface
+  // normal at the impact, `attached_entity` the victim.
+  //
+  // Appended rather than slotted next to BULLET_IMPACT on purpose: the wire id
+  // is the enum value and nothing hashes this enum, so reordering silently
+  // remaps every effect for a client on a different build.
+  FLESH_IMPACT,
 
   COUNT // keep last — number of effect types, never serialized as a real value
 };
@@ -35,6 +44,7 @@ inline const char* to_string(effect_type_t type)
     case effect_type_t::FOOTSTEP:         return "FOOTSTEP";
     case effect_type_t::JUMP:             return "JUMP";
     case effect_type_t::LAND:             return "LAND";
+    case effect_type_t::FLESH_IMPACT:     return "FLESH_IMPACT";
     default:
       assert(false && "to_string(effect_type_t): unknown type");
       return "<unknown>";

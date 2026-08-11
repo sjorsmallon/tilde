@@ -87,6 +87,14 @@ constexpr key_mapping_t key_mappings[] = {
     {key_t::Left_Bracket, SDL_SCANCODE_LEFTBRACKET},
     {key_t::Right_Bracket, SDL_SCANCODE_RIGHTBRACKET},
     {key_t::Tilde, SDL_SCANCODE_GRAVE},
+
+    // Keypad. SDL orders these KP_1..KP_9 then KP_0, so they are NOT contiguous
+    // in scancode order -- hence the explicit rows rather than a loop.
+    {key_t::Keypad_0, SDL_SCANCODE_KP_0}, {key_t::Keypad_1, SDL_SCANCODE_KP_1},
+    {key_t::Keypad_2, SDL_SCANCODE_KP_2}, {key_t::Keypad_3, SDL_SCANCODE_KP_3},
+    {key_t::Keypad_4, SDL_SCANCODE_KP_4}, {key_t::Keypad_5, SDL_SCANCODE_KP_5},
+    {key_t::Keypad_6, SDL_SCANCODE_KP_6}, {key_t::Keypad_7, SDL_SCANCODE_KP_7},
+    {key_t::Keypad_8, SDL_SCANCODE_KP_8}, {key_t::Keypad_9, SDL_SCANCODE_KP_9},
 };
 
 constexpr std::array<int, key_count> build_key_to_scancode()

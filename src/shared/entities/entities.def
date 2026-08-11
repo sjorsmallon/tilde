@@ -138,9 +138,16 @@ Fully_Serializable :: [@Networked, @Editable, @Saveable]
 // them. So `Sphere` is the generated sphere, `Box` has no `Cube` twin, and
 // `Pyramid` is pyramid.obj, which is the one the editor actually draws.
 
+// A class may declare SEVERAL scans, because one asset kind can have more than
+// one on-disk form. A mesh is either a .obj (static prop, hand-authored, no
+// bones) or a .mesh (exported by src/tools/blender_export.py, carrying skin
+// weights and a skeleton reference -- see animation_def.md). Nothing that
+// resolves a mesh_asset should have to know which: load_mesh dispatches on the
+// extension, and `skin.empty()` is the whole "is this skinned" test downstream.
 mesh_asset :: assets {
     placeholder "resources/obj/error.obj"
-    scan        "resources/obj" ".obj"
+    scan        "resources/obj"    ".obj"
+    scan        "resources/models" ".mesh"
 
     // name         generator key (what get_primitive_mesh takes today)
     procedural Box      "box"
@@ -177,11 +184,23 @@ Shader_Type :: enum { Lit, Unlit }
 Shape_Kind :: enum { Sphere, Capsule, Box }
 
 // was: Trigger_Volume_Entity::action_name (pascal_string, looked up in the
-// server registry). Values mirror TRIGGER_ACTION_LIST in trigger_action_list.hpp.
+// server registry). This enum is now the only list -- the TRIGGER_ACTION_LIST
+// X-macro it used to mirror is gone, and fire_trigger_action's exhaustive
+// switch is what obligates a new value to grow a handler.
 Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn }
 
 // was: Trigger_Volume_Entity::fire_mode (pascal_string "on_enter"/"every_tick")
 Fire_Mode :: enum { On_Enter, Every_Tick }
+
+// The five authored aim poses (animation_def.md §5). No entity field has this
+// type and no id rides the wire -- it is here for the generated `_COUNT` and
+// the `enum_traits` specialization, because it sizes an Enum_Array in three
+// places and a hand-written enum can only get a count from a `Count` sentinel
+// that then needs a dead `case` in every switch.
+//
+// The ORDER is the pose space's, not alphabetical: Forward is the centre of the
+// plus that compute_aim_blend interpolates over, and the pairs are opposites.
+Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
 
 
 
@@ -302,6 +321,18 @@ Player_Entity :: entity @runtime_only {
     // 0 = never fired (server ticks start at 1).
     last_fire_tick:    u32              @Networked
     last_fire_weapon:  Weapon = .Knife  @Networked
+    // The hitmarker, latched on the SHOOTER for exactly the reason above: a
+    // confirmation you never got is lost information. It is state rather than a
+    // cosmetic effect for a second reason too -- the cosmetic queue is
+    // broadcast to every client, and a hitmarker is per-viewer. Only the
+    // shooter's own client reacts to its own entity's stamp advancing.
+    //
+    // The world-space wet thud everyone hears is the other half, and that one
+    // IS a cosmetic effect (FLESH_IMPACT): decoration, lossy, spatialized at
+    // the victim rather than at the shooter.
+    // 0 = never landed a hit.
+    last_hit_tick:         u32          @Networked
+    last_hit_was_headshot: bool         @Networked
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
     // Feeds remote-player interpolation.

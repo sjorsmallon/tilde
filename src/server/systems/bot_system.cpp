@@ -3,6 +3,7 @@
 #include "bot_system.hpp"
 
 #include "../cosmetic_events.hpp"
+#include "../entity_lifecycle.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/pathfinding.hpp"
@@ -35,12 +36,8 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
     bot->health            = 100;
 
     // Identical to a human player's -- a bot IS a Player_Entity, and a bot
-    // that was hittable where a player is not would make every aim test a lie.
-    bot->hitbox.shape  = entities::Shape_Kind::Capsule;
-    bot->hitbox.size   = {shared::player_capsule_radius,
-                          shared::player_capsule_cylinder_half_height,
-                          shared::player_capsule_radius};
-    bot->hitbox.offset = {0.f, shared::player_capsule_center_offset, 0.f};
+    // that was hittable or drawn differently would make every aim test a lie.
+    initialize_player_body(*bot);
 
     register_kinematic_capsule(physics,
                                bot_uid,
@@ -193,14 +190,17 @@ void update_bots(std::vector<Bot_State> &bots,
     }
 
     // ---- per-state update ----
-    vec3f front = {1.f, 0.f, 0.f};
+    // Facing defaults to whatever the bot is already looking at, so a state
+    // that never sets `front` leaves the yaw where it was instead of snapping
+    // to a fixed world direction.
+    vec3f front = linalg::direction_from_angles(bot_ent->view_angle_yaw, 0.f);
     Move_Input input;
 
     switch (bot.goal)
     {
       case BotGoal::Idle:
       {
-        // Stand still.
+        // Stand still, keep facing where we already face.
         break;
       }
 
@@ -346,8 +346,12 @@ void update_bots(std::vector<Bot_State> &bots,
                        new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
                        new_vel);
 
-    // Update facing direction so the client can visualise it.
-    bot_ent->view_angle_yaw = std::atan2(front.x, front.z);
+    // Update facing direction so the client can visualise it. DEGREES, in
+    // direction_from_angles' convention (yaw sweeps +X toward +Z) -- this is
+    // the same field the remote-player renderer and the aim poses read, and it
+    // used to be written as a raw atan2(x, z) radian value.
+    bot_ent->view_angle_yaw =
+        linalg::wrap_degrees(linalg::to_degrees(std::atan2(front.z, front.x)));
   }
 }
 

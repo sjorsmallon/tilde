@@ -15,6 +15,7 @@
 
 #include "log.hpp" // Utilizing existing log system
 #include "asset.hpp"
+#include "skinning.hpp"
 #include "vertex.hpp"
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "imstb_truetype.h"
@@ -44,6 +45,22 @@ const uint32_t lit_vert_spv[] =
 
 const uint32_t lit_frag_spv[] =
 #include "lit.frag.spv.h"
+    ;
+
+const uint32_t lit_textured_vert_spv[] =
+#include "lit_textured.vert.spv.h"
+    ;
+
+const uint32_t lit_textured_frag_spv[] =
+#include "lit_textured.frag.spv.h"
+    ;
+
+const uint32_t lit_textured_skinned_vert_spv[] =
+#include "lit_textured_skinned.vert.spv.h"
+    ;
+
+const uint32_t unlit_textured_frag_spv[] =
+#include "unlit_textured.frag.spv.h"
     ;
 
 const uint32_t particle_comp_spv[] =
@@ -183,6 +200,18 @@ static mat4_t g_current_view_proj;
 static float g_camera_right[3] = {1, 0, 0};
 static float g_camera_up[3] = {0, 1, 0};
 
+// The viewport set_viewport last handed Vulkan, in PIXELS: x, y, width, height.
+// Retained because NDC alone cannot be turned back into a screen position --
+// try_project_to_screen needs the rect the NDC cube was mapped onto, and the
+// alternative is every caller re-deriving it from the swapchain extent and the
+// normalized viewport, which is how the two silently disagree.
+static float g_current_viewport_pixels[4] = {0, 0, 0, 0};
+
+// How many frames the CPU may run ahead of the GPU. Anything sized per
+// frame-in-flight -- command buffers, sync objects, the per-frame uniform
+// allocator below -- is sized by this.
+constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+
 // --- AABB Pipeline Globals ---
 static VkPipelineLayout g_aabb_pipeline_layout = VK_NULL_HANDLE;
 static VkPipeline g_aabb_pipeline = VK_NULL_HANDLE;
@@ -200,6 +229,108 @@ static bool g_supports_wireframe = false;
 static VkPipeline g_unlit_pipeline = VK_NULL_HANDLE;
 static VkPipeline g_lit_pipeline = VK_NULL_HANDLE;
 static VkPipelineLayout g_lit_pipeline_layout = VK_NULL_HANDLE;
+
+// Lit + textured: the same lighting and the same push constants as g_lit_pipeline,
+// plus one combined image sampler at set 0 binding 0. A submesh picks between the
+// two by whether its material resolved a texture, so a mesh can use both.
+static VkPipeline            g_lit_textured_pipeline        = VK_NULL_HANDLE;
+static VkPipelineLayout      g_lit_textured_pipeline_layout = VK_NULL_HANDLE;
+static VkDescriptorSetLayout g_material_texture_ds_layout   = VK_NULL_HANDLE;
+static VkDescriptorPool      g_material_texture_pool        = VK_NULL_HANDLE;
+
+// The same again with GPU skinning in the vertex stage. Shares lit_textured.frag
+// and the albedo set; adds the bone matrix set. See
+// create_skinned_pipelines for why there is no untextured variant.
+//
+// Two pipelines, ONE layout: they differ only in the fragment stage, and the
+// sets (albedo at 0, bones at 1) and push constants are identical. The unlit
+// one is a debug view -- see unlit_textured.frag.
+static VkPipeline       g_lit_textured_skinned_pipeline   = VK_NULL_HANDLE;
+static VkPipeline       g_unlit_textured_skinned_pipeline = VK_NULL_HANDLE;
+// A skinned mesh asked for wireframe needs its OWN pipeline. The unskinned
+// wireframe pipeline has no skin vertex binding, so routing a posed mesh
+// through it would draw the BIND pose in wireframe -- which looks like a
+// working feature and is the wrong answer to every question you would ask it.
+static VkPipeline       g_skinned_wireframe_pipeline      = VK_NULL_HANDLE;
+static VkPipelineLayout g_skinned_pipeline_layout         = VK_NULL_HANDLE;
+
+// How many distinct texture assets can be bound as material albedo. A hard cap
+// rather than a growing pool because exhausting it is a content problem worth
+// hearing about (it logs and falls back to untextured), not something to paper
+// over by allocating another pool.
+constexpr uint32_t MAX_MATERIAL_TEXTURES = 64;
+
+// One entry per TEXTURE ASSET, not per material: two materials naming one image
+// resolve to one handle upstream, so keying on the handle means they share the
+// upload and the descriptor set as well.
+struct material_texture_gpu_t
+{
+  gpu_texture_t   texture;
+  VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+};
+
+static std::unordered_map<uint32_t, material_texture_gpu_t> g_material_textures;
+
+// --- Per-draw uniform data ---
+//
+// The renderer's mechanism for GPU-resident data that varies PER DRAW and is too
+// big for push constants. Bone matrices are the first customer -- 128 mat4 is 8 KB
+// against a 128-byte push constant budget -- but nothing here is about skinning.
+//
+// Two allocation policies, and they are different from each other:
+//
+//   WITHIN a frame it is a BUMP ALLOCATOR. `next_block` rises as draws take
+//   blocks, nothing is released individually, and the whole region resets to
+//   zero at frame start. Draw order is the allocation order and the frame is the
+//   lifetime; that is the entire contract.
+//
+//   ACROSS frames it is DOUBLE BUFFERED, not a ring. One region per
+//   frame-in-flight, selected by index, so frame N writes memory frame N-1 is
+//   not reading. `begin_frame` has just waited on that index's fence, which is
+//   what makes the reset safe. There is no head/tail and no wraparound -- the
+//   line batch and the debug face buffer are the codebase's actual ring buffers
+//   and this is deliberately not one.
+//
+// Blocks are a fixed size chosen at creation because a dynamic UBO descriptor
+// fixes its `range` when the set is written; the dynamic offset moves, the size
+// does not. A second user creates a second allocator with its own block size and
+// stage flags rather than sharing this one's.
+struct frame_uniform_allocation_t
+{
+  VkDescriptorSet set            = VK_NULL_HANDLE;
+  uint32_t        dynamic_offset = 0;
+  void           *mapped         = nullptr;
+
+  bool valid() const { return set != VK_NULL_HANDLE; }
+};
+
+struct frame_uniform_allocator_t
+{
+  VkBuffer        buffer[MAX_FRAMES_IN_FLIGHT] = {};
+  VkDeviceMemory  memory[MAX_FRAMES_IN_FLIGHT] = {};
+  void           *mapped[MAX_FRAMES_IN_FLIGHT] = {};
+  VkDescriptorSet set[MAX_FRAMES_IN_FLIGHT]    = {};
+
+  VkDescriptorPool      pool      = VK_NULL_HANDLE;
+  VkDescriptorSetLayout ds_layout = VK_NULL_HANDLE;
+
+  uint32_t block_size  = 0; // padded up to minUniformBufferOffsetAlignment
+  uint32_t block_count = 0; // per frame-in-flight
+  uint32_t next_block  = 0; // the bump pointer; reset by reset_frame_uniforms
+  uint32_t frame_index = 0;
+};
+
+// The bone matrices for one skinned draw. MAX_BONES is chosen together with the
+// uint8_t bone indices in skeleton.hpp and with `mat4 bones[128]` in
+// lit_textured_skinned.vert; all three move or none do.
+constexpr uint32_t SKINNING_BLOCK_BYTES = assets::MAX_BONES * sizeof(linalg::mat4f);
+
+// Skinned draws per frame. A player is one, so this is a player count with room
+// to spare; running out logs and draws that mesh in bind pose rather than with
+// whatever the previous draw left in the block.
+constexpr uint32_t MAX_SKINNED_DRAWS_PER_FRAME = 64;
+
+static frame_uniform_allocator_t g_skinning_uniforms;
 
 // Displacement textured pipeline
 static VkPipeline             g_disp_textured_pipeline  = VK_NULL_HANDLE;
@@ -221,6 +352,12 @@ struct mesh_gpu_buffer_t
   VkDeviceMemory index_memory = VK_NULL_HANDLE;
   uint32_t index_count = 0;
   assets::asset_handle_t<assets::mesh_asset_t> asset_handle;
+
+  // Binding 1: assets::vertex_skin_t, parallel to the vertex buffer. Present
+  // only when the asset is skinned -- `skin_buffer == VK_NULL_HANDLE` is the
+  // renderer's copy of `mesh_asset_t::is_skinned()`.
+  VkBuffer       skin_buffer = VK_NULL_HANDLE;
+  VkDeviceMemory skin_memory = VK_NULL_HANDLE;
 };
 
 static std::unordered_map<uint32_t, mesh_gpu_buffer_t> g_mesh_buffers;
@@ -312,7 +449,6 @@ static std::vector<VkSemaphore> g_render_finished_semaphores;
 static std::vector<VkFence> g_in_flight_fences;
 
 static uint32_t g_current_frame_idx_in_swapchain = 0;
-const int MAX_FRAMES_IN_FLIGHT = 2;
 static bool g_swapchain_rebuild = false;
 static uint32_t g_image_index = 0; // Stored between begin_frame and end_frame
 
@@ -1637,12 +1773,32 @@ static void create_mesh_pipeline()
   vkDestroyShaderModule(g_device, fragShaderModule, nullptr);
 }
 
+// What a material pipeline reads per vertex. A closed set rather than the caller
+// passing binding and attribute descriptions: there are exactly two vertex
+// layouts in this renderer and both are pinned by structs elsewhere
+// (vertex_xnu, assets::vertex_skin_t), so spelling them out here keeps the
+// pipeline and the struct within sight of each other.
+enum class vertex_layout : uint8_t
+{
+  // binding 0: vertex_xnu, stride 32 -> locations 0,1,2
+  Static,
+  // the above, plus
+  // binding 1: assets::vertex_skin_t, stride 20 -> locations 3,4
+  Skinned,
+};
+
 // Helper: create a material pipeline (shared boilerplate for unlit/lit).
 // Returns the created pipeline handle. Caller passes shaders, layout, and output.
+// `wireframe` swaps polygon mode to LINE, drops culling (you want the back
+// edges too -- that is the point of a wireframe) and biases depth so the lines
+// sit in front of the surface they trace instead of z-fighting it. Same
+// constants as the unskinned wireframe pipeline, so the two look identical.
 static VkPipeline create_material_pipeline_impl(
     const uint32_t *vert_spv, size_t vert_size,
     const uint32_t *frag_spv, size_t frag_size,
-    VkPipelineLayout layout)
+    VkPipelineLayout layout,
+    vertex_layout vertices = vertex_layout::Static,
+    bool wireframe = false)
 {
   VkShaderModule vertModule, fragModule;
 
@@ -1673,12 +1829,17 @@ static VkPipeline create_material_pipeline_impl(
       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
        VK_SHADER_STAGE_FRAGMENT_BIT, fragModule, "main", nullptr}};
 
-  VkVertexInputBindingDescription bindingDescription{};
-  bindingDescription.binding = 0;
-  bindingDescription.stride = sizeof(vertex_xnu);
-  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  const bool skinned = vertices == vertex_layout::Skinned;
 
-  VkVertexInputAttributeDescription attributeDescriptions[3]{};
+  VkVertexInputBindingDescription bindingDescriptions[2]{};
+  bindingDescriptions[0].binding = 0;
+  bindingDescriptions[0].stride = sizeof(vertex_xnu);
+  bindingDescriptions[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  bindingDescriptions[1].binding = 1;
+  bindingDescriptions[1].stride = sizeof(assets::vertex_skin_t);
+  bindingDescriptions[1].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  VkVertexInputAttributeDescription attributeDescriptions[5]{};
   attributeDescriptions[0].binding = 0;
   attributeDescriptions[0].location = 0;
   attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -1691,12 +1852,22 @@ static VkPipeline create_material_pipeline_impl(
   attributeDescriptions[2].location = 2;
   attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
   attributeDescriptions[2].offset = offsetof(vertex_xnu, uv);
+  // Skin influences ride a SECOND binding rather than a widened vertex, so the
+  // static layout above is untouched and the five pipelines using it are too.
+  attributeDescriptions[3].binding = 1;
+  attributeDescriptions[3].location = 3;
+  attributeDescriptions[3].format = VK_FORMAT_R8G8B8A8_UINT;
+  attributeDescriptions[3].offset = offsetof(assets::vertex_skin_t, bone_indices);
+  attributeDescriptions[4].binding = 1;
+  attributeDescriptions[4].location = 4;
+  attributeDescriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  attributeDescriptions[4].offset = offsetof(assets::vertex_skin_t, bone_weights);
 
   VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
   vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vertexInputInfo.vertexBindingDescriptionCount = 1;
-  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-  vertexInputInfo.vertexAttributeDescriptionCount = 3;
+  vertexInputInfo.vertexBindingDescriptionCount = skinned ? 2 : 1;
+  vertexInputInfo.pVertexBindingDescriptions = bindingDescriptions;
+  vertexInputInfo.vertexAttributeDescriptionCount = skinned ? 5 : 3;
   vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
 
   VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -1713,11 +1884,13 @@ static VkPipeline create_material_pipeline_impl(
   rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
   rasterizer.depthClampEnable = VK_FALSE;
   rasterizer.rasterizerDiscardEnable = VK_FALSE;
-  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.polygonMode = wireframe ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
   rasterizer.lineWidth = 1.0f;
-  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.cullMode = wireframe ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
   rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-  rasterizer.depthBiasEnable = VK_FALSE;
+  rasterizer.depthBiasEnable = wireframe ? VK_TRUE : VK_FALSE;
+  rasterizer.depthBiasConstantFactor = wireframe ? -2.0f : 0.0f;
+  rasterizer.depthBiasSlopeFactor = wireframe ? -1.0f : 0.0f;
 
   VkPipelineMultisampleStateCreateInfo multisampling{};
   multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -1811,6 +1984,449 @@ static void create_lit_pipeline()
       lit_vert_spv, sizeof(lit_vert_spv),
       lit_frag_spv, sizeof(lit_frag_spv),
       g_lit_pipeline_layout);
+}
+
+// --- Per-frame uniform allocator ---
+//
+// See the struct declaration for the two allocation policies. These four are the
+// whole API: create once, reset at frame start, allocate per draw, destroy at
+// shutdown.
+
+static bool create_frame_uniform_allocator(frame_uniform_allocator_t &allocator,
+                                           uint32_t block_bytes, uint32_t blocks_per_frame,
+                                           VkShaderStageFlags stages)
+{
+  // A dynamic offset must be a multiple of minUniformBufferOffsetAlignment, so
+  // the BLOCK is padded up to it rather than the offsets being computed against
+  // an unaligned stride.
+  VkPhysicalDeviceProperties device_properties{};
+  vkGetPhysicalDeviceProperties(g_physical_device, &device_properties);
+  const VkDeviceSize alignment = device_properties.limits.minUniformBufferOffsetAlignment;
+
+  allocator.block_size = alignment > 0
+                             ? (uint32_t)(((block_bytes + alignment - 1) / alignment) * alignment)
+                             : block_bytes;
+  allocator.block_count = blocks_per_frame;
+  allocator.next_block  = 0;
+  allocator.frame_index = 0;
+
+  if (allocator.block_size > device_properties.limits.maxUniformBufferRange)
+  {
+    log_error("[renderer] a {}-byte uniform block exceeds this device's maxUniformBufferRange ({})",
+              allocator.block_size, device_properties.limits.maxUniformBufferRange);
+    return false;
+  }
+
+  VkDescriptorSetLayoutBinding binding{};
+  binding.binding         = 0;
+  binding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+  binding.descriptorCount = 1;
+  binding.stageFlags      = stages;
+
+  VkDescriptorSetLayoutCreateInfo ds_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  ds_layout_info.bindingCount = 1;
+  ds_layout_info.pBindings    = &binding;
+  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &allocator.ds_layout) !=
+      VK_SUCCESS)
+  {
+    log_error("[renderer] failed to create a frame uniform descriptor set layout");
+    return false;
+  }
+
+  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_FRAMES_IN_FLIGHT};
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.maxSets       = MAX_FRAMES_IN_FLIGHT;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes    = &pool_size;
+  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &allocator.pool) != VK_SUCCESS)
+  {
+    log_error("[renderer] failed to create a frame uniform descriptor pool");
+    return false;
+  }
+
+  const VkDeviceSize region_bytes = (VkDeviceSize)allocator.block_size * allocator.block_count;
+
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    // HOST_VISIBLE | HOST_COHERENT and mapped for the process's whole life: the
+    // data is written once per draw and read once, so staging it through device
+    // local memory would cost a copy to save nothing.
+    create_buffer(region_bytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                  allocator.buffer[frame], allocator.memory[frame]);
+    if (vkMapMemory(g_device, allocator.memory[frame], 0, region_bytes, 0,
+                    &allocator.mapped[frame]) != VK_SUCCESS)
+    {
+      log_error("[renderer] failed to map a frame uniform region");
+      return false;
+    }
+
+    VkDescriptorSetAllocateInfo ds_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    ds_alloc.descriptorPool     = allocator.pool;
+    ds_alloc.descriptorSetCount = 1;
+    ds_alloc.pSetLayouts        = &allocator.ds_layout;
+    if (vkAllocateDescriptorSets(g_device, &ds_alloc, &allocator.set[frame]) != VK_SUCCESS)
+    {
+      log_error("[renderer] failed to allocate a frame uniform descriptor set");
+      return false;
+    }
+
+    // One descriptor per region covering ONE BLOCK; the dynamic offset picks
+    // which block, which is why `range` is the block size and not the region's.
+    VkDescriptorBufferInfo buffer_info{};
+    buffer_info.buffer = allocator.buffer[frame];
+    buffer_info.offset = 0;
+    buffer_info.range  = allocator.block_size;
+
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet          = allocator.set[frame];
+    write.dstBinding      = 0;
+    write.descriptorCount = 1;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    write.pBufferInfo     = &buffer_info;
+    vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+  }
+
+  return true;
+}
+
+// Safe because begin_frame has already waited on this frame index's fence, so
+// everything that read the region is done with it.
+static void reset_frame_uniforms(frame_uniform_allocator_t &allocator, uint32_t frame_index)
+{
+  allocator.frame_index = frame_index;
+  allocator.next_block  = 0;
+}
+
+// The bump. An exhausted region returns an invalid allocation and says so once
+// per frame -- the caller decides what a draw without its uniforms does, and
+// silently handing back block 0 would draw one thing wearing another's data.
+static frame_uniform_allocation_t allocate_frame_uniform(frame_uniform_allocator_t &allocator)
+{
+  if (allocator.pool == VK_NULL_HANDLE)
+    return {};
+
+  if (allocator.next_block >= allocator.block_count)
+  {
+    if (allocator.next_block == allocator.block_count)
+      log_error("[renderer] out of frame uniform blocks ({} per frame); later draws this frame "
+                "will fall back",
+                allocator.block_count);
+    allocator.next_block += 1;
+    return {};
+  }
+
+  const uint32_t block  = allocator.next_block++;
+  const uint32_t offset = block * allocator.block_size;
+
+  frame_uniform_allocation_t allocation;
+  allocation.set            = allocator.set[allocator.frame_index];
+  allocation.dynamic_offset = offset;
+  allocation.mapped         = (uint8_t *)allocator.mapped[allocator.frame_index] + offset;
+  return allocation;
+}
+
+static void destroy_frame_uniform_allocator(frame_uniform_allocator_t &allocator)
+{
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    if (allocator.mapped[frame])
+      vkUnmapMemory(g_device, allocator.memory[frame]);
+    if (allocator.buffer[frame])
+      vkDestroyBuffer(g_device, allocator.buffer[frame], nullptr);
+    if (allocator.memory[frame])
+      vkFreeMemory(g_device, allocator.memory[frame], nullptr);
+  }
+  if (allocator.pool)
+    vkDestroyDescriptorPool(g_device, allocator.pool, nullptr);
+  if (allocator.ds_layout)
+    vkDestroyDescriptorSetLayout(g_device, allocator.ds_layout, nullptr);
+  allocator = {};
+}
+
+// The lit pipeline plus a per-material albedo sampler. Same push constant range
+// as g_lit_pipeline (LitPushConstants), so draw_mesh packs the block once and
+// pushes it against whichever layout it is about to draw with.
+static void create_lit_textured_pipeline()
+{
+  VkDescriptorSetLayoutBinding albedo_binding{};
+  albedo_binding.binding         = 0;
+  albedo_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  albedo_binding.descriptorCount = 1;
+  albedo_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo ds_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  ds_layout_info.bindingCount = 1;
+  ds_layout_info.pBindings    = &albedo_binding;
+  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr,
+                                  &g_material_texture_ds_layout) != VK_SUCCESS)
+  {
+    log_error("Failed to create material texture descriptor set layout!");
+    return;
+  }
+
+  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_MATERIAL_TEXTURES};
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.maxSets       = MAX_MATERIAL_TEXTURES;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes    = &pool_size;
+  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_material_texture_pool) != VK_SUCCESS)
+  {
+    log_error("Failed to create material texture descriptor pool!");
+    return;
+  }
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(LitPushConstants);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = 1;
+  layout_info.pSetLayouts            = &g_material_texture_ds_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr,
+                             &g_lit_textured_pipeline_layout) != VK_SUCCESS)
+  {
+    log_error("Failed to create lit textured pipeline layout!");
+    return;
+  }
+
+  g_lit_textured_pipeline = create_material_pipeline_impl(
+      lit_textured_vert_spv, sizeof(lit_textured_vert_spv),
+      lit_textured_frag_spv, sizeof(lit_textured_frag_spv),
+      g_lit_textured_pipeline_layout);
+}
+
+// GPU skinning (animation_def.md §7, build order step 2). One pipeline, not two:
+// there is no untextured skinned variant, and an untextured material on a
+// skinned mesh binds a 1x1 white texture instead.
+//
+// The reason is that skinned/unskinned x textured/untextured is a permutation
+// axis, and a fourth pipeline would buy a case no asset has -- a skinned mesh is
+// a character and characters are textured. The white fallback costs four bytes
+// and one texture fetch; the permutation would cost a shader, a pipeline and a
+// branch in every future material feature.
+//
+// Set layout is albedo at 0 and bones at 1, so lit_textured.frag is reused
+// BYTE FOR BYTE by both the skinned and unskinned pipelines. Only the vertex
+// half of a skinned draw differs, and the sets say so.
+static VkDescriptorSet material_texture_descriptor_set(
+    assets::asset_handle_t<assets::texture_asset_t> handle);
+
+static void create_skinned_pipelines()
+{
+  if (g_material_texture_ds_layout == VK_NULL_HANDLE)
+    return; // create_lit_textured_pipeline already logged why
+
+  if (!create_frame_uniform_allocator(g_skinning_uniforms, SKINNING_BLOCK_BYTES,
+                                      MAX_SKINNED_DRAWS_PER_FRAME, VK_SHADER_STAGE_VERTEX_BIT))
+  {
+    log_error("Failed to create the skinning uniform allocator; skinned meshes will not draw");
+    return;
+  }
+
+  VkDescriptorSetLayout set_layouts[2] = {g_material_texture_ds_layout,
+                                          g_skinning_uniforms.ds_layout};
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(LitPushConstants);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = 2;
+  layout_info.pSetLayouts            = set_layouts;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr,
+                             &g_skinned_pipeline_layout) != VK_SUCCESS)
+  {
+    log_error("Failed to create skinned pipeline layout!");
+    return;
+  }
+
+  g_lit_textured_skinned_pipeline = create_material_pipeline_impl(
+      lit_textured_skinned_vert_spv, sizeof(lit_textured_skinned_vert_spv),
+      lit_textured_frag_spv, sizeof(lit_textured_frag_spv),
+      g_skinned_pipeline_layout, vertex_layout::Skinned);
+
+  // Same vertex stage, same layout, no sun. Requested with shader_type::Unlit
+  // on a skinned mesh; a failure here costs the debug view and nothing else,
+  // so it is not fatal to the lit one above.
+  g_unlit_textured_skinned_pipeline = create_material_pipeline_impl(
+      lit_textured_skinned_vert_spv, sizeof(lit_textured_skinned_vert_spv),
+      unlit_textured_frag_spv, sizeof(unlit_textured_frag_spv),
+      g_skinned_pipeline_layout, vertex_layout::Skinned);
+
+  // Unlit fragment stage on purpose: shading a one-pixel line buys nothing and
+  // costs contrast, and the whole reason to look at a skinned wireframe is to
+  // see where the surface sits relative to something drawn over it.
+  if (g_supports_wireframe)
+  {
+    g_skinned_wireframe_pipeline = create_material_pipeline_impl(
+        lit_textured_skinned_vert_spv, sizeof(lit_textured_skinned_vert_spv),
+        unlit_textured_frag_spv, sizeof(unlit_textured_frag_spv),
+        g_skinned_pipeline_layout, vertex_layout::Skinned, /*wireframe*/ true);
+  }
+}
+
+// --- Engine-supplied material textures ---
+//
+// Two of them, because "this material has no texture" and "this material's
+// texture did not load" are different facts and must not look the same on
+// screen. Both are registered through the ordinary asset cache under a
+// "renderer://" key that no file can collide with, so they share the pool, the
+// descriptor path and the lifetime of every other material texture -- there is
+// no second texture mechanism, just textures whose pixels the renderer supplies.
+
+// Registers `pixels` under `path` on first use and returns its descriptor set.
+static VkDescriptorSet engine_material_descriptor_set(const char *path, int32_t size,
+                                                      std::vector<uint8_t> &&pixels)
+{
+  assets::asset_handle_t<assets::texture_asset_t> handle = assets::find_texture_in_cache(path);
+  if (!handle.valid())
+  {
+    assets::texture_asset_t texture;
+    texture.width    = size;
+    texture.height   = size;
+    texture.channels = 4;
+    texture.pixels   = std::move(pixels);
+    handle           = assets::register_dynamic_texture(path, std::move(texture));
+  }
+  return material_texture_descriptor_set(handle);
+}
+
+// A material that legitimately has NO texture -- a flat-colour material, which
+// the exporter writes as "-" and which is not an error. White multiplies out of
+// the shader, so the submesh renders by its diffuse colour alone, which is
+// exactly what the untextured lit pipeline does on the unskinned path. The two
+// paths agree by construction rather than by coincidence.
+static VkDescriptorSet flat_colour_material_descriptor_set()
+{
+  return engine_material_descriptor_set("renderer://white", 1, {255, 255, 255, 255});
+}
+
+// A material that NAMES a texture the asset layer could not load. The magenta
+// and black checkerboard is the same idea as mesh_asset::Missing resolving to
+// the question mark: a broken asset must be visible at a glance from any angle
+// and at any distance, and must never be mistakable for authored art.
+static VkDescriptorSet missing_material_descriptor_set()
+{
+  constexpr int32_t SIZE      = 16;
+  constexpr int32_t CHECK     = 8; // pixels per square -- 2x2 squares over the tile
+  constexpr uint8_t MAGENTA[] = {255, 0, 255, 255};
+  constexpr uint8_t BLACK[]   = {0, 0, 0, 255};
+
+  std::vector<uint8_t> pixels((size_t)SIZE * SIZE * 4);
+  for (int32_t y = 0; y < SIZE; ++y)
+  {
+    for (int32_t x = 0; x < SIZE; ++x)
+    {
+      const bool     magenta = ((x / CHECK) + (y / CHECK)) % 2 == 0;
+      const uint8_t *source  = magenta ? MAGENTA : BLACK;
+      memcpy(&pixels[((size_t)y * SIZE + x) * 4], source, 4);
+    }
+  }
+
+  return engine_material_descriptor_set("renderer://missing_texture", SIZE, std::move(pixels));
+}
+
+// The albedo a material should bind, resolving the three cases in ONE place so
+// the skinned and unskinned draw paths cannot drift apart on what a broken
+// material looks like.
+//
+// `texture_is_mandatory` is true for the skinned pipeline, which has no
+// untextured variant; false lets an untextured material return VK_NULL_HANDLE so
+// the caller can pick the plain lit pipeline instead. It does NOT affect the
+// missing case -- a texture that was named and failed is a checkerboard on both
+// paths.
+static VkDescriptorSet material_albedo_descriptor_set(const assets::material_t &material,
+                                                      bool texture_is_mandatory)
+{
+  if (material.texture.valid())
+  {
+    VkDescriptorSet albedo = material_texture_descriptor_set(material.texture);
+    if (albedo != VK_NULL_HANDLE)
+      return albedo;
+    // Loaded from disk but the GPU upload or the descriptor allocation failed;
+    // both already logged. Still a broken texture, so it still looks like one.
+    return missing_material_descriptor_set();
+  }
+
+  if (!material.texture_path.empty())
+    return missing_material_descriptor_set();
+
+  return texture_is_mandatory ? flat_colour_material_descriptor_set() : VK_NULL_HANDLE;
+}
+
+// The descriptor set for a material's albedo, uploading it on first use. Same
+// lazy shape as upload_mesh_to_gpu: the asset layer owns the pixels, the
+// renderer owns the GPU copy, and nothing walks the material list at load time
+// to decide what the renderer will eventually need.
+//
+// Returns VK_NULL_HANDLE when there is no usable texture -- the caller then
+// draws that submesh through the untextured lit pipeline.
+static VkDescriptorSet material_texture_descriptor_set(
+    assets::asset_handle_t<assets::texture_asset_t> handle)
+{
+  if (!handle.valid() || g_material_texture_pool == VK_NULL_HANDLE ||
+      g_lit_textured_pipeline == VK_NULL_HANDLE)
+    return VK_NULL_HANDLE;
+
+  auto cached = g_material_textures.find(handle.index);
+  if (cached != g_material_textures.end())
+    return cached->second.descriptor_set;
+
+  const assets::texture_asset_t *texture = assets::get(handle);
+  if (!texture)
+  {
+    log_error("[renderer] material texture handle {} resolves to nothing", handle.index);
+    return VK_NULL_HANDLE;
+  }
+
+  if (g_material_textures.size() >= MAX_MATERIAL_TEXTURES)
+  {
+    log_error("[renderer] out of material texture slots ({}); texture {} will draw untextured",
+              MAX_MATERIAL_TEXTURES, handle.index);
+    return VK_NULL_HANDLE;
+  }
+
+  material_texture_gpu_t entry{};
+  entry.texture = upload_texture(texture, /*srgb*/ true);
+  if (!entry.texture.valid())
+    return VK_NULL_HANDLE;
+
+  VkDescriptorSetAllocateInfo ds_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  ds_alloc.descriptorPool     = g_material_texture_pool;
+  ds_alloc.descriptorSetCount = 1;
+  ds_alloc.pSetLayouts        = &g_material_texture_ds_layout;
+  if (vkAllocateDescriptorSets(g_device, &ds_alloc, &entry.descriptor_set) != VK_SUCCESS)
+  {
+    log_error("[renderer] failed to allocate a material texture descriptor set");
+    destroy_texture(entry.texture);
+    return VK_NULL_HANDLE;
+  }
+
+  VkDescriptorImageInfo image_info{};
+  image_info.sampler     = entry.texture.sampler;
+  image_info.imageView   = entry.texture.view;
+  image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  write.dstSet          = entry.descriptor_set;
+  write.dstBinding      = 0;
+  write.descriptorCount = 1;
+  write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo      = &image_info;
+  vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+
+  log_terminal("[renderer] Uploaded material texture {}: {}x{}", handle.index, texture->width,
+               texture->height);
+
+  g_material_textures[handle.index] = entry;
+  return entry.descriptor_set;
 }
 
 // Forward declarations for command-buffer helpers defined later in this file.
@@ -1995,9 +2611,10 @@ static void cleanup_displacement_texture()
 // Public GPU texture upload / destroy
 // ---------------------------------------------------------------------------
 
-gpu_texture_t upload_texture(const assets::texture_asset_t *texture)
+gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
 {
   gpu_texture_t result{};
+  const VkFormat image_format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 
   if (!texture || texture->pixels.empty() || texture->width <= 0 || texture->height <= 0)
   {
@@ -2023,7 +2640,7 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture)
   // VkImage
   VkImageCreateInfo img_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   img_info.imageType     = VK_IMAGE_TYPE_2D;
-  img_info.format        = VK_FORMAT_R8G8B8A8_UNORM;
+  img_info.format        = image_format;
   img_info.extent        = {(uint32_t)w, (uint32_t)h, 1};
   img_info.mipLevels     = 1;
   img_info.arrayLayers   = 1;
@@ -2085,7 +2702,7 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture)
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
   view_info.image            = result.image;
   view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-  view_info.format           = VK_FORMAT_R8G8B8A8_UNORM;
+  view_info.format           = image_format;
   view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
   vkCreateImageView(g_device, &view_info, nullptr, &result.view);
 
@@ -2141,6 +2758,18 @@ static mesh_gpu_buffer_t *upload_mesh_to_gpu(
   size_t            vert_count  = mesh->vertices.size();
   const uint32_t   *indices_ptr = mesh->indices.data();
   size_t            index_count = mesh->indices.size();
+
+  // A skinned mesh must NOT be expanded: `skin` is parallel to `vertices` by
+  // index, and expansion renumbers them. It never happens today -- a skinned
+  // mesh has materials and expansion is the no-material path -- but the two
+  // facts are far apart, and the one that would break is silent.
+  if (mesh->is_skinned() && !mesh->has_materials())
+  {
+    log_error("[renderer] skinned mesh {} has no materials; the barycentric expansion would "
+              "renumber its vertices away from its skin array",
+              handle.index);
+    return nullptr;
+  }
 
   if (!mesh->has_materials() && !mesh->indices.empty())
   {
@@ -2218,11 +2847,40 @@ static mesh_gpu_buffer_t *upload_mesh_to_gpu(
   begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   vkBeginCommandBuffer(cmd, &begin_info);
 
+  // Skin influences, when there are any. Parallel array, second binding, no
+  // repacking -- see skeleton.hpp for why it is not interleaved into vertex_xnu.
+  VkBuffer       skin_staging     = VK_NULL_HANDLE;
+  VkDeviceMemory skin_staging_mem = VK_NULL_HANDLE;
+  VkDeviceSize   skin_size        = 0;
+  if (mesh->is_skinned())
+  {
+    skin_size = mesh->skin.size() * sizeof(assets::vertex_skin_t);
+
+    create_buffer(skin_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                  skin_staging, skin_staging_mem);
+
+    vkMapMemory(g_device, skin_staging_mem, 0, skin_size, 0, &data);
+    memcpy(data, mesh->skin.data(), skin_size);
+    vkUnmapMemory(g_device, skin_staging_mem);
+
+    create_buffer(skin_size,
+                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, gpu_mesh.skin_buffer,
+                  gpu_mesh.skin_memory);
+  }
+
   VkBufferCopy vert_copy = {0, 0, vert_size};
   vkCmdCopyBuffer(cmd, vert_staging, gpu_mesh.vertex_buffer, 1, &vert_copy);
 
   VkBufferCopy idx_copy = {0, 0, idx_size};
   vkCmdCopyBuffer(cmd, idx_staging, gpu_mesh.index_buffer, 1, &idx_copy);
+
+  if (gpu_mesh.skin_buffer)
+  {
+    VkBufferCopy skin_copy = {0, 0, skin_size};
+    vkCmdCopyBuffer(cmd, skin_staging, gpu_mesh.skin_buffer, 1, &skin_copy);
+  }
 
   vkEndCommandBuffer(cmd);
 
@@ -2237,12 +2895,18 @@ static mesh_gpu_buffer_t *upload_mesh_to_gpu(
   vkFreeMemory(g_device, vert_staging_mem, nullptr);
   vkDestroyBuffer(g_device, idx_staging, nullptr);
   vkFreeMemory(g_device, idx_staging_mem, nullptr);
+  if (skin_staging)
+  {
+    vkDestroyBuffer(g_device, skin_staging, nullptr);
+    vkFreeMemory(g_device, skin_staging_mem, nullptr);
+  }
 
   // Store in cache
   g_mesh_buffers[handle.index] = gpu_mesh;
 
-  log_terminal("[renderer] Uploaded mesh {}: {} verts, {} indices",
-               handle.index, vert_count, gpu_mesh.index_count);
+  log_terminal("[renderer] Uploaded mesh {}: {} verts, {} indices{}",
+               handle.index, vert_count, gpu_mesh.index_count,
+               gpu_mesh.skin_buffer ? " (skinned)" : "");
 
   return &g_mesh_buffers[handle.index];
 }
@@ -2260,6 +2924,11 @@ void invalidate_mesh_gpu(assets::asset_handle_t<assets::mesh_asset_t> handle)
     vkFreeMemory(g_device, buffer.vertex_memory, nullptr);
     vkDestroyBuffer(g_device, buffer.index_buffer, nullptr);
     vkFreeMemory(g_device, buffer.index_memory, nullptr);
+    if (buffer.skin_buffer)
+    {
+      vkDestroyBuffer(g_device, buffer.skin_buffer, nullptr);
+      vkFreeMemory(g_device, buffer.skin_memory, nullptr);
+    }
     g_mesh_buffers.erase(it);
   }
 }
@@ -2273,6 +2942,11 @@ static void cleanup_mesh_buffers()
     vkFreeMemory(g_device, buffer.vertex_memory, nullptr);
     vkDestroyBuffer(g_device, buffer.index_buffer, nullptr);
     vkFreeMemory(g_device, buffer.index_memory, nullptr);
+    if (buffer.skin_buffer)
+    {
+      vkDestroyBuffer(g_device, buffer.skin_buffer, nullptr);
+      vkFreeMemory(g_device, buffer.skin_memory, nullptr);
+    }
   }
   g_mesh_buffers.clear();
 }
@@ -2856,6 +3530,85 @@ bool WireframeSupported()
   return g_mesh_wireframe_pipeline != VK_NULL_HANDLE;
 }
 
+// Bind-pose skinning matrices per skeleton, computed once. Keyed by skeleton
+// handle rather than by mesh, because that is what they depend on -- several
+// meshes share one skeleton (body, viewmodel arms, attachments) and they all
+// have the same bind pose by definition.
+static std::unordered_map<uint32_t, std::vector<linalg::mat4f>> g_bind_pose_skinning;
+
+static const std::vector<linalg::mat4f> *bind_pose_skinning_matrices(
+    assets::asset_handle_t<assets::skeleton_t> skeleton_handle)
+{
+  auto cached = g_bind_pose_skinning.find(skeleton_handle.index);
+  if (cached != g_bind_pose_skinning.end())
+    return &cached->second;
+
+  const assets::skeleton_t *skeleton = assets::get(skeleton_handle);
+  if (!skeleton)
+  {
+    log_error("[renderer] skinned mesh names skeleton handle {}, which resolves to nothing",
+              skeleton_handle.index);
+    return nullptr;
+  }
+
+  // Every matrix here comes out identity -- see assets::compute_skinning_matrices
+  // and the test in model_format_test. Deriving it anyway rather than uploading
+  // literal identity is the point: it runs the same hierarchy walk a real pose
+  // will, so the bind-pose checkpoint exercises the code the next step depends
+  // on rather than bypassing it.
+  std::vector<linalg::mat4f> parent_space(skeleton->bones.size());
+  std::vector<linalg::mat4f> skinning(skeleton->bones.size());
+  assets::compute_parent_space_bind_matrices(*skeleton, parent_space);
+  assets::compute_skinning_matrices(*skeleton, parent_space, skinning);
+
+  return &(g_bind_pose_skinning[skeleton_handle.index] = std::move(skinning));
+}
+
+// Copies this draw's bone matrices into a per-frame uniform block. Returns an
+// invalid allocation if there is nothing to bind, in which case the caller skips
+// the submesh rather than drawing it with another draw's pose.
+static frame_uniform_allocation_t upload_skinning_matrices(
+    const assets::mesh_asset_t *mesh, const mesh_draw_parameters_t &parameters)
+{
+  const assets::skeleton_t *skeleton = assets::get(mesh->skeleton);
+  if (!skeleton)
+    return {};
+
+  const uint32_t bone_count = (uint32_t)skeleton->bones.size();
+  if (bone_count > assets::MAX_BONES)
+  {
+    log_error("[renderer] skeleton has {} bones, over the {}-bone shader budget", bone_count,
+              assets::MAX_BONES);
+    return {};
+  }
+
+  const linalg::mat4f *source = parameters.skinning_matrices;
+  if (source && parameters.skinning_matrix_count != bone_count)
+  {
+    log_error("[renderer] draw supplied {} skinning matrices for a {}-bone skeleton; drawing bind "
+              "pose instead",
+              parameters.skinning_matrix_count, bone_count);
+    source = nullptr;
+  }
+
+  if (!source)
+  {
+    const std::vector<linalg::mat4f> *bind_pose = bind_pose_skinning_matrices(mesh->skeleton);
+    if (!bind_pose)
+      return {};
+    source = bind_pose->data();
+  }
+
+  frame_uniform_allocation_t allocation = allocate_frame_uniform(g_skinning_uniforms);
+  if (!allocation.valid())
+    return {};
+
+  // Only the bones this skeleton has are written; the shader never indexes past
+  // them, because the .mesh reader refuses a bone index the skeleton lacks.
+  memcpy(allocation.mapped, source, bone_count * sizeof(linalg::mat4f));
+  return allocation;
+}
+
 void draw_mesh(VkCommandBuffer cmd,
               assets::asset_handle_t<assets::mesh_asset_t> mesh_handle,
               const mesh_draw_parameters_t &parameters)
@@ -2968,10 +3721,80 @@ void draw_mesh(VkCommandBuffer cmd,
   vec3f tint_rgb = {parameters.color.r / 255.0f, parameters.color.g / 255.0f,
                     parameters.color.b / 255.0f};
 
-  auto push_and_draw = [&](const vec3f &draw_color, uint32_t index_count, uint32_t first_index)
+  // Skinning is decided ONCE for the whole mesh, unlike texturing: the pose
+  // belongs to the draw, not to a material, so every submesh shares one uniform
+  // block and one bind. A skinned mesh whose pose could not be provided is
+  // skipped whole rather than drawn in some other draw's pose.
+  // `use_submeshes` is part of the condition because the skinned pipeline always
+  // binds an albedo set, and only the per-material loop below ever produces one.
+  // upload_mesh_to_gpu already refuses a skinned mesh with no materials, so this
+  // is belt and braces -- but the alternative is a draw with set 0 unbound.
+  // Unlit is a skinning shader too: it is the same vertex stage and the same
+  // layout, so a skinned mesh asked for Unlit gets posed rather than silently
+  // dropping to bind pose on the unskinned pipeline.
+  // Wireframe wins over the shader choice: it is a different rasterization of
+  // the same vertex stage, and a posed wireframe is only available here.
+  VkPipeline skinned_pipeline = parameters.wireframe ? g_skinned_wireframe_pipeline
+                                : parameters.shader == shader_type::Unlit
+                                    ? g_unlit_textured_skinned_pipeline
+                                    : g_lit_textured_skinned_pipeline;
+  const bool skinned = (parameters.shader == shader_type::Lit ||
+                        parameters.shader == shader_type::Unlit) &&
+                       gpu_mesh->skin_buffer && use_submeshes &&
+                       skinned_pipeline != VK_NULL_HANDLE;
+  frame_uniform_allocation_t skinning_allocation;
+  if (skinned)
   {
-    if (parameters.shader ==  shader_type::Lit)
+    skinning_allocation = upload_skinning_matrices(mesh_data, parameters);
+    if (!skinning_allocation.valid())
+      return;
+
+    vkCmdBindVertexBuffers(cmd, 1, 1, &gpu_mesh->skin_buffer, offsets);
+  }
+
+  // Whether a submesh is textured is a property of its MATERIAL, not of the
+  // draw call: the caller asks for Lit and gets whichever lit pipeline that
+  // material earned. So one mesh can mix them -- the pipeline bound above is the
+  // untextured one, and a textured submesh rebinds. The skinned pipeline is the
+  // exception; it has no untextured variant, so it is always a rebind.
+  VkPipeline bound_pipeline = parameters.shader == shader_type::Lit ? g_lit_pipeline
+                                                                   : g_unlit_pipeline;
+
+  auto push_and_draw = [&](const vec3f &draw_color, VkDescriptorSet albedo,
+                           uint32_t index_count, uint32_t first_index)
+  {
+    // `skinned` joins the condition because an unlit SKINNED draw takes this
+    // branch: its vertex stage is lit_textured_skinned.vert, so it needs
+    // LitPushConstants and the skinned layout, not the flat aabb pair below.
+    if (parameters.shader ==  shader_type::Lit || skinned)
     {
+      const bool textured = albedo != VK_NULL_HANDLE;
+      VkPipeline       want_pipeline = g_lit_pipeline;
+      VkPipelineLayout want_layout   = g_lit_pipeline_layout;
+      if (skinned)
+      {
+        want_pipeline = skinned_pipeline;
+        want_layout   = g_skinned_pipeline_layout;
+      }
+      else if (textured)
+      {
+        want_pipeline = g_lit_textured_pipeline;
+        want_layout   = g_lit_textured_pipeline_layout;
+      }
+
+      if (want_pipeline != bound_pipeline)
+      {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, want_pipeline);
+        bound_pipeline = want_pipeline;
+      }
+      if (textured)
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, want_layout, 0, 1, &albedo,
+                                0, nullptr);
+      if (skinned)
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, want_layout, 1, 1,
+                                &skinning_allocation.set, 1,
+                                &skinning_allocation.dynamic_offset);
+
       LitPushConstants lpc{};
       memcpy(lpc.mvp, mvp.m, sizeof(float) * 16);
       lpc.color[0] = draw_color.x;
@@ -2981,7 +3804,7 @@ void draw_mesh(VkCommandBuffer cmd,
       lpc.normal_mat_c0[0] = cz * cy;           lpc.normal_mat_c0[1] = sz * cy;           lpc.normal_mat_c0[2] = -sy;     lpc.normal_mat_c0[3] = 0;
       lpc.normal_mat_c1[0] = cz*sy*sx - sz*cx;  lpc.normal_mat_c1[1] = sz*sy*sx + cz*cx;  lpc.normal_mat_c1[2] = cy * sx; lpc.normal_mat_c1[3] = 0;
       lpc.normal_mat_c2[0] = cz*sy*cx + sz*sx;  lpc.normal_mat_c2[1] = sz*sy*cx - cz*sx;  lpc.normal_mat_c2[2] = cy * cx; lpc.normal_mat_c2[3] = 0;
-      vkCmdPushConstants(cmd, g_lit_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+      vkCmdPushConstants(cmd, want_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                          sizeof(LitPushConstants), &lpc);
     }
     else
@@ -3004,13 +3827,15 @@ void draw_mesh(VkCommandBuffer cmd,
     // When the mesh has its own materials, use those colors; tint is ignored.
     for (const auto &sub : mesh_data->submeshes)
     {
-      vec3f mat_color = mesh_data->materials[sub.material_index].diffuse_color;
-      push_and_draw(mat_color, sub.index_count, sub.index_offset);
+      const assets::material_t &material = mesh_data->materials[sub.material_index];
+      push_and_draw(material.diffuse_color,
+                    material_albedo_descriptor_set(material, /*texture_is_mandatory*/ skinned),
+                    sub.index_count, sub.index_offset);
     }
   }
   else
   {
-    push_and_draw(tint_rgb, gpu_mesh->index_count, 0);
+    push_and_draw(tint_rgb, VK_NULL_HANDLE, gpu_mesh->index_count, 0);
   }
 }
 
@@ -3035,6 +3860,11 @@ void set_viewport(VkCommandBuffer cmd, const viewport_t &vp)
   v.minDepth = 0.0f;
   v.maxDepth = 1.0f;
 
+  g_current_viewport_pixels[0] = x;
+  g_current_viewport_pixels[1] = y;
+  g_current_viewport_pixels[2] = w;
+  g_current_viewport_pixels[3] = h;
+
   vkCmdSetViewport(cmd, 0, 1, &v);
 
   VkRect2D scissor{};
@@ -3042,6 +3872,52 @@ void set_viewport(VkCommandBuffer cmd, const viewport_t &vp)
   scissor.extent = {(uint32_t)w, (uint32_t)h};
 
   vkCmdSetScissor(cmd, 0, 1, &scissor);
+}
+
+std::optional<linalg::vec2> try_project_to_screen(const linalg::vec3 &world)
+{
+  // Column-major: m[column * 4 + row], the layout the shaders consume.
+  const float *m = g_current_view_proj.m;
+  const float  clip_x = m[0] * world.x + m[4] * world.y + m[8] * world.z + m[12];
+  const float  clip_y = m[1] * world.x + m[5] * world.y + m[9] * world.z + m[13];
+  const float  clip_w = m[3] * world.x + m[7] * world.y + m[11] * world.z + m[15];
+
+  // Perspective puts w <= 0 behind the eye, where dividing mirrors the point to
+  // a screen position that looks entirely reasonable and is wrong. Ortho leaves
+  // w at 1, so this never trips there and points behind the camera still
+  // project -- which is what an orthographic view is for.
+  if (clip_w <= 1e-6f)
+    return std::nullopt;
+
+  // Both projections already flip Y for Vulkan (perspective negates m[5], ortho
+  // builds 2/(b-t)), so NDC -1 is the TOP of the screen and no flip belongs
+  // here. Adding one is the classic way to get labels mirrored about the
+  // horizon.
+  const float normalized_x = (clip_x / clip_w) * 0.5f + 0.5f;
+  const float normalized_y = (clip_y / clip_w) * 0.5f + 0.5f;
+
+  return linalg::vec2{g_current_viewport_pixels[0] + normalized_x * g_current_viewport_pixels[2],
+                      g_current_viewport_pixels[1] + normalized_y * g_current_viewport_pixels[3]};
+}
+
+void draw_text_in_world(const linalg::vec3 &world, const char *text, color_t color)
+{
+  const std::optional<linalg::vec2> screen = try_project_to_screen(world);
+  if (!screen)
+    return;
+
+  // Cull off-screen labels rather than handing ImGui coordinates far outside
+  // the display: a few hundred bone names all clamped to one edge is worse
+  // than no labels.
+  const ImGuiIO &io = ImGui::GetIO();
+  if (screen->x < 0.0f || screen->y < 0.0f || screen->x > io.DisplaySize.x ||
+      screen->y > io.DisplaySize.y)
+    return;
+
+  // Background list, not foreground: labels belong on top of the 3D scene but
+  // UNDER the tool panels, or a bone name draws over the inspector you are
+  // reading it into.
+  ImGui::GetBackgroundDrawList()->AddText(ImVec2(screen->x, screen->y), to_abgr(color), text);
 }
 
 void set_view(VkCommandBuffer cmd, const render_view_t &view)
@@ -3429,6 +4305,8 @@ bool init(SDL_Window *window)
   create_mesh_pipeline();
   create_unlit_pipeline();
   create_lit_pipeline();
+  create_lit_textured_pipeline();
+  create_skinned_pipelines();
   create_line_pipeline();
   create_line_batch_buffer();
   create_debug_face_pipeline();
@@ -3573,6 +4451,27 @@ void shutdown()
   vkDestroyPipeline(g_device, g_lit_pipeline, nullptr);
   vkDestroyPipelineLayout(g_device, g_lit_pipeline_layout, nullptr);
 
+  for (auto &entry : g_material_textures)
+    destroy_texture(entry.second.texture);
+  g_material_textures.clear();
+  if (g_material_texture_pool)
+    vkDestroyDescriptorPool(g_device, g_material_texture_pool, nullptr);
+  if (g_material_texture_ds_layout)
+    vkDestroyDescriptorSetLayout(g_device, g_material_texture_ds_layout, nullptr);
+  if (g_lit_textured_pipeline_layout)
+    vkDestroyPipelineLayout(g_device, g_lit_textured_pipeline_layout, nullptr);
+  if (g_lit_textured_pipeline)
+    vkDestroyPipeline(g_device, g_lit_textured_pipeline, nullptr);
+
+  g_bind_pose_skinning.clear();
+  destroy_frame_uniform_allocator(g_skinning_uniforms);
+  if (g_skinned_pipeline_layout)
+    vkDestroyPipelineLayout(g_device, g_skinned_pipeline_layout, nullptr);
+  if (g_lit_textured_skinned_pipeline)
+    vkDestroyPipeline(g_device, g_lit_textured_skinned_pipeline, nullptr);
+  if (g_unlit_textured_skinned_pipeline)
+    vkDestroyPipeline(g_device, g_unlit_textured_skinned_pipeline, nullptr);
+
   vkDestroyPipeline(g_device, g_line_pipeline, nullptr);
   vkUnmapMemory(g_device, g_line_batch_memory);
   vkDestroyBuffer(g_device, g_line_batch_buffer, nullptr);
@@ -3639,6 +4538,10 @@ VkCommandBuffer begin_frame()
 
   vkResetCommandBuffer(g_command_buffers[g_current_frame_idx_in_swapchain], 0);
   VkCommandBuffer cmdbuf = g_command_buffers[g_current_frame_idx_in_swapchain];
+
+  // Safe here and only here: the fence wait above means everything that read
+  // this frame index's uniform region has finished with it.
+  reset_frame_uniforms(g_skinning_uniforms, g_current_frame_idx_in_swapchain);
 
   VkCommandBufferBeginInfo begin_info{};
   begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;

@@ -1,0 +1,26 @@
+// Hit volumes for skeleton 'rig'. Handwritten: which bones are
+// volumes and what they cost is game-design data, not model data (todo.md 2e).
+// Sizes are SEEDED from the skin weights by the Animation tool and kept by hand.
+//
+// v <name> Sphere            <bone>          <region> <radius>       [offset]
+// v <name> Capsule|Cylinder  <start> <end>   <region> <radius>       [offset]
+// v <name> Box               <start> <end>   <region> <hx> <hy> <hz> [offset]
+//
+// region is Head|Torso|Legs. A box's half-extents are in the volume's own
+// frame -- right, up, along the bone -- so it turns with the pose. offset
+// slides the volume along the start bone's own direction.
+hitboxes rig
+skeleton rig b1e51a1238f88001
+v head         Sphere    spine.006                         Head   5.570 3.400
+v torso        Capsule   spine            spine.003        Torso  5.850 0.750
+v upperBody    Cylinder  spine.004        spine.005        Torso  6.200 -1.350
+v upper_arm.L  Capsule   upper_arm.L      forearm.L        Torso  3.150
+v forearm.L    Capsule   forearm.L        hand.L           Torso  2.800
+v hand.L       Sphere    hand.L                            Torso  4.900 5.150
+v upper_arm.R  Capsule   upper_arm.R      forearm.R        Torso  3.150
+v forearm.R    Capsule   forearm.R        hand.R           Torso  2.800
+v hand.R       Sphere    hand.R                            Torso  4.750 4.850
+v thigh.L      Capsule   thigh.L          shin.L           Legs   4.700 -2.750
+v shin.L       Capsule   shin.L           foot.L           Legs   4.200 -0.550
+v thigh.R      Capsule   thigh.R          shin.R           Legs   4.700 -3.450
+v shin.R       Capsule   shin.R           foot.R           Legs   3.700

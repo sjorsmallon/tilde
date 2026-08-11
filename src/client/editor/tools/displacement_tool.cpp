@@ -595,7 +595,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
         else if (axis == 1) size.y = 0;
         else size.z = 0;
 
-        renderer.draw_wire_box(p, size, colors::green); // Green highlight
+        renderer.draw_wire_aabb(p, size, colors::green); // Green highlight
       }
     }
   }

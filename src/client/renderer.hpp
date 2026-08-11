@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL.h>
+#include <optional>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -46,7 +47,7 @@ void draw__wire_AABB(VkCommandBuffer cmd, const linalg::vec3 &min,
 void draw_line(VkCommandBuffer cmd, const linalg::vec3 &start,
               const linalg::vec3 &end, color_t color);
 
-// Set depth bias for subsequent draw_line / draw_wire_box calls, and for the
+// Set depth bias for subsequent draw_line / draw_wire_aabb calls, and for the
 // next wireframe draw_mesh. Use stronger (more negative) values to push lines
 // closer to camera. Sticky: it applies until changed, so a caller that raises
 // it is expected to restore it.
@@ -70,6 +71,19 @@ struct mesh_draw_parameters_t
   color_t      color     = colors::white;
   shader_type  shader    = shader_type::Lit;
   bool         wireframe = false;
+
+  // The pose to skin this draw with: one matrix per bone, in the mesh's
+  // skeleton's bone order, as produced by assets::compute_skinning_matrices.
+  // Ignored entirely for an unskinned mesh.
+  //
+  // Null on a SKINNED mesh means BIND POSE, which the renderer derives from the
+  // skeleton and caches. That is a real default rather than a failure case: a
+  // caller that has no animator yet gets the model standing in the pose it was
+  // authored in, and the animation work can arrive at the call sites one at a
+  // time. `skinning_matrix_count` must match the skeleton's bone count when the
+  // pointer is non-null; a mismatch is refused and drawn in bind pose.
+  const linalg::mat4f *skinning_matrices     = nullptr;
+  uint32_t             skinning_matrix_count = 0;
 };
 
 void draw_mesh(VkCommandBuffer cmd,
@@ -116,6 +130,22 @@ void set_viewport(VkCommandBuffer cmd, const viewport_t &vp);
 // Draws nothing itself — the caller then issues its own draw_mesh / draw_line /
 // draw_AABB calls against it.
 void set_view(VkCommandBuffer cmd, const render_view_t &view);
+
+// World point -> pixels, through the view-projection and viewport the CURRENT
+// frame's set_view established. `nullopt` means the point has no screen
+// position: behind a perspective camera's eye, where the perspective divide
+// would otherwise flip it to a mirrored spot on screen that looks plausible.
+[[nodiscard]] std::optional<linalg::vec2> try_project_to_screen(const linalg::vec3 &world);
+
+// A text label anchored to a world position -- bone names, entity ids, debug
+// values that need to sit ON the thing they describe.
+//
+// Unlike every other draw_* here this is NOT a Vulkan draw: it projects and
+// appends to ImGui's background draw list, which is composited after the 3D
+// pass. So it needs no command buffer, it is not depth-tested (a label on a
+// bone inside the mesh still shows), and it must be called AFTER set_view for
+// the frame -- it reads that frame's matrices. Off-screen labels are dropped.
+void draw_text_in_world(const linalg::vec3 &world, const char *text, color_t color);
 
 // Initialize the renderer (Vulkan + ImGui)
 bool init(SDL_Window *window);
@@ -168,7 +198,12 @@ struct gpu_texture_t
   bool valid() const { return image != VK_NULL_HANDLE; }
 };
 
-gpu_texture_t upload_texture(const assets::texture_asset_t *texture);
+// `srgb` picks the image format, and it is a question about what the BYTES MEAN,
+// not about how they look: the swapchain is B8G8R8A8_SRGB, so the hardware
+// encodes on write and a colour texture must be decoded on read or it is
+// gamma-corrected twice. Pass true for anything authored as a colour (albedo),
+// false for data sampled as numbers (roughness, metallic, height, normals).
+gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb = false);
 void          destroy_texture(gpu_texture_t &tex);
 
 // Get GPU-uploaded mesh buffers for custom pipeline drawing.

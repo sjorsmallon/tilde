@@ -29,6 +29,7 @@
 
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -207,21 +208,16 @@ void test_tables()
   // from the same token, so a name may not resolve to both.
   for (uint32_t index = 0; index < cvars::CVAR_COUNT; ++index)
   {
-    cvars::command_id collision{};
-    check(!cvars::find_command(cvars::cvar_info((cvars::cvar_id)index).name,
-                               &collision),
+    check(!cvars::try_find_command(cvars::cvar_info((cvars::cvar_id)index).name),
           "no cvar name is also a command name");
   }
 
-  cvars::cvar_id    id{};
-  cvars::command_id command{};
-  check(cvars::find_cvar("pm_maxspeed", &id) && id == cvars::cvar_id::pm_maxspeed,
-        "find_cvar resolves pm_maxspeed");
-  check(cvars::find_command("spawn_bot", &command) &&
-            command == cvars::command_id::spawn_bot,
-        "find_command resolves spawn_bot");
-  check(!cvars::find_cvar("pm_maxspeedd", &id), "find_cvar rejects a near miss");
-  check(!cvars::find_command("", &command), "find_command rejects an empty name");
+  check(cvars::try_find_cvar("pm_maxspeed") == cvars::cvar_id::pm_maxspeed,
+        "try_find_cvar resolves pm_maxspeed");
+  check(cvars::try_find_command("spawn_bot") == cvars::command_id::spawn_bot,
+        "try_find_command resolves spawn_bot");
+  check(!cvars::try_find_cvar("pm_maxspeedd"), "try_find_cvar rejects a near miss");
+  check(!cvars::try_find_command(""), "try_find_command rejects an empty name");
 
   // The @Mirrored subset is published so both ends agree on the sync set by
   // construction rather than by each filtering on flags and hoping.
@@ -253,15 +249,14 @@ void test_text_conversion()
   std::cout << "[text conversion]\n";
 
   cvars::cvar_state_t state;
-  std::string         text;
 
-  check(cvars::cvar_to_text(state, cvars::cvar_id::pm_maxspeed, text),
-        "cvar_to_text succeeds for an f32");
-  check_equal(text, "320", "f32 default formats without a trailing .0");
+  std::optional<std::string> text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_maxspeed);
+  check(text.has_value(), "try_cvar_to_text succeeds for an f32");
+  check_equal(*text, "320", "f32 default formats without a trailing .0");
 
-  check(cvars::cvar_to_text(state, cvars::cvar_id::debug_show_navmesh, text),
-        "cvar_to_text succeeds for a bool");
-  check_equal(text, "0", "false formats as 0");
+  text = cvars::try_cvar_to_text(state, cvars::cvar_id::debug_show_navmesh);
+  check(text.has_value(), "try_cvar_to_text succeeds for a bool");
+  check_equal(*text, "0", "false formats as 0");
 
   // Floats use the shortest representation that ROUND-TRIPS -- the value that
   // comes back must be bit-identical, or a mirrored pm_* value would drift the
@@ -270,11 +265,11 @@ void test_text_conversion()
   for (float probe : probes)
   {
     state.pm_overbounce = probe;
-    check(cvars::cvar_to_text(state, cvars::cvar_id::pm_overbounce, text),
-          "cvar_to_text succeeds");
+    text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_overbounce);
+    check(text.has_value(), "try_cvar_to_text succeeds");
     cvars::cvar_state_t destination;
-    check(cvars::cvar_from_text(destination, cvars::cvar_id::pm_overbounce, text),
-          "cvar_from_text accepts what cvar_to_text produced");
+    check(cvars::try_cvar_from_text(destination, cvars::cvar_id::pm_overbounce, *text),
+          "try_cvar_from_text accepts what try_cvar_to_text produced");
     check(std::memcmp(&destination.pm_overbounce, &probe, sizeof(float)) == 0,
           "float round-trips bit-exactly through text");
   }
@@ -282,14 +277,14 @@ void test_text_conversion()
   // A partial numeric parse is a REJECTION, not a truncation. stringstream
   // would have read this as 320.
   state.pm_maxspeed = 320.f;
-  check(!cvars::cvar_from_text(state, cvars::cvar_id::pm_maxspeed, "320abc"),
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_maxspeed, "320abc"),
         "trailing garbage rejects the whole token");
   check(state.pm_maxspeed == 320.f, "a rejected numeric parse leaves the value alone");
-  check(!cvars::cvar_from_text(state, cvars::cvar_id::pm_maxspeed, ""),
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_maxspeed, ""),
         "empty text is rejected");
-  check(!cvars::cvar_from_text(state, cvars::cvar_id::pm_maxspeed, "  "),
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_maxspeed, "  "),
         "whitespace is rejected");
-  check(cvars::cvar_from_text(state, cvars::cvar_id::pm_maxspeed, "-12.5"),
+  check(cvars::try_cvar_from_text(state, cvars::cvar_id::pm_maxspeed, "-12.5"),
         "a negative float parses");
   check(state.pm_maxspeed == -12.5f, "the negative float landed");
 
@@ -299,19 +294,19 @@ void test_text_conversion()
   for (const char* token : truthy)
   {
     state.debug_show_navmesh = false;
-    check(cvars::cvar_from_text(state, cvars::cvar_id::debug_show_navmesh, token),
+    check(cvars::try_cvar_from_text(state, cvars::cvar_id::debug_show_navmesh, token),
           "a truthy token parses");
     check(state.debug_show_navmesh, "a truthy token sets true");
   }
   for (const char* token : falsy)
   {
     state.debug_show_navmesh = true;
-    check(cvars::cvar_from_text(state, cvars::cvar_id::debug_show_navmesh, token),
+    check(cvars::try_cvar_from_text(state, cvars::cvar_id::debug_show_navmesh, token),
           "a falsy token parses");
     check(!state.debug_show_navmesh, "a falsy token sets false");
   }
   state.debug_show_navmesh = true;
-  check(!cvars::cvar_from_text(state, cvars::cvar_id::debug_show_navmesh, "tru"),
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::debug_show_navmesh, "tru"),
         "an unrecognised bool token is rejected");
   check(state.debug_show_navmesh,
         "a rejected bool leaves the value alone -- it does not fall back to false");

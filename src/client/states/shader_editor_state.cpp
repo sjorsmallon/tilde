@@ -3,7 +3,6 @@
 #include "../renderer.hpp"
 #include "../state_manager.hpp"
 #include "../../shared/asset.hpp"
-#include "../../shared/old_ideas/ecs.hpp"
 #include "log.hpp"
 #include "shader_tool_paths.h"
 #include "imgui.h"

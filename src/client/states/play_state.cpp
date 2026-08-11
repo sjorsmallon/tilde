@@ -7,6 +7,7 @@
 #include "../game_events.hpp"
 #include "../hud/crosshair.hpp"
 #include "../weapon_fire_audio.hpp"
+#include "../hit_confirm_audio.hpp"
 #include "../../shared/cosmetic_events.hpp"
 #include "../../shared/game_events.hpp"
 #include "../../shared/physics.hpp"
@@ -29,6 +30,7 @@
 #include "../../shared/network/cvar_mirror.hpp"
 #include "../../shared/network/map_transfer.hpp"
 #include "../input.hpp"
+#include "../player_animator.hpp"
 #include "../renderer.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/math.hpp"
@@ -53,6 +55,35 @@ static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
 static uint8_t crosshair_color_channel(uint32_t value)
 {
   return uint8_t(std::min<uint32_t>(value, 255));
+}
+
+// cvars -> the values the animator actually needs. Translating here rather than
+// passing cvar_state_t down keeps player_animator.cpp a pure function of angles.
+static aim_settings_t aim_settings_from(const cvars::cvar_state_t &cvars)
+{
+  return aim_settings_t{.max_pitch_degrees      = cvars.cl_aim_max_pitch,
+          .max_yaw_degrees        = cvars.cl_aim_max_yaw,
+          .body_turn_rate_degrees_per_second = cvars.cl_aim_body_turn_rate};
+}
+
+// The feet chase the view; the leftover twist is what the left/right poses
+// cover. Called from the interpolation pass, so it runs once per frame per
+// player whether or not that player is on screen -- the alternative is a body
+// yaw that only advances while visible, which snaps when one comes into view.
+static void update_remote_player_body_yaw(client_context_t::Remote_Player_State &remote_player,
+                                          float dt, const cvars::cvar_state_t &cvars)
+{
+  // A player who just appeared faces where they are looking. Easing in from 0
+  // would spin every newly-visible model up from due east.
+  if (!remote_player.body_yaw_initialized)
+  {
+    remote_player.body_yaw             = remote_player.render_yaw;
+    remote_player.body_yaw_initialized = true;
+    return;
+  }
+
+  advance_body_yaw(remote_player.body_yaw, remote_player.render_yaw, dt,
+                   aim_settings_from(cvars));
 }
 
 static void render_menu_overlay(bool* show_menu_overlay)
@@ -140,12 +171,20 @@ static void send_request_map_data(network::Client_Connection_State &conn,
 
 bool Play_State::load_client_map(const std::string &map_path)
 {
-  if (map_path.empty() || !shared::load_map(map_path, map))
+  if (map_path.empty())
+  {
+    log_warning("load_client_map: empty map path");
+    return false;
+  }
+
+  std::optional<shared::map_t> loaded = shared::try_load_map(map_path);
+  if (!loaded)
   {
     log_warning("load_client_map: failed to load map '{}'", map_path);
     return false;
   }
 
+  map = std::move(*loaded);
   finalize_client_map();
   return true;
 }
@@ -154,14 +193,9 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
 {
   // Rebuild `this->map` from the streamed package: entities from the canonical
   // text, navmesh from the baked sidecar the package carries.
-  // parse_map_from_string clears the map (including navmesh), so restore the
-  // navmesh afterward.
-  if (!shared::parse_map_from_string(package.entity_text, map))
-  {
-    log_error("apply_map_package: failed to parse streamed entity text for '{}'",
-              package.map_name);
-    return false;
-  }
+  // parse_map_from_string returns a fresh map (no navmesh), so the navmesh is
+  // attached afterward rather than surviving from the previous map.
+  map = shared::parse_map_from_string(package.entity_text);
   map.navmesh = package.navmesh;
 
   finalize_client_map();
@@ -180,7 +214,8 @@ void Play_State::finalize_client_map()
   ctx.remote_physics_bodies.clear();
   ctx.explosion_effects.clear();
   ctx.next_explosion_index = 0;
-  ctx.clear_snapshot_history();
+  // ctx.clear_snapshot_history();
+  ctx.snapshot_state = {};
 
   shared::init_session_from_map(ctx.session, map);
   ctx.session.map_name = map.name;
@@ -692,7 +727,7 @@ void Play_State::update(float dt)
 
     uint32_t snapshot_tick = pkg.has_server_tick() ? pkg.server_tick() : 0;
 
-    if (snapshot_tick <= ctx.latest_processed_tick && ctx.latest_processed_tick != 0)
+    if (snapshot_tick <= ctx.snapshot_state.latest_processed_tick && ctx.snapshot_state.latest_processed_tick != 0)
       continue;
 
     // Which snapshot this packet is a delta against. 0 = full update, every
@@ -702,7 +737,7 @@ void Play_State::update(float dt)
     const network::snapshot_frame_t* baseline = nullptr;
     if (delta_from_tick != 0)
     {
-      baseline = ctx.snapshot_history.find(delta_from_tick);
+      baseline = ctx.snapshot_state.snapshot_history.find(delta_from_tick);
       if (baseline == nullptr)
       {
         // The server deltaed against a tick we no longer hold. 
@@ -710,7 +745,7 @@ void Play_State::update(float dt)
         // wait for a new baseline.
         log_error("[CLIENT] Snapshot {} is a delta from tick {}, which is not in our history "
                   "(acked {}). Dropping the packet; the server will re-baseline.",
-                  snapshot_tick, delta_from_tick, ctx.snapshot_history.acked_tick);
+                  snapshot_tick, delta_from_tick, ctx.snapshot_state.snapshot_history.acked_tick);
         continue;
       }
     }
@@ -748,7 +783,7 @@ void Play_State::update(float dt)
 
     ctx.remote_rockets = latest_snapshot.rockets;
     ctx.remote_physics_bodies = latest_snapshot.physics_bodies;
-    ctx.latest_processed_tick = snapshot_tick;
+    ctx.snapshot_state.latest_processed_tick = snapshot_tick;
 
     // Gunshots are read off replicated state, not dispatched as effects — a
     // player whose last_fire_tick advanced since the previous snapshot fired.
@@ -756,6 +791,9 @@ void Play_State::update(float dt)
     // it watches. The integrated client connects over loopback and receives
     // real snapshots, so this covers both topologies.
     update_weapon_fire_audio(ctx);
+    // Our own hitmarker, same slot and the same watch-a-replicated-stamp
+    // pattern; see hit_confirm_audio.hpp for why it is not a cosmetic effect.
+    play_hitmarker_audio_and_update_hit_tick_state(ctx);
 
     for (const auto &[slot_index, player] : ctx.latest_player_entities)
     {
@@ -805,8 +843,8 @@ void Play_State::update(float dt)
                ? ctx.remote_players.erase(it)
                : std::next(it);
 
-    ctx.snapshot_history.slot_for(snapshot_tick) = std::move(latest_snapshot);
-    ctx.snapshot_history.acknowledge(snapshot_tick);
+    ctx.snapshot_state.snapshot_history.slot_for(snapshot_tick) = std::move(latest_snapshot);
+    ctx.snapshot_state.snapshot_history.acknowledge(snapshot_tick);
 
     // Cosmetic effect batch tails the entity deltas in the same packet.
     // Dispatch immediately — handlers are one-shot, fire-and-forget.
@@ -1057,7 +1095,7 @@ void Play_State::update(float dt)
       // The snapshot ack rides on the move command rather than a message of its
       // own: it is sent at the same rate, to the same place, and a lost move
       // command already costs us a tick — one more datagram would buy nothing.
-      move_cmd.set_acked_server_tick(ctx.snapshot_history.acked_tick);
+      move_cmd.set_acked_server_tick(ctx.snapshot_state.snapshot_history.acked_tick);
       network::send_protobuf_message(conn, move_cmd);
 
       Move_Events tick_events{};
@@ -1142,6 +1180,7 @@ void Play_State::update(float dt)
         remote_player.render_position = remote_player.snapshots[1].position;
         remote_player.render_yaw = remote_player.snapshots[1].yaw;
         remote_player.render_pitch = remote_player.snapshots[1].pitch;
+        update_remote_player_body_yaw(remote_player, dt, *ctx.cvars);
       }
       continue;
     }
@@ -1158,10 +1197,36 @@ void Play_State::update(float dt)
     remote_player.render_position.x = remote_player.snapshots[0].position.x * (1.f - t) + remote_player.snapshots[1].position.x * t;
     remote_player.render_position.y = remote_player.snapshots[0].position.y * (1.f - t) + remote_player.snapshots[1].position.y * t;
     remote_player.render_position.z = remote_player.snapshots[0].position.z * (1.f - t) + remote_player.snapshots[1].position.z * t;
-    remote_player.render_yaw   = remote_player.snapshots[0].yaw   * (1.f - t) + remote_player.snapshots[1].yaw   * t;
+    // Yaw takes the SHORT way round: a raw lerp across the +/-180 seam spins
+    // the model all the way back, which is exactly what a continuously turning
+    // bot walks into once per revolution.
+    const float yaw_delta = linalg::wrap_degrees(remote_player.snapshots[1].yaw -
+                                                 remote_player.snapshots[0].yaw);
+    remote_player.render_yaw   = linalg::wrap_degrees(remote_player.snapshots[0].yaw + yaw_delta * t);
     remote_player.render_pitch = remote_player.snapshots[0].pitch * (1.f - t) + remote_player.snapshots[1].pitch * t;
+
+    update_remote_player_body_yaw(remote_player, dt, *ctx.cvars);
   }
   ctx.interpolation_time += dt;
+
+  // --- Spectate (cl_spectate_slot): ride a remote player's eye ---
+  // Deliberately last, and deliberately reading the same render_position /
+  // render_yaw the model is drawn from: whatever the interpolation pass just
+  // produced is exactly what the view shows, so a stall reads as camera judder
+  // rather than being smoothed over by a separate camera path. Mouse look still
+  // drives ctx.player_yaw underneath -- it just isn't what the camera uses.
+  if (ctx.cvars->cl_spectate_slot >= 0)
+  {
+    auto spectated_it = ctx.remote_players.find(ctx.cvars->cl_spectate_slot);
+    if (spectated_it != ctx.remote_players.end() && spectated_it->second.active)
+    {
+      const client_context_t::Remote_Player_State &spectated = spectated_it->second;
+      camera.position = spectated.render_position +
+                        vec3f{0.f, shared::player_eye_height, 0.f};
+      camera.yaw   = spectated.render_yaw;
+      camera.pitch = spectated.render_pitch;
+    }
+  }
 }
 
 void Play_State::render_ui()
@@ -1326,6 +1391,27 @@ void Play_State::render_ui()
     }
     ImGui::End();
   }
+
+  // --- Aim pose blend scrub (cl_aim_debug) ---
+  // Two sliders IS the test: drag them and watch the five authored poses blend
+  // on whatever remote model is in view. Sliders rather than console sets
+  // because the question is whether the interpolation is smooth, which only a
+  // continuous sweep answers. The range runs past the authored extent on
+  // purpose -- past it the blend should CLAMP to the extreme pose, not keep
+  // bending.
+  if (ctx.cvars->cl_aim_debug)
+  {
+    ImGui::SetNextWindowPos(ImVec2(10, 340), ImGuiCond_Once);
+    ImGui::SetNextWindowBgAlpha(0.4f);
+    if (ImGui::Begin("aim blend", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+      ImGui::SliderFloat("pitch", &ctx.cvars->cl_aim_debug_pitch, -90.f, 90.f, "%.1f deg");
+      ImGui::SliderFloat("yaw dev", &ctx.cvars->cl_aim_debug_yaw, -90.f, 90.f, "%.1f deg");
+      ImGui::TextDisabled("authored extent: +/-%.0f pitch, +/-%.0f yaw",
+                          ctx.cvars->cl_aim_max_pitch, ctx.cvars->cl_aim_max_yaw);
+    }
+    ImGui::End();
+  }
 }
 
 void Play_State::render_3d(VkCommandBuffer cmd)
@@ -1382,11 +1468,81 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     }
   }
 
-  // Render remote players and bots as wireframe AABBs
+  // Render remote players and bots: the model, then the debug volumes.
   for (const auto &[slot, remote_player] : ctx.remote_players)
   {
     if (!remote_player.active || remote_player.slot_index == ctx.my_slot)
       continue;
+
+    // The player model. A bot IS a Player_Entity, so this draws bots too --
+    // which is the only way to see a third-person model without a second
+    // machine. The Render component comes off the reconstructed entity rather
+    // than Remote_Player_State, because that is where the snapshot put it; the
+    // interpolated POSITION comes off Remote_Player_State, because that is
+    // where the interpolation happens. Neither has both.
+    auto player_entity = ctx.latest_player_entities.find(slot);
+    if (player_entity != ctx.latest_player_entities.end() &&
+        player_entity->second.render.visible)
+    {
+      const entities::Render &render = player_entity->second.render;
+
+      auto mesh_handle = assets::get_mesh(render.mesh);
+      if (mesh_handle.valid())
+      {
+        // The body is drawn at BODY_YAW, not view yaw, and the difference is
+        // handed to the aim poses. Pitch never reaches the transform at all:
+        // it is where the player is LOOKING, and applying it to the whole
+        // model would tip them over. Distributing it across the spine is what
+        // the authored pose set does (animation_def.md §5).
+        std::vector<linalg::mat4f> skinning;
+        const assets::mesh_asset_t *mesh = assets::get(mesh_handle);
+        const assets::skeleton_t *skeleton =
+            mesh && mesh->is_skinned() ? assets::get(mesh->skeleton) : nullptr;
+
+        if (skeleton)
+        {
+          float pitch = remote_player.render_pitch;
+          float deviation =
+              linalg::wrap_degrees(remote_player.render_yaw - remote_player.body_yaw);
+
+          // cl_aim_debug drives the two blend inputs directly, because nothing
+          // in the game reaches them: a bot never writes a pitch, and the feet
+          // chase its view yaw at cl_aim_body_turn_rate against a far slower
+          // turn, so the deviation is back at 0 by the next frame. Forcing the
+          // pair is the only way to sweep the pose space.
+          if (ctx.cvars->cl_aim_debug)
+          {
+            pitch     = ctx.cvars->cl_aim_debug_pitch;
+            deviation = ctx.cvars->cl_aim_debug_yaw;
+          }
+
+          compute_aim_skinning_matrices(holding_gun_aim_poses(), *skeleton, pitch, deviation,
+                                        aim_settings_from(*ctx.cvars), skinning);
+        }
+
+        renderer::draw_mesh(cmd, mesh_handle,
+                            {.position = remote_player.render_position + render.offset,
+                             .scale    = render.scale,
+                             .rotation = vec3f{0.f, remote_player.body_yaw, 0.f} +
+                                         render.rotation,
+                             .color    = colors::white,
+                             .shader   = ctx.cvars->cl_player_unlit
+                                             ? renderer::shader_type::Unlit
+                                             : renderer::shader_type::Lit,
+                             // Empty means "no pose": the renderer falls back to
+                             // the bind pose, which is what an unskinned mesh
+                             // should look like. A pose set that failed to load
+                             // cannot reach here -- that death is fatal.
+                             .skinning_matrices     = skinning.empty() ? nullptr : skinning.data(),
+                             .skinning_matrix_count = (uint32_t)skinning.size()});
+      }
+      else
+      {
+        log_error("player slot {} mesh '{}' did not resolve — the model will be "
+                  "invisible; check the asset manifest",
+                  slot, entities::to_string(render.mesh));
+      }
+    }
 
     // The player origin is at the FEET -- same convention as
     // `player_eye_height` and the hitbox table -- so the hull sits entirely
@@ -1401,17 +1557,14 @@ void Play_State::render_3d(VkCommandBuffer cmd)
                         remote_player.render_position.z + player_half_width};
     // Solid normally, WIREFRAME while hitbox debugging is on: the regions below
     // live inside this hull, so a filled hull writes depth over every one of
-    // them and all you see is a green box.
-    //
-    // cl_draw_player_hull turns it off entirely, which leaves remote players
-    // INVISIBLE -- nothing else draws them. See the cvar's comment.
+    // them and all you see is a green box. It hides the model for the same
+    // reason, which is why cl_draw_player_hull defaults OFF now that there is
+    // one to hide.
     const bool show_hitboxes = ctx.cvars->debug_show_hitboxes;
     if (ctx.cvars->cl_draw_player_hull)
     {
       if (show_hitboxes)
         renderer::draw__wire_AABB(cmd, rmin, rmax, colors::green);
-      else
-        renderer::draw_AABB(cmd, rmin, rmax, colors::green);
     }
 
     // The regions hitscan actually resolves against, drawn from the SAME table
@@ -1641,13 +1794,11 @@ void Play_State::render_3d(VkCommandBuffer cmd)
       if (pit != ctx.latest_player_entities.end())
       {
         const auto &ent = pit->second;
-        float yaw = ent.view_angle_yaw;
+        vec3f facing = linalg::direction_from_angles(ent.view_angle_yaw, 0.f);
         vec3f origin = ent.position;
         origin.y += 40.f;
         constexpr float arrow_len = 30.f;
-        vec3f tip = {origin.x + std::sin(yaw) * arrow_len,
-                     origin.y,
-                     origin.z + std::cos(yaw) * arrow_len};
+        vec3f tip = origin + facing * arrow_len;
         renderer::draw_line(cmd, origin, tip, colors::white);
       }
     }

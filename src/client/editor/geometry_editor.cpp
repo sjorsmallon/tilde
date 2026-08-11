@@ -47,7 +47,7 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
     }
   }
 
-  renderer.draw_wire_box(center, shared::get_half_extents(geometry), colors::yellow);
+  renderer.draw_wire_aabb(center, shared::get_half_extents(geometry), colors::yellow);
 }
 
 // ============================================================================
@@ -188,7 +188,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
     }
 
     const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
-    renderer.draw_wire_box((bounds.min + bounds.max) * 0.5f,
+    renderer.draw_wire_aabb((bounds.min + bounds.max) * 0.5f,
                            (bounds.max - bounds.min) * 0.5f, color);
     break;
   }
@@ -199,7 +199,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
     // resizing, and it's what the sculpting brush rays against.
     const shared::displacement_geometry_t &displacement =
         std::get<shared::displacement_geometry_t>(geometry);
-    renderer.draw_wire_box(displacement.position, displacement.half_extents, color);
+    renderer.draw_wire_aabb(displacement.position, displacement.half_extents, color);
     break;
   }
   }

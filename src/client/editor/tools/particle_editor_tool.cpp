@@ -80,7 +80,7 @@ void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
   {
     color_t color = (uid == selected_emitter_uid) ? colors::yellow : color_t{128, 128, 0};
     renderer.draw_circle(emitter->position, 16.f, {0, 1, 0}, color);
-    renderer.draw_wire_box(emitter->position, {4, 4, 4}, color);
+    renderer.draw_wire_aabb(emitter->position, {4, 4, 4}, color);
   }
 }
 

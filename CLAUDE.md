@@ -14,7 +14,7 @@ cmake --build cmake_build -j8
 # Run
 ./cmake_build/bin/MyGame
 
-# Run the whole test suite (~2s, all 20)
+# Run the whole test suite (~2s, all 22)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -55,7 +55,7 @@ src/
 │   ├── cvars/        cvars.def, cvar_runtime.hpp, generated/
 │   └── network/      Entity wire serialization, bitstream, UDP, map transfer
 ├── client/           Vulkan rendering, SDL2 input, editor
-│   ├── states/       Game state machine (Play_State, ToolEditorState)
+│   ├── states/       Game state machine (Play_State, Tool_Editor_State)
 │   └── editor/       Tool-based editor (Selection, Placement, Sculpting)
 ├── server/           Authoritative game server
 ├── tools/            def_gen (the schema compiler: .def parser + code generator)
@@ -144,7 +144,9 @@ Cvar flags are `@Client` / `@Server` / `@Mirrored`, and **no flag means shared-l
 
 ### Editor
 
-Tool pattern: `ToolEditorState` dispatches to the active tool (Selection, Placement, Sculpting, Displacement, Particle, Pathfinding). Each tool handles mouse/key events and overlay drawing.
+Tool pattern: `Tool_Editor_State` dispatches to the active tool (Selection, Placement, Sculpting, Displacement, Particle, Pathfinding, Animation). Each tool handles mouse/key events and overlay drawing.
+
+The Animation tool is the odd one — it edits no map, it looks at the skinned player: a pose picker over bind and the five aim poses through the *real* `compute_aim_blend` / `sample_aim_pose` path, the skeleton, and the `rig.hitboxes` capsules posed under it with their derived-radius seed and the coverage / hull-excursion readouts. `shared/hitbox_rig.hpp` is the shared half (both sides evaluate the volumes; only the tool derives radii, since derivation needs the mesh). See `animation_def.md` §4.
 
 Geometry drawing, inspector panels and placement ghosts live in `editor/geometry_editor.{hpp,cpp}` — the geometry counterpart to `entity_editor_traits`, and much smaller (three kinds, all boxes, so it's switches rather than a trait template per type). `client/geometry_renderer.{hpp,cpp}` is the one geometry draw path shared by the game and the editor.
 
@@ -186,7 +188,35 @@ Map streaming: a client that lacks the server's map (cache miss / hash mismatch)
 
 ## Key Conventions
 
+### Failure: `try_`, `fatal_error`, or nothing
+
+Three shapes, and the **name** tells you which one you are looking at. The rule is total — that is the whole point, because the value is in the contrapositive: a name *without* `try_` is a promise that the call cannot quietly fail.
+
+| Failure is | Signature | On failure |
+|---|---|---|
+| real, and the caller's business | `try_load_map(path) -> std::optional<map_t>` | empty optional; caller branches |
+| a broken build or a caller bug | `load_aim_pose_set(dir, suffix) -> aim_pose_set_t` | `fatal_error(...)`, process dies |
+| impossible | `parse_map_from_string(text) -> map_t` | n/a |
+
+- **`try_` + `std::optional<T>` + `[[nodiscard]]`** is the only fallible spelling. Apply the prefix even when the verb already implies it (`try_find_*`, `try_parse_*`) — an exception costs more than the redundancy, because it breaks the inference. `[[nodiscard]]` is the enforcement; without it the rule is a suggestion, and a dropped `bool` return is exactly how the aim-pose loader failed silently for a while.
+- **The prefix tracks FALLIBILITY, not the optional.** A fallible call with no value to hand back keeps a bare `bool` and still takes the prefix — `try_cvar_from_text(state, id, text)` parses text into a cvar and reports whether it parsed; `std::optional<void>` is not a thing. Dropping the prefix there would break the contrapositive just as badly as dropping it from a `try_find_*`.
+- **A `bool` that IS the answer is not a failure channel and takes no prefix.** `has_component(type, component)`, `is_skinned()`, `map.has_object(uid)` — these return a fact the caller asked for. The test is whether `false` means "I could not do this" (prefix) or "no, that's the answer" (no prefix).
+- **`fatal_error(fmt, ...)`** (`shared/log.hpp`) logs like `log_error` and then aborts. Use it where there is no recovery: a missing asset the game cannot run without, a span the caller sized wrong. It is `[[noreturn]]` and deliberately **not** `assert` — it stays live in release, where a broken install is exactly as unrecoverable.
+- **Never `bool` + an out-param.** That was the old spelling and it is the one thing this convention exists to delete: it makes the failure ignorable, forces the value to be default-constructible, and leaves the caller holding a half-written object. `std::optional` for a big `T` moves, it does not copy — that is not a reason to keep the out-param.
+- **An out-param is still right when it is about *storage*, not about the return** — the caller owns a buffer being refilled each frame. Then take a `Span<T>` (see below), return `void`, and `fatal_error` on a length mismatch. `skinning.hpp` and `animation.hpp`'s `get_local_transforms_of_bones_from_pose` are the worked example.
+
+**The generated code follows this too.** `def_gen` emits `try_from_string<T>(text)`, `try_find_cvar`, `try_find_command`, `try_cvar_to_text`, `try_cvar_from_text` — so the convention holds across the seam rather than stopping at the generator. `try_from_string` is a **template specialized per enum and asset class**, not an overload set: `to_string` dispatches on its argument and its inverse has none, so the caller names the type (`try_from_string<Weapon>(text)`). Changing these means editing the `fprintf` emitters in `src/tools/def_gen.cpp` and regenerating — never the `generated/` files. `SCHEMA_HASH` is mixed from the parsed `.def` content, not the emitted text, so respellings like this leave the wire handshake alone.
+
+Not yet total: the `bool` + out-param pairs left in `map.hpp` (`get_object_position`, `get_object_box`), `asset.hpp` (`compute_mesh_bounds`, `parse_mesh_file`), `animation.hpp` (`sample_aim_pose`, `build_bone_mask`) and `entity_reflection.hpp` (`field_to_text`, `field_from_text`). Convert them when you next touch them.
+
+### General
+
 - C++23 standard
+- **Ranges: three house types, and only three.** `Span<T>` (`shared/span.hpp`) is the one non-owning view — it replaces every pointer-plus-count spelling. `Array<T, N>` and `Enum_Array<Enum_T, T>` (`shared/array.hpp`) are the owning fixed-size pair; both are aggregates that convert implicitly to `Span`, and both are trivially copyable exactly when `T` is, so one can sit in an entity struct without breaking the blittable contract. Prefer them to `std::array` in new code; there is no dynamic house array (`std::vector` stays).
+  - `Enum_Array` is sized from `enum_traits<Enum_T>::count`, which `def_gen` emits per enum in every `.def` (generated ones also carry the enum's `enum_type` id — the compile-time link to its runtime reflection tag). A hand-written enum specializes `enum_traits` next to itself with `count` alone.
+  - `operator[]` takes the enum unchecked; **`try_get` is the one for a key that came off the wire or out of a map file**, since enum fields are deserialized with no range validation.
+  - Both default-initialize to zero (`= {}` member initializer), unlike a raw `T buffer[N]`. `aim_pose_clips_t clips;` giving five nulls is load-bearing for `sample_aim_pose`'s missing-extreme path.
+  - `Enum_Array` fixes the length but does **not** check you filled it — a short initializer value-initializes the tail. `rows_in_enum_order<&row_t::key>(table)` in a `static_assert` is what catches both that and a reorder, so every hand-written table of enum-indexed DATA gets one and its rows carry a member naming their own enum value. Runtime storage (caches, handle arrays) has no key and wants the zero-fill.
 - `linalg::vec3` / `vec3f` are the same type (`vec3_t<float>`); no element-wise `vec3 * vec3` operator, only scalar multiply
 - `shapes.hpp` defines geometric primitives (`aabb_t`, `pyramid_t`, `wedge_t`) with `get_bounds()` functions
 - Tests are standalone executables with simple assertions (no test framework)

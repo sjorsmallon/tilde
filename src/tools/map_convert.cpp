@@ -110,12 +110,13 @@ bool convert_one(const std::string &path, bool check_only)
 
   const std::string original_text = read_file(path);
 
-  shared::map_t map;
-  if (!shared::load_map(path, map))
+  std::optional<shared::map_t> loaded = shared::try_load_map(path);
+  if (!loaded)
   {
     log_error("map_convert: failed to load '{}'", path);
     return false;
   }
+  shared::map_t &map = *loaded;
 
   const conversion_report_t report = inspect(map, original_text);
 

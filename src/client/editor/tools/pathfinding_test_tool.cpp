@@ -166,7 +166,7 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
     {
       linalg::vec3 waypoint = path[waypoint_idx];
       waypoint.y += y_lift;
-      renderer.draw_wire_box(waypoint, half, node_color);
+      renderer.draw_wire_aabb(waypoint, half, node_color);
       if (waypoint_idx + 1 < (int)path.size())
       {
         linalg::vec3 next = path[waypoint_idx + 1];

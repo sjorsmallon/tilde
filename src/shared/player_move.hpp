@@ -37,13 +37,22 @@ constexpr uint64_t Zoom     = 1 << 16;
 constexpr uint64_t P        = 1 << 17; // Placeholder that you can use to hijack.
 } // namespace Button
 
+// Initializers are load-bearing, not decoration. `Move_Input input;` at block
+// scope is DEFAULT-initialization, which for a struct without them leaves every
+// bool indeterminate -- and a caller that sets only the buttons it cares about
+// then moves on garbage. That is what made bots jump constantly: bot_system
+// assigned `forward_pressed` and nothing else, and the stack slot behind
+// `jump_pressed` held the same leftover byte every tick.
+//
+// Reading an indeterminate bool is UB, so it is not merely a wrong value: a
+// bool holding a byte other than 0 or 1 can take both branches of an `if`.
 struct Move_Input
 {
-  bool forward_pressed;
-  bool backward_pressed;
-  bool left_pressed;
-  bool right_pressed;
-  bool jump_pressed;
+  bool forward_pressed  = false;
+  bool backward_pressed = false;
+  bool left_pressed     = false;
+  bool right_pressed    = false;
+  bool jump_pressed     = false;
 };
 
 inline Move_Input move_input_from_buttons(uint64_t buttons)

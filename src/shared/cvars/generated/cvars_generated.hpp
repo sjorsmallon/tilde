@@ -1,16 +1,20 @@
 // Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
 #pragma once
 
+#include "array.hpp"
 #include "cvars/cvar_runtime.hpp"
 #include "span.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
 
 namespace cvars
 {
+
+template <typename T> std::optional<T> try_from_string(std::string_view text);
 
 // Ownership, and nothing else. No flag at all is the common case and
 // means shared-local: both sides hold the value, each process owns its
@@ -37,7 +41,7 @@ enum class Bot_Mode : uint8_t
 constexpr uint32_t Bot_Mode_COUNT = 3;
 
 const char* to_string(Bot_Mode value);
-bool from_string(std::string_view text, Bot_Mode* out_value);
+template <> std::optional<Bot_Mode> try_from_string<Bot_Mode>(std::string_view text);
 
 // THE values. One per process, created by the launcher and handed to
 // each module's init -- so the integrated build's client and server
@@ -71,6 +75,14 @@ struct cvar_state_t
   float m_zoom_sensitivity_ratio = 1.0f;
   float cl_maxfps = 1000.0f;
   bool cl_draw_player_hull = false;
+  int32_t cl_spectate_slot = -1;
+  float cl_aim_max_pitch = 45.0f;
+  float cl_aim_max_yaw = 45.0f;
+  float cl_aim_body_turn_rate = 540.0f;
+  bool cl_player_unlit = false;
+  bool cl_aim_debug = false;
+  float cl_aim_debug_pitch = 0.0f;
+  float cl_aim_debug_yaw = 0.0f;
   bool cl_crosshair = true;
   bool cl_crosshair_dot = true;
   float cl_crosshair_size = 7.0f;
@@ -122,30 +134,38 @@ enum class cvar_id : uint16_t
   m_zoom_sensitivity_ratio = 17,
   cl_maxfps = 18,
   cl_draw_player_hull = 19,
-  cl_crosshair = 20,
-  cl_crosshair_dot = 21,
-  cl_crosshair_size = 22,
-  cl_crosshair_gap = 23,
-  cl_crosshair_thickness = 24,
-  cl_crosshair_r = 25,
-  cl_crosshair_g = 26,
-  cl_crosshair_b = 27,
-  cl_crosshair_a = 28,
-  editor_speed = 29,
-  cl_timescale = 30,
-  sound_reference_distance = 31,
-  sound_max_distance_cutoff = 32,
-  sound_rolloff_factor = 33,
-  debug_show_collisions = 34,
-  debug_show_hitboxes = 35,
-  debug_show_navmesh = 36,
-  debug_show_box_volumes = 37,
-  net_snapshot_debug = 38,
+  cl_spectate_slot = 20,
+  cl_aim_max_pitch = 21,
+  cl_aim_max_yaw = 22,
+  cl_aim_body_turn_rate = 23,
+  cl_player_unlit = 24,
+  cl_aim_debug = 25,
+  cl_aim_debug_pitch = 26,
+  cl_aim_debug_yaw = 27,
+  cl_crosshair = 28,
+  cl_crosshair_dot = 29,
+  cl_crosshair_size = 30,
+  cl_crosshair_gap = 31,
+  cl_crosshair_thickness = 32,
+  cl_crosshair_r = 33,
+  cl_crosshair_g = 34,
+  cl_crosshair_b = 35,
+  cl_crosshair_a = 36,
+  editor_speed = 37,
+  cl_timescale = 38,
+  sound_reference_distance = 39,
+  sound_max_distance_cutoff = 40,
+  sound_rolloff_factor = 41,
+  debug_show_collisions = 42,
+  debug_show_hitboxes = 43,
+  debug_show_navmesh = 44,
+  debug_show_box_volumes = 45,
+  net_snapshot_debug = 46,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 39;
+constexpr uint32_t CVAR_COUNT = 47;
 
 enum class command_id : uint16_t
 {
@@ -204,8 +224,8 @@ const command_info_t& command_info(command_id id);
 // this is a linear scan and stays one -- it runs at typing speed.
 // Cvars and commands share one flat namespace, so a name resolves to at
 // most one of these two.
-bool find_cvar(std::string_view name, cvar_id* out_id);
-bool find_command(std::string_view name, command_id* out_id);
+[[nodiscard]] std::optional<cvar_id>    try_find_cvar(std::string_view name);
+[[nodiscard]] std::optional<command_id> try_find_command(std::string_view name);
 
 // The @Mirrored subset, so both ends agree on the sync set by
 // construction rather than by each filtering on flags and hoping.
@@ -215,11 +235,14 @@ Span<const cvar_id> mirrored_cvars();
 // files, and the mirrored-value payload all go through this pair.
 // Floats use the shortest representation that round-trips.
 //
-// cvar_from_text returns false and leaves the value ALONE when the text
+// try_cvar_from_text returns false and leaves the value ALONE when the text
 // does not parse -- the caller reports it, because only the caller knows
-// whether it came from a console line, a config file or the wire.
-bool cvar_to_text(const cvar_state_t& state, cvar_id id, std::string& out_text);
-bool cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text);
+// whether it came from a console line, a config file or the wire. It keeps
+// a bool rather than an optional because it has no value to hand back, but
+// it still carries the try_ prefix: the prefix tracks FALLIBILITY, and a
+// bare name has to keep meaning "this cannot quietly fail".
+[[nodiscard]] std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id);
+[[nodiscard]] bool try_cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text);
 
 // Handler declarations, TYPED from each command's declared signature.
 // Declaring a command in the .def OBLIGATES the owning side to define the
@@ -281,3 +304,17 @@ void bind_client_commands(command_table_t& table);
 // into that same value by the one generator run.
 
 } // namespace cvars
+
+// --- Enum_Array support ---------------------------------------------
+//
+// Global scope on purpose: enum_traits is declared in shared/array.hpp,
+// which knows nothing about this namespace. `count` is what sizes an
+// Enum_Array<cvars::Foo, T>, so adding a value to the .def resizes
+// every table over that enum. It does not fill the new row -- see
+// rows_in_enum_order in array.hpp for the check that catches that.
+
+template <> struct enum_traits<cvars::Bot_Mode>
+{
+  static constexpr uint32_t count = cvars::Bot_Mode_COUNT;
+};
+

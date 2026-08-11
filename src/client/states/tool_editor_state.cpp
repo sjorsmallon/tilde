@@ -6,6 +6,7 @@
 #include "../editor/editor_bvh.hpp"
 #include "../editor/entity_editor_traits.hpp"
 #include "../editor/geometry_editor.hpp"
+#include "../editor/tools/animation_tool.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
@@ -153,7 +154,7 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
     renderer::draw_line(cmd, start, end, color);
   }
 
-  void draw_wire_box(const linalg::vec3 &center,
+  void draw_wire_aabb(const linalg::vec3 &center,
                      const linalg::vec3 &half_extents, color_t color) override
   {
     linalg::vec3 min = center - half_extents;
@@ -197,12 +198,10 @@ struct VulkanOverlayRenderer : public overlay_renderer_t
     }
   }
 
-  void draw_text(const linalg::vec3 &pos, const char *text,
-                 color_t color) override
+  void draw_text_in_world(const linalg::vec3 &pos, const char *text,
+                          color_t color) override
   {
-    // Not supported in immediate 3d cmd buffer easily without font texture
-    // binding Could use ImGui::GetBackgroundDrawList()->AddText but that
-    // requires projection
+    renderer::draw_text_in_world(pos, text, color);
   }
 };
 
@@ -234,11 +233,15 @@ void Tool_Editor_State::on_enter()
       std::string line;
       std::getline(forward, line);
       log_terminal(line);
-      map_loaded = load_map(line, map);
+      std::optional<shared::map_t> loaded = shared::try_load_map(line);
+      map_loaded = loaded.has_value();
       if (!map_loaded)
         log_terminal("Failed to load map");
       else
+      {
+        map = std::move(*loaded);
         snapshot_on_load(line);
+      }
     }
 
     if (!map_loaded)
@@ -269,6 +272,7 @@ void Tool_Editor_State::on_enter()
     tools.push_back(std::make_unique<Pathfinding_Test_Tool>());
     tools.push_back(std::make_unique<Particle_Editor_Tool>());
     tools.push_back(std::make_unique<Displacement_Tool>());
+    tools.push_back(std::make_unique<Animation_Tool>());
   }
 
   // Enable first tool
@@ -283,6 +287,60 @@ void Tool_Editor_State::on_exit()
   {
     tools[active_tool_index]->on_disable(context);
   }
+}
+
+void Tool_Editor_State::snap_to_axis_view(ViewMode mode)
+{
+  // Pitch stops short of straight down. At exactly +-90 the forward vector is
+  // parallel to world up, the right vector collapses, and get_orientation_vectors
+  // falls back to an arbitrary one -- so the view spins depending on nothing.
+  constexpr float VERTICAL_PITCH = 89.0f;
+
+  float       yaw          = 0.0f;
+  float       pitch        = 0.0f;
+  const char *announcement = "";
+
+  switch (mode)
+  {
+    case ViewMode::Front:   yaw = 0.0f;   pitch = 0.0f;             announcement = "Front (+X)";   break;
+    case ViewMode::Back:    yaw = 180.0f; pitch = 0.0f;             announcement = "Back (-X)";    break;
+    case ViewMode::Side:    yaw = 90.0f;  pitch = 0.0f;             announcement = "Right (+Z)";   break;
+    case ViewMode::Left:    yaw = 270.0f; pitch = 0.0f;             announcement = "Left (-Z)";    break;
+    case ViewMode::TopDown: yaw = 0.0f;   pitch = -VERTICAL_PITCH;  announcement = "Top (-Y)";     break;
+    case ViewMode::Bottom:  yaw = 0.0f;   pitch = VERTICAL_PITCH;   announcement = "Bottom (+Y)";  break;
+
+    // Not an axis view; nothing to snap to. Reached only if a caller passes it,
+    // which no keypad binding does.
+    case ViewMode::FreeCam:
+      return;
+  }
+
+  // The active tool decides what "the thing" is. No tool with an opinion means
+  // the world origin at map scale, which is the old behaviour.
+  view_focus_t focus;
+  if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
+  {
+    if (std::optional<view_focus_t> tool_focus = tools[active_tool_index]->view_focus())
+      focus = *tool_focus;
+  }
+
+  camera.orthographic = true;
+  camera.yaw          = yaw;
+  camera.pitch        = pitch;
+  view_mode           = mode;
+
+  // Orthographic, so the pull-back does not affect how big the subject looks --
+  // only whether it is inside the depth range. Framing is ortho_height's job.
+  const camera_basis_t basis = get_orientation_vectors(camera);
+  const float          pull_back = std::max(focus.radius * 4.0f, 1024.0f);
+  camera.position = focus.center - basis.forward * pull_back;
+
+  // Diameter plus a margin, so the subject fills the viewport instead of
+  // sitting in the middle of it.
+  camera.ortho_height  = focus.radius * 2.5f;
+  camera.orbit_target  = focus.center;
+
+  renderer::draw_announcement(announcement);
 }
 
 void Tool_Editor_State::switch_tool(int index)
@@ -302,7 +360,9 @@ void Tool_Editor_State::switch_tool(int index)
   context.bvh = &bvh;
   context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.grid = &grid_settings;
-  context.time = 0; // TODO: Get real time
+  // context.time is NOT reset here -- it is seconds since the editor opened,
+  // advanced in update(), and a tool switch is not a new clock. Resetting it
+  // made every selection pulse restart mid-fade.
 
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
   {
@@ -343,6 +403,12 @@ viewport_state_t Tool_Editor_State::transform_viewport_state()
 void Tool_Editor_State::update(float dt)
 {
   last_dt = dt;
+
+  // The editor's own clock, in seconds since it opened. Every animated overlay
+  // reads it -- selection pulses, and the hitbox highlight in the Animation
+  // tool. It was pinned at 0 with a TODO, which is why the Selection tool's
+  // "pulse" has always been a flat colour.
+  context.time += dt;
 
   // Re-read every frame so `r_fov` from the console takes effect immediately,
   // and so picking and rendering can never be a frame apart on it.
@@ -445,11 +511,38 @@ void Tool_Editor_State::update(float dt)
         renderer::draw_announcement("Side (+Z)");
         break;
       case ViewMode::Side:
+      // The keypad-only views are not in the cycle -- Shift+Space would
+      // otherwise need seven steps to get back where it started. They drop
+      // straight out to Free Cam.
+      case ViewMode::Bottom:
+      case ViewMode::Back:
+      case ViewMode::Left:
         view_mode = ViewMode::FreeCam;
         camera.orthographic = false;
         renderer::draw_announcement("Free Cam");
         break;
       }
+    }
+
+    // Keypad axis views, Blender-style: 1 front, 3 right, 7 top, Ctrl for the
+    // opposite side. Unlike Shift+Space these centre on what the active tool
+    // says it is looking at, which is the point of them.
+    if (input::is_key_pressed(input::key_t::Keypad_1))
+      snap_to_axis_view(mods.ctrl ? ViewMode::Back : ViewMode::Front);
+    if (input::is_key_pressed(input::key_t::Keypad_3))
+      snap_to_axis_view(mods.ctrl ? ViewMode::Left : ViewMode::Side);
+    if (input::is_key_pressed(input::key_t::Keypad_7))
+      snap_to_axis_view(mods.ctrl ? ViewMode::Bottom : ViewMode::TopDown);
+
+    // Keypad 5 is Blender's ortho/perspective toggle, and having snapped to an
+    // axis you immediately want it. Same effect as O, on the key the muscle
+    // memory reaches for.
+    if (input::is_key_pressed(input::key_t::Keypad_5))
+    {
+      camera.orthographic = !camera.orthographic;
+      if (!camera.orthographic)
+        view_mode = ViewMode::FreeCam;
+      renderer::draw_announcement(camera.orthographic ? "Orthographic" : "Perspective");
     }
 
     if (camera.orthographic && view_mode == ViewMode::FreeCam)
@@ -885,10 +978,9 @@ void Tool_Editor_State::render_ui()
     if (ImGui::Button("Load", ImVec2(120, 0)))
     {
       std::string full_path = get_maps_dir() + map_files[selected_idx];
-      shared::map_t new_map;
-      if (shared::load_map(full_path, new_map))
+      if (std::optional<shared::map_t> new_map = shared::try_load_map(full_path))
       {
-        map = std::move(new_map);
+        map = std::move(*new_map);
         transaction_system = Transaction_System{};
         geometry_updated_flag = true;
 
@@ -999,6 +1091,8 @@ void Tool_Editor_State::render_ui()
     switch_tool(4);
   if (ImGui::Button("Displacement"))
     switch_tool(5);
+  if (ImGui::Button("Animation"))
+    switch_tool(6);
 
   ImGui::Separator();
   ImGui::Text("Active Tool: %d", active_tool_index);

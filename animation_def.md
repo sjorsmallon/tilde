@@ -8,6 +8,165 @@ reasoning kept, because they are all easy mistakes to make again.
 Read `entity_def.md` first for the house principles this inherits: single
 declaration point, derive-never-invent, closed sets, loud failures.
 
+---
+
+## WHAT'S LEFT
+
+**Done: build-order steps 1, 2 and 7** — exporter, loader, model on screen,
+textures, GPU skinning, and the authored aim pose set driven by the mouse. The
+narrative of what landed and why is in `done.md` under ANIMATION TRACK; this file
+keeps the design.
+
+**The one fact that governs the schedule: there is no walk cycle.** Zero
+locomotion Actions exist in any `.blend`, and authoring one is a skill to learn
+rather than an afternoon. Everything involving clip playback sits behind it —
+which is why **aim jumped the queue** (decided 2026-08-08, landed 2026-08-09).
+
+---
+
+### NEXT — the walk cycle itself, in Blender.
+
+Nothing in the engine blocks step 3 any more: the `.animation` format, its
+reader, `sample_animation_clip_at`'s multi-frame interpolation and the asset-layer hash check
+all shipped with aim and are exercised by `model_format_test`. What is missing is
+an Action to put through them.
+
+- [ ] **Author one full-body looping walk cycle** on `actual_with_poses.blend`.
+- [ ] **Measure `stride_distance`** — the forward travel of the planted foot over
+      one cycle — and emit it. The `.animation` grammar and reader already carry
+      the optional `stride` line; the exporter does not write one yet, because a
+      single-frame pose has no cycle to measure.
+- [ ] **Clip export**: the same `--poses` machinery over a frame RANGE rather
+      than one frame. `export_poses` writes one frame today; the writer takes a
+      list.
+
+### DONE — aim (2026-08-09)
+
+Kept as a record of what the shape turned out to be, because the rest of the
+layer system reuses it.
+
+- [x] Five `*_holding_gun` poses exported as **single-frame `.animation` files**.
+      No `.pose` format was invented.
+- [x] `pose_position == 'POSE'` assert, and a loose-pose warning (18 such bones
+      on `actual_with_poses.blend`) plus a reset so the export is reproducible.
+- [x] `.animation` reader in `model_format.{hpp,cpp}`; `assets::load_animation`
+      resolves the sibling skeleton and checks the hash.
+- [x] `pose_t` / `transform_t`, `sample_animation_clip_at`, `blend_into` with float per-bone
+      masks, `get_local_transforms_of_bones_from_pose` — `src/shared/animation.{hpp,cpp}`.
+- [x] The 2D (pitch, yaw) pose space, driven from `play_state.cpp` through
+      `mesh_draw_parameters_t::skinning_matrices`.
+
+Four corrections this made to what is written below, all worth reading before
+building on it:
+
+- **"Bilinear" was not achievable literally.** Five poses sit in a PLUS: there is
+  no up-left pose and therefore no four corners. `compute_aim_blend` is
+  barycentric on the plus — one vertical neighbour, one horizontal neighbour,
+  Forward taking the remainder — which degrades to a plain lerp on either axis
+  alone and splits both extremes at a full diagonal.
+- **The body has to be drawn at a LAGGING yaw.** Not in the original list, and
+  load-bearing: draw the model at the view yaw and the torso can never be turned
+  relative to it, so left/right are unreachable and half the pose space is dead.
+  `body_yaw` chases the view at `cl_aim_body_turn_rate`, and the twist that is
+  left over is what the poses cover.
+- **Blend the poses ABSOLUTELY, not additively** — they are full-body poses, not
+  deltas. `blend_additive` is declared and still unwritten; it needs a reference
+  to subtract and only earns its keep once a locomotion base layer exists to add
+  onto.
+- **`.animation` needed a `bones` count** the grammar in §2 did not have.
+  Without it a frame's channel count is defined by whichever frame happens to be
+  first, and a truncated frame is undetectable.
+
+---
+
+### UNBLOCKED 2026-08-10 — the tool and the hitbox mapping start now
+
+Both sat under "BLOCKED on a walk cycle existing" on the grounds that neither can
+be judged without posed content to judge it against. **That premise expired when
+aim landed**: the five `*_holding_gun` poses are real poses, driven live by
+`compute_aim_skinning_matrices`, and they move the spine, arms and head. A
+capsule that does not track a raised arm is visible today.
+
+What genuinely still needs the walk cycle: **leg volumes** (no aim pose moves a
+leg, so they stay effectively rest-pose) and the §4 hull-excursion check, which
+is a statement about a whole stride.
+
+- [x] **The Animation tool, phase A** — a tool in `Tool_Editor_State`: model at
+      origin, pose picker over bind + the five aim poses, pitch/yaw sliders
+      through the *real* `compute_aim_blend` / `sample_aim_pose` path, skeleton
+      overlaid as bone lines. Reuses `player_animator.hpp`; does not grow a
+      second animator.
+- [x] **The Animation tool, phase B** (2026-08-10) — `rig.hitboxes` read,
+      capsules drawn under the live pose, the volume table with
+      derived-vs-authored radii and a fill-from-derived button, the coverage and
+      hull-excursion readouts, and the audit view (today's three static boxes and
+      the 32×32×72 movement hull drawn alongside). `shared/hitbox_rig.{hpp,cpp}`
+      is the shared half — types, resolution, endpoints, derivation, audit — and
+      `hitbox_rig_test` is the guard. What is NOT here: the server hit-testing
+      against these capsules (below), which is the next step and needs no new
+      data.
+- [ ] **Scrub, layers, masks, crossfade** — this part really is blocked, because
+      Blender cannot preview any of it and neither can we without a clip.
+- [ ] **~~`rig.hitboxes`~~ + hitscan against capsules** — the mapping half landed
+      2026-08-10 (`resources/models/rig.hitboxes`, ten volumes over three
+      regions, read by `game_shared`). What remains is `hitscan.cpp` testing
+      against the posed capsules instead of `player_hitboxes`'s three static
+      boxes, which means the server sampling the pose it already has the assets
+      for. NOT `hb_*` bones, NOT placement gizmos, NOT baked. `todo.md` §2e.
+- [ ] **`locomotion_phase` replicated**, and **posed endpoints rewound** in
+      `Snapshot_History` (not `{clip, phase, stance}` — see §4 and §6).
+- [ ] **Crossfades + the locomotion blendspace.** Smaller than it looks; aim
+      builds the primitives.
+
+---
+
+### LOOSE ENDS — small, independent, no order
+
+- [ ] **`left_holding_gun` has the legs swapped.** In that pose `DEF-foot.L` sits
+      where `foot.R` is in the other four (`(-0.19, 0.166, 0.067)` against
+      `(0.151, -0.143, 0.067)`). Confirmed by reading `pose_bone.matrix` straight
+      out of Blender, so it is authoring and not export — it looks like a
+      paste-X-flipped pose that caught the leg controls. Blending toward it
+      swings the legs round. Re-author and re-export; nothing in code changes.
+- [ ] **`downward_holding_gun` leans far enough to leave the hull.** Measured
+      2026-08-10 by `hitbox_rig_test` against the authored rig: it bends the
+      spine until the head volume sits at **chest height (y 41.8), 20 units in
+      front** — 9.1 outside the hull against §4's budget of 6, and a pose no
+      silhouette reads as "looking down". `upward` was the same story and is now
+      at 4.6, under budget. The test prints the number and flags it rather than
+      failing, because these are being re-authored; the tool shows it live while
+      you drag the pitch slider.
+- [x] ~~**The hands are outside every volume.**~~ Fixed 2026-08-10 by authoring
+      `hand.L` / `hand.R` as offset spheres: coverage went from 296 uncovered
+      vertices to 12, all of them toes, worst 4.0 units. That is what the
+      coverage readout is for.
+- [ ] **The model sinks 1.8 units into the floor** (`min.y = −1.77`). It is 16
+      of 735 vertices, both soles, asymmetric (left −0.045 m, right −0.036 m);
+      the rig is grounded correctly (`DEF-toe` at +0.0019 m). Fix in Edit Mode in
+      `actual_with_poses.blend`. **Do not move the mesh object** — vertices
+      export in armature space, so that slides the skin off the skeleton.
+- [ ] **Does the model face the right way?** `play_state.cpp` passes
+      `render_yaw` through with no offset; unverified. If wrong, fix it in the
+      exporter, not the draw call.
+- [ ] **`left_holding_gun.asset.blend`** sits in `asset_library/Saved/Actions/`
+      while the other four are one level up. Aim wants all five in one scannable
+      directory.
+- [ ] **Exporter hardening leftovers** (`todo.md` §2b): two mesh objects → one
+      `.mesh`, two bones → one name after the `DEF-` strip (that one also
+      poisons `skeleton_hash`), and `.001` datablock warnings.
+- [ ] **Two empty Armature modifiers** on `Leet_Full` with no object set. Inert
+      — the exporter skips them via its `and m.object` guard — but they are the
+      kind of leftover that costs someone an hour later.
+
+> **Do not re-litigate: `actual_with_poses.blend` is the canonical file.**
+> `better_offset.blend` holds the same character diverged (1217 vertices vs 1216,
+> `.001` material datablocks, images linked into the Blender tree rather than
+> packed, feet at `+0.66` rather than `−1.77`). Its feet are closer to the ground
+> plane, which makes it *look* like the newer fix. Exporting from it to chase the
+> offset silently swaps the model.
+
+---
+
 ## The principle
 
 Animation is split into two tiers by whether it can change a hit decision.
@@ -33,6 +192,107 @@ one frame of state. **Phase cannot**, because it integrates over time. So phase
 is the one animation value that rides the wire, and the design's job is to keep
 it the only one.
 
+### The server is authoritative, and that includes the pose
+
+Stated plainly because the tier split can be misread as "animation is a client
+concern": **the server decides what happened.** For hits to be decided correctly
+it has to know — or dictate — the animation state the hitboxes are posed from.
+~~That is precisely what the baked hitbox track is for: the server carries no
+skeleton and blends no bones, it looks up per-frame capsules by `(clip, phase)`
+and lerps, off state it already owns.~~ **REVERSED 2026-08-10** — the server
+samples the poses and walks the hierarchy itself, out of the same `game_shared`
+code the client uses. See the reversal block at the top of §4, which also
+separates the two guarantees this used to run together.
+
+**"A tier-2 disagreement is invisible" is scoped to CLIENT-VS-CLIENT.** It says
+nothing about model-vs-hitbox, and conflating the two is easy. A tier-2 pose
+that swings the silhouette away from the server's volumes makes you aim at
+something that is not there — identically on every client, no desync required.
+So the split does *not* license arbitrary cosmetic motion; a pose is only
+legitimately tier 2 if it keeps the rendered player close to the volumes the
+server will test. Anything that moves the silhouette meaningfully has to become
+tier 1 or be bounded (see "The hull invariant weakens" below, which is the same
+argument applied to limbs).
+
+**Today's live instance of exactly that gap**: `player_hitboxes` is three
+axis-aligned volumes at fixed offsets from the feet, not rotated and not posed,
+while the model is drawn with up to `cl_aim_max_yaw` (45°) of torso twist plus a
+full aim pose. The table's own comment states its precondition — head is a
+sphere on the vertical axis, torso and legs are square columns on that axis — and
+that holds for a neutral pose but stops holding once the torso twists relative
+to the feet, because the shoulders leave the axis. Shooting a visibly leaning
+torso and missing is a present bug, not a future one.
+
+**`body_yaw` is the odd input out, and this is the thing to remember.** Every
+other pose input is replicated or server-derivable from replicated state:
+`velocity` and stance give the clip and weights, `locomotion_phase` rides the
+wire, `view_angle_pitch` is replicated and rewound. `body_yaw` is neither — it
+is a client-local integrator over `render_yaw`, with no server-side counterpart
+and no way to recompute it from one frame. So the day torso twist is supposed to
+affect hitboxes, `body_yaw` cannot stay where it is: it has to become
+server-owned, or be redefined as a deterministic function of already-replicated
+state.
+
+**Deferred on purpose:** even with all of that, clients simulate and render
+ahead of the server, so some disagreement remains. That residue is the lag
+compensation / rewind problem, not this one, and it is solved later.
+
+### RESOLVED (2026-08-09): `body_yaw` is a tier-1 accumulator, and the server owns it
+
+Decided rather than left open, because the interim state — every client
+integrating its own copy while the server holds none — is a three-way
+disagreement, and no amount of care on the client side collapses it.
+
+**The rule already in this document decides it.** *Replicate accumulators,
+derive everything else.* `body_yaw` integrates over time and cannot be recovered
+from one frame, so it is an accumulator, so it rides the wire. It got filed as
+tier 2 because "aim" reads as cosmetic, not because the rule put it there. It is
+the same shape as `locomotion_phase`: two accumulators, one rule, one answer.
+
+**Precedent.** Source/CS:GO's `CCSGOPlayerAnimState` runs ON THE SERVER at fixed
+tick from networked eye angles and velocity; the server poses the skeleton and
+that is what lag compensation rewinds and tests against. Clients receive the
+result rather than inventing it. CS:GO is also the cautionary tale — the paths
+where client and server animstate could diverge are precisely what cheat
+"resolvers" target. The whole exploit category exists because two sides were
+allowed to compute one animation value independently.
+
+**Note the correction:** replicating the CLIENT-computed value would indeed be
+the wrong fix (it syncs clients to each other while all of them still disagree
+with the server). Replicating a SERVER-computed value is the right fix and the
+opposite thing. Owner first, wire second.
+
+The shape:
+
+1. **The server owns it.** `body_yaw` advances in the server tick from that
+   player's `view_angle_yaw` and `velocity`, both already server-side.
+   `advance_body_yaw` moves to `shared/` and the server calls it — one
+   implementation, so there is no second copy to drift.
+2. **`body_yaw: f32 @Networked`** on `Player_Entity`, beside `locomotion_phase`.
+3. **Into `Snapshot_History`**, so rewind poses the hitbox with the twist the
+   shooter actually saw.
+4. **Clients stop integrating.** They read it, and may smooth between snapshots
+   for presentation — but that smoothed value must never feed the next frame's
+   input, or the local integrator is back.
+
+Two details that are easy to get wrong:
+
+- **The clock.** The current client version integrates on the RENDER clock from
+  the INTERPOLATED `render_yaw` — non-reproducible twice over, variable `dt` and
+  an input that is itself a lerp. Server-side it is a fixed tick from the
+  snapshot value, which is what makes it reproducible at all.
+- **Velocity is an input.** Canonical feet yaw is driven by movement direction
+  as well as view: strafing turns the feet along velocity while the torso stays
+  on the crosshair. The current implementation has no velocity term at all, so
+  the feet chase only where you look. Server-side that input is free.
+
+Cost is one delta-compressed float per player, changing only while turning.
+
+**When: with step 5, not before.** `locomotion_phase` replicated-and-rewound is
+the same machinery — same wire field, same `Snapshot_History` slot, same
+server-side animstate update — and building it twice would be silly. Until then
+the twist stays cosmetic-only and the gap is the bounded one described above.
+
 ## Pipeline
 
 ```
@@ -53,6 +313,84 @@ model.blend
 
 The two halves never meet. The server has no skeleton, no clip sampling and no
 pose. That is the load-bearing consequence of baking (§4).
+
+### The life of a vertex
+
+The diagram above is files. This is the same pipeline followed by one vertex,
+because the space a value is written in changes four times along it and nothing
+in the types says so.
+
+`V` is on the forearm. The arm is three bones: shoulder at y=10, elbow at y=20,
+wrist at y=25. `V` sits at **(0, 23, 0)** and is weighted entirely to the elbow.
+
+**Blender, at export.**
+
+1. The artist models in the **rest pose**. `V` is at (0, 23, 0).
+2. `V` is written in **armature space** — deliberately, so it shares a frame
+   with the inverse binds, which come from `bone.matrix_local` (also armature
+   space). From the ORIGINAL mesh data, not the evaluated one, or the Armature
+   modifier bakes the current pose into the vertex buffer.
+3. `V`'s influences go to a **parallel array**, not into the vertex:
+   `vertex_skin_t{bone_indices, bone_weights}` = `{elbow,0,0,0}` / `{1,0,0,0}`.
+4. Each bone writes `inverse_bind = inverse(engine(bone.matrix_local))`. The
+   elbow's is **T(0, −20, 0)**.
+5. Clips write **parent-relative** TRS per bone per frame, divided by the
+   RECONSTRUCTED parent (§1, "Reconstructing the hierarchy").
+
+**Load, once.**
+
+6. `.mesh` → `mesh_asset_t.vertices`; `V` at (0, 23, 0), its skin entry at the
+   same index.
+7. `.skeleton` → `skeleton_t`: names, `parent_index`, `inverse_bind`. The parser
+   refuses a file where any parent ≥ its own index.
+8. The mesh's skeleton hash is checked against the skeleton's, which is what
+   makes `V`'s bone 7 and the skeleton's bone 7 provably the same bone.
+9. Both arrays upload as **two vertex bindings**. From here `V` is never touched
+   by the CPU again — it stays at (0, 23, 0) for the life of the process.
+
+**Per frame, CPU — once per model, not per vertex.**
+
+10. Sample a clip → `pose_t` (parent-relative TRS). Or `blend_into` several for
+    the aim set. Or `compute_bind_pose` if nothing is playing.
+11. `get_local_transforms_of_bones_from_pose` → TRS to `mat4`. STILL
+    parent-relative; nothing is resolved yet.
+12. `compute_model_space_matrices` → one forward pass over `parent_index`:
+    where each bone is NOW, in model space. Say the elbow swung to (5, 20, 0).
+13. `* inverse_bind` → the skinning matrices. Elbow:
+    `T(5,20,0) * T(0,−20,0)` = **T(5, 0, 0)**. Steps 12–13 are both inside
+    `compute_skinning_matrices`. (a.k.a to know where this vertex is in relation to the bone, subtract the bone's trs from your current trs. (yhou can sort of visualize this as dragging the bone to the origin and the vertex coming along with it.))
+14. Upload ≤128 of them to the `Skinning` UBO, one dynamic-offset block per
+    skinned draw.
+
+**Per frame, GPU — per vertex.**
+
+15. The shader fetches `inPosition` = **(0, 23, 0)**, the same bind-pose value as
+    every frame since load, plus indices and weights from binding 1.
+16. Blend up to four skinning matrices by weight. `V` has one, so `skin` =
+    T(5, 0, 0). Weights are pre-normalized by the exporter and the reader
+    refuses a vertex where they are not, so the shader does not renormalize.
+17. `skin * inPosition` → **(5, 23, 0)**. `V` moved with its elbow. Still MODEL
+    space, just posed.
+18. `mvp * skinnedPosition` → clip space. The normal takes `mat3(skin)`, then
+    `normalMatrix` → world, for lighting.
+
+Three things this is here to make obvious.
+
+**The vertex buffer is immutable.** Animation changes 128 matrices, never a
+vertex. That is why skinning is cheap, and why there is no drift: every frame
+recomputes from untouched source data rather than accumulating onto last frame's
+result.
+
+**`inverse_bind` translates between two vocabularies.** The mesh speaks model
+space, the skeleton speaks bone space. `V` at (0, 23, 0) means nothing to the
+elbow until `inverse_bind` restates it as "3 units above the elbow" — only then
+can the elbow say where that is now. A skinning matrix is a DELTA from bind, not
+a placement.
+
+**Check any change against the bind pose.** With nothing animating, step 12 gives
+T(0,20,0), step 13 gives identity, and step 17 leaves `V` exactly where the
+artist put it. Every stage above has to be right for that cancellation, which is
+why it is the assertion in `skinning.hpp` and in `test_model_format.cpp`.
 
 ---
 
@@ -251,13 +589,31 @@ the rig (`bpy.data.libraries.load(path, link=False)`), assigns action + slot as
 above, and reads the evaluated pose. They are **not** clips and never become
 `.animation` files — they are additive-layer inputs (§5).
 
-### Hitbox track emission
+### Hitbox track emission — **DELETED 2026-08-10, this step does not exist**
 
-For each clip, the exporter also writes the posed hitbox volumes per frame,
+> The exporter writes no hitbox track. The server evaluates the pose and reads
+> endpoints off bones, so there is nothing to bake; see the reversal block at the
+> top of §4. What survives from the note below is the `rig.hitboxes` mapping,
+> which is handwritten beside the skeleton and is not an exporter output at all.
+> Radius derivation from skin weights survives too, but only as a *seed* the
+> Animation tool offers — the value that ships is the one in the file.
+
+~~For each clip, the exporter also writes the posed hitbox volumes per frame,
 already skinned into model space. This is what lets the server skip the skeleton
-entirely. Volumes are authored in Blender as named bones (`hb_head`,
-`hb_upper_arm_l`, …); the exporter reads each one's head and tail per frame and
-writes the two endpoints.
+entirely.~~
+
+> **SUPERSEDED 2026-08-08 — volumes are NOT authored as `hb_*` bones.** That was
+> the plan here, and it is a trap: the exporter collects the skeleton as the
+> `use_deform` set and `skeleton_hash` is over exactly those names, so an `hb_`
+> bone either pollutes the skeleton and its hash or is invisible without a
+> second bone-collection path. It is also mostly unnecessary — a volume's
+> endpoints are an existing bone's head and tail, and its radius is what the
+> skin weights already encode.
+>
+> Instead: a handwritten `rig.hitboxes` beside the skeleton names existing
+> deform bones, their damage regions, and a radius override only where
+> derivation is wrong. The exporter derives the radius from the skinned vertices
+> and bakes endpoints per frame as below. Full reasoning in `todo.md` §2e.
 
 Radii are constant per volume and written once in the header, not per frame.
 
@@ -284,10 +640,11 @@ vertex_line  := "v" f32{3} f32{3} f32{2} int{4} f32{4} nl
 index_block  := "indices" int nl { "i" int int int nl }
 submesh_line := "sub" int int int int nl            // offset count material
 
-animation_file:="animation" ident nl "skeleton" ident hex nl
+animation_file:="animation" ident nl "skeleton" ident hex nl "bones" int nl
                 "fps" f32 nl "frames" int nl [ "stride" f32 nl ] { frame_block }
 frame_block  := "f" int nl { channel_line }
 channel_line := "b" int f32{3} f32{4} f32{3} nl     // bone translation rot(xyzw) scale
+                                                    // bones written 0..n-1, every frame
 
 hitbox_file  := "hitboxes" ident nl "skeleton" ident hex nl
                 "fps" f32 nl "frames" int nl "volumes" int nl
@@ -299,6 +656,12 @@ hitbox_frame := "hf" int nl { "hv" int f32{3} f32{3} nl }   // volume p0 p1
 
 A `.mesh` with no `skeleton` line is a static mesh — skin arrays stay empty and
 nothing downstream changes.
+
+`bones` on an `.animation` was added when the reader was written (2026-08-09) and
+is not optional. Without it, how many `channel_line`s a `frame_block` holds is
+defined by whichever frame happens to come first, so a truncated frame is
+undetectable — the reader would just start the next frame early. `stride` stays
+optional: an authored pose has no cycle to measure.
 
 ---
 
@@ -358,6 +721,71 @@ mid-stride, and the current table has **no arm volumes at all** — the torso bo
 is 28 wide ([player_hitboxes.hpp:63](src/shared/player_hitboxes.hpp#L63)) and an
 arm at shoulder width is outside it.
 
+> ## REVERSED 2026-08-10 — the server runs the animator; there is no bake
+>
+> What this section said, and what the rest of it below is still written in
+> terms of: the exporter bakes posed volumes per clip per frame, the server
+> indexes that table by `(clip, phase)` and lerps between two frames, and
+> therefore carries no skeleton. **That is dropped.** `hitbox_track_t`,
+> `<clip>.hitboxes` and the exporter's emission step are not going to be built.
+> The server samples the same poses the client samples, walks the same
+> hierarchy, and reads endpoints off the same bones.
+>
+> **Why the bake loses.** It is a cache keyed on the wrong thing. An entry is
+> *one clip at one frame*, but the pose actually drawn is a blend — a locomotion
+> base, a masked torso layer, a crossfade mid-transition, and a barycentric mix
+> of five aim poses over it. No combination of those is an entry, so a lookup
+> can only find neighbours and lerp between them. This section already conceded
+> that under "Blending" and waved it through as an accepted approximation; what
+> makes it unacceptable is that the gap *widens with every layer feature*, and
+> it widens invisibly. The failure mode is a player reporting that shots do not
+> register, months after the change that caused it.
+>
+> Nor is it a cache worth having on size or speed. The table is small (240 bytes
+> per frame, ~7 KB for a 30-frame clip) but so is the computation it replaces:
+> 35 bones over 32 players at 60 Hz is ~67k transform composes per second. The
+> bake caches something cheaper than the drift it introduces.
+>
+> **The cost of reversing is near zero.** `animation.hpp` and `skinning.hpp` are
+> already in `game_shared`, which links into `game_server` — the "the SERVER
+> never calls any of it" line in that header was policy, not a dependency. The
+> server needs `rig.skeleton`, the clips and `rig.hitboxes`; all small, and
+> still no meshes, because radius derivation is tool-time and its output is a
+> number in a text file.
+>
+> ### The two guarantees, which are NOT the same guarantee
+>
+> These got conflated in the conversation that produced this reversal, so they
+> are separated here permanently. Both are wanted. They are bought by different
+> mechanisms and neither implies the other.
+>
+> **1. Client/server agreement — the pose drawn is the pose tested.** The client
+> renders a pose; the server decides hits against limb positions. If those come
+> from two different pieces of code they will disagree, and you aim at a
+> silhouette that is not where the volumes are. *Bought by:* both sides calling
+> the same `sample_animation_clip_at` / `blend_into` / hierarchy walk out of `game_shared`.
+> This is the whole reason the bake is gone.
+>
+> **2. Reproducibility of a past tick — lag compensation.** At tick 100 the
+> server must know where the limbs were at tick 90. Two ways to have that:
+>
+> - store the *inputs* (`{clip, phase, stance}`) and re-run the animator against
+>   them at rewind time — which obligates the animator to produce a bit-identical
+>   result on the second run, forever, a real constraint on how it may be
+>   written;
+> - store the *outputs* (the capsule endpoints) and read them back — nothing is
+>   re-run, so nothing has to reproduce.
+>
+> *Bought by:* the second. `Snapshot_History` carries endpoints. At 10 volumes ×
+> 2 endpoints × 12 bytes = 240 B per player per tick, a 32-tick ring for 32
+> players is ~245 KB, which is not a budget worth an eternal constraint on the
+> animator.
+>
+> **Guarantee 1 is about two machines agreeing now. Guarantee 2 is about one
+> machine agreeing with its own past.** Shared code gives you the first and says
+> nothing about the second; storing outputs gives you the second and says
+> nothing about the first.
+
 What does **not** follow is that the server runs the animator. Those are
 separable, and separating them is the whole design:
 
@@ -366,6 +794,52 @@ separable, and separating them is the whole design:
 So the exporter bakes them (§1). The server does a table lookup and a lerp
 between two baked frames. No bones, no clip sampling, no blending of rotations,
 no hierarchy walk, no skeleton in `game_shared`.
+
+### BUILT 2026-08-10 — the mapping, the shared math, the tool
+
+`resources/models/rig.hitboxes` exists and is read by `game_shared`. What the
+sections below still describe as a plan, in the shapes it actually took:
+
+```
+v <name> Sphere            <bone>          <region> <radius>       [offset]
+v <name> Capsule|Cylinder  <start> <end>   <region> <radius>       [offset]
+v <name> Box               <start> <end>   <region> <hx> <hy> <hz> [offset]
+```
+
+- **Endpoints are the two named bones' HEADS.** The skeleton stores no tail, and
+  naming the far joint means there is no reconstruction to get wrong — the upper
+  arm is `upper_arm.L -> forearm.L`. A span rather than a bone because Rigify
+  gives seven `spine*` bones and §4 wants one torso.
+- **The shape is NAMED, not inferred.** The first version spelled a sphere as
+  `start == end` and had no box or cylinder at all. Inferring a shape from a
+  degenerate span means the format can only ever express what someone thought of
+  first, and it reads as a typo rather than as a decision. Four kinds now, in
+  `assets::hitbox_shape_t` — deliberately not `entities::Shape_Kind`, which is
+  the vocabulary of entity components and Jolt bodies and has no Cylinder;
+  adding one there would oblige the physics and collision switches to handle a
+  shape they cannot make.
+- **A Box is oriented by the bone, not by the world.** Its half-extents are in
+  the volume's own frame — across the bone (right), across it (up), along it —
+  so it turns with the limb instead of being an AABB that grows every time the
+  pose rotates.
+- **There is NO volume count in the header.** The `.mesh` and `.skeleton`
+  formats declare theirs because they are generated and a truncated file would
+  otherwise pass silently. This one is handwritten, so a count is a second thing
+  to keep in step that can only ever fall out of it. Volumes run to end of file.
+- **`offset` slides the volume along the start bone's own axis**, in BONE space
+  so it rotates with the pose. The head and the hands use it: each is a single
+  bone whose head sits at the jaw or the wrist. That axis is **minus the third
+  column** of the model-space matrix, not the second — `assets::bone_direction`
+  and the comment on it explain why, and the Animation tool's leaf-bone stubs
+  were drawn along the wrong one until this landed.
+- **Sizes are authored and required.** `derive_hitbox_size` (a high percentile
+  of distance from the axis, and of the projection onto each of the volume's own
+  axes) seeds the tool's derived column; the file's numbers are what the server
+  reads, because derivation needs the mesh and the server has none.
+- **The two checked numbers of this section are `hitbox_rig_test`'s output**:
+  hull excursion per aim pose, and skin coverage per bone. Both are reported
+  rather than enforced — see the loose ends at the top for what they currently
+  say about the content.
 
 ### Shapes stay trivial
 
@@ -405,12 +879,18 @@ multiplier table does not grow, and adding arms does not touch balance. The
 current comment at [player_hitboxes.hpp:26](src/shared/player_hitboxes.hpp#L26)
 conflates the two because with three boxes they happened to be equal.
 
-### Blending
+### Blending — **the paragraph that killed the bake**
 
-Blending two clips lerps the endpoints with the same weights the visual blend
+~~Blending two clips lerps the endpoints with the same weights the visual blend
 uses. That is not identical to blending bone rotations and re-deriving endpoints,
 but it is deterministic, cheap, and close at locomotion blend weights. Accepted
-approximation; noted so it is not rediscovered as a bug.
+approximation; noted so it is not rediscovered as a bug.~~
+
+Kept visible because it is the whole argument in miniature. The approximation is
+real, it was accepted here on the grounds that it is small, and it does not stay
+small: masks, crossfades, the blendspace and the five-pose aim mix each widen it.
+Under the reversal there is nothing to approximate — the blend happens on
+rotations, once, and the endpoints are read off the result.
 
 ### Aim pitch
 
@@ -443,9 +923,9 @@ A pose is local TRS per bone. The only intermediate representation:
 struct transform_t { vec3f translation; quat rotation; vec3f scale; };
 struct pose_t      { std::vector<transform_t> local; };   // indexed by bone
 
-void sample_clip    (pose_t& out, const animation_clip_t& clip, float phase, bool looping);
-void blend_into     (pose_t& destination, const pose_t& source, const float* per_bone_weight);
-void blend_additive (pose_t& destination, const pose_t& source, const float* per_bone_weight);
+void sample_animation_clip_at    (pose_t& out, const animation_clip_t& clip, float phase, bool looping);
+void blend_into     (pose_t& destination, const pose_t& source, Span<const float> per_bone_weight);
+void blend_additive (pose_t& destination, const pose_t& source, Span<const float> per_bone_weight);
 ```
 
 Rotations blend with `nlerp` plus a hemisphere fix (negate `source.rotation` if
@@ -466,7 +946,7 @@ struct animation_layer_t
 and evaluation is a loop, not three hardcoded `Apply` calls:
 
 ```cpp
-sample_clip(pose, base_clip, base_phase, /*looping*/ true);   // FULL BODY
+sample_animation_clip_at(pose, base_clip, base_phase, /*looping*/ true);   // FULL BODY
 for (const animation_layer_t& layer : layers)
   (layer.additive ? blend_additive : blend_into)(pose, sample(layer), scaled_mask(layer));
 ```
@@ -505,10 +985,33 @@ distributed across neck and chest rather than pivoting one bone.
 2D aim space over (pitch, yaw), which is the form the code version was only ever
 approximating.
 
-Runtime: pick the bracketing poses for the current view angles, bilinearly
-weight them, and apply through `blend_additive` against the `torso` and `head`
-masks. The artist controls how aim distributes across the spine; no per-bone
-axis table, no clamp tuning, no third mechanism.
+Runtime: pick the bracketing poses for the current view angles, weight them, and
+blend. The artist controls how aim distributes across the spine; no per-bone axis
+table, no clamp tuning, no third mechanism.
+
+**Two corrections from building it (2026-08-09).** The blend is ABSOLUTE and
+full-body, not `blend_additive` against a `torso`/`head` mask — these are whole
+poses rather than deltas, and additive needs a reference to subtract that only
+exists once a locomotion base layer does. And the weighting is not bilinear:
+five poses sit in a PLUS, so there are no four corners. `compute_aim_blend` is
+barycentric on the plus —
+
+```
+vertical   = clamp01(|pitch| / max_pitch)   toward Upward or Downward
+horizontal = clamp01(|yaw|   / max_yaw)     toward Left or Right
+forward    = max(0, 1 - vertical - horizontal)      then normalize all three
+```
+
+— which is a plain two-pose lerp whenever one axis is zero (the common case) and
+splits both extremes evenly at a full diagonal. Two sequential `blend_into` calls
+would not: the second overwrites the first at full weight.
+
+**Yaw needs somewhere to come from.** The model is drawn at a `body_yaw` that
+LAGS the view yaw, and the deviation between them is what feeds the left/right
+poses. Draw the body at the view yaw and that deviation is zero forever, which
+makes two of the five poses unreachable by construction. The feet chase the view
+at `cl_aim_body_turn_rate` and get pushed round once the twist would exceed
+`cl_aim_max_yaw`. Purely local tier-2 state, never replicated.
 
 The `_holding_gun` suffix is not incidental — the set is weapon-specific, which
 lines up with `active_weapon_id` selecting the torso clip set (§6). A second
@@ -566,44 +1069,86 @@ fix is scaling playback by speed, which is *exactly* the phase advance above. On
 mechanism, two problems, and it is why `stride_distance` is measured at export
 rather than hand-tuned per clip.
 
-### Lag compensation
+### Lag compensation — **REVISED 2026-08-10: store outputs, not inputs**
 
-`Snapshot_History` gains `locomotion_phase` alongside position. Rewinding a shot
-is then: fetch the tick, read position + phase + view angles, index the hitbox
-track, lerp two frames, apply aim pitch to head and torso, test the ray.
+`Snapshot_History` stores the **posed capsule endpoints**, alongside position.
+Rewinding a shot is then: fetch the tick, read the endpoints, test the ray.
+There is no animation work at rewind time at all.
 
 ```
-{ uint16 clip; float phase; uint8 stance; }  ≈ 8 bytes / player / tick
-32 ticks × 32 players                        ≈ 8 KB
+10 volumes × 2 endpoints × 12 bytes          = 240 bytes / player / tick
+32 ticks × 32 players                        ≈ 245 KB
 ```
 
-Cheap because it is baked. The expensive thing would have been re-*evaluating* a
-skeleton at a past tick — which would have required the animator to be
+This is the *second* of the two guarantees separated at the top of §4, and it is
+worth restating why it is not the same as the first. Sharing animation code
+between client and server makes the drawn pose and the tested pose agree **now**;
+it says nothing about a tick that has already gone by. Storing endpoints is what
+covers that, and it covers it by making re-evaluation unnecessary rather than
+reliable.
+
+~~`Snapshot_History` gains `locomotion_phase` alongside position. Rewinding a
+shot is then: fetch the tick, read position + phase + view angles, index the
+hitbox track, lerp two frames, apply aim pitch to head and torso, test the ray.~~
+
+~~`{ uint16 clip; float phase; uint8 stance; }` ≈ 8 bytes / player / tick~~
+
+The old form stored the *inputs* and re-ran the animator against them, which is
+why the paragraph below worried about float evaluation order. That worry was
+correct and it is what the endpoint form deletes: nothing is recomputed, so
+nothing has to reproduce. 245 KB is not a budget worth a permanent constraint on
+how the animator may be written.
+
+~~Cheap because it is baked. The expensive thing would have been re-*evaluating*
+a skeleton at a past tick — which would have required the animator to be
 deterministic across float evaluation order, and would have made clip sampling
-part of the netcode. Baking removes that entirely.
+part of the netcode. Baking removes that entirely.~~
+
+`locomotion_phase` still rides the wire (§"The one new field") — the client needs
+it to draw what the server computed. It is simply no longer what lag compensation
+indexes.
 
 ---
 
-## 7. GPU skinning
+## 7. GPU skinning  — **BUILT, this is what shipped**
 
-Skinning matrices go in a UBO indexed by instance, not in the vertex buffer:
+Skinning matrices go in a UBO selected per draw by a dynamic offset, not in the
+vertex buffer. `resources/shaders/lit_textured_skinned.vert`:
 
 ```glsl
-layout(set = 0, binding = 2) uniform Skinning { mat4 bones[128]; } skinning;
+// set 0 is the material albedo, so lit_textured.frag is reused UNCHANGED by
+// both the skinned and unskinned pipelines. Only the vertex half differs.
+layout(set = 1, binding = 0) uniform Skinning { mat4 bones[128]; } skinning;
 
-vec4 skinned = vec4(0.0);
-for (int i = 0; i < 4; ++i)
-    skinned += weights[i] * (skinning.bones[bone_indices[i]] * vec4(position, 1.0));
+mat4 skin = inBoneWeights.x * skinning.bones[inBoneIndices.x]
+          + inBoneWeights.y * skinning.bones[inBoneIndices.y]
+          + inBoneWeights.z * skinning.bones[inBoneIndices.z]
+          + inBoneWeights.w * skinning.bones[inBoneIndices.w];
+vec4 skinnedPosition = skin * vec4(inPosition, 1.0);
+vec3 skinnedNormal   = mat3(skin) * inNormal;   // same matrix, no translation
 ```
 
-Normals use the same matrices without translation. Do not build a CPU skinning
-path "first" — it is not a stepping stone, it is a different renderer change that
-would then be deleted.
+Blending the MATRICES and transforming once is equivalent to transforming per
+bone and blending the results, and it is one matrix-vector multiply instead of
+four. Normals would want the inverse transpose under non-uniform bone scale; no
+rig here has any, and paying for one per vertex to handle a case the exporter
+could reject is the wrong trade.
 
-Weights are `float` in the file and packed at upload.
-`VK_FORMAT_R8G8B8A8_UNORM` halves binding 1's stride and the vertex fetch decodes
-it free — worth doing eventually, and worth *not* baking 8-bit weights into the
-file format so it stays a non-breaking change.
+Weights are not renormalized in the shader — the exporter normalizes them and
+the `.mesh` reader refuses a vertex whose weights do not sum to 1.
+
+**Do not build a CPU skinning path "first."** It is not a stepping stone; it is a
+different renderer change that would then be deleted.
+
+The matrices come from `assets::compute_skinning_matrices`
+(`src/shared/skinning.hpp`), which lives in `game_shared` rather than the
+renderer so the hierarchy walk can be tested without a GPU.
+
+**Still open:** weights are `float` in the file and uploaded as
+`R32G32B32A32_SFLOAT`. Packing to `VK_FORMAT_R8G8B8A8_UNORM` at upload would
+halve binding 1's stride and the vertex fetch decodes it free — worth doing
+eventually, and worth *not* baking 8-bit weights into the file format so it stays
+a non-breaking change.
 
 ---
 
@@ -615,7 +1160,27 @@ file format so it stays a non-breaking change.
   the hash check rather than failing subtly.
 - **Ragdoll blending.** `Physics_Body_Entity` exists, so the temptation is
   there. Out of scope.
-- **Animation in the editor.** The tool editor stays geometry-and-entities.
+- ~~**Animation in the editor.** The tool editor stays geometry-and-entities.~~
+  **REVERSED 2026-08-08.** This does not survive steps 6–7. Masks, layer
+  weights, crossfades, the blendspace and additive aim are all this runtime's
+  inventions — **Blender cannot preview any of them**, because it has no such
+  concepts. Tuning `spine_01: 0.75, spine_02: 0.35` by running around in-game
+  and squinting is not a workflow. And even for a plain clip, Blender's viewport
+  is not this renderer: different skinning math, axis convention and scale, and
+  it evaluates f-curves where we sample baked frames with nlerp, so a clip can
+  read correctly there and be wrong here — exactly the class of bug this
+  pipeline introduces.
+
+  An **Animation tool** in `Tool_Editor_State` (alongside Selection, Placement,
+  Sculpting, Displacement, Particle, Pathfinding): scrub a clip, freeze a frame,
+  orbit it, overlay the skeleton, toggle layers and masks, and — its first
+  customer — draw the baked hitbox volumes against the posed mesh.
+
+  **When:** step 4. It cannot exist before step 2 (nothing skinned to show) and
+  is barely useful before step 3 (one static pose to scrub). It is needed at
+  step 4 and mandatory by 6–7. That timing is also when `rig.hitboxes` gets
+  authored, which is deliberate: neither is done blind and neither is built
+  early. See `todo.md` §2e.
 - **Tier-2 state on the wire.** Not deferred — excluded by the principle.
 
 ## Open questions
@@ -637,39 +1202,42 @@ file format so it stays a non-breaking change.
 
 ## Build order
 
-Each step is independently verifiable, which is the point of the ordering.
+The canonical Blender file is
+`resources/blender/actual_with_poses.blend`. Each step below is independently
+verifiable, which is the whole point of the ordering. **"WHAT'S LEFT" at the top
+of this file is the live work list** — this is the reasoning behind the sequence.
 
-1. **Exporter emits `.skeleton` + static `.mesh`; loader reads both; render in bind
-   pose.** No animation. Proves axis conversion, scale and dedup — with a cube,
-   before a character exists.
-2. **Skin arrays + GPU skinning pipeline, driven by bind pose only.** Should
-   render *identically* to step 1. Any difference is an inverse-bind or ordering
-   bug, isolated from blending.
-3. **`.animation` export + `sample_clip` + one full-body looping clip.** A walking
-   player, no layers.
+1. ✅ **Exporter emits `.skeleton` + `.mesh`; loader reads both; render in bind
+   pose.** Proves axis conversion, scale and dedup with no animation involved.
+   Done 2026-08-08; textures followed 2026-08-09.
+2. ✅ **Skin arrays + GPU skinning pipeline, driven by bind pose only.** Renders
+   *identically* to step 1, so any difference is an inverse-bind or ordering bug
+   isolated from blending. Done 2026-08-09.
+3. **`.animation` export + `sample_animation_clip_at` + one full-body looping clip.** A
+   walking player, no layers. The format, the reader and `sample_animation_clip_at` all
+   landed with step 7; what is left is authoring the clip and measuring
+   `stride_distance`.
 4. **`.hitboxes` export + `hitbox_track_t` + hitscan against baked volumes**,
    debug-drawn over the skinned mesh. Still one clip, so phase is local — this
    step is about geometry being right, not netcode.
-5. **`locomotion_phase` replicated + rewound in `Snapshot_History`.** Remote
-   players' hitboxes now match what the shooter saw.
+5. **`locomotion_phase` AND `body_yaw` replicated + rewound in
+   `Snapshot_History`.** Remote players' hitboxes now match what the shooter
+   saw. Both accumulators land together on purpose — same wire field pattern,
+   same history slot, same server-side animstate update. This is also where
+   `body_yaw` stops being a client-local integrator and the server becomes its
+   owner; see "RESOLVED: `body_yaw` is a tier-1 accumulator" under The
+   principle.
 6. **`blend_into`, masks, crossfade, the locomotion blendspace.**
-7. **Additive layer + procedural aim (tier 2).**
+7. ✅ **Aim from the authored pose set (tier 2).** Promoted out of order and run
+   before 3–6, because it was the only step whose data already existed and it
+   needed no animation skill. Done 2026-08-09. Not "additive layer + procedural
+   aim" in the end — the poses are absolute and there is no procedural axis
+   table; see §5.
 
-Steps 1 and 2 are where the time goes and where bugs are cheapest to find. Step
-2 rendering identically to step 1 is the single most valuable checkpoint in the
-list. Step 4 before step 5 matters: get the volumes right in a single-player
-case before adding rewind, or you will be debugging two things at once.
+Two orderings that matter and are not arbitrary:
 
-### What the assets can support today (2026-08-08)
-
-| Step | Blocked on |
-|---|---|
-| 1–2 bind pose, GPU skinning | nothing — the rig and mesh are ready |
-| 3 first clip | **no locomotion clips exist.** Zero Actions in every project file; a walk cycle has to be authored |
-| 4–5 hitboxes, rewind | step 3, plus the `hb_*` volume bones are not in the rig yet |
-| 6 blending | step 3 |
-| 7 aim | **nothing** — the five-pose set is authored and in the repo |
-
-Aim is the only late step whose data already exists, so it can jump the queue if
-a visible result is wanted before a walk cycle is animated. Its one prerequisite,
-the hierarchy reconstruction, is verified working.
+- **Step 2 rendering identically to step 1** is the single most valuable
+  checkpoint in the list, because it isolates the skinning plumbing from every
+  question about poses.
+- **Step 4 before step 5.** Get the volumes right in a single-player case before
+  adding rewind, or you debug two things at once.

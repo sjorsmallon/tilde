@@ -81,9 +81,10 @@ struct client_context_t
   uint32_t awaiting_stream_content_hash = 0;
 
 
+  static constexpr int32_t invalid_slot_idx = -1;
 
   // the slot we occupy on the server (I guess to filter inputs etc?)
-  int my_slot = -1;
+  int32_t my_slot = invalid_slot_idx;
 
   // Local player's entity uid, learned from the first self snapshot. Used to
   // suppress server-dispatched cosmetic effects attached to our own player
@@ -131,7 +132,7 @@ struct client_context_t
   };
   struct Remote_Player_State
   {
-    int slot_index = -1;
+    int32_t slot_index = invalid_slot_idx;
     // Which entity currently occupies the slot. A slot can change occupant, and
     // interpolating across that would lerp the new player in from the old
     // player's last position.
@@ -142,6 +143,33 @@ struct client_context_t
     vec3f render_position = {0, 0, 0};
     float render_yaw = 0.f;
     float render_pitch = 0.f;
+    // Where the FEET point, which lags render_yaw. The difference between the
+    // two is the torso twist, and it is what drives the left/right aim poses --
+    // drawing the body at render_yaw would make that difference zero forever
+    // and leave two of the five poses unreachable.
+    //
+    // INTERIM, AND KNOWN WRONG -- moves to the server at animation step 5.
+    //
+    // Client-local, and the only pose input that is: velocity, stance and
+    // view_angle_pitch are all replicated, while this integrates over
+    // render_yaw and cannot be recovered from one frame. That makes it an
+    // ACCUMULATOR, and "replicate accumulators, derive everything else" puts it
+    // on the wire next to locomotion_phase -- it was filed as tier-2 cosmetic
+    // because "aim" reads that way, not because the rule put it there.
+    //
+    // What is wrong with it meanwhile, so nobody mistakes it for settled: every
+    // client integrates its own copy and the server holds none, and the server
+    // tests unposed axis-aligned volumes anyway, so up to cl_aim_max_yaw of
+    // twist is silhouette the hitbox does not have. Do not "fix" that by
+    // replicating THIS value -- syncing clients to each other still leaves all
+    // of them disagreeing with the server. The server has to own it.
+    //
+    // Also note it integrates on the RENDER clock from the INTERPOLATED yaw,
+    // which is what makes it unreproducible; the server version is a fixed tick
+    // off the snapshot value. See animation_def.md, "RESOLVED: body_yaw is a
+    // tier-1 accumulator".
+    float body_yaw = 0.f;
+    bool  body_yaw_initialized = false;
   };
 
 
@@ -159,35 +187,42 @@ struct client_context_t
   // integrated mode via server_session; in networked mode this will visibly
   // stutter at server tick boundaries until interpolation is added.
   std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> remote_physics_bodies;
-  uint32_t latest_processed_tick = 0;
 
-  // Per-player Player_Entity::last_fire_tick as of the last snapshot we looked
-  // at, keyed by entity uid. An advance means that player fired; see
-  // weapon_fire_audio.hpp. Keyed by uid rather than slot so a slot changing
-  // occupant cannot inherit the previous player's stamp.
-  std::unordered_map<shared::entity_uid_t, uint32_t> last_seen_fire_tick;
 
-  // --- Delta decompression: the snapshot history ---
-  // The server deltas against a tick we ACKED, so we must still be holding the
-  // exact state we reconstructed for that tick — not merely "the current
-  // world", which has moved on. Mirrors the server's ring one for one; see
-  // shared/network/snapshot_history.hpp. `acked_tick` on it is the value echoed
-  // back in every C2S_PlayerMoveCommand.
-  // The frame type is ::network::snapshot_frame_t, the same one the server
-  // stores — the server deltas against what it believes we reconstructed, so
-  // the two structures being one type is not a convenience, it is the
-  // guarantee. Keyed by entity uid on both ends; `latest_player_entities` above
-  // is the by-slot view the rest of the client wants, rebuilt on publish.
-  ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history;
-
-  void clear_snapshot_history()
+  struct snapshot_state_t
   {
-    snapshot_history.clear();
-    latest_processed_tick = 0;
-    // Stale stamps against a fresh tick counter would read as a burst of
-    // ancient gunfire on the first snapshot after a map switch.
-    last_seen_fire_tick.clear();
-  }
+    // // --- Delta decompression: the snapshot history ---
+    // // The server deltas against a tick we ACKED, so we must still be holding the
+    // // exact state we reconstructed for that tick — not merely "the current
+    // // world", which has moved on. Mirrors the server's ring one for one; see
+    // // shared/network/snapshot_history.hpp. `acked_tick` on it is the value echoed
+    // // back in every C2S_PlayerMoveCommand.
+    // // The frame type is ::network::snapshot_frame_t, the same one the server
+    // // stores — the server deltas against what it believes we reconstructed, so
+    // // the two structures being one type is not a convenience, it is the
+    // // guarantee. Keyed by entity uid on both ends; `latest_player_entities` above
+    // // is the by-slot view the rest of the client wants, rebuilt on publish.
+    ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history; 
+
+
+    uint32_t latest_processed_tick = 0;
+    
+    // // Per-player Player_Entity::last_fire_tick as of the last snapshot we looked
+    // // at, keyed by entity uid. An advance means that player fired; see
+    // // weapon_fire_audio.hpp. Keyed by uid rather than slot so a slot changing
+    // // occupant cannot inherit the previous player's stamp.
+    std::unordered_map<shared::entity_uid_t, uint32_t> last_seen_fire_tick_per_player;
+
+    // // The same trick for OUR OWN Player_Entity::last_hit_tick — an advance means
+    // // a shot of ours landed. A scalar and not a map because a hitmarker is ours
+    // // alone: nobody else's hits are our business. `seeded` distinguishes "never
+    // // looked" from "looked, and it was 0", so joining a server where we already
+    // // have a stamp does not ding on the first snapshot.
+    uint32_t last_seen_hit_tick = 0;
+    bool hit_tick_seeded = false;
+  };
+
+  snapshot_state_t snapshot_state{};
 
   // --- Integrated-mode session pointer ---
   // In integrated builds, set to the server's authoritative session so the
