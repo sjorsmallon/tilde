@@ -105,6 +105,13 @@ void update_respawns(server_context_t &context,
     player->view_angle_pitch = spawn_orientation.x;
     player->health           = 100;
     player->velocity         = {0.f, 0.f, 0.f};
+    // Back to alive: this is what stops clients drawing the death clip.
+    player->death_tick       = 0;
+    // The feet are an accumulator, so they have to be PLACED, not left: the
+    // corpse froze them wherever it died, and a respawn that only writes the
+    // view yaw makes the fresh player spin their legs around to catch up while
+    // the server hit-tests the twist.
+    player->body_yaw         = spawn_orientation.y;
 
     // Move the kinematic Jolt capsule so subsequent overlap/swept queries
     // this tick (rocket splash, trigger volumes) see the player at the new

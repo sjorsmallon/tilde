@@ -327,6 +327,7 @@ struct Player_Entity : Entity
   int32_t health = {};
   int32_t ammo = {};
   Weapon active_weapon_id = Weapon::Knife;
+  uint32_t death_tick = {};
   uint32_t last_fire_tick = {};
   Weapon last_fire_weapon = Weapon::Knife;
   uint32_t last_hit_tick = {};

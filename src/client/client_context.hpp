@@ -90,6 +90,12 @@ struct client_context_t
   // suppress server-dispatched cosmetic effects attached to our own player
   // (jump/land), which we already played locally via prediction. 0 until known.
   shared::entity_uid_t my_entity_uid = 0;
+  // Our own Player_Entity::health, off the last snapshot. Prediction reads it:
+  // the server stops steering a dead player, so a client that kept feeding its
+  // own input into player_move would predict a walk the server never runs and
+  // spend the whole respawn delay being reconciled backwards. 100 until the
+  // first snapshot, which is also the not-connected case (no server, no death).
+  int32_t local_player_health = 100;
   int command_number = 0;
   uint32_t server_tickrate = 60;
 
@@ -158,6 +164,18 @@ struct client_context_t
     // frame -- the moment it did, the local integrator would be back. See
     // animation_def.md, "RESOLVED: body_yaw is a tier-1 accumulator".
     float body_yaw = 0.f;
+
+    // Player_Entity::death_tick as of the last snapshot: 0 = alive, non-zero =
+    // this player is a corpse and the death clip is what gets drawn.
+    uint32_t death_tick = 0;
+    // How far into the death clip the corpse is. Advanced on the RENDER clock
+    // rather than recomputed from the tick stamp every frame, because the
+    // stamp only moves at the server tickrate and the clip would visibly step
+    // at 60Hz on a 144Hz display. SEEDED from the stamp when death_tick
+    // changes, which is what makes a client connecting mid-corpse -- or one
+    // that dropped the packet the death landed in -- pick the animation up
+    // where it is instead of restarting it.
+    float death_animation_seconds = 0.f;
   };
 
 

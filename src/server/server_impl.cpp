@@ -851,6 +851,10 @@ bool Tick()
     if (!player)
       continue;
 
+    // A corpse still receives moves -- the client keeps sending them for the
+    // whole respawn delay -- and every use of them below is gated on this.
+    const bool is_dead = player->health <= 0;
+
     const auto &move = tm.move;
 
     // --- Per-command bookkeeping and button edges ---
@@ -900,6 +904,15 @@ bool Tick()
     // Decode Move_Input from the button bitfield
     Move_Input input = move_input_from_buttons(current_buttons);
 
+    // Death takes the CONTROLS away, not the simulation: the input is zeroed
+    // but player_move still runs, so gravity and friction keep working and a
+    // player killed mid-air falls and settles instead of hanging there with the
+    // death clip playing in mid-air. The knockback velocity damage wrote plays
+    // out the same way. Zeroing velocity outright (what the countdown gate
+    // below does) would do neither.
+    if (is_dead)
+      input = Move_Input{};
+
     // Compute front/right from viewangles
     float yaw = move.viewangles().yaw();
     float pitch = move.viewangles().pitch();
@@ -934,8 +947,15 @@ bool Tick()
 
     player->position = new_pos;
     player->velocity = new_vel;
-    player->view_angle_yaw = yaw;
-    player->view_angle_pitch = pitch;
+    // The corpse does not look around. These drive the model's orientation and
+    // (through body_yaw) the hit volumes, so letting a dead player's mouse
+    // still write them spins the body under a death animation that is supposed
+    // to be playing out where they fell.
+    if (!is_dead)
+    {
+      player->view_angle_yaw   = yaw;
+      player->view_angle_pitch = pitch;
+    }
 
     // Broadcast movement cosmetics tagged with this player's uid. Every client
     // receives them, but the player who made the move suppresses their own copy
@@ -967,8 +987,8 @@ bool Tick()
     }
 
     // fire_pressed was decoded above the movement gate; acting on it is what
-    // stays gated.
-    if (fire_pressed)
+    // stays gated -- by the phase, and by being alive.
+    if (fire_pressed && !is_dead)
     {
       // Every weapon fires along the view ray from the eye, so both are
       // computed once above the branch. direction is already normalized --
@@ -1175,7 +1195,13 @@ bool Tick()
     const aim_settings_t settings = aim_settings_from(*ctx.cvars);
     for (entities::Player_Entity &player :
          ctx.session.entity_system.entities_of<entities::Player_Entity>())
+    {
+      // A corpse's feet chase nothing. The death clip owns the pose from here
+      // until the respawn re-places body_yaw, and the volumes are not tested
+      // anyway.
+      if (player.health <= 0) continue;
       advance_body_yaw(player.body_yaw, player.view_angle_yaw, tick_dt, settings);
+    }
   }
 
   update_rockets(ctx, tick_dt);

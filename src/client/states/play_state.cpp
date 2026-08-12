@@ -259,6 +259,10 @@ void Play_State::on_enter()
   ctx.received_server_update = false;
   ctx.interpolation_time     = 0.f;
   ctx.pending_commands       = {};
+  // Alive until a snapshot says otherwise. Carrying a corpse's health across a
+  // reconnect would leave prediction refusing to move us until the first
+  // snapshot of the new session landed.
+  ctx.local_player_health    = 100;
 
   // Jolt must be initialized before load_client_map builds a physics_state_t.
   static bool jolt_initialized = false;
@@ -773,6 +777,7 @@ void Play_State::update(float dt)
       if (slot_index == ctx.my_slot)
       {
         ctx.my_entity_uid = player.entity_id;
+        ctx.local_player_health = player.health;
         ctx.latest_server_position = player.position;
         ctx.latest_server_velocity = player.velocity;
         ctx.latest_server_ack_command =
@@ -802,6 +807,22 @@ void Play_State::update(float dt)
                            player.view_angle_pitch, player.body_yaw, snapshot_tick};
         if (remote_player.snapshot_count < 2)
           remote_player.snapshot_count++;
+
+        // Death is a latched stamp, so the interesting event is the stamp
+        // CHANGING: 0 -> N starts the clip, N -> 0 is the respawn that ends it.
+        // Seeded from how long ago the death tick was rather than from zero,
+        // because the snapshot carrying it may not be the first one we see of
+        // this corpse.
+        if (player.death_tick != remote_player.death_tick)
+        {
+          remote_player.death_tick = player.death_tick;
+          const bool stamp_in_the_past =
+              player.death_tick != 0 && snapshot_tick > player.death_tick;
+          remote_player.death_animation_seconds =
+              stamp_in_the_past ? static_cast<float>(snapshot_tick - player.death_tick) /
+                                      static_cast<float>(ctx.server_tickrate)
+                                : 0.f;
+        }
 
         ctx.interpolation_time = 0.f;
       }
@@ -1005,13 +1026,16 @@ void Play_State::update(float dt)
   //
   // It re-runs the server's rate limit (weapons.hpp is shared, so it is the
   // same number) or we would bang on every click while the server discards the
-  // ones inside the interval. Two things it does NOT reproduce: the server also
-  // gates firing on is_movement_allowed(), which is game-rules state the client
-  // does not have, so during a countdown this plays a shot the server drops;
-  // and a shot fired while dead is not filtered here either. Both are audible
-  // only, and neither can desync anything — no state is predicted, just audio.
+  // ones inside the interval. Being dead is filtered too, off our own
+  // replicated health — the server refuses a corpse's shots, and this is the
+  // one of its two gates the client can actually see. The other it still does
+  // not reproduce: is_movement_allowed() is game-rules state the client does
+  // not have, so during a countdown this plays a shot the server drops. Audible
+  // only, and it cannot desync anything — no state is predicted, just audio.
+  const bool local_player_is_dead = ctx.local_player_health <= 0;
+
   seconds_since_local_fire += dt;
-  if ((buttons & Button::Fire) != 0 && ctx.audio)
+  if ((buttons & Button::Fire) != 0 && !local_player_is_dead && ctx.audio)
   {
     auto my_entity = ctx.latest_player_entities.find(ctx.my_slot);
     if (my_entity != ctx.latest_player_entities.end())
@@ -1037,6 +1061,15 @@ void Play_State::update(float dt)
   }
 
   Move_Input move_input = move_input_from_buttons(buttons);
+
+  // Prediction has to make the same decision the server makes, or it is not
+  // prediction. The server zeroes a dead player's input and keeps simulating
+  // (gravity and friction still run), so we zero ours identically and let
+  // player_move do the rest -- the alternative is walking around locally for
+  // the whole respawn delay while reconciliation drags us back every snapshot.
+  // Zeroed BEFORE the ring buffer stores it, so replays stay consistent too.
+  if (local_player_is_dead)
+    move_input = Move_Input{};
 
   // Movement cosmetics produced by this frame's predicted tick(s). We play the
   // local player's jump/land here, immediately, off prediction — no server
@@ -1146,6 +1179,13 @@ void Play_State::update(float dt)
   float tick_interval = 1.0f / static_cast<float>(ctx.server_tickrate);
   for (auto &[slot, remote_player] : ctx.remote_players)
   {
+    // The death clip runs on the render clock, and ABOVE the snapshot_count
+    // gate below: a corpse we have only ever seen one snapshot of still has an
+    // animation to play. sample_animation_clip_at clamps a one-shot at the end,
+    // so this running past the clip's duration is what holds the final pose.
+    if (remote_player.death_tick != 0)
+      remote_player.death_animation_seconds += dt;
+
     if (!remote_player.active || remote_player.snapshot_count < 2)
     {
       if (remote_player.snapshot_count == 1)
@@ -1479,7 +1519,18 @@ void Play_State::render_3d(VkCommandBuffer cmd)
         const assets::skeleton_t *skeleton =
             mesh && mesh->is_skinned() ? assets::get(mesh->skeleton) : nullptr;
 
-        if (skeleton)
+        if (skeleton && remote_player.death_tick != 0)
+        {
+          // A corpse is not aiming at anything, so the death clip REPLACES the
+          // aim blend rather than layering over it -- both are full-body poses
+          // and there is no crossfade in the animator yet. body_yaw below still
+          // orients the body, frozen where the server stopped advancing it, so
+          // the player falls in the direction they were facing.
+          compute_clip_skinning_matrices(death_clip(), *skeleton,
+                                         remote_player.death_animation_seconds,
+                                         /*looping*/ false, skinning);
+        }
+        else if (skeleton)
         {
           float pitch = remote_player.render_pitch;
           float deviation =
@@ -1557,7 +1608,11 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     // What this cannot show is the tick gap: the server tests these against
     // where the player was when the shot arrived, and lag compensation is still
     // to come (animation_def.md §4, guarantee 2).
-    if (show_hitboxes)
+    //
+    // A corpse draws none, because the server tests none: the fire path skips
+    // every player at health <= 0, and an overlay that kept drawing volumes
+    // there would be showing you a target that does not exist.
+    if (show_hitboxes && remote_player.death_tick == 0)
     {
       const shared::player_rig_t &rig = shared::player_rig();
 

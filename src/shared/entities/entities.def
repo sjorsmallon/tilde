@@ -325,6 +325,14 @@ Player_Entity :: entity @runtime_only {
     health:            i32              @Networked
     ammo:              i32              @Networked
     active_weapon_id:  Weapon = .Knife  @Networked
+    // The death stamp, latched at the >0 -> <=0 health crossing, and the clock
+    // the death clip plays on. Same latched-stamp shape as last_fire_tick below
+    // and replicated for the same reason: a death you never saw is lost
+    // information. It is also what lets a client that connects mid-corpse pick
+    // the animation up at the right frame instead of restarting it -- health
+    // alone says THAT a player is dead, never SINCE WHEN.
+    // 0 = alive (server ticks start at 1); cleared on respawn.
+    death_tick:        u32              @Networked
     // The shot itself, latched where it resolves: this pair IS the fire event,
     // and clients play the gunshot off last_fire_tick advancing. Replicated
     // STATE rather than a cosmetic effect because a gunshot you never hear is

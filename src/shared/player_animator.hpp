@@ -105,3 +105,22 @@ void compute_aim_skinning_matrices(const aim_pose_set_t &pose_set,
                                    const assets::skeleton_t &skeleton, float pitch_degrees,
                                    float yaw_deviation_degrees, const aim_settings_t &settings,
                                    std::vector<linalg::mat4f> &out);
+
+// The one death clip, loaded on first use and held forever -- the same shape and
+// the same reasoning as holding_gun_aim_poses() above. A missing one is a broken
+// build, not a runtime condition, so this dies naming the file rather than
+// handing back a corpse frozen in the bind pose.
+const assets::animation_clip_t &death_clip();
+
+// A clip played on a CLOCK rather than sampled at a phase: `seconds` is time
+// into the playback and the phase is derived from clip_duration_seconds, which
+// is the one place that knows a loop spans one more interval than a one-shot.
+// A one-shot past its end clamps on the last frame (sample_animation_clip_at
+// does the clamping), which is what a corpse holding its final pose is.
+//
+// Not folded into compute_aim_skinning_matrices: that one blends five poses off
+// two angles, this one plays one clip off a time, and the only thing they share
+// is the tail below -- which is three lines.
+void compute_clip_skinning_matrices(const assets::animation_clip_t &clip,
+                                    const assets::skeleton_t &skeleton, float seconds,
+                                    bool looping, std::vector<linalg::mat4f> &out);

@@ -136,3 +136,45 @@ void compute_aim_skinning_matrices(const aim_pose_set_t &pose_set,
   assets::get_local_transforms_of_bones_from_pose(pose, local);
   assets::compute_skinning_matrices(skeleton, local, out);
 }
+
+const assets::animation_clip_t &death_clip()
+{
+  static const char *path = "resources/models/Death.animation";
+
+  // The handle is the cache -- Asset_Pool has no eviction, so a handle that
+  // resolved once resolves forever -- but the POINTER is re-resolved per call
+  // rather than stored, which is what keeps this correct if the pool ever
+  // relocates its storage.
+  static const assets::asset_handle_t<assets::animation_clip_t> handle = []
+  {
+    assets::asset_handle_t<assets::animation_clip_t> loaded = assets::load_animation(path);
+    if (!loaded.valid())
+      fatal_error("the death clip '{}' failed to load; a player has no pose to die in", path);
+    return loaded;
+  }();
+
+  return *assets::get(handle);
+}
+
+void compute_clip_skinning_matrices(const assets::animation_clip_t &clip,
+                                    const assets::skeleton_t &skeleton, float seconds,
+                                    bool looping, std::vector<linalg::mat4f> &out)
+{
+  // A clip with nothing to play (one frame, one-shot) reports zero duration --
+  // that is the cue to sample it rather than divide by it.
+  const float duration = assets::clip_duration_seconds(clip, looping);
+  const float phase    = duration > 0.0f ? seconds / duration : 0.0f;
+
+  assets::pose_t pose;
+  assets::sample_animation_clip_at(pose, clip, phase, looping);
+
+  if (pose.local.size() != skeleton.bones.size())
+    fatal_error("clip '{}' has {} bones but skeleton '{}' has {}; the clip and the mesh are not on "
+                "one skeleton",
+                clip.name, pose.local.size(), skeleton.name, skeleton.bones.size());
+
+  out.resize(skeleton.bones.size());
+  std::vector<linalg::mat4f> local(skeleton.bones.size());
+  assets::get_local_transforms_of_bones_from_pose(pose, local);
+  assets::compute_skinning_matrices(skeleton, local, out);
+}

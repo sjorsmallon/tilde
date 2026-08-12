@@ -122,6 +122,10 @@ void update_bots(std::vector<Bot_State> &bots,
     for (entities::Player_Entity &p : players)
     {
       if (p.client_slot_index >= BOT_SLOT_BASE) continue;
+      // Corpses are invisible to hitscan, so a bot that kept aiming at one
+      // would stand there emptying a magazine into a body it cannot hit until
+      // the respawn moved it.
+      if (p.health <= 0) continue;
       float d = linalg::distance_between(bot_ent->position, p.position);
       if (d < best_dist) { best_dist = d; target = &p; }
     }

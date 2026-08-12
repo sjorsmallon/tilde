@@ -41,6 +41,13 @@ static void apply_damage_to_player(server_context_t &context,
 
   if (health_before > 0 && player.health <= 0)
   {
+    // Latched here rather than in the respawn scheduler because THIS is the
+    // crossing; the scheduler already keys its own map by uid and would be a
+    // second place that has to agree on when the player died. Clients play the
+    // death clip off this stamp, so it must be written before the snapshot this
+    // tick produces.
+    player.death_tick = get_tick_number();
+
     shared::game_event_t died_event{};
     died_event.kind = shared::game_event_kind_t::PLAYER_DIED;
     died_event.player_died.victim_id    = info.victim_uid;
