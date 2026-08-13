@@ -232,8 +232,6 @@ add_library(game_shared STATIC
     src/shared/player_move.cpp
     src/shared/physics.hpp
     src/shared/physics.cpp
-    src/shared/bot_debug.hpp
-    src/shared/bot_debug.cpp
     src/shared/cosmetic_events.hpp
     src/shared/cosmetic_events.cpp
     src/shared/game_events.hpp
@@ -286,22 +284,20 @@ set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 
+# Two vertex shaders x two fragment shaders is the whole mesh family; the
+# pipeline cache combines them with blend/cull/depth/fill. debug.* backs every
+# debug primitive. Anything under preview/ or pbr/ is compiled at RUNTIME by the
+# shader tool and does not belong here.
 set(SHADER_SOURCES
-    ${SHADER_SRC_DIR}/aabb.vert
-    ${SHADER_SRC_DIR}/aabb.frag
-    ${SHADER_SRC_DIR}/unlit.vert
-    ${SHADER_SRC_DIR}/unlit.frag
-    ${SHADER_SRC_DIR}/lit.vert
-    ${SHADER_SRC_DIR}/lit.frag
-    ${SHADER_SRC_DIR}/lit_textured.vert
-    ${SHADER_SRC_DIR}/lit_textured.frag
-    ${SHADER_SRC_DIR}/lit_textured_skinned.vert
-    ${SHADER_SRC_DIR}/unlit_textured.frag
+    ${SHADER_SRC_DIR}/debug.vert
+    ${SHADER_SRC_DIR}/debug.frag
+    ${SHADER_SRC_DIR}/mesh.vert
+    ${SHADER_SRC_DIR}/mesh_skinned.vert
+    ${SHADER_SRC_DIR}/mesh_lit.frag
+    ${SHADER_SRC_DIR}/mesh_unlit.frag
     ${SHADER_SRC_DIR}/particle.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
-    ${SHADER_SRC_DIR}/disp_textured.vert
-    ${SHADER_SRC_DIR}/disp_textured.frag
 )
 set(SHADER_HEADERS "")
 
@@ -335,6 +331,7 @@ add_library(game_client SHARED
     ${CVAR_GEN_CLIENT_BINDINGS}
     src/client/jolt_debug_renderer.cpp
     src/client/client_impl.cpp
+    src/client/client_context.cpp
     src/client/cosmetic_events.cpp
     src/client/effects/rocket_explosion.cpp
     src/client/effects/footstep.cpp
@@ -366,6 +363,8 @@ add_library(game_client SHARED
     src/client/editor/geometry_editor.cpp
     src/client/input.cpp
     src/client/geometry_renderer.cpp
+    src/client/render_assets.cpp
+    src/client/debug_draw_list.cpp
     src/client/hitbox_debug_draw.hpp
     src/client/renderer.cpp
     src/client/shader_tool_runtime.cpp
@@ -375,15 +374,22 @@ target_include_directories(game_client PUBLIC
     src/client
     ${SHADER_OUT_DIR}
 )
+# So a test can link the editor tools. The DLL's own entry points are explicitly
+# exported; everything else was internal, which is why the editor
+# compile-isolation test sat uncompiled for so long.
+set_target_properties(game_client PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 # miniaudio.h lives at the populated source root; only game_client needs it.
 target_include_directories(game_client PRIVATE ${miniaudio_SOURCE_DIR})
 target_link_libraries(game_client PUBLIC 
     game_shared 
     Vulkan::Vulkan 
     SDL2::SDL2-static 
-    SDL2::SDL2main
     imgui
 )
+# SDL2main is an EXECUTABLE entry-point shim, so it belongs to the launchers
+# rather than to the DLL they load. Propagating it from here put a second `main`
+# into the link of anything that touched game_client -- which is what stopped a
+# test from linking the editor tools.
 if(APPLE)
     # Ensure RPATH setup for finding shared libs
     set_target_properties(game_client PROPERTIES MACOSX_RPATH TRUE)
@@ -425,7 +431,7 @@ endif()
 # 4. Integrated Game (Client + Server)
 add_executable(MyGame src/launcher/main_integrated.cpp)
 target_include_directories(MyGame PRIVATE src)
-target_link_libraries(MyGame PRIVATE game_client game_server game_shared)
+target_link_libraries(MyGame PRIVATE game_client game_server game_shared SDL2::SDL2main)
 # For macOS app bundle (optional, keeping as console app for now since detached_console used)
 
 
@@ -438,7 +444,7 @@ target_link_libraries(MyGame_Server PRIVATE game_server game_shared)
 # 5b. Networked Client (Client only, connects to a separate MyGame_Server)
 add_executable(MyGame_Client src/launcher/main_client.cpp)
 target_include_directories(MyGame_Client PRIVATE src)
-target_link_libraries(MyGame_Client PRIVATE game_client game_shared)
+target_link_libraries(MyGame_Client PRIVATE game_client game_shared SDL2::SDL2main)
 
 
 # 6. Task System Test
@@ -499,6 +505,24 @@ target_include_directories(transaction_system_test PRIVATE src src/client src/cl
 target_link_libraries(transaction_system_test PRIVATE game_shared Vulkan::Vulkan)
 
 
+
+# 16b. Debug draw list — the renderer's one piece of GPU-free logic. It links
+# the split translation unit rather than the client DLL, which is the point of
+# the split: retire()'s lifetimes and the polygon pool are testable without a
+# device, a swapchain or a window.
+add_executable(debug_draw_list_test
+    src/test/debug_draw_list_test.cpp
+    src/client/debug_draw_list.cpp)
+target_include_directories(debug_draw_list_test PRIVATE src src/client)
+target_link_libraries(debug_draw_list_test PRIVATE game_shared Vulkan::Vulkan SDL2::SDL2-static)
+
+# 16c. Editor tools must compile and LINK against pass_builder_t with no mock --
+# which is the whole argument for having deleted overlay_renderer_t rather than
+# reimplementing it. Built, but deliberately NOT in GAME_TESTS: see the file's
+# header comment for why running it would test the module layout instead.
+add_executable(editor_compile_test src/client/editor/test_editor_compile.cpp)
+target_include_directories(editor_compile_test PRIVATE src src/client src/client/editor)
+target_link_libraries(editor_compile_test PRIVATE game_client game_shared)
 
 # 17. Entity Delta Packing Test
 add_executable(test_entity_delta_packing src/test/test_entity_delta_packing.cpp)
@@ -604,6 +628,7 @@ set(GAME_TESTS
     server_loop_test
     session_test
     transaction_system_test
+    debug_draw_list_test
     test_entity_delta_packing
     snapshot_delta_test
     test_rng

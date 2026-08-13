@@ -1,4 +1,5 @@
 #include "shader_editor_state.hpp"
+#include "../render_assets.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
 #include "../state_manager.hpp"
@@ -111,7 +112,7 @@ void Shader_Editor_State::on_enter()
   load_preview_mesh();
 
   // Create Vulkan resources (descriptor set, UBO, pipeline layout)
-  VkDevice device = renderer::get_VkDevice();;
+  VkDevice device = renderer::get_VkDevice();
   VkPhysicalDevice physical_device = renderer::get_VkPhysicalDevice();
 
   if (!create_preview_resources(device, physical_device, preview_pipeline))
@@ -153,7 +154,7 @@ void Shader_Editor_State::on_enter()
 void Shader_Editor_State::on_exit()
 {
   log_terminal("[ShaderEditor] Exiting shader editor state");
-  VkDevice device = renderer::get_VkDevice();;
+  VkDevice device = renderer::get_VkDevice();
   vkDeviceWaitIdle(device);
   destroy_preview_resources(device, preview_pipeline);
   pipeline_ready = false;
@@ -190,7 +191,7 @@ void Shader_Editor_State::recompile_preview_shaders()
     return;
   }
 
-  VkDevice device = renderer::get_VkDevice();;
+  VkDevice device = renderer::get_VkDevice();
   vkDeviceWaitIdle(device);
 
   if (create_preview_pipeline_from_spv(device, renderer::get_VkRenderPass(),
@@ -365,8 +366,37 @@ void Shader_Editor_State::update(float dt)
 // 3D Rendering
 // ---------------------------------------------------------------------------
 
-void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
+// The custom-pipeline draw, recorded inside the render pass with the pass's
+// viewport already applied. This is the whole escape hatch: everything else the
+// shader editor draws is an ordinary debug primitive.
+void Shader_Editor_State::record_preview_draw(VkCommandBuffer cmd, void *user)
 {
+  Shader_Editor_State &self = *static_cast<Shader_Editor_State *>(user);
+
+  const uint32_t frame = renderer::get_current_frame_index();
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, self.preview_pipeline.pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          self.preview_pipeline.pipeline_layout, 0, 1,
+                          &self.preview_pipeline.descriptor_set[frame], 0, nullptr);
+
+  // Push constant: identity model matrix (OBJ loader normalizes to 100 units)
+  float model_matrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  vkCmdPushConstants(cmd, self.preview_pipeline.pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                     sizeof(model_matrix), model_matrix);
+
+  VkBuffer     vertex_buffers[] = {self.preview_mesh.vertex_buffer};
+  VkDeviceSize offsets[]        = {0};
+  vkCmdBindVertexBuffers(cmd, 0, 1, vertex_buffers, offsets);
+  vkCmdBindIndexBuffer(cmd, self.preview_mesh.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+  vkCmdDrawIndexed(cmd, self.preview_mesh.index_count, 1, 0, 0, 0);
+}
+
+void Shader_Editor_State::build_frame(float delta_seconds,
+                                      std::vector<renderer::view_pass_t> &passes)
+{
+  scene.begin_frame(delta_seconds);
+
   // In orbit mode, yaw/pitch encode the offset direction (target → camera),
   // so get_orientation_vectors returns a forward that points AWAY from the
   // target.  Fix this by recomputing yaw/pitch to look at the orbit target.
@@ -376,132 +406,82 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
     look_at(render_camera, render_camera.orbit_target);
   }
 
-  // Set the view so draw_line etc. use the correct VP matrix
-  renderer::render_view_t view_def;
-  view_def.viewport = {{0, 0}, {1, 1}};
-  view_def.camera = render_camera;
-  renderer::set_view(cmd, view_def);
+  scene.view.viewport = {{0, 0}, {1, 1}};
+  scene.view.camera   = render_camera;
 
-  if (!pipeline_ready || preview_pipeline.pipeline == VK_NULL_HANDLE)
-    return;
+  // The gizmos below are appended even when the preview pipeline is broken.
+  // They used to sit after three early returns, so a shader that failed to
+  // compile took the ground grid and the light handles with it -- exactly when
+  // you most want to see where the light you are debugging is.
+  const bool preview_ready =
+      pipeline_ready && preview_pipeline.pipeline != VK_NULL_HANDLE && mesh_handle.valid();
 
-  if (!mesh_handle.valid())
-    return;
+  const std::optional<renderer::mesh_gpu_info_t> mesh_info =
+      preview_ready ? renderer::try_get_mesh_gpu_info(get_render_mesh(mesh_handle))
+                    : std::nullopt;
 
-  renderer::mesh_gpu_info_t mesh_info;
-  if (!renderer::get_mesh_gpu_info(mesh_handle, mesh_info))
-    return;
-
-  // Build UBO data — reconstruct view/proj from camera the same way
-  // set_view does, but using linalg::mat4f for the UBO layout.
-  auto [forward, right, up] = get_orientation_vectors(render_camera);
-  linalg::vec3f eye = render_camera.position;
-
-  // Build view matrix (look-at from position along forward)
-  linalg::vec3f target_point = eye + forward;
-  linalg::vec3f f = linalg::normalize(target_point - eye);
-  linalg::vec3f r = linalg::normalize(linalg::cross(f, linalg::vec3f{0, 1, 0}));
-  linalg::vec3f u = linalg::cross(r, f);
-
-  linalg::mat4f view = linalg::mat4f::identity();
-  view[0] = {r.x, u.x, -f.x, 0.0f};
-  view[1] = {r.y, u.y, -f.y, 0.0f};
-  view[2] = {r.z, u.z, -f.z, 0.0f};
-  view[3] = {-linalg::dot(r, eye), -linalg::dot(u, eye),
-             linalg::dot(f, eye), 1.0f};
-
-  // Projection — match set_view's perspective (Vulkan Y-flip). Same camera
-  // FOV the pick ray uses, so clicking a light lands where it is drawn.
-  float fov_rad = linalg::to_radians(render_camera.fov_degrees);
-  float aspect = 16.0f / 9.0f;
+  if (mesh_info)
   {
-    int window_width, window_height;
-    SDL_Window *window = SDL_GL_GetCurrentWindow();
-    if (window)
+    preview_mesh = *mesh_info;
+
+    // The SAME matrices the rest of the pass draws through. Rebuilding them by
+    // hand here -- forty lines of look-at and perspective, with their own copy
+    // of the near and far planes -- is how the preview and the gizmos over it
+    // silently drift apart.
+    const renderer::view_matrices_t matrices = renderer::view_matrices(scene.view);
+    const linalg::vec3f             eye      = render_camera.position;
+
+    preview_scene_ubo_t ubo = {};
+    memcpy(ubo.view, &matrices.view, sizeof(float) * 16);
+    memcpy(ubo.projection, &matrices.projection, sizeof(float) * 16);
+    memcpy(ubo.view_projection, &matrices.view_projection, sizeof(float) * 16);
+    ubo.camera_position[0] = eye.x;
+    ubo.camera_position[1] = eye.y;
+    ubo.camera_position[2] = eye.z;
+    ubo.time[0] = elapsed_time;
+    ubo.time[1] = std::sin(elapsed_time);
+    ubo.time[2] = std::cos(elapsed_time);
+    ubo.time[3] = 0.016f; // approximate dt
+
+    ubo.light_count  = static_cast<int32_t>(std::min(lights.size(), static_cast<size_t>(MAX_LIGHTS)));
+    ubo.debug_flags  = 0;
+    if (render_normals) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderNormals);
+    if (render_uv) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderUV);
+    if (render_parallax_uv) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderParallaxUV);
+    for (int i = 0; i < ubo.light_count; i++)
     {
-      SDL_GetWindowSize(window, &window_width, &window_height);
-      if (window_height > 0)
-        aspect = static_cast<float>(window_width) /
-                 static_cast<float>(window_height);
+      const auto &light = lights[i];
+      ubo.lights[i].position[0] = light.position.x;
+      ubo.lights[i].position[1] = light.position.y;
+      ubo.lights[i].position[2] = light.position.z;
+      ubo.lights[i].direction[0] = light.direction.x;
+      ubo.lights[i].direction[1] = light.direction.y;
+      ubo.lights[i].direction[2] = light.direction.z;
+      ubo.lights[i].color_intensity[0] = light.color.x;
+      ubo.lights[i].color_intensity[1] = light.color.y;
+      ubo.lights[i].color_intensity[2] = light.color.z;
+      ubo.lights[i].color_intensity[3] = light.intensity;
+      ubo.lights[i].spot_params[0] =
+          std::cos(linalg::to_radians(light.spot_inner_degrees));
+      ubo.lights[i].spot_params[1] =
+          std::cos(linalg::to_radians(light.spot_outer_degrees));
+      ubo.lights[i].spot_params[2] = light.range;
+      ubo.lights[i].spot_params[3] = static_cast<float>(light.light_type);
     }
+
+    // Copy parameter slots
+    for (int i = 0; i < PARAM_COLOR_COUNT; i++)
+      memcpy(ubo.param_color[i], param_colors[i], sizeof(float) * 4);
+    for (int i = 0; i < PARAM_VEC4_COUNT; i++)
+      memcpy(ubo.param_vec4[i], param_vec4s[i], sizeof(float) * 4);
+    memcpy(ubo.param_float, param_floats.data(), sizeof(float) * PARAM_FLOAT_COUNT);
+
+    // Upload UBO to the current frame's buffer to avoid GPU/CPU races.
+    const uint32_t frame = renderer::get_current_frame_index();
+    memcpy(preview_pipeline.ubo_mapped[frame], &ubo, sizeof(ubo));
+
+    scene.custom.push_back({&Shader_Editor_State::record_preview_draw, this});
   }
-  float tan_half = std::tan(fov_rad * 0.5f);
-  linalg::mat4f projection = {};
-  projection[0] = {1.0f / (aspect * tan_half), 0.0f, 0.0f, 0.0f};
-  projection[1] = {0.0f, -1.0f / tan_half, 0.0f, 0.0f}; // Vulkan Y-flip
-  projection[2] = {0.0f, 0.0f, 50000.0f / (1.0f - 50000.0f), -1.0f};
-  projection[3] = {0.0f, 0.0f, (1.0f * 50000.0f) / (1.0f - 50000.0f), 0.0f};
-
-  linalg::mat4f view_projection = projection * view;
-
-  preview_scene_ubo_t ubo = {};
-  memcpy(ubo.view, &view, sizeof(float) * 16);
-  memcpy(ubo.projection, &projection, sizeof(float) * 16);
-  memcpy(ubo.view_projection, &view_projection, sizeof(float) * 16);
-  ubo.camera_position[0] = eye.x;
-  ubo.camera_position[1] = eye.y;
-  ubo.camera_position[2] = eye.z;
-  ubo.time[0] = elapsed_time;
-  ubo.time[1] = std::sin(elapsed_time);
-  ubo.time[2] = std::cos(elapsed_time);
-  ubo.time[3] = 0.016f; // approximate dt
-
-  ubo.light_count  = static_cast<int32_t>(std::min(lights.size(), static_cast<size_t>(MAX_LIGHTS)));
-  ubo.debug_flags  = 0;
-  if (render_normals) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderNormals);
-  if (render_uv) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderUV);
-  if (render_parallax_uv) ubo.debug_flags |= static_cast<int32_t>(debug_flag::RenderParallaxUV);
-  for (int i = 0; i < ubo.light_count; i++)
-  {
-    const auto &light = lights[i];
-    ubo.lights[i].position[0] = light.position.x;
-    ubo.lights[i].position[1] = light.position.y;
-    ubo.lights[i].position[2] = light.position.z;
-    ubo.lights[i].direction[0] = light.direction.x;
-    ubo.lights[i].direction[1] = light.direction.y;
-    ubo.lights[i].direction[2] = light.direction.z;
-    ubo.lights[i].color_intensity[0] = light.color.x;
-    ubo.lights[i].color_intensity[1] = light.color.y;
-    ubo.lights[i].color_intensity[2] = light.color.z;
-    ubo.lights[i].color_intensity[3] = light.intensity;
-    ubo.lights[i].spot_params[0] =
-        std::cos(linalg::to_radians(light.spot_inner_degrees));
-    ubo.lights[i].spot_params[1] =
-        std::cos(linalg::to_radians(light.spot_outer_degrees));
-    ubo.lights[i].spot_params[2] = light.range;
-    ubo.lights[i].spot_params[3] = static_cast<float>(light.light_type);
-  }
-
-  // Copy parameter slots
-  for (int i = 0; i < PARAM_COLOR_COUNT; i++)
-    memcpy(ubo.param_color[i], param_colors[i], sizeof(float) * 4);
-  for (int i = 0; i < PARAM_VEC4_COUNT; i++)
-    memcpy(ubo.param_vec4[i], param_vec4s[i], sizeof(float) * 4);
-  memcpy(ubo.param_float, param_floats.data(), sizeof(float) * PARAM_FLOAT_COUNT);
-
-  // Upload UBO to the current frame's buffer to avoid GPU/CPU races.
-  uint32_t frame = renderer::get_current_frame_idx_in_swapchain();
-  memcpy(preview_pipeline.ubo_mapped[frame], &ubo, sizeof(ubo));
-
-  // Bind pipeline
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    preview_pipeline.pipeline);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          preview_pipeline.pipeline_layout, 0, 1,
-                          &preview_pipeline.descriptor_set[frame], 0, nullptr);
-
-  // Push constant: identity model matrix (OBJ loader normalizes to 100 units)
-  float model_matrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  vkCmdPushConstants(cmd, preview_pipeline.pipeline_layout,
-                     VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(model_matrix),
-                     model_matrix);
-
-  // Draw mesh
-  VkBuffer vertex_buffers[] = {mesh_info.vertex_buffer};
-  VkDeviceSize offsets[] = {0};
-  vkCmdBindVertexBuffers(cmd, 0, 1, vertex_buffers, offsets);
-  vkCmdBindIndexBuffer(cmd, mesh_info.index_buffer, 0, VK_INDEX_TYPE_UINT32);
-  vkCmdDrawIndexed(cmd, mesh_info.index_count, 1, 0, 0, 0);
 
   // Ground grid (Y=0 plane)
   {
@@ -515,13 +495,11 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
     {
       float offset = static_cast<float>(i) * step;
       color_t color = (i == 0) ? axis_x_color : grid_color;
-      renderer::draw_line(cmd,
-                         {static_cast<float>(-half_extent) * step, 0.0f, offset},
+      scene.debug.line({static_cast<float>(-half_extent) * step, 0.0f, offset},
                          {static_cast<float>(half_extent) * step, 0.0f, offset},
                          color);
       color = (i == 0) ? axis_z_color : grid_color;
-      renderer::draw_line(cmd,
-                         {offset, 0.0f, static_cast<float>(-half_extent) * step},
+      scene.debug.line({offset, 0.0f, static_cast<float>(-half_extent) * step},
                          {offset, 0.0f, static_cast<float>(half_extent) * step},
                          color);
     }
@@ -536,11 +514,11 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
 
     float size = 8.0f;
     linalg::vec3f p = light.position;
-    renderer::draw_line(cmd, {p.x - size, p.y, p.z},
+    scene.debug.line({p.x - size, p.y, p.z},
                        {p.x + size, p.y, p.z}, light_color);
-    renderer::draw_line(cmd, {p.x, p.y - size, p.z},
+    scene.debug.line({p.x, p.y - size, p.z},
                        {p.x, p.y + size, p.z}, light_color);
-    renderer::draw_line(cmd, {p.x, p.y, p.z - size},
+    scene.debug.line({p.x, p.y, p.z - size},
                        {p.x, p.y, p.z + size}, light_color);
 
     // Draw frustum / direction visualization
@@ -595,13 +573,13 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
                   (std::sin(angle_next) * outer_radius);
 
           // Base circle
-          renderer::draw_line(cmd, point_current, point_next,
+          scene.debug.line(point_current, point_next,
                              outer_color);
 
           // Cone edge lines from apex (4 lines)
           if (s % 8 == 0)
           {
-            renderer::draw_line(cmd, p, point_current,
+            scene.debug.line(p, point_current,
                                outer_color);
           }
         }
@@ -635,7 +613,7 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
                 up_axis *
                     (std::sin(angle_next) * inner_radius);
 
-            renderer::draw_line(cmd, point_current, point_next,
+            scene.debug.line(point_current, point_next,
                                inner_color);
           }
         }
@@ -646,12 +624,13 @@ void Shader_Editor_State::render_3d(VkCommandBuffer cmd)
       {
         float arrow_length =
             (light.light_type == 1) ? light.range * 0.3f : 40.0f;
-        renderer::draw_arrow(
-            cmd, p, p + normalized_direction * arrow_length,
+        scene.debug.arrow(p, p + normalized_direction * arrow_length,
             light_color);
       }
     }
   }
+
+  passes.push_back(scene.to_pass());
 }
 
 // ---------------------------------------------------------------------------

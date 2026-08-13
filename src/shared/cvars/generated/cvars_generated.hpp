@@ -101,6 +101,9 @@ struct cvar_state_t
   bool debug_show_hitboxes = true;
   bool debug_show_navmesh = false;
   bool debug_show_box_volumes = false;
+  bool debug_hide_geometry = false;
+  bool debug_show_entity_counts = false;
+  bool debug_show_physics_bodies = false;
   bool net_snapshot_debug = false;
 };
 
@@ -160,12 +163,15 @@ enum class cvar_id : uint16_t
   debug_show_hitboxes = 43,
   debug_show_navmesh = 44,
   debug_show_box_volumes = 45,
-  net_snapshot_debug = 46,
+  debug_hide_geometry = 46,
+  debug_show_entity_counts = 47,
+  debug_show_physics_bodies = 48,
+  net_snapshot_debug = 49,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 47;
+constexpr uint32_t CVAR_COUNT = 50;
 
 enum class command_id : uint16_t
 {

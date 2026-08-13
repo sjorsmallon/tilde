@@ -108,7 +108,7 @@ void Pathfinding_Test_Tool::on_key_down(editor_context_t &ctx,
 // Visuals
 
 void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
-                                           overlay_renderer_t &renderer)
+                                           pass_builder_t &draws)
 {
   const navmesh_t &navmesh = ctx.map->navmesh;
   if (!navmesh.valid())
@@ -134,7 +134,7 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
       linalg::vec3 b = navmesh.vertices[polygon.vertices[(e + 1) % vertex_count]].position;
       a.y += y_lift;
       b.y += y_lift;
-      renderer.draw_line(a, b, color);
+      draws.debug.line(a, b, color);
     }
   }
 
@@ -143,8 +143,8 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
   {
     constexpr color_t start_color = colors::green;
     linalg::vec3 base = *start + linalg::vec3{0, y_lift, 0};
-    renderer.draw_circle(base, 16.f, {0, 1, 0}, start_color);
-    renderer.draw_line(base, base + linalg::vec3{0, 48.f, 0}, start_color);
+    draws.debug.wire_circle(base, 16.f, {0, 1, 0}, start_color);
+    draws.debug.line(base, base + linalg::vec3{0, 48.f, 0}, start_color);
   }
 
   // End marker — red circle + vertical spike.
@@ -152,8 +152,8 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
   {
     constexpr color_t end_color = colors::red;
     linalg::vec3 base = *end + linalg::vec3{0, y_lift, 0};
-    renderer.draw_circle(base, 16.f, {0, 1, 0}, end_color);
-    renderer.draw_line(base, base + linalg::vec3{0, 48.f, 0}, end_color);
+    draws.debug.wire_circle(base, 16.f, {0, 1, 0}, end_color);
+    draws.debug.line(base, base + linalg::vec3{0, 48.f, 0}, end_color);
   }
 
   // Path: yellow lines connecting waypoints, white boxes at each waypoint.
@@ -166,12 +166,12 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
     {
       linalg::vec3 waypoint = path[waypoint_idx];
       waypoint.y += y_lift;
-      renderer.draw_wire_aabb(waypoint, half, node_color);
+      draws.debug.box(waypoint, half, node_color);
       if (waypoint_idx + 1 < (int)path.size())
       {
         linalg::vec3 next = path[waypoint_idx + 1];
         next.y += y_lift;
-        renderer.draw_line(waypoint, next, path_color);
+        draws.debug.line(waypoint, next, path_color);
       }
     }
   }

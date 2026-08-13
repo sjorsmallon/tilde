@@ -117,12 +117,15 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out);
 // (todo.md §2e). Resolving the bone names against a loaded skeleton is
 // `assets::try_resolve_hitbox_rig`, not this; here the file is only checked for
 // being well-formed.
-[[nodiscard]] std::optional<assets::hitbox_rig_t> try_parse_hitbox_rig_file(const char *path);
+[[nodiscard]] std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *path);
 
 // The writer half, so the Animation tool can emit a template for a rig that has
 // no file yet and save a radius you filled from the derived column. The output
 // is the same text a human writes -- there is no generated-file convention here,
 // because this file is authored and the tool only ever seeds it.
+//
+// It takes the BOUND `hitbox_rig_t` rather than the file form, because the tool
+// only ever holds a bound rig -- the file form exists to be resolved, not kept.
 [[nodiscard]] bool try_write_hitbox_rig_file(const char *path, const assets::hitbox_rig_t &rig);
 
 } // namespace models

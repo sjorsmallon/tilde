@@ -44,7 +44,11 @@ struct ServerInbox
   std::vector<std::pair<int, std::vector<uint8>>> map_data_requests;
 };
 
-struct Server_Connection_State
+// How bytes reach each peer, one entry per slot, and nothing about what they
+// mean. The client's counterpart is Client_Transport_Layer; game-level
+// connection state (who is in a slot, what they are doing) lives in the
+// server's own context, a stratum above this one.
+struct Server_Transport_Layer
 {
   // things we thought about
   std::array<bool, sv_max_player_count> player_slots{};
@@ -62,17 +66,17 @@ struct Server_Connection_State
   uint8 next_message_id = 0;
 };
 
-inline void disconnect_player(Server_Connection_State &server_connection_state,
+inline void disconnect_player(Server_Transport_Layer &transport_layer,
                               const Address &ip)
 {
   int idx = 0;
-  for (auto &player_ip : server_connection_state.player_ips)
+  for (auto &player_ip : transport_layer.player_ips)
   {
-    if (server_connection_state.player_slots[idx] && ip == player_ip)
+    if (transport_layer.player_slots[idx] && ip == player_ip)
     {
-      server_connection_state.player_ips[idx] = {};
-      server_connection_state.player_slots[idx] = false;
-      server_connection_state.partial_packets[idx].clear();
+      transport_layer.player_ips[idx] = {};
+      transport_layer.player_slots[idx] = false;
+      transport_layer.partial_packets[idx].clear();
 
       return;
     }
@@ -82,26 +86,26 @@ inline void disconnect_player(Server_Connection_State &server_connection_state,
 
 // can return null
 inline Byte_Buffer *get_player_packet_byte_buffer_from_ip(
-    Server_Connection_State &server_connection_state, const Address &ip)
+    Server_Transport_Layer &transport_layer, const Address &ip)
 {
   int idx = 0;
-  for (auto &player_ip : server_connection_state.player_ips)
+  for (auto &player_ip : transport_layer.player_ips)
   {
-    if (server_connection_state.player_slots[idx] && ip == player_ip)
-      return &server_connection_state.player_byte_buffers[idx];
+    if (transport_layer.player_slots[idx] && ip == player_ip)
+      return &transport_layer.player_byte_buffers[idx];
     idx += 1;
   }
 
   return nullptr;
 }
 
-inline size_t get_player_idx(Server_Connection_State &server_connection_state,
+inline size_t get_player_idx(Server_Transport_Layer &transport_layer,
                              const Address &ip)
 {
   size_t idx = 0;
-  for (auto &player_ip : server_connection_state.player_ips)
+  for (auto &player_ip : transport_layer.player_ips)
   {
-    if (server_connection_state.player_slots[idx] && ip == player_ip)
+    if (transport_layer.player_slots[idx] && ip == player_ip)
     {
       return idx;
     }
@@ -112,7 +116,7 @@ inline size_t get_player_idx(Server_Connection_State &server_connection_state,
   return -1;
 }
 
-inline void poll_network(Server_Connection_State &state, Udp_Socket &socket,
+inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
                          double time_window_seconds, ServerInbox &out_inbox)
 {
   using clock = std::chrono::high_resolution_clock;

@@ -22,7 +22,7 @@ public:
   void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
 
   void on_draw_overlay(editor_context_t &ctx,
-                       overlay_renderer_t &renderer) override;
+                       pass_builder_t &draws) override;
 
 private:
   shared::entity_uid_t hovered_uid = shared::invalid_entity_uid;

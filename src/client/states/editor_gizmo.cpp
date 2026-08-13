@@ -13,7 +13,7 @@ namespace client
 using namespace linalg;
 
 // Helper to draw a ring (circle) in 3D
-static void draw_ring(VkCommandBuffer cmd, const vec3 &center, float radius,
+static void draw_ring(pass_builder_t &draws, const vec3 &center, float radius,
                       int axis, color_t color)
 {
   const int segments = 64;
@@ -52,18 +52,18 @@ static void draw_ring(VkCommandBuffer cmd, const vec3 &center, float radius,
             center.y + std::sin(theta2) * radius, center.z};
     }
 
-    renderer::draw_line(cmd, p1, p2, color);
+    draws.debug.line(p1, p2, color);
 
     // draw a box every 8 segments
     if (i % 8 == 0)
     {
       float s = radius * 0.05f;
-      renderer::draw_AABB(cmd, p1 - vec3{s, s, s}, p1 + vec3{s, s, s}, color);
+      draws.debug.aabb(p1 - vec3{s, s, s}, p1 + vec3{s, s, s}, color);
     }
   }
 }
 
-void draw_reshape_gizmo(VkCommandBuffer cmd, const reshape_gizmo_t &gizmo)
+void draw_reshape_gizmo(pass_builder_t &draws, const reshape_gizmo_t &gizmo)
 {
   // Note: We do NOT draw the AABB here, as the editor draws the selection
   // separately (wireframe/filled). We only draw the handles.
@@ -99,11 +99,11 @@ void draw_reshape_gizmo(VkCommandBuffer cmd, const reshape_gizmo_t &gizmo)
     }
 
     vec3 end = handle.origin + handle.direction * handle_length;
-    renderer::draw_arrow(cmd, handle.origin, end, color);
+    draws.debug.arrow(handle.origin, end, color);
   }
 }
 
-void draw_transform_gizmo(VkCommandBuffer cmd, const transform_gizmo_t &gizmo)
+void draw_transform_gizmo(pass_builder_t &draws, const transform_gizmo_t &gizmo)
 {
   vec3 position = gizmo.position;
   float s = gizmo.size;
@@ -116,13 +116,13 @@ void draw_transform_gizmo(VkCommandBuffer cmd, const transform_gizmo_t &gizmo)
 
   // Draw Arrows
   // X Axis
-  renderer::draw_arrow(cmd, position, position + vec3{s, 0, 0},
+  draws.debug.arrow(position, position + vec3{s, 0, 0},
                        (gizmo.hovered_axis_index == 0) ? col_sel : col_x);
   // Y Axis
-  renderer::draw_arrow(cmd, position, position + vec3{0, s, 0},
+  draws.debug.arrow(position, position + vec3{0, s, 0},
                        (gizmo.hovered_axis_index == 1) ? col_sel : col_y);
   // Z Axis
-  renderer::draw_arrow(cmd, position, position + vec3{0, 0, s},
+  draws.debug.arrow(position, position + vec3{0, 0, s},
                        (gizmo.hovered_axis_index == 2) ? col_sel : col_z);
 
   // Draw Rings
@@ -132,11 +132,11 @@ void draw_transform_gizmo(VkCommandBuffer cmd, const transform_gizmo_t &gizmo)
 
   float r_radius = s * 0.8f;
 
-  draw_ring(cmd, position, r_radius, 0,
+  draw_ring(draws, position, r_radius, 0,
             (gizmo.hovered_ring_index == 0) ? col_sel : col_x);
-  draw_ring(cmd, position, r_radius, 1,
+  draw_ring(draws, position, r_radius, 1,
             (gizmo.hovered_ring_index == 1) ? col_sel : col_y);
-  draw_ring(cmd, position, r_radius, 2,
+  draw_ring(draws, position, r_radius, 2,
             (gizmo.hovered_ring_index == 2) ? col_sel : col_z);
 }
 
@@ -310,7 +310,7 @@ bool update_reshape_gizmo(reshape_gizmo_t &gizmo, const linalg::ray_t &ray,
 
 // Editor_Gizmo Implementation
 
-void Editor_Gizmo::start_interaction(Transaction_System* transaction_system,
+void Editor_Gizmo::start_interaction(Transaction_System* transactions,
                                      shared::map_t* map,
                                      shared::entity_uid_t uid)
 {
@@ -325,7 +325,7 @@ void Editor_Gizmo::start_interaction(Transaction_System* transaction_system,
   {
     target_map = map;
     target_uid = uid;
-    transaction_system = transaction_system;
+    transaction_system = transactions;
 
     interacting_ = true;
     start_entity.reset();
@@ -354,7 +354,7 @@ void Editor_Gizmo::start_interaction(Transaction_System* transaction_system,
 
   target_map = map;
   target_uid = uid;
-  transaction_system = transaction_system;
+  transaction_system = transactions;
 
   // Snapshot entity before modification
   interacting_ = true;
@@ -364,17 +364,13 @@ void Editor_Gizmo::start_interaction(Transaction_System* transaction_system,
   // Store original for drag calculations
   auto &ent = entry->entity;
 
-  if (const entities::Box_Volume *volume = entities::get_box_volume(ent.get()))
-  {
-    original_transform.position = ent->position;
-    original_transform.scale =
-        volume->half_extents; // Store half-extents as scale
-  }
-  else if (auto *player = entities::entity_as<::entities::Player_Entity>(ent.get()))
-  {
-    original_transform.position = player->position;
-    original_transform.scale = {1, 1, 1};
-  }
+  // Every entity has a position -- write it unconditionally. Making this the
+  // Box_Volume branch's job left a point entity (light, spawn, weapon) dragging
+  // from a stale or zeroed origin, which snapped it to 0,0,0 on the first move.
+  original_transform.position = ent->position;
+
+  const entities::Box_Volume *volume = entities::get_box_volume(ent.get());
+  original_transform.scale = volume ? volume->half_extents : linalg::vec3{1, 1, 1};
 
   // Initialize Transform Gizmo State. Orientation is set once here for every
   // entity kind rather than per branch above -- the per-branch writes it
@@ -479,16 +475,16 @@ void Editor_Gizmo::update(const linalg::ray_t &ray, bool is_mouse_down)
   }
 }
 
-void Editor_Gizmo::draw(VkCommandBuffer cmd)
+void Editor_Gizmo::draw(pass_builder_t &draws)
 {
   if (current_mode == Gizmo_Mode::Reshape ||
       current_mode == Gizmo_Mode::Unified)
-    draw_reshape_gizmo(cmd, reshape_state);
+    draw_reshape_gizmo(draws, reshape_state);
 
   // Always draw transform gizmo if it exists/initialized?
   // Or only if mode allows.
   // User wants to see rings.
-  draw_transform_gizmo(cmd, transform_state);
+  draw_transform_gizmo(draws, transform_state);
 }
 
 void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,

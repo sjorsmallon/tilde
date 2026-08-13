@@ -507,7 +507,7 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
   Collider_Planes result;
   constexpr float cos_45 = 0.707f;
 
-  AABB player_aabb;
+  shared::aabb_bounds_t player_aabb;
   player_aabb.min = player_pos - vec3{half_width, half_height, half_width};
   player_aabb.max = player_pos + vec3{half_width, half_height, half_width};
 

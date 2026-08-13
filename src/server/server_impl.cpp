@@ -35,7 +35,7 @@
 #include "network/entity_serialization.hpp"
 #include "network/entity_snapshot.hpp"
 #include "network/quantization.hpp"
-#include "network/server_connection_state.hpp"
+#include "network/server_transport_layer.hpp"
 #include "network/snapshot_history.hpp"
 
 #include "server_context.hpp"
@@ -82,7 +82,7 @@ static void send_text_message_to_a_specific_client(network::Udp_Socket &socket,
 // client received it. Recipient count included for the same reason — a
 // broadcast with no connected slots is a message that died in the slot table
 // rather than on the wire, and that reads as "the client never got it".
-static void broadcast_server_message(network::Server_Connection_State &net,
+static void broadcast_server_message(network::Server_Transport_Layer &net,
                                      network::Udp_Socket &socket,
                                      std::string_view text)
 {
@@ -130,7 +130,7 @@ static void send_reject(const network::Address &sender, std::string_view reason,
   reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
   auto packets = network::convert_to_packets(
       buffer, static_cast<network::uint8>(network::Message_Type::NetCommand),
-      ctx.net.next_message_id);
+      ctx.transport_layer.next_message_id);
   for (const auto &p : packets)
     g_socket.send(p, sender);
 }
@@ -241,7 +241,7 @@ spawn_position_in_front_of(int caller_slot)
 void handle_player_leave(server_context_t &state,
                          const network::Address &sender)
 {
-  int slot = network::get_player_idx(state.net, sender);
+  int slot = network::get_player_idx(state.transport_layer, sender);
   if (slot == -1)
     return;
 
@@ -250,9 +250,9 @@ void handle_player_leave(server_context_t &state,
     destroy_entity(state, player_uid);
 
   g_player_states[slot] = {};
-  broadcast_server_message(state.net, g_socket,
+  broadcast_server_message(state.transport_layer, g_socket,
                            std::format("Player left (slot {})", slot));
-  network::disconnect_player(state.net, sender);
+  network::disconnect_player(state.transport_layer, sender);
   log_terminal("Player left slot {}: {}", slot, sender.to_string());
 }
 
@@ -513,9 +513,9 @@ static void send_change_map(int slot)
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::CmdChangeMap),
-      ctx.net.next_message_id);
+      ctx.transport_layer.next_message_id);
   for (const auto &p : packets)
-    g_socket.send(p, ctx.net.player_ips[slot]);
+    g_socket.send(p, ctx.transport_layer.player_ips[slot]);
 }
 
 // Sends a bitstream-native S2C_CvarValues to one slot. Two callers, two
@@ -529,9 +529,9 @@ static void send_cvar_values(int slot, const shared::cvar_values_message_t &msg)
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::S2C_CvarValues),
-      ctx.net.next_message_id);
+      ctx.transport_layer.next_message_id);
   for (const auto &p : packets)
-    g_socket.send(p, ctx.net.player_ips[slot]);
+    g_socket.send(p, ctx.transport_layer.player_ips[slot]);
 }
 
 // Broadcasts every @Mirrored value that changed since the last broadcast, then
@@ -549,7 +549,7 @@ static void broadcast_changed_cvar_values()
 
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (ctx.net.player_slots[slot])
+    if (ctx.transport_layer.player_slots[slot])
       send_cvar_values(slot, changed);
   }
 
@@ -578,7 +578,7 @@ bool reload_map(const std::string &map_path)
   // entity deltas for a map they aren't running yet.
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (!ctx.net.player_slots[slot])
+    if (!ctx.transport_layer.player_slots[slot])
       continue;
     spawn_player_for_slot(slot);
     ctx.client_map_ready[slot] = false;
@@ -593,7 +593,7 @@ bool Tick()
   //@Todo: Yikes, reallocating the inbox is wasteful. 
   network::ServerInbox inbox;
 
-  network::poll_network(ctx.net, g_socket, 0.005,
+  network::poll_network(ctx.transport_layer, g_socket, 0.005,
                         inbox); // 5ms receive window
 
   // Handle Net Commands (Handshake)
@@ -602,7 +602,7 @@ bool Tick()
 
     if (cmd.has_connect())
     {
-      if (network::get_player_idx(ctx.net, sender) != -1)
+      if (network::get_player_idx(ctx.transport_layer, sender) != -1)
         continue;
 
       // Schema handshake, before a slot is taken. A client built from a
@@ -631,7 +631,7 @@ bool Tick()
       int slot = invalid_slot_idx;
       for (int player_idx = 0; player_idx < network::sv_max_player_count; ++player_idx)
       {
-        if (!ctx.net.player_slots[player_idx])
+        if (!ctx.transport_layer.player_slots[player_idx])
         {
           slot = player_idx;
           break;
@@ -641,10 +641,10 @@ bool Tick()
       if (slot != invalid_slot_idx)
       {
         // Accept
-        ctx.net.player_slots[slot] = true;
-        ctx.net.player_ips[slot] = sender;
-        ctx.net.player_byte_buffers[slot] = {};
-        ctx.net.partial_packets[slot].clear();
+        ctx.transport_layer.player_slots[slot] = true;
+        ctx.transport_layer.player_ips[slot] = sender;
+        ctx.transport_layer.player_byte_buffers[slot] = {};
+        ctx.transport_layer.partial_packets[slot].clear();
         g_player_states[slot] = {};
 
         // A reused slot must not inherit the previous occupant's ack — this
@@ -679,7 +679,7 @@ bool Tick()
           auto packets = network::convert_to_packets(
               buffer,
               static_cast<network::uint8>(network::Message_Type::NetCommand),
-              ctx.net.next_message_id);
+              ctx.transport_layer.next_message_id);
           for (const auto &p : packets)
             g_socket.send(p, sender);
         }
@@ -691,7 +691,7 @@ bool Tick()
 
         // Announce join to all clients (including the new one)
         broadcast_server_message(
-            ctx.net, g_socket,
+            ctx.transport_layer, g_socket,
             std::format("{} joined the server (slot {})",
                         cmd.connect().player_name(), slot));
 
@@ -701,7 +701,7 @@ bool Tick()
         size_t player_count = 0;
         for (int i = 0; i < network::sv_max_player_count; ++i)
         {
-          if (ctx.net.player_slots[i])
+          if (ctx.transport_layer.player_slots[i])
             player_count++;
         }
 
@@ -711,7 +711,7 @@ bool Tick()
           start_match(ctx, g_tick_number,
                       static_cast<uint32_t>(ctx.cvars->sv_tickrate));
           broadcast_server_message(
-              ctx.net, g_socket,
+              ctx.transport_layer, g_socket,
               std::format("Entering Countdown phase. Match will start in {:.0f} "
                           "seconds.",
                           countdown_duration_seconds));
@@ -732,7 +732,7 @@ bool Tick()
   for (const auto &[player_idx, line] : inbox.commands)
   {
     log_terminal("Command from slot {}: {}", player_idx, line);
-    const auto &client_ip = ctx.net.player_ips[player_idx];
+    const auto &client_ip = ctx.transport_layer.player_ips[player_idx];
 
     // The same dispatcher the client console runs, over the same generated
     // tables. Two things keep this from bouncing the line straight back: the
@@ -753,7 +753,7 @@ bool Tick()
     // is waiting to hear what came of it.
     send_text_message_to_a_specific_client(
         g_socket, client_ip, reply.empty() ? ("OK: " + line) : reply,
-        ctx.net.next_message_id);
+        ctx.transport_layer.next_message_id);
   }
 
   // Process C2S_MapLoaded acks: a client finished (re)loading the map. Verify
@@ -803,9 +803,9 @@ bool Tick()
     auto packets = network::convert_to_packets(
         writer.buffer,
         static_cast<network::uint8>(network::Message_Type::S2C_MapData),
-        ctx.net.next_message_id);
+        ctx.transport_layer.next_message_id);
     for (const auto &p : packets)
-      g_socket.send(p, ctx.net.player_ips[player_idx]);
+      g_socket.send(p, ctx.transport_layer.player_ips[player_idx]);
 
     ctx.client_map_ready[player_idx] = false;
     log_terminal("Streamed map package '{}' ({} bytes, {} packets, hash {:#x}) "
@@ -819,7 +819,7 @@ bool Tick()
   // switch message eventually reaches the client (it stops once acked above).
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (ctx.net.player_slots[slot] && !ctx.client_map_ready[slot])
+    if (ctx.transport_layer.player_slots[slot] && !ctx.client_map_ready[slot])
       send_change_map(slot);
   }
 
@@ -894,7 +894,7 @@ bool Tick()
         pressed_this_tick & Button::Key3)
     {
       // log_terminal("Slot {} equipped this weapon: {}", player_idx, to_string(player->active_weapon_id));
-      broadcast_server_message(ctx.net, g_socket,
+      broadcast_server_message(ctx.transport_layer, g_socket,
                              std::format("Slot {} equipped this weapon: {}",
                                          player_idx, to_string(player->active_weapon_id)));
     }
@@ -1091,7 +1091,7 @@ bool Tick()
 
         if (hit.hit_uid != shared::null_entity_uid)
         {
-          broadcast_server_message(ctx.net, g_socket,
+          broadcast_server_message(ctx.transport_layer, g_socket,
                                  std::format("Player {} hit player {} in the {}",
                                              player_idx, hit.hit_uid,
                                              to_string(hit.region)));
@@ -1308,13 +1308,13 @@ bool Tick()
     constexpr network::uint8 dbg_type =
         static_cast<network::uint8>(network::Message_Type::S2C_BotDebug);
     auto dbg_packets =
-        network::convert_to_packets(dbg_buf, dbg_type, ctx.net.next_message_id);
+        network::convert_to_packets(dbg_buf, dbg_type, ctx.transport_layer.next_message_id);
     for (int slot = 0; slot < network::sv_max_player_count; ++slot)
     {
-      if (!ctx.net.player_slots[slot])
+      if (!ctx.transport_layer.player_slots[slot])
         continue;
       for (const auto &pkt : dbg_packets)
-        g_socket.send(pkt, ctx.net.player_ips[slot]);
+        g_socket.send(pkt, ctx.transport_layer.player_ips[slot]);
     }
   }
 
@@ -1359,7 +1359,7 @@ bool Tick()
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (!ctx.net.player_slots[slot])
+    if (!ctx.transport_layer.player_slots[slot])
       continue;
 
     // Withhold snapshots from a client still loading a (new) map — it has no
@@ -1396,10 +1396,10 @@ bool Tick()
     package.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
     auto packets = network::convert_to_packets(
         buffer, static_cast<network::uint8>(network::Message_Type::S2C_EntityPackage),
-        ctx.net.next_message_id);
+        ctx.transport_layer.next_message_id);
 
     for (const auto &p : packets)
-      g_socket.send(p, ctx.net.player_ips[slot]);
+      g_socket.send(p, ctx.transport_layer.player_ips[slot]);
   }
 
   // Effect queue is drained per tick: every connected client received this
@@ -1426,13 +1426,13 @@ bool Tick()
     auto event_packets = network::convert_to_packets(
         batch_buffer,
         static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch),
-        ctx.net.next_message_id);
+        ctx.transport_layer.next_message_id);
 
     for (int slot = 0; slot < network::sv_max_player_count; ++slot)
     {
-      if (!ctx.net.player_slots[slot]) continue;
+      if (!ctx.transport_layer.player_slots[slot]) continue;
       for (const auto &p : event_packets)
-        g_socket.send(p, ctx.net.player_ips[slot]);
+        g_socket.send(p, ctx.transport_layer.player_ips[slot]);
     }
   }
   ctx.game_event_queue_this_tick.clear();

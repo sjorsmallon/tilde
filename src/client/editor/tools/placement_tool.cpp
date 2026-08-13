@@ -293,7 +293,7 @@ void Placement_Tool::on_draw_ui(editor_context_t &ctx)
 }
 
 void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
-                                     overlay_renderer_t &renderer)
+                                     pass_builder_t &draws)
 {
   if (!cursor_is_currently_over_surface)
     return;
@@ -302,7 +302,7 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
   {
     const linalg::vec3 center =
         compute_geometry_placement_center(*geometry_to_place, ghost_position);
-    draw_geometry_ghost(*geometry_to_place, renderer, center);
+    draw_geometry_ghost(*geometry_to_place, draws, center);
     return;
   }
 
@@ -313,8 +313,8 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
     const linalg::vec3 origin =
         compute_placement_origin(entity_to_place.get(), ghost_position);
 
-    if (!draw_entity_ghost(entity_to_place.get(), renderer, origin))
-      draw_default_ghost(entity_to_place.get(), renderer, origin);
+    if (!draw_entity_ghost(entity_to_place.get(), draws, origin))
+      draw_default_ghost(entity_to_place.get(), draws, origin);
   }
 }
 

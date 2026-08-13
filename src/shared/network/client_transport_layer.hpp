@@ -14,11 +14,14 @@
 namespace network
 {
 
-struct Client_Connection_State
+// How bytes reach the server, and nothing about what they mean. Whether we are
+// handshaken, which slot we hold and at what tickrate is CONNECTION state, and
+// lives in client_context_t::connection -- a stratum above this one. UDP has no
+// connection to be in, which is why there is no `connected` flag here.
+struct Client_Transport_Layer
 {
   Udp_Socket socket;
   Address server_address;
-  bool connected = false;
 
   // Incoming fragments awaiting reassembly, keyed by header.message_id; each
   // value is a vector sized to that message's fragment_count.
@@ -53,7 +56,7 @@ struct Client_Inbox
 };
 
 template <typename T>
-inline void send_protobuf_message(Client_Connection_State &state, const T &msg)
+inline void send_protobuf_message(Client_Transport_Layer &state, const T &msg)
 {
   std::vector<uint8> buffer(msg.ByteSizeLong());
   msg.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
@@ -155,7 +158,7 @@ inline client_message_handler_fn find_client_message_handler(uint8 message_type)
 // Files one fragment into its message's bucket and, once every fragment has
 // arrived, concatenates them into out_payload and frees the bucket. Returns
 // false while the message is still incomplete.
-inline bool reassemble_fragment(Client_Connection_State &state,
+inline bool reassemble_fragment(Client_Transport_Layer &state,
                                 const Packet &packet,
                                 std::vector<uint8> &out_payload)
 {
@@ -198,7 +201,7 @@ inline bool reassemble_fragment(Client_Connection_State &state,
 
 } // namespace detail
 
-inline void poll_client_network(Client_Connection_State &state,
+inline void poll_client_network(Client_Transport_Layer &state,
                                 double time_window, Client_Inbox &out_inbox)
 {
   using clock = std::chrono::high_resolution_clock;

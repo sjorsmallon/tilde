@@ -7,21 +7,12 @@
 namespace client
 {
 
-// Editor-side drawing and UI for entities. The entity counterpart to
-// geometry_editor.hpp: entity_editor_traits.cpp holds one exhaustive switch
-// over entities::entity_type per function below, rather than a per-type
-// specialization mechanism — see entity_editor_traits.cpp's file comment for
-// why the earlier trait-template version was retired.
-
-// Half-extents for Y-offset when placing (so entity sits on a surface).
-// Box-volume entities (Trigger_Volume) report through get_box_volume(); the
-// rest is a switch over entity_type.
 linalg::vec3 get_placement_half_extents(const entities::Entity *e);
 
 // Placement preview at `origin` — the entity's position, NOT necessarily the
 // center of the drawn shape. Returns false to fall back to the default path
 // (render component mesh wireframe, then wire box).
-bool draw_entity_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
+bool draw_entity_ghost(const entities::Entity *e, pass_builder_t &draws,
                        const linalg::vec3 &origin);
 
 // Draw an entity in the editor. Tries the render component first, then a
@@ -29,7 +20,7 @@ bool draw_entity_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
 // uid: map entity uid (for cache keys and random-color seeding).
 // solid: true when the user has "Solid Entities" checked.
 bool draw_entity_in_editor(const entities::Entity *e,
-                           overlay_renderer_t &renderer, uint32_t uid,
+                           pass_builder_t &draws, uint32_t uid,
                            bool solid);
 
 // How far above a surface the entity's ORIGIN sits when placed on it. Half the
@@ -44,7 +35,7 @@ linalg::vec3 compute_placement_origin(const entities::Entity *e,
                                       const linalg::vec3 &ghost_position);
 
 // Default ghost drawing: tries render component mesh wireframe, then wire box.
-void draw_default_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
+void draw_default_ghost(const entities::Entity *e, pass_builder_t &draws,
                         const linalg::vec3 &origin);
 
 // The selection highlight's pink <-> white pulse at time `time`. Shared so the
@@ -56,7 +47,7 @@ color_t compute_selection_pulse_color(float time);
 // else AABB bounds. Color pulsates between pink and white based on time.
 // grid_step: current editor grid step (used for AABB face grid overlay).
 void draw_selection_highlight(const entities::Entity *e,
-                              overlay_renderer_t &renderer, float time,
+                              pass_builder_t &draws, float time,
                               float grid_step);
 
 } // namespace client

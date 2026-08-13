@@ -5,7 +5,7 @@
 #include "../shared/shapes.hpp"
 #include "linalg.hpp"
 #include <optional>
-#include <vulkan/vulkan.h> // For VkCommandBuffer
+#include "../frame_builder.hpp"
 
 //@NOTE(SJM): axis indices should be a canonical enum , since now here's mixing of 1 being -x or y.
 
@@ -48,8 +48,8 @@ struct transform_gizmo_t
   int dragging_ring_index = -1;
 };
 
-void draw_reshape_gizmo(VkCommandBuffer cmd, const reshape_gizmo_t &gizmo);
-void draw_transform_gizmo(VkCommandBuffer cmd, const transform_gizmo_t &gizmo);
+void draw_reshape_gizmo(pass_builder_t &draws, const reshape_gizmo_t &gizmo);
+void draw_transform_gizmo(pass_builder_t &draws, const transform_gizmo_t &gizmo);
 
 // Hit Testing
 bool hit_test_reshape_gizmo(const linalg::ray_t &ray, reshape_gizmo_t &gizmo);
@@ -88,7 +88,7 @@ public:
   // Current grid snap step (set by the tool before interaction)
   float snap_step = editor::MAJOR_GRID_STEP;
 
-  void start_interaction(Transaction_System *sys, shared::map_t *map,
+  void start_interaction(Transaction_System *transactions, shared::map_t *map,
                          shared::entity_uid_t uid);
   void end_interaction();
   bool is_interacting() const;
@@ -96,7 +96,7 @@ public:
 
   // Passthrough to underlying gizmo logic
   void update(const linalg::ray_t &ray, bool is_mouse_down);
-  void draw(VkCommandBuffer cmd);
+  void draw(pass_builder_t &draws);
 
   // Manipulate the gizmo and the underlying object
   void handle_input(const linalg::ray_t &ray, bool is_mouse_down,
@@ -147,14 +147,14 @@ private:
 
   struct Transform_Snapshot
   {
-    linalg::vec3 position;
-    linalg::vec3 scale; // or half_extents * 2
+    linalg::vec3 position = {};
+    linalg::vec3 scale = {}; // or half_extents * 2
     // Euler XYZ degrees, the one decided orientation representation (see
     // entities.def). This was a vec4 whose w was written 0 by some paths and 1
     // by others -- the vec4 shape read as "quaternion" and invited identity
     // quaternion writes that the euler write below then silently clobbered.
     // A vec3 makes that mistake unrepresentable.
-    linalg::vec3 orientation;
+    linalg::vec3 orientation = {};
   } original_transform;
 };
 

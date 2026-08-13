@@ -69,4 +69,15 @@ collect_changed_mirrored_cvars(const cvars::cvar_state_t& current,
 bool apply_cvar_values(cvars::cvar_state_t&         state,
                        const cvar_values_message_t& message);
 
+// Client side, on disconnect. The @Mirrored values are exactly as stale as the
+// connection that pushed them: nothing else in cvar_state_t is server-owned, so
+// nothing else is reverted. Without this a dead server's movement constants
+// keep steering the offline session -- play_state still runs player_move when
+// not connected -- and survive into the first ticks of the next connection.
+//
+// CALLER BEWARE: the integrated launcher hands ONE cvar_state_t to both
+// client::Init and server::Init, so an in-process server still owns these
+// values and this must not run there. See reset_for_new_connection.
+void revert_mirrored_cvars_to_defaults(cvars::cvar_state_t& state);
+
 } // namespace shared

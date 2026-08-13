@@ -241,18 +241,19 @@ enum class entity_type : uint16_t
 {
   Invalid = 0,
   Player_Spawn_Entity = 1,
-  Player_Entity = 2,
-  Weapon_Entity = 3,
-  Rocket_Entity = 4,
-  Particle_Emitter_Entity = 5,
-  Trigger_Volume_Entity = 6,
-  Light_Entity = 7,
-  Physics_Body_Entity = 8,
+  Player_Spectate_Entity = 2,
+  Player_Entity = 3,
+  Weapon_Entity = 4,
+  Rocket_Entity = 5,
+  Particle_Emitter_Entity = 6,
+  Trigger_Volume_Entity = 7,
+  Light_Entity = 8,
+  Physics_Body_Entity = 9,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 9;
+constexpr uint32_t ENTITY_TYPE_COUNT = 10;
 
 enum class component_type : uint16_t
 {
@@ -313,6 +314,14 @@ struct Player_Spawn_Entity : Entity
 
   Spawn_Type spawn_type = Spawn_Type::Human;
   Team_Allegiance team_allegiance = Team_Allegiance::Free_For_All;
+};
+
+struct Player_Spectate_Entity : Entity
+{
+  static constexpr entity_type static_type = entity_type::Player_Spectate_Entity;
+
+  Player_Spectate_Entity() { type = entity_type::Player_Spectate_Entity; }
+
 };
 
 struct Player_Entity : Entity
@@ -449,6 +458,16 @@ static_assert(std::is_trivially_destructible_v<Player_Spawn_Entity>,
               "slot by overwriting it and runs no destructor");
 static_assert(std::is_base_of_v<Entity, Player_Spawn_Entity>,
               "Player_Spawn_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Player_Spectate_Entity>,
+              "Player_Spectate_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Player_Spectate_Entity>,
+              "Player_Spectate_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Player_Spectate_Entity>,
+              "Player_Spectate_Entity must derive from Entity: the generated tables hand out "
               "Entity* for every entity type");
 
 static_assert(std::is_trivially_copyable_v<Player_Entity>,

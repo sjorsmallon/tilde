@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aabb.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "linalg.hpp"
 #include "plane.hpp"
@@ -15,32 +16,17 @@ namespace shared
 // which bought them nothing: none of them is an entity, none is networked, and
 // the one that WAS reachable as an entity field (box_volume_t) is now the
 // generated entities::Box_Volume component.
-struct aabb_t
-{
-  linalg::vec3 center       = {0, 0, 0};
-  linalg::vec3 half_extents = {1.f, 1.f, 1.f};
-};
-
+//
+// aabb_t / aabb_bounds_t and the operations on them live in aabb.hpp. What
+// stays here is everything that involves ANOTHER shape: the Box_Volume bridge,
+// the pyramid and wedge, and the compute_collision_planes / compute_face_polygons
+// overload sets, which must not be split across headers.
 struct pyramid_t
 {
   linalg::vec3 position = {};
   float        size     = {};
   float        height   = {};
 };
-
-struct aabb_bounds_t
-{
-  linalg::vec3 min;
-  linalg::vec3 max;
-};
-
-inline aabb_bounds_t get_bounds(const aabb_t &aabb)
-{
-  return {
-      aabb.center - aabb.half_extents,
-      aabb.center + aabb.half_extents,
-  };
-}
 
 // Promote a local-frame box volume to a world-space aabb_t. Lets callers reuse
 // the existing aabb_t-based helpers (get_bounds, compute_collision_planes,
@@ -158,24 +144,6 @@ inline std::array<linalg::vec3, 6> get_wedge_points(const wedge_t &wedge)
   {
     return {p0, p1, p2, p3, p5, p6};
   }
-}
-
-// Check if two AABBs intersect
-inline bool aabbs_intersect(const aabb_bounds_t &a, const aabb_bounds_t &b)
-{
-  return (a.min.x <= b.max.x && a.max.x >= b.min.x) &&
-         (a.min.y <= b.max.y && a.max.y >= b.min.y) &&
-         (a.min.z <= b.max.z && a.max.z >= b.min.z);
-}
-
-inline bool aabbs_intersect_with_tolerance(
-    const aabb_bounds_t &lhs,
-    const aabb_bounds_t &rhs,
-    float tolerance)
-{
-    return (lhs.min.x <= rhs.max.x + tolerance && lhs.max.x >= rhs.min.x - tolerance) &&
-           (lhs.min.y <= rhs.max.y + tolerance && lhs.max.y >= rhs.min.y - tolerance) &&
-           (lhs.min.z <= rhs.max.z + tolerance && lhs.max.z >= rhs.min.z - tolerance);
 }
 
 // Subtract one AABB from another, yielding up to 6 non-overlapping pieces.

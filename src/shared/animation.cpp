@@ -110,7 +110,7 @@ transform_t lerp_transform(const transform_t &from, const transform_t &to, float
 void sample_animation_clip_at(pose_t &out, const animation_clip_t &clip, const float phase, const bool looping)
 {
   const uint32_t frame_count = clip.frame_count();
-  out.local.assign(clip.bone_count, transform_t{});
+  out.parent_space.assign(clip.bone_count, transform_t{});
 
   if (frame_count == 0 || clip.bone_count == 0)
   {
@@ -125,7 +125,7 @@ void sample_animation_clip_at(pose_t &out, const animation_clip_t &clip, const f
   // toward, and phase is meaningless rather than merely unused.
   if (frame_count == 1)
   {
-    out.local.assign(frames, frames + clip.bone_count);
+    out.parent_space.assign(frames, frames + clip.bone_count);
     return;
   }
 
@@ -163,7 +163,7 @@ void sample_animation_clip_at(pose_t &out, const animation_clip_t &clip, const f
   const transform_t* b = frames + (size_t)second * clip.bone_count;
 
   for (uint32_t bone = 0; bone < clip.bone_count; ++bone)
-    out.local[bone] = lerp_transform(a[bone], b[bone], blend);
+    out.parent_space[bone] = lerp_transform(a[bone], b[bone], blend);
 }
 
 float clip_duration_seconds(const animation_clip_t &clip, const bool looping)
@@ -181,41 +181,39 @@ float clip_duration_seconds(const animation_clip_t &clip, const bool looping)
 void blend_into(pose_t &destination, const pose_t &source, Span<const float> per_bone_weight,
                 float layer_weight)
 {
-  if (destination.local.size() != source.local.size())
+  if (destination.parent_space.size() != source.parent_space.size())
   {
     log_error("blend_into: {} bones against {}; the two poses are not on one skeleton",
-              destination.local.size(), source.local.size());
+              destination.parent_space.size(), source.parent_space.size());
     return;
   }
 
-  if (!per_bone_weight.empty() && per_bone_weight.count != destination.local.size())
+  if (!per_bone_weight.empty() && per_bone_weight.count != destination.parent_space.size())
     fatal_error("blend_into: the mask is {} long but the poses have {} bones",
-                per_bone_weight.count, destination.local.size());
+                per_bone_weight.count, destination.parent_space.size());
 
-  for (size_t bone = 0; bone < destination.local.size(); ++bone)
+  for (size_t bone = 0; bone < destination.parent_space.size(); ++bone)
   {
     const float mask   = per_bone_weight.empty() ? 1.0f : per_bone_weight[(uint32_t)bone];
     const float weight = clamp01(mask * layer_weight);
     if (weight <= 0.0f)
       continue;
-    destination.local[bone] = weight >= 1.0f
-                                  ? source.local[bone]
-                                  : lerp_transform(destination.local[bone], source.local[bone], weight);
+    destination.parent_space[bone] = weight >= 1.0f
+                                  ? source.parent_space[bone]
+                                  : lerp_transform(destination.parent_space[bone], source.parent_space[bone], weight);
   }
 }
 
-// once again, LOCAL means "in relation to their parent". this transform is not the world-space one.
-// reference to their parent is not embedded in the out_local span, it's just associated by index.
-// that information is part of the skeleton.
-void get_local_transforms_of_bones_from_pose(const pose_t &pose, Span<linalg::mat4f> out_local)
+void compose_parent_space_matrices(const pose_t &pose, Span<linalg::mat4f> out_parent_space)
 {
-  if (out_local.count != pose.local.size())
-    fatal_error("get_local_transforms_of_bones_from_pose: 'out_local' is {} long but the pose has {} bones", out_local.count,
-                pose.local.size());
+  if (out_parent_space.count != pose.parent_space.size())
+    fatal_error("compose_parent_space_matrices: 'out_parent_space' is {} long but the pose has {} bones",
+                out_parent_space.count, pose.parent_space.size());
 
-  for (uint32_t bone = 0; bone < out_local.count; ++bone)
-    out_local[bone] = linalg::compose_transform(pose.local[bone].translation,
-                                                pose.local[bone].rotation, pose.local[bone].scale);
+  for (uint32_t bone = 0; bone < out_parent_space.count; ++bone)
+    out_parent_space[bone] = linalg::compose_transform(pose.parent_space[bone].translation,
+                                                       pose.parent_space[bone].rotation,
+                                                       pose.parent_space[bone].scale);
 }
 
 void compute_bind_pose(const skeleton_t &skeleton, pose_t &out)
@@ -223,9 +221,9 @@ void compute_bind_pose(const skeleton_t &skeleton, pose_t &out)
   std::vector<linalg::mat4f> parent_space(skeleton.bones.size());
   compute_parent_space_bind_matrices(skeleton, parent_space);
 
-  out.local.resize(skeleton.bones.size());
+  out.parent_space.resize(skeleton.bones.size());
   for (size_t bone = 0; bone < skeleton.bones.size(); ++bone)
-    out.local[bone] = decompose_affine_matrix_to_transform(parent_space[bone]);
+    out.parent_space[bone] = decompose_affine_matrix_to_transform(parent_space[bone]);
 }
 
 bool build_bone_mask(const skeleton_t &skeleton, const std::vector<bone_weight_t> &entries,

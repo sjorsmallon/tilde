@@ -1,15 +1,16 @@
 #pragma once
 
+#include "../shared/array.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/game_session.hpp"
-#include "../shared/network/client_connection_state.hpp"
+#include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/player_move.hpp"
 
-#include <array>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -18,106 +19,187 @@ namespace client
 
 struct audio_system_t; // owned by client_impl.cpp; see init()/shutdown()
 
-struct client_context_t
+static constexpr int32_t invalid_slot_idx = -1;
+
+// --- Connection phase (client network/handshake state machine) ---
+//   Disconnected ──on_enter: send CmdConnect──▶ Connecting
+//
+//   Connecting ──CmdAccept, have matching map──▶ Connected
+//              ──CmdAccept, no/mismatched map──▶ Loading   (send C2S_RequestMapData)
+//              ──CmdReject──────────────────────▶ Disconnected
+//
+//   Connected ──CmdChangeMap (new map)─────────▶ Loading
+//             ──on_exit: send CmdDisconnect─────▶ Disconnected
+//
+//   Loading ──local copy present & hash matches─▶ Connected (send C2S_MapLoaded)
+//           ──S2C_MapData arrives & verifies────▶ Connected (send C2S_MapLoaded)
+//           ──load/verify fails─────────────────▶ (stay Loading; re-request)
+//
+// Invariants: we only send move commands / run prediction+reconciliation while
+// Connected; the server withholds snapshots (client_map_ready) until it sees
+// our C2S_MapLoaded, so a Loading client receives no entity deltas. See
+// play_state.cpp update() and connection_t::awaiting_stream_content_hash.
+enum class Connection_Phase { Disconnected, Connecting, Loading, Connected };
+
+// --- Client-side prediction ring buffer entry ---
+struct Saved_Command
 {
-   // launcher hands these off to the client module on init().
-  // They are owned by the launcher and outlive the client module.
-  cvars::cvar_state_t*    cvars    = nullptr;
-  cvars::command_table_t* commands = nullptr;
+  int command_number = -1;
+  Move_Input input = {};
+  float yaw = 0.f;
+  float pitch = 0.f;
+  vec3f predicted_position = {0, 0, 0};
+  vec3f predicted_velocity = {0, 0, 0};
+};
+static constexpr uint32_t MAX_PENDING_COMMANDS = 128;
 
-  // client only since the server has cannot visualize.
-  debug_collision::Face_Sink debug_collision_faces;
+// --- Remote player interpolation ---
+struct Remote_Player_Snapshot
+{
+  vec3f position = {0, 0, 0};
+  float yaw = 0.f;
+  float pitch = 0.f;
+  // Server-owned; see Remote_Player_State::body_yaw below.
+  float body_yaw = 0.f;
+  uint32_t server_tick = 0;
+};
 
-  // --- Shared game world (entities, BVH, navmesh) ---
+struct Remote_Player_State
+{
+  int32_t slot_index = invalid_slot_idx;
+  // Which entity currently occupies the slot. A slot can change occupant, and
+  // interpolating across that would lerp the new player in from the old
+  // player's last position.
+  shared::entity_uid_t entity_uid = shared::null_entity_uid;
+  bool active = false;
+  Remote_Player_Snapshot snapshots[2] = {};
+  int snapshot_count = 0;
+  vec3f render_position = {0, 0, 0};
+  float render_yaw = 0.f;
+  float render_pitch = 0.f;
+  // Where the FEET point, which lags the view yaw. The difference between the
+  // two is the torso twist, and it is what drives the left/right aim poses --
+  // drawing the body at the view yaw would make that difference zero forever
+  // and leave two of the five poses unreachable.
+  //
+  // READ FROM THE SNAPSHOT, never integrated here. The server owns this: it
+  // advances the accumulator on the fixed tick and poses the hit volumes with
+  // it, so a client integrating its own copy would draw a silhouette the
+  // server is not testing. Interpolated between the two snapshots like the
+  // view yaw beside it, and that interpolated value never feeds the next
+  // frame -- the moment it did, the local integrator would be back. See
+  // animation_def.md, "RESOLVED: body_yaw is a tier-1 accumulator".
+  float body_yaw = 0.f;
+
+  // Player_Entity::death_tick as of the last snapshot: 0 = alive, non-zero =
+  // this player is a corpse and the death clip is what gets drawn.
+  uint32_t death_tick = 0;
+  // How far into the death clip the corpse is. Advanced on the RENDER clock
+  // rather than recomputed from the tick stamp every frame, because the
+  // stamp only moves at the server tickrate and the clip would visibly step
+  // at 60Hz on a 144Hz display. SEEDED from the stamp when death_tick
+  // changes, which is what makes a client connecting mid-corpse -- or one
+  // that dropped the packet the death landed in -- pick the animation up
+  // where it is instead of restarting it.
+  float death_animation_seconds = 0.f;
+};
+
+//@Note(SMIA): move this.
+struct explosion_effect_t
+{
+  vec3f position;
+  float time_remaining;
+  uint32_t explosion_index; // renderer key: high bit set to avoid entity_id collision
+};
+
+struct local_world_t
+{
   shared::game_session_t session;
 
-  // FNV-1a hash of the map the client loaded
-  // computed via shared::compute_map_content_hash().
+  // FNV-1a hash of the map the client loaded, via compute_map_content_hash().
   // Verified against the server's CmdAccept.content_hash to detect a
   // client/server map mismatch. 0 = not computed (verification skipped).
-  uint32_t loaded_map_content_hash = 0;
+  uint32_t map_content_hash = 0;
 
-  // --- Network socket and server address ---
-  ::network::Client_Connection_State connection_state;
+  // Client-owned static physics world. Effect handlers (e.g. the
+  // rocket-explosion handler) cast against this to resolve surface contact
+  // locally. Null in editor / menu states and before the first map load.
+  //
+  // OWNED here, not borrowed. The unique_ptr used to live on Play_State with a
+  // raw copy in this slot, which made teardown ORDER load-bearing: on_exit had
+  // to null the borrow before dropping the owner, or a late effect dispatch
+  // would cast against a freed world.
+  std::unique_ptr<physics_state_t> physics_state;
 
-  // --- Requested server endpoint ---
-  // Written by whoever initiates a join (the main menu's Join Game field, the
-  // `connect` console command) and read exactly once, by Play_State::on_enter,
-  // which is the only place that sets connection_state.server_address above.
-  // state_manager::switch_to() carries no payload and the states are long-lived
-  // singletons, so the context is the seam between "who picked the server" and
-  // "who connects to it". Defaults to loopback, which is what the integrated
-  // launcher and the menu's plain Start Game want.
-  ::network::Address requested_server_address =
-      ::network::Address(127, 0, 0, 1, ::network::server_port_number);
+  // Session and physics are built; the world can be simulated and drawn. Was
+  // Play_State::session_ready_for_simulation_and_rendering -- a fact ABOUT this
+  // struct, stored where nobody holding the struct could see it.
+  //
+  // Distinct from connection_t::phase: while streaming a map we are
+  // Connecting/Loading with this still false, and an offline client with a map
+  // has it true with no connection at all.
+  bool ready = false;
+};
 
-  // --- Connection phase (client network/handshake state machine) ---
-  //   Disconnected ──on_enter: send CmdConnect──▶ Connecting
-  //
-  //   Connecting ──CmdAccept, have matching map──▶ Connected
-  //              ──CmdAccept, no/mismatched map──▶ Loading   (send C2S_RequestMapData)
-  //              ──CmdReject──────────────────────▶ Disconnected
-  //
-  //   Connected ──CmdChangeMap (new map)─────────▶ Loading
-  //             ──on_exit: send CmdDisconnect─────▶ Disconnected
-  //
-  //   Loading ──local copy present & hash matches─▶ Connected (send C2S_MapLoaded)
-  //           ──S2C_MapData arrives & verifies────▶ Connected (send C2S_MapLoaded)
-  //           ──load/verify fails─────────────────▶ (stay Loading; re-request)
-  //
-  // Invariants: we only send move commands / run prediction+reconciliation while
-  // Connected; the server withholds snapshots (client_map_ready) until it sees
-  // our C2S_MapLoaded, so a Loading client receives no entity deltas. See
-  // play_state.cpp update() and awaiting_stream_content_hash below.
-  enum class Connection_Phase { Disconnected, Connecting, Loading, Connected };
-  Connection_Phase connection_phase = Connection_Phase::Disconnected;
+// Who we are to the server, and how far through the handshake we got. Plain
+// data only -- the socket is client_context_t::transport_layer, a stratum below
+// this one, and is not reset with it.
+struct connection_t
+{
+  Connection_Phase phase = Connection_Phase::Disconnected;
 
   // Non-zero while we're in Loading because we lacked (cache miss) or
   // mismatched the server's map and asked it to stream the compiled package:
   // holds the content_hash we're waiting to receive. Guards the CmdChangeMap
-  // handler so a resent switch message re-requests the stream (cheap retransmit
-  // stand-in) instead of tearing down and reloading the world every tick.
-  // Cleared once S2C_MapData applies. See map_transfer / play_state.
+  // handler so a resent switch message re-requests the stream (a cheap
+  // retransmit stand-in) instead of tearing down and reloading the world every
+  // tick. Cleared once S2C_MapData applies.
   uint32_t awaiting_stream_content_hash = 0;
 
-
-  static constexpr int32_t invalid_slot_idx = -1;
-
-  // the slot we occupy on the server (I guess to filter inputs etc?)
+  // The slot we occupy on the server.
   int32_t my_slot = invalid_slot_idx;
 
   // Local player's entity uid, learned from the first self snapshot. Used to
   // suppress server-dispatched cosmetic effects attached to our own player
   // (jump/land), which we already played locally via prediction. 0 until known.
   shared::entity_uid_t my_entity_uid = 0;
-  // Our own Player_Entity::health, off the last snapshot. Prediction reads it:
-  // the server stops steering a dead player, so a client that kept feeding its
-  // own input into player_move would predict a walk the server never runs and
-  // spend the whole respawn delay being reconciled backwards. 100 until the
-  // first snapshot, which is also the not-connected case (no server, no death).
-  int32_t local_player_health = 100;
-  int command_number = 0;
-  uint32_t server_tickrate = 60;
 
-  // --- Local player simulation ---
+  uint32_t server_tickrate = 60;
+};
+
+// The local player as WE compute them, plus the server's last word on us that
+// reconciliation corrects against. All of it is meaningless across a connect,
+// which is what makes it a group.
+struct prediction_t
+{
   vec3f player_position = {0, 36, 0};
   vec3f player_velocity = {0, 0, 0};
   float player_yaw = 0.0f;
   float player_pitch = 0.0f;
   float physics_accumulator = 0.0f;
 
-  // --- Client-side prediction ring buffer ---
-  struct Saved_Command
-  {
-    int command_number = -1;
-    Move_Input input = {};
-    float yaw = 0.f;
-    float pitch = 0.f;
-    vec3f predicted_position = {0, 0, 0};
-    vec3f predicted_velocity = {0, 0, 0};
-  };
-  static constexpr int MAX_PENDING_COMMANDS = 128;
-  std::array<Saved_Command, MAX_PENDING_COMMANDS> pending_commands = {};
+  // Our own Player_Entity::health, off the last snapshot. Prediction reads it:
+  // the server stops steering a dead player, so a client that kept feeding its
+  // own input into player_move would predict a walk the server never runs and
+  // spend the whole respawn delay being reconciled backwards. 100 until the
+  // first snapshot, which is also the not-connected case (no server, no death).
+  int32_t local_player_health = 100;
+
+  // Zoom STATE, not the click: right-click toggles it, and it rides the button
+  // bitfield to the server (Button::Zoom) so the server can charge movement
+  // speed or accuracy for it. That is what makes it a predicted INPUT and puts
+  // it here rather than beside the eased zoom_fraction on Play_State -- as a
+  // state member it survived a disconnect, so you rejoined still zoomed.
+  bool zoom_active = false;
+
+  // Real seconds since our own last predicted gunshot, for re-running the
+  // server's fire-rate gate locally (weapons.hpp is shared, so it is the same
+  // number). Audio only -- the authoritative limit is the server's
+  // last_fire_tick -- but it is per-connection like the health above it.
+  float seconds_since_local_fire = 0.f;
+
+  int command_number = 0;
+  Array<Saved_Command, MAX_PENDING_COMMANDS> pending_commands = {};
 
   // --- Server reconciliation ---
   vec3f latest_server_position = {0, 0, 0};
@@ -125,67 +207,42 @@ struct client_context_t
   int latest_server_ack_command = -1;
   bool received_server_update = false;
   vec3f visual_error_offset = {0, 0, 0};
-  vec3f reconciliation_error = {0, 0, 0};
-  float reconciliation_error_magnitude = 0.0f;
+  vec3f reconciliation_error = {0, 0, 0};      // HUD readout only
+  float reconciliation_error_magnitude = 0.0f; // HUD readout only
+};
 
-  // --- Remote player interpolation ---
-  struct Remote_Player_Snapshot
-  {
-    vec3f position = {0, 0, 0};
-    float yaw = 0.f;
-    float pitch = 0.f;
-    // Server-owned; see Remote_Player_State::body_yaw below.
-    float body_yaw = 0.f;
-    uint32_t server_tick = 0;
-  };
-  struct Remote_Player_State
-  {
-    int32_t slot_index = invalid_slot_idx;
-    // Which entity currently occupies the slot. A slot can change occupant, and
-    // interpolating across that would lerp the new player in from the old
-    // player's last position.
-    shared::entity_uid_t entity_uid = shared::null_entity_uid;
-    bool active = false;
-    Remote_Player_Snapshot snapshots[2] = {};
-    int snapshot_count = 0;
-    vec3f render_position = {0, 0, 0};
-    float render_yaw = 0.f;
-    float render_pitch = 0.f;
-    // Where the FEET point, which lags the view yaw. The difference between the
-    // two is the torso twist, and it is what drives the left/right aim poses --
-    // drawing the body at the view yaw would make that difference zero forever
-    // and leave two of the five poses unreachable.
-    //
-    // READ FROM THE SNAPSHOT, never integrated here. The server owns this: it
-    // advances the accumulator on the fixed tick and poses the hit volumes with
-    // it, so a client integrating its own copy would draw a silhouette the
-    // server is not testing. Interpolated between the two snapshots like the
-    // view yaw beside it, and that interpolated value never feeds the next
-    // frame -- the moment it did, the local integrator would be back. See
-    // animation_def.md, "RESOLVED: body_yaw is a tier-1 accumulator".
-    float body_yaw = 0.f;
+// One bot's pathfinding state as of the last S2C_BotDebug packet. Filled from
+// the wire in play_state.cpp; drawn by the bot HUD and the path overlay.
+//
+// This is NOT a memory bridge from game_server, though it claimed to be one as
+// a `bot_debug::g_entries` global for a long time. It cannot be: game_shared is
+// a static lib, so each module linked its own copy and the server's writes were
+// never visible here. The server's real path is `g_bots` -> S2C_BotDebug ->
+// this vector, which works in both the integrated (loopback) and networked
+// builds. It sits in replication_t because that is what it is -- and because as
+// a global neither reset reached it, so a previous connection's bot paths kept
+// drawing over the new one.
+struct bot_debug_entry_t
+{
+  int32_t            slot       = -1;
+  int                goal       = 0; // BotGoal: 0=Idle 1=Chase 2=Attack 3=Retreat
+  int                type       = 0; // BotType: 0=Idle 1=Chase 2=Regular
+  std::vector<vec3f> path;
+  int                path_index = 0;
+};
 
-    // Player_Entity::death_tick as of the last snapshot: 0 = alive, non-zero =
-    // this player is a corpse and the death clip is what gets drawn.
-    uint32_t death_tick = 0;
-    // How far into the death clip the corpse is. Advanced on the RENDER clock
-    // rather than recomputed from the tick stamp every frame, because the
-    // stamp only moves at the server tickrate and the clip would visibly step
-    // at 60Hz on a 144Hz display. SEEDED from the stamp when death_tick
-    // changes, which is what makes a client connecting mid-corpse -- or one
-    // that dropped the packet the death landed in -- pick the animation up
-    // where it is instead of restarting it.
-    float death_animation_seconds = 0.f;
-  };
-
-
+// Everything the server tells us about the world other than ourselves. Keyed by
+// entity uid / slot, both of which mean nothing in a different map or a
+// different connection -- which is why this is the one group BOTH resets clear.
+struct replication_t
+{
   std::unordered_map<int32_t, Remote_Player_State> remote_players;
   float interpolation_time = 0.f;
 
   // --- Delta decompression: the latest reconstructed snapshot ---
-  // These are what the game reads. They are a copy of the newest frame in the
-  // history below, kept separate because the rest of the client wants "the
-  // current world", not "frame N".
+  // What the game reads. A copy of the newest frame in the history below, kept
+  // separate because the rest of the client wants "the current world", not
+  // "frame N".
   std::unordered_map<int32_t, entities::Player_Entity> latest_player_entities;
   std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> remote_rockets;
   // Physics bodies received from server. State is replaced wholesale each
@@ -194,71 +251,118 @@ struct client_context_t
   // stutter at server tick boundaries until interpolation is added.
   std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> remote_physics_bodies;
 
+  // --- Delta decompression: the snapshot history ---
+  // The server deltas against a tick we ACKED, so we must still be holding the
+  // exact state we reconstructed for that tick — not merely "the current
+  // world", which has moved on. Mirrors the server's ring one for one; see
+  // shared/network/snapshot_history.hpp. `acked_tick` on it is the value echoed
+  // back in every C2S_PlayerMoveCommand. The frame type is the same one the
+  // server stores — the server deltas against what it believes we
+  // reconstructed, so the two structures being one type is not a convenience,
+  // it is the guarantee. Keyed by entity uid on both ends;
+  // `latest_player_entities` above is the by-slot view, rebuilt on publish.
+  ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history;
+  uint32_t latest_processed_tick = 0;
 
-  struct snapshot_state_t
-  {
-    // // --- Delta decompression: the snapshot history ---
-    // // The server deltas against a tick we ACKED, so we must still be holding the
-    // // exact state we reconstructed for that tick — not merely "the current
-    // // world", which has moved on. Mirrors the server's ring one for one; see
-    // // shared/network/snapshot_history.hpp. `acked_tick` on it is the value echoed
-    // // back in every C2S_PlayerMoveCommand.
-    // // The frame type is ::network::snapshot_frame_t, the same one the server
-    // // stores — the server deltas against what it believes we reconstructed, so
-    // // the two structures being one type is not a convenience, it is the
-    // // guarantee. Keyed by entity uid on both ends; `latest_player_entities` above
-    // // is the by-slot view the rest of the client wants, rebuilt on publish.
-    ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history; 
+  // Per-player Player_Entity::last_fire_tick as of the last snapshot we looked
+  // at, keyed by entity uid. An advance means that player fired; see
+  // weapon_fire_audio.hpp. Keyed by uid rather than slot so a slot changing
+  // occupant cannot inherit the previous player's stamp.
+  std::unordered_map<shared::entity_uid_t, uint32_t> last_seen_fire_tick_per_player;
 
+  // The same trick for OUR OWN Player_Entity::last_hit_tick — an advance means
+  // a shot of ours landed. A scalar and not a map because a hitmarker is ours
+  // alone: nobody else's hits are our business. `seeded` distinguishes "never
+  // looked" from "looked, and it was 0", so joining a server where we already
+  // have a stamp does not ding on the first snapshot.
+  uint32_t last_seen_hit_tick = 0;
+  bool hit_tick_seeded = false;
 
-    uint32_t latest_processed_tick = 0;
-    
-    // // Per-player Player_Entity::last_fire_tick as of the last snapshot we looked
-    // // at, keyed by entity uid. An advance means that player fired; see
-    // // weapon_fire_audio.hpp. Keyed by uid rather than slot so a slot changing
-    // // occupant cannot inherit the previous player's stamp.
-    std::unordered_map<shared::entity_uid_t, uint32_t> last_seen_fire_tick_per_player;
+  // Replaced wholesale by each S2C_BotDebug packet.
+  std::vector<bot_debug_entry_t> bot_debug_entries;
+};
 
-    // // The same trick for OUR OWN Player_Entity::last_hit_tick — an advance means
-    // // a shot of ours landed. A scalar and not a map because a hitmarker is ours
-    // // alone: nobody else's hits are our business. `seeded` distinguishes "never
-    // // looked" from "looked, and it was 0", so joining a server where we already
-    // // have a stamp does not ding on the first snapshot.
-    uint32_t last_seen_hit_tick = 0;
-    bool hit_tick_seeded = false;
-  };
-
-  snapshot_state_t snapshot_state{};
-
-  // --- Integrated-mode session pointer ---
-  // In integrated builds, set to the server's authoritative session so the
-  // renderer can read entity pools directly instead of going through snapshot
-  // interpolation. Null in dedicated/networked-only builds.
-  const shared::game_session_t* server_session = nullptr;
-
-  // --- Client-owned physics world (static geometry only) ---
-  // Borrowed from Play_State for the duration of the play session — set in
-  // Play_State::on_enter, cleared in on_exit. Effect handlers (e.g. the
-  // rocket-explosion handler) cast against this to resolve surface contact
-  // locally. Null in editor / menu states and during reconnects.
-  physics_state_t* physics_state = nullptr;
-
-  // --- Client audio ---
-  // Borrowed pointer to the client-global audio system (owned in
-  // client_impl.cpp, lives for the whole client session). Cosmetic-effect
-  // handlers play sounds through this. Always non-null after client init();
-  // handlers guard it anyway in case audio init failed.
-  audio_system_t* audio = nullptr;
-
-  //@Note(SMIA): move this.
-  struct explosion_effect_t
-  {
-    vec3f position;
-    float time_remaining;
-    uint32_t explosion_index; // renderer key: high bit set to avoid entity_id collision
-  };
+// Drawn, and read by nothing else. Dropping any of it costs at most a frame's
+// appearance, which is what makes it safe to clear on any transition.
+struct visual_effects_t
+{
   std::vector<explosion_effect_t> explosion_effects;
   uint32_t next_explosion_index = 0;
+
+  // Client only, since the server cannot visualize. Filled by player_move
+  // during prediction, drawn and cleared in build_frame.
+  debug_collision::Face_Sink debug_collision_faces;
 };
+
+struct client_context_t
+{
+  // --- Handles and inputs ---
+  // NOTHING here is touched by the reset functions below; each field says why.
+  // Everything AFTER them is reset-scoped state, and its group name says by what.
+
+  // Installed once at client::Init / client_impl init and live for the whole
+  // client session. The launcher owns cvars/commands and outlives this module.
+  //
+  // NOTE: the POINTER is module-scope, but the @Mirrored values behind `cvars`
+  // are CONNECTION-scope -- server-owned, pushed over the wire, and stale the
+  // moment the connection ends. That is handled by an explicit revert in
+  // reset_for_new_connection, not by this pointer's lifetime.
+  cvars::cvar_state_t*    cvars    = nullptr;
+  cvars::command_table_t* commands = nullptr;
+
+  // Borrowed pointer to the client-global audio system (owned in
+  // client_impl.cpp). Cosmetic-effect handlers play sounds through this. Always
+  // non-null after client init(); handlers guard it anyway in case audio init
+  // failed.
+  audio_system_t* audio = nullptr;
+
+  // Integrated builds only: the server's authoritative session, so the renderer
+  // can read entity pools directly instead of going through snapshot
+  // interpolation. Null in dedicated/networked-only builds -- which also makes
+  // it the client's only way to answer "is there a server in this process".
+  const shared::game_session_t* server_session = nullptr;
+
+  // Holds a Udp_Socket with a destructor and no user-defined assignment, so
+  // `= {}` would copy a live handle and double-close it. Its lifetime is
+  // open()/close(), managed explicitly by Play_State::on_enter / on_exit.
+  ::network::Client_Transport_Layer transport_layer;
+
+  // An INPUT to the next connect, not state produced by one: written by whoever
+  // initiates a join (the main menu's Join Game field, the `connect` console
+  // command) BEFORE Play_State runs, and read exactly once by on_enter.
+  // state_manager::switch_to() carries no payload and the states are long-lived
+  // singletons, so the context is the seam between "who picked the server" and
+  // "who connects to it". Putting it in `connection` would have
+  // reset_for_new_connection erase the address it is about to dial. Defaults to
+  // loopback, which is what the integrated launcher and plain Start Game want.
+  ::network::Address requested_server_address =
+      ::network::Address(127, 0, 0, 1, ::network::server_port_number);
+
+  // --- Reset-scoped state ---
+  local_world_t    world;
+  connection_t     connection;
+  prediction_t     prediction;
+  replication_t    replication;
+  visual_effects_t visuals;
+};
+
+// A new connection attempt (Play_State::on_enter). Everything the previous
+// connection established goes: our identity on the server, the predicted local
+// player, and the replicated world -- uids and slots from the old server mean
+// nothing to the new one.
+//
+// `world` survives: reconnecting to a server running the map we already have
+// must not throw that map away. (Leaving Play_State entirely is the other
+// story -- on_exit clears the world outright, because a client that is not in
+// play has no world.) The handles and requested_server_address at the top of
+// the struct survive for the reasons written there.
+void reset_for_new_connection(client_context_t& context);
+
+// A new map (Play_State::finalize_client_map, from a local load or a streamed
+// package). Only what is keyed to the map we are leaving: the replicated world
+// and the effects standing in it. `world` itself is not cleared here -- the
+// caller is mid-rebuild of it. The connection is untouched: a map switch happens
+// WITHIN a connection, and clearing my_slot would desync the handshake.
+void reset_for_new_map(client_context_t& context);
 
 } // namespace client

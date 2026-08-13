@@ -571,7 +571,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
 // ===================================================================
 
 void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
-                                        overlay_renderer_t &renderer)
+                                        pass_builder_t &draws)
 {
   // In setup mode: highlight hovered face
   if (mode == Mode::Setup && hovered_uid != 0 &&
@@ -595,7 +595,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
         else if (axis == 1) size.y = 0;
         else size.z = 0;
 
-        renderer.draw_wire_aabb(p, size, colors::green); // Green highlight
+        draws.debug.box(p, size, colors::green); // Green highlight
       }
     }
   }
@@ -614,7 +614,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
       {
         for (int i = 0; i < grid_size - 1; ++i)
         {
-          renderer.draw_line(displacement_ptr->get_vertex_world(i, j),
+          draws.debug.line(displacement_ptr->get_vertex_world(i, j),
                              displacement_ptr->get_vertex_world(i + 1, j), grid_color);
         }
       }
@@ -623,7 +623,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
       {
         for (int j = 0; j < grid_size - 1; ++j)
         {
-          renderer.draw_line(displacement_ptr->get_vertex_world(i, j),
+          draws.debug.line(displacement_ptr->get_vertex_world(i, j),
                              displacement_ptr->get_vertex_world(i, j + 1), grid_color);
         }
       }
@@ -633,11 +633,11 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
   // In paint mode: draw brush circle and normal arrow
   if (mode == Mode::Paint && cursor_is_currently_over_a_displacement_face)
   {
-    renderer.draw_circle(cursor_position, brush.radius, cursor_normal, colors::yellow);
+    draws.debug.wire_circle(cursor_position, brush.radius, cursor_normal, colors::yellow);
 
     // Draw normal arrow
     linalg::vec3 arrow_end = cursor_position + cursor_normal * (brush.radius * 0.5f);
-    renderer.draw_line(cursor_position, arrow_end, colors::red);
+    draws.debug.line(cursor_position, arrow_end, colors::red);
   }
 
   // In select mode: highlight selected vertices and draw dragging box
@@ -658,7 +658,7 @@ void Displacement_Tool::on_draw_overlay(editor_context_t &ctx,
             if (selected_vertices_bitmask[(size_t)(j * grid_size + i)])
             {
               linalg::vec3 vp = displacement_ptr->get_vertex_world(i, j);
-              renderer.draw_circle(vp, dot_r, fn, colors::cyan); // selected-vertex dot
+              draws.debug.wire_circle(vp, dot_r, fn, colors::cyan); // selected-vertex dot
             }
           }
         }

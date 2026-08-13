@@ -84,7 +84,7 @@ building on it:
 Both sat under "BLOCKED on a walk cycle existing" on the grounds that neither can
 be judged without posed content to judge it against. **That premise expired when
 aim landed**: the five `*_holding_gun` poses are real poses, driven live by
-`compute_aim_skinning_matrices`, and they move the spine, arms and head. A
+`compute_aim_posed_skeleton`, and they move the spine, arms and head. A
 capsule that does not track a raised arm is visible today.
 
 What genuinely still needs the walk cycle: **leg volumes** (no aim pose moves a
@@ -368,13 +368,18 @@ wrist at y=25. `V` sits at **(0, 23, 0)** and is weighted entirely to the elbow.
 
 10. Sample a clip → `pose_t` (parent-relative TRS). Or `blend_into` several for
     the aim set. Or `compute_bind_pose` if nothing is playing.
-11. `get_local_transforms_of_bones_from_pose` → TRS to `mat4`. STILL
+11. `compose_parent_space_matrices` → TRS to `mat4`. STILL
     parent-relative; nothing is resolved yet.
 12. `compute_model_space_matrices` → one forward pass over `parent_index`:
     where each bone is NOW, in model space. Say the elbow swung to (5, 20, 0).
 13. `* inverse_bind` → the skinning matrices. Elbow:
     `T(5,20,0) * T(0,−20,0)` = **T(5, 0, 0)**. Steps 12–13 are both inside
     `compute_skinning_matrices`. (a.k.a to know where this vertex is in relation to the bone, subtract the bone's trs from your current trs. (yhou can sort of visualize this as dragging the bone to the origin and the vertex coming along with it.))
+
+    Steps 11–13 are what `compute_posed_skeleton` does in ONE pass, filling a
+    `posed_skeleton_t{model_space, skinning}`. The three functions above stay
+    for the BIND-pose callers, which start at step 12 with parent-space matrices
+    already in hand and have no `pose_t` to compose from.
 14. Upload ≤128 of them to the `Skinning` UBO, one dynamic-offset block per
     skinned draw.
 

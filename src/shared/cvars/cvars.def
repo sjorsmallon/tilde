@@ -4,7 +4,7 @@
 //
 // Transcribed 2026-07-29 from the CVar<T> / Console_Command declarations
 // scattered across player_move.cpp, debug_collision.cpp, game_cvars.cpp,
-// audio_system.cpp, play_state.cpp, server_impl.cpp, console.cpp and the three
+// audio_system_t.cpp, play_state.cpp, server_impl.cpp, console.cpp and the three
 // launchers. See cvar_def.md at the repo root for the design, todo.md for the
 // step order. Read entities.def first -- this is its sibling and every
 // principle there carries over.
@@ -207,7 +207,7 @@ Time :: cvars {
 }
 
 // ---------------------------------------------------------------------------
-// Audio -- was audio_system.cpp (file-scope statics, so console-visible only in
+// Audio -- was audio_system_t.cpp (file-scope statics, so console-visible only in
 // whichever module happened to link them)
 // ---------------------------------------------------------------------------
 //
@@ -231,6 +231,15 @@ Debugging :: cvars {
     debug_show_hitboxes:    bool = true                "Show entity hitboxes in wireframe"
     debug_show_navmesh:     bool = false                "Show baked navmesh as a line grid"
     debug_show_box_volumes: bool = false                "Draw every entity's box volume as a wireframe AABB (triggers, clip volumes, ...)"
+
+    // @Client, unlike the four above: those are unflagged because player_move
+    // reads debug_show_collisions on BOTH sides, while these three are view
+    // toggles the server has no rendering to apply them to. They were plain
+    // Play_State bools, which put three of the seven checkboxes in one HUD
+    // block out of the console's reach for no reason.
+    debug_hide_geometry:       bool = false @Client     "Skip drawing map geometry"
+    debug_show_entity_counts:  bool = false @Client     "Per-type entity count overlay"
+    debug_show_physics_bodies: bool = false @Client     "Draw Jolt bodies and constraints (JPH_DEBUG_RENDERER builds)"
 
     net_snapshot_debug:     bool = false    @Client     "Log each received snapshot's baseline tick and payload size (every 120 ticks)"
 }

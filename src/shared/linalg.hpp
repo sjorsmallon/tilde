@@ -353,6 +353,85 @@ inline float to_radians(float degrees) { return degrees * (PI / 180.0f); }
 
 inline float to_degrees(float radians) { return radians * (180.0f / PI); }
 
+// --- Camera and model matrices ---
+//
+// These four are VULKAN-CONVENTION: clip Y points down and clip Z spans [0, 1],
+// so the projections below flip Y and remap Z rather than producing the
+// OpenGL-style [-1, 1] every textbook derivation gives. They lived as a
+// hand-rolled `mat4_t` inside the renderer until the renderer stopped owning a
+// math library; nothing about them is renderer-specific, and picking has to
+// agree with the projection a frame was drawn with.
+
+// `fov_y_radians` is the VERTICAL field of view. Right-handed, looking down -Z.
+inline mat4f perspective(float fov_y_radians, float aspect, float near_plane, float far_plane)
+{
+  const float tan_half = std::tan(fov_y_radians * 0.5f);
+
+  mat4f result = {};
+  result[0].x = 1.0f / (aspect * tan_half);
+  result[1].y = -1.0f / tan_half; // negated: clip Y is down, world Y is up
+  result[2].z = far_plane / (near_plane - far_plane);
+  result[2].w = -1.0f;
+  result[3].z = -(far_plane * near_plane) / (far_plane - near_plane);
+  return result;
+}
+
+inline mat4f orthographic(float left, float right, float bottom, float top, float near_plane,
+                          float far_plane)
+{
+  mat4f result = mat4f::identity();
+  result[0].x = 2.0f / (right - left);
+  result[1].y = 2.0f / (bottom - top); // bottom-top, not top-bottom: clip Y is down
+  result[2].z = 1.0f / (near_plane - far_plane);
+  result[3].x = -(right + left) / (right - left);
+  result[3].y = -(bottom + top) / (bottom - top);
+  result[3].z = near_plane / (near_plane - far_plane);
+  return result;
+}
+
+inline mat4f look_at(const vec3f &eye, const vec3f &target, const vec3f &up)
+{
+  const vec3f forward = normalize(target - eye);
+  const vec3f right   = normalize(cross(forward, up));
+  const vec3f true_up = cross(right, forward);
+
+  mat4f result = mat4f::identity();
+  result[0]    = {right.x, true_up.x, -forward.x, 0.0f};
+  result[1]    = {right.y, true_up.y, -forward.y, 0.0f};
+  result[2]    = {right.z, true_up.z, -forward.z, 0.0f};
+  result[3]    = {-dot(right, eye), -dot(true_up, eye), dot(forward, eye), 1.0f};
+  return result;
+}
+
+// Rz * Ry * Rx, degrees. Euler survives here because map geometry and the entity
+// schema store orientation as three floats; anything with a real rotation to
+// interpolate uses `quatf` and `to_mat4` instead.
+inline mat4f rotation_from_euler_degrees(const vec3f &euler_degrees)
+{
+  const float cx = std::cos(to_radians(euler_degrees.x)), sx = std::sin(to_radians(euler_degrees.x));
+  const float cy = std::cos(to_radians(euler_degrees.y)), sy = std::sin(to_radians(euler_degrees.y));
+  const float cz = std::cos(to_radians(euler_degrees.z)), sz = std::sin(to_radians(euler_degrees.z));
+
+  mat4f result = mat4f::identity();
+  result[0]    = {cz * cy, sz * cy, -sy, 0.0f};
+  result[1]    = {cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx, 0.0f};
+  result[2]    = {cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx, 0.0f};
+  return result;
+}
+
+// T * R * S with R from euler degrees -- the euler twin of compose_transform,
+// and what a draw call composes its model matrix with.
+inline mat4f compose_transform_euler(const vec3f &translation, const vec3f &euler_degrees,
+                                     const vec3f &scale)
+{
+  mat4f result = rotation_from_euler_degrees(euler_degrees);
+  result[0]    = result[0] * scale.x;
+  result[1]    = result[1] * scale.y;
+  result[2]    = result[2] * scale.z;
+  result[3]    = {translation.x, translation.y, translation.z, 1.0f};
+  return result;
+}
+
 // An angle difference folded into (-180, 180]. Yaws are stored unwrapped, so a
 // player turning past the 0/360 seam produces a raw difference near 360 that
 // reads as "turned almost all the way round" -- which is how a smoothly turning

@@ -702,6 +702,45 @@ void test_mirroring()
   check(shared::apply_cvar_values(partial, {}), "an empty message applies cleanly");
 }
 
+// --- 6. Reverting on disconnect ---------------------------------------------
+
+void test_mirror_revert()
+{
+  std::cout << "[mirror revert]\n";
+
+  const cvars::cvar_state_t defaults;
+
+  // A client mid-connection: the server has pushed @Mirrored values, and the
+  // player has set some cvars of their own alongside them.
+  cvars::cvar_state_t client;
+  client.pm_maxspeed  = 500.f;
+  client.pm_jumpspeed = 400.f;
+  client.cl_timescale = 0.25f;        // unflagged, locally owned
+  client.debug_show_navmesh = true;   // unflagged, locally owned
+  check(client.pm_maxspeed != defaults.pm_maxspeed,
+        "the mirrored value starts away from its default");
+
+  shared::revert_mirrored_cvars_to_defaults(client);
+
+  // Every @Mirrored cvar is back to the cvars.def default -- checked over the
+  // whole set through the generated table, not just the two written above, so
+  // adding an @Mirrored cvar cannot quietly escape the revert.
+  check(shared::collect_changed_mirrored_cvars(client, defaults).values.empty(),
+        "every @Mirrored cvar matches a default-constructed state");
+
+  // ...and nothing the client owns was touched. This is the half that makes the
+  // revert safe to call on disconnect: it is not a "reset all cvars".
+  check(client.cl_timescale == 0.25f, "an unflagged cvar survived the revert");
+  check(client.debug_show_navmesh == true,
+        "a locally-owned debug cvar survived the revert");
+
+  // Idempotent: reverting an already-default state is a no-op, so calling it
+  // from both on_exit and reset_for_new_connection costs nothing.
+  shared::revert_mirrored_cvars_to_defaults(client);
+  check(shared::collect_changed_mirrored_cvars(client, defaults).values.empty(),
+        "a second revert changes nothing");
+}
+
 } // namespace
 
 int main()
@@ -716,6 +755,7 @@ int main()
   test_console_missing_handlers();
   test_command_binders();
   test_mirroring();
+  test_mirror_revert();
 
   if (failure_count != 0)
   {

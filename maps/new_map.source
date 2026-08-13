@@ -62,3 +62,10 @@ entity
   "param_string" ""
   "param_float" "0"
 }
+entity
+{
+  "classname" "player_spectate_entity"
+  "_uid" "7"
+  "position" "-1152 2304 -640"
+  "orientation" "0 -1 0"
+}

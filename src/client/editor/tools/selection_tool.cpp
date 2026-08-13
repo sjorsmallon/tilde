@@ -508,7 +508,7 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 }
 
 void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
-                                     overlay_renderer_t &renderer)
+                                     pass_builder_t &draws)
 {
   if (!ctx.map)
     return;
@@ -518,7 +518,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   auto draw_bounds_highlight = [&](shared::entity_uid_t uid, color_t color)
   {
     const shared::aabb_bounds_t bounds = shared::compute_object_bounds(*ctx.map, uid);
-    renderer.draw_wire_aabb((bounds.min + bounds.max) * 0.5f,
+    draws.debug.box((bounds.min + bounds.max) * 0.5f,
                            (bounds.max - bounds.min) * 0.5f, color);
   };
 
@@ -527,9 +527,9 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
   for (auto uid : selected_uids)
   {
     if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
-      draw_geometry_selection_highlight(geometry->value, renderer, ctx.time, grid_step);
+      draw_geometry_selection_highlight(geometry->value, draws, ctx.time, grid_step);
     else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      draw_selection_highlight(entry->entity.get(), renderer, ctx.time, grid_step);
+      draw_selection_highlight(entry->entity.get(), draws, ctx.time, grid_step);
   }
 
   // 2. Highlight Hovered Item - Yellow
@@ -595,13 +595,13 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
     linalg::vec3 half_extents = {editor::GRID_INDICATOR_HALF_W,
                                   editor::GRID_INDICATOR_HALF_H,
                                   editor::GRID_INDICATOR_HALF_W};
-    renderer.draw_wire_aabb(center, half_extents, with_alpha(colors::white, 0x88));
+    draws.debug.box(center, half_extents, with_alpha(colors::white, 0x88));
   }
 
   // 5. Draw Gizmo
   if (selected_uids.size() == 1)
   {
-    editor_gizmo.draw(renderer.get_command_buffer());
+    editor_gizmo.draw(draws);
   }
 }
 

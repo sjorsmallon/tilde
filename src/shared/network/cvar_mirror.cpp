@@ -20,6 +20,12 @@ const std::byte* value_bytes(const cvars::cvar_state_t& state,
   return reinterpret_cast<const std::byte*>(&state) + info.offset;
 }
 
+std::byte* mutable_value_bytes(cvars::cvar_state_t&      state,
+                               const cvars::cvar_info_t& info)
+{
+  return reinterpret_cast<std::byte*>(&state) + info.offset;
+}
+
 } // namespace
 
 void serialize_cvar_values(network::Bit_Writer&         writer,
@@ -118,6 +124,23 @@ bool apply_cvar_values(cvars::cvar_state_t&         state,
     }
   }
   return all_applied;
+}
+
+void revert_mirrored_cvars_to_defaults(cvars::cvar_state_t& state)
+{
+  // cvar_state_t's member initializers ARE the cvars.def defaults, so a
+  // default-constructed one is the authority on what "no server has told us"
+  // means. Static because it is immutable and identical on every call.
+  static const cvars::cvar_state_t defaults{};
+
+  // Byte-copied through the same offset/size pair collect_changed compares
+  // through, so the two cannot disagree about what a mirrored value IS.
+  for (cvars::cvar_id id : cvars::mirrored_cvars())
+  {
+    const cvars::cvar_info_t& info = cvars::cvar_info(id);
+    std::memcpy(mutable_value_bytes(state, info), value_bytes(defaults, info),
+                info.size);
+  }
 }
 
 } // namespace shared

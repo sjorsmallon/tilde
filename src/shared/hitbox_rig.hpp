@@ -35,13 +35,6 @@
 namespace assets
 {
 
-// Deliberately NOT `entities::Shape_Kind`, which is the vocabulary of entity
-// hitbox components and Jolt physics bodies. Two reasons, and they point the
-// same way: this set needs a Cylinder (a limb with flat caps, which Jolt cannot
-// spawn and the entity collision tests do not implement), and that enum is a
-// networked, saveable entity field whose values are switched over exhaustively
-// in the physics and collision paths. Adding a member there to serve the rig
-// would oblige four unrelated systems to handle a shape they cannot make.
 enum class hitbox_shape_t : uint8_t
 {
   Sphere,   // one bone; a ball at its head
@@ -54,26 +47,12 @@ enum class hitbox_shape_t : uint8_t
 const char *to_string(hitbox_shape_t shape);
 [[nodiscard]] std::optional<hitbox_shape_t> try_hitbox_shape_from_string(const char *text);
 
-// True for the shapes sized by a single radius. The rest is Box, which is sized
-// by three half-extents; every "which number does this shape read" test in the
-// code goes through here rather than listing kinds again.
 inline bool hitbox_shape_uses_radius(hitbox_shape_t shape)
 {
   return shape != hitbox_shape_t::Box;
 }
-
-// The percentile of distance that becomes a derived size. Not the maximum: one
-// stray vertex -- a belt buckle, a hair card -- would otherwise size a whole
-// limb.
 constexpr float HITBOX_SIZE_PERCENTILE = 0.9f;
-
-// How far a vertex may sit outside every volume before coverage reports it. A
-// hit that misses by less than this is inside the noise of where a convex shape
-// approximates a surface anyway.
 constexpr float HITBOX_COVERAGE_TOLERANCE = 3.0f;
-
-// animation_def.md §4: the absolute hull invariant becomes a bounded, checked
-// one, because an extended arm cannot stay inside a 32-wide column.
 constexpr float HITBOX_MAX_HULL_EXCURSION = 6.0f;
 
 struct hitbox_volume_t
@@ -102,7 +81,7 @@ struct hitbox_volume_t
   float offset = 0.0f;
 };
 
-struct hitbox_rig_t
+struct hitbox_rig_file_t
 {
   std::string                  name;
   std::string                  skeleton_name;
@@ -110,11 +89,12 @@ struct hitbox_rig_t
   std::vector<hitbox_volume_t> volumes;
 };
 
-// A volume's bone names resolved against one loaded skeleton. Parallel to
-// `hitbox_rig_t::volumes`, never reordered -- the two are indexed together.
-struct resolved_hitbox_volume_t
+// hitboxes that are attached to a rig.
+struct rigged_hitbox_volume_t
 {
-  uint32_t start_bone = 0;
+  hitbox_volume_t volume;
+
+  uint32_t start_bone = 0; // indices into skeleton_t::bones
   uint32_t end_bone   = 0;
 
   // The bones whose flesh this volume is responsible for: the parent chain from
@@ -124,13 +104,20 @@ struct resolved_hitbox_volume_t
   std::vector<uint32_t> span_bones;
 };
 
-using resolved_hitbox_rig_t = std::vector<resolved_hitbox_volume_t>;
+// the actual runtime type.
+struct hitbox_rig_t
+{
+  std::string                         name;
+  std::string                         skeleton_name;
+  uint64_t                            skeleton_hash = 0;
+  std::vector<rigged_hitbox_volume_t> volumes;
+};
 
 // Every bone name must exist and `start_bone` must be an ancestor of (or equal
 // to) `end_bone`; either failure is an empty optional and a logged error naming
 // the volume, never a volume quietly dropped from the set.
-[[nodiscard]] std::optional<resolved_hitbox_rig_t>
-try_resolve_hitbox_rig(const hitbox_rig_t &rig, const skeleton_t &skeleton);
+[[nodiscard]] std::optional<hitbox_rig_t> try_resolve_hitbox_rig(const hitbox_rig_file_t &file,
+                                                                 const skeleton_t &skeleton);
 
 // The axes a Box's half-extents are written in, derived from the START bone's
 // model-space matrix. `forward` is where the bone points, so the third extent is
@@ -143,6 +130,8 @@ struct hitbox_frame_t
   linalg::vec3f forward = {0, 0, 1};
 };
 
+// hit detection takes in a span of these.
+// this allows that to be free of knowing about skeletons and whatever.
 struct posed_hitbox_t
 {
   hitbox_shape_t       shape  = hitbox_shape_t::Capsule;
@@ -160,8 +149,8 @@ struct posed_hitbox_t
 // drawn -- NOT the skinning matrices, which carry the inverse bind and would put
 // every volume at the origin. `out` must be rig.volumes.size() long; a wrong
 // length is fatal.
-void compute_posed_hitboxes(const hitbox_rig_t &rig, const resolved_hitbox_rig_t &resolved,
-                            Span<const linalg::mat4f> model_space, Span<posed_hitbox_t> out);
+void compute_posed_hitboxes(const hitbox_rig_t &rig, Span<const linalg::mat4f> model_space,
+                            Span<posed_hitbox_t> out);
 
 // The bind pose's model-space matrices, which is the frame the mesh's vertices
 // are already in -- so derivation and coverage both compare skin against bones
@@ -197,12 +186,10 @@ struct hitbox_seed_t
 };
 
 hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
-                                 const hitbox_volume_t          &volume,
-                                 const resolved_hitbox_volume_t &resolved);
+                                 const rigged_hitbox_volume_t &rigged);
 
 void derive_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
-                         const hitbox_rig_t &rig, const resolved_hitbox_rig_t &resolved,
-                         Span<hitbox_seed_t> out);
+                         const hitbox_rig_t &rig, Span<hitbox_seed_t> out);
 
 hitbox_rig_t make_hitbox_rig_template(const mesh_asset_t &mesh, const skeleton_t &skeleton);
 

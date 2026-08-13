@@ -73,14 +73,14 @@ void Particle_Editor_Tool::on_mouse_up(editor_context_t &, const input::mouse_ev
 void Particle_Editor_Tool::on_key_down(editor_context_t &, const key_event_t &) {}
 
 void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
-                                          overlay_renderer_t &renderer)
+                                          pass_builder_t &draws)
 {
   // Highlight all particle emitters with a circle, selected one brighter
   for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
   {
     color_t color = (uid == selected_emitter_uid) ? colors::yellow : color_t{128, 128, 0};
-    renderer.draw_circle(emitter->position, 16.f, {0, 1, 0}, color);
-    renderer.draw_wire_aabb(emitter->position, {4, 4, 4}, color);
+    draws.debug.wire_circle(emitter->position, 16.f, {0, 1, 0}, color);
+    draws.debug.box(emitter->position, {4, 4, 4}, color);
   }
 }
 

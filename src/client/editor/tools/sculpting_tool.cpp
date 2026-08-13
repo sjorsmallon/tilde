@@ -242,7 +242,7 @@ void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
 void Sculpting_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}
 
 void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
-                                     overlay_renderer_t &renderer)
+                                     pass_builder_t &draws)
 {
   if (hovered_uid != 0 && !dragging)
   {
@@ -259,7 +259,7 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
       int axis = shared::box_face_axis(hovered_face);
       size[axis] = 0;
 
-      renderer.draw_wire_aabb(p, size, colors::red);
+      draws.debug.box(p, size, colors::red);
     }
   }
 }

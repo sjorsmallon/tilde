@@ -27,7 +27,7 @@ void shutdown()
     g_active_state = nullptr;
   }
   g_states.clear();
-  g_client_context.session.entity_system.reset();
+  g_client_context.world.session.entity_system.reset();
 }
 
 void init()
@@ -82,25 +82,17 @@ void render_ui()
   }
 }
 
-void pre_render(VkCommandBuffer cmd)
+void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes)
 {
   if (g_active_state)
   {
-    g_active_state->pre_render(cmd);
-  }
-}
-
-void render_3d(VkCommandBuffer cmd)
-{
-  if (g_active_state)
-  {
-    g_active_state->render_3d(cmd);
+    g_active_state->build_frame(delta_seconds, passes);
   }
 }
 
 shared::Entity_System &get_entity_system()
 {
-  return g_client_context.session.entity_system;
+  return g_client_context.world.session.entity_system;
 }
 
 client_context_t &get_client_context() { return g_client_context; }

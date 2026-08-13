@@ -16,14 +16,6 @@ namespace
 // there is no recursion here and no tree node -- the dotted name carries the
 // nesting ("render.material.color"), which reads the same way the map file
 // spells it.
-//
-// WHAT THE CUTOVER CHANGED HERE, beyond the type names:
-//   * enums and asset ids get a Combo over the closed set the generator knows,
-//     where they were free-form text boxes holding "lit" / "on_enter" /
-//     "__primitive_box" with nothing checking the spelling;
-//   * the string_choices_provider callback is gone with them. It existed so a
-//     pascal_string field could offer a dropdown (the trigger action list); an
-//     enum field offers one by construction.
 void render_leaf_field(uint8_t *base, const entities::leaf_field_t &leaf, int id)
 {
   const entities::field_info_t &field = *leaf.info;

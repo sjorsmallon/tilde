@@ -10,7 +10,7 @@ namespace client::effects
 // between 
 void on_jump(client_context_t &context, const shared::effect_data_t &data)
 {
-  if (data.attached_entity == context.my_entity_uid)
+  if (data.attached_entity == context.connection.my_entity_uid)
     return; // our own jump — already played locally
   if (context.audio)
     context.audio->play_3d("resources/sounds/player_jump.wav", data.origin);
@@ -18,7 +18,7 @@ void on_jump(client_context_t &context, const shared::effect_data_t &data)
 
 void on_land(client_context_t &context, const shared::effect_data_t &data)
 {
-  if (data.attached_entity == context.my_entity_uid)
+  if (data.attached_entity == context.connection.my_entity_uid)
     return; // our own landing — already played locally
   if (!context.audio)
     return;

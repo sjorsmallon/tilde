@@ -1,7 +1,9 @@
 #pragma once
 
 #include <string_view>
-#include <vulkan/vulkan.h>
+#include <vector>
+
+#include "renderer.hpp"
 
 namespace client
 {
@@ -51,11 +53,15 @@ public:
   // Render UI (ImGui)
   virtual void render_ui() = 0;
 
-  // Pre-render pass (compute dispatches, etc.) — called before begin_render_pass
-  virtual void pre_render(VkCommandBuffer cmd) {}
-
-  // Render 3D scene (Vulkan)
-  virtual void render_3d(VkCommandBuffer cmd) {}
+  // Append this state's view passes to the frame. The client loop calls
+  // render_frame exactly once with everything appended here, so a state
+  // contributes DATA and never touches a command buffer, a render pass, or the
+  // order the two happen in.
+  //
+  // `delta_seconds` is the render delta the state's debug list ages by. Passing
+  // it in rather than caching it from update() keeps "which clock do debug draws
+  // expire on" a visible decision.
+  virtual void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes) {}
 };
 
 } // namespace client

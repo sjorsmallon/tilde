@@ -18,11 +18,11 @@ jolt_debug_renderer_t::jolt_debug_renderer_t()
 
 void jolt_debug_renderer_t::DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::ColorArg color)
 {
-    if (!command_buffer_)
+    if (!debug_)
         return;
-    linalg::vec3 a{float(from.GetX()), float(from.GetY()), float(from.GetZ())};
-    linalg::vec3 b{float(to.GetX()),   float(to.GetY()),   float(to.GetZ())};
-    renderer::draw_line(command_buffer_, a, b, jolt_color_to_color(color));
+    linalg::vec3f a{float(from.GetX()), float(from.GetY()), float(from.GetZ())};
+    linalg::vec3f b{float(to.GetX()),   float(to.GetY()),   float(to.GetZ())};
+    debug_->line(a, b, jolt_color_to_color(color));
 }
 
 void jolt_debug_renderer_t::DrawText3D(JPH::RVec3Arg, const std::string_view &,

@@ -31,7 +31,11 @@ struct transform_t
 //@NOTE(SJM): this "indexed by bone" does not sit well with me.
 struct pose_t
 {
-  std::vector<transform_t> local; // indexed by bone
+  // PARENT SPACE, not model or world: bone i's transform is written in bone i's
+  // PARENT's frame, so it says nothing about where the bone is until the chain
+  // above it is resolved. The reference to the parent is not in here -- it is
+  // `skeleton.bones[i].parent_index`, associated by index alone.
+  std::vector<transform_t> parent_space; // indexed by bone
 };
 
 // A clip is frames x bones of local transforms, flat. `frames` is row-major by
@@ -80,8 +84,9 @@ float clip_duration_seconds(const animation_clip_t &clip, bool looping);
 void blend_into(pose_t &destination, const pose_t &source, Span<const float> per_bone_weight,
                 float layer_weight = 1.0f);
 
-// TRS -> the local matrices compute_skinning_matrices consumes.
-void get_local_transforms_of_bones_from_pose(const pose_t &pose, Span<linalg::mat4f> out_local);
+// TRS -> matrices, STILL in parent space. This changes the representation and
+// nothing else; resolving the hierarchy is skinning.hpp's job.
+void compose_parent_space_matrices(const pose_t &pose, Span<linalg::mat4f> out_parent_space);
 
 void compute_bind_pose(const skeleton_t &skeleton, pose_t &out);
 

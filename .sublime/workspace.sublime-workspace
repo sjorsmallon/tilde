@@ -1,0 +1,1747 @@
+{
+	"auto_complete":
+	{
+		"selected_items":
+		[
+			[
+				"globa",
+				"global_names_typed"
+			],
+			[
+				"I",
+				"I64_CONSTANT"
+			],
+			[
+				"prin",
+				"print\tstd::print with two cursors"
+			],
+			[
+				"global_",
+				"global_runtime_values_typed"
+			],
+			[
+				"emit_btyt",
+				"emit_bytecode_while_statement"
+			],
+			[
+				"whil_es",
+				"while_statement_t"
+			],
+			[
+				"execut",
+				"executable_program"
+			],
+			[
+				"emit_",
+				"emit_bytecode_if_statement"
+			],
+			[
+				"execute",
+				"executable_program"
+			],
+			[
+				"if",
+				"if_statement_t"
+			],
+			[
+				"If_",
+				"if_statement_t"
+			],
+			[
+				"the",
+				"the_token_after_that"
+			],
+			[
+				"executa",
+				"executable_program"
+			],
+			[
+				"GREA",
+				"GREATER_THAN"
+			],
+			[
+				"Logical",
+				"Logical_And"
+			],
+			[
+				"Greater",
+				"Greater_Or_Equal_To"
+			],
+			[
+				"emit_by",
+				"emit_bytecode_assignment"
+			],
+			[
+				"expr",
+				"exprstmt"
+			],
+			[
+				"expression",
+				"expression_statement_t"
+			],
+			[
+				"litear",
+				"literal_t"
+			],
+			[
+				"Ex",
+				"expression_statement_t"
+			],
+			[
+				"bin",
+				"binary_expression_t"
+			],
+			[
+				"assig",
+				"assignment_t"
+			],
+			[
+				"node",
+				"nodetype_t"
+			],
+			[
+				"binar",
+				"binary_operator_t"
+			],
+			[
+				"shader_",
+				"shader_stage_str"
+			],
+			[
+				"print",
+				"print_network"
+			],
+			[
+				"server_player_",
+				"server_player_aabb_vertices"
+			],
+			[
+				"player_",
+				"player_collider_aabb"
+			],
+			[
+				"player",
+				"player_move_message_ptr"
+			],
+			[
+				"server_player",
+				"server_player_aabb_gl_buffer"
+			],
+			[
+				"player_move",
+				"player_move_message_ptr"
+			],
+			[
+				"map_",
+				"world_map_vertices"
+			],
+			[
+				"pack",
+				"construct_message_only_packet"
+			],
+			[
+				"MESSA",
+				"MESSAGE_JOIN_SERVER_ACCEPTED"
+			],
+			[
+				"registe",
+				"register_texture_opengl"
+			],
+			[
+				"wall_",
+				"wall_gl_buffer"
+			],
+			[
+				"text_entry_",
+				"text_entry_bar_max"
+			],
+			[
+				"split",
+				"tokenize_and_split_command"
+			],
+			[
+				"wrap_func",
+				"wrap_function_pointer_to_std_function_with_string_args"
+			],
+			[
+				"text_",
+				"text_entry_bar_vertices"
+			],
+			[
+				"gl_buff",
+				"text_entry_bar_gl_buffer"
+			],
+			[
+				"position",
+				"position_screen_pixel_space"
+			],
+			[
+				"console_backgroun",
+				"console_background_gl_buffer"
+			],
+			[
+				"textu",
+				"texture_coordinates_fs_in"
+			],
+			[
+				"text",
+				"text_character_gl_buffer"
+			],
+			[
+				"console_",
+				"console_gl_buffer"
+			],
+			[
+				"console",
+				"all_console_vertices"
+			],
+			[
+				"atlas",
+				"atlas_height"
+			],
+			[
+				"Font",
+				"Font_Texture_Atlas"
+			],
+			[
+				"ceiling",
+				"ceiling_face_indices"
+			],
+			[
+				"aa",
+				"aabbs_vertices"
+			],
+			[
+				"ground",
+				"ground_face_indices"
+			],
+			[
+				"crea",
+				"create_planes_from_indices"
+			],
+			[
+				"ceiling_t",
+				"ceiling_trace_found"
+			],
+			[
+				"cos",
+				"cos_angle_plane_world_down"
+			],
+			[
+				"colli",
+				"collider_plane"
+			],
+			[
+				"faces",
+				"colliding_faces"
+			],
+			[
+				"aabb",
+				"aabb_transform_matrix"
+			],
+			[
+				"co",
+				"collider_planes"
+			],
+			[
+				"triangl",
+				"triangle_intersects_aabb"
+			],
+			[
+				"ground_",
+				"ground_plane_count"
+			],
+			[
+				"aabs",
+				"aabbs_vertices"
+			],
+			[
+				"fa",
+				"face_indices"
+			],
+			[
+				"player_aa",
+				"player_aabb_gl_buffer"
+			],
+			[
+				"aabb_",
+				"player_aabb_vertices"
+			],
+			[
+				"previous",
+				"previous_face_color"
+			],
+			[
+				"previous_",
+				"previous_face_color"
+			],
+			[
+				"SEVER",
+				"MESSAGE_JOIN_SERVER_ACCEPTED"
+			],
+			[
+				"MESS",
+				"MESSAGE_JOIN_SERVER"
+			],
+			[
+				"uv_gr",
+				"uv_grid_shader_program"
+			],
+			[
+				"normaliz",
+				"normalized_wish_direction"
+			],
+			[
+				"mini_a",
+				"mini_aabbs_vertices"
+			],
+			[
+				"mini",
+				"mini_aabbs_gl_buffer"
+			],
+			[
+				"mini_",
+				"mini_aabbs_gl_buffer"
+			],
+			[
+				"g_",
+				"g_identifier"
+			],
+			[
+				"TOKEN_",
+				"TOKEN_IDENTIFIER"
+			],
+			[
+				"top_level",
+				"top_level_expr_function_ir"
+			],
+			[
+				"prototyp",
+				"prototype_ast"
+			],
+			[
+				"arg",
+				"argument_names"
+			],
+			[
+				"create_",
+				"create_binary_operator_node"
+			],
+			[
+				"binary_",
+				"BINARY_OP"
+			],
+			[
+				"current_",
+				"current_operator_priority"
+			],
+			[
+				"drawing_instanced_compute",
+				"drawing_instanced_cubes_compute_shader_deferred"
+			],
+			[
+				"draw_ins",
+				"drawing_instanced_cubes_compute_shader"
+			],
+			[
+				"instanced",
+				"instanced_cube_no_index_buffer_VBO"
+			],
+			[
+				"creat_",
+				"create_shader_program_from_files"
+			],
+			[
+				"instancd_",
+				"instanced_cube_UBO"
+			],
+			[
+				"instaned",
+				"instanced_cube_EBO"
+			],
+			[
+				"instanced_b",
+				"instanced_cube_VBO"
+			],
+			[
+				"instac",
+				"instanced_cube_VAO"
+			],
+			[
+				"default_ca",
+				"default_camera_position"
+			],
+			[
+				"fixed",
+				"fixed_color_shader_id"
+			],
+			[
+				"passthrou",
+				"passthrough_shader_program"
+			],
+			[
+				"passthorugh",
+				"passthrough_shader_program"
+			],
+			[
+				"capabil",
+				"capabilities"
+			],
+			[
+				"avail",
+				"available_present_mode"
+			],
+			[
+				"ppEnabled",
+				"ppEnabledExtensionNames"
+			],
+			[
+				"que_faMIL",
+				"queue_families"
+			],
+			[
+				"device_",
+				"device_properties"
+			],
+			[
+				"VkDebugUtilsMessen",
+				"VkDebugUtilsMessengerCreateInfoEXT"
+			]
+		]
+	},
+	"buffers":
+	[
+		{
+			"file": "/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/geometry_editor.hpp",
+			"settings":
+			{
+				"buffer_size": 1561,
+				"encoding": "UTF-8",
+				"line_ending": "Windows"
+			},
+			"undo_stack":
+			[
+			]
+		},
+		{
+			"file": "/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/Sjors.sublime-syntax",
+			"settings":
+			{
+				"buffer_size": 344,
+				"encoding": "UTF-8",
+				"line_ending": "Windows"
+			},
+			"undo_stack":
+			[
+				[
+					5,
+					1,
+					"insert",
+					{
+						"characters": " source.hpp"
+					},
+					"CwAAACsAAAAAAAAALAAAAAAAAAAAAAAALAAAAAAAAAAtAAAAAAAAAAAAAAAtAAAAAAAAAC4AAAAAAAAAAAAAAC4AAAAAAAAALwAAAAAAAAAAAAAALwAAAAAAAAAwAAAAAAAAAAAAAAAwAAAAAAAAADEAAAAAAAAAAAAAADEAAAAAAAAAMgAAAAAAAAAAAAAAMgAAAAAAAAAzAAAAAAAAAAAAAAAzAAAAAAAAADQAAAAAAAAAAAAAADQAAAAAAAAANQAAAAAAAAAAAAAANQAAAAAAAAA2AAAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAAKwAAAAAAAAArAAAAAAAAAAAAAAAAAPC/"
+				]
+			]
+		},
+		{
+			"file": "/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/entity_editor_traits.hpp",
+			"settings":
+			{
+				"buffer_size": 3020,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			},
+			"undo_stack":
+			[
+			]
+		},
+		{
+			"file": "/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/editor_tool.hpp",
+			"settings":
+			{
+				"buffer_size": 1801,
+				"line_ending": "Windows"
+			}
+		},
+		{
+			"file": "/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/Witness.sublime-color-scheme",
+			"settings":
+			{
+				"buffer_size": 2181,
+				"encoding": "UTF-8",
+				"line_ending": "Windows"
+			},
+			"undo_stack":
+			[
+				[
+					80,
+					1,
+					"paste",
+					null,
+					"AQAAAAAAAAAAAAAAawgAAAAAAABkAgAALy8gRG9jdW1lbnRhdGlvbiBhdCBodHRwczovL3d3dy5zdWJsaW1ldGV4dC5jb20vZG9jcy9jb2xvcl9zY2hlbWVzLmh0bWwKewoJInZhcmlhYmxlcyI6Cgl7Cgl9LAoJImdsb2JhbHMiOgoJewoJCSJzZWxlY3Rpb24iOiAiIzFjNzk3ZCIKCX0sCgkicnVsZXMiOgoJWwoJCXsKICAgICAgICAgICAibmFtZSI6ICJTdGFuZGFsb25lIEZ1bmN0aW9uIENhbGxzIiwKICAgICAgICAgICAgInNjb3BlIjogInZhcmlhYmxlLmZ1bmN0aW9uIC0gbWV0YS5tZXRob2QtY2FsbCAtIHZhcmlhYmxlLm90aGVyLm1lbWJlciIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogImxpZ2h0Ymx1ZSIsCiAgICAgICAgICAgIC8vICJiYWNrZ3JvdW5kIjogImxpZ2h0Ymx1ZSIsCiAgICAgICAgfSwKICAgICAgICB7CgkJICAgICJzY29wZSI6ICJtZXRhLmZ1bmN0aW9uLWNhbGwgdmFyaWFibGUuZnVuY3Rpb24sIGVudGl0eS5uYW1lLmZ1bmN0aW9uIiwKCQkgICAgImZvcmVncm91bmQiOiAiIzA2ZDRkNCIKCQl9LAoJCXsKCSAgICAic2NvcGUiOiAiZW50aXR5Lm5hbWUudHlwZSwgZW50aXR5Lm5hbWUuY2xhc3MsIHN1cHBvcnQudHlwZSIsCgkgICAgImZvcmVncm91bmQiOiAiI2M2YTBlOCIKCQl9CgldCn0K",
+					"BAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwvwAAAAABAAAAAAAAAAAAAABkAgAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					84,
+					1,
+					"paste",
+					null,
+					"AQAAAAAAAAAAAAAA9AgAAAAAAABrCAAAewogICAgIm5hbWUiOiAiV2l0bmVzcyBEYXJrIE9yYW5nZSBDeWFuIiwKICAgICJnbG9iYWxzIjogewogICAgICAgICJhY2NlbnQiOiAiI2VjOGUyYyIsCiAgICAgICAgImJhY2tncm91bmQiOiAiIzAzMTgxOCIsCiAgICAgICAgImJsb2NrX2NhcmV0IjogInJnYmEoMjM2LCAxNDIsIDQ0LCAwLjU1KSIsCiAgICAgICAgImJyYWNrZXRzX29wdGlvbnMiOiAidW5kZXJsaW5lIiwKICAgICAgICAiY2FyZXQiOiAiI2VjOGUyYyIsCiAgICAgICAgImZvbGRfbWFya2VyIjogIiNlYzhlMmMiLAogICAgICAgICJmb3JlZ3JvdW5kIjogIiNlNGQ0YjgiLAogICAgICAgICJndXR0ZXIiOiAiIzAzMTgxOCIsCiAgICAgICAgImd1dHRlcl9mb3JlZ3JvdW5kIjogIiM4Nzk1OGUiLAogICAgICAgICJpbmFjdGl2ZV9zZWxlY3Rpb24iOiAiIzE3M2YzYiIsCiAgICAgICAgImxpbmVfaGlnaGxpZ2h0IjogIiMwOTI1MjMiLAogICAgICAgICJzZWxlY3Rpb24iOiAiIzMxNWE1NSIsCiAgICAgICAgInRhZ3Nfb3B0aW9ucyI6ICJ1bmRlcmxpbmUiCiAgICB9LAogICAgInJ1bGVzIjogWwogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImNvbW1lbnQiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjM2Y5ZjcyIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiY29uc3RhbnQubGFuZ3VhZ2UiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjNzlmZmNmIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiZW50aXR5Lm5hbWUsIGtleXdvcmQuZGVjbGFyYXRpb24sIG1ldGEuYW5ub3RhdGlvbiwgbWV0YS5wYXRoLCBtZXRhLnN0cnVjdCBtZXRhLmJsb2NrLCBtZXRhLnRhZywgc3VwcG9ydC52YXJpYWJsZSwgdmFyaWFibGUsIHZhcmlhYmxlLm90aGVyLnJlYWR3cml0ZSIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiMwNmQ0ZDQiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJlbnRpdHkubmFtZS5jb25zdGFudCwga2V5d29yZC5jb250cm9sLCBtZXRhLmNsYXNzIGVudGl0eS5uYW1lLmNsYXNzLCBtZXRhLmNvbnN0YW50LCBtZXRhLnN0cnVjdCBlbnRpdHkubmFtZS5zdHJ1Y3QsIG1ldGEuc3RydWN0IG1ldGEuZ3JvdXAsIHN0b3JhZ2UudHlwZSwgc3VwcG9ydC5jb25zdGFudCwgc3VwcG9ydC50eXBlLCB2YXJpYWJsZS50eXBlIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiIzhmZTM5YiIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogIm1ldGEuZnVuY3Rpb24ucGFyYW1ldGVycywgbWV0YS5mdW5jdGlvbi1jYWxsIHZhcmlhYmxlLmZ1bmN0aW9uLCB2YXJpYWJsZS5wYXJhbWV0ZXIiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjMDZkNGQ0IgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiZW50aXR5Lm5hbWUuZW51bSwga2V5d29yZC5vcGVyYXRvciwgbWV0YS5wcmVwcm9jZXNzb3IsIHB1bmN0dWF0aW9uLnNlY3Rpb24sIHZhcmlhYmxlLm90aGVyIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiI2VjOGUyYyIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImVudGl0eS5uYW1lLmZ1bmN0aW9uLCBtZXRhLmJsb2NrIG1ldGEubWV0aG9kIGVudGl0eS5uYW1lLmZ1bmN0aW9uIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiI2U0ZDRiOCIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogInN0b3JhZ2UubW9kaWZpZXIiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjZjJlYWRmIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAia2V5d29yZCwga2V5d29yZC5kZWNsYXJhdGlvbiIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiNmMmVhZGYiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJpbnZhbGlkIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiIzlhYzdhOCIsCiAgICAgICAgICAgICJiYWNrZ3JvdW5kIjogIiM0MDJjMjUiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJzdHJpbmciLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjMGZkZmFmIgogICAgICAgIH0KICAgIF0KfQ",
+					"BAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwvwAAAAABAAAAAAAAAAAAAABrCAAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					90,
+					1,
+					"paste",
+					null,
+					"AQAAAAAAAAAAAAAAFQgAAAAAAAD0CAAAewogICAgIm5hbWUiOiAiV2l0bmVzcyBEYXJrIE9yYW5nZSBDeWFuIiwKICAgICJnbG9iYWxzIjogewogICAgICAgICJhY2NlbnQiOiAiI2VjOGUyYyIsCiAgICAgICAgImJhY2tncm91bmQiOiAiIzAyMTMxMyIsCiAgICAgICAgImJsb2NrX2NhcmV0IjogInJnYmEoMjM2LCAxNDIsIDQ0LCAwLjU1KSIsCiAgICAgICAgImJyYWNrZXRzX29wdGlvbnMiOiAidW5kZXJsaW5lIiwKICAgICAgICAiY2FyZXQiOiAiI2VjOGUyYyIsCiAgICAgICAgImZvbGRfbWFya2VyIjogIiNlYzhlMmMiLAogICAgICAgICJmb3JlZ3JvdW5kIjogIiNlNGQ0YjgiLAogICAgICAgICJndXR0ZXIiOiAiIzAyMTMxMyIsCiAgICAgICAgImd1dHRlcl9mb3JlZ3JvdW5kIjogIiM3NDg0N2UiLAogICAgICAgICJpbmFjdGl2ZV9zZWxlY3Rpb24iOiAiIzE0M2EzNyIsCiAgICAgICAgImxpbmVfaGlnaGxpZ2h0IjogIiMwNzFmMWUiLAogICAgICAgICJzZWxlY3Rpb24iOiAiIzI5NGY0YiIsCiAgICAgICAgInRhZ3Nfb3B0aW9ucyI6ICJ1bmRlcmxpbmUiCiAgICB9LAogICAgInJ1bGVzIjogWwogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImNvbW1lbnQiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjM2Y5ZjcyIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiY29uc3RhbnQubGFuZ3VhZ2UiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjNzlmZmNmIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiZW50aXR5Lm5hbWUuY2xhc3MsIGVudGl0eS5uYW1lLnN0cnVjdCwgZW50aXR5Lm5hbWUudHlwZSwgc3VwcG9ydC50eXBlLCBzdG9yYWdlLnR5cGUiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjMDZkNGQ0IgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiZW50aXR5Lm5hbWUsIGtleXdvcmQuZGVjbGFyYXRpb24sIG1ldGEuYW5ub3RhdGlvbiwgbWV0YS5wYXRoLCBtZXRhLnN0cnVjdCBtZXRhLmJsb2NrLCBtZXRhLnRhZyIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiMwNmQ0ZDQiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJ2YXJpYWJsZSwgdmFyaWFibGUub3RoZXIucmVhZHdyaXRlLCB2YXJpYWJsZS5vdGhlciIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiNlNGQ0YjgiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJtZXRhLmZ1bmN0aW9uLnBhcmFtZXRlcnMsIHZhcmlhYmxlLnBhcmFtZXRlciIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiNlNGQ0YjgiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJlbnRpdHkubmFtZS5jb25zdGFudCwga2V5d29yZC5jb250cm9sLCBtZXRhLmNvbnN0YW50LCBtZXRhLnN0cnVjdCBtZXRhLmdyb3VwLCBzdXBwb3J0LmNvbnN0YW50LCB2YXJpYWJsZS50eXBlIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiIzhmZTM5YiIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImVudGl0eS5uYW1lLmVudW0sIGtleXdvcmQub3BlcmF0b3IsIG1ldGEucHJlcHJvY2Vzc29yLCBwdW5jdHVhdGlvbi5zZWN0aW9uIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiI2VjOGUyYyIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImVudGl0eS5uYW1lLmZ1bmN0aW9uLCBtZXRhLmJsb2NrIG1ldGEubWV0aG9kIGVudGl0eS5uYW1lLmZ1bmN0aW9uLCBtZXRhLmZ1bmN0aW9uLWNhbGwgdmFyaWFibGUuZnVuY3Rpb24iLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjZTRkNGI4IgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAic3RvcmFnZS5tb2RpZmllciIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiNmMmVhZGYiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJrZXl3b3JkLCBrZXl3b3JkLmRlY2xhcmF0aW9uIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiI2YyZWFkZiIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImludmFsaWQiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjOWFjN2E4IiwKICAgICAgICAgICAgImJhY2tncm91bmQiOiAiIzQwMmMyNSIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogInN0cmluZyIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiMwZmRmYWYiCiAgICAgICAgfQogICAgXQp9",
+					"BAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwvwAAAAABAAAAAAAAAAAAAAD0CAAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					94,
+					1,
+					"paste",
+					null,
+					"AQAAAAAAAAAAAAAAxQcAAAAAAAAVCAAAewogICAgIm5hbWUiOiAiV2l0bmVzcyBEYXJrIE9yYW5nZSBDeWFuIiwKICAgICJnbG9iYWxzIjogewogICAgICAgICJhY2NlbnQiOiAiI2VjOGUyYyIsCiAgICAgICAgImJhY2tncm91bmQiOiAiIzAyMTMxMyIsCiAgICAgICAgImJsb2NrX2NhcmV0IjogInJnYmEoMjM2LCAxNDIsIDQ0LCAwLjU1KSIsCiAgICAgICAgImJyYWNrZXRzX29wdGlvbnMiOiAidW5kZXJsaW5lIiwKICAgICAgICAiY2FyZXQiOiAiI2VjOGUyYyIsCiAgICAgICAgImZvbGRfbWFya2VyIjogIiNlYzhlMmMiLAogICAgICAgICJmb3JlZ3JvdW5kIjogIiNlNGQ0YjgiLAogICAgICAgICJndXR0ZXIiOiAiIzAyMTMxMyIsCiAgICAgICAgImd1dHRlcl9mb3JlZ3JvdW5kIjogIiM3NDg0N2UiLAogICAgICAgICJpbmFjdGl2ZV9zZWxlY3Rpb24iOiAiIzE0M2EzNyIsCiAgICAgICAgImxpbmVfaGlnaGxpZ2h0IjogIiMwNzFmMWUiLAogICAgICAgICJzZWxlY3Rpb24iOiAiIzI5NGY0YiIsCiAgICAgICAgInRhZ3Nfb3B0aW9ucyI6ICJ1bmRlcmxpbmUiCiAgICB9LAogICAgInJ1bGVzIjogWwogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImNvbW1lbnQiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjM2Y5ZjcyIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiY29uc3RhbnQubGFuZ3VhZ2UiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjNzlmZmNmIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiZW50aXR5Lm5hbWUuY2xhc3MsIGVudGl0eS5uYW1lLnN0cnVjdCwgZW50aXR5Lm5hbWUudHlwZSwgc3VwcG9ydC50eXBlIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiIzA2ZDRkNCIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogInN0b3JhZ2UudHlwZSIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiM4ZmUzOWIiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJ2YXJpYWJsZSwgdmFyaWFibGUub3RoZXIsIHZhcmlhYmxlLm90aGVyLnJlYWR3cml0ZSwgdmFyaWFibGUucGFyYW1ldGVyIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiI2U0ZDRiOCIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImVudGl0eS5uYW1lLmZ1bmN0aW9uLCBtZXRhLmJsb2NrIG1ldGEubWV0aG9kIGVudGl0eS5uYW1lLmZ1bmN0aW9uLCBtZXRhLmZ1bmN0aW9uLWNhbGwgdmFyaWFibGUuZnVuY3Rpb24iLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjZTRkNGI4IgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiZW50aXR5Lm5hbWUuY29uc3RhbnQsIGtleXdvcmQuY29udHJvbCwgbWV0YS5jb25zdGFudCwgbWV0YS5zdHJ1Y3QgbWV0YS5ncm91cCwgc3VwcG9ydC5jb25zdGFudCwgdmFyaWFibGUudHlwZSIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiM4ZmUzOWIiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJlbnRpdHkubmFtZS5lbnVtLCBrZXl3b3JkLm9wZXJhdG9yLCBtZXRhLnByZXByb2Nlc3NvciwgcHVuY3R1YXRpb24uc2VjdGlvbiIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiNlYzhlMmMiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAgICJzY29wZSI6ICJzdG9yYWdlLm1vZGlmaWVyIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiI2YyZWFkZiIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICAgInNjb3BlIjogImtleXdvcmQiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjZjJlYWRmIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAiaW52YWxpZCIsCiAgICAgICAgICAgICJmb3JlZ3JvdW5kIjogIiM5YWM3YTgiLAogICAgICAgICAgICAiYmFja2dyb3VuZCI6ICIjNDAyYzI1IgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAic2NvcGUiOiAic3RyaW5nIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiIzBmZGZhZiIKICAgICAgICB9CiAgICBdCn0",
+					"BAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwvwAAAAABAAAAAAAAAAAAAAAVCAAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					14,
+					1,
+					"paste",
+					null,
+					"AQAAAOICAAAAAAAAlgMAAAAAAACfAAAAICAgewogICAgICAgICAgICAic2NvcGUiOiAiZW50aXR5Lm5hbWUuY2xhc3MsIGVudGl0eS5uYW1lLnN0cnVjdCwgZW50aXR5Lm5hbWUudHlwZSwgc3VwcG9ydC50eXBlLCBzdG9yYWdlLnR5cGUiLAogICAgICAgICAgICAiZm9yZWdyb3VuZCI6ICIjMDZkNGQ0IgogICAgICAgIH0s",
+					"AwAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAIEDAAAAAAAA4gIAAAAAAAAAAAAAAADwvw"
+				],
+				[
+					26,
+					1,
+					"insert",
+					{
+						"characters": "\t\t"
+					},
+					"AgAAAJUDAAAAAAAAmQMAAAAAAAAAAAAAmQMAAAAAAACdAwAAAAAAAAAAAAA",
+					"AwAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAJUDAAAAAAAAlQMAAAAAAAAAAAAAAAAAAA"
+				],
+				[
+					28,
+					1,
+					"insert",
+					{
+						"characters": ","
+					},
+					"AQAAAJ4DAAAAAAAAnwMAAAAAAAAAAAAA",
+					"AwAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAJ4DAAAAAAAAngMAAAAAAAAAAAAAAADwvw"
+				],
+				[
+					33,
+					2,
+					"indent",
+					null,
+					"BgAAAN0CAAAAAAAA4QIAAAAAAAAAAAAA6AIAAAAAAADsAgAAAAAAAAAAAACBAwAAAAAAAIUDAAAAAAAAAAAAAN0CAAAAAAAA4QIAAAAAAAAAAAAA7AIAAAAAAADwAgAAAAAAAAAAAACJAwAAAAAAAI0DAAAAAAAAAAAAAA",
+					"AwAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAH4DAAAAAAAA4gIAAAAAAAAAAAAAAABKQA"
+				],
+				[
+					34,
+					1,
+					"unindent",
+					null,
+					"AwAAAN0CAAAAAAAA3QIAAAAAAAAEAAAAICAgIOgCAAAAAAAA6AIAAAAAAAAEAAAAICAgIIEDAAAAAAAAgQMAAAAAAAAEAAAAICAgIA",
+					"AwAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAJYDAAAAAAAA6gIAAAAAAAAAAAAAAADwvw"
+				],
+				[
+					38,
+					1,
+					"insert",
+					{
+						"characters": "\t"
+					},
+					"AQAAAPACAAAAAAAA9AIAAAAAAAAAAAAA",
+					"AwAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPC/AAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8L8AAAAAAQAAAPACAAAAAAAA8AIAAAAAAAAAAAAAAABVQA"
+				],
+				[
+					55,
+					1,
+					"insert",
+					{
+						"characters": "\t"
+					},
+					"AQAAAI0DAAAAAAAAkQMAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAAjQMAAAAAAACNAwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					39,
+					1,
+					"insert",
+					{
+						"characters": ","
+					},
+					"AQAAAO8HAAAAAAAA8AcAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAA7wcAAAAAAADvBwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					40,
+					1,
+					"insert",
+					{
+						"characters": "\n"
+					},
+					"AQAAAPAHAAAAAAAA+QcAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAA8AcAAAAAAADwBwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					41,
+					1,
+					"paste",
+					null,
+					"AQAAAPkHAAAAAAAAVQgAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAA+QcAAAAAAAD5BwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					47,
+					1,
+					"insert",
+					{
+						"characters": "\t\t"
+					},
+					"AgAAAFQIAAAAAAAAWAgAAAAAAAAAAAAAWAgAAAAAAABcCAAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAAVAgAAAAAAABUCAAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					50,
+					1,
+					"insert",
+					{
+						"characters": "\t\t"
+					},
+					"AgAAADwIAAAAAAAAQAgAAAAAAAAAAAAAQAgAAAAAAABECAAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAAPAgAAAAAAAA8CAAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					57,
+					1,
+					"insert",
+					{
+						"characters": "\t"
+					},
+					"AQAAAP8HAAAAAAAAAwgAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAA/wcAAAAAAAD/BwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					58,
+					1,
+					"insert",
+					{
+						"characters": "\t"
+					},
+					"AQAAAAMIAAAAAAAABwgAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAAAwgAAAAAAAADCAAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					62,
+					1,
+					"paste",
+					null,
+					"AQAAAPgHAAAAAAAATQgAAAAAAAB1AAAAIHsKICAgICAgICAgICAgInNjb3BlIjogInNvdXJjZS5jKysgbWV0YS5uYW1lc3BhY2UuYysrIG1ldGEuYmxvY2suYysrIiwKICAgICAgICAgICAgImZvcmVncm91bmQiOiAiI2ZmMDBmZiIKICAgICAgICB9",
+					"AQAAAAAAAAABAAAAbQgAAAAAAAD4BwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					65,
+					2,
+					"indent",
+					null,
+					"BgAAAPoHAAAAAAAA/gcAAAAAAAAAAAAANAgAAAAAAAA4CAAAAAAAAAAAAABUCAAAAAAAAFgIAAAAAAAAAAAAAPoHAAAAAAAA/gcAAAAAAAAAAAAAOAgAAAAAAAA8CAAAAAAAAAAAAABcCAAAAAAAAGAIAAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAATQgAAAAAAAD6BwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					69,
+					1,
+					"insert",
+					{
+						"characters": " "
+					},
+					"AQAAAPgHAAAAAAAA+QcAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAA+AcAAAAAAAD4BwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					96,
+					1,
+					"insert",
+					{
+						"characters": " eni"
+					},
+					"BAAAAGcDAAAAAAAAaAMAAAAAAAAAAAAAaAMAAAAAAABpAwAAAAAAAAAAAABpAwAAAAAAAGoDAAAAAAAAAAAAAGoDAAAAAAAAawMAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAAZwMAAAAAAABnAwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					97,
+					1,
+					"left_delete",
+					null,
+					"AQAAAGoDAAAAAAAAagMAAAAAAAABAAAAaQ",
+					"AQAAAAAAAAABAAAAawMAAAAAAABrAwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					98,
+					1,
+					"insert",
+					{
+						"characters": "tity.name.name"
+					},
+					"DgAAAGoDAAAAAAAAawMAAAAAAAAAAAAAawMAAAAAAABsAwAAAAAAAAAAAABsAwAAAAAAAG0DAAAAAAAAAAAAAG0DAAAAAAAAbgMAAAAAAAAAAAAAbgMAAAAAAABvAwAAAAAAAAAAAABvAwAAAAAAAHADAAAAAAAAAAAAAHADAAAAAAAAcQMAAAAAAAAAAAAAcQMAAAAAAAByAwAAAAAAAAAAAAByAwAAAAAAAHMDAAAAAAAAAAAAAHMDAAAAAAAAdAMAAAAAAAAAAAAAdAMAAAAAAAB1AwAAAAAAAAAAAAB1AwAAAAAAAHYDAAAAAAAAAAAAAHYDAAAAAAAAdwMAAAAAAAAAAAAAdwMAAAAAAAB4AwAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAAagMAAAAAAABqAwAAAAAAAAAAAAAAAPC/"
+				],
+				[
+					99,
+					1,
+					"insert",
+					{
+						"characters": "space,"
+					},
+					"BgAAAHgDAAAAAAAAeQMAAAAAAAAAAAAAeQMAAAAAAAB6AwAAAAAAAAAAAAB6AwAAAAAAAHsDAAAAAAAAAAAAAHsDAAAAAAAAfAMAAAAAAAAAAAAAfAMAAAAAAAB9AwAAAAAAAAAAAAB9AwAAAAAAAH4DAAAAAAAAAAAAAA",
+					"AQAAAAAAAAABAAAAeAMAAAAAAAB4AwAAAAAAAAAAAAAAAPC/"
+				]
+			]
+		}
+	],
+	"build_system": "",
+	"build_system_choices":
+	[
+		[
+			[
+				[
+					"Packages/C++/C Single File.sublime-build",
+					""
+				],
+				[
+					"Packages/C++/C Single File.sublime-build",
+					"Run"
+				]
+			],
+			[
+				"Packages/C++/C Single File.sublime-build",
+				""
+			]
+		],
+		[
+			[
+				[
+					"Packages/C++/C Single File.sublime-build",
+					""
+				],
+				[
+					"Packages/C++/C Single File.sublime-build",
+					"Run"
+				],
+				[
+					"Packages/User/untitled.sublime-build",
+					""
+				]
+			],
+			[
+				"Packages/User/untitled.sublime-build",
+				""
+			]
+		],
+		[
+			[
+				[
+					"Packages/C++/C++ Single File.sublime-build",
+					""
+				],
+				[
+					"Packages/C++/C++ Single File.sublime-build",
+					"Run"
+				]
+			],
+			[
+				"Packages/C++/C++ Single File.sublime-build",
+				"Run"
+			]
+		],
+		[
+			[
+				[
+					"Packages/C++/C++ Single File.sublime-build",
+					""
+				],
+				[
+					"Packages/C++/C++ Single File.sublime-build",
+					"Run"
+				],
+				[
+					"Packages/User/build_tests.sublime-build",
+					""
+				],
+				[
+					"Packages/User/untitled.sublime-build",
+					""
+				]
+			],
+			[
+				"Packages/User/build_tests.sublime-build",
+				""
+			]
+		],
+		[
+			[
+				[
+					"Packages/C++/C++ Single File.sublime-build",
+					""
+				],
+				[
+					"Packages/C++/C++ Single File.sublime-build",
+					"Run"
+				],
+				[
+					"Packages/User/untitled.sublime-build",
+					""
+				]
+			],
+			[
+				"Packages/User/untitled.sublime-build",
+				""
+			]
+		],
+		[
+			[
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					""
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Automatic"
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Run"
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Run (with args)..."
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Check"
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Test"
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Test (with args)..."
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Bench"
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Clean"
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Document"
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Clippy"
+				],
+				[
+					"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+					"Script"
+				]
+			],
+			[
+				"Packages/Rust Enhanced/RustEnhanced.sublime-build",
+				"Run (with args)..."
+			]
+		],
+		[
+			[
+				[
+					"Packages/Rust/Rust.sublime-build",
+					""
+				],
+				[
+					"Packages/Rust/Rust.sublime-build",
+					"Run"
+				],
+				[
+					"Packages/Rust/Rust.sublime-build",
+					"Build & Run"
+				]
+			],
+			[
+				"Packages/Rust/Rust.sublime-build",
+				"Build & Run"
+			]
+		],
+		[
+			[
+				[
+					"Packages/User/build_tests.sublime-build",
+					""
+				],
+				[
+					"Packages/User/untitled.sublime-build",
+					""
+				]
+			],
+			[
+				"Packages/User/build_tests.sublime-build",
+				""
+			]
+		]
+	],
+	"build_varint": "",
+	"command_palette":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+			[
+				"edit",
+				"Color Scheme Editor: Edit current color scheme"
+			],
+			[
+				"color",
+				"UI: Select Color Scheme"
+			],
+			[
+				"edit ",
+				"Color Scheme Editor: Edit current color scheme"
+			],
+			[
+				"coilor",
+				"Color Scheme Editor: Edit current color scheme"
+			],
+			[
+				"color scheme",
+				"UI: Customize Color Scheme"
+			],
+			[
+				"package",
+				"Package Control: Install Package"
+			],
+			[
+				"install",
+				"Package Control: Install Package"
+			],
+			[
+				"list pac",
+				"Package Control: List Packages"
+			],
+			[
+				"colo",
+				"UI: Select Color Scheme"
+			],
+			[
+				"scheme",
+				"UI: Select Color Scheme"
+			],
+			[
+				"isntal",
+				"Package Control: Install Package"
+			],
+			[
+				"color sche",
+				"UI: Select Color Scheme"
+			],
+			[
+				"custom",
+				"UI: Customize Color Scheme"
+			],
+			[
+				"color s",
+				"UI: Select Color Scheme"
+			],
+			[
+				"install p",
+				"Package Control: Install Package"
+			],
+			[
+				"termi",
+				"Terminus: Toggle Panel"
+			],
+			[
+				"termina",
+				"Terminus: Toggle Panel"
+			],
+			[
+				"term",
+				"Terminus: Toggle Panel"
+			],
+			[
+				"terminal",
+				"Terminus: Toggle Panel"
+			],
+			[
+				"cust",
+				"UI: Customize Color Scheme"
+			],
+			[
+				"glsl",
+				"Set Syntax: GLSL"
+			],
+			[
+				"packag",
+				"Package Control: Install Package"
+			],
+			[
+				"snip",
+				"Snippet: std::print with two cursors"
+			],
+			[
+				"Snippet: ",
+				"Snippet: printf …"
+			],
+			[
+				"highlight",
+				"Highlight Build Errors: Show build errors"
+			],
+			[
+				"build errors",
+				"Highlight Build Errors: Hide build errors"
+			],
+			[
+				"COLOR ",
+				"UI: Select Color Scheme"
+			],
+			[
+				"CUIS",
+				"UI: Customize Theme"
+			],
+			[
+				"colorscheme",
+				"UI: Customize Color Scheme"
+			],
+			[
+				"cio",
+				"Package Control: Install Package"
+			],
+			[
+				"solar",
+				"SolarizedToggle: Toggle"
+			],
+			[
+				"te",
+				"Terminus: Toggle Panel"
+			],
+			[
+				"ter",
+				"Terminus: Toggle Panel"
+			],
+			[
+				"package contorl",
+				"Package Control: Advanced Install Packages"
+			],
+			[
+				"solair",
+				"SolarizedToggle: Toggle"
+			],
+			[
+				"solari",
+				"SolarizedToggle: Toggle"
+			],
+			[
+				"SCHEME",
+				"UI: Select Color Scheme"
+			],
+			[
+				"install pa",
+				"Package Control: Install Package"
+			],
+			[
+				"lsit pack",
+				"Package Control: List Packages"
+			],
+			[
+				"list pa",
+				"Package Control: Install Package"
+			],
+			[
+				"packlag",
+				"Package Control: List Packages"
+			],
+			[
+				"theme",
+				"UI: Select Theme"
+			],
+			[
+				"solarie",
+				"SolarizedToggle: Toggle"
+			]
+		],
+		"width": 0.0
+	},
+	"console":
+	{
+		"height": 257.0,
+		"history":
+		[
+			"view = window.open_file(r\"C:\\Users\\sjors\\AppData\\Roaming\\Sublime Text\\Witness.sublime-color-scheme\")",
+			"os.system('cls' if os.name == 'nt' else 'clear')",
+			"print(\"\\033c\", end =\"\")",
+			"\n\n print(\"\\033c\", end=\"\")\nprint(\"\\033c\", end=\"\")\n",
+			"\n\n print(\"\\033c\", end=\"\")\n\n",
+			"cargo add",
+			"ls",
+			"font",
+			"font_size()",
+			"view.settings().get('font_face')",
+			"wtf",
+			"sublime.log_fps(True)",
+			"c",
+			"print(a)",
+			"a = \"test\"",
+			"a = test",
+			"test",
+			"dir",
+			"s"
+		]
+	},
+	"distraction_free":
+	{
+		"menu_visible": true,
+		"show_minimap": false,
+		"show_open_files": false,
+		"show_tabs": false,
+		"side_bar_visible": false,
+		"status_bar_visible": false
+	},
+	"expanded_folders":
+	[
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/.claude",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/cmake_build/bin",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/scripts",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor"
+	],
+	"file_history":
+	[
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/editor_tool.hpp",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/entity_editor_traits.hpp",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/editor_types.hpp",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/Sjors.sublime-syntax",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/geometry_editor.hpp",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Witness.sublime-color-scheme",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/Witness.sublime-color-scheme",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/C++.sublime-syntax",
+		"/C/Program Files/Sublime Text/Packages/C++.sublime-package",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/C++ custom.sublime-syntax",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/audio/audio_system.hpp",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/entity_inspector.cpp",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/entity_editor_traits.cpp",
+		"/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/editor_bvh.hpp",
+		"/C/Users/sjors/Desktop/Projects/vm/main.cc",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/Witness color scheme/Witness.sublime-color-scheme",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/Preferences.sublime-settings",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/Default/Preferences.sublime-settings",
+		"/C/Users/sjors/Desktop/Projects/vm/todo.md",
+		"/C/Users/sjors/Desktop/Projects/vm/readme.md",
+		"/C/Users/sjors/Desktop/Projects/vm/clang_single_file_windows.sublime-build",
+		"/C/Users/sjors/Desktop/Projects/vm/byte_stack.hpp",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/format",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/xstring",
+		"/C/Users/sjors/Desktop/rust/guessing_game/src/main.rs",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/packet.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/readme.md",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/parallax_texture_xnu/parallax_texture_xnu.frag",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/parallax_texture_xnu/parallax_texture_xnu.vert",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/bindless_texture_vertex_xu/bindless_texture_vertex_xu.frag",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/bindless_texture_vertex_xu/bindless_texture_vertex_xu.vert",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/gl_helpers.hpp",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/xutility",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_keycode.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_events.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/tst/SDL_test.cc",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/udp_socket.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_test_assert.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/message.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/tst/server_test.cc",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/keys.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/input.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/console.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_test.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/concepts.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/player_move.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/bsp.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/commands.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/tst/command_test.cc",
+		"/C/Users/sjors/Desktop/Projects/tremble/tools/shader_generator.cpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/tst/run_both.cc",
+		"/C/Users/sjors/Documents/Dead Space (2023)/settings/steam/ProfileOptions_profile",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/parallax_texture_xnu",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/server.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/unused_/client_thread.hpp",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/functional",
+		"/C/Users/sjors/Desktop/Projects/tremble/tst/client_server.cc",
+		"/C/Users/sjors/Desktop/Projects/tremble/meson.build",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/vec.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/just_a_floor_AABBs",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/vec3.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/thread.hpp",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/utility",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/string.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/plane.hpp",
+		"/C/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/um/winsock.h",
+		"/C/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/shared/ws2def.h",
+		"/C/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/shared/minwindef.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/meson_configuration.md",
+		"/C/Users/sjors/Desktop/Projects/tremble/native.ini",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/font.hpp",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/print",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/unused",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/AABB.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/stb_image.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/text/text.vert",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/tiled_vertex_xu/tiled_vertex_xu.frag",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/vertex_xu/vertex_xu.frag",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/type_traits",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/yvals_core.h",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/cstdlib",
+		"/C/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/ucrt/stdlib.h",
+		"/C/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/ucrt/corecrt_math.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/vertex_color_x/vertex_color_x.vert",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/vertex_color_x/vertex_color_x.frag",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/vertex_xu/vertex_xu.vert",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/vertex.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/stb_truetype.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_test_log.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/debug_draw.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/gtx/quaternion.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/list_of_AABB",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/texture_test",
+		"/C/Users/sjors/Desktop/Projects/tremble/tst/font_test.cc",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/stb_image_write.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/console.cpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/detail/setup.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/gtx/norm.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/gtx/component_wise.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/detail/func_geometric.inl",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_platform_defines.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/camera.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/tst/SDL_baseline_test.cc",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/message.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/entity.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/memcpy_but_type.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/grid/grid.frag",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/to_byte_representation.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/grid/grid.vert",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/main_client.cc",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_init.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/src/print.hpp",
+		"/C/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/include/iosfwd",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/std_print..sublime-snippet",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/ninja.sublime-build",
+		"/C/Users/sjors/Desktop/Projects/tremble/build_tests.bat",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_keyboard.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/geometric.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/tst/AABB_test.cc",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_render.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_video.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/SDL3/SDL_process.h",
+		"/C/Users/sjors/Desktop/Projects/tremble/tremble.sublime-project",
+		"/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/build_tests.sublime-build",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/ext/matrix_clip_space.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/inc/glm/ext/matrix_transform.hpp",
+		"/C/Users/sjors/Desktop/Projects/tremble/data/shaders/vertex_color_xnc/vertex_color_xnc.frag"
+	],
+	"find":
+	{
+		"height": 31.3333333333
+	},
+	"find_in_files":
+	{
+		"height": 356.0,
+		"where_history":
+		[
+		]
+	},
+	"find_state":
+	{
+		"case_sensitive": false,
+		"find_history":
+		[
+			"global-maybe-function",
+			"global-type"
+		],
+		"highlight": true,
+		"in_selection": false,
+		"preserve_case": false,
+		"regex": false,
+		"replace_history":
+		[
+			";\n"
+		],
+		"reverse": false,
+		"scrollbar_highlights": true,
+		"show_context": true,
+		"use_buffer2": true,
+		"use_gitignore": true,
+		"whole_word": false,
+		"wrap": true
+	},
+	"folders":
+	[
+		{
+			"path": "C:\\Users\\sjors\\Desktop\\Projects\\tilde\\tilde"
+		}
+	],
+	"groups":
+	[
+		{
+			"sheets":
+			[
+				{
+					"buffer": 0,
+					"file": "/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/geometry_editor.hpp",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 1561,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								616,
+								617
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/User/C++.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 3,
+					"stack_multiselect": false,
+					"type": "text"
+				},
+				{
+					"buffer": 1,
+					"file": "/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/Sjors.sublime-syntax",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 344,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								54,
+								54
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/YAML/YAML.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 4,
+					"stack_multiselect": false,
+					"type": "text"
+				},
+				{
+					"buffer": 2,
+					"file": "/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/entity_editor_traits.hpp",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 3020,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								1146,
+								1146
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/User/Sjors.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 198.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 1,
+					"stack_multiselect": false,
+					"type": "text"
+				},
+				{
+					"buffer": 3,
+					"file": "/C/Users/sjors/Desktop/Projects/tilde/tilde/src/client/editor/editor_tool.hpp",
+					"selected": true,
+					"semi_transient": true,
+					"settings":
+					{
+						"buffer_size": 1801,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								0,
+								0
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/User/C++.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"stack_multiselect": false,
+					"type": "text"
+				},
+				{
+					"buffer": 4,
+					"file": "/C/Users/sjors/AppData/Roaming/Sublime Text/Packages/User/Witness.sublime-color-scheme",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 2181,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								894,
+								894
+							]
+						],
+						"settings":
+						{
+							"edit_settings_other_view_id": 458,
+							"edit_settings_view": "user",
+							"syntax": "Packages/JSON/JSON.sublime-syntax",
+							"tab_size": 4,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 672.0,
+						"translation.y": 226.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 2,
+					"stack_multiselect": false,
+					"type": "text"
+				}
+			]
+		},
+		{
+			"sheets":
+			[
+			]
+		}
+	],
+	"incremental_find":
+	{
+		"height": 31.3333333333
+	},
+	"input":
+	{
+		"height": 121.333333333
+	},
+	"layout":
+	{
+		"cells":
+		[
+			[
+				0,
+				0,
+				1,
+				1
+			],
+			[
+				1,
+				0,
+				2,
+				1
+			]
+		],
+		"cols":
+		[
+			0.0,
+			0.844957587182,
+			1.0
+		],
+		"rows":
+		[
+			0.0,
+			1.0
+		]
+	},
+	"menu_visible": true,
+	"output.Terminus":
+	{
+		"height": 561.0
+	},
+	"output.exec":
+	{
+		"height": 218.0,
+		"history":
+		[
+		]
+	},
+	"output.find_results":
+	{
+		"height": 0.0,
+		"history":
+		[
+		]
+	},
+	"pinned_build_system": "Packages/User/clang_single_file_windows.sublime-build",
+	"project": "",
+	"replace":
+	{
+		"height": 102.666666667
+	},
+	"save_all_on_build": true,
+	"select_file":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+			[
+				"sdl_test.cc",
+				"tst\\SDL_test.cc"
+			],
+			[
+				"server_test",
+				"tst\\server_test.cc"
+			],
+			[
+				"sdl_test",
+				"tst\\SDL_test.cc"
+			],
+			[
+				"sdl_tes",
+				"inc\\SDL3\\SDL_test_assert.h"
+			],
+			[
+				"tst/server",
+				"tst\\server_test.cc"
+			],
+			[
+				"sdl_keyco",
+				"inc\\SDL3\\SDL_keycode.h"
+			],
+			[
+				"SDL_event",
+				"inc\\SDL3\\SDL_events.h"
+			],
+			[
+				"message",
+				"src\\message.hpp"
+			],
+			[
+				"readme",
+				"readme.md"
+			],
+			[
+				"udp",
+				"src\\udp_socket.hpp"
+			],
+			[
+				"gl_helper",
+				"src\\gl_helpers.hpp"
+			],
+			[
+				"sdl",
+				"inc\\SDL3\\SDL_test_log.h"
+			],
+			[
+				"gl_he",
+				"src\\gl_helpers.hpp"
+			],
+			[
+				"sdl.cc",
+				"tst\\SDL_test.cc"
+			],
+			[
+				"player",
+				"src\\player_move.hpp"
+			],
+			[
+				"gl_",
+				"src\\gl_helpers.hpp"
+			],
+			[
+				"debug_",
+				"src\\debug_draw.hpp"
+			],
+			[
+				"player_move",
+				"src\\player_move.hpp"
+			],
+			[
+				"bsp",
+				"src\\bsp.hpp"
+			],
+			[
+				"unuse",
+				"src\\unused"
+			],
+			[
+				"plane",
+				"src\\plane.hpp"
+			],
+			[
+				"unu",
+				"src\\unused"
+			],
+			[
+				"pl",
+				"src\\plane.hpp"
+			],
+			[
+				"sd",
+				"tst\\SDL_test.cc"
+			],
+			[
+				"p",
+				"src\\plane.hpp"
+			],
+			[
+				"vec",
+				"src\\vec.hpp"
+			],
+			[
+				"bsp.",
+				"src\\bsp.hpp"
+			],
+			[
+				"bs",
+				"src\\bsp.hpp"
+			],
+			[
+				"unus",
+				"src\\unused"
+			],
+			[
+				"unused",
+				"src\\unused"
+			],
+			[
+				"SDL_",
+				"tst\\SDL_test.cc"
+			],
+			[
+				"verte",
+				"src\\vertex.hpp"
+			],
+			[
+				"main",
+				"src\\main_client.cc"
+			],
+			[
+				"message.h",
+				"src\\message.h"
+			],
+			[
+				"",
+				"src\\message.h"
+			],
+			[
+				"to",
+				"src\\to_byte_representation.h"
+			],
+			[
+				"clie",
+				"src\\main_client.cc"
+			],
+			[
+				"server",
+				"src\\main_server.cc"
+			],
+			[
+				"m",
+				"src\\message.h"
+			],
+			[
+				"client",
+				"src\\main_client.cc"
+			],
+			[
+				"game",
+				"src\\game.cpp"
+			]
+		],
+		"width": 0.0
+	},
+	"select_project":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"select_symbol":
+	{
+		"height": 131.333333333,
+		"last_filter": "render_ene",
+		"selected_items":
+		[
+			[
+				"render_ene",
+				"render_entity_fields_in_an_imgui_window"
+			],
+			[
+				"triangle_",
+				"triangle_intersects_aabb"
+			]
+		],
+		"width": 592.0
+	},
+	"selected_group": 0,
+	"settings":
+	{
+	},
+	"show_minimap": true,
+	"show_open_files": false,
+	"show_tabs": true,
+	"side_bar_visible": true,
+	"side_bar_width": 570.0,
+	"status_bar_visible": true,
+	"template_settings":
+	{
+	}
+}

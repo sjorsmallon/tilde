@@ -6,8 +6,8 @@
 #include "../../shared/linalg.hpp"
 #include "../../shared/map.hpp" // For map_t
 #include "../camera.hpp"        // For camera_t
+#include "../frame_builder.hpp"
 #include "../input.hpp"
-#include <vulkan/vulkan.h>
 
 namespace client
 {
@@ -55,39 +55,6 @@ struct view_focus_t
 {
   linalg::vec3f center = {0, 0, 0};
   float         radius = 512.0f;
-};
-
-// Interface for drawing editor overlays
-struct overlay_renderer_t
-{
-  virtual ~overlay_renderer_t() = default;
-
-  virtual VkCommandBuffer get_command_buffer() = 0;
-
-  virtual void draw_line(const linalg::vec3 &start, const linalg::vec3 &end,
-                         color_t color) = 0;
-  virtual void draw_wire_aabb(const linalg::vec3 &center,
-                             const linalg::vec3 &half_extents,
-                             color_t color) = 0;
-  virtual void draw_solid_box(const linalg::vec3 &center,
-                              const linalg::vec3 &half_extents,
-                              color_t color) = 0;
-  virtual void draw_circle(const linalg::vec3 &center, float radius,
-                           const linalg::vec3 &normal, color_t color) = 0;
-  // A label anchored to a world position. Not depth-tested and composited
-  // after the 3D pass, so it stays readable on a bone inside the mesh.
-  virtual void draw_text_in_world(const linalg::vec3 &pos, const char *text,
-                                  color_t color) = 0;
-
-  // Three great circles -- enough to read as a sphere from any angle. Not
-  // virtual: it is pure composition over draw_circle, so an implementation has
-  // nothing to add and every one of them gets it without writing it again.
-  void draw_wire_sphere(const linalg::vec3 &center, float radius, color_t color)
-  {
-    draw_circle(center, radius, {0, 1, 0}, color);
-    draw_circle(center, radius, {1, 0, 0}, color);
-    draw_circle(center, radius, {0, 0, 1}, color);
-  }
 };
 
 } // namespace client

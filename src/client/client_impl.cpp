@@ -7,6 +7,7 @@
 #include "state_manager.hpp"
 
 #include <memory>
+#include <vector>
 
 #include <chrono>
 #include <iostream>
@@ -22,10 +23,15 @@
 namespace client
 {
 
-static SDL_Window *g_window = nullptr;
+static SDL_Window* g_window = nullptr;
 static std::chrono::high_resolution_clock::time_point g_last_tick_time;
 static bool g_tick_time_initialized = false;
 static std::unique_ptr<audio_system_t> g_audio;
+
+void set_asset_state(assets::asset_state_t *asset_state)
+{
+  assets::set_state(asset_state);
+}
 
 bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
           assets::asset_state_t *asset_state)
@@ -113,32 +119,8 @@ bool Tick()
     {
       return false;
     }
-    // Resize handling is done inside renderer::begin_frame via queries usually,
-    // or we can pass it.
-    // NOTE: In the previous code, resize triggered `g_swapchain_rebuild =
-    // true`. In our new `renderer.cpp`, `begin_frame` handles checking for
-    // `VK_ERROR_OUT_OF_DATE`. Explicit resize event handling might be needed if
-    // we want to be proactive.
-    // However, `renderer.cpp` as written checks `vkAcquireNextImage` result and
-    // rebuilds. But for window resize events, we might want to flag it?
-    // Let's rely on Vulkan returning OutOfDate for now, or assume the user is
-    // happy with the current implementation which checks `g_swapchain_rebuild`
-    // inside renderer (which is currently global static in renderer.cpp, but
-    // how is it set??) Ah, `renderer.cpp` globals are static. But the SDL event
-    // loop here sees the event. The previous code had: if (event.type ==
-    // SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED ...)
-    //   g_swapchain_rebuild = true;
-    //
-    // I need to tell renderer to rebuild!
-    // Or add `renderer::HandleResize()`.
-    // Or just `renderer::process_event` should handle it?
-    // YES, `renderer::process_event` should probably handle it if we move that
-    // logic there.
-    // OR we just rely on `begin_frame` failing to acquire and rebuilding.
-    // But SDL might not trigger "OutOfDate" immediately on all platforms?
-    // Let's assume proactive is better.
-    // I'll add `renderer::RequestSwapchainRebuild()` or similar?
-    // Or just let `process_event` handle it.
+    // Resize needs no handling here: new_frame() rebuilds the swapchain when
+    // vkAcquireNextImageKHR reports it out of date, and skips that frame.
   }
 
   // Compute real dt
@@ -170,11 +152,12 @@ bool Tick()
     return false;
   }
 
-  // Render
-  VkCommandBuffer cmd = renderer::begin_frame();
-  if (cmd == VK_NULL_HANDLE)
+  // Render. The two-phase shape is ImGui's doing and nothing else's: the UI is
+  // built imperatively between the calls. Everything the 3D scene needs is a
+  // value collected in build_frame, and render_frame runs EXACTLY ONCE.
+  if (!renderer::new_frame())
   {
-    return true; // Skip frame
+    return true; // minimized, or the swapchain is being rebuilt
   }
 
   state_manager::render_ui();
@@ -186,10 +169,11 @@ bool Tick()
   }
   client::console::get().draw();
 
-  state_manager::pre_render(cmd);
-  renderer::begin_render_pass(cmd);
-  state_manager::render_3d(cmd);
-  renderer::end_frame(cmd);
+  // Retained across frames so the per-frame pass list costs no allocation.
+  static std::vector<renderer::view_pass_t> frame_passes;
+  frame_passes.clear();
+  state_manager::build_frame(dt, frame_passes);
+  renderer::render_frame(frame_passes);
 
   return true;
 }

@@ -23,20 +23,19 @@ linalg::vec3f matrix_translation(const linalg::mat4f &matrix)
 // Where a volume's two endpoints sit, given the matrices of the pose it is being
 // evaluated in, and the axes a Box's extents are read in. One function so the
 // runtime path and derivation cannot disagree about where a volume is.
-void volume_placement(const hitbox_volume_t &volume, const resolved_hitbox_volume_t &resolved,
-                      Span<const linalg::mat4f> model_space, linalg::vec3f &out_start,
-                      linalg::vec3f &out_end, hitbox_frame_t &out_frame)
+void volume_placement(const rigged_hitbox_volume_t &rigged, Span<const linalg::mat4f> model_space,
+                      linalg::vec3f &out_start, linalg::vec3f &out_end, hitbox_frame_t &out_frame)
 {
-  const linalg::mat4f &start_matrix = model_space[resolved.start_bone];
+  const linalg::mat4f &start_matrix = model_space[rigged.start_bone];
 
   out_frame.forward = bone_direction(start_matrix);
   const linalg::vec4 &x_column = start_matrix[0];
   out_frame.right              = linalg::normalize(linalg::vec3f{x_column.x, x_column.y, x_column.z});
   out_frame.up                 = linalg::cross(out_frame.forward, out_frame.right);
 
-  const linalg::vec3f slide = out_frame.forward * volume.offset;
+  const linalg::vec3f slide = out_frame.forward * rigged.volume.offset;
   out_start                 = matrix_translation(start_matrix) + slide;
-  out_end                   = matrix_translation(model_space[resolved.end_bone]) + slide;
+  out_end                   = matrix_translation(model_space[rigged.end_bone]) + slide;
 }
 
 // Distance from a point to the SEGMENT, not to the infinite line: past an
@@ -359,21 +358,24 @@ std::optional<hitbox_shape_t> try_hitbox_shape_from_string(const char *text)
   return std::nullopt;
 }
 
-std::optional<resolved_hitbox_rig_t> try_resolve_hitbox_rig(const hitbox_rig_t &rig,
-                                                            const skeleton_t   &skeleton)
+std::optional<hitbox_rig_t> try_resolve_hitbox_rig(const hitbox_rig_file_t &file,
+                                                   const skeleton_t       &skeleton)
 {
-  if (rig.skeleton_hash != 0 && rig.skeleton_hash != skeleton.hash)
+  if (file.skeleton_hash != 0 && file.skeleton_hash != skeleton.hash)
   {
     log_error("hitbox rig '{}' was authored against skeleton hash {:016x}, but '{}' hashes to "
               "{:016x}; the two disagree about which bones exist",
-              rig.name, rig.skeleton_hash, skeleton.name, skeleton.hash);
+              file.name, file.skeleton_hash, skeleton.name, skeleton.hash);
     return std::nullopt;
   }
 
-  resolved_hitbox_rig_t resolved;
-  resolved.reserve(rig.volumes.size());
+  hitbox_rig_t rig;
+  rig.name          = file.name;
+  rig.skeleton_name = file.skeleton_name;
+  rig.skeleton_hash = file.skeleton_hash;
+  rig.volumes.reserve(file.volumes.size());
 
-  for (const hitbox_volume_t &volume : rig.volumes)
+  for (const hitbox_volume_t &volume : file.volumes)
   {
     const int32_t start_bone = bone_index_of(skeleton, volume.start_bone);
     const int32_t end_bone   = bone_index_of(skeleton, volume.end_bone);
@@ -384,7 +386,8 @@ std::optional<resolved_hitbox_rig_t> try_resolve_hitbox_rig(const hitbox_rig_t &
       return std::nullopt;
     }
 
-    resolved_hitbox_volume_t entry;
+    rigged_hitbox_volume_t entry;
+    entry.volume     = volume;
     entry.start_bone = (uint32_t)start_bone;
     entry.end_bone   = (uint32_t)end_bone;
 
@@ -411,23 +414,22 @@ std::optional<resolved_hitbox_rig_t> try_resolve_hitbox_rig(const hitbox_rig_t &
       return std::nullopt;
     }
 
-    resolved.push_back(std::move(entry));
+    rig.volumes.push_back(std::move(entry));
   }
 
-  return resolved;
+  return rig;
 }
 
-void compute_posed_hitboxes(const hitbox_rig_t &rig, const resolved_hitbox_rig_t &resolved,
-                            Span<const linalg::mat4f> model_space, Span<posed_hitbox_t> out)
+void compute_posed_hitboxes(const hitbox_rig_t &rig, Span<const linalg::mat4f> model_space,
+                            Span<posed_hitbox_t> out)
 {
-  if (resolved.size() != rig.volumes.size() || out.size() != rig.volumes.size())
-    fatal_error("compute_posed_hitboxes: {} volumes, {} resolved, {} outputs", rig.volumes.size(),
-                resolved.size(), out.size());
+  if (out.size() != rig.volumes.size())
+    fatal_error("compute_posed_hitboxes: {} volumes, {} outputs", rig.volumes.size(), out.size());
 
   for (uint32_t index = 0; index < (uint32_t)rig.volumes.size(); ++index)
   {
-    const hitbox_volume_t          &volume = rig.volumes[index];
-    const resolved_hitbox_volume_t &entry  = resolved[index];
+    const rigged_hitbox_volume_t &entry  = rig.volumes[index];
+    const hitbox_volume_t        &volume = entry.volume;
 
     if (entry.start_bone >= model_space.size() || entry.end_bone >= model_space.size())
       fatal_error("hitbox volume '{}' indexes bone {}/{} of a {}-matrix pose", volume.name,
@@ -438,7 +440,7 @@ void compute_posed_hitboxes(const hitbox_rig_t &rig, const resolved_hitbox_rig_t
     hitbox.radius       = volume.radius;
     hitbox.half_extents = volume.half_extents;
     hitbox.region       = volume.region;
-    volume_placement(volume, entry, model_space, hitbox.start, hitbox.end, hitbox.frame);
+    volume_placement(entry, model_space, hitbox.start, hitbox.end, hitbox.frame);
 
     // A sphere is one bone by construction, so its endpoints must not be able to
     // disagree even if a file names two.
@@ -556,8 +558,7 @@ std::optional<hitbox_ray_hit_t> intersect_ray_hitbox(const posed_hitbox_t &hitbo
 }
 
 hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
-                                 const hitbox_volume_t          &volume,
-                                 const resolved_hitbox_volume_t &resolved)
+                                 const rigged_hitbox_volume_t &rigged)
 {
   if (!mesh.is_skinned() || skeleton.bones.empty())
     return {};
@@ -568,7 +569,7 @@ hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &ske
   linalg::vec3f  start;
   linalg::vec3f  end;
   hitbox_frame_t frame;
-  volume_placement(volume, resolved, bind_model, start, end, frame);
+  volume_placement(rigged, bind_model, start, end, frame);
 
   const linalg::vec3f center = (start + end) * 0.5f;
 
@@ -584,8 +585,8 @@ hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &ske
     if (bone < 0)
       continue;
 
-    const bool in_span = std::find(resolved.span_bones.begin(), resolved.span_bones.end(),
-                                   (uint32_t)bone) != resolved.span_bones.end();
+    const bool in_span = std::find(rigged.span_bones.begin(), rigged.span_bones.end(),
+                                   (uint32_t)bone) != rigged.span_bones.end();
     if (!in_span)
       continue;
 
@@ -607,19 +608,17 @@ hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &ske
 }
 
 void derive_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
-                         const hitbox_rig_t &rig, const resolved_hitbox_rig_t &resolved,
-                         Span<hitbox_seed_t> out)
+                         const hitbox_rig_t &rig, Span<hitbox_seed_t> out)
 {
-  if (resolved.size() != rig.volumes.size() || out.size() != rig.volumes.size())
-    fatal_error("derive_hitbox_sizes: {} volumes, {} resolved, {} outputs", rig.volumes.size(),
-                resolved.size(), out.size());
+  if (out.size() != rig.volumes.size())
+    fatal_error("derive_hitbox_sizes: {} volumes, {} outputs", rig.volumes.size(), out.size());
 
   printf("[hitbox] derived sizes for '%s' against mesh of %zu vertices\n", rig.name.c_str(),
          mesh.vertices.size());
   for (uint32_t index = 0; index < out.size(); ++index)
   {
-    const hitbox_volume_t &volume = rig.volumes[index];
-    out[index] = derive_hitbox_size(mesh, skeleton, volume, resolved[index]);
+    const hitbox_volume_t &volume = rig.volumes[index].volume;
+    out[index] = derive_hitbox_size(mesh, skeleton, rig.volumes[index]);
 
     printf("[hitbox]   %-12s %-8s %-12s -> %-12s  radius %6.2f (authored %6.2f)  extents "
            "%5.2f %5.2f %5.2f%s\n",
@@ -641,23 +640,22 @@ hitbox_rig_t make_hitbox_rig_template(const mesh_asset_t &mesh, const skeleton_t
   {
     const bone_t &bone = skeleton.bones[index];
 
-    resolved_hitbox_volume_t entry;
+    // A one-bone span has no length, so the template offers spheres: a capsule
+    // between a bone and itself is the same shape with a name that lies.
+    rigged_hitbox_volume_t entry;
+    entry.volume     = {.name       = bone.name,
+                        .shape      = hitbox_shape_t::Sphere,
+                        .start_bone = bone.name,
+                        .end_bone   = bone.name,
+                        .region     = guess_region(bone.name)};
     entry.start_bone = index;
     entry.end_bone   = index;
     entry.span_bones = {index};
 
-    // A one-bone span has no length, so the template offers spheres: a capsule
-    // between a bone and itself is the same shape with a name that lies.
-    hitbox_volume_t volume{.name       = bone.name,
-                           .shape      = hitbox_shape_t::Sphere,
-                           .start_bone = bone.name,
-                           .end_bone   = bone.name,
-                           .region     = guess_region(bone.name)};
-
-    const hitbox_seed_t seed = derive_hitbox_size(mesh, skeleton, volume, entry);
-    volume.radius            = seed.radius;
-    volume.half_extents      = seed.half_extents;
-    rig.volumes.push_back(std::move(volume));
+    const hitbox_seed_t seed  = derive_hitbox_size(mesh, skeleton, entry);
+    entry.volume.radius       = seed.radius;
+    entry.volume.half_extents = seed.half_extents;
+    rig.volumes.push_back(std::move(entry));
   }
   return rig;
 }

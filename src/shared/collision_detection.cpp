@@ -1,55 +1,11 @@
 #include "collision_detection.hpp"
 #include <algorithm>
 #include <cfloat>
+#include <functional>
 
 using namespace linalg;
+using namespace shared;
 
-// Helper to compute the union of two AABBs
-static AABB union_aabb(const AABB &a, const AABB &b)
-{
-  return {{std::min(a.min.x, b.min.x), std::min(a.min.y, b.min.y),
-           std::min(a.min.z, b.min.z)},
-          {std::max(a.max.x, b.max.x), std::max(a.max.y, b.max.y),
-           std::max(a.max.z, b.max.z)}};
-}
-
-static vec3f get_aabb_center(const AABB &aabb)
-{
-  return (aabb.min + aabb.max) * 0.5f;
-}
-
-static void expand_aabb(AABB &aabb, const vec3f &p)
-{
-  aabb.min.x = std::min(aabb.min.x, p.x);
-  aabb.min.y = std::min(aabb.min.y, p.y);
-  aabb.min.z = std::min(aabb.min.z, p.z);
-
-  aabb.max.x = std::max(aabb.max.x, p.x);
-  aabb.max.y = std::max(aabb.max.y, p.y);
-  aabb.max.z = std::max(aabb.max.z, p.z);
-}
-
-/*
-  BVH Construction Algorithm (Midpoint Split):
-
-  This builder uses the "Midpoint Split" heuristic, which is fast (O(N)) and
-  effective for real-time applications. It works as follows:
-
-  1. Calculate Node AABB: Compute the union of all primitive AABBs in the
-  current range. This becomes the bounding box for the node.
-
-  2. Leaf Check: If the number of primitives is small (<= 8), stop and create a
-  Leaf Node.
-
-  3. Split Heuristic:
-     - Calculate the "Centroid AABB": the bounding box of the *centers* of all
-  primitives.
-     - Pick the longest axis of this Centroid AABB (X, Y, or Z).
-     - Split the primitives into two groups based on their center position
-  relative to the midpoint of the Centroid AABB along that axis.
-
-  4. Recursion: Recursively build the left and right children.
-*/
 Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
 {
   Bounding_Volume_Hierarchy bvh;
@@ -65,9 +21,10 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
     active_indices[i] = static_cast<uint32_t>(i);
   }
 
-  // Recursive builder
-  // Returns the index of the created node in bvh.nodes
-  // range_start and range_end are indices into active_indices
+
+  //@NOTE(SJM): this is a std::function because
+  // it calls itself and otherwise, auto deduction fails
+  // because auto definitions cannot contain themselves.
   std::function<uint32_t(uint32_t, uint32_t)> build_recursive =
       [&](uint32_t range_start, uint32_t range_end) -> uint32_t
   {
@@ -77,9 +34,9 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
 
     // 1. Compute AABB for this node
     // Also compute centroids AABB for splitting
-    AABB node_aabb = inputs[active_indices[range_start]].aabb;
+    aabb_bounds_t node_aabb = inputs[active_indices[range_start]].aabb;
     vec3f first_center = get_aabb_center(node_aabb);
-    AABB centroid_aabb = {first_center, first_center};
+    aabb_bounds_t centroid_aabb = {first_center, first_center};
 
     for (uint32_t i = range_start + 1; i < range_end; ++i)
     {
@@ -87,11 +44,9 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
       node_aabb = union_aabb(node_aabb, input.aabb);
 
       vec3f center = get_aabb_center(input.aabb);
-      expand_aabb(centroid_aabb, center);
+      expand_aabb_to_include_point(centroid_aabb, center);
     }
 
-    // Reference to node (warning: reallocations of bvh.nodes invalidate this!)
-    // So we just use indices and modify later.
     bvh.nodes[node_idx].aabb = node_aabb;
 
     // 2. Check for leaf condition
@@ -121,17 +76,17 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
     if (extent.z > extent[axis])
       axis = 2;
 
-    float split_pos =
+    float split_position =
         (centroid_aabb.min[axis] + centroid_aabb.max[axis]) * 0.5f;
 
     // Partition
-    auto it = std::partition(
+    auto split_pointer = std::partition(
         active_indices.begin() + range_start,
         active_indices.begin() + range_end, [&](uint32_t idx)
-        { return get_aabb_center(inputs[idx].aabb)[axis] < split_pos; });
+        { return get_aabb_center(inputs[idx].aabb)[axis] < split_position; });
 
     uint32_t mid =
-        static_cast<uint32_t>(std::distance(active_indices.begin(), it));
+        static_cast<uint32_t>(std::distance(active_indices.begin(), split_pointer));
 
     // If split failed, simply split in half
     if (mid == range_start || mid == range_end)
@@ -260,7 +215,7 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
   return hit_anything;
 }
 
-void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
+void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const aabb_bounds_t &aabb,
                         std::vector<const BVH_Primitive *> &out_primitives)
 {
   if (bvh.nodes.empty())
@@ -311,7 +266,7 @@ void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
 }
 
 void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
-                   const AABB &aabb,
+                   const aabb_bounds_t &aabb,
                    std::vector<Plane> collision_planes)
 {
   std::vector<BVH_Input> inputs;

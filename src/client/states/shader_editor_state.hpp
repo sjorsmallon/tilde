@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../frame_builder.hpp"
 #include "../game_state.hpp"
 #include "../shader_tool_runtime.hpp"
 #include "../../shared/file_watcher.hpp"
@@ -44,7 +45,18 @@ public:
   void on_exit() override;
   void update(float dt) override;
   void render_ui() override;
-  void render_3d(VkCommandBuffer cmd) override;
+  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes) override;
+
+private:
+  // Recorded inside the render pass by render_frame. Static because
+  // custom_draw_t carries a plain function pointer and a void* -- no virtuals,
+  // no capture, nothing that could outlive the state.
+  static void record_preview_draw(VkCommandBuffer cmd, void *user);
+
+  // This frame's view pass and the buffers the custom draw reads.
+  pass_builder_t            scene;
+  renderer::mesh_gpu_info_t preview_mesh{};
+
 
 private:
   void recompile_preview_shaders();

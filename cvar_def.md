@@ -356,7 +356,7 @@ tree breaks at step 3 and builds again at step 5; no compatibility layer.
 
 1. **Write `cvars.def`** — transcribe every current cvar and command
    (grep-complete inventory: `player_move`, `debug_collision`, `game_cvars`,
-   `audio_system`, `play_state`, `server_impl`, `console`, three launchers).
+   `audio_system_t`, `play_state`, `server_impl`, `console`, three launchers).
    This is the flag audit and the description audit; `map` converts to a
    command here.
 2. **Rename `entity_gen` → `def_gen` and extend it** — the two block kinds,

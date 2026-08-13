@@ -727,7 +727,7 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
 
 // --- .hitboxes -------------------------------------------------------------
 
-std::optional<assets::hitbox_rig_t> try_parse_hitbox_rig_file(const char *path)
+std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *path)
 {
   std::ifstream file(path);
   if (!file.is_open())
@@ -740,7 +740,7 @@ std::optional<assets::hitbox_rig_t> try_parse_hitbox_rig_file(const char *path)
   reader.path = path;
   std::string storage;
 
-  assets::hitbox_rig_t rig;
+  assets::hitbox_rig_file_t rig;
 
   if (!next_line(file, storage, reader) || !expect_keyword(reader, "hitboxes"))
     return std::nullopt;
@@ -883,8 +883,10 @@ bool try_write_hitbox_rig_file(const char *path, const assets::hitbox_rig_t &rig
            rig.skeleton_name.c_str(), (unsigned long long)rig.skeleton_hash);
   file << header;
 
-  for (const assets::hitbox_volume_t &volume : rig.volumes)
+  for (const assets::rigged_hitbox_volume_t &rigged : rig.volumes)
   {
+    const assets::hitbox_volume_t &volume = rigged.volume;
+
     // Written with the same per-shape arity the reader expects, so a file the
     // tool saved and a file a human typed are the same file.
     char bones[128];

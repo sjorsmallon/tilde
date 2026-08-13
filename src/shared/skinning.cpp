@@ -32,9 +32,16 @@ void check_span_length(uint32_t length, uint32_t bone_count, const char *functio
 } // namespace
 
 
-// A bone's bind matrix is its rest pose written in its PARENT's coordinate
-// system. The root has no parent, so its parent space IS model space.
-// inverse_bind[i] is the inverse of bone i's model-space matrix in the bind pose. Spelled out from 
+// we store the inverse_bind of a bone in _model_ space.
+// normally, you'd just have the bone TRS in model space, only relative to that origin.
+// because we need the inverse_bind (sort of like an "undo" matrix of that TRS) a lot, that's what is actually stored in the skeleton.
+// however, it's also nice to have the bone position expressed in the parent's coordinate frame
+// because that's the way we can skin trivially.
+// so what this function does is 
+// first: get the actual bone position stored in bind_model by inversing the inverse (yielding the normal TRS).
+// subsequently, for each of these bone positions, multiply by the inverse bind of their parent to get that bone's position in its parent space.
+// in other words, imagine pulling on the whole chain moving the parent bone to the origin and rotate it to be normal and then observe where the target bone is.
+// this sort of expression to "parent-relative" is what we need later for skinning.
 void compute_parent_space_bind_matrices(const skeleton_t &skeleton,
                                         Span<linalg::mat4f> out_parent_space)
 {
@@ -42,9 +49,8 @@ void compute_parent_space_bind_matrices(const skeleton_t &skeleton,
   check_span_length(out_parent_space.count, bone_count, "compute_parent_space_bind_matrices",
                     "out_parent_space");
 
-  // bind_model[i] is needed by i's CHILDREN, which all come after i, so one
-  // forward pass suffices here too -- but only if we keep it, hence the scratch
-  // pass rather than inverting a parent's matrix again per child.
+  // because bones are ordered such that children always follow their parents, 
+  // we can do a single forward pass to calculate the bind_model matrices of their parent bones.
   linalg::mat4f bind_model[MAX_BONES];
   for (uint32_t index = 0; index < bone_count; ++index)
     bind_model[index] = linalg::inverse_affine(skeleton.bones[index].inverse_bind);
@@ -91,6 +97,31 @@ void compute_skinning_matrices(const skeleton_t         &skeleton,
 
   for (uint32_t index = 0; index < bone_count; ++index)
     out_skinning[index] = model_space[index] * skeleton.bones[index].inverse_bind;
+}
+
+void compute_posed_skeleton(const skeleton_t &skeleton, const pose_t &pose, posed_skeleton_t &out)
+{
+  const uint32_t bone_count = checked_bone_count(skeleton, "compute_posed_skeleton");
+  check_span_length((uint32_t)pose.parent_space.size(), bone_count, "compute_posed_skeleton",
+                    "pose.parent_space");
+
+  out.model_space.resize(bone_count);
+  out.skinning.resize(bone_count);
+
+  // this is the parent space for a particular pose. 
+  // it describes a _STEP_. 100 meters left, rotate 40 degrees.
+  linalg::mat4f parent_space[MAX_BONES];
+  compose_parent_space_matrices(pose, Span<linalg::mat4f>{parent_space, bone_count});
+  for (uint32_t index = 0; index < bone_count; ++index)
+  {
+    const int32_t parent   = skeleton.bones[index].parent_index;
+
+    // a bone starts AT its parent's frame: its position and its rotation. then applies its own transform within that rotated frame.
+    out.model_space[index] = parent == ROOT_BONE_INDEX ? parent_space[index] : out.model_space[parent] * parent_space[index];
+    // The skinning matrix for bone i is: the transform that takes a vertex from where it sat in the bind pose to where it sits in this pose expressed in model space.
+    // inverse bind, to express where the vertex is in relation to bone i's frame in the bind position, and then multiplied by the model space _now_ for that bone.
+    out.skinning[index]   = out.model_space[index] * skeleton.bones[index].inverse_bind;
+  }
 }
 
 } // namespace assets

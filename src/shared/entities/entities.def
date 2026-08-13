@@ -85,6 +85,7 @@
 // ---------------------------------------------------------------------------
 // Base
 // ---------------------------------------------------------------------------
+Fully_Serializable :: [@Networked, @Editable, @Saveable]
 
 Entity :: base {
     // The receiver keys the entity by this, so it must ride the wire. It is
@@ -99,7 +100,7 @@ Entity :: base {
     orientation: v3                     @Fully_Serializable
 }
 
-Fully_Serializable :: [@Networked, @Editable, @Saveable]
+
 
 // ---------------------------------------------------------------------------
 // Asset classes
@@ -297,6 +298,10 @@ Hitbox :: component {
 Player_Spawn_Entity :: entity {
     spawn_type: Spawn_Type = .Human     @Editable @Saveable
     team_allegiance: Team_Allegiance = .Free_For_All @Editable @Saveable 
+}
+
+// this does not need anything, really.
+Player_Spectate_Entity:: entity {
 }
 
 

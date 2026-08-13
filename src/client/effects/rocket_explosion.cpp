@@ -12,10 +12,11 @@ namespace client::effects
 void on_rocket_explosion(client_context_t &context,
                          const shared::effect_data_t &data)
 {
-  if (!context.physics_state)
+  if (!context.world.physics_state)
   {
-    log_error("rocket_explosion handler invoked with no client physics_state — "
-              "Play_State should set context.physics_state on entry");
+    log_error("rocket_explosion handler invoked with no client physics world — "
+              "an effect arrived before any map was loaded (context.world.ready "
+              "is false), so there is no surface to resolve the decal against");
     return;
   }
 
@@ -47,7 +48,7 @@ void on_rocket_explosion(client_context_t &context,
     // fraction-0 hit with a flipped normal.
     const query_filter_t filter{.layers     = query_layers_t::Static_Only,
                                 .back_faces = back_face_mode_t::Ignore};
-    bool surface_hit = cast_sphere(*context.physics_state,
+    bool surface_hit = cast_sphere(*context.world.physics_state,
                                    probe_from, probe_to,
                                    probe_radius, filter, hit);
 
@@ -73,11 +74,11 @@ void on_rocket_explosion(client_context_t &context,
   // Spawn the visible particle effect at the detonation origin. Lifetime is
   // long enough for the particle emitter's emit-then-fade window (see the
   // draw site in play_state.cpp).
-  client_context_t::explosion_effect_t fx{};
+  explosion_effect_t fx{};
   fx.position        = data.origin;
   fx.time_remaining  = 1.2f;
-  fx.explosion_index = context.next_explosion_index++;
-  context.explosion_effects.push_back(fx);
+  fx.explosion_index = context.visuals.next_explosion_index++;
+  context.visuals.explosion_effects.push_back(fx);
 
   if (context.audio)
     context.audio->play_3d("resources/sounds/rocket_explosion.wav", data.origin);

@@ -117,24 +117,19 @@ void compute_aim_pose(const aim_pose_set_t &pose_set, const assets::skeleton_t &
 
   assets::sample_aim_pose(out, clips, blend);
 
-  if (out.local.size() != skeleton.bones.size())
+  if (out.parent_space.size() != skeleton.bones.size())
     fatal_error("aim pose has {} bones but skeleton '{}' has {}; the pose set and the mesh are not "
                 "on one skeleton",
-                out.local.size(), skeleton.name, skeleton.bones.size());
+                out.parent_space.size(), skeleton.name, skeleton.bones.size());
 }
 
-void compute_aim_skinning_matrices(const aim_pose_set_t &pose_set,
-                                   const assets::skeleton_t &skeleton, float pitch_degrees,
-                                   float yaw_deviation_degrees, const aim_settings_t &settings,
-                                   std::vector<linalg::mat4f> &out)
+void compute_aim_posed_skeleton(const aim_pose_set_t &pose_set, const assets::skeleton_t &skeleton,
+                                float pitch_degrees, float yaw_deviation_degrees,
+                                const aim_settings_t &settings, assets::posed_skeleton_t &out)
 {
   assets::pose_t pose;
   compute_aim_pose(pose_set, skeleton, pitch_degrees, yaw_deviation_degrees, settings, pose);
-
-  out.resize(skeleton.bones.size());
-  std::vector<linalg::mat4f> local(skeleton.bones.size());
-  assets::get_local_transforms_of_bones_from_pose(pose, local);
-  assets::compute_skinning_matrices(skeleton, local, out);
+  assets::compute_posed_skeleton(skeleton, pose, out);
 }
 
 const assets::animation_clip_t &death_clip()
@@ -156,9 +151,9 @@ const assets::animation_clip_t &death_clip()
   return *assets::get(handle);
 }
 
-void compute_clip_skinning_matrices(const assets::animation_clip_t &clip,
-                                    const assets::skeleton_t &skeleton, float seconds,
-                                    bool looping, std::vector<linalg::mat4f> &out)
+void compute_clip_posed_skeleton(const assets::animation_clip_t &clip,
+                                 const assets::skeleton_t &skeleton, float seconds, bool looping,
+                                 assets::posed_skeleton_t &out)
 {
   // A clip with nothing to play (one frame, one-shot) reports zero duration --
   // that is the cue to sample it rather than divide by it.
@@ -168,13 +163,13 @@ void compute_clip_skinning_matrices(const assets::animation_clip_t &clip,
   assets::pose_t pose;
   assets::sample_animation_clip_at(pose, clip, phase, looping);
 
-  if (pose.local.size() != skeleton.bones.size())
+  // Checked here rather than left to compute_posed_skeleton so the message can
+  // name the CLIP: "the clip and the mesh are not on one skeleton" is the
+  // authoring mistake, and a generic bone-count mismatch does not point at it.
+  if (pose.parent_space.size() != skeleton.bones.size())
     fatal_error("clip '{}' has {} bones but skeleton '{}' has {}; the clip and the mesh are not on "
                 "one skeleton",
-                clip.name, pose.local.size(), skeleton.name, skeleton.bones.size());
+                clip.name, pose.parent_space.size(), skeleton.name, skeleton.bones.size());
 
-  out.resize(skeleton.bones.size());
-  std::vector<linalg::mat4f> local(skeleton.bones.size());
-  assets::get_local_transforms_of_bones_from_pose(pose, local);
-  assets::compute_skinning_matrices(skeleton, local, out);
+  assets::compute_posed_skeleton(skeleton, pose, out);
 }

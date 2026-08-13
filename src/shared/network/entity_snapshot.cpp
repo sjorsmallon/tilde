@@ -190,6 +190,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
       case entities::entity_type::Invalid:
       case entities::entity_type::Player_Spawn_Entity:
       case entities::entity_type::Weapon_Entity:
+      case entities::entity_type::Player_Spectate_Entity:
       case entities::entity_type::Particle_Emitter_Entity:
       case entities::entity_type::Trigger_Volume_Entity:
       case entities::entity_type::Light_Entity:

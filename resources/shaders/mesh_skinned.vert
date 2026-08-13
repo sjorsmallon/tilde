@@ -1,9 +1,9 @@
 #version 450
 
-// lit_textured.vert with GPU skinning. Pairs with lit_textured.frag UNCHANGED,
-// which is why albedo stays at set 0 and the bone matrices take set 1: the
-// fragment half of a skinned draw is identical to an unskinned one, and only
-// the vertex half moves.
+// mesh.vert with GPU skinning. It declares the same outputs and the same push
+// block, so it pairs with either fragment shader unchanged: the fragment half of
+// a skinned draw is identical to an unskinned one, and only the vertex half
+// moves. That is why albedo stays at set 0 and the bone matrices take set 1.
 //
 // Binding 1 is the parallel skin array (assets::vertex_skin_t, stride 20). Its
 // layout is asserted at the struct declaration in src/shared/skeleton.hpp --
@@ -16,9 +16,10 @@ layout(location = 2) in vec2  inUV;
 layout(location = 3) in uvec4 inBoneIndices;
 layout(location = 4) in vec4  inBoneWeights;
 
-layout(location = 0) out vec3 fragWorldNormal;
-layout(location = 1) out vec3 fragColor;
-layout(location = 2) out vec2 fragUV;
+layout(location = 0) out vec3       fragWorldNormal;
+layout(location = 1) out vec3       fragColor;
+layout(location = 2) out vec2       fragUV;
+layout(location = 3) out flat float fragAlpha;
 
 layout(push_constant) uniform PushConstants {
     mat4 mvp;
@@ -48,8 +49,9 @@ void main() {
     // wrong trade.
     vec3 skinnedNormal = mat3(skin) * inNormal;
 
-    gl_Position = pc.mvp * skinnedPosition;
+    gl_Position     = pc.mvp * skinnedPosition;
     fragWorldNormal = normalize(pc.normalMatrix * skinnedNormal);
-    fragColor = pc.color.rgb;
-    fragUV = inUV;
+    fragColor       = pc.color.rgb;
+    fragUV          = inUV;
+    fragAlpha       = pc.color.a;
 }

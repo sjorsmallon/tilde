@@ -97,11 +97,12 @@ void update_bots(std::vector<Bot_State> &bots,
   shared::game_session_t &session = context.session;
   physics_state_t        &physics = *context.physics;
 
-  // No bot_debug::g_entries fill here any more: it was a dead store. That
-  // global lives in game_shared, a STATIC lib, so this DLL's copy was never the
-  // one play_state.cpp reads -- and nothing serialized it either. The client's
-  // bot visualisation is fed over the wire from `g_bots` directly, in
-  // server_impl.cpp's S2C_BotDebug broadcast, which is the real bridge.
+  // Nothing fills a shared debug list here, and there is no longer one to fill:
+  // the old bot_debug::g_entries lived in game_shared, a STATIC lib, so this
+  // DLL's copy was never the one the client read -- and nothing serialized it
+  // either. The client's bot visualisation is fed over the wire from `g_bots`
+  // directly, in server_impl.cpp's S2C_BotDebug broadcast, which is the real
+  // bridge; it lands in client replication_t::bot_debug_entries.
 
   Span<entities::Player_Entity> players =
       session.entity_system.entities_of<entities::Player_Entity>();

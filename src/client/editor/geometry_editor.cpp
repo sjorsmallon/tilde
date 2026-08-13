@@ -3,6 +3,7 @@
 #include "../../shared/editor_grid.hpp"
 #include "../../shared/log.hpp"
 #include "../geometry_renderer.hpp"
+#include "../render_assets.hpp"
 #include "../renderer.hpp"
 #include "entity_editor_traits.hpp"
 #include "imgui.h"
@@ -11,6 +12,52 @@
 
 namespace client
 {
+
+namespace
+{
+
+// A distinct colour per uid so adjacent brushes are visually separable. This
+// used to be a `use_random_color` push constant hashed in the vertex shader --
+// one caller, and a whole plumbing path to serve it. Hashing on the CPU costs
+// nothing and the shader stopped having a mode.
+color_t color_from_uid(shared::entity_uid_t uid)
+{
+  uint32_t seed = (uint32_t)uid;
+  seed ^= seed >> 17;
+  seed *= 0xbf324c81u;
+  seed ^= seed >> 11;
+  seed *= 0x9a812cd5u;
+  seed ^= seed >> 15;
+
+  // Biased toward the bright end so the colours read against a dark viewport.
+  const auto channel = [](uint32_t byte) {
+    return (uint8_t)((((float)byte / 255.0f) * 0.7f + 0.3f) * 255.0f);
+  };
+  return color_t{channel(seed & 0xFFu), channel((seed >> 8) & 0xFFu),
+                 channel((seed >> 16) & 0xFFu), 255};
+}
+
+// A wireframe preview of a mesh. False means the mesh did not resolve and the
+// caller should fall back to a box.
+bool push_wireframe_mesh(pass_builder_t &draws,
+                         assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
+                         const linalg::vec3f &position, const linalg::vec3f &rotation,
+                         const linalg::vec3f &scale, color_t color)
+{
+  const renderer::mesh_handle_t mesh = get_render_mesh(mesh_asset);
+  if (!mesh.valid() || !renderer::wireframe_supported())
+    return false;
+
+  renderer::mesh_draw_t draw{};
+  draw.mesh      = mesh;
+  draw.transform = linalg::compose_transform_euler(position, rotation, scale);
+  draw.tint      = color;
+  draw.fill      = renderer::fill_mode_t::wireframe;
+  draws.meshes.push_back(draw);
+  return true;
+}
+
+} // namespace
 
 // ============================================================================
 // Placement
@@ -25,7 +72,7 @@ linalg::vec3 compute_geometry_placement_center(const shared::geometry_value_t &g
 }
 
 void draw_geometry_ghost(const shared::geometry_value_t &geometry,
-                         overlay_renderer_t &renderer, const linalg::vec3 &center)
+                         pass_builder_t &draws, const linalg::vec3 &center)
 {
   // A static mesh previews as its own wireframe mesh when the asset resolves —
   // placing a prop by its bounding box tells you nothing about its orientation.
@@ -35,19 +82,12 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
         std::get<shared::static_mesh_geometry_t>(geometry);
     const assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
         shared::resolve_surface_mesh(static_mesh.surface);
-    if (mesh_handle.valid() && renderer::WireframeSupported())
-    {
-      renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
-                          {.position = center,
-                           .scale = static_mesh.scale,
-                           .rotation = static_mesh.orientation,
-                           .color = colors::yellow,
-                           .wireframe = true});
+    if (push_wireframe_mesh(draws, mesh_handle, center, static_mesh.orientation,
+                            static_mesh.scale, colors::yellow))
       return;
-    }
   }
 
-  renderer.draw_wire_aabb(center, shared::get_half_extents(geometry), colors::yellow);
+  draws.debug.box(center, shared::get_half_extents(geometry), colors::yellow);
 }
 
 // ============================================================================
@@ -55,7 +95,7 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
 // ============================================================================
 
 void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
-                             overlay_renderer_t &renderer, shared::entity_uid_t uid,
+                             pass_builder_t &draws, shared::entity_uid_t uid,
                              bool solid)
 {
   // A box with no mesh is the one case the editor draws differently from the
@@ -66,17 +106,14 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
     const shared::box_geometry_t &box = std::get<shared::box_geometry_t>(geometry);
     if (box.surface.mesh_path.empty())
     {
-      renderer::draw_AABB(renderer.get_command_buffer(),
-                         box.position - box.half_extents,
-                         box.position + box.half_extents, colors::white,
-                         /*as_wireframe=*/!solid,
-                         /*random_color=*/true,
-                         /*random_seed=*/uid);
+      draws.debug.box(box.position, box.half_extents, color_from_uid(uid),
+                      solid ? renderer::fill_mode_t::solid
+                            : renderer::fill_mode_t::wireframe);
       return;
     }
   }
 
-  draw_geometry(renderer.get_command_buffer(), geometry, uid);
+  draw_geometry(draws, geometry, uid);
 }
 
 // ============================================================================
@@ -89,9 +126,9 @@ namespace
 // Grid lines across all six faces of a box at world-aligned `grid_step`
 // intervals, so a selected brush reads as a measurable volume rather than just
 // an outline. Ported unchanged from the AABB entity's editor trait.
-void draw_box_face_grid(overlay_renderer_t &renderer, const linalg::vec3 &position,
+void draw_box_face_grid(pass_builder_t &draws, const linalg::vec3 &position,
                         const linalg::vec3 &half_extents, color_t color,
-                        float grid_step)
+                        float grid_step, float depth_bias)
 {
   const linalg::vec3 &p = position;
   const linalg::vec3 &h = half_extents;
@@ -103,19 +140,19 @@ void draw_box_face_grid(overlay_renderer_t &renderer, const linalg::vec3 &positi
   {
     float xs = std::ceil(xa / grid_step) * grid_step;
     for (float x = xs; x <= xb + 1e-3f; x += grid_step)
-      renderer.draw_line({x, y, za}, {x, y, zb}, color);
+      draws.debug.line({x, y, za}, {x, y, zb}, color, depth_bias);
     float zs = std::ceil(za / grid_step) * grid_step;
     for (float z = zs; z <= zb + 1e-3f; z += grid_step)
-      renderer.draw_line({xa, y, z}, {xb, y, z}, color);
+      draws.debug.line({xa, y, z}, {xb, y, z}, color, depth_bias);
   };
 
   auto draw_grid_xz_outer = [&](float y, float xa, float xb, float za, float zb)
   {
     // Always draw the 4 outer edges regardless of grid alignment
-    renderer.draw_line({xa, y, za}, {xb, y, za}, color);
-    renderer.draw_line({xb, y, za}, {xb, y, zb}, color);
-    renderer.draw_line({xb, y, zb}, {xa, y, zb}, color);
-    renderer.draw_line({xa, y, zb}, {xa, y, za}, color);
+    draws.debug.line({xa, y, za}, {xb, y, za}, color, depth_bias);
+    draws.debug.line({xb, y, za}, {xb, y, zb}, color, depth_bias);
+    draws.debug.line({xb, y, zb}, {xa, y, zb}, color, depth_bias);
+    draws.debug.line({xa, y, zb}, {xa, y, za}, color, depth_bias);
     draw_grid_xz(y, xa, xb, za, zb);
   };
 
@@ -123,20 +160,20 @@ void draw_box_face_grid(overlay_renderer_t &renderer, const linalg::vec3 &positi
   {
     float ys = std::ceil(ya / grid_step) * grid_step;
     for (float y = ys; y <= yb + 1e-3f; y += grid_step)
-      renderer.draw_line({x, y, za}, {x, y, zb}, color);
+      draws.debug.line({x, y, za}, {x, y, zb}, color, depth_bias);
     float zs = std::ceil(za / grid_step) * grid_step;
     for (float z = zs; z <= zb + 1e-3f; z += grid_step)
-      renderer.draw_line({x, ya, z}, {x, yb, z}, color);
+      draws.debug.line({x, ya, z}, {x, yb, z}, color, depth_bias);
   };
 
   auto draw_grid_xy = [&](float z, float xa, float xb, float ya, float yb)
   {
     float xs = std::ceil(xa / grid_step) * grid_step;
     for (float x = xs; x <= xb + 1e-3f; x += grid_step)
-      renderer.draw_line({x, ya, z}, {x, yb, z}, color);
+      draws.debug.line({x, ya, z}, {x, yb, z}, color, depth_bias);
     float ys = std::ceil(ya / grid_step) * grid_step;
     for (float y = ys; y <= yb + 1e-3f; y += grid_step)
-      renderer.draw_line({xa, y, z}, {xb, y, z}, color);
+      draws.debug.line({xa, y, z}, {xb, y, z}, color, depth_bias);
   };
 
   // Top and bottom (Y faces)
@@ -153,20 +190,24 @@ void draw_box_face_grid(overlay_renderer_t &renderer, const linalg::vec3 &positi
 } // namespace
 
 void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
-                                       overlay_renderer_t &renderer, float time,
+                                       pass_builder_t &draws, float time,
                                        float grid_step)
 {
   const color_t color = compute_selection_pulse_color(time);
 
-  // Strong depth bias so the highlight renders in front of the solid surface.
-  renderer::set_line_depth_bias(-200.0f, -10.0f);
+  // Strong bias so the highlight renders in FRONT of the solid surface it
+  // traces. It rides each line rather than being set and restored around the
+  // switch below: three early-return paths each had to remember the restore,
+  // and one of them getting it wrong was invisible.
+  constexpr float highlight_bias = -200.0f;
 
   switch (shared::get_kind(geometry))
   {
   case shared::geometry_kind_t::Box:
   {
     const shared::box_geometry_t &box = std::get<shared::box_geometry_t>(geometry);
-    draw_box_face_grid(renderer, box.position, box.half_extents, color, grid_step);
+    draw_box_face_grid(draws, box.position, box.half_extents, color, grid_step,
+                       highlight_bias);
     break;
   }
 
@@ -176,20 +217,13 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
         std::get<shared::static_mesh_geometry_t>(geometry);
     const assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
         shared::resolve_surface_mesh(static_mesh.surface);
-    if (mesh_handle.valid() && renderer::WireframeSupported())
-    {
-      renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
-                          {.position = static_mesh.position,
-                           .scale = static_mesh.scale,
-                           .rotation = static_mesh.orientation,
-                           .color = color,
-                           .wireframe = true});
+    if (push_wireframe_mesh(draws, mesh_handle, static_mesh.position,
+                            static_mesh.orientation, static_mesh.scale, color))
       break;
-    }
 
     const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
-    renderer.draw_wire_aabb((bounds.min + bounds.max) * 0.5f,
-                           (bounds.max - bounds.min) * 0.5f, color);
+    draws.debug.box((bounds.min + bounds.max) * 0.5f, (bounds.max - bounds.min) * 0.5f, color,
+                    renderer::fill_mode_t::wireframe, highlight_bias);
     break;
   }
 
@@ -199,12 +233,11 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
     // resizing, and it's what the sculpting brush rays against.
     const shared::displacement_geometry_t &displacement =
         std::get<shared::displacement_geometry_t>(geometry);
-    renderer.draw_wire_aabb(displacement.position, displacement.half_extents, color);
+    draws.debug.box(displacement.position, displacement.half_extents, color,
+                    renderer::fill_mode_t::wireframe, highlight_bias);
     break;
   }
   }
-
-  renderer::set_line_depth_bias(-2.0f, -1.0f);
 }
 
 // ============================================================================

@@ -6,7 +6,7 @@
 #include "../shared/game_session.hpp"
 #include "game_rules.hpp"
 #include "../shared/map.hpp"
-#include "../shared/network/server_connection_state.hpp"
+#include "../shared/network/server_transport_layer.hpp"
 #include "../shared/physics.hpp"
 #include <array>
 #include <cstdint>
@@ -39,7 +39,7 @@ struct server_context_t
   // broadcasts nothing — a joining client gets the full set at connect instead.
   cvars::cvar_state_t last_broadcast_cvars;
 
-  network::Server_Connection_State net;
+  network::Server_Transport_Layer transport_layer;
   shared::game_session_t session;
 
   // Match-level rules: which round we're in, which phase, when the phase ends.

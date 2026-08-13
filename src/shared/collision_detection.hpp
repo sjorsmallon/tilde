@@ -1,5 +1,5 @@
 #pragma once
-#include "bsp.hpp"
+#include "aabb.hpp"
 #include "network/network_types.hpp"
 #include "plane.hpp"
 #include <cmath>
@@ -46,7 +46,7 @@ struct Collision_Id
 
 struct BVH_Node
 {
-  AABB aabb;
+  shared::aabb_bounds_t aabb;
 
   // Internal Node Data
   uint32_t left = 0;
@@ -65,7 +65,7 @@ struct BVH_Node
 struct BVH_Primitive
 {
   Collision_Id id;
-  AABB aabb;
+  shared::aabb_bounds_t aabb;
   std::vector<Plane> collision_planes; // convex hull faces, normals pointing outward
   std::vector<std::vector<vec3f>> face_polygons; // face_polygons[i] ↔ collision_planes[i]
 };
@@ -80,7 +80,7 @@ struct Bounding_Volume_Hierarchy
 };
 
 void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
-                   const AABB &aabb,
+                   const shared::aabb_bounds_t &aabb,
                    std::vector<Plane> collision_planes = {});
 
 Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs);
@@ -95,7 +95,7 @@ struct ray_hit_result_t
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
                        const vec3f &origin, const vec3f &dir, ray_hit_result_t &out_hit);
 
-void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const AABB &aabb,
+void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const shared::aabb_bounds_t &aabb,
                         std::vector<const BVH_Primitive *> &out_primitives);
 
 // Möller–Trumbore ray-triangle intersection. Returns true and sets out_t to the

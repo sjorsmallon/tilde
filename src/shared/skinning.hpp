@@ -22,9 +22,12 @@
 // when that lands, sampling produces TRS, composes to these matrices, and calls
 // the same function.
 
+#include "animation.hpp"
 #include "linalg.hpp"
 #include "skeleton.hpp"
 #include "span.hpp"
+
+#include <vector>
 
 namespace assets
 {
@@ -76,6 +79,41 @@ void compute_model_space_matrices(const skeleton_t          &skeleton,
 void compute_skinning_matrices(const skeleton_t          &skeleton,
                                Span<const linalg::mat4f>  parent_space,
                                Span<linalg::mat4f>        out_skinning);
+
+// The two matrix sets a posed skeleton yields, held together because they are
+// not independent: skinning[i] IS model_space[i] * inverse_bind[i], so a caller
+// holding one that disagrees with the other holds a bug. Only
+// compute_posed_skeleton sizes them, which is what makes "both as long as the
+// skeleton" unrepresentable rather than merely checked -- three loose vectors
+// and three resize calls at the call site is one edit away from being wrong.
+//
+// The PARENT-SPACE matrices are deliberately NOT a member. Nothing reads them
+// once the walk is done; they were only ever scratch, and holding them as a
+// third array meant every caller allocated and sized a buffer whose contents it
+// never looked at.
+struct posed_skeleton_t
+{
+  // Where each bone IS, in the model's own frame. This is what anything wanting
+  // a bone's POSITION reads -- a skeleton overlay, a hitbox capsule's endpoints,
+  // an attachment point. See compute_model_space_matrices above for why the
+  // skinning matrices cannot answer that question.
+  std::vector<linalg::mat4f> model_space;
+  // model_space[i] * inverse_bind[i]. What gets uploaded to the UBO.
+  std::vector<linalg::mat4f> skinning;
+
+  // Back to "nothing is posed", keeping the capacity. An EMPTY skinning set is
+  // what a draw reads as the bind pose, so this is what an unskinned mesh gets.
+  // A member rather than two clear() calls at the call site for the same reason
+  // the two vectors are a struct: half-cleared is not a state that should exist.
+  void clear()
+  {
+    model_space.clear();
+    skinning.clear();
+  }
+};
+
+void compute_posed_skeleton(const skeleton_t &skeleton, const pose_t &pose,
+                            posed_skeleton_t &out);
 
 // Where a bone POINTS -- head toward tail -- given its MODEL-SPACE matrix. The
 // skeleton stores no tail, so this is the only tail information there is, and a

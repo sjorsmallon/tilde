@@ -37,11 +37,8 @@ void request_exit();
 // Render UI for the current state
 void render_ui();
 
-// Pre-render pass (compute dispatches)
-void pre_render(VkCommandBuffer cmd);
-
-// Render 3D for the current state
-void render_3d(VkCommandBuffer cmd);
+// Append the current state's view passes to the frame
+void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes);
 
 // Get access to the shared entity system
 // Get access to the shared entity system (convenience wrapper around context)

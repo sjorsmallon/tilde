@@ -30,9 +30,9 @@ void play_hitmarker_audio_and_update_hit_tick_state(client_context_t &context)
   // should this actually be an assert?
   if (!context.audio) return;
 
-  auto my_entity = context.latest_player_entities.find(context.my_slot);
+  auto my_entity = context.replication.latest_player_entities.find(context.connection.my_slot);
 
-  if (my_entity == context.latest_player_entities.end())
+  if (my_entity == context.replication.latest_player_entities.end())
   {
     log_error("tried to play hit confirm audio but our own entity is missing from the latest snapshot.");
     return;
@@ -42,23 +42,23 @@ void play_hitmarker_audio_and_update_hit_tick_state(client_context_t &context)
 
   // First sight seeds and never plays: joining with a non-zero stamp already
   // on our entity would read as "you just hit someone" the moment we connect.
-  if (!context.snapshot_state.hit_tick_seeded)
+  if (!context.replication.hit_tick_seeded)
   {
-    context.snapshot_state.last_seen_hit_tick = player_entity.last_hit_tick;
-    context.snapshot_state.hit_tick_seeded    = true;
+    context.replication.last_seen_hit_tick = player_entity.last_hit_tick;
+    context.replication.hit_tick_seeded    = true;
     return;
   }
 
-  if (player_entity.last_hit_tick <=context.snapshot_state.last_seen_hit_tick) return;
+  if (player_entity.last_hit_tick <=context.replication.last_seen_hit_tick) return;
 
 
-  context.snapshot_state.last_seen_hit_tick = player_entity.last_hit_tick;
+  context.replication.last_seen_hit_tick = player_entity.last_hit_tick;
 
   // Guard the subtraction as well as the age: a stamp ahead of the snapshot
   // tick would wrap and read as ancient.
-  if (player_entity.last_hit_tick > context.snapshot_state.latest_processed_tick) return;
+  if (player_entity.last_hit_tick > context.replication.latest_processed_tick) return;
   
-  if (context.snapshot_state.latest_processed_tick - player_entity.last_hit_tick > max_hit_stamp_age_ticks) return;
+  if (context.replication.latest_processed_tick - player_entity.last_hit_tick > max_hit_stamp_age_ticks) return;
 
   // body hit is a different sound, and is already played at the victim's location. We only want to play a hitmarker for headshots.
   if (!player_entity.last_hit_was_headshot) return;

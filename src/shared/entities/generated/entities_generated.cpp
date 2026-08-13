@@ -212,6 +212,36 @@ constexpr field_info_t Player_Spawn_Entity_FIELDS[] = {
    .enum_id = 2},
 };
 
+constexpr field_info_t Player_Spectate_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Player_Spectate_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Player_Spectate_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_id = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Player_Spectate_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Player_Spectate_Entity::position),
+   .flags = 7u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_id = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Player_Spectate_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Player_Spectate_Entity::orientation),
+   .flags = 7u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_id = NOT_AN_ENUM},
+};
+
 constexpr field_info_t Player_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_U32,
@@ -1024,6 +1054,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
 };
 
 Entity* construct_Player_Spawn_Entity(void* memory) { return new (memory) Player_Spawn_Entity(); }
+Entity* construct_Player_Spectate_Entity(void* memory) { return new (memory) Player_Spectate_Entity(); }
 Entity* construct_Player_Entity(void* memory) { return new (memory) Player_Entity(); }
 Entity* construct_Weapon_Entity(void* memory) { return new (memory) Weapon_Entity(); }
 Entity* construct_Rocket_Entity(void* memory) { return new (memory) Rocket_Entity(); }
@@ -1033,6 +1064,7 @@ Entity* construct_Light_Entity(void* memory) { return new (memory) Light_Entity(
 Entity* construct_Physics_Body_Entity(void* memory) { return new (memory) Physics_Body_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
+Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
 Entity* as_base_Player_Entity(void* memory) { return static_cast<Entity*>((Player_Entity*)memory); }
 Entity* as_base_Weapon_Entity(void* memory) { return static_cast<Entity*>((Weapon_Entity*)memory); }
 Entity* as_base_Rocket_Entity(void* memory) { return static_cast<Entity*>((Rocket_Entity*)memory); }
@@ -1044,6 +1076,7 @@ Entity* as_base_Physics_Body_Entity(void* memory) { return static_cast<Entity*>(
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
+  {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 3}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
   {"player_entity", "Player", {Player_Entity_FIELDS, 19}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 6}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 12u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
@@ -1056,6 +1089,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
 constexpr int32_t COMPONENT_OFFSETS[][4] = {
   {-1, -1, -1, -1}, // Invalid
   {-1, -1, -1, -1}, // Player_Spawn_Entity
+  {-1, -1, -1, -1}, // Player_Spectate_Entity
   {-1, -1, (int32_t)offsetof(Player_Entity, render), (int32_t)offsetof(Player_Entity, hitbox)}, // Player_Entity
   {-1, -1, (int32_t)offsetof(Weapon_Entity, render), -1}, // Weapon_Entity
   {-1, -1, (int32_t)offsetof(Rocket_Entity, render), (int32_t)offsetof(Rocket_Entity, hitbox)}, // Rocket_Entity
@@ -1065,9 +1099,10 @@ constexpr int32_t COMPONENT_OFFSETS[][4] = {
   {-1, -1, (int32_t)offsetof(Physics_Body_Entity, render), (int32_t)offsetof(Physics_Body_Entity, hitbox)}, // Physics_Body_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 6;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 7;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
+  entity_type::Player_Spectate_Entity,
   entity_type::Weapon_Entity,
   entity_type::Particle_Emitter_Entity,
   entity_type::Trigger_Volume_Entity,
@@ -1472,6 +1507,7 @@ Entity* create_entity(entity_type type)
   {
     case entity_type::Invalid: break;
     case entity_type::Player_Spawn_Entity: return new Player_Spawn_Entity();
+    case entity_type::Player_Spectate_Entity: return new Player_Spectate_Entity();
     case entity_type::Player_Entity: return new Player_Entity();
     case entity_type::Weapon_Entity: return new Weapon_Entity();
     case entity_type::Rocket_Entity: return new Rocket_Entity();
@@ -1501,6 +1537,7 @@ void destroy_entity(Entity* entity)
   {
     case entity_type::Invalid: break;
     case entity_type::Player_Spawn_Entity: delete static_cast<Player_Spawn_Entity*>(entity); return;
+    case entity_type::Player_Spectate_Entity: delete static_cast<Player_Spectate_Entity*>(entity); return;
     case entity_type::Player_Entity: delete static_cast<Player_Entity*>(entity); return;
     case entity_type::Weapon_Entity: delete static_cast<Weapon_Entity*>(entity); return;
     case entity_type::Rocket_Entity: delete static_cast<Rocket_Entity*>(entity); return;
@@ -1517,6 +1554,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xd8ae6a33u;
+const uint32_t SCHEMA_HASH = 0x079790dfu;
 
 } // namespace entities

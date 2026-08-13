@@ -1,4 +1,5 @@
 #include "animation_tool.hpp"
+#include "../../render_assets.hpp"
 
 #include "../../../shared/cvars/generated/cvars_generated.hpp"
 #include "../../../shared/entities/generated/entities_generated.hpp"
@@ -31,14 +32,13 @@ constexpr entities::mesh_asset PREVIEW_MESH = entities::mesh_asset::Leet_Full;
 // bone's own local +Y (its height). Long enough to see which way the bone points.
 constexpr float LEAF_BONE_STUB_LENGTH = 4.0f;
 
-
 // used to resolve all subitems for this mesh. the animations / hitboxes / armature.
 constexpr const char *MODELS_DIRECTORY = "resources/models/";
 
 // The bare filename of a clip path, for a combo label. Returns a pointer INTO
 // `path`, so it lives exactly as long as the `clip_paths` entry it came from --
 // which is every use here, since ImGui copies the label it is handed.
-const char *clip_name_of(const std::string &path)
+const char* clip_name_of(const std::string &path)
 {
   const size_t slash = path.find_last_of('/');
   return path.c_str() + (slash == std::string::npos ? 0 : slash + 1);
@@ -48,8 +48,8 @@ const char *clip_name_of(const std::string &path)
 
 void Animation_Tool::on_enable(editor_context_t &ctx)
 {
-  selected_bone   = Animation_Tool::NO_BONE_SELECTED;
-  selected_volume = Animation_Tool::NO_VOLUME_SELECTED;
+  selected_bone_idx   = Animation_Tool::NO_BONE_SELECTED;
+  selected_volume_idx = Animation_Tool::NO_VOLUME_SELECTED;
 
   // The pose has to exist before the rig can be resolved against it, and
   // update_pose is what resolves the skeleton -- so this is two calls, in this
@@ -79,10 +79,10 @@ void Animation_Tool::on_update(editor_context_t &ctx, const viewport_state_t &vi
 void Animation_Tool::scan_clips()
 {
   const std::string previous =
-      (selected_clip != NO_CLIP_SELECTED) ? clip_paths[selected_clip] : std::string();
+      (selected_clip_idx != NO_CLIP_SELECTED) ? clip_paths[selected_clip_idx] : std::string();
 
   clip_paths.clear();
-  selected_clip = NO_CLIP_SELECTED;
+  selected_clip_idx = NO_CLIP_SELECTED;
 
   std::error_code error_code;
   std::filesystem::directory_iterator directory(MODELS_DIRECTORY, error_code);
@@ -107,26 +107,26 @@ void Animation_Tool::scan_clips()
   {
     if (clip_paths[index] == previous)
     {
-      selected_clip = (int)index;
+      selected_clip_idx = (int)index;
       break;
     }
   }
-  if (selected_clip == NO_CLIP_SELECTED && !clip_paths.empty())
-    selected_clip = 0;
+  if (selected_clip_idx == NO_CLIP_SELECTED && !clip_paths.empty())
+    selected_clip_idx = 0;
 
-  if (selected_clip != NO_CLIP_SELECTED)
-    load_selected_clip();
+  if (selected_clip_idx != NO_CLIP_SELECTED)
+    load_selected_clip_idx();
 }
 
-void Animation_Tool::load_selected_clip()
+void Animation_Tool::load_selected_clip_idx()
 {
   clip_handle = {};
   clip_phase  = 0.0f;
 
-  if (selected_clip == NO_CLIP_SELECTED)
+  if (selected_clip_idx == NO_CLIP_SELECTED)
     return;
 
-  clip_handle = assets::load_animation(clip_paths[selected_clip].c_str());
+  clip_handle = assets::load_animation(clip_paths[selected_clip_idx].c_str());
 }
 
 void Animation_Tool::advance_clip(float dt)
@@ -134,9 +134,9 @@ void Animation_Tool::advance_clip(float dt)
   if (pose_source != Pose_Source::Clip || !clip_playing)
     return;
 
-  const assets::animation_clip_t *clip = assets::get(clip_handle);
-  if (!clip)
-    return;
+  const assets::animation_clip_t* clip = assets::get(clip_handle);
+  
+  if (!clip) return;
 
   // A one-frame clip one-shot has no duration, so there is nothing to advance
   // and nothing to divide by -- it is already showing its only pose.
@@ -174,16 +174,12 @@ void Animation_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}
 linalg::vec3f Animation_Tool::bone_head(uint32_t bone_index) const
 {
   // Column-major: cols[3] is the translation column.
-  const linalg::vec4 &translation = model_space_matrices[bone_index][3];
+  const linalg::vec4 &translation = posed_skeleton.model_space[bone_index][3];
   return linalg::vec3f{translation.x, translation.y, translation.z};
 }
 
 linalg::vec3f Animation_Tool::to_world_direction(const linalg::vec3f &model_space_vector) const
 {
-  // Ry at the model-yaw slider's angle -- the same rotation renderer.cpp applies
-  // to the mesh (T * Rz * Ry * Rx * S, with pitch and roll zero here). Sweeps +X
-  // toward -Z, the OPPOSITE of the viewangle yaw in linalg.hpp; the mesh's model
-  // matrix is the convention that has to match.
   constexpr float DEGREES_TO_RADIANS = 3.14159265358979f / 180.0f;
   const float     angle              = model_yaw_degrees * DEGREES_TO_RADIANS;
   const float     cosine             = std::cos(angle);
@@ -208,13 +204,12 @@ linalg::vec3f Animation_Tool::to_world(const linalg::vec3f &model_space_point) c
 void Animation_Tool::load_rig()
 {
   rig  = {};
-  resolved_rig.clear();
   hitboxes.clear();
   seeds.clear();
   coverage = {};
   excursion = {};
   rig_load_attempted = true;
-  selected_volume    = NO_VOLUME_SELECTED;
+  selected_volume_idx    = NO_VOLUME_SELECTED;
 
   if (!skeleton)
   {
@@ -226,17 +221,17 @@ void Animation_Tool::load_rig()
 
   // Both loaders name the file, the volume and the bones they could not find,
   // so a failure here has already said everything there is to say.
-  std::optional<assets::hitbox_rig_t> parsed = models::try_parse_hitbox_rig_file(rig_path.c_str());
+  std::optional<assets::hitbox_rig_file_t> parsed =
+      models::try_parse_hitbox_rig_file(rig_path.c_str());
   if (!parsed)
     return;
 
-  std::optional<assets::resolved_hitbox_rig_t> resolved =
+  std::optional<assets::hitbox_rig_t> resolved =
       assets::try_resolve_hitbox_rig(*parsed, *skeleton);
   if (!resolved)
     return;
 
-  rig          = std::move(*parsed);
-  resolved_rig = std::move(*resolved);
+  rig = std::move(*resolved);
   hitboxes.resize(rig.volumes.size());
 
   refresh_derivation();
@@ -249,7 +244,7 @@ void Animation_Tool::refresh_derivation()
     return;
 
   seeds.resize(rig.volumes.size());
-  assets::derive_hitbox_sizes(*mesh, *skeleton, rig, resolved_rig, seeds);
+  assets::derive_hitbox_sizes(*mesh, *skeleton, rig, seeds);
 
   // Coverage is a BIND-pose property (skinning moves skin and volumes together),
   // so it is computed against the bind pose (read: t-pose) rather than the one on screen.
@@ -262,7 +257,7 @@ void Animation_Tool::refresh_derivation()
   assets::compute_model_space_matrices(*skeleton, bind_parent_space, bind_model);
 
   std::vector<assets::posed_hitbox_t> bind_hitboxes(rig.volumes.size());
-  assets::compute_posed_hitboxes(rig, resolved_rig, bind_model, bind_hitboxes);
+  assets::compute_posed_hitboxes(rig, bind_model, bind_hitboxes);
   coverage = assets::compute_hitbox_coverage(*mesh, *skeleton, bind_hitboxes,
                                              assets::HITBOX_COVERAGE_TOLERANCE);
 }
@@ -276,6 +271,7 @@ bool Animation_Tool::update_pose()
   skeleton             = nullptr;
 
   mesh_handle = assets::get_mesh(PREVIEW_MESH);
+
   if (!mesh_handle.valid())
   {
     if (report)
@@ -332,10 +328,8 @@ bool Animation_Tool::update_pose()
 
     case Pose_Source::Clip:
     {
-      // Unlike the aim poses -- which are a build the process cannot run without
-      // -- a clip is something you point the tool at, so a missing one is a
-      // state the panel reports rather than a reason to die.
-      const assets::animation_clip_t *clip = assets::get(clip_handle);
+      
+      const assets::animation_clip_t* clip = assets::get(clip_handle);
       if (!clip)
       {
         if (report)
@@ -350,29 +344,23 @@ bool Animation_Tool::update_pose()
     }
   }
 
-  if (pose.local.size() != bone_count)
+  if (pose.parent_space.size() != bone_count)
   {
     if (report)
       log_error("[animation] the sampled pose has {} bones but skeleton '{}' has {}",
-                pose.local.size(), skeleton->name, bone_count);
+                pose.parent_space.size(), skeleton->name, bone_count);
     return false;
   }
 
   model_failure_logged = false;
 
-  local_matrices.resize(bone_count);
-  model_space_matrices.resize(bone_count);
-  skinning_matrices.resize(bone_count);
-
-  assets::get_local_transforms_of_bones_from_pose(pose, local_matrices);
-  assets::compute_model_space_matrices(*skeleton, local_matrices, model_space_matrices);
-  assets::compute_skinning_matrices(*skeleton, local_matrices, skinning_matrices);
+  assets::compute_posed_skeleton(*skeleton, pose, posed_skeleton);
 
   // The volumes follow the pose every frame, through the same model-space
   // matrices the mesh is skinned by -- which is the whole claim phase B makes.
   if (!hitboxes.empty())
   {
-    assets::compute_posed_hitboxes(rig, resolved_rig, model_space_matrices, hitboxes);
+    assets::compute_posed_hitboxes(rig, posed_skeleton.model_space, hitboxes);
     excursion = assets::compute_hull_excursion(hitboxes, shared::player_half_width,
                                                shared::player_half_height * 2.0f);
   }
@@ -383,13 +371,13 @@ std::optional<view_focus_t> Animation_Tool::view_focus() const
 {
   // Bone heads, not the movement hull: the hull is a constant, while an
   // extended arm is exactly the thing you snapped to a side view to look at.
-  if (!skeleton || model_space_matrices.empty())
+  if (!skeleton || posed_skeleton.model_space.empty())
     return view_focus_t{.center = {0.0f, shared::player_half_height, 0.0f},
                         .radius = shared::player_half_height};
 
   linalg::vec3f minimum = bone_head(0);
   linalg::vec3f maximum = minimum;
-  for (uint32_t index = 1; index < (uint32_t)model_space_matrices.size(); ++index)
+  for (uint32_t index = 1; index < (uint32_t)posed_skeleton.model_space.size(); ++index)
   {
     const linalg::vec3f head = bone_head(index);
     minimum = {std::min(minimum.x, head.x), std::min(minimum.y, head.y),
@@ -410,24 +398,25 @@ std::optional<view_focus_t> Animation_Tool::view_focus() const
   return view_focus_t{.center = center, .radius = radius};
 }
 
-void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &renderer)
+void Animation_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
 {
-  // `skeleton` is the one "is there anything to draw" test, and it is set only
-  // by on_update. The hull and the static table below do NOT depend on it --
-  // they are map-space constants and stay useful when the model is missing.
   const bool posed = skeleton != nullptr;
 
   if (posed && show_mesh)
   {
-    renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
-                        {.position = {0, 0, 0},
-                         .scale    = {1, 1, 1},
-                         .rotation = {0, model_yaw_degrees, 0},
-                         .color    = colors::white,
-                         .shader = unlit ? renderer::shader_type::Unlit : renderer::shader_type::Lit,
-                         .wireframe             = wireframe,
-                         .skinning_matrices     = skinning_matrices.data(),
-                         .skinning_matrix_count = (uint32_t)skinning_matrices.size()});
+    const renderer::mesh_handle_t mesh = get_render_mesh(mesh_handle);
+
+    renderer::mesh_draw_t draw{};
+    draw.mesh      = mesh;
+    draw.transform = linalg::compose_transform_euler({0, 0, 0}, {0, model_yaw_degrees, 0},
+                                                     {1, 1, 1});
+    // `posed_skeleton` is a member, so the Span outlives this call and stays
+    // valid until render_frame reads it.
+    draw.pose = posed_skeleton.skinning;
+    draw.fill = wireframe ? renderer::fill_mode_t::wireframe : renderer::fill_mode_t::solid;
+    if (unlit)
+      draw.material_overrides = material_variant(mesh, {.shader = renderer::shader_t::unlit});
+    draws.meshes.push_back(draw);
   }
 
   if (posed && show_skeleton)
@@ -446,15 +435,15 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
       {
         has_child[parent] = true;
         const color_t color =
-            ((int)parent == selected_bone || (int)index == selected_bone) ? colors::gold : colors::green;
-        renderer.draw_line(to_world(bone_head(parent)), to_world(bone_head(index)), color);
+            ((int)parent == selected_bone_idx || (int)index == selected_bone_idx) ? colors::gold : colors::green;
+        draws.debug.line(to_world(bone_head(parent)), to_world(bone_head(index)), color);
       }
     }
 
     for (uint32_t index = 0; index < bone_count; ++index)
     {
       const linalg::vec3f head     = to_world(bone_head(index));
-      const bool          selected = (int)index == selected_bone;
+      const bool          selected = (int)index == selected_bone_idx;
 
       if (!has_child[index])
       {
@@ -463,17 +452,18 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
         // 2026-08-10, which pointed every leaf stub sideways.
         const linalg::vec3f axis =
             to_world(bone_head(index) +
-                       assets::bone_direction(model_space_matrices[index]) * LEAF_BONE_STUB_LENGTH);
-        renderer.draw_line(head, axis, selected ? colors::gold : colors::green);
+                       assets::bone_direction(posed_skeleton.model_space[index]) *
+                           LEAF_BONE_STUB_LENGTH);
+        draws.debug.line(head, axis, selected ? colors::gold : colors::green);
       }
 
       // Joints get a marker so a bone that has collapsed onto its parent -- the
       // classic wrong-inverse-bind symptom -- is visible as a doubled dot
       // rather than as nothing at all.
-      renderer.draw_wire_aabb(head, {0.6f, 0.6f, 0.6f}, selected ? colors::gold : colors::white);
+      draws.debug.box(head, {0.6f, 0.6f, 0.6f}, selected ? colors::gold : colors::white);
 
       if (show_bone_names || selected)
-        renderer.draw_text_in_world(head, skeleton->bones[index].name.c_str(), colors::white);
+        draws.debug.text(head, skeleton->bones[index].name.c_str(), colors::white);
     }
   }
 
@@ -485,7 +475,7 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
     // Through the same wireframes the in-game overlay uses, so the tool cannot
     // show a shape the game does not.
     const auto line = [&](const linalg::vec3f &start, const linalg::vec3f &end, color_t color)
-    { renderer.draw_line(start, end, color); };
+    { draws.debug.line(start, end, color); };
 
     for (uint32_t index = 0; index < (uint32_t)hitboxes.size(); ++index)
     {
@@ -494,7 +484,7 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
       // two conventions. A static highlight would also be ambiguous here, since
       // a volume's region colour is already a colour.
       const assets::posed_hitbox_t &hitbox = hitboxes[index];
-      const color_t                 color  = (int)index == selected_volume
+      const color_t                 color  = (int)index == selected_volume_idx
                                                  ? compute_selection_pulse_color(ctx.time)
                                                  : hit_region_color(hitbox.region);
 
@@ -510,8 +500,8 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
 
       draw_posed_hitbox(line, placed, color);
 
-      if ((int)index == selected_volume)
-        renderer.draw_text_in_world(placed.start, rig.volumes[index].name.c_str(), colors::white);
+      if ((int)index == selected_volume_idx)
+        draws.debug.text(placed.start, rig.volumes[index].volume.name.c_str(), colors::white);
     }
   }
 
@@ -520,7 +510,7 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, overlay_renderer_t &
   // against -- see the hull excursion readout.
   if (show_movement_hull)
   {
-    renderer.draw_wire_aabb({0, shared::player_half_height, 0},
+    draws.debug.box({0, shared::player_half_height, 0},
                            {shared::player_half_width, shared::player_half_height,
                             shared::player_half_width},
                            colors::white);
@@ -556,7 +546,7 @@ void Animation_Tool::draw_hitbox_panel()
 
   const char *worst_volume = excursion.volume_index < 0
                                  ? "none"
-                                 : rig.volumes[(size_t)excursion.volume_index].name.c_str();
+                                 : rig.volumes[(size_t)excursion.volume_index].volume.name.c_str();
   const bool over_budget = excursion.distance > assets::HITBOX_MAX_HULL_EXCURSION;
   ImGui::TextColored(over_budget ? ImVec4(1, 0.5f, 0.3f, 1) : ImVec4(0.6f, 0.9f, 0.6f, 1),
                      "hull excursion %.2f / %.1f  (%s)", excursion.distance,
@@ -584,15 +574,15 @@ void Animation_Tool::draw_hitbox_panel()
 
     for (uint32_t index = 0; index < (uint32_t)rig.volumes.size(); ++index)
     {
-      assets::hitbox_volume_t &volume = rig.volumes[index];
+      assets::hitbox_volume_t &volume = rig.volumes[index].volume;
       const bool               round  = assets::hitbox_shape_uses_radius(volume.shape);
       ImGui::PushID((int)index);
       ImGui::TableNextRow();
 
       ImGui::TableNextColumn();
-      if (ImGui::Selectable(volume.name.c_str(), (int)index == selected_volume,
+      if (ImGui::Selectable(volume.name.c_str(), (int)index == selected_volume_idx,
                             ImGuiSelectableFlags_SpanAllColumns))
-        selected_volume = ((int)index == selected_volume) ? -1 : (int)index;
+        selected_volume_idx = ((int)index == selected_volume_idx) ? -1 : (int)index;
 
       ImGui::TableNextColumn();
       ImGui::TextUnformatted(assets::to_string(volume.shape));
@@ -630,14 +620,15 @@ void Animation_Tool::draw_hitbox_panel()
     ImGui::EndTable();
   }
 
-  if (selected_volume >= 0)
+  if (selected_volume_idx >= 0)
   {
     // The selected volume's numbers, wide enough to drag slowly while watching
     // the shape move. The table shows the same values; this is where they are
     // edited, because a column the width of a word is not a place to drag.
-    assets::hitbox_volume_t &volume = rig.volumes[(size_t)selected_volume];
+    assets::rigged_hitbox_volume_t &rigged = rig.volumes[(size_t)selected_volume_idx];
+    assets::hitbox_volume_t        &volume = rigged.volume;
     const assets::hitbox_seed_t seed =
-        selected_volume < (int)seeds.size() ? seeds[(size_t)selected_volume] : assets::hitbox_seed_t{};
+        selected_volume_idx < (int)seeds.size() ? seeds[(size_t)selected_volume_idx] : assets::hitbox_seed_t{};
 
     // Changing shape keeps the span and the region and only reinterprets the
     // size, so a volume seeded as a capsule can be tried as a box without
@@ -654,7 +645,13 @@ void Animation_Tool::draw_hitbox_panel()
 
         volume.shape = candidate;
         if (candidate == assets::hitbox_shape_t::Sphere)
-          volume.end_bone = volume.start_bone;
+        {
+          // The bound half collapses with the authored half, or derivation keeps
+          // measuring against the span this volume no longer has.
+          volume.end_bone   = volume.start_bone;
+          rigged.end_bone   = rigged.start_bone;
+          rigged.span_bones = {rigged.start_bone};
+        }
 
         // Seed whichever size the new shape reads if it has never been set --
         // a box that starts at zero is invisible, which looks like a bug in the
@@ -730,19 +727,19 @@ void Animation_Tool::draw_hitbox_panel()
 
 void Animation_Tool::draw_clip_panel()
 {
-  const char *preview = (selected_clip == NO_CLIP_SELECTED)
+  const char *preview = (selected_clip_idx == NO_CLIP_SELECTED)
                             ? "(no clips found)"
-                            : clip_name_of(clip_paths[selected_clip]);
+                            : clip_name_of(clip_paths[selected_clip_idx]);
 
   if (ImGui::BeginCombo("Clip", preview))
   {
     for (size_t index = 0; index < clip_paths.size(); ++index)
     {
-      const bool chosen = ((int)index == selected_clip);
+      const bool chosen = ((int)index == selected_clip_idx);
       if (ImGui::Selectable(clip_name_of(clip_paths[index]), chosen))
       {
-        selected_clip = (int)index;
-        load_selected_clip();
+        selected_clip_idx = (int)index;
+        load_selected_clip_idx();
       }
     }
     ImGui::EndCombo();
@@ -917,8 +914,8 @@ void Animation_Tool::on_draw_ui(editor_context_t &ctx)
       char                label[160];
       snprintf(label, sizeof(label), "%2u %-18s (%.1f, %.1f, %.1f)", index,
                skeleton->bones[index].name.c_str(), head.x, head.y, head.z);
-      if (ImGui::Selectable(label, (int)index == selected_bone))
-        selected_bone = ((int)index == selected_bone) ? -1 : (int)index;
+      if (ImGui::Selectable(label, (int)index == selected_bone_idx))
+        selected_bone_idx = ((int)index == selected_bone_idx) ? -1 : (int)index;
     }
     ImGui::TreePop();
   }

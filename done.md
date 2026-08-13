@@ -1190,7 +1190,7 @@ has nothing to convert. `S2C_CVarSync` and `CvarPair` are deleted from
         disconnected client leave it null.
       * **Shared readers take the state as a parameter.**
         `player_move(const cvar_state_t&, ...)` and
-        `audio_system_t::init(const cvar_state_t&)`. A reference makes
+        `audio_system_t_t::init(const cvar_state_t&)`. A reference makes
         client/server agreement about the `pm_*` values a signature obligation
         rather than a hope about which copy of a static-lib global each module
         linked — the same argument the `@Mirrored` flag makes.

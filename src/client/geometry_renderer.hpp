@@ -2,22 +2,22 @@
 
 #include "../shared/entity_uid.hpp"
 #include "../shared/map_geometry.hpp"
-#include "renderer.hpp"
+#include "frame_builder.hpp"
 
 namespace client
 {
 
-// Draw one piece of map geometry.
+// Draw one piece of map geometry into a pass.
 //
 // One implementation for both regimes that used to draw geometry: the in-game
-// static pass in Play_State::render_3d and the editor's per-entity traits. Both
-// had grown their own copy of "resolve the mesh path, else fall back to the
-// kind's primitive", and they had already drifted (the editor cached generated
+// static pass in Play_State and the editor's per-entity traits. Both had grown
+// their own copy of "resolve the mesh path, else fall back to the kind's
+// primitive", and they had already drifted (the editor cached generated
 // displacement meshes, the game regenerated one every frame).
 //
 // `uid` only names the cache slot for a displacement's generated mesh, so the
 // same displacement doesn't get rebuilt once per view per frame.
-void draw_geometry(VkCommandBuffer cmd, const shared::geometry_value_t &geometry,
+void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid);
 
 // Rebuild the cached mesh for a displacement whose grid was just edited,

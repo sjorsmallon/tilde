@@ -491,13 +491,13 @@ static void test_clip_sampling_and_duration()
   {
     const float phase = (float)frame / (float)(frame_count - 1);
     assets::sample_animation_clip_at(sampled, *clip, phase, /*looping*/ false);
-    CHECK(sampled.local.size() == clip->bone_count, "sampled %zu of %u bones",
-          sampled.local.size(), clip->bone_count);
+    CHECK(sampled.parent_space.size() == clip->bone_count, "sampled %zu of %u bones",
+          sampled.parent_space.size(), clip->bone_count);
 
     for (uint32_t bone = 0; bone < clip->bone_count; ++bone)
     {
       const assets::transform_t &stored = clip->frames[(size_t)frame * clip->bone_count + bone];
-      CHECK(linalg::length(sampled.local[bone].translation - stored.translation) < 1e-3f,
+      CHECK(linalg::length(sampled.parent_space[bone].translation - stored.translation) < 1e-3f,
             "frame %u bone %u sampled away from the stored translation", frame, bone);
     }
   }
@@ -509,7 +509,7 @@ static void test_clip_sampling_and_duration()
   assets::sample_animation_clip_at(sampled, *clip, 1.0f, /*looping*/ false);
   assets::sample_animation_clip_at(beyond, *clip, 4.5f, /*looping*/ false);
   for (uint32_t bone = 0; bone < clip->bone_count; ++bone)
-    CHECK(linalg::length(beyond.local[bone].translation - sampled.local[bone].translation) < 1e-4f,
+    CHECK(linalg::length(beyond.parent_space[bone].translation - sampled.parent_space[bone].translation) < 1e-4f,
           "a one-shot past the end did not clamp at bone %u", bone);
 
   // Looping, phase 1.0 and phase 0.0 are the SAME pose -- that is what makes a
@@ -519,7 +519,7 @@ static void test_clip_sampling_and_duration()
   assets::sample_animation_clip_at(at_zero, *clip, 0.0f, /*looping*/ true);
   assets::sample_animation_clip_at(at_one, *clip, 1.0f, /*looping*/ true);
   for (uint32_t bone = 0; bone < clip->bone_count; ++bone)
-    CHECK(linalg::length(at_one.local[bone].translation - at_zero.local[bone].translation) < 1e-4f,
+    CHECK(linalg::length(at_one.parent_space[bone].translation - at_zero.parent_space[bone].translation) < 1e-4f,
           "looping phase 1.0 is not phase 0.0 at bone %u", bone);
 }
 
@@ -601,10 +601,9 @@ static void test_real_aim_poses()
 static void skinned_bounds(const assets::skeleton_t &skeleton, const assets::mesh_asset_t &mesh,
                            const assets::pose_t &pose, vec3f &out_minimum, vec3f &out_maximum)
 {
-  std::vector<linalg::mat4f> local(skeleton.bones.size());
-  std::vector<linalg::mat4f> skinning(skeleton.bones.size());
-  assets::get_local_transforms_of_bones_from_pose(pose, local);
-  assets::compute_skinning_matrices(skeleton, local, skinning);
+  assets::posed_skeleton_t posed;
+  assets::compute_posed_skeleton(skeleton, pose, posed);
+  const std::vector<linalg::mat4f> &skinning = posed.skinning;
 
   out_minimum = {1e30f, 1e30f, 1e30f};
   out_maximum = {-1e30f, -1e30f, -1e30f};
@@ -653,8 +652,8 @@ static void test_posed_skinning_stays_a_person()
 
     assets::pose_t pose;
     assets::sample_animation_clip_at(pose, *clip, 0.0f, /*looping*/ false);
-    CHECK(pose.local.size() == skeleton->bones.size(), "sampled %zu bones against a %zu-bone rig",
-          pose.local.size(), skeleton->bones.size());
+    CHECK(pose.parent_space.size() == skeleton->bones.size(), "sampled %zu bones against a %zu-bone rig",
+          pose.parent_space.size(), skeleton->bones.size());
 
     vec3f minimum, maximum;
     skinned_bounds(*skeleton, *mesh, pose, minimum, maximum);
@@ -738,34 +737,34 @@ static void test_blend_and_aim_space()
 
   blended = base;
   assets::blend_into(blended, other, {}, 0.0f);
-  for (size_t bone = 0; bone < blended.local.size(); ++bone)
-    CHECK(std::fabs(blended.local[bone].translation.y - base.local[bone].translation.y) < 1e-5f,
+  for (size_t bone = 0; bone < blended.parent_space.size(); ++bone)
+    CHECK(std::fabs(blended.parent_space[bone].translation.y - base.parent_space[bone].translation.y) < 1e-5f,
           "weight 0 must leave the destination untouched at bone %zu", bone);
 
   blended = base;
   assets::blend_into(blended, other, {}, 1.0f);
-  for (size_t bone = 0; bone < blended.local.size(); ++bone)
-    CHECK(std::fabs(blended.local[bone].translation.y - other.local[bone].translation.y) < 1e-5f,
+  for (size_t bone = 0; bone < blended.parent_space.size(); ++bone)
+    CHECK(std::fabs(blended.parent_space[bone].translation.y - other.parent_space[bone].translation.y) < 1e-5f,
           "weight 1 must replace the destination at bone %zu", bone);
 
   // A mask is per-bone: bone 0 fully replaced, the rest untouched.
-  assets::bone_mask_t mask(base.local.size(), 0.0f);
+  assets::bone_mask_t mask(base.parent_space.size(), 0.0f);
   mask[0] = 1.0f;
   blended = base;
   assets::blend_into(blended, other, mask, 1.0f);
-  CHECK(std::fabs(blended.local[0].translation.y - other.local[0].translation.y) < 1e-5f,
+  CHECK(std::fabs(blended.parent_space[0].translation.y - other.parent_space[0].translation.y) < 1e-5f,
         "the masked-in bone must take the source");
-  for (size_t bone = 1; bone < blended.local.size(); ++bone)
-    CHECK(std::fabs(blended.local[bone].translation.y - base.local[bone].translation.y) < 1e-5f,
+  for (size_t bone = 1; bone < blended.parent_space.size(); ++bone)
+    CHECK(std::fabs(blended.parent_space[bone].translation.y - base.parent_space[bone].translation.y) < 1e-5f,
           "the masked-out bone %zu must keep the destination", bone);
 
   // Rotations stay unit through a blend -- nlerp renormalizes, and a
   // non-normalized quaternion would reach the shader as a matrix that scales.
   blended = base;
   assets::blend_into(blended, other, {}, 0.37f);
-  for (size_t bone = 0; bone < blended.local.size(); ++bone)
+  for (size_t bone = 0; bone < blended.parent_space.size(); ++bone)
   {
-    const linalg::quatf &rotation = blended.local[bone].rotation;
+    const linalg::quatf &rotation = blended.parent_space[bone].rotation;
     const float          length   = std::sqrt(linalg::dot(rotation, rotation));
     CHECK(std::fabs(length - 1.0f) < 1e-4f, "bone %zu blended to a rotation of length %f", bone,
           length);
@@ -781,13 +780,13 @@ static void test_blend_and_aim_space()
 
   assets::pose_t aimed;
   assets::sample_aim_pose(aimed, poses, centered);
-  for (size_t bone = 0; bone < aimed.local.size(); ++bone)
-    CHECK(std::fabs(aimed.local[bone].translation.y - base.local[bone].translation.y) < 1e-4f,
+  for (size_t bone = 0; bone < aimed.parent_space.size(); ++bone)
+    CHECK(std::fabs(aimed.parent_space[bone].translation.y - base.parent_space[bone].translation.y) < 1e-4f,
           "at zero angles the aim pose IS the Forward pose; bone %zu differs", bone);
 
   assets::sample_aim_pose(aimed, poses, up);
-  for (size_t bone = 0; bone < aimed.local.size(); ++bone)
-    CHECK(std::fabs(aimed.local[bone].translation.y - other.local[bone].translation.y) < 1e-4f,
+  for (size_t bone = 0; bone < aimed.parent_space.size(); ++bone)
+    CHECK(std::fabs(aimed.parent_space[bone].translation.y - other.parent_space[bone].translation.y) < 1e-4f,
           "at full pitch up the aim pose IS the Upward pose; bone %zu differs", bone);
 
   // A missing extreme gives its weight back to Forward rather than sampling
@@ -795,8 +794,8 @@ static void test_blend_and_aim_space()
   assets::aim_pose_clips_t incomplete;
   incomplete[entities::Aim_Pose::Forward] = poses[entities::Aim_Pose::Forward];
   assets::sample_aim_pose(aimed, incomplete, up);
-  for (size_t bone = 0; bone < aimed.local.size(); ++bone)
-    CHECK(std::fabs(aimed.local[bone].translation.y - base.local[bone].translation.y) < 1e-4f,
+  for (size_t bone = 0; bone < aimed.parent_space.size(); ++bone)
+    CHECK(std::fabs(aimed.parent_space[bone].translation.y - base.parent_space[bone].translation.y) < 1e-4f,
           "a missing Upward must fall back to Forward; bone %zu differs", bone);
 }
 

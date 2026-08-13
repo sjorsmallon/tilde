@@ -3,7 +3,7 @@
 Drop short SFX clips here. Paths are resolved relative to the working directory
 the game is launched from (the repo root for `./cmake_build/bin/MyGame`).
 
-The client audio system (`src/client/audio/audio_system.{hpp,cpp}`, miniaudio
+The client audio system (`src/client/audio/audio_system_t.{hpp,cpp}`, miniaudio
 backend) loads these on demand and caches the decoded data by path. WAV / MP3 /
 FLAC are supported. A missing file logs an error once (see
 `feedback_no_silent_failures`) and is otherwise ignored — the game still runs.

@@ -13,6 +13,7 @@
 #include "cvars/generated/cvars_generated.hpp"
 #include "linalg.hpp"
 #include "skeleton.hpp"
+#include "skinning.hpp"
 
 #include <vector>
 
@@ -66,10 +67,10 @@ aim_pose_set_t load_aim_pose_set(const char *directory, const char *suffix);
 const aim_pose_set_t &holding_gun_aim_poses();
 
 // The blend on its own, stopping at the POSE. Split out of
-// compute_aim_skinning_matrices because a caller that wants where the BONES are
-// -- the Animation tool drawing a skeleton overlay or a hitbox capsule -- cannot
-// get there from skinning matrices: those carry the inverse bind and are a
-// delta, not a position. One sampler, two consumers.
+// compute_aim_posed_skeleton for the callers that do not want the matrix walk
+// at all -- the server's hit volumes sample here and walk the hierarchy
+// themselves, since they pose the volumes rather than a mesh. One sampler,
+// several consumers.
 
 // Advances `body_yaw` toward `view_yaw` and returns the DEVIATION between them
 // in degrees -- the value the left/right poses are driven by.
@@ -90,21 +91,21 @@ void compute_aim_pose(const aim_pose_set_t &pose_set, const assets::skeleton_t &
                       float pitch_degrees, float yaw_deviation_degrees,
                       const aim_settings_t &settings, assets::pose_t &out);
 
-// pitch/yaw_deviation (degrees) -> one skinning matrix per bone, ready for
-// `mesh_draw_parameters_t::skinning_matrices`.
+// pitch/yaw_deviation (degrees) -> the posed skeleton: `out.skinning` is ready
+// for `mesh_draw_t::pose`, `out.model_space` for anything wanting bone
+// positions.
 //
-// `out` is a vector rather than a Span because this is the function that KNOWS
-// the bone count -- it resizes to the skeleton, where the two in skinning.hpp
-// only fill what they are handed. Pass the same vector every frame and the
-// resize is a no-op after the first.
+// `out` is a posed_skeleton_t rather than a Span because this is the function
+// that KNOWS the bone count -- compute_posed_skeleton resizes to the skeleton,
+// where the two raw walks in skinning.hpp only fill what they are handed. Pass
+// the same one every frame and the resize is a no-op after the first.
 //
 // Every remaining failure here is a broken build, not a runtime condition: the
 // pose set loaded or the process died, so a pose that cannot be sampled or a
 // skeleton the poses were not authored against is fatal.
-void compute_aim_skinning_matrices(const aim_pose_set_t &pose_set,
-                                   const assets::skeleton_t &skeleton, float pitch_degrees,
-                                   float yaw_deviation_degrees, const aim_settings_t &settings,
-                                   std::vector<linalg::mat4f> &out);
+void compute_aim_posed_skeleton(const aim_pose_set_t &pose_set, const assets::skeleton_t &skeleton,
+                                float pitch_degrees, float yaw_deviation_degrees,
+                                const aim_settings_t &settings, assets::posed_skeleton_t &out);
 
 // The one death clip, loaded on first use and held forever -- the same shape and
 // the same reasoning as holding_gun_aim_poses() above. A missing one is a broken
@@ -118,9 +119,9 @@ const assets::animation_clip_t &death_clip();
 // A one-shot past its end clamps on the last frame (sample_animation_clip_at
 // does the clamping), which is what a corpse holding its final pose is.
 //
-// Not folded into compute_aim_skinning_matrices: that one blends five poses off
+// Not folded into compute_aim_posed_skeleton: that one blends five poses off
 // two angles, this one plays one clip off a time, and the only thing they share
-// is the tail below -- which is three lines.
-void compute_clip_skinning_matrices(const assets::animation_clip_t &clip,
-                                    const assets::skeleton_t &skeleton, float seconds,
-                                    bool looping, std::vector<linalg::mat4f> &out);
+// is the tail below -- which is now a single compute_posed_skeleton call.
+void compute_clip_posed_skeleton(const assets::animation_clip_t &clip,
+                                 const assets::skeleton_t &skeleton, float seconds, bool looping,
+                                 assets::posed_skeleton_t &out);

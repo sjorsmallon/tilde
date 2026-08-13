@@ -5,103 +5,97 @@
 #include "../../shared/editor_grid.hpp"
 #include "../../shared/map.hpp"
 #include "../../shared/shapes.hpp"
+#include "render_assets.hpp"
 #include "renderer.hpp"
 #include <cmath>
 
 namespace client
 {
 
-// ===================================================================
-// Per-type drawing, as one exhaustive switch per function rather than a
-// template specialized per entity type. The old version required four
-// specializations per entity (get_half_extents / draw_ghost / draw_in_editor
-// / draw_selection_wireframe) purely so a forgotten one became a linker
-// error — but ENTITY_DISPATCH was already a switch over the closed enum, so
-// that exhaustiveness came for free from -Wswitch too. Collapsing to plain
-// switches also surfaces what was already true: Player_Spawn, Particle_
-// Emitter, Trigger_Volume and Light draw the *same* shape for both the
-// placement ghost and the in-editor view, just at a different position —
-// they were being duplicated by the trait mechanism, not expressed by it.
-// ===================================================================
-
 namespace
 {
 
 // -- Shared per-type shapes (ghost + in-editor draw identically) --------
 
-void draw_player_spawn_shape(overlay_renderer_t &renderer,
+void draw_player_spawn_shape(pass_builder_t &draws,
                              const linalg::vec3 &position, color_t color)
 {
-  // `position` is the entity ORIGIN, which for a spawn is where the player's
-  // FEET go -- the same convention as player_eye_height and the hitbox table.
-  // draw_wire_aabb takes a CENTER, so the hull is lifted half its height; it is
-  // not centered on the origin.
   const linalg::vec3 hull{shared::player_half_width,
                           shared::player_half_height,
                           shared::player_half_width};
-  renderer.draw_wire_aabb(position + linalg::vec3{0, shared::player_half_height, 0},
+  draws.debug.box(position + linalg::vec3{0, shared::player_half_height, 0},
                          hull, color);
 
   // Marker spike, drawn from the top of the hull upward so it stays visible
   // instead of being buried inside the box.
   const float hull_top = 2.f * shared::player_half_height;
-  renderer.draw_line(position + linalg::vec3{0, hull_top, 0},
+  draws.debug.line(position + linalg::vec3{0, hull_top, 0},
                      position + linalg::vec3{0, hull_top + 24.f, 0}, color);
 }
 
-void draw_particle_emitter_shape(overlay_renderer_t &renderer,
+void draw_particle_emitter_shape(pass_builder_t &draws,
                                  const linalg::vec3 &position, color_t color)
 {
   constexpr float r = 16.f;
-  renderer.draw_line(position + linalg::vec3{-r, 0, 0},
+  draws.debug.line(position + linalg::vec3{-r, 0, 0},
                      position + linalg::vec3{r, 0, 0}, color);
-  renderer.draw_line(position + linalg::vec3{0, 0, -r},
+  draws.debug.line(position + linalg::vec3{0, 0, -r},
                      position + linalg::vec3{0, 0, r}, color);
-  renderer.draw_line(position, position + linalg::vec3{0, 32, 0}, color);
+  draws.debug.line(position, position + linalg::vec3{0, 32, 0}, color);
 }
 
-void draw_trigger_volume_shape(overlay_renderer_t &renderer,
+void draw_trigger_volume_shape(pass_builder_t &draws,
                                const linalg::vec3 &position,
                                const linalg::vec3 &half_extents, color_t color)
 {
-  renderer.draw_wire_aabb(position, half_extents, color);
+  draws.debug.box(position, half_extents, color);
 }
 
-void draw_light_cross(overlay_renderer_t &renderer, const linalg::vec3 &position,
+void draw_light_cross(pass_builder_t &draws, const linalg::vec3 &position,
                       color_t color, float size)
 {
-  renderer.draw_line(position - linalg::vec3{size, 0, 0},
+  draws.debug.line(position - linalg::vec3{size, 0, 0},
                      position + linalg::vec3{size, 0, 0}, color);
-  renderer.draw_line(position - linalg::vec3{0, size, 0},
+  draws.debug.line(position - linalg::vec3{0, size, 0},
                      position + linalg::vec3{0, size, 0}, color);
-  renderer.draw_line(position - linalg::vec3{0, 0, size},
+  draws.debug.line(position - linalg::vec3{0, 0, size},
                      position + linalg::vec3{0, 0, size}, color);
+}
+
+// Append a mesh draw. False means the mesh did not resolve and the caller
+// should fall back to a box -- the one place the editor turns an asset handle
+// into a draw, so the wireframe-support check lives here rather than at each of
+// the five call sites that used to make it.
+bool push_mesh(pass_builder_t &draws, assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
+               const linalg::vec3f &position, const linalg::vec3f &rotation,
+               const linalg::vec3f &scale, color_t tint, renderer::fill_mode_t fill)
+{
+  if (fill == renderer::fill_mode_t::wireframe && !renderer::wireframe_supported())
+    return false;
+
+  const renderer::mesh_handle_t mesh = get_render_mesh(mesh_asset);
+  if (!mesh.valid())
+    return false;
+
+  renderer::mesh_draw_t draw{};
+  draw.mesh      = mesh;
+  draw.transform = linalg::compose_transform_euler(position, rotation, scale);
+  draw.tint      = tint;
+  draw.fill      = fill;
+  draws.meshes.push_back(draw);
+  return true;
 }
 
 // Player_Entity has no placeable representation of its own (runtime-spawned);
 // its "gizmo" is its actual mesh drawn in wireframe, used for the in-editor
 // view and the selection outline (ghost falls back to the default box).
-bool draw_player_entity_mesh(overlay_renderer_t &renderer,
+bool draw_player_entity_mesh(pass_builder_t &draws,
                              const entities::Player_Entity *e, color_t color,
                              bool tinted)
 {
-  const char *mesh_path = "resources/obj/pyramid.obj";
-  auto mesh_handle = assets::load_mesh(mesh_path);
-  if (!mesh_handle.valid())
-    return false;
-  if (tinted && !renderer::WireframeSupported())
-    return false;
-
-  renderer::mesh_draw_parameters_t parameters{
-      .position  = e->position,
-      .rotation  = e->orientation,
-      .wireframe = true,
-  };
-  if (tinted)
-    parameters.color = color;
-
-  renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle, parameters);
-  return true;
+  return push_mesh(draws, assets::load_mesh("resources/obj/pyramid.obj"), e->position,
+                   e->orientation, {1, 1, 1}, tinted ? color : colors::white,
+                   renderer::fill_mode_t::wireframe);
 }
 
 } // namespace
@@ -117,6 +111,7 @@ linalg::vec3 get_placement_half_extents(const entities::Entity *e)
 
   switch (e->type)
   {
+    case entities::entity_type::Player_Spectate_Entity:
     case entities::entity_type::Player_Spawn_Entity:
     case entities::entity_type::Player_Entity:
       return {shared::player_half_width, shared::player_half_height,
@@ -141,26 +136,29 @@ linalg::vec3 get_placement_half_extents(const entities::Entity *e)
           editor::DEFAULT_HALF_EXTENT};
 }
 
-bool draw_entity_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
+bool draw_entity_ghost(const entities::Entity *e, pass_builder_t &draws,
                        const linalg::vec3 &origin)
 {
   switch (e->type)
-  {
+  { 
+    case entities::entity_type::Player_Spectate_Entity:
+      draw_player_spawn_shape(draws, origin, colors::green);
+      return true;
     case entities::entity_type::Player_Spawn_Entity:
-      draw_player_spawn_shape(renderer, origin, colors::pink);
+      draw_player_spawn_shape(draws, origin, colors::pink);
       return true;
     case entities::entity_type::Particle_Emitter_Entity:
-      draw_particle_emitter_shape(renderer, origin, colors::gold);
+      draw_particle_emitter_shape(draws, origin, colors::gold);
       return true;
     case entities::entity_type::Trigger_Volume_Entity:
       draw_trigger_volume_shape(
-          renderer, origin,
+          draws, origin,
           static_cast<const entities::Trigger_Volume_Entity *>(e)
               ->volume.half_extents,
           colors::red);
       return true;
     case entities::entity_type::Light_Entity:
-      draw_light_cross(renderer, origin, colors::yellow, 0.3f);
+      draw_light_cross(draws, origin, colors::yellow, 0.3f);
       return true;
     case entities::entity_type::Weapon_Entity:   // has render component
     case entities::entity_type::Player_Entity:   // falls back to default box
@@ -178,53 +176,49 @@ bool draw_entity_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
 // ===================================================================
 
 // Try to draw an entity via its render_component_t. Returns true on success.
-static bool try_draw_render_component(const entities::Entity *e,
-                                      VkCommandBuffer cmd)
+static bool try_draw_render_component(const entities::Entity *e, pass_builder_t &draws)
 {
   const entities::Render *rc = entities::get_render(e);
   if (!rc || !rc->visible)
     return false;
 
-  assets::asset_handle_t<assets::mesh_asset_t> mesh_handle = assets::get_mesh(rc->mesh);
-  if (!mesh_handle.valid())
-    return false;
-
-  renderer::draw_mesh(cmd, mesh_handle,
-                     {.position = e->position,
-                      .scale    = rc->scale,
-                      .rotation = e->orientation + rc->rotation});
-  return true;
+  return push_mesh(draws, assets::get_mesh(rc->mesh), e->position,
+                   e->orientation + rc->rotation, rc->scale, colors::white,
+                   renderer::fill_mode_t::solid);
 }
 
 bool draw_entity_in_editor(const entities::Entity *e,
-                           overlay_renderer_t &renderer, uint32_t, bool)
+                           pass_builder_t &draws, uint32_t, bool)
 {
   // First: try the render component (common to all entity types).
-  if (try_draw_render_component(e, renderer.get_command_buffer()))
+  if (try_draw_render_component(e, draws))
     return true;
 
   // Second: per-type gizmo.
   switch (e->type)
   {
+    case entities::entity_type::Player_Spectate_Entity:
+      draw_player_spawn_shape(draws, e->position, colors::green);
+      return true;
     case entities::entity_type::Player_Spawn_Entity:
-      draw_player_spawn_shape(renderer, e->position, colors::pink);
+      draw_player_spawn_shape(draws, e->position, colors::pink);
       return true;
     case entities::entity_type::Particle_Emitter_Entity:
-      draw_particle_emitter_shape(renderer, e->position, colors::gold);
+      draw_particle_emitter_shape(draws, e->position, colors::gold);
       return true;
     case entities::entity_type::Trigger_Volume_Entity:
       draw_trigger_volume_shape(
-          renderer, e->position,
+          draws, e->position,
           static_cast<const entities::Trigger_Volume_Entity *>(e)
               ->volume.half_extents,
           colors::red);
       return true;
     case entities::entity_type::Light_Entity:
-      draw_light_cross(renderer, e->position, colors::yellow, 0.3f);
+      draw_light_cross(draws, e->position, colors::yellow, 0.3f);
       return true;
     case entities::entity_type::Player_Entity:
       return draw_player_entity_mesh(
-          renderer, static_cast<const entities::Player_Entity *>(e),
+          draws, static_cast<const entities::Player_Entity *>(e),
           colors::white, /*tinted=*/false);
     case entities::entity_type::Weapon_Entity:       // relies on render component
     case entities::entity_type::Rocket_Entity:       // runtime only
@@ -257,28 +251,16 @@ color_t compute_selection_pulse_color(float time)
 }
 
 // Try to draw a mesh wireframe from the entity's render component.
-static bool try_draw_mesh_selection_wireframe(const entities::Entity *e,
-                                              VkCommandBuffer cmd,
+static bool try_draw_mesh_selection_wireframe(const entities::Entity *e, pass_builder_t &draws,
                                               color_t color)
 {
   const entities::Render *rc = entities::get_render(e);
   if (!rc || !rc->visible)
     return false;
 
-  assets::asset_handle_t<assets::mesh_asset_t> mesh_handle = assets::get_mesh(rc->mesh);
-  if (!mesh_handle.valid())
-    return false;
-
-  if (!renderer::WireframeSupported())
-    return false;
-
-  renderer::draw_mesh(cmd, mesh_handle,
-                     {.position  = e->position,
-                      .scale     = rc->scale,
-                      .rotation  = e->orientation + rc->rotation,
-                      .color     = color,
-                      .wireframe = true});
-  return true;
+  return push_mesh(draws, assets::get_mesh(rc->mesh), e->position,
+                   e->orientation + rc->rotation, rc->scale, color,
+                   renderer::fill_mode_t::wireframe);
 }
 
 // Runtime dispatch for the shape-specific selection wireframe. Player_Spawn
@@ -286,26 +268,27 @@ static bool try_draw_mesh_selection_wireframe(const entities::Entity *e,
 // selection scale than the AABB fallback does) — only Trigger_Volume, Light
 // and Player_Entity draw a shape-specific outline.
 static bool dispatch_selection_wireframe(const entities::Entity *e,
-                                         overlay_renderer_t &renderer,
+                                         pass_builder_t &draws,
                                          color_t color, float)
 {
   switch (e->type)
   {
     case entities::entity_type::Trigger_Volume_Entity:
       draw_trigger_volume_shape(
-          renderer, e->position,
+          draws, e->position,
           static_cast<const entities::Trigger_Volume_Entity *>(e)
               ->volume.half_extents,
           color);
       return true;
     case entities::entity_type::Light_Entity:
-      draw_light_cross(renderer, e->position, color, 0.4f);
+      draw_light_cross(draws, e->position, color, 0.4f);
       return true;
     case entities::entity_type::Player_Entity:
       return draw_player_entity_mesh(
-          renderer, static_cast<const entities::Player_Entity *>(e), color,
+          draws, static_cast<const entities::Player_Entity *>(e), color,
           /*tinted=*/true);
     case entities::entity_type::Player_Spawn_Entity:
+    case entities::entity_type::Player_Spectate_Entity:
     case entities::entity_type::Particle_Emitter_Entity:
     case entities::entity_type::Weapon_Entity:
     case entities::entity_type::Rocket_Entity:
@@ -318,63 +301,50 @@ static bool dispatch_selection_wireframe(const entities::Entity *e,
 }
 
 void draw_selection_highlight(const entities::Entity *e,
-                              overlay_renderer_t &renderer, float time,
+                              pass_builder_t &draws, float time,
                               float grid_step)
 {
   color_t color = compute_selection_pulse_color(time);
 
-  // Push a very strong depth bias so the selection wireframe renders in front
-  // of the solid barycentric mesh. The constant factor dominates for
-  // flat-facing surfaces; the slope factor helps for oblique angles.
-  renderer::set_line_depth_bias(-200.0f, -10.0f);
+  // A very strong bias so the outline renders in FRONT of the surface it
+  // traces. It rides the lines that need it instead of being set and restored
+  // around three early-return paths -- each of which had to remember the
+  // restore, and one getting it wrong was invisible.
+  constexpr float highlight_bias = -200.0f;
 
   // 1. Try mesh wireframe from render component
-  if (try_draw_mesh_selection_wireframe(e, renderer.get_command_buffer(), color))
-  {
-    renderer::set_line_depth_bias(-2.0f, -1.0f);
+  if (try_draw_mesh_selection_wireframe(e, draws, color))
     return;
-  }
 
   // 2. Try per-entity shape wireframe (wedge, AABB, trigger volume, etc.)
-  if (dispatch_selection_wireframe(e, renderer, color, grid_step))
-  {
-    renderer::set_line_depth_bias(-2.0f, -1.0f);
+  if (dispatch_selection_wireframe(e, draws, color, grid_step))
     return;
-  }
 
   // 3. Fallback: AABB bounds wireframe
   auto bounds = shared::compute_entity_bounds(e);
-  renderer.draw_wire_aabb((bounds.min + bounds.max) * 0.5f,
-                         (bounds.max - bounds.min) * 0.5f, color);
-
-  renderer::set_line_depth_bias(-2.0f, -1.0f);
+  draws.debug.box((bounds.min + bounds.max) * 0.5f, (bounds.max - bounds.min) * 0.5f, color,
+                  renderer::fill_mode_t::wireframe, highlight_bias);
 }
 
 // ===================================================================
 // Default ghost drawing (render component -> wire box fallback)
 // ===================================================================
 
-void draw_default_ghost(const entities::Entity *e, overlay_renderer_t &renderer,
+void draw_default_ghost(const entities::Entity *e, pass_builder_t &draws,
                         const linalg::vec3 &origin)
 {
   if (const entities::Render *rc = entities::get_render(e))
   {
-    assets::asset_handle_t<assets::mesh_asset_t> mesh_handle = assets::get_mesh(rc->mesh);
-    if (mesh_handle.valid())
-    {
-      renderer::draw_mesh(renderer.get_command_buffer(), mesh_handle,
-                         {.position  = origin,
-                          .color     = colors::yellow,
-                          .wireframe = true});
+    if (push_mesh(draws, assets::get_mesh(rc->mesh), origin, {0, 0, 0}, {1, 1, 1},
+                  colors::yellow, renderer::fill_mode_t::wireframe))
       return;
-    }
   }
 
-  // Fallback: wire box. draw_wire_aabb takes a CENTER, which is the origin only
-  // for centered-origin types -- a feet-origin one sits half a hull lower.
+  // Fallback: wire box. debug.box takes a CENTER, which is the origin only for
+  // centered-origin types -- a feet-origin one sits half a hull lower.
   const linalg::vec3 half_extents = get_placement_half_extents(e);
   const float lift = half_extents.y - get_placement_origin_height(e);
-  renderer.draw_wire_aabb(origin + linalg::vec3{0, lift, 0}, half_extents,
+  draws.debug.box(origin + linalg::vec3{0, lift, 0}, half_extents,
                          colors::yellow);
 }
 
@@ -389,6 +359,7 @@ float get_placement_origin_height(const entities::Entity *e)
     // Feet origin: the entity's position IS the surface point, no lift. Adding
     // half a hull here is what left editor-placed spawns 36 units in the air,
     // since the runtime reads a spawn's position as the player's feet.
+    case entities::entity_type::Player_Spectate_Entity:
     case entities::entity_type::Player_Spawn_Entity:
     case entities::entity_type::Player_Entity:
       return 0.f;

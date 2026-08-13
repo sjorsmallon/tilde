@@ -26,9 +26,8 @@ namespace shared
 struct player_rig_t
 {
   const assets::skeleton_t* skeleton = nullptr;
-  assets::hitbox_rig_t          rig;
-  assets::resolved_hitbox_rig_t resolved;
-  aim_pose_set_t                aim_poses;
+  assets::hitbox_rig_t      rig;
+  aim_pose_set_t            aim_poses;
 
   uint32_t volume_count() const { return (uint32_t)rig.volumes.size(); }
 };

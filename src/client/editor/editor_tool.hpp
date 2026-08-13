@@ -40,12 +40,12 @@ public:
 
   // What the keypad axis views (1/3/7) should centre and frame on. `nullopt`
   // means "no opinion" and the editor falls back to the world origin at map
-  // scale -- which is an ANSWER, not a failure, so this takes no `try_` prefix.
+  // scale.
   virtual std::optional<view_focus_t> view_focus() const { return std::nullopt; }
 
   // Visuals
   virtual void on_draw_overlay(editor_context_t &ctx,
-                               overlay_renderer_t &renderer) = 0;
+                               pass_builder_t &draws) = 0;
 
   // UI (2D)
   virtual void on_draw_ui(editor_context_t &ctx) {}

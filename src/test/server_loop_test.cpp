@@ -1,5 +1,5 @@
 #include "../shared/network/packet.hpp"
-#include "../shared/network/server_connection_state.hpp"
+#include "../shared/network/server_transport_layer.hpp"
 #include "../shared/network/udp_socket.hpp"
 #include "game.pb.h"
 #include <cassert>
@@ -12,7 +12,7 @@ void test_receive_and_reassembly()
 {
   std::cout << "[TEST] Testing Receive and Reassembly..." << std::endl;
 
-  Server_Connection_State state;
+  Server_Transport_Layer state;
   Udp_Socket server_socket;
   Udp_Socket client_socket;
 

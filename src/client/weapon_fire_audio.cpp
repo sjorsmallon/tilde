@@ -80,13 +80,13 @@ const char *fire_sound_for(entities::Weapon weapon)
 
 void update_weapon_fire_audio(client_context_t &context)
 {
-  for (const auto &[slot_index, player] : context.latest_player_entities)
+  for (const auto &[slot_index, player] : context.replication.latest_player_entities)
   {
     // First sight seeds the baseline and never plays. Without this, every
     // player already in the world when we join arrives with a non-zero stamp
     // that reads as "just fired", and connecting sets off a volley.
     auto [entry, inserted] =
-        context.snapshot_state.last_seen_fire_tick_per_player.try_emplace(player.entity_id,
+        context.replication.last_seen_fire_tick_per_player.try_emplace(player.entity_id,
                                                 player.last_fire_tick);
     if (inserted)
       continue;
@@ -96,14 +96,14 @@ void update_weapon_fire_audio(client_context_t &context)
     entry->second = player.last_fire_tick;
 
     // Our own shot already played off prediction in Play_State.
-    if (player.entity_id == context.my_entity_uid)
+    if (player.entity_id == context.connection.my_entity_uid)
       continue;
 
     // Guard the subtraction as well as the age: a stamp ahead of the snapshot
     // tick would wrap and read as ancient.
-    if (player.last_fire_tick > context.snapshot_state.latest_processed_tick)
+    if (player.last_fire_tick > context.replication.latest_processed_tick)
       continue;
-    if (context.snapshot_state.latest_processed_tick - player.last_fire_tick >
+    if (context.replication.latest_processed_tick - player.last_fire_tick >
         max_fire_stamp_age_ticks)
       continue;
 
@@ -122,11 +122,11 @@ void update_weapon_fire_audio(client_context_t &context)
 
   // Drop players who left, or the map grows for the life of the session and a
   // slot's new occupant inherits the old one's stamp.
-  for (auto it = context.snapshot_state.last_seen_fire_tick_per_player.begin();
-       it != context.snapshot_state.last_seen_fire_tick_per_player.end();)
+  for (auto it = context.replication.last_seen_fire_tick_per_player.begin();
+       it != context.replication.last_seen_fire_tick_per_player.end();)
   {
     bool still_present = false;
-    for (const auto &[slot_index, player] : context.latest_player_entities)
+    for (const auto &[slot_index, player] : context.replication.latest_player_entities)
     {
       if (player.entity_id == it->first)
       {
@@ -134,7 +134,7 @@ void update_weapon_fire_audio(client_context_t &context)
         break;
       }
     }
-    it = still_present ? std::next(it) : context.snapshot_state.last_seen_fire_tick_per_player.erase(it);
+    it = still_present ? std::next(it) : context.replication.last_seen_fire_tick_per_player.erase(it);
   }
 }
 

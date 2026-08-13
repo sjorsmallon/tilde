@@ -4,6 +4,7 @@
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
 #include "../editor/transaction_system.hpp"
+#include "../frame_builder.hpp"
 #include "../game_state.hpp"
 #include "../shared/collision_detection.hpp"
 #include "../shared/editor_grid.hpp"
@@ -21,8 +22,7 @@ public:
   void on_exit() override;
   void update(float dt) override;
   void render_ui() override;
-  void pre_render(VkCommandBuffer cmd) override;
-  void render_3d(VkCommandBuffer cmd) override;
+  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes) override;
 
 private:
   const int no_tool_selected_index = -1;
@@ -32,6 +32,11 @@ private:
   // Own state
   shared::map_t map;
   camera_t camera;
+
+  // The editor's one view pass and the storage its spans point into. A member
+  // so the vectors keep their capacity and so the debug list can hold entries
+  // that outlive a frame.
+  pass_builder_t scene;
   float aspect = 1.77f;
   float z_near = 0.1f;
   float z_far = 16000.0f;

@@ -76,10 +76,9 @@ static bool g_dump = false;
 
 struct model_t
 {
-  assets::skeleton_t          skeleton;
-  assets::mesh_asset_t        mesh;
-  assets::hitbox_rig_t        rig;
-  assets::resolved_hitbox_rig_t resolved;
+  assets::skeleton_t   skeleton;
+  assets::mesh_asset_t mesh;
+  assets::hitbox_rig_t rig;
 };
 
 static model_t load_model()
@@ -93,17 +92,15 @@ static model_t load_model()
   CHECK(models::parse_mesh_file(MESH_PATH, model.mesh, reference), "'%s' must parse", MESH_PATH);
   CHECK(model.mesh.is_skinned(), "the preview mesh must carry skin data");
 
-  std::optional<assets::hitbox_rig_t> rig = models::try_parse_hitbox_rig_file(RIG_PATH);
-  CHECK(rig.has_value(), "'%s' must parse", RIG_PATH);
+  std::optional<assets::hitbox_rig_file_t> file = models::try_parse_hitbox_rig_file(RIG_PATH);
+  CHECK(file.has_value(), "'%s' must parse", RIG_PATH);
+
+  CHECK(file->skeleton_name == model.skeleton.name, "rig names skeleton '%s', not '%s'",
+        file->skeleton_name.c_str(), model.skeleton.name.c_str());
+
+  std::optional<assets::hitbox_rig_t> rig = assets::try_resolve_hitbox_rig(*file, model.skeleton);
+  CHECK(rig.has_value(), "every bone the rig names must exist in '%s'", SKELETON_PATH);
   model.rig = std::move(*rig);
-
-  CHECK(model.rig.skeleton_name == model.skeleton.name, "rig names skeleton '%s', not '%s'",
-        model.rig.skeleton_name.c_str(), model.skeleton.name.c_str());
-
-  std::optional<assets::resolved_hitbox_rig_t> resolved =
-      assets::try_resolve_hitbox_rig(model.rig, model.skeleton);
-  CHECK(resolved.has_value(), "every bone the rig names must exist in '%s'", SKELETON_PATH);
-  model.resolved = std::move(*resolved);
 
   return model;
 }
@@ -120,8 +117,10 @@ static void test_authored_rig(const model_t &model)
   CHECK(model.rig.volumes.size() >= 3, "only %zu volumes", model.rig.volumes.size());
 
   bool region_present[3] = {false, false, false};
-  for (const assets::hitbox_volume_t &volume : model.rig.volumes)
+  for (const assets::rigged_hitbox_volume_t &rigged : model.rig.volumes)
   {
+    const assets::hitbox_volume_t &volume = rigged.volume;
+
     region_present[(uint32_t)volume.region] = true;
 
     if (assets::hitbox_shape_uses_radius(volume.shape))
@@ -145,8 +144,8 @@ static void test_authored_rig(const model_t &model)
   // so two volumes with one name is two rows you cannot tell apart.
   for (size_t outer = 0; outer < model.rig.volumes.size(); ++outer)
     for (size_t inner = outer + 1; inner < model.rig.volumes.size(); ++inner)
-      CHECK(model.rig.volumes[outer].name != model.rig.volumes[inner].name,
-            "duplicate volume name '%s'", model.rig.volumes[outer].name.c_str());
+      CHECK(model.rig.volumes[outer].volume.name != model.rig.volumes[inner].volume.name,
+            "duplicate volume name '%s'", model.rig.volumes[outer].volume.name.c_str());
 }
 
 // The drift check that derivation exists for: the size that ships is authored,
@@ -158,11 +157,11 @@ static void test_sizes_against_derived(const model_t &model)
   printf("test_sizes_against_derived\n");
 
   std::vector<assets::hitbox_seed_t> seeds(model.rig.volumes.size());
-  assets::derive_hitbox_sizes(model.mesh, model.skeleton, model.rig, model.resolved, seeds);
+  assets::derive_hitbox_sizes(model.mesh, model.skeleton, model.rig, seeds);
 
   for (size_t index = 0; index < model.rig.volumes.size(); ++index)
   {
-    const assets::hitbox_volume_t &volume = model.rig.volumes[index];
+    const assets::hitbox_volume_t &volume = model.rig.volumes[index].volume;
     const assets::hitbox_seed_t   &seed   = seeds[index];
 
     CHECK(seed.radius > 0.0f, "volume '%s' covers no vertex -- its span_bones own no skin",
@@ -192,14 +191,11 @@ static void test_sizes_against_derived(const model_t &model)
 static void compute_hitboxes(const model_t &model, const assets::pose_t &pose,
                              std::vector<assets::posed_hitbox_t> &out)
 {
-  std::vector<linalg::mat4f> local_matrices(model.skeleton.bones.size());
-  std::vector<linalg::mat4f> model_space(model.skeleton.bones.size());
-
-  assets::get_local_transforms_of_bones_from_pose(pose, local_matrices);
-  assets::compute_model_space_matrices(model.skeleton, local_matrices, model_space);
+  assets::posed_skeleton_t posed;
+  assets::compute_posed_skeleton(model.skeleton, pose, posed);
 
   out.resize(model.rig.volumes.size());
-  assets::compute_posed_hitboxes(model.rig, model.resolved, model_space, out);
+  assets::compute_posed_hitboxes(model.rig, posed.model_space, out);
 }
 
 // §4: the absolute "hitboxes never leave the movement hull" invariant becomes a
@@ -233,7 +229,7 @@ static void test_hull_excursion(const model_t &model)
 
     const char *worst = excursion.volume_index < 0
                             ? "(none)"
-                            : model.rig.volumes[(size_t)excursion.volume_index].name.c_str();
+                            : model.rig.volumes[(size_t)excursion.volume_index].volume.name.c_str();
     printf("  %-46s excursion %5.2f  (%s", pose_path, excursion.distance, worst);
     if (excursion.volume_index >= 0)
     {
@@ -419,7 +415,8 @@ static void test_round_trip(const model_t &model)
   const std::string path = fixture_path("round_trip.hitboxes");
   CHECK(models::try_write_hitbox_rig_file(path.c_str(), model.rig), "the writer must succeed");
 
-  std::optional<assets::hitbox_rig_t> reloaded = models::try_parse_hitbox_rig_file(path.c_str());
+  std::optional<assets::hitbox_rig_file_t> reloaded =
+      models::try_parse_hitbox_rig_file(path.c_str());
   CHECK(reloaded.has_value(), "what the writer wrote must parse");
 
   CHECK(reloaded->name == model.rig.name, "name changed");
@@ -430,7 +427,7 @@ static void test_round_trip(const model_t &model)
 
   for (size_t index = 0; index < model.rig.volumes.size(); ++index)
   {
-    const assets::hitbox_volume_t &original = model.rig.volumes[index];
+    const assets::hitbox_volume_t &original = model.rig.volumes[index].volume;
     const assets::hitbox_volume_t &copy     = reloaded->volumes[index];
     CHECK(copy.name == original.name, "volume %zu renamed", index);
     CHECK(copy.start_bone == original.start_bone, "volume '%s' start bone changed",
@@ -462,11 +459,11 @@ static void test_every_shape_round_trips(const model_t &model)
 {
   printf("test_every_shape_round_trips\n");
 
-  assets::hitbox_rig_t rig;
-  rig.name          = "shapes";
-  rig.skeleton_name = model.skeleton.name;
-  rig.skeleton_hash = model.skeleton.hash;
-  rig.volumes       = {
+  assets::hitbox_rig_file_t authored;
+  authored.name          = "shapes";
+  authored.skeleton_name = model.skeleton.name;
+  authored.skeleton_hash = model.skeleton.hash;
+  authored.volumes       = {
       {.name = "ball", .shape = assets::hitbox_shape_t::Sphere, .start_bone = "spine.006",
              .end_bone = "spine.006", .region = shared::hit_region_t::Head, .radius = 6.5f,
              .offset = 3.25f},
@@ -479,17 +476,23 @@ static void test_every_shape_round_trips(const model_t &model)
              .half_extents = {9.0f, 7.5f, 6.25f}},
   };
 
-  const std::string path = fixture_path("shapes.hitboxes");
-  CHECK(models::try_write_hitbox_rig_file(path.c_str(), rig), "the writer must succeed");
+  // The writer takes the bound form, so the trip is authored -> resolve -> write
+  // -> read, which is exactly what the tool's Save button does.
+  std::optional<assets::hitbox_rig_t> rig = assets::try_resolve_hitbox_rig(authored, model.skeleton);
+  CHECK(rig.has_value(), "the four-shape rig must resolve");
 
-  std::optional<assets::hitbox_rig_t> reloaded = models::try_parse_hitbox_rig_file(path.c_str());
+  const std::string path = fixture_path("shapes.hitboxes");
+  CHECK(models::try_write_hitbox_rig_file(path.c_str(), *rig), "the writer must succeed");
+
+  std::optional<assets::hitbox_rig_file_t> reloaded =
+      models::try_parse_hitbox_rig_file(path.c_str());
   CHECK(reloaded.has_value(), "what the writer wrote must parse");
-  CHECK(reloaded->volumes.size() == rig.volumes.size(), "volume count changed: %zu",
+  CHECK(reloaded->volumes.size() == authored.volumes.size(), "volume count changed: %zu",
         reloaded->volumes.size());
 
-  for (size_t index = 0; index < rig.volumes.size(); ++index)
+  for (size_t index = 0; index < authored.volumes.size(); ++index)
   {
-    const assets::hitbox_volume_t &original = rig.volumes[index];
+    const assets::hitbox_volume_t &original = authored.volumes[index];
     const assets::hitbox_volume_t &copy     = reloaded->volumes[index];
     CHECK(copy.shape == original.shape, "volume '%s' came back as %s", original.name.c_str(),
           assets::to_string(copy.shape));
@@ -499,17 +502,17 @@ static void test_every_shape_round_trips(const model_t &model)
           original.name.c_str());
   }
 
-  // And they resolve and pose: a shape the format can spell but the math cannot
-  // place would be a format that lies.
-  std::optional<assets::resolved_hitbox_rig_t> resolved =
+  // And what came back off disk resolves and poses: a shape the format can spell
+  // but the math cannot place would be a format that lies.
+  std::optional<assets::hitbox_rig_t> reresolved =
       assets::try_resolve_hitbox_rig(*reloaded, model.skeleton);
-  CHECK(resolved.has_value(), "the four-shape rig must resolve");
+  CHECK(reresolved.has_value(), "the four-shape rig must resolve after a round trip");
 
   std::vector<linalg::mat4f> bind_model(model.skeleton.bones.size());
   assets::compute_bind_model_matrices(model.skeleton, bind_model);
 
-  std::vector<assets::posed_hitbox_t> posed(reloaded->volumes.size());
-  assets::compute_posed_hitboxes(*reloaded, *resolved, bind_model, posed);
+  std::vector<assets::posed_hitbox_t> posed(reresolved->volumes.size());
+  assets::compute_posed_hitboxes(*reresolved, bind_model, posed);
 
   // A point at each volume's own centre is inside it, and one a long way off is
   // not -- the cheapest statement that distance_outside_hitbox is oriented the
@@ -519,11 +522,11 @@ static void test_every_shape_round_trips(const model_t &model)
     const assets::posed_hitbox_t &hitbox = posed[index];
     CHECK(assets::distance_outside_hitbox(hitbox, hitbox.center()) == 0.0f,
           "%s '%s' does not contain its own centre", assets::to_string(hitbox.shape),
-          reloaded->volumes[index].name.c_str());
+          reresolved->volumes[index].volume.name.c_str());
     CHECK(assets::distance_outside_hitbox(hitbox, hitbox.center() + linalg::vec3f{1000, 0, 0}) >
               900.0f,
           "%s '%s' claims to reach 1000 units away", assets::to_string(hitbox.shape),
-          reloaded->volumes[index].name.c_str());
+          reresolved->volumes[index].volume.name.c_str());
   }
 }
 
@@ -536,7 +539,8 @@ static void test_malformed(const model_t &model)
   auto refuses = [&path](const char *what, const std::string &contents)
   {
     write_fixture(path, contents);
-    const std::optional<assets::hitbox_rig_t> rig = models::try_parse_hitbox_rig_file(path.c_str());
+    const std::optional<assets::hitbox_rig_file_t> rig =
+        models::try_parse_hitbox_rig_file(path.c_str());
     g_checks += 1;
     if (rig.has_value())
     {
@@ -571,7 +575,7 @@ static void test_malformed(const model_t &model)
   // well-formed and still cannot be applied to this skeleton.
   auto refuses_resolution = [&model](const char *what, const assets::hitbox_volume_t &volume)
   {
-    assets::hitbox_rig_t rig;
+    assets::hitbox_rig_file_t rig;
     rig.name          = "probe";
     rig.skeleton_name = model.skeleton.name;
     rig.volumes.push_back(volume);
@@ -604,7 +608,7 @@ static void test_malformed(const model_t &model)
   // A rig authored against another skeleton revision is refused whole rather
   // than resolved by name and hoped over -- same shape as the .mesh/.animation
   // hash checks.
-  assets::hitbox_rig_t stale;
+  assets::hitbox_rig_file_t stale;
   stale.name          = "stale";
   stale.skeleton_name = model.skeleton.name;
   stale.skeleton_hash = model.skeleton.hash ^ 1ull;
@@ -649,9 +653,9 @@ static void dump(const model_t &model)
   printf("\nevery bone as a one-bone volume (the authoring template)\n");
   const assets::hitbox_rig_t template_rig =
       assets::make_hitbox_rig_template(model.mesh, model.skeleton);
-  for (const assets::hitbox_volume_t &volume : template_rig.volumes)
-    printf("  v %-18s %-18s %-6s %6.2f\n", volume.name.c_str(), volume.name.c_str(),
-           shared::to_string(volume.region), volume.radius);
+  for (const assets::rigged_hitbox_volume_t &rigged : template_rig.volumes)
+    printf("  v %-18s %-18s %-6s %6.2f\n", rigged.volume.name.c_str(), rigged.volume.name.c_str(),
+           shared::to_string(rigged.volume.region), rigged.volume.radius);
 }
 
 int main(int argument_count, char **arguments)

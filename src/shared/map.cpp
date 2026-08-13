@@ -783,6 +783,9 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
 
   switch (entity->type)
   {
+    case entities::entity_type::Player_Spectate_Entity:
+      return player_hull_bounds(entity);
+
     case entities::entity_type::Player_Spawn_Entity:
       return player_hull_bounds(entity);
 

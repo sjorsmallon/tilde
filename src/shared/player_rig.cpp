@@ -35,26 +35,26 @@ player_rig_t load_player_rig()
                 skeleton_path);
 
   const std::string rig_path = std::string(MODELS_DIRECTORY) + "/" + SKELETON_NAME + ".hitboxes";
-  std::optional<assets::hitbox_rig_t> parsed = models::try_parse_hitbox_rig_file(rig_path.c_str());
+  std::optional<assets::hitbox_rig_file_t> parsed =
+      models::try_parse_hitbox_rig_file(rig_path.c_str());
   if (!parsed)
     fatal_error("player hit volumes '{}' did not parse; without them nothing can be hit",
                 rig_path);
-  loaded.rig = std::move(*parsed);
 
   // The rig names the skeleton revision it was authored against. A mismatch is
   // not a rounding error: bone indices are the skeleton's, so volumes would sit
   // on whatever limb now occupies the index they were sized for.
-  if (loaded.rig.skeleton_hash != loaded.skeleton->hash)
+  if (parsed->skeleton_hash != loaded.skeleton->hash)
     fatal_error("hit volumes '{}' were authored against skeleton hash {:016x}, but '{}' hashes to "
                 "{:016x}; re-derive the rig",
-                rig_path, loaded.rig.skeleton_hash, skeleton_path, loaded.skeleton->hash);
+                rig_path, parsed->skeleton_hash, skeleton_path, loaded.skeleton->hash);
 
-  std::optional<assets::resolved_hitbox_rig_t> resolved =
-      assets::try_resolve_hitbox_rig(loaded.rig, *loaded.skeleton);
-  if (!resolved)
+  std::optional<assets::hitbox_rig_t> rig =
+      assets::try_resolve_hitbox_rig(*parsed, *loaded.skeleton);
+  if (!rig)
     fatal_error("hit volumes '{}' name bones that skeleton '{}' does not have", rig_path,
                 loaded.skeleton->name);
-  loaded.resolved = std::move(*resolved);
+  loaded.rig = std::move(*rig);
 
   log_terminal("[hitbox] player rig '{}': {} volumes on skeleton '{}' ({} bones)",
                loaded.rig.name, loaded.rig.volumes.size(), loaded.skeleton->name,
@@ -111,20 +111,20 @@ void compute_player_hitboxes(const player_rig_t &rig, const player_pose_t &pose,
   // not a third input that could disagree with them.
   const float yaw_deviation = linalg::wrap_degrees(pose.view_yaw - pose.body_yaw);
 
-  // Sized to the skeleton every call. These are three vectors per shot per
-  // target; a thread_local pool would buy a few allocations at the cost of
-  // making this the one function in here that is not reentrant.
-  const uint32_t bone_count = (uint32_t)rig.skeleton->bones.size();
-
+  // Sized to the skeleton every call; a thread_local pool would buy a few
+  // allocations at the cost of making this the one function in here that is not
+  // reentrant.
   assets::pose_t sampled;
   compute_aim_pose(rig.aim_poses, *rig.skeleton, pose.view_pitch, yaw_deviation, settings, sampled);
 
-  std::vector<linalg::mat4f> local(bone_count);
-  std::vector<linalg::mat4f> model_space(bone_count);
-  assets::get_local_transforms_of_bones_from_pose(sampled, local);
-  assets::compute_model_space_matrices(*rig.skeleton, local, model_space);
+  // Only `model_space` is read below -- a hitbox wants where the bone IS. The
+  // skinning matrices come along because they fall out of the same walk, and
+  // separating them would mean a second entry point to keep in step with this
+  // one.
+  assets::posed_skeleton_t posed;
+  assets::compute_posed_skeleton(*rig.skeleton, sampled, posed);
 
-  assets::compute_posed_hitboxes(rig.rig, rig.resolved, model_space, out);
+  assets::compute_posed_hitboxes(rig.rig, posed.model_space, out);
 
   const model_to_world_t transform = transform_for(pose);
   for (assets::posed_hitbox_t &hitbox : out)

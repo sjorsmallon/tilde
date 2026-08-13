@@ -1,18 +1,22 @@
 #pragma once
 
 #include "../../shared/player_constants.hpp"
+#include "../../shared/skinning.hpp"
 #include "../camera.hpp"
 #include "../game_state.hpp"
 #include "../shared/game_session.hpp"
-#include "../shared/network/client_connection_state.hpp"
+#include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/network_types.hpp"
+#include "../frame_builder.hpp"
 #include "../state_manager.hpp"
 #include "imgui.h"
 #include "physics.hpp"
 #ifdef JPH_DEBUG_RENDERER
 #include "../jolt_debug_renderer.hpp"
 #endif
+#include <deque>
 #include <memory>
+#include <vector>
 
 namespace shared
 {
@@ -29,77 +33,77 @@ public:
   void on_exit() override;
   void update(float dt) override;
   void render_ui() override;
-  void pre_render(VkCommandBuffer cmd) override;
-  void render_3d(VkCommandBuffer cmd) override;
+  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes) override;
 
 private:
-  // Loads the map file at `map_path` into `this->map`, then rebuilds the client
-  // world from it via finalize_client_map(). Shared by on_enter (first connect)
-  // and the mid-game CmdChangeMap handler in update(). Returns false if the map
-  // file can't be loaded (leaving the current world untouched). Assumes
-  // jolt_init() has already run.
+
+
+
   bool load_client_map(const std::string &map_path);
-
-  // Rebuilds the client world from a streamed compiled package instead of a local
-  // file. Returns false if the entity text can't be parsed.
-  // Shares finalize_client_map's tail.
   bool apply_map_package(const shared::map_package_t &package);
-
-  // Shared tail of load_client_map / apply_map_package: drops the previous
-  // map's replication state, then (re)builds the session, static physics world,
-  // content hash, and camera spawn from the already-populated `this->map`.
-  void finalize_client_map();
+  void finalize_client_map(const shared::map_t &map);
 
   // Transitions the connection to Connected: flags it, sets the phase, and
   // registers the console network-forwarder. Shared by the direct-connect
   // (hash match) path and the post-download (streamed map) path.
   void enter_connected_phase();
 
-  // Map & session
-  shared::map_t map;
-  // True once finalize_client_map() has built the local runtime world (the
-  // game_session_t `session` + physics_state) from a map. Gates all local
-  // simulation and rendering. Distinct from connection_phase (the network
-  // handshake state): while streaming a map we can be Connecting/Loading with
-  // this still false. False at boot and until the first map is loaded/streamed.
-  bool session_ready_for_simulation_and_rendering = false;
-
-  // Camera (first person, follows player)
+  // Camera (first person, follows player). DERIVED, every frame, from
+  // context.prediction (position, yaw, pitch) or from a spectated player's
+  // interpolated render pose. Nothing here is ever read back into prediction --
+  // that is what lets the spectate override at the end of update() write
+  // camera.yaw alone without desyncing what we send to the server.
   camera_t camera;
 
-  // Zoom is purely local presentation: 0 = r_fov, 1 = r_zoom_fov, eased over
-  // r_zoom_easing_time_between_fovs. Not predicted and not reconciled — nothing about it feeds
-  // player_move, and the server is told only that we are zoomed.
-  // Right-click TOGGLES zoom_active; zoom_fraction is the eased follower.
-  bool zoom_active = false;
-  float zoom_fraction = 0.0f;
+  // The one view pass this state draws, and the storage its spans point into.
+  // A member rather than a local because the debug list carries entries with
+  // lifetimes across frames, and because the vectors keep their capacity.
+  pass_builder_t scene;
 
-  // Real seconds since our own last predicted gunshot, for re-running the
-  // server's fire-rate gate locally. Audio only — nothing else reads it, and
-  // the authoritative rate limit is still the server's last_fire_tick.
-  float seconds_since_local_fire = 0.0f;
+  // One posed skeleton per posed player, reused every frame. mesh_draw_t holds
+  // a Span into these and nothing is recorded until render_frame, so they
+  // cannot be locals. A deque rather than a vector because growing must not
+  // move the slots already handed out.
+  std::deque<assets::posed_skeleton_t> pose_storage;
+  size_t                               pose_count = 0;
 
   // Player dimensions — canonical values live in shared::player_half_width/height
   static constexpr float player_half_width  = shared::player_half_width;
   static constexpr float player_half_height = shared::player_half_height;
 
-  // UI/debug state
-  bool mouse_captured = true;
-  bool console_was_open = false;
-  bool hide_geometry = false;
-  bool show_entity_debug = false;
-  bool show_menu_overlay = false;
-  bool menu_overlay_was_open = false;
-  float last_dt = 0.016f;
+  // Per-connection UI state, cleared wholesale by on_enter -- the same rule the
+  // context's lifetime groups follow, and for the same reason: states are
+  // long-lived singletons, so anything NOT in here survives a disconnect and
+  // rejoin. Membership test: does this mean anything to a different connection?
+  //
+  // It used to mean the menu overlay was still up when you re-entered play
+  // after leaving with F1 (which is handled ahead of the overlay bail), and
+  // that "first server update" logged once per process instead of once per
+  // connect.
+  struct per_connection_ui_t
+  {
+    // The eased follower for context.prediction.zoom_active: 0 = r_fov,
+    // 1 = r_zoom_fov, over r_zoom_easing_time_between_fovs. Purely local
+    // presentation -- the toggle itself is a predicted input and lives in
+    // prediction_t, because the server is told we are zoomed.
+    float zoom_fraction = 0.0f;
 
-  // FPS averaging ring buffer
+    bool mouse_captured        = true;
+    bool console_was_open      = false;
+    bool show_menu_overlay     = false;
+    bool menu_overlay_was_open = false;
+
+    bool logged_first_server_update = false;
+  };
+  per_connection_ui_t ui;
+
+  // FPS averaging ring buffer. Outside `ui` on purpose: process-lifetime
+  // scratch, and carrying it across a reconnect costs nothing.
   static constexpr int FPS_HISTORY_SIZE = 64;
   float dt_history[FPS_HISTORY_SIZE] = {};
   int dt_history_index = 0;
   int dt_history_count = 0;
 
-  std::unique_ptr<physics_state_t> physics_state;
-  bool show_physics_debug = false;
 #ifdef JPH_DEBUG_RENDERER
   std::unique_ptr<client::jolt_debug_renderer_t> jolt_debug_renderer;
 #endif

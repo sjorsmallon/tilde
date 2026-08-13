@@ -1,5 +1,6 @@
 #include "../../shared/entities/entity_reflection.hpp"
-#include "tool_editor_state.hpp"
+#include "tool_editor_state.hpp"
+#include "../particle_emitter_parameters.hpp"
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
 #include "../../shared/map_baker.hpp"
@@ -138,72 +139,6 @@ static void snapshot_on_load(const std::string &full_path)
 {
   rotate_backup_file(full_path);
 }
-
-// Concrete renderer adapter
-struct VulkanOverlayRenderer : public overlay_renderer_t
-{
-  VkCommandBuffer cmd;
-
-  VulkanOverlayRenderer(VkCommandBuffer c) : cmd(c) {}
-
-  VkCommandBuffer get_command_buffer() override { return cmd; }
-
-  void draw_line(const linalg::vec3 &start, const linalg::vec3 &end,
-                 color_t color) override
-  {
-    renderer::draw_line(cmd, start, end, color);
-  }
-
-  void draw_wire_aabb(const linalg::vec3 &center,
-                     const linalg::vec3 &half_extents, color_t color) override
-  {
-    linalg::vec3 min = center - half_extents;
-    linalg::vec3 max = center + half_extents;
-    renderer::draw__wire_AABB(cmd, min, max, color);
-  }
-
-  void draw_solid_box(const linalg::vec3 &center,
-                      const linalg::vec3 &half_extents, color_t color) override
-  {
-    linalg::vec3 min = center - half_extents;
-    linalg::vec3 max = center + half_extents;
-    renderer::draw_AABB(cmd, min, max, color);
-  }
-
-  void draw_circle(const linalg::vec3 &center, float radius,
-                   const linalg::vec3 &normal, color_t color) override
-  {
-    // Approximate circle with lines
-    const int segments = 16;
-    linalg::vec3 tangent, bitangent;
-
-    // Simple basis construction
-    if (std::abs(normal.y) > 0.9f)
-      tangent = {1, 0, 0};
-    else
-      tangent = linalg::normalize(linalg::cross({0, 1, 0}, normal));
-    bitangent = linalg::cross(normal, tangent);
-
-    for (int i = 0; i < segments; ++i)
-    {
-      float t1 = (float)i / segments * 2.0f * 3.14159f;
-      float t2 = (float)(i + 1) / segments * 2.0f * 3.14159f;
-
-      linalg::vec3 p1 =
-          center + (tangent * std::cos(t1) + bitangent * std::sin(t1)) * radius;
-      linalg::vec3 p2 =
-          center + (tangent * std::cos(t2) + bitangent * std::sin(t2)) * radius;
-
-      draw_line(p1, p2, color);
-    }
-  }
-
-  void draw_text_in_world(const linalg::vec3 &pos, const char *text,
-                          color_t color) override
-  {
-    renderer::draw_text_in_world(pos, text, color);
-  }
-};
 
 // A new map isn't empty — it gets a floor to stand on, or the first thing you
 // place has nothing to land against.
@@ -1146,14 +1081,12 @@ void Tool_Editor_State::render_ui()
   }
 }
 
-void Tool_Editor_State::render_3d(VkCommandBuffer cmd)
+void Tool_Editor_State::build_frame(float delta_seconds,
+                                   std::vector<renderer::view_pass_t> &passes)
 {
-  renderer::render_view_t view_def;
-  view_def.viewport = {{0, 0}, {1, 1}};
-  view_def.camera = camera;
-
-  // Applies the viewport and the view-projection every draw_* below reads.
-  renderer::set_view(cmd, view_def);
+  scene.begin_frame(delta_seconds);
+  scene.view.viewport = {{0, 0}, {1, 1}};
+  scene.view.camera   = camera;
 
   // Draw Grid
   if (show_grid)
@@ -1201,8 +1134,8 @@ void Tool_Editor_State::render_3d(VkCommandBuffer cmd)
           continue;
         auto [s1, e1] = make_line_a(p, extent, grid_plane);
         auto [s2, e2] = make_line_b(p, extent, grid_plane);
-        renderer::draw_line(cmd, s1, e1, minor_color);
-        renderer::draw_line(cmd, s2, e2, minor_color);
+        scene.debug.line(s1, e1, minor_color);
+        scene.debug.line(s2, e2, minor_color);
       }
     }
 
@@ -1214,30 +1147,29 @@ void Tool_Editor_State::render_3d(VkCommandBuffer cmd)
       float p = (float)i * major;
       auto [s1, e1] = make_line_a(p, extent, grid_plane);
       auto [s2, e2] = make_line_b(p, extent, grid_plane);
-      renderer::draw_line(cmd, s1, e1, major_color);
-      renderer::draw_line(cmd, s2, e2, major_color);
+      scene.debug.line(s1, e1, major_color);
+      scene.debug.line(s2, e2, major_color);
     }
 
     // Axes - always draw all relevant axis lines
-    renderer::draw_line(cmd, {-extent, 0, 0}, {extent, 0, 0}, axis_color_x);
-    renderer::draw_line(cmd, {0, 0, -extent}, {0, 0, extent}, axis_color_z);
+    scene.debug.line({-extent, 0, 0}, {extent, 0, 0}, axis_color_x);
+    scene.debug.line({0, 0, -extent}, {0, 0, extent}, axis_color_z);
     if (grid_plane != 0) // Also draw Y axis for non-XZ planes
-      renderer::draw_line(cmd, {0, -extent, 0}, {0, extent, 0}, axis_color_y);
+      scene.debug.line({0, -extent, 0}, {0, extent, 0}, axis_color_y);
   }
 
   // Draw map elements: geometry through geometry_editor, entities through
   // entity_editor_traits.
-  VulkanOverlayRenderer overlay(cmd);
   if (!hide_geometry)
   {
     for (const shared::map_geometry_t &entry : map.geometry)
-      draw_geometry_in_editor(entry.value, overlay, entry.uid, draw_entities_solid);
+      draw_geometry_in_editor(entry.value, scene, entry.uid, draw_entities_solid);
 
     for (const auto &entry : map.entities)
     {
       if (!entry.entity)
         continue;
-      draw_entity_in_editor(entry.entity.get(), overlay, entry.uid,
+      draw_entity_in_editor(entry.entity.get(), scene, entry.uid,
                             draw_entities_solid);
     }
   }
@@ -1267,7 +1199,7 @@ void Tool_Editor_State::render_3d(VkCommandBuffer cmd)
         vec3f b = nav.vertices[poly.vertices[(e + 1) % N]].position;
         a.y += y_lift;
         b.y += y_lift;
-        renderer::draw_line(cmd, a, b, color);
+        scene.debug.line(a, b, color);
       }
     }
 
@@ -1277,72 +1209,24 @@ void Tool_Editor_State::render_3d(VkCommandBuffer cmd)
     for (const auto &v : nav.vertices)
     {
       vec3f p = v.position; p.y += y_lift;
-      renderer::draw_line(cmd, {p.x - right, p.y, p.z}, {p.x + right, p.y, p.z}, vert_color);
-      renderer::draw_line(cmd, {p.x, p.y, p.z - right}, {p.x, p.y, p.z + right}, vert_color);
+      scene.debug.line({p.x - right, p.y, p.z}, {p.x + right, p.y, p.z}, vert_color);
+      scene.debug.line({p.x, p.y, p.z - right}, {p.x, p.y, p.z + right}, vert_color);
     }
   }
 
-  // Draw particle emitters
+  // Particle emitters. Filled ONCE: the renderer sequences the compute dispatch
+  // before the render pass itself, because that ordering is a Vulkan fact rather
+  // than something a caller should have to remember.
   for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
-  {
-    renderer::particle_emitter_parameters_t p{};
-    p.entity_id = pe->entity_id;
-    p.position = pe->position;
-    p.delta_time = last_dt;
-    p.emit_rate = pe->emit_rate;
-    p.max_particles = pe->max_particles;
-    p.lifetime_min = pe->lifetime_min;
-    p.lifetime_max = pe->lifetime_max;
-    p.velocity_min = pe->velocity_min;
-    p.velocity_max = pe->velocity_max;
-    p.spread = pe->spread;
-    p.gravity = pe->gravity;
-    p.drag = pe->drag;
-    p.size_start = pe->size_start;
-    p.size_end = pe->size_end;
-    p.rotation_speed_min = pe->rotation_speed_min;
-    p.rotation_speed_max = pe->rotation_speed_max;
-    p.color_start = pe->color_start;
-    p.color_end = pe->color_end;
-    p.alpha_start = pe->alpha_start;
-    p.alpha_end = pe->alpha_end;
-    renderer::draw_particles(cmd, p);
-  }
+    scene.particles.push_back(emitter_parameters(*pe, last_dt));
 
   // Draw Tool Overlay
   if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
   {
-    tools[active_tool_index]->on_draw_overlay(context, overlay);
+    tools[active_tool_index]->on_draw_overlay(context, scene);
   }
-}
 
-void Tool_Editor_State::pre_render(VkCommandBuffer cmd)
-{
-  for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
-  {
-    renderer::particle_emitter_parameters_t p{};
-    p.entity_id = pe->entity_id;
-    p.position = pe->position;
-    p.delta_time = last_dt;
-    p.emit_rate = pe->emit_rate;
-    p.max_particles = pe->max_particles;
-    p.lifetime_min = pe->lifetime_min;
-    p.lifetime_max = pe->lifetime_max;
-    p.velocity_min = pe->velocity_min;
-    p.velocity_max = pe->velocity_max;
-    p.spread = pe->spread;
-    p.gravity = pe->gravity;
-    p.drag = pe->drag;
-    p.size_start = pe->size_start;
-    p.size_end = pe->size_end;
-    p.rotation_speed_min = pe->rotation_speed_min;
-    p.rotation_speed_max = pe->rotation_speed_max;
-    p.color_start = pe->color_start;
-    p.color_end = pe->color_end;
-    p.alpha_start = pe->alpha_start;
-    p.alpha_end = pe->alpha_end;
-    renderer::update_particles(cmd, p);
-  }
+  passes.push_back(scene.to_pass());
 }
 
 void Tool_Editor_State::update_bvh()

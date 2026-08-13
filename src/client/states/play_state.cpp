@@ -26,6 +26,7 @@
 #include <print>
 #include <tuple>
 #include "../geometry_renderer.hpp"
+#include "../render_assets.hpp"
 #include "../../shared/network/quantization.hpp"
 #include "../../shared/network/cvar_mirror.hpp"
 #include "../../shared/network/map_transfer.hpp"
@@ -37,7 +38,6 @@
 #include "../shared/linalg.hpp"
 #include "../shared/math.hpp"
 #include "../state_manager.hpp"
-#include "../../shared/bot_debug.hpp"
 #include "imgui.h"
 #include <fstream>
 #include <print>
@@ -45,8 +45,7 @@
 namespace client
 {
 
-using Connection_Phase  = client_context_t::Connection_Phase;
-using explosion_effect_t = client_context_t::explosion_effect_t;
+using explosion_effect_t = explosion_effect_t;
 
 // How often (in server ticks) `net_snapshot_debug` prints a line. One per two
 // seconds at a 60Hz tickrate -- enough to watch a trend, quiet enough to leave on.
@@ -58,7 +57,7 @@ static uint8_t crosshair_color_channel(uint32_t value)
 {
   return uint8_t(std::min<uint32_t>(value, 255));
 }
-
+// bool* so imgui buttons can self-close the menu.
 static void render_menu_overlay(bool* show_menu_overlay)
 {
   ImGui::Begin("Menu", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
@@ -96,12 +95,12 @@ static void forward_console_line_to_server(std::string_view line)
   auto &ctx = state_manager::get_client_context();
   game::C2S_Command cmd;
   cmd.set_line(std::string(line));
-  network::send_protobuf_message(ctx.connection_state, cmd);
+  network::send_protobuf_message(ctx.transport_layer, cmd);
 }
 
-// Sends a bitstream-native C2S_MapLoaded ack so the server knows this client
+// C2S_MapLoaded ack so the server knows this client
 // finished loading the current map and can resume streaming snapshots to it.
-static void send_map_loaded_ack(network::Client_Connection_State &conn,
+static void send_map_loaded_ack(network::Client_Transport_Layer &transport,
                                 uint32_t content_hash)
 {
   shared::map_loaded_message_t msg{content_hash};
@@ -111,9 +110,9 @@ static void send_map_loaded_ack(network::Client_Connection_State &conn,
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::C2S_MapLoaded),
-      conn.next_message_id);
+      transport.next_message_id);
   for (const auto &p : packets)
-    conn.socket.send(p, conn.server_address);
+    transport.socket.send(p, transport.server_address);
 }
 
 // Directory this client resolves map files against. Defaults to "maps"; the
@@ -128,7 +127,7 @@ static std::string client_maps_directory()
 // Asks the server to stream the compiled package for `map_name` because we lack
 // it (cache miss) or our local copy's hash doesn't match. Bitstream-native
 // C2S_RequestMapData; the server replies with S2C_MapData.
-static void send_request_map_data(network::Client_Connection_State &conn,
+static void send_request_map_data(network::Client_Transport_Layer &transport,
                                   const std::string &map_name)
 {
   shared::request_map_data_message_t msg{map_name};
@@ -137,9 +136,9 @@ static void send_request_map_data(network::Client_Connection_State &conn,
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::C2S_RequestMapData),
-      conn.next_message_id);
+      transport.next_message_id);
   for (const auto &p : packets)
-    conn.socket.send(p, conn.server_address);
+    transport.socket.send(p, transport.server_address);
 }
 
 bool Play_State::load_client_map(const std::string &map_path)
@@ -157,82 +156,98 @@ bool Play_State::load_client_map(const std::string &map_path)
     return false;
   }
 
-  map = std::move(*loaded);
-  finalize_client_map();
+  finalize_client_map(*loaded);
   return true;
 }
 
 bool Play_State::apply_map_package(const shared::map_package_t &package)
 {
-  // Rebuild `this->map` from the streamed package: entities from the canonical
-  // text, navmesh from the baked sidecar the package carries.
-  // parse_map_from_string returns a fresh map (no navmesh), so the navmesh is
-  // attached afterward rather than surviving from the previous map.
-  map = shared::parse_map_from_string(package.entity_text);
+  // Build the map from the streamed package: entities from the canonical text,
+  // navmesh from the baked sidecar the package carries. parse_map_from_string
+  // returns a fresh map (no navmesh), so the navmesh is attached afterward
+  // rather than surviving from the previous map.
+  shared::map_t map = shared::parse_map_from_string(package.entity_text);
   map.navmesh = package.navmesh;
 
-  finalize_client_map();
+  finalize_client_map(map);
   return true;
 }
 
-void Play_State::finalize_client_map()
+void Play_State::finalize_client_map(const shared::map_t &map)
 {
   auto &ctx = state_manager::get_client_context();
 
-  // Drop replication state from any previous map so nothing bleeds across a
-  // switch: remote entities, delta baselines, and transient client effects.
-  ctx.remote_players = {};
-  ctx.latest_player_entities.clear();
-  ctx.remote_rockets.clear();
-  ctx.remote_physics_bodies.clear();
-  ctx.explosion_effects.clear();
-  ctx.next_explosion_index = 0;
-  // ctx.clear_snapshot_history();
-  ctx.snapshot_state = {};
+  // Drop everything keyed to the map we are leaving -- remote entities, delta
+  // baselines, transient effects -- so nothing bleeds across the switch. The
+  // connection is deliberately untouched; see client_context.hpp.
+  reset_for_new_map(ctx);
 
-  shared::init_session_from_map(ctx.session, map);
-  ctx.session.map_name = map.name;
+  shared::init_session_from_map(ctx.world.session, map);
+  ctx.world.session.map_name = map.name;
+
+  // Every mesh and texture this map can show, uploaded now. register_mesh
+  // blocks on a queue submit, so the first sight of a model must not be a draw
+  // call -- that stall used to happen mid-frame, several times over, the first
+  // time a player walked into view.
+  preload_map_render_assets(map);
 
  // hash so we can verify we're running the same map as the server. 0 is a sentinel for not computed.
-  ctx.loaded_map_content_hash = shared::compute_map_content_hash(map);
+  ctx.world.map_content_hash = shared::compute_map_content_hash(map);
 
   // Rebuild the client's static physics world — recreating physics_state_t is
-  // the cleanest way to drop the previous map's static bodies. Lend the
-  // borrowed pointer so cosmetic-effect handlers can cast against static world.
-  physics_state = std::make_unique<physics_state_t>();
-  init_physics(*physics_state);
-  shared::populate_static_physics_bodies(*physics_state, map);
-  ctx.physics_state = physics_state.get();
+  // the cleanest way to drop the previous map's static bodies. The context owns
+  // it, so cosmetic-effect handlers casting against the static world are
+  // reading the same object rather than a lent copy of the pointer.
+  ctx.world.physics_state = std::make_unique<physics_state_t>();
+  init_physics(*ctx.world.physics_state);
+  shared::populate_static_physics_bodies(*ctx.world.physics_state, map);
 
-  // Place the camera at a spawn marker for an immediate, non-jarring view; the
-  // server's authoritative position arrives in the next snapshot.
+  // place the camera at a spectate position (if it's there.)
+  Span<entities::Player_Spectate_Entity> spectate_spots = ctx.world.session.entity_system.entities_of<entities::Player_Spectate_Entity>();
+
+  if (!spectate_spots.empty())
+  {
+    // pick the first one.
+    camera.position = spectate_spots.front().position;
+    auto orientation = spectate_spots.front().orientation;
+    float yaw   = atan2(orientation.x, orientation.z);
+    float pitch = atan2(orientation.y, sqrt(orientation.x*orientation.x + orientation.z*orientation.z));
+    camera.yaw =  yaw;
+    camera.pitch = pitch;
+  }
+  else 
+  {
+    log_terminal("[CLIENT] no spectate entities found, so posing camera on a player spawn entity.");
+  }
+
   Span<entities::Player_Spawn_Entity> spawns =
-      ctx.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      ctx.world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
   if (!spawns.empty())
   {
-    ctx.player_position = spawns.front().position;
+    ctx.prediction.player_position = spawns.front().position;
     log_terminal("[CLIENT] Spawn from map: ({:.1f}, {:.1f}, {:.1f})",
-                 ctx.player_position.x, ctx.player_position.y, ctx.player_position.z);
+                 ctx.prediction.player_position.x, ctx.prediction.player_position.y, ctx.prediction.player_position.z);
   }
   else
   {
     log_error("had no spawn markers in map '{}'; placing camera at default (0, 36, 0)",
-              ctx.session.map_name);
-    ctx.player_position = {0, 36, 0};
+              ctx.world.session.map_name);
+    ctx.prediction.player_position = {0, 36, 0};
   }
 
-  camera.position.x = ctx.player_position.x;
-  camera.position.y = ctx.player_position.y + shared::player_eye_height;
-  camera.position.z = ctx.player_position.z;
+  camera.position.x = ctx.prediction.player_position.x;
+  camera.position.y = ctx.prediction.player_position.y + shared::player_eye_height;
+  camera.position.z = ctx.prediction.player_position.z;
+
+  // Last, so `ready` is never observably ahead of the world it describes.
+  ctx.world.ready = true;
 }
 
 void Play_State::enter_connected_phase()
 {
   auto &ctx  = state_manager::get_client_context();
-  auto &conn = ctx.connection_state;
 
-  conn.connected         = true;
-  ctx.connection_phase   = Connection_Phase::Connected;
+  ctx.connection.phase = Connection_Phase::Connected;
 
   // Forward @Server cvars and commands over the network. Installing this is
   // what makes execute_console_line stop running them locally: a connected
@@ -242,27 +257,18 @@ void Play_State::enter_connected_phase()
 
 void Play_State::on_enter()
 {
-  session_ready_for_simulation_and_rendering = false;
-
   auto &ctx = state_manager::get_client_context();
 
-  // Connection-level reset (world-level reset happens in load_client_map).
-  ctx.player_velocity        = {0, 0, 0};
-  ctx.player_position        = {0, 36, 0};
-  ctx.player_yaw             = 0.0f;
-  ctx.player_pitch           = 0.0f;
-  ctx.physics_accumulator    = 0.0f;
-  ctx.connection_phase       = Connection_Phase::Disconnected;
-  ctx.my_slot                = -1;
-  ctx.command_number         = 0;
-  ctx.latest_server_ack_command = -1;
-  ctx.received_server_update = false;
-  ctx.interpolation_time     = 0.f;
-  ctx.pending_commands       = {};
-  // Alive until a snapshot says otherwise. Carrying a corpse's health across a
-  // reconnect would leave prediction refusing to move us until the first
-  // snapshot of the new session landed.
-  ctx.local_player_health    = 100;
+  // Our half of the connection reset: everything on this state that means
+  // nothing to a new connection. The context's three groups go below.
+  ui = {};
+
+  // Connection-level reset: identity, prediction, and the replicated world.
+  // `world` survives it, so reconnecting to a server running the map we already
+  // have does not throw that map away. Unconditional, unlike the old open-coded
+  // list -- a cold client whose local map load fails below used to carry the
+  // previous connection's remote players into this one.
+  reset_for_new_connection(ctx);
 
   // Jolt must be initialized before load_client_map builds a physics_state_t.
   static bool jolt_initialized = false;
@@ -289,11 +295,11 @@ void Play_State::on_enter()
   // and streams instead.
   std::string map_path = shared::resolve_map_path(client_maps_directory(), last_map);
 
-  if (load_client_map(map_path))
-  {
-    session_ready_for_simulation_and_rendering = true;
-  }
-  else
+  // Unconditional even if we already hold a world: the editor writes
+  // last_map.txt, so editor -> play must pick up whatever was just being
+  // edited. finalize_client_map sets world.ready on success; a failure leaves
+  // the previous world's flag alone, which is why on_exit cleared it.
+  if (!load_client_map(map_path))
   {
     log_terminal("No local map '{}' at boot; will request it from the server "
                  "after connecting.", map_path);
@@ -301,8 +307,8 @@ void Play_State::on_enter()
 
   // Camera look direction (position was set from a spawn in load_client_map, or
   // left at the default if we have no map yet and will stream one).
-  camera.yaw = ctx.player_yaw;
-  camera.pitch = ctx.player_pitch;
+  camera.yaw = ctx.prediction.player_yaw;
+  camera.pitch = ctx.prediction.player_pitch;
   camera.orthographic = false;
 
   input::set_relative_mouse_mode(true);
@@ -312,8 +318,8 @@ void Play_State::on_enter()
 #endif
 
   // --- Connect to server ---
-  auto &conn = ctx.connection_state;
-  if (!conn.socket.is_open())
+  auto &transport = ctx.transport_layer;
+  if (!transport.socket.is_open())
   {
     // Bind an ephemeral port (0 = OS assigns). A fixed client port breaks two
     // clients on one machine: SO_REUSEADDR lets the second bind(5001) succeed,
@@ -321,13 +327,13 @@ void Play_State::on_enter()
     // to whichever socket bound first — the second client hangs on connect.
     // The server keys players by the address recvfrom reports, so it never
     // cares which port a client uses.
-    conn.socket.open(0);
+    transport.socket.open(0);
   }
 
   // Whoever sent us here chose the endpoint (main menu Join Game, `connect`,
   // or nobody -- in which case this is still the loopback default).
-  conn.server_address = ctx.requested_server_address;
-  log_terminal("Connecting to {}", conn.server_address.to_string());
+  transport.server_address = ctx.requested_server_address;
+  log_terminal("Connecting to {}", transport.server_address.to_string());
 
   game::NetCommand net_command;
   auto* connect_cmd = net_command.mutable_connect();
@@ -335,8 +341,8 @@ void Play_State::on_enter()
   connect_cmd->set_player_name("Player");
   connect_cmd->set_schema_hash(entities::SCHEMA_HASH);
 
-  network::send_protobuf_message(conn, net_command);
-  ctx.connection_phase = Connection_Phase::Connecting;
+  network::send_protobuf_message(transport, net_command);
+  ctx.connection.phase = Connection_Phase::Connecting;
 
   renderer::draw_announcement("play Mode");
 }
@@ -344,37 +350,43 @@ void Play_State::on_enter()
 void Play_State::on_exit()
 {
   auto &ctx = state_manager::get_client_context();
-  auto &conn = ctx.connection_state;
+  auto &transport = ctx.transport_layer;
 
-  if (ctx.connection_phase != Connection_Phase::Disconnected)
+  if (ctx.connection.phase != Connection_Phase::Disconnected)
   {
     game::NetCommand disconnect_cmd;
     disconnect_cmd.mutable_disconnect()->set_reason("Player left");
-    network::send_protobuf_message(conn, disconnect_cmd);
-    ctx.connection_phase = Connection_Phase::Disconnected;
+    network::send_protobuf_message(transport, disconnect_cmd);
+    ctx.connection.phase = Connection_Phase::Disconnected;
     // Disconnected: @Server names have nowhere to go, and running them locally
     // would be wrong in a networked build, so execute_console_line reports
     // "not connected" instead.
     ctx.commands->forward_to_server = nullptr;
   }
-  conn.socket.close();
+  transport.socket.close();
 
   input::set_relative_mouse_mode(false);
 
 #ifdef JPH_DEBUG_RENDERER
   jolt_debug_renderer.reset();
 #endif
-  // Clear the borrowed handle before the owning unique_ptr destroys the body
-  // so any late-arriving effect dispatch sees a null pointer rather than a
-  // dangling one.
-  ctx.physics_state = nullptr;
-  physics_state.reset();
+
+  // A client that is not in play has no world. One assignment covers the
+  // session, the physics world, the content hash and `ready` together -- which
+  // is the point of them living in one struct: there is no order to get wrong
+  // and no half-torn-down world for a late effect dispatch to cast against.
+  ctx.world = {};
+
+  // The @Mirrored cvars belonged to the connection we just dropped. Leaving
+  // them would let a dead server's movement constants steer the offline
+  // session -- update() still runs player_move when not connected. Gated: in an
+  // integrated build the in-process server still owns these values.
+  if (ctx.server_session == nullptr && ctx.cvars)
+    shared::revert_mirrored_cvars_to_defaults(*ctx.cvars);
 }
 
 void Play_State::update(float dt)
 {
-  last_dt = dt;
-
   // Record dt for FPS averaging
   dt_history[dt_history_index] = dt;
   dt_history_index = (dt_history_index + 1) % FPS_HISTORY_SIZE;
@@ -384,9 +396,9 @@ void Play_State::update(float dt)
   auto &ctx = state_manager::get_client_context();
 
   // Tick down explosion effects
-  for (auto &fx : ctx.explosion_effects)
+  for (auto &fx : ctx.visuals.explosion_effects)
     fx.time_remaining -= dt;
-  std::erase_if(ctx.explosion_effects, [](const explosion_effect_t &fx) {
+  std::erase_if(ctx.visuals.explosion_effects, [](const explosion_effect_t &fx) {
     return fx.time_remaining <= 0.f;
   });
 
@@ -399,15 +411,15 @@ void Play_State::update(float dt)
       // If the console is open, just close it and stay in play mode.
       console::get().close();
     }
-    else if (!show_menu_overlay)
+    else if (!ui.show_menu_overlay)
     {
       // If the console is closed, show the menu overlay instead of leaving play.
-      show_menu_overlay = true;
+      ui.show_menu_overlay = true;
     }
-    else if (show_menu_overlay)
+    else if (ui.show_menu_overlay)
     {
       // If the console is closed and the menu overlay is not showing, show it.
-      show_menu_overlay = !show_menu_overlay;
+      ui.show_menu_overlay = !ui.show_menu_overlay;
     }
     else
     {
@@ -426,41 +438,40 @@ void Play_State::update(float dt)
   }
 
 
-  // NOTE: no session_ready_for_simulation_and_rendering early-out here. The
-  // network handshake / map handling below must run even when we have no world
-  // yet — that's exactly how a client that lacks the map boots: connect, get
-  // CmdAccept, stream the package, and only then build a session. Local
-  // simulation + rendering-prep (from "Reconciliation" onward) is what's gated
-  // on the flag, further down. See the Connection_Phase state machine in
-  // client_context.hpp.
-  auto &conn = ctx.connection_state;
+  // NOTE: no ctx.world.ready early-out here. The network handshake / map
+  // handling below must run even when we have no world yet — that's exactly how
+  // a client that lacks the map boots: connect, get CmdAccept, stream the
+  // package, and only then build a session. Local simulation + rendering-prep
+  // (from "Reconciliation" onward) is what's gated on the flag, further down.
+  // See the Connection_Phase state machine in client_context.hpp.
+  auto &transport = ctx.transport_layer;
 
   // U -> toggle mouse capture
   if (input::is_key_pressed(input::key_t::U))
   {
-    mouse_captured = !mouse_captured;
+    ui.mouse_captured = !ui.mouse_captured;
   }
 
   // Falling edge: console just closed -> recapture the mouse for play.
   // This also overrides any prior U-toggle so closing the console always
   // returns the player to "playing" with a captured cursor.
     const bool console_open = console::get().is_open();
-    if (console_was_open && !console_open)
-      mouse_captured = true;
-    console_was_open = console_open;
+    if (ui.console_was_open && !console_open)
+      ui.mouse_captured = true;
+    ui.console_was_open = console_open;
 
     // Same falling edge for the menu overlay: dismissing it (Escape or "Resume")
     // puts the player straight back into play with a captured cursor.
-    if (menu_overlay_was_open && !show_menu_overlay)
-      mouse_captured = true;
-    menu_overlay_was_open = show_menu_overlay;
+    if (ui.menu_overlay_was_open && !ui.show_menu_overlay)
+      ui.mouse_captured = true;
+    ui.menu_overlay_was_open = ui.show_menu_overlay;
 
     // Re-assert relative mouse mode every frame so the console can transparently
     // release the cursor while it's open. Without this, SDL stays in relative
     // mode (cursor hidden and warped to center) even when the console is up,
     // making the console unusable with the mouse. The menu overlay releases it
     // for the same reason — its buttons need a real cursor to click.
-    input::set_relative_mouse_mode(mouse_captured && !console_open && !show_menu_overlay);
+    input::set_relative_mouse_mode(ui.mouse_captured && !console_open && !ui.show_menu_overlay);
 
     // Dispatch key bindings configured via the `bind` command. poll_bindings is
     // a no-op when the console is open, so we don't have to gate it here.
@@ -469,42 +480,40 @@ void Play_State::update(float dt)
   
   // --- Poll network ---
   network::Client_Inbox inbox;
-  network::poll_client_network(conn, 0.001, inbox); // 1ms receive window
+  network::poll_client_network(transport, 0.001, inbox); // 1ms receive window
 
   for (const auto &cmd : inbox.net_commands)
   {
     if (cmd.has_accept())
     {
-      ctx.my_slot = cmd.accept().client_slot();
-      ctx.server_tickrate = cmd.accept().server_tickrate();
-      if (ctx.server_tickrate == 0)
-        ctx.server_tickrate = 60;
+      ctx.connection.my_slot = cmd.accept().client_slot();
+      ctx.connection.server_tickrate = cmd.accept().server_tickrate();
+      if (ctx.connection.server_tickrate == 0)
+        ctx.connection.server_tickrate = 60;
 
       // Decide whether we can play immediately or must download the map first.
       uint32_t server_hash = cmd.accept().content_hash();
-      bool hash_mismatch = server_hash != 0 && ctx.loaded_map_content_hash != 0 &&
-                           server_hash != ctx.loaded_map_content_hash;
+      bool hash_mismatch = server_hash != 0 && ctx.world.map_content_hash != 0 &&
+                           server_hash != ctx.world.map_content_hash;
 
-      if (!session_ready_for_simulation_and_rendering || hash_mismatch)
+      if (!ctx.world.ready || hash_mismatch)
       {
-        const char *reason = session_ready_for_simulation_and_rendering
-                                 ? "Map mismatch"
-                                 : "No local map";
+        const char *reason = ctx.world.ready ? "Map mismatch" : "No local map";
         log_terminal("{} on connect (server '{}' hash {:#x}, local {:#x}); "
                      "requesting map from server.",
                      reason, cmd.accept().map_name(), server_hash,
-                     ctx.loaded_map_content_hash);
-        ctx.connection_phase = Connection_Phase::Loading;
-        ctx.awaiting_stream_content_hash = server_hash;
+                     ctx.world.map_content_hash);
+        ctx.connection.phase = Connection_Phase::Loading;
+        ctx.connection.awaiting_stream_content_hash = server_hash;
 
         renderer::draw_announcement("Downloading map...");
 
-        send_request_map_data(conn, cmd.accept().map_name());
+        send_request_map_data(transport, cmd.accept().map_name());
         continue;
       }
 
       log_terminal("Connected to server! Slot {}, map: {} (hash {:#x})",
-                   ctx.my_slot, cmd.accept().map_name(), server_hash);
+                   ctx.connection.my_slot, cmd.accept().map_name(), server_hash);
       enter_connected_phase();
     }
     else if (cmd.has_reject())
@@ -522,7 +531,7 @@ void Play_State::update(float dt)
                   cmd.reject().reason());
       }
       log_terminal("Connection rejected: {}", cmd.reject().reason());
-      ctx.connection_phase = Connection_Phase::Disconnected;
+      ctx.connection.phase = Connection_Phase::Disconnected;
     }
   }
 
@@ -537,26 +546,26 @@ void Play_State::update(float dt)
 
     // Idempotent resends: if we already run this exact map, just re-ack. The
     // server resends CmdChangeMap each tick until it sees our C2S_MapLoaded.
-    if (ctx.connection_phase == Connection_Phase::Connected &&
-        ctx.loaded_map_content_hash == change.content_hash)
+    if (ctx.connection.phase == Connection_Phase::Connected &&
+        ctx.world.map_content_hash == change.content_hash)
     {
-      send_map_loaded_ack(conn, change.content_hash);
+      send_map_loaded_ack(transport, change.content_hash);
       continue;
     }
 
     // Already waiting on a stream for this switch: re-send the request (a cheap
     // stand-in for retransmit — the server streams once per request) and keep
     // waiting, instead of tearing the world down again on every resent message.
-    if (ctx.connection_phase == Connection_Phase::Loading &&
-        ctx.awaiting_stream_content_hash == change.content_hash)
+    if (ctx.connection.phase == Connection_Phase::Loading &&
+        ctx.connection.awaiting_stream_content_hash == change.content_hash)
     {
-      send_request_map_data(conn, change.map_name);
+      send_request_map_data(transport, change.map_name);
       continue;
     }
 
     log_terminal("Server switching map to '{}' (path '{}', hash {:#x})",
                  change.map_name, change.map_path, change.content_hash);
-    ctx.connection_phase = Connection_Phase::Loading;
+    ctx.connection.phase = Connection_Phase::Loading;
     renderer::draw_announcement("Loading map...");
 
     // Cache miss (file won't load) or hash mismatch → request the package. The
@@ -564,20 +573,20 @@ void Play_State::update(float dt)
     std::string local_path =
         shared::resolve_map_path(client_maps_directory(), change.map_path);
     if (!load_client_map(local_path) ||
-        ctx.loaded_map_content_hash != change.content_hash)
+        ctx.world.map_content_hash != change.content_hash)
     {
       log_terminal("No matching local copy of '{}' (cache miss/mismatch); "
                    "requesting map from server.", change.map_name);
-      ctx.awaiting_stream_content_hash = change.content_hash;
+      ctx.connection.awaiting_stream_content_hash = change.content_hash;
       renderer::draw_announcement("Downloading map...");
-      send_request_map_data(conn, change.map_name);
+      send_request_map_data(transport, change.map_name);
       continue;
     }
 
     // Loaded and verified locally — ack so the server resumes snapshots for us.
-    send_map_loaded_ack(conn, change.content_hash);
-    ctx.awaiting_stream_content_hash = 0;
-    ctx.connection_phase = Connection_Phase::Connected;
+    send_map_loaded_ack(transport, change.content_hash);
+    ctx.connection.awaiting_stream_content_hash = 0;
+    ctx.connection.phase = Connection_Phase::Connected;
     log_terminal("Map switch to '{}' complete; acked hash {:#x}",
                  change.map_name, change.content_hash);
   }
@@ -588,7 +597,7 @@ void Play_State::update(float dt)
   for (const auto &payload : inbox.map_data_messages)
   {
     // A late or duplicate package after we've already loaded is ignored.
-    if (ctx.connection_phase != Connection_Phase::Loading)
+    if (ctx.connection.phase != Connection_Phase::Loading)
       break;
 
     network::Bit_Reader reader(payload.data(), payload.size());
@@ -625,17 +634,16 @@ void Play_State::update(float dt)
       log_error("Failed to apply streamed map package '{}'.", data.map_name);
       continue;
     }
-    session_ready_for_simulation_and_rendering = true;
 
     // Ack the entities-only content hash the server tracks (set by
     // apply_map_package), not the package hash, so it matches
-    // g_state.map_content_hash and the server resumes snapshots for us.
-    send_map_loaded_ack(conn, ctx.loaded_map_content_hash);
-    ctx.awaiting_stream_content_hash = 0;
+    // ctx.world.map_content_hash and the server resumes snapshots for us.
+    send_map_loaded_ack(transport, ctx.world.map_content_hash);
+    ctx.connection.awaiting_stream_content_hash = 0;
     enter_connected_phase();
     log_terminal("Downloaded map '{}' (package hash {:#x}); acked content hash "
                  "{:#x}", package.map_name, data.package_hash,
-                 ctx.loaded_map_content_hash);
+                 ctx.world.map_content_hash);
   }
 
   // --- Handle server console messages ---
@@ -682,17 +690,17 @@ void Play_State::update(float dt)
   // --- Apply bot debug packets from server ---
   for (const auto &msg : inbox.bot_debug_updates)
   {
-    bot_debug::g_entries.clear();
+    ctx.replication.bot_debug_entries.clear();
     for (const auto &e : msg.bots())
     {
-      bot_debug::Entry entry;
+      bot_debug_entry_t entry;
       entry.slot       = e.slot();
       entry.goal       = e.goal();
       entry.type       = e.type();
       entry.path_index = e.path_index();
       for (const auto &v : e.path())
         entry.path.push_back({v.x(), v.y(), v.z()});
-      bot_debug::g_entries.push_back(std::move(entry));
+      ctx.replication.bot_debug_entries.push_back(std::move(entry));
     }
   }
 
@@ -704,7 +712,7 @@ void Play_State::update(float dt)
 
     uint32_t snapshot_tick = pkg.has_server_tick() ? pkg.server_tick() : 0;
 
-    if (snapshot_tick <= ctx.snapshot_state.latest_processed_tick && ctx.snapshot_state.latest_processed_tick != 0)
+    if (snapshot_tick <= ctx.replication.latest_processed_tick && ctx.replication.latest_processed_tick != 0)
       continue;
 
     // Which snapshot this packet is a delta against. 0 = full update, every
@@ -714,7 +722,7 @@ void Play_State::update(float dt)
     const network::snapshot_frame_t* baseline = nullptr;
     if (delta_from_tick != 0)
     {
-      baseline = ctx.snapshot_state.snapshot_history.find(delta_from_tick);
+      baseline = ctx.replication.snapshot_history.find(delta_from_tick);
       if (baseline == nullptr)
       {
         // The server deltaed against a tick we no longer hold. 
@@ -722,7 +730,7 @@ void Play_State::update(float dt)
         // wait for a new baseline.
         log_error("[CLIENT] Snapshot {} is a delta from tick {}, which is not in our history "
                   "(acked {}). Dropping the packet; the server will re-baseline.",
-                  snapshot_tick, delta_from_tick, ctx.snapshot_state.snapshot_history.acked_tick);
+                  snapshot_tick, delta_from_tick, ctx.replication.snapshot_history.acked_tick);
         continue;
       }
     }
@@ -754,13 +762,13 @@ void Play_State::update(float dt)
                    snapshot_tick, delta_from_tick, latest_snapshot.players.size(),
                    latest_snapshot.rockets.size(), latest_snapshot.physics_bodies.size(), data_size);
 
-    ctx.latest_player_entities.clear();
+    ctx.replication.latest_player_entities.clear();
     for (const auto &[uid, player] : latest_snapshot.players)
-      ctx.latest_player_entities[player.client_slot_index] = player;
+      ctx.replication.latest_player_entities[player.client_slot_index] = player;
 
-    ctx.remote_rockets = latest_snapshot.rockets;
-    ctx.remote_physics_bodies = latest_snapshot.physics_bodies;
-    ctx.snapshot_state.latest_processed_tick = snapshot_tick;
+    ctx.replication.remote_rockets = latest_snapshot.rockets;
+    ctx.replication.remote_physics_bodies = latest_snapshot.physics_bodies;
+    ctx.replication.latest_processed_tick = snapshot_tick;
 
     // Gunshots are read off replicated state, not dispatched as effects — a
     // player whose last_fire_tick advanced since the previous snapshot fired.
@@ -772,29 +780,28 @@ void Play_State::update(float dt)
     // pattern; see hit_confirm_audio.hpp for why it is not a cosmetic effect.
     play_hitmarker_audio_and_update_hit_tick_state(ctx);
 
-    for (const auto &[slot_index, player] : ctx.latest_player_entities)
+    for (const auto &[slot_index, player] : ctx.replication.latest_player_entities)
     {
-      if (slot_index == ctx.my_slot)
+      if (slot_index == ctx.connection.my_slot)
       {
-        ctx.my_entity_uid = player.entity_id;
-        ctx.local_player_health = player.health;
-        ctx.latest_server_position = player.position;
-        ctx.latest_server_velocity = player.velocity;
-        ctx.latest_server_ack_command =
+        ctx.connection.my_entity_uid = player.entity_id;
+        ctx.prediction.local_player_health = player.health;
+        ctx.prediction.latest_server_position = player.position;
+        ctx.prediction.latest_server_velocity = player.velocity;
+        ctx.prediction.latest_server_ack_command =
             pkg.has_last_processed_command() ? pkg.last_processed_command() : -1;
-        ctx.received_server_update = true;
+        ctx.prediction.received_server_update = true;
 
-        static bool first_update = true;
-        if (first_update) {
+        if (!ui.logged_first_server_update) {
           log_terminal("[CLIENT] First server update: position ({:.1f}, {:.1f}, {:.1f}), entity_id {}",
                        player.position.x, player.position.y, player.position.z,
                        player.entity_id);
-          first_update = false;
+          ui.logged_first_server_update = true;
         }
       }
       else
       {
-        auto &remote_player = ctx.remote_players[slot_index];
+        auto &remote_player = ctx.replication.remote_players[slot_index];
         // don't lerp positions if the entity id changed (e.g. player disconnected and rejoined)
         if (remote_player.active && remote_player.entity_uid != player.entity_id)
           remote_player = {};
@@ -820,11 +827,11 @@ void Play_State::update(float dt)
               player.death_tick != 0 && snapshot_tick > player.death_tick;
           remote_player.death_animation_seconds =
               stamp_in_the_past ? static_cast<float>(snapshot_tick - player.death_tick) /
-                                      static_cast<float>(ctx.server_tickrate)
+                                      static_cast<float>(ctx.connection.server_tickrate)
                                 : 0.f;
         }
 
-        ctx.interpolation_time = 0.f;
+        ctx.replication.interpolation_time = 0.f;
       }
     }
 
@@ -832,13 +839,13 @@ void Play_State::update(float dt)
     // interpolation state has to go too — it is what the renderer draws from,
     // and nothing else ever cleared it. Before explicit removal this could not
     // be done correctly, which is why disconnected players kept rendering.
-    for (auto it = ctx.remote_players.begin(); it != ctx.remote_players.end();)
-      it = ctx.latest_player_entities.count(it->first) == 0
-               ? ctx.remote_players.erase(it)
+    for (auto it = ctx.replication.remote_players.begin(); it != ctx.replication.remote_players.end();)
+      it = ctx.replication.latest_player_entities.count(it->first) == 0
+               ? ctx.replication.remote_players.erase(it)
                : std::next(it);
 
-    ctx.snapshot_state.snapshot_history.slot_for(snapshot_tick) = std::move(latest_snapshot);
-    ctx.snapshot_state.snapshot_history.acknowledge(snapshot_tick);
+    ctx.replication.snapshot_history.slot_for(snapshot_tick) = std::move(latest_snapshot);
+    ctx.replication.snapshot_history.acknowledge(snapshot_tick);
 
     // Cosmetic effect batch tails the entity deltas in the same packet.
     // Dispatch immediately — handlers are one-shot, fire-and-forget.
@@ -852,29 +859,29 @@ void Play_State::update(float dt)
   // once a map is loaded. While Connecting or while Loading a streamed map we
   // have no session yet — poll the network (above) but do nothing here. The
   // renderer draws the "Downloading map..." announcement in the meantime, and
-  // render_3d/pre_render bail on !session_ready_for_simulation_and_rendering too.
-  if (!session_ready_for_simulation_and_rendering)
+  // build_frame bails on !ctx.world.ready too.
+  if (!ctx.world.ready)
     return;
 
   // --- Reconciliation ---
-  if (ctx.received_server_update &&
-      ctx.connection_phase == Connection_Phase::Connected)
+  if (ctx.prediction.received_server_update &&
+      ctx.connection.phase == Connection_Phase::Connected)
   {
-    ctx.received_server_update = false;
+    ctx.prediction.received_server_update = false;
 
     
     // Seed from the server's authoritative state, then replay every command it
     // hasn't acked yet on top — the result is where we should actually be now.
-    vec3f reconciled_position = ctx.latest_server_position;
-    vec3f reconciled_velocity = ctx.latest_server_velocity;
+    vec3f reconciled_position = ctx.prediction.latest_server_position;
+    vec3f reconciled_velocity = ctx.prediction.latest_server_velocity;
 
-    float prediction_dt = 1.0f / static_cast<float>(ctx.server_tickrate);
+    float prediction_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
 
-    for (int command_count = ctx.latest_server_ack_command + 1; command_count < ctx.command_number;
+    for (int command_count = ctx.prediction.latest_server_ack_command + 1; command_count < ctx.prediction.command_number;
          ++command_count)
     {
-      int idx = command_count % (int)ctx.pending_commands.size();
-      const auto &saved = ctx.pending_commands[idx];
+      int idx = command_count % (int)ctx.prediction.pending_commands.size();
+      const auto &saved = ctx.prediction.pending_commands[idx];
       if (saved.command_number != command_count)
         break;
 
@@ -884,19 +891,19 @@ void Play_State::update(float dt)
       auto saved_basis = get_orientation_vectors(temporary_camera);
 
       std::tie(reconciled_position, reconciled_velocity) =
-          player_move(*ctx.cvars, saved.input, ctx.session.bvh, reconciled_position,
+          player_move(*ctx.cvars, saved.input, ctx.world.session.bvh, reconciled_position,
                       reconciled_velocity, saved_basis.forward, saved_basis.right,
                       player_half_width, player_half_height, prediction_dt,
-                      nullptr, &ctx.debug_collision_faces);
+                      nullptr, &ctx.visuals.debug_collision_faces);
     }
 
-    vec3f error = {reconciled_position.x - ctx.player_position.x,
-                   reconciled_position.y - ctx.player_position.y,
-                   reconciled_position.z - ctx.player_position.z};
+    vec3f error = {reconciled_position.x - ctx.prediction.player_position.x,
+                   reconciled_position.y - ctx.prediction.player_position.y,
+                   reconciled_position.z - ctx.prediction.player_position.z};
     float error_magnitude = linalg::length(error);
 
-    ctx.reconciliation_error = error;
-    ctx.reconciliation_error_magnitude = error_magnitude;
+    ctx.prediction.reconciliation_error = error;
+    ctx.prediction.reconciliation_error_magnitude = error_magnitude;
 
     constexpr float SNAP_THRESHOLD = 5.0f;
     // Server position is quantized to 1/32 per axis by write_coord, so a 3D
@@ -907,17 +914,17 @@ void Play_State::update(float dt)
 
     if (error_magnitude > SNAP_THRESHOLD)
     {
-      ctx.visual_error_offset = {0, 0, 0};
-      ctx.player_position = reconciled_position;
-      ctx.player_velocity = reconciled_velocity;
+      ctx.prediction.visual_error_offset = {0, 0, 0};
+      ctx.prediction.player_position = reconciled_position;
+      ctx.prediction.player_velocity = reconciled_velocity;
     }
     else if (error_magnitude > QUANTIZATION_DEADZONE)
     {
-      ctx.visual_error_offset.x += ctx.player_position.x - reconciled_position.x;
-      ctx.visual_error_offset.y += ctx.player_position.y - reconciled_position.y;
-      ctx.visual_error_offset.z += ctx.player_position.z - reconciled_position.z;
-      ctx.player_position = reconciled_position;
-      ctx.player_velocity = reconciled_velocity;
+      ctx.prediction.visual_error_offset.x += ctx.prediction.player_position.x - reconciled_position.x;
+      ctx.prediction.visual_error_offset.y += ctx.prediction.player_position.y - reconciled_position.y;
+      ctx.prediction.visual_error_offset.z += ctx.prediction.player_position.z - reconciled_position.z;
+      ctx.prediction.player_position = reconciled_position;
+      ctx.prediction.player_velocity = reconciled_velocity;
     }
     // else: error is below quantization noise — keep local prediction and
     // leave visual_error_offset alone so it can decay to zero.
@@ -931,39 +938,39 @@ void Play_State::update(float dt)
   // Right-click TOGGLES: zoom_active persists until clicked off, so
   // zoom_fraction eases toward a state rather than tracking a held button.
   const bool zoom_input_allowed =
-      mouse_captured && !console_open && !show_menu_overlay;
+      ui.mouse_captured && !console_open && !ui.show_menu_overlay;
 
   if (!zoom_input_allowed)
   {
     // Losing the mouse cancels the zoom rather than parking it: returning from
     // a menu still zoomed, with no click to explain it, reads as a bug. Also
     // keeps the old behavior that opening a menu eases the zoom back out.
-    zoom_active = false;
+    ctx.prediction.zoom_active = false;
   }
   else if (input::is_mouse_pressed(input::mouse_button_t::Right))
   {
-    zoom_active = !zoom_active;
+    ctx.prediction.zoom_active = !ctx.prediction.zoom_active;
   }
 
-  const float zoom_target = zoom_active ? 1.0f : 0.0f;
+  const float zoom_target = ctx.prediction.zoom_active ? 1.0f : 0.0f;
   if (ctx.cvars->r_zoom_easing_time_between_fovs <= 0.0f)
   {
-    zoom_fraction = zoom_target;
+    ui.zoom_fraction = zoom_target;
   }
   else
   {
     float step = dt / ctx.cvars->r_zoom_easing_time_between_fovs;
-    zoom_fraction += shared::clamp(zoom_target - zoom_fraction, -step, step);
+    ui.zoom_fraction += shared::clamp(zoom_target - ui.zoom_fraction, -step, step);
   }
 
   camera.fov_degrees = shared::lerp(ctx.cvars->r_fov, ctx.cvars->r_zoom_fov,
-                                    zoom_fraction);
+                                    ui.zoom_fraction);
 
   // before input handling, render the menu overlay (done in render_ui)
-  if (show_menu_overlay) return;
+  if (ui.show_menu_overlay) return;
 
   // --- Mouse look ---
-  if (mouse_captured && !console_open)
+  if (ui.mouse_captured && !console_open)
   {
     // Scale by tan(fov/2) so a given hand movement sweeps the same distance
     // across the screen at any FOV — otherwise zooming multiplies your aim
@@ -978,19 +985,19 @@ void Play_State::update(float dt)
         shared::lerp(1.0f, zoom_scale, ctx.cvars->m_zoom_sensitivity_ratio);
 
     linalg::vec2i delta = input::mouse_delta();
-    ctx.player_yaw += delta.x * sensitivity;
-    ctx.player_pitch -= delta.y * sensitivity;
-    shared::clamp_this(ctx.player_pitch, -89.0f, 89.0f);
+    ctx.prediction.player_yaw += delta.x * sensitivity;
+    ctx.prediction.player_pitch -= delta.y * sensitivity;
+    shared::clamp_this(ctx.prediction.player_pitch, -89.0f, 89.0f);
   }
 
-  camera.yaw = ctx.player_yaw;
-  camera.pitch = ctx.player_pitch;
+  camera.yaw = ctx.prediction.player_yaw;
+  camera.pitch = ctx.prediction.player_pitch;
   auto basis = get_orientation_vectors(camera);
 
   // Keep the audio listener glued to the local player's eye each frame so
   // spatialized cosmetic sounds pan/attenuate relative to where we're looking.
   if (ctx.audio)
-    ctx.audio->update(ctx.player_position, basis.forward, basis.up);
+    ctx.audio->update(ctx.prediction.player_position, basis.forward, basis.up);
 
   // --- Gather move input (suppressed while console is open) ---
   uint64_t buttons = 0;
@@ -1016,7 +1023,7 @@ void Play_State::update(float dt)
     // moment scoping costs movement speed or accuracy, and it has to arrive
     // through the predicted button bitfield to do so. It is the zoom STATE,
     // not the click — the toggle edge never leaves this machine.
-    if (zoom_active)                                           buttons |= Button::Zoom;
+    if (ctx.prediction.zoom_active)                            buttons |= Button::Zoom;
   }
 
   // --- Predicted local gunshot ---
@@ -1032,13 +1039,13 @@ void Play_State::update(float dt)
   // not reproduce: is_movement_allowed() is game-rules state the client does
   // not have, so during a countdown this plays a shot the server drops. Audible
   // only, and it cannot desync anything — no state is predicted, just audio.
-  const bool local_player_is_dead = ctx.local_player_health <= 0;
+  const bool local_player_is_dead = ctx.prediction.local_player_health <= 0;
 
-  seconds_since_local_fire += dt;
+  ctx.prediction.seconds_since_local_fire += dt;
   if ((buttons & Button::Fire) != 0 && !local_player_is_dead && ctx.audio)
   {
-    auto my_entity = ctx.latest_player_entities.find(ctx.my_slot);
-    if (my_entity != ctx.latest_player_entities.end())
+    auto my_entity = ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
+    if (my_entity != ctx.replication.latest_player_entities.end())
     {
       // active_weapon_id came off the wire, and enum fields are deserialized
       // without a range check, so it is looked up through fire_sound_for
@@ -1051,9 +1058,9 @@ void Play_State::update(float dt)
       {
         const shared::weapon_definition_t &weapon =
             shared::get_weapon_definition(my_weapon);
-        if (seconds_since_local_fire >= weapon.fire_interval_seconds)
+        if (ctx.prediction.seconds_since_local_fire >= weapon.fire_interval_seconds)
         {
-          seconds_since_local_fire = 0.f;
+          ctx.prediction.seconds_since_local_fire = 0.f;
           ctx.audio->play_2d(sound);
         }
       }
@@ -1082,37 +1089,37 @@ void Play_State::update(float dt)
   // --- Client-side prediction ---
   // When connected, physics steps at the server tickrate so prediction matches
   // the server. Accumulate real frame time and step in fixed increments.
-  if (ctx.connection_phase == Connection_Phase::Connected)
+  if (ctx.connection.phase == Connection_Phase::Connected)
   {
-    float tick_dt = 1.0f / static_cast<float>(ctx.server_tickrate);
-    ctx.physics_accumulator += dt;
+    float tick_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
+    ctx.prediction.physics_accumulator += dt;
 
-    while (ctx.physics_accumulator >= tick_dt)
+    while (ctx.prediction.physics_accumulator >= tick_dt)
     {
-      ctx.physics_accumulator -= tick_dt;
+      ctx.prediction.physics_accumulator -= tick_dt;
 
       game::C2S_PlayerMoveCommand move_cmd;
-      move_cmd.set_command_number(ctx.command_number);
-      move_cmd.set_tick_count(ctx.command_number);
+      move_cmd.set_command_number(ctx.prediction.command_number);
+      move_cmd.set_tick_count(ctx.prediction.command_number);
       auto* view_angles = move_cmd.mutable_viewangles();
-      view_angles->set_pitch(ctx.player_pitch);
-      view_angles->set_yaw(ctx.player_yaw);
+      view_angles->set_pitch(ctx.prediction.player_pitch);
+      view_angles->set_yaw(ctx.prediction.player_yaw);
       move_cmd.set_buttons_bitfield(buttons);
       // The snapshot ack rides on the move command rather than a message of its
       // own: it is sent at the same rate, to the same place, and a lost move
       // command already costs us a tick — one more datagram would buy nothing.
-      move_cmd.set_acked_server_tick(ctx.snapshot_state.snapshot_history.acked_tick);
-      network::send_protobuf_message(conn, move_cmd);
+      move_cmd.set_acked_server_tick(ctx.replication.snapshot_history.acked_tick);
+      network::send_protobuf_message(transport, move_cmd);
 
       Move_Events tick_events{};
       auto [new_position, new_velocity] =
-          player_move(*ctx.cvars, move_input, ctx.session.bvh, ctx.player_position,
-                      ctx.player_velocity, basis.forward, basis.right,
+          player_move(*ctx.cvars, move_input, ctx.world.session.bvh, ctx.prediction.player_position,
+                      ctx.prediction.player_velocity, basis.forward, basis.right,
                       player_half_width, player_half_height, tick_dt,
-                      &tick_events, &ctx.debug_collision_faces);
+                      &tick_events, &ctx.visuals.debug_collision_faces);
 
-      ctx.player_position = new_position;
-      ctx.player_velocity = new_velocity;
+      ctx.prediction.player_position = new_position;
+      ctx.prediction.player_velocity = new_velocity;
 
       // Coalesce across the (possibly multiple) ticks stepped this frame:
       // jump is a one-shot, landing keeps the hardest impact.
@@ -1124,23 +1131,23 @@ void Play_State::update(float dt)
         frame_move_events.land_impact_speed = tick_events.land_impact_speed;
       }
 
-      int idx = ctx.command_number % (int)ctx.pending_commands.size();
-      ctx.pending_commands[idx] = {ctx.command_number,    move_input,
-                                   ctx.player_yaw,        ctx.player_pitch,
-                                   ctx.player_position,   ctx.player_velocity};
-      ctx.command_number++;
+      int idx = ctx.prediction.command_number % (int)ctx.prediction.pending_commands.size();
+      ctx.prediction.pending_commands[idx] = {ctx.prediction.command_number,    move_input,
+                                   ctx.prediction.player_yaw,        ctx.prediction.player_pitch,
+                                   ctx.prediction.player_position,   ctx.prediction.player_velocity};
+      ctx.prediction.command_number++;
     }
   }
   else
   {
     auto [new_position, new_velocity] =
-        player_move(*ctx.cvars, move_input, ctx.session.bvh, ctx.player_position,
-                    ctx.player_velocity, basis.forward, basis.right,
+        player_move(*ctx.cvars, move_input, ctx.world.session.bvh, ctx.prediction.player_position,
+                    ctx.prediction.player_velocity, basis.forward, basis.right,
                     player_half_width, player_half_height, dt, &frame_move_events,
-                    &ctx.debug_collision_faces);
+                    &ctx.visuals.debug_collision_faces);
 
-    ctx.player_position = new_position;
-    ctx.player_velocity = new_velocity;
+    ctx.prediction.player_position = new_position;
+    ctx.prediction.player_velocity = new_velocity;
   }
 
   // Local player's movement sounds — centered (2D), since it's us. Other
@@ -1159,25 +1166,25 @@ void Play_State::update(float dt)
   {
     constexpr float SMOOTH_SPEED = 16.0f;
     float decay = std::exp(-SMOOTH_SPEED * dt);
-    ctx.visual_error_offset.x *= decay;
-    ctx.visual_error_offset.y *= decay;
-    ctx.visual_error_offset.z *= decay;
+    ctx.prediction.visual_error_offset.x *= decay;
+    ctx.prediction.visual_error_offset.y *= decay;
+    ctx.prediction.visual_error_offset.z *= decay;
 
-    if (linalg::length(ctx.visual_error_offset) < 0.001f)
-      ctx.visual_error_offset = {0, 0, 0};
+    if (linalg::length(ctx.prediction.visual_error_offset) < 0.001f)
+      ctx.prediction.visual_error_offset = {0, 0, 0};
   }
 
   // --- Update camera ---
   // Extrapolate by the leftover accumulator for smooth inter-tick camera motion.
-  float extrapolation_factor = (ctx.connection_phase == Connection_Phase::Connected)
-                     ? ctx.physics_accumulator : 0.f;
-  camera.position.x = ctx.player_position.x + ctx.player_velocity.x * extrapolation_factor + ctx.visual_error_offset.x;
-  camera.position.y = ctx.player_position.y + ctx.player_velocity.y * extrapolation_factor + ctx.visual_error_offset.y + shared::player_eye_height;
-  camera.position.z = ctx.player_position.z + ctx.player_velocity.z * extrapolation_factor + ctx.visual_error_offset.z;
+  float extrapolation_factor = (ctx.connection.phase == Connection_Phase::Connected)
+                     ? ctx.prediction.physics_accumulator : 0.f;
+  camera.position.x = ctx.prediction.player_position.x + ctx.prediction.player_velocity.x * extrapolation_factor + ctx.prediction.visual_error_offset.x;
+  camera.position.y = ctx.prediction.player_position.y + ctx.prediction.player_velocity.y * extrapolation_factor + ctx.prediction.visual_error_offset.y + shared::player_eye_height;
+  camera.position.z = ctx.prediction.player_position.z + ctx.prediction.player_velocity.z * extrapolation_factor + ctx.prediction.visual_error_offset.z;
 
   // --- Interpolate remote players ---
-  float tick_interval = 1.0f / static_cast<float>(ctx.server_tickrate);
-  for (auto &[slot, remote_player] : ctx.remote_players)
+  float tick_interval = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
+  for (auto &[slot, remote_player] : ctx.replication.remote_players)
   {
     // The death clip runs on the render clock, and ABOVE the snapshot_count
     // gate below: a corpse we have only ever seen one snapshot of still has an
@@ -1203,7 +1210,7 @@ void Play_State::update(float dt)
       tick_count_between_latest_two_snapshots = 1;
 
     float interp_duration = tick_interval * static_cast<float>(tick_count_between_latest_two_snapshots);
-    float t = ctx.interpolation_time / interp_duration;
+    float t = ctx.replication.interpolation_time / interp_duration;
     if (t > 1.f)
       t = 1.f;
 
@@ -1227,20 +1234,20 @@ void Play_State::update(float dt)
     remote_player.body_yaw =
         linalg::wrap_degrees(remote_player.snapshots[0].body_yaw + body_yaw_delta * t);
   }
-  ctx.interpolation_time += dt;
+  ctx.replication.interpolation_time += dt;
 
   // --- Spectate (cl_spectate_slot): ride a remote player's eye ---
   // Deliberately last, and deliberately reading the same render_position /
   // render_yaw the model is drawn from: whatever the interpolation pass just
   // produced is exactly what the view shows, so a stall reads as camera judder
   // rather than being smoothed over by a separate camera path. Mouse look still
-  // drives ctx.player_yaw underneath -- it just isn't what the camera uses.
+  // drives ctx.prediction.player_yaw underneath -- it just isn't what the camera uses.
   if (ctx.cvars->cl_spectate_slot >= 0)
   {
-    auto spectated_it = ctx.remote_players.find(ctx.cvars->cl_spectate_slot);
-    if (spectated_it != ctx.remote_players.end() && spectated_it->second.active)
+    auto spectated_it = ctx.replication.remote_players.find(ctx.cvars->cl_spectate_slot);
+    if (spectated_it != ctx.replication.remote_players.end() && spectated_it->second.active)
     {
-      const client_context_t::Remote_Player_State &spectated = spectated_it->second;
+      const Remote_Player_State &spectated = spectated_it->second;
       camera.position = spectated.render_position +
                         vec3f{0.f, shared::player_eye_height, 0.f};
       camera.yaw   = spectated.render_yaw;
@@ -1253,15 +1260,15 @@ void Play_State::render_ui()
 {
   auto &ctx = state_manager::get_client_context();
 
-  if (show_menu_overlay)
+  if (ui.show_menu_overlay)
   {
-    render_menu_overlay(&show_menu_overlay);
+    render_menu_overlay(&ui.show_menu_overlay);
     return;
   }
 
   // Only while actually looking around: an uncaptured cursor is the player's
   // aiming device at that point, and a second one in the middle reads as a bug.
-  if (mouse_captured && ctx.cvars->cl_crosshair)
+  if (ui.mouse_captured && ctx.cvars->cl_crosshair)
   {
     hud::crosshair_settings_t crosshair;
     crosshair.arm_length = ctx.cvars->cl_crosshair_size;
@@ -1285,10 +1292,10 @@ void Play_State::render_ui()
   {
     ImGui::Text("PLAY MODE  [ESC] to return to editor");
     ImGui::Text("Uncapture mouse [U]");
-    ImGui::Text("position: %.1f, %.1f, %.1f", ctx.player_position.x, ctx.player_position.y,
-                ctx.player_position.z);
-    ImGui::Text("vel: %.1f, %.1f, %.1f", ctx.player_velocity.x, ctx.player_velocity.y,
-                ctx.player_velocity.z);
+    ImGui::Text("position: %.1f, %.1f, %.1f", ctx.prediction.player_position.x, ctx.prediction.player_position.y,
+                ctx.prediction.player_position.z);
+    ImGui::Text("vel: %.1f, %.1f, %.1f", ctx.prediction.player_velocity.x, ctx.prediction.player_velocity.y,
+                ctx.prediction.player_velocity.z);
 
     float avg_dt = 0.f;
     for (int i = 0; i < dt_history_count; i++)
@@ -1297,24 +1304,24 @@ void Play_State::render_ui()
     ImGui::Text("%.1f fps (%.2f ms)", 1.f / avg_dt, avg_dt * 1000.f);
 
     const char *conn_str = "Disconnected";
-    if (ctx.connection_phase == Connection_Phase::Connecting)
+    if (ctx.connection.phase == Connection_Phase::Connecting)
       conn_str = "Connecting...";
-    else if (ctx.connection_phase == Connection_Phase::Loading)
+    else if (ctx.connection.phase == Connection_Phase::Loading)
       conn_str = "Loading map...";
-    else if (ctx.connection_phase == Connection_Phase::Connected)
+    else if (ctx.connection.phase == Connection_Phase::Connected)
       conn_str = "Connected";
-    ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, ctx.my_slot, ctx.command_number);
+    ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, ctx.connection.my_slot, ctx.prediction.command_number);
 
-    if (ctx.reconciliation_error_magnitude > 0.01f)
+    if (ctx.prediction.reconciliation_error_magnitude > 0.01f)
       ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "reconc err: %7.3f (%7.2f, %7.2f, %7.2f)",
-                         ctx.reconciliation_error_magnitude, ctx.reconciliation_error.x, ctx.reconciliation_error.y, ctx.reconciliation_error.z);
+                         ctx.prediction.reconciliation_error_magnitude, ctx.prediction.reconciliation_error.x, ctx.prediction.reconciliation_error.y, ctx.prediction.reconciliation_error.z);
     else
-      ImGui::Text("reconc err: %7.3f", ctx.reconciliation_error_magnitude);
+      ImGui::Text("reconc err: %7.3f", ctx.prediction.reconciliation_error_magnitude);
 
-    float vis_offset_mag = linalg::length(ctx.visual_error_offset);
+    float vis_offset_mag = linalg::length(ctx.prediction.visual_error_offset);
     if (vis_offset_mag > 0.01f)
       ImGui::TextColored(ImVec4(1, 1, 0.3f, 1), "vis offset: %7.3f (%7.2f, %7.2f, %7.2f)",
-                         vis_offset_mag, ctx.visual_error_offset.x, ctx.visual_error_offset.y, ctx.visual_error_offset.z);
+                         vis_offset_mag, ctx.prediction.visual_error_offset.x, ctx.prediction.visual_error_offset.y, ctx.prediction.visual_error_offset.z);
     else
       ImGui::Text("vis offset: %7.3f", vis_offset_mag);
 
@@ -1327,20 +1334,22 @@ void Play_State::render_ui()
     ImGui::Checkbox("Show Hitboxes", &ctx.cvars->debug_show_hitboxes);
     ImGui::Checkbox("Show Box Volumes", &ctx.cvars->debug_show_box_volumes);
 
-    ImGui::Checkbox("Hide Geometry", &hide_geometry);
-    ImGui::Checkbox("Show Entities", &show_entity_debug);
+    // These three used to be Play_State bools sitting in the same block as the
+    // four cvars above, which put them out of the console's reach for no reason.
+    ImGui::Checkbox("Hide Geometry", &ctx.cvars->debug_hide_geometry);
+    ImGui::Checkbox("Show Entities", &ctx.cvars->debug_show_entity_counts);
 #ifdef JPH_DEBUG_RENDERER
-    ImGui::Checkbox("Show Physics Debug", &show_physics_debug);
+    ImGui::Checkbox("Show Physics Debug", &ctx.cvars->debug_show_physics_bodies);
 #endif
   }
   ImGui::End();
 
   // --- Entity debug overlay ---
-  if (show_entity_debug)
+  if (ctx.cvars->debug_show_entity_counts)
   {
     ImGui::SetNextWindowPos(ImVec2(300, 10), ImGuiCond_Once);
     ImGui::SetNextWindowBgAlpha(0.5f);
-    if (ImGui::Begin("Entities##entity_debug", &show_entity_debug,
+    if (ImGui::Begin("Entities##entity_debug", &ctx.cvars->debug_show_entity_counts,
                      ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoSavedSettings))
     {
@@ -1349,7 +1358,7 @@ void Play_State::render_ui()
       // pools is an array indexed by tag now, so `type` is a member rather than
       // a map key — and index 0 (Invalid) is empty, so the count check skips it
       // without a special case.
-      for (const shared::Entity_Pool &pool : ctx.session.entity_system.pools)
+      for (const shared::Entity_Pool &pool : ctx.world.session.entity_system.pools)
       {
         const int count = (int)pool.count;
         if (count > 0)
@@ -1359,7 +1368,7 @@ void Play_State::render_ui()
         }
       }
 
-      int geometry_count = (int)ctx.session.geometry.size();
+      int geometry_count = (int)ctx.world.session.geometry.size();
       if (geometry_count > 0)
       {
         ImGui::Text("%-20s %d", "geometry", geometry_count);
@@ -1367,16 +1376,16 @@ void Play_State::render_ui()
       }
 
       int remote_count = 0;
-      for (auto &[slot, remote_player] : ctx.remote_players)
+      for (auto &[slot, remote_player] : ctx.replication.remote_players)
         if (remote_player.active) remote_count++;
       if (remote_count > 0)
         ImGui::Text("%-20s %d", "remote players", remote_count);
 
-      int rocket_count = (int)ctx.remote_rockets.size();
+      int rocket_count = (int)ctx.replication.remote_rockets.size();
       if (rocket_count > 0)
         ImGui::Text("%-20s %d", "remote rockets", rocket_count);
 
-      int fx_count = (int)ctx.explosion_effects.size();
+      int fx_count = (int)ctx.visuals.explosion_effects.size();
       if (fx_count > 0)
         ImGui::Text("%-20s %d", "explosion fx", fx_count);
 
@@ -1387,7 +1396,7 @@ void Play_State::render_ui()
   }
 
   // --- Bot debug HUD ---
-  if (!bot_debug::g_entries.empty())
+  if (!ctx.replication.bot_debug_entries.empty())
   {
     static constexpr const char *goal_names[] = {"Idle","Chase","Attack","Retreat"};
     static constexpr const char *type_names[] = {"idle","chase","regular"};
@@ -1401,7 +1410,7 @@ void Play_State::render_ui()
                          ImGuiWindowFlags_NoSavedSettings))
     {
       ImGui::TextDisabled("-- Bots --");
-      for (const auto &bot : bot_debug::g_entries)
+      for (const auto &bot : ctx.replication.bot_debug_entries)
       {
         const char *goal_str = (bot.goal >= 0 && bot.goal < 4) ? goal_names[bot.goal] : "?";
         const char *type_str = (bot.type >= 0 && bot.type < 3) ? type_names[bot.type] : "?";
@@ -1434,64 +1443,144 @@ void Play_State::render_ui()
   }
 }
 
-void Play_State::render_3d(VkCommandBuffer cmd)
+namespace
 {
-  if (!session_ready_for_simulation_and_rendering)
-    return;
 
+// The 20-field fill used to exist four times over -- emitter and explosion, each
+// once for the compute dispatch and once for the draw, with nothing checking
+// that the pairs matched. Emitters now ride the pass, so there is one fill and
+// one caller.
+renderer::particle_emitter_parameters_t
+emitter_parameters(const entities::Particle_Emitter_Entity &emitter, float delta_seconds)
+{
+  renderer::particle_emitter_parameters_t parameters{};
+  parameters.entity_id          = emitter.entity_id;
+  parameters.position           = emitter.position;
+  parameters.delta_time         = delta_seconds;
+  parameters.emit_rate          = emitter.emit_rate;
+  parameters.max_particles      = emitter.max_particles;
+  parameters.lifetime_min       = emitter.lifetime_min;
+  parameters.lifetime_max       = emitter.lifetime_max;
+  parameters.velocity_min       = emitter.velocity_min;
+  parameters.velocity_max       = emitter.velocity_max;
+  parameters.spread             = emitter.spread;
+  parameters.gravity            = emitter.gravity;
+  parameters.drag               = emitter.drag;
+  parameters.size_start         = emitter.size_start;
+  parameters.size_end           = emitter.size_end;
+  parameters.rotation_speed_min = emitter.rotation_speed_min;
+  parameters.rotation_speed_max = emitter.rotation_speed_max;
+  parameters.color_start        = emitter.color_start;
+  parameters.color_end          = emitter.color_end;
+  parameters.alpha_start        = emitter.alpha_start;
+  parameters.alpha_end          = emitter.alpha_end;
+  return parameters;
+}
+
+renderer::particle_emitter_parameters_t
+explosion_parameters(uint64_t explosion_index, const vec3f &position, float time_remaining,
+                     float delta_seconds)
+{
+  renderer::particle_emitter_parameters_t parameters{};
+  // The high bit guarantees no collision with a real entity id.
+  parameters.entity_id          = 0x8000000000000000ULL | explosion_index;
+  parameters.position           = position;
+  parameters.delta_time         = delta_seconds;
+  parameters.emit_rate          = (time_remaining > 0.6f) ? 200.0f : 0.0f;
+  parameters.max_particles      = 48;
+  parameters.lifetime_min       = 0.3f;
+  parameters.lifetime_max       = 0.8f;
+  parameters.velocity_min       = 40.0f;
+  parameters.velocity_max       = 120.0f;
+  parameters.spread             = 2.0f;
+  parameters.gravity            = {0, -20.0f, 0};
+  parameters.drag               = 1.5f;
+  parameters.size_start         = 3.0f;
+  parameters.size_end           = 8.0f;
+  parameters.rotation_speed_min = -3.0f;
+  parameters.rotation_speed_max = 3.0f;
+  parameters.color_start        = {1.0f, 0.8f, 0.3f};
+  parameters.color_end          = {0.4f, 0.4f, 0.4f};
+  parameters.alpha_start        = 0.9f;
+  parameters.alpha_end          = 0.0f;
+  return parameters;
+}
+
+// A Render component's material as a pipeline_state. Only the shader varies
+// today; blend, cull and depth are the material system's growth room.
+renderer::pipeline_state_t state_for(const entities::Material &material)
+{
+  renderer::pipeline_state_t state;
+  state.shader = material.shader_type == entities::Shader_Type::Unlit ? renderer::shader_t::unlit
+                                                                      : renderer::shader_t::lit;
+  return state;
+}
+
+} // namespace
+
+void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes)
+{
   auto &ctx = state_manager::get_client_context();
 
-  renderer::render_view_t view_def;
-  view_def.viewport = {{0, 0}, {1, 1}};
-  view_def.camera = camera;
+  if (!ctx.world.ready)
+    return;
 
-  renderer::set_view(cmd, view_def);
+  shared::Entity_System &entity_system = ctx.world.session.entity_system;
+
+  // Clears the mesh and emitter lists and RETIRES the debug list -- so a trace
+  // appended with a lifetime from a fixed tick survives, and one appended with
+  // none dies here, exactly one frame after it was made.
+  scene.begin_frame(delta_seconds);
+  scene.view.viewport = {{0, 0}, {1, 1}};
+  scene.view.camera   = camera;
+
+  pose_count = 0;
 
   // Render the session's geometry. One call per object — the mesh-path /
   // primitive / displacement-grid decision lives in draw_geometry, shared with
   // the editor, instead of being spelled out twice.
-  if (!hide_geometry)
+  if (!ctx.cvars->debug_hide_geometry)
   {
-    for (const shared::map_geometry_t &entry : ctx.session.geometry)
-      draw_geometry(cmd, entry.value, entry.uid);
+    for (const shared::map_geometry_t &entry : ctx.world.session.geometry)
+      draw_geometry(scene, entry.value, entry.uid);
   }
 
-  // Render map entities (geometry is not among them any more, so there is
-  // nothing to skip here except the local player).
-  for (const auto &entry : map.entities)
+  // Render the session's entities (geometry is not among them any more, so
+  // there is nothing to skip here except the local player). Off the pools, like
+  // the geometry above and the entity-count HUD: the session IS the client's
+  // world, and reading the map_t it was built from meant carrying a second copy
+  // of every entity purely so this loop could walk it.
+  for (shared::Entity_Pool &pool : entity_system.pools)
   {
-    const auto &ent = entry.entity;
-    if (!ent)
+    if (pool.type == entities::entity_type::Player_Entity)
       continue;
 
-    if (ent->type == entities::entity_type::Player_Entity)
-      continue;
-
-    const entities::Render *rc = entities::get_render(ent.get());
-    if (rc && rc->visible)
+    for (uint32_t slot = 0; slot < pool.count; ++slot)
     {
-      auto mesh_handle = assets::get_mesh(rc->mesh);
-      if (mesh_handle.valid())
-      {
-        auto shader = rc->material.shader_type == entities::Shader_Type::Unlit
-                          ? renderer:: shader_type::Unlit
-                          : renderer:: shader_type::Lit;
-        vec3f mat_color = rc->material.color;
-        color_t tint = color_from_vec3(mat_color);
-        renderer::draw_mesh(cmd, mesh_handle,
-                           {.position = ent->position,
-                            .scale    = rc->scale,
-                            .rotation = ent->orientation + rc->rotation,
-                            .color    = tint,
-                            .shader   = shader});
-      }
+      const entities::Entity *ent = pool.at(slot);
+
+      const entities::Render *rc = entities::get_render(ent);
+      if (!rc || !rc->visible)
+        continue;
+
+      const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(rc->mesh));
+      if (!mesh.valid())
+        continue;
+
+      renderer::mesh_draw_t draw{};
+      draw.mesh      = mesh;
+      draw.transform = linalg::compose_transform_euler(ent->position,
+                                                       ent->orientation + rc->rotation, rc->scale);
+      draw.tint      = color_from_vec3(rc->material.color);
+      draw.material_overrides = material_variant(mesh, state_for(rc->material));
+      scene.meshes.push_back(draw);
     }
   }
 
   // Render remote players and bots: the model, then the debug volumes.
-  for (const auto &[slot, remote_player] : ctx.remote_players)
+  for (const auto &[slot, remote_player] : ctx.replication.remote_players)
   {
-    if (!remote_player.active || remote_player.slot_index == ctx.my_slot)
+    if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot)
       continue;
 
     // The player model. A bot IS a Player_Entity, so this draws bots too --
@@ -1500,24 +1589,36 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     // than Remote_Player_State, because that is where the snapshot put it; the
     // interpolated POSITION comes off Remote_Player_State, because that is
     // where the interpolation happens. Neither has both.
-    auto player_entity = ctx.latest_player_entities.find(slot);
-    if (player_entity != ctx.latest_player_entities.end() &&
+    auto player_entity = ctx.replication.latest_player_entities.find(slot);
+    if (player_entity != ctx.replication.latest_player_entities.end() &&
         player_entity->second.render.visible)
     {
       const entities::Render &render = player_entity->second.render;
 
-      auto mesh_handle = assets::get_mesh(render.mesh);
-      if (mesh_handle.valid())
+      const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
+          assets::get_mesh(render.mesh);
+      const renderer::mesh_handle_t mesh = get_render_mesh(mesh_asset);
+      if (mesh.valid())
       {
         // The body is drawn at BODY_YAW, not view yaw, and the difference is
         // handed to the aim poses. Pitch never reaches the transform at all:
         // it is where the player is LOOKING, and applying it to the whole
         // model would tip them over. Distributing it across the spine is what
         // the authored pose set does (animation_def.md §5).
-        std::vector<linalg::mat4f> skinning;
-        const assets::mesh_asset_t *mesh = assets::get(mesh_handle);
-        const assets::skeleton_t *skeleton =
-            mesh && mesh->is_skinned() ? assets::get(mesh->skeleton) : nullptr;
+        //
+        // The pose has to outlive this loop -- mesh_draw_t holds a Span into it
+        // and nothing is recorded until render_frame -- so it goes in a slot of
+        // `pose_storage`, whose element addresses a deque keeps stable as it
+        // grows.
+        if (pose_count == pose_storage.size())
+          pose_storage.emplace_back();
+        assets::posed_skeleton_t &posed = pose_storage[pose_count++];
+        posed.clear();
+
+        const assets::mesh_asset_t *mesh_asset_data = assets::get(mesh_asset);
+        const assets::skeleton_t   *skeleton =
+            mesh_asset_data && mesh_asset_data->is_skinned() ? assets::get(mesh_asset_data->skeleton)
+                                                             : nullptr;
 
         if (skeleton && remote_player.death_tick != 0)
         {
@@ -1526,9 +1627,9 @@ void Play_State::render_3d(VkCommandBuffer cmd)
           // and there is no crossfade in the animator yet. body_yaw below still
           // orients the body, frozen where the server stopped advancing it, so
           // the player falls in the direction they were facing.
-          compute_clip_skinning_matrices(death_clip(), *skeleton,
-                                         remote_player.death_animation_seconds,
-                                         /*looping*/ false, skinning);
+          compute_clip_posed_skeleton(death_clip(), *skeleton,
+                                      remote_player.death_animation_seconds,
+                                      /*looping*/ false, posed);
         }
         else if (skeleton)
         {
@@ -1547,25 +1648,22 @@ void Play_State::render_3d(VkCommandBuffer cmd)
             deviation = ctx.cvars->cl_aim_debug_yaw;
           }
 
-          compute_aim_skinning_matrices(holding_gun_aim_poses(), *skeleton, pitch, deviation,
-                                        aim_settings_from(*ctx.cvars), skinning);
+          compute_aim_posed_skeleton(holding_gun_aim_poses(), *skeleton, pitch, deviation,
+                                     aim_settings_from(*ctx.cvars), posed);
         }
 
-        renderer::draw_mesh(cmd, mesh_handle,
-                            {.position = remote_player.render_position + render.offset,
-                             .scale    = render.scale,
-                             .rotation = vec3f{0.f, remote_player.body_yaw, 0.f} +
-                                         render.rotation,
-                             .color    = colors::white,
-                             .shader   = ctx.cvars->cl_player_unlit
-                                             ? renderer::shader_type::Unlit
-                                             : renderer::shader_type::Lit,
-                             // Empty means "no pose": the renderer falls back to
-                             // the bind pose, which is what an unskinned mesh
-                             // should look like. A pose set that failed to load
-                             // cannot reach here -- that death is fatal.
-                             .skinning_matrices     = skinning.empty() ? nullptr : skinning.data(),
-                             .skinning_matrix_count = (uint32_t)skinning.size()});
+        renderer::mesh_draw_t draw{};
+        draw.mesh      = mesh;
+        draw.transform = linalg::compose_transform_euler(
+            remote_player.render_position + render.offset,
+            vec3f{0.f, remote_player.body_yaw, 0.f} + render.rotation, render.scale);
+        // An empty pose means BIND POSE, which is what an unskinned mesh should
+        // look like. A pose set that failed to load cannot reach here -- that
+        // death is fatal.
+        draw.pose = posed.skinning;
+        if (ctx.cvars->cl_player_unlit)
+          draw.material_overrides = material_variant(mesh, {.shader = renderer::shader_t::unlit});
+        scene.meshes.push_back(draw);
       }
       else
       {
@@ -1586,17 +1684,14 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     const vec3f rmax = {remote_player.render_position.x + player_half_width,
                         remote_player.render_position.y + 2.f * player_half_height,
                         remote_player.render_position.z + player_half_width};
-    // Solid normally, WIREFRAME while hitbox debugging is on: the regions below
-    // live inside this hull, so a filled hull writes depth over every one of
-    // them and all you see is a green box. It hides the model for the same
-    // reason, which is why cl_draw_player_hull defaults OFF now that there is
-    // one to hide.
+    // Wireframe only, and only while hitbox debugging is on: the regions below
+    // live inside this hull, so a filled hull would write depth over every one
+    // of them and all you would see is a green box. It hides the model for the
+    // same reason, which is why cl_draw_player_hull defaults OFF now that there
+    // is one to hide.
     const bool show_hitboxes = ctx.cvars->debug_show_hitboxes;
-    if (ctx.cvars->cl_draw_player_hull)
-    {
-      if (show_hitboxes)
-        renderer::draw__wire_AABB(cmd, rmin, rmax, colors::green);
-    }
+    if (ctx.cvars->cl_draw_player_hull && show_hitboxes)
+      scene.debug.aabb(rmin, rmax, colors::green);
 
     // The volumes hitscan actually resolves against, placed by the SAME
     // function the server places them with (shared::compute_player_hitboxes)
@@ -1625,7 +1720,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
                                       aim_settings_from(*ctx.cvars), volumes);
 
       const auto line = [&](const vec3f &start, const vec3f &end, color_t color)
-      { renderer::draw_line(cmd, start, end, color); };
+      { scene.debug.line(start, end, color); };
 
       for (const assets::posed_hitbox_t &hitbox : volumes)
         client::draw_posed_hitbox(line, hitbox, client::hit_region_color(hitbox.region));
@@ -1633,20 +1728,21 @@ void Play_State::render_3d(VkCommandBuffer cmd)
   }
 
   // Render rockets received from server
-  for (const auto &[id, rocket] : ctx.remote_rockets)
+  for (const auto &[id, rocket] : ctx.replication.remote_rockets)
   {
     const auto *rc = &rocket.render;
     if (!rc->visible)
       continue;
 
-    auto mesh_handle = assets::get_mesh(rc->mesh);
-    if (mesh_handle.valid())
+    const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(rc->mesh));
+    if (mesh.valid())
     {
-      renderer::draw_mesh(cmd, mesh_handle,
-                         {.position = rocket.position,
-                          .scale    = rc->scale,
-                          .rotation = rocket.orientation,
-                          .color    = colors::cyan});
+      renderer::mesh_draw_t draw{};
+      draw.mesh      = mesh;
+      draw.transform = linalg::compose_transform_euler(rocket.position, rocket.orientation,
+                                                       rc->scale);
+      draw.tint      = colors::cyan;
+      scene.meshes.push_back(draw);
     }
     else
     {
@@ -1662,19 +1758,15 @@ void Play_State::render_3d(VkCommandBuffer cmd)
       switch (hitbox->shape)
       {
         case entities::Shape_Kind::Sphere:
-          renderer::draw_hitbox_sphere(cmd, hitbox_center, hitbox->size.x, colors::green);
+          scene.debug.wire_sphere(hitbox_center, hitbox->size.x, colors::green);
           break;
         case entities::Shape_Kind::Capsule:
-          renderer::draw_hitbox_capsule(cmd, hitbox_center, hitbox->size.x, hitbox->size.y,
-                                        colors::green);
+          scene.debug.wire_capsule(hitbox_center, hitbox->size.x, hitbox->size.y, colors::green);
           break;
         case entities::Shape_Kind::Box:
-        {
-          vec3f min = hitbox_center - hitbox->size;
-          vec3f max = hitbox_center + hitbox->size;
-          renderer::draw__wire_AABB(cmd, min, max, colors::green);
+          scene.debug.aabb(hitbox_center - hitbox->size, hitbox_center + hitbox->size,
+                           colors::green);
           break;
-        }
       }
     }
   }
@@ -1688,14 +1780,14 @@ void Play_State::render_3d(VkCommandBuffer cmd)
       const auto &render = body.render;
       if (!render.visible) return;
 
-      auto mesh_handle = assets::get_mesh(render.mesh);
-      if (!mesh_handle.valid()) return;
+      const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(render.mesh));
+      if (!mesh.valid()) return;
 
-      renderer::draw_mesh(cmd, mesh_handle,
-                         {.position = body.position,
-                          .scale    = render.scale,
-                          .rotation = body.orientation + render.rotation,
-                          .shader   = renderer:: shader_type::Lit});
+      renderer::mesh_draw_t draw{};
+      draw.mesh      = mesh;
+      draw.transform = linalg::compose_transform_euler(
+          body.position, body.orientation + render.rotation, render.scale);
+      scene.meshes.push_back(draw);
     };
 
     if (ctx.server_session)
@@ -1708,7 +1800,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     }
     else
     {
-      for (const auto &[id, body] : ctx.remote_physics_bodies)
+      for (const auto &[id, body] : ctx.replication.remote_physics_bodies)
         draw_one(body);
     }
   }
@@ -1716,7 +1808,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
   // Debug: navmesh as triangle wireframes, colored by island ID
   if (ctx.cvars->debug_show_navmesh)
   {
-    const navmesh_t &nav = ctx.session.navmesh;
+    const navmesh_t &nav = ctx.world.session.navmesh;
     constexpr float y_lift = 2.f;
 
     static constexpr color_t island_colors[] = {
@@ -1736,7 +1828,7 @@ void Play_State::render_3d(VkCommandBuffer cmd)
         vec3f b = nav.vertices[poly.vertices[(e + 1) % N]].position;
         a.y += y_lift;
         b.y += y_lift;
-        renderer::draw_line(cmd, a, b, color);
+        scene.debug.line(a, b, color);
       }
     }
 
@@ -1745,29 +1837,29 @@ void Play_State::render_3d(VkCommandBuffer cmd)
     for (const auto &v : nav.vertices)
     {
       vec3f p = v.position; p.y += y_lift;
-      renderer::draw_line(cmd, {p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
-      renderer::draw_line(cmd, {p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
+      scene.debug.line({p.x - r, p.y, p.z}, {p.x + r, p.y, p.z}, vert_color);
+      scene.debug.line({p.x, p.y, p.z - r}, {p.x, p.y, p.z + r}, vert_color);
     }
   }
 
-  // Debug: collision faces in green
+  // Debug: collision faces in green. Translucent, so they do not write depth and
+  // the geometry behind them stays readable -- which is what the alpha in the
+  // colour now actually buys.
   if (ctx.cvars->debug_show_collisions)
   {
-    constexpr color_t green = colors::green;
+    const color_t face_color = with_alpha(colors::green, 128);
 
-    renderer::reset_debug_face_buffer();
-
-    for (const Debug_Collision_Face &face : ctx.debug_collision_faces)
+    for (const Debug_Collision_Face &face : ctx.visuals.debug_collision_faces)
     {
       if (!face.polygon.empty())
-        renderer:: draw_filled_polygon(cmd, face.polygon, green);
+        scene.debug.filled_polygon(face.polygon, face_color);
 
-      vec3 arrow_start = face.plane.point + face.plane.normal * 0.5f;
-      vec3 arrow_end = arrow_start + face.plane.normal * 5.0f;
-      renderer::draw_line(cmd, arrow_start, arrow_end, colors::red);
+      vec3f arrow_start = face.plane.point + face.plane.normal * 0.5f;
+      vec3f arrow_end = arrow_start + face.plane.normal * 5.0f;
+      scene.debug.line(arrow_start, arrow_end, colors::red);
     }
 
-    ctx.debug_collision_faces.clear();
+    ctx.visuals.debug_collision_faces.clear();
   }
 
   // Debug: collision volumes as wireframe AABBs. Magenta for trigger volumes
@@ -1776,25 +1868,27 @@ void Play_State::render_3d(VkCommandBuffer cmd)
   // actually renders as.
   if (ctx.cvars->debug_show_box_volumes)
   {
-    for (const auto &entry : map.entities)
+    for (shared::Entity_Pool &pool : entity_system.pools)
     {
-      const auto *ent = entry.entity.get();
-      if (!ent) continue;
-      const auto *volume = entities::get_box_volume(ent);
-      if (!volume) continue;
+      for (uint32_t slot = 0; slot < pool.count; ++slot)
+      {
+        const entities::Entity *ent = pool.at(slot);
+        const entities::Box_Volume *volume = entities::get_box_volume(ent);
+        if (!volume) continue;
 
-      renderer::draw__wire_AABB(cmd, ent->position - volume->half_extents,
-                             ent->position + volume->half_extents, colors::magenta);
+        scene.debug.aabb(ent->position - volume->half_extents,
+                         ent->position + volume->half_extents, colors::magenta);
+      }
     }
 
-    for (const shared::map_geometry_t &entry : ctx.session.geometry)
+    for (const shared::map_geometry_t &entry : ctx.world.session.geometry)
     {
       const color_t color =
           (shared::get_kind(entry.value) == shared::geometry_kind_t::Displacement)
               ? colors::yellow
               : colors::white;
       const shared::aabb_bounds_t bounds = shared::get_bounds(entry.value);
-      renderer::draw__wire_AABB(cmd, bounds.min, bounds.max, color);
+      scene.debug.aabb(bounds.min, bounds.max, color);
     }
   }
 
@@ -1802,12 +1896,12 @@ void Play_State::render_3d(VkCommandBuffer cmd)
   {
     static constexpr color_t goal_color[] = {
       color_t{136, 136, 136},  // Idle
-      color_t{255, 0, 255},    // Chase 
+      color_t{255, 0, 255},    // Chase
       colors::red,             // Attack
       color_t{0, 68, 255},     // Retreat
     };
 
-    for (const auto &bot : bot_debug::g_entries)
+    for (const auto &bot : ctx.replication.bot_debug_entries)
     {
       int gi = static_cast<int>(bot.goal);
       color_t color = goal_color[gi < 4 ? gi : 0];
@@ -1817,19 +1911,19 @@ void Play_State::render_3d(VkCommandBuffer cmd)
       {
         vec3f a = path[i];     a.y += 4.f;
         vec3f b = path[i + 1]; b.y += 4.f;
-        renderer::draw_line(cmd, a, b, color);
+        scene.debug.line(a, b, color);
       }
 
       if (bot.path_index < (int)path.size())
       {
         vec3f wp = path[bot.path_index]; wp.y += 4.f;
         constexpr float r = 8.f;
-        renderer::draw_line(cmd, {wp.x - r, wp.y, wp.z}, {wp.x + r, wp.y, wp.z}, color);
-        renderer::draw_line(cmd, {wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);
+        scene.debug.line({wp.x - r, wp.y, wp.z}, {wp.x + r, wp.y, wp.z}, color);
+        scene.debug.line({wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);
       }
 
-      auto pit = ctx.latest_player_entities.find(bot.slot);
-      if (pit != ctx.latest_player_entities.end())
+      auto pit = ctx.replication.latest_player_entities.find(bot.slot);
+      if (pit != ctx.replication.latest_player_entities.end())
       {
         const auto &ent = pit->second;
         vec3f facing = linalg::direction_from_angles(ent.view_angle_yaw, 0.f);
@@ -1837,141 +1931,41 @@ void Play_State::render_3d(VkCommandBuffer cmd)
         origin.y += 40.f;
         constexpr float arrow_len = 30.f;
         vec3f tip = origin + facing * arrow_len;
-        renderer::draw_line(cmd, origin, tip, colors::white);
+        scene.debug.line(origin, tip, colors::white);
       }
     }
   }
 
-  // Draw particle emitters
-  for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
-  {
-    renderer::particle_emitter_parameters_t p{};
-    p.entity_id          = pe->entity_id;
-    p.position           = pe->position;
-    p.delta_time         = last_dt;
-    p.emit_rate          = pe->emit_rate;
-    p.max_particles      = pe->max_particles;
-    p.lifetime_min       = pe->lifetime_min;
-    p.lifetime_max       = pe->lifetime_max;
-    p.velocity_min       = pe->velocity_min;
-    p.velocity_max       = pe->velocity_max;
-    p.spread             = pe->spread;
-    p.gravity            = pe->gravity;
-    p.drag               = pe->drag;
-    p.size_start         = pe->size_start;
-    p.size_end           = pe->size_end;
-    p.rotation_speed_min = pe->rotation_speed_min;
-    p.rotation_speed_max = pe->rotation_speed_max;
-    p.color_start        = pe->color_start;
-    p.color_end          = pe->color_end;
-    p.alpha_start        = pe->alpha_start;
-    p.alpha_end          = pe->alpha_end;
-    renderer::draw_particles(cmd, p);
-  }
+  // Particle emitters. Filled ONCE now: the renderer sequences the compute
+  // dispatch before the render pass itself, because that ordering is a Vulkan
+  // fact rather than something a caller should have to remember.
+  for (const entities::Particle_Emitter_Entity &emitter :
+       entity_system.entities_of<entities::Particle_Emitter_Entity>())
+    scene.particles.push_back(emitter_parameters(emitter, delta_seconds));
+
+  for (const auto &fx : ctx.visuals.explosion_effects)
+    scene.particles.push_back(
+        explosion_parameters(fx.explosion_index, fx.position, fx.time_remaining, delta_seconds));
 
   // Jolt physics debug overlay
 #ifdef JPH_DEBUG_RENDERER
-  if (show_physics_debug && physics_state && jolt_debug_renderer)
+  if (ctx.cvars->debug_show_physics_bodies && ctx.world.physics_state && jolt_debug_renderer)
   {
-    jolt_debug_renderer->set_command_buffer(cmd);
+    jolt_debug_renderer->set_debug_list(&scene.debug);
     jolt_debug_renderer->SetCameraPos(
         JPH::RVec3(camera.position.x, camera.position.y, camera.position.z));
 
     JPH::BodyManager::DrawSettings draw_settings;
     draw_settings.mDrawShape = true;
-    physics_state->physics_system.DrawBodies(draw_settings, jolt_debug_renderer.get());
-    physics_state->physics_system.DrawConstraints(jolt_debug_renderer.get());
+    ctx.world.physics_state->physics_system.DrawBodies(draw_settings, jolt_debug_renderer.get());
+    ctx.world.physics_state->physics_system.DrawConstraints(jolt_debug_renderer.get());
 
     jolt_debug_renderer->NextFrame();
-    jolt_debug_renderer->set_command_buffer(VK_NULL_HANDLE);
+    jolt_debug_renderer->set_debug_list(nullptr);
   }
 #endif
 
-  // Draw explosion effects
-  // entity_id uses high bit to guarantee no collision with real entity IDs
-  for (const auto &fx : ctx.explosion_effects)
-  {
-    renderer::particle_emitter_parameters_t p{};
-    p.entity_id          = 0x8000000000000000ULL | fx.explosion_index;
-    p.position           = fx.position;
-    p.delta_time         = last_dt;
-    p.emit_rate          = (fx.time_remaining > 0.6f) ? 200.0f : 0.0f;
-    p.max_particles      = 48;
-    p.lifetime_min       = 0.3f;
-    p.lifetime_max       = 0.8f;
-    p.velocity_min       = 40.0f;
-    p.velocity_max       = 120.0f;
-    p.spread             = 2.0f;
-    p.gravity            = {0, -20.0f, 0};
-    p.drag               = 1.5f;
-    p.size_start         = 3.0f;
-    p.size_end           = 8.0f;
-    p.rotation_speed_min = -3.0f;
-    p.rotation_speed_max = 3.0f;
-    p.color_start        = {1.0f, 0.8f, 0.3f};
-    p.color_end          = {0.4f, 0.4f, 0.4f};
-    p.alpha_start        = 0.9f;
-    p.alpha_end          = 0.0f;
-    renderer::draw_particles(cmd, p);
-  }
-}
-
-void Play_State::pre_render(VkCommandBuffer cmd)
-{
-  if (!session_ready_for_simulation_and_rendering) return;
-
-  for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
-  {
-    renderer::particle_emitter_parameters_t p{};
-    p.entity_id          = pe->entity_id;
-    p.position           = pe->position;
-    p.delta_time         = last_dt;
-    p.emit_rate          = pe->emit_rate;
-    p.max_particles      = pe->max_particles;
-    p.lifetime_min       = pe->lifetime_min;
-    p.lifetime_max       = pe->lifetime_max;
-    p.velocity_min       = pe->velocity_min;
-    p.velocity_max       = pe->velocity_max;
-    p.spread             = pe->spread;
-    p.gravity            = pe->gravity;
-    p.drag               = pe->drag;
-    p.size_start         = pe->size_start;
-    p.size_end           = pe->size_end;
-    p.rotation_speed_min = pe->rotation_speed_min;
-    p.rotation_speed_max = pe->rotation_speed_max;
-    p.color_start        = pe->color_start;
-    p.color_end          = pe->color_end;
-    p.alpha_start        = pe->alpha_start;
-    p.alpha_end          = pe->alpha_end;
-    renderer::update_particles(cmd, p);
-  }
-
-  auto &ctx = state_manager::get_client_context();
-  for (const auto &fx : ctx.explosion_effects)
-  {
-    renderer::particle_emitter_parameters_t p{};
-    p.entity_id          = 0x8000000000000000ULL | fx.explosion_index;
-    p.position           = fx.position;
-    p.delta_time         = last_dt;
-    p.emit_rate          = (fx.time_remaining > 0.6f) ? 200.0f : 0.0f;
-    p.max_particles      = 48;
-    p.lifetime_min       = 0.3f;
-    p.lifetime_max       = 0.8f;
-    p.velocity_min       = 40.0f;
-    p.velocity_max       = 120.0f;
-    p.spread             = 2.0f;
-    p.gravity            = {0, -20.0f, 0};
-    p.drag               = 1.5f;
-    p.size_start         = 3.0f;
-    p.size_end           = 8.0f;
-    p.rotation_speed_min = -3.0f;
-    p.rotation_speed_max = 3.0f;
-    p.color_start        = {1.0f, 0.8f, 0.3f};
-    p.color_end          = {0.4f, 0.4f, 0.4f};
-    p.alpha_start        = 0.9f;
-    p.alpha_end          = 0.0f;
-    renderer::update_particles(cmd, p);
-  }
+  passes.push_back(scene.to_pass());
 }
 
 } // namespace client
