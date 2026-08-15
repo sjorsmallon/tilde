@@ -1,0 +1,38 @@
+// events.def -- the gameplay event channel.
+//
+// The other half of the event family; effects.def is its twin and carries the
+// full note on what a `channel` is. Same construct, same emitted surface -- the
+// two files differ only in which packet their batch rides.
+//
+// Reliable: the batch is its own message. Lost = a visible gap, so it is not
+// allowed to be lost. Missing kill feed entries, missing score updates.
+//
+// ORDER IS THE WIRE ID. Append.
+
+Game_Event :: channel
+{
+    // Shared prefix, empty today. server_tick: u32 lands here when a consumer
+    // wants it -- a channel field costs every event on the wire.
+}
+
+Rocket_Detonated :: Game_Event  "a rocket detonated, by impact or lifetime expiry"
+{
+    attacker_id: u32
+    victim_id:   u32   // 0 = splash-only, no direct victim
+    weapon_id:   u16
+}
+
+Player_Died :: Game_Event  "a player's health crossed from >0 to <=0"
+{
+    victim_id:    u32
+    attacker_id:  u32  // 0 = world/suicide
+    weapon_id:    u16
+    was_headshot: bool
+}
+
+Player_Spawned :: Game_Event  "a player entered the world at a spawn point"
+{
+    player_id:         u32
+    spawn_position:    v3
+    spawn_orientation: v3   // Euler degrees, Entity's convention
+}

@@ -69,7 +69,7 @@ void action_warp_to_spawn(server::server_context_t &context,
   log_terminal("trigger fired by player {}: warping to spawn '{}'",
                player.entity_id, trigger.param_target_name.c_str());
   Span<entities::Player_Spawn_Entity> spawns =
-      context.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      context.world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
   if (spawns.empty())
   {
     log_error("warp_to_spawn: no Player_Spawn_Entity in session, cannot warp "

@@ -632,7 +632,7 @@ void read_entity_fields(entities::Entity &entity, const std::string &classname,
 
     consumed[leaf.name] = true;
 
-    if (entities::field_from_text(it->second, *leaf.info, base + leaf.offset))
+    if (field_from_text(it->second, *leaf.info, base + leaf.offset))
       continue;
 
     // Legacy value form, the second half of the one-time conversion the
@@ -645,10 +645,9 @@ void read_entity_fields(entities::Entity &entity, const std::string &classname,
     // enum whose text is "2" is exactly the sort of thing it should reject.
     // This is map.cpp's business because only map.cpp is reading a file that
     // might predate the change.
-    if (leaf.info->type == entities::FIELD_TYPE_ENUM)
+    if (leaf.info->type == FIELD_TYPE_ENUM)
     {
-      const entities::enum_type_info_t &enum_info =
-          entities::enum_info((entities::enum_type)leaf.info->enum_id);
+      const enum_type_info_t &enum_info = *leaf.info->enum_info;
 
       char *parse_end = nullptr;
       const long numeric = std::strtol(it->second.c_str(), &parse_end, 10);
@@ -679,7 +678,7 @@ void read_entity_fields(entities::Entity &entity, const std::string &classname,
         at_word_start = (character == '_');
       }
 
-      if (entities::field_from_text(title_case, *leaf.info, base + leaf.offset))
+      if (field_from_text(title_case, *leaf.info, base + leaf.offset))
       {
         log_warning("map parse: {}.{} was the legacy spelling \"{}\"; read as {}. "
                     "The next save writes the name.",
@@ -794,7 +793,7 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
       // Drawn as the pyramid marker, so it picks as one -- the Render component
       // is not what a player is drawn from.
       assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
-          assets::get_mesh(entities::mesh_asset::Pyramid);
+          assets::get_mesh(assets::mesh_asset::Pyramid);
       if (mesh_handle.valid())
       {
         vec3f mesh_min, mesh_max;
@@ -1196,7 +1195,7 @@ std::string serialize_map_to_string(const map_t &map)
          entities::collect_leaf_fields(entity->type, entities::FIELD_FLAG_SAVEABLE))
     {
       std::string value;
-      if (!entities::field_to_text(base + leaf.offset, *leaf.info, value))
+      if (!field_to_text(base + leaf.offset, *leaf.info, value))
       {
         log_error("map save: entity uid {} field {}.{} could not be written as text — "
                   "the key is omitted and the value will be lost on the next load",

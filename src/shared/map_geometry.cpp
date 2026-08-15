@@ -517,8 +517,8 @@ void add_box_faces(assets::mesh_asset_t &mesh, const linalg::vec3 &half_extents,
   const face_definition_t faces[box_face_count] = {
       {box_face_t::Plus_X,  {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mx.x, mn.y, mx.z}, { 1, 0, 0}},
       {box_face_t::Minus_X, {mn.x, mn.y, mx.z}, {mn.x, mx.y, mx.z}, {mn.x, mx.y, mn.z}, {mn.x, mn.y, mn.z}, {-1, 0, 0}},
-      {box_face_t::Plus_Y,  {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, { 0, 1, 0}},
-      {box_face_t::Minus_Y, {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, { 0,-1, 0}},
+      {box_face_t::Plus_Y,  {mn.x, mx.y, mx.z}, {mx.x, mx.y, mx.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z}, { 0, 1, 0}},
+      {box_face_t::Minus_Y, {mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mn.y, mx.z}, {mn.x, mn.y, mx.z}, { 0,-1, 0}},
       {box_face_t::Plus_Z,  {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}, { 0, 0, 1}},
       {box_face_t::Minus_Z, {mx.x, mn.y, mn.z}, {mn.x, mn.y, mn.z}, {mn.x, mx.y, mn.z}, {mx.x, mx.y, mn.z}, { 0, 0,-1}},
   };
@@ -594,7 +594,17 @@ assets::mesh_asset_t generate_displacement_mesh(const displacement_geometry_t &d
     }
   }
 
-  // Two triangles per grid cell.
+  // Two triangles per grid cell, wound counter-clockwise seen from outside like
+  // every other surface (HOUSE_FRONT_FACE in renderer.hpp).
+  //
+  // Which order that is depends on the face: box_face_tangents_by_axis is keyed
+  // per AXIS, not per face, so +X and -X share one (u, v) pair and the frame's
+  // handedness relative to the outward normal flips between them. Walking the
+  // grid in a fixed (i, j) order therefore gives an outward winding on only half
+  // the faces -- displacements on -X, -Y and +Z used to render inside-out.
+  const bool tangents_face_outward =
+      linalg::dot(linalg::cross(face_u, face_v), displacement.get_face_normal()) > 0.0f;
+
   for (int j = 0; j < grid_size - 1; ++j)
   {
     for (int i = 0; i < grid_size - 1; ++i)
@@ -603,12 +613,25 @@ assets::mesh_asset_t generate_displacement_mesh(const displacement_geometry_t &d
       const uint32_t top_right = top_left + 1;
       const uint32_t bottom_left = top_left + (uint32_t)grid_size;
       const uint32_t bottom_right = bottom_left + 1;
-      mesh.indices.push_back(top_left);
-      mesh.indices.push_back(bottom_left);
-      mesh.indices.push_back(top_right);
-      mesh.indices.push_back(top_right);
-      mesh.indices.push_back(bottom_left);
-      mesh.indices.push_back(bottom_right);
+
+      if (tangents_face_outward)
+      {
+        mesh.indices.push_back(top_left);
+        mesh.indices.push_back(top_right);
+        mesh.indices.push_back(bottom_left);
+        mesh.indices.push_back(top_right);
+        mesh.indices.push_back(bottom_right);
+        mesh.indices.push_back(bottom_left);
+      }
+      else
+      {
+        mesh.indices.push_back(top_left);
+        mesh.indices.push_back(bottom_left);
+        mesh.indices.push_back(top_right);
+        mesh.indices.push_back(top_right);
+        mesh.indices.push_back(bottom_left);
+        mesh.indices.push_back(bottom_right);
+      }
     }
   }
 

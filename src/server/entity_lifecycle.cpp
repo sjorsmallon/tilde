@@ -30,7 +30,7 @@ void initialize_player_body(entities::Player_Entity &player)
   // When there is a real class roster, the wire field should become the class
   // and the mesh a lookup off it: a class is a mesh AND a hitbox profile AND a
   // move speed, none of which derive from a mesh id.
-  player.render.mesh    = entities::mesh_asset::Leet_Full;
+  player.render.mesh    = assets::mesh_asset::Leet_Full;
   player.render.visible = true;
   player.render.scale   = {1.f, 1.f, 1.f};
   // The exporter puts the model's feet at the origin, which is the same
@@ -56,8 +56,8 @@ bool destroy_entity(server_context_t &context, shared::entity_uid_t uid)
   // unregister_physics_body is a documented no-op for a uid with no body, so a
   // Rocket_Entity (which has none) costs one failed map lookup and a type this
   // function has never heard of cannot leak by being left out of a switch.
-  if (context.physics)
-    unregister_physics_body(*context.physics, uid);
+  if (context.world.physics)
+    unregister_physics_body(*context.world.physics, uid);
 
   // Server-side side tables keyed by uid. Same leak as the Jolt body, different
   // container: an entry that outlives the entity it names is only noticed when
@@ -65,9 +65,9 @@ bool destroy_entity(server_context_t &context, shared::entity_uid_t uid)
   // own (update_respawns logs and drops an entry whose player is gone), so this
   // is not a live bug -- it is the same class of bug, so it gets torn down in
   // the same place rather than relying on each consumer to be forgiving.
-  context.death_tick_by_player_uid.erase(uid);
+  context.world.death_tick_by_player_uid.erase(uid);
 
-  return context.session.entity_system.destroy(uid);
+  return context.world.session.entity_system.destroy(uid);
 }
 
 } // namespace server

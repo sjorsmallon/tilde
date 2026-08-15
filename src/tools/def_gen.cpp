@@ -9,41 +9,59 @@
 // two tools would need a hash-combining convention living in C++ plus a
 // duplicated lexer that drifts.
 //
-// Design notes live in entity_def.md (entities) and cvar_def.md (cvars and
-// commands) at the repo root.
+// Design notes live in entity_def.md (entities), cvar_def.md (cvars and
+// commands) and events_def.md (events) at the repo root.
 //
 // ---------------------------------------------------------------------------
-// Two families, fenced apart
+// Four families, fenced apart
 // ---------------------------------------------------------------------------
 //
-// The ENTITY family is `base` / `component` / `entity` / `enum` / `assets` /
-// flagsets, and emits entities_generated.{hpp,cpp}. The CVAR family is `cvars`
-// / `commands`, and emits cvars_generated.{hpp,cpp} plus the two per-side
-// command binder TUs.
+// The ENTITY family is `base` / `component` / `entity` / `enum` / flagsets, and
+// emits entities_generated.{hpp,cpp}. The ASSET family is `assets` / `enum`, and
+// emits assets_generated.{hpp,cpp} in namespace `assets`. The CVAR family is
+// `cvars` / `commands`, and emits cvars_generated.{hpp,cpp} plus the two
+// per-side command binder TUs. The EVENT family is `base` plus declarations that
+// NAME a base as their kind, and emits events_generated.{hpp,cpp} plus one
+// per-side binding TU.
 //
 // One .def file holds ONE family. They share the lexer, the block parser, the
-// primitive type table and the hash -- nothing else. A cvar may not reference an
-// entity type, an entity field may not reference a command, and the two flag
-// vocabularies are disjoint (@Networked on a cvar and @Client on an entity field
-// are both errors, not no-ops). The day a cross-family reference seems
-// necessary, that is a design discussion, not a parser feature.
+// primitive type table and the hash. A cvar may not reference an entity type, an
+// entity field may not reference a command, and the flag vocabularies are
+// disjoint (@Networked on a cvar and @Client on an entity field are both errors,
+// not no-ops).
+//
+// `base` is the one declaration kind two families share, so it claims NEITHER:
+// what decides the file is what sits beside it -- `entity` declarations make it
+// the entity family, declarations naming a base make it the event family.
+//
+// `import` is the ONE crossing, and it is one-directional and one-kind: an
+// entity .def imports an asset .def to use its classes as field types. The
+// importing file gets the asset declarations for type resolution and class-id
+// assignment only -- it never emits them and never hashes them, because the
+// imported file is itself an input and does both. Nothing else may be imported,
+// and the asset family may not import at all.
 //
 // ---------------------------------------------------------------------------
 // Grammar
 // ---------------------------------------------------------------------------
 //
-//   program           -> declaration*
+//   program           -> (import | declaration)*
+//
+//   import            -> 'import' STRING_LITERAL
 //
 //   declaration       -> IDENTIFIER '::' declaration_body
 //
-//   declaration_body  -> 'base'      '{' field* '}'
+//   declaration_body  -> 'base'      annotation* '{' field* '}'
 //                      | 'component' '{' field* '}'
 //                      | 'entity'    annotation* '{' field* '}'
 //                      | 'enum'      '{' enum_value_list '}'
 //                      | 'assets'    '{' asset_entry* '}'
 //                      | 'cvars'     '{' cvar_line* '}'
 //                      | 'commands'  '{' command_line* '}'
+//                      | IDENTIFIER  '{' (field* | event_member+) '}'   -- a declared base name
 //                      | flagset
+//
+//   event_member      -> IDENTIFIER STRING_LITERAL
 //
 //   flagset           -> '[' annotation (',' annotation)* ']'
 //
@@ -291,6 +309,9 @@ enum cvar_flags_t : uint32_t
   CVAR_FLAG_MIRRORED = 1 << 2, // server-owned, pushed to clients as a read-only mirror
 };
 
+// Class level annotations, in the same word as a flagset's resolved field mask
+// for the same reason the two field vocabularies share theirs: which set a word
+// means is decided by the owning declaration's kind and family.
 enum class_flags_t : uint32_t
 {
   CLASS_FLAG_NONE         = 0,
@@ -415,6 +436,11 @@ struct asset_scan_t
   int32_t     line;
 };
 
+// Imports are one level deep by design: only an asset .def may be imported, and
+// an asset .def may not itself import. Four is already more asset .def files
+// than the design admits.
+constexpr int32_t MAX_IMPORTS = 4;
+
 // Every node keeps the source offset and line of the token it started at, so
 // the resolve pass can point at real file positions long after the tokens are
 // behind it.
@@ -474,20 +500,30 @@ enum declaration_kind_t : uint8_t
   DECLARATION_ASSETS,
   DECLARATION_CVARS,
   DECLARATION_COMMANDS,
+  // A closed set of named messages, each carrying a payload, each dispatched to
+  // exactly one handler. The declaration itself holds the SHARED payload; its
+  // members are prepended with it.
+  DECLARATION_CHANNEL,
+  // A member of a channel: its declaration kind is the NAME of the channel. A
+  // member's kind identifier is not a keyword, so it is recorded at parse time
+  // and resolved after.
+  DECLARATION_CHANNEL_MEMBER,
 };
 
 static const char* declaration_kind_name(declaration_kind_t kind)
 {
   switch (kind)
   {
-    case DECLARATION_BASE:      return "base";
-    case DECLARATION_COMPONENT: return "component";
-    case DECLARATION_ENTITY:    return "entity";
-    case DECLARATION_ENUM:      return "enum";
-    case DECLARATION_FLAGSET:   return "flagset";
-    case DECLARATION_ASSETS:    return "assets";
-    case DECLARATION_CVARS:     return "cvars";
-    case DECLARATION_COMMANDS:  return "commands";
+    case DECLARATION_BASE:           return "base";
+    case DECLARATION_COMPONENT:      return "component";
+    case DECLARATION_ENTITY:         return "entity";
+    case DECLARATION_ENUM:           return "enum";
+    case DECLARATION_FLAGSET:        return "flagset";
+    case DECLARATION_ASSETS:         return "assets";
+    case DECLARATION_CVARS:          return "cvars";
+    case DECLARATION_COMMANDS:       return "commands";
+    case DECLARATION_CHANNEL:        return "channel";
+    case DECLARATION_CHANNEL_MEMBER: return "channel member";
   }
   return "unknown";
 }
@@ -530,19 +566,37 @@ struct declaration_t
   int32_t      scan_count;
   const char*  placeholder_path; // nullptr if the class declares no placeholder
 
+  // DECLARATION_CHANNEL_MEMBER only: the channel named on the right-hand side
+  // of '::', and its mandatory description. Resolved after parsing, because a
+  // member may name a channel declared below it.
+  string_view_t base_name;
+  int32_t       base_declaration; // -1 until resolved
+  string_view_t description;
+
+  // Came in through `import`. Resolvable as a type and counted when class ids
+  // are assigned, but never emitted and never hashed -- the file it came from is
+  // its own input and does both. Its name and asset entries point into THAT
+  // file's buffers, which is why an imported program is never freed.
+  bool is_imported;
+
   int32_t offset;
   int32_t line;
 };
 
-// Which half of the tool a .def file belongs to. Decided by its contents, not
-// by its name: a file that declares cvars/commands blocks emits the cvar
-// artifacts, one that declares entity-family blocks emits the entity artifacts,
-// and a file that does both is an error (see check_family).
+// Which family a .def file belongs to. Decided by its contents, not by its name:
+// a file that declares cvars/commands blocks emits the cvar artifacts, one that
+// declares assets emits the asset artifacts, one that declares component/entity
+// emits the entity artifacts, one that declares a channel and its members emits
+// the event artifacts, and a file that mixes two is an error (see
+// check_family). `enum` claims no family -- every family declares them.
+// Imported declarations do not count toward the decision.
 enum def_family_t : uint8_t
 {
   DEF_FAMILY_EMPTY = 0,
   DEF_FAMILY_ENTITY,
+  DEF_FAMILY_ASSET,
   DEF_FAMILY_CVAR,
+  DEF_FAMILY_EVENT,
 };
 
 struct program_t
@@ -590,6 +644,12 @@ struct program_t
   // "resources/obj" -- what the game says at runtime -- rather than something
   // relative to wherever the build happens to invoke the generator from.
   const char* asset_root;
+
+  // Resolved paths of the files this one imported, to reject importing the same
+  // file twice. Kept as paths rather than as program pointers because that is
+  // what identifies a file; the programs themselves are leaked (see load_import).
+  const char* imports[MAX_IMPORTS];
+  int32_t     import_count;
 
   int32_t error_count;
 };
@@ -641,6 +701,7 @@ static declaration_t* push_declaration(program_t* program)
   declaration->first_field        = program->field_count;
   declaration->first_enum_value   = program->enum_value_count;
   declaration->first_annotation   = program->annotation_count;
+  declaration->base_declaration   = -1;
   return declaration;
 }
 
@@ -1264,8 +1325,9 @@ static bool parse_description(parser_t* parser, int32_t line, string_view_t* out
   if (token.kind != TOKEN_STRING_LITERAL || token.line != line)
   {
     parse_error_at(parser, token,
-                   "every %s needs a description string on the same line -- it is what the "
-                   "console prints for help and autocomplete, so it is data, not a comment",
+                   "every %s needs a description string on the same line -- it is data, not a "
+                   "comment: the console prints it for help, and the generated enums and "
+                   "--scaffold stubs carry it",
                    what);
     return false;
   }
@@ -1451,6 +1513,27 @@ static bool parse_struct_body(parser_t* parser, declaration_t* declaration)
   declaration->field_count = parser->program->field_count - declaration->first_field;
 
   return expect(parser, TOKEN_CLOSE_BRACE, "'}' to close the declaration body");
+}
+
+// `Name :: <a declared channel> "description" { fields }`
+//
+// The description is mandatory and sits on the declaration line, exactly as it
+// does for a cvar or a command: these are the names of a closed protocol, and
+// it feeds the generated enum comments and --scaffold's stubs. The body is
+// optional -- a member with none carries only the channel's fields, which is
+// the whole of what an effect is.
+static bool parse_channel_member(parser_t* parser, declaration_t* declaration, int32_t line)
+{
+  if (!parse_description(parser, line, &declaration->description, "channel member"))
+    return false;
+
+  declaration->first_field = parser->program->field_count;
+  declaration->field_count = 0;
+
+  if (!check(parser, TOKEN_OPEN_BRACE))
+    return true;
+
+  return parse_struct_body(parser, declaration);
 }
 
 static bool parse_enum_body(parser_t* parser, declaration_t* declaration)
@@ -1710,12 +1793,14 @@ static declaration_t* parse_declaration(parser_t* parser)
     parsed                 = parse_cvar_family_body(parser, declaration, is_commands);
   }
   else if (string_view_matches(kind_text, "base") || string_view_matches(kind_text, "component") ||
-           string_view_matches(kind_text, "entity"))
+           string_view_matches(kind_text, "entity") || string_view_matches(kind_text, "channel"))
   {
     if (string_view_matches(kind_text, "base"))
       declaration->kind = DECLARATION_BASE;
     else if (string_view_matches(kind_text, "component"))
       declaration->kind = DECLARATION_COMPONENT;
+    else if (string_view_matches(kind_text, "channel"))
+      declaration->kind = DECLARATION_CHANNEL;
     else
       declaration->kind = DECLARATION_ENTITY;
 
@@ -1726,10 +1811,14 @@ static declaration_t* parse_declaration(parser_t* parser)
   }
   else
   {
-    parse_error_at(parser, kind_token,
-                   "'%.*s' is not a declaration kind; expected 'base', 'component', "
-                   "'entity', 'enum', 'assets', 'cvars' or 'commands'",
-                   kind_text.length, kind_text.data);
+    // Not a keyword, so it names a channel -- or it is a typo. Which one cannot
+    // be decided here (a member may name a channel declared below it), so the
+    // name is recorded and the resolve pass reports an unknown one.
+    declaration->kind             = DECLARATION_CHANNEL_MEMBER;
+    declaration->base_name        = kind_text;
+    declaration->base_declaration = -1;
+
+    parsed = parse_channel_member(parser, declaration, kind_token.line);
   }
 
   if (!parsed)
@@ -1741,10 +1830,27 @@ static declaration_t* parse_declaration(parser_t* parser)
   return declaration;
 }
 
+// Defined below the resolve pass: an import runs the whole front end over the
+// imported file, because what gets copied out is the EXPANDED manifest.
+static bool load_import(parser_t* parser, token_t path_token);
+
 static void parse_program(parser_t* parser)
 {
   while (!check(parser, TOKEN_END_OF_FILE))
   {
+    token_t token = peek(parser);
+    if (token.kind == TOKEN_IDENTIFIER &&
+        string_view_matches(token_text(parser->program, token), "import"))
+    {
+      advance(parser);
+
+      token_t path_token = peek(parser);
+      if (!expect(parser, TOKEN_STRING_LITERAL, "a quoted path after 'import'") ||
+          !load_import(parser, path_token))
+        synchronize_to_next_declaration(parser);
+      continue;
+    }
+
     if (parse_declaration(parser) == nullptr)
       synchronize_to_next_declaration(parser);
   }
@@ -1924,11 +2030,31 @@ static void resolve_entity_field_flags(program_t* program, const name_table_t* t
   field->flags = flags;
 }
 
+// The event family has NO field flag vocabulary at all, which is a statement
+// rather than an omission: every declared field of an event is networked (that
+// is the only thing an event is), never editable and never saved. A flag here
+// would be a claim with nothing to read it.
+static void resolve_event_field_flags(program_t* program, field_t* field)
+{
+  for (int32_t offset = 0; offset < field->annotation_count; ++offset)
+  {
+    const annotation_t* annotation = &program->annotations[field->first_annotation + offset];
+    report_error(program, annotation->offset, annotation->line,
+                 "'@%.*s': an event field takes no flags. Every field of an event rides the "
+                 "wire and nothing else ever reads it, so there is nothing for a flag to say",
+                 annotation->name.length, annotation->name.data);
+  }
+
+  field->flags = FIELD_FLAG_NONE;
+}
+
 // Which flag vocabulary a line's annotations are read in is decided by the
 // declaration that owns it, so this walks declarations rather than the flat
 // field array.
 static void resolve_field_flags(program_t* program, const name_table_t* table)
 {
+  const bool event_family = program->family == DEF_FAMILY_EVENT;
+
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -1939,6 +2065,8 @@ static void resolve_field_flags(program_t* program, const name_table_t* table)
       field_t* field = &program->fields[declaration->first_field + offset];
       if (cvar_family)
         resolve_cvar_line_flags(program, field);
+      else if (event_family)
+        resolve_event_field_flags(program, field);
       else
         resolve_entity_field_flags(program, table, field);
     }
@@ -1960,7 +2088,8 @@ static void resolve_class_annotations(program_t* program)
       if (!string_view_matches(annotation->name, "runtime_only"))
       {
         report_error(program, annotation->offset, annotation->line,
-                     "'@%.*s' is not a class annotation; only '@runtime_only' is",
+                     "'@%.*s' is not a class annotation; the complete list is '@runtime_only' "
+                     "(entities)",
                      annotation->name.length, annotation->name.data);
         continue;
       }
@@ -2068,6 +2197,34 @@ static void resolve_types(program_t* program, const name_table_t* table)
 
     parameter->type.kind              = TYPE_ENUM;
     parameter->type.declaration_index = target;
+  }
+}
+
+// The right-hand side of '::' holds both the declaration keywords and the names
+// of declared bases, so a base named `enum` would be unreachable as a kind. One
+// namespace, one rule -- and it costs a declaration nothing to avoid seven words.
+static void check_declaration_names(program_t* program)
+{
+  static const char* KEYWORDS[] = {"base",   "component", "entity",   "enum",   "channel",
+                                   "assets", "cvars",     "commands", "import"};
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->is_imported)
+      continue;
+
+    for (const char* keyword : KEYWORDS)
+    {
+      if (!string_view_matches(declaration->name, keyword))
+        continue;
+
+      report_error(program, declaration->offset, declaration->line,
+                   "'%s' is a declaration keyword, so it cannot also be a declaration name: the "
+                   "right-hand side of '::' holds both keywords and declared channel names",
+                   keyword);
+      break;
+    }
   }
 }
 
@@ -2289,6 +2446,18 @@ static void expand_asset_manifests(program_t* program)
       continue;
 
     int32_t class_first = combined_count;
+
+    // An imported class arrives already expanded -- the file it came from ran
+    // this pass. Carry its entries across so local indices stay valid; scanning
+    // again would touch the filesystem twice and could disagree.
+    if (declaration->is_imported)
+    {
+      for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
+        combined[combined_count++] = program->asset_entries[declaration->first_asset_entry + which];
+
+      declaration->first_asset_entry = class_first;
+      continue;
+    }
 
     // --- slot 0: Missing ---
     //
@@ -2523,50 +2692,270 @@ static void check_flag_contradictions(program_t* program)
 // toward a cross-family reference, which is exactly what the design forbids.
 static void check_family(program_t* program)
 {
-  const declaration_t* first_entity = nullptr;
-  const declaration_t* first_cvar   = nullptr;
+  const declaration_t* first[DEF_FAMILY_EVENT + 1] = {};
 
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
 
-    // An enum is family-NEUTRAL: entity fields and command parameters both
-    // take enum types, and each family emits the enums declared beside it. It
-    // claims no family, so a file of cvars plus their enums stays one family.
-    if (declaration->kind == DECLARATION_ENUM)
+    // An imported asset class claims no family in the file that imported it --
+    // that is the whole point of the crossing. It stays the asset family's, and
+    // the file it came from is what emits it.
+    if (declaration->is_imported)
       continue;
 
+    // An enum is family-NEUTRAL: entity fields, asset classes and command
+    // parameters all sit beside enums, and each family emits the enums declared
+    // with it. It claims no family, so a file of cvars plus their enums stays
+    // one family. It is the LAST neutral kind -- `base` was neutral only while
+    // the event family used one, and `channel` took that job.
+    if (declaration->kind == DECLARATION_ENUM || declaration->kind == DECLARATION_FLAGSET)
+      continue;
+
+    def_family_t family = DEF_FAMILY_ENTITY;
     if (declaration_is_cvar_family(declaration->kind))
+      family = DEF_FAMILY_CVAR;
+    else if (declaration->kind == DECLARATION_ASSETS)
+      family = DEF_FAMILY_ASSET;
+    else if (declaration->kind == DECLARATION_CHANNEL)
+      family = DEF_FAMILY_EVENT;
+    else if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
     {
-      if (first_cvar == nullptr)
-        first_cvar = declaration;
+      // Its channel did not resolve, so this is a misspelled keyword and
+      // resolve_channel_members has already said so. Letting it claim the event
+      // family would bury that under a "this file mixes families".
+      if (declaration->base_declaration < 0)
+        continue;
+      family = DEF_FAMILY_EVENT;
     }
-    else if (first_entity == nullptr)
-    {
-      first_entity = declaration;
-    }
+
+    if (first[family] == nullptr)
+      first[family] = declaration;
   }
 
-  if (first_entity != nullptr && first_cvar != nullptr)
+  const declaration_t* claimed = nullptr;
+  def_family_t         family  = DEF_FAMILY_EMPTY;
+
+  for (int32_t index = DEF_FAMILY_ENTITY; index <= DEF_FAMILY_EVENT; ++index)
   {
-    const declaration_t* later = first_cvar->line > first_entity->line ? first_cvar : first_entity;
-    report_error(program, later->offset, later->line,
-                 "this file mixes the two declaration families: '%.*s' (line %d) is %s and "
-                 "'%.*s' (line %d) is %s. One .def file holds one family -- they emit different "
-                 "artifacts into different directories",
-                 first_entity->name.length, first_entity->name.data, first_entity->line,
-                 declaration_kind_name(first_entity->kind), first_cvar->name.length,
-                 first_cvar->name.data, first_cvar->line,
-                 declaration_kind_name(first_cvar->kind));
-    return;
+    if (first[index] == nullptr)
+      continue;
+
+    if (claimed != nullptr)
+    {
+      const declaration_t* later = first[index]->line > claimed->line ? first[index] : claimed;
+      report_error(program, later->offset, later->line,
+                   "this file mixes declaration families: '%.*s' (line %d) is %s and "
+                   "'%.*s' (line %d) is %s. One .def file holds one family -- they emit "
+                   "different artifacts into different directories. To use an asset class as "
+                   "an entity field type, `import` the .def that declares it",
+                   claimed->name.length, claimed->name.data, claimed->line,
+                   declaration_kind_name(claimed->kind), first[index]->name.length,
+                   first[index]->name.data, first[index]->line,
+                   declaration_kind_name(first[index]->kind));
+      return;
+    }
+
+    claimed = first[index];
+    family  = (def_family_t)index;
   }
 
-  if (first_cvar != nullptr)
-    program->family = DEF_FAMILY_CVAR;
-  else if (first_entity != nullptr)
-    program->family = DEF_FAMILY_ENTITY;
-  else
-    program->family = DEF_FAMILY_EMPTY;
+  program->family = family;
+}
+
+// An asset .def holds asset classes and nothing else. Enums and flagsets are
+// family-neutral in the grammar, but this family emits neither, so one declared
+// here would vanish -- rejected rather than silently dropped.
+static void check_asset_family(program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind == DECLARATION_ASSETS)
+      continue;
+
+    report_error(program, declaration->offset, declaration->line,
+                 "'%.*s' is %s; an asset .def declares asset classes only",
+                 declaration->name.length, declaration->name.data,
+                 declaration_kind_name(declaration->kind));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Event family checks
+// ---------------------------------------------------------------------------
+
+// Links each member to the channel named on the right-hand side of its '::'.
+// This is also where a plain typo lands: `Foo :: entty "..."` parsed as a member
+// of a channel called `entty`, because the parser cannot tell a channel name
+// from a misspelled keyword without the whole file.
+static void resolve_channel_members(program_t* program, const name_table_t* table)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_CHANNEL_MEMBER)
+      continue;
+
+    int32_t target = find_declaration(table, program, declaration->base_name);
+    if (target < 0 || program->declarations[target].kind != DECLARATION_CHANNEL)
+    {
+      report_error(program, declaration->offset, declaration->line,
+                   "'%.*s' is not a declaration kind and not a declared channel; expected 'base', "
+                   "'component', 'entity', 'channel', 'enum', 'assets', 'cvars', 'commands', or "
+                   "the name of a 'channel' declared in this file",
+                   declaration->base_name.length, declaration->base_name.data);
+      continue;
+    }
+
+    declaration->base_declaration = target;
+  }
+}
+
+// What the shared field codec (network/field_codec.hpp) can encode, minus the
+// two aggregate types. A `component` would need the leaf flattening only the
+// entity family does, and an `asset` would need the `import` this family
+// forbids -- so each is rejected by name below rather than emitting a row no
+// walker can read.
+static bool channel_type_is_allowed(type_kind_t kind)
+{
+  switch (kind)
+  {
+    case TYPE_F32:
+    case TYPE_F64:
+    case TYPE_U8:
+    case TYPE_U16:
+    case TYPE_U32:
+    case TYPE_U64:
+    case TYPE_I8:
+    case TYPE_I16:
+    case TYPE_I32:
+    case TYPE_I64:
+    case TYPE_BOOL:
+    case TYPE_V3:
+    case TYPE_V4:
+    case TYPE_V4I:
+    case TYPE_STRING:
+    case TYPE_ENUM:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static void check_event_family(program_t* program)
+{
+  int32_t channel_count = 0;
+
+  // Nothing in an event references an entity, an asset or a cvar, and nothing
+  // may reference an event. The family has no crossing at all -- `import` is
+  // the entity family's one door, and it stays that way.
+  if (program->import_count > 0)
+    report_error(program, 0, 1,
+                 "an event .def imports nothing: its payloads are primitives and its own enums, "
+                 "and 'import' exists so an entity field can be typed by an asset class");
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+
+    if (declaration->kind == DECLARATION_CHANNEL)
+    {
+      ++channel_count;
+      if (channel_count > 1)
+        report_error(program, declaration->offset, declaration->line,
+                     "'%.*s' is a second channel in this file; one .def holds one channel, "
+                     "because the emitted filenames are derived from the .def's own name and two "
+                     "channels have no single answer for them",
+                     declaration->name.length, declaration->name.data);
+      continue;
+    }
+
+    if (declaration->kind == DECLARATION_ENUM || declaration->kind == DECLARATION_CHANNEL_MEMBER)
+      continue;
+
+    report_error(program, declaration->offset, declaration->line,
+                 "'%.*s' is %s; an event .def declares one channel, its members and enums only",
+                 declaration->name.length, declaration->name.data,
+                 declaration_kind_name(declaration->kind));
+  }
+
+  if (channel_count == 0)
+    report_error(program, 0, 1,
+                 "an event .def declares one 'channel': its shared payload is authored, not built "
+                 "into the generator");
+
+  // --- field types ---
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_CHANNEL &&
+        declaration->kind != DECLARATION_CHANNEL_MEMBER)
+      continue;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* field = &program->fields[declaration->first_field + offset];
+      if (field->type.kind == TYPE_UNRESOLVED)
+        continue; // already reported
+
+      if (field->type.kind == TYPE_COMPONENT)
+      {
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is a component. A channel's field table is FLAT -- there is no "
+                     "leaf flattening pass to compose a component's offsets. Inline the fields "
+                     "you need",
+                     field->name.length, field->name.data);
+        continue;
+      }
+
+      if (field->type.kind == TYPE_ASSET)
+      {
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is an asset class, which would have to be 'import'ed -- and an "
+                     "event .def imports nothing. Send the id as a u32, or send what the consumer "
+                     "actually needs",
+                     field->name.length, field->name.data);
+        continue;
+      }
+
+      if (!channel_type_is_allowed(field->type.kind))
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' has type '%.*s', which the field codec cannot encode",
+                     field->name.length, field->name.data, field->type.name.length,
+                     field->type.name.data);
+    }
+  }
+
+  // --- member names are unique within their channel ---
+  //
+  // A member name is a declaration name, so the general duplicate check already
+  // catches a collision. This one exists for the message: the members of one
+  // channel become one enum, and that is why it matters.
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_CHANNEL_MEMBER || declaration->base_declaration < 0)
+      continue;
+
+    for (int32_t other = 0; other < index; ++other)
+    {
+      const declaration_t* previous = &program->declarations[other];
+      if (previous->kind != DECLARATION_CHANNEL_MEMBER ||
+          previous->base_declaration != declaration->base_declaration)
+        continue;
+      if (!string_views_match(declaration->name, previous->name))
+        continue;
+
+      report_error(program, declaration->offset, declaration->line,
+                   "'%.*s' is already a member of channel '%.*s' on line %d; the members of one "
+                   "channel become one enum",
+                   declaration->name.length, declaration->name.data,
+                   program->declarations[declaration->base_declaration].name.length,
+                   program->declarations[declaration->base_declaration].name.data, previous->line);
+      break;
+    }
+  }
 }
 
 // A cvar's value has to survive a memcmp against a retained copy (that is how
@@ -2902,9 +3291,15 @@ static void resolve_program(program_t* program)
   name_table_t table = {};
   build_name_table(&table, program);
 
-  // First, because everything after it is family-specific.
+  // Before check_family, because an unresolved channel name is a MISSPELLED
+  // KEYWORD as often as it is a real member, and reporting that plainly beats
+  // reporting that the file mixes families.
+  resolve_channel_members(program, &table);
+
+  // Then family, because everything after it is family-specific.
   check_family(program);
 
+  check_declaration_names(program);
   check_duplicate_declarations(program);
   check_duplicate_fields(program);
 
@@ -2927,12 +3322,130 @@ static void resolve_program(program_t* program)
     check_base_declaration(program);
     check_component_cycles(program);
     check_flag_contradictions(program);
+    // Runs here too, for imported classes only: it is what carries their
+    // already-expanded entries into this program's array.
     expand_asset_manifests(program);
+  }
+  else if (program->family == DEF_FAMILY_ASSET)
+  {
+    check_asset_family(program);
+    expand_asset_manifests(program);
+  }
+  else if (program->family == DEF_FAMILY_EVENT)
+  {
+    check_event_family(program);
   }
 
   check_literal_defaults(program);
 
   free(table.slots);
+}
+
+static bool read_entire_file(const char* filename, char** out_contents, int32_t* out_length);
+static void allocate_program(program_t* program);
+
+// `import "path"` -- path is relative to the importing .def's own directory, so
+// a .def reads the same wherever the build runs from.
+//
+// The imported file is parsed and resolved in full, then its asset classes are
+// copied across. Only asset classes: importing an entity or a cvar would be a
+// second definition of something, whereas an asset class is being USED as a
+// type, which is the one crossing the design admits.
+//
+// The imported program is deliberately never freed. Declaration names and asset
+// entry strings stay as pointers into its source buffer and string arena, and
+// the copies made here point at them.
+static bool load_import(parser_t* parser, token_t path_token)
+{
+  program_t* importer = parser->program;
+
+  if (importer->import_count >= MAX_IMPORTS)
+  {
+    parse_error_at(parser, path_token, "more than %d imports in one file", MAX_IMPORTS);
+    return false;
+  }
+
+  string_view_t         relative = token_text(importer, path_token);
+  std::filesystem::path resolved = std::filesystem::path(importer->filename).parent_path() /
+                                   std::string(relative.data, (size_t)relative.length);
+
+  char* path_copy = arena_copy(importer, resolved.string().c_str(), (int32_t)resolved.string().size());
+  if (path_copy == nullptr)
+    return false;
+
+  for (int32_t index = 0; index < importer->import_count; ++index)
+  {
+    if (strcmp(importer->imports[index], path_copy) == 0)
+    {
+      parse_error_at(parser, path_token, "'%s' is imported twice", path_copy);
+      return false;
+    }
+  }
+  importer->imports[importer->import_count++] = path_copy;
+
+  program_t* imported  = (program_t*)calloc(1, sizeof(program_t));
+  imported->filename   = path_copy;
+  imported->asset_root = importer->asset_root;
+
+  if (!read_entire_file(imported->filename, &imported->source, &imported->source_length))
+  {
+    parse_error_at(parser, path_token, "cannot read imported file '%s'", imported->filename);
+    return false;
+  }
+
+  allocate_program(imported);
+  tokenize(imported);
+
+  parser_t imported_parser = {};
+  imported_parser.program  = imported;
+  parse_program(&imported_parser);
+  resolve_program(imported);
+
+  if (imported->error_count > 0)
+  {
+    fprintf(stderr, "%s: %d error%s\n", imported->filename, imported->error_count,
+            imported->error_count == 1 ? "" : "s");
+    parse_error_at(parser, path_token, "imported file '%s' did not compile", imported->filename);
+    return false;
+  }
+
+  if (imported->family != DEF_FAMILY_ASSET)
+  {
+    parse_error_at(parser, path_token,
+                   "'%s' is not an asset .def; only asset classes may be imported",
+                   imported->filename);
+    return false;
+  }
+
+  if (imported->import_count > 0)
+  {
+    parse_error_at(parser, path_token,
+                   "'%s' imports files of its own; imports are one level deep",
+                   imported->filename);
+    return false;
+  }
+
+  for (int32_t index = 0; index < imported->declaration_count; ++index)
+  {
+    const declaration_t* source = &imported->declarations[index];
+    if (source->kind != DECLARATION_ASSETS)
+      continue;
+
+    declaration_t* copy = push_declaration(importer);
+    *copy             = *source;
+    copy->is_imported = true;
+
+    copy->first_asset_entry = importer->asset_entry_count;
+    for (int32_t which = 0; which < source->asset_entry_count; ++which)
+    {
+      asset_entry_t* entry = push_asset_entry(importer);
+      if (entry == nullptr)
+        return false;
+      *entry = imported->asset_entries[source->first_asset_entry + which];
+    }
+  }
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -3051,7 +3564,12 @@ static void write_cpp_type(FILE* out, const type_reference_t* type)
       fprintf(out, "network::pascal_string_t<%d>", type->capacity);
       return;
 
+    // An asset class is always imported from an asset .def, which emits it into
+    // namespace assets rather than beside the entities that use it.
     case TYPE_ASSET:
+      fprintf(out, "assets::%.*s", type->name.length, type->name.data);
+      return;
+
     case TYPE_ENUM:
     case TYPE_COMPONENT:
       fprintf(out, "%.*s", type->name.length, type->name.data);
@@ -3182,8 +3700,8 @@ static void write_default_value(FILE* out, const type_reference_t* type,
       return;
 
     case DEFAULT_ENUM_LITERAL:
-      fprintf(out, "%.*s::%.*s", type->name.length, type->name.data,
-              value->text.length, value->text.data);
+      fprintf(out, "%s%.*s::%.*s", type->kind == TYPE_ASSET ? "assets::" : "",
+              type->name.length, type->name.data, value->text.length, value->text.data);
       return;
 
     case DEFAULT_BOOL:
@@ -3316,7 +3834,10 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "#include \"array.hpp\"\n");
   fprintf(out, "#include \"linalg.hpp\"\n");
   fprintf(out, "#include \"network/network_types.hpp\"\n");
+  fprintf(out, "#include \"reflection.hpp\"\n");
   fprintf(out, "#include \"span.hpp\"\n");
+  if (has_asset_class(program))
+    fprintf(out, "#include \"assets/generated/assets_generated.hpp\"\n");
   fprintf(out, "#include <cstdint>\n");
   fprintf(out, "#include <optional>\n");
   fprintf(out, "#include <string_view>\n");
@@ -3333,82 +3854,6 @@ static void emit_generated_header(FILE* out, const program_t* program)
   // "Failure: try_, fatal_error, or nothing"): unknown text is INPUT, not a
   // bug, so it is the caller's business rather than a fatal_error.
   fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
-
-  // --- asset classes ---
-  //
-  // An asset id names an asset; it does NOT say where the bytes come from. That
-  // is deliberately absent from this API: a file-backed mesh and a procedurally
-  // generated one are the same kind of thing to every consumer, and the one
-  // place the difference exists is the manifest table below, which the asset
-  // system reads at init and nobody else reads at all.
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-  {
-    const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_ASSETS)
-      continue;
-
-    fprintf(out, "// Missing is 0: an asset field that was never assigned resolves to the\n");
-    fprintf(out, "// placeholder, which is loudly wrong, rather than to whichever asset\n");
-    fprintf(out, "// happened to sort first, which would look plausible.\n");
-    fprintf(out, "enum class %.*s : uint16_t\n{\n", declaration->name.length,
-            declaration->name.data);
-    for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
-    {
-      const asset_entry_t* entry = &program->asset_entries[declaration->first_asset_entry + which];
-      fprintf(out, "  %s = %d,\n", entry->name, which);
-    }
-    fprintf(out, "};\n\n");
-
-    fprintf(out, "constexpr uint32_t %.*s_COUNT = %d;\n\n", declaration->name.length,
-            declaration->name.data, declaration->asset_entry_count);
-
-    fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
-            declaration->name.data);
-    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text);\n\n",
-            declaration->name.length, declaration->name.data, declaration->name.length,
-            declaration->name.data);
-  }
-
-  if (has_asset_class(program))
-  {
-    fprintf(out, "// Where an asset's bytes come from. This exists for the asset system's\n");
-    fprintf(out, "// init and for nothing else -- if you are reaching for it anywhere\n");
-    fprintf(out, "// else, the code wants an asset id, not a source.\n");
-    fprintf(out, "enum asset_source_kind_t : uint8_t\n{\n");
-    fprintf(out, "  ASSET_SOURCE_MISSING = 0, // no asset assigned; `source` is empty\n");
-    fprintf(out, "  ASSET_SOURCE_FILE,        // `source` is a path, relative to the working dir\n");
-    fprintf(out, "  ASSET_SOURCE_PROCEDURAL,  // `source` is a generator key\n");
-    fprintf(out, "};\n\n");
-
-    fprintf(out, "struct asset_info_t\n{\n");
-    fprintf(out, "  const char*         name;\n");
-    fprintf(out, "  const char*         source;\n");
-    fprintf(out, "  asset_source_kind_t source_kind;\n");
-    fprintf(out, "};\n\n");
-
-    for (int32_t index = 0; index < program->declaration_count; ++index)
-    {
-      const declaration_t* declaration = &program->declarations[index];
-      if (declaration->kind != DECLARATION_ASSETS)
-        continue;
-
-      fprintf(out, "// The complete %.*s manifest, indexed by id. Populate every entry at\n",
-              declaration->name.length, declaration->name.data);
-      fprintf(out, "// init: registration must NOT be lazy, or an id resolves to nothing\n");
-      fprintf(out, "// depending on what ran first.\n");
-      fprintf(out, "Span<const asset_info_t> %.*s_manifest();\n\n",
-              declaration->name.length, declaration->name.data);
-    }
-
-    // The manifest reached by the id a field carries rather than by the class's
-    // name. This is what makes an asset field convertible to and from text by a
-    // walker that only has a field_info_t: entry `index` of the returned span is
-    // the asset whose numeric value is `index`.
-    fprintf(out, "// The manifest a field_info_t::asset_class_id refers to. Empty span for\n");
-    fprintf(out, "// an id no asset class owns, which is a caller bug -- check the column\n");
-    fprintf(out, "// is not NOT_AN_ASSET_CLASS before calling.\n");
-    fprintf(out, "Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);\n\n");
-  }
 
   // --- enums ---
   //
@@ -3476,13 +3921,6 @@ static void emit_generated_header(FILE* out, const program_t* program)
     }
     fprintf(out, "};\n\n");
     fprintf(out, "constexpr uint32_t ENUM_TYPE_COUNT = %d;\n\n", enum_count);
-
-    fprintf(out, "struct enum_type_info_t\n{\n");
-    fprintf(out, "  const char*                 name;\n");
-    fprintf(out, "  // Indexed by the enum's own numeric value; the values are dense and\n");
-    fprintf(out, "  // start at 0, so `size()` is also the count of valid values.\n");
-    fprintf(out, "  Span<const char* const>     value_names;\n");
-    fprintf(out, "};\n\n");
 
     fprintf(out, "const enum_type_info_t& enum_info(enum_type type);\n\n");
 
@@ -3651,16 +4089,10 @@ static void emit_generated_header(FILE* out, const program_t* program)
   }
 
   // --- reflection record types ---
-  fprintf(out, "enum field_type_t : uint8_t\n{\n");
-  fprintf(out, "  FIELD_TYPE_INVALID = 0,\n");
-  fprintf(out, "  FIELD_TYPE_F32, FIELD_TYPE_F64,\n");
-  fprintf(out, "  FIELD_TYPE_U8, FIELD_TYPE_U16, FIELD_TYPE_U32, FIELD_TYPE_U64,\n");
-  fprintf(out, "  FIELD_TYPE_I8, FIELD_TYPE_I16, FIELD_TYPE_I32, FIELD_TYPE_I64,\n");
-  fprintf(out, "  FIELD_TYPE_BOOL,\n");
-  fprintf(out, "  FIELD_TYPE_V3, FIELD_TYPE_V4, FIELD_TYPE_V4I,\n");
-  fprintf(out, "  FIELD_TYPE_STRING, FIELD_TYPE_ASSET, FIELD_TYPE_ENUM, FIELD_TYPE_COMPONENT,\n");
-  fprintf(out, "};\n\n");
-
+  //
+  // field_type_t, field_info_t, enum_type_info_t and the sentinels are NOT
+  // emitted: they are family-neutral and live in shared/reflection.hpp, which
+  // this header includes. Only the flag vocabulary is the entity family's own.
   fprintf(out, "enum field_flags_t : uint32_t\n{\n");
   fprintf(out, "  FIELD_FLAG_NONE      = 0,\n");
   fprintf(out, "  FIELD_FLAG_NETWORKED = 1 << 0,\n");
@@ -3672,8 +4104,8 @@ static void emit_generated_header(FILE* out, const program_t* program)
   // thing a reader has to know is how those two meet: offsets are relative to
   // the struct the field was declared in, so a recursive walk composes them by
   // addition. Said here rather than left to be rediscovered per consumer.
-  fprintf(out, "// A field of one struct. Offsets are relative to THAT struct, so walking\n");
-  fprintf(out, "// into a component composes them:\n");
+  fprintf(out, "// Entity field tables NEST -- a component-typed field's insides live in\n");
+  fprintf(out, "// another table, and a walk composes the offsets:\n");
   fprintf(out, "//\n");
   fprintf(out, "//   for (field : entity_info(type).fields)\n");
   fprintf(out, "//     if (field.type == FIELD_TYPE_COMPONENT)\n");
@@ -3683,27 +4115,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "// A component-typed field's own size_in_bytes spans the whole nested\n");
   fprintf(out, "// struct, so a consumer that does NOT care about the inside (undo's\n");
   fprintf(out, "// memcmp diffing, a whole-struct copy) can treat it as one opaque blob\n");
-  fprintf(out, "// and never recurse at all.\n");
-  fprintf(out, "// Four of field_info_t's columns are meaningful only for their own\n");
-  fprintf(out, "// FIELD_TYPE. These name what \"not that type\" looks like, so a reader\n");
-  fprintf(out, "// never has to remember whether absent is -1 or 0 -- and so a check\n");
-  fprintf(out, "// says what it means rather than testing a magic number.\n");
-  fprintf(out, "constexpr int32_t  NOT_A_COMPONENT    = -1;\n");
-  fprintf(out, "constexpr uint32_t NOT_A_STRING       = 0;\n");
-  fprintf(out, "constexpr int32_t  NOT_AN_ASSET_CLASS = -1;\n");
-  fprintf(out, "constexpr int32_t  NOT_AN_ENUM        = -1;\n\n");
-
-  fprintf(out, "struct field_info_t\n{\n");
-  fprintf(out, "  const char*  name;\n");
-  fprintf(out, "  field_type_t type;\n");
-  fprintf(out, "  uint32_t     offset;\n");
-  fprintf(out, "  uint32_t     size_in_bytes;\n");
-  fprintf(out, "  uint32_t     flags;\n");
-  fprintf(out, "  int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else NOT_A_COMPONENT\n");
-  fprintf(out, "  uint32_t     string_capacity; // FIELD_TYPE_STRING only, else NOT_A_STRING\n");
-  fprintf(out, "  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else NOT_AN_ASSET_CLASS\n");
-  fprintf(out, "  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else NOT_AN_ENUM\n");
-  fprintf(out, "};\n\n");
+  fprintf(out, "// and never recurse at all.\n\n");
 
   // Entities all derive from the base, so a single pointer type covers every
   // factory return. Without a base declaration there is no common type and the
@@ -3831,7 +4243,8 @@ static void emit_field_table(FILE* out, const program_t* program, const declarat
 
       char enum_id[64] = "NOT_AN_ENUM";
       if (field->type.kind == TYPE_ENUM && field->type.declaration_index >= 0)
-        snprintf(enum_id, sizeof(enum_id), "%d", enum_ids[field->type.declaration_index]);
+        snprintf(enum_id, sizeof(enum_id), "&ENUM_INFOS[%d]",
+                 enum_ids[field->type.declaration_index]);
 
       char string_capacity[64] = "NOT_A_STRING";
       if (field->type.kind == TYPE_STRING)
@@ -3850,7 +4263,7 @@ static void emit_field_table(FILE* out, const program_t* program, const declarat
       fprintf(out, "   .component_id = %s,\n", component_id);
       fprintf(out, "   .string_capacity = %s,\n", string_capacity);
       fprintf(out, "   .asset_class_id = %s,\n", asset_class_id);
-      fprintf(out, "   .enum_id = %s},\n", enum_id);
+      fprintf(out, "   .enum_info = %s},\n", enum_id);
     }
   }
 }
@@ -3879,6 +4292,11 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
   {
     const declaration_t* declaration = &program->declarations[index];
 
+    // The file it came from is its own input and mixes it there. Hashing it
+    // again here would just count it twice.
+    if (declaration->is_imported)
+      continue;
+
     // A cvar/command BLOCK name is a foldable section comment: never emitted,
     // read by nothing. Mixing it in would make renaming a section refuse every
     // connection, which is exactly the kind of meaning the design denies it.
@@ -3887,6 +4305,13 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
 
     mix(declaration_kind_name(declaration->kind),
         (int32_t)strlen(declaration_kind_name(declaration->kind)));
+
+    // A member's kind name is "channel member" for all of them, so the channel
+    // it belongs to has to be mixed separately -- moving a member between two
+    // channels changes which enum it is numbered in, which is exactly the kind
+    // of silent remap the handshake exists to catch.
+    if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
+      mix(declaration->base_name.data, declaration->base_name.length);
 
     for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
     {
@@ -3972,6 +4397,46 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
   fprintf(out, "#endif\n\n");
 
   fprintf(out, "namespace entities\n{\n\nnamespace\n{\n\n");
+
+  // --- enum value-name tables ---
+  //
+  // The same strings the typed to_string returns, in an array a walker can
+  // index. Duplicated rather than shared with the switch below on purpose: the
+  // switch is what an unhandled enumerator warns on, and a table would silence
+  // exactly that.
+  //
+  // These come FIRST because an enum-typed field row points straight at
+  // &ENUM_INFOS[n].
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    if (enum_ids[index] < 0)
+      continue;
+    const declaration_t* declaration = &program->declarations[index];
+
+    fprintf(out, "constexpr const char* %.*s_VALUE_NAMES[] = {\n", declaration->name.length,
+            declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "  \"%.*s\",\n", value->length, value->data);
+    }
+    fprintf(out, "};\n\n");
+  }
+
+  if (enum_count > 0)
+  {
+    fprintf(out, "constexpr enum_type_info_t ENUM_INFOS[] = {\n");
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      if (enum_ids[index] < 0)
+        continue;
+      const declaration_t* declaration = &program->declarations[index];
+      fprintf(out, "  {\"%.*s\", {%.*s_VALUE_NAMES, %d}},\n", declaration->name.length,
+              declaration->name.data, declaration->name.length, declaration->name.data,
+              declaration->enum_value_count);
+    }
+    fprintf(out, "};\n\n");
+  }
 
   // --- per component field tables ---
   for (int32_t index = 0; index < program->declaration_count; ++index)
@@ -4165,121 +4630,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     }
   }
 
-  // --- asset manifests ---
-  //
-  // The source column lives here and only here. Every other consumer of an
-  // asset id goes through the enum and never learns whether the bytes came off
-  // disk or out of a generator.
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-  {
-    const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_ASSETS)
-      continue;
-
-    fprintf(out, "constexpr asset_info_t %.*s_MANIFEST[] = {\n", declaration->name.length,
-            declaration->name.data);
-    for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
-    {
-      const asset_entry_t* entry = &program->asset_entries[declaration->first_asset_entry + which];
-
-      const char* kind_name = "ASSET_SOURCE_MISSING";
-      if (entry->source_kind == ASSET_SOURCE_FILE)
-        kind_name = "ASSET_SOURCE_FILE";
-      else if (entry->source_kind == ASSET_SOURCE_PROCEDURAL)
-        kind_name = "ASSET_SOURCE_PROCEDURAL";
-
-      fprintf(out, "  {\"%s\", \"%s\", %s},\n", entry->name, entry->source, kind_name);
-    }
-    fprintf(out, "};\n\n");
-  }
-
-  // --- enum value-name tables ---
-  //
-  // The same strings the typed to_string returns, in an array a walker can
-  // index. Duplicated rather than shared with the switch above on purpose: the
-  // switch is what an unhandled enumerator warns on, and a table would silence
-  // exactly that.
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-  {
-    if (enum_ids[index] < 0)
-      continue;
-    const declaration_t* declaration = &program->declarations[index];
-
-    fprintf(out, "constexpr const char* %.*s_VALUE_NAMES[] = {\n", declaration->name.length,
-            declaration->name.data);
-    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
-    {
-      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
-      fprintf(out, "  \"%.*s\",\n", value->length, value->data);
-    }
-    fprintf(out, "};\n\n");
-  }
-
-  if (enum_count > 0)
-  {
-    fprintf(out, "constexpr enum_type_info_t ENUM_INFOS[] = {\n");
-    for (int32_t index = 0; index < program->declaration_count; ++index)
-    {
-      if (enum_ids[index] < 0)
-        continue;
-      const declaration_t* declaration = &program->declarations[index];
-      fprintf(out, "  {\"%.*s\", {%.*s_VALUE_NAMES, %d}},\n", declaration->name.length,
-              declaration->name.data, declaration->name.length, declaration->name.data,
-              declaration->enum_value_count);
-    }
-    fprintf(out, "};\n\n");
-  }
-
   fprintf(out, "} // namespace\n\n");
-
-  // --- asset accessors ---
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-  {
-    const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_ASSETS)
-      continue;
-
-    fprintf(out, "Span<const asset_info_t> %.*s_manifest()\n{\n",
-            declaration->name.length, declaration->name.data);
-    fprintf(out, "  return {%.*s_MANIFEST, %.*s_COUNT};\n}\n\n",
-            declaration->name.length, declaration->name.data, declaration->name.length,
-            declaration->name.data);
-
-    fprintf(out, "const char* to_string(%.*s value)\n{\n", declaration->name.length,
-            declaration->name.data);
-    fprintf(out, "  assert((uint32_t)value < %.*s_COUNT);\n", declaration->name.length,
-            declaration->name.data);
-    fprintf(out, "  return %.*s_MANIFEST[(uint16_t)value].name;\n}\n\n", declaration->name.length,
-            declaration->name.data);
-
-    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text)\n{\n",
-            declaration->name.length, declaration->name.data, declaration->name.length,
-            declaration->name.data);
-    fprintf(out, "  for (uint32_t index = 0; index < %.*s_COUNT; ++index)\n  {\n",
-            declaration->name.length, declaration->name.data);
-    fprintf(out, "    if (text != %.*s_MANIFEST[index].name)\n      continue;\n",
-            declaration->name.length, declaration->name.data);
-    fprintf(out, "    return (%.*s)index;\n  }\n", declaration->name.length,
-            declaration->name.data);
-    fprintf(out, "  return std::nullopt;\n}\n\n");
-  }
-
-  if (has_asset_class(program))
-  {
-    fprintf(out, "Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id)\n{\n");
-    fprintf(out, "  switch (asset_class_id)\n  {\n");
-    for (int32_t index = 0; index < program->declaration_count; ++index)
-    {
-      if (asset_class_ids[index] < 0)
-        continue;
-      const declaration_t* declaration = &program->declarations[index];
-      fprintf(out, "    case %d: return %.*s_manifest();\n", asset_class_ids[index],
-              declaration->name.length, declaration->name.data);
-    }
-    fprintf(out, "  }\n");
-    fprintf(out, "  assert(false && \"asset_class_manifest: no asset class has this id\");\n");
-    fprintf(out, "  return {};\n}\n\n");
-  }
 
   // --- enum string conversion ---
   for (int32_t index = 0; index < program->declaration_count; ++index)
@@ -4394,6 +4745,190 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
   free(component_ids);
   free(asset_class_ids);
   free(enum_ids);
+}
+
+// ---------------------------------------------------------------------------
+// Code generation -- the asset family
+// ---------------------------------------------------------------------------
+//
+// Two files, in namespace `assets`, which is also where the hand-written asset
+// system lives -- an id and the pools it resolves against are one subject.
+//
+// This family knows nothing about entities. The link runs the other way: an
+// entity .def imports an asset .def, so entities_generated.hpp includes this
+// header and an entity's asset-typed field is spelled assets::mesh_asset.
+
+static void emit_assets_header(FILE* out, const program_t* program)
+{
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "#pragma once\n\n");
+  // Relative to src/shared, which is game_shared's public include dir.
+  fprintf(out, "#include \"span.hpp\"\n");
+  fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <optional>\n");
+  fprintf(out, "#include <string_view>\n\n");
+  fprintf(out, "namespace assets\n{\n\n");
+
+  fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
+
+  // An asset id names an asset; it does NOT say where the bytes come from. That
+  // is deliberately absent from this API: a file-backed mesh and a procedurally
+  // generated one are the same kind of thing to every consumer, and the one
+  // place the difference exists is the manifest table, which the asset system
+  // reads at init and nobody else reads at all.
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    fprintf(out, "// Missing is 0: an asset field that was never assigned resolves to the\n");
+    fprintf(out, "// placeholder, which is loudly wrong, rather than to whichever asset\n");
+    fprintf(out, "// happened to sort first, which would look plausible.\n");
+    fprintf(out, "enum class %.*s : uint16_t\n{\n", declaration->name.length,
+            declaration->name.data);
+    for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
+    {
+      const asset_entry_t* entry = &program->asset_entries[declaration->first_asset_entry + which];
+      fprintf(out, "  %s = %d,\n", entry->name, which);
+    }
+    fprintf(out, "};\n\n");
+
+    fprintf(out, "constexpr uint32_t %.*s_COUNT = %d;\n\n", declaration->name.length,
+            declaration->name.data, declaration->asset_entry_count);
+
+    fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text);\n\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
+  }
+
+  fprintf(out, "// Where an asset's bytes come from. This exists for the asset system's\n");
+  fprintf(out, "// init and for nothing else -- if you are reaching for it anywhere\n");
+  fprintf(out, "// else, the code wants an asset id, not a source.\n");
+  fprintf(out, "enum asset_source_kind_t : uint8_t\n{\n");
+  fprintf(out, "  ASSET_SOURCE_MISSING = 0, // no asset assigned; `source` is empty\n");
+  fprintf(out, "  ASSET_SOURCE_FILE,        // `source` is a path, relative to the working dir\n");
+  fprintf(out, "  ASSET_SOURCE_PROCEDURAL,  // `source` is a generator key\n");
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "struct asset_info_t\n{\n");
+  fprintf(out, "  const char*         name;\n");
+  fprintf(out, "  const char*         source;\n");
+  fprintf(out, "  asset_source_kind_t source_kind;\n");
+  fprintf(out, "};\n\n");
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    fprintf(out, "// The complete %.*s manifest, indexed by id. Populate every entry at\n",
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "// init: registration must NOT be lazy, or an id resolves to nothing\n");
+    fprintf(out, "// depending on what ran first.\n");
+    fprintf(out, "Span<const asset_info_t> %.*s_manifest();\n\n", declaration->name.length,
+            declaration->name.data);
+  }
+
+  // The manifest reached by the id a field carries rather than by the class's
+  // name. This is what makes an asset field convertible to and from text by a
+  // walker that only has a field_info_t: entry `index` of the returned span is
+  // the asset whose numeric value is `index`.
+  fprintf(out, "// The manifest an entities::field_info_t::asset_class_id refers to. Empty\n");
+  fprintf(out, "// span for an id no asset class owns, which is a caller bug -- check the\n");
+  fprintf(out, "// column is not NOT_AN_ASSET_CLASS before calling.\n");
+  fprintf(out, "Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);\n\n");
+
+  fprintf(out, "} // namespace assets\n");
+}
+
+static void emit_assets_source(FILE* out, const program_t* program, const char* header_name)
+{
+  int32_t  class_count     = 0;
+  int32_t* asset_class_ids = build_asset_class_ids(program, &class_count);
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "#include \"%s\"\n\n", header_name);
+  fprintf(out, "#include <cassert>\n\n");
+  fprintf(out, "namespace assets\n{\n\nnamespace\n{\n\n");
+
+  // The source column lives here and only here. Every other consumer of an
+  // asset id goes through the enum and never learns whether the bytes came off
+  // disk or out of a generator.
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    fprintf(out, "constexpr asset_info_t %.*s_MANIFEST[] = {\n", declaration->name.length,
+            declaration->name.data);
+    for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
+    {
+      const asset_entry_t* entry = &program->asset_entries[declaration->first_asset_entry + which];
+
+      const char* kind_name = "ASSET_SOURCE_MISSING";
+      if (entry->source_kind == ASSET_SOURCE_FILE)
+        kind_name = "ASSET_SOURCE_FILE";
+      else if (entry->source_kind == ASSET_SOURCE_PROCEDURAL)
+        kind_name = "ASSET_SOURCE_PROCEDURAL";
+
+      fprintf(out, "  {\"%s\", \"%s\", %s},\n", entry->name, entry->source, kind_name);
+    }
+    fprintf(out, "};\n\n");
+  }
+
+  fprintf(out, "} // namespace\n\n");
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    fprintf(out, "Span<const asset_info_t> %.*s_manifest()\n{\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "  return {%.*s_MANIFEST, %.*s_COUNT};\n}\n\n", declaration->name.length,
+            declaration->name.data, declaration->name.length, declaration->name.data);
+
+    fprintf(out, "const char* to_string(%.*s value)\n{\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "  assert((uint32_t)value < %.*s_COUNT);\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "  return %.*s_MANIFEST[(uint16_t)value].name;\n}\n\n", declaration->name.length,
+            declaration->name.data);
+
+    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text)\n{\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "  for (uint32_t index = 0; index < %.*s_COUNT; ++index)\n  {\n",
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "    if (text != %.*s_MANIFEST[index].name)\n      continue;\n",
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "    return (%.*s)index;\n  }\n", declaration->name.length, declaration->name.data);
+    fprintf(out, "  return std::nullopt;\n}\n\n");
+  }
+
+  fprintf(out, "Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id)\n{\n");
+  fprintf(out, "  switch (asset_class_id)\n  {\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    if (asset_class_ids[index] < 0)
+      continue;
+    const declaration_t* declaration = &program->declarations[index];
+    fprintf(out, "    case %d: return %.*s_manifest();\n", asset_class_ids[index],
+            declaration->name.length, declaration->name.data);
+  }
+  fprintf(out, "  }\n");
+  fprintf(out, "  assert(false && \"asset_class_manifest: no asset class has this id\");\n");
+  fprintf(out, "  return {};\n}\n\n");
+
+  fprintf(out, "} // namespace assets\n");
+
+  free(asset_class_ids);
 }
 
 // ---------------------------------------------------------------------------
@@ -5369,6 +5904,666 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
 }
 
 // ---------------------------------------------------------------------------
+// Code generation -- the event family
+// ---------------------------------------------------------------------------
+//
+// Three files, in namespace `shared`, which is where both channels' types
+// already live. Their names are derived from the .def's own filename stem, the
+// way the output DIRECTORY already was -- this is the first family with two
+// input files, and a hardcoded name has no single answer across them:
+//
+//   <stem>_generated.hpp        the channel enum, the payload structs, the
+//                               field tables, the codec and the fire helpers
+//   <stem>_generated.cpp        the tables and the codec. References NO
+//                               handler, so it compiles into game_shared with
+//                               neither side present
+//   client_<stem>_bindings.cpp  the channel's dispatch, which is what
+//                               references the handlers -> into game_client
+//
+// The split is the cvar family's, for the cvar family's reason. Two facts this
+// emitter is TOLD rather than derives, exactly as emit_command_bindings is told
+// `cvars::commands` and `command_context_t`: the receiving side's context type
+// is client_context_t, and a handler is `on_<member>`. Everything else --
+// namespaces, enum names, function names, parameter types -- comes off the .def.
+//
+// There is NO event codec here. A member's table is rows of the same
+// field_info_t the entity family emits, so the wire is network::write_field /
+// read_field and the text is field_to_text. What used to be ~200 lines of
+// emitted walker plus a second field-type enum plus a second formatter is now
+// three call sites.
+
+// The receiving side. One place, so moving the seam is one edit.
+static const char* EVENT_CONTEXT_TYPE   = "client_context_t";
+static const char* EVENT_HANDLER_HEADER = "event_handlers.hpp";
+
+// "Rocket_Explosion" -> "rocket_explosion". Function names and namespaces are
+// derived from the declared name, so nothing is ever spelled twice.
+static void write_lower(FILE* out, string_view_t name)
+{
+  for (int32_t index = 0; index < name.length; ++index)
+  {
+    char character = name.data[index];
+    if (character >= 'A' && character <= 'Z')
+      character = (char)(character - 'A' + 'a');
+    fputc(character, out);
+  }
+}
+
+static void write_upper(FILE* out, string_view_t name)
+{
+  for (int32_t index = 0; index < name.length; ++index)
+  {
+    char character = name.data[index];
+    if (character >= 'a' && character <= 'z')
+      character = (char)(character - 'a' + 'A');
+    fputc(character, out);
+  }
+}
+
+// A channel's tag enum and its count, derived from the channel name so the two
+// are one edit: `Effect` -> `effect_type` / `EFFECT_TYPE_COUNT`.
+static void write_channel_enum(FILE* out, string_view_t channel_name)
+{
+  write_lower(out, channel_name);
+  fprintf(out, "_type");
+}
+
+static void write_channel_count(FILE* out, string_view_t channel_name)
+{
+  write_upper(out, channel_name);
+  fprintf(out, "_TYPE_COUNT");
+}
+
+// The one channel this file declares, or -1. check_event_family has already
+// rejected a file with none or with two, so a caller reaching -1 is on the
+// error path and emits nothing.
+static int32_t find_channel_declaration(const program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+    if (program->declarations[index].kind == DECLARATION_CHANNEL)
+      return index;
+  return -1;
+}
+
+// The channel's members, in declaration order -- which IS the wire id.
+static int32_t collect_channel_members(const program_t* program, int32_t channel_index,
+                                       const declaration_t** out, int32_t capacity)
+{
+  int32_t count = 0;
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_CHANNEL_MEMBER ||
+        declaration->base_declaration != channel_index)
+      continue;
+
+    assert(count < capacity);
+    out[count++] = declaration;
+  }
+
+  return count;
+}
+
+// The channel's fields first, then the member's own, which is both the struct
+// layout and the wire order. Offsets are into the MEMBER struct, so the two
+// halves need no composition at read time -- a channel table is flat.
+static void emit_channel_field_table(FILE* out, const program_t* program,
+                                     const declaration_t* channel, const declaration_t* member,
+                                     const int32_t* enum_ids)
+{
+  const string_view_t struct_name = member->name;
+
+  for (int32_t pass = 0; pass < 2; ++pass)
+  {
+    const declaration_t* source = pass == 0 ? channel : member;
+
+    for (int32_t offset = 0; offset < source->field_count; ++offset)
+    {
+      const field_t* field = &program->fields[source->first_field + offset];
+
+      char enum_info[64] = "NOT_AN_ENUM";
+      if (field->type.kind == TYPE_ENUM && field->type.declaration_index >= 0)
+        snprintf(enum_info, sizeof(enum_info), "&ENUM_INFOS[%d]",
+                 enum_ids[field->type.declaration_index]);
+
+      char string_capacity[64] = "NOT_A_STRING";
+      if (field->type.kind == TYPE_STRING)
+        snprintf(string_capacity, sizeof(string_capacity), "%u", (uint32_t)field->type.capacity);
+
+      // A channel field carries no flags -- everything declared rides the wire
+      // and nothing else reads the table -- and can be neither a component nor
+      // an asset, so three of the nine columns are always their sentinel.
+      fprintf(out, "  {.name = \"%.*s\",\n", field->name.length, field->name.data);
+      fprintf(out, "   .type = %s,\n", field_type_enum_name(field->type.kind));
+      fprintf(out, "   .offset = (uint32_t)offsetof(%.*s, %.*s),\n", struct_name.length,
+              struct_name.data, field->name.length, field->name.data);
+      fprintf(out, "   .size_in_bytes = (uint32_t)sizeof(%.*s::%.*s),\n", struct_name.length,
+              struct_name.data, field->name.length, field->name.data);
+      fprintf(out, "   .flags = 0u,\n");
+      fprintf(out, "   .component_id = NOT_A_COMPONENT,\n");
+      fprintf(out, "   .string_capacity = %s,\n", string_capacity);
+      fprintf(out, "   .asset_class_id = NOT_AN_ASSET_CLASS,\n");
+      fprintf(out, "   .enum_info = %s},\n", enum_info);
+    }
+  }
+}
+
+static int32_t channel_member_field_count(const declaration_t* channel,
+                                          const declaration_t* member)
+{
+  return channel->field_count + member->field_count;
+}
+
+static void emit_channel_struct(FILE* out, const program_t* program,
+                                const declaration_t* declaration, const declaration_t* channel)
+{
+  if (channel != nullptr)
+    fprintf(out, "struct %.*s : %.*s\n{\n", declaration->name.length, declaration->name.data,
+            channel->name.length, channel->name.data);
+  else
+    fprintf(out, "struct %.*s\n{\n", declaration->name.length, declaration->name.data);
+
+  write_field_members(out, program, declaration);
+  fprintf(out, "};\n");
+  fprintf(out,
+          "static_assert(std::is_trivially_copyable_v<%.*s>,\n"
+          "              \"%.*s must stay trivially copyable: the codec addresses its fields \"\n"
+          "              \"through byte offsets\");\n\n",
+          declaration->name.length, declaration->name.data, declaration->name.length,
+          declaration->name.data);
+}
+
+static void emit_events_header(FILE* out, const program_t* program)
+{
+  const int32_t channel_index = find_channel_declaration(program);
+  if (channel_index < 0)
+    return;
+
+  const declaration_t* channel = &program->declarations[channel_index];
+
+  const declaration_t** members =
+      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) *
+                                    sizeof(const declaration_t*));
+  const int32_t member_count =
+      collect_channel_members(program, channel_index, members, program->declaration_count + 1);
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "#pragma once\n\n");
+  // Relative to src/shared, which is game_shared's public include dir.
+  fprintf(out, "#include \"array.hpp\"\n");
+  fprintf(out, "#include \"event_stream.hpp\"\n");
+  fprintf(out, "#include \"linalg.hpp\"\n");
+  fprintf(out, "#include \"network/bitstream.hpp\"\n");
+  fprintf(out, "#include \"network/network_types.hpp\"\n");
+  fprintf(out, "#include \"reflection.hpp\"\n");
+  fprintf(out, "#include \"span.hpp\"\n\n");
+  fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <optional>\n");
+  fprintf(out, "#include <string>\n");
+  fprintf(out, "#include <string_view>\n");
+  fprintf(out, "#include <type_traits>\n\n");
+
+  fprintf(out, "namespace shared\n{\n\n");
+
+  fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
+
+  // --- enums declared beside the channel ---
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENUM)
+      continue;
+
+    fprintf(out, "enum class %.*s : uint8_t\n{\n", declaration->name.length,
+            declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "  %.*s = %d,\n", value->length, value->data, offset);
+    }
+    fprintf(out, "};\n\n");
+    fprintf(out, "constexpr uint32_t %.*s_COUNT = %d;\n\n", declaration->name.length,
+            declaration->name.data, declaration->enum_value_count);
+    fprintf(out, "const char* to_string(%.*s value);\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text);\n\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
+  }
+
+  fprintf(out, "// ===================================================================\n");
+  fprintf(out, "// Channel: %.*s\n", channel->name.length, channel->name.data);
+  fprintf(out, "// ===================================================================\n\n");
+
+  // --- the tag ---
+  fprintf(out, "// Declaration order is the wire id. It is mixed into SCHEMA_HASH, so a\n");
+  fprintf(out, "// reorder is a refused handshake rather than a silent remap -- a better\n");
+  fprintf(out, "// outcome, not a licence. Append.\n");
+  fprintf(out, "enum class ");
+  write_channel_enum(out, channel->name);
+  fprintf(out, " : uint16_t\n{\n");
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    fprintf(out, "  %.*s = %d, // %.*s\n", members[which]->name.length, members[which]->name.data,
+            which, members[which]->description.length, members[which]->description.data);
+  }
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "// Not a member of the enum above, so `switch` over a ");
+  write_channel_enum(out, channel->name);
+  fprintf(out, "\n// still warns on an unhandled case.\n");
+  fprintf(out, "constexpr uint32_t ");
+  write_channel_count(out, channel->name);
+  fprintf(out, " = %d;\n\n", member_count);
+
+  fprintf(out, "const char* to_string(");
+  write_channel_enum(out, channel->name);
+  fprintf(out, " value);\n\n");
+
+  // --- the channel struct: the shared payload ---
+  fprintf(out, "// The shared payload. Authored in the .def rather than built into the\n");
+  fprintf(out, "// generator, so adding a field every member can use is one line there.\n");
+  emit_channel_struct(out, program, channel, nullptr);
+
+  fprintf(out, "// One struct per member, ALWAYS -- a member with no fields of its own gets\n");
+  fprintf(out, "// an empty one rather than a special case. These are STACK LOCALS: the\n");
+  fprintf(out, "// encoder builds one inside the fire helper and the reader builds one on\n");
+  fprintf(out, "// the way to a consumer. Neither is ever stored, which is why this family\n");
+  fprintf(out, "// has no tagged union and no queue.\n");
+  for (int32_t which = 0; which < member_count; ++which)
+    emit_channel_struct(out, program, members[which], channel);
+
+  fprintf(out, "// Fire helpers. Each writes the kind, then the channel's fields, then its\n");
+  fprintf(out, "// own -- straight into the stream. Nothing is queued, so no value survives\n");
+  fprintf(out, "// the call and a kind can never disagree with its payload.\n");
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    fprintf(out, "void fire_");
+    write_lower(out, members[which]->name);
+    fprintf(out, "(event_stream_t& stream, const %.*s& payload);\n", members[which]->name.length,
+            members[which]->name.data);
+  }
+  fprintf(out, "\n");
+
+  fprintf(out, "// The read half, one per member. Empty when a field's value is outside\n");
+  fprintf(out, "// this build's tables -- an enum id no declared value holds. That leaves\n");
+  fprintf(out, "// the reader mid-record with the rest of the batch bit-packed behind it,\n");
+  fprintf(out, "// so there is nothing to resynchronize to and the caller stops.\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// The receiving side's dispatch switch is generated beside its handlers\n");
+  fprintf(out, "// (client_*_bindings.cpp), because it is what references them.\n");
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    fprintf(out, "[[nodiscard]] std::optional<%.*s> try_read_", members[which]->name.length,
+            members[which]->name.data);
+    write_lower(out, members[which]->name);
+    fprintf(out, "(network::Bit_Reader& reader);\n");
+  }
+  fprintf(out, "\n");
+
+  fprintf(out, "// The ONE place a payload becomes characters. One overload per member, so\n");
+  fprintf(out, "// a caller holding a payload has a formatter for it.\n");
+  for (int32_t which = 0; which < member_count; ++which)
+    fprintf(out, "std::string to_text(const %.*s& value);\n", members[which]->name.length,
+            members[which]->name.data);
+  fprintf(out, "\n");
+
+  fprintf(out, "// Every event PENDING in the stream, decoded back out of the bytes that\n");
+  fprintf(out, "// will actually be sent. A debugger view of a queue shows what someone\n");
+  fprintf(out, "// INTENDED to send; a codec bug is invisible there and visible here.\n");
+  fprintf(out, "std::string ");
+  write_lower(out, channel->name);
+  fprintf(out, "_stream_to_text(const event_stream_t& stream);\n\n");
+
+  fprintf(out, "} // namespace shared\n");
+
+  // enum_traits for the channel tag AND the declared enums, at global scope --
+  // the primary template lives in shared/array.hpp. Enum_Array<effect_type, T>
+  // is what replaced the effect handler registry's magic table size.
+  fprintf(out, "\n// --- Enum_Array support ---------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// Global scope on purpose: enum_traits is declared in shared/array.hpp,\n");
+  fprintf(out, "// which knows nothing about this namespace. `count` is what sizes an\n");
+  fprintf(out, "// Enum_Array over a channel tag -- adding a member to the .def resizes\n");
+  fprintf(out, "// every table over it, which is what deleted the handler registry's\n");
+  fprintf(out, "// hand-picked table size.\n\n");
+
+  fprintf(out, "template <> struct enum_traits<shared::");
+  write_channel_enum(out, channel->name);
+  fprintf(out, ">\n{\n  static constexpr uint32_t count = shared::");
+  write_channel_count(out, channel->name);
+  fprintf(out, ";\n};\n\n");
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENUM)
+      continue;
+
+    fprintf(out, "template <> struct enum_traits<shared::%.*s>\n{\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "  static constexpr uint32_t count = shared::%.*s_COUNT;\n};\n\n",
+            declaration->name.length, declaration->name.data);
+  }
+
+  free(members);
+}
+
+static void emit_events_source(FILE* out, const program_t* program, const char* header_path)
+{
+  const int32_t channel_index = find_channel_declaration(program);
+  if (channel_index < 0)
+    return;
+
+  const declaration_t* channel = &program->declarations[channel_index];
+
+  int32_t  enum_count = 0;
+  int32_t* enum_ids   = build_enum_ids(program, &enum_count);
+
+  const declaration_t** members =
+      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) *
+                                    sizeof(const declaration_t*));
+  const int32_t member_count =
+      collect_channel_members(program, channel_index, members, program->declaration_count + 1);
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "#include \"%s\"\n\n", header_path);
+  fprintf(out, "#include \"log.hpp\"\n");
+  fprintf(out, "#include \"network/field_codec.hpp\"\n\n");
+  fprintf(out, "#include <cassert>\n#include <cstddef>\n#include <format>\n\n");
+
+  // A member struct derives from its channel and both halves may carry data, so
+  // offsetof is conditionally-supported -- the same situation the entity family
+  // is in, suppressed the same way.
+  fprintf(out, "#if defined(__clang__) || defined(__GNUC__)\n");
+  fprintf(out, "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n");
+  fprintf(out, "#elif defined(_MSC_VER)\n");
+  fprintf(out, "#pragma warning(disable : 4841)\n");
+  fprintf(out, "#endif\n\n");
+
+  fprintf(out, "namespace shared\n{\n\nnamespace\n{\n\n");
+
+  // --- enum value names, then the infos an enum-typed field row points at ---
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    if (enum_ids[index] < 0)
+      continue;
+    const declaration_t* declaration = &program->declarations[index];
+
+    fprintf(out, "constexpr const char* ");
+    write_upper(out, declaration->name);
+    fprintf(out, "_VALUE_NAMES[] = {\n");
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "  \"%.*s\",\n", value->length, value->data);
+    }
+    fprintf(out, "};\n\n");
+  }
+
+  if (enum_count > 0)
+  {
+    fprintf(out, "constexpr enum_type_info_t ENUM_INFOS[] = {\n");
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      if (enum_ids[index] < 0)
+        continue;
+      const declaration_t* declaration = &program->declarations[index];
+      fprintf(out, "  {\"%.*s\", {", declaration->name.length, declaration->name.data);
+      write_upper(out, declaration->name);
+      fprintf(out, "_VALUE_NAMES, %d}},\n", declaration->enum_value_count);
+    }
+    fprintf(out, "};\n\n");
+  }
+
+  // --- field tables ---
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    fprintf(out, "constexpr field_info_t ");
+    write_upper(out, members[which]->name);
+    fprintf(out, "_FIELDS[] = {\n");
+    emit_channel_field_table(out, program, channel, members[which], enum_ids);
+    fprintf(out, "};\n\n");
+  }
+
+  fprintf(out, "} // namespace\n\n");
+
+  // --- enum string conversion ---
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENUM)
+      continue;
+
+    fprintf(out, "const char* to_string(%.*s value)\n{\n  switch (value)\n  {\n",
+            declaration->name.length, declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* v = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "    case %.*s::%.*s: return \"%.*s\";\n", declaration->name.length,
+              declaration->name.data, v->length, v->data, v->length, v->data);
+    }
+    fprintf(out, "  }\n  assert(false && \"invalid %.*s\");\n  return \"\";\n}\n\n",
+            declaration->name.length, declaration->name.data);
+
+    fprintf(out, "template <> std::optional<%.*s> try_from_string<%.*s>(std::string_view text)\n{\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* v = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "  if (text == \"%.*s\") return %.*s::%.*s;\n", v->length, v->data,
+              declaration->name.length, declaration->name.data, v->length, v->data);
+    }
+    fprintf(out, "  return std::nullopt;\n}\n\n");
+  }
+
+  // --- the tag's name ---
+  fprintf(out, "const char* to_string(");
+  write_channel_enum(out, channel->name);
+  fprintf(out, " value)\n{\n  switch (value)\n  {\n");
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    fprintf(out, "    case ");
+    write_channel_enum(out, channel->name);
+    fprintf(out, "::%.*s: return \"%.*s\";\n", members[which]->name.length,
+            members[which]->name.data, members[which]->name.length, members[which]->name.data);
+  }
+  fprintf(out, "  }\n  assert(false && \"invalid ");
+  write_channel_enum(out, channel->name);
+  fprintf(out, "\");\n  return \"\";\n}\n\n");
+
+  // --- per member: fire, read, format ---
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    const declaration_t* member = members[which];
+    const int32_t        total  = channel_member_field_count(channel, member);
+
+    fprintf(out, "void fire_");
+    write_lower(out, member->name);
+    fprintf(out, "(event_stream_t& stream, const %.*s& payload)\n{\n", member->name.length,
+            member->name.data);
+    fprintf(out, "  stream.writer.write_bits((uint32_t)");
+    write_channel_enum(out, channel->name);
+    fprintf(out, "::%.*s, 16);\n", member->name.length, member->name.data);
+    fprintf(out, "  for (const field_info_t& field : Span<const field_info_t>{");
+    write_upper(out, member->name);
+    fprintf(out, "_FIELDS, %d})\n", total);
+    fprintf(out, "    network::write_field(stream.writer, "
+                 "reinterpret_cast<const uint8_t*>(&payload), field, field.offset);\n");
+    fprintf(out, "  ++stream.count;\n\n");
+    fprintf(out, "  if (stream.log_fired)\n    log_terminal(\"[event fired] {}\", "
+                 "to_text(payload));\n");
+    fprintf(out, "}\n\n");
+
+    fprintf(out, "std::optional<%.*s> try_read_", member->name.length, member->name.data);
+    write_lower(out, member->name);
+    fprintf(out, "(network::Bit_Reader& reader)\n{\n");
+    fprintf(out, "  %.*s payload;\n", member->name.length, member->name.data);
+    fprintf(out, "  for (const field_info_t& field : Span<const field_info_t>{");
+    write_upper(out, member->name);
+    fprintf(out, "_FIELDS, %d})\n", total);
+    fprintf(out, "    if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), "
+                 "field, field.offset))\n      return std::nullopt;\n");
+    fprintf(out, "  return payload;\n}\n\n");
+
+    fprintf(out, "std::string to_text(const %.*s& value)\n{\n", member->name.length,
+            member->name.data);
+    fprintf(out, "  return std::string(\"%.*s\") + fields_to_text({", member->name.length,
+            member->name.data);
+    write_upper(out, member->name);
+    fprintf(out, "_FIELDS, %d}, &value);\n}\n\n", total);
+  }
+
+  // --- the pending-stream dump ---
+  fprintf(out, "std::string ");
+  write_lower(out, channel->name);
+  fprintf(out, "_stream_to_text(const event_stream_t& stream)\n{\n");
+  fprintf(out, "  if (stream.empty())\n    return \"<nothing pending>\";\n\n");
+  fprintf(out, "  network::Bit_Reader reader(stream.writer.buffer.data(),\n");
+  fprintf(out, "                             stream.writer.buffer.size());\n");
+  fprintf(out, "  reader.read_bits(16); // the count slot, backpatched only at send\n\n");
+  fprintf(out, "  std::string text;\n");
+  fprintf(out, "  for (uint32_t index = 0; index < stream.count; ++index)\n  {\n");
+  fprintf(out, "    if (index > 0)\n      text += '\\n';\n\n");
+  fprintf(out, "    const uint32_t kind = reader.read_bits(16);\n");
+  fprintf(out, "    if (kind >= ");
+  write_channel_count(out, channel->name);
+  fprintf(out, ")\n    {\n");
+  fprintf(out, "      text += std::format(\"<unknown kind {}; the rest is unreadable>\", kind);\n");
+  fprintf(out, "      break;\n    }\n\n");
+  fprintf(out, "    switch ((");
+  write_channel_enum(out, channel->name);
+  fprintf(out, ")kind)\n    {\n");
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    fprintf(out, "      case ");
+    write_channel_enum(out, channel->name);
+    fprintf(out, "::%.*s:\n      {\n", members[which]->name.length, members[which]->name.data);
+    fprintf(out, "        const std::optional<%.*s> payload = try_read_",
+            members[which]->name.length, members[which]->name.data);
+    write_lower(out, members[which]->name);
+    fprintf(out, "(reader);\n");
+    fprintf(out, "        if (!payload)\n        {\n");
+    fprintf(out, "          text += \"<undecodable payload; the rest is unreadable>\";\n");
+    fprintf(out, "          return text;\n        }\n");
+    fprintf(out, "        text += to_text(*payload);\n        break;\n      }\n");
+  }
+  fprintf(out, "    }\n  }\n\n  return text;\n}\n\n");
+
+  fprintf(out, "} // namespace shared\n");
+
+  free(members);
+  free(enum_ids);
+}
+
+// The per-side TU. Everything that references a handler lives here, so
+// <stem>_generated.cpp compiles into game_shared with neither side present --
+// the cvar family's split, for the cvar family's reason.
+static void emit_event_bindings(FILE* out, const program_t* program, const char* header_path)
+{
+  const int32_t channel_index = find_channel_declaration(program);
+  if (channel_index < 0)
+    return;
+
+  const declaration_t* channel = &program->declarations[channel_index];
+
+  const declaration_t** members =
+      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) *
+                                    sizeof(const declaration_t*));
+  const int32_t member_count =
+      collect_channel_members(program, channel_index, members, program->declaration_count + 1);
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// The receiving side's seam. Every handler below is REFERENCED here and\n");
+  fprintf(out, "// DEFINED by hand, so a missing, misspelled or wrongly typed one fails at\n");
+  fprintf(out, "// LINK time, naming the symbol. That link step is the assert: there is no\n");
+  fprintf(out, "// registration, so \"forgot to register\" is not representable and the only\n");
+  fprintf(out, "// surviving failure is \"forgot to write it\".\n");
+  fprintf(out, "#include \"%s\"\n", header_path);
+  fprintf(out, "#include \"%s\"\n\n", EVENT_HANDLER_HEADER);
+  fprintf(out, "#include \"log.hpp\"\n\n");
+
+  fprintf(out, "namespace client\n{\n\n");
+
+  // --- handler declarations ---
+  fprintf(out, "// Channel %.*s. One file per member under src/client/", channel->name.length,
+          channel->name.data);
+  write_lower(out, channel->name);
+  fprintf(out, "s/.\nnamespace ");
+  write_lower(out, channel->name);
+  fprintf(out, "s\n{\n");
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    fprintf(out, "void on_");
+    write_lower(out, members[which]->name);
+    fprintf(out, "(%s& context, const shared::%.*s& value);\n", EVENT_CONTEXT_TYPE,
+            members[which]->name.length, members[which]->name.data);
+  }
+  fprintf(out, "} // namespace ");
+  write_lower(out, channel->name);
+  fprintf(out, "s\n\n");
+
+  // --- the batch reader IS the dispatch switch ---
+  fprintf(out, "// The switch lives here rather than beside the codec because it is what\n");
+  fprintf(out, "// references the consumers. Each payload is a stack local on its way to\n");
+  fprintf(out, "// one call -- no vector, no tagged union, no member access to get wrong.\n");
+  fprintf(out, "void dispatch_received_");
+  write_lower(out, channel->name);
+  fprintf(out, "s(%s& context, network::Bit_Reader& reader,\n", EVENT_CONTEXT_TYPE);
+  fprintf(out, "                                 bool log_received)\n{\n");
+  fprintf(out, "  const uint32_t count = reader.read_bits(16);\n\n");
+  fprintf(out, "  for (uint32_t index = 0; index < count; ++index)\n  {\n");
+  fprintf(out, "    const uint32_t kind = reader.read_bits(16);\n");
+  fprintf(out, "    if (kind >= shared::");
+  write_channel_count(out, channel->name);
+  fprintf(out, ")\n    {\n");
+  fprintf(out, "      // The payload behind an unknown kind has an unknown length, so\n");
+  fprintf(out, "      // every record after it is unreadable too.\n");
+  fprintf(out, "      log_error(\"dispatch_received_");
+  write_lower(out, channel->name);
+  fprintf(out, "s: record {} of {} carries an \"\n");
+  fprintf(out, "                \"unknown kind {}; dropping the rest of the batch\", index, count, kind);\n");
+  fprintf(out, "      return;\n    }\n\n");
+  fprintf(out, "    switch ((shared::");
+  write_channel_enum(out, channel->name);
+  fprintf(out, ")kind)\n    {\n");
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    const declaration_t* member = members[which];
+    fprintf(out, "      case shared::");
+    write_channel_enum(out, channel->name);
+    fprintf(out, "::%.*s:\n      {\n", member->name.length, member->name.data);
+    fprintf(out, "        const std::optional<shared::%.*s> payload = shared::try_read_",
+            member->name.length, member->name.data);
+    write_lower(out, member->name);
+    fprintf(out, "(reader);\n");
+    fprintf(out, "        if (!payload)\n        {\n");
+    fprintf(out, "          // A field the tables cannot represent leaves the reader\n");
+    fprintf(out, "          // mid-record, so the rest of the batch is gone with it.\n");
+    fprintf(out, "          log_error(\"dispatch_received_");
+    write_lower(out, channel->name);
+    fprintf(out, "s: record {} of {} did not \"\n");
+    fprintf(out, "                    \"decode; dropping the rest of the batch\", index, count);\n");
+    fprintf(out, "          return;\n        }\n");
+    fprintf(out, "        if (log_received)\n          log_terminal(\"[event received] {}\", "
+                 "shared::to_text(*payload));\n");
+    fprintf(out, "        ");
+    write_lower(out, channel->name);
+    fprintf(out, "s::on_");
+    write_lower(out, member->name);
+    fprintf(out, "(context, *payload);\n        break;\n      }\n");
+  }
+  fprintf(out, "    }\n  }\n}\n\n");
+
+  fprintf(out, "} // namespace client\n");
+
+  free(members);
+}
+
+// ---------------------------------------------------------------------------
 // Dump
 // ---------------------------------------------------------------------------
 
@@ -5448,8 +6643,13 @@ static void dump_program(const program_t* program)
   {
     const declaration_t* declaration = &program->declarations[index];
 
-    printf("\n%.*s :: %s", declaration->name.length, declaration->name.data,
-           declaration_kind_name(declaration->kind));
+    if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
+      printf("\n%.*s :: %.*s  \"%.*s\"", declaration->name.length, declaration->name.data,
+             declaration->base_name.length, declaration->base_name.data,
+             declaration->description.length, declaration->description.data);
+    else
+      printf("\n%.*s :: %s", declaration->name.length, declaration->name.data,
+             declaration_kind_name(declaration->kind));
 
     if (declaration->kind == DECLARATION_FLAGSET)
     {
@@ -5676,6 +6876,27 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
   return true;
 }
 
+static bool emit_asset_family(const program_t* program, const char* output_dir)
+{
+  const char* header_name = "assets_generated.hpp";
+  char        path[1024];
+
+  FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
+  if (header_file == nullptr)
+    return false;
+  emit_assets_header(header_file, program);
+  fclose(header_file);
+
+  FILE* source_file = open_generated_file(output_dir, "assets_generated.cpp", path, sizeof(path));
+  if (source_file == nullptr)
+    return false;
+  emit_assets_source(source_file, program, header_name);
+  fclose(source_file);
+
+  fprintf(stderr, "def_gen: wrote %s/assets_generated.{hpp,cpp}\n", output_dir);
+  return true;
+}
+
 static bool emit_cvar_family(const program_t* program, const char* output_dir)
 {
   // Bounded by the field count, which is bounded by the token count.
@@ -5734,6 +6955,184 @@ static bool emit_cvar_family(const program_t* program, const char* output_dir)
   return wrote;
 }
 
+// The .def's filename stem: "src/shared/effects/effects.def" -> "effects". Both
+// the emitted filenames and the directory they land in come off the input path,
+// so two inputs in one family cannot collide.
+static void derive_input_stem(const char* def_path, char* buffer, size_t buffer_size)
+{
+  std::string stem = std::filesystem::path(def_path).stem().string();
+  snprintf(buffer, buffer_size, "%s", stem.c_str());
+}
+
+// Lowercase `name` into `buffer`, appending a trailing 's'. The channel's
+// handler namespace and directory: `Effect` -> "effects".
+static void write_lower_plural(string_view_t name, char* buffer, size_t buffer_size)
+{
+  size_t length = (size_t)name.length;
+  if (length > buffer_size - 2)
+    length = buffer_size - 2;
+
+  for (size_t index = 0; index < length; ++index)
+  {
+    char character = name.data[index];
+    buffer[index]  = (character >= 'A' && character <= 'Z') ? (char)(character - 'A' + 'a')
+                                                            : character;
+  }
+  buffer[length]     = 's';
+  buffer[length + 1] = '\0';
+}
+
+static void write_lower_into(string_view_t name, char* buffer, size_t buffer_size)
+{
+  size_t length = (size_t)name.length;
+  if (length > buffer_size - 1)
+    length = buffer_size - 1;
+
+  for (size_t index = 0; index < length; ++index)
+  {
+    char character = name.data[index];
+    buffer[index]  = (character >= 'A' && character <= 'Z') ? (char)(character - 'A' + 'a')
+                                                            : character;
+  }
+  buffer[length] = '\0';
+}
+
+// --scaffold: write the empty handler file for any member that has none.
+//
+// The link error already tells you WHAT to write; this only saves the typing.
+// Three constraints, all load-bearing:
+//
+//   - Write-if-absent, full stop. It stats the path and skips it if anything is
+//     there. It never opens an existing file for writing, never merges, never
+//     diffs, never backs up -- because it never needs to. A stub is a starting
+//     point, not an owned artifact; the moment it exists it belongs to a human.
+//   - Opt-in, never part of a build. A `cmake --build` must not create source
+//     files. This is something you type, like --dump.
+//   - It reports what it wrote, one line each, so an accidental invocation is
+//     visible now rather than discovered later in `git status`.
+//
+// CMake still needs the new file in the game_client list. The repo writes its
+// source lists out rather than globbing, and the link error is the reminder.
+static bool scaffold_event_handlers(const program_t* program, const char* client_root)
+{
+  const int32_t channel_index = find_channel_declaration(program);
+  if (channel_index < 0)
+    return true;
+
+  const declaration_t* channel = &program->declarations[channel_index];
+
+  const declaration_t** members =
+      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) *
+                                    sizeof(const declaration_t*));
+  const int32_t member_count =
+      collect_channel_members(program, channel_index, members, program->declaration_count + 1);
+
+  int32_t written = 0;
+  bool    ok      = true;
+
+  // src/client/<channel>s/<member>.cpp -- the same shape src/client/effects/
+  // already has, derived rather than declared.
+  char plural[256];
+  write_lower_plural(channel->name, plural, sizeof(plural));
+
+  char directory[1024];
+  snprintf(directory, sizeof(directory), "%s/%s", client_root, plural);
+
+  std::error_code error_code;
+  std::filesystem::create_directories(directory, error_code);
+
+  for (int32_t which = 0; which < member_count; ++which)
+  {
+    char lowered_member[256];
+    write_lower_into(members[which]->name, lowered_member, sizeof(lowered_member));
+
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.cpp", directory, lowered_member);
+
+    if (std::filesystem::exists(path))
+      continue;
+
+    FILE* file = fopen(path, "wb");
+    if (file == nullptr)
+    {
+      fprintf(stderr, "error: cannot write '%s'\n", path);
+      ok = false;
+      continue;
+    }
+
+    fprintf(file, "#include \"../%s\"\n\n", EVENT_HANDLER_HEADER);
+    fprintf(file, "namespace client::%s\n{\n\n", plural);
+    fprintf(file, "// %.*s\n", members[which]->description.length,
+            members[which]->description.data);
+    fprintf(file, "// This file is yours now -- --scaffold wrote it once and will never\n");
+    fprintf(file, "// touch it again. Its consumer list lives here.\n");
+    fprintf(file, "void on_%s(%s &context, const shared::%.*s &value)\n", lowered_member,
+            EVENT_CONTEXT_TYPE, members[which]->name.length, members[which]->name.data);
+    fprintf(file, "{\n  (void)context;\n  (void)value;\n}\n\n");
+    fprintf(file, "} // namespace client::%s\n", plural);
+    fclose(file);
+
+    fprintf(stderr, "def_gen: scaffolded %s\n", path);
+    ++written;
+  }
+
+  if (written == 0)
+    fprintf(stderr, "def_gen: every %s handler already has a file; nothing scaffolded\n", plural);
+  else
+    fprintf(stderr, "def_gen: %d file%s scaffolded -- add them to the game_client source "
+                    "list in CMakeLists.txt\n",
+            written, written == 1 ? "" : "s");
+
+  free(members);
+  return ok;
+}
+
+static bool emit_event_family(const program_t* program, const char* output_dir)
+{
+  char path[1024];
+  char stem[256];
+  derive_input_stem(program->filename, stem, sizeof(stem));
+
+  // All four names are derived from the stem. They were literals while every
+  // family had exactly one input file; the event family has two, and the fourth
+  // one below is written verbatim into an #include, so a literal would have the
+  // effects codec including the gameplay-event header.
+  char header_name[512];
+  char source_name[512];
+  char bindings_name[512];
+  char header_path[512];
+  snprintf(header_name, sizeof(header_name), "%s_generated.hpp", stem);
+  snprintf(source_name, sizeof(source_name), "%s_generated.cpp", stem);
+  snprintf(bindings_name, sizeof(bindings_name), "client_%s_bindings.cpp", stem);
+
+  // The generated TUs include the header by PATH rather than by its bare name:
+  // one of them sits in this directory but is compiled into another module,
+  // where the bare name resolves against a different include root.
+  snprintf(header_path, sizeof(header_path), "%s/generated/%s", stem, header_name);
+
+  FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
+  if (header_file == nullptr)
+    return false;
+  emit_events_header(header_file, program);
+  fclose(header_file);
+
+  FILE* source_file = open_generated_file(output_dir, source_name, path, sizeof(path));
+  if (source_file == nullptr)
+    return false;
+  emit_events_source(source_file, program, header_path);
+  fclose(source_file);
+
+  FILE* bindings_file = open_generated_file(output_dir, bindings_name, path, sizeof(path));
+  if (bindings_file == nullptr)
+    return false;
+  emit_event_bindings(bindings_file, program, header_path);
+  fclose(bindings_file);
+
+  fprintf(stderr, "def_gen: wrote %s/%s_generated.{hpp,cpp} and %s\n", output_dir, stem,
+          bindings_name);
+  return true;
+}
+
 int main(int argument_count, char** arguments)
 {
   // Eight is far more .def files than the design admits: one per kind, and the
@@ -5748,8 +7147,12 @@ int main(int argument_count, char** arguments)
   // runtime ("resources/obj"), so they resolve against the repo root, not
   // against wherever the build invoked the generator from.
   const char* asset_root  = ".";
-  bool        should_dump = false;
-  bool        should_emit = false;
+  bool        should_dump     = false;
+  bool        should_emit     = false;
+  bool        should_scaffold = false;
+  // Where --scaffold writes handler stubs. A path rather than a derivation: the
+  // receiving side's source tree is not something a .def knows about.
+  const char* client_root = "src/client";
 
   for (int index = 1; index < argument_count; ++index)
   {
@@ -5761,6 +7164,21 @@ int main(int argument_count, char** arguments)
     if (strcmp(arguments[index], "--emit") == 0)
     {
       should_emit = true;
+      continue;
+    }
+    if (strcmp(arguments[index], "--scaffold") == 0)
+    {
+      should_scaffold = true;
+      continue;
+    }
+    if (strcmp(arguments[index], "--client-root") == 0)
+    {
+      if (index + 1 >= argument_count)
+      {
+        fprintf(stderr, "error: --client-root needs a directory\n");
+        return 1;
+      }
+      client_root = arguments[++index];
       continue;
     }
     if (strcmp(arguments[index], "--output-dir") == 0)
@@ -5805,6 +7223,11 @@ int main(int argument_count, char** arguments)
                     "                  <dir of the .def>/generated unless --output-dir says\n"
                     "                  otherwise. Without it the tool only parses and checks.\n"
                     "  --dump          print the parsed IR\n"
+                    "  --scaffold      write a handler stub for any event member that has no\n"
+                    "                  file yet. Write-if-absent: never overwrites, never\n"
+                    "                  merges, and reports every file it writes. Opt-in, so a\n"
+                    "                  build never creates source files.\n"
+                    "  --client-root   where --scaffold writes (default src/client)\n"
                     "  --output-dir    override the derived output directory; legal only with\n"
                     "                  exactly one input\n"
                     "  --asset-root    resolve the .def's asset scan paths against this\n"
@@ -5871,6 +7294,17 @@ int main(int argument_count, char** arguments)
            input_count == 1 ? "" : "s");
   }
 
+  if (should_scaffold)
+  {
+    for (int32_t index = 0; index < input_count; ++index)
+    {
+      if (programs[index].family != DEF_FAMILY_EVENT)
+        continue;
+      if (!scaffold_event_handlers(&programs[index], client_root))
+        return 1;
+    }
+  }
+
   if (!should_emit)
     return 0;
 
@@ -5889,8 +7323,16 @@ int main(int argument_count, char** arguments)
         wrote = emit_entity_family(program, output_dir, schema_hash);
         break;
 
+      case DEF_FAMILY_ASSET:
+        wrote = emit_asset_family(program, output_dir);
+        break;
+
       case DEF_FAMILY_CVAR:
         wrote = emit_cvar_family(program, output_dir);
+        break;
+
+      case DEF_FAMILY_EVENT:
+        wrote = emit_event_family(program, output_dir);
         break;
 
       case DEF_FAMILY_EMPTY:

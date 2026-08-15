@@ -26,7 +26,7 @@ namespace client
 namespace
 {
 
-constexpr entities::mesh_asset PREVIEW_MESH = entities::mesh_asset::Leet_Full;
+constexpr assets::mesh_asset PREVIEW_MESH = assets::mesh_asset::Leet_Full;
 
 // A leaf bone has no child to draw toward, so its segment is a stub along the
 // bone's own local +Y (its height). Long enough to see which way the bone points.
@@ -276,7 +276,7 @@ bool Animation_Tool::update_pose()
   {
     if (report)
       log_error("[animation] preview mesh '{}' did not resolve through the asset manifest",
-                entities::to_string(PREVIEW_MESH));
+                assets::to_string(PREVIEW_MESH));
     return false;
   }
 
@@ -285,7 +285,7 @@ bool Animation_Tool::update_pose()
   {
     if (report)
       log_error("[animation] preview mesh '{}' has no skin arrays: it exported unskinned",
-                entities::to_string(PREVIEW_MESH));
+                assets::to_string(PREVIEW_MESH));
     return false;
   }
 
@@ -294,7 +294,7 @@ bool Animation_Tool::update_pose()
   {
     if (report)
       log_error("[animation] preview mesh '{}' names a skeleton that is not in the cache",
-                entities::to_string(PREVIEW_MESH));
+                assets::to_string(PREVIEW_MESH));
     return false;
   }
 

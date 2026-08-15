@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -155,8 +156,17 @@ static void test_real_mesh()
   // ambiguous:
   //
   //   - Y is up: the figure is TALL and THIN, so its vertical span dwarfs its
-  //     depth. Blender is Z-up; if `(x,y,z) -> (x,z,-y)` were dropped, the two
-  //     would swap and this check would be the one that noticed.
+  //     DEPTH (front-to-back, which is X). Blender is Z-up; if the conversion
+  //     were dropped, the two would swap and this check would notice.
+  //   - Z is LEFT-TO-RIGHT: an arm span is far wider than a chest is deep. The
+  //     axis conversion folds in a quarter turn of yaw, and dropping just that
+  //     turn (leaving Y-up intact) puts the arms back on X, which only this
+  //     check can see.
+  //   - +X is FORWARD: the face protrudes that way. The only check here that
+  //     can catch a 180-degree error, and it guards a live assumption --
+  //     `linalg::model_yaw_from_view_yaw` turns a model with the body yaw and
+  //     NO constant correction, which is only right if the authored facing is
+  //     yaw 0, i.e. +X (`direction_from_angles`).
   //   - The feet are on the ground plane (y ~ 0), which no coincidence of
   //     scaling produces.
   //   - 1 unit == 1 inch: a person is ~67 units against a 72-unit player hull
@@ -175,12 +185,36 @@ static void test_real_mesh()
   }
 
   float vertical_span = maximum.y - minimum.y;
-  float depth_span    = maximum.z - minimum.z;
+  float depth_span    = maximum.x - minimum.x;
+  float width_span    = maximum.z - minimum.z;
 
   CHECK(vertical_span > 3.0f * depth_span,
         "vertical span %f is not much larger than depth span %f -- a standing figure is tall and "
         "thin, so the up axis is not Y and the Blender Z-up conversion did not happen",
         vertical_span, depth_span);
+  CHECK(width_span > 2.0f * depth_span,
+        "the figure is %f wide against %f deep -- an arm span dwarfs a chest, so the left-right "
+        "axis is not Z and the axis conversion's quarter turn of yaw did not happen",
+        width_span, depth_span);
+
+  // Facing, measured over the HEAD rather than the whole figure: that is where
+  // the asymmetry is unambiguous, since a face protrudes and the back of a skull
+  // does not. Currently +6.17 forward against -2.48 back, so the 1.3 threshold
+  // has room for re-authoring without going quiet.
+  float head_forward  = -std::numeric_limits<float>::max();
+  float head_backward = std::numeric_limits<float>::max();
+  for (const vertex_xnu &vertex : mesh.vertices)
+  {
+    if (vertex.position.y < 0.85f * maximum.y)
+      continue;
+    head_forward  = std::fmax(head_forward, vertex.position.x);
+    head_backward = std::fmin(head_backward, vertex.position.x);
+  }
+
+  CHECK(head_forward > 1.3f * -head_backward,
+        "the head reaches x %+f forward against %+f back, so the model does not clearly face +X -- "
+        "the draw call applies no constant correction, so the authored facing must BE yaw 0",
+        head_forward, head_backward);
   CHECK(std::fabs(minimum.y) < 5.0f, "the model's lowest point is y = %f, not on the ground plane",
         minimum.y);
   CHECK(vertical_span > 50.0f && vertical_span < 90.0f,

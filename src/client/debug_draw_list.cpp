@@ -94,8 +94,12 @@ void debug_draw_list_t::aabb(const linalg::vec3f &min, const linalg::vec3f &max,
   // silhouette from anything but a corner-on angle.
   if (fill == fill_mode_t::solid)
   {
-    static constexpr int FACES[6][4] = {{0, 1, 2, 3}, {5, 4, 7, 6}, {4, 0, 3, 7},
-                                        {1, 5, 6, 2}, {3, 2, 6, 7}, {4, 5, 1, 0}};
+    // Counter-clockwise seen from outside, like every other surface in the
+    // codebase (see HOUSE_FRONT_FACE in renderer.hpp). All six used to be wound
+    // the other way, so a map box -- which has no mesh and lands here -- was
+    // drawn from the inside.
+    static constexpr int FACES[6][4] = {{3, 2, 1, 0}, {6, 7, 4, 5}, {7, 3, 0, 4},
+                                        {2, 6, 5, 1}, {7, 6, 2, 3}, {0, 1, 5, 4}};
     for (const int *face : FACES)
     {
       const linalg::vec3f quad[4] = {corners[face[0]], corners[face[1]], corners[face[2]],

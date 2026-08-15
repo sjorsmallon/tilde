@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../shared/game_events.hpp"
+#include "../../shared/events/generated/events_generated.hpp"
 #include "../server_context.hpp"
 
 #include <cstdint>

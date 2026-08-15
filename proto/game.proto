@@ -45,7 +45,7 @@ message S2C_EntityPackage {
     optional bool  is_delta = 2;
     optional bytes entity_data = 4; // this is the reflective snapshot data
     optional int32 server_tick = 5;
-    optional int32 last_processed_command = 6; // per-client ack for reconciliation
+    optional int32 latest_processed_command = 6; // per-client ack for reconciliation
 
     // Which snapshot entity_data is a delta AGAINST. 0 = full update (every
     // networked leaf present, no baseline needed). Otherwise the client must

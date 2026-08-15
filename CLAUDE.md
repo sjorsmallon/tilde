@@ -14,7 +14,7 @@ cmake --build cmake_build -j8
 # Run
 ./cmake_build/bin/MyGame
 
-# Run the whole test suite (~2s, all 22)
+# Run the whole test suite (~2s, all 25)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -37,10 +37,12 @@ Adding a test means adding the target *and* its name to `GAME_TESTS`; the list i
 Inspect what the DSL parsed, without building the game or writing anything:
 
 ```bash
-./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --dump
+./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def src/shared/effects/effects.def src/shared/events/events.def --dump
 ```
 
 Pass **every** `.def` in one run — `SCHEMA_HASH` is computed across all of them, so a partial run with `--emit` writes a hash that disagrees with a full build. Emission is opt-in (`--emit`); output goes to a `generated/` directory beside each `.def`.
+
+`--scaffold` (also opt-in, never part of a build) writes the empty handler file for any event member that has none. It is write-if-absent and reports every file it writes: it never opens an existing file, never merges, never backs up. `--client-root` moves where it writes.
 
 Meson (`meson.build`) exists but is **out of date** — it has no `def_gen` target and is missing source files. CMake is primary.
 
@@ -52,7 +54,10 @@ Three libraries: `game_shared` (static lib), `game_client` (shared lib, Vulkan/S
 src/
 ├── shared/           Core logic, networking, entities, map system
 │   ├── entities/     entities.def (the DSL), entity_reflection, generated/
+│   ├── assets/       assets.def (the asset manifest), generated/
 │   ├── cvars/        cvars.def, cvar_runtime.hpp, generated/
+│   ├── effects/      effects.def (the cosmetic channel), generated/
+│   ├── events/       events.def (the gameplay channel), generated/
 │   └── network/      Entity wire serialization, bitstream, UDP, map transfer
 ├── client/           Vulkan rendering, SDL2 input, editor
 │   ├── states/       Game state machine (Play_State, Tool_Editor_State)
@@ -89,7 +94,7 @@ entities.def  ──def_gen──▶  entities_generated.{hpp,cpp}   (structs + 
        map I/O · undo/redo · wire serialization · editor inspector
 ```
 
-Generated output: the `entity_type` enum, one plain struct per entity, the component structs, the enum types, `ENTITY_INFOS[]` / `COMPONENT_OFFSETS[][]` reflection tables, `entity_from_classname`, `placeable_entity_types()`, the asset manifests, and `SCHEMA_HASH`.
+Generated output: the `entity_type` enum, one plain struct per entity, the component structs, the enum types, `ENTITY_INFOS[]` / `COMPONENT_OFFSETS[][]` reflection tables, `entity_from_classname`, `placeable_entity_types()`, and `SCHEMA_HASH`. The asset manifests are **not** here — they are their own family (see "Asset System").
 
 Field flags are `@Networked`, `@Editable`, `@Saveable`, and all three are load-bearing (a self-contradictory combination, e.g. `@Editable` on a `@runtime_only` type, is a generator error, not a no-op). `entities.def` documents what each one means and why every field has the flags it has — read that before adding a field.
 
@@ -103,19 +108,24 @@ Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entit
 
 Collision geometry is deliberately NOT in that list — boxes, static meshes and displacements are map-owned values (see "Map vs Session"). `Trigger_Volume_Entity` is the only entity left that owns a `Box_Volume`.
 
-### Entity reflection
+### Reflection — the family-neutral layer, and the entity half
 
-`src/shared/entities/entity_reflection.{hpp,cpp}` is the hand-written half that walks the generated tables. Three jobs:
+**`src/shared/reflection.hpp` is at GLOBAL scope**, beside the other house types (`Span`, `Array`, `enum_traits`) and for the same reason: the record types every family's generated tables are made of belong to no one family. `field_type_t`, `field_info_t`, `enum_type_info_t`, the `NOT_A_*` sentinels — and the text conversion:
 
-- **Text** — `field_to_text` / `field_from_text`, the *only* place entity field bytes become characters. Map save/load are the callers.
+- **Text** — `field_to_text` / `field_from_text` (`shared/reflection.cpp`), the *only* place field bytes become characters, for entities AND events. Map save/load and the event debug formatter are the callers. `fields_to_text` is the flat-table wrapper.
+- **Wire** — `network::write_field` / `read_field` (`shared/network/field_codec.{hpp,cpp}`), the *only* place a `field_type_t` becomes bits. One switch; entities pass a composed leaf offset, the event families pass the flat offset their tables carry.
+
+An enum-typed field row holds `const enum_type_info_t* enum_info` rather than a per-family enum id — that pointer is what makes both of the above family-neutral, since there is no id space left to resolve against.
+
+`src/shared/entities/entity_reflection.{hpp,cpp}` is what is genuinely entity-specific:
+
+- **Leaves** — `collect_leaf_fields(type, required_flags)` flattens the component tree into dotted paths (`volume.half_extents`) in declaration order; that ordering is what makes a saved map diffable. `networked_leaf_fields(type)` is the cached hot-path variant for the wire. A channel's table is flat and needs neither.
 - **Diffs** — `capture_field_changes` / `write_field_changes`, binary before/after field bytes; the editor's undo primitive.
 - **Copy** — `clone_entity` (exact, memcpy-based; deliberately not a serialize round-trip, which would quantize positions).
 
-`collect_leaf_fields(type, required_flags)` flattens the component tree into dotted paths (`volume.half_extents`) in declaration order — that ordering is what makes a saved map diffable. `networked_leaf_fields(type)` is the cached hot-path variant for the wire.
+### CVars and commands — a `.def` family
 
-### CVars and commands — the second `.def` family
-
-`def_gen` is **the schema compiler**, not the entity generator: `src/shared/cvars/cvars.def` is its second input, declaring every console variable and command. It emits `src/shared/cvars/generated/`:
+`def_gen` is **the schema compiler**, not the entity generator: `src/shared/cvars/cvars.def` is one of its five inputs, declaring every console variable and command. It emits `src/shared/cvars/generated/`:
 
 ```
 cvars_generated.hpp            cvar_state_t, cvar_id / command_id, the info
@@ -126,7 +136,11 @@ server_command_bindings.cpp    fills the @Server slots — into game_server
 client_command_bindings.cpp    the @Client slots — into game_client
 ```
 
-The two families are fenced: one `.def` holds one family (mixing them is a generator error), a cvar may not reference an entity type, and the flag vocabularies are disjoint — `@Networked` on a cvar and `@Client` on an entity field are both errors, not no-ops. What they share is the lexer, the primitive type table and `SCHEMA_HASH`.
+The four families are fenced: one `.def` holds one family (mixing them is a generator error), a cvar may not reference an entity type, and the flag vocabularies are disjoint — `@Networked` on a cvar, `@Client` on an entity field and a flag on any event field at all are errors, not no-ops. What they share is the lexer, the primitive type table and `SCHEMA_HASH`. The event family is the one with **two** input files, one channel each.
+
+**`enum` is the one family-neutral declaration kind**, because every family declares them; a file of cvars plus their enums is still one family. `base` used to be neutral too, while the event family authored one — the `channel` keyword took that job, so `base` is the entity family's again.
+
+`import` is the **one** crossing, and it goes one direction only: `entities.def` imports `assets.def` so an entity field can be typed `mesh_asset`. The importing file gets those declarations for type resolution and class-id assignment; it never emits or hashes them, because the imported file is its own input and does both. An asset `.def` may not import, may not declare anything but asset classes, and nothing but an asset `.def` may be imported — each of those is a generator error naming the file. An event `.def` may not import either, and nothing may import it.
 
 Cvar flags are `@Client` / `@Server` / `@Mirrored`, and **no flag means shared-local** (both sides hold it, each process owns its own). `@Mirrored` is server-owned with a read-only client copy kept fresh over the wire — earned only by movement prediction today. A command must declare `@Client` or `@Server`, because that is which binder TU references its handler.
 
@@ -141,6 +155,30 @@ Cvar flags are `@Client` / `@Server` / `@Mirrored`, and **no flag means shared-l
 **`@Mirrored` values on the wire.** `S2C_CvarValues` (`src/shared/network/cvar_mirror.hpp`) is bitstream-native and carries `(cvar_id, text)` pairs — the *only* cvar traffic there is. Names never ride the wire: both sides compile the same generated tables and the connect handshake refuses a mismatched `SCHEMA_HASH`, so the ids are safe as per-build table indices. The server sends the full `@Mirrored` set right after `CmdAccept`, then broadcasts only what changed, detected by **memcmp against a retained `last_broadcast_cvars`** — which is why a direct field write in server code replicates and there is no `Set()` to forget. The retain happens only after the send, so an unsent change is collected again next tick; that is the whole lost-update story (there is no ack). The receiver refuses any pair whose cvar is not `@Mirrored` rather than trusting the sender.
 
 > **Migration status: CVAR TRACK is complete** (steps 1–6, 2026-07-30). `CVar<T>`, the `CVarSystem` singleton, the `S2C_CVarSync` stub machinery and `src/shared/cvar.hpp` are all gone. `cvar_def.md` is the design; `cvar_test` is the guard.
+
+### Events — the fourth `.def` family, and two channels
+
+A **channel** is a closed set of named messages, each carrying a payload, each dispatched to exactly one handler, declared with the **`channel` keyword**: `Effect :: channel { …shared payload… }`. Its fields are prepended to every member and serialize first, exactly as `Entity :: base` works for entities. A member names the channel as its declaration kind and carries a **mandatory description** — `Bullet_Impact :: Effect "world-surface hit"` — with an **optional** `{ fields }` body. A member's kind identifier is not a keyword, so it is recorded at parse time and resolved after; that is also where `Foo :: entty` lands, which is why an unresolved name is reported as a misspelled keyword.
+
+**The kind enum is derived from member declaration order** (`effect_type` / `EFFECT_TYPE_COUNT`, from the channel's name); nothing is spelled twice. **One struct per member, always** — a member with no body gets an empty one deriving from the channel, so there is zero special-casing in the emitter and a handler's parameter is always its own type. Fire helpers take that struct: `fire_rocket_explosion(stream, const Rocket_Explosion&)`.
+
+**One `.def` holds one channel** (a second is a generator error), and the two live in `src/shared/effects/effects.def` and `src/shared/events/events.def`. This is the first family with two input files, so all four emitted names are derived from the `.def`'s **filename stem** rather than hardcoded — `effects.def` → `effects_generated.{hpp,cpp}` + `client_effects_bindings.cpp`, into `<dir of the .def>/generated/`. The old literals were safe only while every family had exactly one input; one of them is written verbatim into an `#include`, so a literal would have the effects codec including the gameplay-event header.
+
+**Both channels encode at fire time, into a `shared::event_stream_t`** (a `Bit_Writer` + a count). Nothing is held as a value, so **neither channel has a queue or a tagged union** — there is no `game_event_t`, no `dispatched_effect_t`. The client's reader decodes into a typed stack local and calls one consumer. `outgoing.effects` and `outgoing.events` are both streams.
+
+**Which packet the batch rides in is the only difference left.** Gameplay events get their own message, so their bitstream starts at bit 0. The effect batch is spliced into each client's snapshot with `Bit_Writer::write_bytes`, which **byte-aligns first** — at most 7 wasted bits per packet, and that is what lets ONE encoding serve every client even though each client's entity delta is a different length. `finish()` is called once before the per-client loop. **The client's `reader.align()` is the other half of that pair and the two must move together**: a misaligned effect block decodes as plausible garbage rather than failing, so both sites carry a comment pointing at the other and `events_test` covers the splice specifically.
+
+`event_stream_t::reset()` reserves 16 zero bits and `finish()` pokes the two bytes they occupy. The count cannot be *prepended* at send time — payloads are bit-packed, so joining two bitstreams needs a bit-shifted copy — and those bits are the only ones in the stream guaranteed byte-aligned.
+
+**There is no event codec and no event reflection vocabulary.** A member's table is rows of the same `field_info_t` the entity family emits, so the wire is `network::write_field` / `read_field` and the text is `field_to_text` (see "Reflection" above). The allowed field set is therefore everything that walker handles — `f64`, `u64`, the narrow ints, `v4`, `v4i` and `string<N>` come free — minus `component` (a channel table is flat, with no leaf flattening pass) and `asset` (would need the `import` this family forbids). Each of those two is a generator error saying why.
+
+**The seam is a symbol reference, not a text region.** `client_<stem>_bindings.cpp` switches over the channel's closed enum and calls `client::effects::on_<name>` / `client::game_events::on_<name>` directly, so a declared member with no function is a **link error naming the symbol**. That link step is the assert: there is no registry, no table and no bind step, so "forgot to register" is not representable — only "forgot to write it". `src/client/event_handlers.hpp` is the hand-written seam and declares nothing but the two dispatch entry points; the per-member files under `src/client/effects/` and `src/client/game_events/` are where each event's **consumer list** lives, which is why a registry would be worse than a switch.
+
+Ordering is the wire id, and the declarations are mixed into `SCHEMA_HASH`, so a reorder is a refused handshake rather than a silent remap. Append anyway.
+
+`src/shared/EVENTS.md` is the "how to add one" guide; `events_def.md` is the design; `events_test` guards the round trip for every declared member of both channels, the per-record layout, and the align-and-splice path. `sv_event_debug` / `cl_event_debug` log each event fired and dispatched, latched onto both streams once per tick in `clear_outgoing` so the fire helpers stay free of the cvar family.
+
+`fire_trigger_action`'s switch is deliberately **not** generated: `-Werror=switch` already makes a missing case a compile error, and generating the switch would trade that for a link error — later, less local, strictly worse.
 
 ### Editor
 
@@ -174,11 +212,23 @@ The editor picking BVH is built by `build_editor_bvh()` (`editor/editor_bvh.hpp`
 Two layers:
 
 - **The cache.** `assets::load_mesh(path)` / `assets::load_texture(path)` load from disk into `mesh_asset_t` / `texture_asset_t`, cached by path. Textures are always forced to RGBA (4-byte stride) regardless of what the file holds.
-- **The manifest.** Asset *classes* are declared in `entities.def` and scan a directory (`resources/obj`, `resources/sprites`), so the generator emits a closed enum — `entities::mesh_asset::Cube` etc. — plus the id→path table. An entity field typed as an asset stores that id, so a bad asset name in a map file is caught by name lookup rather than becoming a silent missing mesh. **Ids are not stable** across adding a file to a scanned directory; names are the on-disk identity, and the resolved manifest is mixed into `SCHEMA_HASH`.
+- **The manifest.** Asset *classes* are declared in **`src/shared/assets/assets.def`** — its own `.def` family — and scan a directory (`resources/obj`, `resources/models`, `resources/sprites`), so the generator emits a closed enum plus the id→path table into `assets/generated/assets_generated.{hpp,cpp}`, in **namespace `assets`** beside the hand-written half that resolves the ids (`assets::mesh_asset::Sphere`, `assets::get_mesh`). An entity field typed as an asset stores that id, so a bad asset name in a map file is caught by name lookup rather than becoming a silent missing mesh. **Ids are not stable** across adding a file to a scanned directory; names are the on-disk identity, and the resolved manifest is mixed into `SCHEMA_HASH`.
+
+The dependency runs **assets → entities**, never the reverse: `entities.def` imports `assets.def`, so `entities_generated.hpp` includes `assets_generated.hpp` and an asset-typed entity field is spelled `assets::mesh_asset`. Nothing in the asset family knows entities exist. Adding a mesh means editing `assets.def`, not `entities.def`.
 
 `assets::init()` walks the manifests eagerly and must run before any `get_mesh`/`get_sprite` — all three launchers call it. Id 0 is `Missing` (`resources/obj/error.obj`, the question mark), so an unassigned mesh field renders as the placeholder by construction.
 
-Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` strings** rather than manifest ids: a level author adding a prop should not have to touch `entities.def`.
+Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` strings** rather than manifest ids: a level author adding a prop should not have to touch `assets.def`.
+
+### Server state, grouped by what resets it
+
+`server_context_t` (`src/server/server_context.hpp`) is the server's counterpart to `client_context_t`, and it is organised the same way: **by reset scope, not by topic**. Handles that live for the process sit at the top under a comment saying nothing resets them (`cvars`/`commands`, `last_broadcast_cvars`, `socket`, `transport_layer`, and `tick_number` — monotonic on purpose, since phase deadlines, entity tick stamps and both snapshot rings are keyed by it). Everything after them is a named group: `world` (the map and everything keyed to it), `clients` (an `Array<client_slot_t, sv_max_player_count>` — the slot table), `replication` (the snapshot ring), and `incoming` / `outgoing` (one tick's C2S and S2C traffic).
+
+`src/server/server_context.cpp` holds the **only** four functions that clear anything: `reset_for_new_map`, `reset_client_slot`, `clear_incoming`, `clear_outgoing`. Read that file to answer "what resets when"; `server_context_test` asserts both halves of each — what is cleared *and* what deliberately survives. Don't open-code a field list at a call site again: if a group ever needs to be half-cleared, its boundary is drawn wrong.
+
+Two deliberate irregularities, both with the reason written at the site: `world.rules` is reset by a **call** (`reset_game_rules`) because a phase deadline is an absolute tick, and the two tick groups `clear()` per member rather than `= {}` so their vectors keep capacity at 60Hz. `outgoing.effects` and `outgoing.events` are the same intent in a different member: `event_stream_t::reset()` keeps the writer's buffer *and* re-reserves the count slot, so both streams come out of `clear_outgoing` ready to be fired into. That is also where `sv_event_debug` is latched onto them — the one place guaranteed to run exactly once before anything can fire, which keeps the generated fire helpers free of the cvar family.
+
+`server_impl.cpp` has exactly **one** file-scope object, `g_server_context`; every helper in it takes `server_context_t&` as a parameter. The `cvars::commands::*` handlers at the bottom of that file are the one exception — the generated binder calls them with console arguments and nothing else, so there is no seam to thread a context through.
 
 ### Networking
 
@@ -219,7 +269,7 @@ Three shapes, and the **name** tells you which one you are looking at. The rule 
 
 **The generated code follows this too.** `def_gen` emits `try_from_string<T>(text)`, `try_find_cvar`, `try_find_command`, `try_cvar_to_text`, `try_cvar_from_text` — so the convention holds across the seam rather than stopping at the generator. `try_from_string` is a **template specialized per enum and asset class**, not an overload set: `to_string` dispatches on its argument and its inverse has none, so the caller names the type (`try_from_string<Weapon>(text)`). Changing these means editing the `fprintf` emitters in `src/tools/def_gen.cpp` and regenerating — never the `generated/` files. `SCHEMA_HASH` is mixed from the parsed `.def` content, not the emitted text, so respellings like this leave the wire handshake alone.
 
-Not yet total: the `bool` + out-param pairs left in `map.hpp` (`get_object_position`, `get_object_box`), `asset.hpp` (`compute_mesh_bounds`, `parse_mesh_file`), `animation.hpp` (`sample_aim_pose`, `build_bone_mask`) and `entity_reflection.hpp` (`field_to_text`, `field_from_text`). Convert them when you next touch them.
+Not yet total: the `bool` + out-param pairs left in `map.hpp` (`get_object_position`, `get_object_box`), `asset.hpp` (`compute_mesh_bounds`, `parse_mesh_file`), `animation.hpp` (`sample_aim_pose`, `build_bone_mask`) and `reflection.hpp` (`field_to_text`, `field_from_text`). Convert them when you next touch them.
 
 ### General
 

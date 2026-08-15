@@ -300,7 +300,7 @@ become the package hash before remote clients / streaming are real.
 - [x] client honors server's map + FNV-1a hash (CmdAccept.map_path/content_hash);
       mismatch = hard error (no silent desync)
 - [x] mid-game map switch: reload_map broadcasts bitstream CmdChangeMap, keeps
-      players connected + re-spawns them (spawn_player_for_slot), client reloads
+      players connected + re-spawns them (spawn_player_entity_for_slot), client reloads
       via load_client_map + Connection_Phase::Loading, acks C2S_MapLoaded;
       server withholds snapshots (client_map_ready) until acked
 - byte streaming fallback (S2C_MapData) for clients that lack the COMPILED
@@ -879,7 +879,7 @@ destroyed or networked.
       also hope".
       * The slot scans went too, and needed a different answer: "which player is
         slot N" is a *slot* question the uid index cannot serve, so
-        `Player_Server_State` gained a `player_uid` column.
+        `client_slot_t` gained a `player_uid` column.
 - [x] **5. `unregister_physics_body` wired into destruction.**
       `server::destroy_entity(context, uid)`
       (`src/server/entity_lifecycle.{hpp,cpp}`) is the one server-side
@@ -896,7 +896,7 @@ destroyed or networked.
         kill does not destroy the victim — `schedule_respawn` reuses the entity.
         The step made a future leak unrepresentable; it did not fix a live one.
       * **The audit found a real bug instead.** `load_map_into_state` cleared
-        `Player_Server_State::player_uid` because a new session restarts
+        `client_slot_t::player_uid` because a new session restarts
         `next_entity_id` and a retained uid can be *reissued* — but never cleared
         `death_tick_by_player_uid`, keyed the same way. A death pending across a
         map switch would resolve to a real but unrelated `Player_Entity` and
@@ -1534,7 +1534,7 @@ within each, so ids stay deterministic.
 `Player_Entity::render` was declared, `@Networked`, and completely reader-less,
 so remote players were a green collision AABB and nothing else.
 `server::initialize_player_body` (`entity_lifecycle.{hpp,cpp}`) now assigns the
-hitbox and the model in ONE place called by both `spawn_player_for_slot` and
+hitbox and the model in ONE place called by both `spawn_player_entity_for_slot` and
 `spawn_bot` — a bot IS a `Player_Entity`, and the hitbox half of that setup had
 already drifted across the two before the model gave it a second reason to.
 

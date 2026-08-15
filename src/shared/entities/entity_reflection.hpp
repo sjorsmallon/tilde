@@ -8,15 +8,16 @@
 // deliberately small. Three jobs, all of which used to be virtual methods on
 // the entity base class the macro system generated:
 //
-//   1. TEXT     one field <-> one string. The map file's leaf values, and the
-//               text side of anything else that has to name a field on disk.
+//   1. LEAVES   flattening the component tree into dotted paths, which is what
+//               makes a field NAMEABLE by map I/O and the inspector.
 //   2. DIFFS    binary before/after field bytes -- the editor's undo primitive.
 //   3. COPY     an exact clone, and the typed component accessors that replaced
 //               get_component<T>() / get_box_volume().
 //
-// What is NOT here, on purpose: the wire format (entity_serialization.hpp) and
-// anything that knows what a map file looks like (map.cpp). This layer knows
-// fields, not files and not packets.
+// What is NOT here, on purpose: the wire format (network/field_codec.hpp), the
+// text conversion (shared/reflection.hpp) -- both family-neutral, since an
+// event's fields go through the same two -- and anything that knows what a map
+// file looks like (map.cpp).
 
 #include "generated/entities_generated.hpp"
 
@@ -70,27 +71,6 @@ std::vector<leaf_field_t> collect_component_leaf_fields(component_type component
 // have no cached counterpart -- add one when something needs it, not before.
 // The returned span is valid for the life of the process.
 Span<const leaf_field_t> networked_leaf_fields(entity_type type);
-
-// --- Text -------------------------------------------------------------------
-//
-// This pair is the ONLY place entity field bytes become characters. Map save
-// and map load are its two callers today; anything that later needs a
-// name-keyed textual form of a field change (an undo log written to disk, a
-// diagnostic dump) uses the same pair rather than growing a second encoding.
-//
-// Floats use the shortest representation that round-trips, so a save/load cycle
-// is exact and a map file diff shows only what actually changed.
-
-// Writes the field at `field_bytes` into `out_text`. False (out_text untouched)
-// only for FIELD_TYPE_COMPONENT, which is not a leaf -- flatten first.
-bool field_to_text(const void* field_bytes, const field_info_t& field, std::string& out_text);
-
-// Parses `text` into the field at `field_bytes`. False, and the field left
-// alone, when the text does not parse as this field's type or names an
-// enum/asset value that does not exist. The caller reports it -- this returns
-// the failure rather than logging, because only the caller knows which entity
-// and which file it came from.
-bool field_from_text(const std::string& text, const field_info_t& field, void* field_bytes);
 
 // --- Binary field diffs -----------------------------------------------------
 //

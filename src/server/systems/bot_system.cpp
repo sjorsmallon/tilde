@@ -2,7 +2,6 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "bot_system.hpp"
 
-#include "../cosmetic_events.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
@@ -89,20 +88,67 @@ static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
   return facing;
 }
 
-void update_bots(std::vector<Bot_State> &bots,
-                 server_context_t        &context,
-                 uint32_t                 current_tick,
-                 float                    dt)
+// The half of a bot's tick that is SIMULATION rather than decision: the move,
+// the cosmetics it produces, and the physics pose. Split out because a corpse
+// runs this and nothing else -- death takes the AI away, not the simulation,
+// which is the same split the human path makes in server_impl.cpp. Sharing the
+// one body is the point: a second player_move call for the dead case is how the
+// two drift apart.
+static void apply_bot_movement(server_context_t &context, physics_state_t &physics,
+                               const shared::game_session_t &session,
+                               entities::Player_Entity &bot_ent, const vec3f &front,
+                               const Move_Input &input, float half_width, float dt)
 {
-  shared::game_session_t &session = context.session;
-  physics_state_t        &physics = *context.physics;
+  vec3f right = linalg::cross(front, vec3f{0.f, 1.f, 0.f});
+  float rlen  = linalg::length(right);
+  if (rlen > 0.001f) right = right * (1.f / rlen);
+
+  Move_Events move_events{};
+  auto [new_pos, new_vel] =
+      player_move(*context.cvars, input, session.bvh, bot_ent.position, bot_ent.velocity, front,
+                  right, half_width, shared::player_half_height, dt, &move_events);
+
+  bot_ent.position = new_pos;
+  bot_ent.velocity = new_vel;
+
+  // Movement cosmetics, same as real players. Bots are never the local player
+  // on any client, so no originator-suppression is needed — every client hears
+  // these spatialized at the bot's position.
+  if (move_events.jumped)
+  {
+    shared::Jump fx{};
+    fx.origin          = new_pos;
+    fx.attached_entity = bot_ent.entity_id;
+    shared::fire_jump(context.outgoing.effects, fx);
+  }
+  if (move_events.landed &&
+      move_events.land_impact_speed > context.cvars->pm_minimum_land_impact_speed)
+  {
+    shared::Land fx{};
+    fx.origin          = new_pos;
+    fx.scale           = move_events.land_impact_speed;
+    fx.attached_entity = bot_ent.entity_id;
+    shared::fire_land(context.outgoing.effects, fx);
+  }
+
+  set_kinematic_pose(physics, bot_ent.entity_id,
+                     new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f}, new_vel);
+}
+
+void update_bots(server_context_t &context,
+                 uint32_t          current_tick,
+                 float             dt)
+{
+  shared::game_session_t &session = context.world.session;
+  physics_state_t        &physics = *context.world.physics;
+  std::vector<Bot_State> &bots    = context.world.bots;
 
   // Nothing fills a shared debug list here, and there is no longer one to fill:
   // the old bot_debug::g_entries lived in game_shared, a STATIC lib, so this
   // DLL's copy was never the one the client read -- and nothing serialized it
-  // either. The client's bot visualisation is fed over the wire from `g_bots`
-  // directly, in server_impl.cpp's S2C_BotDebug broadcast, which is the real
-  // bridge; it lands in client replication_t::bot_debug_entries.
+  // either. The client's bot visualisation is fed over the wire from
+  // context.world.bots directly, in server_impl.cpp's S2C_BotDebug broadcast,
+  // which is the real bridge; it lands in client replication_t::bot_debug_entries.
 
   Span<entities::Player_Entity> players =
       session.entity_system.entities_of<entities::Player_Entity>();
@@ -116,6 +162,25 @@ void update_bots(std::vector<Bot_State> &bots,
     entities::Player_Entity *bot_ent =
         session.entity_system.get<entities::Player_Entity>(bot.entity_uid);
     if (!bot_ent) continue;
+
+    // ---- a corpse decides nothing ----
+    // The target scan below already skips dead TARGETS; nothing skipped a dead
+    // HUNTER, so a killed bot kept pathing, kept chasing and kept launching
+    // rockets with the death clip playing on top of it.
+    //
+    // Still simulated, though, and on a zeroed input rather than by skipping the
+    // move: gravity, friction and the rocket knockback that did the killing all
+    // have to play out, or the body hangs where it died. Facing is left frozen
+    // for the same reason it is for humans (server_impl.cpp) -- body_yaw places
+    // the hit volumes and orients the model, so writing it would spin the corpse
+    // under an animation that is supposed to be settling.
+    if (bot_ent->health <= 0)
+    {
+      apply_bot_movement(context, physics, session, *bot_ent,
+                         linalg::direction_from_angles(bot_ent->view_angle_yaw, 0.f),
+                         Move_Input{}, bot.personality.move_speed, dt);
+      continue;
+    }
 
     // ---- find nearest human target ----
     entities::Player_Entity *target    = nullptr;
@@ -314,42 +379,8 @@ void update_bots(std::vector<Bot_State> &bots,
     }
 
     // ---- apply movement ----
-    vec3f right = linalg::cross(front, vec3f{0.f, 1.f, 0.f});
-    float rlen  = linalg::length(right);
-    if (rlen > 0.001f) right = right * (1.f / rlen);
-
-    Move_Events move_events{};
-    auto [new_pos, new_vel] =
-        player_move(*context.cvars, input, session.bvh, bot_ent->position,
-                    bot_ent->velocity, front, right, bot.personality.move_speed,
-                    shared::player_half_height, dt, &move_events);
-
-    bot_ent->position = new_pos;
-    bot_ent->velocity = new_vel;
-
-    // Movement cosmetics, same as real players. Bots are never the local
-    // player on any client, so no originator-suppression is needed — every
-    // client hears these spatialized at the bot's position.
-    if (move_events.jumped)
-    {
-      shared::effect_data_t fx{};
-      fx.origin          = new_pos;
-      fx.attached_entity = bot_ent->entity_id;
-      dispatch_effect(context, shared::effect_type_t::JUMP, fx);
-    }
-    if (move_events.landed && move_events.land_impact_speed > context.cvars->pm_minimum_land_impact_speed)
-    {
-      shared::effect_data_t fx{};
-      fx.origin          = new_pos;
-      fx.scale           = move_events.land_impact_speed;
-      fx.attached_entity = bot_ent->entity_id;
-      dispatch_effect(context, shared::effect_type_t::LAND, fx);
-    }
-
-    set_kinematic_pose(physics,
-                       bot_ent->entity_id,
-                       new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                       new_vel);
+    apply_bot_movement(context, physics, session, *bot_ent, front, input,
+                       bot.personality.move_speed, dt);
 
     // Update facing direction so the client can visualise it. DEGREES, in
     // direction_from_angles' convention (yaw sweeps +X toward +Z) -- this is

@@ -824,7 +824,7 @@ static VkPipeline create_debug_pipeline(const debug_pipeline_options_t &options)
   rasterizer.polygonMode    = VK_POLYGON_MODE_FILL;
   rasterizer.lineWidth      = options.line_width;
   rasterizer.cullMode       = options.cull_mode;
-  rasterizer.frontFace      = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterizer.frontFace      = HOUSE_FRONT_FACE;
   rasterizer.depthBiasEnable = options.dynamic_depth_bias ? VK_TRUE : VK_FALSE;
 
   VkPipelineMultisampleStateCreateInfo multisampling{
@@ -1057,7 +1057,7 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   rasterizer.cullMode    = (wireframe || key.state.cull_mode == cull_mode_t::none)
                                ? VK_CULL_MODE_NONE
                                : VK_CULL_MODE_BACK_BIT;
-  rasterizer.frontFace                = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterizer.frontFace                = HOUSE_FRONT_FACE;
   rasterizer.depthBiasEnable          = wireframe ? VK_TRUE : VK_FALSE;
   rasterizer.depthBiasConstantFactor  = wireframe ? -2.0f : 0.0f;
   rasterizer.depthBiasSlopeFactor     = wireframe ? -1.0f : 0.0f;
@@ -2125,7 +2125,7 @@ static void create_particle_graphics_pipeline()
   rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
   rasterizer.lineWidth = 1.0f;
   rasterizer.cullMode = VK_CULL_MODE_NONE; // Billboards face camera
-  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  rasterizer.frontFace = HOUSE_FRONT_FACE;
 
   VkPipelineMultisampleStateCreateInfo multisampling{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
   multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;

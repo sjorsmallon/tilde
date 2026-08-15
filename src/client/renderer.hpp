@@ -395,6 +395,22 @@ bool wireframe_supported();
 // For code that builds its own pipelines (shader_tool_runtime,
 // shader_editor_state). Everything below is outside the draw-list model.
 
+// The front-face winding EVERY pipeline uses, in here and out at the escape
+// hatch alike. It was four separate literals before, which is how three of the
+// hand-written geometry tables came to disagree with each other.
+//
+// Every surface is wound counter-clockwise seen from OUTSIDE, so
+// cross(b - a, c - b) is the outward normal -- what Blender, the .obj exporter,
+// add_box_faces() and debug_draw_list_t::aabb all produce. Anything hand-wound
+// has to match; there is no per-object escape.
+//
+// Getting it wrong is nearly invisible, which is why it survived so long: vertex
+// normals still light the surface correctly, so a solid object renders as its
+// own interior rather than as anything obviously broken. Check it by going
+// INSIDE a box -- the walls should be see-through. Solid from both sides means
+// culling is off, not that the winding is right.
+constexpr VkFrontFace HOUSE_FRONT_FACE = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
 VkDevice         get_VkDevice();
 VkPhysicalDevice get_VkPhysicalDevice();
 VkRenderPass     get_VkRenderPass();

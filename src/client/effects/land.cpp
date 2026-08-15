@@ -1,4 +1,4 @@
-#include "../../shared/cosmetic_events.hpp"
+#include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/linalg.hpp"
 #include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
@@ -6,17 +6,7 @@
 namespace client::effects
 {
 
-//FIXME(SMIA): this sounds like a footgun waiting to happen, the discontinuity
-// between 
-void on_jump(client_context_t &context, const shared::effect_data_t &data)
-{
-  if (data.attached_entity == context.connection.my_entity_uid)
-    return; // our own jump — already played locally
-  if (context.audio)
-    context.audio->play_3d("resources/sounds/player_jump.wav", data.origin);
-}
-
-void on_land(client_context_t &context, const shared::effect_data_t &data)
+void on_land(client_context_t &context, const shared::Land &data)
 {
   if (data.attached_entity == context.connection.my_entity_uid)
     return; // our own landing — already played locally

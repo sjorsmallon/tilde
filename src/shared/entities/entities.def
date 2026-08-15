@@ -2,6 +2,12 @@
 //
 // Parsed by src/tools/def_gen.cpp, which emits generated/entities_generated.*
 //
+// `mesh_asset` and `sprite_asset` are declared in ../assets/assets.def and
+// imported below. An asset class is a family of its own -- it emits its own
+// header in namespace `assets`, beside the asset system that resolves the ids --
+// so an asset-typed field here is spelled assets::mesh_asset in the generated
+// structs. Adding a mesh means editing that file, not this one.
+//
 // Transcribed 2026-07-26 from the macro declarations in this folder; flags
 // audited field by field 2026-07-27 (P4). See entity_def.md at the repo root
 // for the design, todo.md for the phase order.
@@ -82,6 +88,8 @@
 // answer different questions, and for the entity where both exist, only one is
 // live.
 
+import "../assets/assets.def"
+
 // ---------------------------------------------------------------------------
 // Base
 // ---------------------------------------------------------------------------
@@ -103,94 +111,23 @@ Entity :: base {
 
 
 // ---------------------------------------------------------------------------
-// Asset classes
-// ---------------------------------------------------------------------------
-//
-// An asset class is a closed set of things the game can reference by name,
-// knowable at build time. `scan` enumerates a directory; `procedural` names an
-// entry whose bytes come from a generator function instead of a file.
-//
-// That distinction is a COLUMN IN THE GENERATED TABLE AND NOTHING ELSE. The
-// generated enum is pure identity: no consumer of a mesh_asset ever asks where
-// the bytes came from, and the public API deliberately gives it no way to. This
-// replaces the `__primitive_` string prefix, which was never a naming scheme --
-// it was a lazy-initialisation trigger (load_mesh already resolved those keys
-// from the cache; the prefix existed so call sites could reach the function
-// that ran the one-time init). Registration becomes eager over this manifest,
-// and the prefix, along with its seven strncmp dispatch sites, goes away.
-//
-// Entry 0 of every class is Missing, so an unassigned field resolves to the
-// placeholder rather than to whichever asset sorted first. The scan skips the
-// placeholder's own file, so it has exactly one name.
-//
-// WHY `procedural` STILL EXISTS (2026-07-27). The cleanest end state deletes
-// it: bake the generators to .obj, and "a mesh asset is a .obj in
-// resources/obj" becomes the whole rule, with no source column at all. That is
-// blocked on one thing, found while settling this -- load_obj NORMALIZES every
-// .obj to a 100-unit max extent (asset.cpp, see the warning there), while
-// get_primitive_mesh returns UNIT-sized meshes that callers scale themselves.
-// So the two regimes differ by ~100x and a baked primitive would load at the
-// wrong size. Fixing that means deleting the normalization, which changes how
-// every mesh in the game is sized. Not bundled into generator work.
-//
-// The NAMING is settled regardless, and needs no qualifiers: sphere.obj (3.5 MB
-// and referenced by nothing) and cube.obj (also unreferenced) are deleted, and
-// generate_pyramid_mesh -- registered but never once requested -- is gone with
-// them. So `Sphere` is the generated sphere, `Box` has no `Cube` twin, and
-// `Pyramid` is pyramid.obj, which is the one the editor actually draws.
-
-// A class may declare SEVERAL scans, because one asset kind can have more than
-// one on-disk form. A mesh is either a .obj (static prop, hand-authored, no
-// bones) or a .mesh (exported by src/tools/blender_export.py, carrying skin
-// weights and a skeleton reference -- see animation_def.md). Nothing that
-// resolves a mesh_asset should have to know which: load_mesh dispatches on the
-// extension, and `skin.empty()` is the whole "is this skinned" test downstream.
-mesh_asset :: assets {
-    placeholder "resources/obj/error.obj"
-    scan        "resources/obj"    ".obj"
-    scan        "resources/models" ".mesh"
-
-    // name         generator key (what get_primitive_mesh takes today)
-    procedural Box      "box"
-    procedural Arrow    "arrow"
-    procedural Sphere   "sphere"
-    procedural Cylinder "cylinder"
-    procedural Cone     "cone"
-    procedural Wedge    "wedge"
-}
-
-sprite_asset :: assets {
-    scan "resources/sprites" ".png"
-}
-
-// ---------------------------------------------------------------------------
 // Enums -- every one of these was a string or a bare int in the macro system
 // ---------------------------------------------------------------------------
 
-// was: Light_Entity::light_type (int32, mirroring light_type_t)
 Light_Type :: enum { Point, Spot, Directional }
 
-// was: Player_Spawn_Entity::spawn_type (int32, "0 = human, 1 = bot")
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum {Red, Blu, Free_For_All}
+
 Weapon :: enum {Knife, Scout, Rocket_Launcher}
 Weapon_Kind :: enum { Melee, Hitscan, Projectile, Sniper }
 
-// was: material_t::shader_type (pascal_string "lit" / "unlit")
 Shader_Type :: enum { Lit, Unlit }
-
-// was: hitbox_component_t::shape_type ("sphere"/"capsule"/"aabb") AND
-// Physics_Body_Entity::shape_type ("box"/"sphere"/"capsule"). Merged into one
-// enum -- the two spelled the same concept differently ("aabb" vs "box").
 Shape_Kind :: enum { Sphere, Capsule, Box }
 
-// was: Trigger_Volume_Entity::action_name (pascal_string, looked up in the
-// server registry). This enum is now the only list -- the TRIGGER_ACTION_LIST
-// X-macro it used to mirror is gone, and fire_trigger_action's exhaustive
-// switch is what obligates a new value to grow a handler.
-Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn }
 
-// was: Trigger_Volume_Entity::fire_mode (pascal_string "on_enter"/"every_tick")
+
+Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn }
 Fire_Mode :: enum { On_Enter, Every_Tick }
 
 // The five authored aim poses (animation_def.md §5). No entity field has this
@@ -233,13 +170,6 @@ Material :: component {
     roughness:   f32 = 0.5              @Fully_Serializable
 }
 
-// was: network::render_component_t
-//
-// @Networked is EARNED here, unlike most static config: Rocket and
-// Physics_Body are spawned at RUNTIME, so a client that never had them in its
-// map learns what to draw only from the wire. play_state.cpp draws both
-// straight out of the snapshot map. Editable/saved because Physics_Body is
-// also map-placeable.
 Render :: component {
     mesh:         mesh_asset = .Missing @Fully_Serializable
     visible:      bool = true           @Fully_Serializable
@@ -250,12 +180,6 @@ Render :: component {
     material:     Material
 }
 
-// was: network::hitbox_component_t
-//
-// @Networked for the debug hitbox overlay, which reads rocket.hitbox on the
-// client (play_state.cpp:1207) -- and a rocket is runtime-spawned, so the
-// client has no other source. Cheap: a hitbox never changes after spawn, so
-// delta compression sends it once and never again.
 Hitbox :: component {
     shape:  Shape_Kind = .Sphere        @Fully_Serializable
     size:   v3 = {8, 8, 8}              @Fully_Serializable

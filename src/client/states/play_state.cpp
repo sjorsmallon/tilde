@@ -3,13 +3,10 @@
 #include "play_state.hpp"
 #include "../audio/audio_system.hpp"
 #include "../console.hpp"
-#include "../cosmetic_events.hpp"
-#include "../game_events.hpp"
 #include "../hud/crosshair.hpp"
 #include "../weapon_fire_audio.hpp"
 #include "../hit_confirm_audio.hpp"
-#include "../../shared/cosmetic_events.hpp"
-#include "../../shared/game_events.hpp"
+#include "../event_handlers.hpp"
 #include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../../shared/hit_region.hpp"
@@ -262,12 +259,6 @@ void Play_State::on_enter()
   // Our half of the connection reset: everything on this state that means
   // nothing to a new connection. The context's three groups go below.
   ui = {};
-
-  // Connection-level reset: identity, prediction, and the replicated world.
-  // `world` survives it, so reconnecting to a server running the map we already
-  // have does not throw that map away. Unconditional, unlike the old open-coded
-  // list -- a cold client whose local map load fails below used to carry the
-  // previous connection's remote players into this one.
   reset_for_new_connection(ctx);
 
   // Jolt must be initialized before load_client_map builds a physics_state_t.
@@ -681,10 +672,9 @@ void Play_State::update(float dt)
     const auto *data =
         reinterpret_cast<const network::uint8 *>(batch.event_data().data());
     network::Bit_Reader reader(data, batch.event_data().size());
-    std::vector<shared::game_event_t> events =
-        shared::deserialize_game_event_batch(reader);
-    if (!events.empty())
-      dispatch_received_game_events(ctx, events);
+    // Read straight off the wire into a typed local per record — the generated
+    // dispatch owns the whole loop, so no vector of events exists here.
+    dispatch_received_game_events(ctx, reader, ctx.cvars->cl_event_debug);
   }
 
   // --- Apply bot debug packets from server ---
@@ -789,7 +779,7 @@ void Play_State::update(float dt)
         ctx.prediction.latest_server_position = player.position;
         ctx.prediction.latest_server_velocity = player.velocity;
         ctx.prediction.latest_server_ack_command =
-            pkg.has_last_processed_command() ? pkg.last_processed_command() : -1;
+            pkg.has_latest_processed_command() ? pkg.latest_processed_command() : -1;
         ctx.prediction.received_server_update = true;
 
         if (!ui.logged_first_server_update) {
@@ -847,12 +837,16 @@ void Play_State::update(float dt)
     ctx.replication.snapshot_history.slot_for(snapshot_tick) = std::move(latest_snapshot);
     ctx.replication.snapshot_history.acknowledge(snapshot_tick);
 
-    // Cosmetic effect batch tails the entity deltas in the same packet.
+    // The cosmetic effect batch tails the entity delta in the same packet.
     // Dispatch immediately — handlers are one-shot, fire-and-forget.
-    std::vector<shared::dispatched_effect_t> effects =
-        shared::deserialize_effect_batch(reader);
-    if (!effects.empty())
-      dispatch_received_effects(ctx, effects);
+    //
+    // align() FIRST. The server spliced a pre-encoded block in with
+    // write_bytes, which aligns before copying, so the block starts on a byte
+    // boundary that the entity delta's own bit length does not predict. THE
+    // TWO MUST MOVE TOGETHER — see the splice in server_impl.cpp. Getting this
+    // wrong decodes as plausible garbage rather than failing.
+    reader.align();
+    dispatch_received_effects(ctx, reader, ctx.cvars->cl_event_debug);
   }
 
   // Everything below simulates and renders the local world, which only exists
@@ -1313,8 +1307,8 @@ void Play_State::render_ui()
     ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, ctx.connection.my_slot, ctx.prediction.command_number);
 
     if (ctx.prediction.reconciliation_error_magnitude > 0.01f)
-      ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "reconc err: %7.3f (%7.2f, %7.2f, %7.2f)",
-                         ctx.prediction.reconciliation_error_magnitude, ctx.prediction.reconciliation_error.x, ctx.prediction.reconciliation_error.y, ctx.prediction.reconciliation_error.z);
+      ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "reconc err: %7.3f",
+                         ctx.prediction.reconciliation_error_magnitude);
     else
       ImGui::Text("reconc err: %7.3f", ctx.prediction.reconciliation_error_magnitude);
 
@@ -1326,16 +1320,10 @@ void Play_State::render_ui()
       ImGui::Text("vis offset: %7.3f", vis_offset_mag);
 
     ImGui::Separator();
-    // Straight at the launcher's cvar_state_t: no Set(), because there is no
-    // Set() — a cvar is a field, and the mirroring path detects changes by
-    // comparing against a retained copy rather than by intercepting writes.
     ImGui::Checkbox("Show Collision Planes", &ctx.cvars->debug_show_collisions);
     ImGui::Checkbox("Show Navmesh", &ctx.cvars->debug_show_navmesh);
     ImGui::Checkbox("Show Hitboxes", &ctx.cvars->debug_show_hitboxes);
     ImGui::Checkbox("Show Box Volumes", &ctx.cvars->debug_show_box_volumes);
-
-    // These three used to be Play_State bools sitting in the same block as the
-    // four cvars above, which put them out of the console's reach for no reason.
     ImGui::Checkbox("Hide Geometry", &ctx.cvars->debug_hide_geometry);
     ImGui::Checkbox("Show Entities", &ctx.cvars->debug_show_entity_counts);
 #ifdef JPH_DEBUG_RENDERER
@@ -1421,13 +1409,6 @@ void Play_State::render_ui()
     ImGui::End();
   }
 
-  // --- Aim pose blend scrub (cl_aim_debug) ---
-  // Two sliders IS the test: drag them and watch the five authored poses blend
-  // on whatever remote model is in view. Sliders rather than console sets
-  // because the question is whether the interpolation is smooth, which only a
-  // continuous sweep answers. The range runs past the authored extent on
-  // purpose -- past it the blend should CLAMP to the extreme pose, not keep
-  // bending.
   if (ctx.cvars->cl_aim_debug)
   {
     ImGui::SetNextWindowPos(ImVec2(10, 340), ImGuiCond_Once);
@@ -1446,10 +1427,7 @@ void Play_State::render_ui()
 namespace
 {
 
-// The 20-field fill used to exist four times over -- emitter and explosion, each
-// once for the compute dispatch and once for the draw, with nothing checking
-// that the pairs matched. Emitters now ride the pass, so there is one fill and
-// one caller.
+
 renderer::particle_emitter_parameters_t
 emitter_parameters(const entities::Particle_Emitter_Entity &emitter, float delta_seconds)
 {
@@ -1545,11 +1523,6 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       draw_geometry(scene, entry.value, entry.uid);
   }
 
-  // Render the session's entities (geometry is not among them any more, so
-  // there is nothing to skip here except the local player). Off the pools, like
-  // the geometry above and the entity-count HUD: the session IS the client's
-  // world, and reading the map_t it was built from meant carrying a second copy
-  // of every entity purely so this loop could walk it.
   for (shared::Entity_Pool &pool : entity_system.pools)
   {
     if (pool.type == entities::entity_type::Player_Entity)
@@ -1656,7 +1629,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         draw.mesh      = mesh;
         draw.transform = linalg::compose_transform_euler(
             remote_player.render_position + render.offset,
-            vec3f{0.f, remote_player.body_yaw, 0.f} + render.rotation, render.scale);
+            vec3f{0.f, linalg::model_yaw_from_view_yaw(remote_player.body_yaw), 0.f} +
+                render.rotation,
+            render.scale);
         // An empty pose means BIND POSE, which is what an unskinned mesh should
         // look like. A pose set that failed to load cannot reach here -- that
         // death is fatal.
@@ -1669,7 +1644,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       {
         log_error("player slot {} mesh '{}' did not resolve — the model will be "
                   "invisible; check the asset manifest",
-                  slot, entities::to_string(render.mesh));
+                  slot, assets::to_string(render.mesh));
       }
     }
 
@@ -1747,7 +1722,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     else
     {
       std::print("[CLIENT] Rocket {} mesh '{}' did not resolve\n", id,
-                 entities::to_string(rc->mesh));
+                 assets::to_string(rc->mesh));
     }
 
     if (ctx.cvars->debug_show_hitboxes)

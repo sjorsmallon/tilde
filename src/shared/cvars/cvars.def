@@ -242,6 +242,14 @@ Debugging :: cvars {
     debug_show_physics_bodies: bool = false @Client     "Draw Jolt bodies and constraints (JPH_DEBUG_RENDERER builds)"
 
     net_snapshot_debug:     bool = false    @Client     "Log each received snapshot's baseline tick and payload size (every 120 ticks)"
+
+    // The pair answers the question actually being asked most of the time --
+    // was it fired, and did it arrive -- without a debugger at all, which
+    // matters on a dedicated server over a real connection where breakpoints
+    // are not an option. Both log through the generated table-driven formatter,
+    // so they cover every event with no per-event print code.
+    sv_event_debug:         bool = false    @Server     "Log each gameplay event as the server fires it"
+    cl_event_debug:         bool = false    @Client     "Log each gameplay event as this client dispatches it"
 }
 
 // ---------------------------------------------------------------------------

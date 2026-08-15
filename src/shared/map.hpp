@@ -84,7 +84,7 @@ struct map_t
   }
 
   // Find entity by uid (linear scan)
-  map_entity_t *find_by_uid(entity_uid_t uid)
+  map_entity_t* find_by_uid(entity_uid_t uid)
   {
     for (auto &e : entities)
       if (e.uid == uid)

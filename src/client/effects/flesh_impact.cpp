@@ -1,4 +1,4 @@
-#include "../../shared/cosmetic_events.hpp"
+#include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/hitscan.hpp"
 #include "../../shared/linalg.hpp"
 #include "../audio/audio_system.hpp"
@@ -29,7 +29,7 @@ constexpr const char *FLESH_IMPACT_SOUNDS[] = {
 // through here: it rides Player_Entity::last_hit_tick, because it is per-viewer
 // and this queue is a broadcast.
 void on_flesh_impact(client_context_t &context,
-                     const shared::effect_data_t &data)
+                     const shared::Flesh_Impact &data)
 {
   if (!context.audio)
     return;

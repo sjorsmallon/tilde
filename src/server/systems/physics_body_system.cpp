@@ -47,8 +47,8 @@ spawn_physics_body(server_context_t &context,
                    vec3f position,
                    vec3f initial_velocity)
 {
-  shared::game_session_t &session = context.session;
-  physics_state_t        &physics = *context.physics;
+  shared::game_session_t &session = context.world.session;
+  physics_state_t        &physics = *context.world.physics;
 
   const shared::entity_uid_t body_uid =
       session.entity_system.spawn<entities::Physics_Body_Entity>();
@@ -86,13 +86,13 @@ spawn_physics_body(server_context_t &context,
   // takes a radius, so halve at this boundary.
   if (shape == entities::Shape_Kind::Box)
   {
-    body->render.mesh = entities::mesh_asset::Box;
+    body->render.mesh = assets::mesh_asset::Box;
     register_dynamic_box(physics, body_uid,
                          position, size * 0.5f, initial_velocity);
   }
   else if (shape == entities::Shape_Kind::Sphere)
   {
-    body->render.mesh = entities::mesh_asset::Sphere;
+    body->render.mesh = assets::mesh_asset::Sphere;
     register_dynamic_sphere(physics, body_uid,
                             position, size.x * 0.5f, initial_velocity);
   }

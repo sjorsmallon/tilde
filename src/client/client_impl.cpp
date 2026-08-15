@@ -2,7 +2,6 @@
 #include "audio/audio_system.hpp"
 #include "client_api.hpp"
 #include "console.hpp"
-#include "cosmetic_events.hpp"
 #include "renderer.hpp"
 #include "state_manager.hpp"
 
@@ -87,11 +86,6 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   // Set initial state
   state_manager::init();
   state_manager::switch_to(game_state::main_menu);
-
-  // Bind every cosmetic-effect handler. Each effect_type_t maps to exactly
-  // one function — registration must happen before the first snapshot can
-  // arrive, so it lives in client init() rather than Play_State::on_enter.
-  register_all_effect_handlers();
 
   // Bring up audio and lend the shared context a borrowed pointer. A failed
   // audio init is non-fatal — the engine becomes inert and play_* no-op — so

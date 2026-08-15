@@ -464,6 +464,19 @@ inline vec3f direction_from_angles(float yaw_degrees, float pitch_degrees)
   return {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
 }
 
+// The same yaw as the euler Y of a MODEL matrix, which is not the same number.
+// `rotation_from_euler_degrees` sweeps +X toward -Z; a view yaw sweeps +X toward
+// +Z (above). So the conversion is a NEGATION, and passing a yaw straight
+// through mirrors the model instead of merely offsetting it -- right at 45
+// degrees, backwards everywhere else, which is how it read as "the model does
+// not face where the player faces".
+//
+// There is no constant term because models are exported facing +X, which IS yaw
+// 0 (blender_export.py's AXIS_CONVERSION). Anything that draws from a view or
+// body yaw goes through here; an euler authored in the editor does not, since it
+// is already a model rotation.
+inline float model_yaw_from_view_yaw(float yaw_degrees) { return -yaw_degrees; }
+
 template <typename T> inline T mix(T a, T b, float t)
 {
   return a * (1.0f - t) + b * t;

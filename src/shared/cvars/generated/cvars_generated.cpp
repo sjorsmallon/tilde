@@ -367,6 +367,20 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, net_snapshot_debug),
      .size = sizeof(cvar_state_t::net_snapshot_debug),
      .string_capacity = 0},
+    {.name = "sv_event_debug",
+     .description = "Log each gameplay event as the server fires it",
+     .flags = CVAR_FLAG_SERVER,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, sv_event_debug),
+     .size = sizeof(cvar_state_t::sv_event_debug),
+     .string_capacity = 0},
+    {.name = "cl_event_debug",
+     .description = "Log each gameplay event as this client dispatches it",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, cl_event_debug),
+     .size = sizeof(cvar_state_t::cl_event_debug),
+     .string_capacity = 0},
 };
 
 const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {

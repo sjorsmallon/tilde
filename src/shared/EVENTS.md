@@ -1,345 +1,227 @@
 # Cosmetic Effects & Gameplay Events — How to Add One
 
-Two server-to-client dispatch channels live alongside the schema/snapshot
-system. Both are documented in detail at the repo root in
-`cosmetic_events_plan.md` — this file is the short, practical "I want to
-add one, what files do I touch" guide.
+Two server-to-client dispatch **channels**, one `.def` file each —
+**[`src/shared/effects/effects.def`](effects/effects.def)** and
+**[`src/shared/events/events.def`](events/events.def)** — the fourth `.def`
+family, after entities, assets and cvars. `events_def.md` at the repo root is
+the design; this file is the short "I want to add one, what do I touch" guide.
 
-| Channel              | Reliability | Payload shape                 | Examples                                      | Wire format                                       |
-| -------------------- | ----------- | ----------------------------- | --------------------------------------------- | ------------------------------------------------- |
-| **Cosmetic effects** | Unreliable  | Fixed `effect_data_t` (one struct for every effect) | rocket explosion, bullet impact, footstep      | Appended to snapshot packet (no extra packet)     |
-| **Gameplay events**  | Reliable\*  | Per-event `*_payload_t` struct, tagged union  | kill feed entry, score change, round start     | Standalone protobuf `S2C_GameEventBatch`          |
+A **channel** is a closed set of named messages, each carrying a payload, each
+dispatched to exactly one handler. `channel` declares the shared payload; each
+member names the channel as its declaration kind and carries a mandatory
+description:
+
+```
+Effect :: channel
+{
+    origin: v3
+    ...
+}
+
+Bullet_Impact :: Effect  "world-surface hit"        // no body: only the channel's fields
+Round_Started :: Game_Event  "..." { round: u32 }   // a body adds its own
+```
+
+| Channel | Reliability | Wire path |
+| --- | --- | --- |
+| **Cosmetic effects** (`Effect`) | Unreliable | Spliced into the snapshot packet, byte-aligned |
+| **Gameplay events** (`Game_Event`) | Reliable\* | Standalone protobuf `S2C_GameEventBatch` |
 
 \* "Reliable" today = best-effort via the same fragmentation infra as
 `S2C_ServerMessage`. Ack/retransmit is a follow-up.
 
+**Which packet the batch rides in is the only difference left.** Both encode at
+fire time into a `shared::event_stream_t`; neither holds a value past the call,
+so neither has a queue or a tagged union. The effect stream is spliced into each
+client's snapshot with `Bit_Writer::write_bytes`, which byte-aligns first — at
+most 7 wasted bits per packet, and that is what lets ONE encoding serve every
+client even though each client's entity delta is a different length.
+
 ### When to pick which
 
-- **Lost it = invisible?** → cosmetic. (You won't notice a missing explosion
-  sound under packet loss.)
-- **Lost it = visible gap?** → gameplay. (Missing kill feed entries, missing
-  score updates.)
-- **Both?** Fire both. A rocket detonating produces `ROCKET_EXPLOSION` (cosmetic,
-  spawns particles + decal) *and* `ROCKET_DETONATED` (gameplay, feeds kill
-  feed/score). They flow through different channels — that's the design.
+- **Lost it = invisible?** → effect. (You won't notice a missing explosion under
+  packet loss.)
+- **Lost it = visible gap?** → gameplay event. (Missing kill feed entries,
+  missing score updates.)
+- **Both?** Fire both. A rocket detonating produces `Rocket_Explosion` (particles
+  + decal) *and* `Rocket_Detonated` (kill feed, score).
 - **Continuous value (current state is the signal)?** → neither. Use a
-  `Schema_Flags::Networked` field on an entity. Examples: ammo count, view
-  angle, "is_aiming" boolean.
+  `@Networked` field on an entity. Ammo count, view angle, `is_aiming`.
 
 ---
 
-## Adding a new cosmetic effect
+## Adding one — the same four steps for either channel
 
-Worked example: adding `BULLET_IMPACT`. Skip the steps that don't apply.
+### 1. Declare it
 
-### 1. Declare the enum value
+In the channel's `.def`. **Append** — declaration order is the wire id:
 
-[src/shared/cosmetic_events.hpp](cosmetic_events.hpp):
-
-```cpp
-enum class effect_type_t : uint16_t
-{
-  ROCKET_EXPLOSION,
-  BULLET_IMPACT,   // ← add
-  FOOTSTEP,
-};
 ```
-
-That's it for shared types. `effect_data_t` is **fixed-shape** — every effect
-uses the same struct (origin, normal, color, scale, attached_entity,
-surface_material). Fill the fields you need, ignore the rest. No new
-serializer code, no protobuf change.
-
-### 2. Dispatch on the server
-
-At the gameplay site that should produce the effect, build an
-`effect_data_t` and call `dispatch_effect`. Example, hypothetically in a
-hitscan weapon system:
-
-```cpp
-// src/server/systems/hitscan_system.cpp
-#include "../../shared/cosmetic_events.hpp"
-#include "../cosmetic_events.hpp"
-
-shared::effect_data_t fx{};
-fx.origin           = impact_point;
-fx.normal           = impact_normal;           // {0,0,0} = "N/A"
-fx.color            = {1.f, 1.f, 1.f};
-fx.scale            = 1.f;
-fx.attached_entity  = 0;
-fx.surface_material = 0;
-dispatch_effect(context, shared::effect_type_t::BULLET_IMPACT, fx);
-```
-
-`dispatch_effect` just pushes onto `context.effect_queue_this_tick`; the
-snapshot writer drains it at end of tick. Safe to call multiple times per
-tick from anywhere in the server's single-threaded update.
-
-### 3. Write the client handler
-
-One file per effect under [src/client/effects/](../client/effects/). The
-convention: `bullet_impact.cpp` defines `void on_bullet_impact(client_context_t&, const effect_data_t&)`.
-
-```cpp
-// src/client/effects/bullet_impact.cpp
-#include "../../shared/cosmetic_events.hpp"
-#include "../client_context.hpp"
-
-namespace client::effects
+Round_Started :: Game_Event  "the warmup timer elapsed"
 {
-void on_bullet_impact(client_context_t &context,
-                      const shared::effect_data_t &data)
-{
-    // Spawn decal, particle, sound, etc. Free to do its own local physics
-    // cast against context.physics_state (see rocket_explosion.cpp for the
-    // pattern — surface decals trace locally so they line up with what the
-    // client sees, not what the server saw).
-}
-} // namespace client::effects
-```
-
-### 4. Register the handler
-
-[src/client/cosmetic_events.cpp](../client/cosmetic_events.cpp), in
-`register_all_effect_handlers`:
-
-```cpp
-namespace client::effects {
-  void on_rocket_explosion(client_context_t&, const shared::effect_data_t&);
-  void on_bullet_impact   (client_context_t&, const shared::effect_data_t&); // ← add
-}
-
-void register_all_effect_handlers()
-{
-  register_effect_handler(shared::effect_type_t::ROCKET_EXPLOSION,
-                          &effects::on_rocket_explosion);
-  register_effect_handler(shared::effect_type_t::BULLET_IMPACT,        // ← add
-                          &effects::on_bullet_impact);
+    round_number: u32
 }
 ```
 
-Missing a registration is **not silent**: receiving an unregistered effect
-type triggers `log_error` + `assert` in `dispatch_received_effects`.
+Field types are everything the shared field codec handles: `f32`/`f64`, the
+integer widths, `bool`, `v3`/`v4`/`v4i`, `string<N>`, and an enum declared in
+the same file. Not `component` (a channel's field table is flat — there is no
+leaf flattening pass) and not an asset class (that would need an `import`, which
+this family forbids). `f32`, `v3` and `v4` ride the wire **quantized**
+(`network::write_coord`) — a field needing full float precision does not belong
+here.
 
-### 5. Add to the build
+Everything else — the payload struct, the field table, the fire helper, the
+reader, the formatter — is generated. A member with no body gets an empty struct
+deriving from the channel, always; there is no special case.
 
-[CMakeLists.txt](../../CMakeLists.txt) — add the new file to the
-`game_client` source list. Look for the existing `src/client/effects/rocket_explosion.cpp` line and add yours next to it.
+### 2. Fire it on the server
 
-### 6. Verify
+```cpp
+shared::Round_Started started{};
+started.round_number = current_round;
+shared::fire_round_started(context.outgoing.events, started);
+```
 
-Build, run, trigger the effect. The handler runs on the receiving client.
+`context.outgoing.effects` for the effect channel, `context.outgoing.events` for
+gameplay events. Both are `event_stream_t`; `server_context.hpp` includes both
+generated headers, so a fire site needs no extra include. It encodes straight
+into the stream — no value survives the call, so a kind can never disagree with
+its payload.
+
+### 3. Write the handler
+
+One file per member, named after it —
+[`src/client/effects/bullet_impact.cpp`](../client/effects/bullet_impact.cpp),
+[`src/client/game_events/round_started.cpp`](../client/game_events/) — defining
+`client::effects::on_bullet_impact(client_context_t&, const shared::Bullet_Impact&)`
+or `client::game_events::on_round_started(client_context_t&, const shared::Round_Started&)`.
+
+The parameter is always the **member's own type**, even when it adds no fields:
+`const shared::Bullet_Impact&`, not `const shared::Effect&`.
+
+`def_gen --scaffold` writes the empty file for you if it does not exist. It
+never overwrites, never merges, and prints every file it wrote — the moment a
+stub exists it is yours.
+
+**That file is where the consumer list lives.** To add another consumer to an
+existing event, add a line to its file — no registry, so grep finds who cares:
+
+```cpp
+void on_round_started(client_context_t &context, const shared::Round_Started &value)
+{
+  round_banner::on_round_started(context, value);
+  announcer::on_round_started(context, value);
+}
+```
+
+### 4. Add it to the build
+
+[CMakeLists.txt](../../CMakeLists.txt), the `game_client` source list, next to
+the other `src/client/effects/*.cpp` or `src/client/game_events/*.cpp` lines.
+
+**There is no registration step.** The generated binder TU
+(`client_effects_bindings.cpp` / `client_events_bindings.cpp`) switches over the
+closed enum and calls the handler directly, so a member with no function is a
+**link error naming the symbol**. That link step is the assert; "forgot to
+register" is not representable, because there is nothing to register.
 
 ---
 
-## Adding a new gameplay event
+## Debugging
 
-Worked example: adding `ROUND_STARTED`.
+Two cvars, following `net_snapshot_debug`'s precedent:
 
-### 1. Declare the kind and payload
+- `sv_event_debug` — the generated fire helper logs each event as it is fired.
+  Gives ordering and cross-tick timing. Latched onto both streams once per tick
+  in `clear_outgoing`, so the fire helpers stay free of the cvar family.
+- `cl_event_debug` — logs each event as the receiving client dispatches it.
 
-[src/shared/game_events.hpp](game_events.hpp):
+Together they answer the question actually being asked most of the time — was it
+fired, and did it arrive — without a debugger, which matters on a dedicated
+server over a real connection.
 
-```cpp
-enum class game_event_kind_t : uint16_t
-{
-  ROCKET_DETONATED,
-  PLAYER_DIED,
-  ROUND_STARTED,   // ← add
-};
+Both go through `field_to_text`, the **same** function that writes entity fields
+into a map file. There is one place field bytes become characters and this is
+it:
 
-struct round_started_payload_t   // ← add
-{
-  uint32_t round_number;
-  uint32_t server_tick;
-};
-
-struct game_event_t
-{
-  game_event_kind_t kind;
-  union {
-    rocket_detonated_payload_t rocket_detonated;
-    player_died_payload_t      player_died;
-    round_started_payload_t    round_started;  // ← add
-  };
-};
+```
+Player_Died{ victim_id=7, attacker_id=3, weapon_id=0, was_headshot=false }
 ```
 
-Per-event payloads (as opposed to the cosmetic system's shared struct)
-because gameplay events have wildly different field needs — `player_died`
-cares about attacker/victim/weapon, `round_started` cares about round
-number. A single shared blob doesn't fit.
-
-### 2. Serialize / deserialize
-
-[src/shared/game_events.cpp](game_events.cpp) — three places. Pattern:
-one local `serialize_<name>` / `deserialize_<name>` pair, then add cases in
-the two switch statements.
-
-```cpp
-static void serialize_round_started(network::Bit_Writer &writer,
-                                    const round_started_payload_t &payload)
-{
-  writer.write_bits(payload.round_number, 32);
-  writer.write_bits(payload.server_tick, 32);
-}
-
-static round_started_payload_t
-deserialize_round_started(network::Bit_Reader &reader)
-{
-  round_started_payload_t payload{};
-  payload.round_number = reader.read_bits(32);
-  payload.server_tick  = reader.read_bits(32);
-  return payload;
-}
-
-void serialize_game_event(...)
-{
-  // ...
-  case game_event_kind_t::ROUND_STARTED:
-    serialize_round_started(writer, event.round_started);
-    break;
-}
-
-game_event_t deserialize_game_event(...)
-{
-  // ...
-  case game_event_kind_t::ROUND_STARTED:
-    event.kind = game_event_kind_t::ROUND_STARTED;
-    event.round_started = deserialize_round_started(reader);
-    return event;
-}
-```
-
-The `default:` branch at the bottom of `deserialize_game_event` is `log_error
-+ assert` — unknown kinds **never silently drop**.
-
-### 3. Fire on the server
-
-At the site where the event should occur, build a `game_event_t` and call
-`fire_game_event`:
-
-```cpp
-// src/server/match/round_system.cpp  (hypothetical)
-#include "../../shared/game_events.hpp"
-#include "../game_events.hpp"
-
-shared::game_event_t ev{};
-ev.kind                            = shared::game_event_kind_t::ROUND_STARTED;
-ev.round_started.round_number      = current_round;
-ev.round_started.server_tick       = context.tick;
-fire_game_event(context, ev);
-```
-
-Same lifecycle as cosmetic dispatch: pushed onto
-`context.game_event_queue_this_tick`, drained into one
-`S2C_GameEventBatch` per connected client at end of tick.
-
-### 4. Write the client consumer(s)
-
-Add one function per consumer that cares about the event. Consumers live
-under [src/client/](../client/) in whatever subsystem they belong to —
-kill feed for HUD entries, score HUD for score updates, audio for sound,
-etc. Keep each consumer's signature **payload-specific**, not generic
-`game_event_t` — the consumer should read only what it needs.
-
-```cpp
-// src/client/hud/round_banner.hpp/.cpp  (hypothetical)
-namespace client::round_banner {
-void on_round_started(client_context_t &context,
-                      const shared::round_started_payload_t &payload);
-}
-```
-
-### 5. Wire the dispatch switch
-
-[src/client/game_events.cpp](../client/game_events.cpp) — add a case to
-`dispatch_one`. Every case ends with `return` (not `break`), so the
-fallthrough into `log_error + assert` only fires for unknown kinds.
-
-```cpp
-case shared::game_event_kind_t::ROUND_STARTED:
-  round_banner::on_round_started(context, event.round_started);
-  // future consumers: announcer::on_round_started(...);
-  //                   demo_recorder::on_round_started(...);
-  return;
-```
-
-To add *another* consumer for an *existing* event later: write its
-function, add one line to the same case. No registry, no init-time
-ordering — see "Direct client-side dispatch" in the design doc for why
-we don't use a `subscribe(kind, handler)` registry.
-
-### 6. Add to the build
-
-[CMakeLists.txt](../../CMakeLists.txt) — add any new consumer source files
-to the `game_client` list. Shared event types are already part of
-`game_shared`, no change needed there.
-
-### 7. Verify
-
-Build, run, fire the event. Every wired consumer runs on the receiving
-client. The Phase 2/4 stubs (`kill_feed::on_*`) just log — useful as a
-sanity check that the event arrived before the real UI/audio lands.
-
----
+`shared::game_event_stream_to_text(context.outgoing.events)` (and
+`effect_stream_to_text`) dumps everything pending in a stream at any point in a
+tick, decoded **back out of the bytes that will actually be sent**. A debugger
+view of a queue shows what someone *intended* to send; a codec bug that drops or
+misencodes a field is invisible there and visible here.
 
 ## Quick reference: which file does what
 
 ```
-src/shared/cosmetic_events.{hpp,cpp}   effect_type_t, effect_data_t, batch serializer
-src/server/cosmetic_events.{hpp,cpp}   dispatch_effect() — queues onto server_context
-src/client/cosmetic_events.{hpp,cpp}   handler registry, register_all_effect_handlers()
-src/client/effects/*.cpp               one file per effect_type_t value
-
-src/shared/game_events.{hpp,cpp}       game_event_kind_t, payload structs, serializer
-src/server/game_events.{hpp,cpp}       fire_game_event() — queues onto server_context
-src/client/game_events.{hpp,cpp}       dispatch switch (no registry)
-src/client/hud/kill_feed.{hpp,cpp}     example consumer (logs today, ImGui later)
-
-proto/game.proto                       S2C_GameEventBatch — already wired, no change
-                                       per new event kind
+src/shared/effects/effects.def            THE declaration point, effects
+src/shared/events/events.def              THE declaration point, gameplay events
+src/shared/{effects,events}/generated/    channel enum, structs, field tables,
+                                          fire helpers, readers (game_shared)
+src/shared/event_stream.{hpp,cpp}         event_stream_t -- the hand-written half
+src/shared/reflection.{hpp,cpp}           field_info_t and field_to_text: the
+                                          record type and the formatter, shared
+                                          with the entity family
+src/shared/network/field_codec.{hpp,cpp}  write_field / read_field: the wire,
+                                          also shared with the entity family
+src/client/event_handlers.hpp             the receiving side's seam, and all of it
+src/shared/{effects,events}/generated/client_*_bindings.cpp
+                                          each channel's dispatch (game_client)
+src/client/effects/*.cpp                  one file per Effect member
+src/client/game_events/*.cpp              one file per Game_Event member
+src/client/hud/kill_feed.{hpp,cpp}        example consumer (logs today, ImGui later)
+proto/game.proto                          S2C_GameEventBatch -- carries bytes only,
+                                          no change per new event
 ```
+
+## The one thing that can silently desync
+
+The effect batch is spliced into the snapshot packet **byte-aligned**: the
+server calls `writer.write_bytes(...)` (which aligns) and the client calls
+`reader.align()` before dispatching. **Those two must move together.** A
+misaligned effect block decodes as plausible garbage rather than failing, which
+is why `events_test` covers the splice specifically and why both sites carry a
+comment pointing at the other.
 
 ## Pattern: events that need server-side state tracking
 
-Some events fire from a *timer*, not from a synchronous gameplay site —
-`PLAYER_SPAWNED` after a death, `ROUND_STARTED` after the warmup timer
-elapses, achievement-style events that need to remember earlier
-transitions. The pattern:
+Some events fire from a *timer*, not a synchronous gameplay site —
+`Player_Spawned` after a death, a round start after warmup elapses. The pattern:
 
-1. **Stamp the trigger** in a side table on `server_context_t` at the
-   site that initiates the timer (`death_tick_by_player_uid` is the
-   precedent — populated by `rocket_system` at the same line that fires
-   `PLAYER_DIED`).
+1. **Stamp the trigger** in a side table on `server_context_t` at the site that
+   starts the timer (`death_tick_by_player_uid` is the precedent — written by
+   `rocket_system` at the same line that fires `Player_Died`).
 2. **Drain the table** once per server tick from a dedicated system
-   (`update_respawns` in [`src/server/systems/respawn_system.cpp`](../server/systems/respawn_system.cpp)).
-   For each entry whose deadline has arrived: apply the gameplay effect
-   (reset the player), fire the gameplay event, remove the entry.
-3. **Carry authoritative values in the payload** — don't make the
-   consumer look up state by id. `player_spawned_payload_t` carries
-   `spawn_position` and `spawn_orientation` inline so the consumer
-   doesn't depend on the spawn-marker entity being on the client. See
-   the payload comment in [`game_events.hpp`](game_events.hpp) for why
-   we picked values-in-event over carrying a spawn-marker uid.
-
-This same shape works for any "event fires N seconds/ticks after some
-condition": warmup → round start, headshot streak → achievement, low HP
-→ regen activation, etc.
+   (`update_respawns` in
+   [`src/server/systems/respawn_system.cpp`](../server/systems/respawn_system.cpp)):
+   for each entry whose deadline has arrived, apply the effect, fire the event,
+   remove the entry.
+3. **Carry authoritative values in the payload** — don't make the consumer look
+   state up by id. `Player_Spawned` carries `spawn_position` and
+   `spawn_orientation` inline so the consumer does not depend on the spawn-marker
+   entity existing on the client.
 
 ## What NOT to do
 
-- **Don't add per-event protobuf messages.** The whole point is one batch
-  message containing many events, encoded by the shared bitstream.
-- **Don't add a `subscribe(kind, handler)` registry** for gameplay events.
-  The plan picked a direct switch for grep-ability and to keep the
-  call-graph readable. Adding a registry hides who consumes what.
-- **Don't put domain facts in the event kind.** Headshot? `was_headshot:
-  bool` on `PLAYER_DIED`. Don't introduce a `PLAYER_HEADSHOT_DIED` kind.
-- **Don't fire cosmetic events for things the client can derive from
-  schema state.** Muzzle smoke from `fire_tick`, footstep cadence from
-  velocity — those stay as continuous, schema-driven effects. Cosmetic
-  events are for **discrete, short-lived** moments.
-- **Don't silently drop on unknown kinds.** The default branch must
-  `log_error` + `assert`. The whole architecture assumes the producer and
-  consumer agree on the kind set; silent drops would hide that drift.
+- **Don't add per-event protobuf messages.** One batch message carries many
+  events, encoded by the shared bitstream.
+- **Don't add a `subscribe(kind, handler)` registry.** The per-event file *is*
+  the consumer list, and it is grep-able. A registry hides who consumes what and
+  reintroduces "did everyone register?" — which the generated switch deleted.
+- **Don't put domain facts in the member name.** Headshot? `was_headshot: bool`
+  on `Player_Died`. Not a `Player_Headshot_Died` kind.
+- **Don't fire cosmetic effects for things the client can derive from replicated
+  state.** Muzzle smoke from `fire_tick`, footstep cadence from velocity — those
+  stay continuous and schema-driven. Cosmetic events are for **discrete,
+  short-lived** moments.
+- **Don't put two channels in one `.def`.** Emitted filenames are derived from
+  the file's stem, so two channels have no single answer for them. The generator
+  refuses.
+- **Don't hand-edit `generated/`.** Edit the `.def` and rebuild.
+- **Don't reorder members to "tidy up".** Order is the wire id. It is hashed, so
+  a reorder is a refused handshake rather than a silent remap — a better
+  outcome, not a licence.

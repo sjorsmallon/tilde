@@ -2,7 +2,6 @@
 #include "damage.hpp"
 
 #include "../shared/log.hpp"
-#include "game_events.hpp"
 #include "server_api.hpp"
 #include "systems/respawn_system.hpp"
 
@@ -48,13 +47,12 @@ static void apply_damage_to_player(server_context_t &context,
     // tick produces.
     player.death_tick = get_tick_number();
 
-    shared::game_event_t died_event{};
-    died_event.kind = shared::game_event_kind_t::PLAYER_DIED;
-    died_event.player_died.victim_id    = info.victim_uid;
-    died_event.player_died.attacker_id  = info.attacker_uid;
-    died_event.player_died.weapon_id    = info.weapon_id;
-    died_event.player_died.was_headshot = info.was_headshot;
-    fire_game_event(context, died_event);
+    shared::Player_Died died{};
+    died.victim_id    = info.victim_uid;
+    died.attacker_id  = info.attacker_uid;
+    died.weapon_id    = info.weapon_id;
+    died.was_headshot = info.was_headshot;
+    shared::fire_player_died(context.outgoing.events, died);
     // Bots and humans share this path — both are Player_Entity instances.
     schedule_respawn(context, info.victim_uid, get_tick_number());
   }
@@ -74,7 +72,7 @@ static void apply_damage_to_physics_body(server_context_t &context,
   const vec3f direction = (distance > 1e-4f)
                               ? to_body * (1.f / distance)
                               : vec3f{0.f, 1.f, 0.f};
-  add_linear_velocity(*context.physics, info.victim_uid,
+  add_linear_velocity(*context.world.physics, info.victim_uid,
                       direction * info.knockback_force);
 }
 
@@ -87,7 +85,7 @@ void inflict_damage(server_context_t &context, const damage_info_t &info)
     return;
   }
 
-  shared::game_session_t &session = context.session;
+  shared::game_session_t &session = context.world.session;
 
   // Dispatch on entity type. Two damageable types today; if this grows past
   // ~6 cases or any case past ~50 lines, promote to a registration table

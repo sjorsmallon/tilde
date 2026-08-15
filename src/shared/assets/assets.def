@@ -1,0 +1,66 @@
+// ---------------------------------------------------------------------------
+// Asset classes
+// ---------------------------------------------------------------------------
+//
+// An asset class is a closed set of things the game can reference by name,
+// knowable at build time. `scan` enumerates a directory; `procedural` names an
+// entry whose bytes come from a generator function instead of a file.
+//
+// That distinction is a COLUMN IN THE GENERATED TABLE AND NOTHING ELSE. The
+// generated enum is pure identity: no consumer of a mesh_asset ever asks where
+// the bytes came from, and the public API deliberately gives it no way to. This
+// replaces the `__primitive_` string prefix, which was never a naming scheme --
+// it was a lazy-initialisation trigger (load_mesh already resolved those keys
+// from the cache; the prefix existed so call sites could reach the function
+// that ran the one-time init). Registration becomes eager over this manifest,
+// and the prefix, along with its seven strncmp dispatch sites, goes away.
+//
+// Entry 0 of every class is Missing, so an unassigned field resolves to the
+// placeholder rather than to whichever asset sorted first. The scan skips the
+// placeholder's own file, so it has exactly one name.
+//
+// This file is its own family: it emits generated/assets_generated.{hpp,cpp} in
+// namespace `assets`, beside the hand-written asset system that resolves the
+// ids. entities.def `import`s it to use these classes as field types -- the one
+// crossing between families, and it runs in that direction only. See
+// src/tools/def_gen.cpp's header comment.
+//
+// WHY `procedural` STILL EXISTS (2026-07-27). The cleanest end state deletes
+// it: bake the generators to .obj, and "a mesh asset is a .obj in
+// resources/obj" becomes the whole rule, with no source column at all. That is
+// blocked on one thing, found while settling this -- load_obj NORMALIZES every
+// .obj to a 100-unit max extent (asset.cpp, see the warning there), while
+// get_primitive_mesh returns UNIT-sized meshes that callers scale themselves.
+// So the two regimes differ by ~100x and a baked primitive would load at the
+// wrong size. Fixing that means deleting the normalization, which changes how
+// every mesh in the game is sized. Not bundled into generator work.
+//
+// The NAMING is settled regardless, and needs no qualifiers: sphere.obj (3.5 MB
+// and referenced by nothing) and cube.obj (also unreferenced) are deleted, and
+// generate_pyramid_mesh -- registered but never once requested -- is gone with
+// them. So `Sphere` is the generated sphere, `Box` has no `Cube` twin, and
+// `Pyramid` is pyramid.obj, which is the one the editor actually draws.
+
+// A class may declare SEVERAL scans, because one asset kind can have more than
+// one on-disk form. A mesh is either a .obj (static prop, hand-authored, no
+// bones) or a .mesh (exported by src/tools/blender_export.py, carrying skin
+// weights and a skeleton reference -- see animation_def.md). Nothing that
+// resolves a mesh_asset should have to know which: load_mesh dispatches on the
+// extension, and `skin.empty()` is the whole "is this skinned" test downstream.
+mesh_asset :: assets {
+    placeholder "resources/obj/error.obj"
+    scan        "resources/obj"    ".obj"
+    scan        "resources/models" ".mesh"
+
+    // name         generator key (what get_primitive_mesh takes today)
+    procedural Box      "box"
+    procedural Arrow    "arrow"
+    procedural Sphere   "sphere"
+    procedural Cylinder "cylinder"
+    procedural Cone     "cone"
+    procedural Wedge    "wedge"
+}
+
+sprite_asset :: assets {
+    scan "resources/sprites" ".png"
+}

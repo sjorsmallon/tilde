@@ -130,7 +130,7 @@ endif()
 # The schema compiler: parses every .def file and emits the constexpr tables and
 # plain structs the game reads. Standalone, no project dependencies. Inspect the
 # parsed IR without writing anything with:
-#   ./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --dump
+#   ./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def --dump
 add_executable(def_gen src/tools/def_gen.cpp)
 
 # Generated structs and tables. These land in the source tree rather than the
@@ -144,6 +144,15 @@ set(ENTITY_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entities_generated.hpp)
 set(ENTITY_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entities_generated.cpp)
 file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
 
+# The asset manifest. entities.def `import`s this file, so def_gen reads it
+# twice in one run -- once as its own input (which is what emits it) and once
+# through the import (which only resolves mesh_asset as a field type).
+set(ASSET_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/assets/assets.def)
+set(ASSET_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/assets/generated)
+set(ASSET_GEN_HEADER ${ASSET_GEN_OUT_DIR}/assets_generated.hpp)
+set(ASSET_GEN_SOURCE ${ASSET_GEN_OUT_DIR}/assets_generated.cpp)
+file(MAKE_DIRECTORY ${ASSET_GEN_OUT_DIR})
+
 set(CVAR_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/cvars/cvars.def)
 set(CVAR_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/cvars/generated)
 set(CVAR_GEN_HEADER ${CVAR_GEN_OUT_DIR}/cvars_generated.hpp)
@@ -154,13 +163,33 @@ set(CVAR_GEN_SERVER_BINDINGS ${CVAR_GEN_OUT_DIR}/server_command_bindings.cpp)
 set(CVAR_GEN_CLIENT_BINDINGS ${CVAR_GEN_OUT_DIR}/client_command_bindings.cpp)
 file(MAKE_DIRECTORY ${CVAR_GEN_OUT_DIR})
 
-# The .def's asset classes scan these directories, so the generated manifest
+# The two server->client dispatch channels, one .def each -- the event family is
+# the first with two input files, so every emitted name is derived from the
+# .def's own stem rather than hardcoded. One per-side binder TU each, for the
+# cvar family's reason: it is what references the handlers, so it compiles into
+# the module that defines them.
+set(EFFECT_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/effects/effects.def)
+set(EFFECT_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/effects/generated)
+set(EFFECT_GEN_HEADER ${EFFECT_GEN_OUT_DIR}/effects_generated.hpp)
+set(EFFECT_GEN_SOURCE ${EFFECT_GEN_OUT_DIR}/effects_generated.cpp)
+set(EFFECT_GEN_CLIENT_BINDINGS ${EFFECT_GEN_OUT_DIR}/client_effects_bindings.cpp)
+file(MAKE_DIRECTORY ${EFFECT_GEN_OUT_DIR})
+
+set(EVENT_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/events/events.def)
+set(EVENT_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/events/generated)
+set(EVENT_GEN_HEADER ${EVENT_GEN_OUT_DIR}/events_generated.hpp)
+set(EVENT_GEN_SOURCE ${EVENT_GEN_OUT_DIR}/events_generated.cpp)
+set(EVENT_GEN_CLIENT_BINDINGS ${EVENT_GEN_OUT_DIR}/client_events_bindings.cpp)
+file(MAKE_DIRECTORY ${EVENT_GEN_OUT_DIR})
+
+# assets.def's classes scan these directories, so the generated manifest
 # depends on their CONTENTS, not just on the .def. CONFIGURE_DEPENDS re-runs the
 # glob on build, so adding a mesh regenerates rather than silently producing a
 # manifest that is missing it. Paths inside the .def are relative to
 # --asset-root, which is why they can read the same way the game reads them.
-file(GLOB ENTITY_GEN_ASSET_FILES CONFIGURE_DEPENDS
+file(GLOB ASSET_GEN_SCANNED_FILES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/obj/*.obj
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/models/*.mesh
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/sprites/*.png
 )
 
@@ -169,13 +198,19 @@ file(GLOB ENTITY_GEN_ASSET_FILES CONFIGURE_DEPENDS
 # disagrees with a full build.
 add_custom_command(
     OUTPUT ${ENTITY_GEN_HEADER} ${ENTITY_GEN_SOURCE}
+           ${ASSET_GEN_HEADER} ${ASSET_GEN_SOURCE}
            ${CVAR_GEN_HEADER} ${CVAR_GEN_SOURCE}
            ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS}
-    COMMAND def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
+           ${EFFECT_GEN_HEADER} ${EFFECT_GEN_SOURCE} ${EFFECT_GEN_CLIENT_BINDINGS}
+           ${EVENT_GEN_HEADER} ${EVENT_GEN_SOURCE} ${EVENT_GEN_CLIENT_BINDINGS}
+    COMMAND def_gen ${ENTITY_DEF_FILE} ${ASSET_DEF_FILE} ${CVAR_DEF_FILE}
+            ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
             --emit
             --asset-root ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE} ${ENTITY_GEN_ASSET_FILES}
-    COMMENT "Generating definitions from entities.def and cvars.def..."
+    DEPENDS def_gen ${ENTITY_DEF_FILE} ${ASSET_DEF_FILE} ${CVAR_DEF_FILE}
+            ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
+            ${ASSET_GEN_SCANNED_FILES}
+    COMMENT "Generating definitions from entities.def, assets.def, cvars.def, effects.def and events.def..."
 )
 
 
@@ -192,6 +227,7 @@ add_library(game_shared STATIC
     src/shared/replay_system.hpp
     src/shared/task_system.hpp
     src/shared/task_system.cpp
+    ${ASSET_GEN_SOURCE}
     ${ENTITY_GEN_SOURCE}
     # The cvar tables and text conversion. Holds no reference to any command
     # handler, so it compiles here without either side being present -- the two
@@ -201,6 +237,13 @@ add_library(game_shared STATIC
     src/shared/cvars/cvar_runtime.hpp
     src/shared/cvars/cvar_console.hpp
     src/shared/cvars/cvar_console.cpp
+    # The family-neutral reflection layer: the record types every generated
+    # table is made of, the text conversion, and the wire codec for one field.
+    # Entities and both event channels walk all three.
+    src/shared/reflection.hpp
+    src/shared/reflection.cpp
+    src/shared/network/field_codec.hpp
+    src/shared/network/field_codec.cpp
     src/shared/entities/entity_reflection.cpp
     src/shared/network/entity_serialization.cpp
     src/shared/network/entity_snapshot.cpp
@@ -232,10 +275,13 @@ add_library(game_shared STATIC
     src/shared/player_move.cpp
     src/shared/physics.hpp
     src/shared/physics.cpp
-    src/shared/cosmetic_events.hpp
-    src/shared/cosmetic_events.cpp
-    src/shared/game_events.hpp
-    src/shared/game_events.cpp
+    # Both channels' tables and fire helpers. Neither references a handler, so
+    # they compile here with neither side present -- the two binder TUs are what
+    # reference them, and those go into game_client below.
+    ${EFFECT_GEN_SOURCE}
+    ${EVENT_GEN_SOURCE}
+    src/shared/event_stream.hpp
+    src/shared/event_stream.cpp
     src/shared/weapons.hpp
     src/shared/hit_region.hpp
     src/shared/hitscan.hpp
@@ -332,17 +378,25 @@ add_library(game_client SHARED
     src/client/jolt_debug_renderer.cpp
     src/client/client_impl.cpp
     src/client/client_context.cpp
-    src/client/cosmetic_events.cpp
+    # One binder TU per channel, each switching over its closed enum and calling
+    # one hand-written function per member. A member with no function is a link
+    # error on this target, naming the symbol.
+    ${EFFECT_GEN_CLIENT_BINDINGS}
+    ${EVENT_GEN_CLIENT_BINDINGS}
+    src/client/event_handlers.hpp
     src/client/effects/rocket_explosion.cpp
     src/client/effects/footstep.cpp
-    src/client/effects/player_movement.cpp
+    src/client/effects/jump.cpp
+    src/client/effects/land.cpp
     src/client/effects/bullet_impact.cpp
     src/client/effects/flesh_impact.cpp
     src/client/weapon_fire_audio.cpp
     src/client/hit_confirm_audio.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
-    src/client/game_events.cpp
+    src/client/game_events/rocket_detonated.cpp
+    src/client/game_events/player_died.cpp
+    src/client/game_events/player_spawned.cpp
     src/client/hud/kill_feed.cpp
     src/client/hud/crosshair.cpp
     src/client/console.cpp
@@ -405,8 +459,11 @@ add_library(game_server SHARED
     # Fills the @Server command slots -- the other half of the split above.
     ${CVAR_GEN_SERVER_BINDINGS}
     src/server/server_impl.cpp
-    src/server/cosmetic_events.cpp
-    src/server/game_events.cpp
+    # The reset seams: what is cleared on a map change, on a slot changing
+    # occupant, and at each end of a tick. server_context_test guards them.
+    src/server/server_context.hpp
+    src/server/server_context.cpp
+    src/server/bot_state.hpp
     src/server/damage.hpp
     src/server/damage.cpp
     src/server/entity_lifecycle.hpp
@@ -553,7 +610,8 @@ target_link_libraries(navmesh_test PRIVATE game_shared)
 # Guards the generated entity layout: trivial copyability (memcpy snapshots and
 # memcmp diffing) and derived-to-base conversion, which the inheritance layout
 # was chosen to preserve.
-add_executable(entity_layout_test src/test/entity_layout_test.cpp ${ENTITY_GEN_SOURCE})
+add_executable(entity_layout_test src/test/entity_layout_test.cpp ${ENTITY_GEN_SOURCE}
+                                  ${ASSET_GEN_SOURCE})
 target_include_directories(entity_layout_test PRIVATE src/shared)
 
 
@@ -597,6 +655,22 @@ target_link_libraries(hitbox_rig_test PRIVATE game_shared)
 add_executable(array_test src/test/array_test.cpp)
 target_include_directories(array_test PRIVATE src src/shared)
 
+# 26. Server context test — the reset seams in src/server/server_context.cpp.
+# Asserts BOTH halves of each reset: what is cleared and what deliberately
+# survives. The half that survives is the one a future edit is likely to get
+# wrong.
+#
+# Compiles the two TUs it needs rather than linking game_server, the same way
+# cvar_test compiles the generated binders: game_server is a SHARED lib and only
+# its GAME_SERVER_API surface is exported, and the reset functions are internal
+# to the module by design. This also keeps the test from loading a DLL to check
+# what is really pure struct manipulation.
+add_executable(server_context_test src/test/server_context_test.cpp
+    src/server/server_context.cpp
+    src/server/systems/game_rules_system.cpp)
+target_include_directories(server_context_test PRIVATE src src/shared src/server)
+target_link_libraries(server_context_test PRIVATE game_shared)
+
 # One-time map converter for the geometry exit (src/tools/map_convert.cpp).
 # Loading a map converts it in memory; this tool makes that deliberate and
 # batchable. Usage: map_convert [--check] maps/*.source
@@ -616,6 +690,15 @@ target_link_libraries(map_convert PRIVATE game_shared)
 # anywhere else failed — a standing footgun that this pins shut for every test
 # at once, rather than documenting it again.
 enable_testing()
+
+# 24. Event Family Round Trip
+#
+# fire -> encode -> decode -> compare for every declared member of both
+# channels, plus the byte-for-byte check against the hand-written codec the
+# generator replaced. cvar_test's counterpart for the event family.
+add_executable(events_test src/test/test_events.cpp)
+target_include_directories(events_test PRIVATE src)
+target_link_libraries(events_test PRIVATE game_shared)
 
 set(GAME_TESTS
     task_system_test
@@ -640,7 +723,9 @@ set(GAME_TESTS
     hitscan_test
     model_format_test
     hitbox_rig_test
-    array_test)
+    array_test
+    server_context_test
+    events_test)
 
 foreach(test_target IN LISTS GAME_TESTS)
   add_test(NAME ${test_target} COMMAND ${test_target})

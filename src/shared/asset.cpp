@@ -1272,25 +1272,25 @@ void init()
     return;
   state->manifest_initialized = true;
 
-  const Span<const entities::asset_info_t> meshes = entities::mesh_asset_manifest();
+  const Span<const asset_info_t> meshes = mesh_asset_manifest();
   for (uint32_t index = 0; index < meshes.size(); ++index)
   {
-    const entities::asset_info_t &info = meshes[index];
+    const asset_info_t &info = meshes[index];
 
     switch (info.source_kind)
     {
-      case entities::ASSET_SOURCE_FILE:
+      case ASSET_SOURCE_FILE:
         state->mesh_handles[index] = load_mesh(info.source);
         if (!state->mesh_handles[index].valid())
           log_error("assets: mesh \"{}\" could not be loaded from \"{}\"", info.name, info.source);
         break;
 
-      case entities::ASSET_SOURCE_PROCEDURAL:
+      case ASSET_SOURCE_PROCEDURAL:
         state->mesh_handles[index] =
             state->meshes.add(info.name, generate_mesh_for_key(info.source));
         break;
 
-      case entities::ASSET_SOURCE_MISSING:
+      case ASSET_SOURCE_MISSING:
         // Not a skip: an id with no source is a hole in the manifest, and every
         // Render field that names it will draw the placeholder instead.
         log_error("assets: mesh \"{}\" (id {}) has no source in the manifest", info.name, index);
@@ -1298,27 +1298,27 @@ void init()
     }
   }
 
-  const Span<const entities::asset_info_t> sprites = entities::sprite_asset_manifest();
+  const Span<const asset_info_t> sprites = sprite_asset_manifest();
   for (uint32_t index = 0; index < sprites.size(); ++index)
   {
-    const entities::asset_info_t &info = sprites[index];
+    const asset_info_t &info = sprites[index];
 
     switch (info.source_kind)
     {
-      case entities::ASSET_SOURCE_FILE:
+      case ASSET_SOURCE_FILE:
         state->sprite_handles[index] = load_texture(info.source);
         if (!state->sprite_handles[index].valid())
           log_error("assets: sprite \"{}\" could not be loaded from \"{}\"", info.name,
                     info.source);
         break;
 
-      case entities::ASSET_SOURCE_PROCEDURAL:
+      case ASSET_SOURCE_PROCEDURAL:
         log_error("assets: sprite \"{}\" is declared procedural, but no sprite generator "
                   "exists — that id will resolve to nothing",
                   info.name);
         break;
 
-      case entities::ASSET_SOURCE_MISSING:
+      case ASSET_SOURCE_MISSING:
         // sprite_asset has no placeholder today (there is no error.png), so
         // slot 0 legitimately has no source. Reported rather than skipped, per
         // the rule that nothing here fails silently.
@@ -1331,7 +1331,7 @@ void init()
   printf("[assets] manifest registered: %u meshes, %u sprites\n", meshes.size(), sprites.size());
 }
 
-asset_handle_t<mesh_asset_t> get_mesh(entities::mesh_asset id)
+asset_handle_t<mesh_asset_t> get_mesh(mesh_asset id)
 {
   asset_state_t *state = state_for("get_mesh");
   if (!state)
@@ -1345,19 +1345,19 @@ asset_handle_t<mesh_asset_t> get_mesh(entities::mesh_asset id)
   }
 
   const uint32_t index = (uint32_t)id;
-  if (index >= entities::mesh_asset_COUNT)
+  if (index >= mesh_asset_COUNT)
   {
     log_error("assets: mesh id {} is outside the manifest", index);
-    return state->mesh_handles[(uint32_t)entities::mesh_asset::Missing];
+    return state->mesh_handles[(uint32_t)mesh_asset::Missing];
   }
 
   if (!state->mesh_handles[index].valid())
-    return state->mesh_handles[(uint32_t)entities::mesh_asset::Missing];
+    return state->mesh_handles[(uint32_t)mesh_asset::Missing];
 
   return state->mesh_handles[index];
 }
 
-asset_handle_t<texture_asset_t> get_sprite(entities::sprite_asset id)
+asset_handle_t<texture_asset_t> get_sprite(sprite_asset id)
 {
   asset_state_t *state = state_for("get_sprite");
   if (!state)
@@ -1371,7 +1371,7 @@ asset_handle_t<texture_asset_t> get_sprite(entities::sprite_asset id)
   }
 
   const uint32_t index = (uint32_t)id;
-  if (index >= entities::sprite_asset_COUNT)
+  if (index >= sprite_asset_COUNT)
   {
     log_error("assets: sprite id {} is outside the manifest", index);
     return {};

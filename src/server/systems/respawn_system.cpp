@@ -1,9 +1,9 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "respawn_system.hpp"
 
+#include "../../shared/events/generated/events_generated.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/player_constants.hpp"
-#include "../game_events.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -16,22 +16,21 @@ void fire_player_spawned_event(server_context_t &context,
                                vec3f spawn_position,
                                vec3f spawn_orientation)
 {
-  shared::game_event_t event{};
-  event.kind = shared::game_event_kind_t::PLAYER_SPAWNED;
-  event.player_spawned.player_id         = player_uid;
-  event.player_spawned.spawn_position    = spawn_position;
-  event.player_spawned.spawn_orientation = spawn_orientation;
-  fire_game_event(context, event);
+  shared::Player_Spawned spawned{};
+  spawned.player_id         = player_uid;
+  spawned.spawn_position    = spawn_position;
+  spawned.spawn_orientation = spawn_orientation;
+  shared::fire_player_spawned(context.outgoing.events, spawned);
 }
 
 void schedule_respawn(server_context_t &context,
                       shared::entity_uid_t player_uid,
                       uint32_t death_tick)
 {
-  if (context.death_tick_by_player_uid.contains(player_uid))
+  if (context.world.death_tick_by_player_uid.contains(player_uid))
     return;
 
-  context.death_tick_by_player_uid[player_uid] = death_tick;
+  context.world.death_tick_by_player_uid[player_uid] = death_tick;
 }
 
 // Pick a spawn marker for this player. Right now we always grab the first
@@ -57,7 +56,7 @@ void update_respawns(server_context_t &context,
                      uint32_t current_tick,
                      uint32_t tickrate_hz)
 {
-  if (context.death_tick_by_player_uid.empty())
+  if (context.world.death_tick_by_player_uid.empty())
     return;
 
   const uint32_t delay_ticks =
@@ -66,7 +65,7 @@ void update_respawns(server_context_t &context,
   // Collect uids to respawn this tick. Two-pass so we can erase from the
   // map without invalidating the iteration over it.
   std::vector<shared::entity_uid_t> ready_uids;
-  for (const auto &[uid, death_tick] : context.death_tick_by_player_uid)
+  for (const auto &[uid, death_tick] : context.world.death_tick_by_player_uid)
   {
     if (current_tick >= death_tick + delay_ticks)
       ready_uids.push_back(uid);
@@ -74,10 +73,10 @@ void update_respawns(server_context_t &context,
 
   for (shared::entity_uid_t uid : ready_uids)
   {
-    context.death_tick_by_player_uid.erase(uid);
+    context.world.death_tick_by_player_uid.erase(uid);
 
     entities::Player_Entity *player =
-        context.session.entity_system.get<entities::Player_Entity>(uid);
+        context.world.session.entity_system.get<entities::Player_Entity>(uid);
     if (!player)
     {
       // Player entity vanished between death and respawn (disconnect, map
@@ -89,7 +88,7 @@ void update_respawns(server_context_t &context,
 
     vec3f spawn_position{0.f, 0.f, 0.f};
     vec3f spawn_orientation{0.f, 0.f, 0.f};
-    if (!pick_spawn_marker(context.session, spawn_position, spawn_orientation))
+    if (!pick_spawn_marker(context.world.session, spawn_position, spawn_orientation))
     {
       log_error("update_respawns: no Player_Spawn_Entity available, "
                 "respawning player uid {} at origin",
@@ -117,9 +116,9 @@ void update_respawns(server_context_t &context,
     // this tick (rocket splash, trigger volumes) see the player at the new
     // position, not the death position. Matches the offset
     // register_kinematic_capsule uses at connect time.
-    if (context.physics)
+    if (context.world.physics)
     {
-      set_kinematic_pose(*context.physics, uid,
+      set_kinematic_pose(*context.world.physics, uid,
                          spawn_position +
                              vec3f{0.f, shared::player_capsule_center_offset, 0.f},
                          vec3f{0.f, 0.f, 0.f});

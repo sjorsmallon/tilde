@@ -6,12 +6,9 @@
 #include "../shared/collision_detection.hpp"
 #include "damage.hpp"
 #include "../shared/entities/entity_reflection.hpp"
-#include "../shared/cosmetic_events.hpp"
-#include "../shared/game_events.hpp"
 #include "entity_lifecycle.hpp"
 #include "server_api.hpp"
 #include "trigger_actions.hpp"
-#include "cosmetic_events.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/game_rules_system.hpp"
 #include "systems/physics_body_system.hpp"
@@ -19,6 +16,7 @@
 #include "systems/rocket_system.hpp"
 #include "../shared/hitscan.hpp"
 #include "../shared/weapons.hpp"
+#include "../shared/array.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -48,11 +46,11 @@
 namespace server
 {
 
-// Send a text message to a specific client to display in their console
-static void send_text_message_to_a_specific_client(network::Udp_Socket &socket,
+server_context_t g_server_context;
+
+static void send_text_message_to_a_specific_client(server_context_t &context,
                                 const network::Address &ip,
-                                std::string_view text,
-                                network::uint8 &next_message_id)
+                                std::string_view text)
 {
   game::S2C_ServerMessage msg;
   msg.set_message(std::string(text));
@@ -60,65 +58,40 @@ static void send_text_message_to_a_specific_client(network::Udp_Socket &socket,
   msg.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
   constexpr network::uint8 type_id =
       static_cast<network::uint8>(network::Message_Type::S2C_ServerMessage);
-  auto packets = network::convert_to_packets(buffer, type_id, next_message_id);
+  auto packets = network::convert_to_packets(
+      buffer, type_id, context.transport_layer.next_message_id);
   // sendto()'s return value used to be discarded here, which made a message that
   // never left the box indistinguishable from one the client chose not to
   // display — exactly the ambiguity that made this path hard to diagnose.
-  for (const auto &pkt : packets)
+  for (const auto &packet : packets)
   {
-    if (!socket.send(pkt, ip))
+    if (!context.socket.send(packet, ip))
       log_error("S2C_ServerMessage to {} failed to send (fragment {}/{}, {} "
                 "bytes): {}",
-                ip.to_string(), pkt.header.fragment_index + 1,
-                pkt.header.fragment_count, pkt.header.payload_size, text);
+                ip.to_string(), packet.header.fragment_index + 1,
+                packet.header.fragment_count, packet.header.payload_size, text);
   }
 }
 
-// Broadcast a text message to all currently connected clients.
-//
-// Also echoed to the server's own terminal: on a dedicated server nobody is
-// looking at a client console, and in the integrated launcher this is the line
-// that says the server *decided* to say something, independent of whether any
-// client received it. Recipient count included for the same reason — a
-// broadcast with no connected slots is a message that died in the slot table
-// rather than on the wire, and that reads as "the client never got it".
-static void broadcast_server_message(network::Server_Transport_Layer &net,
-                                     network::Udp_Socket &socket,
-                                     std::string_view text)
+static void broadcast_server_text_message(server_context_t &context,
+                                          std::string_view text)
 {
   int recipient_count = 0;
-  for (int i = 0; i < network::sv_max_player_count; ++i)
+  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (net.player_slots[i])
+    if (context.transport_layer.player_slots[slot])
     {
       ++recipient_count;
-      send_text_message_to_a_specific_client(socket, net.player_ips[i], text,
-                                             net.next_message_id);
+      send_text_message_to_a_specific_client(
+          context, context.transport_layer.player_ips[slot], text);
     }
   }
 
   log_terminal("[BROADCAST -> {} client(s)] {}", recipient_count, text);
 }
 
-// NOTE(cvar-mirror): send_cvar_sync is gone. It existed to tell the client what
-// names the server had, because the server's registry was a runtime map the
-// client could not see. Both sides now compile the SAME generated
-// CVAR_INFOS/COMMAND_INFOS out of cvars.def, and the connect handshake refuses
-// any client whose SCHEMA_HASH differs -- so "what names exist" needs no
-// message at all. What rides the wire is @Mirrored VALUES only: see
-// send_cvar_values below.
-
-server_context_t ctx;
-network::Udp_Socket g_socket;
-// Starts at 1, not 0: tick 0 is the "no baseline / full update" sentinel in
-// S2C_EntityPackage.delta_from_tick and in the client's snapshot ack, so no
-// real snapshot may carry it.
-uint32_t g_tick_number = 1;
-
-// Refuse a pending connection. server_schema_hash is only meaningful for a
-// schema mismatch (0 otherwise) -- it rides alongside the reason so the client
-// can print both hashes without having to parse the sentence.
-static void send_reject(const network::Address &sender, std::string_view reason,
+static void send_reject(server_context_t &context,
+                        const network::Address &sender, std::string_view reason,
                         uint32_t server_schema_hash)
 {
   game::NetCommand reply;
@@ -130,10 +103,11 @@ static void send_reject(const network::Address &sender, std::string_view reason,
   reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
   auto packets = network::convert_to_packets(
       buffer, static_cast<network::uint8>(network::Message_Type::NetCommand),
-      ctx.transport_layer.next_message_id);
+      context.transport_layer.next_message_id);
   for (const auto &p : packets)
-    g_socket.send(p, sender);
+    context.socket.send(p, sender);
 }
+
 // Snapshot of a Player_Spawn_Entity used at (re)spawn time: position +
 // orientation (Euler degrees, .y = yaw, .x = pitch, .z = roll/unused). The
 // respawn_system has its own private picker because it lives in
@@ -146,10 +120,12 @@ struct human_spawn_transform_t
 
 // Returns all human spawn markers (Spawn_Type::Human) from the entity_system.
 // Used for player join and spawn_bot cycling.
-static std::vector<human_spawn_transform_t> get_human_spawn_transforms()
+static std::vector<human_spawn_transform_t>
+get_human_spawn_transforms(server_context_t &context)
 {
   Span<entities::Player_Spawn_Entity> pool =
-      ctx.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      context.world.session.entity_system
+          .entities_of<entities::Player_Spawn_Entity>();
   std::vector<human_spawn_transform_t> out;
   for (const entities::Player_Spawn_Entity &sp : pool)
     if (sp.spawn_type == entities::Spawn_Type::Human)
@@ -159,63 +135,19 @@ static std::vector<human_spawn_transform_t> get_human_spawn_transforms()
   return out;
 }
 
-struct Player_Server_State
-{
-  int      last_processed_command = -1;
-  uint64_t last_buttons           = 0;
-
-  // Which Player_Entity belongs to this connection slot.
-  //
-  // P7 step 4 decided this rather than leaving the scans: three places asked
-  // "which player is slot N" by walking the whole player pool comparing
-  // client_slot_index, and that is a SLOT lookup, not a uid one -- the uid index
-  // cannot answer it, so the only way to delete the scan was to record the
-  // answer where the slot already has a home. This array IS the slot table:
-  // it is cleared on join and on leave, which is exactly when the mapping
-  // changes.
-  //
-  // null_entity_uid means the slot has no live entity (unconnected, or spawn
-  // failed). Bots are NOT here: their client_slot_index is >= BOT_SLOT_BASE,
-  // which is out of this array's range by construction, and Bot_State carries
-  // its own uid.
-  shared::entity_uid_t player_uid = shared::null_entity_uid;
-};
-
-std::array<Player_Server_State, network::sv_max_player_count> g_player_states{};
-
-// --- Snapshot history, the baseline store for delta compression ---
-//
-// One snapshot per tick, not one "last sent" state -- see snapshot_history.hpp
-// for why that distinction is the whole of delta correctness over UDP.
-//
-// ONE ring, shared by every client, plus one ack cursor each. There is no PVS
-// or relevancy filtering, so the frame every client is sent is the same frame;
-// storing it per client cost `CAPACITY x sv_max_player_count` copies of the
-// world to hold 32 distinct ones. What is genuinely per client is only which
-// tick that client has acked, which is a uint32.
-//
-// If per-client filtering ever lands, this goes back to per-client frames --
-// the frames stop being identical at that moment, not before.
-network::Snapshot_History<network::snapshot_frame_t> g_snapshot_history{};
-
-std::array<uint32_t, network::sv_max_player_count> g_client_acked_ticks{};
-
-std::vector<Bot_State> g_bots;
-int g_next_bot_slot = BOT_SLOT_BASE; // increments with each spawned bot
-
 // Compute a spawn position roughly at the caller's eye height and 80 units
 // forward along their view direction. Returns nullopt if the slot has no
 // associated Player_Entity (e.g. command typed at the dedicated-server console
 // where caller_slot == -1, or an unconnected slot).
 static std::optional<vec3f>
-spawn_position_in_front_of(int caller_slot)
+position_in_front_of(server_context_t &context, int32_t caller_slot)
 {
-  if (caller_slot < 0 || caller_slot >= network::sv_max_player_count)
+  if (!is_valid_client_slot(caller_slot))
     return std::nullopt;
 
   const entities::Player_Entity *player =
-      ctx.session.entity_system.get<entities::Player_Entity>(
-          g_player_states[caller_slot].player_uid);
+      context.world.session.entity_system.get<entities::Player_Entity>(
+          context.clients[caller_slot].player_uid);
   if (!player) return std::nullopt;
 
   float yaw_rad   = linalg::to_radians(player->view_angle_yaw);
@@ -228,86 +160,44 @@ spawn_position_in_front_of(int caller_slot)
   return player->position + vec3f{0, eye_height, 0} + forward * forward_offset;
 }
 
-// The four @Server command handlers. Their bodies are handwritten and live
-// here, next to the state they touch; only the BINDING is generated
-// (server_command_bindings.cpp, compiled into this DLL, takes the address of
-// each of these). So a rename or a signature drift is a link error naming the
-// symbol -- there is no registration, and nothing for the linker to drop.
-//
-// They are defined at the bottom of this file, after reload_map and the spawn
-// helpers they call. Declared here only so the reader meets them in the place
-// the old Console_Command objects used to sit.
-
-void handle_player_leave(server_context_t &state,
+void handle_player_leave(server_context_t &context,
                          const network::Address &sender)
 {
-  int slot = network::get_player_idx(state.transport_layer, sender);
-  if (slot == -1)
+  int32_t slot = static_cast<int32_t>(
+      network::get_player_idx(context.transport_layer, sender));
+  if (!is_valid_client_slot(slot))
     return;
 
-  const shared::entity_uid_t player_uid = g_player_states[slot].player_uid;
+  const shared::entity_uid_t player_uid = context.clients[slot].player_uid;
   if (player_uid != shared::null_entity_uid)
-    destroy_entity(state, player_uid);
+    destroy_entity(context, player_uid);
 
-  g_player_states[slot] = {};
-  broadcast_server_message(state.transport_layer, g_socket,
-                           std::format("Player left (slot {})", slot));
-  network::disconnect_player(state.transport_layer, sender);
+  // The whole slot, same call the join path makes. Leave used to clear the uid
+  // alone and leave the ack and the map-ready gate behind for the next occupant.
+  reset_client_slot(context, slot);
+
+  broadcast_server_text_message(context,
+                                std::format("Player left (slot {})", slot));
+  network::disconnect_player(context.transport_layer, sender);
   log_terminal("Player left slot {}: {}", slot, sender.to_string());
 }
 
-// Load a map file into ctx, replacing any existing session. Resets the
-// physics world, bot list, trigger-overlap set, and per-client delta baselines
-// so nothing from the prior map leaks into the new one.
+// Load a map file into the context, replacing any existing world.
 // Returns true on successful load. On failure the session is left empty.
-static bool load_map_into_state(const std::string &map_path)
+static bool load_map_into_state(server_context_t &context,
+                                const std::string &map_path)
 {
-  // Tear down previous world. Recreating physics_state_t is the cleanest way to
-  // drop all static/dynamic bodies — there's no bulk-clear API on physics_state_t.
-  ctx.physics = std::make_unique<physics_state_t>();
-  init_physics(*ctx.physics);
+  // Everything keyed to the map we are leaving, in one call — session, physics,
+  // the retained map, bots, trigger overlaps, pending deaths, the snapshot ring,
+  // the rules, and the map-scoped columns of every client slot. What survives
+  // and why is written out in server_context.cpp; this used to be a dozen
+  // statements here that only agreed with the other two reset sites by hand.
+  reset_for_new_map(context);
 
-  ctx.session = {};
-  ctx.current_map = {};
-  ctx.current_map_path.clear();
-  ctx.map_content_hash = 0;
-  g_bots.clear();
-  g_next_bot_slot = BOT_SLOT_BASE;
-  ctx.previous_tick_overlapping_trigger_player_pairs.clear();
-
-  // Every player uid in the slot table named an entity in the session we just
-  // dropped. This must be cleared HERE, not left to the caller's respawn loop:
-  // a fresh session restarts next_entity_id, so a retained uid is not merely
-  // dangling — it can be REISSUED to an unrelated entity, and then a slot
-  // resolves to someone else's player. The "a stale uid resolves to nothing"
-  // guarantee (entity_storage_def.md §2) holds within one session's monotonic
-  // counter, and a map load is where that counter restarts.
-  //
-  // Only the uid column: last_processed_command / last_buttons describe the
-  // client's command stream, which survives a map change.
-  for (Player_Server_State &player_state : g_player_states)
-    player_state.player_uid = shared::null_entity_uid;
-
-  // Same argument, same restarted counter, and this one was genuinely missing:
-  // a pending death entry keyed by an old uid would be REISSUED to an unrelated
-  // entity in the new session, and update_respawns would then teleport it to a
-  // spawn marker and set its health to 100 when the delay elapsed. The
-  // "no longer exists, skipping" branch there does not save us, because after
-  // reissue the uid resolves to a real Player_Entity -- just the wrong one.
-  ctx.death_tick_by_player_uid.clear();
-
-  // A map change restarts the match: round 1, Warmup, fresh deadline. Same
-  // argument as the two clears above — rules state describes the world we just
-  // dropped, and a retained round counter would make the new map look like it
-  // resumed mid-match.
-  reset_game_rules(ctx, g_tick_number,
-                   static_cast<uint32_t>(ctx.cvars->sv_tickrate));
-
-  // Every frame in the ring describes the OLD world; a delta against one after
-  // a map switch would be nonsense. Clearing the acks too means every client's
-  // next snapshot is a full update, which is what a new world is.
-  g_snapshot_history.clear();
-  g_client_acked_ticks.fill(0);
+  // A fresh Jolt world. reset_for_new_map dropped the old unique_ptr, which is
+  // the bulk clear — there is no bulk-clear API on physics_state_t.
+  context.world.physics = std::make_unique<physics_state_t>();
+  init_physics(*context.world.physics);
 
   if (map_path.empty())
   {
@@ -323,22 +213,24 @@ static bool load_map_into_state(const std::string &map_path)
     return false;
   }
 
-  ctx.current_map              = std::move(*loaded);
-  shared::map_t &server_map    = ctx.current_map;
+  world_t &world = context.world;
 
-  shared::init_session_from_map(ctx.session, server_map);
-  ctx.session.map_name = server_map.name;
-  ctx.current_map_path = map_path;
+  world.current_map         = std::move(*loaded);
+  shared::map_t &server_map = world.current_map;
+
+  shared::init_session_from_map(world.session, server_map);
+  world.session.map_name  = server_map.name;
+  world.current_map_path  = map_path;
   // Hash the canonical serialization (not the file), so it matches what the
   // client computes from its own loaded copy and what streaming will embed.
-  ctx.map_content_hash = shared::compute_map_content_hash(server_map);
-  shared::populate_static_physics_bodies(*ctx.physics, server_map);
+  world.map_content_hash = shared::compute_map_content_hash(server_map);
+  shared::populate_static_physics_bodies(*world.physics, server_map);
 
   // Spawn bots for any bot-type spawn markers (Spawn_Type::Bot).
   // Human spawn markers (Spawn_Type::Human) stay in entity_system and are
   // queried directly when players join — no need to extract or clear the pool.
   Span<entities::Player_Spawn_Entity> spawn_pool =
-      ctx.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
 
   int human_spawn_count = 0;
   int bot_spawn_count = 0;
@@ -349,7 +241,8 @@ static bool load_map_into_state(const std::string &map_path)
   {
     if (sp.spawn_type == entities::Spawn_Type::Bot)
     {
-      g_bots.push_back(spawn_bot(ctx.session, *ctx.physics, sp.position, g_next_bot_slot++, BotType::Regular));
+      world.bots.push_back(spawn_bot(world.session, *world.physics, sp.position,
+                                     world.next_bot_slot++, BotType::Regular));
       ++bot_spawn_count;
     }
     else
@@ -357,7 +250,7 @@ static bool load_map_into_state(const std::string &map_path)
   }
 
   log_terminal("Loaded map='{}', {} human spawns, {} bot spawns",
-               ctx.session.map_name, human_spawn_count, bot_spawn_count);
+               world.session.map_name, human_spawn_count, bot_spawn_count);
   return true;
 }
 
@@ -375,21 +268,14 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
     return false;
   }
 
-  // Before the first map load resolves a mesh. Same static-lib reason as the
-  // client: this DLL has its own asset state pointer and it starts null.
   assets::set_state(asset_state);
 
-  // Before anything reads sv_tickrate or runs a console line. bind_server_commands
-  // fills this DLL's @Server handler slots; the link step already proved every
-  // symbol it names exists, so there is no runtime check to make here.
-  ctx.cvars    = cvar_state;
-  ctx.commands = command_table;
+  g_server_context.cvars    = cvar_state;
+  g_server_context.commands = command_table;
   cvars::bind_server_commands(*command_table);
 
-  // Seed the mirroring baseline from the values we are actually starting with,
-  // so the first tick broadcasts nothing. A client that connects later gets the
-  // full set from the accept handler regardless.
-  ctx.last_broadcast_cvars = *cvar_state;
+  // initialize to defaults.
+  g_server_context.last_broadcast_cvars = *cvar_state;
 
   // The hit volumes, eagerly. Loading them either succeeds or kills the
   // process, and "the server dies at boot naming the file" beats "the server
@@ -404,7 +290,7 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
     jolt_initialized = true;
   }
 
-  if (!g_socket.open(network::server_port_number))
+  if (!g_server_context.socket.open(network::server_port_number))
   {
     log_error("Failed to open server socket on port {}. Port may be in use or insufficient permissions.",
                  network::server_port_number);
@@ -421,42 +307,39 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
     f.close();
   }
 
-  load_map_into_state(map_name);
+  load_map_into_state(g_server_context, map_name);
 
   log_terminal("--- Server initialization complete ---");
   return true;
 }
 
-// Spawns a Player_Entity for a connected slot into the current session: picks a
-// human spawn transform, sets the combat hitbox, registers the kinematic Jolt
-// body, and fires PLAYER_SPAWNED. Shared by the connect path and the mid-game
-// map switch (reload_map), which both need an identically-initialized player.
-// Records the new player's uid in g_player_states[slot], which is what every
-// "which player is slot N" lookup now reads instead of scanning the pool.
-// Returns that uid, or null_entity_uid if the spawn failed.
-static shared::entity_uid_t spawn_player_for_slot(int slot)
+
+static shared::entity_uid_t spawn_player_entity_for_slot(server_context_t &context,
+                                                  int32_t slot)
 {
-  if (slot < 0 || slot >= network::sv_max_player_count)
+  if (!is_valid_client_slot(slot))
   {
-    log_error("spawn_player_for_slot: slot {} is out of range", slot);
+    log_error("spawn_player_entity_for_slot: slot {} is out of range", slot);
     return shared::null_entity_uid;
   }
 
   const shared::entity_uid_t player_uid =
-      ctx.session.entity_system.spawn<entities::Player_Entity>();
+      context.world.session.entity_system.spawn<entities::Player_Entity>();
 
-  // Held for the rest of this function: nothing below spawns or destroys a
-  // Player_Entity, so nothing can move the pool out from under it.
   entities::Player_Entity *player =
-      ctx.session.entity_system.get<entities::Player_Entity>(player_uid);
+      context.world.session.entity_system.get<entities::Player_Entity>(player_uid);
+  
   if (!player)
+  {
+    log_error("spawned a player entity and could not find it.");
     return shared::null_entity_uid;
+  }
 
-  g_player_states[slot].player_uid = player_uid;
+  context.clients[slot].player_uid = player_uid;
 
   player->client_slot_index = slot;
-  auto spawns = get_human_spawn_transforms();
-  const human_spawn_transform_t &chosen_spawn = spawns[slot % spawns.size()];
+  auto spawns = get_human_spawn_transforms(context);
+  const human_spawn_transform_t& chosen_spawn = spawns[slot % spawns.size()];
   player->position         = chosen_spawn.position;
   player->orientation      = chosen_spawn.orientation;
   player->view_angle_yaw   = chosen_spawn.orientation.y;
@@ -464,98 +347,79 @@ static shared::entity_uid_t spawn_player_for_slot(int slot)
   player->health = 100;
 
   log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
-               slot, player->entity_id, player->position.x,
-               player->position.y, player->position.z);
+               slot, player->entity_id, player->position.x, player->position.y, player->position.z);
 
   // Hitbox and model: the same for every player, human or bot.
   initialize_player_body(*player);
 
   // Kinematic Jolt body so rockets and overlap queries can find this player.
-  if (ctx.physics)
+  if (context.world.physics)
   {
-    register_kinematic_capsule(*ctx.physics, player_uid,
-                               player->position +
-                                   vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+    register_kinematic_capsule(*context.world.physics, 
+                               player_uid,
+                               player->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
                                shared::player_capsule_radius,
                                shared::player_capsule_cylinder_half_height);
   }
 
-  // Clients can't tell a connect-time spawn from a respawn, by design.
-  fire_player_spawned_event(ctx, player_uid,
-                            chosen_spawn.position, chosen_spawn.orientation);
+  fire_player_spawned_event(context, player_uid, chosen_spawn.position, chosen_spawn.orientation);
   return player_uid;
 }
 
-// The map identifier we put on the wire: a maps-relative basename (e.g.
-// "new_map.source"), NOT the server's absolute path. Each client resolves it
-// against its own maps dir (MAPS_DIR), so a client can have the map in a
-// different folder — or not at all, in which case it streams. See
-// shared::resolve_map_path.
-static std::string current_map_wire_id()
+static std::string current_map_wire_id(const server_context_t &context)
 {
-  return std::filesystem::path(ctx.current_map_path).filename().generic_string();
+  return std::filesystem::path(context.world.current_map_path)
+      .filename()
+      .generic_string();
 }
 
-// Sends a bitstream-native CmdChangeMap for the current map to one slot. Payload
-// mirrors CmdAccept (path, name, hash). Idempotent: resent each tick to any
-// connected-but-not-ready client until it acks C2S_MapLoaded — our cheap
-// stand-in for reliable delivery until an ack/retransmit channel exists
-// (see todo.md "reliable bulk transfer").
-static void send_change_map(int slot)
+static void send_change_map(server_context_t &context, int32_t slot)
 {
   shared::change_map_message_t msg;
-  msg.map_path     = current_map_wire_id();
-  msg.map_name     = ctx.session.map_name;
-  msg.content_hash = ctx.map_content_hash;
+  msg.map_path     = current_map_wire_id(context);
+  msg.map_name     = context.world.session.map_name;
+  msg.content_hash = context.world.map_content_hash;
 
   network::Bit_Writer writer;
   shared::serialize_change_map(writer, msg);
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::CmdChangeMap),
-      ctx.transport_layer.next_message_id);
+      context.transport_layer.next_message_id);
   for (const auto &p : packets)
-    g_socket.send(p, ctx.transport_layer.player_ips[slot]);
+    context.socket.send(p, context.transport_layer.player_ips[slot]);
 }
 
-// Sends a bitstream-native S2C_CvarValues to one slot. Two callers, two
-// payloads: the whole @Mirrored set at connect (so a client joining mid-match
-// starts from the server's live values, not from cvars.def defaults) and the
-// per-tick diff below.
-static void send_cvar_values(int slot, const shared::cvar_values_message_t &msg)
+static void send_cvar_values(server_context_t &context, int32_t slot,
+                             const shared::cvar_values_message_t &msg)
 {
   network::Bit_Writer writer;
   shared::serialize_cvar_values(writer, msg);
   auto packets = network::convert_to_packets(
       writer.buffer,
       static_cast<network::uint8>(network::Message_Type::S2C_CvarValues),
-      ctx.transport_layer.next_message_id);
+      context.transport_layer.next_message_id);
   for (const auto &p : packets)
-    g_socket.send(p, ctx.transport_layer.player_ips[slot]);
+    context.socket.send(p, context.transport_layer.player_ips[slot]);
 }
 
-// Broadcasts every @Mirrored value that changed since the last broadcast, then
-// retains the new values. The retain happens ONLY here, after the send: a change
-// that is never broadcast stays different from the retained copy and is picked
-// up again next tick, which is the whole lost-update repair story (there is no
-// ack for this message).
-static void broadcast_changed_cvar_values()
+static void broadcast_changed_cvar_values(server_context_t &context)
 {
   shared::cvar_values_message_t changed =
-      shared::collect_changed_mirrored_cvars(*ctx.cvars,
-                                             ctx.last_broadcast_cvars);
+      shared::collect_changed_mirrored_cvars(*context.cvars,
+                                             context.last_broadcast_cvars);
   if (changed.values.empty())
     return;
 
-  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (ctx.transport_layer.player_slots[slot])
-      send_cvar_values(slot, changed);
+    if (context.transport_layer.player_slots[slot])
+      send_cvar_values(context, slot, changed);
   }
 
-  // Whole-struct copy, not a per-member one: only the @Mirrored members are
+  // Whole-struct copy: only the @Mirrored members are
   // ever compared, so copying the rest costs nothing and cannot go stale.
-  ctx.last_broadcast_cvars = *ctx.cvars;
+  context.last_broadcast_cvars = *context.cvars;
 
   for (const shared::cvar_value_t &value : changed.values)
     log_terminal("Mirroring '{}' = {} to connected clients",
@@ -564,25 +428,23 @@ static void broadcast_changed_cvar_values()
 
 bool reload_map(const std::string &map_path)
 {
+  server_context_t &context = g_server_context;
+
   log_terminal("--- Changing server map: '{}' ---", map_path);
 
   // Load the new map. This wipes the session, physics world, bots, and every
   // client's delta baseline, so the first snapshot after the switch is a full
   // (non-delta) update.
-  if (!load_map_into_state(map_path))
+  if (!load_map_into_state(context, map_path))
     return false;
 
-  // Keep connected players connected across the switch: re-spawn each into the
-  // fresh session and tell them to load the new map. Snapshots are withheld
-  // (client_map_ready=false) until each acks C2S_MapLoaded, so nobody receives
-  // entity deltas for a map they aren't running yet.
-  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  // Keep connected players connected across the switch
+  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (!ctx.transport_layer.player_slots[slot])
+    if (!context.transport_layer.player_slots[slot])
       continue;
-    spawn_player_for_slot(slot);
-    ctx.client_map_ready[slot] = false;
-    send_change_map(slot);
+    spawn_player_entity_for_slot(context, slot);
+    send_change_map(context, slot);
   }
   return true;
 }
@@ -590,26 +452,25 @@ bool reload_map(const std::string &map_path)
 bool Tick()
 {
   timed_function();
-  //@Todo: Yikes, reallocating the inbox is wasteful. 
-  network::ServerInbox inbox;
 
-  network::poll_network(ctx.transport_layer, g_socket, 0.005,
-                        inbox); // 5ms receive window
+  server_context_t &context = g_server_context;
+
+  // The inbox is retained on the context so its vectors keep their capacity;
+  // poll_network only push_backs, so it has to be emptied here or last tick's
+  // moves get replayed.
+  clear_incoming(context);
+  network::ServerInbox &inbox = context.incoming;
+
+  network::poll_network(context.transport_layer, context.socket, 0.005, inbox); // 5ms receive window
 
   // Handle Net Commands (Handshake)
   for (const auto &[sender, cmd] : inbox.net_commands)
   {
-
     if (cmd.has_connect())
     {
-      if (network::get_player_idx(ctx.transport_layer, sender) != -1)
+      if (network::get_player_idx(context.transport_layer, sender) != invalid_slot_idx)
         continue;
 
-      // Schema handshake, before a slot is taken. A client built from a
-      // different entities.def (or a different asset manifest) parses the
-      // entity bitstream against different offsets, so everything after this
-      // point would be silently wrong. Refuse, and say both hashes -- the
-      // number is the only thing that identifies which build is stale.
       const uint32_t client_schema_hash = cmd.connect().schema_hash();
       if (client_schema_hash != entities::SCHEMA_HASH)
       {
@@ -618,7 +479,7 @@ bool Tick()
                   "built from the same entities.def and asset set.",
                   cmd.connect().player_name(), client_schema_hash,
                   entities::SCHEMA_HASH);
-        send_reject(sender,
+        send_reject(context, sender,
                     std::format("Schema mismatch: client {:#010x}, server "
                                 "{:#010x} -- rebuild against the same "
                                 "entities.def",
@@ -627,11 +488,10 @@ bool Tick()
         continue;
       }
 
-      constexpr const int32_t invalid_slot_idx = -1;
-      int slot = invalid_slot_idx;
-      for (int player_idx = 0; player_idx < network::sv_max_player_count; ++player_idx)
+      int32_t slot = invalid_slot_idx;
+      for (int32_t player_idx = 0; player_idx < network::sv_max_player_count; ++player_idx)
       {
-        if (!ctx.transport_layer.player_slots[player_idx])
+        if (!context.transport_layer.player_slots[player_idx])
         {
           slot = player_idx;
           break;
@@ -641,77 +501,71 @@ bool Tick()
       if (slot != invalid_slot_idx)
       {
         // Accept
-        ctx.transport_layer.player_slots[slot] = true;
-        ctx.transport_layer.player_ips[slot] = sender;
-        ctx.transport_layer.player_byte_buffers[slot] = {};
-        ctx.transport_layer.partial_packets[slot].clear();
-        g_player_states[slot] = {};
+        context.transport_layer.player_slots[slot] = true;
+        context.transport_layer.player_ips[slot] = sender;
+        context.transport_layer.player_byte_buffers[slot] = {};
+        context.transport_layer.partial_packets[slot].clear();
 
-        // A reused slot must not inherit the previous occupant's ack — this
-        // client has reconstructed nothing, so its first snapshot is a full
-        // update.
-        g_client_acked_ticks[slot] = 0;
+        reset_client_slot(context, slot);
 
         log_terminal("Player {} joined at slot {}",
                      cmd.connect().player_name(), slot);
 
-        spawn_player_for_slot(slot);
+        spawn_player_entity_for_slot(context, slot);
 
         // The client loads its map before connecting, so it's ready to receive
         // snapshots the moment it's accepted. (A mid-game CmdChangeMap flips this
         // back to false until the client acks the new map.)
-        ctx.client_map_ready[slot] = true;
+        context.clients[slot].map_ready = true;
 
         // Send Accept
         {
           game::NetCommand reply;
           auto *accept = reply.mutable_accept();
           accept->set_client_slot(slot);
-          accept->set_map_name(ctx.session.map_name.empty()
+          accept->set_map_name(context.world.session.map_name.empty()
                                   ? "start.map"
-                                  : ctx.session.map_name);
-          accept->set_server_tickrate(static_cast<int>(ctx.cvars->sv_tickrate));
-          accept->set_map_path(current_map_wire_id());
-          accept->set_content_hash(ctx.map_content_hash);
+                                  : context.world.session.map_name);
+          accept->set_server_tickrate(
+              static_cast<int>(context.cvars->sv_tickrate));
+          accept->set_map_path(current_map_wire_id(context));
+          accept->set_content_hash(context.world.map_content_hash);
 
           std::vector<network::uint8> buffer(reply.ByteSizeLong());
           reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
           auto packets = network::convert_to_packets(
               buffer,
               static_cast<network::uint8>(network::Message_Type::NetCommand),
-              ctx.transport_layer.next_message_id);
+              context.transport_layer.next_message_id);
           for (const auto &p : packets)
-            g_socket.send(p, sender);
+            context.socket.send(p, sender);
         }
 
-        // The full @Mirrored set, right after the accept. It must go AFTER the
-        // hash check above: the ids are per-build table indices, so a client
-        // that disagreed about cvars.def would apply them to the wrong cvars.
-        send_cvar_values(slot, shared::collect_mirrored_cvars(*ctx.cvars));
+        send_cvar_values(context, slot,
+                         shared::collect_mirrored_cvars(*context.cvars));
 
         // Announce join to all clients (including the new one)
-        broadcast_server_message(
-            ctx.transport_layer, g_socket,
-            std::format("{} joined the server (slot {})",
-                        cmd.connect().player_name(), slot));
+        broadcast_server_text_message(
+            context, std::format("{} joined the server (slot {})",
+                                 cmd.connect().player_name(), slot));
 
-        //@FIXME(SMIA): this is just a placeholder for now, 
+        //@FIXME(SMIA): this is just a placeholder for now,
         // for fun coop games.
         // count active players. if 4 players, start countdown?
         size_t player_count = 0;
-        for (int i = 0; i < network::sv_max_player_count; ++i)
+        for (int32_t i = 0; i < network::sv_max_player_count; ++i)
         {
-          if (ctx.transport_layer.player_slots[i])
+          if (context.transport_layer.player_slots[i])
             player_count++;
         }
 
         if (player_count == 4)
         {
           log_terminal("4 players connected, starting countdown to start match.");
-          start_match(ctx, g_tick_number,
-                      static_cast<uint32_t>(ctx.cvars->sv_tickrate));
-          broadcast_server_message(
-              ctx.transport_layer, g_socket,
+          start_match(context, context.tick_number,
+                      static_cast<uint32_t>(context.cvars->sv_tickrate));
+          broadcast_server_text_message(
+              context,
               std::format("Entering Countdown phase. Match will start in {:.0f} "
                           "seconds.",
                           countdown_duration_seconds));
@@ -719,12 +573,12 @@ bool Tick()
       }
       else
       {
-        send_reject(sender, "Server Full", 0);
+        send_reject(context, sender, "Server Full", 0);
       }
     }
     else if (cmd.has_disconnect())
     {
-      handle_player_leave(ctx, sender);
+      handle_player_leave(context, sender);
     }
   }
 
@@ -732,7 +586,7 @@ bool Tick()
   for (const auto &[player_idx, line] : inbox.commands)
   {
     log_terminal("Command from slot {}: {}", player_idx, line);
-    const auto &client_ip = ctx.transport_layer.player_ips[player_idx];
+    const auto &client_ip = context.transport_layer.player_ips[player_idx];
 
     // The same dispatcher the client console runs, over the same generated
     // tables. Two things keep this from bouncing the line straight back: the
@@ -741,10 +595,11 @@ bool Tick()
     // loopback forever), and the real caller_slot below marks this line as
     // having already come from the wire, which execute_console_line refuses to
     // forward a second time.
-    cvars::command_context_t context{ .caller_slot = static_cast<int>(player_idx) };
+    cvars::command_context_t command_context{
+        .caller_slot = static_cast<int>(player_idx)};
     std::string reply;
     cvars::console_result_t result = cvars::execute_console_line(
-        *ctx.cvars, *ctx.commands, line, context, &reply);
+        *context.cvars, *context.commands, line, command_context, &reply);
 
     if (result == cvars::console_result_t::unknown_name)
       log_terminal("Unknown command from slot {}: {}", player_idx, line);
@@ -752,8 +607,7 @@ bool Tick()
     // Echo something back either way: the client printed the line locally and
     // is waiting to hear what came of it.
     send_text_message_to_a_specific_client(
-        g_socket, client_ip, reply.empty() ? ("OK: " + line) : reply,
-        ctx.transport_layer.next_message_id);
+        context, client_ip, reply.empty() ? ("OK: " + line) : reply);
   }
 
   // Process C2S_MapLoaded acks: a client finished (re)loading the map. Verify
@@ -764,17 +618,18 @@ bool Tick()
   {
     network::Bit_Reader reader(payload.data(), payload.size());
     shared::map_loaded_message_t ack = shared::deserialize_map_loaded(reader);
-    if (ack.content_hash == ctx.map_content_hash)
+    if (ack.content_hash == context.world.map_content_hash)
     {
-      ctx.client_map_ready[player_idx] = true;
+      context.clients[player_idx].map_ready = true;
       log_terminal("Slot {} loaded map '{}' (hash {:#x}); resuming snapshots.",
-                   player_idx, ctx.session.map_name, ack.content_hash);
+                   player_idx, context.world.session.map_name,
+                   ack.content_hash);
     }
     else
     {
       log_error("Slot {} acked map hash {:#x} but server is running {:#x}. "
                 "Withholding snapshots until it loads the correct map.",
-                player_idx, ack.content_hash, ctx.map_content_hash);
+                player_idx, ack.content_hash, context.world.map_content_hash);
     }
   }
 
@@ -789,11 +644,12 @@ bool Tick()
     shared::request_map_data_message_t req =
         shared::deserialize_request_map_data(reader);
 
-    shared::map_package_t package = shared::build_map_package(ctx.current_map);
+    shared::map_package_t package =
+        shared::build_map_package(context.world.current_map);
     std::vector<network::uint8> blob = shared::serialize_map_package(package);
 
     shared::map_data_message_t msg;
-    msg.map_name     = ctx.session.map_name;
+    msg.map_name     = context.world.session.map_name;
     msg.package_hash = shared::compute_map_package_hash(blob);
     msg.compressed   = false; // step 6 adds gzip
     msg.bytes        = std::move(blob);
@@ -803,11 +659,11 @@ bool Tick()
     auto packets = network::convert_to_packets(
         writer.buffer,
         static_cast<network::uint8>(network::Message_Type::S2C_MapData),
-        ctx.transport_layer.next_message_id);
+        context.transport_layer.next_message_id);
     for (const auto &p : packets)
-      g_socket.send(p, ctx.transport_layer.player_ips[player_idx]);
+      context.socket.send(p, context.transport_layer.player_ips[player_idx]);
 
-    ctx.client_map_ready[player_idx] = false;
+    context.clients[player_idx].map_ready = false;
     log_terminal("Streamed map package '{}' ({} bytes, {} packets, hash {:#x}) "
                  "to slot {} (requested '{}').",
                  msg.map_name, msg.bytes.size(), packets.size(),
@@ -817,10 +673,11 @@ bool Tick()
   // Resend CmdChangeMap to any connected-but-not-ready client. UDP has no
   // ack/retransmit yet, so this idempotent per-tick resend is how a dropped
   // switch message eventually reaches the client (it stops once acked above).
-  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (ctx.transport_layer.player_slots[slot] && !ctx.client_map_ready[slot])
-      send_change_map(slot);
+    if (context.transport_layer.player_slots[slot] &&
+        !context.clients[slot].map_ready)
+      send_change_map(context, slot);
   }
 
   // Sort moves by timestamp
@@ -831,7 +688,7 @@ bool Tick()
   // Process moves — run player_move() authoritatively
   for (const auto &[player_idx, tm] : inbox.moves)
   {
-    if (player_idx < 0 || player_idx >= network::sv_max_player_count)
+    if (!is_valid_client_slot(player_idx))
     {
       log_error("Tick: a move arrived tagged with slot {}, which is out of range "
                 "— dropped",
@@ -842,8 +699,8 @@ bool Tick()
     // One uid-index lookup, held for this iteration only. The rocket spawn below
     // lands in a different pool, so it cannot move this player.
     entities::Player_Entity* player =
-        ctx.session.entity_system.get<entities::Player_Entity>(
-            g_player_states[player_idx].player_uid);
+        context.world.session.entity_system.get<entities::Player_Entity>(
+            context.clients[player_idx].player_uid);
     // Silent on purpose, unlike the range check above: a connected client keeps
     // sending moves across a map switch, between the session reset and its
     // respawn, and that window has no entity to move. Ordinary, and per-tick, so
@@ -861,7 +718,7 @@ bool Tick()
     //
     // ABOVE the is_movement_allowed gate below, on purpose. That gate
     // `continue`s, so anything left underneath it silently stops happening
-    // during a countdown — and last_buttons going stale there is a real bug,
+    // during a countdown — and latest_buttons_bitmap going stale there is a real bug,
     // not merely lost bookkeeping: a client that presses fire mid-countdown and
     // keeps holding it would still look like a fresh rising edge on the first
     // live tick and get a free shot. Decoding here keeps the edges honest
@@ -869,20 +726,19 @@ bool Tick()
     //
     // player_idx was range-checked at the top of the loop, so this indexes
     // freely from here on.
-    Player_Server_State &pstate   = g_player_states[player_idx];
-    pstate.last_processed_command = move.command_number();
+    client_slot_t &client            = context.clients[player_idx];
+    client.latest_processed_command = move.command_number();
 
     // Snapshot ack. Never trusted beyond "the client claims it holds this
     // tick" — the history lookup still has to hit a frame we actually kept.
     // Only ever moves forward: datagrams reorder, and an older value would
     // cost bandwidth for nothing.
-    if (move.acked_server_tick() > g_client_acked_ticks[player_idx])
-      g_client_acked_ticks[player_idx] = move.acked_server_tick();
+    if (move.acked_server_tick() > client.acked_snapshot_tick)
+      client.acked_snapshot_tick = move.acked_server_tick();
 
-      
-    const uint64_t current_buttons       = move.buttons_bitfield();
-    const uint64_t pressed_this_tick = current_buttons & ~pstate.last_buttons;
-    pstate.last_buttons              = current_buttons;
+    const uint64_t current_buttons   = move.buttons_bitfield();
+    const uint64_t pressed_this_tick = current_buttons & ~client.latest_buttons_bitmap;
+    client.latest_buttons_bitmap     = current_buttons;
 
     // weapon switching is allowed even though moving isn't.
     if (pressed_this_tick & Button::Key1)
@@ -894,9 +750,9 @@ bool Tick()
         pressed_this_tick & Button::Key3)
     {
       // log_terminal("Slot {} equipped this weapon: {}", player_idx, to_string(player->active_weapon_id));
-      broadcast_server_message(ctx.transport_layer, g_socket,
-                             std::format("Slot {} equipped this weapon: {}",
-                                         player_idx, to_string(player->active_weapon_id)));
+      broadcast_server_text_message(
+          context, std::format("Slot {} equipped this weapon: {}", player_idx,
+                               to_string(player->active_weapon_id)));
     }
 
     const bool fire_pressed = (pressed_this_tick & Button::Fire) != 0;
@@ -930,7 +786,7 @@ bool Tick()
 
     float tick_dt = static_cast<float>(get_tick_interval());
 
-    if (!is_movement_allowed(ctx)) 
+    if (!is_movement_allowed(context)) 
     {
       // Movement is disallowed (e.g. countdown phase). Zero out velocity and
       // keep the player at their current position.
@@ -941,7 +797,7 @@ bool Tick()
       // Authoritative move. Updates position and velocity in place.
     Move_Events move_events{};
     auto [new_pos, new_vel] =
-        player_move(*ctx.cvars, input, ctx.session.bvh, player->position,
+        player_move(*context.cvars, input, context.world.session.bvh, player->position,
                     player->velocity, front, right_dir, 16.f, 36.f, tick_dt,
                     &move_events);
 
@@ -963,24 +819,24 @@ bool Tick()
     // so only *other* clients hear it, spatialized at the player's position.
     if (move_events.jumped)
     {
-      shared::effect_data_t fx{};
+      shared::Jump fx{};
       fx.origin          = new_pos;
       fx.attached_entity = player->entity_id;
-      dispatch_effect(ctx, shared::effect_type_t::JUMP, fx);
+      shared::fire_jump(context.outgoing.effects, fx);
     }
     if (move_events.landed && move_events.land_impact_speed >
-                                  ctx.cvars->pm_minimum_land_impact_speed)
+                                  context.cvars->pm_minimum_land_impact_speed)
     {
-      shared::effect_data_t fx{};
+      shared::Land fx{};
       fx.origin          = new_pos;
       fx.scale           = move_events.land_impact_speed; // for volume scaling
       fx.attached_entity = player->entity_id;
-      dispatch_effect(ctx, shared::effect_type_t::LAND, fx);
+      shared::fire_land(context.outgoing.effects, fx);
     }
 
-    if (ctx.physics)
+    if (context.world.physics)
     {
-      set_kinematic_pose(*ctx.physics,
+      set_kinematic_pose(*context.world.physics,
                          player->entity_id,
                          new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
                          new_vel);
@@ -1003,7 +859,7 @@ bool Tick()
       // accumulated float, so it cannot drift and a paused/countdown phase
       // cannot bank up shots.
       const float seconds_since_last_fire =
-          static_cast<float>(g_tick_number - player->last_fire_tick) *
+          static_cast<float>(context.tick_number - player->last_fire_tick) *
           static_cast<float>(get_tick_interval());
       if (seconds_since_last_fire < weapon.fire_interval_seconds)
         continue;
@@ -1014,7 +870,7 @@ bool Tick()
       // by the time the snapshot lands. Both live on the entity so they
       // replicate -- see entities.def for why this is state and not an
       // effect. Above the kind switch so every weapon is covered once.
-      player->last_fire_tick   = g_tick_number;
+      player->last_fire_tick   = context.tick_number;
       player->last_fire_weapon = player->active_weapon_id;
 
       // Switch on KIND, not on Weapon: the fire path cares how a shot
@@ -1037,7 +893,7 @@ bool Tick()
 
         ray_hit_result_t world_hit{};
         const bool world_blocked =
-            bvh_intersect_ray(ctx.session.bvh, eye, direction, world_hit) &&
+            bvh_intersect_ray(context.world.session.bvh, eye, direction, world_hit) &&
             world_hit.hit;
         if (world_blocked)
           range = std::min(range, world_hit.t);
@@ -1052,14 +908,14 @@ bool Tick()
         // targets' spans point into, and it is sized up front -- a push_back
         // reallocating it would leave every earlier span dangling.
         const shared::player_rig_t &rig      = shared::player_rig();
-        const aim_settings_t        settings = aim_settings_from(*ctx.cvars);
+        const aim_settings_t        settings = aim_settings_from(*context.cvars);
 
         std::vector<shared::hitscan_target_t> targets;
         std::vector<assets::posed_hitbox_t>   volumes;
         {
           std::vector<const entities::Player_Entity *> victims;
           for (const entities::Player_Entity &other :
-               ctx.session.entity_system.entities_of<entities::Player_Entity>())
+               context.world.session.entity_system.entities_of<entities::Player_Entity>())
           {
             if (other.entity_id == player->entity_id) continue;
             if (other.health <= 0) continue;
@@ -1091,10 +947,10 @@ bool Tick()
 
         if (hit.hit_uid != shared::null_entity_uid)
         {
-          broadcast_server_message(ctx.transport_layer, g_socket,
-                                 std::format("Player {} hit player {} in the {}",
-                                             player_idx, hit.hit_uid,
-                                             to_string(hit.region)));
+          broadcast_server_text_message(
+              context, std::format("Player {} hit player {} in the {}",
+                                   player_idx, hit.hit_uid,
+                                   to_string(hit.region)));
           const bool was_headshot = hit.region == shared::hit_region_t::Head;
 
           damage_info_t info{};
@@ -1106,34 +962,34 @@ bool Tick()
                                  (was_headshot ? weapon.headshot_multiplier : 1.f);
           info.source_position = eye;
           info.was_headshot    = was_headshot;
-          inflict_damage(ctx, info);
+          inflict_damage(context, info);
 
           // The wet thud, for everyone, at the VICTIM. Dispatched here rather
           // than inside inflict_damage because this is the only place that
           // knows where the shot landed -- damage_info_t carries the shooter's
           // eye, not the impact point -- and because one rocket is N damage
           // calls but should still be one noise.
-          shared::effect_data_t impact_fx{};
+          shared::Flesh_Impact impact_fx{};
           impact_fx.origin           = hit.impact_point;
           impact_fx.normal           = hit.impact_normal;
           impact_fx.attached_entity  = hit.hit_uid;
           impact_fx.surface_material = static_cast<uint16_t>(hit.region);
-          dispatch_effect(ctx, shared::effect_type_t::FLESH_IMPACT, impact_fx);
+          shared::fire_flesh_impact(context.outgoing.effects, impact_fx);
 
           // The hitmarker, for the shooter only, as replicated state. Their
           // own client plays it off this stamp advancing -- see
           // Player_Entity::last_hit_tick in entities.def for why it is not an
           // effect.
-          player->last_hit_tick         = g_tick_number;
+          player->last_hit_tick         = context.tick_number;
           player->last_hit_was_headshot = was_headshot;
         }
         else if (world_blocked && weapon.kind != entities::Weapon_Kind::Melee)
         {
           // Melee deliberately produces no impact effect: a knife swing that
           // reaches a wall should not spray a bullet decal.
-          shared::effect_data_t fx{};
+          shared::Bullet_Impact fx{};
           fx.origin = eye + direction * world_hit.t;
-          dispatch_effect(ctx, shared::effect_type_t::BULLET_IMPACT, fx);
+          shared::fire_bullet_impact(context.outgoing.effects, fx);
         }
         break;
       }
@@ -1143,19 +999,19 @@ bool Tick()
         log_terminal("Player {} fired a rocket!", player_idx);
 
         const shared::entity_uid_t rocket_uid =
-            ctx.session.entity_system.spawn<entities::Rocket_Entity>();
+            context.world.session.entity_system.spawn<entities::Rocket_Entity>();
         entities::Rocket_Entity *rocket =
-            ctx.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
+            context.world.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
         if (rocket)
         {
           // Muzzle is the eye, same as the hitscan origin -- a rocket that
           // spawns somewhere other than where the crosshair is aimed from is
           // the same class of bug as a mismatched hitscan origin.
           rocket->position = eye;
-          rocket->velocity = direction * ctx.cvars->game_rocket_speed;
+          rocket->velocity = direction * context.cvars->game_rocket_speed;
           rocket->owner_id = player->entity_id;
 
-          rocket->render.mesh     = entities::mesh_asset::Missing;
+          rocket->render.mesh     = assets::mesh_asset::Missing;
           rocket->render.visible  = true;
           rocket->render.scale    = vec3{1.f, 1.f, 1.f};
           rocket->render.rotation = vec3{0.f, 0.f, 0.f};
@@ -1167,7 +1023,7 @@ bool Tick()
 
           printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
                  rocket->position.x, rocket->position.y, rocket->position.z,
-                 entities::to_string(rocket->render.mesh), rocket->render.visible);
+                 assets::to_string(rocket->render.mesh), rocket->render.visible);
         }
         break;
       }
@@ -1177,12 +1033,12 @@ bool Tick()
 
   // --- Simulate server-side entities ---
   float tick_dt = static_cast<float>(get_tick_interval());
-  if (!ctx.physics)
+  if (!context.world.physics)
   {
     log_error("Server tick with no physics state — init() must have failed");
     return false;
   }
-  update_bots(g_bots, ctx, g_tick_number, tick_dt);
+  update_bots(context, context.tick_number, tick_dt);
 
   // The feet chase the view, on the FIXED tick, for every player -- after
   // update_bots because a bot's view yaw is written in there and this reads it.
@@ -1192,9 +1048,9 @@ bool Tick()
   // permanently untwisted. This is the one writer of the field
   // (animation_def.md, "body_yaw is a tier-1 accumulator") -- clients read it.
   {
-    const aim_settings_t settings = aim_settings_from(*ctx.cvars);
+    const aim_settings_t settings = aim_settings_from(*context.cvars);
     for (entities::Player_Entity &player :
-         ctx.session.entity_system.entities_of<entities::Player_Entity>())
+         context.world.session.entity_system.entities_of<entities::Player_Entity>())
     {
       // A corpse's feet chase nothing. The death clip owns the pose from here
       // until the respawn re-places body_yaw, and the volumes are not tested
@@ -1204,22 +1060,22 @@ bool Tick()
     }
   }
 
-  update_rockets(ctx, tick_dt);
+  update_rockets(context, tick_dt);
   // Respawn drain runs after damage systems so any deaths registered this
   // tick are eligible for the deadline check (delay is >0 ticks, so a
   // same-tick death-respawn never happens — but ordering is the intent).
-  update_respawns(ctx, g_tick_number,
-                  static_cast<uint32_t>(ctx.cvars->sv_tickrate));
+  update_respawns(context, context.tick_number,
+                  static_cast<uint32_t>(context.cvars->sv_tickrate));
 
   // Match-level phase FSM, after the gameplay systems so a win condition
   // firing this tick (once win conditions exist) is reflected before the
   // deadline check runs. Purely bookkeeping today — see the wiring list in
   // enter_phase().
-  update_game_rules(ctx, g_tick_number,
-                    static_cast<uint32_t>(ctx.cvars->sv_tickrate));
+  update_game_rules(context, context.tick_number,
+                    static_cast<uint32_t>(context.cvars->sv_tickrate));
 
-  step_physics(*ctx.physics, tick_dt);
-  update_physics_bodies(ctx.session, *ctx.physics);
+  step_physics(*context.world.physics, tick_dt);
+  update_physics_bodies(context.world.session, *context.world.physics);
 
   // --- Check trigger volumes against players ---
   //
@@ -1232,16 +1088,16 @@ bool Tick()
   // Two fire modes are supported:
   //   - On_Enter:   fire only on the rising edge (previous tick: no overlap).
   //   - Every_Tick: fire whenever overlap is active.
-  // Per-(trigger, player) overlap state is kept on ctx across ticks.
+  // Per-(trigger, player) overlap state is kept on context across ticks.
   //
   // Both pools are fetched HERE rather than reused from earlier in the tick:
   // this is a walk over every player, not a lookup of one, so it wants the pool
   // — but a pool pointer grabbed hundreds of lines ago would have survived every
   // spawn and destroy in between.
   Span<entities::Player_Entity> player_pool =
-      ctx.session.entity_system.entities_of<entities::Player_Entity>();
+      context.world.session.entity_system.entities_of<entities::Player_Entity>();
   Span<entities::Trigger_Volume_Entity> trigger_pool =
-      ctx.session.entity_system.entities_of<entities::Trigger_Volume_Entity>();
+      context.world.session.entity_system.entities_of<entities::Trigger_Volume_Entity>();
   std::set<std::pair<std::uint64_t, std::uint64_t>> current_tick_overlaps;
   for (entities::Player_Entity &player : player_pool)
   {
@@ -1268,7 +1124,7 @@ bool Tick()
       std::pair<std::uint64_t, std::uint64_t> pair_key{trigger.entity_id,
                                                         player.entity_id};
       bool was_overlapping =
-          ctx.previous_tick_overlapping_trigger_player_pairs.count(
+          context.world.previous_tick_overlapping_trigger_player_pairs.count(
               pair_key) > 0;
       current_tick_overlaps.insert(pair_key);
 
@@ -1278,17 +1134,17 @@ bool Tick()
       if (!should_fire)
         continue;
 
-      server::fire_trigger_action(ctx, trigger, player);
+      server::fire_trigger_action(context, trigger, player);
     }
   }
-  ctx.previous_tick_overlapping_trigger_player_pairs =
+  context.world.previous_tick_overlapping_trigger_player_pairs =
       std::move(current_tick_overlaps);
 
   // --- Broadcast bot debug state to all connected clients ---
-  if (!g_bots.empty())
+  if (!context.world.bots.empty())
   {
     game::S2C_BotDebug dbg_msg;
-    for (const auto &bot : g_bots)
+    for (const auto &bot : context.world.bots)
     {
       auto *entry = dbg_msg.add_bots();
       entry->set_slot(bot.player_slot);
@@ -1308,13 +1164,13 @@ bool Tick()
     constexpr network::uint8 dbg_type =
         static_cast<network::uint8>(network::Message_Type::S2C_BotDebug);
     auto dbg_packets =
-        network::convert_to_packets(dbg_buf, dbg_type, ctx.transport_layer.next_message_id);
+        network::convert_to_packets(dbg_buf, dbg_type, context.transport_layer.next_message_id);
     for (int slot = 0; slot < network::sv_max_player_count; ++slot)
     {
-      if (!ctx.transport_layer.player_slots[slot])
+      if (!context.transport_layer.player_slots[slot])
         continue;
-      for (const auto &pkt : dbg_packets)
-        g_socket.send(pkt, ctx.transport_layer.player_ips[slot]);
+      for (const auto &packet : dbg_packets)
+        context.socket.send(packet, context.transport_layer.player_ips[slot]);
     }
   }
 
@@ -1328,11 +1184,11 @@ bool Tick()
   // data pointer and the count, so the same reuse would read freed memory. Fetch
   // at the point of use, per entities_of()'s contract.
   Span<entities::Player_Entity> snapshot_player_pool =
-      ctx.session.entity_system.entities_of<entities::Player_Entity>();
+      context.world.session.entity_system.entities_of<entities::Player_Entity>();
   Span<entities::Rocket_Entity> rocket_pool =
-      ctx.session.entity_system.entities_of<entities::Rocket_Entity>();
+      context.world.session.entity_system.entities_of<entities::Rocket_Entity>();
   Span<entities::Physics_Body_Entity> physics_body_pool =
-      ctx.session.entity_system.entities_of<entities::Physics_Body_Entity>();
+      context.world.session.entity_system.entities_of<entities::Physics_Body_Entity>();
 
   // Build this tick's frame ONCE, straight into its slot in the ring. It is
   // both what gets encoded and what a later ack will name as a baseline, so
@@ -1343,9 +1199,9 @@ bool Tick()
   // A client that acked the tick occupying this same ring slot has by
   // definition aged out — find() checks the tick, so it misses and that client
   // gets a full update.
-  network::snapshot_frame_t &frame = g_snapshot_history.slot_for(g_tick_number);
+  network::snapshot_frame_t &frame = context.replication.snapshot_history.slot_for(context.tick_number);
   frame.clear();
-  frame.tick = g_tick_number;
+  frame.tick = context.tick_number;
 
   for (const entities::Player_Entity &entity : snapshot_player_pool)
     frame.players[entity.entity_id] = entity;
@@ -1356,15 +1212,20 @@ bool Tick()
   for (const entities::Physics_Body_Entity &body : physics_body_pool)
     frame.physics_bodies[body.entity_id] = body;
 
+  // Backpatch the effect stream's count ONCE, before the loop: every client
+  // gets byte-for-byte the same block, which is the whole point of encoding at
+  // fire time rather than per client.
+  context.outgoing.effects.finish();
+
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_player_count; ++slot)
   {
-    if (!ctx.transport_layer.player_slots[slot])
+    if (!context.transport_layer.player_slots[slot])
       continue;
 
     // Withhold snapshots from a client still loading a (new) map — it has no
     // world to apply entity deltas to yet. Resumes once it acks C2S_MapLoaded.
-    if (!ctx.client_map_ready[slot])
+    if (!context.clients[slot].map_ready)
       continue;
 
     network::Bit_Writer writer;
@@ -1373,21 +1234,35 @@ bool Tick()
     // A miss (never acked, or acked so long ago it fell out of the ring) is not
     // an error — it just means this packet is a full update.
     const network::snapshot_frame_t *baseline =
-        g_snapshot_history.find(g_client_acked_ticks[slot]);
+        context.replication.snapshot_history.find(context.clients[slot].acked_snapshot_tick);
     const uint32_t baseline_tick = baseline != nullptr ? baseline->tick : 0;
 
     network::serialize_snapshot(writer, frame, baseline);
 
-    // Cosmetic effect batch rides in the same packet, after entity deltas.
-    // Unreliable by design (lost effect = silently dropped). Identical bytes
-    // sent to every client; per-client filtering is a future addition if PVS
+    // The cosmetic effect batch rides in the same packet, after the entity
+    // delta. Unreliable by design (lost effect = silently dropped). Identical
+    // bytes for every client; per-client filtering is a future addition if PVS
     // / relevancy ever lands.
-    shared::serialize_effect_batch(writer, ctx.effect_queue_this_tick);
+    //
+    // ALIGN-AND-SPLICE. Every client's delta is a different length, so this
+    // block would start at a different BIT offset per client -- which is why
+    // the effects used to be held as values and re-encoded here. write_bytes
+    // calls align() first, so the splice IS the alignment: at most 7 wasted
+    // bits, and one encoding serves everyone.
+    //
+    // The client's reader.align() (play_state.cpp, dispatch_received_effects)
+    // is the other half. THE TWO MUST MOVE TOGETHER -- a misaligned effect
+    // block decodes as plausible garbage rather than failing.
+    //
+    // Always spliced, even when nothing fired: the stream always holds its
+    // 2-byte count slot, so the reader's shape never varies.
+    writer.write_bytes(context.outgoing.effects.writer.buffer.data(),
+                       context.outgoing.effects.writer.buffer.size());
 
     // Create and send package
     game::S2C_EntityPackage package;
-    package.set_server_tick(g_tick_number);
-    package.set_last_processed_command(g_player_states[slot].last_processed_command);
+    package.set_server_tick(context.tick_number);
+    package.set_latest_processed_command(context.clients[slot].latest_processed_command);
     package.set_delta_from_tick(baseline_tick);
     package.set_is_delta(baseline_tick != 0);
     package.set_entity_data(writer.buffer.data(), writer.buffer.size());
@@ -1396,29 +1271,27 @@ bool Tick()
     package.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
     auto packets = network::convert_to_packets(
         buffer, static_cast<network::uint8>(network::Message_Type::S2C_EntityPackage),
-        ctx.transport_layer.next_message_id);
+        context.transport_layer.next_message_id);
 
     for (const auto &p : packets)
-      g_socket.send(p, ctx.transport_layer.player_ips[slot]);
+      context.socket.send(p, context.transport_layer.player_ips[slot]);
   }
-
-  // Effect queue is drained per tick: every connected client received this
-  // tick's batch in the loop above, so the next tick starts empty.
-  ctx.effect_queue_this_tick.clear();
 
   // Reliable gameplay event batch. Sent on its own protobuf message (not
   // bolted onto the snapshot) because gameplay events are reliable while
   // snapshots are unreliable — different reliability guarantees, different
   // wire path. The encoded body is identical for every client, so we encode
   // once and send to each connected client.
-  if (!ctx.game_event_queue_this_tick.empty())
+  if (!context.outgoing.events.empty())
   {
-    network::Bit_Writer event_writer;
-    shared::serialize_game_event_batch(event_writer, ctx.game_event_queue_this_tick);
+    // Already encoded — each fire wrote straight into this buffer. All that is
+    // left is to backpatch the count into the 16 bits reset() reserved.
+    context.outgoing.events.finish();
 
     game::S2C_GameEventBatch batch;
-    batch.set_event_data(event_writer.buffer.data(), event_writer.buffer.size());
-    batch.set_server_tick(g_tick_number);
+    batch.set_event_data(context.outgoing.events.writer.buffer.data(),
+                         context.outgoing.events.writer.buffer.size());
+    batch.set_server_tick(context.tick_number);
 
     std::vector<network::uint8> batch_buffer(batch.ByteSizeLong());
     batch.SerializeToArray(batch_buffer.data(),
@@ -1426,25 +1299,29 @@ bool Tick()
     auto event_packets = network::convert_to_packets(
         batch_buffer,
         static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch),
-        ctx.transport_layer.next_message_id);
+        context.transport_layer.next_message_id);
 
     for (int slot = 0; slot < network::sv_max_player_count; ++slot)
     {
-      if (!ctx.transport_layer.player_slots[slot]) continue;
+      if (!context.transport_layer.player_slots[slot]) continue;
       for (const auto &p : event_packets)
-        g_socket.send(p, ctx.transport_layer.player_ips[slot]);
+        context.socket.send(p, context.transport_layer.player_ips[slot]);
     }
   }
-  ctx.game_event_queue_this_tick.clear();
+
+  // Both S2C batches have gone out: every connected client received this tick's
+  // effects in the snapshot loop and its events just above, so the next tick
+  // starts empty.
+  clear_outgoing(context);
 
   // Mirror @Mirrored cvar changes last, so it catches every writer this tick —
   // a console line off the wire, a command handler, gameplay code writing the
-  // field directly. Not gated on client_map_ready: a cvar value is world-
-  // independent, and a client mid-download still wants the movement constants
-  // it will simulate with the moment its map lands.
-  broadcast_changed_cvar_values();
+  // field directly. Not gated on client_slot_t::map_ready: a cvar value is
+  // world-independent, and a client mid-download still wants the movement
+  // constants it will simulate with the moment its map lands.
+  broadcast_changed_cvar_values(context);
 
-  g_tick_number++;
+  context.tick_number++;
   return true;
 }
 
@@ -1459,16 +1336,17 @@ double get_tick_interval()
   // Called by the launcher every frame, including before init() in a
   // hypothetical reordering -- fall back to the .def default rather than
   // dereferencing null.
-  const float tickrate =
-      ctx.cvars ? ctx.cvars->sv_tickrate : cvars::cvar_state_t{}.sv_tickrate;
+  const float tickrate = g_server_context.cvars
+                             ? g_server_context.cvars->sv_tickrate
+                             : cvars::cvar_state_t{}.sv_tickrate;
   return 1.0 / static_cast<double>(tickrate);
 }
 
-uint32_t get_tick_number() { return g_tick_number; }
+uint32_t get_tick_number() { return g_server_context.tick_number; }
 
 const shared::game_session_t *get_session_for_integrated_client()
 {
-  return &ctx.session;
+  return &g_server_context.world.session;
 }
 
 } // namespace server
@@ -1490,9 +1368,13 @@ const shared::game_session_t *get_session_for_integrated_client()
 // argument binder has already parsed, validated and defaulted every parameter
 // -- an unparseable line got the usage reply instead of a call.
 //
-// `context.caller_slot` is the network player slot that typed the line, or -1
-// when the server itself invoked it (no human caller, hence no "in front of
-// me" position).
+// `command_context.caller_slot` is the network player slot that typed the line,
+// or -1 when the server itself invoked it (no human caller, hence no "in front
+// of me" position).
+//
+// These are the one place that names g_server_context directly rather than
+// taking it as a parameter: the generated binder calls them with the console's
+// arguments and nothing else, so there is no seam to thread a context through.
 
 namespace cvars::commands
 {
@@ -1512,65 +1394,74 @@ void spawn_bot(Bot_Mode mode, const command_context_t &)
     case Bot_Mode::regular: type = BotType::Regular; break;
   }
 
-  auto spawns = get_human_spawn_transforms();
-  const vec3f &position = spawns[g_bots.size() % spawns.size()].position;
+  server_context_t &server_context = g_server_context;
+  world_t          &world          = server_context.world;
+
+  auto spawns = get_human_spawn_transforms(server_context);
+  const vec3f &position = spawns[world.bots.size() % spawns.size()].position;
   // Qualified: unqualified lookup would find THIS function (we are inside
   // cvars::commands::spawn_bot) and never reach server::spawn_bot.
-  g_bots.push_back(server::spawn_bot(ctx.session, *ctx.physics, position,
-                                     g_next_bot_slot++, type));
+  world.bots.push_back(server::spawn_bot(world.session, *world.physics, position,
+                                         world.next_bot_slot++, type));
 
   log_terminal("spawn_bot: spawned {} bot at slot {}", cvars::to_string(mode),
-               g_next_bot_slot - 1);
+               world.next_bot_slot - 1);
 }
 
-void spawn_cube(const command_context_t &context)
+void spawn_cube(const command_context_t &command_context)
 {
   using namespace server;
 
-  if (!ctx.physics)
+  server_context_t &server_context = g_server_context;
+
+  if (!server_context.world.physics)
   {
     log_error("spawn_cube: physics state not initialized");
     return;
   }
-  auto drop_position = spawn_position_in_front_of(context.caller_slot);
+  auto drop_position =
+      position_in_front_of(server_context, command_context.caller_slot);
   if (!drop_position)
   {
     log_error("spawn_cube: no Player_Entity for caller_slot {}",
-              context.caller_slot);
+              command_context.caller_slot);
     return;
   }
 
   vec3f full_extents = {16.f, 16.f, 16.f};
   const shared::entity_uid_t body_uid =
-      spawn_physics_body(ctx, entities::Shape_Kind::Box, full_extents,
-                         *drop_position);
+      spawn_physics_body(server_context, entities::Shape_Kind::Box,
+                         full_extents, *drop_position);
   if (body_uid != shared::null_entity_uid)
     log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
                  body_uid, drop_position->x, drop_position->y,
                  drop_position->z);
 }
 
-void spawn_sphere(const command_context_t &context)
+void spawn_sphere(const command_context_t &command_context)
 {
   using namespace server;
 
-  if (!ctx.physics)
+  server_context_t &server_context = g_server_context;
+
+  if (!server_context.world.physics)
   {
     log_error("spawn_sphere: physics state not initialized");
     return;
   }
-  auto drop_position = spawn_position_in_front_of(context.caller_slot);
+  auto drop_position =
+      position_in_front_of(server_context, command_context.caller_slot);
   if (!drop_position)
   {
     log_error("spawn_sphere: no Player_Entity for caller_slot {}",
-              context.caller_slot);
+              command_context.caller_slot);
     return;
   }
 
   vec3f full_extents = {16.f, 16.f, 16.f}; // x = diameter
   const shared::entity_uid_t body_uid =
-      spawn_physics_body(ctx, entities::Shape_Kind::Sphere, full_extents,
-                         *drop_position);
+      spawn_physics_body(server_context, entities::Shape_Kind::Sphere,
+                         full_extents, *drop_position);
   if (body_uid != shared::null_entity_uid)
     log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
                  body_uid, drop_position->x, drop_position->y,

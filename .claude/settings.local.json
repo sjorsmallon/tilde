@@ -254,7 +254,13 @@
       "Bash(printf '%s' 'VkCommandBuffer begin_frame\\(\\)')",
       "Bash(printf '%s' 'VkDevice get_VkDevice\\(\\) { return g_device; }')",
       "Bash(python /c/Users/sjors/AppData/Local/Temp/claude/c--Users-sjors-Desktop-Projects-tilde-tilde/9f7e8244-3d4b-4433-891b-a57efc922ecd/scratchpad/cut.py src/client/renderer.cpp /c/Users/sjors/AppData/Local/Temp/claude/c--Users-sjors-Desktop-Projects-tilde-tilde/9f7e8244-3d4b-4433-891b-a57efc922ecd/scratchpad/a.txt /c/Users/sjors/AppData/Local/Temp/claude/c--Users-sjors-Desktop-Projects-tilde-tilde/9f7e8244-3d4b-4433-891b-a57efc922ecd/scratchpad/b.txt /c/Users/sjors/AppData/Local/Temp/claude/c--Users-sjors-Desktop-Projects-tilde-tilde/9f7e8244-3d4b-4433-891b-a57efc922ecd/scratchpad/rH.txt)",
-      "Bash(grep -v \"ctx\\\\.\\\\|ui\\\\.\\\\|entity_system\\\\|//\")"
+      "Bash(grep -v \"ctx\\\\.\\\\|ui\\\\.\\\\|entity_system\\\\|//\")",
+      "Bash(grep -n \"^static\\\\|^int main\\\\|^// ---\\\\|^//===\\\\|^struct \\\\|^enum \" src/tools/def_gen.cpp)",
+      "Bash(awk 'NR>=3300 && NR<=4400 && /DECLARATION_ASSETS|has_asset_class|asset_manifest|asset_info_t|ASSET_SOURCE|asset_entries|mesh_asset|enum_traits|DECLARATION_ENUM/ {print NR\": \"$0}' src/tools/def_gen.cpp)",
+      "Bash(mkdir -p src/shared/assets/generated)",
+      "Bash(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def --dump)",
+      "Bash(grep -n \"mesh_asset\\\\|sprite_asset\\\\|assets$\")",
+      "Bash(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def --emit --asset-root .)"
     ],
     "additionalDirectories": [
       "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"

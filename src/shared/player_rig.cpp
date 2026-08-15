@@ -67,11 +67,10 @@ player_rig_t load_player_rig()
 //
 // The rotation is the RENDERER's, not `direction_from_angles`': a model matrix
 // with rotation.y sweeps +X toward -Z (renderer.cpp's T * Rz * Ry * Rx * S),
-// while a view yaw sweeps +X toward +Z. Matching the renderer is the whole
-// point -- a volume has to land on the limb you can see, and the drawn mesh is
-// what decides where that is. If the model turns out to face the wrong way
-// (todo.md, "Does the model face the right way?") both move together and the
-// fix stays in the exporter.
+// while a view yaw sweeps +X toward +Z. `model_yaw_from_view_yaw` is that
+// conversion and both sides call it -- a volume has to land on the limb you can
+// see, so this angle and play_state's draw call must be the same angle or the
+// overlay stops being evidence of anything.
 struct model_to_world_t
 {
   float         cosine = 1.0f;
@@ -87,7 +86,7 @@ struct model_to_world_t
 
 model_to_world_t transform_for(const player_pose_t &pose)
 {
-  const float angle = linalg::to_radians(pose.body_yaw);
+  const float angle = linalg::to_radians(linalg::model_yaw_from_view_yaw(pose.body_yaw));
   return {std::cos(angle), std::sin(angle), pose.feet_position};
 }
 

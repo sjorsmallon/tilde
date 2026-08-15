@@ -1,0 +1,40 @@
+// effects.def -- the cosmetic effect channel.
+
+//
+// A CHANNEL is a closed set of named messages, each carrying a payload, each
+// dispatched to exactly one handler. `channel` declares the shared payload; its
+// fields are prepended to every member and serialize first, exactly as
+// `Entity :: base` works for entities. A member names the channel as its
+// declaration kind and carries a mandatory description -- these are the names of
+// a closed protocol, and the description feeds the generated enum comments and
+// --scaffold's stubs.
+//
+// One channel per file. The kind enum is DERIVED from declaration order, so
+// nothing is spelled twice, and ORDER IS THE WIRE ID -- mixed into SCHEMA_HASH,
+// so a reorder is a refused handshake rather than a silent remap. Append.
+//
+// f32 and v3 ride the wire QUANTIZED (network::write_coord). A field that needs
+// full float precision does not belong on this wire.
+//
+// Nothing here imports anything and nothing may import this file: an effect
+// references no entity, no asset and no cvar.
+//
+// Unreliable: the batch is spliced into the snapshot packet, byte-aligned.
+// Lost = invisible. You will not notice a missing explosion under packet loss.
+
+Effect :: channel
+{
+    origin:           v3    // where it happened, world space
+    normal:           v3    // {0,0,0} = not applicable
+    color:            v3
+    scale:            f32
+    attached_entity:  u32   // an entity uid; 0 = world-space
+    surface_material: u16   // 0 = unknown
+}
+
+Rocket_Explosion :: Effect  "splash particles + surface decal"
+Bullet_Impact    :: Effect  "world-surface hit"
+Footstep         :: Effect  "one foot planting"
+Jump             :: Effect  "leaving the ground"
+Land             :: Effect  "arriving back on it"
+Flesh_Impact     :: Effect  "a shot that landed on a player; surface_material carries the hit_region_t, attached_entity the victim"

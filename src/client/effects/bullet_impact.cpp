@@ -1,4 +1,4 @@
-#include "../../shared/cosmetic_events.hpp"
+#include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/physics.hpp"
@@ -10,7 +10,7 @@ namespace client::effects
 {
 
 void on_bullet_impact(client_context_t &context,
-                      const shared::effect_data_t &data)
+                      const shared::Bullet_Impact &data)
 {
     (void)context;
     (void)data;

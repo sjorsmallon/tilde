@@ -40,15 +40,22 @@ REQUIRED_VERSION = (5, 1)
 # 1 engine unit == 1 inch (player_eye_height 64, gravity 800), so metres * 39.37.
 METRES_TO_UNITS = 39.37
 
-# Blender is Z-up right-handed; the engine is Y-up. (x, y, z) -> (x, z, -y),
-# matching Blender's own OBJ exporter at Up:Y Forward:-Z -- which is what the
-# existing resources/obj assets already are, since asset.cpp applies no flip.
+# Blender is Z-up right-handed; the engine is Y-up. (x, y, z) -> (-y, z, -x),
+# i.e. Blender's Up:Y Forward:-Z with a further -90 degrees of yaw folded in, so
+# that a character authored facing -Y (Blender's front view) comes out facing
+# +X. +X is what `direction_from_angles` calls yaw 0, which is what lets a draw
+# call turn a model with the body yaw and no constant correction -- do that
+# correction here or every future .mesh carries its own copy of it.
+#
+# Deliberately NOT the convention of resources/obj: those props are placed by an
+# author-chosen euler in the editor, so they have no yaw-0 to agree with.
+#
 # The 3x3 part is a proper rotation (determinant 1), so normals need no
-# transpose-inverse and stay unit length.
-AXIS_CONVERSION = mathutils.Matrix(((1, 0, 0, 0),
-                                    (0, 0, 1, 0),
-                                    (0, -1, 0, 0),
-                                    (0, 0, 0, 1)))
+# transpose-inverse and stay unit length, and left stays left.
+AXIS_CONVERSION = mathutils.Matrix((( 0, -1, 0, 0),
+                                    ( 0,  0, 1, 0),
+                                    (-1,  0, 0, 0),
+                                    ( 0,  0, 0, 1)))
 
 MAX_INFLUENCES = 4
 MAX_BONES = 128

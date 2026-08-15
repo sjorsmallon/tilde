@@ -18,7 +18,7 @@ namespace
 // spells it.
 void render_leaf_field(uint8_t *base, const entities::leaf_field_t &leaf, int id)
 {
-  const entities::field_info_t &field = *leaf.info;
+  const field_info_t &field = *leaf.info;
   void *field_ptr = base + leaf.offset;
   const char *label = leaf.name.c_str();
 
@@ -26,50 +26,50 @@ void render_leaf_field(uint8_t *base, const entities::leaf_field_t &leaf, int id
 
   switch (field.type)
   {
-    case entities::FIELD_TYPE_I8:
-    case entities::FIELD_TYPE_I16:
-    case entities::FIELD_TYPE_I32:
+    case FIELD_TYPE_I8:
+    case FIELD_TYPE_I16:
+    case FIELD_TYPE_I32:
       ImGui::InputInt(label, static_cast<int *>(field_ptr));
       break;
 
-    case entities::FIELD_TYPE_U8:
+    case FIELD_TYPE_U8:
       ImGui::InputScalar(label, ImGuiDataType_U8, field_ptr);
       break;
-    case entities::FIELD_TYPE_U16:
+    case FIELD_TYPE_U16:
       ImGui::InputScalar(label, ImGuiDataType_U16, field_ptr);
       break;
-    case entities::FIELD_TYPE_U32:
+    case FIELD_TYPE_U32:
       ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
       break;
-    case entities::FIELD_TYPE_U64:
+    case FIELD_TYPE_U64:
       ImGui::InputScalar(label, ImGuiDataType_U64, field_ptr);
       break;
-    case entities::FIELD_TYPE_I64:
+    case FIELD_TYPE_I64:
       ImGui::InputScalar(label, ImGuiDataType_S64, field_ptr);
       break;
 
-    case entities::FIELD_TYPE_F32:
+    case FIELD_TYPE_F32:
       ImGui::DragFloat(label, static_cast<float *>(field_ptr), 0.1f);
       break;
-    case entities::FIELD_TYPE_F64:
+    case FIELD_TYPE_F64:
       ImGui::InputDouble(label, static_cast<double *>(field_ptr));
       break;
 
-    case entities::FIELD_TYPE_BOOL:
+    case FIELD_TYPE_BOOL:
       ImGui::Checkbox(label, static_cast<bool *>(field_ptr));
       break;
 
-    case entities::FIELD_TYPE_V3:
+    case FIELD_TYPE_V3:
       ImGui::DragFloat3(label, static_cast<float *>(field_ptr), 0.1f);
       break;
-    case entities::FIELD_TYPE_V4:
+    case FIELD_TYPE_V4:
       ImGui::DragFloat4(label, static_cast<float *>(field_ptr), 0.1f);
       break;
-    case entities::FIELD_TYPE_V4I:
+    case FIELD_TYPE_V4I:
       ImGui::InputInt4(label, static_cast<int *>(field_ptr));
       break;
 
-    case entities::FIELD_TYPE_STRING:
+    case FIELD_TYPE_STRING:
     {
       // pascal_string_t<N> is `uint8 length; char data[N + 1]`, addressed
       // generically through the capacity the field record carries.
@@ -87,10 +87,9 @@ void render_leaf_field(uint8_t *base, const entities::leaf_field_t &leaf, int id
       break;
     }
 
-    case entities::FIELD_TYPE_ENUM:
+    case FIELD_TYPE_ENUM:
     {
-      const entities::enum_type_info_t &info =
-          entities::enum_info((entities::enum_type)field.enum_id);
+      const enum_type_info_t &info = *field.enum_info;
 
       // Enum storage is one byte; the widget wants an int.
       uint8_t stored = *static_cast<uint8_t *>(field_ptr);
@@ -104,14 +103,14 @@ void render_leaf_field(uint8_t *base, const entities::leaf_field_t &leaf, int id
       break;
     }
 
-    case entities::FIELD_TYPE_ASSET:
+    case FIELD_TYPE_ASSET:
     {
-      const Span<const entities::asset_info_t> manifest =
-          entities::asset_class_manifest(field.asset_class_id);
+      const Span<const assets::asset_info_t> manifest =
+          assets::asset_class_manifest(field.asset_class_id);
 
       std::vector<const char *> names;
       names.reserve(manifest.size());
-      for (const entities::asset_info_t &asset : manifest)
+      for (const assets::asset_info_t &asset : manifest)
         names.push_back(asset.name);
 
       uint16_t stored = *static_cast<uint16_t *>(field_ptr);
@@ -122,8 +121,8 @@ void render_leaf_field(uint8_t *base, const entities::leaf_field_t &leaf, int id
       break;
     }
 
-    case entities::FIELD_TYPE_COMPONENT:
-    case entities::FIELD_TYPE_INVALID:
+    case FIELD_TYPE_COMPONENT:
+    case FIELD_TYPE_INVALID:
       // Components never reach here: the caller flattens them away.
       ImGui::Text("%s: <not an editable leaf>", label);
       break;

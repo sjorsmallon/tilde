@@ -36,7 +36,7 @@ static constexpr int32_t invalid_slot_idx = -1;
 //           ──load/verify fails─────────────────▶ (stay Loading; re-request)
 //
 // Invariants: we only send move commands / run prediction+reconciliation while
-// Connected; the server withholds snapshots (client_map_ready) until it sees
+// Connected; the server withholds snapshots (its client_slot_t::map_ready) until it sees
 // our C2S_MapLoaded, so a Loading client receives no entity deltas. See
 // play_state.cpp update() and connection_t::awaiting_stream_content_hash.
 enum class Connection_Phase { Disconnected, Connecting, Loading, Connected };
@@ -296,45 +296,13 @@ struct visual_effects_t
 
 struct client_context_t
 {
-  // --- Handles and inputs ---
-  // NOTHING here is touched by the reset functions below; each field says why.
-  // Everything AFTER them is reset-scoped state, and its group name says by what.
-
-  // Installed once at client::Init / client_impl init and live for the whole
-  // client session. The launcher owns cvars/commands and outlives this module.
-  //
-  // NOTE: the POINTER is module-scope, but the @Mirrored values behind `cvars`
-  // are CONNECTION-scope -- server-owned, pushed over the wire, and stale the
-  // moment the connection ends. That is handled by an explicit revert in
-  // reset_for_new_connection, not by this pointer's lifetime.
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
-
-  // Borrowed pointer to the client-global audio system (owned in
-  // client_impl.cpp). Cosmetic-effect handlers play sounds through this. Always
-  // non-null after client init(); handlers guard it anyway in case audio init
-  // failed.
   audio_system_t* audio = nullptr;
 
-  // Integrated builds only: the server's authoritative session, so the renderer
-  // can read entity pools directly instead of going through snapshot
-  // interpolation. Null in dedicated/networked-only builds -- which also makes
-  // it the client's only way to answer "is there a server in this process".
   const shared::game_session_t* server_session = nullptr;
-
-  // Holds a Udp_Socket with a destructor and no user-defined assignment, so
-  // `= {}` would copy a live handle and double-close it. Its lifetime is
-  // open()/close(), managed explicitly by Play_State::on_enter / on_exit.
   ::network::Client_Transport_Layer transport_layer;
 
-  // An INPUT to the next connect, not state produced by one: written by whoever
-  // initiates a join (the main menu's Join Game field, the `connect` console
-  // command) BEFORE Play_State runs, and read exactly once by on_enter.
-  // state_manager::switch_to() carries no payload and the states are long-lived
-  // singletons, so the context is the seam between "who picked the server" and
-  // "who connects to it". Putting it in `connection` would have
-  // reset_for_new_connection erase the address it is about to dial. Defaults to
-  // loopback, which is what the integrated launcher and plain Start Game want.
   ::network::Address requested_server_address =
       ::network::Address(127, 0, 0, 1, ::network::server_port_number);
 
@@ -346,23 +314,7 @@ struct client_context_t
   visual_effects_t visuals;
 };
 
-// A new connection attempt (Play_State::on_enter). Everything the previous
-// connection established goes: our identity on the server, the predicted local
-// player, and the replicated world -- uids and slots from the old server mean
-// nothing to the new one.
-//
-// `world` survives: reconnecting to a server running the map we already have
-// must not throw that map away. (Leaving Play_State entirely is the other
-// story -- on_exit clears the world outright, because a client that is not in
-// play has no world.) The handles and requested_server_address at the top of
-// the struct survive for the reasons written there.
 void reset_for_new_connection(client_context_t& context);
-
-// A new map (Play_State::finalize_client_map, from a local load or a streamed
-// package). Only what is keyed to the map we are leaving: the replicated world
-// and the effects standing in it. `world` itself is not cleared here -- the
-// caller is mid-rebuild of it. The connection is untouched: a map switch happens
-// WITHIN a connection, and clearing my_slot would desync the handshake.
 void reset_for_new_map(client_context_t& context);
 
 } // namespace client

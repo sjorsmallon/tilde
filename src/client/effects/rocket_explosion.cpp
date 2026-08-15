@@ -1,4 +1,4 @@
-#include "../../shared/cosmetic_events.hpp"
+#include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/physics.hpp"
@@ -10,7 +10,7 @@ namespace client::effects
 
 // ROCKET_EXPLOSION handler. The server tells us:
 void on_rocket_explosion(client_context_t &context,
-                         const shared::effect_data_t &data)
+                         const shared::Rocket_Explosion &data)
 {
   if (!context.world.physics_state)
   {

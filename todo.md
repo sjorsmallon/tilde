@@ -43,13 +43,15 @@ from B's write-up did not survive contact and are worth knowing:
 
 **Problem.** Every sound in the codebase is a raw path string —
 `play_3d("resources/sounds/player_jump.wav")`. Meshes and sprites are declared
-as asset classes in `entities.def` that scan a directory, so the generator emits
-a closed enum and a bad name is a build error. Sounds get none of that.
-`weapon_fire_audio.cpp` currently points at `resources/sounds/rocket_fire.wav`,
-**which does not exist** — you find out from a runtime log line.
+as asset classes in `src/shared/assets/assets.def` that scan a directory, so the
+generator emits a closed enum and a bad name is a build error. Sounds get none
+of that. `weapon_fire_audio.cpp` currently points at
+`resources/sounds/rocket_fire.wav`, **which does not exist** — you find out from
+a runtime log line.
 
-**The fix:** a `sound_asset` class scanning `resources/sounds`, so the string
-becomes `sound_asset::Rocket_Fire` and a typo fails the build.
+**The fix:** a `sound_asset` class in `assets.def` scanning `resources/sounds`,
+so the string becomes `assets::sound_asset::Rocket_Fire` and a typo fails the
+build.
 
 **The blocker, and why this is not a one-line .def edit:** the resolved manifest
 is mixed into `SCHEMA_HASH`, and the connect handshake refuses a peer whose hash
@@ -498,11 +500,22 @@ tool.
 
 ## Unverified, needs eyes
 
-- [ ] **Does the model face the right way?** `play_state.cpp` passes
-      `render_yaw` through with no offset. If the model faces +Z in Blender and
-      engine yaw-0 faces +X, every player is rotated 90°. The fix belongs in the
-      exporter — the one place Blender conventions get translated — not in the
-      draw call, or every future `.mesh` carries the same correction.
+- [x] **Does the model face the right way?** No — and it was TWO faults, not
+      one. Measured off the bind pose: toes reach z +6.31 against a heel at
+      −4.19 and the face protrudes to z +6.17, so the model faced **+Z** while
+      yaw 0 is +X. That is the 90° this entry predicted, and it went where this
+      entry said, into `AXIS_CONVERSION`.
+
+      The one it did not predict: `rotation_from_euler_degrees` sweeps +X toward
+      **−Z** while `direction_from_angles` sweeps +X toward **+Z**, so passing a
+      body yaw in as euler.y MIRRORS the model rather than offsetting it — right
+      at 45°, backwards everywhere else, turning the wrong way as the player
+      turns. No exporter change can fix that one; it is a property of the
+      euler→matrix path, and it is now `linalg::model_yaw_from_view_yaw`.
+
+      `player_rig.cpp`'s `transform_for` was wrong in the identical way, which
+      is exactly why the debug overlay still lined up with the model and hid
+      both faults. Both call the helper now.
 
 ---
 

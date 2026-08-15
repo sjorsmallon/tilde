@@ -13,10 +13,10 @@ entities.def  ──def_gen──▶  generated/entities_generated.{hpp,cpp}
 
 | File | What it is |
 |---|---|
-| `entities.def` | **The source of truth.** Every entity, component, enum and asset class. Edit this. |
+| `entities.def` | **The source of truth.** Every entity, component and enum. Edit this. (Asset classes live in `../assets/assets.def`, imported at the top.) |
 | `../../tools/def_gen.cpp` | The schema compiler: parser + generator for every `.def`. Standalone, no project dependencies. |
 | `generated/entities_generated.hpp` | Structs, enums, `entity_type`, `SCHEMA_HASH`. Generated — do not edit. |
-| `generated/entities_generated.cpp` | `ENTITY_INFOS[]`, `COMPONENT_OFFSETS[][]`, the factory, the asset manifests. Generated — do not edit. |
+| `generated/entities_generated.cpp` | `ENTITY_INFOS[]`, `COMPONENT_OFFSETS[][]`, the factory. Generated — do not edit. |
 | `entity_reflection.{hpp,cpp}` | The hand-written half: everything the tables can *do* that isn't worth generating. |
 
 The generated files land in the source tree rather than the build dir on
@@ -24,17 +24,23 @@ purpose: they are meant to be readable and opened without building, and a
 `.def` change should show up as one reviewable diff. CMake regenerates them
 whenever the `.def` *or* the contents of a scanned asset directory change.
 
-`def_gen` is not entity-only: `../cvars/cvars.def` is its second input, and one
-run over both produces the single `SCHEMA_HASH` the connect handshake compares.
-Pass every `.def` in one invocation — a partial run with `--emit` writes a hash
-that disagrees with a full build. The two families share the lexer, the
-primitive type table and the hash, and nothing else.
+`def_gen` is not entity-only: `../assets/assets.def` and `../cvars/cvars.def`
+are its other two inputs, and one run over all three produces the single
+`SCHEMA_HASH` the connect handshake compares. Pass every `.def` in one
+invocation — a partial run with `--emit` writes a hash that disagrees with a
+full build. The three families share the lexer, the primitive type table and the
+hash, and nothing else.
+
+The one crossing is `import`, at the top of this `.def`: it makes `assets.def`'s
+classes usable as field types here, so `mesh: mesh_asset` is emitted as
+`assets::mesh_asset`. It runs in that direction only — the asset family knows
+nothing about entities.
 
 Inspect the parsed IR without building the game (and without writing anything —
 emission is opt-in via `--emit`):
 
 ```bash
-./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def --dump
+./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def --dump
 ```
 
 ## The old macro system is gone

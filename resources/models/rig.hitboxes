@@ -11,7 +11,7 @@
 // slides the volume along the start bone's own direction.
 hitboxes rig
 skeleton rig b1e51a1238f88001
-v head         Sphere    spine.006                         Head   5.570 3.400
+v head         Capsule   spine.006        spine.006        Head   6.938 0.150
 v torso        Capsule   spine            spine.003        Torso  5.850 0.750
 v upperBody    Cylinder  spine.004        spine.005        Torso  6.200 -1.350
 v upper_arm.L  Capsule   upper_arm.L      forearm.L        Torso  3.150

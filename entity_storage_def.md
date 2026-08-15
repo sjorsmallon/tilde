@@ -278,7 +278,7 @@ Runtime failures, so each step needs its own way of being wrong loudly.
    whole player pool for a matching `client_slot_index` went too, but not by
    substitution — `Bot_State` now holds `entity_uid`, set at spawn, because the
    scan was answering a *slot* question the uid index cannot answer. Same shape
-   as the fix step 4 needed for `Player_Server_State`.
+   as the fix step 4 needed for `client_slot_t`.
 4. **Flip `spawn<T>()` to return a uid and `destroy` to take one.** This is the
    compile-breaking step, and it is deliberately *after* the index exists so
    every call site has something to migrate *to*. Call sites are the ones in the
@@ -291,10 +291,10 @@ Runtime failures, so each step needs its own way of being wrong loudly.
    * **The three slot scans are gone too, and that was the open question in the
      todo.** "Which player is slot N" is a *slot* lookup, so the uid index cannot
      answer it — the fix was to record the answer where the slot already lives.
-     `Player_Server_State` (the per-connection server state, already cleared on
+     `client_slot_t` (the per-connection server state, already cleared on
      join and on leave, which is exactly when the mapping changes) gained a
-     `player_uid` column, and `spawn_player_for_slot` fills it. That deleted the
-     pool walks in `handle_player_leave`, `spawn_position_in_front_of` and the
+     `player_uid` column, and `spawn_player_entity_for_slot` fills it. That deleted the
+     pool walks in `handle_player_leave`, `position_in_front_of` and the
      per-move player lookup in `Tick`. Bots are structurally excluded: their
      `client_slot_index` is `>= BOT_SLOT_BASE`, past the end of that array, and
      `Bot_State` carries its own uid.
@@ -344,7 +344,7 @@ Runtime failures, so each step needs its own way of being wrong loudly.
      hand. So the step made a future leak unrepresentable rather than fixing a
      live one.
    * **The audit found a different, live bug.** `load_map_into_state` cleared
-     `Player_Server_State::player_uid` because a new session restarts
+     `client_slot_t::player_uid` because a new session restarts
      `next_entity_id` and a retained uid can be *reissued* (§2's guarantee holds
      within one session's counter, and a map load restarts it) — but it never
      cleared `death_tick_by_player_uid`, keyed the same way. A death pending

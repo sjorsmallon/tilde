@@ -32,8 +32,8 @@ static void enter_phase(server_context_t &context,
 {
   const float duration = phase_duration_seconds(phase);
 
-  context.rules.phase = phase;
-  context.rules.phase_end_tick =
+  context.world.rules.phase = phase;
+  context.world.rules.phase_end_tick =
       duration > 0.f
           ? current_tick +
                 static_cast<uint32_t>(duration * static_cast<float>(tickrate_hz))
@@ -42,11 +42,11 @@ static void enter_phase(server_context_t &context,
   // Countdown, not Warmup, is the per-round boundary: Warmup happens once at
   // match start, so counting there would leave round_number stuck at 1.
   if (phase == round_phase_t::Countdown)
-    ++context.rules.round_number;
+    ++context.world.rules.round_number;
 
   log_terminal("Round {}: entering phase {} (ends tick {})",
-               context.rules.round_number, to_string(phase),
-               context.rules.phase_end_tick);
+               context.world.rules.round_number, to_string(phase),
+               context.world.rules.phase_end_tick);
 
   // NOT WIRED YET, and deliberately listed rather than left implicit:
   //
@@ -105,7 +105,7 @@ void reset_game_rules(server_context_t &context,
   // 1. Seeding phase_end_tick to `current_tick` instead would read as "already
   // expired" and the first update_game_rules would promote immediately,
   // skipping the match-start warmup entirely.
-  context.rules = {};
+  context.world.rules = {};
   enter_phase(context, round_phase_t::Warmup, current_tick, tickrate_hz);
 }
 
@@ -114,16 +114,16 @@ void update_game_rules(server_context_t &context,
                        uint32_t tickrate_hz)
 {
   // No deadline: this phase ends on a win condition (end_round), not a timer.
-  if (context.rules.phase_end_tick == 0)
+  if (context.world.rules.phase_end_tick == 0)
     return;
 
-  if (current_tick < context.rules.phase_end_tick)
+  if (current_tick < context.world.rules.phase_end_tick)
     return;
 
   // Deadline reached. Live expiring here is the timeout path and lands on the
   // same phase a win condition would; the two differ only in what the
   // round-end event will eventually report as the reason.
-  enter_phase(context, next_phase(context.rules, context.rules.phase),
+  enter_phase(context, next_phase(context.world.rules, context.world.rules.phase),
               current_tick, tickrate_hz);
 }
 
@@ -131,11 +131,11 @@ void start_match(server_context_t &context,
                  uint32_t current_tick,
                  uint32_t tickrate_hz)
 {
-  if (context.rules.phase != round_phase_t::Warmup)
+  if (context.world.rules.phase != round_phase_t::Warmup)
   {
     log_error("start_match called during phase {} — only Warmup can start a "
               "match. Ignoring.",
-              to_string(context.rules.phase));
+              to_string(context.world.rules.phase));
     return;
   }
 
@@ -146,10 +146,10 @@ void end_round(server_context_t &context,
                uint32_t current_tick,
                uint32_t tickrate_hz)
 {
-  if (context.rules.phase != round_phase_t::Live)
+  if (context.world.rules.phase != round_phase_t::Live)
   {
     log_error("end_round called during phase {} — only Live can end. Ignoring.",
-              to_string(context.rules.phase));
+              to_string(context.world.rules.phase));
     return;
   }
 
@@ -158,7 +158,7 @@ void end_round(server_context_t &context,
 
 bool is_round_live(const server_context_t &context)
 {
-  return context.rules.phase == round_phase_t::Live;
+  return context.world.rules.phase == round_phase_t::Live;
 }
 
 bool is_movement_allowed(const server_context_t &context)
@@ -166,7 +166,7 @@ bool is_movement_allowed(const server_context_t &context)
   // Written as "everything except the freeze" rather than as a list of allowed
   // phases: a phase added later should default to letting people walk, since
   // silently freezing players is the harder failure to notice.
-  return context.rules.phase != round_phase_t::Countdown;
+  return context.world.rules.phase != round_phase_t::Countdown;
 }
 
 bool can_take_damage(const server_context_t &context)

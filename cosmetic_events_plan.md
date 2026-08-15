@@ -1,4 +1,4 @@
-# Effect & Game Event System: Source-2-Style Architecture
+# Effect & Game Event System
 
 ## Goal
 

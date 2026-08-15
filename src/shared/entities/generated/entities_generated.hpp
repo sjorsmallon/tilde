@@ -4,7 +4,9 @@
 #include "array.hpp"
 #include "linalg.hpp"
 #include "network/network_types.hpp"
+#include "reflection.hpp"
 #include "span.hpp"
+#include "assets/generated/assets_generated.hpp"
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -14,74 +16,6 @@ namespace entities
 {
 
 template <typename T> std::optional<T> try_from_string(std::string_view text);
-
-// Missing is 0: an asset field that was never assigned resolves to the
-// placeholder, which is loudly wrong, rather than to whichever asset
-// happened to sort first, which would look plausible.
-enum class mesh_asset : uint16_t
-{
-  Missing = 0,
-  Isosphere = 1,
-  Pyramid = 2,
-  Leet_Full = 3,
-  Box = 4,
-  Arrow = 5,
-  Sphere = 6,
-  Cylinder = 7,
-  Cone = 8,
-  Wedge = 9,
-};
-
-constexpr uint32_t mesh_asset_COUNT = 10;
-
-const char* to_string(mesh_asset value);
-template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_view text);
-
-// Missing is 0: an asset field that was never assigned resolves to the
-// placeholder, which is loudly wrong, rather than to whichever asset
-// happened to sort first, which would look plausible.
-enum class sprite_asset : uint16_t
-{
-  Missing = 0,
-  Smoke = 1,
-};
-
-constexpr uint32_t sprite_asset_COUNT = 2;
-
-const char* to_string(sprite_asset value);
-template <> std::optional<sprite_asset> try_from_string<sprite_asset>(std::string_view text);
-
-// Where an asset's bytes come from. This exists for the asset system's
-// init and for nothing else -- if you are reaching for it anywhere
-// else, the code wants an asset id, not a source.
-enum asset_source_kind_t : uint8_t
-{
-  ASSET_SOURCE_MISSING = 0, // no asset assigned; `source` is empty
-  ASSET_SOURCE_FILE,        // `source` is a path, relative to the working dir
-  ASSET_SOURCE_PROCEDURAL,  // `source` is a generator key
-};
-
-struct asset_info_t
-{
-  const char*         name;
-  const char*         source;
-  asset_source_kind_t source_kind;
-};
-
-// The complete mesh_asset manifest, indexed by id. Populate every entry at
-// init: registration must NOT be lazy, or an id resolves to nothing
-// depending on what ran first.
-Span<const asset_info_t> mesh_asset_manifest();
-
-// The complete sprite_asset manifest, indexed by id. Populate every entry at
-// init: registration must NOT be lazy, or an id resolves to nothing
-// depending on what ran first.
-Span<const asset_info_t> sprite_asset_manifest();
-
-// The manifest a field_info_t::asset_class_id refers to. Empty span for
-// an id no asset class owns, which is a caller bug -- check the column
-// is not NOT_AN_ASSET_CLASS before calling.
-Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);
 
 // Every enum below is DENSE and starts at 0, so its _COUNT is both the
 // number of declared names and one past the largest value -- which is
@@ -226,14 +160,6 @@ enum class enum_type : uint16_t
 
 constexpr uint32_t ENUM_TYPE_COUNT = 10;
 
-struct enum_type_info_t
-{
-  const char*                 name;
-  // Indexed by the enum's own numeric value; the values are dense and
-  // start at 0, so `size()` is also the count of valid values.
-  Span<const char* const>     value_names;
-};
-
 const enum_type_info_t& enum_info(enum_type type);
 
 // Invalid is 0 so that zeroed memory never looks like a valid entity.
@@ -280,7 +206,7 @@ struct Material
 
 struct Render
 {
-  mesh_asset mesh = mesh_asset::Missing;
+  assets::mesh_asset mesh = assets::mesh_asset::Missing;
   bool visible = true;
   bool is_wireframe = false;
   linalg::vec3f offset = {0.0f, 0.0f, 0.0f};
@@ -381,7 +307,7 @@ struct Particle_Emitter_Entity : Entity
 
   Particle_Emitter_Entity() { type = entity_type::Particle_Emitter_Entity; }
 
-  sprite_asset sprite = sprite_asset::Smoke;
+  assets::sprite_asset sprite = assets::sprite_asset::Smoke;
   float emit_rate = 20.0f;
   int32_t max_particles = 64;
   float lifetime_min = 0.5f;
@@ -540,17 +466,6 @@ static_assert(std::is_base_of_v<Entity, Physics_Body_Entity>,
               "Physics_Body_Entity must derive from Entity: the generated tables hand out "
               "Entity* for every entity type");
 
-enum field_type_t : uint8_t
-{
-  FIELD_TYPE_INVALID = 0,
-  FIELD_TYPE_F32, FIELD_TYPE_F64,
-  FIELD_TYPE_U8, FIELD_TYPE_U16, FIELD_TYPE_U32, FIELD_TYPE_U64,
-  FIELD_TYPE_I8, FIELD_TYPE_I16, FIELD_TYPE_I32, FIELD_TYPE_I64,
-  FIELD_TYPE_BOOL,
-  FIELD_TYPE_V3, FIELD_TYPE_V4, FIELD_TYPE_V4I,
-  FIELD_TYPE_STRING, FIELD_TYPE_ASSET, FIELD_TYPE_ENUM, FIELD_TYPE_COMPONENT,
-};
-
 enum field_flags_t : uint32_t
 {
   FIELD_FLAG_NONE      = 0,
@@ -559,8 +474,8 @@ enum field_flags_t : uint32_t
   FIELD_FLAG_SAVEABLE  = 1 << 2,
 };
 
-// A field of one struct. Offsets are relative to THAT struct, so walking
-// into a component composes them:
+// Entity field tables NEST -- a component-typed field's insides live in
+// another table, and a walk composes the offsets:
 //
 //   for (field : entity_info(type).fields)
 //     if (field.type == FIELD_TYPE_COMPONENT)
@@ -571,27 +486,6 @@ enum field_flags_t : uint32_t
 // struct, so a consumer that does NOT care about the inside (undo's
 // memcmp diffing, a whole-struct copy) can treat it as one opaque blob
 // and never recurse at all.
-// Four of field_info_t's columns are meaningful only for their own
-// FIELD_TYPE. These name what "not that type" looks like, so a reader
-// never has to remember whether absent is -1 or 0 -- and so a check
-// says what it means rather than testing a magic number.
-constexpr int32_t  NOT_A_COMPONENT    = -1;
-constexpr uint32_t NOT_A_STRING       = 0;
-constexpr int32_t  NOT_AN_ASSET_CLASS = -1;
-constexpr int32_t  NOT_AN_ENUM        = -1;
-
-struct field_info_t
-{
-  const char*  name;
-  field_type_t type;
-  uint32_t     offset;
-  uint32_t     size_in_bytes;
-  uint32_t     flags;
-  int32_t      component_id;    // FIELD_TYPE_COMPONENT only, else NOT_A_COMPONENT
-  uint32_t     string_capacity; // FIELD_TYPE_STRING only, else NOT_A_STRING
-  int32_t      asset_class_id;  // FIELD_TYPE_ASSET only, else NOT_AN_ASSET_CLASS
-  int32_t      enum_id;         // FIELD_TYPE_ENUM only, else NOT_AN_ENUM
-};
 
 struct entity_type_info_t
 {

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "animation.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "assets/generated/assets_generated.hpp"
 #include "skeleton.hpp"
 #include "vertex.hpp"
 #include <cstdint>
@@ -177,8 +177,8 @@ struct asset_state_t
   // Handles per manifest id, filled by init(). Indexed by the generated enum's
   // own value, so a lookup is an array read; an id whose entry could not be
   // provided keeps an invalid handle and the accessor falls back to Missing.
-  asset_handle_t<mesh_asset_t> mesh_handles[entities::mesh_asset_COUNT];
-  asset_handle_t<texture_asset_t> sprite_handles[entities::sprite_asset_COUNT];
+  asset_handle_t<mesh_asset_t> mesh_handles[mesh_asset_COUNT];
+  asset_handle_t<texture_asset_t> sprite_handles[sprite_asset_COUNT];
   bool manifest_initialized = false;
 };
 
@@ -235,8 +235,8 @@ void init();
 //
 // mesh_asset::Missing is id 0, so a Render component that was never assigned a
 // mesh draws the question mark rather than nothing.
-asset_handle_t<mesh_asset_t>    get_mesh(entities::mesh_asset id);
-asset_handle_t<texture_asset_t> get_sprite(entities::sprite_asset id);
+asset_handle_t<mesh_asset_t>    get_mesh(mesh_asset id);
+asset_handle_t<texture_asset_t> get_sprite(sprite_asset id);
 
 // --- Dynamic mesh registration (for procedural geometry like displacements) ---
 

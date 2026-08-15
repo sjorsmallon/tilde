@@ -191,22 +191,22 @@ int main()
   // column below is read by the asset system's init and by nothing else.
   {
     Render render;
-    check(render.mesh == mesh_asset::Missing,
+    check(render.mesh == assets::mesh_asset::Missing,
           "an unassigned mesh field reads as Missing, not as whichever asset sorted first");
 
     Particle_Emitter_Entity emitter;
-    check(emitter.sprite == sprite_asset::Smoke, "a declared asset default resolves by name");
+    check(emitter.sprite == assets::sprite_asset::Smoke, "a declared asset default resolves by name");
 
-    check(strcmp(to_string(mesh_asset::Pyramid), "Pyramid") == 0, "asset to_string");
-    check(try_from_string<mesh_asset>("Sphere") == mesh_asset::Sphere,
+    check(strcmp(to_string(assets::mesh_asset::Pyramid), "Pyramid") == 0, "asset to_string");
+    check(assets::try_from_string<assets::mesh_asset>("Sphere") == assets::mesh_asset::Sphere,
           "asset try_from_string round trip");
-    check(!try_from_string<mesh_asset>("No_Such_Mesh"),
+    check(!assets::try_from_string<assets::mesh_asset>("No_Such_Mesh"),
           "asset try_from_string rejects an unknown name");
 
-    Span<const asset_info_t> meshes = mesh_asset_manifest();
+    Span<const assets::asset_info_t> meshes = assets::mesh_asset_manifest();
 
-    check(meshes.size() == mesh_asset_COUNT, "the manifest covers every id in the enum");
-    check(meshes[0].source_kind == ASSET_SOURCE_FILE &&
+    check(meshes.size() == assets::mesh_asset_COUNT, "the manifest covers every id in the enum");
+    check(meshes[0].source_kind == assets::ASSET_SOURCE_FILE &&
               strcmp(meshes[0].source, "resources/obj/error.obj") == 0,
           "slot 0 resolves to the declared placeholder, so nothing renders as a plausible cube");
 
@@ -215,7 +215,7 @@ int main()
     // generator creates itself, so its duplicate-name check could never catch
     // it -- the scan skips the placeholder path instead.
     uint32_t entries_naming_the_placeholder = 0;
-    for (const asset_info_t& mesh : meshes)
+    for (const assets::asset_info_t& mesh : meshes)
       if (strcmp(mesh.source, "resources/obj/error.obj") == 0)
         ++entries_naming_the_placeholder;
     check(entries_naming_the_placeholder == 1,
@@ -226,11 +226,11 @@ int main()
     bool saw_file       = false;
     bool saw_procedural = false;
     bool every_entry_is_resolvable = true;
-    for (const asset_info_t& mesh : meshes)
+    for (const assets::asset_info_t& mesh : meshes)
     {
-      if (mesh.source_kind == ASSET_SOURCE_FILE)
+      if (mesh.source_kind == assets::ASSET_SOURCE_FILE)
         saw_file = true;
-      if (mesh.source_kind == ASSET_SOURCE_PROCEDURAL)
+      if (mesh.source_kind == assets::ASSET_SOURCE_PROCEDURAL)
         saw_procedural = true;
       if (mesh.source[0] == '\0')
         every_entry_is_resolvable = false;
@@ -254,7 +254,7 @@ int main()
     check(sprite_field_names_its_class, "an asset field records which asset class it draws from");
 
     printf("mesh manifest (%u):", meshes.size());
-    for (const asset_info_t& mesh : meshes)
+    for (const assets::asset_info_t& mesh : meshes)
       printf(" %s", mesh.name);
     printf("\n");
   }

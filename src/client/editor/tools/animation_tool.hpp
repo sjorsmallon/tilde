@@ -96,7 +96,6 @@ private:
   int selected_volume_idx = NO_VOLUME_SELECTED;
 
   // Resized once, reused every frame.
-
   assets::pose_t           pose;
   assets::posed_skeleton_t posed_skeleton;
 

@@ -105,6 +105,8 @@ struct cvar_state_t
   bool debug_show_entity_counts = false;
   bool debug_show_physics_bodies = false;
   bool net_snapshot_debug = false;
+  bool sv_event_debug = false;
+  bool cl_event_debug = false;
 };
 
 // Load-bearing for mirroring: change detection is a member compare
@@ -167,11 +169,13 @@ enum class cvar_id : uint16_t
   debug_show_entity_counts = 47,
   debug_show_physics_bodies = 48,
   net_snapshot_debug = 49,
+  sv_event_debug = 50,
+  cl_event_debug = 51,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 50;
+constexpr uint32_t CVAR_COUNT = 52;
 
 enum class command_id : uint16_t
 {
