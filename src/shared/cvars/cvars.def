@@ -303,6 +303,12 @@ Server_Commands :: commands {
     // CmdChangeMap broadcast, not by a settable string.
     map(path: string)                  @Server  "Switch the server to a new map"
     noclip(enabled: bool = false)      @Server  "Disable movement Vector Clipping"
+
+    // A client connects as a SPECTATOR -- it holds a slot with no player
+    // entity -- and this is what gives it a body. @Server because spawning is
+    // the server's to do; the caller is command_context_t::caller_slot, so
+    // there is nothing to name and no parameters.
+    join_game()                        @Server  "Leave spectate and spawn into the match"
 }
 
 Client_Commands :: commands {

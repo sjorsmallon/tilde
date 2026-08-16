@@ -250,7 +250,6 @@ add_library(game_shared STATIC
     src/shared/network/udp_socket.cpp
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
-    src/shared/components/components.cpp
     src/shared/map.cpp
     src/shared/map_geometry.cpp
     src/shared/map_baker.cpp

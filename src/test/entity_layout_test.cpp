@@ -60,9 +60,29 @@ int main()
   int32_t offset = component_byte_offset(entity_type::Trigger_Volume_Entity,
                                          component_type::Box_Volume);
   Box_Volume* volume = (Box_Volume*)((char*)&trigger + offset);
-  check(volume->half_extents.x == 1.0f && volume->half_extents.y == 1.0f &&
-            volume->half_extents.z == 1.0f,
+  check(volume->half_extents.x == 64.0f && volume->half_extents.y == 64.0f &&
+            volume->half_extents.z == 64.0f,
         "component reached by table offset carries its declared defaults");
+
+  // Per-use component defaults (`volume: Box_Volume = { half_extents = ... }`).
+  // The half_extents check above is the OVERRIDDEN half; this is the other half
+  // and the one that actually needs guarding: a member the literal does not name
+  // must keep the component's own default. Emitting the literal as anything but
+  // a designated initializer would zero these instead.
+  check(volume->position.x == 0.0f && volume->position.y == 0.0f && volume->position.z == 0.0f,
+        "a field the use-site literal does not name keeps the component's own default");
+
+  Player_Entity player;
+  check(player.render.mesh == assets::mesh_asset::Leet_Full,
+        "a use-site component default reaches the entity struct");
+  check(player.render.visible && player.render.scale.x == 1.0f && player.render.scale.y == 1.0f &&
+            player.render.scale.z == 1.0f,
+        "and leaves Render's own defaults alone around it");
+
+  // The scalar that replaced the Hitbox component on the rocket.
+  Rocket_Entity rocket;
+  check(rocket.collision_radius == 12.0f, "a rocket knows its own sweep radius");
+  check(rocket.lifetime == 5.0f, "one lifetime, not one per spawn site");
 
   check(entity_type_from_classname("light_entity") == entity_type::Light_Entity,
         "classname lookup round trip");

@@ -27,10 +27,10 @@ This represents a live game instance.
 ## 2. Loading Pipeline
 
 1.  **Parse**: `shared::load_map` reads a text file and populates a `map_t`.
-2.  **Initialize**: `shared::init_session_from_map(session, map)` takes the data and boots the session.
+2.  **Build**: `shared::build_session(map)` returns the runtime session for that map.
+    *   Calls `Entity_System::populate_from_map`.
     *   Copies static geometry.
     *   Builds the BVH.
-    *   Iterates `map.entities` and calls `Entity_System::populate_from_map`.
 
 ## 3. Entity System
 

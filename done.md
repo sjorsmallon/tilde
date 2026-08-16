@@ -300,7 +300,7 @@ become the package hash before remote clients / streaming are real.
 - [x] client honors server's map + FNV-1a hash (CmdAccept.map_path/content_hash);
       mismatch = hard error (no silent desync)
 - [x] mid-game map switch: reload_map broadcasts bitstream CmdChangeMap, keeps
-      players connected + re-spawns them (spawn_player_entity_for_slot), client reloads
+      players connected + re-spawns them (spawn_player_entity_for_client_slot), client reloads
       via load_client_map + Connection_Phase::Loading, acks C2S_MapLoaded;
       server withholds snapshots (client_map_ready) until acked
 - byte streaming fallback (S2C_MapData) for clients that lack the COMPILED
@@ -325,7 +325,7 @@ become the package hash before remote clients / streaming are real.
      whole map. Fine on localhost; add ack/retransmit (or resend-until-acked)
      before remote streaming. See "ack/nack system" under Multiplayer Networking
      below.
-  1. [x] DONE. Keep the map_t on the server: load_map_into_state loads into
+  1. [x] DONE. Keep the map_t on the server: load_map_file_into_context loads into
      server_context_t::current_map (retained, cleared on reload) so we can
      serialize without re-reading disk.
   2. [x] DONE. Pure (no-I/O) serialize_map_to_string(map_t) / parse_map_from_
@@ -895,7 +895,7 @@ destroyed or networked.
         Jolt body (moved by hand, hit-tested with `cast_sphere`), and a rocket
         kill does not destroy the victim — `schedule_respawn` reuses the entity.
         The step made a future leak unrepresentable; it did not fix a live one.
-      * **The audit found a real bug instead.** `load_map_into_state` cleared
+      * **The audit found a real bug instead.** `load_map_file_into_context` cleared
         `client_slot_t::player_uid` because a new session restarts
         `next_entity_id` and a retained uid can be *reissued* — but never cleared
         `death_tick_by_player_uid`, keyed the same way. A death pending across a
@@ -1534,7 +1534,7 @@ within each, so ids stay deterministic.
 `Player_Entity::render` was declared, `@Networked`, and completely reader-less,
 so remote players were a green collision AABB and nothing else.
 `server::initialize_player_body` (`entity_lifecycle.{hpp,cpp}`) now assigns the
-hitbox and the model in ONE place called by both `spawn_player_entity_for_slot` and
+hitbox and the model in ONE place called by both `spawn_player_entity_for_client_slot` and
 `spawn_bot` — a bot IS a `Player_Entity`, and the hitbox half of that setup had
 already drifted across the two before the model gave it a second reason to.
 

@@ -108,39 +108,10 @@ static void send_reject(server_context_t &context,
     context.socket.send(p, sender);
 }
 
-// Snapshot of a Player_Spawn_Entity used at (re)spawn time: position +
-// orientation (Euler degrees, .y = yaw, .x = pitch, .z = roll/unused). The
-// respawn_system has its own private picker because it lives in
-// game_server; this file-local one is for player-join and bot cycling.
-struct human_spawn_transform_t
-{
-  vec3f position;
-  vec3f orientation;
-};
 
-// Returns all human spawn markers (Spawn_Type::Human) from the entity_system.
-// Used for player join and spawn_bot cycling.
-static std::vector<human_spawn_transform_t>
-get_human_spawn_transforms(server_context_t &context)
-{
-  Span<entities::Player_Spawn_Entity> pool =
-      context.world.session.entity_system
-          .entities_of<entities::Player_Spawn_Entity>();
-  std::vector<human_spawn_transform_t> out;
-  for (const entities::Player_Spawn_Entity &sp : pool)
-    if (sp.spawn_type == entities::Spawn_Type::Human)
-      out.push_back({sp.position, sp.orientation});
-  if (out.empty())
-    out.push_back({{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}}); // safety fallback
-  return out;
-}
-
-// Compute a spawn position roughly at the caller's eye height and 80 units
-// forward along their view direction. Returns nullopt if the slot has no
-// associated Player_Entity (e.g. command typed at the dedicated-server console
-// where caller_slot == -1, or an unconnected slot).
+// little helper function to get a good location to spawn physics objects.
 static std::optional<vec3f>
-position_in_front_of(server_context_t &context, int32_t caller_slot)
+get_position_in_front_of(server_context_t &context, int32_t caller_slot)
 {
   if (!is_valid_client_slot(caller_slot))
     return std::nullopt;
@@ -166,14 +137,15 @@ void handle_player_leave(server_context_t &context,
   int32_t slot = static_cast<int32_t>(
       network::get_player_idx(context.transport_layer, sender));
   if (!is_valid_client_slot(slot))
+  {
+    log_error("tried to handle a player leave where the sender was NOT occupying a slot?");
     return;
+  }
 
   const shared::entity_uid_t player_uid = context.clients[slot].player_uid;
   if (player_uid != shared::null_entity_uid)
     destroy_entity(context, player_uid);
 
-  // The whole slot, same call the join path makes. Leave used to clear the uid
-  // alone and leave the ack and the map-ready gate behind for the next occupant.
   reset_client_slot(context, slot);
 
   broadcast_server_text_message(context,
@@ -182,26 +154,16 @@ void handle_player_leave(server_context_t &context,
   log_terminal("Player left slot {}: {}", slot, sender.to_string());
 }
 
-// Load a map file into the context, replacing any existing world.
-// Returns true on successful load. On failure the session is left empty.
-static bool load_map_into_state(server_context_t &context,
+
+static bool load_map_file_into_context(server_context_t &context,
                                 const std::string &map_path)
 {
-  // Everything keyed to the map we are leaving, in one call — session, physics,
-  // the retained map, bots, trigger overlaps, pending deaths, the snapshot ring,
-  // the rules, and the map-scoped columns of every client slot. What survives
-  // and why is written out in server_context.cpp; this used to be a dozen
-  // statements here that only agreed with the other two reset sites by hand.
-  reset_for_new_map(context);
-
-  // A fresh Jolt world. reset_for_new_map dropped the old unique_ptr, which is
-  // the bulk clear — there is no bulk-clear API on physics_state_t.
-  context.world.physics = std::make_unique<physics_state_t>();
-  init_physics(*context.world.physics);
+  reset_state_in_preparation_for_new_map_load(context);
+  context.world.physics = make_physics_state();
 
   if (map_path.empty())
   {
-    log_terminal("load_map_into_state: empty path, leaving session empty.");
+    log_terminal("load_map_file_into_context: empty path, leaving session empty.");
     return false;
   }
 
@@ -213,35 +175,28 @@ static bool load_map_into_state(server_context_t &context,
     return false;
   }
 
-  world_t &world = context.world;
+  world_t& world = context.world;
 
   world.current_map         = std::move(*loaded);
-  shared::map_t &server_map = world.current_map;
+  shared::map_t& server_map = world.current_map;
 
-  shared::init_session_from_map(world.session, server_map);
-  world.session.map_name  = server_map.name;
+  world.session = shared::build_session(server_map);
   world.current_map_path  = map_path;
-  // Hash the canonical serialization (not the file), so it matches what the
-  // client computes from its own loaded copy and what streaming will embed.
   world.map_content_hash = shared::compute_map_content_hash(server_map);
+
   shared::populate_static_physics_bodies(*world.physics, server_map);
 
-  // Spawn bots for any bot-type spawn markers (Spawn_Type::Bot).
-  // Human spawn markers (Spawn_Type::Human) stay in entity_system and are
-  // queried directly when players join — no need to extract or clear the pool.
+
   Span<entities::Player_Spawn_Entity> spawn_pool =
       world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
 
   int human_spawn_count = 0;
   int bot_spawn_count = 0;
-  // The span survives the spawn_bot calls inside the loop: what those spawn is a
-  // Player_Entity, and this is the Player_Spawn_Entity pool. Only a spawn into
-  // THIS pool would invalidate it, and nothing here does one.
   for (const entities::Player_Spawn_Entity &sp : spawn_pool)
   {
     if (sp.spawn_type == entities::Spawn_Type::Bot)
     {
-      world.bots.push_back(spawn_bot(world.session, *world.physics, sp.position,
+      world.bots.push_back(spawn_bot(world.session, *world.physics, sp,
                                      world.next_bot_slot++, BotType::Regular));
       ++bot_spawn_count;
     }
@@ -254,13 +209,13 @@ static bool load_map_into_state(server_context_t &context,
   return true;
 }
 
-bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
+bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *cvar_command_table,
           assets::asset_state_t *asset_state)
 {
   log_terminal("--- Initializing Server ---");
   log_terminal("Server port: {}", network::server_port_number);
 
-  if (!cvar_state || !command_table || !asset_state)
+  if (!cvar_state || !cvar_command_table || !asset_state)
   {
     log_error("server::Init: the launcher must own and pass a cvar_state_t, a "
               "command_table_t and an asset_state_t (see cvar_def.md and the "
@@ -271,16 +226,13 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   assets::set_state(asset_state);
 
   g_server_context.cvars    = cvar_state;
-  g_server_context.commands = command_table;
-  cvars::bind_server_commands(*command_table);
+  g_server_context.commands = cvar_command_table;
+  cvars::bind_server_commands(*cvar_command_table);
 
   // initialize to defaults.
   g_server_context.last_broadcast_cvars = *cvar_state;
 
-  // The hit volumes, eagerly. Loading them either succeeds or kills the
-  // process, and "the server dies at boot naming the file" beats "the server
-  // dies on the first shot of a live match" -- the lazy first use would
-  // otherwise be inside the fire path.
+  // this is kind of a shit way to load a static upfront and I don't like it.
   shared::player_rig();
 
   static bool jolt_initialized = false;
@@ -307,19 +259,19 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
     f.close();
   }
 
-  load_map_into_state(g_server_context, map_name);
+  load_map_file_into_context(g_server_context, map_name);
 
   log_terminal("--- Server initialization complete ---");
   return true;
 }
 
 
-static shared::entity_uid_t spawn_player_entity_for_slot(server_context_t &context,
-                                                  int32_t slot)
+static shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &context,
+                                                  const int32_t slot)
 {
   if (!is_valid_client_slot(slot))
   {
-    log_error("spawn_player_entity_for_slot: slot {} is out of range", slot);
+    log_error("spawn_player_entity_for_client_slot: slot {} is out of range", slot);
     return shared::null_entity_uid;
   }
 
@@ -338,31 +290,27 @@ static shared::entity_uid_t spawn_player_entity_for_slot(server_context_t &conte
   context.clients[slot].player_uid = player_uid;
 
   player->client_slot_index = slot;
-  auto spawns = get_human_spawn_transforms(context);
-  const human_spawn_transform_t& chosen_spawn = spawns[slot % spawns.size()];
-  player->position         = chosen_spawn.position;
-  player->orientation      = chosen_spawn.orientation;
-  player->view_angle_yaw   = chosen_spawn.orientation.y;
-  player->view_angle_pitch = chosen_spawn.orientation.x;
-  player->health = 100;
+  // Cycled by slot so two players joining an empty server don't stack.
+  const entities::Player_Spawn_Entity *marker =
+      try_pick_human_spawn(context.world.session, static_cast<uint32_t>(slot));
+  if (marker == nullptr)
+    log_error("spawn_player: map '{}' declares no Spawn_Type::Human marker — "
+              "spawning slot {} at origin",
+              context.world.session.map_name, slot);
+
+  place_player_at_spawn(*player, marker ? *marker : origin_fallback_spawn());
 
   log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
                slot, player->entity_id, player->position.x, player->position.y, player->position.z);
 
-  // Hitbox and model: the same for every player, human or bot.
-  initialize_player_body(*player);
-
   // Kinematic Jolt body so rockets and overlap queries can find this player.
-  if (context.world.physics)
-  {
-    register_kinematic_capsule(*context.world.physics, 
-                               player_uid,
-                               player->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                               shared::player_capsule_radius,
-                               shared::player_capsule_cylinder_half_height);
-  }
+  register_kinematic_capsule(*context.world.physics,
+                             player_uid,
+                             player->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                             shared::player_capsule_radius,
+                             shared::player_capsule_cylinder_half_height);
 
-  fire_player_spawned_event(context, player_uid, chosen_spawn.position, chosen_spawn.orientation);
+  fire_player_spawned_event(context, *player);
   return player_uid;
 }
 
@@ -432,10 +380,19 @@ bool reload_map(const std::string &map_path)
 
   log_terminal("--- Changing server map: '{}' ---", map_path);
 
+  // Who had a body before the wipe. Read FIRST: the map load nulls every slot's
+  // player_uid as part of the map-scoped reset, so afterwards every slot looks
+  // like a spectator. A spectator stays one across a map change rather than
+  // being spawned in by the switch.
+  Array<bool, network::sv_max_player_count> was_playing{};
+  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+    was_playing[slot] =
+        context.clients[slot].player_uid != shared::null_entity_uid;
+
   // Load the new map. This wipes the session, physics world, bots, and every
   // client's delta baseline, so the first snapshot after the switch is a full
   // (non-delta) update.
-  if (!load_map_into_state(context, map_path))
+  if (!load_map_file_into_context(context, map_path))
     return false;
 
   // Keep connected players connected across the switch
@@ -443,7 +400,8 @@ bool reload_map(const std::string &map_path)
   {
     if (!context.transport_layer.player_slots[slot])
       continue;
-    spawn_player_entity_for_slot(context, slot);
+    if (was_playing[slot])
+      spawn_player_entity_for_client_slot(context, slot);
     send_change_map(context, slot);
   }
   return true;
@@ -508,10 +466,15 @@ bool Tick()
 
         reset_client_slot(context, slot);
 
-        log_terminal("Player {} joined at slot {}",
+        log_terminal("Player {} joined at slot {} (spectating)",
                      cmd.connect().player_name(), slot);
 
-        spawn_player_entity_for_slot(context, slot);
+        // No body yet, on purpose: reset_client_slot left player_uid null, and
+        // a connected slot with no player entity IS the spectating state. The
+        // `join_game` command is what spawns one. Absence is the encoding
+        // rather than a mode flag, so every exclusion a spectator needs comes
+        // for free -- not in the entity pool means not hit-tested, not drawn,
+        // no body_yaw advanced, no Jolt capsule, nothing in the snapshot.
 
         // The client loads its map before connecting, so it's ready to receive
         // snapshots the moment it's accepted. (A mid-game CmdChangeMap flips this
@@ -834,13 +797,10 @@ bool Tick()
       shared::fire_land(context.outgoing.effects, fx);
     }
 
-    if (context.world.physics)
-    {
-      set_kinematic_pose(*context.world.physics,
-                         player->entity_id,
-                         new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                         new_vel);
-    }
+    set_kinematic_pose(*context.world.physics,
+                       player->entity_id,
+                       new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                       new_vel);
 
     // fire_pressed was decoded above the movement gate; acting on it is what
     // stays gated -- by the phase, and by being alive.
@@ -1007,19 +967,11 @@ bool Tick()
           // Muzzle is the eye, same as the hitscan origin -- a rocket that
           // spawns somewhere other than where the crosshair is aimed from is
           // the same class of bug as a mismatched hitscan origin.
+          // Everything else -- lifetime, damage, radii, the render component --
+          // is a per-type constant and comes from entities.def.
           rocket->position = eye;
           rocket->velocity = direction * context.cvars->game_rocket_speed;
           rocket->owner_id = player->entity_id;
-
-          rocket->render.mesh     = assets::mesh_asset::Missing;
-          rocket->render.visible  = true;
-          rocket->render.scale    = vec3{1.f, 1.f, 1.f};
-          rocket->render.rotation = vec3{0.f, 0.f, 0.f};
-
-          // Initialize hitbox (sphere with 12 unit radius)
-          rocket->hitbox.shape  = entities::Shape_Kind::Sphere;
-          rocket->hitbox.size   = {12.f, 12.f, 12.f}; // x = radius
-          rocket->hitbox.offset = {0.f, 0.f, 0.f};
 
           printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
                  rocket->position.x, rocket->position.y, rocket->position.z,
@@ -1397,15 +1349,50 @@ void spawn_bot(Bot_Mode mode, const command_context_t &)
   server_context_t &server_context = g_server_context;
   world_t          &world          = server_context.world;
 
-  auto spawns = get_human_spawn_transforms(server_context);
-  const vec3f &position = spawns[world.bots.size() % spawns.size()].position;
+  // Cycled by bot count, so a burst of spawn_bot spreads them over the markers.
+  const entities::Player_Spawn_Entity *marker =
+      try_pick_human_spawn(world.session, static_cast<uint32_t>(world.bots.size()));
+  if (marker == nullptr)
+    log_error("spawn_bot: map '{}' declares no Spawn_Type::Human marker — "
+              "spawning the bot at origin",
+              world.session.map_name);
+
   // Qualified: unqualified lookup would find THIS function (we are inside
   // cvars::commands::spawn_bot) and never reach server::spawn_bot.
-  world.bots.push_back(server::spawn_bot(world.session, *world.physics, position,
+  world.bots.push_back(server::spawn_bot(world.session, *world.physics,
+                                         marker ? *marker : origin_fallback_spawn(),
                                          world.next_bot_slot++, type));
 
   log_terminal("spawn_bot: spawned {} bot at slot {}", cvars::to_string(mode),
                world.next_bot_slot - 1);
+}
+
+void join_game(const command_context_t &command_context)
+{
+  using namespace server;
+
+  server_context_t &server_context = g_server_context;
+  const int32_t     slot           = command_context.caller_slot;
+
+  // caller_slot is -1 when the server itself typed the line. A dedicated
+  // server's console has no body to spawn, so there is nothing to do but say
+  // why -- unlike spawn_bot, this command is meaningless without a caller.
+  if (!is_valid_client_slot(slot))
+  {
+    log_error("join_game: no calling player (caller_slot {}) — this command "
+              "only means something from a connected client",
+              slot);
+    return;
+  }
+
+  if (server_context.clients[slot].player_uid != shared::null_entity_uid)
+  {
+    log_terminal("join_game: slot {} already has a player entity — ignoring",
+                 slot);
+    return;
+  }
+
+  spawn_player_entity_for_client_slot(server_context, slot);
 }
 
 void spawn_cube(const command_context_t &command_context)
@@ -1420,7 +1407,7 @@ void spawn_cube(const command_context_t &command_context)
     return;
   }
   auto drop_position =
-      position_in_front_of(server_context, command_context.caller_slot);
+      get_position_in_front_of(server_context, command_context.caller_slot);
   if (!drop_position)
   {
     log_error("spawn_cube: no Player_Entity for caller_slot {}",
@@ -1450,7 +1437,7 @@ void spawn_sphere(const command_context_t &command_context)
     return;
   }
   auto drop_position =
-      position_in_front_of(server_context, command_context.caller_slot);
+      get_position_in_front_of(server_context, command_context.caller_slot);
   if (!drop_position)
   {
     log_error("spawn_sphere: no Player_Entity for caller_slot {}",

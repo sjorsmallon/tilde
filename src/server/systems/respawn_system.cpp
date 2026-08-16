@@ -12,15 +12,40 @@ namespace server
 {
 
 void fire_player_spawned_event(server_context_t &context,
-                               shared::entity_uid_t player_uid,
-                               vec3f spawn_position,
-                               vec3f spawn_orientation)
+                               const entities::Player_Entity &player)
 {
   shared::Player_Spawned spawned{};
-  spawned.player_id         = player_uid;
-  spawned.spawn_position    = spawn_position;
-  spawned.spawn_orientation = spawn_orientation;
+  spawned.player_id         = player.entity_id;
+  spawned.spawn_position    = player.position;
+  spawned.spawn_orientation = player.orientation;
   shared::fire_player_spawned(context.outgoing.events, spawned);
+}
+
+const entities::Player_Spawn_Entity& origin_fallback_spawn()
+{
+  static const entities::Player_Spawn_Entity fallback{};
+  return fallback;
+}
+
+// Declared in respawn_system.hpp — see there for why this takes the marker.
+void place_player_at_spawn(entities::Player_Entity &player,
+                           const entities::Player_Spawn_Entity &marker)
+{
+  player.position    = marker.position;
+  player.orientation = marker.orientation;
+  // The marker's orientation is Euler degrees: .y = yaw, .x = pitch.
+  player.view_angle_yaw   = marker.orientation.y;
+  player.view_angle_pitch = marker.orientation.x;
+  // The feet are an accumulator, so they have to be PLACED, not left: a corpse
+  // froze them wherever it died, and a spawn that only writes the view yaw
+  // makes the fresh player spin their legs around to catch up while the server
+  // hit-tests the twist. A first spawn has the same problem from zero.
+  player.body_yaw = marker.orientation.y;
+
+  player.health   = 100;
+  player.velocity = {0.f, 0.f, 0.f};
+  // Back to alive: this is what stops clients drawing the death clip.
+  player.death_tick = 0;
 }
 
 void schedule_respawn(server_context_t &context,
@@ -33,23 +58,35 @@ void schedule_respawn(server_context_t &context,
   context.world.death_tick_by_player_uid[player_uid] = death_tick;
 }
 
-// Pick a spawn marker for this player. Right now we always grab the first
-// human spawn (Spawn_Type::Human); team-based or round-cycled selection lands
-// later by changing this function — every (re)spawn path routes through it.
-static bool pick_spawn_marker(shared::game_session_t &session,
-                              vec3f &out_position,
-                              vec3f &out_orientation)
+// Declared in respawn_system.hpp — see there for the contract.
+const entities::Player_Spawn_Entity*
+try_pick_human_spawn(shared::game_session_t &session, uint32_t rotation_index)
 {
   Span<entities::Player_Spawn_Entity> spawns =
       session.entity_system.entities_of<entities::Player_Spawn_Entity>();
-  for (const entities::Player_Spawn_Entity &sp : spawns)
+
+  // Two passes rather than a collected vector: this runs on player join and on
+  // every respawn, and the pool is small enough that counting is cheaper than
+  // allocating.
+  uint32_t human_count = 0;
+  for (const entities::Player_Spawn_Entity &spawn : spawns)
+    if (spawn.spawn_type == entities::Spawn_Type::Human) ++human_count;
+
+  if (human_count == 0)
+    return nullptr;
+
+  const uint32_t wanted = rotation_index % human_count;
+  uint32_t       seen   = 0;
+  for (const entities::Player_Spawn_Entity &spawn : spawns)
   {
-    if (sp.spawn_type != entities::Spawn_Type::Human) continue;
-    out_position    = sp.position;
-    out_orientation = sp.orientation;
-    return true;
+    if (spawn.spawn_type != entities::Spawn_Type::Human) continue;
+    if (seen == wanted) return &spawn;
+    ++seen;
   }
-  return false;
+
+  fatal_error("try_pick_human_spawn: counted %u human spawns then failed to "
+              "reach index %u — the pool changed under us",
+              human_count, wanted);
 }
 
 void update_respawns(server_context_t &context,
@@ -86,45 +123,27 @@ void update_respawns(server_context_t &context,
       continue;
     }
 
-    vec3f spawn_position{0.f, 0.f, 0.f};
-    vec3f spawn_orientation{0.f, 0.f, 0.f};
-    if (!pick_spawn_marker(context.world.session, spawn_position, spawn_orientation))
-    {
+    // 0: the respawn drain always takes the first marker. Cycling here is a
+    // gameplay decision, not a mechanism one — change the argument, not this.
+    const entities::Player_Spawn_Entity *marker =
+        try_pick_human_spawn(context.world.session, 0);
+    if (marker == nullptr)
       log_error("update_respawns: no Player_Spawn_Entity available, "
                 "respawning player uid {} at origin",
                 static_cast<uint64_t>(uid));
-    }
 
-    // Reset gameplay state. Health back to full, velocity cleared,
-    // position/orientation taken from the spawn marker. view_angle_yaw/pitch
-    // come from the spawn's Euler orientation (.y = yaw, .x = pitch).
-    player->position         = spawn_position;
-    player->orientation      = spawn_orientation;
-    player->view_angle_yaw   = spawn_orientation.y;
-    player->view_angle_pitch = spawn_orientation.x;
-    player->health           = 100;
-    player->velocity         = {0.f, 0.f, 0.f};
-    // Back to alive: this is what stops clients drawing the death clip.
-    player->death_tick       = 0;
-    // The feet are an accumulator, so they have to be PLACED, not left: the
-    // corpse froze them wherever it died, and a respawn that only writes the
-    // view yaw makes the fresh player spin their legs around to catch up while
-    // the server hit-tests the twist.
-    player->body_yaw         = spawn_orientation.y;
+    place_player_at_spawn(*player, marker ? *marker : origin_fallback_spawn());
 
     // Move the kinematic Jolt capsule so subsequent overlap/swept queries
     // this tick (rocket splash, trigger volumes) see the player at the new
     // position, not the death position. Matches the offset
     // register_kinematic_capsule uses at connect time.
-    if (context.world.physics)
-    {
-      set_kinematic_pose(*context.world.physics, uid,
-                         spawn_position +
-                             vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                         vec3f{0.f, 0.f, 0.f});
-    }
+    set_kinematic_pose(*context.world.physics, uid,
+                       player->position +
+                           vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                       vec3f{0.f, 0.f, 0.f});
 
-    fire_player_spawned_event(context, uid, spawn_position, spawn_orientation);
+    fire_player_spawned_event(context, *player);
   }
 }
 

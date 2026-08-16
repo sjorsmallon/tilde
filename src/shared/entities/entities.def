@@ -52,6 +52,22 @@
 //     no-op. The base's fields are exempt by construction: `Entity` is not
 //     itself @runtime_only, and its flags describe the map-placed types.
 //
+// A component-typed field carries no flags, but it CAN carry a default, written
+// as a literal naming the fields it differs on:
+//
+//     render: Render = { mesh = .Leet_Full }
+//
+// A field the literal does not name keeps the component's own default, so the
+// component stays the one place a neutral value is written and a use site says
+// only what is special about it. Literals nest (`{ material = { color = ... } }`)
+// and their order does not matter -- the generator sorts them.
+//
+// This exists so a per-type value has ONE home. Every one of these used to be a
+// hand-written assignment in a spawn function, and they had already drifted:
+// bot-fired rockets lived 5 seconds while player-fired ones lived 20, and a
+// trigger volume was born {1,1,1} everywhere except the editor's placement tool,
+// which said {64,64,64}.
+//
 // ---------------------------------------------------------------------------
 // ORIENTATION UNITS  (decided 2026-07-27; documented here, not yet enforced)
 // ---------------------------------------------------------------------------
@@ -123,7 +139,11 @@ Weapon :: enum {Knife, Scout, Rocket_Launcher}
 Weapon_Kind :: enum { Melee, Hitscan, Projectile, Sniper }
 
 Shader_Type :: enum { Lit, Unlit }
-Shape_Kind :: enum { Sphere, Capsule, Box }
+// Physics_Body_Entity's shape, and the only user. Capsule was here for the old
+// static player hitbox; nothing writes one now and spawn_physics_body has never
+// been able to build one, so a value that can only ever produce a log_error is
+// not a value worth having.
+Shape_Kind :: enum { Sphere, Box }
 
 
 
@@ -180,12 +200,6 @@ Render :: component {
     material:     Material
 }
 
-Hitbox :: component {
-    shape:  Shape_Kind = .Sphere        @Fully_Serializable
-    size:   v3 = {8, 8, 8}              @Fully_Serializable
-    offset: v3 = {0, 0, 0}              @Fully_Serializable
-}
-
 // ---------------------------------------------------------------------------
 // Entities
 // ---------------------------------------------------------------------------
@@ -235,67 +249,32 @@ Player_Entity :: entity @runtime_only {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
     view_angle_pitch:  f32              @Networked
-    // Where the FEET point, which LAGS view_angle_yaw; the difference between
-    // the two is the torso twist that drives the left/right aim poses.
-    //
-    // Server-owned and on the wire because it is an ACCUMULATOR -- it
-    // integrates over time and cannot be recovered from one frame, so
-    // "replicate accumulators, derive everything else" puts it here next to the
-    // angles it is derived from. It was a client-local integrator until the
-    // server started posing hit volumes: with every client integrating its own
-    // copy and the server holding none, the silhouette you shoot at was up to
-    // sv_aim_max_yaw away from the volumes being tested. Clients now read this
-    // and never write it (animation_def.md, "body_yaw is a tier-1
-    // accumulator").
     body_yaw:          f32              @Networked
-    // The local player's HUD reads these off its own entity. Replicated for
-    // every player because per-recipient field filtering does not exist yet;
-    // when it does, these are the first candidates.
+
     health:            i32              @Networked
     ammo:              i32              @Networked
     active_weapon_id:  Weapon = .Knife  @Networked
-    // The death stamp, latched at the >0 -> <=0 health crossing, and the clock
-    // the death clip plays on. Same latched-stamp shape as last_fire_tick below
-    // and replicated for the same reason: a death you never saw is lost
-    // information. It is also what lets a client that connects mid-corpse pick
-    // the animation up at the right frame instead of restarting it -- health
-    // alone says THAT a player is dead, never SINCE WHEN.
-    // 0 = alive (server ticks start at 1); cleared on respawn.
+
     death_tick:        u32              @Networked
-    // The shot itself, latched where it resolves: this pair IS the fire event,
-    // and clients play the gunshot off last_fire_tick advancing. Replicated
-    // STATE rather than a cosmetic effect because a gunshot you never hear is
-    // lost information, not lost decoration -- effects ride their packet once
-    // with no resend, these ride the delta against the ACKED baseline, so a
-    // dropped packet costs a tick of latency instead of the sound.
-    // 0 = never fired (server ticks start at 1).
     last_fire_tick:    u32              @Networked
     last_fire_weapon:  Weapon = .Knife  @Networked
-    // The hitmarker, latched on the SHOOTER for exactly the reason above: a
-    // confirmation you never got is lost information. It is state rather than a
-    // cosmetic effect for a second reason too -- the cosmetic queue is
-    // broadcast to every client, and a hitmarker is per-viewer. Only the
-    // shooter's own client reacts to its own entity's stamp advancing.
-    //
-    // The world-space wet thud everyone hears is the other half, and that one
-    // IS a cosmetic effect (FLESH_IMPACT): decoration, lossy, spatialized at
-    // the victim rather than at the shooter.
-    // 0 = never landed a hit.
     last_hit_tick:         u32          @Networked
     last_hit_was_headshot: bool         @Networked
+
+
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
     // Feeds remote-player interpolation.
     velocity:          v3               @Networked
-    render:            Render
-    hitbox:            Hitbox
-    team_allegiance: Team_Allegiance = .Free_For_All @Networked  
+
+    render:            Render = { mesh = .Leet_Full }
+    team_allegiance: Team_Allegiance = .Free_For_All @Networked
 }
 
 // this is supposed to be a thing you pick up.
 Weapon_Entity :: entity {
     ammo:             i32               @Networked
-weapon_id:        Weapon            @Networked
+    weapon_id:        Weapon            @Networked
     render:           Render
 }
 
@@ -307,13 +286,17 @@ Rocket_Entity :: entity @runtime_only {
     // draws a radius -- rocket_system.cpp is the only reader of all four, and
     // the server despawns on lifetime itself. Previously all @Networked, which
     // put 16 bytes of numbers on the wire per rocket for no reader.
-    lifetime: f32 = 20.0
+    lifetime: f32 = 5.0
     damage_amount: f32 = 50.0
     damage_radius: f32 = 120.0
     knockback_force: f32 = 600.0
     owner_id:        u32
+    // What rocket_system sweeps the flight path with. Was a whole Hitbox
+    // component whose shape was always Sphere and whose offset was always zero;
+    // the radius is the only part anything ever read. @Networked for the
+    // debug_show_hitboxes overlay, which is the client's only interest in it.
+    collision_radius: f32 = 12.0        @Networked
     render:          Render
-    hitbox:          Hitbox
 }
 
 // The client builds emitters from ITS OWN MAP LOAD, not from snapshots --
@@ -359,7 +342,9 @@ Particle_Emitter_Entity :: entity {
 // client is never told one exists. Nothing here is @Networked, and Box_Volume
 // above dropped @Networked for the same reason.
 Trigger_Volume_Entity :: entity {
-    volume:            Box_Volume
+    // 64 is the editor's grid-sized starting box -- big enough to see and to
+    // drag. Box_Volume's own {1,1,1} stays neutral for whatever embeds it next.
+    volume:            Box_Volume = { half_extents = {64, 64, 64} }
     action:            Trigger_Action = .Kill   @Editable @Saveable
     fire_mode:         Fire_Mode = .On_Enter    @Editable @Saveable
     // 64 is enough for a spawn name to match against. param_string is
@@ -405,7 +390,6 @@ Physics_Body_Entity :: entity {
     // Kept @Networked for the interpolation item in todo.md: bodies currently
     // snap to each snapshot, and velocity is what a lerp/extrapolate needs.
     velocity: v3                        @Networked
-    mass:     f32                       @Editable @Saveable
+    mass:     f32 = 10.0                @Editable @Saveable
     render:   Render
-    hitbox:   Hitbox
 }

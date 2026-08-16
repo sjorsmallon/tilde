@@ -47,7 +47,7 @@ struct client_slot_t
 };
 
 // The map currently running, and everything keyed to it. Cleared whole by
-// reset_for_new_map.
+// reset_state_in_preparation_for_new_map_load.
 struct world_t
 {
   shared::game_session_t session;
@@ -113,7 +113,7 @@ struct server_context_t
   tick_output_t outgoing;
 };
 
-void reset_for_new_map(server_context_t& context);
+void reset_state_in_preparation_for_new_map_load(server_context_t& context);
 void reset_client_slot(server_context_t& context, int32_t slot);
 void clear_incoming(server_context_t& context);
 void clear_outgoing(server_context_t& context);

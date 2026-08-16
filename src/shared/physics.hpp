@@ -9,6 +9,7 @@
 #include "linalg.hpp"
 
 #include <map>
+#include <memory>
 #include <vector>
 
 // these patterns are a bit verbose but they mirror Jolt's internal design
@@ -102,11 +103,17 @@ void jolt_init();
 // identical results from identical inputs.
 void init_physics(physics_state_t &state);
 
+// The two above as one call, which is the only useful order. Heap allocated
+// because physics_state_t holds Jolt objects that are neither movable nor
+// assignable, so it cannot sit inline in a struct that resets with `= {}`.
+// jolt_init() must have run.
+std::unique_ptr<physics_state_t> make_physics_state();
+
 // Advance the simulation by dt seconds. Use a fixed timestep (e.g. 1/60 s).
 void step_physics(physics_state_t &state, float dt);
 
 // Register a static axis-aligned box body for a map entity (AABB_Entity, Wedge_Entity).
-// Call this on both server and client after init_session_from_map.
+// Call this on both server and client after build_session.
 void register_static_box(physics_state_t &state, shared::entity_uid_t uid,
                           linalg::vec3f position, linalg::vec3f half_extents);
 

@@ -3,6 +3,7 @@
 #include "bot_system.hpp"
 
 #include "../entity_lifecycle.hpp"
+#include "respawn_system.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/pathfinding.hpp"
@@ -14,7 +15,7 @@ namespace server
 {
 
 Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
-                    const vec3f &position,
+                    const entities::Player_Spawn_Entity &marker,
                     int32_t slot, BotType type, BotPersonality personality)
 {
   const shared::entity_uid_t bot_uid =
@@ -30,13 +31,12 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
 
   if (bot)
   {
-    bot->position          = position;
     bot->client_slot_index = slot;
-    bot->health            = 100;
 
-    // Identical to a human player's -- a bot IS a Player_Entity, and a bot
-    // that was hittable or drawn differently would make every aim test a lie.
-    initialize_player_body(*bot);
+    // The same placement a human gets -- a bot IS a Player_Entity, so it gets
+    // the marker's orientation, view angles and body_yaw too, not just its
+    // position.
+    place_player_at_spawn(*bot, marker);
 
     register_kinematic_capsule(physics,
                                bot_uid,
@@ -333,17 +333,12 @@ void update_bots(server_context_t &context,
               session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
           if (rocket)
           {
-            rocket->position        = eye;
-            rocket->velocity        = aim_dir * 600.f;
-            rocket->lifetime        = 5.f;
-            rocket->damage_amount   = 50.f;
-            rocket->damage_radius   = 120.f;
-            rocket->knockback_force = 600.f;
-            rocket->owner_id        = bot_ent->entity_id;
-
-            rocket->hitbox.shape = entities::Shape_Kind::Sphere;
-            rocket->hitbox.size   = {12.f, 12.f, 12.f};
-            rocket->hitbox.offset = {0.f, 0.f, 0.f};
+            // A bot's rocket is a player's rocket. It used to restate lifetime,
+            // damage, both radii and the hitbox here, which is how bot rockets
+            // came to live 5 seconds while player rockets lived 20.
+            rocket->position = eye;
+            rocket->velocity = aim_dir * 600.f;
+            rocket->owner_id = bot_ent->entity_id;
           }
         }
         break;

@@ -37,7 +37,7 @@ struct Collision_Id
 
   Type type;
   // The meaning of `index` is owned by whoever built the BVH:
-  //   - session BVH (init_session_from_map): a static_entities array position
+  //   - session BVH (build_session): a static_entities array position
   //   - editor BVH (build_editor_bvh):       an entity uid (map.find_by_uid)
   // Each subsystem only ever queries its own BVH, so there is no ambiguity.
   uint32_t

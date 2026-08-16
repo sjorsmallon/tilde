@@ -188,54 +188,9 @@ const char* classname_of(const Entity* entity)
   return entity_info(entity->type).classname;
 }
 
-namespace
-{
-
-// One implementation for all three accessors: the tables answer both "does this
-// type have it" and "where", so the only per-component part is the tag and the
-// result type.
-void* component_pointer(Entity* entity, component_type component)
-{
-  if (entity == nullptr || entity->type == entity_type::Invalid)
-    return nullptr;
-
-  const int32_t offset = component_byte_offset(entity->type, component);
-  if (offset < 0)
-    return nullptr;
-
-  return reinterpret_cast<uint8_t*>(entity) + offset;
-}
-
-} // namespace
-
-Box_Volume* get_box_volume(Entity* entity)
-{
-  return static_cast<Box_Volume*>(component_pointer(entity, component_type::Box_Volume));
-}
-
-const Box_Volume* get_box_volume(const Entity* entity)
-{
-  return get_box_volume(const_cast<Entity*>(entity));
-}
-
-Render* get_render(Entity* entity)
-{
-  return static_cast<Render*>(component_pointer(entity, component_type::Render));
-}
-
-const Render* get_render(const Entity* entity)
-{
-  return get_render(const_cast<Entity*>(entity));
-}
-
-Hitbox* get_hitbox(Entity* entity)
-{
-  return static_cast<Hitbox*>(component_pointer(entity, component_type::Hitbox));
-}
-
-const Hitbox* get_hitbox(const Entity* entity)
-{
-  return get_hitbox(const_cast<Entity*>(entity));
-}
+// The component accessors moved to the header as get_component<T>, keyed by the
+// generated static_component tag -- see entity_reflection.hpp. `component_pointer`
+// went with them: it existed to share one body across a hand-written pair per
+// component, which a template does for every component there will ever be.
 
 } // namespace entities

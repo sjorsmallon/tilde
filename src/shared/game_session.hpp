@@ -17,7 +17,7 @@ namespace shared
 // and the actual static geometry data required for collision.
 //
 // Lifecycle:
-// 1. Initialized via start_session_from_map()
+// 1. Built from a map via build_session()
 // 2. Updated via game loop (which updates Entity_System)
 // 3. BVH is static for the duration of the session (for now)
 struct game_session_t
@@ -50,14 +50,17 @@ struct game_session_t
   std::string map_name;
 };
 
-// Initializes the session from a loaded map.
-// - Resets the entity system and populates it from map entities.
-// - Copies the map's geometry.
-// - Builds the BVH over that geometry.
-void init_session_from_map(game_session_t &session, const map_t &map);
+// The runtime world for `map`: entities copied into pools, geometry copied,
+// BVH built over that copy, navmesh carried across.
+//
+// Returns a fresh session rather than refilling one, which is why there is no
+// reset inside: replacing the caller's session is an assignment, and "what
+// survived the last map" is not a question this can raise. `map` is not
+// mutated -- the session stamps uids on its OWN copies (session_test guards it).
+[[nodiscard]] game_session_t build_session(const map_t &map);
 
 // Register Jolt static bodies for the map's geometry (boxes and displacements,
-// both as their axis-aligned bound). Call after init_session_from_map on both
+// both as their axis-aligned bound). Call after build_session on both
 // server and client when physics is needed.
 //
 // Static meshes are skipped: their collision shape would be the triangle mesh,

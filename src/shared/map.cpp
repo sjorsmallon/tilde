@@ -560,7 +560,10 @@ namespace
 void rewrite_legacy_entity_properties(std::map<std::string, std::string> &properties)
 {
   // 1. Component blobs.
-  static constexpr const char *BLOB_KEYS[] = {"volume", "render", "hitbox", "material"};
+  // "hitbox" is deliberately absent: that component is gone, so a legacy blob
+  // naming it should take the unknown-key path in read_entity_fields (logged and
+  // ignored) rather than be split into three keys that are equally unknown.
+  static constexpr const char *BLOB_KEYS[] = {"volume", "render", "material"};
   for (const char *blob_key : BLOB_KEYS)
   {
     auto it = properties.find(blob_key);

@@ -26,7 +26,7 @@ void reset_for_new_connection(client_context_t& context)
     shared::revert_mirrored_cvars_to_defaults(*context.cvars);
 }
 
-void reset_for_new_map(client_context_t& context)
+void reset_state_in_preparation_for_new_map_load(client_context_t& context)
 {
   context.replication = {};
   context.visuals     = {};

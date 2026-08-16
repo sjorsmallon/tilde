@@ -145,6 +145,20 @@ bool invoke_noclip(Span<std::string_view> args, const command_context_t& context
   return true;
 }
 
+// join_game
+bool invoke_join_game(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::join_game, args.size());
+    return false;
+  }
+
+  commands::join_game(context);
+  return true;
+}
+
 } // namespace
 
 void bind_server_commands(command_table_t& table)
@@ -154,6 +168,7 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::spawn_sphere] = &invoke_spawn_sphere;
   table.binders[(uint32_t)command_id::map] = &invoke_map;
   table.binders[(uint32_t)command_id::noclip] = &invoke_noclip;
+  table.binders[(uint32_t)command_id::join_game] = &invoke_join_game;
 }
 
 } // namespace cvars

@@ -241,21 +241,12 @@ void Placement_Tool::select_placeable(int index)
     return;
   }
 
+  // Every field is already at its declared default -- including the per-use ones
+  // like Trigger_Volume's 64-unit box, which used to be written here and
+  // disagreed with entities.def's {1,1,1} for as long as it did.
   entity_to_place = shared::make_entity(placeable.entity_type);
   if (!entity_to_place)
-  {
     log_error("select_placeable: no entity registered for \"{}\"", placeable.label);
-    return;
-  }
-
-  // Set up defaults for entity types that need them. Trigger_Volume is the only
-  // box-volume entity left now that geometry has moved out.
-  if (entities::Box_Volume *volume = entities::get_box_volume(entity_to_place.get()))
-  {
-    volume->half_extents = {editor::DEFAULT_HALF_EXTENT,
-                            editor::DEFAULT_HALF_EXTENT,
-                            editor::DEFAULT_HALF_EXTENT};
-  }
 }
 
 void Placement_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)

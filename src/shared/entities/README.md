@@ -101,7 +101,7 @@ changes how you write code against them:
 |---|---|
 | `dynamic_cast<T*>(entity)` | `entities::entity_as<T>(entity)` — exact type match |
 | `entity->get_box_volume()` | `entities::get_box_volume(entity)` — component table lookup |
-| `entity->get_component<T>()` | `get_box_volume` / `get_render` / `get_hitbox` |
+| `entity->get_component<T>()` | `get_box_volume` / `get_render` |
 | `delete entity` | `entities::destroy_entity(entity)` — recovers the concrete type from the tag |
 | a virtual override per type | a handwritten exhaustive `switch` over `entity_type` |
 

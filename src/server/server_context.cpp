@@ -9,30 +9,27 @@
 // a reason to open-code a field list at the call site again.
 //
 // The one standing exception is client_slot_t, which is genuinely two scopes in
-// one struct — see reset_for_new_map.
+// one struct — see reset_state_in_preparation_for_new_map_load.
 
 namespace server
 {
 
-void reset_for_new_map(server_context_t& context)
+void reset_state_in_preparation_for_new_map_load(server_context_t& context)
 {
-  // Session, physics, the retained map, bots, trigger overlaps, pending deaths.
+  // Session, the retained map, bots, trigger overlaps, pending deaths.
+  //
+  // This NULLS world.physics rather than rebuilding it: jolt_init() must have
+  // run before a physics_state_t exists, and g_server_context is a file-scope
+  // object, so a world that made its own could not be constructed at static
+  // init. The map load calls make_physics_state() on the next line; keeping the
+  // construction there is also what lets server_context_test assert the whole
+  // reset without standing Jolt up.
   context.world = {};
-
-  // Every frame in the ring describes the OLD world; a delta against one after a
-  // map switch would be nonsense. Clearing the acks below means every client's
-  // next snapshot is a full update, which is what a new world is.
   context.replication = {};
-
-  // Effects and events produced for a world we just dropped. `incoming` is empty
-  // here by construction — a map load runs mid-Tick, after the inbox has been
-  // consumed — but clearing it is cheaper to verify than that argument is.
   clear_incoming(context);
   clear_outgoing(context);
 
-  // A map change restarts the match: round 1, Warmup, fresh deadline. A call and
-  // not part of `world = {}` because a phase deadline is an absolute tick, so
-  // the reset needs the clock.
+
   reset_game_rules(context, context.tick_number,
                    static_cast<uint32_t>(context.cvars->sv_tickrate));
 

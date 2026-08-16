@@ -119,19 +119,47 @@ const char* classname_of(const Entity* entity);
 
 // --- Components -------------------------------------------------------------
 //
-// The closed-enum replacement for get_component<T>(). An entity either has the
-// component or does not, and the tables know which -- so this is a table lookup
-// and a pointer add, where the old version was a virtual call and a linear
-// search over field types.
+// An entity either has the component or does not, and the tables know which --
+// so this is a table lookup and a pointer add, where the pre-generator version
+// was a virtual call and a linear search over field types.
+//
+// Keyed by the component's own static_component tag, so adding a component to
+// entities.def costs no accessor here: it used to be a hand-written pair per
+// component, in a header and a .cpp, which is one more place to forget.
+// nullptr means "this type does not embed it" -- an ordinary answer, not a
+// failure, which is why there is no try_ prefix.
+//
+// To iterate every entity that HAS one, do not walk all entities and call this:
+// use Entity_System::entities_with<Component_T>(), which skips the pools whose
+// type cannot match and resolves the offset once per pool.
+template <typename Component_T> Component_T* get_component(Entity* entity)
+{
+  if (entity == nullptr || entity->type == entity_type::Invalid)
+    return nullptr;
 
-Box_Volume*       get_box_volume(Entity* entity);
-const Box_Volume* get_box_volume(const Entity* entity);
+  const int32_t offset = component_byte_offset(entity->type, Component_T::static_component);
+  if (offset < 0)
+    return nullptr;
 
-Render*       get_render(Entity* entity);
-const Render* get_render(const Entity* entity);
+  return reinterpret_cast<Component_T*>(reinterpret_cast<uint8_t*>(entity) + offset);
+}
 
-Hitbox*       get_hitbox(Entity* entity);
-const Hitbox* get_hitbox(const Entity* entity);
+template <typename Component_T> const Component_T* get_component(const Entity* entity)
+{
+  return get_component<Component_T>(const_cast<Entity*>(entity));
+}
+
+// Named spellings of the two components anything reaches for. Kept because they
+// read better at a call site than get_component<Box_Volume>(e) and because they
+// are what ~25 sites already say; both are the template.
+inline Box_Volume* get_box_volume(Entity* entity) { return get_component<Box_Volume>(entity); }
+inline const Box_Volume* get_box_volume(const Entity* entity)
+{
+  return get_component<Box_Volume>(entity);
+}
+
+inline Render*       get_render(Entity* entity) { return get_component<Render>(entity); }
+inline const Render* get_render(const Entity* entity) { return get_component<Render>(entity); }
 
 // --- Type queries -----------------------------------------------------------
 

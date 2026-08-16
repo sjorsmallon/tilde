@@ -69,7 +69,7 @@ src/
 
 ### Map vs Session
 
-`map_t` is the static serialized data (VMF-style text format). `game_session_t` is the runtime world. Pipeline: `load_map()` → `init_session_from_map()`. The editor works directly on `map_t`.
+`map_t` is the static serialized data (VMF-style text format). `game_session_t` is the runtime world. Pipeline: `load_map()` → `build_session()`, which returns a fresh `game_session_t` rather than refilling one. The editor works directly on `map_t`.
 
 `map_t` holds **two** lists, sharing ONE uid space (`next_uid`):
 
@@ -98,9 +98,11 @@ Generated output: the `entity_type` enum, one plain struct per entity, the compo
 
 Field flags are `@Networked`, `@Editable`, `@Saveable`, and all three are load-bearing (a self-contradictory combination, e.g. `@Editable` on a `@runtime_only` type, is a generator error, not a no-op). `entities.def` documents what each one means and why every field has the flags it has — read that before adding a field.
 
+**Defaults, including per-use component defaults.** Every field's default is a member initializer in the generated struct, so construction is `T entity{}` and nothing needs a setup pass. A component-typed field takes a literal naming only the fields it differs on — `render: Render = { mesh = .Leet_Full }` — which emits as a C++ designated initializer, so any member the literal does not name keeps the component's own default. Literals nest and their order does not matter (the generator sorts them into declaration order, which the designated initializer requires). This is why there is no `initialize_player_body` and no per-spawn fixup block: a per-type constant has one home, and the drift it replaced was real (bot rockets lived 5s to player rockets' 20s; a trigger volume was `{1,1,1}` everywhere except the placement tool's `{64,64,64}`). Defaults are excluded from `SCHEMA_HASH` on purpose, so changing one never breaks the handshake.
+
 Entities are **plain structs with no virtuals** (hence blittable, hence memcmp-diffable and memcpy-clonable). Consequences worth knowing:
 - `entity_as<T>(entity)` replaces `dynamic_cast` (exact type match — the hierarchy is closed and one level deep).
-- `entities::get_box_volume` / `get_render` / `get_hitbox` are component-table lookups, not virtuals.
+- `entities::get_box_volume` / `get_render` are component-table lookups, not virtuals.
 - `destroy_entity()`, not `delete` through a base pointer — there is no virtual destructor to dispatch through.
 - Per-type behavior is a handwritten **exhaustive switch** over the closed enum (`create_map_entity`, `fire_trigger_action`, `compute_entity_bounds`, the editor's `ENTITY_DISPATCH`). That's the sanctioned pattern; adding an entity makes each switch a compile error, which is the point. **Storage is not on that list** — `Entity_System` sizes one byte pool per tag from `ENTITY_INFOS` directly, so a new entity needs no case anywhere in it (`make_entity_pool` was the fifth switch and is gone; see `entity_system_def.md`).
 
@@ -224,7 +226,7 @@ Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` s
 
 `server_context_t` (`src/server/server_context.hpp`) is the server's counterpart to `client_context_t`, and it is organised the same way: **by reset scope, not by topic**. Handles that live for the process sit at the top under a comment saying nothing resets them (`cvars`/`commands`, `last_broadcast_cvars`, `socket`, `transport_layer`, and `tick_number` — monotonic on purpose, since phase deadlines, entity tick stamps and both snapshot rings are keyed by it). Everything after them is a named group: `world` (the map and everything keyed to it), `clients` (an `Array<client_slot_t, sv_max_player_count>` — the slot table), `replication` (the snapshot ring), and `incoming` / `outgoing` (one tick's C2S and S2C traffic).
 
-`src/server/server_context.cpp` holds the **only** four functions that clear anything: `reset_for_new_map`, `reset_client_slot`, `clear_incoming`, `clear_outgoing`. Read that file to answer "what resets when"; `server_context_test` asserts both halves of each — what is cleared *and* what deliberately survives. Don't open-code a field list at a call site again: if a group ever needs to be half-cleared, its boundary is drawn wrong.
+`src/server/server_context.cpp` holds the **only** four functions that clear anything: `reset_state_in_preparation_for_new_map_load`, `reset_client_slot`, `clear_incoming`, `clear_outgoing`. Read that file to answer "what resets when"; `server_context_test` asserts both halves of each — what is cleared *and* what deliberately survives. Don't open-code a field list at a call site again: if a group ever needs to be half-cleared, its boundary is drawn wrong.
 
 Two deliberate irregularities, both with the reason written at the site: `world.rules` is reset by a **call** (`reset_game_rules`) because a phase deadline is an absolute tick, and the two tick groups `clear()` per member rather than `= {}` so their vectors keep capacity at 60Hz. `outgoing.effects` and `outgoing.events` are the same intent in a different member: `event_stream_t::reset()` keeps the writer's buffer *and* re-reserves the count slot, so both streams come out of `clear_outgoing` ready to be fired into. That is also where `sv_event_debug` is latched onto them — the one place guaranteed to run exactly once before anything can fire, which keeps the generated fire helpers free of the cvar family.
 

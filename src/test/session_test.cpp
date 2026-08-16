@@ -4,6 +4,8 @@
 #include "map.hpp" // shared::create_entity_by_classname
 #include <cassert>
 #include <iostream>
+#include <utility>
+#include <vector>
 
 using namespace shared;
 
@@ -42,9 +44,8 @@ int main()
   // can compare against a map nothing has had a chance to touch.
   const uint32_t map_hash_before_init = compute_map_content_hash(test_map);
 
-  // 2. Initialize Session
-  game_session_t session;
-  init_session_from_map(session, test_map);
+  // 2. Build the session
+  game_session_t session = build_session(test_map);
 
   // 3. Verify
 
@@ -152,7 +153,7 @@ int main()
     return 1;
   }
 
-  // --- P7 step 1: init_session_from_map does not mutate the map ---------------
+  // --- P7 step 1: build_session does not mutate the map -----------------------
   //
   // The load-bearing assertion is the DIRECT field read below, not the hash.
   // `entity_id` is deliberately not @Saveable (it is runtime identity, not map
@@ -162,7 +163,7 @@ int main()
   // passed against the very bug this test exists for.
   if (spawn_ent->entity_id != 0)
   {
-    log_error("init_session_from_map wrote entity_id {} into the MAP's entity. The map "
+    log_error("build_session wrote entity_id {} into the MAP's entity. The map "
               "owns that object; the session is supposed to stamp the uid on its own "
               "copy. `const map_t&` is a lie again.",
               spawn_ent->entity_id);
@@ -172,7 +173,7 @@ int main()
   const uint32_t hash_after_init = compute_map_content_hash(test_map);
   if (hash_after_init != map_hash_before_init)
   {
-    log_error("Map content hash changed across init_session_from_map: {} -> {}",
+    log_error("Map content hash changed across build_session: {} -> {}",
               map_hash_before_init, hash_after_init);
     return 1;
   }
@@ -180,8 +181,7 @@ int main()
   // Two sessions from one map. This is the failure the const lie produced: the
   // second init used to renumber the entity the first was already using.
   {
-    game_session_t second_session;
-    init_session_from_map(second_session, test_map);
+    game_session_t second_session = build_session(test_map);
 
     Span<entities::Player_Spawn_Entity> second_spawns =
         second_session.entity_system.entities_of<entities::Player_Spawn_Entity>();
@@ -330,6 +330,117 @@ int main()
     if (!entity_system.validate_locations())
     {
       log_error("uid index disagrees with the pools after reset");
+      return 1;
+    }
+  }
+
+  // --- entities_with<Component_T...>: the component aggregate -----------------
+  //
+  // The invariant no compiler checks. entities_with walks pools at the type's
+  // runtime stride and offsets each component by a value resolved once per pool
+  // — so a wrong stride or a wrong offset reads element 0 correctly and garbles
+  // every element after it. The guard is therefore a comparison against the
+  // brute-force walk it replaced, entity by entity, not a count.
+  {
+    game_session_t component_session = build_session(test_map);
+    Entity_System &entity_system     = component_session.entity_system;
+
+    // A deliberate mix: three types carrying Render (and one of them spawned
+    // more than once, so the inner slot walk has somewhere to go), one carrying
+    // Box_Volume, and two carrying neither — the pools that must be skipped.
+    entity_system.spawn<entities::Rocket_Entity>();
+    entity_system.spawn<entities::Rocket_Entity>();
+    entity_system.spawn<entities::Rocket_Entity>();
+    entity_system.spawn<entities::Weapon_Entity>();
+    entity_system.spawn<entities::Physics_Body_Entity>();
+    entity_system.spawn<entities::Trigger_Volume_Entity>();
+    entity_system.spawn<entities::Light_Entity>();
+    entity_system.spawn<entities::Player_Spectate_Entity>();
+
+    // What `for (pool) for (slot) if (get_render(entity))` used to produce.
+    std::vector<std::pair<entity_uid_t, const void *>> expected_render;
+    for (Entity_Pool &pool : entity_system.pools)
+    {
+      for (uint32_t slot = 0; slot < pool.count; ++slot)
+      {
+        const entities::Entity     *entity = pool.at(slot);
+        const entities::Render *render = entities::get_render(entity);
+        if (render)
+          expected_render.push_back({entity->entity_id, render});
+      }
+    }
+
+    if (expected_render.size() != 5)
+    {
+      log_error("the brute-force walk found {} renderable entities; 5 were spawned",
+                expected_render.size());
+      return 1;
+    }
+
+    std::vector<std::pair<entity_uid_t, const void *>> actual_render;
+    for (auto [entity, render] : entity_system.entities_with<entities::Render>())
+    {
+      // Same object, not merely the same values: the row's component reference
+      // must point INTO the pooled entity, which is what makes writing through
+      // it write the entity.
+      if (&render != entities::get_render(&entity))
+      {
+        log_error("entities_with<Render> handed a component that is not the entity's own "
+                  "(uid {})",
+                  entity.entity_id);
+        return 1;
+      }
+      actual_render.push_back({entity.entity_id, &render});
+    }
+
+    // Both walk pools in type order then slot order, so this is an exact
+    // sequence compare rather than a set compare.
+    if (actual_render != expected_render)
+    {
+      log_error("entities_with<Render> visited {} entities; the brute-force walk visited {} "
+                "(or visited them in a different order)",
+                actual_render.size(), expected_render.size());
+      return 1;
+    }
+
+    uint32_t volume_count = 0;
+    for (auto [entity, volume] : entity_system.entities_with<entities::Box_Volume>())
+    {
+      if (&volume != entities::get_box_volume(&entity))
+      {
+        log_error("entities_with<Box_Volume> handed a foreign component (uid {})",
+                  entity.entity_id);
+        return 1;
+      }
+      ++volume_count;
+    }
+    if (volume_count != 1)
+    {
+      log_error("entities_with<Box_Volume> found {} entities; one Trigger_Volume was spawned",
+                volume_count);
+      return 1;
+    }
+
+    // The intersection form. No entity declares both today, so the fold over the
+    // pack must OR the bits rather than take either alone — an over-matching
+    // mask shows up here as a non-empty result.
+    for (auto [entity, render, volume] :
+         entity_system.entities_with<entities::Render, entities::Box_Volume>())
+    {
+      (void)render;
+      (void)volume;
+      log_error("entities_with<Render, Box_Volume> matched uid {}; no entity has both",
+                entity.entity_id);
+      return 1;
+    }
+
+    // The empty case: begin() must settle all the way to end() rather than
+    // stopping on the first pool that happens to be empty.
+    Entity_System empty_system;
+    if (empty_system.entities_with<entities::Render>().begin() !=
+        empty_system.entities_with<entities::Render>().end())
+    {
+      log_error("entities_with<Render> on an empty Entity_System is not empty");
       return 1;
     }
   }

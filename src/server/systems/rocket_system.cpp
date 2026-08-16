@@ -168,7 +168,7 @@ void update_rockets(server_context_t &context, float dt)
                                 .back_faces = back_face_mode_t::Collide};
 
     if (cast_sphere(physics, rocket.position, next_pos,
-                    rocket.hitbox.size.x, filter, hit))
+                    rocket.collision_radius, filter, hit))
     {
       rocket.position = hit.position;
       detonate(rocket, context, hit.entity_id, hit.normal);

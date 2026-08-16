@@ -7,7 +7,6 @@
 namespace server
 {
 
-void initialize_player_body(entities::Player_Entity &player);
 bool destroy_entity(server_context_t &context, shared::entity_uid_t uid);
 
 } // namespace server

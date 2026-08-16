@@ -58,6 +58,13 @@ void init_physics(physics_state_t &state)
     state.physics_system.SetGravity({0, -800.f, 0});
 }
 
+std::unique_ptr<physics_state_t> make_physics_state()
+{
+    std::unique_ptr<physics_state_t> state = std::make_unique<physics_state_t>();
+    init_physics(*state);
+    return state;
+}
+
 void step_physics(physics_state_t &state, float dt)
 {
     // collision_steps = 1 is correct for a fixed 60 Hz tick.

@@ -10,9 +10,12 @@
 namespace server
 {
 
-// Spawns a bot Player_Entity at position and returns its tracking state.
+// Spawns a bot Player_Entity at a spawn marker and returns its tracking state.
+// Takes the marker rather than a position for the same reason
+// place_player_at_spawn does — passing `marker.position` here is exactly how
+// map-placed bots ended up ignoring the orientation they were authored with.
 Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
-                    const vec3f &position,
+                    const entities::Player_Spawn_Entity &marker,
                     int32_t slot, BotType type = BotType::Regular,
                     BotPersonality personality = {});
 

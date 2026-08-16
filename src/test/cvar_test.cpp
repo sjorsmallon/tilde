@@ -79,13 +79,14 @@ call_record_t g_spawn_cube;
 call_record_t g_spawn_sphere;
 call_record_t g_map;
 call_record_t g_noclip;
+call_record_t g_join_game;
 call_record_t g_bind;
 call_record_t g_connect;
 
 void reset_records()
 {
   g_spawn_bot = g_spawn_cube = g_spawn_sphere = {};
-  g_map = g_noclip = g_bind = g_connect = {};
+  g_map = g_noclip = g_join_game = g_bind = g_connect = {};
 }
 
 // The line buffer a console command's argument views point into must outlive
@@ -131,6 +132,12 @@ void spawn_sphere(const command_context_t& context)
 {
   ++g_spawn_sphere.count;
   g_spawn_sphere.caller_slot = context.caller_slot;
+}
+
+void join_game(const command_context_t& context)
+{
+  ++g_join_game.count;
+  g_join_game.caller_slot = context.caller_slot;
 }
 
 void map(std::string_view path, const command_context_t& context)

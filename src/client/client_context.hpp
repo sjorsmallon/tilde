@@ -164,6 +164,17 @@ struct connection_t
   // (jump/land), which we already played locally via prediction. 0 until known.
   shared::entity_uid_t my_entity_uid = 0;
 
+  // The server holds no player entity for our slot: we are connected but not
+  // playing. DERIVED each snapshot from whether our slot appears among the
+  // reconstructed players, never sent — the server encodes spectating as the
+  // absence of a body, so there is no flag on the wire to disagree with.
+  //
+  // True until a snapshot says otherwise, because that is how a connection
+  // starts: you join as a spectator and `join_game` gives you a body. Only
+  // meaningful while phase == Connected — an offline client has no server to
+  // hold a body for it, and every reader gates on the phase for that reason.
+  bool spectating = true;
+
   uint32_t server_tickrate = 60;
 };
 
@@ -315,6 +326,6 @@ struct client_context_t
 };
 
 void reset_for_new_connection(client_context_t& context);
-void reset_for_new_map(client_context_t& context);
+void reset_state_in_preparation_for_new_map_load(client_context_t& context);
 
 } // namespace client

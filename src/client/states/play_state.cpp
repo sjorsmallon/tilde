@@ -170,6 +170,35 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
   return true;
 }
 
+// Poses `camera` at one of the map's Player_Spectate_Entity markers — the
+// fixed positions a spectator watches from. `spot_index` is which, in map
+// declaration order (stable across a load, which is what makes cycling an
+// index rather than a lookup). False when the map declares none, leaving the
+// camera untouched; the caller decides whether that is worth saying out loud.
+//
+// Entity::orientation is Euler DEGREES here (.y = yaw, .x = pitch), the same
+// reading the server's spawn path uses, and camera_t's angles are degrees too
+// — so this is a copy, not a conversion. It used to atan2 the orientation as
+// if it were a direction vector and assign the resulting radians into a
+// degrees field, which pointed a rotated spectate spot roughly nowhere.
+[[nodiscard]] static bool try_pose_camera_at_spectate_spot(
+    camera_t &camera, shared::game_session_t &session, int32_t spot_index)
+{
+  Span<entities::Player_Spectate_Entity> spectate_spots =
+      session.entity_system.entities_of<entities::Player_Spectate_Entity>();
+  if (spectate_spots.empty())
+    return false;
+
+  const int32_t count = static_cast<int32_t>(spectate_spots.size());
+  const entities::Player_Spectate_Entity &spot =
+      spectate_spots[((spot_index % count) + count) % count];
+
+  camera.position = spot.position;
+  camera.yaw      = spot.orientation.y;
+  camera.pitch    = spot.orientation.x;
+  return true;
+}
+
 void Play_State::finalize_client_map(const shared::map_t &map)
 {
   auto &ctx = state_manager::get_client_context();
@@ -177,9 +206,9 @@ void Play_State::finalize_client_map(const shared::map_t &map)
   // Drop everything keyed to the map we are leaving -- remote entities, delta
   // baselines, transient effects -- so nothing bleeds across the switch. The
   // connection is deliberately untouched; see client_context.hpp.
-  reset_for_new_map(ctx);
+  reset_state_in_preparation_for_new_map_load(ctx);
 
-  shared::init_session_from_map(ctx.world.session, map);
+  ctx.world.session = shared::build_session(map);
   ctx.world.session.map_name = map.name;
 
   // Every mesh and texture this map can show, uploaded now. register_mesh
@@ -195,27 +224,12 @@ void Play_State::finalize_client_map(const shared::map_t &map)
   // the cleanest way to drop the previous map's static bodies. The context owns
   // it, so cosmetic-effect handlers casting against the static world are
   // reading the same object rather than a lent copy of the pointer.
-  ctx.world.physics_state = std::make_unique<physics_state_t>();
-  init_physics(*ctx.world.physics_state);
+  ctx.world.physics_state = make_physics_state();
   shared::populate_static_physics_bodies(*ctx.world.physics_state, map);
 
   // place the camera at a spectate position (if it's there.)
-  Span<entities::Player_Spectate_Entity> spectate_spots = ctx.world.session.entity_system.entities_of<entities::Player_Spectate_Entity>();
-
-  if (!spectate_spots.empty())
-  {
-    // pick the first one.
-    camera.position = spectate_spots.front().position;
-    auto orientation = spectate_spots.front().orientation;
-    float yaw   = atan2(orientation.x, orientation.z);
-    float pitch = atan2(orientation.y, sqrt(orientation.x*orientation.x + orientation.z*orientation.z));
-    camera.yaw =  yaw;
-    camera.pitch = pitch;
-  }
-  else 
-  {
+  if (!try_pose_camera_at_spectate_spot(camera, ctx.world.session, 0))
     log_terminal("[CLIENT] no spectate entities found, so posing camera on a player spawn entity.");
-  }
 
   Span<entities::Player_Spawn_Entity> spawns =
       ctx.world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
@@ -756,6 +770,18 @@ void Play_State::update(float dt)
     for (const auto &[uid, player] : latest_snapshot.players)
       ctx.replication.latest_player_entities[player.client_slot_index] = player;
 
+    // Do we have a body? Absence here is AUTHORITATIVE rather than merely
+    // unheard-from: the map above is refilled from the reconstructed frame,
+    // which is seeded from the baseline and carries removals explicitly, so a
+    // slot missing from it is a slot the server holds no player entity for.
+    // That is exactly how the server encodes spectating.
+    ctx.connection.spectating =
+        !ctx.replication.latest_player_entities.contains(ctx.connection.my_slot);
+    if (ctx.connection.spectating)
+      // Or the stale uid would keep suppressing our own cosmetic effects for a
+      // body we no longer have.
+      ctx.connection.my_entity_uid = shared::null_entity_uid;
+
     ctx.replication.remote_rockets = latest_snapshot.rockets;
     ctx.replication.remote_physics_bodies = latest_snapshot.physics_bodies;
     ctx.replication.latest_processed_tick = snapshot_tick;
@@ -1106,14 +1132,24 @@ void Play_State::update(float dt)
       network::send_protobuf_message(transport, move_cmd);
 
       Move_Events tick_events{};
-      auto [new_position, new_velocity] =
-          player_move(*ctx.cvars, move_input, ctx.world.session.bvh, ctx.prediction.player_position,
-                      ctx.prediction.player_velocity, basis.forward, basis.right,
-                      player_half_width, player_half_height, tick_dt,
-                      &tick_events, &ctx.visuals.debug_collision_faces);
+      // Spectating: the server holds no body for us and drops these moves --
+      // but the snapshot ack RIDES on them, so they keep being sent, or our
+      // ack would never advance and the server would re-baseline forever.
+      // What is skipped is the local sim: predicting would walk a phantom
+      // around the map and hand the first post-join_game snapshot a position
+      // to drag us back from. The ring-buffer entry below is still written, so
+      // reconciliation never reads a stale command number out of it.
+      if (!ctx.connection.spectating)
+      {
+        auto [new_position, new_velocity] =
+            player_move(*ctx.cvars, move_input, ctx.world.session.bvh, ctx.prediction.player_position,
+                        ctx.prediction.player_velocity, basis.forward, basis.right,
+                        player_half_width, player_half_height, tick_dt,
+                        &tick_events, &ctx.visuals.debug_collision_faces);
 
-      ctx.prediction.player_position = new_position;
-      ctx.prediction.player_velocity = new_velocity;
+        ctx.prediction.player_position = new_position;
+        ctx.prediction.player_velocity = new_velocity;
+      }
 
       // Coalesce across the (possibly multiple) ticks stepped this frame:
       // jump is a one-shot, landing keeps the hardest impact.
@@ -1230,14 +1266,20 @@ void Play_State::update(float dt)
   }
   ctx.replication.interpolation_time += dt;
 
-  // --- Spectate (cl_spectate_slot): ride a remote player's eye ---
-  // Deliberately last, and deliberately reading the same render_position /
-  // render_yaw the model is drawn from: whatever the interpolation pass just
-  // produced is exactly what the view shows, so a stall reads as camera judder
-  // rather than being smoothed over by a separate camera path. Mouse look still
-  // drives ctx.prediction.player_yaw underneath -- it just isn't what the camera uses.
+  // --- Which camera source wins ---
+  // Resolved in ONE place, deliberately last, so two sources can never both
+  // write in the same frame. Most specific first; the prediction-driven camera
+  // written above is the fallthrough.
+  //
+  // The eye-follow arm reads the same render_position / render_yaw the model is
+  // drawn from: whatever the interpolation pass just produced is exactly what
+  // the view shows, so a stall reads as camera judder rather than being
+  // smoothed over by a separate camera path. Mouse look still drives
+  // ctx.prediction.player_yaw underneath in both arms -- it just isn't what the
+  // camera uses.
   if (ctx.cvars->cl_spectate_slot >= 0)
   {
+    // Ride a remote player's eye.
     auto spectated_it = ctx.replication.remote_players.find(ctx.cvars->cl_spectate_slot);
     if (spectated_it != ctx.replication.remote_players.end() && spectated_it->second.active)
     {
@@ -1247,6 +1289,17 @@ void Play_State::update(float dt)
       camera.yaw   = spectated.render_yaw;
       camera.pitch = spectated.render_pitch;
     }
+  }
+  else if (ctx.connection.phase == Connection_Phase::Connected &&
+           ctx.connection.spectating)
+  {
+    // Connected with no body: sit at a fixed, map-authored spectate spot. Spot
+    // 0 for now -- cycling between them moves this index and nothing else.
+    //
+    // The result is deliberately dropped: a map with no spectate markers leaves
+    // the camera where prediction put it, and finalize_client_map already said
+    // so once at load. Saying it again every frame would be noise.
+    (void)try_pose_camera_at_spectate_spot(camera, ctx.world.session, 0);
   }
 }
 
@@ -1523,31 +1576,26 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       draw_geometry(scene, entry.value, entry.uid);
   }
 
-  for (shared::Entity_Pool &pool : entity_system.pools)
+  for (auto [entity, render] : entity_system.entities_with<entities::Render>())
   {
-    if (pool.type == entities::entity_type::Player_Entity)
+    // Players are drawn below, from replication rather than from the pool.
+    if (entity.type == entities::entity_type::Player_Entity)
       continue;
 
-    for (uint32_t slot = 0; slot < pool.count; ++slot)
-    {
-      const entities::Entity *ent = pool.at(slot);
+    if (!render.visible)
+      continue;
 
-      const entities::Render *rc = entities::get_render(ent);
-      if (!rc || !rc->visible)
-        continue;
+    const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(render.mesh));
+    if (!mesh.valid())
+      continue;
 
-      const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(rc->mesh));
-      if (!mesh.valid())
-        continue;
-
-      renderer::mesh_draw_t draw{};
-      draw.mesh      = mesh;
-      draw.transform = linalg::compose_transform_euler(ent->position,
-                                                       ent->orientation + rc->rotation, rc->scale);
-      draw.tint      = color_from_vec3(rc->material.color);
-      draw.material_overrides = material_variant(mesh, state_for(rc->material));
-      scene.meshes.push_back(draw);
-    }
+    renderer::mesh_draw_t draw{};
+    draw.mesh      = mesh;
+    draw.transform = linalg::compose_transform_euler(
+        entity.position, entity.orientation + render.rotation, render.scale);
+    draw.tint      = color_from_vec3(render.material.color);
+    draw.material_overrides = material_variant(mesh, state_for(render.material));
+    scene.meshes.push_back(draw);
   }
 
   // Render remote players and bots: the model, then the debug volumes.
@@ -1725,25 +1773,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                  assets::to_string(rc->mesh));
     }
 
+    // The same sphere rocket_system sweeps the flight path with.
     if (ctx.cvars->debug_show_hitboxes)
-    {
-      const auto *hitbox = &rocket.hitbox;
-      vec3f hitbox_center = rocket.position + hitbox->offset;
-
-      switch (hitbox->shape)
-      {
-        case entities::Shape_Kind::Sphere:
-          scene.debug.wire_sphere(hitbox_center, hitbox->size.x, colors::green);
-          break;
-        case entities::Shape_Kind::Capsule:
-          scene.debug.wire_capsule(hitbox_center, hitbox->size.x, hitbox->size.y, colors::green);
-          break;
-        case entities::Shape_Kind::Box:
-          scene.debug.aabb(hitbox_center - hitbox->size, hitbox_center + hitbox->size,
-                           colors::green);
-          break;
-      }
-    }
+      scene.debug.wire_sphere(rocket.position, rocket.collision_radius, colors::green);
   }
 
   // --- Render physics bodies ---
@@ -1843,17 +1875,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // actually renders as.
   if (ctx.cvars->debug_show_box_volumes)
   {
-    for (shared::Entity_Pool &pool : entity_system.pools)
+    for (auto [entity, volume] : entity_system.entities_with<entities::Box_Volume>())
     {
-      for (uint32_t slot = 0; slot < pool.count; ++slot)
-      {
-        const entities::Entity *ent = pool.at(slot);
-        const entities::Box_Volume *volume = entities::get_box_volume(ent);
-        if (!volume) continue;
-
-        scene.debug.aabb(ent->position - volume->half_extents,
-                         ent->position + volume->half_extents, colors::magenta);
-      }
+      scene.debug.aabb(entity.position - volume.half_extents,
+                       entity.position + volume.half_extents, colors::magenta);
     }
 
     for (const shared::map_geometry_t &entry : ctx.world.session.geometry)

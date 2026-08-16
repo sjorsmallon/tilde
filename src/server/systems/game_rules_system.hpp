@@ -22,7 +22,7 @@ inline constexpr float game_over_duration_seconds = 0.0f;
 
 
 // Put the rules state back to its pre-match value and enter Warmup for round
-// 1. Called from load_map_into_state(), so a map change restarts the match —
+// 1. Called from load_map_file_into_context(), so a map change restarts the match —
 // same reasoning as the death-tick table being cleared there: rules state
 // describes the world that was just dropped.
 void reset_game_rules(server_context_t &context,

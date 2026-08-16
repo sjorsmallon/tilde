@@ -23,7 +23,7 @@ namespace
 
 // A context with every reset-scoped group visibly dirty, so a reset that misses
 // something leaves a value the asserts can name. `cvars` is filled because
-// reset_for_new_map dereferences it (the rules deadline needs sv_tickrate).
+// reset_state_in_preparation_for_new_map_load dereferences it (the rules deadline needs sv_tickrate).
 void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
 {
   context.cvars    = &cvar_state;
@@ -70,13 +70,13 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
 
 // --- 1. A new map ------------------------------------------------------------
 
-void test_reset_for_new_map()
+void test_reset_state_in_preparation_for_new_map_load()
 {
   cvars::cvar_state_t cvar_state;
   server_context_t    context;
   make_dirty(context, cvar_state);
 
-  reset_for_new_map(context);
+  reset_state_in_preparation_for_new_map_load(context);
 
   // Cleared: everything keyed to the map we left.
   assert(context.world.session.map_name.empty());
@@ -125,7 +125,7 @@ void test_reset_for_new_map()
     assert(client.latest_buttons_bitmap == 0b1011);
   }
 
-  printf("  reset_for_new_map: ok\n");
+  printf("  reset_state_in_preparation_for_new_map_load: ok\n");
 }
 
 // --- 2. A slot changes occupant ----------------------------------------------
@@ -208,7 +208,7 @@ void test_clear_tick_groups()
 int main()
 {
   printf("server_context_test\n");
-  test_reset_for_new_map();
+  test_reset_state_in_preparation_for_new_map_load();
   test_reset_client_slot();
   test_clear_tick_groups();
   printf("server_context_test: all passed\n");

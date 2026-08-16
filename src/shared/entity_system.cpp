@@ -111,7 +111,7 @@ void Entity_System::add_entity(entity_uid_t uid, const entities::Entity *entity)
   //
   // Map-loaded entities carry their canonical uid here. Runtime-spawned entities
   // go through Entity_System::spawn() instead, which assigns from next_entity_id.
-  // Both ID spaces are unified at session init time (see init_session_from_map).
+  // Both ID spaces are unified by populate_from_map below.
   entities::Entity *copy = pool.push_copy(entity);
   copy->entity_id        = uid;
 
@@ -122,7 +122,16 @@ void Entity_System::populate_from_map(const map_t &map)
 {
   reset();
   for (const map_entity_t &entry : map.entities)
+  {
+    if (!entry.entity)
+    {
+      log_error("map '{}' holds uid {} with no entity behind it — dropping it, "
+                "but the map is malformed and whatever wrote it is the bug",
+                map.name, entry.uid);
+      continue;
+    }
     add_entity(entry.uid, entry.entity.get());
+  }
 
   // Continue runtime IDs from where the map left off so map-loaded and
   // runtime-spawned IDs share one monotonic space.

@@ -1,6 +1,5 @@
 #include "physics_body_system.hpp"
 
-#include "../../shared/components/components.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
 #include "../entity_lifecycle.hpp"
@@ -66,20 +65,11 @@ spawn_physics_body(server_context_t &context,
   body->position = position;
   body->velocity = initial_velocity;
   body->size     = size;
-  body->mass     = 10.f;
-  body->shape = shape;
+  body->shape    = shape;
 
-  // The hitbox and the Jolt shape come from the same value, which is the point
-  // of merging the two shape spellings into one enum: this used to write the
-  // string "box" into a hitbox whose collision test only understood
-  // "sphere"/"capsule"/"aabb", so a cube's hitbox matched nothing and could
-  // never be hit. Cubes are hittable now -- correct, but a behavior CHANGE.
-  body->hitbox.shape  = shape;
-  body->hitbox.size   = size;
-  body->hitbox.offset = {0, 0, 0};
-
-  body->render.visible = true;
-  body->render.scale   = size;
+  // Derived from the arguments, unlike `mass` and `render.visible`, which are
+  // per-type constants and live in entities.def.
+  body->render.scale = size;
 
   // `size` is full extents (diameter on each axis), matching render.scale and the
   // diameter-1 primitive meshes. Jolt's BoxShape takes half-extents and SphereShape

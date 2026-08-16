@@ -1,5 +1,6 @@
 #pragma once
 
+#include "array.hpp"
 #include "entities/entity_reflection.hpp"
 #include "log.hpp"
 #include "map.hpp"
@@ -8,7 +9,9 @@
 #include <cassert>
 #include <cstddef>
 #include <cstring>
+#include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace shared
@@ -149,6 +152,8 @@ struct entity_location_t
   uint32_t              slot = 0;
 };
 
+template <typename... Component_T> struct Component_View;
+
 struct Entity_System
 {
   // Sizes every pool from the generated table. There is no dispatch inside and
@@ -209,6 +214,20 @@ struct Entity_System
 
     return Span<T>(reinterpret_cast<T *>(pool.storage.data()), pool.count);
   }
+
+  // Every live entity carrying ALL of Component_T..., across every pool whose
+  // type embeds them — in entity_type declaration order, then slot order.
+  //
+  //   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
+  //
+  // Replaces `for (pool) for (slot) if (get_render(entity))`, which evaluated a
+  // filter that is CONSTANT PER POOL once per entity — every element of the
+  // Light_Entity pool paying a COMPONENT_OFFSETS lookup that could only return
+  // -1. See Component_View below for what it costs instead.
+  //
+  // Same lifetime rule as entities_of<T>(): a view, not a container, invalidated
+  // by the next spawn or destroy in any pool it covers.
+  template <typename... Component_T> Component_View<Component_T...> entities_with();
 
   // Create an entity of type T and return its uid — the handle. Resolve it with
   // get<T>(uid) to write the new entity's fields. Cannot fail.
@@ -310,5 +329,122 @@ private:
   // swap-and-pop fixup exists once.
   void remove_at_slot(entities::entity_type type, uint32_t slot);
 };
+
+// The result of Entity_System::entities_with<Component_T...>(). A lazy range:
+// nothing is allocated, nothing is cached, and nothing has to be kept in sync at
+// spawn or destroy — which is the whole reason this is not a stored aggregate.
+//
+// "Which entity types have Render" is not a fact anyone declares twice: it comes
+// out of `render: Render` in entities.def as entity_type_info_t::component_mask.
+// So the outer loop walks TYPES (ENTITY_TYPE_COUNT of them, one mask test each,
+// once per query) rather than entities, and the inner loop walks the matching
+// pools at their runtime stride. The component byte offsets are resolved ONCE
+// PER POOL, in settle(), instead of once per entity.
+//
+// Intersections come free: required_mask is a fold over the pack, so
+// entities_with<Render, Box_Volume>() is the same test against both bits.
+template <typename... Component_T> struct Component_View
+{
+  static_assert(sizeof...(Component_T) > 0, "entities_with<> needs at least one component");
+
+  static constexpr uint32_t REQUIRED_MASK =
+      (... | (1u << (uint16_t)Component_T::static_component));
+
+  // A pack cannot be expanded into struct members, so the row is a tuple —
+  // which still binds as `auto [entity, render]` at the call site. The members
+  // are references INTO THE POOL, so writing through them writes the entity.
+  using row_t = std::tuple<entities::Entity &, Component_T &...>;
+
+  Entity_System *system = nullptr;
+
+  struct iterator
+  {
+    Entity_System *system = nullptr;
+
+    // Indexes `system->pools` directly, so it is the entity_type tag. Starts at
+    // 1: index 0 is Invalid, and entity_info() asserts on it.
+    uint32_t type_index = 1;
+    uint32_t slot       = 0;
+
+    // Resolved once per pool by settle(), in pack order.
+    Array<uint32_t, sizeof...(Component_T)> offsets = {};
+
+    // Postcondition: either type_index == ENTITY_TYPE_COUNT (the end), or
+    // pools[type_index] embeds every component, holds `slot`, and `offsets` is
+    // resolved for it.
+    void settle()
+    {
+      while (type_index < entities::ENTITY_TYPE_COUNT)
+      {
+        const entities::entity_type type = (entities::entity_type)type_index;
+
+        if ((entities::entity_info(type).component_mask & REQUIRED_MASK) == REQUIRED_MASK &&
+            slot < system->pools[type_index].count)
+        {
+          uint32_t next = 0;
+          // Left-to-right by the fold's evaluation order, so `offsets` ends up
+          // in pack order and make_row's index_sequence lines up with it.
+          ((offsets[next++] = (uint32_t)entities::component_byte_offset(
+                type, Component_T::static_component)),
+           ...);
+          return;
+        }
+
+        ++type_index;
+        slot = 0;
+      }
+    }
+
+    iterator &operator++()
+    {
+      ++slot;
+      // Still inside the same pool: the offsets already hold, which is the
+      // whole point. Only a pool change goes back through settle().
+      if (slot < system->pools[type_index].count)
+        return *this;
+
+      ++type_index;
+      slot = 0;
+      settle();
+      return *this;
+    }
+
+    row_t operator*() const
+    {
+      return make_row(system->pools[type_index].at(slot),
+                      std::index_sequence_for<Component_T...>{});
+    }
+
+    bool operator!=(const iterator &other) const
+    {
+      return type_index != other.type_index || slot != other.slot;
+    }
+
+  private:
+    template <size_t... Index>
+    row_t make_row(entities::Entity *base, std::index_sequence<Index...>) const
+    {
+      // `base` comes from Entity_Pool::at, which goes through the generated
+      // as_base thunk — an entity and its base are not pointer-interconvertible,
+      // so the adjustment is not ours to guess (entity_system.hpp §Entity_Pool).
+      return row_t(*base, *reinterpret_cast<Component_T *>(reinterpret_cast<uint8_t *>(base) +
+                                                           offsets[Index])...);
+    }
+  };
+
+  iterator begin() const
+  {
+    iterator result{system};
+    result.settle();
+    return result;
+  }
+
+  iterator end() const { return iterator{system, entities::ENTITY_TYPE_COUNT, 0}; }
+};
+
+template <typename... Component_T> Component_View<Component_T...> Entity_System::entities_with()
+{
+  return Component_View<Component_T...>{this};
+}
 
 } // namespace shared

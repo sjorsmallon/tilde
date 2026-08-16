@@ -97,11 +97,10 @@ template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_
 enum class Shape_Kind : uint8_t
 {
   Sphere = 0,
-  Capsule = 1,
-  Box = 2,
+  Box = 1,
 };
 
-constexpr uint32_t Shape_Kind_COUNT = 3;
+constexpr uint32_t Shape_Kind_COUNT = 2;
 
 const char* to_string(Shape_Kind value);
 template <> std::optional<Shape_Kind> try_from_string<Shape_Kind>(std::string_view text);
@@ -186,19 +185,22 @@ enum class component_type : uint16_t
   Box_Volume = 0,
   Material = 1,
   Render = 2,
-  Hitbox = 3,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 4;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 3;
 
 struct Box_Volume
 {
+  static constexpr component_type static_component = component_type::Box_Volume;
+
   linalg::vec3f position = {0.0f, 0.0f, 0.0f};
   linalg::vec3f half_extents = {1.0f, 1.0f, 1.0f};
 };
 
 struct Material
 {
+  static constexpr component_type static_component = component_type::Material;
+
   Shader_Type shader_type = Shader_Type::Lit;
   linalg::vec3f color = {1.0f, 1.0f, 1.0f};
   float roughness = 0.5f;
@@ -206,6 +208,8 @@ struct Material
 
 struct Render
 {
+  static constexpr component_type static_component = component_type::Render;
+
   assets::mesh_asset mesh = assets::mesh_asset::Missing;
   bool visible = true;
   bool is_wireframe = false;
@@ -213,13 +217,6 @@ struct Render
   linalg::vec3f scale = {1.0f, 1.0f, 1.0f};
   linalg::vec3f rotation = {0.0f, 0.0f, 0.0f};
   Material material = {};
-};
-
-struct Hitbox
-{
-  Shape_Kind shape = Shape_Kind::Sphere;
-  linalg::vec3f size = {8.0f, 8.0f, 8.0f};
-  linalg::vec3f offset = {0.0f, 0.0f, 0.0f};
 };
 
 struct Entity
@@ -269,8 +266,7 @@ struct Player_Entity : Entity
   bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};
   linalg::vec3f velocity = {};
-  Render render = {};
-  Hitbox hitbox = {};
+  Render render = {.mesh = assets::mesh_asset::Leet_Full};
   Team_Allegiance team_allegiance = Team_Allegiance::Free_For_All;
 };
 
@@ -292,13 +288,13 @@ struct Rocket_Entity : Entity
   Rocket_Entity() { type = entity_type::Rocket_Entity; }
 
   linalg::vec3f velocity = {};
-  float lifetime = 20.0f;
+  float lifetime = 5.0f;
   float damage_amount = 50.0f;
   float damage_radius = 120.0f;
   float knockback_force = 600.0f;
   uint32_t owner_id = {};
+  float collision_radius = 12.0f;
   Render render = {};
-  Hitbox hitbox = {};
 };
 
 struct Particle_Emitter_Entity : Entity
@@ -335,7 +331,7 @@ struct Trigger_Volume_Entity : Entity
 
   Trigger_Volume_Entity() { type = entity_type::Trigger_Volume_Entity; }
 
-  Box_Volume volume = {};
+  Box_Volume volume = {.half_extents = {64.0f, 64.0f, 64.0f}};
   Trigger_Action action = Trigger_Action::Kill;
   Fire_Mode fire_mode = Fire_Mode::On_Enter;
   network::pascal_string_t<64> param_target_name = {};
@@ -367,9 +363,8 @@ struct Physics_Body_Entity : Entity
   Shape_Kind shape = Shape_Kind::Box;
   linalg::vec3f size = {};
   linalg::vec3f velocity = {};
-  float mass = {};
+  float mass = 10.0f;
   Render render = {};
-  Hitbox hitbox = {};
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

@@ -93,9 +93,12 @@
 //
 //   default_value     -> NUMBER
 //                      | '{' NUMBER (',' NUMBER)* '}'
+//                      | '{' field_default (',' field_default)* '}'
 //                      | '.' IDENTIFIER
 //                      | 'true' | 'false'
 //                      | STRING_LITERAL
+//
+//   field_default     -> IDENTIFIER '=' default_value
 //
 //   annotation        -> '@' IDENTIFIER
 //
@@ -108,6 +111,13 @@
 // comment: it is what the console prints for help and autocomplete. A missing
 // one is an error. There is no ambiguity with a string DEFAULT -- a default only
 // ever follows '='.
+//
+// The two brace forms of default_value are told apart by a two token lookahead
+// past the '{': IDENTIFIER '=' starts a component literal, anything else the
+// numeric vector. A component literal names the fields it overrides and leaves
+// the rest to the component's own declared defaults, which is why it emits as a
+// C++ designated initializer -- an unnamed member there keeps its own default
+// member initializer.
 //
 // ---------------------------------------------------------------------------
 // Memory
@@ -390,6 +400,10 @@ enum default_kind_t : uint8_t
   DEFAULT_ENUM_LITERAL,
   DEFAULT_BOOL,
   DEFAULT_STRING,
+  // `{ mesh = .Leet_Full }` on a component-typed field: the component's own
+  // defaults with these fields overridden. Nests, because an override's value is
+  // itself a default_value_t.
+  DEFAULT_COMPONENT,
 };
 
 struct default_value_t
@@ -399,6 +413,23 @@ struct default_value_t
   int32_t        number_count;
   bool           boolean;
   string_view_t  text; // enum value name, or the contents of a string literal
+
+  // DEFAULT_COMPONENT only: into program_t::component_overrides.
+  int32_t first_override;
+  int32_t override_count;
+};
+
+// One `name = value` inside a component literal. Resolved by NAME against the
+// target component's field list, so a use site never has to know the
+// component's field order -- resolve sorts the overrides into it, which is what
+// the emitted designated initializer requires.
+struct component_override_t
+{
+  string_view_t   name;
+  default_value_t value;
+  int32_t         field_index; // into program_t::fields, -1 until resolved
+  int32_t         offset;
+  int32_t         line;
 };
 
 // Where an asset's bytes come from. This is the ONLY place the distinction
@@ -622,6 +653,10 @@ struct program_t
   int32_t      parameter_count;
   int32_t      parameter_capacity;
 
+  component_override_t* component_overrides;
+  int32_t               component_override_count;
+  int32_t               component_override_capacity;
+
   annotation_t* annotations;
   int32_t       annotation_count;
   int32_t       annotation_capacity;
@@ -662,6 +697,7 @@ struct program_mark_t
   int32_t declaration_count;
   int32_t field_count;
   int32_t parameter_count;
+  int32_t component_override_count;
   int32_t annotation_count;
   int32_t enum_value_count;
   int32_t asset_entry_count;
@@ -670,23 +706,25 @@ struct program_mark_t
 static program_mark_t mark_program(const program_t* program)
 {
   program_mark_t mark;
-  mark.declaration_count = program->declaration_count;
-  mark.field_count       = program->field_count;
-  mark.parameter_count   = program->parameter_count;
-  mark.annotation_count  = program->annotation_count;
-  mark.enum_value_count  = program->enum_value_count;
-  mark.asset_entry_count = program->asset_entry_count;
+  mark.declaration_count        = program->declaration_count;
+  mark.field_count              = program->field_count;
+  mark.parameter_count          = program->parameter_count;
+  mark.component_override_count = program->component_override_count;
+  mark.annotation_count         = program->annotation_count;
+  mark.enum_value_count         = program->enum_value_count;
+  mark.asset_entry_count        = program->asset_entry_count;
   return mark;
 }
 
 static void rewind_program(program_t* program, program_mark_t mark)
 {
-  program->declaration_count = mark.declaration_count;
-  program->field_count       = mark.field_count;
-  program->parameter_count   = mark.parameter_count;
-  program->annotation_count  = mark.annotation_count;
-  program->enum_value_count  = mark.enum_value_count;
-  program->asset_entry_count = mark.asset_entry_count;
+  program->declaration_count        = mark.declaration_count;
+  program->field_count              = mark.field_count;
+  program->parameter_count          = mark.parameter_count;
+  program->component_override_count = mark.component_override_count;
+  program->annotation_count         = mark.annotation_count;
+  program->enum_value_count         = mark.enum_value_count;
+  program->asset_entry_count        = mark.asset_entry_count;
   // The string arena is deliberately NOT rewound: it is a bump allocator shared
   // by every declaration, and a failed parse leaks a few bytes of it at most.
 }
@@ -723,6 +761,15 @@ static parameter_t* push_parameter(program_t* program)
   *parameter                        = {};
   parameter->type.declaration_index = -1;
   return parameter;
+}
+
+static component_override_t* push_component_override(program_t* program)
+{
+  assert(program->component_override_count < program->component_override_capacity);
+  component_override_t* override = &program->component_overrides[program->component_override_count++];
+  *override             = {};
+  override->field_index = -1;
+  return override;
 }
 
 static annotation_t* push_annotation(program_t* program)
@@ -1195,12 +1242,86 @@ static bool parse_type(parser_t* parser, type_reference_t* out_type, bool bare_s
   return true;
 }
 
+// A component literal `{ mesh = .Leet_Full, scale = {2, 2, 2} }`. The caller has
+// already eaten the '{' and established that what follows is IDENTIFIER '='.
+// Recursive: an override's value is a default_value_t like any other, which is
+// what lets a nested component be written `{ material = { color = {1, 0, 0} } }`.
+static bool parse_default_value(parser_t* parser, default_value_t* out_value);
+
+// One literal's DIRECT overrides are collected here first and pushed as a block
+// only once the whole literal has parsed. Parsing them straight into the program
+// array would interleave a nested literal's overrides with its parent's, and the
+// parent's [first, count) range would then cover children that are not its own.
+// Ranges already written by nested literals stay valid across the block push --
+// their slots were pushed earlier and nothing ever moves.
+constexpr int32_t MAX_COMPONENT_LITERAL_OVERRIDES = 64;
+
+static bool parse_component_literal(parser_t* parser, default_value_t* out_value)
+{
+  program_t* program = parser->program;
+
+  component_override_t direct[MAX_COMPONENT_LITERAL_OVERRIDES];
+  int32_t              direct_count = 0;
+
+  while (true)
+  {
+    if (direct_count >= MAX_COMPONENT_LITERAL_OVERRIDES)
+    {
+      parse_error(parser, "a component default overrides at most %d fields",
+                  MAX_COMPONENT_LITERAL_OVERRIDES);
+      return false;
+    }
+
+    token_t name_token = peek(parser);
+    if (!expect(parser, TOKEN_IDENTIFIER, "a field name inside the component default"))
+      return false;
+
+    component_override_t* override = &direct[direct_count++];
+    *override             = {};
+    override->field_index = -1;
+    override->name        = token_text(program, name_token);
+    override->offset      = name_token.offset;
+    override->line        = name_token.line;
+
+    if (!expect(parser, TOKEN_EQUALS, "'=' after the field name"))
+      return false;
+    if (!parse_default_value(parser, &override->value))
+      return false;
+
+    if (!accept(parser, TOKEN_COMMA))
+      break;
+  }
+
+  if (!expect(parser, TOKEN_CLOSE_BRACE, "'}' to close the component default"))
+    return false;
+
+  out_value->kind           = DEFAULT_COMPONENT;
+  out_value->first_override = program->component_override_count;
+  out_value->override_count = direct_count;
+
+  for (int32_t index = 0; index < direct_count; ++index)
+    *push_component_override(program) = direct[index];
+
+  return true;
+}
+
 static bool parse_default_value(parser_t* parser, default_value_t* out_value)
 {
   *out_value = {};
 
   if (accept(parser, TOKEN_OPEN_BRACE))
   {
+    // Two token lookahead past the '{' is what separates the two brace forms.
+    // `{ mesh = ... }` is a component literal; `{0, 0, 0}` is a vector.
+    if (check(parser, TOKEN_IDENTIFIER) && peek_ahead(parser, 1).kind == TOKEN_EQUALS)
+      return parse_component_literal(parser, out_value);
+
+    if (check(parser, TOKEN_CLOSE_BRACE))
+    {
+      parse_error(parser, "an empty '{}' default says nothing; omit the '=' instead");
+      return false;
+    }
+
     out_value->kind = DEFAULT_VECTOR;
     while (true)
     {
@@ -2146,10 +2267,14 @@ static void resolve_types(program_t* program, const name_table_t* table)
         case DECLARATION_COMPONENT:
           field->type.kind              = TYPE_COMPONENT;
           field->type.declaration_index = target;
-          if (field->default_value.kind != DEFAULT_NONE)
+          // A component-typed field takes a component literal or nothing. Any
+          // other default is a category error -- `render: Render = 3` -- and
+          // resolve_component_defaults never sees it.
+          if (field->default_value.kind != DEFAULT_NONE &&
+              field->default_value.kind != DEFAULT_COMPONENT)
             report_error(program, field->offset, field->line,
-                         "field '%.*s' may not have a default value; the defaults declared "
-                         "inside component '%.*s' are used instead",
+                         "field '%.*s' is a component, so its default must be a '{ field = value }' "
+                         "literal naming fields of '%.*s'",
                          field->name.length, field->name.data, target_declaration->name.length,
                          target_declaration->name.data);
           break;
@@ -3041,6 +3166,76 @@ static void check_cvar_lines(program_t* program)
   }
 }
 
+// What a type accepts as a default, in the .def's own spelling. Used only to
+// explain a mismatch.
+static const char* default_form_for_type(const type_reference_t* type)
+{
+  switch (type->kind)
+  {
+    case TYPE_F32: case TYPE_F64:
+    case TYPE_U8:  case TYPE_U16: case TYPE_U32: case TYPE_U64:
+    case TYPE_I8:  case TYPE_I16: case TYPE_I32: case TYPE_I64: return "a number";
+    case TYPE_BOOL:                                             return "true or false";
+    case TYPE_V3: case TYPE_V4: case TYPE_V4I:                   return "a '{x, y, z}' vector";
+    case TYPE_STRING:                                           return "a quoted string";
+    case TYPE_ENUM: case TYPE_ASSET:                            return "a '.Name' literal";
+    case TYPE_COMPONENT: return "a '{ field = value }' component literal";
+    default:             return "no default at all";
+  }
+}
+
+// A default's SHAPE against the type it initializes -- nullptr when the pairing
+// is fine, otherwise what the type wanted. Shared by fields, command parameters
+// and component-literal overrides, all three of which carry defaults: a
+// wrong-kind default would otherwise surface as a C++ error inside generated
+// code the author never wrote.
+static const char* default_kind_mismatch(default_kind_t kind, const type_reference_t* type)
+{
+  // Unresolved is already reported; piling a second error on it helps nobody.
+  if (kind == DEFAULT_NONE || type->kind == TYPE_UNRESOLVED)
+    return nullptr;
+
+  bool matches = false;
+  switch (kind)
+  {
+    case DEFAULT_NONE: matches = true; break;
+
+    case DEFAULT_NUMBER:
+      matches = type->kind == TYPE_F32 || type->kind == TYPE_F64 || type->kind == TYPE_U8 ||
+                type->kind == TYPE_U16 || type->kind == TYPE_U32 || type->kind == TYPE_U64 ||
+                type->kind == TYPE_I8 || type->kind == TYPE_I16 || type->kind == TYPE_I32 ||
+                type->kind == TYPE_I64;
+      break;
+
+    case DEFAULT_VECTOR:
+      matches = type->kind == TYPE_V3 || type->kind == TYPE_V4 || type->kind == TYPE_V4I;
+      break;
+
+    case DEFAULT_ENUM_LITERAL:
+      matches = type->kind == TYPE_ENUM || type->kind == TYPE_ASSET;
+      break;
+
+    case DEFAULT_BOOL:      matches = type->kind == TYPE_BOOL;      break;
+    case DEFAULT_STRING:    matches = type->kind == TYPE_STRING;    break;
+    case DEFAULT_COMPONENT: matches = type->kind == TYPE_COMPONENT; break;
+  }
+
+  return matches ? nullptr : default_form_for_type(type);
+}
+
+// How many components a vector default must carry. v4i is the odd one only in
+// that its components are integers; the count is the type's arity either way.
+static int32_t vector_component_count(type_kind_t kind)
+{
+  switch (kind)
+  {
+    case TYPE_V3:  return 3;
+    case TYPE_V4:
+    case TYPE_V4I: return 4;
+    default:       return 0;
+  }
+}
+
 // The signature rules the binder generator depends on. Everything here is a
 // promise the emitted argument binder cashes in: "optional parameters form a
 // suffix" is what lets it map token count to parameter count, and "the rest
@@ -3135,24 +3330,13 @@ static void check_command_parameters(program_t* program)
 
         // A wrong-kind default would otherwise surface as a C++ error inside a
         // generated binder the author never wrote.
-        const default_kind_t default_kind = parameter->default_value.kind;
-        bool default_matches = true;
-        switch (default_kind)
-        {
-          case DEFAULT_NONE:         break;
-          case DEFAULT_NUMBER:       default_matches = kind == TYPE_F32 || kind == TYPE_I32 ||
-                                                       kind == TYPE_U32;    break;
-          case DEFAULT_BOOL:         default_matches = kind == TYPE_BOOL;   break;
-          case DEFAULT_STRING:       default_matches = kind == TYPE_STRING; break;
-          case DEFAULT_ENUM_LITERAL: default_matches = kind == TYPE_ENUM;   break;
-          case DEFAULT_VECTOR:       default_matches = false;               break;
-        }
-        if (!default_matches)
+        const char* wanted = default_kind_mismatch(parameter->default_value.kind, &parameter->type);
+        if (wanted != nullptr)
         {
           report_error(program, parameter->offset, parameter->line,
-                       "parameter '%.*s' has a default that is not a value of its type '%.*s'",
+                       "parameter '%.*s' of type '%.*s' takes %s as its default",
                        parameter->name.length, parameter->name.data, parameter->type.name.length,
-                       parameter->type.name.data);
+                       parameter->type.name.data, wanted);
         }
       }
     }
@@ -3233,6 +3417,61 @@ static void check_enum_literal(program_t* program, string_view_t owner_name,
                  owner_name.length, owner_name.data);
 }
 
+// Everything that can be said about ONE default against the type it
+// initializes, once the type is resolved: its shape, its arity if it is a
+// vector, and the name it uses if it is a `.Something`.
+//
+// `owner` is what the message calls the thing being defaulted -- "field 'mesh'"
+// or "parameter 'mode'" -- so one function serves all three carriers.
+static void check_one_default(program_t* program, const char* owner_kind, string_view_t owner_name,
+                              const type_reference_t* type, const default_value_t* value,
+                              int32_t offset, int32_t line)
+{
+  const char* wanted = default_kind_mismatch(value->kind, type);
+  if (wanted != nullptr)
+  {
+    report_error(program, offset, line, "%s '%.*s' of type '%.*s' takes %s as its default",
+                 owner_kind, owner_name.length, owner_name.data, type->name.length,
+                 type->name.data, wanted);
+    return;
+  }
+
+  if (value->kind == DEFAULT_VECTOR)
+  {
+    const int32_t arity = vector_component_count(type->kind);
+    if (value->number_count != arity)
+      report_error(program, offset, line,
+                   "%s '%.*s' is a '%.*s', so its default needs %d components, not %d",
+                   owner_kind, owner_name.length, owner_name.data, type->name.length,
+                   type->name.data, arity, value->number_count);
+    return;
+  }
+
+  if (value->kind != DEFAULT_ENUM_LITERAL || type->declaration_index < 0)
+    return;
+
+  const declaration_t* target = &program->declarations[type->declaration_index];
+  string_view_t        name   = value->text;
+  bool                 found  = false;
+
+  if (type->kind == TYPE_ENUM)
+  {
+    for (int32_t which = 0; which < target->enum_value_count && !found; ++which)
+      found = string_views_match(program->enum_values[target->first_enum_value + which], name);
+  }
+  else // TYPE_ASSET; default_kind_mismatch already rejected everything else
+  {
+    for (int32_t which = 0; which < target->asset_entry_count && !found; ++which)
+      found = string_view_matches(name, program->asset_entries[target->first_asset_entry + which].name);
+  }
+
+  if (!found)
+    report_error(program, offset, line,
+                 "'%.*s' is not a value of '%.*s', so %s '%.*s' cannot default to it", name.length,
+                 name.data, target->name.length, target->name.data, owner_kind, owner_name.length,
+                 owner_name.data);
+}
+
 static void check_literal_defaults(program_t* program)
 {
   for (int32_t index = 0; index < program->parameter_count; ++index)
@@ -3248,41 +3487,106 @@ static void check_literal_defaults(program_t* program)
   {
     const field_t* field = &program->fields[index];
 
-    if (field->default_value.kind != DEFAULT_ENUM_LITERAL || field->type.declaration_index < 0)
+    // TYPE_VOID is a command line: a field with no type and no default, whose
+    // parameters carry the defaults and are checked above. TYPE_COMPONENT is
+    // resolve_types' business -- it reports a non-literal default there with a
+    // message that names the component, and the literal's own contents are
+    // covered by the override loop below.
+    if (field->type.kind == TYPE_VOID || field->type.kind == TYPE_COMPONENT)
       continue;
 
-    const declaration_t* target = &program->declarations[field->type.declaration_index];
-    string_view_t        wanted = field->default_value.text;
-    bool                 found  = false;
+    check_one_default(program, "field", field->name, &field->type, &field->default_value,
+                      field->offset, field->line);
+  }
 
-    if (field->type.kind == TYPE_ENUM)
+  // Overrides are checked flat rather than by walking down from each field:
+  // every one of them, however deeply nested, has already been resolved to the
+  // field it names, so its type is right there.
+  for (int32_t index = 0; index < program->component_override_count; ++index)
+  {
+    const component_override_t* override = &program->component_overrides[index];
+    if (override->field_index < 0) // unresolved name, already reported
+      continue;
+
+    const field_t* target = &program->fields[override->field_index];
+    check_one_default(program, "field", target->name, &target->type, &override->value,
+                      override->offset, override->line);
+  }
+}
+
+// Links each override in a component literal to the field it names, and sorts
+// them into that component's declaration order. Recursive, because an override's
+// value can be another literal.
+static void resolve_component_default(program_t* program, const type_reference_t* type,
+                                      default_value_t* value)
+{
+  const declaration_t* component = &program->declarations[type->declaration_index];
+
+  for (int32_t index = 0; index < value->override_count; ++index)
+  {
+    component_override_t* override = &program->component_overrides[value->first_override + index];
+
+    for (int32_t which = 0; which < component->field_count; ++which)
     {
-      for (int32_t which = 0; which < target->enum_value_count && !found; ++which)
-        found = string_views_match(program->enum_values[target->first_enum_value + which], wanted);
-    }
-    else if (field->type.kind == TYPE_ASSET)
-    {
-      for (int32_t which = 0; which < target->asset_entry_count && !found; ++which)
+      if (string_views_match(program->fields[component->first_field + which].name, override->name))
       {
-        const char* name = program->asset_entries[target->first_asset_entry + which].name;
-        found = string_view_matches(wanted, name);
+        override->field_index = component->first_field + which;
+        break;
       }
     }
-    else
+
+    if (override->field_index < 0)
     {
-      report_error(program, field->offset, field->line,
-                   "field '%.*s' has a '.%.*s' default, but its type '%.*s' is not an enum or an "
-                   "asset class",
-                   field->name.length, field->name.data, wanted.length, wanted.data,
-                   field->type.name.length, field->type.name.data);
+      report_error(program, override->offset, override->line, "component '%.*s' has no field '%.*s'",
+                   component->name.length, component->name.data, override->name.length,
+                   override->name.data);
       continue;
     }
 
-    if (!found)
-      report_error(program, field->offset, field->line,
-                   "'%.*s' is not a value of '%.*s', so field '%.*s' cannot default to it",
-                   wanted.length, wanted.data, target->name.length, target->name.data,
-                   field->name.length, field->name.data);
+    for (int32_t earlier = 0; earlier < index; ++earlier)
+    {
+      if (program->component_overrides[value->first_override + earlier].field_index !=
+          override->field_index)
+        continue;
+      report_error(program, override->offset, override->line,
+                   "'%.*s' is given a default twice in the same '{ }'", override->name.length,
+                   override->name.data);
+      break;
+    }
+
+    const field_t* field = &program->fields[override->field_index];
+    if (override->value.kind == DEFAULT_COMPONENT && field->type.kind == TYPE_COMPONENT &&
+        field->type.declaration_index >= 0)
+      resolve_component_default(program, &field->type, &override->value);
+  }
+
+  // C++ designated initializers must name members in declaration order. Sorting
+  // here rather than demanding it of the author: a use site says WHAT differs,
+  // and should not have to know the order the component happens to declare in.
+  // Whole values move, so each override's own nested range travels with it.
+  component_override_t* overrides = &program->component_overrides[value->first_override];
+  for (int32_t index = 1; index < value->override_count; ++index)
+  {
+    component_override_t pending  = overrides[index];
+    int32_t              position = index;
+    while (position > 0 && overrides[position - 1].field_index > pending.field_index)
+    {
+      overrides[position] = overrides[position - 1];
+      --position;
+    }
+    overrides[position] = pending;
+  }
+}
+
+static void resolve_component_defaults(program_t* program)
+{
+  for (int32_t index = 0; index < program->field_count; ++index)
+  {
+    field_t* field = &program->fields[index];
+    if (field->default_value.kind != DEFAULT_COMPONENT || field->type.kind != TYPE_COMPONENT ||
+        field->type.declaration_index < 0)
+      continue;
+    resolve_component_default(program, &field->type, &field->default_value);
   }
 }
 
@@ -3307,6 +3611,10 @@ static void resolve_program(program_t* program)
   resolve_field_flags(program, &table);
   resolve_class_annotations(program);
   resolve_types(program, &table);
+
+  // Needs resolve_types: an override is looked up in the component's field
+  // list, which is only reachable once the field's type names one.
+  resolve_component_defaults(program);
 
   // A file that mixes families is already rejected and stays DEF_FAMILY_EMPTY,
   // so neither set of checks runs on it -- reporting "no 'base' declaration" on
@@ -3664,9 +3972,10 @@ static bool type_has_integer_components(type_kind_t kind)
   return kind == TYPE_V4I;
 }
 
-// Fields and command parameters both carry defaults, hence the (type, value)
-// pair rather than a field_t.
-static void write_default_value(FILE* out, const type_reference_t* type,
+// Fields, command parameters and component-literal overrides all carry
+// defaults, hence the (type, value) pair rather than a field_t. `program` is
+// needed only by the component case, which names fields to recurse into.
+static void write_default_value(FILE* out, const program_t* program, const type_reference_t* type,
                                 const default_value_t* value)
 {
   if (value->kind == DEFAULT_NONE)
@@ -3712,6 +4021,29 @@ static void write_default_value(FILE* out, const type_reference_t* type,
       fprintf(out, "\"%.*s\"", value->text.length, value->text.data);
       return;
 
+    // A designated initializer, which is the whole point: a member NOT named
+    // here is initialized from its own default member initializer, so the
+    // component keeps owning every value the use site did not override.
+    // resolve_component_default has already sorted these into declaration
+    // order, which C++ requires.
+    case DEFAULT_COMPONENT:
+    {
+      fprintf(out, "{");
+      for (int32_t index = 0; index < value->override_count; ++index)
+      {
+        const component_override_t* override =
+            &program->component_overrides[value->first_override + index];
+        const field_t* field = &program->fields[override->field_index];
+
+        if (index > 0)
+          fprintf(out, ", ");
+        fprintf(out, ".%.*s = ", field->name.length, field->name.data);
+        write_default_value(out, program, &field->type, &override->value);
+      }
+      fprintf(out, "}");
+      return;
+    }
+
     case DEFAULT_NONE:
       break;
   }
@@ -3719,9 +4051,9 @@ static void write_default_value(FILE* out, const type_reference_t* type,
   fprintf(out, "{}");
 }
 
-static void write_default_initializer(FILE* out, const field_t* field)
+static void write_default_initializer(FILE* out, const program_t* program, const field_t* field)
 {
-  write_default_value(out, &field->type, &field->default_value);
+  write_default_value(out, program, &field->type, &field->default_value);
 }
 
 // The classname is the on-disk identity, derived from the declared name rather
@@ -3747,7 +4079,7 @@ static void write_field_members(FILE* out, const program_t* program,
     fprintf(out, "  ");
     write_cpp_type(out, &field->type);
     fprintf(out, " %.*s = ", field->name.length, field->name.data);
-    write_default_initializer(out, field);
+    write_default_initializer(out, program, field);
     fprintf(out, ";\n");
   }
 }
@@ -3772,6 +4104,17 @@ static void emit_component_struct(FILE* out, const program_t* program, int32_t i
   }
 
   fprintf(out, "struct %.*s\n{\n", declaration->name.length, declaration->name.data);
+
+  // The compile-time half of the tag, mirroring an entity's static_type and
+  // there for the same reason: entities_with<T>() needs the component_type
+  // without the caller passing it alongside T, which would be a second
+  // spelling of the same fact that could disagree with the first.
+  //
+  // static, so it is not a data member: no storage, no effect on layout,
+  // offsetof, blittability or the memcmp diff.
+  fprintf(out, "  static constexpr component_type static_component = component_type::%.*s;\n\n",
+          declaration->name.length, declaration->name.data);
+
   write_field_members(out, program, declaration);
   fprintf(out, "};\n\n");
 
@@ -5178,7 +5521,7 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
     fprintf(out, "  ");
     write_cpp_type(out, &cvar->type);
     fprintf(out, " %.*s = ", cvar->name.length, cvar->name.data);
-    write_default_initializer(out, cvar);
+    write_default_initializer(out, program, cvar);
     fprintf(out, ";\n");
   }
   fprintf(out, "};\n\n");
@@ -5687,7 +6030,7 @@ static void emit_argument_binder(FILE* out, const program_t* program, const fiel
     write_parameter_cpp_type(out, &parameter->type);
     fprintf(out, " %.*s = ", name_length, name);
     if (optional)
-      write_default_value(out, &parameter->type, &parameter->default_value);
+      write_default_value(out, program, &parameter->type, &parameter->default_value);
     else
       fprintf(out, "{}");
     fprintf(out, ";\n");
@@ -6581,7 +6924,7 @@ static void print_type(const type_reference_t* type)
   printf("%.*s", type->name.length, type->name.data);
 }
 
-static void print_default_value(const default_value_t* value)
+static void print_default_value(const program_t* program, const default_value_t* value)
 {
   switch (value->kind)
   {
@@ -6609,6 +6952,21 @@ static void print_default_value(const default_value_t* value)
 
     case DEFAULT_STRING:
       printf(" = \"%.*s\"", value->text.length, value->text.data);
+      break;
+
+    // Printed in the RESOLVED order, which is the component's declaration
+    // order rather than the order the .def wrote them in -- the dump is what
+    // the generator understood, not an echo of the source.
+    case DEFAULT_COMPONENT:
+      printf(" = {");
+      for (int32_t index = 0; index < value->override_count; ++index)
+      {
+        const component_override_t* override =
+            &program->component_overrides[value->first_override + index];
+        printf("%s%.*s", index == 0 ? "" : ", ", override->name.length, override->name.data);
+        print_default_value(program, &override->value);
+      }
+      printf("}");
       break;
   }
 }
@@ -6691,7 +7049,7 @@ static void dump_program(const program_t* program)
 
         printf("  %.*s: ", field->name.length, field->name.data);
         print_type(&field->type);
-        print_default_value(&field->default_value);
+        print_default_value(program, &field->default_value);
         print_cvar_flags(field->flags);
         printf("   \"%.*s\"\n", field->description.length, field->description.data);
       }
@@ -6712,7 +7070,7 @@ static void dump_program(const program_t* program)
           print_type(&parameter->type);
           if (parameter->is_rest)
             printf("...");
-          print_default_value(&parameter->default_value);
+          print_default_value(program, &parameter->default_value);
         }
         printf(")");
         print_cvar_flags(field->flags);
@@ -6728,7 +7086,7 @@ static void dump_program(const program_t* program)
 
         printf("  %.*s: ", field->name.length, field->name.data);
         print_type(&field->type);
-        print_default_value(&field->default_value);
+        print_default_value(program, &field->default_value);
         print_field_flags(field->flags);
         printf("   // %s\n", type_kind_name(field->type.kind));
       }
@@ -6812,6 +7170,12 @@ static void allocate_program(program_t* program)
   program->parameter_capacity = token_bound;
   program->parameters =
       (parameter_t*)malloc((size_t)program->parameter_capacity * sizeof(parameter_t));
+
+  // An override is at least three tokens (IDENTIFIER '=' value), so the token
+  // bound covers it with room to spare.
+  program->component_override_capacity = token_bound;
+  program->component_overrides         = (component_override_t*)malloc(
+      (size_t)program->component_override_capacity * sizeof(component_override_t));
 
   program->annotation_capacity = token_bound;
   program->annotations =

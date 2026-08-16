@@ -12,9 +12,9 @@ namespace server
 //
 // Takes a Shape_Kind rather than the `const char*` it took before the cutover:
 // the shape is a closed set, so a string here could name something no branch
-// handled and only fail at spawn time. Shape_Kind::Capsule is still rejected --
-// register_dynamic_capsule does not exist in physics.cpp yet -- but that is now
-// one unhandled enumerator rather than an open set of unknown strings.
+// handled and only fail at spawn time. Every enumerator is handled now --
+// Shape_Kind lost Capsule with the static hitbox, since register_dynamic_capsule
+// does not exist in physics.cpp and nothing was asking for one.
 //
 // Returns the new body's uid, or null_entity_uid on failure (no pool, or a shape
 // physics cannot build). A uid rather than the Physics_Body_Entity* it used to

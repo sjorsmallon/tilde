@@ -184,11 +184,12 @@ enum class command_id : uint16_t
   spawn_sphere = 2,
   map = 3,
   noclip = 4,
-  bind = 5,
-  connect = 6,
+  join_game = 5,
+  bind = 6,
+  connect = 7,
 };
 
-constexpr uint32_t COMMAND_COUNT = 7;
+constexpr uint32_t COMMAND_COUNT = 8;
 
 enum cvar_type : uint8_t
 {
@@ -280,6 +281,9 @@ void map(std::string_view path, const command_context_t& context);
 // @Server  Disable movement Vector Clipping
 // usage: noclip [enabled]
 void noclip(bool enabled, const command_context_t& context);
+// @Server  Leave spectate and spawn into the match
+// usage: join_game
+void join_game(const command_context_t& context);
 // @Client  Bind a key (a-z) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);

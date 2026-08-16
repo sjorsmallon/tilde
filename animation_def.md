@@ -1214,12 +1214,17 @@ a non-breaking change.
    level-author data.
 3. **Where masks live.** Beside the skeleton is assumed above; the alternative
    puts bone names in `SCHEMA_HASH`, which is probably wrong.
-4. **`Player_Entity::hitbox` looks vestigial.** It is written at
-   [server_impl.cpp:466](src/server/server_impl.cpp#L466) and
-   [bot_system.cpp:39](src/server/systems/bot_system.cpp#L39) but never read —
-   the only reads are `rocket.hitbox`, and `entities::get_hitbox` has no callers.
-   Hitscan uses the static table and Jolt derives its capsule from
-   `player_capsule_*`. It gets more clearly dead under this design. Delete?
+4. ~~**`Player_Entity::hitbox` looks vestigial.**~~ **RESOLVED — deleted, 2026-08-16.**
+   It was written at every player and bot spawn and read by nothing, while
+   costing three networked leaves per player. The whole `Hitbox` component went
+   with it: `Physics_Body_Entity::hitbox` was a copy of its own `shape`/`size`
+   three lines up, and `Rocket_Entity::hitbox` was a sphere radius wearing a
+   shape enum and an always-zero offset — now `Rocket_Entity::collision_radius`,
+   a plain `f32`. `entities::get_hitbox`, the `component_type::Hitbox`
+   enumerator, `Shape_Kind::Capsule` and the never-called
+   `shared/components/components.{hpp,cpp}` are all gone too. Hitscan resolves
+   against `compute_player_hitboxes`, and Jolt still derives its capsule from
+   `player_capsule_*`.
 
 ## Build order
 

@@ -293,8 +293,8 @@ Runtime failures, so each step needs its own way of being wrong loudly.
      answer it — the fix was to record the answer where the slot already lives.
      `client_slot_t` (the per-connection server state, already cleared on
      join and on leave, which is exactly when the mapping changes) gained a
-     `player_uid` column, and `spawn_player_entity_for_slot` fills it. That deleted the
-     pool walks in `handle_player_leave`, `position_in_front_of` and the
+     `player_uid` column, and `spawn_player_entity_for_client_slot` fills it. That deleted the
+     pool walks in `handle_player_leave`, `get_position_in_front_of` and the
      per-move player lookup in `Tick`. Bots are structurally excluded: their
      `client_slot_index` is `>= BOT_SLOT_BASE`, past the end of that array, and
      `Bot_State` carries its own uid.
@@ -343,7 +343,7 @@ Runtime failures, so each step needs its own way of being wrong loudly.
      entity. The only destroyed body-owner was a leaving player, unregistered by
      hand. So the step made a future leak unrepresentable rather than fixing a
      live one.
-   * **The audit found a different, live bug.** `load_map_into_state` cleared
+   * **The audit found a different, live bug.** `load_map_file_into_context` cleared
      `client_slot_t::player_uid` because a new session restarts
      `next_entity_id` and a retained uid can be *reissued* (§2's guarantee holds
      within one session's counter, and a map load restarts it) — but it never
