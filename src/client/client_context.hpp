@@ -275,6 +275,11 @@ struct replication_t
   ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history;
   uint32_t latest_processed_tick = 0;
 
+  // The tick `Remote_Player_State::snapshots[0]` came from -- the OLDER endpoint
+  // of the blend the renderer draws through. `snapshot_history.acked_tick` is
+  // the newer one, and `interpolation_time` below is how far along it we are.
+  uint32_t previous_snapshot_tick = 0;
+
   // Per-player Player_Entity::last_fire_tick as of the last snapshot we looked
   // at, keyed by entity uid. An advance means that player fired; see
   // weapon_fire_audio.hpp. Keyed by uid rather than slot so a slot changing

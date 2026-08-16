@@ -1,5 +1,8 @@
 # TODO
 
+# reliable retransmit.
+
+
 Finished work moves to `done.md`. Design rationale lives in `entity_def.md`,
 `entity_storage_def.md`, `entity_system_def.md` and `cvar_def.md`; this file is
 the work list and the order.
@@ -492,11 +495,57 @@ tool.
       the ENTRY point so "the muzzle is already inside a volume" is a miss
       uniformly. `hitbox_rig_test` gained the end-to-end guard (real rig →
       posed → shot).
-- [ ] **Lag compensation.** What is left of the gap: the server tests where the
-      target is NOW, and a shooter on 80 ms aimed at where it was. That is
-      guarantee 2 in `animation_def.md` §4 — `Snapshot_History` carrying the
-      endpoints per tick, so nothing has to be re-derived — and it is the same
-      machinery as replicating `locomotion_phase`.
+- [x] **Lag compensation — done 2026-08-16.** `lag_compensation_def.md` is the
+      design and is marked LANDED. The server now rewinds targets to the blend
+      the shooter was aiming through: the client reports its interpolation
+      **bracket** (`interpolated_from_tick` / `interpolated_towards_tick` /
+      `interpolation_fraction` on the move command),
+      `shared/lag_compensation.cpp` lerps those same two snapshot frames and
+      poses them through `compute_player_hitboxes`, and the fire path swaps that
+      set in for `posed_players.targets`. Policy is shooter-favored, bounded by
+      `sv_max_rewind_ticks` (12, ~200 ms), and every clamp logs — rate-limited to
+      one per second per slot.
+
+      Four things about it that are load-bearing and easy to undo:
+      - the wire carries the **bracket, not a collapsed moment**. The server
+        reproduces the CHORD the client drew, not the true state between the
+        endpoints; after packet loss those differ, and posing the truth misses a
+        crosshair that was dead on the drawn model. `lag_compensation_test`'s
+        "chord, not the truth" case is the guard.
+      - prediction-ahead needed **no** field: `command_number` already covers it.
+      - the bracket is read off **this move**, never off `client_slot_t` — the
+        high-water fold that `held_snapshot_tick` gets would judge the shot
+        through a newer blend than the shooter aimed through.
+      - `classify_bracket` refuses a `towards_tick` past `held_snapshot_tick`.
+        That is the only check a *fabricated* bracket cannot walk past; the ring
+        bounds alone would accept a tick the server sent to nobody.
+
+      Three prerequisites landed in the same pass because they interact: damage
+      deferred to a pass after the move loop (which makes trades symmetric and,
+      as a side effect, makes the `is_dead` gate read start-of-tick health), the
+      dead `header.timestamp` move sort deleted, and stale/duplicate
+      `command_number` rejection.
+
+      Removing that timestamp also moved `Packet`'s payload offset — the header
+      had been 8-aligned by accident and the send path computed the offset as
+      `sizeof(Packet_Header) + sizeof(int)`. It is now a stated constant
+      (`PACKET_PAYLOAD_OFFSET_IN_BYTES`) with a `static_assert` against
+      `offsetof`, so the next header change is a build failure rather than a
+      corrupted wire.
+- [ ] **Cap moves per client per tick** — the successor to lag compensation, and
+      named in `lag_compensation_def.md` §3 as explicitly out of its scope. A
+      client whose packets bunch after a stall still gets N `player_move()` steps
+      in one tick. Firing is interval-gated, so this is a movement exploit rather
+      than a damage one, and the stale-`command_number` drop that landed with the
+      rewind already removes the replay half of it.
+- [ ] **The mutual-trade case has no unit test.** Damage deferral makes two
+      shooters resolving against each other in one tick both land damage, and
+      that is the one bullet of `lag_compensation_def.md` §4 that
+      `lag_compensation_test` does not cover: the fix lives in `Tick()` in
+      `server_impl.cpp`, inside the `game_server` DLL behind no exported entry
+      point, needing Jolt, a map and a socket to reach. There is no function to
+      call. Either extract enough of the move loop to be callable, or accept the
+      live check in §5 as the coverage and say so here.
 
 ## Unverified, needs eyes
 
@@ -645,7 +694,6 @@ tool.
       client there and delete the `my_entity_uid` check. Until then a
       misprediction has no correction path: the sound already played for
       something that didn't happen server-side.
-- [ ] Lag compensation.
 - [ ] Client-side dynamic-entity prediction. The networked client's Jolt world
       holds only static geometry; remote players are snapshot-interpolated and
       rockets / cubes snap, but none of them are simulated. Cosmetic effects

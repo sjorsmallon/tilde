@@ -39,9 +39,9 @@ void reset_state_in_preparation_for_new_map_load(server_context_t& context)
   // held button.
   for (client_slot_t& client : context.clients)
   {
-    client.player_uid          = shared::null_entity_uid;
-    client.acked_snapshot_tick = 0;
-    client.map_ready           = false;
+    client.player_uid         = shared::null_entity_uid;
+    client.held_snapshot_tick = 0;
+    client.map_ready          = false;
   }
 }
 
@@ -82,6 +82,9 @@ void clear_outgoing(server_context_t& context)
   // buffer's capacity for the same reason the vectors above do.
   context.outgoing.effects.reset();
   context.outgoing.events.reset();
+  // clear(), not `= {}`, for the same capacity reason as the inbox vectors: this
+  // is refilled from scratch at the tickrate.
+  context.outgoing.pending_hits.clear();
 
   // sv_event_debug, latched once per tick rather than read per fire. This is
   // the one place guaranteed to run exactly once before anything can fire, and

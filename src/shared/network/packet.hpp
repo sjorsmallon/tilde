@@ -99,9 +99,14 @@ template <> struct Packet_Traits<game::S2C_GameEventBatch>
   static constexpr Message_Type type = Message_Type::S2C_GameEventBatch;
 };
 
+// A `uint64 timestamp` used to lead this, and nothing ever wrote it — while the
+// server sorted incoming moves by it. A sort key nobody sets is a nondeterminism
+// source wearing the clothes of a deterministic one, so both halves are gone
+// rather than one of them being filled in: ordering moves within a tick was
+// never lag compensation, and lag compensation is what the ordering was there to
+// approximate. See lag_compensation_def.md §3.
 struct Packet_Header
 {
-  uint64 timestamp;      //  when was this sent?
   // Fragmentation: a message too big for one packet is split into fragments.
   // ("sequence" is deliberately avoided here — that word is reserved for the
   // future packet-level ack layer; this axis is message/fragment, not packet.)
@@ -115,16 +120,32 @@ struct Packet_Header
 // Alignment and sizing
 // 1452 is a common MTU size (Ethernet 1500 - IP 20 - UDP 8 - potential PPPoE 8)
 constexpr size_t MAX_PACKET_SIZE_IN_BYTES = 1200;
+
+// Where the payload starts inside a Packet -- STATED, not computed as
+// sizeof(Packet_Header) plus a guess at the padding the compiler will insert.
+// That guess was silently correct only while the header happened to be
+// 8-aligned; dropping the dead `timestamp` above changed the alignment, moved
+// `buffer` two bytes, and every send then shipped the payload from an offset the
+// arithmetic no longer named. The static_assert below is what makes that a build
+// failure instead of a corrupted wire.
+constexpr size_t PACKET_PAYLOAD_OFFSET_IN_BYTES = 8;
 constexpr size_t MAX_PAYLOAD_SIZE_IN_BYTES =
-    MAX_PACKET_SIZE_IN_BYTES - sizeof(Packet_Header) -
-    sizeof(int); // Adjusting for padding
+    MAX_PACKET_SIZE_IN_BYTES - PACKET_PAYLOAD_OFFSET_IN_BYTES;
 
 struct Packet
 {
   Packet_Header header;
-  int padding_for_alignment;
-  uint8 buffer[MAX_PAYLOAD_SIZE_IN_BYTES];
+  // Pads the payload up to PACKET_PAYLOAD_OFFSET_IN_BYTES. Not `int`: the header
+  // is 2-aligned, so an int here would make the compiler insert padding of its
+  // own ahead of it and the offset would stop being the sum of the sizes.
+  uint16 payload_alignment_padding;
+  uint8  buffer[MAX_PAYLOAD_SIZE_IN_BYTES];
 };
+
+static_assert(offsetof(Packet, buffer) == PACKET_PAYLOAD_OFFSET_IN_BYTES,
+              "the payload offset both ends serialize against must match the struct");
+static_assert(sizeof(Packet) <= MAX_PACKET_SIZE_IN_BYTES,
+              "a Packet must fit in one datagram");
 
 // Helper: Chunk a large buffer into serialized packets (fragments of a message)
 //

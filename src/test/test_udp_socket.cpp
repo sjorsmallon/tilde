@@ -67,11 +67,9 @@ int main()
     uint8 next_message_id = 0;
     auto packets = convert_to_packets(big_data, 10, next_message_id);
 
-    // Expected packets: ceil(3000 / MAX_PAYLOAD_SIZE)
-    // MAX_PAYLOAD_SIZE = 1452 - sizeof(Packet_Header) - 4
-    // Header = 8+1+1+1+1+2 = 14 bytes. Padding = 4. Total overhead = 18.
-    // Payload = 1434.
-    // 3000 / 1434 = 2.09 -> 3 packets.
+    // Expected packets: ceil(3000 / MAX_PAYLOAD_SIZE_IN_BYTES).
+    // Header = 1+1+1+1+2 = 6 bytes, padded to PACKET_PAYLOAD_OFFSET_IN_BYTES = 8.
+    // Payload = 1200 - 8 = 1192. 3000 / 1192 = 2.52 -> 3 packets.
 
     assert(packets.size() == 3);
     assert(packets[0].header.fragment_index == 0);

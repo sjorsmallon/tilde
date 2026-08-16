@@ -97,6 +97,19 @@ struct Move_Events
 // passes a sink: recording happens in shared code but the drawing is
 // client-side, so a server-side recording has no reader (see debug_collision.hpp).
 //
+// `bvh` is STATIC geometry, and taking nothing else about the world is
+// load-bearing rather than incidental: it is why movement needs no lag
+// compensation. Walls are identical at every tick, so there is no "which tick
+// did I collide against" to answer, and the client can predict this exactly.
+// Shooting rewinds because it tests against other players -- the only part of
+// the world that differs between two ticks.
+//
+// So the day a dynamic collider becomes a movement input (player-vs-player,
+// moving platforms, standing on a Physics_Body_Entity), prediction silently
+// starts depending on time and drifts with no error to say so. That is a design
+// decision, not a parameter to add -- see lag_compensation_def.md, "Why movement
+// needs no rewind".
+//
 // `cvars` is the process's one cvar_state_t (the launcher's), passed by
 // reference rather than read from a global: the pm_* tunables are @Mirrored, so
 // the client's prediction and the server's authoritative run must feed the SAME

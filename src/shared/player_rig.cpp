@@ -116,14 +116,27 @@ void compute_player_hitboxes(const player_rig_t &rig, const player_pose_t &pose,
   assets::pose_t sampled;
   compute_aim_pose(rig.aim_poses, *rig.skeleton, pose.view_pitch, yaw_deviation, settings, sampled);
 
-  // Only `model_space` is read below -- a hitbox wants where the bone IS. The
-  // skinning matrices come along because they fall out of the same walk, and
-  // separating them would mean a second entry point to keep in step with this
-  // one.
-  assets::posed_skeleton_t posed;
-  assets::compute_posed_skeleton(*rig.skeleton, sampled, posed);
+  // Model space only -- a hitbox wants where the bone IS. This deliberately
+  // does NOT go through compute_posed_skeleton: that one also fills the skinning
+  // matrices, which are model_space * inverse_bind and which nothing here reads.
+  // They are not a by-product of the same walk, they are a second walk
+  // (compute_model_space_matrices and compute_skinning_matrices are already
+  // separate entry points), so taking them was ~35 matrix multiplies and a
+  // vector per call, paid for every player every tick.
+  //
+  // Stack rather than caller storage, matching compute_posed_skeleton's own
+  // scratch: sized by the bone budget, so nothing here allocates or is
+  // non-reentrant.
+  const uint32_t bone_count = (uint32_t)rig.skeleton->bones.size();
+  linalg::mat4f  parent_space[assets::MAX_BONES];
+  linalg::mat4f  model_space[assets::MAX_BONES];
 
-  assets::compute_posed_hitboxes(rig.rig, posed.model_space, out);
+  assets::compose_parent_space_matrices(sampled, Span<linalg::mat4f>{parent_space, bone_count});
+  assets::compute_model_space_matrices(*rig.skeleton,
+                                       Span<const linalg::mat4f>{parent_space, bone_count},
+                                       Span<linalg::mat4f>{model_space, bone_count});
+
+  assets::compute_posed_hitboxes(rig.rig, Span<const linalg::mat4f>{model_space, bone_count}, out);
 
   const model_to_world_t transform = transform_for(pose);
   for (assets::posed_hitbox_t &hitbox : out)

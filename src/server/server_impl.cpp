@@ -18,6 +18,7 @@
 #include "../shared/weapons.hpp"
 #include "../shared/array.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <format>
@@ -220,8 +221,7 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *cvar_command_
   if (!cvar_state || !cvar_command_table || !asset_state)
   {
     log_error("server::Init: the launcher must own and pass a cvar_state_t, a "
-              "command_table_t and an asset_state_t (see cvar_def.md and the "
-              "ownership note in asset.hpp)");
+              "command_table_t and an asset_state_t.");
     return false;
   }
 
@@ -292,6 +292,7 @@ static shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t
   context.clients[slot].player_uid = player_uid;
 
   player->client_slot_index = slot;
+
   // Cycled by slot so two players joining an empty server don't stack.
   const entities::Player_Spawn_Entity *marker =
       try_pick_human_spawn(context.world.session, static_cast<uint32_t>(slot));
@@ -323,8 +324,24 @@ static std::string current_map_wire_id(const server_context_t &context)
       .generic_string();
 }
 
+// Retransmit cadence for CmdChangeMap. The tick loop is this message's only
+// retransmit layer, but a not-ready client answers a resend by re-requesting the
+// map package and the server streams the whole package per request -- so
+// resending every tick re-streamed the map at the tickrate for as long as a
+// download was in flight. Four times a second is a retransmit; sixty is a flood.
+static constexpr float change_map_resend_interval_seconds = 0.25f;
+
+static uint32_t change_map_resend_interval_ticks(const server_context_t &context)
+{
+  const uint32_t ticks = static_cast<uint32_t>(change_map_resend_interval_seconds *
+                                               context.cvars->sv_tickrate);
+  return ticks > 0 ? ticks : 1; // a sub-1Hz tickrate still resends every tick
+}
+
 static void send_change_map_message(server_context_t &context, int32_t slot)
 {
+  context.clients[slot].last_map_switch_send_tick = context.tick_number;
+
   shared::change_map_message_t msg;
   msg.map_path     = current_map_wire_id(context);
   msg.map_name     = context.world.session.map_name;
@@ -409,6 +426,158 @@ bool change_map_to(const std::string &map_path)
   return true;
 }
 
+// Poses every living player's hit volumes into context.posed_players, once, for
+// every shot this tick to share.
+//
+// Called at the TOP of the tick, before the move loop advances anybody. That
+// ordering is the point: the fire path runs inside that loop, so rebuilding per
+// shot tested each victim at whatever position the loop had reached, and whether
+// A hit B depended on which slot each of them held. Every shooter now tests the
+// same start-of-tick world.
+//
+// Corpses are skipped -- the fire path already ignored health <= 0, and the
+// client's overlay draws none for the same reason.
+static void pose_all_players(server_context_t &context)
+{
+  shared::posed_players_t &posed = context.posed_players;
+  // `volumes` is resized rather than cleared: every element it ends up holding
+  // is overwritten below, so clearing first would only zero them all twice.
+  posed.targets.clear();
+  posed.built_for_tick = context.tick_number;
+
+  const shared::player_rig_t &rig = shared::player_rig();
+  const aim_settings_t settings   = aim_settings_from(*context.cvars);
+  const uint32_t volume_count     = rig.volume_count();
+
+  Span<entities::Player_Entity> players =
+      context.world.session.entity_system.entities_of<entities::Player_Entity>();
+
+  // Sized in full before a single target is pushed: each target holds a SPAN
+  // into this vector, so filling the two in lockstep would leave every span
+  // taken before a reallocation pointing at freed storage.
+  uint32_t living_count = 0;
+  for (const entities::Player_Entity &player : players)
+    living_count += player.health > 0 ? 1 : 0;
+
+  posed.volumes.resize((size_t)living_count * volume_count);
+  posed.targets.reserve(living_count);
+
+  for (const entities::Player_Entity &player : players)
+  {
+    if (player.health <= 0)
+      continue;
+
+    // this constness confused the fuck out of me: it's the span that can't be modified, not that the entities it points to cannot.
+    // so no reassignment to point to some other thing.
+    const Span<assets::posed_hitbox_t> slice{
+        posed.volumes.data() + (size_t)posed.targets.size() * volume_count, volume_count};
+
+    shared::compute_player_hitboxes(rig,
+                                    {.feet_position = player.position,
+                                     .body_yaw      = player.body_yaw,
+                                     .view_yaw      = player.view_angle_yaw,
+                                     .view_pitch    = player.view_angle_pitch},
+                                    settings, slice);
+
+    posed.targets.push_back(shared::make_hitscan_target(
+        player.entity_id, Span<const assets::posed_hitbox_t>{slice}));
+  }
+}
+
+// The blend this move claims to have been aimed through, as far back as this
+// server is willing to reach. A zeroed bracket means "do not rewind" — the
+// caller then tests the present-tick pose set, which is still a real arm
+// (spectators, the first shots before two snapshots exist, and every refusal
+// below all land there).
+//
+// Read off THIS MOVE and never off client_slot_t. The drain pass folds
+// held_snapshot_tick into a per-client high-water mark; the same fold applied to
+// a bracket would judge the shot through a NEWER blend than the shooter aimed
+// through, which is the exact error this whole path removes.
+static shared::interpolation_bracket_t get_interpolation_bracket_for_move(
+    server_context_t &context, int32_t client_slot,
+    const game::C2S_PlayerMoveCommand &move)
+{
+  client_slot_t &client = context.clients[client_slot];
+
+  const shared::interpolation_bracket_t requested{
+      .from_tick    = move.interpolated_from_tick(),
+      .towards_tick = move.interpolated_towards_tick(),
+      .fraction     = move.interpolation_fraction()};
+
+  // The ring cannot produce a tick it has already overwritten, so a policy
+  // cap past its capacity would only promise a rewind that then misses.
+  const int32_t  configured = context.cvars->sv_max_rewind_ticks;
+  const uint32_t max_rewind =
+      std::min<uint32_t>(configured < 0 ? 0u : (uint32_t)configured,
+                         network::Snapshot_History<network::snapshot_frame_t>::CAPACITY - 1);
+
+  const shared::bracket_verdict_t verdict = shared::classify_bracket(
+      requested, client.held_snapshot_tick, context.tick_number, max_rewind);
+
+  switch (verdict.status)
+  {
+    case shared::bracket_status_t::Absent:
+      return {};
+
+    case shared::bracket_status_t::Unheld:
+      log_warning("slot {}: move names a blend towards tick {}, but that slot has "
+                  "only acked up to {} (server is at {}) — rewind refused",
+                  client_slot, requested.towards_tick, client.held_snapshot_tick,
+                  context.tick_number);
+      return {};
+
+    case shared::bracket_status_t::Malformed:
+      log_warning("slot {}: malformed interpolation bracket {} -> {} at {:.3f} — "
+                  "rewind refused",
+                  client_slot, requested.from_tick, requested.towards_tick,
+                  requested.fraction);
+      return {};
+
+    case shared::bracket_status_t::Ok:
+    case shared::bracket_status_t::Clamped:
+      break;
+  }
+
+  const float milliseconds_per_tick = 1000.f * static_cast<float>(get_tick_interval());
+
+  // how far back in time did we actually go? 
+  const uint32_t bracket_span_ticks = verdict.bracket.towards_tick - verdict.bracket.from_tick;
+  const float    rewind_ticks =
+      static_cast<float>(context.tick_number - verdict.bracket.towards_tick) +
+      (1.f - verdict.bracket.fraction) * static_cast<float>(bracket_span_ticks);
+
+  if (context.cvars->sv_lag_compensation_debug)
+    log_terminal("[rewind] slot {}: asked {} -> {} at {:.3f}, using {} -> {}, reaching "
+                 "back {:.2f} ticks ({:.1f} ms)",
+                 client_slot, requested.from_tick, requested.towards_tick, requested.fraction,
+                 verdict.bracket.from_tick, verdict.bracket.towards_tick, rewind_ticks,
+                 rewind_ticks * milliseconds_per_tick);
+
+  if (verdict.status == shared::bracket_status_t::Clamped)
+  {
+    // A silently clamped rewind judges the shot through a blend the shooter did
+    // not aim through, and they feel that as no-reg. Rate-limited to one per
+    // second per slot: a client parked at 300ms over-clamps on every single shot
+    // and would otherwise bury the rest of the log.
+    const uint32_t warning_interval_ticks =
+        std::max(1u, static_cast<uint32_t>(context.cvars->sv_tickrate));
+    if (client.last_rewind_warning_tick == 0 ||
+        context.tick_number - client.last_rewind_warning_tick >= warning_interval_ticks)
+    {
+      client.last_rewind_warning_tick = context.tick_number;
+      log_warning("slot {}: rewind clamped by sv_max_rewind_ticks ({}) — asked for "
+                  "{} -> {}, judged through {} -> {}; that shot reaches back {:.2f} "
+                  "ticks ({:.1f} ms)",
+                  client_slot, max_rewind, requested.from_tick, requested.towards_tick,
+                  verdict.bracket.from_tick, verdict.bracket.towards_tick, rewind_ticks,
+                  rewind_ticks * milliseconds_per_tick);
+    }
+  }
+
+  return verdict.bracket;
+}
+
 bool Tick()
 {
   timed_function();
@@ -416,8 +585,7 @@ bool Tick()
   server_context_t &context = g_server_context;
 
   // The inbox is retained on the context so its vectors keep their capacity;
-  // poll_network only push_backs, so it has to be emptied here or last tick's
-  // moves get replayed.
+  // poll_network only push_backs, so it has to be emptied here.
   clear_incoming(context);
   network::ServerInbox &inbox = context.incoming;
 
@@ -428,9 +596,12 @@ bool Tick()
   {
     if (cmd.has_connect())
     {
-      // Already connected — a duplicate Connect, ignore it.
+      // duplicate connect, no meaningful work to do.
       if (network::try_find_client_slot(context.transport_layer, sender))
+      {
+        log_warning("duplicate connect received from sender: <not sure if i should log ip addresses.>");
         continue;
+      }
 
       const uint32_t client_schema_hash = cmd.connect().schema_hash();
       if (client_schema_hash != entities::SCHEMA_HASH)
@@ -472,16 +643,6 @@ bool Tick()
         log_terminal("Player {} joined at slot {} (spectating)",
                      cmd.connect().player_name(), slot);
 
-        // No body yet, on purpose: reset_client_slot left player_uid null, and
-        // a connected slot with no player entity IS the spectating state. The
-        // `join_game` command is what spawns one. Absence is the encoding
-        // rather than a mode flag, so every exclusion a spectator needs comes
-        // for free -- not in the entity pool means not hit-tested, not drawn,
-        // no body_yaw advanced, no Jolt capsule, nothing in the snapshot.
-
-        // The client loads its map before connecting, so it's ready to receive
-        // snapshots the moment it's accepted. (A mid-game CmdChangeMap flips this
-        // back to false until the client acks the new map.)
         context.clients[slot].map_ready = true;
 
         // Send Accept
@@ -539,7 +700,7 @@ bool Tick()
       }
       else
       {
-        send_reject(context, sender, "Server Full", 0);
+        send_reject(context, sender, "Server is Full. please try again later.", 0);
       }
     }
     else if (cmd.has_disconnect())
@@ -548,19 +709,12 @@ bool Tick()
     }
   }
 
-  // Dispatch console commands from clients
+  // Dispatch console commands from clients.
   for (const auto &[client_slot, line] : inbox.commands)
   {
     log_terminal("Command from slot {}: {}", client_slot, line);
     const auto &client_address = context.transport_layer.addresses[client_slot];
 
-    // The same dispatcher the client console runs, over the same generated
-    // tables. Two things keep this from bouncing the line straight back: the
-    // server's command_table_t is its OWN (the integrated launcher hands each
-    // side a separate one -- sharing it made every @Server line ping-pong over
-    // loopback forever), and the real caller_slot below marks this line as
-    // having already come from the wire, which execute_console_line refuses to
-    // forward a second time.
     cvars::command_context_t command_context{.caller_slot = client_slot};
     std::string reply;
     cvars::console_result_t result = cvars::execute_console_line(
@@ -575,10 +729,8 @@ bool Tick()
         context, client_address, reply.empty() ? ("OK: " + line) : reply);
   }
 
-  // Process C2S_MapLoaded acks: a client finished (re)loading the map. Verify
-  // the echoed hash matches the map we're actually running before we resume
-  // snapshots to it — a mismatch means the client loaded the wrong map, which
-  // we surface loudly rather than papering over by streaming stale deltas.
+
+  // check if the map loaded for everyone so they can start receiving snapshots.
   for (const auto &[client_slot, payload] : inbox.map_loaded_acks)
   {
     network::Bit_Reader reader(payload.data(), payload.size());
@@ -598,11 +750,7 @@ bool Tick()
     }
   }
 
-  // Stream the compiled map package to any client that asked for it (cache miss
-  // or hash mismatch on its side). We host exactly one map, so the requested
-  // name is only for logging — we always send the current map's package. Mark
-  // the client not-ready so snapshots stay withheld until it acks C2S_MapLoaded
-  // after applying the stream.
+  // in case someone doesn't have the map, they request the data.
   for (const auto &[client_slot, payload] : inbox.map_data_requests)
   {
     network::Bit_Reader reader(payload.data(), payload.size());
@@ -616,7 +764,7 @@ bool Tick()
     shared::map_data_message_t msg;
     msg.map_name     = context.world.session.map_name;
     msg.package_hash = shared::compute_map_package_hash(blob);
-    msg.compressed   = false; // step 6 adds gzip
+    msg.compressed   = false; 
     msg.bytes        = std::move(blob);
 
     network::Bit_Writer writer;
@@ -629,6 +777,11 @@ bool Tick()
       context.socket.send(p, context.transport_layer.addresses[client_slot]);
 
     context.clients[client_slot].map_ready = false;
+    // Starts the retransmit clock: the client has everything it needs now, so
+    // resending CmdChangeMap before it has had time to assemble and load the
+    // package would only make it re-request the whole thing.
+    context.clients[client_slot].last_map_switch_send_tick = context.tick_number;
+
     log_terminal("Streamed map package '{}' ({} bytes, {} packets, hash {:#x}) "
                  "to slot {} (requested '{}').",
                  msg.map_name, msg.bytes.size(), packets.size(),
@@ -636,22 +789,61 @@ bool Tick()
   }
 
   // Resend CmdChangeMap to any connected-but-not-ready client. UDP has no
-  // ack/retransmit yet, so this idempotent per-tick resend is how a dropped
-  // switch message eventually reaches the client (it stops once acked above).
+  // ack/retransmit yet, so this idempotent resend is how a dropped switch
+  // message eventually reaches the client (it stops once acked above), paced so
+  // that a client still downloading doesn't re-request the package every tick.
+  const uint32_t resend_interval = change_map_resend_interval_ticks(context);
   for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
-    if (context.transport_layer.slot_occupied[slot] &&
-        !context.clients[slot].map_ready)
+    if (!context.transport_layer.slot_occupied[slot] ||
+        context.clients[slot].map_ready)
+      continue;
+
+    const uint32_t ticks_since_send =
+        context.tick_number - context.clients[slot].last_map_switch_send_tick;
+    if (ticks_since_send >= resend_interval)
       send_change_map_message(context, slot);
   }
 
-  // Sort moves by timestamp
+
+  // this used to sort by timestamp which was broken regardless.
+  // noew  ordered monotonically by command number so that commands in the same tick
+  // will at least be processed later. :~)
   std::sort(inbox.moves.begin(), inbox.moves.end(),
             [](const auto &a, const auto &b)
-            { return a.second.timestamp < b.second.timestamp; });
+            {
+              if (a.first != b.first)
+                return a.first < b.first;
+              return a.second.command_number() < b.second.command_number();
+            });
 
-  // Process moves — run player_move() authoritatively
-  for (const auto &[client_slot, tm] : inbox.moves)
+  // Update (on the server''s internal data structure)
+  // each client's held snapshot, based on the held_snapshot tick from the move,
+  // which (in theory?) should be the latest snapshot.
+  //
+  // A pass of its own, ahead of the move loop, because that loop skips a client
+  // with no body and a spectator still receives snapshots. It is also what makes
+  // the rewind bracket check sound against UDP reordering: by the time any shot
+  // is judged, held_snapshot_tick already includes every move that arrived this
+  // tick, however late.
+  for (const auto &[client_slot, move] : inbox.moves)
+  {
+    if (!is_valid_client_slot(client_slot))
+      continue; // the move loop below logs it; one complaint per move is enough
+
+    client_slot_t &client = context.clients[client_slot];
+    client.held_snapshot_tick =
+        std::max(client.held_snapshot_tick, move.held_snapshot_tick());
+  }
+
+  // since the server is in lockstep, pose all players once before handling moves:
+  // internalize:
+  // Posing after the move would test a world no client has ever been shown,
+  // and would make the fallback arm disagree with the rewind arm by one tick.
+  pose_all_players(context);
+
+  // actually move players.
+  for (const auto &[client_slot, move] : inbox.moves)
   {
     if (!is_valid_client_slot(client_slot))
     {
@@ -661,77 +853,56 @@ bool Tick()
       continue;
     }
 
-    // One uid-index lookup, held for this iteration only. The rocket spawn below
-    // lands in a different pool, so it cannot move this player.
+    // valid during this tick.
     entities::Player_Entity* player =
         context.world.session.entity_system.get<entities::Player_Entity>(
             context.clients[client_slot].player_uid);
-    // Silent on purpose, unlike the range check above: a connected client keeps
-    // sending moves across a map switch, between the session reset and its
-    // respawn, and that window has no entity to move. Ordinary, and per-tick, so
-    // logging it would be noise.
-    if (!player)
-      continue;
 
-    // A corpse still receives moves -- the client keeps sending them for the
-    // whole respawn delay -- and every use of them below is gated on this.
+    bool spectating = !player;
+    if (spectating)
+    {
+      continue;
+    }
+
+    // filtering so we don't process input people that could probably not move.
     const bool is_dead = player->health <= 0;
 
-    const auto &move = tm.move;
+    client_slot_t &client = context.clients[client_slot];
 
-    // --- Per-command bookkeeping and button edges ---
-    //
-    // ABOVE the is_movement_allowed gate below, on purpose. That gate
-    // `continue`s, so anything left underneath it silently stops happening
-    // during a countdown — and latest_buttons_bitmap going stale there is a real bug,
-    // not merely lost bookkeeping: a client that presses fire mid-countdown and
-    // keeps holding it would still look like a fresh rising edge on the first
-    // live tick and get a free shot. Decoding here keeps the edges honest
-    // whether or not the phase lets the player act on them.
-    //
-    // client_slot was range-checked at the top of the loop, so this indexes
-    // freely from here on.
-    client_slot_t &client            = context.clients[client_slot];
+    // Duplicates and UDP-reordered replays. `latest_processed_command` is a
+    // high-water mark, and the sort above delivers a client's own moves in
+    // issue order, so anything at or below it has already been applied.
+
+    if (move.command_number() <= client.latest_processed_command)
+      continue;
     client.latest_processed_command = move.command_number();
 
-    // Snapshot ack. Never trusted beyond "the client claims it holds this
-    // tick" — the history lookup still has to hit a frame we actually kept.
-    // Only ever moves forward: datagrams reorder, and an older value would
-    // cost bandwidth for nothing.
-    if (move.acked_server_tick() > client.acked_snapshot_tick)
-      client.acked_snapshot_tick = move.acked_server_tick();
-
     const uint64_t current_buttons   = move.buttons_bitfield();
-    const uint64_t pressed_this_tick = current_buttons & ~client.latest_buttons_bitmap;
+    const uint64_t buttons_pressed_this_tick = current_buttons & ~client.latest_buttons_bitmap;
     client.latest_buttons_bitmap     = current_buttons;
 
     // weapon switching is allowed even though moving isn't.
-    if (pressed_this_tick & Button::Key1)
+    if (buttons_pressed_this_tick & Button::Key1)
       player->active_weapon_id = entities::Weapon::Scout;
-    if (pressed_this_tick & Button::Key3)
+    if (buttons_pressed_this_tick & Button::Key3)
       player->active_weapon_id = entities::Weapon::Knife;
 
-    if (pressed_this_tick & Button::Key1 || pressed_this_tick & Button::Key2 ||
-        pressed_this_tick & Button::Key3)
+    if (buttons_pressed_this_tick & Button::Key1 || buttons_pressed_this_tick & Button::Key2 ||
+        buttons_pressed_this_tick & Button::Key3)
     {
-      // log_terminal("Slot {} equipped this weapon: {}", client_slot, to_string(player->active_weapon_id));
       broadcast_server_text_message(
           context, std::format("Slot {} equipped this weapon: {}", client_slot,
                                to_string(player->active_weapon_id)));
     }
 
-    const bool fire_pressed = (pressed_this_tick & Button::Fire) != 0;
+    const bool fire_pressed = (buttons_pressed_this_tick & Button::Fire) != 0;
 
     // Decode Move_Input from the button bitfield
     Move_Input input = move_input_from_buttons(current_buttons);
 
-    // Death takes the CONTROLS away, not the simulation: the input is zeroed
-    // but player_move still runs, so gravity and friction keep working and a
-    // player killed mid-air falls and settles instead of hanging there with the
-    // death clip playing in mid-air. The knockback velocity damage wrote plays
-    // out the same way. Zeroing velocity outright (what the countdown gate
-    // below does) would do neither.
-    if (is_dead)
+    // allowed to move is the moire logical one because we can pile more co=nditions on here.
+    bool allowed_to_move = !is_dead;
+    if (!allowed_to_move)
       input = Move_Input{};
 
     // Compute front/right from viewangles
@@ -739,49 +910,51 @@ bool Tick()
     float pitch = move.viewangles().pitch();
     float yaw_rad = linalg::to_radians(yaw);
     float pitch_rad = linalg::to_radians(pitch);
-    float cY = std::cos(yaw_rad), sY = std::sin(yaw_rad);
-    float cP = std::cos(pitch_rad), sP = std::sin(pitch_rad);
-    vec3 front = {cY * cP, sP, sY * cP};
-    vec3 right_dir = linalg::cross(front, vec3{0, 1, 0});
-    float right_len = linalg::length(right_dir);
-    if (right_len > 0.001f)
-      right_dir = right_dir * (1.0f / right_len);
+    float cos_yaw = std::cos(yaw_rad);
+    float sin_yaw = std::sin(yaw_rad);
+    float cos_pitch = std::cos(pitch_rad);
+    float sin_pitch = std::sin(pitch_rad);
+
+    vec3 front = {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
+    //@FIXME(SJM): up vector global?
+    const vec3 up = vec3{0,1,0};
+    vec3 right = linalg::cross(front, up);
+    float right_length = linalg::length(right);
+    if (right_length > 0.001f)
+      right = right * (1.0f / right_length);
     else
-      right_dir = {1, 0, 0};
+    {
+      log_warning("arbitrarily deciding that right is {{1, 0, 0}} because the vector length was too small.");
+      right = {1, 0, 0};
+    }
 
     float tick_dt = static_cast<float>(get_tick_interval());
 
     if (!is_movement_allowed(context)) 
     {
-      // Movement is disallowed (e.g. countdown phase). Zero out velocity and
-      // keep the player at their current position.
+      // zero out velocity so nothing builds up.
       player->velocity = {0.f, 0.f, 0.f};
-      // No need to update position: it stays where it is.
+      // No need to update positions further.
       continue;
     }
+
       // Authoritative move. Updates position and velocity in place.
     Move_Events move_events{};
     auto [new_pos, new_vel] =
         player_move(*context.cvars, input, context.world.session.bvh, player->position,
-                    player->velocity, front, right_dir, 16.f, 36.f, tick_dt,
+                    player->velocity, front, right, 16.f, 36.f, tick_dt,
                     &move_events);
 
     player->position = new_pos;
     player->velocity = new_vel;
-    // The corpse does not look around. These drive the model's orientation and
-    // (through body_yaw) the hit volumes, so letting a dead player's mouse
-    // still write them spins the body under a death animation that is supposed
-    // to be playing out where they fell.
-    if (!is_dead)
+
+    if (allowed_to_move)
     {
-      player->view_angle_yaw   = yaw;
+      player->view_angle_yaw = yaw;
       player->view_angle_pitch = pitch;
     }
 
-    // Broadcast movement cosmetics tagged with this player's uid. Every client
-    // receives them, but the player who made the move suppresses their own copy
-    // (already played locally via prediction — see client jump/land handlers),
-    // so only *other* clients hear it, spatialized at the player's position.
+    // play some sounds.
     if (move_events.jumped)
     {
       shared::Jump fx{};
@@ -793,197 +966,205 @@ bool Tick()
                                   context.cvars->pm_minimum_land_impact_speed)
     {
       shared::Land fx{};
-      fx.origin          = new_pos;
-      fx.scale           = move_events.land_impact_speed; // for volume scaling
+      fx.origin = new_pos;
+      fx.scale = move_events.land_impact_speed; // for volume scaling
       fx.attached_entity = player->entity_id;
       shared::fire_land(context.outgoing.effects, fx);
     }
 
+    // jolt nonsense
     set_kinematic_pose(*context.world.physics,
                        player->entity_id,
                        new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
                        new_vel);
 
-    // fire_pressed was decoded above the movement gate; acting on it is what
-    // stays gated -- by the phase, and by being alive.
-    if (fire_pressed && !is_dead)
+
+    if (fire_pressed && allowed_to_move)
     {
-      // Every weapon fires along the view ray from the eye, so both are
-      // computed once above the branch. direction is already normalized --
-      // resolve_hitscan requires that.
+
+      // this tripped me up 15 different times, so here we go again.
+      // POST-move eye, against start-of-tick or rewound victims. The asymmetry
+      // is deliberate and it is what the client's screen looks like: prediction
+      // runs this same move before the frame is drawn, so the camera sits at the
+      // post-move position (play_state.cpp, prediction.player_position), while
+      // remote players are drawn interpolated in the PAST. Sampling the shooter
+      // pre-move would reconstruct a view nobody ever aimed from.
+
       const vec3f direction = linalg::direction_from_angles(yaw, pitch);
       const vec3f eye = player->position + vec3f{0.f, shared::player_eye_height, 0.f};
 
-      const shared::weapon_definition_t &weapon =
+      const shared::weapon_definition_t& weapon =
           shared::get_weapon_definition(player->active_weapon_id);
 
-      // Rate limit. Measured in ticks against the tick clock rather than an
-      // accumulated float, so it cannot drift and a paused/countdown phase
-      // cannot bank up shots.
       const float seconds_since_last_fire =
           static_cast<float>(context.tick_number - player->last_fire_tick) *
           static_cast<float>(get_tick_interval());
+
+      //@NOTE(SJM): it's so funny how continue actually means skip.
       if (seconds_since_last_fire < weapon.fire_interval_seconds)
         continue;
 
-      // The gate and the announcement are ONE write. Clients watch
-      // last_fire_tick advance to know a shot happened; last_fire_weapon
-      // tells them which gun it came from even if this player has switched
-      // by the time the snapshot lands. Both live on the entity so they
-      // replicate -- see entities.def for why this is state and not an
-      // effect. Above the kind switch so every weapon is covered once.
+      // update metadata about firing so clients don't get confused about what happened.
       player->last_fire_tick   = context.tick_number;
       player->last_fire_weapon = player->active_weapon_id;
 
-      // Switch on KIND, not on Weapon: the fire path cares how a shot
-      // resolves, and Knife and Scout resolve identically (they differ only in
-      // range and damage, both of which come off the table above).
       switch (weapon.kind)
       {
-      case entities::Weapon_Kind::Melee:
-      case entities::Weapon_Kind::Hitscan:
-      case entities::Weapon_Kind::Sniper:
-      {
-        // The world clamp casts against the session BVH, NOT Jolt. Jolt is
-        // missing static meshes and displacements (see the skips in
-        // populate_static_physics_bodies), so a bullet cast against it would
-        // fly through terrain the player is standing on. The BVH holds every
-        // geometry kind and holds no players at all, which is exactly the
-        // split we want: geometry clamps the range, resolve_hitscan owns
-        // players.
-        float range = weapon.range;
-
-        ray_hit_result_t world_hit{};
-        const bool world_blocked =
-            bvh_intersect_ray(context.world.session.bvh, eye, direction, world_hit) &&
-            world_hit.hit;
-        if (world_blocked)
-          range = std::min(range, world_hit.t);
-
-        // Alive players only, never the shooter. Corpses keep their Jolt
-        // capsule (it still blocks movement) but are invisible to hitscan,
-        // which is the decided corpse policy.
-        //
-        // Each target is POSED here: the skeletal volumes evaluated through the
-        // same aim blend the client draws that player with, so the silhouette
-        // you shot at is the thing being tested. `volumes` owns the storage the
-        // targets' spans point into, and it is sized up front -- a push_back
-        // reallocating it would leave every earlier span dangling.
-        const shared::player_rig_t &rig      = shared::player_rig();
-        const aim_settings_t        settings = aim_settings_from(*context.cvars);
-
-        std::vector<shared::hitscan_target_t> targets;
-        std::vector<assets::posed_hitbox_t>   volumes;
+        case entities::Weapon_Kind::Melee:
+        case entities::Weapon_Kind::Hitscan:
+        case entities::Weapon_Kind::Sniper:
         {
-          std::vector<const entities::Player_Entity *> victims;
-          for (const entities::Player_Entity &other :
-               context.world.session.entity_system.entities_of<entities::Player_Entity>())
+          float range = weapon.range;
+
+          ray_hit_result_t world_hit{};
+          const bool shot_collided_with_static_geometry =
+              bvh_intersect_ray(context.world.session.bvh, eye, direction, world_hit) &&
+              world_hit.hit;
+
+          // clip the max range, since players outside of this range can't possibly be hit.
+          if (shot_collided_with_static_geometry)
+            range = std::min(range, world_hit.t);
+
+          if (context.posed_players.built_for_tick != context.tick_number)
+            fatal_error("hit volumes were posed for tick {} but this is tick {}; "
+                        "pose_all_players must run before the move loop",
+                        context.posed_players.built_for_tick, context.tick_number);
+
+          // --- Lag compensation ---
+          // Rewind the targets to the blend this move was aimed THROUGH, so the
+          // silhouette tested is the one that was under the crosshair rather
+          // than where that player has since got to. Shooter-favored, and
+          // bounded by sv_max_rewind_ticks; lag_compensation_def.md argues the
+          // tradeoff.
+          //
+          // The present-tick set is the fallback and still a real arm: a
+          // spectator, a client's first shots before it holds two snapshots, a
+          // refused bracket, or an endpoint that has aged out of the ring all
+          // land there.
+          Span<const shared::hitscan_target_t> targets{context.posed_players.targets};
+          if (context.cvars->sv_lag_compensation)
           {
-            if (other.entity_id == player->entity_id) continue;
-            if (other.health <= 0) continue;
-            victims.push_back(&other);
+            // Inside the cvar check, not beside it: get_interpolation_bracket_for_move
+            // logs, and a server with the feature turned off has no business
+            // complaining about brackets it is not going to use.
+            const shared::interpolation_bracket_t bracket =
+                get_interpolation_bracket_for_move(context, client_slot, move);
+
+            if (bracket.towards_tick != 0 &&
+                shared::try_pose_players_across_bracket(
+                    context.replication.snapshot_history, shared::player_rig(),
+                    aim_settings_from(*context.cvars), bracket, context.rewind_scratch))
+              targets = Span<const shared::hitscan_target_t>{context.rewind_scratch.targets};
           }
 
-          volumes.resize(victims.size() * rig.volume_count());
-          targets.reserve(victims.size());
+          const shared::hitscan_result_t hit = shared::resolve_hitscan(
+              eye, direction, range, targets, player->entity_id);
 
-          for (uint32_t index = 0; index < (uint32_t)victims.size(); ++index)
+          if (hit.hit_uid != shared::null_entity_uid)
           {
-            const entities::Player_Entity &victim = *victims[index];
-            const Span<assets::posed_hitbox_t> slice{volumes.data() + index * rig.volume_count(),
-                                                     rig.volume_count()};
+            broadcast_server_text_message(
+                context, std::format("Player {} hit player {} in the {}",
+                                    client_slot, hit.hit_uid,
+                                    to_string(hit.region)));
+            const bool was_headshot = hit.region == shared::hit_region_t::Head;
 
-            shared::compute_player_hitboxes(rig,
-                                            {.feet_position = victim.position,
-                                             .body_yaw      = victim.body_yaw,
-                                             .view_yaw      = victim.view_angle_yaw,
-                                             .view_pitch    = victim.view_angle_pitch},
-                                            settings, slice);
+            damage_info_t info{};
+            info.victim_uid      = hit.hit_uid;
+            info.attacker_uid    = player->entity_id;
+            info.inflictor_uid   = player->entity_id;
+            info.weapon_id       = static_cast<uint16_t>(player->active_weapon_id);
+            info.amount          = weapon.damage *
+                                  (was_headshot ? weapon.headshot_multiplier : 1.f);
+            info.source_position = eye;
+            info.was_headshot    = was_headshot;
 
-            targets.push_back({victim.entity_id, Span<const assets::posed_hitbox_t>{slice}});
+            // defer for kill contribution.
+            context.outgoing.pending_hits.push_back(
+                {info, hit.impact_point, hit.impact_normal, hit.region});
           }
+          else if (shot_collided_with_static_geometry && weapon.kind != entities::Weapon_Kind::Melee)
+          {
+            // Melee deliberately produces no impact effect: a knife swing that
+            // reaches a wall should not spray a bullet decal.
+            shared::Bullet_Impact fx{};
+            fx.origin = eye + direction * world_hit.t;
+            shared::fire_bullet_impact(context.outgoing.effects, fx);
+          }
+          break;
         }
-
-        const shared::hitscan_result_t hit =
-            shared::resolve_hitscan(eye, direction, range, targets);
-
-        if (hit.hit_uid != shared::null_entity_uid)
+        case entities::Weapon_Kind::Projectile:
         {
-          broadcast_server_text_message(
-              context, std::format("Player {} hit player {} in the {}",
-                                   client_slot, hit.hit_uid,
-                                   to_string(hit.region)));
-          const bool was_headshot = hit.region == shared::hit_region_t::Head;
+          log_terminal("Player {} fired a rocket!", client_slot);
 
-          damage_info_t info{};
-          info.victim_uid      = hit.hit_uid;
-          info.attacker_uid    = player->entity_id;
-          info.inflictor_uid   = player->entity_id;
-          info.weapon_id       = static_cast<uint16_t>(player->active_weapon_id);
-          info.amount          = weapon.damage *
-                                 (was_headshot ? weapon.headshot_multiplier : 1.f);
-          info.source_position = eye;
-          info.was_headshot    = was_headshot;
-          inflict_damage(context, info);
+          const shared::entity_uid_t rocket_uid =
+              context.world.session.entity_system.spawn<entities::Rocket_Entity>();
+          entities::Rocket_Entity *rocket =
+              context.world.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
+          if (rocket)
+          {
+            // Muzzle is the eye, same as the hitscan origin -- a rocket that
+            // spawns somewhere other than where the crosshair is aimed from is
+            // the same class of bug as a mismatched hitscan origin.
+            // Everything else -- lifetime, damage, radii, the render component --
+            // is a per-type constant and comes from entities.def.
+            rocket->position = eye;
+            rocket->velocity = direction * context.cvars->game_rocket_speed;
+            rocket->owner_id = player->entity_id;
 
-          // The wet thud, for everyone, at the VICTIM. Dispatched here rather
-          // than inside inflict_damage because this is the only place that
-          // knows where the shot landed -- damage_info_t carries the shooter's
-          // eye, not the impact point -- and because one rocket is N damage
-          // calls but should still be one noise.
-          shared::Flesh_Impact impact_fx{};
-          impact_fx.origin           = hit.impact_point;
-          impact_fx.normal           = hit.impact_normal;
-          impact_fx.attached_entity  = hit.hit_uid;
-          impact_fx.surface_material = static_cast<uint16_t>(hit.region);
-          shared::fire_flesh_impact(context.outgoing.effects, impact_fx);
-
-          // The hitmarker, for the shooter only, as replicated state. Their
-          // own client plays it off this stamp advancing -- see
-          // Player_Entity::last_hit_tick in entities.def for why it is not an
-          // effect.
-          player->last_hit_tick         = context.tick_number;
-          player->last_hit_was_headshot = was_headshot;
+            printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
+                  rocket->position.x, rocket->position.y, rocket->position.z,
+                  assets::to_string(rocket->render.mesh), rocket->render.visible);
+          }
+          break;
         }
-        else if (world_blocked && weapon.kind != entities::Weapon_Kind::Melee)
-        {
-          // Melee deliberately produces no impact effect: a knife swing that
-          // reaches a wall should not spray a bullet decal.
-          shared::Bullet_Impact fx{};
-          fx.origin = eye + direction * world_hit.t;
-          shared::fire_bullet_impact(context.outgoing.effects, fx);
-        }
-        break;
-      }
-
-      case entities::Weapon_Kind::Projectile:
-      {
-        log_terminal("Player {} fired a rocket!", client_slot);
-
-        const shared::entity_uid_t rocket_uid =
-            context.world.session.entity_system.spawn<entities::Rocket_Entity>();
-        entities::Rocket_Entity *rocket =
-            context.world.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
-        if (rocket)
-        {
-          // Muzzle is the eye, same as the hitscan origin -- a rocket that
-          // spawns somewhere other than where the crosshair is aimed from is
-          // the same class of bug as a mismatched hitscan origin.
-          // Everything else -- lifetime, damage, radii, the render component --
-          // is a per-type constant and comes from entities.def.
-          rocket->position = eye;
-          rocket->velocity = direction * context.cvars->game_rocket_speed;
-          rocket->owner_id = player->entity_id;
-
-          printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
-                 rocket->position.x, rocket->position.y, rocket->position.z,
-                 assets::to_string(rocket->render.mesh), rocket->render.visible);
-        }
-        break;
-      }
       }
     }
   }
+
+  // --- Apply the hits the move loop deferred ---
+  //
+  // Immediately after the loop closes, and before anything else simulates. Every
+  // shot this tick was resolved against the same start-of-tick world (see
+  // pose_all_players), so the damage from all of them has to land after all of
+  // them or move order decides who wins a trade. Nothing mutated health during
+  // the loop, which is what makes its `is_dead` gate read start-of-tick health.
+  //
+  // Two passes, and the split is the point. The FX are PER HIT -- each one knows
+  // an impact point the damage does not -- while the damage is ONE batch, summed
+  // per victim, because two shooters landing on the same victim in the same tick
+  // must not have the outcome or the kill credit decided by which move sorted
+  // first. inflict_damage in a loop was exactly that, and dropped the loser's
+  // damage and knockback entirely; see inflict_damage_batch.
+  for (const pending_hit_t &pending : context.outgoing.pending_hits)
+  {
+    // The wet thud, for everyone, at the VICTIM. Dispatched here rather than
+    // inside inflict_damage because the hit is the only thing that knows where
+    // the shot landed -- damage_info_t carries the shooter's eye, not the impact
+    // point -- and because one rocket is N damage calls but should still be one
+    // noise.
+    shared::Flesh_Impact impact_fx{};
+    impact_fx.origin           = pending.impact_point;
+    impact_fx.normal           = pending.impact_normal;
+    impact_fx.attached_entity  = pending.info.victim_uid;
+    impact_fx.surface_material = static_cast<uint16_t>(pending.region);
+    shared::fire_flesh_impact(context.outgoing.effects, impact_fx);
+
+    // The hitmarker, for the shooter only, as replicated state. Their own client
+    // plays it off this stamp advancing -- see Player_Entity::last_hit_tick in
+    // entities.def for why it is not an effect. Every contributor gets one, not
+    // just the one credited with the kill: you hit them, so you saw it land.
+    entities::Player_Entity *attacker =
+        context.world.session.entity_system.get<entities::Player_Entity>(
+            pending.info.attacker_uid);
+    if (attacker)
+    {
+      attacker->last_hit_tick         = context.tick_number;
+      attacker->last_hit_was_headshot = pending.info.was_headshot;
+    }
+  }
+
+  inflict_damage_batch(context, context.outgoing.pending_hits);
+  context.outgoing.pending_hits.clear();
 
   // --- Simulate server-side entities ---
   float tick_dt = static_cast<float>(get_tick_interval());
@@ -1184,11 +1365,12 @@ bool Tick()
 
     network::Bit_Writer writer;
 
-    // The baseline is the snapshot this client ACKED, not the one last sent.
-    // A miss (never acked, or acked so long ago it fell out of the ring) is not
-    // an error — it just means this packet is a full update.
+    // Diff against the snapshot this client says it HOLDS, not the one we last
+    // sent — that one may have been dropped. A miss (never told us, or told us
+    // so long ago the frame fell out of the ring) is not an error; it just means
+    // this packet is a full update.
     const network::snapshot_frame_t *baseline =
-        context.replication.snapshot_history.find(context.clients[slot].acked_snapshot_tick);
+        context.replication.snapshot_history.find(context.clients[slot].held_snapshot_tick);
     const uint32_t baseline_tick = baseline != nullptr ? baseline->tick : 0;
 
     network::serialize_snapshot(writer, frame, baseline);

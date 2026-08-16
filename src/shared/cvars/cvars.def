@@ -109,6 +109,25 @@ Aim :: cvars {
 }
 
 // ---------------------------------------------------------------------------
+// Lag compensation -- lag_compensation_def.md
+// ---------------------------------------------------------------------------
+//
+// @Server and NOT @Mirrored: the client makes no decision from any of these. It
+// reports the blend it drew through unconditionally; whether the server rewinds
+// through it, how far back it may reach and whether that gets logged are all
+// the server's business alone.
+//
+// The policy these encode is shooter-favored -- "I hit what my crosshair was
+// on" -- and the bill is that a victim already behind cover on both screens can
+// still take damage. sv_max_rewind_ticks is what bounds that bill.
+
+Lag_Compensation :: cvars {
+    sv_lag_compensation:       bool = true   @Server  "Rewind targets to what the shooter saw"
+    sv_max_rewind_ticks:       i32  = 12     @Server  "Cap on how far back a shot may reach (~200ms at 60Hz)"
+    sv_lag_compensation_debug: bool = false  @Server  "Log every rewind: requested bracket, clamped bracket, disparity, hit"
+}
+
+// ---------------------------------------------------------------------------
 // Server -- was server_impl.cpp
 // ---------------------------------------------------------------------------
 

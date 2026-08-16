@@ -250,21 +250,12 @@ bool Udp_Socket::send(const Packet &packet, const Address &address)
 {
     if (m_socket_handle == INVALID_SOCKET) return false;
 
-    // TODO: stamp packet.header.timestamp ("when was this sent?") HERE, at the
-    // actual send, so it reflects the true moment on the wire. Right now nothing
-    // in the codebase ever writes header.timestamp, yet the server reads it to
-    // order incoming moves (poll_network -> TimestampedMove in
-    // server_transport_layer.hpp), so that ordering is currently keyed on an
-    // unset (0/garbage) value. Doing it here needs a mutable packet: either drop
-    // the `const` and set it before sendto, or copy-and-stamp into a local.
-
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(address.ip_v4);
     addr.sin_port = htons(address.port);
 
-    size_t header_plus_padding = sizeof(Packet_Header) + sizeof(int);
-    size_t send_size = header_plus_padding + packet.header.payload_size;
+    size_t send_size = PACKET_PAYLOAD_OFFSET_IN_BYTES + packet.header.payload_size;
 
     if (send_size > sizeof(Packet)) send_size = sizeof(Packet);
 

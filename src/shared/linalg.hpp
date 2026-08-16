@@ -444,6 +444,23 @@ inline float wrap_degrees(float degrees)
   return degrees - 180.0f;
 }
 
+// Blend two angles the SHORT way round, with the fraction pinned to [0,1].
+//
+// The counterpart to shared::lerp_clamped for anything measured in degrees: a
+// raw lerp across the +/-180 seam spins a continuously turning player all the
+// way back, which is once per revolution for a chasing bot. Lives here rather
+// than in math.hpp because it needs wrap_degrees.
+//
+// ONE definition on purpose. The client draws remote players through this and
+// the server rewinds them through it, and those two must agree exactly or the
+// silhouette you shoot at is not the one that gets tested -- the same reason
+// compute_player_hitboxes is shared. It was hand-rolled in both places.
+inline float lerp_degrees_clamped(float from, float towards, float fraction)
+{
+  fraction = fraction < 0.0f ? 0.0f : (fraction > 1.0f ? 1.0f : fraction);
+  return wrap_degrees(from + wrap_degrees(towards - from) * fraction);
+}
+
 // View angles (DEGREES, the form they take at every boundary -- the proto
 // viewangles, Player_Entity::view_angle_*, camera_t) to a forward direction.
 // Y-up: yaw sweeps from +X toward +Z, positive pitch looks up.

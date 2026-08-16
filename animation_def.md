@@ -806,6 +806,20 @@ arm at shoulder width is outside it.
 > machine agreeing with its own past.** Shared code gives you the first and says
 > nothing about the second; storing outputs gives you the second and says
 > nothing about the first.
+>
+> **Guarantee 2 LANDED 2026-08-16**, for `position`, `body_yaw` and both view
+> angles — `shared/lag_compensation.cpp`, design in `lag_compensation_def.md`.
+> Note what shipped is one step past what this block describes: the ring stores
+> whole `Player_Entity` values rather than capsule endpoints, so the rewind reads
+> the *pose inputs* back and re-poses them through the same
+> `compute_player_hitboxes` the live path calls. That is still "store outputs,
+> not inputs" in the sense that matters — nothing re-runs an animator, nothing
+> has to be bit-reproducible — and it keeps guarantee 1 for free, because the
+> rewound silhouette comes out of the identical function the client draws with.
+>
+> `locomotion_phase` still owes its accumulator; when it exists it joins the
+> replicated set and the rewind picks it up with no work, since the rewind reads
+> whatever the frame holds.
 
 What does **not** follow is that the server runs the animator. Those are
 separable, and separating them is the whole design:

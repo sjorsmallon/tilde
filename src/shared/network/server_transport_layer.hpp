@@ -22,16 +22,13 @@ struct Byte_Buffer
   size_t cursor = 0; // byte_offset to insert at.
 };
 
-struct TimestampedMove
-{
-  uint64 timestamp;
-  game::C2S_PlayerMoveCommand move;
-};
-
 struct ServerInbox
 {
-  // Pair of client slot and move
-  std::vector<std::pair<int, TimestampedMove>> moves;
+  // Pair of client slot and move. These used to be wrapped in a TimestampedMove
+  // carrying packet.header.timestamp, which NOTHING ever wrote -- the server
+  // sorted by it anyway. Ordering is now (slot, command_number), which the
+  // client does write; see the sort in server_impl.cpp's Tick().
+  std::vector<std::pair<int, game::C2S_PlayerMoveCommand>> moves;
   std::vector<Address> potential_joins;
   // Handshake commands from clients (or would-be clients)
   std::vector<std::pair<Address, game::NetCommand>> net_commands;
@@ -188,8 +185,7 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
           game::C2S_PlayerMoveCommand move_cmd;
           if (move_cmd.ParseFromArray(buffer.data(), buffer.size()))
           {
-            out_inbox.moves.push_back(
-                {client_slot, {packet.header.timestamp, move_cmd}});
+            out_inbox.moves.push_back({client_slot, move_cmd});
           }
         }
         else if (packet.header.message_type ==

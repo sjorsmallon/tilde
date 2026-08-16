@@ -24,12 +24,46 @@ message C2S_PlayerMoveCommand {
   // The "Buttons" Bitfield
   optional uint64 buttons_bitfield = 7;
 
-  // Highest server tick this client has fully reconstructed, i.e. the newest
-  // snapshot it can be deltaed against. 0 = none yet, send a full update.
-  // This is the ONLY thing that makes delta compression correct over UDP: the
-  // server may not delta against what it last SENT (that packet may have been
-  // dropped), only against what the client says it APPLIED.
-  optional uint32 acked_server_tick = 8;
+  // The newest snapshot this client holds a complete copy of, named by the
+  // server tick it was taken at. 0 = none yet, send a full update.
+  //
+  // It RIDES on the move command but describes nothing about the move -- moves
+  // are the only regular c2s traffic, so it hitches a ride rather than paying
+  // for a datagram of its own. This is the ONLY thing that makes delta
+  // compression correct over UDP: the server may not build a diff against what
+  // it last SENT (that packet may have been dropped), only against what the
+  // client says it actually HAS.
+  optional uint32 held_snapshot_tick = 8;
+
+  // The blend this move was aimed THROUGH: remote players are DRAWN
+  // interpolated between two snapshots (play_state.cpp, "Interpolate remote
+  // players"), never at either one, so the world the crosshair was on is at no
+  // whole tick.
+  //
+  // The server lerps these SAME two endpoints before testing a shot, rather
+  // than posing the true state at the moment they work out to. After packet
+  // loss the two are different places -- the client drew a chord, and the real
+  // path between the endpoints may have curved off it. Reproducing the chord is
+  // what makes "if it was under your crosshair, you hit it" true.
+  // See shared/lag_compensation.hpp.
+  //
+  // Distinct from `command_number`, which stamps the same press on the client's
+  // OTHER clock: prediction runs its own body AHEAD of the server while
+  // rendering everyone else BEHIND it. That clock needs no compensation -- the
+  // server re-derives the shooter's own position from the inputs in this very
+  // message.
+  //
+  // Either tick being 0 means no blend yet (spectating, or fewer than two
+  // snapshots seen); the server falls back to present-tick poses.
+  //
+  // Deliberately NOT merged into held_snapshot_tick, even though
+  // interpolated_towards_tick equals it today. They answer different questions
+  // ("what did I reconstruct" vs "what did I draw"), and the equality is an
+  // invariant of the client's publish path, not of this message -- it stops
+  // holding the moment anything replicates at its own cadence.
+  optional uint32 interpolated_from_tick    = 9;
+  optional uint32 interpolated_towards_tick = 10;
+  optional float  interpolation_fraction    = 11;   // 0..1, from -> towards
 }
 
 // s2c is server to client.

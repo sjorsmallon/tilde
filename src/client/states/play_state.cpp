@@ -550,7 +550,8 @@ void Play_State::update(float dt)
     shared::change_map_message_t change = shared::deserialize_change_map(reader);
 
     // Idempotent resends: if we already run this exact map, just re-ack. The
-    // server resends CmdChangeMap each tick until it sees our C2S_MapLoaded.
+    // server resends CmdChangeMap a few times a second until it sees our
+    // C2S_MapLoaded.
     if (ctx.connection.phase == Connection_Phase::Connected &&
         ctx.world.map_content_hash == change.content_hash)
     {
@@ -558,9 +559,11 @@ void Play_State::update(float dt)
       continue;
     }
 
-    // Already waiting on a stream for this switch: re-send the request (a cheap
-    // stand-in for retransmit — the server streams once per request) and keep
-    // waiting, instead of tearing the world down again on every resent message.
+    // Already waiting on a stream for this switch: re-send the request (a
+    // stand-in for retransmit) and keep waiting, instead of tearing the world
+    // down again on every resent message. NOT cheap on the server — it streams
+    // the whole package per request — which is why its resend is paced rather
+    // than per-tick, and why it starts that clock when it streams.
     if (ctx.connection.phase == Connection_Phase::Loading &&
         ctx.connection.awaiting_stream_content_hash == change.content_hash)
     {
@@ -860,6 +863,12 @@ void Play_State::update(float dt)
                ? ctx.replication.remote_players.erase(it)
                : std::next(it);
 
+    // Latched BEFORE the acknowledge below moves the cursor: the tick we were
+    // acking until now is the one every remote_player's snapshots[0] was just
+    // filled from, so the pair is the bracket the next frame will draw through.
+    // The move command reports it so the server can rewind shots to it.
+    ctx.replication.previous_snapshot_tick = ctx.replication.snapshot_history.acked_tick;
+
     ctx.replication.snapshot_history.slot_for(snapshot_tick) = std::move(latest_snapshot);
     ctx.replication.snapshot_history.acknowledge(snapshot_tick);
 
@@ -983,8 +992,8 @@ void Play_State::update(float dt)
     ui.zoom_fraction += shared::clamp(zoom_target - ui.zoom_fraction, -step, step);
   }
 
-  camera.fov_degrees = shared::lerp(ctx.cvars->r_fov, ctx.cvars->r_zoom_fov,
-                                    ui.zoom_fraction);
+  camera.fov_degrees = shared::lerp_clamped(ctx.cvars->r_fov, ctx.cvars->r_zoom_fov,
+                                            ui.zoom_fraction);
 
   // before input handling, render the menu overlay (done in render_ui)
   if (ui.show_menu_overlay) return;
@@ -1125,16 +1134,57 @@ void Play_State::update(float dt)
       view_angles->set_pitch(ctx.prediction.player_pitch);
       view_angles->set_yaw(ctx.prediction.player_yaw);
       move_cmd.set_buttons_bitfield(buttons);
-      // The snapshot ack rides on the move command rather than a message of its
-      // own: it is sent at the same rate, to the same place, and a lost move
-      // command already costs us a tick — one more datagram would buy nothing.
-      move_cmd.set_acked_server_tick(ctx.replication.snapshot_history.acked_tick);
+      // Which snapshot we hold, so the server can send its next one as a diff
+      // against it. Rides on the move command rather than a message of its own:
+      // it is sent at the same rate, to the same place, and a lost move command
+      // already costs us a tick — one more datagram would buy nothing.
+      move_cmd.set_held_snapshot_tick(ctx.replication.snapshot_history.acked_tick);
+
+      // The blend this move was aimed THROUGH, which is a different question
+      // from what we hold: remote players are drawn interpolated BETWEEN two
+      // snapshots, so the world the crosshair was on is at no whole tick. See
+      // game.proto's interpolated_* fields for why the server needs both
+      // endpoints and not the single moment they work out to.
+      //
+      // Left at 0 until we have two snapshots (or while spectating), which the
+      // server reads as "no blend" and answers with present-tick poses.
+      //
+      // Two accepted inaccuracies, both under a frame of error against tens of
+      // milliseconds of network delay:
+      //  - this is the fixed-step accumulator loop, which runs BEFORE the
+      //    interpolation advance further down, so the fraction is last frame's;
+      //  - interpolation_time is GLOBAL, not per remote player, so one bracket
+      //    describes every target. True today — no PVS, everything arrives in
+      //    one packet — and already flagged as fragile in todo.md. If per-entity
+      //    cadence lands, this field set becomes per-entity or becomes wrong.
+      const uint32_t interpolated_from    = ctx.replication.previous_snapshot_tick;
+      const uint32_t interpolated_towards = ctx.replication.snapshot_history.acked_tick;
+      if (interpolated_from != 0 && interpolated_towards != 0)
+      {
+        // The same clamped t the interpolation loop computes below, off the two
+        // GLOBAL snapshot ticks rather than one player's — so the blend we
+        // report is the blend we drew, by construction.
+        const uint32_t ticks_between =
+            std::max(1u, interpolated_towards - interpolated_from);
+        const float interp_duration = tick_dt * static_cast<float>(ticks_between);
+        // Pinned the same way the draw below pins it (shared::lerp_clamped), so
+        // "the blend we report is the blend we drew" stays literally true.
+        const float fraction = shared::clamp(
+            ctx.replication.interpolation_time / interp_duration, 0.f, 1.f);
+
+        move_cmd.set_interpolated_from_tick(interpolated_from);
+        move_cmd.set_interpolated_towards_tick(interpolated_towards);
+        move_cmd.set_interpolation_fraction(fraction);
+      }
+
       network::send_protobuf_message(transport, move_cmd);
 
       Move_Events tick_events{};
-      // Spectating: the server holds no body for us and drops these moves --
-      // but the snapshot ack RIDES on them, so they keep being sent, or our
-      // ack would never advance and the server would re-baseline forever.
+      // Spectating: the server holds no body for us and ignores the movement in
+      // these -- but held_snapshot_tick RIDES on them, so they keep being sent,
+      // or the server would never learn what we hold and would send a full
+      // snapshot every tick. (It reads that field in a pass of its own, ahead of
+      // the move handling that skips us, which is what makes this work.)
       // What is skipped is the local sim: predicting would walk a phantom
       // around the map and hand the first post-join_game snapshot a position
       // to drag us back from. The ring-buffer entry below is still written, so
@@ -1240,29 +1290,29 @@ void Play_State::update(float dt)
       tick_count_between_latest_two_snapshots = 1;
 
     float interp_duration = tick_interval * static_cast<float>(tick_count_between_latest_two_snapshots);
-    float t = ctx.replication.interpolation_time / interp_duration;
-    if (t > 1.f)
-      t = 1.f;
+    // INTERPOLATION, never extrapolation: past the newer snapshot this holds at
+    // it rather than projecting on. Guaranteed by the _clamped helpers below and
+    // no longer by remembering to pin t here -- there is no interpolation delay
+    // buffer, so t reaching 1 is the routine case every time a snapshot is even
+    // slightly late, not an edge case.
+    const float t = ctx.replication.interpolation_time / interp_duration;
 
-    remote_player.render_position.x = remote_player.snapshots[0].position.x * (1.f - t) + remote_player.snapshots[1].position.x * t;
-    remote_player.render_position.y = remote_player.snapshots[0].position.y * (1.f - t) + remote_player.snapshots[1].position.y * t;
-    remote_player.render_position.z = remote_player.snapshots[0].position.z * (1.f - t) + remote_player.snapshots[1].position.z * t;
-    // Yaw takes the SHORT way round: a raw lerp across the +/-180 seam spins
-    // the model all the way back, which is exactly what a continuously turning
-    // bot walks into once per revolution.
-    const float yaw_delta = linalg::wrap_degrees(remote_player.snapshots[1].yaw -
-                                                 remote_player.snapshots[0].yaw);
-    remote_player.render_yaw   = linalg::wrap_degrees(remote_player.snapshots[0].yaw + yaw_delta * t);
-    remote_player.render_pitch = remote_player.snapshots[0].pitch * (1.f - t) + remote_player.snapshots[1].pitch * t;
+    const auto &older = remote_player.snapshots[0];
+    const auto &newer = remote_player.snapshots[1];
 
-    // The feet take the short way round for the same reason the view yaw does,
-    // and off the same two snapshots -- this is a smoothed READ of a
-    // server-owned value, not an integration. Nothing downstream writes it
-    // back.
-    const float body_yaw_delta = linalg::wrap_degrees(remote_player.snapshots[1].body_yaw -
-                                                      remote_player.snapshots[0].body_yaw);
-    remote_player.body_yaw =
-        linalg::wrap_degrees(remote_player.snapshots[0].body_yaw + body_yaw_delta * t);
+    remote_player.render_position.x = shared::lerp_clamped(older.position.x, newer.position.x, t);
+    remote_player.render_position.y = shared::lerp_clamped(older.position.y, newer.position.y, t);
+    remote_player.render_position.z = shared::lerp_clamped(older.position.z, newer.position.z, t);
+
+    // Angles take the SHORT way round, through the same function the server
+    // rewinds shots with -- if the two disagreed, the silhouette drawn here
+    // would not be the one hit-tested there.
+    remote_player.render_yaw   = linalg::lerp_degrees_clamped(older.yaw, newer.yaw, t);
+    remote_player.render_pitch = shared::lerp_clamped(older.pitch, newer.pitch, t);
+
+    // The feet, off the same two snapshots -- this is a smoothed READ of a
+    // server-owned value, not an integration. Nothing downstream writes it back.
+    remote_player.body_yaw = linalg::lerp_degrees_clamped(older.body_yaw, newer.body_yaw, t);
   }
   ctx.replication.interpolation_time += dt;
 
@@ -1734,7 +1784,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     {
       const shared::player_rig_t &rig = shared::player_rig();
 
-      std::vector<assets::posed_hitbox_t> volumes(rig.volume_count());
+      std::vector<assets::posed_hitbox_t> &volumes = hitbox_scratch;
+      volumes.resize(rig.volume_count());
       shared::compute_player_hitboxes(rig,
                                       {.feet_position = remote_player.render_position,
                                        .body_yaw      = remote_player.body_yaw,

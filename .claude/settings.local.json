@@ -260,7 +260,8 @@
       "Bash(mkdir -p src/shared/assets/generated)",
       "Bash(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def --dump)",
       "Bash(grep -n \"mesh_asset\\\\|sprite_asset\\\\|assets$\")",
-      "Bash(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def --emit --asset-root .)"
+      "Bash(./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def --emit --asset-root .)",
+      "Bash(git -C \"c:/Users/sjors/Desktop/Projects/tilde/tilde\" status --short -- lag_compensation_def.md todo.md)"
     ],
     "additionalDirectories": [
       "C:\\Users\\sjors\\AppData\\Local\\Temp\\claude\\c--Users-sjors-Desktop-Projects-tilde-tilde\\5c2e41f3-47da-4d68-93f0-94a7a6f0015a\\scratchpad"

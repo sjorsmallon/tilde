@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../shared/hitbox_rig.hpp" // posed_hitbox_t, for the overlay scratch below
 #include "../../shared/player_constants.hpp"
 #include "../../shared/skinning.hpp"
 #include "../camera.hpp"
@@ -66,6 +67,12 @@ private:
   // move the slots already handed out.
   std::deque<assets::posed_skeleton_t> pose_storage;
   size_t                               pose_count = 0;
+
+  // Scratch for the debug_show_hitboxes overlay, reused across players and
+  // frames. Unlike pose_storage this needs no stable address -- the volumes are
+  // drawn on the spot and the debug list copies them -- it is here purely so the
+  // overlay stops allocating per player per frame.
+  std::vector<assets::posed_hitbox_t> hitbox_scratch;
 
   // Player dimensions — canonical values live in shared::player_half_width/height
   static constexpr float player_half_width  = shared::player_half_width;

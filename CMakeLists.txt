@@ -285,6 +285,8 @@ add_library(game_shared STATIC
     src/shared/hit_region.hpp
     src/shared/hitscan.hpp
     src/shared/hitscan.cpp
+    src/shared/lag_compensation.hpp
+    src/shared/lag_compensation.cpp
     src/shared/network/map_transfer.cpp
     src/shared/network/cvar_mirror.cpp
 )
@@ -647,6 +649,14 @@ add_executable(hitbox_rig_test src/test/hitbox_rig_test.cpp)
 target_include_directories(hitbox_rig_test PRIVATE src src/shared)
 target_link_libraries(hitbox_rig_test PRIVATE game_shared)
 
+# 24b. Lag compensation — the rewind path (shared/lag_compensation.cpp).
+# Links game_shared alone: the bracket check is pure arithmetic and the posing
+# half takes values, so no server_context_t, no socket and no Jolt. Loads the
+# real rig from resources/models, so it wants the project root as its cwd.
+add_executable(lag_compensation_test src/test/lag_compensation_test.cpp)
+target_include_directories(lag_compensation_test PRIVATE src src/shared)
+target_link_libraries(lag_compensation_test PRIVATE game_shared)
+
 # 25. Array test — Array<T, N> and Enum_Array<Enum_T, T> (src/shared/array.hpp).
 # Header-only, so it links nothing: almost every promise these types make is a
 # static_assert, and the executable exists to prove the header compiles and to
@@ -722,6 +732,7 @@ set(GAME_TESTS
     hitscan_test
     model_format_test
     hitbox_rig_test
+    lag_compensation_test
     array_test
     server_context_test
     events_test)

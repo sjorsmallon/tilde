@@ -90,12 +90,12 @@ void test_receive_and_reassembly()
   }
 
   // Find move for player 0
-  const TimestampedMove *received_move_ptr = nullptr;
-  for (const auto &[pidx, tm] : inbox.moves)
+  const game::C2S_PlayerMoveCommand *received_move_ptr = nullptr;
+  for (const auto &[pidx, move] : inbox.moves)
   {
     if (pidx == 0)
     {
-      received_move_ptr = &tm;
+      received_move_ptr = &move;
       break;
     }
   }
@@ -103,11 +103,8 @@ void test_receive_and_reassembly()
   assert(received_move_ptr && "No move found for player 0");
   const auto &received_move = *received_move_ptr;
 
-  // Timestamp might be 0 as packet helper doesn't set it (comment says
-  // "Timestamp should be set by sender") We didn't set it in loop. So it's 0.
-
-  assert(received_move.move.command_number() == 10);
-  assert(received_move.move.forwardmove() == 127.0f);
+  assert(received_move.command_number() == 10);
+  assert(received_move.forwardmove() == 127.0f);
   std::cout << "  -> Move Reassembled Correctly!" << std::endl;
 }
 

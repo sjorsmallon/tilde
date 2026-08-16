@@ -57,14 +57,27 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   died.attacker_id = 7;
   shared::fire_player_died(context.outgoing.events, died);
 
+  // A hit the move loop resolved but has not applied. Normally drained the
+  // instant that loop closes; it is a group member so that a tick which died
+  // halfway cannot replay it.
+  pending_hit_t pending{};
+  pending.info.victim_uid   = 42;
+  pending.info.attacker_uid = 7;
+  pending.info.amount       = 35.f;
+  pending.impact_point      = {1.f, 2.f, 3.f};
+  pending.region            = shared::hit_region_t::Head;
+  context.outgoing.pending_hits.push_back(pending);
+
   for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
     client_slot_t& client = context.clients[slot];
     client.player_uid               = 1000 + slot;
     client.latest_processed_command = 70 + slot;
     client.latest_buttons_bitmap    = 0b1011;
-    client.acked_snapshot_tick      = 880 + slot;
+    client.held_snapshot_tick       = 880 + slot;
     client.map_ready                = true;
+    client.last_map_switch_send_tick = 890 + slot;
+    client.last_rewind_warning_tick  = 870 + slot;
   }
 }
 
@@ -95,6 +108,9 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(context.incoming.map_loaded_acks.empty());
   assert(context.outgoing.effects.empty());
   assert(context.outgoing.events.empty());
+  // Damage resolved against the world we are leaving must not land in the one
+  // we are entering — the victim uid may not even exist there.
+  assert(context.outgoing.pending_hits.empty());
 
   // Rules restart the match — by a CALL, so this is not `= {}`: Warmup for
   // round 0 (the first Countdown takes it to 1) with a deadline computed off
@@ -115,7 +131,7 @@ void test_reset_state_in_preparation_for_new_map_load()
     // Cleared: the map-scoped columns. A retained uid can be REISSUED by the
     // fresh session's restarted counter and resolve to someone else's player.
     assert(client.player_uid == shared::null_entity_uid);
-    assert(client.acked_snapshot_tick == 0);
+    assert(client.held_snapshot_tick == 0);
     assert(!client.map_ready);
 
     // Survives: the command stream describes the CLIENT, not the world. Wiping
@@ -123,6 +139,16 @@ void test_reset_state_in_preparation_for_new_map_load()
     // rising edge on the first tick after the switch.
     assert(client.latest_processed_command == 70 + slot);
     assert(client.latest_buttons_bitmap == 0b1011);
+
+    // Survives, but only because clearing it would be dead: change_map_to sends
+    // a CmdChangeMap to every OCCUPIED slot right after this reset, and that
+    // send stamps the field. An unoccupied slot is never in the retransmit loop.
+    assert(client.last_map_switch_send_tick == static_cast<uint32_t>(890 + slot));
+
+    // Survives for the same reason latest_buttons_bitmap does: it describes the
+    // CLIENT's connection quality, which a map change does not improve. Wiping
+    // it would let one warning through per map load, per slot, for free.
+    assert(client.last_rewind_warning_tick == static_cast<uint32_t>(870 + slot));
   }
 
   printf("  reset_state_in_preparation_for_new_map_load: ok\n");
@@ -145,8 +171,10 @@ void test_reset_client_slot()
   assert(reset_client.player_uid == shared::null_entity_uid);
   assert(reset_client.latest_processed_command == invalid_slot_idx);
   assert(reset_client.latest_buttons_bitmap == 0);
-  assert(reset_client.acked_snapshot_tick == 0);
+  assert(reset_client.held_snapshot_tick == 0);
   assert(!reset_client.map_ready);
+  assert(reset_client.last_map_switch_send_tick == 0);
+  assert(reset_client.last_rewind_warning_tick == 0);
 
   // Every other slot, and the world, are none of this reset's business.
   for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
@@ -186,12 +214,14 @@ void test_clear_tick_groups()
   assert(context.incoming.map_data_requests.empty());
   assert(context.outgoing.effects.empty());
   assert(context.outgoing.events.empty());
+  assert(context.outgoing.pending_hits.empty());
 
   // The reason these are functions and not `= {}` on the group: they run at the
   // tickrate, so the capacity has to survive. An `= {}` "simplification" fails
   // here rather than silently reintroducing a per-tick realloc.
   assert(context.incoming.commands.capacity() > 0);
   assert(context.incoming.map_loaded_acks.capacity() > 0);
+  assert(context.outgoing.pending_hits.capacity() > 0);
   // Same intent, different member: a stream keeps its buffer's allocation.
   assert(context.outgoing.effects.writer.buffer.capacity() > 0);
   assert(context.outgoing.events.writer.buffer.capacity() > 0);

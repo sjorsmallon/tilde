@@ -198,7 +198,33 @@ A player is hit-tested against the **posed skeletal volumes**, not a static box 
 
 `Player_Entity::body_yaw` (where the feet point, lagging the view yaw) is **server-owned and `@Networked`**: the server advances it once per fixed tick over every player entity, and clients read it. A client integrating its own copy would draw a pose the server is not testing. The three `sv_aim_*` extents are `@Mirrored` for the same reason.
 
-Not built yet: lag compensation. The server tests where the target is now.
+**Lag compensation: the server rewinds the targets to what the shooter saw.**
+The client reports the interpolation **bracket** it was drawing through on every
+move command (`interpolated_from_tick` / `interpolated_towards_tick` /
+`interpolation_fraction` — remote players are drawn *between* two snapshots, so
+the world under the crosshair is at no whole tick). `shared/lag_compensation.hpp`
+is the two halves: `classify_bracket` decides whether a request is one an honest
+client on this connection could have made, and `try_pose_players_across_bracket`
+lerps those two `Snapshot_History` frames and poses them through the *same*
+`compute_player_hitboxes` — so the rewound silhouette is the drawn silhouette.
+The fire path swaps that set in for `posed_players.targets` and changes nothing
+else; `resolve_hitscan` never knew what tick it was testing.
+
+Two things it commits to. The wire carries the **bracket, not a collapsed
+moment**: the server reproduces the *chord* the client drew, because after packet
+loss the real path between two snapshots may have curved off it and posing the
+truth misses a crosshair that was dead on the drawn model. And the policy is
+**shooter-favored** — a victim already behind cover on both screens can still
+take damage, bounded by `sv_max_rewind_ticks`. Both have a test that fails if
+they are undone (`lag_compensation_test`).
+
+Damage is **deferred** to a pass immediately after the move loop
+(`tick_output_t::pending_hits`) rather than applied inside it. Every shot in a
+tick tests the same start-of-tick world, so the damage from all of them has to
+land after all of them: applying it in the loop let whichever move sorted first
+kill the other, and the loop's own `is_dead` gate then dropped the second shot.
+With nothing mutating health during the loop, that gate now reads start-of-tick
+health, which is the trade fix falling out for free.
 
 Geometry drawing, inspector panels and placement ghosts live in `editor/geometry_editor.{hpp,cpp}` — the geometry counterpart to `entity_editor_traits`, and much smaller (three kinds, all boxes, so it's switches rather than a trait template per type). `client/geometry_renderer.{hpp,cpp}` is the one geometry draw path shared by the game and the editor.
 
@@ -253,7 +279,9 @@ Protobuf for message definitions (`proto/game.proto`). Custom UDP with delta-com
 
 The connect handshake exchanges `entities::SCHEMA_HASH` (in `CmdConnect`); the server refuses a client whose hash differs, reporting both. A mismatch means the two builds disagree about entity layout or the asset manifest, so every snapshot after it would be misparsed.
 
-**Snapshot deltas are taken against the ACKED snapshot, never the last-sent one.** This is the load-bearing rule of the whole delta path: snapshots are unreliable, so deltaing against what was last sent means one dropped datagram permanently desyncs every field that then stops changing. The client names the newest snapshot it reconstructed in `C2S_PlayerMoveCommand.acked_server_tick`; the server names what it deltaed against in `S2C_EntityPackage.delta_from_tick` (0 = full update). Both ends keep the same 32-tick ring, `network::Snapshot_History` (`shared/network/snapshot_history.hpp`) — the server keeps what it sent, the client keeps what it reconstructed. A client that no longer holds `delta_from_tick` drops the packet whole and logs it; its ack doesn't advance, so the server falls back to a full update within a round trip. Server ticks start at 1 because 0 is the "no baseline" sentinel. Client cvar `net_snapshot_debug` prints the baseline tick and payload size every 120 ticks.
+**Snapshot deltas are built against the snapshot the client says it HOLDS, never the last-sent one.** This is the load-bearing rule of the whole delta path: snapshots are unreliable, so deltaing against what was last sent means one dropped datagram permanently desyncs every field that then stops changing. The client names the newest snapshot it holds a complete copy of in `C2S_PlayerMoveCommand.held_snapshot_tick`; the server names what it deltaed against in `S2C_EntityPackage.delta_from_tick` (0 = full update). Both ends keep the same 32-tick ring, `network::Snapshot_History` (`shared/network/snapshot_history.hpp`) — the server keeps what it sent, the client keeps what it reconstructed. A client that no longer holds `delta_from_tick` drops the packet whole and logs it; the number it reports doesn't advance, so the server falls back to a full update within a round trip. Server ticks start at 1 because 0 is the "no baseline" sentinel. Client cvar `net_snapshot_debug` prints the baseline tick and payload size every 120 ticks.
+
+`held_snapshot_tick` **rides on the move command but is not part of the move** — moves are the only regular C2S traffic, so it hitches a ride rather than paying for a datagram of its own. The server therefore drains it in a pass of its own in `Tick()`, *before* the move loop: that loop skips a client with no body, and a spectator still receives snapshots. `client_slot_t::held_snapshot_tick` is the server's **note about** the client, and it grows only (`std::max`, not assignment) — UDP reorders and duplicates, so a later packet can carry an older number, and a stale one must not make the server forget what the client already confirmed.
 
 Per-leaf change masks come from `networked_leaf_fields(type)` on both ends, so bit N is the same field by construction; `deserialize_entity` can hand that mask back via an optional `network::changed_fields_t*` out-param.
 

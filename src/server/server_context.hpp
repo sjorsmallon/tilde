@@ -7,6 +7,8 @@
 #include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/events/generated/events_generated.hpp"
 #include "../shared/game_session.hpp"
+#include "../shared/hitscan.hpp"
+#include "../shared/lag_compensation.hpp"
 #include "../shared/map.hpp"
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/server_transport_layer.hpp"
@@ -14,6 +16,7 @@
 #include "../shared/network/udp_socket.hpp"
 #include "../shared/physics.hpp"
 #include "bot_state.hpp"
+#include "damage_types.hpp"
 #include "game_rules.hpp"
 
 #include <cstdint>
@@ -42,8 +45,21 @@ struct client_slot_t
   shared::entity_uid_t player_uid = shared::null_entity_uid;
   int32_t  latest_processed_command = invalid_slot_idx;
   uint64_t latest_buttons_bitmap    = 0;
-  uint32_t acked_snapshot_tick = 0;
+  uint32_t held_snapshot_tick = 0;
   bool map_ready = false;
+
+  // Tick we last sent this slot something that moves it toward map_ready: the
+  // CmdChangeMap itself, or the streamed map package. The tick loop's
+  // CmdChangeMap retransmit paces itself off this, so a slot that just received
+  // a whole package gets an interval to load it before being nudged again.
+  // 0 means "never", which fires on the next tick.
+  uint32_t last_map_switch_send_tick = 0;
+
+  // Tick we last complained that this client's rewind request had to be clamped
+  // to sv_max_rewind_ticks. A client sitting at 300ms over-clamps on EVERY shot,
+  // and a warning per shot buries everything else in the log — so the warning is
+  // rate-limited to one per second per slot off this. 0 means "never".
+  uint32_t last_rewind_warning_tick = 0;
 };
 
 // The map currently running, and everything keyed to it. Cleared whole by
@@ -74,22 +90,23 @@ struct replication_t
 
 using tick_input_t = network::ServerInbox;
 
-// The two S2C channels' per-tick output. ONE shape: both encode at fire time,
-// and nothing here is ever read back -- the only consumer is the send at end of
-// tick.
-//
-// `effects` used to be a value queue, because its batch is appended inside the
-// per-client snapshot loop and therefore starts at a different BIT offset per
-// client. The snapshot writer byte-ALIGNS before splicing the finished stream
-// in, which costs at most 7 bits per packet and is what lets one encoding serve
-// every client.
+// A hit that has been RESOLVED but not yet applied.
+struct pending_hit_t
+{
+  damage_info_t        info;
+  linalg::vec3f        impact_point{};
+  linalg::vec3f        impact_normal{};
+  shared::hit_region_t region = shared::hit_region_t::Torso;
+};
+
+
 struct tick_output_t
 {
-  // Spliced into each client's snapshot packet, byte-aligned.
   shared::event_stream_t effects;
 
-  // Its own message, so its bitstream starts at bit 0.
   shared::event_stream_t events;
+
+  std::vector<pending_hit_t> pending_hits;
 };
 
 struct server_context_t
@@ -104,6 +121,14 @@ struct server_context_t
   network::Server_Transport_Layer transport_layer;
 
   uint32_t tick_number = 1;
+
+  // Rebuilt whole at the top of every tick, so nothing resets it: only the
+  // vectors' CAPACITY lives across ticks, and `built_for_tick` is what makes a
+  // stale read a crash rather than an assumption.
+  shared::posed_players_t posed_players;
+
+ // allocated once but "reused" per shot, expected to be sized once and then just repopulated for every shot fired by clients.
+  shared::posed_players_t rewind_scratch;
 
   // --- Reset-scoped state ---
   world_t       world;
