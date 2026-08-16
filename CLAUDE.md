@@ -222,6 +222,21 @@ The dependency runs **assets → entities**, never the reverse: `entities.def` i
 
 Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` strings** rather than manifest ids: a level author adding a prop should not have to touch `assets.def`.
 
+### Client vs Player
+
+Two words, and they are **not** interchangeable:
+
+- **client** — a connected peer and its server-side session: a slot, an address, a reassembly buffer, an acked snapshot tick, `map_ready`. Netcode.
+- **player** — a `Player_Entity` with a body in the world. Gameplay.
+
+The mapping is **0-or-1 in both directions**, which is what makes one word for both a bug rather than a shorthand. A client whose `client_slot_t::player_uid` is `null_entity_uid` is a **spectator** — `change_map_to` reads that *before* the wipe precisely so a spectator stays one across the switch. A **bot** is the mirror case: a player with no client at all, parked past the slot table at `BOT_SLOT_BASE = sv_max_client_count`. `client_slot_t::player_uid` is the seam between the two, and the only place they meet.
+
+So `sv_max_client_count` counts **connection slots, not bodies** — it sizes the transport layer's parallel arrays and `server_context_t::clients`, and bots deliberately begin where it ends.
+
+`Server_Transport_Layer` is the layer with no players in it at all: it knows how bytes reach a peer and nothing about what they mean. Its members therefore drop the qualifier the struct name already supplies (`slot_occupied`, `addresses`, `byte_buffers`), while the **free functions beside it keep it**, since nothing at their call site says it otherwise (`try_find_client_slot`, `disconnect_client`). Its `addresses` are `Address` — host *and* port, never "ip".
+
+An empty `try_find_client_slot` is **not** an error: `poll_network` asks it about every datagram, and a sender with no slot is the routine "someone wants to join" case. Callers for whom it *is* an error log it themselves, with the context to say what they were attempting — which is why the lookup itself no longer logs.
+
 ### Server state, grouped by what resets it
 
 `server_context_t` (`src/server/server_context.hpp`) is the server's counterpart to `client_context_t`, and it is organised the same way: **by reset scope, not by topic**. Handles that live for the process sit at the top under a comment saying nothing resets them (`cvars`/`commands`, `last_broadcast_cvars`, `socket`, `transport_layer`, and `tick_number` — monotonic on purpose, since phase deadlines, entity tick stamps and both snapshot rings are keyed by it). Everything after them is a named group: `world` (the map and everything keyed to it), `clients` (an `Array<client_slot_t, sv_max_client_count>` — the slot table), `replication` (the snapshot ring), and `incoming` / `outgoing` (one tick's C2S and S2C traffic).
