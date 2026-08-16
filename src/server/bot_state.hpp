@@ -13,10 +13,10 @@
 namespace server
 {
 
-// Bots use client_slot_index >= BOT_SLOT_BASE so the server never confuses
-// them with a real network connection. Starting right after the real-player
-// range keeps the value meaningful and in sync with sv_max_player_count.
-static constexpr int32_t BOT_SLOT_BASE = network::sv_max_player_count;
+// A bot is a player with no client: it drives a Player_Entity but occupies no
+// connection slot. Its index starts past the client range so the server never
+// confuses the two, and tracking sv_max_client_count keeps that true.
+static constexpr int32_t BOT_SLOT_BASE = network::sv_max_client_count;
 
 enum class BotGoal { Idle, Chase, Attack, Retreat };
 

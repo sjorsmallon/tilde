@@ -57,7 +57,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   died.attacker_id = 7;
   shared::fire_player_died(context.outgoing.events, died);
 
-  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
     client_slot_t& client = context.clients[slot];
     client.player_uid               = 1000 + slot;
@@ -108,7 +108,7 @@ void test_reset_state_in_preparation_for_new_map_load()
   // by it, so restarting it would collide a new frame with a retained one.
   assert(context.tick_number == 900);
 
-  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
     const client_slot_t& client = context.clients[slot];
 
@@ -149,7 +149,7 @@ void test_reset_client_slot()
   assert(!reset_client.map_ready);
 
   // Every other slot, and the world, are none of this reset's business.
-  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
     if (slot == target_slot) continue;
     assert(context.clients[slot].player_uid == static_cast<shared::entity_uid_t>(1000 + slot));
@@ -161,7 +161,7 @@ void test_reset_client_slot()
 
   // Out of range is logged and ignored, not indexed.
   reset_client_slot(context, -1);
-  reset_client_slot(context, network::sv_max_player_count);
+  reset_client_slot(context, network::sv_max_client_count);
   assert(context.clients[0].player_uid == 1000);
 
   printf("  reset_client_slot: ok\n");

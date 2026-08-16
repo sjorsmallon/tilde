@@ -146,7 +146,7 @@ Client :: cvars {
     // Ride another player's eye. Purely a debug view: it reads the same
     // INTERPOLATED position/angles the remote model is drawn from, so a
     // spinning idle bot turns any interpolation stall into visible camera
-    // judder. Bots occupy slots from sv_max_player_count (32) up.
+    // judder. Bots occupy slots from sv_max_client_count (32) up.
     cl_spectate_slot:       i32 = -1         @Client    "Spectate a player slot through its eyes (-1 = off; bots start at 32)"
 
     // The aim pose EXTENTS moved to the @Mirrored `Aim` block above when the

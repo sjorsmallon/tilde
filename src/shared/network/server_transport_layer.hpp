@@ -7,8 +7,10 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace network
@@ -28,17 +30,17 @@ struct TimestampedMove
 
 struct ServerInbox
 {
-  // Pair of player_idx and move
+  // Pair of client slot and move
   std::vector<std::pair<int, TimestampedMove>> moves;
   std::vector<Address> potential_joins;
-  // Handshake commands from players (or potential players)
+  // Handshake commands from clients (or would-be clients)
   std::vector<std::pair<Address, game::NetCommand>> net_commands;
-  // console commands: player_idx + raw command line
+  // console commands: client slot + raw command line
   std::vector<std::pair<int, std::string>> commands;
-  // Bitstream-native C2S_MapLoaded acks: player_idx + raw reassembled payload,
+  // Bitstream-native C2S_MapLoaded acks: client slot + raw reassembled payload,
   // decoded in server_impl via shared::deserialize_map_loaded().
   std::vector<std::pair<int, std::vector<uint8>>> map_loaded_acks;
-  // Bitstream-native C2S_RequestMapData: player_idx + raw reassembled payload,
+  // Bitstream-native C2S_RequestMapData: client slot + raw reassembled payload,
   // decoded in server_impl via shared::deserialize_request_map_data(). The
   // server responds by streaming the compiled package as S2C_MapData.
   std::vector<std::pair<int, std::vector<uint8>>> map_data_requests;
@@ -51,12 +53,12 @@ struct ServerInbox
 struct Server_Transport_Layer
 {
   // things we thought about
-  std::array<bool, sv_max_player_count> player_slots{};
-  std::array<Address, sv_max_player_count> player_ips{};
-  std::array<Byte_Buffer, sv_max_player_count> player_byte_buffers{};
+  std::array<bool, sv_max_client_count> slot_occupied{};
+  std::array<Address, sv_max_client_count> addresses{};
+  std::array<Byte_Buffer, sv_max_client_count> byte_buffers{};
 
   // Packet reassembly only
-  std::array<std::map<uint8, std::vector<Packet>>, sv_max_player_count>
+  std::array<std::map<uint8, std::vector<Packet>>, sv_max_client_count>
       partial_packets{};
 
   // Rolling counter passed to convert_to_packets() so each logical message the
@@ -66,54 +68,34 @@ struct Server_Transport_Layer
   uint8 next_message_id = 0;
 };
 
-inline void disconnect_player(Server_Transport_Layer &transport_layer,
-                              const Address &ip)
+// Which slot this address is connected on, if any. An empty result is NOT an
+// error: poll_network asks this of every datagram, and a sender with no slot is
+// the routine "someone wants to join" case. Callers for whom it IS an error log
+// it themselves, with the context to say what they were doing.
+[[nodiscard]] inline std::optional<int32_t>
+try_find_client_slot(const Server_Transport_Layer &transport_layer,
+                     const Address &address)
 {
-  int idx = 0;
-  for (auto &player_ip : transport_layer.player_ips)
+  for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
   {
-    if (transport_layer.player_slots[idx] && ip == player_ip)
-    {
-      transport_layer.player_ips[idx] = {};
-      transport_layer.player_slots[idx] = false;
-      transport_layer.partial_packets[idx].clear();
-
-      return;
-    }
-    idx += 1;
+    if (transport_layer.slot_occupied[slot] &&
+        transport_layer.addresses[slot] == address)
+      return slot;
   }
+  return std::nullopt;
 }
 
-// can return null
-inline Byte_Buffer *get_player_packet_byte_buffer_from_ip(
-    Server_Transport_Layer &transport_layer, const Address &ip)
+inline void disconnect_client(Server_Transport_Layer &transport_layer,
+                              const Address &address)
 {
-  int idx = 0;
-  for (auto &player_ip : transport_layer.player_ips)
-  {
-    if (transport_layer.player_slots[idx] && ip == player_ip)
-      return &transport_layer.player_byte_buffers[idx];
-    idx += 1;
-  }
+  const std::optional<int32_t> slot =
+      try_find_client_slot(transport_layer, address);
+  if (!slot)
+    return;
 
-  return nullptr;
-}
-
-inline size_t get_player_idx(Server_Transport_Layer &transport_layer,
-                             const Address &ip)
-{
-  size_t idx = 0;
-  for (auto &player_ip : transport_layer.player_ips)
-  {
-    if (transport_layer.player_slots[idx] && ip == player_ip)
-    {
-      return idx;
-    }
-    idx += 1;
-  }
-
-  std::cerr << "player not found while get_player_idx is invoked...\n";
-  return -1;
+  transport_layer.addresses[*slot] = {};
+  transport_layer.slot_occupied[*slot] = false;
+  transport_layer.partial_packets[*slot].clear();
 }
 
 inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
@@ -149,18 +131,20 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
         }
       }
 
-      size_t player_idx = get_player_idx(state, sender);
-      if (player_idx == -1)
+      const std::optional<int32_t> sender_slot =
+          try_find_client_slot(state, sender);
+      if (!sender_slot)
       {
-        // Unknown player, maybe they want to join?
+        // Not connected yet — maybe they want to join.
         // Deduplicate? For now, just add.
         out_inbox.potential_joins.push_back(sender);
-        continue; // Unknown player
+        continue;
       }
+      const int32_t client_slot = *sender_slot;
 
       // Store packet fragment
       auto &fragments =
-          state.partial_packets[player_idx][packet.header.message_id];
+          state.partial_packets[client_slot][packet.header.message_id];
 
       // Resize if this is the first fragment seen for this message
       if (fragments.empty())
@@ -204,8 +188,8 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
           game::C2S_PlayerMoveCommand move_cmd;
           if (move_cmd.ParseFromArray(buffer.data(), buffer.size()))
           {
-            out_inbox.moves.push_back({static_cast<int>(player_idx),
-                                       {packet.header.timestamp, move_cmd}});
+            out_inbox.moves.push_back(
+                {client_slot, {packet.header.timestamp, move_cmd}});
           }
         }
         else if (packet.header.message_type ==
@@ -214,8 +198,7 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
           game::C2S_Command cmd;
           if (cmd.ParseFromArray(buffer.data(), buffer.size()))
           {
-            out_inbox.commands.push_back(
-                {static_cast<int>(player_idx), cmd.line()});
+            out_inbox.commands.push_back({client_slot, cmd.line()});
           }
         }
         else if (packet.header.message_type ==
@@ -223,19 +206,17 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
         {
           // Bitstream-native: keep the raw payload; server_impl decodes it with
           // shared::deserialize_map_loaded() and matches the echoed hash.
-          out_inbox.map_loaded_acks.push_back(
-              {static_cast<int>(player_idx), buffer});
+          out_inbox.map_loaded_acks.push_back({client_slot, buffer});
         }
         else if (packet.header.message_type ==
                  static_cast<uint8>(Message_Type::C2S_RequestMapData))
         {
           // Bitstream-native: keep the raw payload; server_impl decodes it with
           // shared::deserialize_request_map_data() and streams S2C_MapData back.
-          out_inbox.map_data_requests.push_back(
-              {static_cast<int>(player_idx), buffer});
+          out_inbox.map_data_requests.push_back({client_slot, buffer});
         }
         // Message fully reassembled — drop its fragment buffer
-        state.partial_packets[player_idx].erase(packet.header.message_id);
+        state.partial_packets[client_slot].erase(packet.header.message_id);
       }
     }
   }

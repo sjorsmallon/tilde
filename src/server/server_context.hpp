@@ -31,10 +31,10 @@ static constexpr int32_t invalid_slot_idx = -1;
 
 // True for a slot that can be used to index `server_context_t::clients` and the
 // transport layer's parallel arrays. Says nothing about whether anyone is
-// connected there — `transport_layer.player_slots[slot]` is that question.
+// connected there — `transport_layer.slot_occupied[slot]` is that question.
 inline bool is_valid_client_slot(int32_t slot)
 {
-  return slot >= 0 && slot < network::sv_max_player_count;
+  return slot >= 0 && slot < network::sv_max_client_count;
 }
 
 struct client_slot_t
@@ -107,7 +107,7 @@ struct server_context_t
 
   // --- Reset-scoped state ---
   world_t       world;
-  Array<client_slot_t, network::sv_max_player_count> clients;
+  Array<client_slot_t, network::sv_max_client_count> clients;
   replication_t replication;
   tick_input_t  incoming;
   tick_output_t outgoing;

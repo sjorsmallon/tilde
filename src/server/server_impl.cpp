@@ -77,13 +77,13 @@ static void broadcast_server_text_message(server_context_t &context,
                                           std::string_view text)
 {
   int recipient_count = 0;
-  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
-    if (context.transport_layer.player_slots[slot])
+    if (context.transport_layer.slot_occupied[slot])
     {
       ++recipient_count;
       send_text_message_to_a_specific_client(
-          context, context.transport_layer.player_ips[slot], text);
+          context, context.transport_layer.addresses[slot], text);
     }
   }
 
@@ -134,13 +134,15 @@ get_position_in_front_of(server_context_t &context, int32_t caller_slot)
 void handle_player_leave(server_context_t &context,
                          const network::Address &sender)
 {
-  int32_t slot = static_cast<int32_t>(
-      network::get_player_idx(context.transport_layer, sender));
-  if (!is_valid_client_slot(slot))
+  const std::optional<int32_t> sender_slot =
+      network::try_find_client_slot(context.transport_layer, sender);
+  if (!sender_slot)
   {
-    log_error("tried to handle a player leave where the sender was NOT occupying a slot?");
+    log_error("tried to handle a client leave from {}, which occupies no slot",
+              sender.to_string());
     return;
   }
+  const int32_t slot = *sender_slot;
 
   const shared::entity_uid_t player_uid = context.clients[slot].player_uid;
   if (player_uid != shared::null_entity_uid)
@@ -150,7 +152,7 @@ void handle_player_leave(server_context_t &context,
 
   broadcast_server_text_message(context,
                                 std::format("Player left (slot {})", slot));
-  network::disconnect_player(context.transport_layer, sender);
+  network::disconnect_client(context.transport_layer, sender);
   log_terminal("Player left slot {}: {}", slot, sender.to_string());
 }
 
@@ -335,7 +337,7 @@ static void send_change_map_message(server_context_t &context, int32_t slot)
       static_cast<network::uint8>(network::Message_Type::CmdChangeMap),
       context.transport_layer.next_message_id);
   for (const auto &p : packets)
-    context.socket.send(p, context.transport_layer.player_ips[slot]);
+    context.socket.send(p, context.transport_layer.addresses[slot]);
 }
 
 static void send_cvar_values(server_context_t &context, int32_t slot,
@@ -348,7 +350,7 @@ static void send_cvar_values(server_context_t &context, int32_t slot,
       static_cast<network::uint8>(network::Message_Type::S2C_CvarValues),
       context.transport_layer.next_message_id);
   for (const auto &p : packets)
-    context.socket.send(p, context.transport_layer.player_ips[slot]);
+    context.socket.send(p, context.transport_layer.addresses[slot]);
 }
 
 static void broadcast_changed_cvar_values(server_context_t &context)
@@ -359,9 +361,9 @@ static void broadcast_changed_cvar_values(server_context_t &context)
   if (changed.values.empty())
     return;
 
-  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
-    if (context.transport_layer.player_slots[slot])
+    if (context.transport_layer.slot_occupied[slot])
       send_cvar_values(context, slot, changed);
   }
 
@@ -384,8 +386,8 @@ bool change_map_to(const std::string &map_path)
   // player_uid as part of the map-scoped reset, so afterwards every slot looks
   // like a spectator. A spectator stays one across a map change rather than
   // being spawned in by the switch.
-  Array<bool, network::sv_max_player_count> was_playing{};
-  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+  Array<bool, network::sv_max_client_count> was_playing{};
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
     was_playing[slot] =
         context.clients[slot].player_uid != shared::null_entity_uid;
 
@@ -396,9 +398,9 @@ bool change_map_to(const std::string &map_path)
     return false;
 
   // Keep connected players connected across the switch
-  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
-    if (!context.transport_layer.player_slots[slot])
+    if (!context.transport_layer.slot_occupied[slot])
       continue;
     if (was_playing[slot])
       spawn_player_entity_for_client_slot(context, slot);
@@ -426,7 +428,8 @@ bool Tick()
   {
     if (cmd.has_connect())
     {
-      if (network::get_player_idx(context.transport_layer, sender) != invalid_slot_idx)
+      // Already connected — a duplicate Connect, ignore it.
+      if (network::try_find_client_slot(context.transport_layer, sender))
         continue;
 
       const uint32_t client_schema_hash = cmd.connect().schema_hash();
@@ -447,11 +450,11 @@ bool Tick()
       }
 
       int32_t slot = invalid_slot_idx;
-      for (int32_t player_idx = 0; player_idx < network::sv_max_player_count; ++player_idx)
+      for (int32_t candidate = 0; candidate < network::sv_max_client_count; ++candidate)
       {
-        if (!context.transport_layer.player_slots[player_idx])
+        if (!context.transport_layer.slot_occupied[candidate])
         {
-          slot = player_idx;
+          slot = candidate;
           break;
         }
       }
@@ -459,9 +462,9 @@ bool Tick()
       if (slot != invalid_slot_idx)
       {
         // Accept
-        context.transport_layer.player_slots[slot] = true;
-        context.transport_layer.player_ips[slot] = sender;
-        context.transport_layer.player_byte_buffers[slot] = {};
+        context.transport_layer.slot_occupied[slot] = true;
+        context.transport_layer.addresses[slot] = sender;
+        context.transport_layer.byte_buffers[slot] = {};
         context.transport_layer.partial_packets[slot].clear();
 
         reset_client_slot(context, slot);
@@ -516,9 +519,9 @@ bool Tick()
         // for fun coop games.
         // count active players. if 4 players, start countdown?
         size_t player_count = 0;
-        for (int32_t i = 0; i < network::sv_max_player_count; ++i)
+        for (int32_t i = 0; i < network::sv_max_client_count; ++i)
         {
-          if (context.transport_layer.player_slots[i])
+          if (context.transport_layer.slot_occupied[i])
             player_count++;
         }
 
@@ -546,10 +549,10 @@ bool Tick()
   }
 
   // Dispatch console commands from clients
-  for (const auto &[player_idx, line] : inbox.commands)
+  for (const auto &[client_slot, line] : inbox.commands)
   {
-    log_terminal("Command from slot {}: {}", player_idx, line);
-    const auto &client_ip = context.transport_layer.player_ips[player_idx];
+    log_terminal("Command from slot {}: {}", client_slot, line);
+    const auto &client_address = context.transport_layer.addresses[client_slot];
 
     // The same dispatcher the client console runs, over the same generated
     // tables. Two things keep this from bouncing the line straight back: the
@@ -558,41 +561,40 @@ bool Tick()
     // loopback forever), and the real caller_slot below marks this line as
     // having already come from the wire, which execute_console_line refuses to
     // forward a second time.
-    cvars::command_context_t command_context{
-        .caller_slot = static_cast<int>(player_idx)};
+    cvars::command_context_t command_context{.caller_slot = client_slot};
     std::string reply;
     cvars::console_result_t result = cvars::execute_console_line(
         *context.cvars, *context.commands, line, command_context, &reply);
 
     if (result == cvars::console_result_t::unknown_name)
-      log_terminal("Unknown command from slot {}: {}", player_idx, line);
+      log_terminal("Unknown command from slot {}: {}", client_slot, line);
 
     // Echo something back either way: the client printed the line locally and
     // is waiting to hear what came of it.
     send_text_message_to_a_specific_client(
-        context, client_ip, reply.empty() ? ("OK: " + line) : reply);
+        context, client_address, reply.empty() ? ("OK: " + line) : reply);
   }
 
   // Process C2S_MapLoaded acks: a client finished (re)loading the map. Verify
   // the echoed hash matches the map we're actually running before we resume
   // snapshots to it — a mismatch means the client loaded the wrong map, which
   // we surface loudly rather than papering over by streaming stale deltas.
-  for (const auto &[player_idx, payload] : inbox.map_loaded_acks)
+  for (const auto &[client_slot, payload] : inbox.map_loaded_acks)
   {
     network::Bit_Reader reader(payload.data(), payload.size());
     shared::map_loaded_message_t ack = shared::deserialize_map_loaded(reader);
     if (ack.content_hash == context.world.map_content_hash)
     {
-      context.clients[player_idx].map_ready = true;
+      context.clients[client_slot].map_ready = true;
       log_terminal("Slot {} loaded map '{}' (hash {:#x}); resuming snapshots.",
-                   player_idx, context.world.session.map_name,
+                   client_slot, context.world.session.map_name,
                    ack.content_hash);
     }
     else
     {
       log_error("Slot {} acked map hash {:#x} but server is running {:#x}. "
                 "Withholding snapshots until it loads the correct map.",
-                player_idx, ack.content_hash, context.world.map_content_hash);
+                client_slot, ack.content_hash, context.world.map_content_hash);
     }
   }
 
@@ -601,7 +603,7 @@ bool Tick()
   // name is only for logging — we always send the current map's package. Mark
   // the client not-ready so snapshots stay withheld until it acks C2S_MapLoaded
   // after applying the stream.
-  for (const auto &[player_idx, payload] : inbox.map_data_requests)
+  for (const auto &[client_slot, payload] : inbox.map_data_requests)
   {
     network::Bit_Reader reader(payload.data(), payload.size());
     shared::request_map_data_message_t req =
@@ -624,21 +626,21 @@ bool Tick()
         static_cast<network::uint8>(network::Message_Type::S2C_MapData),
         context.transport_layer.next_message_id);
     for (const auto &p : packets)
-      context.socket.send(p, context.transport_layer.player_ips[player_idx]);
+      context.socket.send(p, context.transport_layer.addresses[client_slot]);
 
-    context.clients[player_idx].map_ready = false;
+    context.clients[client_slot].map_ready = false;
     log_terminal("Streamed map package '{}' ({} bytes, {} packets, hash {:#x}) "
                  "to slot {} (requested '{}').",
                  msg.map_name, msg.bytes.size(), packets.size(),
-                 msg.package_hash, player_idx, req.map_name);
+                 msg.package_hash, client_slot, req.map_name);
   }
 
   // Resend CmdChangeMap to any connected-but-not-ready client. UDP has no
   // ack/retransmit yet, so this idempotent per-tick resend is how a dropped
   // switch message eventually reaches the client (it stops once acked above).
-  for (int32_t slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
-    if (context.transport_layer.player_slots[slot] &&
+    if (context.transport_layer.slot_occupied[slot] &&
         !context.clients[slot].map_ready)
       send_change_map_message(context, slot);
   }
@@ -649,13 +651,13 @@ bool Tick()
             { return a.second.timestamp < b.second.timestamp; });
 
   // Process moves — run player_move() authoritatively
-  for (const auto &[player_idx, tm] : inbox.moves)
+  for (const auto &[client_slot, tm] : inbox.moves)
   {
-    if (!is_valid_client_slot(player_idx))
+    if (!is_valid_client_slot(client_slot))
     {
       log_error("Tick: a move arrived tagged with slot {}, which is out of range "
                 "— dropped",
-                player_idx);
+                client_slot);
       continue;
     }
 
@@ -663,7 +665,7 @@ bool Tick()
     // lands in a different pool, so it cannot move this player.
     entities::Player_Entity* player =
         context.world.session.entity_system.get<entities::Player_Entity>(
-            context.clients[player_idx].player_uid);
+            context.clients[client_slot].player_uid);
     // Silent on purpose, unlike the range check above: a connected client keeps
     // sending moves across a map switch, between the session reset and its
     // respawn, and that window has no entity to move. Ordinary, and per-tick, so
@@ -687,9 +689,9 @@ bool Tick()
     // live tick and get a free shot. Decoding here keeps the edges honest
     // whether or not the phase lets the player act on them.
     //
-    // player_idx was range-checked at the top of the loop, so this indexes
+    // client_slot was range-checked at the top of the loop, so this indexes
     // freely from here on.
-    client_slot_t &client            = context.clients[player_idx];
+    client_slot_t &client            = context.clients[client_slot];
     client.latest_processed_command = move.command_number();
 
     // Snapshot ack. Never trusted beyond "the client claims it holds this
@@ -712,9 +714,9 @@ bool Tick()
     if (pressed_this_tick & Button::Key1 || pressed_this_tick & Button::Key2 ||
         pressed_this_tick & Button::Key3)
     {
-      // log_terminal("Slot {} equipped this weapon: {}", player_idx, to_string(player->active_weapon_id));
+      // log_terminal("Slot {} equipped this weapon: {}", client_slot, to_string(player->active_weapon_id));
       broadcast_server_text_message(
-          context, std::format("Slot {} equipped this weapon: {}", player_idx,
+          context, std::format("Slot {} equipped this weapon: {}", client_slot,
                                to_string(player->active_weapon_id)));
     }
 
@@ -909,7 +911,7 @@ bool Tick()
         {
           broadcast_server_text_message(
               context, std::format("Player {} hit player {} in the {}",
-                                   player_idx, hit.hit_uid,
+                                   client_slot, hit.hit_uid,
                                    to_string(hit.region)));
           const bool was_headshot = hit.region == shared::hit_region_t::Head;
 
@@ -956,7 +958,7 @@ bool Tick()
 
       case entities::Weapon_Kind::Projectile:
       {
-        log_terminal("Player {} fired a rocket!", player_idx);
+        log_terminal("Player {} fired a rocket!", client_slot);
 
         const shared::entity_uid_t rocket_uid =
             context.world.session.entity_system.spawn<entities::Rocket_Entity>();
@@ -1117,12 +1119,12 @@ bool Tick()
         static_cast<network::uint8>(network::Message_Type::S2C_BotDebug);
     auto dbg_packets =
         network::convert_to_packets(dbg_buf, dbg_type, context.transport_layer.next_message_id);
-    for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+    for (int slot = 0; slot < network::sv_max_client_count; ++slot)
     {
-      if (!context.transport_layer.player_slots[slot])
+      if (!context.transport_layer.slot_occupied[slot])
         continue;
       for (const auto &packet : dbg_packets)
-        context.socket.send(packet, context.transport_layer.player_ips[slot]);
+        context.socket.send(packet, context.transport_layer.addresses[slot]);
     }
   }
 
@@ -1170,9 +1172,9 @@ bool Tick()
   context.outgoing.effects.finish();
 
   // Serialize and send to each client with per-client delta compression
-  for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+  for (int slot = 0; slot < network::sv_max_client_count; ++slot)
   {
-    if (!context.transport_layer.player_slots[slot])
+    if (!context.transport_layer.slot_occupied[slot])
       continue;
 
     // Withhold snapshots from a client still loading a (new) map — it has no
@@ -1226,7 +1228,7 @@ bool Tick()
         context.transport_layer.next_message_id);
 
     for (const auto &p : packets)
-      context.socket.send(p, context.transport_layer.player_ips[slot]);
+      context.socket.send(p, context.transport_layer.addresses[slot]);
   }
 
   // Reliable gameplay event batch. Sent on its own protobuf message (not
@@ -1253,11 +1255,11 @@ bool Tick()
         static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch),
         context.transport_layer.next_message_id);
 
-    for (int slot = 0; slot < network::sv_max_player_count; ++slot)
+    for (int slot = 0; slot < network::sv_max_client_count; ++slot)
     {
-      if (!context.transport_layer.player_slots[slot]) continue;
+      if (!context.transport_layer.slot_occupied[slot]) continue;
       for (const auto &p : event_packets)
-        context.socket.send(p, context.transport_layer.player_ips[slot]);
+        context.socket.send(p, context.transport_layer.addresses[slot]);
     }
   }
 

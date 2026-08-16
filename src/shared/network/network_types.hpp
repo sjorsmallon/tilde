@@ -162,7 +162,10 @@ inline uint16 schema_float_array_max_capacity(size_t field_size)
 // render_component_t moved to components.hpp (included after schema.hpp)
 // to avoid circular dependencies
 
-constexpr auto sv_max_player_count = 32;
+// Connection slots, not bodies in the world: it sizes the transport layer's
+// per-peer arrays and the server's client table. Bots are players with no
+// client and deliberately start where this ends (BOT_SLOT_BASE).
+constexpr auto sv_max_client_count = 32;
 constexpr auto server_port_number = 9999;
 // NOTE: there is deliberately no client_port_number. Clients bind an
 // ephemeral port (open(0)) — a fixed client port made two clients on one

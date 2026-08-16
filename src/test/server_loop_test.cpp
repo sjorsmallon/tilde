@@ -40,8 +40,8 @@ void test_receive_and_reassembly()
   }
   client_addr = Address(127, 0, 0, 1, 9002);
 
-  state.player_slots[0] = true;
-  state.player_ips[0] = client_addr;
+  state.slot_occupied[0] = true;
+  state.addresses[0] = client_addr;
 
   // Create a Move Command
   game::C2S_PlayerMoveCommand move;
