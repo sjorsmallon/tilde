@@ -321,7 +321,7 @@ static std::string current_map_wire_id(const server_context_t &context)
       .generic_string();
 }
 
-static void send_change_map(server_context_t &context, int32_t slot)
+static void send_change_map_message(server_context_t &context, int32_t slot)
 {
   shared::change_map_message_t msg;
   msg.map_path     = current_map_wire_id(context);
@@ -374,7 +374,7 @@ static void broadcast_changed_cvar_values(server_context_t &context)
                  cvars::cvar_info(value.id).name, value.text);
 }
 
-bool reload_map(const std::string &map_path)
+bool change_map_to(const std::string &map_path)
 {
   server_context_t &context = g_server_context;
 
@@ -402,7 +402,7 @@ bool reload_map(const std::string &map_path)
       continue;
     if (was_playing[slot])
       spawn_player_entity_for_client_slot(context, slot);
-    send_change_map(context, slot);
+    send_change_map_message(context, slot);
   }
   return true;
 }
@@ -640,7 +640,7 @@ bool Tick()
   {
     if (context.transport_layer.player_slots[slot] &&
         !context.clients[slot].map_ready)
-      send_change_map(context, slot);
+      send_change_map_message(context, slot);
   }
 
   // Sort moves by timestamp
@@ -1456,7 +1456,7 @@ void spawn_sphere(const command_context_t &command_context)
 }
 
 // Switch the running map. @Server, so a client console forwards `map <name>`
-// over the network; reload_map() keeps players connected, respawns them into
+// over the network; change_map_to() keeps players connected, respawns them into
 // the new world, and broadcasts CmdChangeMap so every client follows.
 //
 // Was a CVar<std::string> with an on-change callback -- a verb wearing a
@@ -1467,7 +1467,7 @@ void map(std::string_view requested_path, const command_context_t &)
   using namespace server;
 
   // Resolve a bare name against maps/ as a convenience. Check existence BEFORE
-  // reload_map -- reload_map tears down the current world before it validates
+  // change_map_to -- change_map_to tears down the current world before it validates
   // the load, so a typo would otherwise wipe everyone into an empty session.
   std::string path(requested_path);
   if (!std::filesystem::exists(path) && std::filesystem::exists("maps/" + path))
@@ -1481,7 +1481,7 @@ void map(std::string_view requested_path, const command_context_t &)
   }
 
   log_terminal("map: switching to '{}'", path);
-  if (!reload_map(path))
+  if (!change_map_to(path))
     log_error("map: failed to load '{}'", path);
 }
 

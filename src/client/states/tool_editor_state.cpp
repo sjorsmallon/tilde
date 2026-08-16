@@ -1,5 +1,6 @@
 #include "../../shared/entities/entity_reflection.hpp"
-#include "tool_editor_state.hpp"
+#include "tool_editor_state.hpp"
+
 #include "../particle_emitter_parameters.hpp"
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
@@ -32,7 +33,7 @@
 namespace client
 {
 
-// Internal client hook (defined in client_impl.cpp). Invokes the integrated
+// Internal client hoochange_map_to in client_impl.cpp). Invokes the integrated
 // launcher's server::reload_map. Returns false if no hook is installed (e.g.
 // in a hypothetical dedicated/networked client build) — caller should treat
 // that as "server-side reload not available" but otherwise continue.
@@ -1036,7 +1037,7 @@ void Tool_Editor_State::render_ui()
   if (ImGui::Button("play"))
   {
     // Commit current edits to disk before switching. This is the same code
-    // path as Ctrl+S, so Play_State's last_map.txt reload and the server's
+    // change_map_torl+S, so Play_State's last_map.txt reload and the server's
     // reload_map both see exactly what's in the editor right now — no more
     // "I clicked save AND play and it still ran the old map" surprises.
     std::string full_path = get_maps_dir() + map.name;

@@ -299,7 +299,7 @@ become the package hash before remote clients / streaming are real.
 
 - [x] client honors server's map + FNV-1a hash (CmdAccept.map_path/content_hash);
       mismatch = hard error (no silent desync)
-- [x] mid-game map switch: reload_map broadcasts bitstream CmdChangeMap, keeps
+- [x] mid-game map switch: change_map_to broadcasts bitstream CmdChangeMap, keeps
       players connected + re-spawns them (spawn_player_entity_for_client_slot), client reloads
       via load_client_map + Connection_Phase::Loading, acks C2S_MapLoaded;
       server withholds snapshots (client_map_ready) until acked

@@ -40,7 +40,7 @@ GAME_CLIENT_API void shutdown();
 GAME_CLIENT_API void set_integrated_server_session(const shared::game_session_t *session);
 
 // Integrated build only: install a callback the editor invokes after writing a
-// map to disk (Save / play). The launcher wires this to server::reload_map so
+// map to disk (Save / play). The launcher wires this to server::change_map_to so
 // the running server picks up the new map without restarting the executable.
 // Pass nullptr (the default) in dedicated/networked builds — the editor will
 // then skip the server-side reload step.

@@ -46,5 +46,5 @@ GAME_SERVER_API const shared::game_session_t *get_session_for_integrated_client(
 // world, bots, and per-client baselines, then loads `map_path` and respawns
 // map-defined bots. Any currently-connected players are disconnected; they
 // will reconnect on their next Connect packet. Returns true on successful load.
-GAME_SERVER_API bool reload_map(const std::string &map_path);
+GAME_SERVER_API bool change_map_to(const std::string &map_path);
 } // namespace server

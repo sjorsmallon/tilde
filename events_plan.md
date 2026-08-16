@@ -437,7 +437,7 @@ same shape as adding `Static_Mesh_Entity`. Spawn it in
 `init_session_from_map()` and look it up by class.
 
 **Map-reload behavior is per-map by construction.** Because the
-session gets wiped on `reload_map`, the World_State_Entity is
+session gets wiped on `change_map_to`, the World_State_Entity is
 recreated from whatever the new map declares (or default-constructed
 if the map has none). That's the right default — map authors
 control "this is a foggy midnight level" vs "this is a sunny noon
