@@ -120,9 +120,9 @@ void set_relative_mouse_mode(bool enabled);
 Span<const key_event_t> frame_key_events();
 Span<const mouse_button_event_t> frame_mouse_button_events();
 
-// --- UI capture (forwarded from ImGui) ---------------------------------------
+// --- ImGui capture -----------------------------------------------------------
 
-bool ui_wants_mouse();
-bool ui_wants_keyboard();
+bool imgui_wants_mouse();
+bool imgui_wants_keyboard();
 
 } // namespace client::input

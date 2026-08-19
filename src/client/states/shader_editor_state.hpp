@@ -44,8 +44,9 @@ public:
   void on_enter() override;
   void on_exit() override;
   void update(float dt) override;
-  void render_ui() override;
-  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes) override;
+  void draw_imgui_panels() override;
+  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+                   renderer::ui_draw_list_t &ui) override;
 
 private:
   // Recorded inside the render pass by render_frame. Static because

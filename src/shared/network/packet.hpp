@@ -15,13 +15,14 @@ namespace network
 // (see shared/network/map_transfer.hpp) and so have no Packet_Traits mapping.
 enum class Message_Type : uint8
 {
-  C2S_PlayerMoveCommand,
+  C2S_PlayerMoveBatch, // C2S: the client's unacked move commands, oldest first
   S2C_EntityPackage,
   NetCommand,
   S2C_ServerMessage,
   C2S_Command,
   S2C_BotDebug,
   S2C_GameEventBatch,
+  S2C_EffectBatch,
   CmdChangeMap,       // S2C: switch to a new map (bitstream-native)
   C2S_MapLoaded,      // C2S: client finished (re)loading the map (bitstream-native)
   C2S_RequestMapData, // C2S: client lacks the compiled package; stream it
@@ -74,9 +75,12 @@ template <> struct Packet_Traits<game::S2C_EntityPackage>
   static constexpr Message_Type type = Message_Type::S2C_EntityPackage;
 };
 
-template <> struct Packet_Traits<game::C2S_PlayerMoveCommand>
+// The batch, not the command: a lone C2S_PlayerMoveCommand is never sent on its
+// own, so it has no mapping and reaching for one is a compile error rather than
+// a datagram the server has no handler for.
+template <> struct Packet_Traits<game::C2S_PlayerMoveBatch>
 {
-  static constexpr Message_Type type = Message_Type::C2S_PlayerMoveCommand;
+  static constexpr Message_Type type = Message_Type::C2S_PlayerMoveBatch;
 };
 
 template <> struct Packet_Traits<game::S2C_ServerMessage>
@@ -97,6 +101,11 @@ template <> struct Packet_Traits<game::S2C_BotDebug>
 template <> struct Packet_Traits<game::S2C_GameEventBatch>
 {
   static constexpr Message_Type type = Message_Type::S2C_GameEventBatch;
+};
+
+template <> struct Packet_Traits<game::S2C_EffectBatch>
+{
+  static constexpr Message_Type type = Message_Type::S2C_EffectBatch;
 };
 
 // A `uint64 timestamp` used to lead this, and nothing ever wrote it — while the

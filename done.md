@@ -5,6 +5,26 @@ Phase order and rationale live in `todo.md`; design rationale in
 `entity_system_def.md` (pool retirement) and `cvar_def.md` (cvars). This file
 keeps the finished work so `todo.md` stays a work list.
 
+- **MOVE BUDGET + COMMAND REDUNDANCY (2026-08-19)** — the successor
+  `lag_compensation_def.md` §3 named as out of its scope. A client's movement is
+  now bounded by a RATE, not by a per-tick count: one credit granted per tick,
+  one spent per executed move, clamped to `sv_max_move_backlog`. The distinction
+  is the whole fix — a speedhacker at 3x sends 180 commands a second and a cap of
+  3 per tick admits every one of them. Dividing the tick's `dt` among queued
+  moves also bounds the rate but fails NEUTRALITY TO ARRIVAL PATTERN, and fails
+  it for every client rendering below the tickrate rather than only for a bad
+  connection: a 30fps client delivers 2/0/2/0 and would run at half speed
+  forever. `move_budget_test` simulates those patterns, because the property is
+  invisible inside any single tick.
+
+  The client now sends `C2S_PlayerMoveBatch` — every move it has not seen acked,
+  in every datagram — which is the only move message on the wire. Redundancy
+  rather than retransmission: `latest_processed_command` was already a high-water
+  mark and the server already dropped anything at or below it, so a duplicate was
+  free before this existed. It also converts the budget's failure mode from drop
+  to throttle, since a move refused for want of a credit is still unacked and
+  arrives again next tick.
+
 - **THE ENTITY TRACK, P0–P7 plus pool retirement** — the generator, schema,
   storage and wire chain. Everything except **P8 (protobuf removal)**, which is
   the one entity-track item still open and still in `todo.md`.
@@ -378,7 +398,7 @@ become the package hash before remote clients / streaming are real.
      re-request cheaply instead of reloading every tick). S2C_MapData handler:
      verify compute_map_package_hash over the (uncompressed) blob ==
      msg.package_hash, deserialize_map_package, apply_map_package, then
-     send_map_loaded_ack with the ENTITIES-ONLY content hash (loaded_map_content_
+     send_map_loaded_ack_message with the ENTITIES-ONLY content hash (loaded_map_content_
      hash, set by finalize) so it matches the server's g_state.map_content_hash —
      NOT the package hash. compressed=true is logged+ignored (step 6). SERVER
      (server_impl.cpp): inbox.map_data_requests handler builds+serializes the

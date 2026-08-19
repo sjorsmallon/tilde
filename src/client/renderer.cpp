@@ -58,6 +58,14 @@ const uint32_t particle_frag_spv[] =
 #include "particle.frag.spv.h"
     ;
 
+const uint32_t ui_vert_spv[] =
+#include "ui.vert.spv.h"
+    ;
+
+const uint32_t ui_frag_spv[] =
+#include "ui.frag.spv.h"
+    ;
+
 #include "stb_image.h"
 
 namespace client
@@ -283,11 +291,14 @@ struct mesh_push_constants_t
 static_assert(sizeof(mesh_push_constants_t) == 128,
               "the mesh push block is at the guaranteed Vulkan minimum; it cannot grow");
 
-// --- Globals (Internal) ---
+// ui.vert's push block. Its OWN block rather than a few spare bytes borrowed
+// from the mesh one, which the static_assert above says has no headroom left.
+struct ui_push_constants_t
+{
+  float inverse_screen[2];
+};
 
-// Announcement State
-static std::string g_announcement_text;
-static uint64_t g_announcement_end_time = 0;
+// --- Globals (Internal) ---
 
 static SDL_Window *g_window = nullptr;
 static VkInstance g_instance = VK_NULL_HANDLE;
@@ -968,6 +979,154 @@ static debug_vertex_t *allocate_debug_vertices(uint32_t count, uint32_t &out_fir
   return storage;
 }
 
+// --- Screen-space UI recording ---
+//
+// The same discipline as the debug ring above -- one persistently-mapped buffer
+// per frame-in-flight, bump-allocated, reset in new_frame(). A SEPARATE buffer
+// rather than a reuse because the vertex format differs: a UI vertex is
+// (vec2, vec2, u32) at 20 bytes against the debug vertex's 40, and the two
+// pipelines declare different attributes.
+//
+// 65536 vertices is 10,922 quads, which is roughly ten thousand glyphs on screen
+// at once. A HUD that needs more has a different problem.
+constexpr uint32_t UI_VERTEX_CAPACITY = 65536;
+
+static VkPipelineLayout g_ui_pipeline_layout                     = VK_NULL_HANDLE;
+static VkPipeline       g_ui_pipeline                            = VK_NULL_HANDLE;
+static VkBuffer         g_ui_vertex_buffer[MAX_FRAMES_IN_FLIGHT] = {};
+static VkDeviceMemory   g_ui_vertex_memory[MAX_FRAMES_IN_FLIGHT] = {};
+static ui_vertex_t     *g_ui_vertex_mapped[MAX_FRAMES_IN_FLIGHT] = {};
+static uint32_t         g_ui_vertex_used                         = 0;
+
+static VkPipeline create_ui_pipeline()
+{
+  VkShaderModule vert_module = VK_NULL_HANDLE;
+  VkShaderModule frag_module = VK_NULL_HANDLE;
+
+  VkShaderModuleCreateInfo vert_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  vert_info.codeSize = sizeof(ui_vert_spv);
+  vert_info.pCode    = ui_vert_spv;
+  if (vkCreateShaderModule(g_device, &vert_info, nullptr, &vert_module) != VK_SUCCESS)
+  {
+    log_error("[renderer] failed to create the UI vertex shader module");
+    return VK_NULL_HANDLE;
+  }
+
+  VkShaderModuleCreateInfo frag_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  frag_info.codeSize = sizeof(ui_frag_spv);
+  frag_info.pCode    = ui_frag_spv;
+  if (vkCreateShaderModule(g_device, &frag_info, nullptr, &frag_module) != VK_SUCCESS)
+  {
+    log_error("[renderer] failed to create the UI fragment shader module");
+    vkDestroyShaderModule(g_device, vert_module, nullptr);
+    return VK_NULL_HANDLE;
+  }
+
+  VkPipelineShaderStageCreateInfo stages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
+       vert_module, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
+
+  VkVertexInputBindingDescription binding{};
+  binding.binding   = 0;
+  binding.stride    = sizeof(ui_vertex_t);
+  binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  // The colour is a packed ABGR byte quad read as a normalized vec4, which is
+  // why the shader takes a vec4 while the vertex carries a uint32_t. UNORM is
+  // what does the /255.
+  VkVertexInputAttributeDescription attributes[3]{};
+  attributes[0] = {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ui_vertex_t, position)};
+  attributes[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ui_vertex_t, uv)};
+  attributes[2] = {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(ui_vertex_t, color)};
+
+  VkPipelineVertexInputStateCreateInfo vertex_input{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+  vertex_input.vertexBindingDescriptionCount   = 1;
+  vertex_input.pVertexBindingDescriptions      = &binding;
+  vertex_input.vertexAttributeDescriptionCount = 3;
+  vertex_input.pVertexAttributeDescriptions    = attributes;
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount  = 1;
+
+  // Culling OFF, not "the house winding": a screen-space quad has no outside to
+  // be seen from, so which way it winds is not information anyone should have to
+  // keep straight.
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth   = 1.0f;
+  rasterizer.cullMode    = VK_CULL_MODE_NONE;
+  rasterizer.frontFace   = HOUSE_FRONT_FACE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  // No depth at all. UI composites over the finished scene and its order is the
+  // order it was appended in.
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+  depth_stencil.depthTestEnable  = VK_FALSE;
+  depth_stencil.depthWriteEnable = VK_FALSE;
+
+  VkPipelineColorBlendAttachmentState blend_attachment{};
+  blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  blend_attachment.blendEnable         = VK_TRUE;
+  blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+  blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  blend_attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+  blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  blend_attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+
+  VkPipelineColorBlendStateCreateInfo color_blending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blending.attachmentCount = 1;
+  color_blending.pAttachments    = &blend_attachment;
+
+  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates    = dynamic_states;
+
+  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipeline_info.stageCount          = 2;
+  pipeline_info.pStages             = stages;
+  pipeline_info.pVertexInputState   = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState      = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState   = &multisampling;
+  pipeline_info.pDepthStencilState  = &depth_stencil;
+  pipeline_info.pColorBlendState    = &color_blending;
+  pipeline_info.pDynamicState       = &dynamic_state;
+  pipeline_info.layout              = g_ui_pipeline_layout;
+  pipeline_info.renderPass          = g_render_pass;
+  pipeline_info.subpass             = 0;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
+      VK_SUCCESS)
+  {
+    log_error("[renderer] failed to create the UI pipeline");
+  }
+
+  vkDestroyShaderModule(g_device, frag_module, nullptr);
+  vkDestroyShaderModule(g_device, vert_module, nullptr);
+  return pipeline;
+}
+
 // --- The mesh pipeline factory ---
 //
 // One function builds every mesh pipeline there is, from the cache key alone.
@@ -1370,6 +1529,60 @@ static void create_mesh_resources()
   {
     fatal_error("[renderer] could not create the mesh pipeline layout");
   }
+}
+
+// Must run AFTER create_mesh_resources: the UI pipeline binds its atlas through
+// g_albedo_ds_layout, which that function owns. Reusing it rather than declaring
+// a second identical layout is the point -- a UI texture and a material texture
+// are the same thing to the GPU (one combined sampler at set 0, binding 0), so
+// register_texture's descriptor sets work here unchanged.
+static void create_ui_resources()
+{
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(ui_push_constants_t);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = 1;
+  layout_info.pSetLayouts            = &g_albedo_ds_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_ui_pipeline_layout) != VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the UI pipeline layout");
+  }
+
+  g_ui_pipeline = create_ui_pipeline();
+
+  const VkDeviceSize buffer_size = sizeof(ui_vertex_t) * UI_VERTEX_CAPACITY;
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    create_buffer(buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                  g_ui_vertex_buffer[frame], g_ui_vertex_memory[frame]);
+    vkMapMemory(g_device, g_ui_vertex_memory[frame], 0, buffer_size, 0,
+                (void **)&g_ui_vertex_mapped[frame]);
+  }
+}
+
+static void destroy_ui_resources()
+{
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    if (g_ui_vertex_memory[frame])
+    {
+      vkUnmapMemory(g_device, g_ui_vertex_memory[frame]);
+      vkFreeMemory(g_device, g_ui_vertex_memory[frame], nullptr);
+    }
+    if (g_ui_vertex_buffer[frame])
+      vkDestroyBuffer(g_device, g_ui_vertex_buffer[frame], nullptr);
+  }
+
+  if (g_ui_pipeline)
+    vkDestroyPipeline(g_device, g_ui_pipeline, nullptr);
+  if (g_ui_pipeline_layout)
+    vkDestroyPipelineLayout(g_device, g_ui_pipeline_layout, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -2546,10 +2759,24 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
   }
 }
 
-void draw_announcement(const char *text)
+linalg::vec2 screen_size()
 {
-  g_announcement_text = text;
-  g_announcement_end_time = SDL_GetTicks64() + 3000;
+  return {(float)g_swapchain_extent.width, (float)g_swapchain_extent.height};
+}
+
+linalg::vec2 logical_window_points_to_framebuffer_pixels(linalg::vec2 window_point)
+{
+  int window_width  = 0;
+  int window_height = 0;
+  SDL_GetWindowSize(g_window, &window_width, &window_height);
+
+  // Before the first resize, or on a headless window, there is nothing to scale
+  // by and the identity is the honest answer.
+  if (window_width <= 0 || window_height <= 0)
+    return window_point;
+
+  return {window_point.x * (float)g_swapchain_extent.width / (float)window_width,
+          window_point.y * (float)g_swapchain_extent.height / (float)window_height};
 }
 
 // The viewport rect in PIXELS. Derived HERE from the same view value the pass
@@ -2798,6 +3025,68 @@ static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &
                          &offset);
   push_debug_constants(cmd, view_projection_matrix, colors::white);
   vkCmdDraw(cmd, written, 1, first_vertex, 0);
+}
+
+// The whole screen-space UI, in one bind and one draw per batch. Recorded once
+// per frame after every view pass, so it is not affected by any pass's viewport
+// -- which is exactly why it resets the viewport and scissor first: apply_viewport
+// left both set to the last pass's rect, and a HUD anchored to a corner of an
+// editor panel is not a HUD.
+static void record_ui_draw_list(VkCommandBuffer cmd, const ui_draw_list_t &ui)
+{
+  if (ui.vertices.empty() || g_ui_pipeline == VK_NULL_HANDLE)
+    return;
+
+  const uint32_t vertex_count = (uint32_t)ui.vertices.size();
+  if (g_ui_vertex_used + vertex_count > UI_VERTEX_CAPACITY)
+  {
+    log_error("[renderer] UI vertex buffer full ({} of {} used, wanted {} more)", g_ui_vertex_used,
+              UI_VERTEX_CAPACITY, vertex_count);
+    return;
+  }
+
+  const uint32_t first_vertex = g_ui_vertex_used;
+  memcpy(g_ui_vertex_mapped[g_current_frame_idx_in_swapchain] + first_vertex, ui.vertices.data(),
+         sizeof(ui_vertex_t) * vertex_count);
+  g_ui_vertex_used += vertex_count;
+
+  VkViewport viewport{};
+  viewport.x        = 0.0f;
+  viewport.y        = 0.0f;
+  viewport.width    = (float)g_swapchain_extent.width;
+  viewport.height   = (float)g_swapchain_extent.height;
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+  VkRect2D scissor{};
+  scissor.offset = {0, 0};
+  scissor.extent = g_swapchain_extent;
+  vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ui_pipeline);
+
+  const VkDeviceSize offset = 0;
+  vkCmdBindVertexBuffers(cmd, 0, 1, &g_ui_vertex_buffer[g_current_frame_idx_in_swapchain], &offset);
+
+  ui_push_constants_t push{};
+  push.inverse_screen[0] = 1.0f / (float)g_swapchain_extent.width;
+  push.inverse_screen[1] = 1.0f / (float)g_swapchain_extent.height;
+  vkCmdPushConstants(cmd, g_ui_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+
+  // One descriptor bind per batch. resolve_albedo_set is the same fallback ladder
+  // the mesh path uses, which is what lets ui_draw_list_t::rect pass an invalid
+  // handle and get the internal 1x1 white with no special case anywhere.
+  for (const ui_batch_t &batch : ui.batches)
+  {
+    const VkDescriptorSet albedo_set = resolve_albedo_set(batch.texture);
+    if (albedo_set == VK_NULL_HANDLE)
+      continue;
+
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ui_pipeline_layout, 0, 1,
+                            &albedo_set, 0, nullptr);
+    vkCmdDraw(cmd, batch.vertex_count, 1, first_vertex + batch.first_vertex, 0);
+  }
 }
 
 // The world-space labels of every pass, projected into ImGui's background draw
@@ -3145,6 +3434,7 @@ bool init(SDL_Window *window)
   // register_mesh warm the ones they imply.
   create_debug_resources();
   create_mesh_resources();
+  create_ui_resources(); // after create_mesh_resources -- it borrows g_albedo_ds_layout
   create_default_resources();
   init_particle_system();
 
@@ -3259,6 +3549,7 @@ void shutdown()
   vkDestroyCommandPool(g_device, g_command_pool, nullptr);
 
   destroy_debug_resources();
+  destroy_ui_resources();
   cleanup_registered_resources();
 
   g_bind_pose_skinning.clear();
@@ -3332,6 +3623,7 @@ bool new_frame()
   // this frame index's per-frame memory has finished with it.
   reset_frame_uniforms(g_skinning_uniforms, g_current_frame_idx_in_swapchain);
   g_debug_vertex_used = 0;
+  g_ui_vertex_used    = 0;
 
   VkCommandBufferBeginInfo begin_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   if (vkBeginCommandBuffer(g_command_buffers[g_current_frame_idx_in_swapchain], &begin_info) !=
@@ -3348,28 +3640,7 @@ bool new_frame()
   return true;
 }
 
-static void render_announcement()
-{
-  if (SDL_GetTicks64() >= g_announcement_end_time || g_announcement_text.empty())
-    return;
-
-  ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-  center.y -= 0.5f * center.y; // up into the top half, where it does not cover the crosshair
-
-  ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-  if (ImGui::Begin("AnnouncementOverlay", nullptr,
-                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs |
-                       ImGuiWindowFlags_AlwaysAutoResize))
-  {
-    ImGui::SetWindowFontScale(2.0f);
-    ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", g_announcement_text.c_str());
-  }
-  ImGui::End();
-}
-
-void render_frame(Span<const view_pass_t> passes)
+void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
 {
   VkCommandBuffer cmd = g_command_buffers[g_current_frame_idx_in_swapchain];
 
@@ -3386,7 +3657,6 @@ void render_frame(Span<const view_pass_t> passes)
   for (const view_pass_t &pass : passes)
     if (pass.debug)
       project_debug_texts(pass.view, *pass.debug);
-  render_announcement();
   ImGui::Render();
 
   // 3. The render pass, and every view pass inside it in the order given.
@@ -3432,6 +3702,12 @@ void render_frame(Span<const view_pass_t> passes)
       if (custom.record)
         custom.record(cmd, custom.user);
   }
+
+  // 4. The screen-space UI, over every view pass and UNDER ImGui. That ordering
+  //    is the one visible behaviour change from moving the crosshair and the
+  //    announcement off ImGui's foreground list: the dev console now covers
+  //    them, which is what an open console should do.
+  record_ui_draw_list(cmd, ui);
 
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
   vkCmdEndRenderPass(cmd);

@@ -12,10 +12,11 @@
 //      codec walks -- so what it pins is the ORDER (channel fields, then the
 //      member's own) and the fact that the fire helper adds nothing but the
 //      16-bit kind in front.
-//   3. The ALIGN-AND-SPLICE round trip. The effect batch is spliced into a
-//      snapshot packet at a byte boundary the entity delta's bit length does
-//      not predict, and a misaligned block decodes as plausible garbage rather
-//      than failing. Nothing else covers it.
+//   3. The effect batch survives its protobuf wrapper. It used to be spliced
+//      into the snapshot behind a byte-align; now it rides S2C_EffectBatch,
+//      whose `bytes` field is a std::string holding embedded NULs. What this
+//      pins is that the client's decode expression -- a Bit_Reader over
+//      .data()/.size() -- reads the stream from bit 0 with nothing in front.
 //   4. The count reaches the receiver. It is backpatched into 16 reserved bits
 //      rather than prepended, because joining two bitstreams needs a
 //      bit-shifted copy -- so the poke and the reader have to agree.
@@ -24,12 +25,14 @@
 #include "../shared/events/generated/events_generated.hpp"
 #include "../shared/network/field_codec.hpp"
 #include "../shared/network/quantization.hpp"
+#include "game.pb.h"
 
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <optional>
 #include <string>
+#include <vector>
 
 using namespace shared;
 
@@ -210,39 +213,45 @@ void test_record_layout()
   printf("  record layout is the kind then the table, in order: ok\n");
 }
 
-// --- 3. Align and splice, the way a snapshot packet does it ------------------
+// --- 3. The effect batch rides its own message -------------------------------
 //
-// The one genuinely new risk in unifying the transport: the effect block is
-// pre-encoded once and memcpy'd into every client's packet at a byte boundary,
-// behind an entity delta whose bit length differs per client.
+// This replaces an align-and-splice test. The batch used to be memcpy'd into
+// every client's snapshot packet behind an entity delta of a different bit
+// length, so the block started at a byte boundary neither side could compute
+// and a missed align() on the reader decoded as plausible garbage. Its own
+// message means the stream starts at bit 0 with no second half to keep in step.
+//
+// What is left to get wrong is the wrapper. A protobuf `bytes` field is a
+// std::string and the payload is full of embedded NULs, so what gets exercised
+// here is the expression the client actually writes -- a Bit_Reader over
+// .data()/.size() -- through a real serialize/parse rather than a field copy.
 
-void test_align_and_splice()
+void test_effect_batch_message()
 {
   event_stream_t effects;
   fire_every_effect(effects);
   effects.finish();
 
-  // An odd bit length in front, standing in for a per-client entity delta.
-  // 13 bits is deliberately not a multiple of 8: the whole point is that the
-  // splice does not start where the prefix ended.
-  network::Bit_Writer packet;
-  packet.write_bits(0x1ABCu, 13);
-  assert(packet.bit_index % 8 != 0);
+  game::S2C_EffectBatch sent;
+  sent.set_effect_data(effects.writer.buffer.data(), effects.writer.buffer.size());
+  sent.set_server_tick(1234);
 
-  // write_bytes align()s first, so the splice IS the alignment.
-  packet.write_bytes(effects.writer.buffer.data(), effects.writer.buffer.size());
+  std::vector<network::uint8> wire(sent.ByteSizeLong());
+  assert(sent.SerializeToArray(wire.data(), (int)wire.size()));
 
-  network::Bit_Reader reader(packet.buffer.data(), packet.buffer.size());
-  assert(reader.read_bits(13) == 0x1ABCu);
+  game::S2C_EffectBatch received;
+  assert(received.ParseFromArray(wire.data(), (int)wire.size()));
+  assert(received.server_tick() == 1234);
+  assert(received.effect_data().size() == effects.writer.buffer.size());
 
-  // The other half of the pair. Without it every field below decodes as
-  // plausible garbage instead of failing.
-  reader.align();
+  network::Bit_Reader reader(
+      reinterpret_cast<const network::uint8*>(received.effect_data().data()),
+      received.effect_data().size());
 
   assert(reader.read_bits(16) == EFFECT_TYPE_COUNT);
   expect_every_effect(reader);
 
-  printf("  align-and-splice round trip: ok\n");
+  printf("  effect batch message round trip: ok\n");
 }
 
 // --- 4. Every gameplay event round-trips through the stream ------------------
@@ -274,6 +283,12 @@ void test_game_event_stream_round_trip()
   spawned.spawn_position    = {exact(1.0f, 1), exact(2.0f, 2), exact(3.0f, 3)};
   spawned.spawn_orientation = {exact(0.0f, 0), exact(90.0f, 0), exact(0.0f, 0)};
   fire_player_spawned(stream, spawned);
+
+  Round_Phase_Changed phase_changed;
+  phase_changed.phase          = Round_Phase::Round_End;
+  phase_changed.round_number   = 4;
+  phase_changed.phase_end_tick = 900;
+  fire_round_phase_changed(stream, phase_changed);
 
   assert(stream.count == GAME_EVENT_TYPE_COUNT);
   assert(!stream.empty());
@@ -308,6 +323,16 @@ void test_game_event_stream_round_trip()
   assert(read_spawned->spawn_position.y == exact(2.0f, 2));
   assert(read_spawned->spawn_position.z == exact(3.0f, 3));
   assert(read_spawned->spawn_orientation.y == exact(90.0f, 0));
+
+  assert(reader.read_bits(16) == (uint32_t)game_event_type::Round_Phase_Changed);
+  const std::optional<Round_Phase_Changed> read_phase = try_read_round_phase_changed(reader);
+  assert(read_phase);
+  // The enum survives the narrowing to its wire width. It is the first enum
+  // field on either channel, so this is the case that would catch the codec
+  // treating it as something wider.
+  assert(read_phase->phase == Round_Phase::Round_End);
+  assert(read_phase->round_number == 4);
+  assert(read_phase->phase_end_tick == 900);
 
   printf("  game event stream round trip (%u kinds): ok\n", GAME_EVENT_TYPE_COUNT);
 }
@@ -381,7 +406,7 @@ int main()
 
   test_effect_round_trip();
   test_record_layout();
-  test_align_and_splice();
+  test_effect_batch_message();
   test_game_event_stream_round_trip();
   test_stream_reset();
   test_formatter();

@@ -24,6 +24,7 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include "game_session.hpp"
 #include "cvars/cvar_console.hpp"
 #include "debug_collision.hpp"
@@ -37,6 +38,7 @@
 #include "network/server_transport_layer.hpp"
 #include "network/snapshot_history.hpp"
 
+#include "move_budget.hpp"
 #include "server_context.hpp"
 #include "timed_function.hpp"
 #include "map.hpp"
@@ -132,6 +134,27 @@ get_position_in_front_of(server_context_t &context, int32_t caller_slot)
   return player->position + vec3f{0, eye_height, 0} + forward * forward_offset;
 }
 
+// Tears down BOTH halves of the peer: the player (its body in the world) and the
+// client (its slot, address and reassembly buffers). `reason` is a past-tense
+// verb phrase -- "left", "timed out" -- and reads as the subject of both the
+// broadcast and the log line.
+void drop_client(server_context_t &context, int32_t slot,
+                 std::string_view reason)
+{
+  const network::Address address = context.transport_layer.addresses[slot];
+
+  const shared::entity_uid_t player_uid = context.clients[slot].player_uid;
+  if (player_uid != shared::null_entity_uid)
+    destroy_entity(context, player_uid);
+
+  reset_client_slot(context, slot);
+
+  broadcast_server_text_message(
+      context, std::format("Player {} (slot {})", reason, slot));
+  network::release_client_slot(context.transport_layer, slot);
+  log_terminal("Player {} slot {}: {}", reason, slot, address.to_string());
+}
+
 void handle_player_leave(server_context_t &context,
                          const network::Address &sender)
 {
@@ -143,18 +166,36 @@ void handle_player_leave(server_context_t &context,
               sender.to_string());
     return;
   }
-  const int32_t slot = *sender_slot;
 
-  const shared::entity_uid_t player_uid = context.clients[slot].player_uid;
-  if (player_uid != shared::null_entity_uid)
-    destroy_entity(context, player_uid);
+  drop_client(context, *sender_slot, "Left.");
+}
 
-  reset_client_slot(context, slot);
 
-  broadcast_server_text_message(context,
-                                std::format("Player left (slot {})", slot));
-  network::disconnect_client(context.transport_layer, sender);
-  log_terminal("Player left slot {}: {}", slot, sender.to_string());
+static void drop_timed_out_clients(server_context_t &context)
+{
+  const float timeout_seconds = context.cvars->sv_timeout;
+  if (timeout_seconds <= 0.0f)
+    return;
+
+  const uint32_t timeout_ticks = std::max(
+      1u, static_cast<uint32_t>(timeout_seconds * context.cvars->sv_tickrate));
+
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
+  {
+    if (!context.transport_layer.slot_occupied[slot])
+      continue;
+
+    const uint32_t silent_ticks =
+        context.tick_number - context.transport_layer.latest_packet_tick[slot];
+    if (silent_ticks < timeout_ticks)
+      continue;
+
+    log_warning("Slot {} ({}) has been silent for {:.1f}s (sv_timeout {:.1f}s)",
+                slot, context.transport_layer.addresses[slot].to_string(),
+                static_cast<float>(silent_ticks) / context.cvars->sv_tickrate,
+                timeout_seconds);
+    drop_client(context, slot, "timed out.");
+  }
 }
 
 
@@ -188,7 +229,6 @@ static bool load_map_file_into_context(server_context_t &context,
   world.map_content_hash = shared::compute_map_content_hash(server_map);
 
   shared::populate_static_physics_bodies(*world.physics, server_map);
-
 
   Span<entities::Player_Spawn_Entity> spawn_pool =
       world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
@@ -280,7 +320,7 @@ static shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t
   const shared::entity_uid_t player_uid =
       context.world.session.entity_system.spawn<entities::Player_Entity>();
 
-  entities::Player_Entity *player =
+  entities::Player_Entity* player =
       context.world.session.entity_system.get<entities::Player_Entity>(player_uid);
   
   if (!player)
@@ -294,7 +334,7 @@ static shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t
   player->client_slot_index = slot;
 
   // Cycled by slot so two players joining an empty server don't stack.
-  const entities::Player_Spawn_Entity *marker =
+  const entities::Player_Spawn_Entity* marker =
       try_pick_human_spawn(context.world.session, static_cast<uint32_t>(slot));
   if (marker == nullptr)
     log_error("spawn_player: map '{}' declares no Spawn_Type::Human marker — "
@@ -589,7 +629,12 @@ bool Tick()
   clear_incoming(context);
   network::ServerInbox &inbox = context.incoming;
 
-  network::poll_network(context.transport_layer, context.socket, 0.005, inbox); // 5ms receive window
+  network::poll_network(context.transport_layer, context.socket, 0.005,
+                        context.tick_number, inbox); // 5ms receive window
+
+  // Ahead of everything that reads a slot, so this tick's work never runs for a
+  // peer that is already gone.
+  drop_timed_out_clients(context);
 
   // Handle Net Commands (Handshake)
   for (const auto &[sender, cmd] : inbox.net_commands)
@@ -633,10 +678,8 @@ bool Tick()
       if (slot != invalid_slot_idx)
       {
         // Accept
-        context.transport_layer.slot_occupied[slot] = true;
-        context.transport_layer.addresses[slot] = sender;
-        context.transport_layer.byte_buffers[slot] = {};
-        context.transport_layer.partial_packets[slot].clear();
+        network::occupy_client_slot(context.transport_layer, slot, sender,
+                                    context.tick_number);
 
         reset_client_slot(context, slot);
 
@@ -836,6 +879,18 @@ bool Tick()
         std::max(client.held_snapshot_tick, move.held_snapshot_tick());
   }
 
+  // Move budget, granted before any move runs and over EVERY occupied slot
+  // rather than over the arrived moves: a client that sent nothing this tick is
+  // exactly the one banking credit for the stall it is in. See
+  // server/move_budget.hpp for why the bound is a rate and not a per-tick cap.
+  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
+  {
+    if (!context.transport_layer.slot_occupied[slot])
+      continue;
+    context.clients[slot].move_credits = grant_move_credit(
+        context.clients[slot].move_credits, context.cvars->sv_max_move_backlog);
+  }
+
   // since the server is in lockstep, pose all players once before handling moves:
   // internalize:
   // Posing after the move would test a world no client has ever been shown,
@@ -853,21 +908,12 @@ bool Tick()
       continue;
     }
 
+    client_slot_t &client = context.clients[client_slot];
+
     // valid during this tick.
     entities::Player_Entity* player =
         context.world.session.entity_system.get<entities::Player_Entity>(
-            context.clients[client_slot].player_uid);
-
-    bool spectating = !player;
-    if (spectating)
-    {
-      continue;
-    }
-
-    // filtering so we don't process input people that could probably not move.
-    const bool is_dead = player->health <= 0;
-
-    client_slot_t &client = context.clients[client_slot];
+            client.player_uid);
 
     // Duplicates and UDP-reordered replays. `latest_processed_command` is a
     // high-water mark, and the sort above delivers a client's own moves in
@@ -875,6 +921,46 @@ bool Tick()
 
     if (move.command_number() <= client.latest_processed_command)
       continue;
+
+    // A spectator has no body to move, but the command was still received and
+    // consumed: the pass above drained its held_snapshot_tick, which is the only
+    // part of a move that applies to a client with no body. So ACK it. The mark
+    // means "I have processed through N", not "I moved you", and leaving it
+    // parked was invisible until the client started resending unacked moves --
+    // at which point a spectator resent the same ones forever.
+    //
+    // No credit is spent. Nothing moved, so there is no rate to bound.
+    const bool spectating = !player;
+    if (spectating)
+    {
+      client.latest_processed_command = move.command_number();
+      continue;
+    }
+
+    // filtering so we don't process input people that could probably not move.
+    const bool is_dead = player->health <= 0;
+
+    // Over budget: drop the move whole, and advance nothing. A dropped command
+    // was never processed, so `latest_processed_command` and the button bitmap
+    // must not move past it -- otherwise a client that gets throttled also
+    // silently loses the button EDGES the skipped command carried.
+    if (!try_spend_move_credit(client.move_credits))
+    {
+      const uint32_t warning_interval =
+          static_cast<uint32_t>(std::max(1.f, context.cvars->sv_tickrate));
+      if (context.tick_number - client.last_move_throttle_warning_tick >=
+          warning_interval)
+      {
+        log_warning("slot {} is over its move budget ({} banked max) — dropping "
+                    "moves. A stall this long costs the client the input it "
+                    "cannot catch up on; a client that never stops being over "
+                    "budget is sending faster than the server ticks",
+                    client_slot, context.cvars->sv_max_move_backlog);
+        client.last_move_throttle_warning_tick = context.tick_number;
+      }
+      continue;
+    }
+
     client.latest_processed_command = move.command_number();
 
     const uint64_t current_buttons   = move.buttons_bitfield();
@@ -1347,11 +1433,6 @@ bool Tick()
   for (const entities::Physics_Body_Entity &body : physics_body_pool)
     frame.physics_bodies[body.entity_id] = body;
 
-  // Backpatch the effect stream's count ONCE, before the loop: every client
-  // gets byte-for-byte the same block, which is the whole point of encoding at
-  // fire time rather than per client.
-  context.outgoing.effects.finish();
-
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_client_count; ++slot)
   {
@@ -1375,26 +1456,6 @@ bool Tick()
 
     network::serialize_snapshot(writer, frame, baseline);
 
-    // The cosmetic effect batch rides in the same packet, after the entity
-    // delta. Unreliable by design (lost effect = silently dropped). Identical
-    // bytes for every client; per-client filtering is a future addition if PVS
-    // / relevancy ever lands.
-    //
-    // ALIGN-AND-SPLICE. Every client's delta is a different length, so this
-    // block would start at a different BIT offset per client -- which is why
-    // the effects used to be held as values and re-encoded here. write_bytes
-    // calls align() first, so the splice IS the alignment: at most 7 wasted
-    // bits, and one encoding serves everyone.
-    //
-    // The client's reader.align() (play_state.cpp, dispatch_received_effects)
-    // is the other half. THE TWO MUST MOVE TOGETHER -- a misaligned effect
-    // block decodes as plausible garbage rather than failing.
-    //
-    // Always spliced, even when nothing fired: the stream always holds its
-    // 2-byte count slot, so the reader's shape never varies.
-    writer.write_bytes(context.outgoing.effects.writer.buffer.data(),
-                       context.outgoing.effects.writer.buffer.size());
-
     // Create and send package
     game::S2C_EntityPackage package;
     package.set_server_tick(context.tick_number);
@@ -1411,6 +1472,46 @@ bool Tick()
 
     for (const auto &p : packets)
       context.socket.send(p, context.transport_layer.addresses[slot]);
+  }
+
+  // Cosmetic effect batch. Its own message, like the gameplay events below.
+  // Unreliable by design (a lost effect is silently dropped) — which is what
+  // the splice into S2C_EntityPackage used to argue from, and the argument was
+  // backwards: sharing the snapshot's packet does not share its reliability,
+  // it shares its FRAGMENTS. A burst of cosmetics that pushed the datagram
+  // past 1200 bytes cost the entity delta a fragment it could not survive.
+  //
+  // Encoded once, sent to everyone: that property comes from firing straight
+  // into the stream, not from the splice, and it is stronger here — the old
+  // code memcpy'd the same bytes into every client's writer and re-serialized
+  // through protobuf per client.
+  //
+  // Gated on map_ready, unlike the events below: an effect is positional and a
+  // client mid-download has no world to place it in. An event is not.
+  if (!context.outgoing.effects.empty())
+  {
+    context.outgoing.effects.finish();
+
+    game::S2C_EffectBatch batch;
+    batch.set_effect_data(context.outgoing.effects.writer.buffer.data(),
+                          context.outgoing.effects.writer.buffer.size());
+    batch.set_server_tick(context.tick_number);
+
+    std::vector<network::uint8> batch_buffer(batch.ByteSizeLong());
+    batch.SerializeToArray(batch_buffer.data(),
+                           static_cast<int>(batch_buffer.size()));
+    auto effect_packets = network::convert_to_packets(
+        batch_buffer,
+        static_cast<network::uint8>(network::Message_Type::S2C_EffectBatch),
+        context.transport_layer.next_message_id);
+
+    for (int slot = 0; slot < network::sv_max_client_count; ++slot)
+    {
+      if (!context.transport_layer.slot_occupied[slot]) continue;
+      if (!context.clients[slot].map_ready) continue;
+      for (const auto &p : effect_packets)
+        context.socket.send(p, context.transport_layer.addresses[slot]);
+    }
   }
 
   // Reliable gameplay event batch. Sent on its own protobuf message (not
@@ -1445,8 +1546,7 @@ bool Tick()
     }
   }
 
-  // Both S2C batches have gone out: every connected client received this tick's
-  // effects in the snapshot loop and its events just above, so the next tick
+  // Both S2C batches have gone out on their own messages, so the next tick
   // starts empty.
   clear_outgoing(context);
 

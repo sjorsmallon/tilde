@@ -1,4 +1,4 @@
-#pragma once
+ #pragma once
 
 #include "../editor_tool.hpp"
 #include "../../../shared/entity_uid.hpp"

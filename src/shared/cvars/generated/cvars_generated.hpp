@@ -74,6 +74,9 @@ struct cvar_state_t
   int32_t sv_max_rewind_ticks = 12;
   bool sv_lag_compensation_debug = false;
   float sv_tickrate = 60.0f;
+  float sv_timeout = 30.0f;
+  int32_t sv_max_move_backlog = 8;
+  int32_t cl_max_unacked_moves = 8;
   float r_fov = 90.0f;
   float r_zoom_fov = 30.0f;
   float r_zoom_easing_time_between_fovs = 0.0f;
@@ -141,47 +144,50 @@ enum class cvar_id : uint16_t
   sv_max_rewind_ticks = 16,
   sv_lag_compensation_debug = 17,
   sv_tickrate = 18,
-  r_fov = 19,
-  r_zoom_fov = 20,
-  r_zoom_easing_time_between_fovs = 21,
-  m_sensitivity = 22,
-  m_zoom_sensitivity_ratio = 23,
-  cl_maxfps = 24,
-  cl_draw_player_hull = 25,
-  cl_spectate_slot = 26,
-  cl_player_unlit = 27,
-  cl_aim_debug = 28,
-  cl_aim_debug_pitch = 29,
-  cl_aim_debug_yaw = 30,
-  cl_crosshair = 31,
-  cl_crosshair_dot = 32,
-  cl_crosshair_size = 33,
-  cl_crosshair_gap = 34,
-  cl_crosshair_thickness = 35,
-  cl_crosshair_r = 36,
-  cl_crosshair_g = 37,
-  cl_crosshair_b = 38,
-  cl_crosshair_a = 39,
-  editor_speed = 40,
-  cl_timescale = 41,
-  sound_reference_distance = 42,
-  sound_max_distance_cutoff = 43,
-  sound_rolloff_factor = 44,
-  debug_show_collisions = 45,
-  debug_show_hitboxes = 46,
-  debug_show_navmesh = 47,
-  debug_show_box_volumes = 48,
-  debug_hide_geometry = 49,
-  debug_show_entity_counts = 50,
-  debug_show_physics_bodies = 51,
-  net_snapshot_debug = 52,
-  sv_event_debug = 53,
-  cl_event_debug = 54,
+  sv_timeout = 19,
+  sv_max_move_backlog = 20,
+  cl_max_unacked_moves = 21,
+  r_fov = 22,
+  r_zoom_fov = 23,
+  r_zoom_easing_time_between_fovs = 24,
+  m_sensitivity = 25,
+  m_zoom_sensitivity_ratio = 26,
+  cl_maxfps = 27,
+  cl_draw_player_hull = 28,
+  cl_spectate_slot = 29,
+  cl_player_unlit = 30,
+  cl_aim_debug = 31,
+  cl_aim_debug_pitch = 32,
+  cl_aim_debug_yaw = 33,
+  cl_crosshair = 34,
+  cl_crosshair_dot = 35,
+  cl_crosshair_size = 36,
+  cl_crosshair_gap = 37,
+  cl_crosshair_thickness = 38,
+  cl_crosshair_r = 39,
+  cl_crosshair_g = 40,
+  cl_crosshair_b = 41,
+  cl_crosshair_a = 42,
+  editor_speed = 43,
+  cl_timescale = 44,
+  sound_reference_distance = 45,
+  sound_max_distance_cutoff = 46,
+  sound_rolloff_factor = 47,
+  debug_show_collisions = 48,
+  debug_show_hitboxes = 49,
+  debug_show_navmesh = 50,
+  debug_show_box_volumes = 51,
+  debug_hide_geometry = 52,
+  debug_show_entity_counts = 53,
+  debug_show_physics_bodies = 54,
+  net_snapshot_debug = 55,
+  sv_event_debug = 56,
+  cl_event_debug = 57,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 55;
+constexpr uint32_t CVAR_COUNT = 58;
 
 enum class command_id : uint16_t
 {
@@ -193,9 +199,10 @@ enum class command_id : uint16_t
   join_game = 5,
   bind = 6,
   connect = 7,
+  announce = 8,
 };
 
-constexpr uint32_t COMMAND_COUNT = 8;
+constexpr uint32_t COMMAND_COUNT = 9;
 
 enum cvar_type : uint8_t
 {
@@ -296,6 +303,9 @@ void bind(std::string_view key, std::string_view command, const command_context_
 // @Client  Connect to a server (ip or ip:port) and enter play
 // usage: connect <address>
 void connect(std::string_view address, const command_context_t& context);
+// @Client  Show a banner on screen for a few seconds
+// usage: announce <text...>
+void announce(std::string_view text, const command_context_t& context);
 } // namespace commands
 
 // The runtime dispatch surface. Each slot holds the command's generated

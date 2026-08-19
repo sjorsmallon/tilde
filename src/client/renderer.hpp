@@ -289,6 +289,48 @@ struct debug_draw_list_t
             float seconds = 0.0f);
 };
 
+// --- Screen-space UI ---
+// Textured quads in framebuffer pixels: the HUD, the crosshair, the
+// announcement banner. Composited once per frame, after every view pass and
+// before ImGui, with no camera and no depth.
+//
+// The renderer knows QUADS, not fonts. A font sits one layer up
+// (client/ui/font.hpp) and produces quads into this list, which is what keeps
+// glyph packing, metrics and text layout out of the renderer entirely.
+//
+// Caller-owned for the same reason debug_draw_list_t is, minus the lifetimes:
+// screen-space UI is per-FRAME and regenerated from state every frame, so this
+// one is cleared rather than retired.
+
+struct ui_vertex_t
+{
+  linalg::vec2 position; // framebuffer PIXELS, origin top-left
+  linalg::vec2 uv;
+  uint32_t     color; // to_abgr(), the same packing the debug shaders take
+};
+
+// A run of vertices sharing one texture. Batches exist so a string of glyphs is
+// one draw call; nothing else about them is interesting.
+struct ui_batch_t
+{
+  texture_handle_t texture; // invalid = the renderer's internal 1x1 white
+  uint32_t         first_vertex = 0;
+  uint32_t         vertex_count = 0;
+};
+
+struct ui_draw_list_t
+{
+  std::vector<ui_vertex_t> vertices;
+  std::vector<ui_batch_t>  batches;
+
+  void clear(); // keeps capacity
+
+  void quad(linalg::vec2 min, linalg::vec2 max, linalg::vec2 uv_min, linalg::vec2 uv_max,
+            color_t color, texture_handle_t texture = {});
+
+  void rect(linalg::vec2 min, linalg::vec2 max, color_t color);
+};
+
 // --- Particles ---
 
 struct particle_emitter_parameters_t
@@ -354,15 +396,32 @@ struct view_pass_t
 };
 
 // Executes the whole frame: particle compute, render pass, every view pass in
-// order, ImGui composite, submit, present. The pass structure is internal.
-void render_frame(Span<const view_pass_t> passes);
-
-// --- Overlay text ---
-
-// Temporary banner at the top of the screen for ~3s. Fire-and-forget.
-void draw_announcement(const char *text);
+// order, the screen-space UI, ImGui composite, submit, present. The pass
+// structure is internal.
+//
+// `ui` is a reference and not a pointer, unlike view_pass_t::debug: screen-space
+// UI is per-FRAME and always present, where a debug list is optional per pass. It
+// is composited AFTER every view pass and BEFORE ImGui, so the dev console and
+// the editor panels sit on top of the HUD -- which is the precedence you want
+// the moment the console is open.
+void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui);
 
 // --- Utilities ---
+
+// The swapchain extent in pixels, which is the coordinate space ui_draw_list_t
+// works in. Exposed so layout code has it without reaching into ImGui's io.
+[[nodiscard]] linalg::vec2 screen_size();
+
+// Convert a point in LOGICAL WINDOW POINTS -- what SDL_GetMouseState and every
+// SDL event report -- into the FRAMEBUFFER PIXELS this UI draws in.
+//
+// The two are the same number only at 100% display scaling. The window is
+// created with SDL_WINDOW_ALLOW_HIGHDPI, so on a scaled display screen_size()
+// (the swapchain extent, from SDL_Vulkan_GetDrawableSize) is larger than
+// SDL_GetWindowSize, and a hit-test done in the wrong one lands at a growing
+// offset from the text it belongs to. This lives here because the renderer owns
+// the window; every UI hit-test goes through it.
+[[nodiscard]] linalg::vec2 logical_window_points_to_framebuffer_pixels(linalg::vec2 window_point);
 
 // The matrices a pass with this view draws through, against the current
 // swapchain extent. Pure function of its arguments.

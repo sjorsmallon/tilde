@@ -39,9 +39,8 @@ public:
   bool bind_key(std::string_view key, std::string command_line);
   void clear_bindings();
 
-  // Poll all bound keys and execute on rising edge. The caller is responsible
-  // for skipping this while the console or any ImGui text input is focused.
-  void poll_bindings();
+  // Self-gating: a no-op while the console is open, so callers need not check.
+  void execute_pressed_bindings();
 
   bool is_open() const { return should_draw; }
   void toggle() { should_draw = !should_draw; }

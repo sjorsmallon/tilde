@@ -41,27 +41,18 @@ class Game_State
 public:
   virtual ~Game_State() = default;
 
-  // Called when this state becomes the active state
   virtual void on_enter() {}
 
-  // Called when this state is removed/replaced
   virtual void on_exit() {}
 
-  // Update logic (physics, input processing, etc.)
   virtual void update(float dt) = 0;
 
-  // Render UI (ImGui)
-  virtual void render_ui() = 0;
+  virtual void draw_imgui_panels() {}
 
-  // Append this state's view passes to the frame. The client loop calls
-  // render_frame exactly once with everything appended here, so a state
-  // contributes DATA and never touches a command buffer, a render pass, or the
-  // order the two happen in.
-  //
-  // `delta_seconds` is the render delta the state's debug list ages by. Passing
-  // it in rather than caching it from update() keeps "which clock do debug draws
-  // expire on" a visible decision.
-  virtual void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes) {}
+  virtual void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+                           renderer::ui_draw_list_t &ui)
+  {
+  }
 };
 
 } // namespace client

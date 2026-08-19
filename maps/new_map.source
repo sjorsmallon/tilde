@@ -41,15 +41,6 @@ box
 }
 entity
 {
-  "classname" "player_spawn_entity"
-  "_uid" "2"
-  "position" "-1024 2.586742 -896"
-  "orientation" "0 0 0"
-  "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
-}
-entity
-{
   "classname" "trigger_volume_entity"
   "_uid" "3"
   "position" "-1675.9169 -1525.5839 -958.0111"
@@ -68,4 +59,40 @@ entity
   "_uid" "7"
   "position" "-1152 2304 -640"
   "orientation" "0 -1 0"
+}
+entity
+{
+  "classname" "player_spawn_entity"
+  "_uid" "8"
+  "position" "-3840 0 -1408"
+  "orientation" "0 0 0"
+  "spawn_type" "Human"
+  "team_allegiance" "Blu"
+}
+entity
+{
+  "classname" "player_spawn_entity"
+  "_uid" "9"
+  "position" "-3840 0 -640"
+  "orientation" "0 0 0"
+  "spawn_type" "Human"
+  "team_allegiance" "Blu"
+}
+entity
+{
+  "classname" "player_spawn_entity"
+  "_uid" "10"
+  "position" "1920 0 -256"
+  "orientation" "0 0 0"
+  "spawn_type" "Human"
+  "team_allegiance" "Red"
+}
+entity
+{
+  "classname" "player_spawn_entity"
+  "_uid" "11"
+  "position" "1920 0 -1024"
+  "orientation" "0 0 0"
+  "spawn_type" "Human"
+  "team_allegiance" "Red"
 }

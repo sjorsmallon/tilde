@@ -321,12 +321,12 @@ Span<const mouse_button_event_t> frame_mouse_button_events()
   return g_mouse_button_events;
 }
 
-bool ui_wants_mouse()
+bool imgui_wants_mouse()
 {
   return ImGui::GetIO().WantCaptureMouse;
 }
 
-bool ui_wants_keyboard()
+bool imgui_wants_keyboard()
 {
   return ImGui::GetIO().WantCaptureKeyboard;
 }

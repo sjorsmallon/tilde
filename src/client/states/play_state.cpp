@@ -3,6 +3,7 @@
 #include "play_state.hpp"
 #include "../audio/audio_system.hpp"
 #include "../console.hpp"
+#include "../hud/announcement.hpp"
 #include "../hud/crosshair.hpp"
 #include "../weapon_fire_audio.hpp"
 #include "../hit_confirm_audio.hpp"
@@ -42,49 +43,16 @@
 namespace client
 {
 
-using explosion_effect_t = explosion_effect_t;
-
-// How often (in server ticks) `net_snapshot_debug` prints a line. One per two
-// seconds at a 60Hz tickrate -- enough to watch a trend, quiet enough to leave on.
+// cadence for cvar 'net_snapshot_debug'.
 static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
 
-// The cl_crosshair_* channels are unclamped u32 -- the console will happily set
-// one to 9999 -- so narrow through a clamp instead of letting it wrap.
-static uint8_t crosshair_color_channel(uint32_t value)
+// cl_crosshair_* channels are unclamped u32, so we narrow / clamp/
+static uint8_t clamp_crosshair_color_channel(uint32_t value)
 {
   return uint8_t(std::min<uint32_t>(value, 255));
 }
-// bool* so imgui buttons can self-close the menu.
-static void render_menu_overlay(bool* show_menu_overlay)
-{
-  ImGui::Begin("Menu", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
-  
-  auto display_size =  ImGui::GetIO().DisplaySize;
-  ImGui::SetWindowSize({display_size.x, display_size.y});
-  ImGui::SetWindowPos({0, 0});
-  if (ImGui::Button("Resume"))
-  {
-    *show_menu_overlay = false;
-  }
 
-  if (ImGui::Button("Disconnect"))
-  {
-    *show_menu_overlay = false;
-    
-    state_manager::switch_to(game_state::tool_editor);
-  }
-
-  if (ImGui::Button("Quit"))
-  {    
-    
-    *show_menu_overlay = false;
-    state_manager::switch_to(game_state::main_menu);
-  }
-
-  ImGui::End();
-}
-
-// This is a used as a function pointer for the cvar system. it allows 
+// this is a used as a function pointer for the cvar system. it allows 
 // the console to have either null or this if there's no server
 // to send things to.
 static void forward_console_line_to_server(std::string_view line)
@@ -97,7 +65,7 @@ static void forward_console_line_to_server(std::string_view line)
 
 // C2S_MapLoaded ack so the server knows this client
 // finished loading the current map and can resume streaming snapshots to it.
-static void send_map_loaded_ack(network::Client_Transport_Layer &transport,
+static void send_map_loaded_ack_message(network::Client_Transport_Layer &transport,
                                 uint32_t content_hash)
 {
   shared::map_loaded_message_t msg{content_hash};
@@ -112,18 +80,16 @@ static void send_map_loaded_ack(network::Client_Transport_Layer &transport,
     transport.socket.send(p, transport.server_address);
 }
 
-// Directory this client resolves map files against. Defaults to "maps"; the
-// MAPS_DIR environment variable overrides it.
-// See scripts/run_client_cold.cmd where map transfer is tested.
+// default maps directory where the client tries to find maps.
+// if MAP_DIR is set in env, that's taken. it is a hacky thing
+// to test locally if map transfer works. 
 static std::string client_maps_directory()
 {
   const char *env = std::getenv("MAPS_DIR");
   return (env && *env) ? std::string(env) : std::string("maps");
 }
 
-// Asks the server to stream the compiled package for `map_name` because we lack
-// it (cache miss) or our local copy's hash doesn't match. Bitstream-native
-// C2S_RequestMapData; the server replies with S2C_MapData.
+// message to the server we need the map data for the map name they just sent us to switch to.
 static void send_request_map_data(network::Client_Transport_Layer &transport,
                                   const std::string &map_name)
 {
@@ -153,7 +119,7 @@ bool Play_State::load_client_map(const std::string &map_path)
     return false;
   }
 
-  finalize_client_map(*loaded);
+  switch_to_map(*loaded);
   return true;
 }
 
@@ -166,7 +132,7 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
   shared::map_t map = shared::parse_map_from_string(package.entity_text);
   map.navmesh = package.navmesh;
 
-  finalize_client_map(map);
+  switch_to_map(map);
   return true;
 }
 
@@ -199,34 +165,29 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
   return true;
 }
 
-void Play_State::finalize_client_map(const shared::map_t &map)
+// everything in ctx.world that is keyed to the map, replaced as a set.
+static void set_client_world_to(client_context_t &ctx, const shared::map_t &map)
 {
-  auto &ctx = state_manager::get_client_context();
 
-  // Drop everything keyed to the map we are leaving -- remote entities, delta
-  // baselines, transient effects -- so nothing bleeds across the switch. The
-  // connection is deliberately untouched; see client_context.hpp.
+  //
   reset_state_in_preparation_for_new_map_load(ctx);
 
   ctx.world.session = shared::build_session(map);
   ctx.world.session.map_name = map.name;
 
-  // Every mesh and texture this map can show, uploaded now. register_mesh
-  // blocks on a queue submit, so the first sight of a model must not be a draw
-  // call -- that stall used to happen mid-frame, several times over, the first
-  // time a player walked into view.
+  // to prevent hitching
   preload_map_render_assets(map);
 
  // hash so we can verify we're running the same map as the server. 0 is a sentinel for not computed.
   ctx.world.map_content_hash = shared::compute_map_content_hash(map);
 
-  // Rebuild the client's static physics world — recreating physics_state_t is
-  // the cleanest way to drop the previous map's static bodies. The context owns
-  // it, so cosmetic-effect handlers casting against the static world are
-  // reading the same object rather than a lent copy of the pointer.
   ctx.world.physics_state = make_physics_state();
   shared::populate_static_physics_bodies(*ctx.world.physics_state, map);
+}
 
+// Where we stand until the first snapshot says otherwise; the server overwrites all of it.
+void Play_State::set_provisional_player_pose_for_new_map(client_context_t &ctx)
+{
   // place the camera at a spectate position (if it's there.)
   if (!try_pose_camera_at_spectate_spot(camera, ctx.world.session, 0))
     log_terminal("[CLIENT] no spectate entities found, so posing camera on a player spawn entity.");
@@ -249,8 +210,17 @@ void Play_State::finalize_client_map(const shared::map_t &map)
   camera.position.x = ctx.prediction.player_position.x;
   camera.position.y = ctx.prediction.player_position.y + shared::player_eye_height;
   camera.position.z = ctx.prediction.player_position.z;
+}
 
-  // Last, so `ready` is never observably ahead of the world it describes.
+// The shared tail of both acquisition paths: this map becomes the live world.
+void Play_State::switch_to_map(const shared::map_t &map)
+{
+  client_context_t &ctx = state_manager::get_client_context();
+
+  set_client_world_to(ctx, map);
+  set_provisional_player_pose_for_new_map(ctx);
+
+  // set this to ready 
   ctx.world.ready = true;
 }
 
@@ -272,7 +242,7 @@ void Play_State::on_enter()
 
   // Our half of the connection reset: everything on this state that means
   // nothing to a new connection. The context's three groups go below.
-  ui = {};
+  connection_ui = {};
   reset_for_new_connection(ctx);
 
   // Jolt must be initialized before load_client_map builds a physics_state_t.
@@ -282,45 +252,31 @@ void Play_State::on_enter()
     jolt_init();
     jolt_initialized = true;
   }
+  #ifdef JPH_DEBUG_RENDERER
+    jolt_debug_renderer = std::make_unique<client::jolt_debug_renderer_t>();
+  #endif
 
-  // Reference-first fast path: load the same map the editor uses (from
-  // last_map.txt) if we have it. The server is authoritative — a mismatch, or a
-  // missing local map entirely, is recovered by streaming the compiled package
-  // once CmdAccept arrives (see the accept handler in update()). So a failed
-  // local load is NOT fatal: we still connect, then download. This is what lets
-  // a client join a server running a map it has never seen.
+
+  // try to load a map from last_map.txt if that existed.
   std::string last_map;
   {
     std::ifstream f("last_map.txt");
     if (f.is_open())
       std::getline(f, last_map);
   }
-  // Resolve against this client's maps dir (MAPS_DIR override), not the raw
-  // last_map.txt path, so a cold client pointed at an empty folder misses here
-  // and streams instead.
-  std::string map_path = shared::resolve_map_path(client_maps_directory(), last_map);
 
-  // Unconditional even if we already hold a world: the editor writes
-  // last_map.txt, so editor -> play must pick up whatever was just being
-  // edited. finalize_client_map sets world.ready on success; a failure leaves
-  // the previous world's flag alone, which is why on_exit cleared it.
+  std::string map_path = shared::resolve_map_path(client_maps_directory(), last_map);
   if (!load_client_map(map_path))
   {
     log_terminal("No local map '{}' at boot; will request it from the server "
                  "after connecting.", map_path);
   }
 
-  // Camera look direction (position was set from a spawn in load_client_map, or
-  // left at the default if we have no map yet and will stream one).
   camera.yaw = ctx.prediction.player_yaw;
   camera.pitch = ctx.prediction.player_pitch;
   camera.orthographic = false;
 
   input::set_relative_mouse_mode(true);
-
-#ifdef JPH_DEBUG_RENDERER
-  jolt_debug_renderer = std::make_unique<client::jolt_debug_renderer_t>();
-#endif
 
   // --- Connect to server ---
   auto &transport = ctx.transport_layer;
@@ -335,6 +291,7 @@ void Play_State::on_enter()
     transport.socket.open(0);
   }
 
+
   // Whoever sent us here chose the endpoint (main menu Join Game, `connect`,
   // or nobody -- in which case this is still the loopback default).
   transport.server_address = ctx.requested_server_address;
@@ -343,13 +300,13 @@ void Play_State::on_enter()
   game::NetCommand net_command;
   auto* connect_cmd = net_command.mutable_connect();
   connect_cmd->set_protocol_version(1);
-  connect_cmd->set_player_name("Player");
+  connect_cmd->set_player_name("SJM");
   connect_cmd->set_schema_hash(entities::SCHEMA_HASH);
 
   network::send_protobuf_message(transport, net_command);
   ctx.connection.phase = Connection_Phase::Connecting;
 
-  renderer::draw_announcement("play Mode");
+  hud::set_announcement("Play State");
 }
 
 void Play_State::on_exit()
@@ -363,6 +320,7 @@ void Play_State::on_exit()
     disconnect_cmd.mutable_disconnect()->set_reason("Player left");
     network::send_protobuf_message(transport, disconnect_cmd);
     ctx.connection.phase = Connection_Phase::Disconnected;
+
     // Disconnected: @Server names have nowhere to go, and running them locally
     // would be wrong in a networked build, so execute_console_line reports
     // "not connected" instead.
@@ -376,62 +334,57 @@ void Play_State::on_exit()
   jolt_debug_renderer.reset();
 #endif
 
-  // A client that is not in play has no world. One assignment covers the
-  // session, the physics world, the content hash and `ready` together -- which
-  // is the point of them living in one struct: there is no order to get wrong
-  // and no half-torn-down world for a late effect dispatch to cast against.
   ctx.world = {};
 
-  // The @Mirrored cvars belonged to the connection we just dropped. Leaving
-  // them would let a dead server's movement constants steer the offline
-  // session -- update() still runs player_move when not connected. Gated: in an
-  // integrated build the in-process server still owns these values.
   if (ctx.server_session == nullptr && ctx.cvars)
     shared::revert_mirrored_cvars_to_defaults(*ctx.cvars);
+
 }
 
 void Play_State::update(float dt)
 {
-  // Record dt for FPS averaging
-  dt_history[dt_history_index] = dt;
-  dt_history_index = (dt_history_index + 1) % FPS_HISTORY_SIZE;
-  if (dt_history_count < FPS_HISTORY_SIZE)
-    dt_history_count++;
-
   auto &ctx = state_manager::get_client_context();
 
-  // Tick down explosion effects
-  for (auto &fx : ctx.visuals.explosion_effects)
-    fx.time_remaining -= dt;
-  std::erase_if(ctx.visuals.explosion_effects, [](const explosion_effect_t &fx) {
-    return fx.time_remaining <= 0.f;
-  });
+  // pause menu handling.
+  if (connection_ui.show_menu_overlay)
+  {
+    const std::optional<pause_menu_item_t> chosen = update_pause_menu(
+        pause_menu, ui::gather_ui_input(), dt, renderer::screen_size());
 
+    if (chosen)
+    {
+      connection_ui.show_menu_overlay = false;
 
-  // ESC -> back to editor (works even if no map was loaded)
-  if (input::is_key_pressed(input::key_t::Escape))
+      switch (*chosen)
+      {
+      case pause_menu_item_t::resume:
+        break;
+
+      case pause_menu_item_t::return_to_editor:
+        state_manager::switch_to(game_state::tool_editor);
+        return;
+
+      case pause_menu_item_t::main_menu:
+        state_manager::switch_to(game_state::main_menu);
+        return;
+
+      case pause_menu_item_t::exit_to_desktop:
+        state_manager::request_exit();
+        return;
+      }
+    }
+  }
+  else if (input::is_key_pressed(input::key_t::Escape))
   {
     if (console::get().is_open())
     {
       // If the console is open, just close it and stay in play mode.
       console::get().close();
     }
-    else if (!ui.show_menu_overlay)
-    {
-      // If the console is closed, show the menu overlay instead of leaving play.
-      ui.show_menu_overlay = true;
-    }
-    else if (ui.show_menu_overlay)
-    {
-      // If the console is closed and the menu overlay is not showing, show it.
-      ui.show_menu_overlay = !ui.show_menu_overlay;
-    }
     else
     {
-      // what even is this case?
-      // Otherwise, go back to the editor.
-      log_terminal("Switching to tool editor state from play state because of some weird escape state.");
-      state_manager::switch_to(game_state::tool_editor);
+      connection_ui.show_menu_overlay = true;
+      pause_menu                      = build_pause_menu(renderer::screen_size());
     }
   }
 
@@ -442,59 +395,54 @@ void Play_State::update(float dt)
     return;
   }
 
-
-  // NOTE: no ctx.world.ready early-out here. The network handshake / map
-  // handling below must run even when we have no world yet — that's exactly how
-  // a client that lacks the map boots: connect, get CmdAccept, stream the
-  // package, and only then build a session. Local simulation + rendering-prep
-  // (from "Reconciliation" onward) is what's gated on the flag, further down.
-  // See the Connection_Phase state machine in client_context.hpp.
-  auto &transport = ctx.transport_layer;
-
   // U -> toggle mouse capture
   if (input::is_key_pressed(input::key_t::U))
   {
-    ui.mouse_captured = !ui.mouse_captured;
+    connection_ui.mouse_captured = !connection_ui.mouse_captured;
   }
 
-  // Falling edge: console just closed -> recapture the mouse for play.
-  // This also overrides any prior U-toggle so closing the console always
-  // returns the player to "playing" with a captured cursor.
-    const bool console_open = console::get().is_open();
-    if (ui.console_was_open && !console_open)
-      ui.mouse_captured = true;
-    ui.console_was_open = console_open;
+  const bool console_open = console::get().is_open();
+  if (connection_ui.console_was_open && !console_open)
+    connection_ui.mouse_captured = true;
+  connection_ui.console_was_open = console_open;
 
-    // Same falling edge for the menu overlay: dismissing it (Escape or "Resume")
-    // puts the player straight back into play with a captured cursor.
-    if (ui.menu_overlay_was_open && !ui.show_menu_overlay)
-      ui.mouse_captured = true;
-    ui.menu_overlay_was_open = ui.show_menu_overlay;
+  if (connection_ui.menu_overlay_was_open && !connection_ui.show_menu_overlay)
+    connection_ui.mouse_captured = true;
+  connection_ui.menu_overlay_was_open = connection_ui.show_menu_overlay;
 
-    // Re-assert relative mouse mode every frame so the console can transparently
-    // release the cursor while it's open. Without this, SDL stays in relative
-    // mode (cursor hidden and warped to center) even when the console is up,
-    // making the console unusable with the mouse. The menu overlay releases it
-    // for the same reason — its buttons need a real cursor to click.
-    input::set_relative_mouse_mode(ui.mouse_captured && !console_open && !ui.show_menu_overlay);
+  // Re-assert relative mouse mode every frame so the console can transparently
+  // release the cursor while it's open. Without this, SDL stays in relative
+  // mode (cursor hidden and warped to center) even when the console is up,
+  // making the console unusable with the mouse. The menu overlay releases it
+  // for the same reason — its buttons need a real cursor to click.
+  input::set_relative_mouse_mode(connection_ui.mouse_captured && !console_open && !connection_ui.show_menu_overlay);
 
-    // Dispatch key bindings configured via the `bind` command. poll_bindings is
-    // a no-op when the console is open, so we don't have to gate it here.
-    console::get().poll_bindings();
+  // if we have any bound keys (e.g. bind j join_game), execute them.
+  console::get().execute_pressed_bindings();
 
-  
-  // --- Poll network ---
+
+  auto &transport = ctx.transport_layer;
+
+  // actually network related stuff.
   network::Client_Inbox inbox;
   network::poll_client_network(transport, 0.001, inbox); // 1ms receive window
 
+  // in case I forget again: poll_client_network already does all the reassembly for us.
+  // this iterates over fully constructed messages. that's why the apply_map_package
+  // is just a single call. I confused myself with thinking that the map probably wouldnt'fit
+  // in one packet.
   for (const auto &cmd : inbox.net_commands)
   {
     if (cmd.has_accept())
     {
       ctx.connection.my_slot = cmd.accept().client_slot();
       ctx.connection.server_tickrate = cmd.accept().server_tickrate();
+
       if (ctx.connection.server_tickrate == 0)
+      {
+        fatal_error("server did not specify tickrate. that seems kind of problematic.");
         ctx.connection.server_tickrate = 60;
+      }
 
       // Decide whether we can play immediately or must download the map first.
       uint32_t server_hash = cmd.accept().content_hash();
@@ -511,7 +459,7 @@ void Play_State::update(float dt)
         ctx.connection.phase = Connection_Phase::Loading;
         ctx.connection.awaiting_stream_content_hash = server_hash;
 
-        renderer::draw_announcement("Downloading map...");
+        hud::set_announcement("Downloading map...");
 
         send_request_map_data(transport, cmd.accept().map_name());
         continue;
@@ -540,10 +488,6 @@ void Play_State::update(float dt)
     }
   }
 
-  // --- Handle server-initiated map switch (CmdChangeMap) ---
-  // Reference-first: try our own local copy of the new map and verify the hash.
-  // If we lack the file (cache miss) or it doesn't match, fall back to streaming
-  // the compiled package from the server (step 5) rather than desyncing.
   for (const auto &payload : inbox.change_map_messages)
   {
     network::Bit_Reader reader(payload.data(), payload.size());
@@ -555,7 +499,7 @@ void Play_State::update(float dt)
     if (ctx.connection.phase == Connection_Phase::Connected &&
         ctx.world.map_content_hash == change.content_hash)
     {
-      send_map_loaded_ack(transport, change.content_hash);
+      send_map_loaded_ack_message(transport, change.content_hash);
       continue;
     }
 
@@ -574,49 +518,45 @@ void Play_State::update(float dt)
     log_terminal("Server switching map to '{}' (path '{}', hash {:#x})",
                  change.map_name, change.map_path, change.content_hash);
     ctx.connection.phase = Connection_Phase::Loading;
-    renderer::draw_announcement("Loading map...");
+    hud::set_announcement("Loading map...");
 
-    // Cache miss (file won't load) or hash mismatch → request the package. The
-    // wire id is maps-relative; resolve it against our own maps dir.
-    std::string local_path =
-        shared::resolve_map_path(client_maps_directory(), change.map_path);
+    // either load the path or request it.
+    std::string local_path = shared::resolve_map_path(client_maps_directory(), change.map_path);
     if (!load_client_map(local_path) ||
         ctx.world.map_content_hash != change.content_hash)
     {
       log_terminal("No matching local copy of '{}' (cache miss/mismatch); "
                    "requesting map from server.", change.map_name);
       ctx.connection.awaiting_stream_content_hash = change.content_hash;
-      renderer::draw_announcement("Downloading map...");
+      hud::set_announcement("Downloading map...");
       send_request_map_data(transport, change.map_name);
       continue;
     }
 
     // Loaded and verified locally — ack so the server resumes snapshots for us.
-    send_map_loaded_ack(transport, change.content_hash);
+    send_map_loaded_ack_message(transport, change.content_hash);
     ctx.connection.awaiting_stream_content_hash = 0;
     ctx.connection.phase = Connection_Phase::Connected;
     log_terminal("Map switch to '{}' complete; acked hash {:#x}",
                  change.map_name, change.content_hash);
   }
-  // --- Handle streamed compiled map package (S2C_MapData) ---
-  // The server's reply to our C2S_RequestMapData. Verify integrity, deserialize
-  // the package, rebuild the world from it, then ack so snapshots resume. We
-  // stay in Connection_Phase::Loading until this completes.
+
   for (const auto &payload : inbox.map_data_messages)
   {
-    // A late or duplicate package after we've already loaded is ignored.
+    // we're not loading into anything. we should ignore incoming map data retransmit messages.
     if (ctx.connection.phase != Connection_Phase::Loading)
+    {
+      log_warning("receiving map_data_messages while loading. retransmit issues? or eager server?");
       break;
+    }
 
     network::Bit_Reader reader(payload.data(), payload.size());
     shared::map_data_message_t data = shared::deserialize_map_data(reader);
 
     if (data.compressed)
     {
-      // gzip decompression lands in step 6; until then the server ships
-      // compressed=false, so a compressed package here is unexpected.
-      log_error("Received compressed S2C_MapData for '{}' but decompression "
-                "isn't implemented yet (step 6); ignoring.", data.map_name);
+      // cool, that's not implemented.
+      fatal_error("Received compressed S2C_MapData for '{}' but decompression isn't implemented yet.", data.map_name);
       continue;
     }
 
@@ -629,7 +569,7 @@ void Play_State::update(float dt)
       continue;
     }
 
-    shared::map_package_t package;
+    auto package = shared::map_package_t{};
     if (!shared::deserialize_map_package(data.bytes, package))
     {
       log_error("Failed to deserialize streamed map package '{}'; waiting for "
@@ -643,10 +583,8 @@ void Play_State::update(float dt)
       continue;
     }
 
-    // Ack the entities-only content hash the server tracks (set by
-    // apply_map_package), not the package hash, so it matches
-    // ctx.world.map_content_hash and the server resumes snapshots for us.
-    send_map_loaded_ack(transport, ctx.world.map_content_hash);
+    // map loaded.
+    send_map_loaded_ack_message(transport, ctx.world.map_content_hash);
     ctx.connection.awaiting_stream_content_hash = 0;
     enter_connected_phase();
     log_terminal("Downloaded map '{}' (package hash {:#x}); acked content hash "
@@ -654,20 +592,12 @@ void Play_State::update(float dt)
                  ctx.world.map_content_hash);
   }
 
-  // --- Handle server console messages ---
-  // Both sinks, deliberately. The in-game console is the one the player reads,
-  // but it is only visible while it is toggled open — and holding it open
-  // suppresses the button bitfield (see the input gather below), so anything the
-  // server says *in response to input* can never be watched live there. The
-  // terminal has no such problem, and is where you are looking when you are
-  // debugging rather than playing.
-  for (const auto &msg : inbox.server_messages)
+  for (const auto &msg : inbox.server_text_messages)
   {
     log_terminal("[SERVER] {}", msg.message());
     console::get().print("%s", msg.message().c_str());
   }
 
-  // --- Apply @Mirrored cvar values pushed by the server (S2C_CvarValues) ---
   for (const auto &payload : inbox.cvar_value_messages)
   {
     network::Bit_Reader reader(payload.data(), payload.size());
@@ -678,48 +608,65 @@ void Play_State::update(float dt)
       log_terminal("[CLIENT] mirrored cvar '{}' = {}",
                    cvars::cvar_info(value.id).name, value.text);
   }
-  // --- Apply reliable gameplay event batches from server ---
-  // Decoded here so consumers (kill feed, score HUD, …) see events the same
-  // tick they arrive, regardless of snapshot ordering.
+
+
+  // Cosmetic effects. Their own message since the split out of
+  // S2C_EntityPackage, so the stream starts at bit 0 and there is no align to
+  // keep in step with the server. Dispatched immediately — handlers are
+  // one-shot, fire-and-forget.
+  for (const auto &batch : inbox.effect_batches)
+  {
+    if (!batch.has_effect_data() || batch.effect_data().empty())
+      continue;
+
+    const auto* data =
+        reinterpret_cast<const network::uint8*>(batch.effect_data().data());
+    network::Bit_Reader reader(data, batch.effect_data().size());
+
+    dispatch_received_effects(ctx, reader, ctx.cvars->cl_event_debug);
+  }
+
   for (const auto &batch : inbox.game_event_batches)
   {
     if (!batch.has_event_data() || batch.event_data().empty())
       continue;
 
-    const auto *data =
-        reinterpret_cast<const network::uint8 *>(batch.event_data().data());
+    const auto* data =
+        reinterpret_cast<const network::uint8*>(batch.event_data().data());
     network::Bit_Reader reader(data, batch.event_data().size());
-    // Read straight off the wire into a typed local per record — the generated
-    // dispatch owns the whole loop, so no vector of events exists here.
+
     dispatch_received_game_events(ctx, reader, ctx.cvars->cl_event_debug);
   }
 
-  // --- Apply bot debug packets from server ---
+
   for (const auto &msg : inbox.bot_debug_updates)
   {
     ctx.replication.bot_debug_entries.clear();
-    for (const auto &e : msg.bots())
+    for (const auto &bot : msg.bots())
     {
-      bot_debug_entry_t entry;
-      entry.slot       = e.slot();
-      entry.goal       = e.goal();
-      entry.type       = e.type();
-      entry.path_index = e.path_index();
-      for (const auto &v : e.path())
-        entry.path.push_back({v.x(), v.y(), v.z()});
+      auto entry = bot_debug_entry_t{};
+      entry.slot       = bot.slot();
+      entry.goal       = bot.goal();
+      entry.type       = bot.type();
+      entry.path_index = bot.path_index();
+      for (const auto &path_point : bot.path())
+      {
+        entry.path.push_back({path_point.x(), path_point.y(), path_point.z()});
+      }
       ctx.replication.bot_debug_entries.push_back(std::move(entry));
     }
   }
 
-  // --- Handle entity updates from server ---
   for (const auto &pkg : inbox.entity_updates)
   {
+
     if (!pkg.has_entity_data() || pkg.entity_data().empty())
       continue;
 
-    uint32_t snapshot_tick = pkg.has_server_tick() ? pkg.server_tick() : 0;
+    uint32_t server_tick = pkg.has_server_tick() ? pkg.server_tick() : 0;
 
-    if (snapshot_tick <= ctx.replication.latest_processed_tick && ctx.replication.latest_processed_tick != 0)
+    // if it's one that's older than the one we have, skip it.
+    if (server_tick <= ctx.replication.latest_processed_tick && ctx.replication.latest_processed_tick != 0)
       continue;
 
     // Which snapshot this packet is a delta against. 0 = full update, every
@@ -737,12 +684,12 @@ void Play_State::update(float dt)
         // wait for a new baseline.
         log_error("[CLIENT] Snapshot {} is a delta from tick {}, which is not in our history "
                   "(acked {}). Dropping the packet; the server will re-baseline.",
-                  snapshot_tick, delta_from_tick, ctx.replication.snapshot_history.acked_tick);
+                  server_tick, delta_from_tick, ctx.replication.snapshot_history.acked_tick);
         continue;
       }
     }
 
-    const auto *data = reinterpret_cast<const network::uint8 *>(
+    const auto* data = reinterpret_cast<const network::uint8*>(
         pkg.entity_data().data());
 
     size_t data_size = pkg.entity_data().size();
@@ -751,43 +698,40 @@ void Play_State::update(float dt)
     // The snapshot being reconstructed. It is SEEDED from the baseline: an
     // entity the server did not mention is unchanged, not gone. What is gone
     // is what carried an explicit removal record — see entity_snapshot.hpp.
-    network::snapshot_frame_t latest_snapshot;
+    auto latest_snapshot = network::snapshot_frame_t{};
     if (!network::deserialize_snapshot(reader, baseline, latest_snapshot))
     {
-      // deserialize_snapshot already logged why. The read position is now
-      // meaningless, so the effect batch trailing the records is unreadable
-      // too: drop the packet whole rather than dispatch garbage. Our ack does
-      // not advance, so the server re-baselines to a full update.
+      // deserialize_snapshot already logged why. A partially applied frame is
+      // worse than a missing one -- it would be acked as complete and every
+      // later delta built on it -- so the packet is dropped whole. Our ack
+      // does not advance, so the server re-baselines to a full update.
       continue;
     }
-    latest_snapshot.tick = snapshot_tick;
+
+    latest_snapshot.tick = server_tick;
 
     if (ctx.cvars->net_snapshot_debug &&
-        snapshot_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
-      log_terminal("[net] snapshot {}: delta_from {}, {} players / {} rockets / {} bodies, "
-                   "{} bytes",
-                   snapshot_tick, delta_from_tick, latest_snapshot.players.size(),
-                   latest_snapshot.rockets.size(), latest_snapshot.physics_bodies.size(), data_size);
+        server_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
+      log_terminal("[net] snapshot {}: delta_from {}, {} players // {} bodies, {} bytes",
+                   server_tick, delta_from_tick, latest_snapshot.players.size(), latest_snapshot.physics_bodies.size(), data_size);
 
+    //@NOTE(SJM): should we just  overwrite?
     ctx.replication.latest_player_entities.clear();
     for (const auto &[uid, player] : latest_snapshot.players)
       ctx.replication.latest_player_entities[player.client_slot_index] = player;
 
-    // Do we have a body? Absence here is AUTHORITATIVE rather than merely
-    // unheard-from: the map above is refilled from the reconstructed frame,
-    // which is seeded from the baseline and carries removals explicitly, so a
-    // slot missing from it is a slot the server holds no player entity for.
-    // That is exactly how the server encodes spectating.
-    ctx.connection.spectating =
-        !ctx.replication.latest_player_entities.contains(ctx.connection.my_slot);
+
+    ctx.connection.spectating = !ctx.replication.latest_player_entities.contains(ctx.connection.my_slot);
     if (ctx.connection.spectating)
+    {
       // Or the stale uid would keep suppressing our own cosmetic effects for a
       // body we no longer have.
       ctx.connection.my_entity_uid = shared::null_entity_uid;
-
+    }
+      
     ctx.replication.remote_rockets = latest_snapshot.rockets;
     ctx.replication.remote_physics_bodies = latest_snapshot.physics_bodies;
-    ctx.replication.latest_processed_tick = snapshot_tick;
+    ctx.replication.latest_processed_tick = server_tick;
 
     // Gunshots are read off replicated state, not dispatched as effects — a
     // player whose last_fire_tick advanced since the previous snapshot fired.
@@ -799,6 +743,25 @@ void Play_State::update(float dt)
     // pattern; see hit_confirm_audio.hpp for why it is not a cosmetic effect.
     play_hitmarker_audio_and_update_hit_tick_state(ctx);
 
+    // The command ack is a fact about the PACKAGE, not about any entity in it:
+    // it says how far the server has consumed this client's command stream. Read
+    // it outside the entity loop, because a spectator has no entity of its own in
+    // the snapshot and still sends commands — nested inside the my-slot branch it
+    // was never read while spectating, so the client resent the same moves
+    // forever and eventually dropped them at cl_max_unacked_moves.
+    if (pkg.has_latest_processed_command())
+      ctx.prediction.latest_server_ack_command = pkg.latest_processed_command();
+
+    // The ack is a high-water mark, so everything at or below it is done and
+    // stops being resent. This is the whole retransmit protocol.
+    std::erase_if(ctx.prediction.unacked_moves,
+                  [&](const game::C2S_PlayerMoveCommand& move)
+                  {
+                    return move.command_number() <=
+                           ctx.prediction.latest_server_ack_command;
+                  });
+
+    // set the stage for prediction.
     for (const auto &[slot_index, player] : ctx.replication.latest_player_entities)
     {
       if (slot_index == ctx.connection.my_slot)
@@ -807,15 +770,15 @@ void Play_State::update(float dt)
         ctx.prediction.local_player_health = player.health;
         ctx.prediction.latest_server_position = player.position;
         ctx.prediction.latest_server_velocity = player.velocity;
-        ctx.prediction.latest_server_ack_command =
-            pkg.has_latest_processed_command() ? pkg.latest_processed_command() : -1;
+        // Stays inside this branch: it gates reconciliation, which replays
+        // against latest_server_position and means nothing without a body.
         ctx.prediction.received_server_update = true;
 
-        if (!ui.logged_first_server_update) {
+        if (!connection_ui.logged_first_server_update) {
           log_terminal("[CLIENT] First server update: position ({:.1f}, {:.1f}, {:.1f}), entity_id {}",
                        player.position.x, player.position.y, player.position.z,
                        player.entity_id);
-          ui.logged_first_server_update = true;
+          connection_ui.logged_first_server_update = true;
         }
       }
       else
@@ -823,29 +786,28 @@ void Play_State::update(float dt)
         auto &remote_player = ctx.replication.remote_players[slot_index];
         // don't lerp positions if the entity id changed (e.g. player disconnected and rejoined)
         if (remote_player.active && remote_player.entity_uid != player.entity_id)
+        {
           remote_player = {};
+        }
        
         remote_player.active = true;
         remote_player.slot_index = slot_index;
         remote_player.entity_uid = player.entity_id;
         remote_player.snapshots[0] = remote_player.snapshots[1];
         remote_player.snapshots[1] = {player.position, player.view_angle_yaw,
-                           player.view_angle_pitch, player.body_yaw, snapshot_tick};
+                           player.view_angle_pitch, player.body_yaw, server_tick};
+        // kind of sloppy increment here.
         if (remote_player.snapshot_count < 2)
           remote_player.snapshot_count++;
 
-        // Death is a latched stamp, so the interesting event is the stamp
-        // CHANGING: 0 -> N starts the clip, N -> 0 is the respawn that ends it.
-        // Seeded from how long ago the death tick was rather than from zero,
-        // because the snapshot carrying it may not be the first one we see of
-        // this corpse.
+
         if (player.death_tick != remote_player.death_tick)
         {
           remote_player.death_tick = player.death_tick;
           const bool stamp_in_the_past =
-              player.death_tick != 0 && snapshot_tick > player.death_tick;
+              player.death_tick != 0 && server_tick > player.death_tick;
           remote_player.death_animation_seconds =
-              stamp_in_the_past ? static_cast<float>(snapshot_tick - player.death_tick) /
+              stamp_in_the_past ? static_cast<float>(server_tick - player.death_tick) /
                                       static_cast<float>(ctx.connection.server_tickrate)
                                 : 0.f;
         }
@@ -863,25 +825,13 @@ void Play_State::update(float dt)
                ? ctx.replication.remote_players.erase(it)
                : std::next(it);
 
-    // Latched BEFORE the acknowledge below moves the cursor: the tick we were
-    // acking until now is the one every remote_player's snapshots[0] was just
-    // filled from, so the pair is the bracket the next frame will draw through.
-    // The move command reports it so the server can rewind shots to it.
+   
     ctx.replication.previous_snapshot_tick = ctx.replication.snapshot_history.acked_tick;
 
-    ctx.replication.snapshot_history.slot_for(snapshot_tick) = std::move(latest_snapshot);
-    ctx.replication.snapshot_history.acknowledge(snapshot_tick);
+    // acknowledge moves the cursor to this latest snapshot tick.
+    ctx.replication.snapshot_history.slot_for(server_tick) = std::move(latest_snapshot);
+    ctx.replication.snapshot_history.acknowledge(server_tick);
 
-    // The cosmetic effect batch tails the entity delta in the same packet.
-    // Dispatch immediately — handlers are one-shot, fire-and-forget.
-    //
-    // align() FIRST. The server spliced a pre-encoded block in with
-    // write_bytes, which aligns before copying, so the block starts on a byte
-    // boundary that the entity delta's own bit length does not predict. THE
-    // TWO MUST MOVE TOGETHER — see the splice in server_impl.cpp. Getting this
-    // wrong decodes as plausible garbage rather than failing.
-    reader.align();
-    dispatch_received_effects(ctx, reader, ctx.cvars->cl_event_debug);
   }
 
   // Everything below simulates and renders the local world, which only exists
@@ -899,7 +849,7 @@ void Play_State::update(float dt)
     ctx.prediction.received_server_update = false;
 
     
-    // Seed from the server's authoritative state, then replay every command it
+    // intiialize from the server's authoritative state, then replay every command it
     // hasn't acked yet on top — the result is where we should actually be now.
     vec3f reconciled_position = ctx.prediction.latest_server_position;
     vec3f reconciled_velocity = ctx.prediction.latest_server_velocity;
@@ -967,7 +917,7 @@ void Play_State::update(float dt)
   // Right-click TOGGLES: zoom_active persists until clicked off, so
   // zoom_fraction eases toward a state rather than tracking a held button.
   const bool zoom_input_allowed =
-      ui.mouse_captured && !console_open && !ui.show_menu_overlay;
+      connection_ui.mouse_captured && !console_open && !connection_ui.show_menu_overlay;
 
   if (!zoom_input_allowed)
   {
@@ -984,22 +934,22 @@ void Play_State::update(float dt)
   const float zoom_target = ctx.prediction.zoom_active ? 1.0f : 0.0f;
   if (ctx.cvars->r_zoom_easing_time_between_fovs <= 0.0f)
   {
-    ui.zoom_fraction = zoom_target;
+    connection_ui.zoom_fraction = zoom_target;
   }
   else
   {
     float step = dt / ctx.cvars->r_zoom_easing_time_between_fovs;
-    ui.zoom_fraction += shared::clamp(zoom_target - ui.zoom_fraction, -step, step);
+    connection_ui.zoom_fraction += shared::clamp(zoom_target - connection_ui.zoom_fraction, -step, step);
   }
 
   camera.fov_degrees = shared::lerp_clamped(ctx.cvars->r_fov, ctx.cvars->r_zoom_fov,
-                                            ui.zoom_fraction);
+                                            connection_ui.zoom_fraction);
 
-  // before input handling, render the menu overlay (done in render_ui)
-  if (ui.show_menu_overlay) return;
+  // The menu overlay owns input while it is up; it draws from build_frame.
+  if (connection_ui.show_menu_overlay) return;
 
   // --- Mouse look ---
-  if (ui.mouse_captured && !console_open)
+  if (connection_ui.mouse_captured && !console_open)
   {
     // Scale by tan(fov/2) so a given hand movement sweeps the same distance
     // across the screen at any FOV — otherwise zooming multiplies your aim
@@ -1098,31 +1048,25 @@ void Play_State::update(float dt)
 
   Move_Input move_input = move_input_from_buttons(buttons);
 
-  // Prediction has to make the same decision the server makes, or it is not
-  // prediction. The server zeroes a dead player's input and keeps simulating
-  // (gravity and friction still run), so we zero ours identically and let
-  // player_move do the rest -- the alternative is walking around locally for
-  // the whole respawn delay while reconciliation drags us back every snapshot.
-  // Zeroed BEFORE the ring buffer stores it, so replays stay consistent too.
   if (local_player_is_dead)
     move_input = Move_Input{};
 
-  // Movement cosmetics produced by this frame's predicted tick(s). We play the
-  // local player's jump/land here, immediately, off prediction — no server
-  // round-trip — so our own feedback is zero-latency. The server still
-  // broadcasts these (tagged with our uid) for *other* clients; our own copy is
-  // suppressed there by my_entity_uid. Reconciliation replays below pass no
-  // out-events, so corrections never re-trigger sounds.
+
   Move_Events frame_move_events{};
 
   // --- Client-side prediction ---
   // When connected, physics steps at the server tickrate so prediction matches
   // the server. Accumulate real frame time and step in fixed increments.
+  //
+  // phase != Connected` means the connection is
+  // pending or broken, never that a server was deliberately not wanted (nothing
+  // here plays offline, the integrated build connects over loopback too).
   if (ctx.connection.phase == Connection_Phase::Connected)
   {
     float tick_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
     ctx.prediction.physics_accumulator += dt;
 
+    // whatever inputs we make here, send them to the server. this could be batched but is not at this moment.
     while (ctx.prediction.physics_accumulator >= tick_dt)
     {
       ctx.prediction.physics_accumulator -= tick_dt;
@@ -1134,10 +1078,6 @@ void Play_State::update(float dt)
       view_angles->set_pitch(ctx.prediction.player_pitch);
       view_angles->set_yaw(ctx.prediction.player_yaw);
       move_cmd.set_buttons_bitfield(buttons);
-      // Which snapshot we hold, so the server can send its next one as a diff
-      // against it. Rides on the move command rather than a message of its own:
-      // it is sent at the same rate, to the same place, and a lost move command
-      // already costs us a tick — one more datagram would buy nothing.
       move_cmd.set_held_snapshot_tick(ctx.replication.snapshot_history.acked_tick);
 
       // The blend this move was aimed THROUGH, which is a different question
@@ -1177,18 +1117,40 @@ void Play_State::update(float dt)
         move_cmd.set_interpolation_fraction(fraction);
       }
 
-      network::send_protobuf_message(transport, move_cmd);
+      // Retain, then send the whole unacked tail. The cadence is unchanged --
+      // still one datagram per command -- but each one now also re-carries the
+      // moves the server has not confirmed, so a single lost packet costs no
+      // input at all. Duplicates are dropped by the server's high-water check.
+      ctx.prediction.unacked_moves.push_back(move_cmd);
+
+      const size_t max_unacked =
+          static_cast<size_t>(std::max(1, ctx.cvars->cl_max_unacked_moves));
+      if (ctx.prediction.unacked_moves.size() > max_unacked)
+      {
+        // Older than the server would rewind to anyway, and the packet cap is
+        // real. Loud, because this is input being abandoned.
+        log_warning("dropping move {} unsent: {} moves unacked, over "
+                    "cl_max_unacked_moves ({}). The server has not acked in "
+                    "{} commands",
+                    ctx.prediction.unacked_moves.front().command_number(),
+                    ctx.prediction.unacked_moves.size(), max_unacked,
+                    ctx.prediction.command_number -
+                        ctx.prediction.latest_server_ack_command);
+        ctx.prediction.unacked_moves.erase(
+            ctx.prediction.unacked_moves.begin(),
+            ctx.prediction.unacked_moves.begin() +
+                (ctx.prediction.unacked_moves.size() - max_unacked));
+      }
+
+      game::C2S_PlayerMoveBatch move_batch;
+      for (const game::C2S_PlayerMoveCommand& unacked :
+           ctx.prediction.unacked_moves)
+        *move_batch.add_moves() = unacked;
+
+      network::send_protobuf_message(transport, move_batch);
 
       Move_Events tick_events{};
-      // Spectating: the server holds no body for us and ignores the movement in
-      // these -- but held_snapshot_tick RIDES on them, so they keep being sent,
-      // or the server would never learn what we hold and would send a full
-      // snapshot every tick. (It reads that field in a pass of its own, ahead of
-      // the move handling that skips us, which is what makes this work.)
-      // What is skipped is the local sim: predicting would walk a phantom
-      // around the map and hand the first post-join_game snapshot a position
-      // to drag us back from. The ring-buffer entry below is still written, so
-      // reconciliation never reads a stale command number out of it.
+      
       if (!ctx.connection.spectating)
       {
         auto [new_position, new_velocity] =
@@ -1217,17 +1179,7 @@ void Play_State::update(float dt)
                                    ctx.prediction.player_position,   ctx.prediction.player_velocity};
       ctx.prediction.command_number++;
     }
-  }
-  else
-  {
-    auto [new_position, new_velocity] =
-        player_move(*ctx.cvars, move_input, ctx.world.session.bvh, ctx.prediction.player_position,
-                    ctx.prediction.player_velocity, basis.forward, basis.right,
-                    player_half_width, player_half_height, dt, &frame_move_events,
-                    &ctx.visuals.debug_collision_faces);
 
-    ctx.prediction.player_position = new_position;
-    ctx.prediction.player_velocity = new_velocity;
   }
 
   // Local player's movement sounds — centered (2D), since it's us. Other
@@ -1343,41 +1295,32 @@ void Play_State::update(float dt)
   else if (ctx.connection.phase == Connection_Phase::Connected &&
            ctx.connection.spectating)
   {
-    // Connected with no body: sit at a fixed, map-authored spectate spot. Spot
-    // 0 for now -- cycling between them moves this index and nothing else.
-    //
-    // The result is deliberately dropped: a map with no spectate markers leaves
-    // the camera where prediction put it, and finalize_client_map already said
-    // so once at load. Saying it again every frame would be noise.
+
     (void)try_pose_camera_at_spectate_spot(camera, ctx.world.session, 0);
   }
+
+    // Record dt for FPS averaging
+  dt_history[dt_history_index] = dt;
+  dt_history_index = (dt_history_index + 1) % FPS_HISTORY_SIZE;
+  if (dt_history_count < FPS_HISTORY_SIZE)
+    dt_history_count++;
+
+
+    // Tick down explosion effects
+  for (auto &fx : ctx.visuals.explosion_effects)
+    fx.time_remaining -= dt;
+  std::erase_if(ctx.visuals.explosion_effects, [](const explosion_effect_t &fx) {
+    return fx.time_remaining <= 0.f;
+  });
+
 }
 
-void Play_State::render_ui()
+void Play_State::draw_imgui_panels()
 {
   auto &ctx = state_manager::get_client_context();
 
-  if (ui.show_menu_overlay)
-  {
-    render_menu_overlay(&ui.show_menu_overlay);
+  if (connection_ui.show_menu_overlay)
     return;
-  }
-
-  // Only while actually looking around: an uncaptured cursor is the player's
-  // aiming device at that point, and a second one in the middle reads as a bug.
-  if (ui.mouse_captured && ctx.cvars->cl_crosshair)
-  {
-    hud::crosshair_settings_t crosshair;
-    crosshair.arm_length = ctx.cvars->cl_crosshair_size;
-    crosshair.gap        = ctx.cvars->cl_crosshair_gap;
-    crosshair.thickness  = ctx.cvars->cl_crosshair_thickness;
-    crosshair.draw_dot   = ctx.cvars->cl_crosshair_dot;
-    crosshair.color      = {crosshair_color_channel(ctx.cvars->cl_crosshair_r),
-                            crosshair_color_channel(ctx.cvars->cl_crosshair_g),
-                            crosshair_color_channel(ctx.cvars->cl_crosshair_b),
-                            crosshair_color_channel(ctx.cvars->cl_crosshair_a)};
-    hud::draw_crosshair(crosshair);
-  }
 
   ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
   ImGui::SetNextWindowBgAlpha(0.3f);
@@ -1599,9 +1542,22 @@ renderer::pipeline_state_t state_for(const entities::Material &material)
 
 } // namespace
 
-void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes)
+void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+                             renderer::ui_draw_list_t &ui)
 {
   auto &ctx = state_manager::get_client_context();
+
+  // Ahead of the world bail below: a client that is still downloading the map
+  // has no session to draw and can still open the menu, and "Disconnect" is the
+  // only way out of a stalled download. It draws under any ImGui window either
+  // way -- an open console covers it, which is the intended precedence.
+  if (connection_ui.show_menu_overlay)
+  {
+    if (const ui::ui_font_t *font = ctx.font)
+      ui::draw_screen(ui, pause_menu.screen, *font);
+    else
+      log_error("[menu] no UI font registered; the pause menu cannot draw");
+  }
 
   if (!ctx.world.ready)
     return;
@@ -1614,7 +1570,6 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   scene.begin_frame(delta_seconds);
   scene.view.viewport = {{0, 0}, {1, 1}};
   scene.view.camera   = camera;
-
   pose_count = 0;
 
   // Render the session's geometry. One call per object — the mesh-path /
@@ -2017,6 +1972,25 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 #endif
 
   passes.push_back(scene.to_pass());
+
+
+  // --- Screen-space UI ---
+  // Only while actually looking around: an uncaptured cursor is the player's
+  // aiming device at that point, and a second one in the middle reads as a bug.
+  if (connection_ui.mouse_captured && !connection_ui.show_menu_overlay &&
+      ctx.cvars->cl_crosshair)
+  {
+    hud::crosshair_settings_t crosshair;
+    crosshair.arm_length = ctx.cvars->cl_crosshair_size;
+    crosshair.gap        = ctx.cvars->cl_crosshair_gap;
+    crosshair.thickness  = ctx.cvars->cl_crosshair_thickness;
+    crosshair.draw_dot   = ctx.cvars->cl_crosshair_dot;
+    crosshair.color      = {clamp_crosshair_color_channel(ctx.cvars->cl_crosshair_r),
+                            clamp_crosshair_color_channel(ctx.cvars->cl_crosshair_g),
+                            clamp_crosshair_color_channel(ctx.cvars->cl_crosshair_b),
+                            clamp_crosshair_color_channel(ctx.cvars->cl_crosshair_a)};
+    hud::draw_crosshair(ui, renderer::screen_size(), crosshair);
+  }
 }
 
 } // namespace client

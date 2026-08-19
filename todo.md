@@ -3,9 +3,16 @@
 # reliable retransmit.
 
 
+**Sub-tick movement: the plan and its prerequisites are in `subtick_plan.md`.**
+Step 1 is done for friction (2026-08-18) and gravity (2026-08-19); step 2, the
+step-invariance test, landed 2026-08-19 as
+`src/test/player_move_step_invariance_test.cpp` and is the gate on everything
+after it. Read that file before touching `player_move.cpp` step sizes — it says
+which divergences are defects and which are air control.
+
 Finished work moves to `done.md`. Design rationale lives in `entity_def.md`,
-`entity_storage_def.md`, `entity_system_def.md` and `cvar_def.md`; this file is
-the work list and the order.
+`entity_storage_def.md`, `entity_system_def.md`, `cvar_def.md` and
+`subtick_plan.md`; this file is the work list and the order.
 
 **Current priorities**
 
@@ -532,12 +539,6 @@ tool.
       (`PACKET_PAYLOAD_OFFSET_IN_BYTES`) with a `static_assert` against
       `offsetof`, so the next header change is a build failure rather than a
       corrupted wire.
-- [ ] **Cap moves per client per tick** — the successor to lag compensation, and
-      named in `lag_compensation_def.md` §3 as explicitly out of its scope. A
-      client whose packets bunch after a stall still gets N `player_move()` steps
-      in one tick. Firing is interval-gated, so this is a movement exploit rather
-      than a damage one, and the stale-`command_number` drop that landed with the
-      rewind already removes the replay half of it.
 - [ ] **The mutual-trade case has no unit test.** Damage deferral makes two
       shooters resolving against each other in one tick both land damage, and
       that is the one bullet of `lag_compensation_def.md` §4 that
@@ -607,6 +608,48 @@ tool.
 - [ ] Irradiance map; environment lighting.
 - [ ] Pack PBR textures into one RGB (ORM: occlusion, roughness, metallic).
 - [ ] Pack normal maps: xy in RG (reconstruct Z), BA for roughness/height.
+
+# UI
+
+Both found 2026-08-17, chasing "the text looks blurry". The blur itself was
+`draw_text` flooring the PEN while stb's oversampling put every glyph offset on
+a quarter pixel — fixed the same day (quads snap, oversampling off; `ui_def.md`
+§"Snapped quads, no oversampling"). These two are what that dig turned up and
+did not fix.
+
+- [ ] **The shipped font has no `_` glyph, so underscores draw as the `.notdef`
+      box.** `anwb-uu-regular.ttf`, codepoint U+005F. `stbtt_FindGlyphIndex`
+      returns 0 and the pack renders `.notdef` at every size, which is why it
+      LOOKS like a deliberate box rather than a missing glyph. Fix is in the
+      font, not the code — or decide the box is acceptable and say so here.
+
+      **The related trap, which is in the code and is commented at the site:**
+      the three sizes must stay three separate `stbtt_PackFontRanges` calls.
+      `stbtt_PackFontRangesGatherRects` latches `missing_glyph_added` across
+      every range in ONE call — the first missing codepoint gets a real
+      `.notdef` rect and each one after gets a zero-area rect that
+      `RenderIntoRects` skips, leaving a **zero advance**. Batched, `_` drew at
+      `small` and collapsed to nothing at `medium` and `large`. Batching is the
+      obvious cleanup now that oversampling no longer forces the split, and it
+      is wrong. `ui_test` names the offending codepoint before it asserts.
+
+- [ ] **The UI layer writes sRGB bytes to an sRGB attachment, so colours are
+      encoded twice and text edges bloom.** The swapchain is
+      `VK_FORMAT_B8G8R8A8_SRGB` (`renderer.cpp:494`) and `ui_vertex_t::color` is
+      an `R8G8B8A8_UNORM` attribute passed straight through `ui.vert` — so an
+      authored 0.5 grey leaves the shader as linear 0.5 and lands on screen at
+      ~0.73. Worse for text than for rects: coverage alpha then blends in LINEAR
+      space, so a half-covered edge texel of white-on-black displays at 188/255
+      where sRGB-space blending gives 128, and every glyph reads slightly glowy.
+      That is the residue of the blur complaint that snapping did not fix.
+
+      Fix for the UI half is one line — `pow(inColor.rgb, vec3(2.2))` in
+      `ui.vert`. **The 3D half is a bigger conversation and should be settled
+      first**: `pbr.frag:269` already does its own `pow(Lo, 1.0/2.2)` and then
+      hands the result to the same sRGB attachment, so the lit path is
+      double-encoded too. Two shaders compensating for one attachment in
+      different directions is the actual bug; decide where the encode lives
+      (attachment or shader, not both) and both fixes fall out.
 
 # Editor
 

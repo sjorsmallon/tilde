@@ -20,6 +20,18 @@ namespace shared
 namespace
 {
 
+constexpr const char* ROUND_PHASE_VALUE_NAMES[] = {
+  "Warmup",
+  "Countdown",
+  "Live",
+  "Round_End",
+  "Game_Over",
+};
+
+constexpr enum_type_info_t ENUM_INFOS[] = {
+  {"Round_Phase", {ROUND_PHASE_VALUE_NAMES, 5}},
+};
+
 constexpr field_info_t ROCKET_DETONATED_FIELDS[] = {
   {.name = "attacker_id",
    .type = FIELD_TYPE_U32,
@@ -119,7 +131,61 @@ constexpr field_info_t PLAYER_SPAWNED_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t ROUND_PHASE_CHANGED_FIELDS[] = {
+  {.name = "phase",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Round_Phase_Changed, phase),
+   .size_in_bytes = (uint32_t)sizeof(Round_Phase_Changed::phase),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[0]},
+  {.name = "round_number",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Round_Phase_Changed, round_number),
+   .size_in_bytes = (uint32_t)sizeof(Round_Phase_Changed::round_number),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "phase_end_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Round_Phase_Changed, phase_end_tick),
+   .size_in_bytes = (uint32_t)sizeof(Round_Phase_Changed::phase_end_tick),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 } // namespace
+
+const char* to_string(Round_Phase value)
+{
+  switch (value)
+  {
+    case Round_Phase::Warmup: return "Warmup";
+    case Round_Phase::Countdown: return "Countdown";
+    case Round_Phase::Live: return "Live";
+    case Round_Phase::Round_End: return "Round_End";
+    case Round_Phase::Game_Over: return "Game_Over";
+  }
+  assert(false && "invalid Round_Phase");
+  return "";
+}
+
+template <> std::optional<Round_Phase> try_from_string<Round_Phase>(std::string_view text)
+{
+  if (text == "Warmup") return Round_Phase::Warmup;
+  if (text == "Countdown") return Round_Phase::Countdown;
+  if (text == "Live") return Round_Phase::Live;
+  if (text == "Round_End") return Round_Phase::Round_End;
+  if (text == "Game_Over") return Round_Phase::Game_Over;
+  return std::nullopt;
+}
 
 const char* to_string(game_event_type value)
 {
@@ -128,6 +194,7 @@ const char* to_string(game_event_type value)
     case game_event_type::Rocket_Detonated: return "Rocket_Detonated";
     case game_event_type::Player_Died: return "Player_Died";
     case game_event_type::Player_Spawned: return "Player_Spawned";
+    case game_event_type::Round_Phase_Changed: return "Round_Phase_Changed";
   }
   assert(false && "invalid game_event_type");
   return "";
@@ -208,6 +275,31 @@ std::string to_text(const Player_Spawned& value)
   return std::string("Player_Spawned") + fields_to_text({PLAYER_SPAWNED_FIELDS, 3}, &value);
 }
 
+void fire_round_phase_changed(event_stream_t& stream, const Round_Phase_Changed& payload)
+{
+  stream.writer.write_bits((uint32_t)game_event_type::Round_Phase_Changed, 16);
+  for (const field_info_t& field : Span<const field_info_t>{ROUND_PHASE_CHANGED_FIELDS, 3})
+    network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
+  ++stream.count;
+
+  if (stream.log_fired)
+    log_terminal("[event fired] {}", to_text(payload));
+}
+
+std::optional<Round_Phase_Changed> try_read_round_phase_changed(network::Bit_Reader& reader)
+{
+  Round_Phase_Changed payload;
+  for (const field_info_t& field : Span<const field_info_t>{ROUND_PHASE_CHANGED_FIELDS, 3})
+    if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
+      return std::nullopt;
+  return payload;
+}
+
+std::string to_text(const Round_Phase_Changed& value)
+{
+  return std::string("Round_Phase_Changed") + fields_to_text({ROUND_PHASE_CHANGED_FIELDS, 3}, &value);
+}
+
 std::string game_event_stream_to_text(const event_stream_t& stream)
 {
   if (stream.empty())
@@ -257,6 +349,17 @@ std::string game_event_stream_to_text(const event_stream_t& stream)
       case game_event_type::Player_Spawned:
       {
         const std::optional<Player_Spawned> payload = try_read_player_spawned(reader);
+        if (!payload)
+        {
+          text += "<undecodable payload; the rest is unreadable>";
+          return text;
+        }
+        text += to_text(*payload);
+        break;
+      }
+      case game_event_type::Round_Phase_Changed:
+      {
+        const std::optional<Round_Phase_Changed> payload = try_read_round_phase_changed(reader);
         if (!payload)
         {
           text += "<undecodable payload; the rest is unreadable>";

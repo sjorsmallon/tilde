@@ -82,11 +82,12 @@ call_record_t g_noclip;
 call_record_t g_join_game;
 call_record_t g_bind;
 call_record_t g_connect;
+call_record_t g_announce;
 
 void reset_records()
 {
   g_spawn_bot = g_spawn_cube = g_spawn_sphere = {};
-  g_map = g_noclip = g_join_game = g_bind = g_connect = {};
+  g_map = g_noclip = g_join_game = g_bind = g_connect = g_announce = {};
 }
 
 // The line buffer a console command's argument views point into must outlive
@@ -168,6 +169,13 @@ void connect(std::string_view address, const command_context_t& context)
   ++g_connect.count;
   g_connect.first_string = std::string(address);
   g_connect.caller_slot  = context.caller_slot;
+}
+
+void announce(std::string_view text, const command_context_t& context)
+{
+  ++g_announce.count;
+  g_announce.rest_string = std::string(text);
+  g_announce.caller_slot = context.caller_slot;
 }
 
 } // namespace cvars::commands
@@ -589,6 +597,20 @@ void test_command_binders()
   check(run(state, table, "bind k", &reply) == cvars::console_result_t::bad_arguments,
         "a rest parameter still needs at least one token");
   check(g_bind.count == 0, "the incomplete bind ran nothing");
+
+  // announce is a rest parameter with NOTHING in front of it, which bind could
+  // not cover: the tail has to start at the first token rather than the second.
+  reset_records();
+  std::string announce_line = "announce round  starts in 3";
+  check(run(state, table, announce_line, &reply) == cvars::console_result_t::ok,
+        "announce with a leading rest parameter succeeds");
+  check_equal(g_announce.rest_string, "round  starts in 3",
+              "the whole tail is the banner text, spacing intact");
+
+  reset_records();
+  check(run(state, table, "announce", &reply) == cvars::console_result_t::bad_arguments,
+        "announce with no text is rejected rather than showing an empty banner");
+  check(g_announce.count == 0, "the empty announce ran nothing");
 }
 
 // --- 5. Mirroring -----------------------------------------------------------

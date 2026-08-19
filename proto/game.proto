@@ -9,6 +9,27 @@ message ViewAngle {
   float yaw = 2;
   float roll = 3;
 }
+// Client -> Server: every move command the client has not seen acknowledged,
+// oldest first. This is the ONLY move message on the wire; a single command is
+// a batch of one.
+//
+// Redundancy instead of retransmission. Moves are the client's half of a
+// prediction the server re-runs, so a lost datagram is a lost tick of input --
+// the player pressed forward and the world disagrees. Re-sending the unacked
+// tail in every datagram costs a few dozen bytes and needs no timers, no acks
+// per command and no state on either side, because the pieces were already
+// here: S2C_EntityPackage.latest_processed_command is a HIGH-WATER mark, and
+// the server already drops anything at or below it. A duplicate is therefore
+// free by construction rather than by agreement.
+//
+// It also converts the move budget's failure mode: a command dropped for want
+// of a credit (server/move_budget.hpp) is still unacked, so it arrives again
+// next tick and runs when the credit does. The budget throttles rather than
+// discards, with the queue living on the client where the data already was.
+message C2S_PlayerMoveBatch {
+  repeated C2S_PlayerMoveCommand moves = 1;
+}
+
 message C2S_PlayerMoveCommand {
   optional int32 command_number = 1; // this is just for sequencing!
   optional int32 tick_count = 2;
@@ -259,5 +280,20 @@ message S2C_BotDebug {
 // is a follow-up if/when packet loss causes visible gaps.
 message S2C_GameEventBatch {
     optional bytes event_data  = 1;
+    optional uint32 server_tick = 2;
+}
+
+// Server -> Client: a batch of cosmetic effects produced this tick. Same
+// payload shape as S2C_GameEventBatch -- the two channels differ in intended
+// reliability, not in encoding.
+//
+// This used to be spliced into S2C_EntityPackage.entity_data behind a
+// byte-align, which coupled two files that had to be edited together and
+// decoded as plausible garbage when they were not. It also put a burst of
+// cosmetics on the critical path of the entity delta: crossing 1200 bytes
+// fragments the packet, and losing one fragment of an unreliable message costs
+// the whole snapshot. A cosmetic can now only cost cosmetics.
+message S2C_EffectBatch {
+    optional bytes effect_data  = 1;
     optional uint32 server_tick = 2;
 }

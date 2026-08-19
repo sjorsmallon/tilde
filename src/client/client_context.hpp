@@ -19,6 +19,11 @@ namespace client
 
 struct audio_system_t; // owned by client_impl.cpp; see init()/shutdown()
 
+namespace ui
+{
+struct ui_font_t; // client/ui/font.hpp
+}
+
 static constexpr int32_t invalid_slot_idx = -1;
 
 // --- Connection phase (client network/handshake state machine) ---
@@ -212,6 +217,17 @@ struct prediction_t
   int command_number = 0;
   Array<Saved_Command, MAX_PENDING_COMMANDS> pending_commands = {};
 
+  // Every move built but not yet acked by the server, oldest first, resent whole
+  // in each move datagram. Held as the BUILT messages rather than rebuilt from
+  // pending_commands above: a resend has to carry the held_snapshot_tick and the
+  // interpolation bracket the command was issued with, and those describe the
+  // moment it was made, not the moment it is re-sent. Saved_Command has neither
+  // -- it exists for reconciliation, which replays movement and nothing else.
+  //
+  // Trimmed by latest_server_ack_command, which is a high-water mark, so this
+  // needs no per-command acking. Capped by cl_max_unacked_moves.
+  std::vector<game::C2S_PlayerMoveCommand> unacked_moves;
+
   // --- Server reconciliation ---
   vec3f latest_server_position = {0, 0, 0};
   vec3f latest_server_velocity = {0, 0, 0};
@@ -315,6 +331,10 @@ struct client_context_t
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
   audio_system_t* audio = nullptr;
+  // The HUD font. Borrowed, like `audio` above: client_impl.cpp owns it and
+  // neither reset touches it, because a font means the same thing in every map
+  // and on every connection.
+  const ui::ui_font_t* font = nullptr;
 
   const shared::game_session_t* server_session = nullptr;
   ::network::Client_Transport_Layer transport_layer;

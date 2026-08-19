@@ -43,16 +43,20 @@ closed sets, loud failures) carries over unchanged and is not re-argued here.
 > - **Two `.def` files, one channel each**, and every emitted filename is derived
 >   from the input's stem. The event family is the first with two inputs, and one
 >   of those names is written verbatim into an `#include`.
-> - **The transport is UNIFIED, which is what made the above possible.** The
->   effect batch is pre-encoded once and spliced into each client's snapshot with
->   `Bit_Writer::write_bytes`, which byte-aligns first: ≤7 wasted bits per packet
->   in exchange for one encoding serving every client. That is the whole reason
->   the value queue existed, so `dispatched_effect_t`, `serialize_effect_batch`,
->   `deserialize_effect_batch` and `try_deserialize_effect` are gone with it, as
->   is `src/server/cosmetic_events.{hpp,cpp}`. The client's `reader.align()` is
->   the other half of the pair and the two must move together — a misaligned
->   block decodes as plausible garbage rather than failing, which is why
->   `events_test` covers the splice specifically.
+> - **The transport is UNIFIED, which is what made the above possible.** Both
+>   batches are pre-encoded once, at fire time, straight into an
+>   `event_stream_t`. That is the whole reason the value queue existed, so
+>   `dispatched_effect_t`, `serialize_effect_batch`, `deserialize_effect_batch`
+>   and `try_deserialize_effect` are gone with it, as is
+>   `src/server/cosmetic_events.{hpp,cpp}`.
+> - **Each batch rides its OWN message** (`S2C_GameEventBatch`,
+>   `S2C_EffectBatch`). The effect batch was first spliced into each client's
+>   snapshot behind a `Bit_Writer::write_bytes` byte-align, paired with the
+>   client's `reader.align()`; that pair is gone. It was unenforceable — a
+>   misaligned block decoded as plausible garbage rather than failing — and it
+>   put cosmetics on the entity delta's critical path, where a burst past 1200
+>   bytes fragmented the snapshot and one lost fragment cost the whole thing.
+>   Encoding once for every client never depended on the splice.
 >
 > Two departures from the body that still stand:
 >
@@ -72,7 +76,7 @@ closed sets, loud failures) carries over unchanged and is not re-argued here.
 >
 > `events_test` is the guard: it round-trips every declared member of both
 > channels, pins each record's layout (the kind, then the table, in table order)
-> and covers the align-and-splice path.
+> and covers the `S2C_EffectBatch` wrapper round trip.
 
 ## Scope: what gets ported, and what deliberately does not
 

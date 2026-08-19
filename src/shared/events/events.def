@@ -36,3 +36,31 @@ Player_Spawned :: Game_Event  "a player entered the world at a spawn point"
     spawn_position:    v3
     spawn_orientation: v3   // Euler degrees, Entity's convention
 }
+
+// Declared HERE rather than in server/game_rules.hpp, which owned it before:
+// the phase is now on the wire, and two enums for one concept is the drift this
+// codebase keeps paying for. game_rules_state_t::phase is this type.
+//
+// Pascal_Case like the entity family's enums, not cvars.def's lowercase -- no
+// one types these at a console.
+//
+//   Warmup     pre-round freeze, match start only. Players are spawned and can
+//              look around; movement and damage are meant to be disabled here
+//              once the gates are wired.
+//   Countdown  the per-round freeze, and the per-round boundary -- round_number
+//              increments on entry, not on Warmup.
+//   Live       the round proper. Ends on the phase deadline or on end_round().
+//   Round_End  post-round settle: scoreboard up, the world keeps simulating,
+//              nothing is scored. Rolls into the next Countdown.
+//   Game_Over  the match is done.
+Round_Phase :: enum { Warmup, Countdown, Live, Round_End, Game_Over }
+
+// ONE event for every transition, not a Round_Started/Round_Ended pair: the FSM
+// has five phases, so a pair would leave Warmup and Game_Over unrepresentable
+// and the payload is identical either way.
+Round_Phase_Changed :: Game_Event  "the match entered a new round phase"
+{
+    phase:          Round_Phase
+    round_number:   u32
+    phase_end_tick: u32   // 0 = no deadline; the phase ends on a win condition
+}

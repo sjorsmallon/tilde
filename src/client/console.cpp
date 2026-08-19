@@ -74,7 +74,7 @@ bool console::bind_key(std::string_view key, std::string command_line)
 
 void console::clear_bindings() { bindings_.clear(); }
 
-void console::poll_bindings()
+void console::execute_pressed_bindings()
 {
   if (should_draw)
     return; // never fire bindings while the console is open

@@ -46,17 +46,16 @@ void set_state(asset_state_t *state)
 namespace
 {
 
-// Every accessor goes through this. A null state means a module resolved an
-// asset before its Init ran set_state() -- report it rather than crashing on a
-// null deref or, worse, silently resolving to nothing the way the duplicated
-// registries used to.
-asset_state_t *state_for(const char *who)
+// Every accessor goes through this. A null state is a broken build, not a
+// runtime condition: this module was never pointed at the launcher's state, so
+// every asset it resolves would come back empty forever.
+asset_state_t &state_for(const char *who)
 {
   if (!g_asset_state)
-    log_error("assets: {} called before assets::set_state() — this module was "
-              "never pointed at the launcher's asset state",
-              who);
-  return g_asset_state;
+    fatal_error("assets: {} called before assets::set_state() — this module was "
+                "never pointed at the launcher's asset state",
+                who);
+  return *g_asset_state;
 }
 
 } // namespace
@@ -874,13 +873,10 @@ std::string canonical_cache_key(const char *path)
 
 asset_handle_t<skeleton_t> load_skeleton(const char *path)
 {
-  asset_state_t *state = state_for("load_skeleton");
-  if (!state)
-    return {};
-
+  asset_state_t &state = state_for("load_skeleton");
   std::string key = canonical_cache_key(path);
 
-  asset_handle_t<skeleton_t> existing = state->skeletons.find(key.c_str());
+  asset_handle_t<skeleton_t> existing = state.skeletons.find(key.c_str());
   if (existing.valid())
     return existing;
 
@@ -890,18 +886,15 @@ asset_handle_t<skeleton_t> load_skeleton(const char *path)
 
   printf("[assets] Loaded skeleton '%s': %zu bones, hash %016llx\n", path,
          skeleton.bones.size(), (unsigned long long)skeleton.hash);
-  return state->skeletons.add(key.c_str(), std::move(skeleton));
+  return state.skeletons.add(key.c_str(), std::move(skeleton));
 }
 
 asset_handle_t<animation_clip_t> load_animation(const char *path)
 {
-  asset_state_t *state = state_for("load_animation");
-  if (!state)
-    return {};
-
+  asset_state_t &state = state_for("load_animation");
   std::string key = canonical_cache_key(path);
 
-  asset_handle_t<animation_clip_t> existing = state->animations.find(key.c_str());
+  asset_handle_t<animation_clip_t> existing = state.animations.find(key.c_str());
   if (existing.valid())
     return existing;
 
@@ -944,7 +937,7 @@ asset_handle_t<animation_clip_t> load_animation(const char *path)
 
   printf("[assets] Loaded animation '%s': %u frame(s) over %u bones, skeleton '%s'\n", path,
          clip.frame_count(), clip.bone_count, clip.skeleton_name.c_str());
-  return state->animations.add(key.c_str(), std::move(clip));
+  return state.animations.add(key.c_str(), std::move(clip));
 }
 
 namespace
@@ -1033,12 +1026,9 @@ void resolve_material_textures(const char *mesh_path, mesh_asset_t &mesh)
 
 asset_handle_t<mesh_asset_t> load_mesh(const char *path)
 {
-  asset_state_t *state = state_for("load_mesh");
-  if (!state)
-    return {};
-
+  asset_state_t &state = state_for("load_mesh");
   // Check cache first (by resolved key if previously loaded).
-  auto existing = state->meshes.find(path);
+  auto existing = state.meshes.find(path);
   if (existing.valid())
     return existing;
 
@@ -1047,7 +1037,7 @@ asset_handle_t<mesh_asset_t> load_mesh(const char *path)
     return {};
 
   // Check cache again by resolved path (covers alias cases).
-  existing = state->meshes.find(resolved.c_str());
+  existing = state.meshes.find(resolved.c_str());
   if (existing.valid())
     return existing;
 
@@ -1068,17 +1058,14 @@ asset_handle_t<mesh_asset_t> load_mesh(const char *path)
   printf("[assets] Loaded mesh '%s': %zu verts, %zu indices%s\n",
          resolved.c_str(), mesh.vertices.size(), mesh.indices.size(),
          mesh.is_skinned() ? " (skinned)" : "");
-  return state->meshes.add(resolved.c_str(), std::move(mesh));
+  return state.meshes.add(resolved.c_str(), std::move(mesh));
 }
 
 asset_handle_t<texture_asset_t> load_texture(const char *path)
 {
-  asset_state_t *state = state_for("load_texture");
-  if (!state)
-    return {};
-
+  asset_state_t &state = state_for("load_texture");
   // Return cached if already loaded
-  auto existing = state->textures.find(path);
+  auto existing = state.textures.find(path);
   if (existing.valid())
     return existing;
 
@@ -1101,94 +1088,83 @@ asset_handle_t<texture_asset_t> load_texture(const char *path)
   stbi_image_free(pixels);
 
   printf("[assets] loaded texture: %s (%dx%d, %d->4 channels)\n", path, w, h, ch);
-  return state->textures.add(path, std::move(tex));
+  return state.textures.add(path, std::move(tex));
 }
 
 const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle)
 {
-  asset_state_t *state = state_for("get(mesh)");
-  return state ? state->meshes.get(handle) : nullptr;
+  asset_state_t &state = state_for("get(mesh)");
+  return state.meshes.get(handle);
 }
 
 asset_handle_t<mesh_asset_t> find_mesh_in_cache(const char *path)
 {
-  asset_state_t *state = state_for("find_mesh_in_cache");
-  return state ? state->meshes.find(path) : asset_handle_t<mesh_asset_t>{};
+  asset_state_t &state = state_for("find_mesh_in_cache");
+  return state.meshes.find(path);
 }
 
 mesh_asset_t *get_mutable(asset_handle_t<mesh_asset_t> handle)
 {
-  asset_state_t *state = state_for("get_mutable");
-  if (!state)
+  asset_state_t &state = state_for("get_mutable");
+  if (!handle.valid() || handle.index >= state.meshes.items.size())
     return nullptr;
-  if (!handle.valid() || handle.index >= state->meshes.items.size())
-    return nullptr;
-  return &state->meshes.items[handle.index];
+  return &state.meshes.items[handle.index];
 }
 
 asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path,
                                                     mesh_asset_t &&mesh)
 {
-  asset_state_t *state = state_for("register_dynamic_mesh");
-  if (!state)
-    return {};
-
-  auto existing = state->meshes.find(path);
+  asset_state_t &state = state_for("register_dynamic_mesh");
+  auto existing = state.meshes.find(path);
   if (existing.valid())
     return existing;
-  return state->meshes.add(path, std::move(mesh));
+  return state.meshes.add(path, std::move(mesh));
 }
 
 asset_handle_t<texture_asset_t> find_texture_in_cache(const char *path)
 {
-  asset_state_t *state = state_for("find_texture_in_cache");
-  return state ? state->textures.find(path) : asset_handle_t<texture_asset_t>{};
+  asset_state_t &state = state_for("find_texture_in_cache");
+  return state.textures.find(path);
 }
 
 asset_handle_t<texture_asset_t> register_dynamic_texture(const char *path,
                                                          texture_asset_t &&texture)
 {
-  asset_state_t *state = state_for("register_dynamic_texture");
-  if (!state)
-    return {};
-
-  auto existing = state->textures.find(path);
+  asset_state_t &state = state_for("register_dynamic_texture");
+  auto existing = state.textures.find(path);
   if (existing.valid())
     return existing;
-  return state->textures.add(path, std::move(texture));
+  return state.textures.add(path, std::move(texture));
 }
 
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle)
 {
-  asset_state_t *state = state_for("get(texture)");
-  return state ? state->textures.get(handle) : nullptr;
+  asset_state_t &state = state_for("get(texture)");
+  return state.textures.get(handle);
 }
 
 const animation_clip_t *get(asset_handle_t<animation_clip_t> handle)
 {
-  asset_state_t *state = state_for("get(animation)");
-  return state ? state->animations.get(handle) : nullptr;
+  asset_state_t &state = state_for("get(animation)");
+  return state.animations.get(handle);
 }
 
 const skeleton_t *get(asset_handle_t<skeleton_t> handle)
 {
-  asset_state_t *state = state_for("get(skeleton)");
-  return state ? state->skeletons.get(handle) : nullptr;
+  asset_state_t &state = state_for("get(skeleton)");
+  return state.skeletons.get(handle);
 }
 
 const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle)
 {
-  asset_state_t *state = state_for("get(pbr_material)");
-  return state ? state->pbr_materials.get(handle) : nullptr;
+  asset_state_t &state = state_for("get(pbr_material)");
+  return state.pbr_materials.get(handle);
 }
 
 asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
 {
-  asset_state_t *state = state_for("load_pbr_material");
-  if (!state)
-    return {};
-
-  auto existing = state->pbr_materials.find(folder_path);
+  asset_state_t &state = state_for("load_pbr_material");
+  auto existing = state.pbr_materials.find(folder_path);
   if (existing.valid())
     return existing;
 
@@ -1212,7 +1188,7 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
   mat.height            = try_load("height.png");
 
   printf("[assets] loaded pbr_material from folder: %s\n", folder_path);
-  return state->pbr_materials.add(folder_path, std::move(mat));
+  return state.pbr_materials.add(folder_path, std::move(mat));
 }
 
 bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_max)
@@ -1264,13 +1240,10 @@ mesh_asset_t generate_mesh_for_key(const char *key)
 
 void init()
 {
-  asset_state_t *state = state_for("init");
-  if (!state)
+  asset_state_t &state = state_for("init");
+  if (state.manifest_initialized)
     return;
-
-  if (state->manifest_initialized)
-    return;
-  state->manifest_initialized = true;
+  state.manifest_initialized = true;
 
   const Span<const asset_info_t> meshes = mesh_asset_manifest();
   for (uint32_t index = 0; index < meshes.size(); ++index)
@@ -1280,14 +1253,14 @@ void init()
     switch (info.source_kind)
     {
       case ASSET_SOURCE_FILE:
-        state->mesh_handles[index] = load_mesh(info.source);
-        if (!state->mesh_handles[index].valid())
+        state.mesh_handles[index] = load_mesh(info.source);
+        if (!state.mesh_handles[index].valid())
           log_error("assets: mesh \"{}\" could not be loaded from \"{}\"", info.name, info.source);
         break;
 
       case ASSET_SOURCE_PROCEDURAL:
-        state->mesh_handles[index] =
-            state->meshes.add(info.name, generate_mesh_for_key(info.source));
+        state.mesh_handles[index] =
+            state.meshes.add(info.name, generate_mesh_for_key(info.source));
         break;
 
       case ASSET_SOURCE_MISSING:
@@ -1306,8 +1279,8 @@ void init()
     switch (info.source_kind)
     {
       case ASSET_SOURCE_FILE:
-        state->sprite_handles[index] = load_texture(info.source);
-        if (!state->sprite_handles[index].valid())
+        state.sprite_handles[index] = load_texture(info.source);
+        if (!state.sprite_handles[index].valid())
           log_error("assets: sprite \"{}\" could not be loaded from \"{}\"", info.name,
                     info.source);
         break;
@@ -1333,11 +1306,8 @@ void init()
 
 asset_handle_t<mesh_asset_t> get_mesh(mesh_asset id)
 {
-  asset_state_t *state = state_for("get_mesh");
-  if (!state)
-    return {};
-
-  if (!state->manifest_initialized)
+  asset_state_t &state = state_for("get_mesh");
+  if (!state.manifest_initialized)
   {
     log_error("assets: get_mesh called before assets::init() — registration is eager and "
               "must run first");
@@ -1348,22 +1318,19 @@ asset_handle_t<mesh_asset_t> get_mesh(mesh_asset id)
   if (index >= mesh_asset_COUNT)
   {
     log_error("assets: mesh id {} is outside the manifest", index);
-    return state->mesh_handles[(uint32_t)mesh_asset::Missing];
+    return state.mesh_handles[(uint32_t)mesh_asset::Missing];
   }
 
-  if (!state->mesh_handles[index].valid())
-    return state->mesh_handles[(uint32_t)mesh_asset::Missing];
+  if (!state.mesh_handles[index].valid())
+    return state.mesh_handles[(uint32_t)mesh_asset::Missing];
 
-  return state->mesh_handles[index];
+  return state.mesh_handles[index];
 }
 
 asset_handle_t<texture_asset_t> get_sprite(sprite_asset id)
 {
-  asset_state_t *state = state_for("get_sprite");
-  if (!state)
-    return {};
-
-  if (!state->manifest_initialized)
+  asset_state_t &state = state_for("get_sprite");
+  if (!state.manifest_initialized)
   {
     log_error("assets: get_sprite called before assets::init() — registration is eager and "
               "must run first");
@@ -1377,7 +1344,7 @@ asset_handle_t<texture_asset_t> get_sprite(sprite_asset id)
     return {};
   }
 
-  return state->sprite_handles[index];
+  return state.sprite_handles[index];
 }
 
 } // namespace assets

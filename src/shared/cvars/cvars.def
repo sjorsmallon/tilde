@@ -136,9 +136,30 @@ Server :: cvars {
     // client learns the tickrate once from CmdAccept at handshake time, which
     // is a handshake fact, not a live-synced value.
     sv_tickrate:            f32 = 60.0      @Server    "Server tick rate in Hz"
+
+    // A connected client sends a move every tick, so silence this long means the
+    // peer is gone: a crash, a pulled cable, or a CmdDisconnect that was itself
+    // lost. 0 disables it, which is what you want while stepping a client
+    // through a debugger.
+    sv_timeout:             f32 = 30.0      @Server    "Seconds of silence before a client is dropped (0 = never)"
+
+    // A client accrues one move credit per tick and spends one per executed
+    // move, so it can never execute more moves over time than the server
+    // ticked. This is how many it may BANK -- the burst that absorbs a network
+    // stall without the client losing input it honestly generated. Beyond it,
+    // moves are dropped and the client rubber-bands. See server/move_budget.hpp
+    // for why a per-tick cap does not bound the exploit at all.
+    sv_max_move_backlog:    i32 = 8         @Server    "Move commands a client may bank and execute in one tick after a stall"
 }
 
 Client :: cvars {
+    // Every move the client has not seen acked rides in every move datagram, so
+    // one lost packet is not one lost tick of input. This bounds how far that
+    // tail may grow: past it the oldest moves are dropped, because a move older
+    // than this is one the server will refuse to rewind to anyway. Eight moves
+    // is roughly 500 bytes against the 1200-byte packet cap.
+    cl_max_unacked_moves:   i32 = 8         @Client    "Unacknowledged move commands resent in every move datagram"
+
     r_fov:                  f32 = 90.0      @Client    "Field of view in degrees"
 
     // Zoom is presentation, so all of it is @Client. The server learns only
@@ -337,4 +358,15 @@ Client_Commands :: commands {
     // must run on the side that isn't connected to one yet. Forwarding it would
     // be nonsense -- there is nowhere to forward it to.
     connect(address: string)               @Client  "Connect to a server (ip or ip:port) and enter play"
+
+    // A COMMAND, not a cvar, for the same reason `map` is one: announcing is a
+    // verb, and the banner has no "current value" anybody can ask for -- it
+    // shows for a few seconds and is gone. A settable string would have to
+    // answer "what is it now?" three seconds later, and the honest answer is
+    // nothing.
+    //
+    // `string...` takes the line's untokenized tail, so `announce hello there`
+    // shows both words with the spacing intact rather than the first token
+    // alone.
+    announce(text: string...)              @Client  "Show a banner on screen for a few seconds"
 }

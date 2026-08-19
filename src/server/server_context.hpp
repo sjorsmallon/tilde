@@ -60,6 +60,22 @@ struct client_slot_t
   // and a warning per shot buries everything else in the log — so the warning is
   // rate-limited to one per second per slot off this. 0 means "never".
   uint32_t last_rewind_warning_tick = 0;
+
+  // Move commands this client may still execute. One is granted per tick and
+  // one is spent per executed move, which bounds movement RATE rather than
+  // moves-per-tick — see server/move_budget.hpp for why that distinction is the
+  // whole fix.
+  //
+  // Starts at ONE, not zero, and that is load-bearing: the two clocks are not
+  // synchronised, so a client's command for a tick can arrive before the server
+  // grants that tick's credit. A client is entitled to be one tick out of phase.
+  // Starting empty cost every client its first burst — visible as one dropped
+  // command on join and after any drain, for no reason anyone could defend.
+  int32_t move_credits = 1;
+
+  // Same rate-limit shape as last_rewind_warning_tick: a client over budget is
+  // over it on every move, so the complaint is one per second per slot.
+  uint32_t last_move_throttle_warning_tick = 0;
 };
 
 // The map currently running, and everything keyed to it. Cleared whole by

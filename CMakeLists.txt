@@ -333,8 +333,9 @@ file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 
 # Two vertex shaders x two fragment shaders is the whole mesh family; the
 # pipeline cache combines them with blend/cull/depth/fill. debug.* backs every
-# debug primitive. Anything under preview/ or pbr/ is compiled at RUNTIME by the
-# shader tool and does not belong here.
+# debug primitive, and ui.* every screen-space quad (glyphs and solid rects
+# alike). Anything under preview/ or pbr/ is compiled at RUNTIME by the shader
+# tool and does not belong here.
 set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/debug.vert
     ${SHADER_SRC_DIR}/debug.frag
@@ -345,6 +346,8 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/particle.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
+    ${SHADER_SRC_DIR}/ui.vert
+    ${SHADER_SRC_DIR}/ui.frag
 )
 set(SHADER_HEADERS "")
 
@@ -398,10 +401,24 @@ add_library(game_client SHARED
     src/client/game_events/rocket_detonated.cpp
     src/client/game_events/player_died.cpp
     src/client/game_events/player_spawned.cpp
+    src/client/game_events/round_phase_changed.cpp
     src/client/hud/kill_feed.cpp
     src/client/hud/crosshair.cpp
+    src/client/hud/announcement.cpp
+    # The GPU-free halves of the UI layer, each its own TU so ui_test can
+    # compile them without a device (see debug_draw_list.cpp, same reason).
+    # ui_input.cpp is the exception and is deliberately NOT in that test: it is
+    # the one file that touches SDL, which is what keeps the other four pure.
+    src/client/ui_draw_list.cpp
+    src/client/ui/font.cpp
+    src/client/ui/screen.cpp
+    src/client/ui/navigation.cpp
+    src/client/ui/list_menu.cpp
+    src/client/ui/ui_input.cpp
     src/client/console.cpp
     src/client/state_manager.cpp
+    src/client/states/main_menu_state.cpp
+    src/client/states/pause_menu.cpp
     src/client/states/play_state.cpp
     src/client/states/editor_gizmo.cpp
     src/client/states/tool_editor_state.cpp
@@ -574,6 +591,25 @@ add_executable(debug_draw_list_test
 target_include_directories(debug_draw_list_test PRIVATE src src/client)
 target_link_libraries(debug_draw_list_test PRIVATE game_shared Vulkan::Vulkan SDL2::SDL2-static)
 
+# 16d. The UI layer's GPU-free halves: the font bake against the REAL
+# resources/fonts TTF, ui_draw_list_t's batching, the layout anchors, and the
+# whole retained-tree interaction model -- resolution, tweens and directional
+# navigation. Same trick as 16b: it compiles the split TUs rather than linking
+# game_client, so every glyph metric is checked with no device and no window.
+#
+# ui/ui_input.cpp is POINTEDLY absent. It is the only file in the layer that
+# reads SDL, and everything downstream takes a ui_input_t by value -- so leaving
+# it out is what proves the interaction model needs no window to test.
+add_executable(ui_test
+    src/test/ui_test.cpp
+    src/client/ui_draw_list.cpp
+    src/client/ui/font.cpp
+    src/client/ui/screen.cpp
+    src/client/ui/navigation.cpp
+    src/client/ui/list_menu.cpp)
+target_include_directories(ui_test PRIVATE src src/client)
+target_link_libraries(ui_test PRIVATE game_shared Vulkan::Vulkan SDL2::SDL2-static)
+
 # 16c. Editor tools must compile and LINK against pass_builder_t with no mock --
 # which is the whole argument for having deleted overlay_renderer_t rather than
 # reimplementing it. Built, but deliberately NOT in GAME_TESTS: see the file's
@@ -680,6 +716,26 @@ add_executable(server_context_test src/test/server_context_test.cpp
 target_include_directories(server_context_test PRIVATE src src/shared src/server)
 target_link_libraries(server_context_test PRIVATE game_shared)
 
+# 27. Player move step invariance — one tick of dt vs N sub-steps of dt/N.
+# Step 2 of subtick_plan.md, and the prerequisite for sub-tick rather than a
+# nicety: it is what classifies each divergence as fixable arithmetic or a
+# deliberate clamp, by elimination. Also the only coverage player_move has.
+#
+# Links game_shared alone and builds its own one-box bvh, so no map, no session
+# and no assets — player_move takes static geometry and a cvar_state_t and
+# nothing else, which is exactly why it can be tested this cheaply.
+add_executable(player_move_step_invariance_test
+    src/test/player_move_step_invariance_test.cpp)
+target_include_directories(player_move_step_invariance_test PRIVATE src src/shared)
+target_link_libraries(player_move_step_invariance_test PRIVATE game_shared)
+
+# 28. Move budget — the per-client movement rate bound (src/server/move_budget.hpp).
+# Header-only, so it links nothing. The cases are multi-tick SIMULATIONS rather
+# than unit checks because the property being guarded (neutrality to arrival
+# pattern) is invisible inside any single tick.
+add_executable(move_budget_test src/test/move_budget_test.cpp)
+target_include_directories(move_budget_test PRIVATE src src/shared)
+
 # One-time map converter for the geometry exit (src/tools/map_convert.cpp).
 # Loading a map converts it in memory; this tool makes that deliberate and
 # batchable. Usage: map_convert [--check] maps/*.source
@@ -735,7 +791,10 @@ set(GAME_TESTS
     lag_compensation_test
     array_test
     server_context_test
-    events_test)
+    events_test
+    ui_test
+    player_move_step_invariance_test
+    move_budget_test)
 
 foreach(test_target IN LISTS GAME_TESTS)
   add_test(NAME ${test_target} COMMAND ${test_target})

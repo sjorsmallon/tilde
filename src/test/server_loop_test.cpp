@@ -40,27 +40,28 @@ void test_receive_and_reassembly()
   }
   client_addr = Address(127, 0, 0, 1, 9002);
 
-  state.slot_occupied[0] = true;
-  state.addresses[0] = client_addr;
+  occupy_client_slot(state, 0, client_addr, 100);
 
-  // Create a Move Command
-  game::C2S_PlayerMoveCommand move;
-  move.set_command_number(10);
-  move.set_forwardmove(127.0f);
-  move.set_sidemove(0.0f);
-  auto *va = move.mutable_viewangles();
-  va->set_yaw(45.0f);
-  va->set_pitch(0.0f);
+  // A batch of two, because the batch is the only move message on the wire and
+  // unpacking it into one inbox entry per move is the part worth exercising.
+  game::C2S_PlayerMoveBatch batch;
+  for (int command_number : {9, 10})
+  {
+    game::C2S_PlayerMoveCommand *move = batch.add_moves();
+    move->set_command_number(command_number);
+    move->set_forwardmove(127.0f);
+    move->set_sidemove(0.0f);
+    auto *va = move->mutable_viewangles();
+    va->set_yaw(45.0f);
+    va->set_pitch(0.0f);
+  }
 
-  std::vector<uint8> serialized_data(move.ByteSizeLong());
-  move.SerializeToArray(serialized_data.data(), serialized_data.size());
+  std::vector<uint8> serialized_data(batch.ByteSizeLong());
+  batch.SerializeToArray(serialized_data.data(), serialized_data.size());
 
-  // Convert to packets (Message Type C2S_PlayerMoveCommand = 0 in enum but
-  // let's check packet.hpp) packet.hpp: C2S_PlayerMoveCommand is first, so 0.
-  // But let's use the enum cast.
   uint8 next_message_id = 0;
   auto packets = convert_to_packets(
-      serialized_data, static_cast<uint8>(Message_Type::C2S_PlayerMoveCommand),
+      serialized_data, static_cast<uint8>(Message_Type::C2S_PlayerMoveBatch),
       next_message_id);
 
   // Send packets
@@ -77,7 +78,7 @@ void test_receive_and_reassembly()
 
   // Server Receive
   ServerInbox inbox;
-  poll_network(state, server_socket, 0.1, inbox); // 100ms window
+  poll_network(state, server_socket, 0.1, 140, inbox); // 100ms window
 
   // Verify
   if (inbox.moves.empty())
@@ -89,23 +90,30 @@ void test_receive_and_reassembly()
     assert(false);
   }
 
-  // Find move for player 0
-  const game::C2S_PlayerMoveCommand *received_move_ptr = nullptr;
+  // Both moves of the batch, as separate inbox entries and in the order they
+  // were packed: the receive side unpacks, it does not deduplicate or reorder.
+  std::vector<const game::C2S_PlayerMoveCommand *> moves_for_player_0;
   for (const auto &[pidx, move] : inbox.moves)
   {
     if (pidx == 0)
-    {
-      received_move_ptr = &move;
-      break;
-    }
+      moves_for_player_0.push_back(&move);
   }
 
-  assert(received_move_ptr && "No move found for player 0");
-  const auto &received_move = *received_move_ptr;
+  assert(moves_for_player_0.size() == 2 &&
+         "a batch of two must land as two inbox moves");
+  assert(moves_for_player_0[0]->command_number() == 9);
+  assert(moves_for_player_0[1]->command_number() == 10);
+  assert(moves_for_player_0[0]->forwardmove() == 127.0f);
+  assert(moves_for_player_0[1]->forwardmove() == 127.0f);
+  std::cout << "  -> Move batch reassembled and unpacked correctly!" << std::endl;
 
-  assert(received_move.command_number() == 10);
-  assert(received_move.forwardmove() == 127.0f);
-  std::cout << "  -> Move Reassembled Correctly!" << std::endl;
+  // Arrival stamps the slot: this is what sv_timeout measures silence against.
+  assert(state.latest_packet_tick[0] == 140);
+
+  release_client_slot(state, 0);
+  assert(!state.slot_occupied[0]);
+  assert(state.latest_packet_tick[0] == 0);
+  std::cout << "  -> Slot liveness stamped and released!" << std::endl;
 }
 
 int main()

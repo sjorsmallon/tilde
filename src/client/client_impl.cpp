@@ -2,8 +2,10 @@
 #include "audio/audio_system.hpp"
 #include "client_api.hpp"
 #include "console.hpp"
+#include "hud/announcement.hpp"
 #include "renderer.hpp"
 #include "state_manager.hpp"
+#include "ui/font.hpp"
 
 #include <memory>
 #include <vector>
@@ -25,7 +27,9 @@ namespace client
 static SDL_Window* g_window = nullptr;
 static std::chrono::high_resolution_clock::time_point g_last_tick_time;
 static bool g_tick_time_initialized = false;
+
 static std::unique_ptr<audio_system_t> g_audio;
+static std::unique_ptr<ui::ui_font_t> g_ui_font;
 
 void set_asset_state(assets::asset_state_t *asset_state)
 {
@@ -81,6 +85,19 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   {
     log_error("Renderer Init Failed");
     return false;
+  }
+
+  // load a font.
+  {
+    const std::optional<ui::font_atlas_t> atlas =
+        ui::try_bake_font_from_file(ui::DEFAULT_FONT_PATH, {18.f, 28.f, 48.f});
+    if (!atlas)
+      fatal_error("client::init: could not bake the UI font from '{}'", ui::DEFAULT_FONT_PATH);
+
+    g_ui_font = std::make_unique<ui::ui_font_t>();
+    g_ui_font->atlas = renderer::register_texture(atlas->image, /*srgb*/ false);
+    g_ui_font->sizes = atlas->sizes;
+    state_manager::get_client_context().font = g_ui_font.get();
   }
 
   // Set initial state
@@ -154,7 +171,25 @@ bool Tick()
     return true; // minimized, or the swapchain is being rebuilt
   }
 
-  state_manager::render_ui();
+  // Ordered the way the frame composites, bottom to top: the UI list first, the
+  // ImGui panels over it.
+  //
+  // Retained across frames so the per-frame pass list and UI vertices cost no
+  // allocation after the first few frames.
+  static std::vector<renderer::view_pass_t> frame_passes;
+  static renderer::ui_draw_list_t           frame_ui;
+  frame_passes.clear();
+  frame_ui.clear();
+  state_manager::build_frame(dt, frame_passes, frame_ui);
+
+  // Appended after the state's own UI so a banner draws over it, and appended
+  // HERE rather than by each state because set_announcement() is fire-and-forget
+  // from thirty call sites that share no state.
+  hud::announcement_t &announcement = hud::current_announcement();
+  hud::advance_announcement(announcement, dt);
+  hud::draw_announcement(frame_ui, *g_ui_font, renderer::screen_size(), announcement);
+
+  state_manager::draw_imgui_panels();
 
   // Global console Overlay
   if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false))
@@ -163,11 +198,7 @@ bool Tick()
   }
   client::console::get().draw();
 
-  // Retained across frames so the per-frame pass list costs no allocation.
-  static std::vector<renderer::view_pass_t> frame_passes;
-  frame_passes.clear();
-  state_manager::build_frame(dt, frame_passes);
-  renderer::render_frame(frame_passes);
+  renderer::render_frame(frame_passes, frame_ui);
 
   return true;
 }
@@ -178,6 +209,11 @@ void shutdown()
   log_terminal("--- Shutting down Client ---");
 
   state_manager::shutdown();
+
+  // Before renderer::shutdown, which frees the atlas texture the font points at.
+  state_manager::get_client_context().font = nullptr;
+  g_ui_font.reset();
+
   renderer::shutdown();
 
   if (g_audio)

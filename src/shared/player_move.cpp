@@ -1,6 +1,7 @@
 #include "player_move.hpp"
 #include "network/network_types.hpp"
 #include "debug_collision.hpp"
+#include <cmath>
 #include <print>
 #include "timed_function.hpp"
 
@@ -110,6 +111,17 @@ auto step_air_move(const cvar_state_t &cvars, const vec3 &old_position,
   return std::make_tuple(position, new_velocity);
 }
 
+//@NOTE(SJM):
+// speed_drop = speed * friction * dt bills you for friction at the speed you're currently going. Take one step and that's fine. Take two half-steps and the second one is charged against a different, already-reduced speed:
+// friction = 4, dt = 1/60  →  friction*dt = 0.0667
+// start: speed = 300
+
+// one full step:    drop = 300 * 0.0667  = 20.00        → 280.000
+
+// two half steps:   drop = 300 * 0.0333  =  9.999       → 290.001
+//                   drop = 290 * 0.0333  =  9.667       → 280.334
+//                                           ^^^^^
+//                               charged against 290, not 300
 auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt) -> vec3
 {
   // snap to only planar movement.
@@ -123,23 +135,17 @@ auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt) -> v
     return vec3{};
   }
 
-  float speed_drop = 0.0f;
+  // exponential decay composes exactly under any subdivision of dt.
+  if (speed >= cvars.pm_stopspeed)
+    return old_velocity * std::exp(-cvars.pm_friction * dt);
 
-  float stopspeed = cvars.pm_stopspeed;
-  float control = speed < stopspeed ? stopspeed : speed;
-  speed_drop += control * cvars.pm_friction * dt;
-
-  // adjust the speed with the induced speed drop.
-  float adjusted_speed = speed - speed_drop;
+  float adjusted_speed = speed - cvars.pm_stopspeed * cvars.pm_friction * dt;
 
   // cannot move in the negatives.
   if (adjusted_speed < 0.0f)
     adjusted_speed = 0.0f;
 
-  if (adjusted_speed > 0.0f)
-    adjusted_speed /= speed;
-
-  return old_velocity * adjusted_speed;
+  return old_velocity * (adjusted_speed / speed);
 }
 
 // since input can be provided -127 -> +127, scale the movement vector based on
@@ -485,11 +491,26 @@ auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
     }
   }
 
-  // apply gravity.
-  new_velocity.y = new_y_velocity;
-  new_velocity.y -= cvars.g_gravity * dt;
+  // Apply gravity as two halves around the position integration. Position then
+  // integrates with the step's MIDPOINT y velocity, and under a constant g the
+  // midpoint IS the exact mean of the endpoints -- so this reproduces
+  // p0 + v0*dt - 0.5*g*dt^2 rather than the -1.0 that integrating with the END
+  // velocity gave. The returned velocity is unchanged (v0 - g*dt either way),
+  // so the grounded check, the land snap and the post-move clips see what they
+  // always did.
+  //
+  // The point is not the extra 5% of jump apex, it is that the exact parabola
+  // is the one answer that does not move when dt does: the old form dropped
+  // 1.0*g*dt^2 whole, 0.75 split in two, 0.625 in four. Sub-tick makes that
+  // difference reachable. See player_move_step_invariance_test.
+  const float half_gravity_step = 0.5f * cvars.g_gravity * dt;
 
-  return step_air_move(cvars, old_position, new_velocity, dt);
+  new_velocity.y = new_y_velocity - half_gravity_step;
+
+  auto [position, velocity] =
+      step_air_move(cvars, old_position, new_velocity, dt);
+  velocity.y -= half_gravity_step;
+  return std::make_tuple(position, velocity);
 }
 // Resolve collisions against the BVH using hull-plane-based penetration test.
 // Pushes player_pos out of overlapping hulls and classifies contact normals.

@@ -30,12 +30,12 @@ Round_Started :: Game_Event  "..." { round: u32 }   // a body adds its own
 \* "Reliable" today = best-effort via the same fragmentation infra as
 `S2C_ServerMessage`. Ack/retransmit is a follow-up.
 
-**Which packet the batch rides in is the only difference left.** Both encode at
+**Which message the batch rides is the only difference left.** Both encode at
 fire time into a `shared::event_stream_t`; neither holds a value past the call,
-so neither has a queue or a tagged union. The effect stream is spliced into each
-client's snapshot with `Bit_Writer::write_bytes`, which byte-aligns first — at
-most 7 wasted bits per packet, and that is what lets ONE encoding serve every
-client even though each client's entity delta is a different length.
+so neither has a queue or a tagged union. Each rides its own protobuf message
+(`S2C_GameEventBatch`, `S2C_EffectBatch`), encoded once and sent to every
+client — that one-encoding property comes from firing straight into the stream,
+not from how it is packetized.
 
 ### When to pick which
 
@@ -178,14 +178,18 @@ proto/game.proto                          S2C_GameEventBatch -- carries bytes on
                                           no change per new event
 ```
 
-## The one thing that can silently desync
+## The thing that used to silently desync
 
-The effect batch is spliced into the snapshot packet **byte-aligned**: the
-server calls `writer.write_bytes(...)` (which aligns) and the client calls
-`reader.align()` before dispatching. **Those two must move together.** A
-misaligned effect block decodes as plausible garbage rather than failing, which
-is why `events_test` covers the splice specifically and why both sites carry a
-comment pointing at the other.
+The effect batch was once spliced into the snapshot packet **byte-aligned** —
+the server called `writer.write_bytes(...)` (which aligns) and the client called
+`reader.align()` before dispatching, and those two had to move together. A
+misaligned block decoded as plausible garbage rather than failing.
+
+It has its own `S2C_EffectBatch` message now, so the stream starts at bit 0 and
+there is no pair to keep in step. **Do not put it back in the snapshot packet.**
+Beyond the unenforceable coupling, sharing that packet shares its *fragments*:
+a burst of cosmetics past the 1200-byte limit used to cost the entity delta a
+fragment it could not survive.
 
 ## Pattern: events that need server-side state tracking
 

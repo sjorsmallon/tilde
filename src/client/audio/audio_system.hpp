@@ -27,8 +27,7 @@ struct audio_system_t
   // play a spatialized one-shot at a world-space position. `volume` is linear
   // (1.0 = unattenuated source)
   void play_3d(const char* path,const linalg::vec3f& position, const float volume = 1.0f);
-
-  // play a non-spatialized one-shot (UI, announcer, 2D feedback).
+   // play a non-spatialized one-shot (UI, announcer, 2D feedback).
   void play_2d(const char *path,const float volume = 1.0f);
 
 private:

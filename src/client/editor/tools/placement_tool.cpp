@@ -4,6 +4,7 @@
 #include "../../../shared/editor_grid.hpp"
 #include "../../../shared/map.hpp"
 #include "../../../shared/shapes.hpp"
+#include "../../hud/announcement.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../geometry_editor.hpp"
 #include "../transaction_system.hpp"
@@ -229,7 +230,7 @@ void Placement_Tool::select_placeable(int index)
 
   selected_type_index = index;
   const placeable_t &placeable = placeables()[index];
-  renderer::draw_announcement(placeable.label);
+  hud::set_announcement(placeable.label);
 
   // Engage exactly one regime.
   geometry_to_place.reset();

@@ -74,19 +74,20 @@ bool update(float dt)
 
 void request_exit() { g_should_exit = true; }
 
-void render_ui()
+void draw_imgui_panels()
 {
   if (g_active_state)
   {
-    g_active_state->render_ui();
+    g_active_state->draw_imgui_panels();
   }
 }
 
-void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes)
+void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+                 renderer::ui_draw_list_t &ui)
 {
   if (g_active_state)
   {
-    g_active_state->build_frame(delta_seconds, passes);
+    g_active_state->build_frame(delta_seconds, passes, ui);
   }
 }
 

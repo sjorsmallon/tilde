@@ -244,7 +244,7 @@ void Shader_Editor_State::update(float dt)
   }
 
   // Camera controls (only when ImGui doesn't want the mouse)
-  if (!input::ui_wants_mouse())
+  if (!input::imgui_wants_mouse())
   {
     // RMB drag = orbit
     if (input::is_mouse_down(input::mouse_button_t::Right))
@@ -393,7 +393,8 @@ void Shader_Editor_State::record_preview_draw(VkCommandBuffer cmd, void *user)
 }
 
 void Shader_Editor_State::build_frame(float delta_seconds,
-                                      std::vector<renderer::view_pass_t> &passes)
+                                      std::vector<renderer::view_pass_t> &passes,
+                                      renderer::ui_draw_list_t &ui)
 {
   scene.begin_frame(delta_seconds);
 
@@ -637,7 +638,7 @@ void Shader_Editor_State::build_frame(float delta_seconds,
 // ImGui UI
 // ---------------------------------------------------------------------------
 
-void Shader_Editor_State::render_ui()
+void Shader_Editor_State::draw_imgui_panels()
 {
   // --- Main shader editor panel ---
   ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);

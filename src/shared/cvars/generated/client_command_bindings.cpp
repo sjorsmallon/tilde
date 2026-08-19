@@ -68,12 +68,35 @@ bool invoke_connect(Span<std::string_view> args, const command_context_t& contex
   return true;
 }
 
+// announce <text...>
+bool invoke_announce(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() < 1u)
+  {
+    usage_error(out_reply, command_id::announce, args.size());
+    return false;
+  }
+
+  // 'text' is 'string...': the untokenized rest of the line. Every view
+  // in args points into ONE contiguous line buffer (see command_binder_t),
+  // so the span from this parameter's first token to the end of the last
+  // token is the original text, interior whitespace intact.
+  std::string_view text(args[0].data(),
+      (size_t)(args[args.size() - 1].data() + args[args.size() - 1].size() -
+               args[0].data()));
+
+  commands::announce(text, context);
+  return true;
+}
+
 } // namespace
 
 void bind_client_commands(command_table_t& table)
 {
   table.binders[(uint32_t)command_id::bind] = &invoke_bind;
   table.binders[(uint32_t)command_id::connect] = &invoke_connect;
+  table.binders[(uint32_t)command_id::announce] = &invoke_announce;
 }
 
 } // namespace cvars

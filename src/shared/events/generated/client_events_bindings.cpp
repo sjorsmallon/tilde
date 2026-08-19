@@ -19,6 +19,7 @@ namespace game_events
 void on_rocket_detonated(client_context_t& context, const shared::Rocket_Detonated& value);
 void on_player_died(client_context_t& context, const shared::Player_Died& value);
 void on_player_spawned(client_context_t& context, const shared::Player_Spawned& value);
+void on_round_phase_changed(client_context_t& context, const shared::Round_Phase_Changed& value);
 } // namespace game_events
 
 // The switch lives here rather than beside the codec because it is what
@@ -89,6 +90,22 @@ void dispatch_received_game_events(client_context_t& context, network::Bit_Reade
         if (log_received)
           log_terminal("[event received] {}", shared::to_text(*payload));
         game_events::on_player_spawned(context, *payload);
+        break;
+      }
+      case shared::game_event_type::Round_Phase_Changed:
+      {
+        const std::optional<shared::Round_Phase_Changed> payload = shared::try_read_round_phase_changed(reader);
+        if (!payload)
+        {
+          // A field the tables cannot represent leaves the reader
+          // mid-record, so the rest of the batch is gone with it.
+          log_error("dispatch_received_game_events: record {} of {} did not "
+                    "decode; dropping the rest of the batch", index, count);
+          return;
+        }
+        if (log_received)
+          log_terminal("[event received] {}", shared::to_text(*payload));
+        game_events::on_round_phase_changed(context, *payload);
         break;
       }
     }

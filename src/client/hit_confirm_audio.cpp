@@ -30,6 +30,15 @@ void play_hitmarker_audio_and_update_hit_tick_state(client_context_t &context)
   // should this actually be an assert?
   if (!context.audio) return;
 
+  // A spectator has no body, so no entity of ours is in the snapshot and there
+  // is no hitmarker to play. That is the routine case, not a failure: client and
+  // player are separate things and the mapping is 0-or-1 (see CLAUDE.md, "Client
+  // vs Player"). Only a client that believes it HAS a body and cannot find it is
+  // anomalous, so the error keeps that case and stops firing every frame that a
+  // spectator holds the mouse down.
+  if (context.connection.spectating)
+    return;
+
   auto my_entity = context.replication.latest_player_entities.find(context.connection.my_slot);
 
   if (my_entity == context.replication.latest_player_entities.end())

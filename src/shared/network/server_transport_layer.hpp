@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../log.hpp"
 #include "game.pb.h"
 #include "network_types.hpp"
 #include "udp_socket.hpp"
@@ -54,6 +55,14 @@ struct Server_Transport_Layer
   std::array<Address, sv_max_client_count> addresses{};
   std::array<Byte_Buffer, sv_max_client_count> byte_buffers{};
 
+  // Server tick we last received ANY datagram from this slot's address --
+  // stamped below on arrival, before the packet's type or contents mean
+  // anything, so a peer that is only sending fragments of one big message still
+  // counts as alive. The policy that reads it (sv_timeout, dropping the client,
+  // destroying its body) is a stratum up in server_impl; this layer only records
+  // that bytes showed up.
+  std::array<uint32_t, sv_max_client_count> latest_packet_tick{};
+
   // Packet reassembly only
   std::array<std::map<uint8, std::vector<Packet>>, sv_max_client_count>
       partial_packets{};
@@ -82,21 +91,32 @@ try_find_client_slot(const Server_Transport_Layer &transport_layer,
   return std::nullopt;
 }
 
-inline void disconnect_client(Server_Transport_Layer &transport_layer,
-                              const Address &address)
+inline void release_client_slot(Server_Transport_Layer &transport_layer,
+                                int32_t slot)
 {
-  const std::optional<int32_t> slot =
-      try_find_client_slot(transport_layer, address);
-  if (!slot)
-    return;
+  transport_layer.addresses[slot] = {};
+  transport_layer.slot_occupied[slot] = false;
+  transport_layer.partial_packets[slot].clear();
+  transport_layer.latest_packet_tick[slot] = 0;
+}
 
-  transport_layer.addresses[*slot] = {};
-  transport_layer.slot_occupied[*slot] = false;
-  transport_layer.partial_packets[*slot].clear();
+// Stamps the slot as heard-from, which is what keeps it from timing out. Called
+// on arrival, and once at accept time -- a slot occupied at tick N with a
+// latest_packet_tick of 0 reads as N ticks of silence and is dropped immediately.
+inline void occupy_client_slot(Server_Transport_Layer &transport_layer,
+                               int32_t slot, const Address &address,
+                               uint32_t current_tick)
+{
+  transport_layer.slot_occupied[slot] = true;
+  transport_layer.addresses[slot] = address;
+  transport_layer.byte_buffers[slot] = {};
+  transport_layer.partial_packets[slot].clear();
+  transport_layer.latest_packet_tick[slot] = current_tick;
 }
 
 inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
-                         double time_window_seconds, ServerInbox &out_inbox)
+                         double time_window_seconds, uint32_t current_tick,
+                         ServerInbox &out_inbox)
 {
   using clock = std::chrono::high_resolution_clock;
   auto start_time = clock::now();
@@ -138,6 +158,7 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
         continue;
       }
       const int32_t client_slot = *sender_slot;
+      state.latest_packet_tick[client_slot] = current_tick;
 
       // Store packet fragment
       auto &fragments =
@@ -180,12 +201,23 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
 
         // Parse
         if (packet.header.message_type ==
-            static_cast<uint8>(Message_Type::C2S_PlayerMoveCommand))
+            static_cast<uint8>(Message_Type::C2S_PlayerMoveBatch))
         {
-          game::C2S_PlayerMoveCommand move_cmd;
-          if (move_cmd.ParseFromArray(buffer.data(), buffer.size()))
+          // Every move the client has not seen acked, oldest first. Most of
+          // them are usually duplicates of moves already run; the move loop's
+          // `command_number <= latest_processed_command` check is what makes
+          // that free, so nothing is deduplicated here.
+          game::C2S_PlayerMoveBatch batch;
+          if (batch.ParseFromArray(buffer.data(), buffer.size()))
           {
-            out_inbox.moves.push_back({client_slot, move_cmd});
+            for (const game::C2S_PlayerMoveCommand& move_cmd : batch.moves())
+              out_inbox.moves.push_back({client_slot, move_cmd});
+          }
+          else
+          {
+            log_error("poll_network: slot {} sent a move batch of {} bytes that "
+                      "would not parse — dropped",
+                      client_slot, buffer.size());
           }
         }
         else if (packet.header.message_type ==

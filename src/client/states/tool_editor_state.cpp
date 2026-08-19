@@ -16,6 +16,7 @@
 #include "../editor/tools/displacement_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
 #include "../console.hpp"
+#include "../hud/announcement.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
 #include "../shared/linalg.hpp"
@@ -184,7 +185,7 @@ void Tool_Editor_State::on_enter()
     {
       map.name = "Tool Editor Map";
       add_default_floor(map);
-      renderer::draw_announcement("Welcome to the Tool Editor!");
+      hud::set_announcement("Welcome to the Tool Editor!");
     }
   }
 
@@ -276,7 +277,7 @@ void Tool_Editor_State::snap_to_axis_view(ViewMode mode)
   camera.ortho_height  = focus.radius * 2.5f;
   camera.orbit_target  = focus.center;
 
-  renderer::draw_announcement(announcement);
+  hud::set_announcement(announcement);
 }
 
 void Tool_Editor_State::switch_tool(int index)
@@ -357,7 +358,7 @@ void Tool_Editor_State::update(float dt)
   }
 
   // Update Camera
-  if (!input::ui_wants_mouse())
+  if (!input::imgui_wants_mouse())
   {
     input::modifiers_t mods = input::current_modifiers();
 
@@ -430,21 +431,21 @@ void Tool_Editor_State::update(float dt)
         camera.yaw = 0.0f;
         camera.pitch = -89.0f;
         camera.position.y = 1500.f;
-        renderer::draw_announcement("Top Down (-Y)");
+        hud::set_announcement("Top Down (-Y)");
         break;
       case ViewMode::TopDown:
         view_mode = ViewMode::Front;
         camera.orthographic = true;
         camera.yaw = 0.0f;
         camera.pitch = 0.0f;
-        renderer::draw_announcement("Front (+X)");
+        hud::set_announcement("Front (+X)");
         break;
       case ViewMode::Front:
         view_mode = ViewMode::Side;
         camera.orthographic = true;
         camera.yaw = 90.0f;
         camera.pitch = 0.0f;
-        renderer::draw_announcement("Side (+Z)");
+        hud::set_announcement("Side (+Z)");
         break;
       case ViewMode::Side:
       // The keypad-only views are not in the cycle -- Shift+Space would
@@ -455,7 +456,7 @@ void Tool_Editor_State::update(float dt)
       case ViewMode::Left:
         view_mode = ViewMode::FreeCam;
         camera.orthographic = false;
-        renderer::draw_announcement("Free Cam");
+        hud::set_announcement("Free Cam");
         break;
       }
     }
@@ -478,7 +479,7 @@ void Tool_Editor_State::update(float dt)
       camera.orthographic = !camera.orthographic;
       if (!camera.orthographic)
         view_mode = ViewMode::FreeCam;
-      renderer::draw_announcement(camera.orthographic ? "Orthographic" : "Perspective");
+      hud::set_announcement(camera.orthographic ? "Orthographic" : "Perspective");
     }
 
     if (camera.orthographic && view_mode == ViewMode::FreeCam)
@@ -494,14 +495,14 @@ void Tool_Editor_State::update(float dt)
       grid_settings.increase();
       char buffer[64];
       snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
-      renderer::draw_announcement(buffer);
+      hud::set_announcement(buffer);
     }
     if (input::is_key_pressed(input::key_t::Left_Bracket))
     {
       grid_settings.decrease();
       char buffer[64];
       snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
-      renderer::draw_announcement(buffer);
+      hud::set_announcement(buffer);
     }
 
     if (input::is_key_down(input::key_t::W))
@@ -606,7 +607,7 @@ void Tool_Editor_State::update(float dt)
   static bool was_lmb_down = false;
   static bool tool_processing_mouse = false;
 
-  if (input::ui_wants_mouse() && !tool_processing_mouse)
+  if (input::imgui_wants_mouse() && !tool_processing_mouse)
   {
     // Use a ray that won't hit anything to prevent hovering
     // Origin far away, direction pointing away
@@ -628,7 +629,7 @@ void Tool_Editor_State::update(float dt)
 
     if (is_lmb_down && !was_lmb_down)
     {
-      if (!input::ui_wants_mouse())
+      if (!input::imgui_wants_mouse())
       {
         tool_processing_mouse = true;
         tools[active_tool_index]->on_mouse_down(context, mouse_e);
@@ -653,7 +654,7 @@ void Tool_Editor_State::update(float dt)
 
     // Forward this frame's key-down events to the active tool. The input
     // system collects these from the SDL event pump, so no scancode polling.
-    if (!input::ui_wants_keyboard())
+    if (!input::imgui_wants_keyboard())
     {
       for (const input::key_event_t &key_event : input::frame_key_events())
       {
@@ -748,7 +749,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   return result;
 }
 
-void Tool_Editor_State::render_ui()
+void Tool_Editor_State::draw_imgui_panels()
 {
   // Ctrl+S / Cmd+S — save current map to disk (no implicit CSG bake; use the
   // "Bake CSG" button for that). Goes through commit_map_to_disk so the
@@ -759,9 +760,9 @@ void Tool_Editor_State::render_ui()
     {
       std::string full_path = get_maps_dir() + map.name;
       if (commit_map_to_disk(map, full_path))
-        renderer::draw_announcement("Saved!");
+        hud::set_announcement("Saved!");
       else
-        renderer::draw_announcement("Save failed!");
+        hud::set_announcement("Save failed!");
     }
   }
 
@@ -774,7 +775,7 @@ void Tool_Editor_State::render_ui()
 
   if (ImGui::Button("Save Map As..."))
   {
-    renderer::draw_announcement("is the gerg ever open?");
+    hud::set_announcement("is the gerg ever open?");
     // Popup for Save Map
     should_open_popup = true;
   }
@@ -796,7 +797,7 @@ void Tool_Editor_State::render_ui()
     simplified.navmesh = map.navmesh;
     map = std::move(simplified);
     geometry_updated_flag = true;
-    renderer::draw_announcement("Geometry simplified (not saved)");
+    hud::set_announcement("Geometry simplified (not saved)");
   }
 
   ImGui::Checkbox("Solid Entities", &draw_entities_solid);
@@ -836,9 +837,9 @@ void Tool_Editor_State::render_ui()
     m_simplify_steps = 0;
     shared::simplify_navmesh(map.navmesh);     // full simplify
     if (shared::save_navmesh_sidecar(full_path, map.navmesh))
-      renderer::draw_announcement("Navmesh baked!");
+      hud::set_announcement("Navmesh baked!");
     else
-      renderer::draw_announcement("Navmesh bake failed (save map first?)");
+      hud::set_announcement("Navmesh bake failed (save map first?)");
   }
 
   // Step-by-step simplification for debugging.
@@ -928,11 +929,11 @@ void Tool_Editor_State::render_ui()
         // if their first action is to delete everything and Ctrl+S.
         snapshot_on_load(full_path);
 
-        renderer::draw_announcement("Map loaded!");
+        hud::set_announcement("Map loaded!");
       }
       else
       {
-        renderer::draw_announcement("Failed to load map!");
+        hud::set_announcement("Failed to load map!");
       }
       ImGui::CloseCurrentPopup();
     }
@@ -969,9 +970,9 @@ void Tool_Editor_State::render_ui()
       std::string full_path = get_maps_dir() + filename_buf;
       map.name = filename_buf;
       if (commit_map_to_disk(map, full_path))
-        renderer::draw_announcement("Saved!");
+        hud::set_announcement("Saved!");
       else
-        renderer::draw_announcement("Save failed!");
+        hud::set_announcement("Save failed!");
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -1003,7 +1004,7 @@ void Tool_Editor_State::render_ui()
       // Clear last_map.txt so the editor doesn't reload the old map on restart
       std::ofstream("last_map.txt");
 
-      renderer::draw_announcement("New map created!");
+      hud::set_announcement("New map created!");
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -1043,7 +1044,7 @@ void Tool_Editor_State::render_ui()
     std::string full_path = get_maps_dir() + map.name;
     if (!commit_map_to_disk(map, full_path))
     {
-      renderer::draw_announcement("Save before play failed!");
+      hud::set_announcement("Save before play failed!");
     }
     else
     {
@@ -1083,7 +1084,8 @@ void Tool_Editor_State::render_ui()
 }
 
 void Tool_Editor_State::build_frame(float delta_seconds,
-                                   std::vector<renderer::view_pass_t> &passes)
+                                    std::vector<renderer::view_pass_t> &passes,
+                                    renderer::ui_draw_list_t &ui)
 {
   scene.begin_frame(delta_seconds);
   scene.view.viewport = {{0, 0}, {1, 1}};

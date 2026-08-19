@@ -35,10 +35,11 @@ bool update(float dt);
 void request_exit();
 
 // Render UI for the current state
-void render_ui();
+void draw_imgui_panels();
 
-// Append the current state's view passes to the frame
-void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes);
+// Append the current state's view passes and screen-space UI to the frame
+void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+                 renderer::ui_draw_list_t &ui);
 
 // Get access to the shared entity system
 // Get access to the shared entity system (convenience wrapper around context)

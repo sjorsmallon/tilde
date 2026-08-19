@@ -39,7 +39,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   context.world.previous_tick_overlapping_trigger_player_pairs.insert({7, 9});
   context.world.death_tick_by_player_uid[42] = 100;
   context.world.rules.round_number   = 5;
-  context.world.rules.phase          = round_phase_t::Live;
+  context.world.rules.phase          = shared::Round_Phase::Live;
   context.world.rules.phase_end_tick = 950;
 
   context.replication.snapshot_history.slot_for(900).tick = 900;
@@ -107,7 +107,14 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(context.incoming.commands.empty());
   assert(context.incoming.map_loaded_acks.empty());
   assert(context.outgoing.effects.empty());
-  assert(context.outgoing.events.empty());
+
+  // A THIRD category, besides cleared and survives: PRODUCED by the reset.
+  // clear_outgoing runs first, then reset_game_rules restarts the match into
+  // Warmup — a real transition — so exactly the one Round_Phase_Changed it
+  // fires is left behind, and a client that stays connected across a map switch
+  // hears about the restart. The count pins that ordering; test_events covers
+  // the payload.
+  assert(context.outgoing.events.count == 1);
   // Damage resolved against the world we are leaving must not land in the one
   // we are entering — the victim uid may not even exist there.
   assert(context.outgoing.pending_hits.empty());
@@ -115,7 +122,7 @@ void test_reset_state_in_preparation_for_new_map_load()
   // Rules restart the match — by a CALL, so this is not `= {}`: Warmup for
   // round 0 (the first Countdown takes it to 1) with a deadline computed off
   // the CURRENT tick, not off zero.
-  assert(context.world.rules.phase == round_phase_t::Warmup);
+  assert(context.world.rules.phase == shared::Round_Phase::Warmup);
   assert(context.world.rules.round_number == 0);
   assert(context.world.rules.phase_end_tick > context.tick_number);
 

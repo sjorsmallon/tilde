@@ -14,7 +14,7 @@ cmake --build cmake_build -j8
 # Run
 ./cmake_build/bin/MyGame
 
-# Run the whole test suite (~2s, all 25)
+# Run the whole test suite (~2s, all 27)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -168,7 +168,9 @@ A **channel** is a closed set of named messages, each carrying a payload, each d
 
 **Both channels encode at fire time, into a `shared::event_stream_t`** (a `Bit_Writer` + a count). Nothing is held as a value, so **neither channel has a queue or a tagged union** — there is no `game_event_t`, no `dispatched_effect_t`. The client's reader decodes into a typed stack local and calls one consumer. `outgoing.effects` and `outgoing.events` are both streams.
 
-**Which packet the batch rides in is the only difference left.** Gameplay events get their own message, so their bitstream starts at bit 0. The effect batch is spliced into each client's snapshot with `Bit_Writer::write_bytes`, which **byte-aligns first** — at most 7 wasted bits per packet, and that is what lets ONE encoding serve every client even though each client's entity delta is a different length. `finish()` is called once before the per-client loop. **The client's `reader.align()` is the other half of that pair and the two must move together**: a misaligned effect block decodes as plausible garbage rather than failing, so both sites carry a comment pointing at the other and `events_test` covers the splice specifically.
+**Both channels now ride their own message** — `S2C_GameEventBatch` and `S2C_EffectBatch` — so both bitstreams start at bit 0 and the two encodings are identical in shape. The effect batch used to be spliced into each client's snapshot behind a `Bit_Writer::write_bytes` byte-align, with the client's `reader.align()` as the mandatory other half; that pair is **gone**, and it should not come back. Two reasons it was wrong. The coupling was unenforceable — a missed align decodes as plausible garbage rather than failing — and, worse, sharing the snapshot's packet does not share its reliability, it shares its **fragments**: a burst of cosmetics past 1200 bytes cost the entity delta a fragment it could not survive. Encoding once for every client was never bought by the splice; it is bought by firing straight into `event_stream_t`, and the separate message keeps it more cheaply (the splice memcpy'd the same bytes into N writers and re-serialized through protobuf N times).
+
+The effect batch is gated on `client_slot_t::map_ready` and the event batch is not: an effect is positional and a client mid-download has no world to place it in, while an event is not. Both send loops carry that reason.
 
 `event_stream_t::reset()` reserves 16 zero bits and `finish()` pokes the two bytes they occupy. The count cannot be *prepended* at send time — payloads are bit-packed, so joining two bitstreams needs a bit-shifted copy — and those bits are the only ones in the stream guaranteed byte-aligned.
 
@@ -178,7 +180,7 @@ A **channel** is a closed set of named messages, each carrying a payload, each d
 
 Ordering is the wire id, and the declarations are mixed into `SCHEMA_HASH`, so a reorder is a refused handshake rather than a silent remap. Append anyway.
 
-`src/shared/EVENTS.md` is the "how to add one" guide; `events_def.md` is the design; `events_test` guards the round trip for every declared member of both channels, the per-record layout, and the align-and-splice path. `sv_event_debug` / `cl_event_debug` log each event fired and dispatched, latched onto both streams once per tick in `clear_outgoing` so the fire helpers stay free of the cvar family.
+`src/shared/EVENTS.md` is the "how to add one" guide; `events_def.md` is the design; `events_test` guards the round trip for every declared member of both channels, the per-record layout, and the `S2C_EffectBatch` wrapper (a protobuf `bytes` field is a `std::string` full of embedded NULs, so the client's `.data()`/`.size()` decode expression is what it exercises). `sv_event_debug` / `cl_event_debug` log each event fired and dispatched, latched onto both streams once per tick in `clear_outgoing` so the fire helpers stay free of the cvar family.
 
 `fire_trigger_action`'s switch is deliberately **not** generated: `-Werror=switch` already makes a missing case a compile error, and generating the switch would trade that for a link error — later, less local, strictly worse.
 
@@ -187,6 +189,39 @@ Ordering is the wire id, and the declarations are mixed into `SCHEMA_HASH`, so a
 Tool pattern: `Tool_Editor_State` dispatches to the active tool (Selection, Placement, Sculpting, Displacement, Particle, Pathfinding, Animation). Each tool handles mouse/key events and overlay drawing.
 
 The Animation tool is the odd one — it edits no map, it looks at the skinned player: a pose picker over bind and the five aim poses through the *real* `compute_aim_blend` / `sample_aim_pose` path, the skeleton, and the `rig.hitboxes` capsules posed under it with their derived-radius seed and the coverage / hull-excursion readouts. `shared/hitbox_rig.hpp` is the shared half (both sides evaluate the volumes; only the tool derives radii, since derivation needs the mesh). See `animation_def.md` §4.
+
+### UI
+
+**Two UI systems, and the boundary is RETAINED WIDGET STATE AND TEXT ENTRY.** ImGui owns the editor, the console and the debug panels — scroll, focus across many widgets, window management and typing, which is what a tool needs. The in-game HUD, the crosshair, the announcement banner **and the menus** go through the client's own screen-space layer instead. (The boundary used to be drawn at *interactivity*, with menus on ImGui's side; that was wrong — interactivity is a hit-test and a focus id. The console stays ImGui because it is text entry, which the layer deliberately cannot do.) `ui_def.md` is the design.
+
+```
+resources/fonts/*.ttf ──stb_truetype──▶ font_atlas_t (pixels + metrics, GPU-FREE)
+                                                │ register_texture
+                                                ▼
+      client/ui/font.hpp  ──draw_text──▶  renderer::ui_draw_list_t  ──▶ one pipeline
+```
+
+**The renderer knows QUADS, not fonts.** `ui_draw_list_t` is declared in `renderer.hpp` because `render_frame(passes, ui)` consumes it — the same reason `debug_draw_list_t` is — but it holds nothing but textured quads in framebuffer pixels. `client/ui/font.hpp` sits one layer up and *produces* quads into it, so glyph packing, metrics and text layout never enter the renderer. `client/ui/layout.hpp` is `anchored()` / `inset()` and nothing more; it is deliberately not a layout system.
+
+The bake is split from the upload for the same reason `debug_draw_list.cpp` is its own TU: `try_bake_font` has no Vulkan in it, registration is two lines at the call site (`client_impl.cpp`), and `ui_test` compiles `ui/font.cpp` + `ui_draw_list.cpp` directly to check every glyph metric with no device, no swapchain and no window.
+
+`ui.frag` is one multiply with no branch, and two upstream decisions are what make that correct for both callers: the bake expands 8-bit coverage to **white-with-alpha** so a glyph samples `(1,1,1,coverage)`, and `ui_draw_list_t::rect` passes an **invalid** texture handle so `resolve_albedo_set`'s existing fallback resolves it to the internal 1x1 white. Untextured quads are not a second path. A **zero-area UV rect means no ink** — the bake establishes that via `stbtt_IsGlyphEmpty` rather than trusting the packer, which still allocates a one-texel rect for a space.
+
+**How the UI binds to game state: STRUCTURE IS RETAINED, VALUES ARE REWRITTEN.** Every node property has exactly one of three owners — **authored** (labels, the parent/child wiring; written once by the build), **bound** (rewritten *every frame* from a source outside the node, never cached), **animated** (opacity, offsets; advanced by `dt`). There is no `hud_health` and no `set_health`, there is `latest_player_entities[my_slot].health` read where it is drawn. Push and observer bindings both buy a second copy that can disagree, the failure `body_yaw`, `held_snapshot_tick` and `last_broadcast_cvars` each already paid for; signals/slots additionally fit this data badly, since snapshots replace state wholesale and there is no "changed" moment to emit.
+
+**"Bound" is about WHERE the value comes from, not who** — the game, the live screen size, and the screen's own focus are three sources, all equally outside the node. So a menu's bound passes are cut by source: `advance_list_menu(menu, dt, screen_size)` writes every rect (the entire window-resize story) and every tint (from the focus), while a value whose source is the GAME is written beside it by the screen that owns it — the main menu's server address is one `write_list_menu_row_value` call. Every write is unconditional, which makes staleness *unrepresentable* rather than discouraged, and they all run at the **end** of `update` so input resolves against the layout that was drawn.
+
+The rule in one line: **continuous values are polled from the truth; discrete occurrences are pushed into a model with a lifetime, and that model is polled.** Anything with a lifetime (kill-feed rows, a damage flash, a tween) is legitimately owned state, because the event that makes it fires once on a different clock than render frames — `hud_state_t` retired per frame like `debug_draw_list_t::retire(dt)`, with the draw a pure function of it. `hud/announcement.cpp` is the smallest complete instance.
+
+**The retained screen** (`client/ui/screen.hpp`) is what focus and animation hang on — a function that re-derives its layout every frame gives a tween nothing to hold. `ui_screen_t` is **one type holding the nodes, the tweens and `focused_node`**, because all three are addressed by the same `ui_node_id_t` and an id means nothing except against the nodes it was minted from; held apart (they were), a rebuild leaves the tweens and the focus naming whatever now sits at that index. A screen is **built as a value by one function and replaced wholesale** — `build_list_menu()` returns the nodes and the handles into them together — never edited structurally, which is what keeps every id in range with no check anywhere. Nodes are addressed **by id, never by pointer** (`nodes` is a vector that reallocates), which is why `animate(screen, node, ui_property_t::opacity).from(0).to(1)` takes a handle rather than the `animate(node.opacity)` that would dangle.
+
+**Focus is the node a *non-positional* activate would hit** — remembered, one per screen, surviving the pointer leaving the window. **Hover is stored nowhere**: a positional input resolves its own target with `hit_test()` as it arrives, which is what a click must do anyway. Whether pointer *movement* also writes focus is a per-screen policy (the menu says yes, so there is one highlight and one meaning for activate), not a fact about the type. Navigation (`ui/navigation.hpp`) is **geometric, not a linear index**: "down" is the nearest focusable node actually below, so a two-column screen works the day it is built. `ui_input_t` is **abstract actions, not keys**, so adding a gamepad touches `ui/ui_input.cpp` alone — and that file is pointedly the one NOT compiled into `ui_test`, since everything else takes a `ui_input_t` by value and needs no window.
+
+**The one widget: `client/ui/list_menu.hpp`.** A vertical list of labelled rows with a sliding focus highlight is what the main menu and the pause menu both *are*, so it is one type, and what differs between them is a `list_menu_style_t` (where the block is anchored, how wide, whether there is a dimmed backdrop — the pause menu differs on that one member and nothing else), a label list, and what activating a row does — which stays entirely at the call site: the widget returns a **row index** and knows nothing about what a row means. `Play_State` rebuilds its `list_menu_t` every time the pause menu opens, `Main_Menu_State` per visit; neither caches one behind an "is it built yet" test. Each screen keeps its own `..._item_t` enum and switches over it, so adding a row is a compile error at the dispatch rather than a row that draws and does nothing. This is deliberately **not** the start of a widget library — the second screen justified the first widget, and the third will justify the second.
+
+**There is no UI `.def` family, and adding one would be a mistake.** Every `.def` family exists because two parties must agree on a declaration (client/server, fire-site/handler, disk/code). A HUD has no second party, so a generator buys no agreement and costs a compiler. A hot-reloaded layout file is the escalation path (`shared/file_watcher.hpp` exists) once the HUD has a settled shape.
+
+ImGui composites last, so the UI list draws UNDER it: an open console covers the crosshair. That is the intended precedence, and it is the one visible change from the port.
 
 ### Player hit volumes
 
