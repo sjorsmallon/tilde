@@ -5,10 +5,17 @@
 // How much movement a client is allowed to execute, and why it is a budget over
 // TIME rather than a cap per tick.
 //
-// The exploit: every move in `incoming.moves` runs a full `player_move(tick_dt)`
-// step, so a client that sends more move commands than the server ticks moves
-// further per second than anyone else. Firing is interval-gated, so it is a
-// movement exploit rather than a damage one.
+// The exploit: every move in `incoming.moves` runs a full tick_dt of movement --
+// as one `player_move` step, or as the several a command's sub-tick edges split
+// it into (shared/subtick.hpp), which sum to the same tick_dt -- so a client
+// that sends more move commands than the server ticks moves further per second
+// than anyone else. Firing is interval-gated, so it is a movement exploit rather
+// than a damage one.
+//
+// Sub-tick edges change what a credit COSTS, not what it buys: a command with
+// the maximum edges asks for MAX_SUBTICK_EDGES + 1 pmove passes instead of one.
+// That is CPU, and it is bounded by the edge cap rather than by this budget --
+// which is the reason the cap exists at all.
 //
 // **A per-tick cap does not fix this**, which is the thing worth writing down. A
 // speedhacker sending 3x the command rate at 60Hz sends 180 commands a second

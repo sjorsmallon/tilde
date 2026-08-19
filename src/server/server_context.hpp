@@ -44,6 +44,11 @@ struct client_slot_t
 {
   shared::entity_uid_t player_uid = shared::null_entity_uid;
   int32_t  latest_processed_command = invalid_slot_idx;
+  // What the client's buttons were when its last processed command ENDED, which
+  // is what the next one's rising edges are measured against. Not "what it sent
+  // last": a command is a start state plus the edges inside the tick, so a press
+  // and its release between two boundaries is a press this sees and a naive
+  // compare of the two boundaries does not. See shared/subtick.hpp.
   uint64_t latest_buttons_bitmap    = 0;
   uint32_t held_snapshot_tick = 0;
   bool map_ready = false;

@@ -1,3 +1,5 @@
+# done
+
 # Lag compensation: rewind the hit test to what the shooter saw
 
 > **Status: LANDED (2026-08-16).** Everything below is in the tree: the three

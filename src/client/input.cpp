@@ -178,6 +178,7 @@ float g_scroll_delta = 0.0f;
 
 std::vector<key_event_t> g_key_events;
 std::vector<mouse_button_event_t> g_mouse_button_events;
+std::vector<input_edge_t> g_input_edges;
 
 } // namespace
 
@@ -208,6 +209,7 @@ void new_frame()
 
   g_key_events.clear();
   g_mouse_button_events.clear();
+  g_input_edges.clear();
 }
 
 void process_sdl_event(const void *sdl_event)
@@ -216,10 +218,28 @@ void process_sdl_event(const void *sdl_event)
   switch (event->type)
   {
   case SDL_KEYDOWN:
+  case SDL_KEYUP:
   {
     key_t key = scancode_to_key(event->key.keysym.scancode);
     if (key == key_t::Unknown)
       return;
+
+    // A key REPEAT is the OS typing for you, not a transition, so it reaches the
+    // shortcut queue (where holding backspace should keep deleting) and never
+    // the edge queue (where it would be a press with no release behind it).
+    if (event->key.repeat == 0)
+    {
+      input_edge_t edge{};
+      edge.device                 = input_device_t::Key;
+      edge.key                    = key;
+      edge.down                   = event->type == SDL_KEYDOWN;
+      edge.timestamp_milliseconds = event->key.timestamp;
+      g_input_edges.push_back(edge);
+    }
+
+    if (event->type != SDL_KEYDOWN)
+      break;
+
     key_event_t key_event{};
     key_event.key = key;
     key_event.mods = modifiers_from_sdl_keymod(event->key.keysym.mod);
@@ -241,6 +261,13 @@ void process_sdl_event(const void *sdl_event)
     button_event.position = {event->button.x, event->button.y};
     button_event.mods = modifiers_from_sdl_keymod(SDL_GetModState());
     g_mouse_button_events.push_back(button_event);
+
+    input_edge_t edge{};
+    edge.device                 = input_device_t::Mouse_Button;
+    edge.button                 = button;
+    edge.down                   = event->type == SDL_MOUSEBUTTONDOWN;
+    edge.timestamp_milliseconds = event->button.timestamp;
+    g_input_edges.push_back(edge);
     break;
   }
   case SDL_MOUSEWHEEL:
@@ -319,6 +346,16 @@ Span<const key_event_t> frame_key_events()
 Span<const mouse_button_event_t> frame_mouse_button_events()
 {
   return g_mouse_button_events;
+}
+
+Span<const input_edge_t> frame_input_edges()
+{
+  return g_input_edges;
+}
+
+uint32_t event_clock_milliseconds()
+{
+  return SDL_GetTicks();
 }
 
 bool imgui_wants_mouse()

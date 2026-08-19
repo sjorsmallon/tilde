@@ -114,6 +114,8 @@ auto step_air_move(const cvar_state_t &cvars, const vec3 &old_position,
 //@NOTE(SJM):
 // speed_drop = speed * friction * dt bills you for friction at the speed you're currently going. Take one step and that's fine. Take two half-steps and the second one is charged against a different, already-reduced speed:
 // friction = 4, dt = 1/60  →  friction*dt = 0.0667
+
+// v' = v - friction * dt;
 // start: speed = 300
 
 // one full step:    drop = 300 * 0.0667  = 20.00        → 280.000
@@ -122,7 +124,22 @@ auto step_air_move(const cvar_state_t &cvars, const vec3 &old_position,
 //                   drop = 290 * 0.0333  =  9.667       → 280.334
 //                                           ^^^^^
 //                               charged against 290, not 300
-auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt) -> vec3
+// Friction and acceleration are ONE system on the ground, not two operators
+// applied in turn: v' = -k*v + a*w. Running them alternately is what made a
+// split tick diverge even after both halves became individually exact, so this
+// reports the duration the acceleration must integrate over as well as the
+// decayed velocity. The exponential branch hands back (1-exp(-k*dt))/k rather
+// than dt, and two halves of THAT sum to the whole:
+//   t(h)*(1+exp(-k*h)) = (1-exp(-k*h))(1+exp(-k*h))/k = (1-exp(-2*k*h))/k
+// which plain dt does not do.
+struct friction_step_t
+{
+  vec3  velocity;
+  float acceleration_duration = 0.f;
+};
+
+auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt)
+    -> friction_step_t
 {
   // snap to only planar movement.
   old_velocity.y = 0.f;
@@ -132,12 +149,15 @@ auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt) -> v
   // stop.
   if (speed < cvars.pm_speed_threshold)
   {
-    return vec3{};
+    return {vec3{}, dt};
   }
 
   // exponential decay composes exactly under any subdivision of dt.
   if (speed >= cvars.pm_stopspeed)
-    return old_velocity * std::exp(-cvars.pm_friction * dt);
+  {
+    const float decay = std::exp(-cvars.pm_friction * dt);
+    return {old_velocity * decay, (1.f - decay) / cvars.pm_friction};
+  }
 
   float adjusted_speed = speed - cvars.pm_stopspeed * cvars.pm_friction * dt;
 
@@ -145,7 +165,9 @@ auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt) -> v
   if (adjusted_speed < 0.0f)
     adjusted_speed = 0.0f;
 
-  return old_velocity * (adjusted_speed / speed);
+  // The floor is a CONSTANT drop, so there is no decay for the acceleration to
+  // be weighted against and dt is already the exact duration.
+  return {old_velocity * (adjusted_speed / speed), dt};
 }
 
 // since input can be provided -127 -> +127, scale the movement vector based on
@@ -235,12 +257,15 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
   bool jump_pressed_this_frame = check_jump(input);
 
   // do not apply friction if we are intending to jump.
-  vec3 old_velocity_with_friction_applied = old_velocity;
+  vec3  old_velocity_with_friction_applied = old_velocity;
+  float acceleration_duration              = dt;
   if (!jump_pressed_this_frame)
   {
     // apply friction. this does not fully 'nullify' the velocity (or does it?).
-    old_velocity_with_friction_applied = apply_friction(
+    const friction_step_t friction = apply_friction(
         cvars, old_velocity, dt); // at this point, y velocity is already gone.
+    old_velocity_with_friction_applied = friction.velocity;
+    acceleration_duration              = friction.acceleration_duration;
   }
 
   // what inputs did we provide?
@@ -305,9 +330,9 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
   else
   {
     float acceleration = cvars.pm_ground_acceleration;
-    new_velocity =
-        accelerate(old_velocity_with_friction_applied,
-                   normalized_wish_direction, wish_speed, acceleration, dt);
+    new_velocity = accelerate(old_velocity_with_friction_applied,
+                              normalized_wish_direction, wish_speed,
+                              acceleration, acceleration_duration);
   }
 
   // clip the new velocity against the ground plane. take the length before

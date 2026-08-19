@@ -1,5 +1,7 @@
 #pragma once
 
+#include "remote_interpolation.hpp"
+
 #include "../shared/array.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/entities/entity_reflection.hpp"
@@ -9,6 +11,7 @@
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/player_move.hpp"
+#include "../shared/subtick.hpp"
 
 #include <memory>
 #include <unordered_map>
@@ -50,7 +53,12 @@ enum class Connection_Phase { Disconnected, Connecting, Loading, Connected };
 struct Saved_Command
 {
   int command_number = -1;
-  Move_Input input = {};
+  // The whole tick's input, edges and all, not the Move_Input it decodes to.
+  // Reconciliation replays this through the SAME split_tick the live prediction
+  // ran it through, so a replay reproduces the sub-steps rather than averaging
+  // them into one -- and it has to, because the split is where the clamps fire.
+  // A replay that split differently would be rubber-banding, not rounding.
+  shared::subtick_input_t input = {};
   float yaw = 0.f;
   float pitch = 0.f;
   vec3f predicted_position = {0, 0, 0};
@@ -59,16 +67,9 @@ struct Saved_Command
 static constexpr uint32_t MAX_PENDING_COMMANDS = 128;
 
 // --- Remote player interpolation ---
-struct Remote_Player_Snapshot
-{
-  vec3f position = {0, 0, 0};
-  float yaw = 0.f;
-  float pitch = 0.f;
-  // Server-owned; see Remote_Player_State::body_yaw below.
-  float body_yaw = 0.f;
-  uint32_t server_tick = 0;
-};
-
+// The snapshot ring and the render clock both live in client/remote_interpolation.hpp,
+// which is where the reasoning is too. What is left here is the per-player
+// state around them: who the slot holds, and what the last sample rendered to.
 struct Remote_Player_State
 {
   int32_t slot_index = invalid_slot_idx;
@@ -77,8 +78,10 @@ struct Remote_Player_State
   // player's last position.
   shared::entity_uid_t entity_uid = shared::null_entity_uid;
   bool active = false;
-  Remote_Player_Snapshot snapshots[2] = {};
-  int snapshot_count = 0;
+  // Per player rather than one shared pair: "time since arrival" means something
+  // different for every entity, so the old global phase could only ever describe
+  // them all by accident. The ring is what the RENDER CLOCK indexes into.
+  client::interpolation_ring_t interpolation;
   vec3f render_position = {0, 0, 0};
   float render_yaw = 0.f;
   float render_pitch = 0.f;
@@ -217,6 +220,40 @@ struct prediction_t
   int command_number = 0;
   Array<Saved_Command, MAX_PENDING_COMMANDS> pending_commands = {};
 
+  // --- Sub-tick input edges ---
+  //
+  // The tracked buttons (Button::Subtick_Tracked) as of the last tick boundary,
+  // and every transition since it that no tick has consumed yet. Together they
+  // are what the next command's subtick_input_t is built from.
+  //
+  // `accumulator_seconds` is measured in the SAME timeline the ticks are cut
+  // from -- seconds past the last tick boundary, in physics_accumulator space --
+  // and not in wall-clock. That is deliberate: the accumulator is what decides
+  // where a tick boundary lands, so placing an edge anywhere else means the two
+  // can disagree about which side of the boundary a press fell on, which is the
+  // one thing sub-tick exists to get right. Every tick consumed rebases the
+  // leftovers by tick_dt, exactly as the accumulator itself is rebased.
+  //
+  // A frame can produce more transitions than one tick can carry
+  // (MAX_SUBTICK_EDGES); the overflow is logged where it is dropped, because
+  // that is input being abandoned.
+  struct pending_input_edge_t
+  {
+    float    accumulator_seconds = 0.f;
+    uint64_t buttons_after       = 0; // tracked bits only; the rest are polled
+  };
+  std::vector<pending_input_edge_t> pending_input_edges;
+  uint64_t tracked_buttons_at_tick_start = 0;
+
+  // Whether the edges above are a current account of what is held. False while
+  // anything stops them being read -- the console owning the keyboard, or not
+  // being Connected, so no tick loop is draining them -- and resuming from that
+  // resamples the keyboard SILENTLY, because the transitions that happened while
+  // parked were genuinely never seen. It is the difference between "we missed
+  // these on purpose" and a lost event, and only the second one is worth a log
+  // line.
+  bool input_edges_are_live = false;
+
   // Every move built but not yet acked by the server, oldest first, resent whole
   // in each move datagram. Held as the BUILT messages rather than rebuilt from
   // pending_commands above: a resend has to carry the held_snapshot_tick and the
@@ -264,7 +301,16 @@ struct bot_debug_entry_t
 struct replication_t
 {
   std::unordered_map<int32_t, Remote_Player_State> remote_players;
-  float interpolation_time = 0.f;
+
+  // WHERE ON THE SERVER'S TICK AXIS THE CLIENT IS DRAWING. One per connection:
+  // every remote entity's ring is indexed by this same clock, which is what a
+  // shared ABSOLUTE coordinate buys and a shared arrival phase could not.
+  //
+  // It replaced a float reset to zero on every snapshot arrival. That reset was
+  // `render_tick = newest_received_tick - 1` written as an assignment, and it
+  // was only ever correct when the clock had already reached exactly that value
+  // -- the discarded remainder was the pop. See remote_interpolation.hpp.
+  client::render_clock_t render_clock;
 
   // --- Delta decompression: the latest reconstructed snapshot ---
   // What the game reads. A copy of the newest frame in the history below, kept
@@ -290,11 +336,6 @@ struct replication_t
   // `latest_player_entities` above is the by-slot view, rebuilt on publish.
   ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history;
   uint32_t latest_processed_tick = 0;
-
-  // The tick `Remote_Player_State::snapshots[0]` came from -- the OLDER endpoint
-  // of the blend the renderer draws through. `snapshot_history.acked_tick` is
-  // the newer one, and `interpolation_time` below is how far along it we are.
-  uint32_t previous_snapshot_tick = 0;
 
   // Per-player Player_Entity::last_fire_tick as of the last snapshot we looked
   // at, keyed by entity uid. An advance means that player fired; see

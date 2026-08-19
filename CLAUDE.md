@@ -223,6 +223,67 @@ The rule in one line: **continuous values are polled from the truth; discrete oc
 
 ImGui composites last, so the UI list draws UNDER it: an open console covers the crosshair. That is the intended precedence, and it is the one visible change from the port.
 
+### Sub-tick input
+
+**A move command is the buttons at the START of the tick plus the EDGES inside
+it**, not a state sampled once per tick. Quantizing a press to the 16.7ms grid is
+a modeling error — the press happened at a time, and the grid is an
+implementation detail of the simulator — so one tick runs as one movement step
+per interval between its edges. `shared/subtick.hpp` is the format and
+`split_tick` is the driver both sides run; `subtick_plan.md` is the design, and
+its first two steps (making `player_move` step-invariant, then
+`player_move_step_invariance_test`) are what had to land before any of this was
+safe.
+
+An edge's time is a **6-bit slot index** (64 per tick, 0.26ms at 60Hz), never a
+float fraction: the client predicts and the server re-simulates, and a float
+differing by one ULP feeds a `dt` that feeds a clamp and diverges the whole
+prediction. `MAX_SUBTICK_EDGES` bounds the sub-step budget one datagram can ask
+for — the move budget bounds the RATE of datagrams, this bounds the cost of one.
+
+Two grammars, deliberately different. The wire's is **strict**
+(`try_append_subtick_edge`): slots 1..63, strictly ascending, capped — an edge
+that breaks it is a client we did not ship, so the server refuses the command
+rather than simulating it. The client's recorder **folds**
+(`try_record_subtick_state`): it is fed raw SDL transitions, whose resolution is
+coarser than a slot and whose order is whatever the queue handed us, so two
+inside one slot collapse and a press-plus-release inside one records nothing.
+
+`shared/network/subtick_codec.{hpp,cpp}` is the ONE place that value becomes a
+move command and back — the client writes it and the server reads it, and the two
+drifting is not something either side could notice, since a slot written into the
+wrong field decodes as a plausible tick. It carries the buttons AND the edges
+together, because a start state without the transitions that follow it is a tick
+of input that never happened.
+
+**No edges is a whole command, not a degenerate one** — it splits into exactly
+the single `tick_dt` step it replaced. That is what let bots, tests and every
+other `player_move` caller go untouched.
+
+Client side, `input::frame_input_edges` is a third queue beside
+`frame_key_events` / `frame_mouse_button_events`, and it is the one that carries
+RELEASES and a timestamp; the older two are presses without one, because a menu
+does not care when inside the frame you clicked. Edges are placed in
+**accumulator space, not wall-clock**: SDL's clock and the physics accumulator
+share no origin, so position comes from the edge's AGE against the frame's real
+duration, mapped onto the accumulator's advance. Ticks consume the pending edges
+and rebase the leftovers by `tick_dt`. Only `Button::Subtick_Tracked` (the four
+directions, jump, fire) gets a slot; everything else is tick-granular on purpose.
+
+`is_key_down` is a frame stale — `input::new_frame` snapshots SDL's keyboard
+before the frame's events are pumped — and that is what makes it comparable to
+the edge-folded state as a **lost-transition check**: a disagreement means a
+KEYUP never reached us (focus loss), which would otherwise stick a button down
+forever now that nothing else resamples. It logs and resyncs. Opening the console
+releases everything as an edge; closing it resamples.
+
+**A shot has a sub-tick moment too, on both ends.** `resolve_player_shot` is
+called from inside the server's step loop, after the step the trigger press
+landed in, so the shot is taken from where the shooter had actually reached — and
+the client reads its interpolation bracket at the moment of the press
+(`bracket_at(clock, ticks_before_now)`) rather than at command-build time, since
+the world it was drawing then is that fraction of a tick older.
+
 ### Player hit volumes
 
 A player is hit-tested against the **posed skeletal volumes**, not a static box table. Three files, in order of who calls whom:

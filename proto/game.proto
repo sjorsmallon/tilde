@@ -30,6 +30,20 @@ message C2S_PlayerMoveBatch {
   repeated C2S_PlayerMoveCommand moves = 1;
 }
 
+// One button transition inside the tick a move command covers: WHEN it happened,
+// and the whole bitfield in effect from that moment on.
+//
+// A slot INDEX, not a fraction: 64 slots per tick, so 0.26ms at 60Hz. The client
+// predicts and the server re-simulates, and those two runs must agree exactly --
+// a float differing by one ULP feeds a dt that feeds a clamp, and diverges the
+// prediction. A 6-bit integer cannot disagree with itself. See
+// shared/subtick.hpp for the grammar and subtick_plan.md for why sub-tick at
+// all.
+message C2S_SubtickEdge {
+  optional uint32 slot = 1;          // 1..63, strictly ascending across edges
+  optional uint64 buttons_after = 2; // the FULL bitfield, not a delta
+}
+
 message C2S_PlayerMoveCommand {
   optional int32 command_number = 1; // this is just for sequencing!
   optional int32 tick_count = 2;
@@ -42,8 +56,23 @@ message C2S_PlayerMoveCommand {
   optional float sidemove = 5;
   optional float upmove = 6;
 
-  // The "Buttons" Bitfield
+  // The buttons at the START of this tick, and every transition that followed,
+  // in order. Together they are the tick's input: the server runs one movement
+  // step per interval between the edges, and the client's prediction runs the
+  // identical split (shared/subtick.hpp, split_tick).
+  //
+  // buttons_bitfield used to be "the buttons when the command was built", which
+  // quantized every press to the 16.7ms tick grid -- a modeling error, since the
+  // press happened at a time and the grid is an implementation detail of the
+  // simulator. It is the START state now, so a press mid-tick shows up as an
+  // edge rather than as next tick's state, and the server sees the press at the
+  // moment it happened rather than up to a tick late.
+  //
+  // No edges is a whole client, not a degenerate one: it means nothing changed
+  // inside the tick, and the tick runs as the single step it always did. Bots
+  // and tests never send any.
   optional uint64 buttons_bitfield = 7;
+  repeated C2S_SubtickEdge subtick_edges = 12;
 
   // The newest snapshot this client holds a complete copy of, named by the
   // server tick it was taken at. 0 = none yet, send a full update.
@@ -73,6 +102,12 @@ message C2S_PlayerMoveCommand {
   // rendering everyone else BEHIND it. That clock needs no compensation -- the
   // server re-derives the shooter's own position from the inputs in this very
   // message.
+  //
+  // Read at the moment of the SHOT when the command carries one, not at the
+  // moment the command was built: the trigger goes down at a sub-tick slot
+  // inside the tick (see subtick_edges above), and the world the shooter was
+  // drawing then is that fraction of a tick older. With no press in the tick it
+  // is the read it always was, and nothing consumes it.
   //
   // Either tick being 0 means no blend yet (spectating, or fewer than two
   // snapshots seen); the server falls back to present-tick poses.

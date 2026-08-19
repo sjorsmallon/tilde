@@ -81,6 +81,35 @@ struct mouse_button_event_t
   modifiers_t mods;
 };
 
+// One button transition, with the time SDL stamped it.
+//
+// A THIRD queue, beside the two above, and the difference is what it is for.
+// frame_key_events / frame_mouse_button_events answer "what happened this
+// frame" for shortcuts and clicks: keys are presses only, and neither carries a
+// time, because a menu does not care WHEN inside the frame you clicked.
+// Sub-tick movement is the caller that does -- the press happened at a moment,
+// and which side of a tick boundary that moment fell on is the whole point (see
+// shared/subtick.hpp). So this one carries RELEASES too, spans both devices in
+// one arrival-ordered list, and keeps the timestamp.
+//
+// The timestamp is SDL's, in whole milliseconds since SDL_Init, and it is what
+// bounds the client's real sub-tick resolution: 1ms is about four of the 64
+// slots at 60Hz. That is a limit of SDL2's event stamps, not of the format.
+enum class input_device_t : uint8_t
+{
+  Key,
+  Mouse_Button
+};
+
+struct input_edge_t
+{
+  input_device_t device = input_device_t::Key;
+  key_t          key    = key_t::Unknown;        // device == Key
+  mouse_button_t button = mouse_button_t::Count; // device == Mouse_Button
+  bool           down   = false;
+  uint32_t       timestamp_milliseconds = 0;
+};
+
 // A processed mouse interaction handed to editor tools. Unlike the raw
 // mouse_button_event_t queue, this carries a movement delta and is dispatched
 // for drags as well as clicks.
@@ -119,6 +148,15 @@ void set_relative_mouse_mode(bool enabled);
 
 Span<const key_event_t> frame_key_events();
 Span<const mouse_button_event_t> frame_mouse_button_events();
+
+// Every key and mouse-button transition this frame, in arrival order, with SDL's
+// timestamp on each. Releases included -- see input_edge_t.
+Span<const input_edge_t> frame_input_edges();
+
+// SDL's event-timestamp clock, read now. The same domain input_edge_t is
+// stamped in, so a caller can ask how OLD an edge is; nothing else in the
+// client keeps time in it.
+uint32_t event_clock_milliseconds();
 
 // --- ImGui capture -----------------------------------------------------------
 

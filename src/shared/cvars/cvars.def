@@ -180,6 +180,34 @@ Client :: cvars {
 
     cl_maxfps:              f32 = 1000.0    @Client    "Maximum client framerate (0 = unlimited)"
 
+    // How far behind the newest received snapshot remote entities are drawn.
+    // THE SLACK IS THE PRODUCT: this is the entire jitter and loss budget, and
+    // it is a straight trade -- every tick of delay is a tick of extra latency
+    // on what you see of everyone else, and a tick of extra rewind the server
+    // must be willing to do. 2 covers a single dropped snapshot; 3 covers two.
+    //
+    // Less new latency than it looks: the old arrival-phase scheme already drew
+    // between 0 and 1 tick behind, so 2 costs about ONE tick over what it
+    // replaced -- and the moments it sat at 0 behind were the frozen ones.
+    //
+    // TICKS, not milliseconds, which is the opposite of Source's cl_interp. A
+    // tick is the snapshot cadence, so "2" means "two snapshots of slack" --
+    // the quantity that actually matters -- and it keeps meaning that if
+    // sv_tickrate moves. A millisecond value silently becomes a different
+    // number of snapshots the moment it does.
+    //
+    // Below 1 the far end of the bracket is a packet that has not arrived, so
+    // the clock is racing arrival again with no budget at all. Above ~4 it
+    // starts eating sv_max_rewind_ticks (12), which is a fairness call rather
+    // than a tuning knob -- see lag_compensation_def.md.
+    cl_interpolation_delay_ticks: f32 = 2.0   @Client    "Server ticks behind the newest snapshot that remote entities are drawn"
+
+    // A dry interpolation buffer is real packet loss, not a rendering detail:
+    // it means loss exceeded cl_interpolation_delay_ticks and a remote player
+    // visibly froze. This is what distinguishes "the network is bad" from "the
+    // buffer is mis-sized", and without it those two look identical.
+    cl_interpolation_debug: bool = false      @Client    "Log interpolation buffer stalls and clock snaps"
+
 
     cl_draw_player_hull:    bool = false     @Client    "Draw remote players as their collision hull, over the model"
 

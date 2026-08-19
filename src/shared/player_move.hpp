@@ -35,6 +35,17 @@ constexpr uint64_t Key0     = 1 << 14;
 constexpr uint64_t Fire     = 1 << 15;
 constexpr uint64_t Zoom     = 1 << 16;
 constexpr uint64_t P        = 1 << 17; // Placeholder that you can use to hijack.
+
+// The buttons whose EDGE is worth a sub-tick slot, and therefore an extra
+// movement step (shared/subtick.hpp). Movement plus the trigger: those are the
+// ones where a press landing 8 units of travel from where it was meant to is
+// something a player can feel.
+//
+// Everything else is deliberately left tick-granular. A weapon switch or a zoom
+// toggle resolving up to 16.7ms late is invisible, and every button admitted
+// here costs a pmove pass on the server whenever it moves.
+constexpr uint64_t Subtick_Tracked =
+    Forward | Backward | Left | Right | Jump | Fire;
 } // namespace Button
 
 // Initializers are load-bearing, not decoration. `Move_Input input;` at block

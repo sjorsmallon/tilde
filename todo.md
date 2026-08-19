@@ -3,16 +3,33 @@
 # reliable retransmit.
 
 
-**Sub-tick movement: the plan and its prerequisites are in `subtick_plan.md`.**
-Step 1 is done for friction (2026-08-18) and gravity (2026-08-19); step 2, the
-step-invariance test, landed 2026-08-19 as
-`src/test/player_move_step_invariance_test.cpp` and is the gate on everything
-after it. Read that file before touching `player_move.cpp` step sizes — it says
-which divergences are defects and which are air control.
+**Sub-tick movement: `subtick_plan.md` — LANDED 2026-08-19, all three steps.**
+Steps 1 and 2 first (friction, gravity and the accelerate/friction ordering are
+step-invariant, guarded by `src/test/player_move_step_invariance_test.cpp` —
+read that file before touching `player_move.cpp` step sizes, it says which
+divergences are defects and which are air control). Then step 3: a move command
+carries the buttons at the START of the tick plus the EDGES inside it, as 6-bit
+slot indices; `shared/subtick.hpp` is the format and `split_tick` is the driver
+both sides run; the client stamps SDL transitions and places them in accumulator
+space; the server runs one movement step per interval and resolves a shot at the
+sub-step the trigger went down in. `subtick_test` guards the format's two
+grammars. The plan's closing section lists what is deliberately still whole-tick
+(view angles, the bracket's frame-vs-tick phase, bots).
+
+**Remote interpolation: `interpolation_buffer_plan.md` — LANDED 2026-08-19.**
+The arrival-reset clock is gone. `client::render_clock_t` is a fractional server
+tick advanced by `dt * tickrate` and never reset; each remote player has its own
+`interpolation_ring_t`; the delay is `cl_interpolation_delay_ticks` (2); drift is
+closed by a rate trim rather than a snap. `remote_interpolation_test` is the
+instrument — arrival schedules in, rendered motion asserted on.
+`interpolation_fraction` is a read of that clock, which is what made sub-tick
+step 3 worth doing — and it is now read at the moment of the SHOT rather than at
+command-build time, since the trigger has a sub-tick slot like any other button.
 
 Finished work moves to `done.md`. Design rationale lives in `entity_def.md`,
-`entity_storage_def.md`, `entity_system_def.md`, `cvar_def.md` and
-`subtick_plan.md`; this file is the work list and the order.
+`entity_storage_def.md`, `entity_system_def.md`, `cvar_def.md`,
+`subtick_plan.md` and `interpolation_buffer_plan.md`; this file is the work list
+and the order.
 
 **Current priorities**
 
@@ -687,12 +704,47 @@ did not fix.
 
 # Networking
 
+- [ ] **`poll_client_network` busy-spins for a full millisecond, every frame.**
+      Found 2026-08-19 while explaining the frame loop; NOT investigated, and
+      parked deliberately until the networking reading happens.
+
+      `play_state.cpp:428` calls `poll_client_network(transport, 0.001, inbox)`,
+      and the loop in `shared/network/client_transport_layer.hpp:219-224` is:
+
+      ```cpp
+      while (clock::now() - start_time < timeout)
+      {
+        if (!state.socket.receive(packet, sender))
+          continue;   // non-blocking socket -> returns false instantly -> spins
+        ...
+      }
+      ```
+
+      The socket is non-blocking (`FIONBIO` / `O_NONBLOCK`,
+      `udp_socket.cpp:210-221`), so a dry socket does not wait — it spins. There
+      is no exit when the buffer empties, so the full 1ms elapses regardless of
+      traffic: a hard floor on frame time and a core at 100%. Under vsync at
+      240Hz that is 24% of a 4.16ms frame budget spent on nothing.
+
+      Nothing waits on the network, so this is not a stall in the usual sense —
+      it is a fixed tax with no upside, since whatever was going to arrive was
+      already in the kernel buffer on entry.
+
+      **Do not "fix" this by draining-until-empty without reading first.** That
+      is the obvious change and it is probably right, but the 1ms window may
+      have been buying a second thing nobody wrote down (a poor man's
+      rate-limit on how often the client can be woken, or slack for fragment
+      reassembly to complete within one frame). The server's poll deserves the
+      same look at the same time — check whether it has the same shape before
+      changing either. The real question underneath is whether this client
+      wants a blocking receive with a timeout, a drain loop, or a
+      `select`/`poll` — and that is a design decision, not a patch.
+
 - [ ] **Snapshot smoothing for rockets and physics bodies.** Remote-PLAYER
-      smoothing already exists and works: `Remote_Player_State` with a
-      2-snapshot buffer (`client_context.hpp:121-144`), fed at
-      `play_state.cpp:725-740`, lerped at `play_state.cpp:987-1016`. Rockets
-      and physics bodies SNAP; the work is following that pattern for two more
-      types.
+      smoothing is done properly as of 2026-08-19: a per-player
+      `client::interpolation_ring_t` read through one `client::render_clock_t`
+      (`client/remote_interpolation.hpp`). Rockets and physics bodies still
+      SNAP; the work is bringing them onto that same clock.
       * **Physics bodies** are the reason to do it, and integrated mode is why
         nobody has noticed: it reads `server_session` directly and never
         touches a snapshot, so the stutter exists only in the networked build
@@ -701,11 +753,13 @@ did not fix.
         is `@Networked` solely for this and stays.
       * **Rockets** travel straight at 600 u/s, so extrapolate along `velocity`
         rather than lerp — two snapshots are ~75 units apart.
-      * Give each smoothed entity **its own accumulator**. The shared
-        `ctx.interpolation_time`, reset inside the per-player loop
-        (`play_state.cpp:739`), is only correct while every remote entity's
-        snapshots arrive in the same packet — true today, false the moment
-        anything is sent at a different cadence.
+      * **RESOLVED 2026-08-19 — give each entity its own RING, and none of them
+        its own clock.** The shared-accumulator fragility this bullet described
+        is gone with `ctx.interpolation_time`. Add an `interpolation_ring_t`
+        beside each smoothed entity and sample it at
+        `ctx.replication.render_clock.render_tick`. A rocket wants
+        extrapolation along `velocity` rather than a lerp — but off that same
+        clock. A second clock here would be the third one and the second bug.
 
       **DECIDED 2026-07-30: no `@interpolate` flag; interpolation does not
       enter `entities.def` at all.** The three existing flags answer "where do

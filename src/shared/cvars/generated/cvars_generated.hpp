@@ -83,6 +83,8 @@ struct cvar_state_t
   float m_sensitivity = 0.1f;
   float m_zoom_sensitivity_ratio = 1.0f;
   float cl_maxfps = 1000.0f;
+  float cl_interpolation_delay_ticks = 2.0f;
+  bool cl_interpolation_debug = false;
   bool cl_draw_player_hull = false;
   int32_t cl_spectate_slot = -1;
   bool cl_player_unlit = false;
@@ -153,41 +155,43 @@ enum class cvar_id : uint16_t
   m_sensitivity = 25,
   m_zoom_sensitivity_ratio = 26,
   cl_maxfps = 27,
-  cl_draw_player_hull = 28,
-  cl_spectate_slot = 29,
-  cl_player_unlit = 30,
-  cl_aim_debug = 31,
-  cl_aim_debug_pitch = 32,
-  cl_aim_debug_yaw = 33,
-  cl_crosshair = 34,
-  cl_crosshair_dot = 35,
-  cl_crosshair_size = 36,
-  cl_crosshair_gap = 37,
-  cl_crosshair_thickness = 38,
-  cl_crosshair_r = 39,
-  cl_crosshair_g = 40,
-  cl_crosshair_b = 41,
-  cl_crosshair_a = 42,
-  editor_speed = 43,
-  cl_timescale = 44,
-  sound_reference_distance = 45,
-  sound_max_distance_cutoff = 46,
-  sound_rolloff_factor = 47,
-  debug_show_collisions = 48,
-  debug_show_hitboxes = 49,
-  debug_show_navmesh = 50,
-  debug_show_box_volumes = 51,
-  debug_hide_geometry = 52,
-  debug_show_entity_counts = 53,
-  debug_show_physics_bodies = 54,
-  net_snapshot_debug = 55,
-  sv_event_debug = 56,
-  cl_event_debug = 57,
+  cl_interpolation_delay_ticks = 28,
+  cl_interpolation_debug = 29,
+  cl_draw_player_hull = 30,
+  cl_spectate_slot = 31,
+  cl_player_unlit = 32,
+  cl_aim_debug = 33,
+  cl_aim_debug_pitch = 34,
+  cl_aim_debug_yaw = 35,
+  cl_crosshair = 36,
+  cl_crosshair_dot = 37,
+  cl_crosshair_size = 38,
+  cl_crosshair_gap = 39,
+  cl_crosshair_thickness = 40,
+  cl_crosshair_r = 41,
+  cl_crosshair_g = 42,
+  cl_crosshair_b = 43,
+  cl_crosshair_a = 44,
+  editor_speed = 45,
+  cl_timescale = 46,
+  sound_reference_distance = 47,
+  sound_max_distance_cutoff = 48,
+  sound_rolloff_factor = 49,
+  debug_show_collisions = 50,
+  debug_show_hitboxes = 51,
+  debug_show_navmesh = 52,
+  debug_show_box_volumes = 53,
+  debug_hide_geometry = 54,
+  debug_show_entity_counts = 55,
+  debug_show_physics_bodies = 56,
+  net_snapshot_debug = 57,
+  sv_event_debug = 58,
+  cl_event_debug = 59,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 58;
+constexpr uint32_t CVAR_COUNT = 60;
 
 enum class command_id : uint16_t
 {

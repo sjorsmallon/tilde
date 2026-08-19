@@ -17,6 +17,8 @@
 #include "../shared/hitscan.hpp"
 #include "../shared/weapons.hpp"
 #include "../shared/array.hpp"
+#include "../shared/network/subtick_codec.hpp"
+#include "../shared/subtick.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -618,6 +620,158 @@ static shared::interpolation_bracket_t get_interpolation_bracket_for_move(
   return verdict.bracket;
 }
 
+
+// One shot, from where the shooter had reached when the trigger went down.
+//
+// Pulled out of the move loop when a tick stopped being one movement step: a
+// trigger press has a sub-tick moment like any other button, so this is called
+// from inside the step loop, after the step the press landed in has run. What
+// used to be "the post-move eye" is now the eye at the moment of the shot, which
+// is what that comment always meant.
+static void resolve_player_shot(server_context_t &context, int32_t client_slot,
+                                const game::C2S_PlayerMoveCommand &move,
+                                entities::Player_Entity *player, float yaw, float pitch)
+{
+  // this tripped me up 15 different times, so here we go again.
+  // POST-move eye, against start-of-tick or rewound victims. The asymmetry
+  // is deliberate and it is what the client's screen looks like: prediction
+  // runs this same move before the frame is drawn, so the camera sits at the
+  // post-move position (play_state.cpp, prediction.player_position), while
+  // remote players are drawn interpolated in the PAST. Sampling the shooter
+  // pre-move would reconstruct a view nobody ever aimed from.
+
+  const vec3f direction = linalg::direction_from_angles(yaw, pitch);
+  const vec3f eye = player->position + vec3f{0.f, shared::player_eye_height, 0.f};
+
+  const shared::weapon_definition_t& weapon =
+      shared::get_weapon_definition(player->active_weapon_id);
+
+  const float seconds_since_last_fire =
+      static_cast<float>(context.tick_number - player->last_fire_tick) *
+      static_cast<float>(get_tick_interval());
+
+  // Still inside the weapon's interval. Was a `continue` while this lived in
+  // the move loop; the joke about continue meaning skip does not survive the
+  // extraction, but the gate does.
+  if (seconds_since_last_fire < weapon.fire_interval_seconds)
+    return;
+
+  // update metadata about firing so clients don't get confused about what happened.
+  player->last_fire_tick   = context.tick_number;
+  player->last_fire_weapon = player->active_weapon_id;
+
+  switch (weapon.kind)
+  {
+    case entities::Weapon_Kind::Melee:
+    case entities::Weapon_Kind::Hitscan:
+    case entities::Weapon_Kind::Sniper:
+    {
+      float range = weapon.range;
+
+      ray_hit_result_t world_hit{};
+      const bool shot_collided_with_static_geometry =
+          bvh_intersect_ray(context.world.session.bvh, eye, direction, world_hit) &&
+          world_hit.hit;
+
+      // clip the max range, since players outside of this range can't possibly be hit.
+      if (shot_collided_with_static_geometry)
+        range = std::min(range, world_hit.t);
+
+      if (context.posed_players.built_for_tick != context.tick_number)
+        fatal_error("hit volumes were posed for tick {} but this is tick {}; "
+                    "pose_all_players must run before the move loop",
+                    context.posed_players.built_for_tick, context.tick_number);
+
+      // --- Lag compensation ---
+      // Rewind the targets to the blend this move was aimed THROUGH, so the
+      // silhouette tested is the one that was under the crosshair rather
+      // than where that player has since got to. Shooter-favored, and
+      // bounded by sv_max_rewind_ticks; lag_compensation_def.md argues the
+      // tradeoff.
+      //
+      // The present-tick set is the fallback and still a real arm: a
+      // spectator, a client's first shots before it holds two snapshots, a
+      // refused bracket, or an endpoint that has aged out of the ring all
+      // land there.
+      Span<const shared::hitscan_target_t> targets{context.posed_players.targets};
+      if (context.cvars->sv_lag_compensation)
+      {
+        // Inside the cvar check, not beside it: get_interpolation_bracket_for_move
+        // logs, and a server with the feature turned off has no business
+        // complaining about brackets it is not going to use.
+        const shared::interpolation_bracket_t bracket =
+            get_interpolation_bracket_for_move(context, client_slot, move);
+
+        if (bracket.towards_tick != 0 &&
+            shared::try_pose_players_across_bracket(
+                context.replication.snapshot_history, shared::player_rig(),
+                aim_settings_from(*context.cvars), bracket, context.rewind_scratch))
+          targets = Span<const shared::hitscan_target_t>{context.rewind_scratch.targets};
+      }
+
+      const shared::hitscan_result_t hit = shared::resolve_hitscan(
+          eye, direction, range, targets, player->entity_id);
+
+      if (hit.hit_uid != shared::null_entity_uid)
+      {
+        broadcast_server_text_message(
+            context, std::format("Player {} hit player {} in the {}",
+                                client_slot, hit.hit_uid,
+                                to_string(hit.region)));
+        const bool was_headshot = hit.region == shared::hit_region_t::Head;
+
+        damage_info_t info{};
+        info.victim_uid      = hit.hit_uid;
+        info.attacker_uid    = player->entity_id;
+        info.inflictor_uid   = player->entity_id;
+        info.weapon_id       = static_cast<uint16_t>(player->active_weapon_id);
+        info.amount          = weapon.damage *
+                              (was_headshot ? weapon.headshot_multiplier : 1.f);
+        info.source_position = eye;
+        info.was_headshot    = was_headshot;
+
+        // defer for kill contribution.
+        context.outgoing.pending_hits.push_back(
+            {info, hit.impact_point, hit.impact_normal, hit.region});
+      }
+      else if (shot_collided_with_static_geometry && weapon.kind != entities::Weapon_Kind::Melee)
+      {
+        // Melee deliberately produces no impact effect: a knife swing that
+        // reaches a wall should not spray a bullet decal.
+        shared::Bullet_Impact fx{};
+        fx.origin = eye + direction * world_hit.t;
+        shared::fire_bullet_impact(context.outgoing.effects, fx);
+      }
+      break;
+    }
+    case entities::Weapon_Kind::Projectile:
+    {
+      log_terminal("Player {} fired a rocket!", client_slot);
+
+      const shared::entity_uid_t rocket_uid =
+          context.world.session.entity_system.spawn<entities::Rocket_Entity>();
+      entities::Rocket_Entity *rocket =
+          context.world.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
+      if (rocket)
+      {
+        // Muzzle is the eye, same as the hitscan origin -- a rocket that
+        // spawns somewhere other than where the crosshair is aimed from is
+        // the same class of bug as a mismatched hitscan origin.
+        // Everything else -- lifetime, damage, radii, the render component --
+        // is a per-type constant and comes from entities.def.
+        rocket->position = eye;
+        rocket->velocity = direction * context.cvars->game_rocket_speed;
+        rocket->owner_id = player->entity_id;
+
+        printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
+              rocket->position.x, rocket->position.y, rocket->position.z,
+              assets::to_string(rocket->render.mesh), rocket->render.visible);
+      }
+      break;
+    }
+  }
+}
+
 bool Tick()
 {
   timed_function();
@@ -963,9 +1117,33 @@ bool Tick()
 
     client.latest_processed_command = move.command_number();
 
-    const uint64_t current_buttons   = move.buttons_bitfield();
-    const uint64_t buttons_pressed_this_tick = current_buttons & ~client.latest_buttons_bitmap;
-    client.latest_buttons_bitmap     = current_buttons;
+    // --- The tick's input: the state it starts in, and every edge inside it ---
+    //
+    // Decoded strictly (shared/subtick.hpp): an edge that breaks the grammar is
+    // a client we did not ship, so the command is refused rather than simulated.
+    // The high-water mark still advances past it -- a refused command is
+    // CONSUMED, and leaving it unacked would have the client resend the same
+    // malformed thing forever.
+    const std::optional<shared::subtick_input_t> decoded_input =
+        network::try_read_subtick_input(move);
+    if (!decoded_input)
+    {
+      log_error("slot {}: move {} carries sub-tick edges that break the grammar "
+                "(slots must be 1..{}, strictly ascending, at most {} of them) — "
+                "command dropped",
+                client_slot, move.command_number(), shared::SUBTICK_SLOT_COUNT - 1,
+                shared::MAX_SUBTICK_EDGES);
+      continue;
+    }
+    const shared::subtick_input_t &subtick_input = *decoded_input;
+
+    // Across the WHOLE tick, edges included, so a press and its release inside
+    // one tick still switches the weapon. `latest_buttons_bitmap` is what the
+    // client leaves the tick in, which is what the next one diffs against.
+    const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
+    const uint64_t buttons_pressed_this_tick =
+        shared::subtick_rising_edges(subtick_input, buttons_before_tick);
+    client.latest_buttons_bitmap = subtick_input.buttons_at_end();
 
     // weapon switching is allowed even though moving isn't.
     if (buttons_pressed_this_tick & Button::Key1)
@@ -981,15 +1159,8 @@ bool Tick()
                                to_string(player->active_weapon_id)));
     }
 
-    const bool fire_pressed = (buttons_pressed_this_tick & Button::Fire) != 0;
-
-    // Decode Move_Input from the button bitfield
-    Move_Input input = move_input_from_buttons(current_buttons);
-
     // allowed to move is the moire logical one because we can pile more co=nditions on here.
     bool allowed_to_move = !is_dead;
-    if (!allowed_to_move)
-      input = Move_Input{};
 
     // Compute front/right from viewangles
     float yaw = move.viewangles().yaw();
@@ -1024,15 +1195,47 @@ bool Tick()
       continue;
     }
 
-      // Authoritative move. Updates position and velocity in place.
-    Move_Events move_events{};
-    auto [new_pos, new_vel] =
-        player_move(*context.cvars, input, context.world.session.bvh, player->position,
-                    player->velocity, front, right, 16.f, 36.f, tick_dt,
-                    &move_events);
+    // Authoritative move, one step per interval between the tick's input edges.
+    // With no edges this is the single tick_dt step it has always been, which is
+    // what lets a bot, a test and every other caller keep the simulation they
+    // had. The client ran this same split before it drew the frame; a
+    // disagreement about it is rubber-banding rather than a rounding error,
+    // because the split is where the clamps fire.
+    const shared::subtick_schedule_t schedule = shared::split_tick(subtick_input, tick_dt);
 
-    player->position = new_pos;
-    player->velocity = new_vel;
+    Move_Events move_events{};
+    uint64_t buttons_entering_step = buttons_before_tick;
+
+    for (const shared::subtick_step_t &step : schedule)
+    {
+      const bool fire_pressed_in_this_step =
+          ((step.buttons & ~buttons_entering_step) & Button::Fire) != 0;
+      buttons_entering_step = step.buttons;
+
+      Move_Events step_events{};
+      auto [new_pos, new_vel] = player_move(
+          *context.cvars,
+          allowed_to_move ? move_input_from_buttons(step.buttons) : Move_Input{},
+          context.world.session.bvh, player->position, player->velocity, front, right,
+          16.f, 36.f, step.dt, &step_events);
+
+      player->position = new_pos;
+      player->velocity = new_vel;
+
+      move_events.jumped |= step_events.jumped;
+      if (step_events.landed &&
+          step_events.land_impact_speed > move_events.land_impact_speed)
+      {
+        move_events.landed            = true;
+        move_events.land_impact_speed = step_events.land_impact_speed;
+      }
+
+      // Inside the step loop, so the shot is taken from where the shooter had
+      // actually reached when the trigger went down -- not from wherever the
+      // whole tick left them, which is up to 16.7ms of travel away.
+      if (fire_pressed_in_this_step && allowed_to_move)
+        resolve_player_shot(context, client_slot, move, player, yaw, pitch);
+    }
 
     if (allowed_to_move)
     {
@@ -1044,7 +1247,7 @@ bool Tick()
     if (move_events.jumped)
     {
       shared::Jump fx{};
-      fx.origin          = new_pos;
+      fx.origin          = player->position;
       fx.attached_entity = player->entity_id;
       shared::fire_jump(context.outgoing.effects, fx);
     }
@@ -1052,7 +1255,7 @@ bool Tick()
                                   context.cvars->pm_minimum_land_impact_speed)
     {
       shared::Land fx{};
-      fx.origin = new_pos;
+      fx.origin = player->position;
       fx.scale = move_events.land_impact_speed; // for volume scaling
       fx.attached_entity = player->entity_id;
       shared::fire_land(context.outgoing.effects, fx);
@@ -1061,150 +1264,12 @@ bool Tick()
     // jolt nonsense
     set_kinematic_pose(*context.world.physics,
                        player->entity_id,
-                       new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                       new_vel);
+                       player->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                       player->velocity);
 
 
-    if (fire_pressed && allowed_to_move)
-    {
-
-      // this tripped me up 15 different times, so here we go again.
-      // POST-move eye, against start-of-tick or rewound victims. The asymmetry
-      // is deliberate and it is what the client's screen looks like: prediction
-      // runs this same move before the frame is drawn, so the camera sits at the
-      // post-move position (play_state.cpp, prediction.player_position), while
-      // remote players are drawn interpolated in the PAST. Sampling the shooter
-      // pre-move would reconstruct a view nobody ever aimed from.
-
-      const vec3f direction = linalg::direction_from_angles(yaw, pitch);
-      const vec3f eye = player->position + vec3f{0.f, shared::player_eye_height, 0.f};
-
-      const shared::weapon_definition_t& weapon =
-          shared::get_weapon_definition(player->active_weapon_id);
-
-      const float seconds_since_last_fire =
-          static_cast<float>(context.tick_number - player->last_fire_tick) *
-          static_cast<float>(get_tick_interval());
-
-      //@NOTE(SJM): it's so funny how continue actually means skip.
-      if (seconds_since_last_fire < weapon.fire_interval_seconds)
-        continue;
-
-      // update metadata about firing so clients don't get confused about what happened.
-      player->last_fire_tick   = context.tick_number;
-      player->last_fire_weapon = player->active_weapon_id;
-
-      switch (weapon.kind)
-      {
-        case entities::Weapon_Kind::Melee:
-        case entities::Weapon_Kind::Hitscan:
-        case entities::Weapon_Kind::Sniper:
-        {
-          float range = weapon.range;
-
-          ray_hit_result_t world_hit{};
-          const bool shot_collided_with_static_geometry =
-              bvh_intersect_ray(context.world.session.bvh, eye, direction, world_hit) &&
-              world_hit.hit;
-
-          // clip the max range, since players outside of this range can't possibly be hit.
-          if (shot_collided_with_static_geometry)
-            range = std::min(range, world_hit.t);
-
-          if (context.posed_players.built_for_tick != context.tick_number)
-            fatal_error("hit volumes were posed for tick {} but this is tick {}; "
-                        "pose_all_players must run before the move loop",
-                        context.posed_players.built_for_tick, context.tick_number);
-
-          // --- Lag compensation ---
-          // Rewind the targets to the blend this move was aimed THROUGH, so the
-          // silhouette tested is the one that was under the crosshair rather
-          // than where that player has since got to. Shooter-favored, and
-          // bounded by sv_max_rewind_ticks; lag_compensation_def.md argues the
-          // tradeoff.
-          //
-          // The present-tick set is the fallback and still a real arm: a
-          // spectator, a client's first shots before it holds two snapshots, a
-          // refused bracket, or an endpoint that has aged out of the ring all
-          // land there.
-          Span<const shared::hitscan_target_t> targets{context.posed_players.targets};
-          if (context.cvars->sv_lag_compensation)
-          {
-            // Inside the cvar check, not beside it: get_interpolation_bracket_for_move
-            // logs, and a server with the feature turned off has no business
-            // complaining about brackets it is not going to use.
-            const shared::interpolation_bracket_t bracket =
-                get_interpolation_bracket_for_move(context, client_slot, move);
-
-            if (bracket.towards_tick != 0 &&
-                shared::try_pose_players_across_bracket(
-                    context.replication.snapshot_history, shared::player_rig(),
-                    aim_settings_from(*context.cvars), bracket, context.rewind_scratch))
-              targets = Span<const shared::hitscan_target_t>{context.rewind_scratch.targets};
-          }
-
-          const shared::hitscan_result_t hit = shared::resolve_hitscan(
-              eye, direction, range, targets, player->entity_id);
-
-          if (hit.hit_uid != shared::null_entity_uid)
-          {
-            broadcast_server_text_message(
-                context, std::format("Player {} hit player {} in the {}",
-                                    client_slot, hit.hit_uid,
-                                    to_string(hit.region)));
-            const bool was_headshot = hit.region == shared::hit_region_t::Head;
-
-            damage_info_t info{};
-            info.victim_uid      = hit.hit_uid;
-            info.attacker_uid    = player->entity_id;
-            info.inflictor_uid   = player->entity_id;
-            info.weapon_id       = static_cast<uint16_t>(player->active_weapon_id);
-            info.amount          = weapon.damage *
-                                  (was_headshot ? weapon.headshot_multiplier : 1.f);
-            info.source_position = eye;
-            info.was_headshot    = was_headshot;
-
-            // defer for kill contribution.
-            context.outgoing.pending_hits.push_back(
-                {info, hit.impact_point, hit.impact_normal, hit.region});
-          }
-          else if (shot_collided_with_static_geometry && weapon.kind != entities::Weapon_Kind::Melee)
-          {
-            // Melee deliberately produces no impact effect: a knife swing that
-            // reaches a wall should not spray a bullet decal.
-            shared::Bullet_Impact fx{};
-            fx.origin = eye + direction * world_hit.t;
-            shared::fire_bullet_impact(context.outgoing.effects, fx);
-          }
-          break;
-        }
-        case entities::Weapon_Kind::Projectile:
-        {
-          log_terminal("Player {} fired a rocket!", client_slot);
-
-          const shared::entity_uid_t rocket_uid =
-              context.world.session.entity_system.spawn<entities::Rocket_Entity>();
-          entities::Rocket_Entity *rocket =
-              context.world.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
-          if (rocket)
-          {
-            // Muzzle is the eye, same as the hitscan origin -- a rocket that
-            // spawns somewhere other than where the crosshair is aimed from is
-            // the same class of bug as a mismatched hitscan origin.
-            // Everything else -- lifetime, damage, radii, the render component --
-            // is a per-type constant and comes from entities.def.
-            rocket->position = eye;
-            rocket->velocity = direction * context.cvars->game_rocket_speed;
-            rocket->owner_id = player->entity_id;
-
-            printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",
-                  rocket->position.x, rocket->position.y, rocket->position.z,
-                  assets::to_string(rocket->render.mesh), rocket->render.visible);
-          }
-          break;
-        }
-      }
-    }
+    // Fire is resolved inside the step loop above, at the sub-step the trigger
+    // went down in -- see resolve_player_shot.
   }
 
   // --- Apply the hits the move loop deferred ---

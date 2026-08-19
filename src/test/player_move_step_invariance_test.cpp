@@ -383,32 +383,41 @@ static void test_ground_position_is_first_order(const cvar_state_t& cvars)
   }
 }
 
-// --- 7. accelerate + friction do not commute: an ORDERING error ---------------
+// --- 7. accelerate + friction: solved together, so the split composes --------
 //
-// Not in subtick_plan.md's list, and it belongs there. On the ground each step
-// runs friction and THEN accelerate, so a split charges friction against speed
-// the previous sub-step just added. Two half-steps therefore end SLOWER, by
-// roughly `accel*W * (dt/2) * (exp(-k*dt/2) - 1)`.
+// Not in subtick_plan.md's original list, and it belongs there. On the ground
+// each step runs friction and THEN accelerate, and that ORDER is what a split
+// perturbs: friction gets charged against speed the previous sub-step just
+// added. It was the friction bug's shape one level up -- neither operator is
+// inexact any more, but applying them alternately is not the same as solving
+// them together.
 //
-// It is the friction bug's shape one level up: the per-step composition is
-// wrong not because either operator is inexact -- both are, now -- but because
-// applying them alternately is not the same as solving them together. The
-// system v' = -k*v + A has a closed form too:
+// Fixed 2026-08-19. The two are one system, v' = -k*v + A*w, and it has a
+// closed form:
 //
-//   exact:   v(dt) = v0*exp(-k*dt) + (A/k)*(1 - exp(-k*dt))       A = accel*W
-//   today:   v <- v*f + c  per step, f = exp(-k*dt/N), c = accel*(dt/N)*W
-//            =>  v_N = v0*f^N + c*(1 - f^N)/(1 - f)
+//   exact:  v(dt) = v0*exp(-k*dt) + (A/k)*(1 - exp(-k*dt))   A = accel*W
 //
-// The discrete form converges DOWN to the exact one. So this is ARITHMETIC, and
-// fixable in the same move as the friction fix was -- but it is a separate
-// decision with its own feel cost, so the assertion here is the divergence, not
-// its absence.
+// which is `v0*decay` -- what apply_friction already returned -- plus the SAME
+// accelerate as before, integrating over (1-exp(-k*dt))/k instead of dt. So the
+// fix is a duration, not a new operator: apply_friction hands back the weighted
+// time alongside the decayed velocity, and two halves of it sum to the whole.
+//
+// The clamp survives this exactly. min(d*f + c, W) composed with itself is
+// min(d*f^2 + c*f + c, W) = min(d*F + C, W) whichever side of W each half lands
+// on, because c >= W*(1-f) whenever accel >= pm_friction -- so a saturated
+// projection stays saturated rather than drifting under the split.
+//
+// The feel cost was taken deliberately, the same call gravity and friction
+// made: a tick now gains A*(1-exp(-k*dt))/k where it gained A*dt, which at
+// pm_friction 6 and 60Hz is 4.8% less acceleration through the transient. The
+// clamp binds after ~7 ticks from a standstill, so nothing about top speed
+// moves; only the ramp does.
 //
 // The wish speed is kept away from the clamp (start well under pm_maxspeed) so
 // the number measured is the ordering alone.
-static void test_ground_accelerate_does_not_commute(const cvar_state_t& cvars)
+static void test_ground_accelerate_composes(const cvar_state_t& cvars)
 {
-  printf("\n[ARITHMETIC] ground accelerate vs friction: an ordering error\n");
+  printf("\n[EXACT] ground accelerate + friction: one system, one closed form\n");
 
   const Bounding_Volume_Hierarchy bvh = floor_world();
   Move_Input input;
@@ -426,28 +435,47 @@ static void test_ground_accelerate_does_not_commute(const cvar_state_t& cvars)
 
   printf("    exact solution of v' = -%.1f*v + %.0f : %.6f\n", k,
          acceleration_rate, exact_speed);
+  printf("    (the pre-fix alternating recurrence gave %.6f at N=1)\n",
+         start_speed * decay + cvars.pm_ground_acceleration * tick_dt *
+                                   cvars.pm_maxspeed);
 
-  float previous_speed = 0.f;
   for (int sub_steps : {1, 2, 4, 16, 64})
   {
     const move_result_t result = run_split(cvars, bvh, input, start_position,
                                            start_velocity, tick_dt, sub_steps);
     const float speed = horizontal_speed(result.velocity);
 
-    const float step_dt = tick_dt / (float)sub_steps;
-    const float step_decay = std::exp(-k * step_dt);
-    const float step_gain = cvars.pm_ground_acceleration * step_dt * cvars.pm_maxspeed;
-    const float total_decay = std::pow(step_decay, (float)sub_steps);
-    const float expected =
-        start_speed * total_decay + step_gain * (1.f - total_decay) / (1.f - step_decay);
-
     printf("    N=%-2d  speed %.6f  error vs exact %+.6f\n", sub_steps, speed,
            speed - exact_speed);
-    check_near(speed, expected, 2e-2f, "speed matches the alternating recurrence");
-    check(speed > exact_speed, "...and the split overshoots the exact solution");
-    if (previous_speed > 0.f)
-      check(speed < previous_speed, "...and more sub-steps land strictly slower");
-    previous_speed = speed;
+    check_near(speed, exact_speed, 2e-2f,
+               "the split reproduces the coupled closed form");
+  }
+}
+
+// --- 7b. and it still saturates at wish_speed, at every subdivision ----------
+//
+// The other half of the claim above: the clamp composes through the new
+// duration too. Run long enough to be pinned, and every N agrees on the pin.
+static void test_ground_saturation_is_step_invariant(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] ground accelerate at the clamp: every split pins alike\n");
+
+  const Bounding_Volume_Hierarchy bvh = floor_world();
+  Move_Input input;
+  input.forward_pressed = true;
+
+  const vec3 start_position{0.f, half_height - 0.02f, 0.f};
+  // Already at the clamp: friction pulls it down, accelerate restores it.
+  const vec3 start_velocity{cvars.pm_maxspeed, 0.f, 0.f};
+
+  for (int sub_steps : {1, 2, 4, 16})
+  {
+    const move_result_t result = run_split(cvars, bvh, input, start_position,
+                                           start_velocity, tick_dt, sub_steps);
+    const float speed = horizontal_speed(result.velocity);
+    printf("    N=%-2d  speed = %.6f\n", sub_steps, speed);
+    check_near(speed, cvars.pm_maxspeed, 1e-2f,
+               "a saturated projection stays pinned under any split");
   }
 }
 
@@ -550,7 +578,8 @@ int main()
   test_friction_speed_composes(cvars);
   test_friction_floor_composes(cvars);
   test_ground_position_is_first_order(cvars);
-  test_ground_accelerate_does_not_commute(cvars);
+  test_ground_accelerate_composes(cvars);
+  test_ground_saturation_is_step_invariant(cvars);
   test_maxspeed_clip_diverges(cvars);
   test_accelerate_clamp_alone_composes(cvars);
 

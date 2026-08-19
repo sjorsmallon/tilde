@@ -5,11 +5,17 @@ error**, not a simplification: the press happened at a time, and the tick grid
 is an implementation detail of the simulator. So sub-tick is the right end
 state. It is also third in line, and doing it first is how it goes badly.
 
-Status: **step 1 done** for friction (2026-08-18) and gravity (2026-08-19),
-**step 2 done** (`player_move_step_invariance_test`, 2026-08-19). One arithmetic
-item is left, and it is the one the test found. Step 3 not started.
+Status: **all three steps are done.** Friction (2026-08-18), gravity
+(2026-08-19), the accelerate/friction ordering (2026-08-19), and the
+step-invariance test that found the third one
+(`player_move_step_invariance_test`, 2026-08-19). Every arithmetic divergence
+that was going to perturb a split tick is gone; what is left diverges on
+purpose. **Step 3 landed 2026-08-19** — the format, the client's input edges,
+the server's split move loop and the shot's own timestamp; see "What step 3
+actually built" at the bottom for what is in the tree and what is deliberately
+still whole-tick.
 
-The test found two things that change the list below: a fifth arithmetic item
+The test found two things that changed the list below: a fifth arithmetic item
 nobody had written down (accelerate and friction do not commute), and that
 item 3 as originally written is wrong — `accelerate`'s clamp composes exactly
 on its own.
@@ -62,21 +68,37 @@ Fixable, and worth fixing on its own merits:**
    constant sink. `g_gravity` was not retuned — the parabola is the reading that
    survives a tickrate change, the same call friction's `exp` made.
 
-2b. **Accelerate and friction do not commute.** Not originally on this list.
-   Each ground step runs friction and *then* accelerate, so a split charges
-   friction against speed the previous sub-step just added: two half-steps end
-   ~1.3 units/s slower from 100 at full forward input. Neither operator is
-   inexact any more — applying them alternately is what is wrong, and the
-   coupled system has a closed form too:
+2b. **Accelerate and friction did not commute.** Not originally on this list;
+   the test found it. Each ground step runs friction and *then* accelerate, so a
+   split charged friction against speed the previous sub-step had just added:
+   two half-steps ended ~1.3 units/s slower from 100 at full forward input.
+   Neither operator was inexact any more — applying them *alternately* was what
+   was wrong, and the coupled system has a closed form too:
 
    ```
    exact:  v(dt) = v0*exp(-k*dt) + (A/k)*(1 - exp(-k*dt))   A = pm_ground_acceleration * pm_maxspeed
-   today:  v <- v*exp(-k*dt/N) + accel*(dt/N)*W   per sub-step
+   before: v <- v*exp(-k*dt/N) + accel*(dt/N)*W   per sub-step
    ```
 
-   The discrete form converges *down* to the exact one, so today's tick
-   accelerates fastest of all subdivisions. Same feel-change caveat as gravity:
-   fixable, not free.
+   **Fixed 2026-08-19**, and the fix is a *duration*, not a new operator. The
+   closed form is `v0*decay` — which `apply_friction` already returned — plus
+   the same `accelerate` integrating over `(1 - exp(-k*dt))/k` instead of `dt`.
+   So `apply_friction` now hands back that weighted time alongside the decayed
+   velocity (`friction_step_t`), and `my_walk_move` feeds it to `accelerate`.
+   Two halves of the weighted time sum to the whole, which plain `dt` does not:
+   `t(h)*(1 + exp(-k*h)) = (1 - exp(-2*k*h))/k`.
+
+   The clamp survives it exactly, which is the part worth checking rather than
+   assuming: `min(d*f + c, W)` composed with itself is `min(d*f² + c*f + c, W)`
+   whichever side of `W` each half lands on, because `c ≥ W*(1-f)` whenever
+   `pm_ground_acceleration ≥ pm_friction`. A saturated projection stays pinned
+   under any split — `test_ground_saturation_is_step_invariant`.
+
+   Feel cost, taken deliberately like the other two: a tick gains
+   `A*(1-exp(-k*dt))/k` where it gained `A*dt`, which at `pm_friction = 6` and
+   60Hz is **4.8% less acceleration through the transient**. The clamp binds
+   after ~7 ticks from a standstill, so top speed does not move; only the ramp
+   does.
 
 **Structural — a discontinuity, not an approximation. Not fixable, and mostly
 should not be:**
@@ -112,13 +134,13 @@ mechanism.
 
 ## The order
 
-### 1. Fix the arithmetic that is wrong regardless
+### 1. Fix the arithmetic that is wrong regardless — **done**
 
-Friction and gravity: **done**. The accelerate/friction ordering (2b) is the
-one left, and it is the weakest case of the three — the clamp binds before
-terminal speed is ever approached, so the divergence is transient. None of the
-three needs sub-tick to justify it, and each one removes something that would
-otherwise perturb every split tick.
+Friction, gravity and the accelerate/friction ordering. None of the three
+needed sub-tick to justify it, and each one removed something that would
+otherwise perturb every split tick. What remains dt-dependent in `player_move`
+is items 3 and 5 only: the maxspeed clip, and the geometry branches. Both are
+structural, both are guarded as DELIBERATE, and neither is a defect.
 
 ### 2. Build the step-invariance test — do not skip this
 
@@ -133,12 +155,20 @@ rather than in playtest.
 flip it when step 1's gravity fix lands and every gravity expectation follows.
 It also retroactively covers the friction fix, which shipped with no test.
 
+Scenario 7 was the ARITHMETIC one; with 2b fixed it is EXACT, and 7b was added
+beside it to assert the clamp keeps pinning at `pm_maxspeed` under every
+subdivision. Scenario 6 (ground position under decay) is the one ARITHMETIC
+label left, and it is *not* on step 1's list: it is a quadrature error on
+position, it never feeds back into velocity, and the trapezoid gravity fix does
+not cover it because the integrand there is an exponential rather than a ramp.
+It shrinks under a split instead of growing, so sub-tick makes it better.
+
 This is the prerequisite for step 3, not a nicety. When prediction rubber-bands
 after sub-tick lands, this test is the only thing that says whether the split is
 at fault or the stair-stepping is. Without it every bug has two candidate
 causes.
 
-### 3. Sub-tick itself
+### 3. Sub-tick itself — **done, 2026-08-19**
 
 With that list in hand, so each remaining divergence can be classified as
 mechanism (source 3 — intended) or defect.
@@ -203,3 +233,81 @@ The split of responsibility, at the instant of a shot:
 
 Both are halves of "the world at the moment I pressed". Lag compensation only
 ever addressed the remote half.
+
+
+---
+
+## What step 3 actually built
+
+`src/shared/subtick.hpp` is the format and the driver,
+`src/shared/network/subtick_codec.hpp` the one place it meets a move command, and
+`subtick_test` the guard on both. Both grammars live there, and the reason there are two is the interesting
+part: the wire's is **strict** (an edge that breaks it is a client we did not
+ship, so the command is refused rather than simulated), the client's recorder
+**folds** (it is fed raw SDL transitions, whose resolution is coarser than a slot
+and whose order is whatever the queue handed us). `split_tick` is what both sides
+run, and a command with no edges splits into exactly the one `tick_dt` step it
+replaced — which is what let bots, `server_loop_test` and every other caller go
+untouched.
+
+**The client, which was the real work, as predicted.** `input::frame_input_edges`
+is a third queue beside the two that were already there, and the difference is
+that it carries RELEASES and a timestamp; the two old ones are presses without
+one, because a menu does not care when inside the frame you clicked. The
+placement is in **accumulator space, not wall-clock**: an edge's position is
+`accumulator_at_frame_start + fraction_into_frame * dt`, and the fraction comes
+from the edge's AGE against the frame's real duration. SDL's clock and the
+accumulator share no origin, so aligning them would need a calibration that
+drifts; how long ago something happened is the one quantity both agree on. Ticks
+consume the pending edges in order and rebase the leftovers by `tick_dt`, exactly
+as the accumulator itself is rebased.
+
+Three things fell out of building it that were not on the list:
+
+- **The poll is a frame stale, and that turns out to be a feature.**
+  `input::new_frame` snapshots SDL's keyboard *before* the frame's events are
+  pumped, so `is_key_down` is the state the previous frame's edges should have
+  left behind. That makes the two comparable, and a disagreement means a
+  transition never reached us — a KEYUP eaten by focus loss is the one that
+  happens. Nothing else resamples any more, so without that check a lost release
+  sticks a button down forever. It logs and resyncs.
+- **The console is an edge.** Opening it releases every tracked button at the
+  moment it opened rather than at the next boundary; closing it resamples,
+  because the releases that happened while it held the keyboard were never read.
+- **`cl_timescale` scales `dt` but not SDL's clock.** The age has to be measured
+  against the frame's real duration and then mapped onto the accumulator's, which
+  are the same number only at timescale 1.
+
+**Only six buttons are tracked** (`Button::Subtick_Tracked`: the four directions,
+jump, fire). Everything else stays tick-granular on purpose — a weapon switch
+resolving 16.7ms late is invisible, and every button admitted costs a pmove pass
+on the server whenever it moves. `MAX_SUBTICK_EDGES = 8` is the sub-step budget,
+not a guess about typing speed: it is what bounds the work one datagram can ask
+for, and the move budget bounds the rate of datagrams rather than this.
+
+**`buttons_bitfield` changed meaning** — it is the state at the START of the
+tick, not at the moment the command was built. Everything that read it as "the
+buttons now" had to move to reading the whole tick: `subtick_rising_edges` is
+what weapon switching uses, and it sees a press and its release that both land
+between two boundaries, which the old two-boundary compare could not.
+
+**The shot got its timestamp, on both ends.** The server's fire path came out of
+the move loop into `resolve_player_shot` and is called from inside the step loop,
+after the step the press landed in — so the shot is taken from where the shooter
+had actually reached, not from wherever the whole tick left them. And the client
+now reads its interpolation bracket **at the moment of the press** rather than at
+command-build time (`bracket_at(clock, ticks_before_now)`), because the world it
+was drawing then is that fraction of a tick older. That is the same 16.7ms of
+travel sub-tick exists to stop rounding away, on the other end of the shot.
+
+### Still whole-tick, and fine
+
+- **View angles.** One yaw/pitch per command, so a sub-step runs under the angle
+  the whole tick did. A mouse delta has no edge to timestamp the way a key does —
+  it is a rate, sampled per frame — so this needs a different mechanism than the
+  one built here, and wants a reason before it gets one.
+- **The bracket's phase.** `advance_render_clock` runs once per frame while the
+  tick loop may run zero or more times, so the clock the bracket is read from is
+  the frame's, not the tick's. The sub-tick offset above is a first-order
+  correction on top of that, and it is bounded by one tick either way.
+- **Bots.** No edges, one step, the simulation they always had.

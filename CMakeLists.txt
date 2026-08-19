@@ -272,6 +272,10 @@ add_library(game_shared STATIC
     src/shared/player_rig.hpp
     src/shared/player_rig.cpp
     src/shared/player_move.cpp
+    src/shared/subtick.hpp
+    src/shared/subtick.cpp
+    src/shared/network/subtick_codec.hpp
+    src/shared/network/subtick_codec.cpp
     src/shared/physics.hpp
     src/shared/physics.cpp
     # Both channels' tables and fire helpers. Neither references a handler, so
@@ -405,6 +409,10 @@ add_library(game_client SHARED
     src/client/hud/kill_feed.cpp
     src/client/hud/crosshair.cpp
     src/client/hud/announcement.cpp
+    # The render clock and sample rings behind remote interpolation. Its own TU
+    # so remote_interpolation_test can compile it with no device (see ui/font.cpp,
+    # same reason).
+    src/client/remote_interpolation.cpp
     # The GPU-free halves of the UI layer, each its own TU so ui_test can
     # compile them without a device (see debug_draw_list.cpp, same reason).
     # ui_input.cpp is the exception and is deliberately NOT in that test: it is
@@ -729,6 +737,31 @@ add_executable(player_move_step_invariance_test
 target_include_directories(player_move_step_invariance_test PRIVATE src src/shared)
 target_link_libraries(player_move_step_invariance_test PRIVATE game_shared)
 
+# 28b. Remote interpolation -- the render clock and the sample rings
+# (src/client/remote_interpolation.{hpp,cpp}). Compiles the module directly
+# rather than linking game_client: nothing about lerping two poses needs a
+# device, a socket or a window. Same trick as ui_test.
+#
+# The cases are ARRIVAL SCHEDULES, not unit checks, for the same reason
+# move_budget_test simulates patterns: what is being guarded (rendered motion
+# stays continuous no matter WHEN packets land) is invisible inside any single
+# frame.
+add_executable(remote_interpolation_test
+    src/test/remote_interpolation_test.cpp
+    src/client/remote_interpolation.cpp)
+target_include_directories(remote_interpolation_test PRIVATE src src/shared)
+target_link_libraries(remote_interpolation_test PRIVATE game_shared)
+
+# 27b. Sub-tick input format and step driver (src/shared/subtick.{hpp,cpp}),
+# plus its wire codec (src/shared/network/subtick_codec.{hpp,cpp}).
+# Step 3 of subtick_plan.md. Splitting a tick at its input edges touches no
+# world, no socket and no cvar, which is why the format is its own file; the
+# round-trip cases reach through game_shared for the generated protobuf, since
+# what they guard is the client's write and the server's read agreeing.
+add_executable(subtick_test src/test/subtick_test.cpp)
+target_include_directories(subtick_test PRIVATE src src/shared)
+target_link_libraries(subtick_test PRIVATE game_shared)
+
 # 28. Move budget — the per-client movement rate bound (src/server/move_budget.hpp).
 # Header-only, so it links nothing. The cases are multi-tick SIMULATIONS rather
 # than unit checks because the property being guarded (neutrality to arrival
@@ -794,7 +827,9 @@ set(GAME_TESTS
     events_test
     ui_test
     player_move_step_invariance_test
-    move_budget_test)
+    subtick_test
+    move_budget_test
+    remote_interpolation_test)
 
 foreach(test_target IN LISTS GAME_TESTS)
   add_test(NAME ${test_target} COMMAND ${test_target})
