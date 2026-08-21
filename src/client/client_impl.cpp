@@ -69,6 +69,11 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
     return false;
   }
 
+  // The raw-input thread owns its own message-only window, so it needs no
+  // handle from ours and can come up before the window does. Failure is not
+  // fatal -- see input::init.
+  input::init();
+
   g_window =
       SDL_CreateWindow("MyGame Client", SDL_WINDOWPOS_CENTERED,
                        SDL_WINDOWPOS_CENTERED, 1280, 720,
@@ -116,7 +121,7 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
 
 bool Tick()
 {
-  timed_function();
+  
 
   client::input::new_frame();
 
@@ -200,6 +205,25 @@ bool Tick()
 
   renderer::render_frame(frame_passes, frame_ui);
 
+  // WHAT WAS ON SCREEN, recorded at the moment it becomes true. A shot is
+  // judged against the world the shooter was looking at, and this is the only
+  // point in the program that knows a frame was actually handed over -- the
+  // early return above means a minimized or rebuilding client presents nothing
+  // and correctly records nothing.
+  //
+  // The stamp is the same clock the input edges carry, so the lookup that pairs
+  // them needs no calibration between two clocks read at different points in
+  // the frame. It is PRESENT time, not photon time: queued frames, the
+  // compositor and the panel all sit past this line, and cl_display_latency_ms
+  // is what the reader subtracts to cross them.
+  {
+    client_context_t &frame_context = state_manager::get_client_context();
+    client::push_drawn_frame(frame_context.replication.drawn_history,
+                             {input::arrival_clock_now(),
+                              frame_context.replication.interpolation_cursor.tick,
+                              frame_context.replication.interpolation_cursor.newest_received_tick});
+  }
+
   return true;
 }
 
@@ -209,6 +233,8 @@ void shutdown()
   log_terminal("--- Shutting down Client ---");
 
   state_manager::shutdown();
+
+  input::shutdown();
 
   // Before renderer::shutdown, which frees the atlas texture the font points at.
   state_manager::get_client_context().font = nullptr;

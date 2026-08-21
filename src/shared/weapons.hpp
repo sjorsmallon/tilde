@@ -33,6 +33,12 @@ struct weapon_definition_t
   float                 headshot_multiplier; // Knife / Rocket: 1.0, no headshots
   float                 fire_interval_seconds;
   float                 range;               // knife 50, scout map-length
+  // 0 means NO MAGAZINE: the weapon never consumes ammo and never reloads, and
+  // the reload edge is a no-op on it. That is the knife, and it is a real
+  // state rather than an unfilled row -- the static_assert below catches the
+  // unfilled row, since a zeroed tail row is not at its own index.
+  int32_t               magazine_size;
+  float                 reload_duration_seconds;
   entities::Weapon_Kind kind;
 };
 
@@ -45,6 +51,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .headshot_multiplier   = 1.0f,
      .fire_interval_seconds = 0.5f,
      .range                 = 50.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
      .kind                  = entities::Weapon_Kind::Melee},
     {.weapon               = entities::Weapon::Scout,
      .display_name          = "Scout",
@@ -52,6 +60,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .headshot_multiplier   = 2.0f,
      .fire_interval_seconds = 1.25f,
      .range                 = 10000.f,
+     .magazine_size           = 10,
+     .reload_duration_seconds = 2.0f,
      .kind                  = entities::Weapon_Kind::Sniper},
     {.weapon               = entities::Weapon::Rocket_Launcher,
      .display_name          = "Rocket Launcher",
@@ -59,6 +69,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .headshot_multiplier   = 1.0f,
      .fire_interval_seconds = 1.0f,
      .range                 = 150.f,
+     .magazine_size           = 4,
+     .reload_duration_seconds = 2.5f,
      .kind                  = entities::Weapon_Kind::Projectile},
 }};
 

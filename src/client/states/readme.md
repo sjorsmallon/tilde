@@ -6,10 +6,10 @@ The client runs player movement physics locally (client-side prediction) so inpu
 
 ## How it works
 
-1. **Predict**: Each server tick, the client runs `player_move()` locally and saves the input + result into a ring buffer (`pending_commands`).
-2. **Send**: The same input is sent to the server as a `C2S_PlayerMoveCommand`.
-3. **Receive**: The server sends back entity state + the last command number it processed.
-4. **Repredict**: Starting from the server's authoritative position, the client replays all unacknowledged commands (server_ack+1 through current). This is the "reconciled" position.
+1. **Predict**: Each server tick, the client runs `player_move()` locally and saves the input + result into a ring buffer (`pending_inputs`).
+2. **Send**: The same input is sent to the server as a `C2S_ClientInput`.
+3. **Receive**: The server sends back entity state + `latest_processed_input_number`, the high-water mark of how far it has consumed this client's input stream.
+4. **Repredict**: Starting from the server's authoritative position, the client replays all unacknowledged inputs (`latest_input_number_processed_by_server + 1` through current). This is the "reconciled" position.
 5. **Correct**: Snap `player_position` and `player_velocity` to the reconciled values. Always. Physics must be correct.
 
 ## Visual Smoothing (Visual Error Offset)

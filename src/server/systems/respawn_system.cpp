@@ -4,6 +4,7 @@
 #include "../../shared/events/generated/events_generated.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/player_constants.hpp"
+#include "../../shared/weapons.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -46,6 +47,14 @@ void place_player_at_spawn(entities::Player_Entity &player,
   player.velocity = {0.f, 0.f, 0.f};
   // Back to alive: this is what stops clients drawing the death clip.
   player.death_tick = 0;
+
+  // A fresh magazine and no reload in flight. Both are accumulators like
+  // body_yaw above: a corpse dies mid-reload, and a spawn that leaves the
+  // deadline standing hands the new body a reload it never started -- or, worse,
+  // one whose deadline has already passed, which the next shot silently
+  // completes into a full magazine.
+  player.ammo = shared::get_weapon_definition(player.active_weapon_id).magazine_size;
+  player.reload_complete_time = 0;
 }
 
 void schedule_respawn(server_context_t &context,

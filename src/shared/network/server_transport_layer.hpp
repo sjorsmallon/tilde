@@ -27,9 +27,9 @@ struct ServerInbox
 {
   // Pair of client slot and move. These used to be wrapped in a TimestampedMove
   // carrying packet.header.timestamp, which NOTHING ever wrote -- the server
-  // sorted by it anyway. Ordering is now (slot, command_number), which the
+  // sorted by it anyway. Ordering is now (slot, input_number), which the
   // client does write; see the sort in server_impl.cpp's Tick().
-  std::vector<std::pair<int, game::C2S_PlayerMoveCommand>> moves;
+  std::vector<std::pair<int, game::C2S_ClientInput>> inputs;
   std::vector<Address> potential_joins;
   // Handshake commands from clients (or would-be clients)
   std::vector<std::pair<Address, game::NetCommand>> net_commands;
@@ -201,17 +201,17 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
 
         // Parse
         if (packet.header.message_type ==
-            static_cast<uint8>(Message_Type::C2S_PlayerMoveBatch))
+            static_cast<uint8>(Message_Type::C2S_ClientInputBatch))
         {
           // Every move the client has not seen acked, oldest first. Most of
-          // them are usually duplicates of moves already run; the move loop's
-          // `command_number <= latest_processed_command` check is what makes
+          // them are usually duplicates of inputs already run; the input loop's
+          // `input_number <= latest_processed_input_number` check is what makes
           // that free, so nothing is deduplicated here.
-          game::C2S_PlayerMoveBatch batch;
+          game::C2S_ClientInputBatch batch;
           if (batch.ParseFromArray(buffer.data(), buffer.size()))
           {
-            for (const game::C2S_PlayerMoveCommand& move_cmd : batch.moves())
-              out_inbox.moves.push_back({client_slot, move_cmd});
+            for (const game::C2S_ClientInput& input : batch.inputs())
+              out_inbox.inputs.push_back({client_slot, input});
           }
           else
           {

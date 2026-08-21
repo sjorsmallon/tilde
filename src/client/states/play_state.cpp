@@ -7,6 +7,7 @@
 #include "../hud/crosshair.hpp"
 #include "../weapon_fire_audio.hpp"
 #include "../hit_confirm_audio.hpp"
+#include "../held_snapshot.hpp"
 #include "../event_handlers.hpp"
 #include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
@@ -19,10 +20,13 @@
 #endif
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
+#include "../../shared/timed_function.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <format>
+#include <optional>
 #include <print>
 #include <tuple>
 #include "../geometry_renderer.hpp"
@@ -46,7 +50,6 @@ namespace client
 {
 
 // cadence for cvar 'net_snapshot_debug'.
-static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
 
 // cl_crosshair_* channels are unclamped u32, so we narrow / clamp/
 // Which movement button an input transition is, or 0 for one that is not
@@ -56,6 +59,9 @@ static constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
 // and the polled half is a straight-line list of ifs.
 static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
 {
+  if (edge.device == input::input_device_t::Mouse_Motion)
+    return 0; // travel, not a transition -- it steers, it does not cut a step
+
   if (edge.device == input::input_device_t::Mouse_Button)
     return edge.button == input::mouse_button_t::Left ? Button::Fire : 0;
 
@@ -66,8 +72,90 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
   case input::key_t::A:     return Button::Left;
   case input::key_t::D:     return Button::Right;
   case input::key_t::Space: return Button::Jump;
+  case input::key_t::R:     return Button::Reload;
+  case input::key_t::Num_0: return Button::Key0;
+  case input::key_t::Num_1: return Button::Key1;
+  case input::key_t::Num_2: return Button::Key2;
+  case input::key_t::Num_3: return Button::Key3;
+  case input::key_t::Num_4: return Button::Key4;
+  case input::key_t::Num_5: return Button::Key5;
+  case input::key_t::Num_6: return Button::Key6;
+  case input::key_t::Num_7: return Button::Key7;
+  case input::key_t::Num_8: return Button::Key8;
+  case input::key_t::Num_9: return Button::Key9;
   default:                  return 0;
   }
+}
+
+// Every button the server treats as "equip weapon N", as one mask.
+//
+// Spelled out rather than derived from Button::Subtick_Tracked: that set is
+// about which edges are worth a sub-tick slot, which is a different question
+// from which edges change the weapon, and conflating them would make Reload
+// cancel itself.
+static constexpr uint64_t weapon_select_buttons()
+{
+  return Button::Key0 | Button::Key1 | Button::Key2 | Button::Key3 | Button::Key4 |
+         Button::Key5 | Button::Key6 | Button::Key7 | Button::Key8 | Button::Key9;
+}
+
+// Our own gunshot. Played off the trigger EDGE inside the tick that carries it,
+// not off the server's replicated last_fire_tick a round trip later -- the one
+// sound where that delay is most audible, which is why update_weapon_fire_audio
+// skips our own uid.
+//
+// Edge, not held state: the server fires once per press
+// (`step.buttons & ~buttons_entering_step & Button::Fire` in its step loop), so
+// the old poll of `buttons & Button::Fire` played a shot every fire_interval for
+// as long as the trigger was down while the server fired exactly one.
+//
+// It re-runs the server's rate limit (weapons.hpp is shared, so it is the same
+// number) or click-spamming would bang faster than the server accepts. Being
+// dead is filtered too, off our own replicated health, as are the two magazine
+// gates: an EMPTY magazine off replicated ammo, and a reload in flight off the
+// locally predicted clock. Each of those is a way resolve_player_shot returns
+// without firing, and every one it does not reproduce is a bang with no bullet.
+//
+// One is still missing and cannot be had here: is_movement_allowed() is
+// game-rules state the client does not have, so during a countdown this plays a
+// shot the server drops. Audible only, and it cannot desync anything -- no
+// state is predicted.
+static void play_predicted_local_gunshot(client_context_t &ctx)
+{
+  if (!ctx.audio)
+    return;
+
+  auto my_entity = ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
+  if (my_entity == ctx.replication.latest_player_entities.end())
+    return;
+
+  // active_weapon_id came off the wire, and enum fields are deserialized without
+  // a range check, so it is looked up through fire_sound_for FIRST -- that
+  // bounds-checks and logs. get_weapon_definition only asserts, which is nothing
+  // in a release build, so it is reached only once the id is known good.
+  const entities::Weapon my_weapon = my_entity->second.active_weapon_id;
+  const char *sound = fire_sound_for(my_weapon);
+  if (!sound)
+    return;
+
+  const shared::weapon_definition_t &weapon = shared::get_weapon_definition(my_weapon);
+  if (ctx.prediction.seconds_since_local_fire < weapon.fire_interval_seconds)
+    return;
+
+  // An EMPTY magazine, off our own replicated ammo. A round trip stale in
+  // principle; not in practice, because the rate gate above is longer than any
+  // round trip we care about, so the count cannot have moved since the snapshot
+  // that carried it. A magazine_size of 0 is the knife, which has no magazine
+  // and is never empty.
+  if (weapon.magazine_size > 0 && my_entity->second.ammo <= 0)
+    return;
+
+  // MID-RELOAD, off the local prediction rather than the server's deadline.
+  if (ctx.prediction.seconds_until_local_reload_complete > 0.f)
+    return;
+
+  ctx.prediction.seconds_since_local_fire = 0.f;
+  ctx.audio->play_2d(sound);
 }
 
 static uint8_t clamp_crosshair_color_channel(uint32_t value)
@@ -368,6 +456,9 @@ void Play_State::update(float dt)
 {
   auto &ctx = state_manager::get_client_context();
 
+  // first execute bound keys because the bound key could close the console.
+  console::get().execute_pressed_bindings();
+
   // pause menu handling.
   if (connection_ui.show_menu_overlay)
   {
@@ -397,34 +488,48 @@ void Play_State::update(float dt)
       }
     }
   }
-  else if (input::is_key_pressed(input::key_t::Escape))
+  else
   {
-    if (console::get().is_open())
+    // The menu owns the keyboard while it is up, so these live in its else
+    // rather than beside it: F1 used to jump to the editor from inside the
+    // pause menu, and U flipped mouse_captured underneath it -- invisible
+    // until you resumed with the capture inverted.
+    if (input::is_key_pressed(input::key_t::Escape))
     {
-      // If the console is open, just close it and stay in play mode.
-      console::get().close();
+      if (console::get().is_open())
+      {
+        // If the console is open, just close it and stay in play mode.
+        console::get().close();
+      }
+      else
+      {
+        connection_ui.show_menu_overlay = true;
+        pause_menu                      = build_pause_menu(renderer::screen_size());
+      }
     }
-    else
+
+    if (input::is_key_pressed(input::key_t::F1))
     {
-      connection_ui.show_menu_overlay = true;
-      pause_menu                      = build_pause_menu(renderer::screen_size());
+      // Otherwise, go back to the editor.
+      state_manager::switch_to(game_state::tool_editor);
+      return;
     }
-  }
 
-  if (input::is_key_pressed(input::key_t::F1))
-  {
-    // Otherwise, go back to the editor.
-    state_manager::switch_to(game_state::tool_editor);
-    return;
-  }
-
-  // U -> toggle mouse capture
-  if (input::is_key_pressed(input::key_t::U))
-  {
-    connection_ui.mouse_captured = !connection_ui.mouse_captured;
+    // U -> toggle mouse capture
+    if (input::is_key_pressed(input::key_t::U))
+    {
+      connection_ui.mouse_captured = !connection_ui.mouse_captured;
+    }
   }
 
   const bool console_open = console::get().is_open();
+
+
+  // suppress gameplay input instead of early returning
+  // because there's more dt bookkeeping.
+  const bool gameplay_input_allowed =
+      !console_open && !connection_ui.show_menu_overlay;
+
   if (connection_ui.console_was_open && !console_open)
     connection_ui.mouse_captured = true;
   connection_ui.console_was_open = console_open;
@@ -438,11 +543,7 @@ void Play_State::update(float dt)
   // mode (cursor hidden and warped to center) even when the console is up,
   // making the console unusable with the mouse. The menu overlay releases it
   // for the same reason — its buttons need a real cursor to click.
-  input::set_relative_mouse_mode(connection_ui.mouse_captured && !console_open && !connection_ui.show_menu_overlay);
-
-  // if we have any bound keys (e.g. bind j join_game), execute them.
-  console::get().execute_pressed_bindings();
-
+  input::set_relative_mouse_mode(connection_ui.mouse_captured && gameplay_input_allowed);
 
   auto &transport = ctx.transport_layer;
 
@@ -494,8 +595,7 @@ void Play_State::update(float dt)
     }
     else if (cmd.has_reject())
     {
-      // A schema mismatch is a build problem, not a gameplay one, so it gets
-      // log_error and both hashes rather than a one-line terminal notice.
+      // got a server reject. check the entity schema hash.
       const uint32_t server_schema_hash = cmd.reject().server_schema_hash();
       if (server_schema_hash != 0 && server_schema_hash != entities::SCHEMA_HASH)
       {
@@ -506,6 +606,7 @@ void Play_State::update(float dt)
                   entities::SCHEMA_HASH, server_schema_hash,
                   cmd.reject().reason());
       }
+      // otherwise: extracurricular reason?
       log_terminal("Connection rejected: {}", cmd.reject().reason());
       ctx.connection.phase = Connection_Phase::Disconnected;
     }
@@ -516,9 +617,7 @@ void Play_State::update(float dt)
     network::Bit_Reader reader(payload.data(), payload.size());
     shared::change_map_message_t change = shared::deserialize_change_map(reader);
 
-    // Idempotent resends: if we already run this exact map, just re-ack. The
-    // server resends CmdChangeMap a few times a second until it sees our
-    // C2S_MapLoaded.
+    // tell the server the map is the same and we are "ready".
     if (ctx.connection.phase == Connection_Phase::Connected &&
         ctx.world.map_content_hash == change.content_hash)
     {
@@ -526,11 +625,9 @@ void Play_State::update(float dt)
       continue;
     }
 
-    // Already waiting on a stream for this switch: re-send the request (a
-    // stand-in for retransmit) and keep waiting, instead of tearing the world
-    // down again on every resent message. NOT cheap on the server — it streams
-    // the whole package per request — which is why its resend is paced rather
-    // than per-tick, and why it starts that clock when it streams.
+    //@FIXME(SJM):
+    // do we just continuously send this without a cooldown?
+    // or only if we receive a change map message?
     if (ctx.connection.phase == Connection_Phase::Loading &&
         ctx.connection.awaiting_stream_content_hash == change.content_hash)
     {
@@ -543,7 +640,7 @@ void Play_State::update(float dt)
     ctx.connection.phase = Connection_Phase::Loading;
     hud::set_announcement("Loading map...");
 
-    // either load the path or request it.
+    // try to resolve locally or request it from the server.
     std::string local_path = shared::resolve_map_path(client_maps_directory(), change.map_path);
     if (!load_client_map(local_path) ||
         ctx.world.map_content_hash != change.content_hash)
@@ -632,11 +729,60 @@ void Play_State::update(float dt)
                    cvars::cvar_info(value.id).name, value.text);
   }
 
+  for (const auto &msg : inbox.bot_debug_updates)
+  {
+    ctx.replication.bot_debug_entries.clear();
 
-  // Cosmetic effects. Their own message since the split out of
-  // S2C_EntityPackage, so the stream starts at bit 0 and there is no align to
-  // keep in step with the server. Dispatched immediately — handlers are
-  // one-shot, fire-and-forget.
+    for (const auto &bot : msg.bots())
+    {
+      auto entry = bot_debug_entry_t{};
+      entry.slot = bot.slot();
+      entry.goal = bot.goal();
+      entry.type = bot.type();
+      entry.path_index = bot.path_index();
+    
+      for (const auto &path_point : bot.path())
+      {
+        entry.path.push_back({path_point.x(), path_point.y(), path_point.z()});
+      }
+
+      ctx.replication.bot_debug_entries.push_back(std::move(entry));
+    }
+  }
+
+  // --- The shot-debug pair ---
+  //
+  // Appended straight into `scene.debug` with a lifetime rather than retained
+  // and re-emitted per frame: pass_builder_t::begin_frame RETIRES the debug list
+  // instead of clearing it, precisely so an entry made outside a render frame
+  // survives. A shot is one frame and nobody can see 16ms.
+  for (const auto &msg : inbox.shot_debug_updates)
+  {
+    // Null when the pair has aged out of the ring, which is routine for the
+    // first shots after turning the cvar on. The server's half still draws --
+    // it is the half that carries the verdict.
+    const client::shot_debug_local_t *local =
+        shot_debug_history.find(msg.input_number());
+
+    client::draw_shot_debug_pair(scene.debug, local, msg,
+                                 aim_settings_from(*ctx.cvars),
+                                 ctx.cvars->cl_shot_debug_seconds);
+  }
+
+  // note that advancing the newest held snapshot does not in any way depend on any dt.
+  for (const auto &pkg : inbox.entity_updates)
+  {
+    
+    std::optional<client::decoded_snapshot_t> decoded = client::try_decode_snapshot(ctx, pkg);
+    if (!decoded)
+      continue;
+
+    // we have a complete new snapshot now, so we move the cursor to it.
+    client::advance_newest_held_snapshot(ctx, std::move(*decoded));
+  }
+
+
+  // after the newest snapshot is established, dispatch received effects and game events.
   for (const auto &batch : inbox.effect_batches)
   {
     if (!batch.has_effect_data() || batch.effect_data().empty())
@@ -648,7 +794,7 @@ void Play_State::update(float dt)
 
     dispatch_received_effects(ctx, reader, ctx.cvars->cl_event_debug);
   }
-
+  
   for (const auto &batch : inbox.game_event_batches)
   {
     if (!batch.has_event_data() || batch.event_data().empty())
@@ -661,211 +807,26 @@ void Play_State::update(float dt)
     dispatch_received_game_events(ctx, reader, ctx.cvars->cl_event_debug);
   }
 
+  // anything related to dt or a fraction of it happens below here.
 
-  for (const auto &msg : inbox.bot_debug_updates)
+  // debug
   {
-    ctx.replication.bot_debug_entries.clear();
-    for (const auto &bot : msg.bots())
-    {
-      auto entry = bot_debug_entry_t{};
-      entry.slot       = bot.slot();
-      entry.goal       = bot.goal();
-      entry.type       = bot.type();
-      entry.path_index = bot.path_index();
-      for (const auto &path_point : bot.path())
-      {
-        entry.path.push_back({path_point.x(), path_point.y(), path_point.z()});
-      }
-      ctx.replication.bot_debug_entries.push_back(std::move(entry));
-    }
+    dt_history[dt_history_index] = dt;
+    dt_history_index = (dt_history_index + 1) % FPS_HISTORY_SIZE;
+    if (dt_history_count < FPS_HISTORY_SIZE) dt_history_count++;
+  
   }
+  
+  for (auto &fx : ctx.visuals.explosion_effects)
+    fx.time_remaining -= dt;
+  std::erase_if(ctx.visuals.explosion_effects, [](const explosion_effect_t &fx) {
+    return fx.time_remaining <= 0.f;
+  });
 
-  for (const auto &pkg : inbox.entity_updates)
-  {
-
-    if (!pkg.has_entity_data() || pkg.entity_data().empty())
-      continue;
-
-    uint32_t server_tick = pkg.has_server_tick() ? pkg.server_tick() : 0;
-
-    // if it's one that's older than the one we have, skip it.
-    if (server_tick <= ctx.replication.latest_processed_tick && ctx.replication.latest_processed_tick != 0)
-      continue;
-
-    // Which snapshot this packet is a delta against. 0 = full update, every
-    // networked leaf is present and no baseline is needed.
-    const uint32_t delta_from_tick = pkg.has_delta_from_tick() ? pkg.delta_from_tick() : 0;
-
-    const network::snapshot_frame_t* baseline = nullptr;
-    if (delta_from_tick != 0)
-    {
-      baseline = ctx.replication.snapshot_history.find(delta_from_tick);
-      if (baseline == nullptr)
-      {
-        // The server deltaed against a tick we no longer hold. 
-        // not anything meaningful to do, drop the backet and 
-        // wait for a new baseline.
-        log_error("[CLIENT] Snapshot {} is a delta from tick {}, which is not in our history "
-                  "(acked {}). Dropping the packet; the server will re-baseline.",
-                  server_tick, delta_from_tick, ctx.replication.snapshot_history.acked_tick);
-        continue;
-      }
-    }
-
-    const auto* data = reinterpret_cast<const network::uint8*>(
-        pkg.entity_data().data());
-
-    size_t data_size = pkg.entity_data().size();
-    network::Bit_Reader reader(data, data_size);
-
-    // The snapshot being reconstructed. It is SEEDED from the baseline: an
-    // entity the server did not mention is unchanged, not gone. What is gone
-    // is what carried an explicit removal record — see entity_snapshot.hpp.
-    auto latest_snapshot = network::snapshot_frame_t{};
-    if (!network::deserialize_snapshot(reader, baseline, latest_snapshot))
-    {
-      // deserialize_snapshot already logged why. A partially applied frame is
-      // worse than a missing one -- it would be acked as complete and every
-      // later delta built on it -- so the packet is dropped whole. Our ack
-      // does not advance, so the server re-baselines to a full update.
-      continue;
-    }
-
-    latest_snapshot.tick = server_tick;
-
-    if (ctx.cvars->net_snapshot_debug &&
-        server_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
-      log_terminal("[net] snapshot {}: delta_from {}, {} players // {} bodies, {} bytes",
-                   server_tick, delta_from_tick, latest_snapshot.players.size(), latest_snapshot.physics_bodies.size(), data_size);
-
-    //@NOTE(SJM): should we just  overwrite?
-    ctx.replication.latest_player_entities.clear();
-    for (const auto &[uid, player] : latest_snapshot.players)
-      ctx.replication.latest_player_entities[player.client_slot_index] = player;
-
-
-    ctx.connection.spectating = !ctx.replication.latest_player_entities.contains(ctx.connection.my_slot);
-    if (ctx.connection.spectating)
-    {
-      // Or the stale uid would keep suppressing our own cosmetic effects for a
-      // body we no longer have.
-      ctx.connection.my_entity_uid = shared::null_entity_uid;
-    }
-      
-    ctx.replication.remote_rockets = latest_snapshot.rockets;
-    ctx.replication.remote_physics_bodies = latest_snapshot.physics_bodies;
-    ctx.replication.latest_processed_tick = server_tick;
-
-    // Gunshots are read off replicated state, not dispatched as effects — a
-    // player whose last_fire_tick advanced since the previous snapshot fired.
-    // Runs here, once per snapshot, which is also the sample rate of the thing
-    // it watches. The integrated client connects over loopback and receives
-    // real snapshots, so this covers both topologies.
-    update_weapon_fire_audio(ctx);
-    // Our own hitmarker, same slot and the same watch-a-replicated-stamp
-    // pattern; see hit_confirm_audio.hpp for why it is not a cosmetic effect.
-    play_hitmarker_audio_and_update_hit_tick_state(ctx);
-
-    // The command ack is a fact about the PACKAGE, not about any entity in it:
-    // it says how far the server has consumed this client's command stream. Read
-    // it outside the entity loop, because a spectator has no entity of its own in
-    // the snapshot and still sends commands — nested inside the my-slot branch it
-    // was never read while spectating, so the client resent the same moves
-    // forever and eventually dropped them at cl_max_unacked_moves.
-    if (pkg.has_latest_processed_command())
-      ctx.prediction.latest_server_ack_command = pkg.latest_processed_command();
-
-    // The ack is a high-water mark, so everything at or below it is done and
-    // stops being resent. This is the whole retransmit protocol.
-    std::erase_if(ctx.prediction.unacked_moves,
-                  [&](const game::C2S_PlayerMoveCommand& move)
-                  {
-                    return move.command_number() <=
-                           ctx.prediction.latest_server_ack_command;
-                  });
-
-    // set the stage for prediction.
-    for (const auto &[slot_index, player] : ctx.replication.latest_player_entities)
-    {
-      if (slot_index == ctx.connection.my_slot)
-      {
-        ctx.connection.my_entity_uid = player.entity_id;
-        ctx.prediction.local_player_health = player.health;
-        ctx.prediction.latest_server_position = player.position;
-        ctx.prediction.latest_server_velocity = player.velocity;
-        // Stays inside this branch: it gates reconciliation, which replays
-        // against latest_server_position and means nothing without a body.
-        ctx.prediction.received_server_update = true;
-
-        if (!connection_ui.logged_first_server_update) {
-          log_terminal("[CLIENT] First server update: position ({:.1f}, {:.1f}, {:.1f}), entity_id {}",
-                       player.position.x, player.position.y, player.position.z,
-                       player.entity_id);
-          connection_ui.logged_first_server_update = true;
-        }
-      }
-      else
-      {
-        auto &remote_player = ctx.replication.remote_players[slot_index];
-        // don't lerp positions if the entity id changed (e.g. player disconnected and rejoined)
-        if (remote_player.active && remote_player.entity_uid != player.entity_id)
-        {
-          remote_player = {};
-        }
-       
-        remote_player.active = true;
-        remote_player.slot_index = slot_index;
-        remote_player.entity_uid = player.entity_id;
-        // Into the ring, and that is ALL an arrival does to the drawing path.
-        // The render clock is not told where to be -- it is told what the newest
-        // tick is (once, below) and left to run.
-        client::push_interpolation_sample(
-            remote_player.interpolation,
-            {player.position, player.view_angle_yaw, player.view_angle_pitch,
-             player.body_yaw, server_tick});
-
-
-        if (player.death_tick != remote_player.death_tick)
-        {
-          remote_player.death_tick = player.death_tick;
-          const bool stamp_in_the_past =
-              player.death_tick != 0 && server_tick > player.death_tick;
-          remote_player.death_animation_seconds =
-              stamp_in_the_past ? static_cast<float>(server_tick - player.death_tick) /
-                                      static_cast<float>(ctx.connection.server_tickrate)
-                                : 0.f;
-        }
-
-      }
-    }
-
-    // Once per package, not once per player: the clock is per CONNECTION. This
-    // is a high-water mark, so it never rewinds on a reordered datagram.
-    client::observe_snapshot_tick(
-        ctx.replication.render_clock, server_tick,
-        client::interpolation_delay_from_cvar(ctx.cvars->cl_interpolation_delay_ticks));
-
-    // A player who left the world has no entry in the frame, so its
-    // interpolation state has to go too — it is what the renderer draws from,
-    // and nothing else ever cleared it. Before explicit removal this could not
-    // be done correctly, which is why disconnected players kept rendering.
-    for (auto it = ctx.replication.remote_players.begin(); it != ctx.replication.remote_players.end();)
-      it = ctx.replication.latest_player_entities.count(it->first) == 0
-               ? ctx.replication.remote_players.erase(it)
-               : std::next(it);
-
-   
-    // acknowledge moves the cursor to this latest snapshot tick.
-    ctx.replication.snapshot_history.slot_for(server_tick) = std::move(latest_snapshot);
-    ctx.replication.snapshot_history.acknowledge(server_tick);
-
-  }
-
-  // Everything below simulates and renders the local world, which only exists
-  // once a map is loaded. While Connecting or while Loading a streamed map we
-  // have no session yet — poll the network (above) but do nothing here. The
-  // renderer draws the "Downloading map..." announcement in the meantime, and
-  // build_frame bails on !ctx.world.ready too.
+  // Nothing below here means anything without a world to simulate against: the
+  // BVH prediction moves through, the session the spectate camera poses in, the
+  // entities interpolation reads. Everything that does NOT need one now runs
+  // above.
   if (!ctx.world.ready)
     return;
 
@@ -875,40 +836,39 @@ void Play_State::update(float dt)
   {
     ctx.prediction.received_server_update = false;
 
-    
-    // intiialize from the server's authoritative state, then replay every command it
-    // hasn't acked yet on top — the result is where we should actually be now.
+    // intiialize from the server's authoritative state, then replay every command the server has not acked yet.
     vec3f reconciled_position = ctx.prediction.latest_server_position;
     vec3f reconciled_velocity = ctx.prediction.latest_server_velocity;
 
     float prediction_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
 
-    for (int command_count = ctx.prediction.latest_server_ack_command + 1; command_count < ctx.prediction.command_number;
-         ++command_count)
+    for (int replayed = ctx.prediction.latest_input_number_processed_by_server + 1;
+         replayed < ctx.prediction.input_number; ++replayed)
     {
-      int idx = command_count % (int)ctx.prediction.pending_commands.size();
-      const auto &saved = ctx.prediction.pending_commands[idx];
-      if (saved.command_number != command_count)
+      int idx = replayed % (int)ctx.prediction.pending_inputs.size();
+      const auto &pending_input = ctx.prediction.pending_inputs[idx];
+      if (pending_input.input_number != replayed)
         break;
 
-      camera_t temporary_camera;
-      temporary_camera.yaw = saved.yaw;
-      temporary_camera.pitch = saved.pitch;
-      auto saved_basis = get_orientation_vectors(temporary_camera);
+      // reconstruct the sub-tick input from the stored per-tick input.
+      const shared::subtick_steps_t subtick_steps =
+          shared::split_input_per_tick_into_subtick_steps(pending_input.input, prediction_dt);
 
-      // Through the SAME split the live prediction ran, so a replay reproduces
-      // the sub-steps rather than averaging them into one whole-tick step. The
-      // split is where the clamps fire, so a replay that split differently would
-      // reconcile against a body the server never simulated.
-      const shared::subtick_schedule_t replay_schedule =
-          shared::split_tick(saved.input, prediction_dt);
-
-      for (const shared::subtick_step_t& step : replay_schedule)
+      for (const shared::subtick_step_t& step : subtick_steps)
       {
+        // The SAME per-step aim the live prediction ran, because it is the same
+        // field: a replay that re-derived the basis from one angle saved beside
+        // the input would diverge from the run it is supposed to reproduce, and
+        // divergence here is rubber-banding.
+        camera_t step_look;
+        step_look.yaw   = step.view.yaw;
+        step_look.pitch = step.view.pitch;
+        const camera_basis_t step_basis = get_orientation_vectors(step_look);
+
         std::tie(reconciled_position, reconciled_velocity) = player_move(
             *ctx.cvars, move_input_from_buttons(step.buttons), ctx.world.session.bvh,
-            reconciled_position, reconciled_velocity, saved_basis.forward,
-            saved_basis.right, player_half_width, player_half_height, step.dt, nullptr,
+            reconciled_position, reconciled_velocity, step_basis.forward,
+            step_basis.right, player_half_width, player_half_height, step.dt, nullptr,
             &ctx.visuals.debug_collision_faces);
       }
     }
@@ -921,11 +881,9 @@ void Play_State::update(float dt)
     ctx.prediction.reconciliation_error = error;
     ctx.prediction.reconciliation_error_magnitude = error_magnitude;
 
+    // if it's too big, just snap.
     constexpr float SNAP_THRESHOLD = 5.0f;
-    // Server position is quantized to 1/32 per axis by write_coord, so a 3D
-    // error below sqrt(3)/32 (~0.054) is indistinguishable from quantization
-    // noise. Without this deadzone the offset reaches a non-zero steady state
-    // and the camera jitters even when the player is standing still.
+    // if it's too small, it's noise.
     constexpr float QUANTIZATION_DEADZONE = 0.0625f;
 
     if (error_magnitude > SNAP_THRESHOLD)
@@ -946,26 +904,28 @@ void Play_State::update(float dt)
     // leave visual_error_offset alone so it can decay to zero.
   }
 
-  // --- Zoom ---
-  // Ahead of the menu-overlay bail below, so an open menu eases the zoom back
-  // out instead of freezing it, and so an `r_fov` change from the console
-  // always reaches the projection. Ahead of mouse look because the sensitivity
-  // scale there depends on the FOV this frame is actually drawn with.
-  // Right-click TOGGLES: zoom_active persists until clicked off, so
-  // zoom_fraction eases toward a state rather than tracking a held button.
-  const bool zoom_input_allowed =
-      connection_ui.mouse_captured && !console_open && !connection_ui.show_menu_overlay;
+// now our position is subtick-accurate: based on the latest baseline provded
+// by the server with our "local" moves recalculated on top of it.
 
+
+  const bool zoom_input_allowed = connection_ui.mouse_captured && gameplay_input_allowed;
+
+  // if zoom is not allowed, just cancel the effect.
   if (!zoom_input_allowed)
   {
-    // Losing the mouse cancels the zoom rather than parking it: returning from
-    // a menu still zoomed, with no click to explain it, reads as a bug. Also
-    // keeps the old behavior that opening a menu eases the zoom back out.
     ctx.prediction.zoom_active = false;
-  }
-  else if (input::is_mouse_pressed(input::mouse_button_t::Right))
+  } // @OTOD(SJM): this should check whether or not we are holding a sniper.
+  else
   {
-    ctx.prediction.zoom_active = !ctx.prediction.zoom_active;
+    // The EDGE, not is_mouse_pressed's frame-start level compare: a click that
+    // both presses and releases inside one frame is invisible to the levels and
+    // used to toggle nothing. What stays tick-granular is the resulting STATE
+    // going to the server (Button::Zoom, raw_input_plan.md D1) -- the toggle
+    // itself is derived here and never leaves this machine.
+    for (const input::input_edge_t& edge : input::frame_input_edges())
+      if (edge.device == input::input_device_t::Mouse_Button &&
+          edge.button == input::mouse_button_t::Right && edge.down)
+        ctx.prediction.zoom_active = !ctx.prediction.zoom_active;
   }
 
   const float zoom_target = ctx.prediction.zoom_active ? 1.0f : 0.0f;
@@ -979,109 +939,100 @@ void Play_State::update(float dt)
     connection_ui.zoom_fraction += shared::clamp(zoom_target - connection_ui.zoom_fraction, -step, step);
   }
 
-  camera.fov_degrees = shared::lerp_clamped(ctx.cvars->r_fov, ctx.cvars->r_zoom_fov,
-                                            connection_ui.zoom_fraction);
-
-  // The menu overlay owns input while it is up; it draws from build_frame.
-  if (connection_ui.show_menu_overlay) return;
+  const float fov_degrees = shared::lerp_clamped(
+      ctx.cvars->r_fov, ctx.cvars->r_zoom_fov, connection_ui.zoom_fraction);
 
   // --- Mouse look ---
-  if (connection_ui.mouse_captured && !console_open)
-  {
-    // Scale by tan(fov/2) so a given hand movement sweeps the same distance
-    // across the screen at any FOV — otherwise zooming multiplies your aim
-    // error by the zoom factor. m_zoom_sensitivity_ratio 0 opts out.
-    float tan_half_current = std::tan(linalg::to_radians(camera.fov_degrees) * 0.5f);
-    float tan_half_base    = std::tan(linalg::to_radians(ctx.cvars->r_fov) * 0.5f);
-    float zoom_scale       = (tan_half_base > 1e-6f)
-                                 ? (tan_half_current / tan_half_base)
-                                 : 1.0f;
-    float sensitivity =
-        ctx.cvars->m_sensitivity *
-        shared::lerp(1.0f, zoom_scale, ctx.cvars->m_zoom_sensitivity_ratio);
+  //
+  // The SENSITIVITY is resolved here; the travel is applied below, one motion
+  // edge at a time in arrival order. That split is the point: a frame's travel
+  // summed into one delta and applied at once has no time on it, so a trigger
+  // press timed to 0.26ms was still aimed wherever the mouse finished the
+  // frame. On a flick that is the entire error sub-tick exists to delete,
+  // moved from the button onto the aim. See shared/subtick.hpp, subtick_view_t.
+  const bool mouse_look_allowed = connection_ui.mouse_captured && gameplay_input_allowed;
 
-    linalg::vec2i delta = input::mouse_delta();
-    ctx.prediction.player_yaw += delta.x * sensitivity;
-    ctx.prediction.player_pitch -= delta.y * sensitivity;
+  // Scale by tan(fov/2) so a given hand movement sweeps the same distance
+  // across the screen at any FOV — otherwise zooming multiplies your aim
+  // error by the zoom factor. m_zoom_sensitivity_ratio 0 opts out.
+  const float tan_half_current = std::tan(linalg::to_radians(fov_degrees) * 0.5f);
+  const float tan_half_base    = std::tan(linalg::to_radians(ctx.cvars->r_fov) * 0.5f);
+  const float zoom_scale =
+      (tan_half_base > 1e-6f) ? (tan_half_current / tan_half_base) : 1.0f;
+  const float mouse_sensitivity =
+      ctx.cvars->m_sensitivity *
+      shared::lerp(1.0f, zoom_scale, ctx.cvars->m_zoom_sensitivity_ratio);
+
+  // The aim the local player STEERS along, which is deliberately not the
+  // camera's: the spectate arms at the bottom point `camera` at someone else
+  // entirely, and movement must keep following our own look. Mouse look drives
+  // ctx.prediction.player_yaw underneath in both cases -- it just isn't always
+  // what the view shows. The steering BASIS is no longer resolved once per
+  // frame: every sub-step recomputes it from the aim in effect at that step.
+  auto apply_mouse_travel = [&](linalg::vec2i motion) {
+    if (!mouse_look_allowed)
+      return;
+    ctx.prediction.player_yaw += motion.x * mouse_sensitivity;
+    ctx.prediction.player_pitch -= motion.y * mouse_sensitivity;
     shared::clamp_this(ctx.prediction.player_pitch, -89.0f, 89.0f);
-  }
+  };
 
-  camera.yaw = ctx.prediction.player_yaw;
-  camera.pitch = ctx.prediction.player_pitch;
-  auto basis = get_orientation_vectors(camera);
+  auto current_view = [&]() -> shared::subtick_view_t {
+    return {ctx.prediction.player_yaw, ctx.prediction.player_pitch};
+  };
 
-  // Keep the audio listener glued to the local player's eye each frame so
-  // spatialized cosmetic sounds pan/attenuate relative to where we're looking.
-  if (ctx.audio)
-    ctx.audio->update(ctx.prediction.player_position, basis.forward, basis.up);
-
-  // --- Gather move input (suppressed while console is open) ---
+  // gather move input at frame start.
   uint64_t buttons = 0;
-  if (!console_open)
+  if (gameplay_input_allowed)
   {
-    if (input::is_key_down(input::key_t::W))                  buttons |= Button::Forward;
-    if (input::is_key_down(input::key_t::S))                  buttons |= Button::Backward;
-    if (input::is_key_down(input::key_t::A))                  buttons |= Button::Left;
-    if (input::is_key_down(input::key_t::D))                  buttons |= Button::Right;
-    if (input::is_key_down(input::key_t::Space))              buttons |= Button::Jump;
-    if (input::is_key_down(input::key_t::Num_1))              buttons |= Button::Key1;
-    if (input::is_key_down(input::key_t::Num_2))               buttons |= Button::Key2;
-    if (input::is_key_down(input::key_t::Num_3))               buttons |= Button::Key3;
-    if (input::is_key_down(input::key_t::Num_4))               buttons |= Button::Key4;
-    if (input::is_key_down(input::key_t::Num_5))               buttons |= Button::Key5;
-    if (input::is_key_down(input::key_t::Num_6))               buttons |= Button::Key6;
-    if (input::is_key_down(input::key_t::Num_7))               buttons |= Button::Key7;
-    if (input::is_key_down(input::key_t::Num_8))               buttons |= Button::Key8;
-    if (input::is_key_down(input::key_t::Num_9))               buttons |= Button::Key9;
-    if (input::is_key_down(input::key_t::Num_0))               buttons |= Button::Key0;
-    if (input::is_mouse_down(input::mouse_button_t::Left))     buttons |= Button::Fire;
+    if (input::is_key_down(input::key_t::W))     buttons |= Button::Forward;
+    if (input::is_key_down(input::key_t::S))     buttons |= Button::Backward;
+    if (input::is_key_down(input::key_t::A))     buttons |= Button::Left;
+    if (input::is_key_down(input::key_t::D))     buttons |= Button::Right;
+    if (input::is_key_down(input::key_t::Space)) buttons |= Button::Jump;
+    if (input::is_key_down(input::key_t::Num_1)) buttons |= Button::Key1;
+    if (input::is_key_down(input::key_t::Num_2)) buttons |= Button::Key2;
+    if (input::is_key_down(input::key_t::Num_3)) buttons |= Button::Key3;
+    if (input::is_key_down(input::key_t::Num_4)) buttons |= Button::Key4;
+    if (input::is_key_down(input::key_t::Num_5)) buttons |= Button::Key5;
+    if (input::is_key_down(input::key_t::Num_6)) buttons |= Button::Key6;
+    if (input::is_key_down(input::key_t::Num_7)) buttons |= Button::Key7;
+    if (input::is_key_down(input::key_t::Num_8)) buttons |= Button::Key8;
+    if (input::is_key_down(input::key_t::Num_9)) buttons |= Button::Key9;
+    if (input::is_key_down(input::key_t::Num_0)) buttons |= Button::Key0;
+    if (input::is_key_down(input::key_t::R))     buttons |= Button::Reload;
+
+
+    if (input::is_mouse_down(input::mouse_button_t::Left))
+    {
+        buttons |= Button::Fire;
+    }
+      
     // Sent even though zoom is drawn client-side: the server needs it the
     // moment scoping costs movement speed or accuracy, and it has to arrive
     // through the predicted button bitfield to do so. It is the zoom STATE,
     // not the click — the toggle edge never leaves this machine.
-    if (ctx.prediction.zoom_active)                            buttons |= Button::Zoom;
+    if (ctx.prediction.zoom_active) buttons |= Button::Zoom;
   }
 
-  // --- Predicted local gunshot ---
-  // Our own shot plays here rather than off the server's last_fire_tick stamp,
-  // which would arrive a round trip late — the one sound where that is most
-  // audible. The watcher skips our uid for exactly this reason.
-  //
-  // It re-runs the server's rate limit (weapons.hpp is shared, so it is the
-  // same number) or we would bang on every click while the server discards the
-  // ones inside the interval. Being dead is filtered too, off our own
-  // replicated health — the server refuses a corpse's shots, and this is the
-  // one of its two gates the client can actually see. The other it still does
-  // not reproduce: is_movement_allowed() is game-rules state the client does
-  // not have, so during a countdown this plays a shot the server drops. Audible
-  // only, and it cannot desync anything — no state is predicted, just audio.
+  // Read once for the frame; the tick loop below gates both the predicted shot
+  // and the predicted move on it.
   const bool local_player_is_dead = ctx.prediction.local_player_health <= 0;
 
+  // Real time, advanced once per frame -- the interval this feeds is a duration
+  // in seconds, not a tick count, so this is the clock it belongs on. Two ticks
+  // stepped in one frame therefore see the same value, which is what we want:
+  // the first that fires resets it and the second is inside the interval.
   ctx.prediction.seconds_since_local_fire += dt;
-  if ((buttons & Button::Fire) != 0 && !local_player_is_dead && ctx.audio)
-  {
-    auto my_entity = ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
-    if (my_entity != ctx.replication.latest_player_entities.end())
-    {
-      // active_weapon_id came off the wire, and enum fields are deserialized
-      // without a range check, so it is looked up through fire_sound_for
-      // FIRST — that bounds-checks and logs. get_weapon_definition only
-      // asserts, which is nothing in a release build, so it is reached only
-      // once the id is known good.
-      const entities::Weapon my_weapon = my_entity->second.active_weapon_id;
-      const char *sound = fire_sound_for(my_weapon);
-      if (sound)
-      {
-        const shared::weapon_definition_t &weapon =
-            shared::get_weapon_definition(my_weapon);
-        if (ctx.prediction.seconds_since_local_fire >= weapon.fire_interval_seconds)
-        {
-          ctx.prediction.seconds_since_local_fire = 0.f;
-          ctx.audio->play_2d(sound);
-        }
-      }
-    }
-  }
+
+  // A corpse has no reload in flight. The server clears reload_complete_time in
+  // place_player_at_spawn, so a client that kept its clock running through a
+  // death would come back silent for the remainder of a reload the server has
+  // already thrown away.
+  ctx.prediction.seconds_until_local_reload_complete =
+      ctx.prediction.local_player_health <= 0
+          ? 0.f
+          : std::max(0.f, ctx.prediction.seconds_until_local_reload_complete - dt);
 
   // --- Place this frame's button transitions on the tick timeline ---
   //
@@ -1090,16 +1041,19 @@ void Play_State::update(float dt)
   // 16.7ms grid. So transitions are stamped as they arrive and accumulated into
   // whichever tick actually contains them (subtick_plan.md, step 3).
   //
-  // Position comes from the edge's AGE, not from an absolute clock. SDL stamps
-  // events in its own domain while the accumulator advances by frame dt, so the
-  // two share no origin, and aligning them would need a calibration that drifts.
-  // How long ago an event happened is the one quantity both clocks agree on --
-  // and it is measured against the frame's REAL duration, then mapped onto the
-  // accumulator's, which is the same number only while cl_timescale is 1.
+  // Position comes from a real SPAN. The input layer reads its arrival clock at
+  // the same point in every frame, so [previous read, this read] is the window
+  // this frame's edges arrived in and an edge's place inside it is a plain
+  // ratio -- unitless, which is what lets it be multiplied by the accumulator's
+  // dt with no calibration between the two clocks and no cl_timescale
+  // correction. This replaces an AGE measured against the frame's duration,
+  // which needed a clamp because the age could exceed it; a ratio of a real
+  // span is in range by construction, so an out-of-range arrival is a bug worth
+  // saying so about rather than something to saturate quietly.
   {
-    const uint32_t now_milliseconds = input::event_clock_milliseconds();
-    const float timescale = std::max(ctx.cvars->cl_timescale, 0.01f);
-    const float real_frame_seconds = std::max(dt / timescale, 0.000001f);
+    const input::input_frame_span_t arrival_span = input::frame_arrival_span();
+    const uint64_t arrival_span_ticks =
+        arrival_span.end_qpc_ticks - arrival_span.start_qpc_ticks;
     const float accumulator_at_frame_start = ctx.prediction.physics_accumulator;
 
     uint64_t live_tracked_buttons =
@@ -1107,10 +1061,40 @@ void Play_State::update(float dt)
             ? ctx.prediction.tracked_buttons_at_tick_start
             : ctx.prediction.pending_input_edges.back().buttons_after;
 
-    auto record_transition = [&](uint64_t tracked_buttons, float seconds_into_frame) {
+    // A SAMPLE, not only a transition: the aim moves continuously and the
+    // buttons do not, so travel is recorded here too, with the buttons simply
+    // repeated. The tick loop below folds a sample whose buttons did not change
+    // into no edge at all (try_record_subtick_state), so this costs the wire
+    // nothing -- what it buys is the aim at every tick boundary, which is the
+    // one thing no button edge can carry: the common tick is one where the
+    // mouse moved and nothing was pressed.
+    auto record_sample = [&](uint64_t tracked_buttons, float seconds_into_frame,
+                             uint64_t arrival_qpc_ticks) {
       live_tracked_buttons = tracked_buttons;
-      ctx.prediction.pending_input_edges.push_back(
-          {accumulator_at_frame_start + seconds_into_frame, tracked_buttons});
+      ctx.prediction.pending_input_edges.push_back({accumulator_at_frame_start + seconds_into_frame,
+                                                    tracked_buttons, current_view(),
+                                                    arrival_qpc_ticks});
+    };
+
+    auto record_transition = [&](uint64_t tracked_buttons, float seconds_into_frame) {
+      record_sample(tracked_buttons, seconds_into_frame, arrival_span.end_qpc_ticks);
+    };
+
+    // Where in the frame an arrival fell, as a plain ratio of a measured span.
+    auto fraction_into_frame_of = [&](uint64_t arrival_qpc_ticks) -> float {
+      if (arrival_span_ticks == 0)
+        return 1.f;
+      if (arrival_qpc_ticks < arrival_span.start_qpc_ticks ||
+          arrival_qpc_ticks > arrival_span.end_qpc_ticks)
+      {
+        log_warning("an input edge arrived outside the frame span it was "
+                    "drained in (arrival {}, span [{}, {}]); placing it at "
+                    "the end of the frame",
+                    arrival_qpc_ticks, arrival_span.start_qpc_ticks, arrival_span.end_qpc_ticks);
+        return 1.f;
+      }
+      return static_cast<float>(arrival_qpc_ticks - arrival_span.start_qpc_ticks) /
+             static_cast<float>(arrival_span_ticks);
     };
 
     // Nothing is draining edges while there is no tick loop: prediction only
@@ -1119,16 +1103,27 @@ void Play_State::update(float dt)
     // on the tick after connecting.
     if (ctx.connection.phase != Connection_Phase::Connected)
     {
+      // Steering still has to work while connecting -- the view is drawn -- but
+      // there is no tick loop to consume samples, so the travel is applied and
+      // nothing is retained.
+      for (const input::input_edge_t& edge : input::frame_input_edges())
+        if (edge.device == input::input_device_t::Mouse_Motion)
+          apply_mouse_travel(edge.motion);
+
       ctx.prediction.pending_input_edges.clear();
       ctx.prediction.tracked_buttons_at_tick_start = 0;
+      ctx.prediction.view_at_tick_start   = current_view();
       ctx.prediction.input_edges_are_live = false;
     }
-    else if (console_open)
+    else if (!gameplay_input_allowed)
     {
-      // The console taking the keyboard releases everything, and that is an edge
-      // like any other: the keys stop being movement at the moment it opened,
-      // not at the next tick boundary. Its own transitions are then ignored --
-      // which is what makes the edge state stale, and why this is not live.
+      // Something else taking the keyboard releases everything, and that is an
+      // edge like any other: the keys stop being movement at the moment it
+      // opened, not at the next tick boundary. Its own transitions are then
+      // ignored -- which is what makes the edge state stale, and why this is not
+      // live. The pause menu belongs here alongside the console now that the
+      // tick loop keeps running underneath it; before, the menu returned out of
+      // update and the buttons simply froze mid-press.
       if (live_tracked_buttons != 0)
         record_transition(0, 0.f);
       ctx.prediction.input_edges_are_live = false;
@@ -1143,26 +1138,75 @@ void Play_State::update(float dt)
         ctx.prediction.pending_input_edges.clear();
         live_tracked_buttons = buttons & Button::Subtick_Tracked;
         ctx.prediction.tracked_buttons_at_tick_start = live_tracked_buttons;
+        ctx.prediction.view_at_tick_start            = current_view();
         ctx.prediction.input_edges_are_live = true;
       }
-      // Otherwise the two ways of knowing which buttons are down must agree, and
-      // they are comparable BECAUSE the poll is a frame stale: input::new_frame
-      // snapshots SDL's keyboard before this frame's events are pumped, so
-      // `buttons` is the state the previous frame's edges should have left
-      // behind. A disagreement means a transition never reached us -- a KEYUP
-      // eaten by focus loss is the one that happens -- and it would otherwise
-      // stick that button down forever, since nothing else resamples.
-      else if ((buttons & Button::Subtick_Tracked) != live_tracked_buttons)
+      // Otherwise the two ways of knowing which buttons are down have to agree
+      // -- but they are read at DIFFERENT cuts of the timeline, and the check
+      // has to account for that rather than pretend they are one instant.
+      //
+      // The poll reflects SDL's last PUMP; the edges reflect the last raw
+      // DRAIN; and the pump sits between the previous drain and this one:
+      //
+      //     drain N-1 ....... pump N-1 ....... drain N
+      //     |                 |                |
+      //     live_tracked      `buttons`        after this frame's edges
+      //
+      // So the poll is BRACKETED. An edge that landed after the pump is not in
+      // the poll yet and the poll matches the left end; one that landed in the
+      // gap before it is, and the poll matches the right end. Both are honest
+      // readings of the same input, which is why comparing against the left end
+      // alone reported the second case as a lost transition -- it is the race
+      // that used to cost one press its sub-tick position.
+      //
+      // Matching NEITHER end is the real failure: a transition that never
+      // reached us at all (a KEYUP eaten by focus loss is the one that
+      // happens), which would otherwise stick that button down forever, since
+      // nothing else resamples.
+      else
       {
-        log_warning("input edges disagree with the keyboard: edges say {:#x}, the "
-                    "poll says {:#x}. A transition was lost (focus change?); "
-                    "resyncing to the poll",
-                    live_tracked_buttons, buttons & Button::Subtick_Tracked);
-        record_transition(buttons & Button::Subtick_Tracked, 0.f);
+        uint64_t buttons_after_this_frames_edges = live_tracked_buttons;
+        for (const input::input_edge_t& edge : input::frame_input_edges())
+        {
+          const uint64_t bit = subtick_button_for_input_edge(edge);
+          if (bit == 0)
+            continue;
+          buttons_after_this_frames_edges = edge.down
+                                                ? (buttons_after_this_frames_edges | bit)
+                                                : (buttons_after_this_frames_edges & ~bit);
+        }
+
+        const uint64_t polled_tracked_buttons = buttons & Button::Subtick_Tracked;
+        if (polled_tracked_buttons != live_tracked_buttons &&
+            polled_tracked_buttons != buttons_after_this_frames_edges)
+        {
+          log_warning("input edges disagree with the keyboard: edges say {:#x} "
+                      "before this frame's and {:#x} after, the poll says {:#x} "
+                      "and matches neither. A transition was lost (focus "
+                      "change?); resyncing to the poll",
+                      live_tracked_buttons, buttons_after_this_frames_edges,
+                      polled_tracked_buttons);
+          record_transition(polled_tracked_buttons, 0.f);
+        }
       }
 
+      // ONE walk, in arrival order, and that ordering is the whole reason the
+      // travel is not summed somewhere else: the aim a shot is taken through is
+      // the travel that arrived BEFORE the trigger, and nothing downstream can
+      // recover that from a frame total.
       for (const input::input_edge_t& edge : input::frame_input_edges())
       {
+        // Both ends inclusive: the resync and focus-release edges, and every
+        // edge on the SDL fallback path, are stamped exactly at the span end.
+        const float seconds_into_frame = fraction_into_frame_of(edge.arrival_qpc_ticks) * dt;
+
+        if (edge.device == input::input_device_t::Mouse_Motion)
+        {
+          apply_mouse_travel(edge.motion);
+          record_sample(live_tracked_buttons, seconds_into_frame, edge.arrival_qpc_ticks);
+          continue;
+        }
+
         const uint64_t bit = subtick_button_for_input_edge(edge);
         if (bit == 0)
           continue;
@@ -1172,12 +1216,7 @@ void Play_State::update(float dt)
         if (tracked_buttons == live_tracked_buttons)
           continue;
 
-        const float age_seconds =
-            static_cast<float>(now_milliseconds - edge.timestamp_milliseconds) / 1000.f;
-        const float fraction_into_frame =
-            std::clamp(1.f - age_seconds / real_frame_seconds, 0.f, 1.f);
-
-        record_transition(tracked_buttons, fraction_into_frame * dt);
+        record_sample(tracked_buttons, seconds_into_frame, edge.arrival_qpc_ticks);
       }
     }
   }
@@ -1213,6 +1252,16 @@ void Play_State::update(float dt)
 
       shared::subtick_input_t subtick_input{};
       subtick_input.buttons_at_start = buttons_before_tick;
+      subtick_input.view_at_start    = ctx.prediction.view_at_tick_start;
+      subtick_input.view_at_end      = ctx.prediction.view_at_tick_start;
+
+      // When the trigger went down, on the WALL clock -- which is a different
+      // question from the slot beside it. The slot says which sub-step the shot
+      // is taken from; this says which drawn frame was in front of the player,
+      // and the drawn frames are stamped on the input clock. Neither derives
+      // from the other.
+      uint64_t fire_press_arrival_qpc_ticks = 0;
+      uint64_t tracked_buttons_walked       = ctx.prediction.tracked_buttons_at_tick_start;
 
       size_t edges_consumed = 0;
       for (const auto& pending : ctx.prediction.pending_input_edges)
@@ -1225,18 +1274,35 @@ void Play_State::update(float dt)
         const uint64_t buttons_after =
             pending.buttons_after | (buttons & ~Button::Subtick_Tracked);
 
-        if (!shared::try_record_subtick_state(subtick_input, slot, buttons_after))
+        if ((pending.buttons_after & ~tracked_buttons_walked & Button::Fire) != 0)
+          fire_press_arrival_qpc_ticks = pending.arrival_qpc_ticks;
+        tracked_buttons_walked = pending.buttons_after;
+
+        // A travel-only sample records no edge (the buttons are unchanged) and
+        // is not an overflow when the list is full -- only a real transition
+        // that cannot be placed is input being abandoned.
+        const bool changes_buttons = buttons_after != subtick_input.buttons_at_end();
+        if (changes_buttons &&
+            !shared::try_record_subtick_state(subtick_input, slot, buttons_after,
+                                              pending.view_after))
         {
           log_warning("losing the TIMING of a button transition at slot {}: command "
                       "{} already carries {} sub-tick edges, the most one tick can "
                       "hold. The state change still lands, at the next tick "
                       "boundary instead of where it happened",
-                      slot, ctx.prediction.command_number, shared::MAX_SUBTICK_EDGES);
+                      slot, ctx.prediction.input_number, shared::MAX_SUBTICK_EDGES);
         }
+
+        // Every sample moves the aim, transition or not. The last one before the
+        // boundary IS the aim at the boundary, which is what the next tick
+        // starts from and what everyone else draws this player looking at.
+        subtick_input.view_at_end = pending.view_after;
 
         ctx.prediction.tracked_buttons_at_tick_start = pending.buttons_after;
         ++edges_consumed;
       }
+
+      ctx.prediction.view_at_tick_start = subtick_input.view_at_end;
 
       // Rebase the leftovers onto the next tick, the same subtraction the
       // accumulator itself just took.
@@ -1246,14 +1312,14 @@ void Play_State::update(float dt)
       for (auto& pending : ctx.prediction.pending_input_edges)
         pending.accumulator_seconds -= tick_dt;
 
-      game::C2S_PlayerMoveCommand move_cmd;
-      move_cmd.set_command_number(ctx.prediction.command_number);
-      move_cmd.set_tick_count(ctx.prediction.command_number);
-      auto* view_angles = move_cmd.mutable_viewangles();
-      view_angles->set_pitch(ctx.prediction.player_pitch);
-      view_angles->set_yaw(ctx.prediction.player_yaw);
-      network::write_subtick_input(move_cmd, subtick_input);
-      move_cmd.set_held_snapshot_tick(ctx.replication.snapshot_history.acked_tick);
+      game::C2S_ClientInput input_message;
+      input_message.set_input_number(ctx.prediction.input_number);
+      // Writes BOTH view angle fields -- the tick's start and its end -- along
+      // with the per-edge aim. Nothing sets viewangles beside it any more: one
+      // writer, so the angle the server steers with and the angle it draws this
+      // player at cannot come from two different moments.
+      network::write_subtick_input(input_message, subtick_input);
+      input_message.set_held_snapshot_tick(ctx.replication.snapshot_history.acked_tick);
 
       // The blend this move was aimed THROUGH, which is a different question
       // from what we hold: remote players are drawn interpolated BETWEEN two
@@ -1261,7 +1327,7 @@ void Play_State::update(float dt)
       // game.proto's interpolated_* fields for why the server needs both
       // endpoints and not the single moment they work out to.
       //
-      // A READ of the render clock, not a second derivation. This used to be
+      // A READ of the interpolation cursor, not a second derivation. This used to be
       // computed here off the two global snapshot ticks while the draw below
       // computed its own off one player's pair; the comment claimed the two
       // agreed by construction, and they agreed by coincidence. Both accepted
@@ -1269,64 +1335,92 @@ void Play_State::update(float dt)
       // frame's, and it is no longer one global phase standing in for every
       // target.
       //
-      // Read at the moment of the SHOT when there is one, not at the moment the
-      // command was built. The trigger went down at a sub-tick slot inside this
-      // tick, and the world the shooter was drawing then is that fraction of a
-      // tick older than the one being drawn now -- the same 16.7ms of travel
-      // sub-tick exists to stop rounding away, on the other end of the shot.
-      // With no press the offset is zero and this is the read it always was.
+      // LOOKED UP, not derived. The question is "what was on the player's
+      // screen when the trigger went down", and the client records the answer
+      // once per presented frame (remote_interpolation.hpp, drawn_history_t) --
+      // so this is a lookup by the press's own arrival time rather than an
+      // attempt to wind the live cursor back by a sub-tick fraction. That
+      // derivation mixed the frame clock with the accumulator clock, gave two
+      // ticks stepped in one frame the same answer, and could not represent the
+      // fact that what the player saw was a frame BOUNDARY and not the instant
+      // of the press. All three go with it.
       //
-      // Left at 0 until the clock has started (spectating, or before the first
-      // snapshot), which the server reads as "no blend" and answers with
-      // present-tick poses.
+      // With no press this is "what is on screen now", which nothing consumes.
       const uint32_t fire_slot = shared::subtick_slot_of_press(
           subtick_input, buttons_before_tick, Button::Fire);
-      const float bracket_ticks_before_now =
-          fire_slot >= shared::SUBTICK_SLOT_COUNT
-              ? 0.f
-              : static_cast<float>(shared::SUBTICK_SLOT_COUNT - fire_slot) /
-                    static_cast<float>(shared::SUBTICK_SLOT_COUNT);
 
-      const shared::interpolation_bracket_t drawn_bracket =
-          client::bracket_at(ctx.replication.render_clock, bracket_ticks_before_now);
+      // Present-to-photons: the frame was handed to the presenter, and the
+      // player saw it some milliseconds later. Only the MACHINE's share of that
+      // is compensated -- see cl_display_latency_ms for why human reaction time
+      // is not and must not be. Capped at 100ms, half of what sv_max_rewind_ticks
+      // allows at 60Hz, so a mis-set cvar cannot spend the server's whole
+      // allowance before the network has had its share. The server clamps
+      // independently (classify_bracket); this one is so the client does not
+      // knowingly ask for something it expects to be pinned.
+      constexpr float MAX_DISPLAY_LATENCY_MS = 100.f;
+      const float     display_latency_ms =
+          shared::clamp(ctx.cvars->cl_display_latency_ms, 0.f, MAX_DISPLAY_LATENCY_MS);
+      const uint64_t display_latency_qpc_ticks = static_cast<uint64_t>(
+          display_latency_ms * 0.001f * static_cast<float>(input::arrival_clock_frequency()));
+
+      const uint64_t looked_at_qpc_ticks =
+          fire_press_arrival_qpc_ticks != 0 ? fire_press_arrival_qpc_ticks
+                                            : input::frame_arrival_span().end_qpc_ticks;
+
+      const shared::interpolation_bracket_t drawn_bracket = client::bracket_on_screen_at(
+          ctx.replication.drawn_history, looked_at_qpc_ticks > display_latency_qpc_ticks
+                                             ? looked_at_qpc_ticks - display_latency_qpc_ticks
+                                             : 0);
       if (drawn_bracket.from_tick != 0)
       {
-        move_cmd.set_interpolated_from_tick(drawn_bracket.from_tick);
-        move_cmd.set_interpolated_towards_tick(drawn_bracket.towards_tick);
-        move_cmd.set_interpolation_fraction(drawn_bracket.fraction);
+        input_message.set_interpolated_from_tick(drawn_bracket.from_tick);
+        input_message.set_interpolated_towards_tick(drawn_bracket.towards_tick);
+        input_message.set_interpolation_fraction(drawn_bracket.fraction);
       }
 
       // Retain, then send the whole unacked tail. The cadence is unchanged --
-      // still one datagram per command -- but each one now also re-carries the
-      // moves the server has not confirmed, so a single lost packet costs no
+      // still one datagram per input -- but each one now also re-carries the
+      // inputs the server has not confirmed, so a single lost packet costs no
       // input at all. Duplicates are dropped by the server's high-water check.
-      ctx.prediction.unacked_moves.push_back(move_cmd);
+      ctx.prediction.unacked_inputs.push_back(input_message);
 
       const size_t max_unacked =
-          static_cast<size_t>(std::max(1, ctx.cvars->cl_max_unacked_moves));
-      if (ctx.prediction.unacked_moves.size() > max_unacked)
+          static_cast<size_t>(std::max(1, ctx.cvars->cl_max_unacked_inputs));
+      if (ctx.prediction.unacked_inputs.size() > max_unacked)
       {
         // Older than the server would rewind to anyway, and the packet cap is
         // real. Loud, because this is input being abandoned.
-        log_warning("dropping move {} unsent: {} moves unacked, over "
-                    "cl_max_unacked_moves ({}). The server has not acked in "
-                    "{} commands",
-                    ctx.prediction.unacked_moves.front().command_number(),
-                    ctx.prediction.unacked_moves.size(), max_unacked,
-                    ctx.prediction.command_number -
-                        ctx.prediction.latest_server_ack_command);
-        ctx.prediction.unacked_moves.erase(
-            ctx.prediction.unacked_moves.begin(),
-            ctx.prediction.unacked_moves.begin() +
-                (ctx.prediction.unacked_moves.size() - max_unacked));
+        log_warning("dropping input {} unsent: {} inputs unacked, over "
+                    "cl_max_unacked_inputs ({}). The server has not acked in "
+                    "{} inputs",
+                    ctx.prediction.unacked_inputs.front().input_number(),
+                    ctx.prediction.unacked_inputs.size(), max_unacked,
+                    ctx.prediction.input_number -
+                        ctx.prediction.latest_input_number_processed_by_server);
+        ctx.prediction.unacked_inputs.erase(
+            ctx.prediction.unacked_inputs.begin(),
+            ctx.prediction.unacked_inputs.begin() +
+                (ctx.prediction.unacked_inputs.size() - max_unacked));
       }
 
-      game::C2S_PlayerMoveBatch move_batch;
-      for (const game::C2S_PlayerMoveCommand& unacked :
-           ctx.prediction.unacked_moves)
-        *move_batch.add_moves() = unacked;
+      game::C2S_ClientInputBatch input_batch;
+      for (const game::C2S_ClientInput& unacked :
+           ctx.prediction.unacked_inputs)
+        *input_batch.add_inputs() = unacked;
 
-      network::send_protobuf_message(transport, move_batch);
+      network::send_protobuf_message(transport, input_batch);
+
+      // --- Predicted local gunshot ---
+      // Here rather than out at frame scope so it reads the SAME fire_slot the
+      // command above carries: one place decides the trigger went down this
+      // tick, and the sound and the bracket sent to the server cannot disagree
+      // about it. The gates match the server's -- a corpse and a spectator both
+      // have their shots refused there.
+      if (fire_slot < shared::SUBTICK_SLOT_COUNT && !local_player_is_dead &&
+          !ctx.connection.spectating)
+      {
+        play_predicted_local_gunshot(ctx);
+      }
 
       // What the prediction actually runs. A dead player steers nothing -- the
       // server stops feeding input into player_move for a corpse, so a client
@@ -1342,20 +1436,97 @@ void Play_State::update(float dt)
       {
         // One movement step per interval between edges. With no edges this is
         // the single tick_dt step it has always been.
-        const shared::subtick_schedule_t schedule =
-            shared::split_tick(predicted_input, tick_dt);
+        const shared::subtick_steps_t steps =
+            shared::split_input_per_tick_into_subtick_steps(predicted_input, tick_dt);
 
-        for (const shared::subtick_step_t& step : schedule)
+        uint64_t buttons_entering_step = buttons_before_tick;
+
+        for (const shared::subtick_step_t& step : steps)
         {
+          const uint64_t pressed_in_this_step = step.buttons & ~buttons_entering_step;
+          const bool fire_pressed_in_this_step = (pressed_in_this_step & Button::Fire) != 0;
+          buttons_entering_step = step.buttons;
+
+          // The predicted reload, started and cancelled on the SAME conditions
+          // the server uses -- see the step loop in server_impl.cpp. This
+          // predicts nothing but a sound, so the cost of the two sides
+          // disagreeing is one wrong bang; the cost of not predicting it at all
+          // is a bang on every trigger pull for the whole reload.
+          //
+          // A weapon key CANCELS it, which is not a detail: the server cancels
+          // on switch, so a client that kept its clock running would go silent
+          // for a reload that is no longer happening.
+          if (pressed_in_this_step & weapon_select_buttons())
+            ctx.prediction.seconds_until_local_reload_complete = 0.f;
+
+          if (pressed_in_this_step & Button::Reload)
+          {
+            const auto my_entity =
+                ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
+            if (my_entity != ctx.replication.latest_player_entities.end())
+            {
+              const shared::weapon_definition_t &held =
+                  shared::get_weapon_definition(my_entity->second.active_weapon_id);
+              if (held.magazine_size > 0 &&
+                  ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
+                  my_entity->second.ammo < held.magazine_size)
+                ctx.prediction.seconds_until_local_reload_complete =
+                    held.reload_duration_seconds;
+            }
+          }
+
+          // The basis is PER STEP now, from the aim in effect when the step
+          // opened. One basis for the whole tick meant every step of it steered
+          // along wherever the mouse finished the frame -- the aim half of the
+          // quantization sub-tick already fixed for the buttons.
+          camera_t step_look;
+          step_look.yaw   = step.view.yaw;
+          step_look.pitch = step.view.pitch;
+          const camera_basis_t step_basis = get_orientation_vectors(step_look);
+
           Move_Events step_events{};
           auto [new_position, new_velocity] = player_move(
               *ctx.cvars, move_input_from_buttons(step.buttons), ctx.world.session.bvh,
               ctx.prediction.player_position, ctx.prediction.player_velocity,
-              basis.forward, basis.right, player_half_width, player_half_height,
+              step_basis.forward, step_basis.right, player_half_width, player_half_height,
               step.dt, &step_events, &ctx.visuals.debug_collision_faces);
 
           ctx.prediction.player_position = new_position;
           ctx.prediction.player_velocity = new_velocity;
+
+          // Stashed HERE, and here specifically: after the step the press
+          // opened, so the eye is the post-move eye the server's fire path
+          // uses. Recording it at command-build time instead would compare the
+          // server's shot against a position this client had not reached yet,
+          // and the two rays would separate for a reason that is not a bug.
+          if (fire_pressed_in_this_step && ctx.cvars->cl_shot_debug_seconds > 0.f)
+          {
+            client::shot_debug_local_t stashed{};
+            stashed.input_number = ctx.prediction.input_number;
+            stashed.eye = ctx.prediction.player_position +
+                          vec3f{0.f, shared::player_eye_height, 0.f};
+            stashed.direction =
+                linalg::direction_from_angles(step.view.yaw, step.view.pitch);
+            stashed.reported_bracket = drawn_bracket;
+
+            // Read off what the DRAW used, not re-derived from the snapshot
+            // ring: this half of the pair has to be "what was on my screen",
+            // and a reconstruction would agree with the server's arithmetic
+            // rather than with the pixels.
+            for (const auto &[slot, remote_player] : ctx.replication.remote_players)
+            {
+              if (!remote_player.active || remote_player.death_tick != 0)
+                continue;
+              stashed.drawn.push_back(
+                  {remote_player.entity_uid,
+                   {.feet_position = remote_player.render_position,
+                    .body_yaw      = remote_player.body_yaw,
+                    .view_yaw      = remote_player.render_yaw,
+                    .view_pitch    = remote_player.render_pitch}});
+            }
+
+            shot_debug_history.record(std::move(stashed));
+          }
 
           tick_events.jumped |= step_events.jumped;
           if (step_events.landed &&
@@ -1377,11 +1548,11 @@ void Play_State::update(float dt)
         frame_move_events.land_impact_speed = tick_events.land_impact_speed;
       }
 
-      int idx = ctx.prediction.command_number % (int)ctx.prediction.pending_commands.size();
-      ctx.prediction.pending_commands[idx] = {ctx.prediction.command_number,    predicted_input,
-                                   ctx.prediction.player_yaw,        ctx.prediction.player_pitch,
-                                   ctx.prediction.player_position,   ctx.prediction.player_velocity};
-      ctx.prediction.command_number++;
+      int idx = ctx.prediction.input_number % (int)ctx.prediction.pending_inputs.size();
+      ctx.prediction.pending_inputs[idx] = {ctx.prediction.input_number, predicted_input,
+                                            ctx.prediction.player_position,
+                                            ctx.prediction.player_velocity};
+      ctx.prediction.input_number++;
     }
 
   }
@@ -1410,18 +1581,10 @@ void Play_State::update(float dt)
       ctx.prediction.visual_error_offset = {0, 0, 0};
   }
 
-  // --- Update camera ---
-  // Extrapolate by the leftover accumulator for smooth inter-tick camera motion.
-  float extrapolation_factor = (ctx.connection.phase == Connection_Phase::Connected)
-                     ? ctx.prediction.physics_accumulator : 0.f;
-  camera.position.x = ctx.prediction.player_position.x + ctx.prediction.player_velocity.x * extrapolation_factor + ctx.prediction.visual_error_offset.x;
-  camera.position.y = ctx.prediction.player_position.y + ctx.prediction.player_velocity.y * extrapolation_factor + ctx.prediction.visual_error_offset.y + shared::player_eye_height;
-  camera.position.z = ctx.prediction.player_position.z + ctx.prediction.player_velocity.z * extrapolation_factor + ctx.prediction.visual_error_offset.z;
-
-  // --- Interpolate remote players ---
-  client::advance_render_clock(
-      ctx.replication.render_clock, dt, static_cast<float>(ctx.connection.server_tickrate),
-      client::interpolation_delay_from_cvar(ctx.cvars->cl_interpolation_delay_ticks));
+  // move the cursor between frames ahead by dt so we know where to interpolate to / where our input is coming from.
+  client::advance_interpolation_cursor(
+      ctx.replication.interpolation_cursor, dt, static_cast<float>(ctx.connection.server_tickrate),
+      client::interpolation_delay_in_ticks_from_cvar(ctx.cvars->cl_interpolation_delay_ticks));
 
   for (auto &[slot, remote_player] : ctx.replication.remote_players)
   {
@@ -1433,14 +1596,14 @@ void Play_State::update(float dt)
       continue;
 
     const client::interpolation_result_t interpolated = client::sample_interpolated_pose(
-        remote_player.interpolation, ctx.replication.render_clock.render_tick);
+        remote_player.interpolation, ctx.replication.interpolation_cursor.tick);
 
     if (interpolated.status == client::interpolation_status_t::dry &&
         ctx.cvars->cl_interpolation_debug)
     {
       log_warning("[CLIENT] interpolation buffer dry for slot {} at render tick {:.2f} "
                   "(newest held {}); frozen. raise cl_interpolation_delay_ticks if frequent",
-                  slot, ctx.replication.render_clock.render_tick,
+                  slot, ctx.replication.interpolation_cursor.tick,
                   remote_player.interpolation.newest().server_tick);
     }
 
@@ -1452,17 +1615,35 @@ void Play_State::update(float dt)
     remote_player.body_yaw        = interpolated.pose.body_yaw;
   }
 
-  // --- Which camera source wins ---
-  // Resolved in ONE place, deliberately last, so two sources can never both
-  // write in the same frame. Most specific first; the prediction-driven camera
-  // written above is the fallthrough.
+  // --- Resolve the camera ---
+  // The ONE place `camera` is written. Everything above works in
+  // ctx.prediction / connection_ui and hands its result here, so two sources
+  // cannot both write it in the same frame and the order of the arms below IS
+  // the priority rule -- most specific first, the predicted eye as the
+  // fallthrough. Zoom used to write fov_degrees three hundred lines up and mouse
+  // look yaw/pitch two hundred, which is what made "resolved in one place" a
+  // claim rather than a fact.
   //
-  // The eye-follow arm reads the same render_position / render_yaw the model is
-  // drawn from: whatever the interpolation pass just produced is exactly what
-  // the view shows, so a stall reads as camera judder rather than being
-  // smoothed over by a separate camera path. Mouse look still drives
-  // ctx.prediction.player_yaw underneath in both arms -- it just isn't what the
-  // camera uses.
+  // Deliberately after the interpolation pass: the eye-follow arm reads the same
+  // render_position / render_yaw the model is drawn from, so whatever that pass
+  // produced is exactly what the view shows and a stall reads as camera judder
+  // rather than being smoothed over by a separate camera path. Mouse look still
+  // drives ctx.prediction.player_yaw underneath every arm -- it just isn't
+  // always what the camera uses.
+  camera.fov_degrees = fov_degrees;
+  camera.yaw         = ctx.prediction.player_yaw;
+  camera.pitch       = ctx.prediction.player_pitch;
+
+  // Extrapolate by the leftover accumulator for smooth inter-tick camera motion.
+  const float extrapolation_factor =
+      (ctx.connection.phase == Connection_Phase::Connected)
+          ? ctx.prediction.physics_accumulator
+          : 0.f;
+  camera.position = ctx.prediction.player_position +
+                    ctx.prediction.player_velocity * extrapolation_factor +
+                    ctx.prediction.visual_error_offset +
+                    vec3f{0.f, shared::player_eye_height, 0.f};
+
   if (ctx.cvars->cl_spectate_slot >= 0)
   {
     // Ride a remote player's eye.
@@ -1483,19 +1664,17 @@ void Play_State::update(float dt)
     (void)try_pose_camera_at_spectate_spot(camera, ctx.world.session, 0);
   }
 
-    // Record dt for FPS averaging
-  dt_history[dt_history_index] = dt;
-  dt_history_index = (dt_history_index + 1) % FPS_HISTORY_SIZE;
-  if (dt_history_count < FPS_HISTORY_SIZE)
-    dt_history_count++;
-
-
-    // Tick down explosion effects
-  for (auto &fx : ctx.visuals.explosion_effects)
-    fx.time_remaining -= dt;
-  std::erase_if(ctx.visuals.explosion_effects, [](const explosion_effect_t &fx) {
-    return fx.time_remaining <= 0.f;
-  });
+  // The listener rides the RESOLVED camera, not the predicted body. With
+  // cl_spectate_slot those are two different players -- ears on your own corpse,
+  // eyes on someone else -- and even without it the camera is the one that
+  // carries the eye height, the inter-tick extrapolation and the reconciliation
+  // smoothing, all of which spatialization should hear. Last, because it is the
+  // only thing here that reads the camera rather than writing it.
+  if (ctx.audio)
+  {
+    const camera_basis_t listener_basis = get_orientation_vectors(camera);
+    ctx.audio->update(camera.position, listener_basis.forward, listener_basis.up);
+  }
 
 }
 
@@ -1534,7 +1713,7 @@ void Play_State::draw_imgui_panels()
       conn_str = "Loading map...";
     else if (ctx.connection.phase == Connection_Phase::Connected)
       conn_str = "Connected";
-    ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, ctx.connection.my_slot, ctx.prediction.command_number);
+    ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, ctx.connection.my_slot, ctx.prediction.input_number);
 
     if (ctx.prediction.reconciliation_error_magnitude > 0.01f)
       ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "reconc err: %7.3f",

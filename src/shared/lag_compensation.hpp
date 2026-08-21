@@ -31,6 +31,13 @@ struct posed_players_t
   // Each one's span points into `volumes`, so nothing here may outlive a resize
   // of it; both builders size `volumes` fully before filling `targets`.
   std::vector<hitscan_target_t> targets;
+  // The pose each target's volumes were built FROM, in `targets` order.
+  //
+  // Retained purely so shot debugging can ship the server's answer to the
+  // client in 16 bytes per target instead of a whole volume set. Both builders
+  // compute it anyway on their way to compute_player_hitboxes -- this only
+  // stops it being thrown away one line later.
+  std::vector<player_pose_t> poses;
   uint32_t built_for_tick = 0;
 };
 

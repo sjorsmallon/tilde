@@ -6,7 +6,7 @@
 // invisible until someone notices in a playtest.
 //
 // So the cases here are ARRIVAL SCHEDULES, not unit checks: a scripted pattern
-// of when snapshots land, played through the real clock at a real frame rate,
+// of when snapshots land, played through the real cursor at a real frame rate,
 // asserting on the RENDERED output. The properties being guarded are only
 // visible across many frames -- a pop is one frame's step being too large, and
 // no single call can see it.
@@ -20,15 +20,15 @@
 #include <cstdio>
 #include <vector>
 
-using client::advance_render_clock;
+using client::advance_interpolation_cursor;
 using client::bracket_at;
 using client::interpolation_result_t;
 using client::interpolation_ring_t;
-using client::interpolation_sample_t;
+using client::snapshot_pose_t;
 using client::interpolation_status_t;
-using client::observe_snapshot_tick;
-using client::push_interpolation_sample;
-using client::render_clock_t;
+using client::record_snapshot_tick;
+using client::push_snapshot_pose;
+using client::interpolation_cursor_t;
 using client::sample_interpolated_pose;
 
 static int failures = 0;
@@ -37,6 +37,14 @@ static void check(bool condition, const char* what)
 {
   printf(condition ? "  ok   %s\n" : "  FAIL %s\n", what);
   if (!condition)
+    ++failures;
+}
+
+static void check_equal_u32(uint32_t actual, uint32_t expected, const char* what)
+{
+  const bool ok = actual == expected;
+  printf(ok ? "  ok   %s  (%u)\n" : "  FAIL %s  (%u, expected %u)\n", what, actual, expected);
+  if (!ok)
     ++failures;
 }
 
@@ -63,15 +71,15 @@ static constexpr float DELAY_TICKS  = 2.f;
 // Units per second. The rendered position must never move faster than this.
 static constexpr float WALK_SPEED = 320.f;
 
-static interpolation_sample_t sample_for_tick(uint32_t tick)
+static snapshot_pose_t pose_for_tick(uint32_t tick)
 {
-  interpolation_sample_t sample;
-  sample.position    = {WALK_SPEED * static_cast<float>(tick) / TICKRATE, 0.f, 0.f};
-  sample.yaw         = 0.f;
-  sample.pitch       = 0.f;
-  sample.body_yaw    = 0.f;
-  sample.server_tick = tick;
-  return sample;
+  snapshot_pose_t pose;
+  pose.position    = {WALK_SPEED * static_cast<float>(tick) / TICKRATE, 0.f, 0.f};
+  pose.yaw         = 0.f;
+  pose.pitch       = 0.f;
+  pose.body_yaw    = 0.f;
+  pose.server_tick = tick;
+  return pose;
 }
 
 // One frame of the schedule: which snapshot ticks landed before it, and how
@@ -90,7 +98,7 @@ struct playback_stats_t
   // would measure packet loss rather than the interpolator. `dry_frames` is
   // where that shows up instead.
   float    largest_step              = 0.f;
-  bool     render_tick_went_backward = false;
+  bool     cursor_tick_went_backward = false;
   bool     moved_while_dry           = false;
   float    worst_occupancy_error     = 0.f;
   uint32_t dry_frames                = 0;
@@ -100,16 +108,16 @@ struct playback_stats_t
   // server it holds, and answers with present-tick poses instead. Checked on
   // EVERY frame of every schedule rather than once in isolation: the plan called
   // this "worth an assertion rather than an assumption", and the assumption is
-  // only ever wrong on the frames where the clock has outrun its samples.
+  // only ever wrong on the frames where the cursor has outrun its samples.
   bool     reported_bracket_unheld   = false;
   bool     reported_bracket_malformed = false;
 };
 
 // Plays a schedule and reports what was RENDERED, which is the only output that
-// matters -- the clock's internals are a means to it.
+// matters -- the cursor's internals are a means to it.
 static playback_stats_t play(const std::vector<frame_event_t>& schedule)
 {
-  render_clock_t       clock;
+  interpolation_cursor_t       cursor;
   interpolation_ring_t ring;
   playback_stats_t     stats;
 
@@ -117,25 +125,25 @@ static playback_stats_t play(const std::vector<frame_event_t>& schedule)
   bool   previous_interpolated = false;
   bool   previous_dry          = false;
   vec3f  previous_rendered    = {0, 0, 0};
-  double previous_render_tick = 0.0;
+  double previous_cursor_tick = 0.0;
 
   for (const frame_event_t& frame : schedule)
   {
     for (uint32_t tick : frame.arrivals)
     {
-      push_interpolation_sample(ring, sample_for_tick(tick));
-      observe_snapshot_tick(clock, tick, DELAY_TICKS);
+      push_snapshot_pose(ring, pose_for_tick(tick));
+      record_snapshot_tick(cursor, tick, DELAY_TICKS);
     }
 
-    advance_render_clock(clock, frame.dt, TICKRATE, DELAY_TICKS);
-    if (!clock.started)
+    advance_interpolation_cursor(cursor, frame.dt, TICKRATE, DELAY_TICKS);
+    if (!cursor.started)
       continue;
 
-    if (have_previous && clock.render_tick < previous_render_tick)
-      stats.render_tick_went_backward = true;
-    previous_render_tick = clock.render_tick;
+    if (have_previous && cursor.tick < previous_cursor_tick)
+      stats.cursor_tick_went_backward = true;
+    previous_cursor_tick = cursor.tick;
 
-    const interpolation_result_t result = sample_interpolated_pose(ring, clock.render_tick);
+    const interpolation_result_t result = sample_interpolated_pose(ring, cursor.tick);
     ++stats.frames;
     if (result.status == interpolation_status_t::dry)
       ++stats.dry_frames;
@@ -166,10 +174,10 @@ static playback_stats_t play(const std::vector<frame_event_t>& schedule)
     previous_interpolated = interpolating;
     have_previous         = true;
 
-    const shared::interpolation_bracket_t reported = bracket_at(clock);
+    const shared::interpolation_bracket_t reported = bracket_at(cursor);
     if (reported.from_tick != 0)
     {
-      if (reported.towards_tick > clock.newest_received_tick)
+      if (reported.towards_tick > cursor.newest_received_tick)
         stats.reported_bracket_unheld = true;
       if (reported.from_tick > reported.towards_tick || reported.fraction < 0.f ||
           reported.fraction > 1.f)
@@ -177,7 +185,7 @@ static playback_stats_t play(const std::vector<frame_event_t>& schedule)
     }
 
     const float occupancy =
-        static_cast<float>(static_cast<double>(clock.newest_received_tick) - clock.render_tick);
+        static_cast<float>(static_cast<double>(cursor.newest_received_tick) - cursor.tick);
     stats.worst_occupancy_error =
         std::max(stats.worst_occupancy_error, std::abs(occupancy - (DELAY_TICKS - 0.5f)));
   }
@@ -230,34 +238,89 @@ static std::vector<frame_event_t> build_schedule(float frame_seconds, uint32_t t
   return schedule;
 }
 
+// ---------------------------------------------------------------------------
+// What was ON SCREEN, and when.
+//
+// A shot is judged against the world the shooter was looking at, and this is
+// the record of it. It replaces winding the live cursor back by a sub-tick
+// fraction, which mixed the frame clock with the accumulator clock and could
+// not represent the fact that what the player saw was a frame BOUNDARY rather
+// than the instant of the press. What these guard is that the lookup answers
+// with a frame that was actually presented, and with the right one.
+// ---------------------------------------------------------------------------
+
+static void test_drawn_history()
+{
+  printf("\nthe drawn-frame history\n");
+
+  client::drawn_history_t history;
+  check(client::bracket_on_screen_at(history, 1000).from_tick == 0,
+        "nothing drawn yet reports no blend");
+
+  // Four frames, ten clock units apart, each drawn a quarter tick further on.
+  for (uint32_t frame = 0; frame < 4; ++frame)
+    client::push_drawn_frame(history, {100 + frame * 10ull, 50.0 + frame * 0.25, 60});
+
+  check_near(client::bracket_on_screen_at(history, 135).fraction, 0.75f, 0.001f,
+             "a press between two presents reads the one already on screen");
+  check_equal_u32(client::bracket_on_screen_at(history, 135).from_tick, 50,
+                  "and brackets from the tick it was drawn between");
+
+  check_near(client::bracket_on_screen_at(history, 130).fraction, 0.75f, 0.001f,
+             "a press exactly at a present reads that present");
+  check_near(client::bracket_on_screen_at(history, 129).fraction, 0.5f, 0.001f,
+             "one clock unit earlier reads the frame before it");
+
+  // The whole reason this is measured rather than derived: a press far in the
+  // past must not be answered with what is on screen NOW.
+  check_near(client::bracket_on_screen_at(history, 105).fraction, 0.f, 0.001f,
+             "an older press reads an older frame, not the newest");
+
+  // Older than everything held. A clamp, not a failure -- the closest available
+  // answer, and the server caps the rewind regardless.
+  check_near(client::bracket_on_screen_at(history, 1).fraction, 0.f, 0.001f,
+             "older than the whole ring clamps to the oldest frame held");
+
+  // Overrun: the ring keeps the newest DRAWN_HISTORY_CAPACITY and the lookup
+  // still walks newest-first, so a fresh press is answered from a fresh frame.
+  for (uint32_t frame = 0; frame < client::DRAWN_HISTORY_CAPACITY * 2; ++frame)
+    client::push_drawn_frame(history, {1000 + frame * 10ull, 200.0 + frame, 100000});
+
+  check(history.held() == client::DRAWN_HISTORY_CAPACITY, "the ring stays bounded");
+  const uint64_t newest_present = 1000 + (client::DRAWN_HISTORY_CAPACITY * 2 - 1) * 10ull;
+  check_equal_u32(client::bracket_on_screen_at(history, newest_present).from_tick,
+                  200 + client::DRAWN_HISTORY_CAPACITY * 2 - 1,
+                  "and the newest frame is what a present-time press reads");
+}
+
 int main()
 {
   printf("remote_interpolation_test\n");
 
-  // -- The clock is a clock -------------------------------------------------
-  printf("\nthe render clock\n");
+  // -- The cursor ------------------------------------------------------------
+  printf("\nthe interpolation cursor\n");
   {
-    render_clock_t clock;
-    check(!clock.started, "a fresh clock has not started");
+    interpolation_cursor_t cursor;
+    check(!cursor.started, "a fresh cursor has not started");
 
-    observe_snapshot_tick(clock, 100, DELAY_TICKS);
-    check(clock.started, "the first snapshot starts it");
-    check_near(static_cast<float>(clock.render_tick), 98.f, 0.001f,
+    record_snapshot_tick(cursor, 100, DELAY_TICKS);
+    check(cursor.started, "the first snapshot starts it");
+    check_near(static_cast<float>(cursor.tick), 98.f, 0.001f,
                "and seeds it at newest - delay");
 
     // The whole point of the representation: arrival is not an event the
     // drawing calculation observes.
-    const double before = clock.render_tick;
-    observe_snapshot_tick(clock, 101, DELAY_TICKS);
-    check(clock.render_tick == before, "a later arrival does NOT move the clock");
+    const double before = cursor.tick;
+    record_snapshot_tick(cursor, 101, DELAY_TICKS);
+    check(cursor.tick == before, "a later arrival does NOT move the cursor");
 
-    observe_snapshot_tick(clock, 99, DELAY_TICKS);
-    check(clock.newest_received_tick == 101,
+    record_snapshot_tick(cursor, 99, DELAY_TICKS);
+    check(cursor.newest_received_tick == 101,
           "a reordered older snapshot does not roll the high-water mark back");
 
     // Reserved for things that are already discontinuities.
-    observe_snapshot_tick(clock, 400, DELAY_TICKS);
-    check_near(static_cast<float>(clock.render_tick), 398.f, 0.001f,
+    record_snapshot_tick(cursor, 400, DELAY_TICKS);
+    check_near(static_cast<float>(cursor.tick), 398.f, 0.001f,
                "a gap larger than the ring snaps");
   }
 
@@ -266,15 +329,15 @@ int main()
   {
     interpolation_ring_t ring;
     for (uint32_t tick = 1; tick <= 12; ++tick)
-      push_interpolation_sample(ring, sample_for_tick(tick));
+      push_snapshot_pose(ring, pose_for_tick(tick));
 
     check(ring.held() == client::INTERPOLATION_RING_CAPACITY, "it fills to capacity and holds");
     check(ring.newest().server_tick == 12, "newest is the last pushed");
     check(ring.oldest().server_tick == 5, "oldest is capacity-1 behind it");
 
-    push_interpolation_sample(ring, sample_for_tick(9));
+    push_snapshot_pose(ring, pose_for_tick(9));
     check(ring.newest().server_tick == 12, "a reordered older sample is ignored");
-    push_interpolation_sample(ring, sample_for_tick(12));
+    push_snapshot_pose(ring, pose_for_tick(12));
     check(ring.pushed == 12, "a duplicate is ignored");
   }
 
@@ -282,22 +345,22 @@ int main()
   printf("\nsampling\n");
   {
     interpolation_ring_t ring;
-    push_interpolation_sample(ring, sample_for_tick(10));
+    push_snapshot_pose(ring, pose_for_tick(10));
     const interpolation_result_t one = sample_interpolated_pose(ring, 10.0);
     check(one.status == interpolation_status_t::starved, "one sample is starved, not dry");
 
-    push_interpolation_sample(ring, sample_for_tick(11));
+    push_snapshot_pose(ring, pose_for_tick(11));
     const interpolation_result_t mid = sample_interpolated_pose(ring, 10.5);
-    check(mid.status == interpolation_status_t::interpolated, "two samples bracket the clock");
+    check(mid.status == interpolation_status_t::interpolated, "two samples bracket the cursor");
     check_near(mid.pose.position.x, WALK_SPEED * 10.5f / TICKRATE, 0.01f,
                "and the position is half way between them");
 
     // The handoff that used to be a reset: at a tick boundary both brackets
     // evaluate to the same point, which is what makes it continuous.
-    push_interpolation_sample(ring, sample_for_tick(12));
+    push_snapshot_pose(ring, pose_for_tick(12));
     const interpolation_result_t on_boundary = sample_interpolated_pose(ring, 11.0);
     check_near(on_boundary.pose.position.x, WALK_SPEED * 11.f / TICKRATE, 0.001f,
-               "a clock exactly on a sample renders that sample");
+               "a cursor exactly on a sample renders that sample");
 
     const interpolation_result_t past = sample_interpolated_pose(ring, 12.5);
     check(past.status == interpolation_status_t::dry, "past the newest sample is dry");
@@ -307,8 +370,8 @@ int main()
     // After loss the held samples are further apart, and the span is read off
     // the stamps rather than assumed to be one tick.
     interpolation_ring_t gapped;
-    push_interpolation_sample(gapped, sample_for_tick(20));
-    push_interpolation_sample(gapped, sample_for_tick(23));
+    push_snapshot_pose(gapped, pose_for_tick(20));
+    push_snapshot_pose(gapped, pose_for_tick(23));
     const interpolation_result_t across = sample_interpolated_pose(gapped, 21.5);
     check(across.status == interpolation_status_t::interpolated, "a gapped pair still brackets");
     check_near(across.pose.position.x, WALK_SPEED * 21.5f / TICKRATE, 0.01f,
@@ -318,37 +381,37 @@ int main()
   // -- The bracket ----------------------------------------------------------
   printf("\nthe reported bracket\n");
   {
-    render_clock_t clock;
-    observe_snapshot_tick(clock, 100, DELAY_TICKS);
-    advance_render_clock(clock, TICK_SECONDS * 0.25f, TICKRATE, DELAY_TICKS);
+    interpolation_cursor_t cursor;
+    record_snapshot_tick(cursor, 100, DELAY_TICKS);
+    advance_interpolation_cursor(cursor, TICK_SECONDS * 0.25f, TICKRATE, DELAY_TICKS);
 
-    const shared::interpolation_bracket_t bracket = bracket_at(clock);
+    const shared::interpolation_bracket_t bracket = bracket_at(cursor);
     check(bracket.from_tick == 98 && bracket.towards_tick == 99,
-          "the bracket is the pair the clock sits between");
+          "the bracket is the pair the cursor sits between");
     check_near(bracket.fraction, 0.25f, 0.01f, "and the fraction is where in it");
 
     // classify_bracket's precondition. Checked here on the easy case and again
     // on every frame of every schedule below, which is where it actually bites:
-    // the clock outruns its samples on any late snapshot, and an unpinned
+    // the cursor outruns its samples on any late snapshot, and an unpinned
     // bracket then reports newest + 1 and is refused.
-    check(bracket.towards_tick <= clock.newest_received_tick,
+    check(bracket.towards_tick <= cursor.newest_received_tick,
           "towards_tick never exceeds what we hold");
 
     // The dry case, named rather than inferred: frozen at the newest sample, so
     // the bracket collapses onto it.
-    render_clock_t outrun;
-    observe_snapshot_tick(outrun, 100, DELAY_TICKS);
-    advance_render_clock(outrun, TICK_SECONDS * 5.f, TICKRATE, DELAY_TICKS);
+    interpolation_cursor_t outrun;
+    record_snapshot_tick(outrun, 100, DELAY_TICKS);
+    advance_interpolation_cursor(outrun, TICK_SECONDS * 5.f, TICKRATE, DELAY_TICKS);
     const shared::interpolation_bracket_t pinned = bracket_at(outrun);
     check(pinned.from_tick == 100 && pinned.towards_tick == 100 && pinned.fraction == 0.f,
-          "a clock past the newest sample reports that sample, not one beyond it");
+          "a cursor past the newest sample reports that sample, not one beyond it");
   }
 
   // -- Arrival schedules ----------------------------------------------------
   // The bound every schedule below is judged against. A rendered step faster
   // than the player can walk is a pop, by definition -- interpolation between
   // two real positions can never exceed the speed between them, so any excess
-  // came from the clock being moved rather than advanced.
+  // came from the cursor being moved rather than advanced.
   const float pop_threshold = WALK_SPEED * 1.05f;
 
   // Applied to every schedule below, because a bracket the server refuses costs
@@ -364,7 +427,7 @@ int main()
   {
     const playback_stats_t stats = play(build_schedule(1.f / 144.f, 120, {}, {}));
     check(stats.frames > 200, "the schedule actually ran");
-    check(!stats.render_tick_went_backward, "render_tick never goes backward");
+    check(!stats.cursor_tick_went_backward, "cursor_tick never goes backward");
     check(stats.largest_step <= pop_threshold, "no rendered step exceeds walking speed");
     check(stats.dry_frames == 0, "the buffer never runs dry on a clean schedule");
     check_bracket_is_usable(stats);
@@ -381,7 +444,7 @@ int main()
       jitter.push_back(tick % 4 < 2 ? 0.005f : -0.005f);
     }
     const playback_stats_t stats = play(build_schedule(1.f / 144.f, 120, jitter, {}));
-    check(!stats.render_tick_went_backward, "render_tick never goes backward");
+    check(!stats.cursor_tick_went_backward, "cursor_tick never goes backward");
     check(stats.largest_step <= pop_threshold, "jitter does not reach the rendered position");
     check(stats.dry_frames == 0, "5ms of jitter is well inside a 2-tick budget");
     check_bracket_is_usable(stats);
@@ -394,7 +457,7 @@ int main()
     check(!stats.moved_while_dry, "and a dry frame freezes rather than fabricating");
     // What delay 2 actually buys, which is less than "covers one dropped
     // snapshot" suggests. A drop puts the next arrival 2 tick-intervals away,
-    // and at delay 2 the clock covers exactly 2 tick-intervals between arrivals
+    // and at delay 2 the cursor covers exactly 2 tick-intervals between arrivals
     // -- so ONE DROP LANDS EXACTLY ON THE BOUNDARY. It grazes dry for a frame or
     // two rather than being absorbed with margin; delay 3 is what covers a drop
     // comfortably. Asserted rather than commented because it is a measurement,
@@ -427,12 +490,12 @@ int main()
     const playback_stats_t stats = play(build_schedule(1.f / 144.f, 120, offsets, {}));
     check(stats.dry_frames > 0, "the stall empties the buffer");
     check(!stats.moved_while_dry, "which freezes rather than extrapolating");
-    // The load-bearing half of "let the clock run": the backlog arrives OLDEST
-    // FIRST, so a snap evaluated per arrival would jerk the clock back to the
+    // The load-bearing half of "let the cursor run": the backlog arrives OLDEST
+    // FIRST, so a snap evaluated per arrival would jerk the cursor back to the
     // front of the burst. Letting it run means the offset re-establishes itself,
-    // because the clock and the server's tick count advanced by the same amount.
-    check(!stats.render_tick_went_backward,
-          "and the clock keeps running through it rather than being snapped back");
+    // because the cursor and the server's tick count advanced by the same amount.
+    check(!stats.cursor_tick_went_backward,
+          "and the cursor keeps running through it rather than being snapped back");
     check(stats.interpolated_frames > 100, "playback resumes after the burst");
     check(stats.largest_step <= pop_threshold, "at walking speed, with no catch-up sprint");
     check_bracket_is_usable(stats);
@@ -441,18 +504,18 @@ int main()
   printf("\nschedule: rendering slower than the tickrate (20fps)\n");
   {
     const playback_stats_t stats = play(build_schedule(1.f / 20.f, 120, {}, {}));
-    check(!stats.render_tick_went_backward, "render_tick never goes backward");
+    check(!stats.cursor_tick_went_backward, "cursor_tick never goes backward");
     check(stats.largest_step <= pop_threshold,
           "a frame rate below the tickrate is a dt, not a discontinuity");
-    check(!stats.moved_while_dry, "and a coarse clock still freezes when it outruns the ring");
+    check(!stats.moved_while_dry, "and a coarse frame rate still freezes when it outruns the ring");
     check_bracket_is_usable(stats);
   }
 
   printf("\ndrift correction converges\n");
   {
-    // A client whose clock runs 2% slow: without the rate trim the buffer fills
+    // A client whose CLOCK runs 2% slow: without the rate trim the buffer fills
     // without bound and the delay silently becomes something nobody chose.
-    render_clock_t       clock;
+    interpolation_cursor_t       cursor;
     interpolation_ring_t ring;
     const float          frame_seconds = 1.f / 144.f;
 
@@ -463,20 +526,22 @@ int main()
       elapsed += frame_seconds;
       while (static_cast<float>(next_tick) * TICK_SECONDS <= elapsed)
       {
-        push_interpolation_sample(ring, sample_for_tick(next_tick));
-        observe_snapshot_tick(clock, next_tick, DELAY_TICKS);
+        push_snapshot_pose(ring, pose_for_tick(next_tick));
+        record_snapshot_tick(cursor, next_tick, DELAY_TICKS);
         ++next_tick;
       }
-      advance_render_clock(clock, frame_seconds * 0.98f, TICKRATE, DELAY_TICKS);
+      advance_interpolation_cursor(cursor, frame_seconds * 0.98f, TICKRATE, DELAY_TICKS);
     }
 
     const float occupancy =
-        static_cast<float>(static_cast<double>(clock.newest_received_tick) - clock.render_tick);
+        static_cast<float>(static_cast<double>(cursor.newest_received_tick) - cursor.tick);
     check_near(occupancy, DELAY_TICKS - 0.5f, 1.0f,
                "a 2% clock error is absorbed by the rate trim, not by the delay growing");
-    check(clock.rate > 1.f && clock.rate <= 1.f + client::INTERPOLATION_MAX_RATE_TRIM,
+    check(cursor.rate > 1.f && cursor.rate <= 1.f + client::INTERPOLATION_MAX_RATE_TRIM,
           "and the trim sits inside its authority rather than saturating forever");
   }
+
+  test_drawn_history();
 
   printf("\n%s\n", failures == 0 ? "all passed" : "FAILURES");
   return failures == 0 ? 0 : 1;

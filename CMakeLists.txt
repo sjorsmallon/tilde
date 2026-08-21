@@ -386,6 +386,7 @@ add_library(game_client SHARED
     src/client/jolt_debug_renderer.cpp
     src/client/client_impl.cpp
     src/client/client_context.cpp
+    src/client/raw_input_win32.cpp
     # One binder TU per channel, each switching over its closed enum and calling
     # one hand-written function per member. A member with no function is a link
     # error on this target, naming the symbol.
@@ -400,6 +401,11 @@ add_library(game_client SHARED
     src/client/effects/flesh_impact.cpp
     src/client/weapon_fire_audio.cpp
     src/client/hit_confirm_audio.cpp
+    src/client/shot_debug.cpp
+    # Decode one entity snapshot, then advance the newest held snapshot to it. Its own
+    # TU so that second half cannot reach `dt` or the camera -- it runs once per
+    # PACKET, not per frame.
+    src/client/held_snapshot.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
     src/client/game_events/rocket_detonated.cpp

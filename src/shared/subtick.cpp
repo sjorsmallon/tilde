@@ -14,28 +14,34 @@ float duration_of_slots(float tick_dt, uint32_t from_slot, uint32_t to_slot)
 
 } // namespace
 
-subtick_schedule_t split_tick(const subtick_input_t& input, float tick_dt)
+subtick_steps_t split_input_per_tick_into_subtick_steps(const subtick_input_t& input,
+                                                        float tick_dt)
 {
-  subtick_schedule_t schedule{};
+  subtick_steps_t result{};
 
-  uint64_t buttons = input.buttons_at_start;
-  uint32_t slot    = 0;
+  uint64_t       buttons = input.buttons_at_start;
+  subtick_view_t view    = input.view_at_start;
+  uint32_t       slot    = 0;
 
   for (uint32_t edge_index = 0; edge_index < input.edge_count; ++edge_index)
   {
     const subtick_edge_t& edge = input.edges[edge_index];
-    schedule.steps[schedule.step_count++] = {
-        .buttons = buttons, .dt = duration_of_slots(tick_dt, slot, edge.slot), .start_slot = slot};
+    result.steps[result.step_count++] = {.buttons    = buttons,
+                                         .view       = view,
+                                         .dt         = duration_of_slots(tick_dt, slot, edge.slot),
+                                         .start_slot = slot};
     buttons = edge.buttons_after;
+    view    = edge.view_after;
     slot    = edge.slot;
   }
 
-  schedule.steps[schedule.step_count++] = {
+  result.steps[result.step_count++] = {
       .buttons    = buttons,
+      .view       = view,
       .dt         = duration_of_slots(tick_dt, slot, SUBTICK_SLOT_COUNT),
       .start_slot = slot};
 
-  return schedule;
+  return result;
 }
 
 uint64_t subtick_rising_edges(const subtick_input_t& input, uint64_t buttons_before)
@@ -71,7 +77,8 @@ uint32_t subtick_slot_of_press(const subtick_input_t& input, uint64_t buttons_be
   return SUBTICK_SLOT_COUNT;
 }
 
-bool try_append_subtick_edge(subtick_input_t& input, uint32_t slot, uint64_t buttons_after)
+bool try_append_subtick_edge(subtick_input_t& input, uint32_t slot, uint64_t buttons_after,
+                             subtick_view_t view_after)
 {
   if (slot == 0 || slot >= SUBTICK_SLOT_COUNT)
     return false;
@@ -82,11 +89,12 @@ bool try_append_subtick_edge(subtick_input_t& input, uint32_t slot, uint64_t but
   if (input.edge_count >= MAX_SUBTICK_EDGES)
     return false;
 
-  input.edges[input.edge_count++] = {static_cast<uint8_t>(slot), buttons_after};
+  input.edges[input.edge_count++] = {static_cast<uint8_t>(slot), buttons_after, view_after};
   return true;
 }
 
-bool try_record_subtick_state(subtick_input_t& input, uint32_t slot, uint64_t buttons)
+bool try_record_subtick_state(subtick_input_t& input, uint32_t slot, uint64_t buttons,
+                              subtick_view_t view)
 {
   if (slot >= SUBTICK_SLOT_COUNT)
     slot = SUBTICK_SLOT_COUNT - 1;
@@ -101,6 +109,7 @@ bool try_record_subtick_state(subtick_input_t& input, uint32_t slot, uint64_t bu
   if (slot == 0)
   {
     input.buttons_at_start = buttons;
+    input.view_at_start    = view;
     return true;
   }
 
@@ -116,16 +125,25 @@ bool try_record_subtick_state(subtick_input_t& input, uint32_t slot, uint64_t bu
   if (lands_on_last_edge)
   {
     if (buttons == state_entering_slot)
+    {
       --input.edge_count;
+    }
     else
+    {
       input.edges[input.edge_count - 1].buttons_after = buttons;
+      input.edges[input.edge_count - 1].view_after    = view;
+    }
     return true;
   }
 
+  // No step to cut, and the aim is deliberately dropped with it: an earlier
+  // edge's view_after is the aim AT that earlier slot, and folding a later
+  // reading back onto it would hand a shot the angle the mouse reached after
+  // the trigger. view_at_end is where a motion past the last edge belongs.
   if (buttons == state_entering_slot)
     return true;
 
-  return try_append_subtick_edge(input, slot, buttons);
+  return try_append_subtick_edge(input, slot, buttons, view);
 }
 
 uint32_t subtick_slot_from_fraction(float fraction)

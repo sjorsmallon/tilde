@@ -42,7 +42,7 @@ static void check_equal(int actual, int expected, const char* what)
 }
 
 // Run an arrival pattern through the budget and report how many moves executed.
-// `arrivals[i]` is how many move commands showed up during tick i.
+// `arrivals[i]` is how many inputs showed up during tick i.
 static int execute(const std::vector<int>& arrivals, int max_backlog)
 {
   // One, matching client_slot_t::move_credits — a client is entitled to be one

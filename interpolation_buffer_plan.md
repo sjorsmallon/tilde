@@ -74,11 +74,11 @@ packet land".
 ### Render time lives in SERVER TICK SPACE, not in seconds-since-arrival
 
 The one representational change; everything else is downstream of it. The client
-keeps a `float render_tick` — a *fractional* server tick it is currently drawing
+keeps a `float cursor_tick` — a *fractional* server tick it is currently drawing
 — advanced by `dt * server_tickrate` every frame and **never reset**.
 
 Snapshots already carry `server_tick`. So drawing becomes: find the two
-snapshots bracketing `render_tick`, lerp by the fraction between their ticks.
+snapshots bracketing `cursor_tick`, lerp by the fraction between their ticks.
 Arrival time stops entering the calculation entirely, which is the point.
 
 ### A ring per player, not two slots
@@ -93,7 +93,7 @@ target" fragility rather than documenting it again.
 
 ### The delay is what buys the slack
 
-`render_tick = newest_received_tick - cl_interpolation_delay_ticks`. A new
+`cursor_tick = newest_received_tick - cl_interpolation_delay_ticks`. A new
 cvar, defaulting to **2** (~33ms at 60Hz).
 
 That number is the entire jitter and loss budget, and it is a straight trade:
@@ -114,12 +114,12 @@ abbreviation is inherited from a different engine rather than chosen.
 
 ### Drift is corrected by TIME-SCALING, not by snapping
 
-The client and server clocks run at slightly different rates, so `render_tick`
+The client and server clocks run at slightly different rates, so `cursor_tick`
 drifts from `newest_received_tick - cl_interpolation_delay_ticks` even with
 zero jitter. Snapping when the gap grows reintroduces exactly the pop this
 exists to delete.
 
-Instead, advance `render_tick` at `dt * server_tickrate * rate`, where `rate` is
+Instead, advance `cursor_tick` at `dt * server_tickrate * rate`, where `rate` is
 nudged within roughly `[0.95, 1.05]` to close the gap. A 5% speed difference is
 imperceptible on someone else's motion; a 30ms jump is not. **Snapping is
 reserved for things that are already discontinuities** — a map change, a
@@ -128,7 +128,7 @@ one), a gap larger than the ring.
 
 ### Buffer dry is an explicit, rare choice
 
-With a delay of 2, "no snapshot newer than `render_tick`" means loss exceeding
+With a delay of 2, "no snapshot newer than `cursor_tick`" means loss exceeding
 the budget. Then, and only then, pick one — and **freeze** is the right pick,
 not extrapolation. Extrapolating a player who is about to change direction
 manufactures a position they were never at, and the server's lag compensation
@@ -181,7 +181,7 @@ reordered, a 200ms burst — and assert on the *rendered* output:
 
 - **continuity**: frame-to-frame rendered movement never exceeds what the
   player's own speed allows. That is the pop, written as an assertion.
-- **monotonicity**: `render_tick` never goes backward.
+- **monotonicity**: `cursor_tick` never goes backward.
 - **bounded lag**: it stays within a tick or two of the intended delay across
   the whole schedule, so drift correction is proven to converge rather than
   merely to run.
@@ -193,7 +193,7 @@ image, and every regression is invisible until someone notices in a playtest.
 
 ### 3. The buffer itself
 
-Ring, render clock, delay, drift correction, dry policy. One change, guarded by
+Ring, interpolation cursor, delay, drift correction, dry policy. One change, guarded by
 step 2.
 
 ### 4. Rewire `interpolation_fraction` to be DERIVED, not recomputed
@@ -204,7 +204,7 @@ sources — global ticks versus per-player snapshot ticks — that agree only
 because delta reconstruction happens to fill every player into every frame. The
 comment claims "by construction"; it is actually by coincidence.
 
-After step 3 there is one render clock, so the reported bracket must be *read
+After step 3 there is one interpolation cursor, so the reported bracket must be *read
 off it* rather than recomputed. That also retires both "accepted inaccuracies"
 listed at `play_state.cpp:1092-1099`: the fraction stops being last frame's, and
 it stops being global.
@@ -227,7 +227,7 @@ timeline stay split — see `subtick_plan.md`, "Two clocks".
 **It does not smooth rockets or physics bodies.** Those are the `todo.md`
 Networking entry, and they should be built *on* this once it exists — a rocket
 wants extrapolation along `velocity` rather than a lerp, but it wants the same
-render clock. Do not give it a second one.
+interpolation cursor. Do not give it a second one.
 
 ---
 
@@ -240,7 +240,7 @@ Step 2 was built before step 3, as written. It earned that three times.
 The claim above -- "`classify_bracket` needs no change; `towards_tick <=
 held_snapshot_tick` stays true, just with more slack" -- is false, and the line
 that follows it ("worth an assertion rather than an assumption") is what caught
-it. `towards_tick` is `floor(render_tick) + 1`, so any frame where the clock has
+it. `towards_tick` is `floor(cursor_tick) + 1`, so any frame where the clock has
 outrun its newest sample reports `newest + 1`, and the server answers `Unheld`
 and falls back to present-tick poses. That is not rare: it is every late
 snapshot, and every frame of every dry buffer -- so lag compensation would have
@@ -257,8 +257,8 @@ once on the easy case.
 ### The snap has to be ONE-DIRECTIONAL
 
 The design says to snap on "a gap larger than the ring". Implemented literally —
-`|newest - delay - render_tick| > ring` — the burst-stall schedule failed on
-`render_tick` going *backward*.
+`|newest - delay - cursor_tick| > ring` — the burst-stall schedule failed on
+`cursor_tick` going *backward*.
 
 The reason is worth keeping. During a stall the clock keeps running while
 `newest_received_tick` stands still, so the two are far apart by exactly the
@@ -295,7 +295,7 @@ telemetry ever says stalls are common.
 
 ```
 client/remote_interpolation.{hpp,cpp}   the clock, the ring, the sampler, bracket_at
-client_context.hpp                      replication.render_clock (one per connection)
+client_context.hpp                      replication.interpolation_cursor (one per connection)
                                         Remote_Player_State::interpolation (one ring each)
 play_state.cpp                          three call sites: push on arrival,
                                         advance once per frame, read the bracket

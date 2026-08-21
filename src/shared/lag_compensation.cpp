@@ -124,6 +124,8 @@ bool try_pose_players_across_bracket(
   // taken before a reallocation pointing at freed storage.
   out.volumes.resize((size_t)living_count * volume_count);
   out.targets.reserve(living_count);
+  out.poses.clear();
+  out.poses.reserve(living_count);
 
   for (const auto& [uid, from_player] : from->players)
   {
@@ -137,11 +139,13 @@ bool try_pose_players_across_bracket(
     const Span<assets::posed_hitbox_t> slice{
         out.volumes.data() + (size_t)out.targets.size() * volume_count, volume_count};
 
+    const player_pose_t pose = blend_pose(from_player, towards_player, bracket.fraction);
+
     // The SAME function the live path and the client's debug_show_hitboxes
     // overlay call, so the rewound silhouette is the drawn silhouette.
-    compute_player_hitboxes(rig, blend_pose(from_player, towards_player, bracket.fraction),
-                            settings, slice);
+    compute_player_hitboxes(rig, pose, settings, slice);
 
+    out.poses.push_back(pose);
     out.targets.push_back(make_hitscan_target(from_player.entity_id,
                                               Span<const assets::posed_hitbox_t>{slice}));
   }

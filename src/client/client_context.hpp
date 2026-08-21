@@ -43,31 +43,34 @@ static constexpr int32_t invalid_slot_idx = -1;
 //           ──S2C_MapData arrives & verifies────▶ Connected (send C2S_MapLoaded)
 //           ──load/verify fails─────────────────▶ (stay Loading; re-request)
 //
-// Invariants: we only send move commands / run prediction+reconciliation while
+// Invariants: we only send client input / run prediction+reconciliation while
 // Connected; the server withholds snapshots (its client_slot_t::map_ready) until it sees
 // our C2S_MapLoaded, so a Loading client receives no entity deltas. See
 // play_state.cpp update() and connection_t::awaiting_stream_content_hash.
 enum class Connection_Phase { Disconnected, Connecting, Loading, Connected };
 
 // --- Client-side prediction ring buffer entry ---
-struct Saved_Command
+struct Saved_Input
 {
-  int command_number = -1;
+  int input_number = -1;
   // The whole tick's input, edges and all, not the Move_Input it decodes to.
-  // Reconciliation replays this through the SAME split_tick the live prediction
+  // Reconciliation replays this through the SAME split_input_per_tick_into_subtick_steps the live prediction
   // ran it through, so a replay reproduces the sub-steps rather than averaging
   // them into one -- and it has to, because the split is where the clamps fire.
   // A replay that split differently would be rubber-banding, not rounding.
+  // The aim rides INSIDE `input`, per step, which is why there is no yaw/pitch
+  // pair beside it any more. There used to be one, and reconciliation replayed
+  // every step of a tick through it while the live prediction had already moved
+  // on -- two spellings of the same thing, free to disagree. A replay now runs
+  // the identical basis the live step did because it reads the identical field.
   shared::subtick_input_t input = {};
-  float yaw = 0.f;
-  float pitch = 0.f;
   vec3f predicted_position = {0, 0, 0};
   vec3f predicted_velocity = {0, 0, 0};
 };
-static constexpr uint32_t MAX_PENDING_COMMANDS = 128;
+static constexpr uint32_t MAX_PENDING_INPUTS = 128;
 
 // --- Remote player interpolation ---
-// The snapshot ring and the render clock both live in client/remote_interpolation.hpp,
+// The snapshot ring and the interpolation cursor both live in client/remote_interpolation.hpp,
 // which is where the reasoning is too. What is left here is the per-player
 // state around them: who the slot holds, and what the last sample rendered to.
 struct Remote_Player_State
@@ -102,7 +105,7 @@ struct Remote_Player_State
   // Player_Entity::death_tick as of the last snapshot: 0 = alive, non-zero =
   // this player is a corpse and the death clip is what gets drawn.
   uint32_t death_tick = 0;
-  // How far into the death clip the corpse is. Advanced on the RENDER clock
+  // How far into the death clip the corpse is. Advanced by frame dt
   // rather than recomputed from the tick stamp every frame, because the
   // stamp only moves at the server tickrate and the clip would visibly step
   // at 60Hz on a 144Hz display. SEEDED from the stamp when death_tick
@@ -184,6 +187,12 @@ struct connection_t
   bool spectating = true;
 
   uint32_t server_tickrate = 60;
+
+  // One log line per connection, the first time a snapshot names our own body.
+  // Connection-scoped, so it resets with the rest of this group rather than
+  // with the UI struct it used to sit in -- which also lets advance_newest_held_snapshot stay
+  // a free function with no Play_State in its signature.
+  bool logged_first_server_update = false;
 };
 
 // The local player as WE compute them, plus the server's last word on us that
@@ -217,8 +226,22 @@ struct prediction_t
   // last_fire_tick -- but it is per-connection like the health above it.
   float seconds_since_local_fire = 0.f;
 
-  int command_number = 0;
-  Array<Saved_Command, MAX_PENDING_COMMANDS> pending_commands = {};
+  // Real seconds left on our own predicted reload, or 0 when none is running.
+  //
+  // PREDICTED, not replicated, for exactly the reason the fire clock above is:
+  // the gunshot is gated at the press and the server's answer is a round trip
+  // behind. Player_Entity::reload_complete_time is deliberately server-only and
+  // stays that way -- it is a sub-tick value on a wire with no grid finer than a
+  // tick, and replicating it would buy a reader that only needs "am I reloading"
+  // eight bytes it cannot use.
+  //
+  // Started, cancelled and cleared on the same conditions the server uses, off
+  // this client's own key presses. Audio only: nothing simulates on it, so a
+  // disagreement costs a sound and never a desync.
+  float seconds_until_local_reload_complete = 0.f;
+
+  int input_number = 0;
+  Array<Saved_Input, MAX_PENDING_INPUTS> pending_inputs = {};
 
   // --- Sub-tick input edges ---
   //
@@ -239,11 +262,28 @@ struct prediction_t
   // that is input being abandoned.
   struct pending_input_edge_t
   {
-    float    accumulator_seconds = 0.f;
-    uint64_t buttons_after       = 0; // tracked bits only; the rest are polled
+    float                  accumulator_seconds = 0.f;
+    uint64_t               buttons_after       = 0; // tracked bits only; the rest are polled
+    shared::subtick_view_t view_after          = {};
+
+    // Wall clock, unlike accumulator_seconds beside it, and both are needed
+    // because they answer to different things. The accumulator decides which
+    // TICK the transition falls in; this decides which drawn FRAME the player
+    // was looking at when they made it, and the drawn frames are stamped on the
+    // input clock (remote_interpolation.hpp, drawn_history_t). Deriving either
+    // from the other means guessing at the offset between two clocks that are
+    // read at different points in the frame.
+    uint64_t arrival_qpc_ticks = 0;
   };
   std::vector<pending_input_edge_t> pending_input_edges;
   uint64_t tracked_buttons_at_tick_start = 0;
+
+  // Where the aim was at that same boundary, and it cannot be derived from the
+  // edges: a tick whose mouse moved and whose buttons did not carries no edge
+  // at all, and that is the common tick. Carried across from the last sample
+  // the previous tick consumed, which is by construction the last travel before
+  // the boundary.
+  shared::subtick_view_t view_at_tick_start = {};
 
   // Whether the edges above are a current account of what is held. False while
   // anything stops them being read -- the console owning the keyboard, or not
@@ -256,19 +296,24 @@ struct prediction_t
 
   // Every move built but not yet acked by the server, oldest first, resent whole
   // in each move datagram. Held as the BUILT messages rather than rebuilt from
-  // pending_commands above: a resend has to carry the held_snapshot_tick and the
+  // pending_inputs above: a resend has to carry the held_snapshot_tick and the
   // interpolation bracket the command was issued with, and those describe the
-  // moment it was made, not the moment it is re-sent. Saved_Command has neither
+  // moment it was made, not the moment it is re-sent. Saved_Input has neither
   // -- it exists for reconciliation, which replays movement and nothing else.
   //
-  // Trimmed by latest_server_ack_command, which is a high-water mark, so this
-  // needs no per-command acking. Capped by cl_max_unacked_moves.
-  std::vector<game::C2S_PlayerMoveCommand> unacked_moves;
+  // Trimmed by latest_input_number_processed_by_server, which is a high-water
+  // mark, so this needs no per-input acking. Capped by cl_max_unacked_inputs.
+  std::vector<game::C2S_ClientInput> unacked_inputs;
 
   // --- Server reconciliation ---
   vec3f latest_server_position = {0, 0, 0};
   vec3f latest_server_velocity = {0, 0, 0};
-  int latest_server_ack_command = -1;
+  // Our copy of the server's high-water mark over our own input stream. Spelled
+  // out to the last word because both halves are load-bearing: it is a NUMBER,
+  // not an input, and the processing is the SERVER'S -- we process our own
+  // inputs too, every tick, as prediction. Everything at or below it is done, so
+  // it both trims unacked_inputs and is where reconciliation starts replaying.
+  int latest_input_number_processed_by_server = -1;
   bool received_server_update = false;
   vec3f visual_error_offset = {0, 0, 0};
   vec3f reconciliation_error = {0, 0, 0};      // HUD readout only
@@ -307,10 +352,16 @@ struct replication_t
   // shared ABSOLUTE coordinate buys and a shared arrival phase could not.
   //
   // It replaced a float reset to zero on every snapshot arrival. That reset was
-  // `render_tick = newest_received_tick - 1` written as an assignment, and it
+  // `cursor_tick = newest_received_tick - 1` written as an assignment, and it
   // was only ever correct when the clock had already reached exactly that value
   // -- the discarded remainder was the pop. See remote_interpolation.hpp.
-  client::render_clock_t render_clock;
+  client::interpolation_cursor_t interpolation_cursor;
+
+  // One entry per presented frame: what the remote players were drawn at, and
+  // when. A trigger press is judged against the entry that was in front of the
+  // player at the moment it arrived, which is the only way to answer that
+  // question without deriving it from a clock that never measured it.
+  client::drawn_history_t drawn_history;
 
   // --- Delta decompression: the latest reconstructed snapshot ---
   // What the game reads. A copy of the newest frame in the history below, kept
@@ -329,7 +380,7 @@ struct replication_t
   // exact state we reconstructed for that tick — not merely "the current
   // world", which has moved on. Mirrors the server's ring one for one; see
   // shared/network/snapshot_history.hpp. `acked_tick` on it is the value echoed
-  // back in every C2S_PlayerMoveCommand. The frame type is the same one the
+  // back in every C2S_ClientInput. The frame type is the same one the
   // server stores — the server deltas against what it believes we
   // reconstructed, so the two structures being one type is not a convenience,
   // it is the guarantee. Keyed by entity uid on both ends;

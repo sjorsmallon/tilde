@@ -258,6 +258,33 @@ Player_Entity :: entity @runtime_only {
     death_tick:        u32              @Networked
     last_fire_tick:    u32              @Networked
     last_fire_weapon:  Weapon = .Knife  @Networked
+
+    // The SLOT inside last_fire_tick the trigger actually went down in, which
+    // refines that stamp to 0.26ms (shared/subtick.hpp). Not a second copy of
+    // the moment -- the tick above is the only tick, and the two are read
+    // together as subtick_time(last_fire_tick, last_fire_slot). A whole second
+    // stamp could disagree with the first; a refinement cannot.
+    //
+    // Server-only on purpose. Its one consumer is the fire-interval gate, which
+    // runs inside the server's step loop. The client's consumer of
+    // last_fire_tick is weapon_fire_audio, a change detector on a wire that has
+    // no grid finer than a tick, so replicating this would cost bytes per
+    // player per snapshot for a reader that cannot use them.
+    last_fire_slot:    u8
+
+    // WHEN the in-flight reload finishes, in sub-tick time; 0 means not
+    // reloading. A DEADLINE rather than a start stamp, because the duration is
+    // a property of the weapon being reloaded and the weapon can change while
+    // the reload runs -- at a sub-tick moment inside the same step loop, now
+    // that the weapon keys carry edges. Storing the start would leave "whose
+    // duration applies" to be re-decided every tick against a weapon that is no
+    // longer the one being reloaded; storing the deadline settles it at the
+    // moment the input arrived, which is the only moment that knows.
+    reload_complete_time: u64
+
+    // Rate limit for the empty-magazine warning. Server-only, like the two
+    // above: a log cadence is not something a client has any use for.
+    last_empty_fire_warning_tick: u32
     last_hit_tick:         u32          @Networked
     last_hit_was_headshot: bool         @Networked
 

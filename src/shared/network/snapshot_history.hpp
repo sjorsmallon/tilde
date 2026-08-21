@@ -16,8 +16,10 @@
 // server will name, and by then the live world has moved on.
 //
 // Frame_T needs one member: `uint32_t tick`. A frame with tick == 0 is an empty
-// slot, which is why server tick numbering starts at 1 -- 0 is the wire
-// sentinel for "no baseline, this is a full update".
+// slot, which is why server tick numbering starts at 1. That 0 is local to this
+// ring -- "nothing stored here", "nothing acked yet" -- and no longer travels:
+// S2C says "delta against a tick" by PRESENCE of the field, not by a reserved
+// number (see entity_snapshot.hpp).
 
 #include <array>
 #include <cstdint>

@@ -262,6 +262,9 @@ struct Player_Entity : Entity
   uint32_t death_tick = {};
   uint32_t last_fire_tick = {};
   Weapon last_fire_weapon = Weapon::Knife;
+  uint8_t last_fire_slot = {};
+  uint64_t reload_complete_time = {};
+  uint32_t last_empty_fire_warning_tick = {};
   uint32_t last_hit_tick = {};
   bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};

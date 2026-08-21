@@ -67,7 +67,7 @@ void reset_client_slot(server_context_t& context, int32_t slot)
 
 void clear_incoming(server_context_t& context)
 {
-  context.incoming.moves.clear();
+  context.incoming.inputs.clear();
   context.incoming.potential_joins.clear();
   context.incoming.net_commands.clear();
   context.incoming.commands.clear();

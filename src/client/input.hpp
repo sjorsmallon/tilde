@@ -81,7 +81,7 @@ struct mouse_button_event_t
   modifiers_t mods;
 };
 
-// One button transition, with the time SDL stamped it.
+// One button transition, with the time it ARRIVED.
 //
 // A THIRD queue, beside the two above, and the difference is what it is for.
 // frame_key_events / frame_mouse_button_events answer "what happened this
@@ -92,13 +92,25 @@ struct mouse_button_event_t
 // shared/subtick.hpp). So this one carries RELEASES too, spans both devices in
 // one arrival-ordered list, and keeps the timestamp.
 //
-// The timestamp is SDL's, in whole milliseconds since SDL_Init, and it is what
-// bounds the client's real sub-tick resolution: 1ms is about four of the 64
-// slots at 60Hz. That is a limit of SDL2's event stamps, not of the format.
+// The timestamp is a QueryPerformanceCounter reading taken by the raw-input
+// thread the instant it woke (raw_input_win32.hpp), so it is the arrival moment
+// to microseconds -- three orders of magnitude below a 0.26 ms sub-tick slot.
+// It is NOT SDL's event timestamp, which was measured to be pump time and
+// therefore constant across a frame. When the raw-input thread could not start
+// this falls back to SDL's transitions stamped at the frame boundary, which is
+// one frame coarse and exactly what it was before.
 enum class input_device_t : uint8_t
 {
   Key,
-  Mouse_Button
+  Mouse_Button,
+  // Mouse TRAVEL, in the same arrival-ordered list as the transitions, because
+  // the ordering between them is the whole point: the aim a shot is taken
+  // through is the motion that arrived BEFORE the trigger and not the motion
+  // that arrived after it. Folding a frame's travel into one delta (which
+  // input::mouse_delta() still does, for the editor and the UI) throws that
+  // ordering away and is what left a flick shot pointed where the mouse
+  // finished rather than where it was when the button went down.
+  Mouse_Motion
 };
 
 struct input_edge_t
@@ -107,7 +119,18 @@ struct input_edge_t
   key_t          key    = key_t::Unknown;        // device == Key
   mouse_button_t button = mouse_button_t::Count; // device == Mouse_Button
   bool           down   = false;
-  uint32_t       timestamp_milliseconds = 0;
+  linalg::vec2i  motion = {0, 0};                // device == Mouse_Motion
+  uint64_t       arrival_qpc_ticks = 0;
+};
+
+// The window this frame's edges arrived in: the previous drain to this one.
+// Both endpoints are read at the same point in the frame, so the span is what
+// the accumulator's dt advance represents and an edge's position inside it is
+// (arrival - start) / (end - start) -- in range by construction, with no clamp.
+struct input_frame_span_t
+{
+  uint64_t start_qpc_ticks = 0;
+  uint64_t end_qpc_ticks   = 0;
 };
 
 // A processed mouse interaction handed to editor tools. Unlike the raw
@@ -123,6 +146,13 @@ struct mouse_event_t
 
 // --- Lifecycle ---------------------------------------------------------------
 
+// Starts the raw-input thread that stamps edges. Never fatal: on failure (or on
+// a platform without one) the edge queue falls back to SDL's transitions,
+// stamped at the frame boundary -- one frame coarser, still playable, and
+// logged rather than silent.
+void init();
+void shutdown();
+
 // Call once at the start of each frame, before pumping SDL events.
 void new_frame();
 
@@ -130,6 +160,19 @@ void new_frame();
 void process_sdl_event(const void *sdl_event);
 
 // --- Polling -----------------------------------------------------------------
+//
+// ONE SAMPLING INSTANT: every accessor below answers as of `new_frame`, which
+// runs before the frame's events are pumped. None of them is a live query, and
+// that is not a limitation being worked around -- SDL's state only moves during
+// a pump and there is exactly one pump per frame, so a "live" read was never
+// `now`, it was the same snapshot taken one frame later. Having two of these on
+// different instants cost a real bug: a caller folding is_key_down and a live
+// is_mouse_down into one bitfield and checking it against edge-derived state
+// saw every click as a lost transition.
+//
+// The instant is BEFORE the pump on purpose. That is what makes these
+// comparable with frame_input_edges() -- see the bracket check in
+// play_state.cpp.
 
 bool is_key_down(key_t key);
 bool is_key_pressed(key_t key); // true only on the frame it became down
@@ -149,14 +192,28 @@ void set_relative_mouse_mode(bool enabled);
 Span<const key_event_t> frame_key_events();
 Span<const mouse_button_event_t> frame_mouse_button_events();
 
-// Every key and mouse-button transition this frame, in arrival order, with SDL's
-// timestamp on each. Releases included -- see input_edge_t.
+// Every key and mouse-button transition this frame, plus the mouse travel
+// between them, in arrival order with a time on each. Releases included -- see
+// input_edge_t.
 Span<const input_edge_t> frame_input_edges();
 
-// SDL's event-timestamp clock, read now. The same domain input_edge_t is
-// stamped in, so a caller can ask how OLD an edge is; nothing else in the
-// client keeps time in it.
-uint32_t event_clock_milliseconds();
+
+// The span the edges above arrived in, and the counter frequency to divide by.
+// Nothing else in the client keeps time in this domain.
+input_frame_span_t frame_arrival_span();
+uint64_t           arrival_clock_frequency();
+
+// The arrival clock read NOW, for the one caller that needs a time from outside
+// the frame boundary: recording when a frame was actually presented. Unlike
+// every accessor above this is deliberately live -- the span endpoints are read
+// at the top of the frame, and present happens at the bottom of it, so reusing
+// one here would stamp the frame roughly a whole frame before it existed.
+uint64_t arrival_clock_now();
+
+// Whether edges are coming from the raw-input thread. False means the SDL
+// fallback, whose stamps are frame-granular -- the sub-tick fold is still
+// correct, just no finer than it was before raw input existed.
+bool raw_input_is_active();
 
 // --- ImGui capture -----------------------------------------------------------
 

@@ -471,7 +471,7 @@ bool change_map_to(const std::string &map_path)
 // Poses every living player's hit volumes into context.posed_players, once, for
 // every shot this tick to share.
 //
-// Called at the TOP of the tick, before the move loop advances anybody. That
+// Called at the TOP of the tick, before the input loop advances anybody. That
 // ordering is the point: the fire path runs inside that loop, so rebuilding per
 // shot tested each victim at whatever position the loop had reached, and whether
 // A hit B depended on which slot each of them held. Every shooter now tests the
@@ -503,6 +503,8 @@ static void pose_all_players(server_context_t &context)
 
   posed.volumes.resize((size_t)living_count * volume_count);
   posed.targets.reserve(living_count);
+  posed.poses.clear();
+  posed.poses.reserve(living_count);
 
   for (const entities::Player_Entity &player : players)
   {
@@ -514,13 +516,14 @@ static void pose_all_players(server_context_t &context)
     const Span<assets::posed_hitbox_t> slice{
         posed.volumes.data() + (size_t)posed.targets.size() * volume_count, volume_count};
 
-    shared::compute_player_hitboxes(rig,
-                                    {.feet_position = player.position,
+    const shared::player_pose_t pose{.feet_position = player.position,
                                      .body_yaw      = player.body_yaw,
                                      .view_yaw      = player.view_angle_yaw,
-                                     .view_pitch    = player.view_angle_pitch},
-                                    settings, slice);
+                                     .view_pitch    = player.view_angle_pitch};
 
+    shared::compute_player_hitboxes(rig, pose, settings, slice);
+
+    posed.poses.push_back(pose);
     posed.targets.push_back(shared::make_hitscan_target(
         player.entity_id, Span<const assets::posed_hitbox_t>{slice}));
   }
@@ -536,16 +539,20 @@ static void pose_all_players(server_context_t &context)
 // held_snapshot_tick into a per-client high-water mark; the same fold applied to
 // a bracket would judge the shot through a NEWER blend than the shooter aimed
 // through, which is the exact error this whole path removes.
-static shared::interpolation_bracket_t get_interpolation_bracket_for_move(
+// Returns the whole VERDICT, not just the bracket it works out to. The status is
+// the interesting half for anyone debugging a miss -- Absent, Malformed and
+// Unheld all mean no rewind happened and the shot was judged against the present
+// tick -- and collapsing it to a zeroed bracket threw exactly that away.
+static shared::bracket_verdict_t get_interpolation_bracket_for_input(
     server_context_t &context, int32_t client_slot,
-    const game::C2S_PlayerMoveCommand &move)
+    const game::C2S_ClientInput &input)
 {
   client_slot_t &client = context.clients[client_slot];
 
   const shared::interpolation_bracket_t requested{
-      .from_tick    = move.interpolated_from_tick(),
-      .towards_tick = move.interpolated_towards_tick(),
-      .fraction     = move.interpolation_fraction()};
+      .from_tick    = input.interpolated_from_tick(),
+      .towards_tick = input.interpolated_towards_tick(),
+      .fraction     = input.interpolation_fraction()};
 
   // The ring cannot produce a tick it has already overwritten, so a policy
   // cap past its capacity would only promise a rewind that then misses.
@@ -560,21 +567,21 @@ static shared::interpolation_bracket_t get_interpolation_bracket_for_move(
   switch (verdict.status)
   {
     case shared::bracket_status_t::Absent:
-      return {};
+      return verdict;
 
     case shared::bracket_status_t::Unheld:
       log_warning("slot {}: move names a blend towards tick {}, but that slot has "
                   "only acked up to {} (server is at {}) — rewind refused",
                   client_slot, requested.towards_tick, client.held_snapshot_tick,
                   context.tick_number);
-      return {};
+      return verdict;
 
     case shared::bracket_status_t::Malformed:
       log_warning("slot {}: malformed interpolation bracket {} -> {} at {:.3f} — "
                   "rewind refused",
                   client_slot, requested.from_tick, requested.towards_tick,
                   requested.fraction);
-      return {};
+      return verdict;
 
     case shared::bracket_status_t::Ok:
     case shared::bracket_status_t::Clamped:
@@ -617,20 +624,149 @@ static shared::interpolation_bracket_t get_interpolation_bracket_for_move(
     }
   }
 
-  return verdict.bracket;
+  return verdict;
 }
 
 
+// How close the ray came to the nearest target it did NOT hit, measured against
+// the broad-phase bound rather than the volumes.
+//
+// A number, not a verdict, and the magnitude is the whole point: a few units
+// means the ray and the silhouette nearly agreed and you are looking at a pose
+// or an aim problem, while a hundred means the server tested a player standing
+// somewhere else entirely -- a rewind that was refused, clamped, or never asked
+// for. Those two failures feel identical in game and need opposite fixes.
+static float distance_to_nearest_target(const vec3f &eye, const vec3f &direction,
+                                        Span<const shared::hitscan_target_t> targets,
+                                        shared::entity_uid_t shooter_uid)
+{
+  float nearest = std::numeric_limits<float>::infinity();
+  for (const shared::hitscan_target_t &target : targets)
+  {
+    if (target.uid == shooter_uid)
+      continue;
+
+    // Clamped at 0 so a target BEHIND the shooter measures from the muzzle
+    // rather than from a point down the backwards extension of the ray.
+    const vec3f to_center     = target.bounds.center - eye;
+    const float along_ray     = std::max(0.f, linalg::dot(to_center, direction));
+    const vec3f closest_point = eye + direction * along_ray;
+
+    nearest = std::min(nearest, linalg::length(target.bounds.center - closest_point) -
+                                    target.bounds.radius);
+  }
+  return nearest;
+}
+
+static void fill_shot_debug_vector(game::Vec3 *out, const vec3f &value)
+{
+  out->set_x(value.x);
+  out->set_y(value.y);
+  out->set_z(value.z);
+}
+
+// Ships one shot's evidence back to the client that fired it.
+//
+// To the SHOOTER only. Nobody else can pair it -- the key is that client's own
+// input number -- and a shot's rewind evidence is a per-connection question, not
+// a broadcast.
+static void send_shot_debug(server_context_t &context, int32_t client_slot,
+                            const game::C2S_ClientInput &input, uint32_t fire_slot,
+                            const vec3f &eye, const vec3f &direction,
+                            const shared::bracket_verdict_t &verdict, bool used_rewind,
+                            const shared::posed_players_t &tested,
+                            Span<const shared::hitscan_target_t> targets,
+                            const shared::hitscan_result_t &hit,
+                            shared::entity_uid_t shooter_uid)
+{
+  game::S2C_ShotDebug message;
+  message.set_input_number(input.input_number());
+  message.set_server_tick(context.tick_number);
+  message.set_fire_slot(fire_slot);
+  fill_shot_debug_vector(message.mutable_eye(), eye);
+  fill_shot_debug_vector(message.mutable_direction(), direction);
+
+  message.set_bracket_status(static_cast<uint32_t>(verdict.status));
+  message.set_used_rewind(used_rewind);
+  message.set_requested_from_tick(input.interpolated_from_tick());
+  message.set_requested_towards_tick(input.interpolated_towards_tick());
+  message.set_requested_fraction(input.interpolation_fraction());
+  message.set_used_from_tick(verdict.bracket.from_tick);
+  message.set_used_towards_tick(verdict.bracket.towards_tick);
+  message.set_used_fraction(verdict.bracket.fraction);
+
+  // `poses` is filled in lockstep with `targets` by both builders, so index i
+  // describes the same player in each. Guarded anyway: a builder that ever
+  // stopped filling one of them would otherwise walk off the end here.
+  const size_t target_count = std::min(tested.targets.size(), tested.poses.size());
+  for (size_t index = 0; index < target_count; ++index)
+  {
+    game::ShotDebugTarget *entry = message.add_targets();
+    entry->set_player_uid(tested.targets[index].uid);
+    fill_shot_debug_vector(entry->mutable_feet_position(), tested.poses[index].feet_position);
+    entry->set_body_yaw(tested.poses[index].body_yaw);
+    entry->set_view_yaw(tested.poses[index].view_yaw);
+    entry->set_view_pitch(tested.poses[index].view_pitch);
+  }
+
+  message.set_hit_uid(hit.hit_uid);
+  message.set_hit_region(static_cast<uint32_t>(hit.region));
+  if (hit.hit_uid != shared::null_entity_uid)
+    fill_shot_debug_vector(message.mutable_impact_point(), hit.impact_point);
+  else
+    message.set_nearest_miss_distance(
+        distance_to_nearest_target(eye, direction, targets, shooter_uid));
+
+  std::vector<network::uint8> buffer(message.ByteSizeLong());
+  message.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
+  constexpr network::uint8 message_type =
+      static_cast<network::uint8>(network::Message_Type::S2C_ShotDebug);
+  const auto packets =
+      network::convert_to_packets(buffer, message_type, context.transport_layer.next_message_id);
+  for (const auto &packet : packets)
+    context.socket.send(packet, context.transport_layer.addresses[client_slot]);
+}
+
+// The three things a reload is, in one place so the step loop below reads as
+// intent rather than as bookkeeping.
+//
+// A reload is the one player action that OUTLIVES the input that started it: it
+// spans ~120 ticks, and the input for tick N carries nothing about a press at
+// tick N-120. So it is retained state -- but what is retained is the DEADLINE,
+// settled from the weapon in hand at the moment the press arrived, rather than
+// a start stamp the server would re-interpret every tick against whatever
+// weapon is held by then. See Player_Entity::reload_complete_time.
+static bool is_reloading(const entities::Player_Entity &player)
+{
+  return player.reload_complete_time != 0;
+}
+
+static void finish_reload(entities::Player_Entity &player)
+{
+  player.ammo = shared::get_weapon_definition(player.active_weapon_id).magazine_size;
+  player.reload_complete_time = 0;
+}
+
+// Cancelled, not paused. Switching weapons mid-reload abandons it, which is why
+// the weapon keys are in Button::Subtick_Tracked at all: reload-then-switch and
+// switch-then-reload inside one tick are now different outcomes, and at tick
+// granularity they were the same one.
+static void cancel_reload(entities::Player_Entity &player)
+{
+  player.reload_complete_time = 0;
+}
+
 // One shot, from where the shooter had reached when the trigger went down.
 //
-// Pulled out of the move loop when a tick stopped being one movement step: a
+// Pulled out of the input loop when a tick stopped being one movement step: a
 // trigger press has a sub-tick moment like any other button, so this is called
 // from inside the step loop, after the step the press landed in has run. What
 // used to be "the post-move eye" is now the eye at the moment of the shot, which
 // is what that comment always meant.
 static void resolve_player_shot(server_context_t &context, int32_t client_slot,
-                                const game::C2S_PlayerMoveCommand &move,
-                                entities::Player_Entity *player, float yaw, float pitch)
+                                const game::C2S_ClientInput &input,
+                                entities::Player_Entity *player, float yaw, float pitch,
+                                uint32_t fire_slot)
 {
   // this tripped me up 15 different times, so here we go again.
   // POST-move eye, against start-of-tick or rewound victims. The asymmetry
@@ -646,18 +782,65 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   const shared::weapon_definition_t& weapon =
       shared::get_weapon_definition(player->active_weapon_id);
 
-  const float seconds_since_last_fire =
-      static_cast<float>(context.tick_number - player->last_fire_tick) *
-      static_cast<float>(get_tick_interval());
+  // The MOMENT the trigger went down, not the tick it went down in. The step
+  // this runs at the end of was opened by that very press, so `fire_slot` is
+  // its slot and the exactness is free -- the old spelling subtracted two tick
+  // numbers and quantized every cadence to 16.7ms, which is the same rounding
+  // sub-tick exists to delete, left in the one gate that decides whether a
+  // shot happens at all.
+  const float tick_dt = static_cast<float>(get_tick_interval());
+  const shared::subtick_time_t fire_time =
+      shared::subtick_time(context.tick_number, fire_slot);
+
+  const float seconds_since_last_fire = shared::subtick_seconds_between(
+      shared::subtick_time(player->last_fire_tick, player->last_fire_slot), fire_time,
+      tick_dt);
 
   // Still inside the weapon's interval. Was a `continue` while this lived in
-  // the move loop; the joke about continue meaning skip does not survive the
+  // the input loop; the joke about continue meaning skip does not survive the
   // extraction, but the gate does.
   if (seconds_since_last_fire < weapon.fire_interval_seconds)
     return;
 
+  // Mid-reload, judged on the same clock: a trigger press in the slot the
+  // reload lands in fires, the slot before it does not. The end-of-tick sweep
+  // would have completed this anyway -- doing it here is what keeps the
+  // authoritative answer exact while the replicated copy stays tick-granular.
+  if (is_reloading(*player))
+  {
+    if (fire_time < player->reload_complete_time)
+      return;
+    finish_reload(*player);
+  }
+
+  // Empty. A magazine-less weapon never reaches this: `magazine_size == 0` is
+  // the knife, which consumes nothing and reloads nothing.
+  //
+  // Rate-limited rather than silent. An empty gun is a legitimate outcome, but
+  // it is indistinguishable from a broken fire path at the only moment anyone
+  // looks -- which is exactly how the switch above shipped without its magazine.
+  if (weapon.magazine_size > 0)
+  {
+    if (player->ammo <= 0)
+    {
+      const uint32_t warning_interval =
+          std::max(1u, static_cast<uint32_t>(context.cvars->sv_tickrate));
+      if (context.tick_number - player->last_empty_fire_warning_tick >= warning_interval)
+      {
+        player->last_empty_fire_warning_tick = context.tick_number;
+        log_warning("slot {}: trigger pulled on an empty {} — no shot resolved",
+                    client_slot, weapon.display_name);
+      }
+      return;
+    }
+    --player->ammo;
+  }
+
   // update metadata about firing so clients don't get confused about what happened.
+  // The tick is the replicated stamp the client's gunshot audio watches; the
+  // slot beside it is the refinement only this gate reads.
   player->last_fire_tick   = context.tick_number;
+  player->last_fire_slot   = static_cast<uint8_t>(fire_slot);
   player->last_fire_weapon = player->active_weapon_id;
 
   switch (weapon.kind)
@@ -679,7 +862,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
 
       if (context.posed_players.built_for_tick != context.tick_number)
         fatal_error("hit volumes were posed for tick {} but this is tick {}; "
-                    "pose_all_players must run before the move loop",
+                    "pose_all_players must run before the input loop",
                     context.posed_players.built_for_tick, context.tick_number);
 
       // --- Lag compensation ---
@@ -694,23 +877,40 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
       // refused bracket, or an endpoint that has aged out of the ring all
       // land there.
       Span<const shared::hitscan_target_t> targets{context.posed_players.targets};
+      shared::bracket_verdict_t verdict{};
+      bool used_rewind = false;
       if (context.cvars->sv_lag_compensation)
       {
         // Inside the cvar check, not beside it: get_interpolation_bracket_for_move
         // logs, and a server with the feature turned off has no business
         // complaining about brackets it is not going to use.
-        const shared::interpolation_bracket_t bracket =
-            get_interpolation_bracket_for_move(context, client_slot, move);
+        verdict = get_interpolation_bracket_for_input(context, client_slot, input);
 
-        if (bracket.towards_tick != 0 &&
+        const bool bracket_is_usable =
+            verdict.status == shared::bracket_status_t::Ok ||
+            verdict.status == shared::bracket_status_t::Clamped;
+
+        if (bracket_is_usable &&
             shared::try_pose_players_across_bracket(
                 context.replication.snapshot_history, shared::player_rig(),
-                aim_settings_from(*context.cvars), bracket, context.rewind_scratch))
-          targets = Span<const shared::hitscan_target_t>{context.rewind_scratch.targets};
+                aim_settings_from(*context.cvars), verdict.bracket, context.rewind_scratch))
+        {
+          targets     = Span<const shared::hitscan_target_t>{context.rewind_scratch.targets};
+          used_rewind = true;
+        }
       }
 
       const shared::hitscan_result_t hit = shared::resolve_hitscan(
           eye, direction, range, targets, player->entity_id);
+
+      // After resolve_hitscan, so the message carries the OUTCOME as well as the
+      // evidence -- a miss with its nearest-miss distance is the case anyone
+      // turning this on is actually looking at.
+      if (context.cvars->sv_shot_debug)
+        send_shot_debug(context, client_slot, input, fire_slot, eye, direction, verdict,
+                        used_rewind,
+                        used_rewind ? context.rewind_scratch : context.posed_players, targets,
+                        hit, player->entity_id);
 
       if (hit.hit_uid != shared::null_entity_uid)
       {
@@ -951,7 +1151,7 @@ bool Tick()
   for (const auto &[client_slot, payload] : inbox.map_data_requests)
   {
     network::Bit_Reader reader(payload.data(), payload.size());
-    shared::request_map_data_message_t req =
+    shared::request_map_data_message_t request =
         shared::deserialize_request_map_data(reader);
 
     shared::map_package_t package =
@@ -982,7 +1182,7 @@ bool Tick()
     log_terminal("Streamed map package '{}' ({} bytes, {} packets, hash {:#x}) "
                  "to slot {} (requested '{}').",
                  msg.map_name, msg.bytes.size(), packets.size(),
-                 msg.package_hash, client_slot, req.map_name);
+                 msg.package_hash, client_slot, request.map_name);
   }
 
   // Resend CmdChangeMap to any connected-but-not-ready client. UDP has no
@@ -1006,31 +1206,31 @@ bool Tick()
   // this used to sort by timestamp which was broken regardless.
   // noew  ordered monotonically by command number so that commands in the same tick
   // will at least be processed later. :~)
-  std::sort(inbox.moves.begin(), inbox.moves.end(),
+  std::sort(inbox.inputs.begin(), inbox.inputs.end(),
             [](const auto &a, const auto &b)
             {
               if (a.first != b.first)
                 return a.first < b.first;
-              return a.second.command_number() < b.second.command_number();
+              return a.second.input_number() < b.second.input_number();
             });
 
   // Update (on the server''s internal data structure)
   // each client's held snapshot, based on the held_snapshot tick from the move,
   // which (in theory?) should be the latest snapshot.
   //
-  // A pass of its own, ahead of the move loop, because that loop skips a client
+  // A pass of its own, ahead of the input loop, because that loop skips a client
   // with no body and a spectator still receives snapshots. It is also what makes
   // the rewind bracket check sound against UDP reordering: by the time any shot
   // is judged, held_snapshot_tick already includes every move that arrived this
   // tick, however late.
-  for (const auto &[client_slot, move] : inbox.moves)
+  for (const auto &[client_slot, input] : inbox.inputs)
   {
     if (!is_valid_client_slot(client_slot))
-      continue; // the move loop below logs it; one complaint per move is enough
+      continue; // the input loop below logs it; one complaint per input is enough
 
     client_slot_t &client = context.clients[client_slot];
     client.held_snapshot_tick =
-        std::max(client.held_snapshot_tick, move.held_snapshot_tick());
+        std::max(client.held_snapshot_tick, input.held_snapshot_tick());
   }
 
   // Move budget, granted before any move runs and over EVERY occupied slot
@@ -1052,7 +1252,7 @@ bool Tick()
   pose_all_players(context);
 
   // actually move players.
-  for (const auto &[client_slot, move] : inbox.moves)
+  for (const auto &[client_slot, input] : inbox.inputs)
   {
     if (!is_valid_client_slot(client_slot))
     {
@@ -1069,25 +1269,25 @@ bool Tick()
         context.world.session.entity_system.get<entities::Player_Entity>(
             client.player_uid);
 
-    // Duplicates and UDP-reordered replays. `latest_processed_command` is a
+    // Duplicates and UDP-reordered replays. `latest_processed_input_number` is a
     // high-water mark, and the sort above delivers a client's own moves in
     // issue order, so anything at or below it has already been applied.
 
-    if (move.command_number() <= client.latest_processed_command)
+    if (input.input_number() <= client.latest_processed_input_number)
       continue;
 
     // A spectator has no body to move, but the command was still received and
     // consumed: the pass above drained its held_snapshot_tick, which is the only
     // part of a move that applies to a client with no body. So ACK it. The mark
     // means "I have processed through N", not "I moved you", and leaving it
-    // parked was invisible until the client started resending unacked moves --
+    // parked was invisible until the client started resending unacked inputs --
     // at which point a spectator resent the same ones forever.
     //
     // No credit is spent. Nothing moved, so there is no rate to bound.
     const bool spectating = !player;
     if (spectating)
     {
-      client.latest_processed_command = move.command_number();
+      client.latest_processed_input_number = input.input_number();
       continue;
     }
 
@@ -1095,7 +1295,7 @@ bool Tick()
     const bool is_dead = player->health <= 0;
 
     // Over budget: drop the move whole, and advance nothing. A dropped command
-    // was never processed, so `latest_processed_command` and the button bitmap
+    // was never processed, so `latest_processed_input_number` and the button bitmap
     // must not move past it -- otherwise a client that gets throttled also
     // silently loses the button EDGES the skipped command carried.
     if (!try_spend_move_credit(client.move_credits))
@@ -1115,7 +1315,7 @@ bool Tick()
       continue;
     }
 
-    client.latest_processed_command = move.command_number();
+    client.latest_processed_input_number = input.input_number();
 
     // --- The tick's input: the state it starts in, and every edge inside it ---
     //
@@ -1125,74 +1325,49 @@ bool Tick()
     // CONSUMED, and leaving it unacked would have the client resend the same
     // malformed thing forever.
     const std::optional<shared::subtick_input_t> decoded_input =
-        network::try_read_subtick_input(move);
+        network::try_read_subtick_input(input);
     if (!decoded_input)
     {
-      log_error("slot {}: move {} carries sub-tick edges that break the grammar "
+      log_error("slot {}: input {} carries sub-tick edges that break the grammar "
                 "(slots must be 1..{}, strictly ascending, at most {} of them) — "
                 "command dropped",
-                client_slot, move.command_number(), shared::SUBTICK_SLOT_COUNT - 1,
+                client_slot, input.input_number(), shared::SUBTICK_SLOT_COUNT - 1,
                 shared::MAX_SUBTICK_EDGES);
       continue;
     }
     const shared::subtick_input_t &subtick_input = *decoded_input;
 
-    // Across the WHOLE tick, edges included, so a press and its release inside
-    // one tick still switches the weapon. `latest_buttons_bitmap` is what the
-    // client leaves the tick in, which is what the next one diffs against.
+    // What the client leaves the tick in, which is what the next one diffs
+    // against. Every button ACTION is resolved per sub-step below, so the
+    // whole-tick rising set is no longer computed here -- it could not say
+    // WHEN, and when is the whole question.
     const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
-    const uint64_t buttons_pressed_this_tick =
-        shared::subtick_rising_edges(subtick_input, buttons_before_tick);
     client.latest_buttons_bitmap = subtick_input.buttons_at_end();
-
-    // weapon switching is allowed even though moving isn't.
-    if (buttons_pressed_this_tick & Button::Key1)
-      player->active_weapon_id = entities::Weapon::Scout;
-    if (buttons_pressed_this_tick & Button::Key3)
-      player->active_weapon_id = entities::Weapon::Knife;
-
-    if (buttons_pressed_this_tick & Button::Key1 || buttons_pressed_this_tick & Button::Key2 ||
-        buttons_pressed_this_tick & Button::Key3)
-    {
-      broadcast_server_text_message(
-          context, std::format("Slot {} equipped this weapon: {}", client_slot,
-                               to_string(player->active_weapon_id)));
-    }
 
     // allowed to move is the moire logical one because we can pile more co=nditions on here.
     bool allowed_to_move = !is_dead;
 
-    // Compute front/right from viewangles
-    float yaw = move.viewangles().yaw();
-    float pitch = move.viewangles().pitch();
-    float yaw_rad = linalg::to_radians(yaw);
-    float pitch_rad = linalg::to_radians(pitch);
-    float cos_yaw = std::cos(yaw_rad);
-    float sin_yaw = std::sin(yaw_rad);
-    float cos_pitch = std::cos(pitch_rad);
-    float sin_pitch = std::sin(pitch_rad);
-
-    vec3 front = {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
-    //@FIXME(SJM): up vector global?
-    const vec3 up = vec3{0,1,0};
-    vec3 right = linalg::cross(front, up);
-    float right_length = linalg::length(right);
-    if (right_length > 0.001f)
-      right = right * (1.0f / right_length);
-    else
-    {
-      log_warning("arbitrarily deciding that right is {{1, 0, 0}} because the vector length was too small.");
-      right = {1, 0, 0};
-    }
+    // Where the aim ENDED UP this tick. Nothing steers with it -- every step
+    // below uses the aim in effect when that step opened -- but it is what the
+    // player entity is left holding, so everyone else draws this player looking
+    // where they finished rather than where they started.
+    const float yaw   = subtick_input.view_at_end.yaw;
+    const float pitch = subtick_input.view_at_end.pitch;
 
     float tick_dt = static_cast<float>(get_tick_interval());
 
-    if (!is_movement_allowed(context)) 
+    // The freeze used to `continue` out of the whole command, which was fine
+    // while the only thing past it was movement. It is not any more: weapon
+    // switching has always been allowed during the freeze (it ran above this
+    // check), and it now lives in the step loop with everything else. So the
+    // freeze became a flag that suppresses the MOVE, and the loop runs either
+    // way -- a frozen player still has their position and velocity left exactly
+    // where the old early-out left them, because player_move is what is skipped.
+    const bool world_is_frozen = !is_movement_allowed(context);
+    if (world_is_frozen)
     {
       // zero out velocity so nothing builds up.
       player->velocity = {0.f, 0.f, 0.f};
-      // No need to update positions further.
-      continue;
     }
 
     // Authoritative move, one step per interval between the tick's input edges.
@@ -1201,43 +1376,134 @@ bool Tick()
     // had. The client ran this same split before it drew the frame; a
     // disagreement about it is rubber-banding rather than a rounding error,
     // because the split is where the clamps fire.
-    const shared::subtick_schedule_t schedule = shared::split_tick(subtick_input, tick_dt);
+    const shared::subtick_steps_t steps =
+        shared::split_input_per_tick_into_subtick_steps(subtick_input, tick_dt);
 
     Move_Events move_events{};
     uint64_t buttons_entering_step = buttons_before_tick;
 
-    for (const shared::subtick_step_t &step : schedule)
+    for (const shared::subtick_step_t &step : steps)
     {
-      const bool fire_pressed_in_this_step =
-          ((step.buttons & ~buttons_entering_step) & Button::Fire) != 0;
+      // Everything a button DOES is resolved here, at the slot that opened this
+      // step -- which is the slot the press landed in, because a press is what
+      // opens a step. That is why the server needs no subtick_slot_of_press:
+      // the split already carried the answer to the site that consumes it.
+      //
+      // Two presses in ONE slot are simultaneous at this resolution, so the
+      // order below is arbitrary and only has to be fixed. It is: switch,
+      // reload, fire.
+      const uint64_t pressed_in_this_step = step.buttons & ~buttons_entering_step;
       buttons_entering_step = step.buttons;
 
-      Move_Events step_events{};
-      auto [new_pos, new_vel] = player_move(
-          *context.cvars,
-          allowed_to_move ? move_input_from_buttons(step.buttons) : Move_Input{},
-          context.world.session.bvh, player->position, player->velocity, front, right,
-          16.f, 36.f, step.dt, &step_events);
+      const shared::subtick_time_t step_time =
+          shared::subtick_time(context.tick_number, step.start_slot);
 
-      player->position = new_pos;
-      player->velocity = new_vel;
+      // Weapon switching is allowed even though moving isn't, and even while
+      // the round is frozen -- both were true before this moved into the loop.
+      const entities::Weapon weapon_before_switch = player->active_weapon_id;
+      if (pressed_in_this_step & Button::Key1)
+        player->active_weapon_id = entities::Weapon::Scout;
+      if (pressed_in_this_step & Button::Key2)
+        player->active_weapon_id = entities::Weapon::Rocket_Launcher;
+      if (pressed_in_this_step & Button::Key3)
+        player->active_weapon_id = entities::Weapon::Knife;
 
-      move_events.jumped |= step_events.jumped;
-      if (step_events.landed &&
-          step_events.land_impact_speed > move_events.land_impact_speed)
+      if (player->active_weapon_id != weapon_before_switch)
       {
-        move_events.landed            = true;
-        move_events.land_impact_speed = step_events.land_impact_speed;
+        cancel_reload(*player);
+        // EQUIPPING BRINGS ITS MAGAZINE. A magazine belongs to the weapon and
+        // `ammo` is one field, so without this the invariant "ammo is the held
+        // weapon's magazine" is false the instant anyone switches -- a player
+        // spawns holding the knife (magazine 0), presses 1, and cannot fire at
+        // all, silently, because the empty check below has no idea the count it
+        // is reading belongs to a different gun.
+        //
+        // The cost is that switching is a free instant reload. That is a real
+        // cheese and the honest fix is per-weapon ammo, which needs a field
+        // shape (Enum_Array<Weapon, i32>) the .def has no spelling for yet.
+        player->ammo =
+            shared::get_weapon_definition(player->active_weapon_id).magazine_size;
+        broadcast_server_text_message(
+            context, std::format("Slot {} equipped this weapon: {}", client_slot,
+                                 to_string(player->active_weapon_id)));
+      }
+
+      // A reload STARTS here and finishes on its own clock. Refused rather than
+      // restarted while one is already running, so holding the key does not park
+      // the deadline permanently one reload away.
+      if (pressed_in_this_step & Button::Reload)
+      {
+        const shared::weapon_definition_t &held =
+            shared::get_weapon_definition(player->active_weapon_id);
+        if (held.magazine_size > 0 && !is_reloading(*player) &&
+            player->ammo < held.magazine_size)
+        {
+          player->reload_complete_time = shared::subtick_time_after(
+              step_time, held.reload_duration_seconds, tick_dt);
+        }
+      }
+
+      const bool fire_pressed_in_this_step = (pressed_in_this_step & Button::Fire) != 0;
+
+      // PER STEP, from the aim in effect when the step opened. One basis for
+      // the whole tick meant a shot was fired along wherever the mouse finished
+      // the frame -- the trigger was timed to 0.26ms and then pointed somewhere
+      // the player had already left. The client derives this from the identical
+      // field, so a disagreement is rubber-banding rather than rounding.
+      const float step_yaw_rad   = linalg::to_radians(step.view.yaw);
+      const float step_pitch_rad = linalg::to_radians(step.view.pitch);
+      const float cos_yaw        = std::cos(step_yaw_rad);
+      const float sin_yaw        = std::sin(step_yaw_rad);
+      const float cos_pitch      = std::cos(step_pitch_rad);
+      const float sin_pitch      = std::sin(step_pitch_rad);
+
+      vec3 front = {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
+      //@FIXME(SJM): up vector global?
+      const vec3 up = vec3{0, 1, 0};
+      vec3       right = linalg::cross(front, up);
+      const float right_length = linalg::length(right);
+      if (right_length > 0.001f)
+        right = right * (1.0f / right_length);
+      else
+      {
+        log_warning("arbitrarily deciding that right is {{1, 0, 0}} because the vector length was too small.");
+        right = {1, 0, 0};
+      }
+
+      // Skipped whole while the round is frozen, which is what the early-out
+      // above used to do to the entire command: position and velocity are left
+      // exactly where they were, rather than being advanced by an empty input
+      // that gravity would still act on.
+      if (!world_is_frozen)
+      {
+        Move_Events step_events{};
+        auto [new_pos, new_vel] = player_move(
+            *context.cvars,
+            allowed_to_move ? move_input_from_buttons(step.buttons) : Move_Input{},
+            context.world.session.bvh, player->position, player->velocity, front, right,
+            16.f, 36.f, step.dt, &step_events);
+
+        player->position = new_pos;
+        player->velocity = new_vel;
+
+        move_events.jumped |= step_events.jumped;
+        if (step_events.landed &&
+            step_events.land_impact_speed > move_events.land_impact_speed)
+        {
+          move_events.landed            = true;
+          move_events.land_impact_speed = step_events.land_impact_speed;
+        }
       }
 
       // Inside the step loop, so the shot is taken from where the shooter had
       // actually reached when the trigger went down -- not from wherever the
       // whole tick left them, which is up to 16.7ms of travel away.
-      if (fire_pressed_in_this_step && allowed_to_move)
-        resolve_player_shot(context, client_slot, move, player, yaw, pitch);
+      if (fire_pressed_in_this_step && allowed_to_move && !world_is_frozen)
+        resolve_player_shot(context, client_slot, input, player, step.view.yaw,
+                            step.view.pitch, step.start_slot);
     }
 
-    if (allowed_to_move)
+    if (allowed_to_move && !world_is_frozen)
     {
       player->view_angle_yaw = yaw;
       player->view_angle_pitch = pitch;
@@ -1261,18 +1527,20 @@ bool Tick()
       shared::fire_land(context.outgoing.effects, fx);
     }
 
-    // jolt nonsense
-    set_kinematic_pose(*context.world.physics,
-                       player->entity_id,
-                       player->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                       player->velocity);
+    // jolt nonsense. Gated for the same reason the move is: the freeze used to
+    // `continue` past this, and a frozen player has nothing new to hand Jolt.
+    if (!world_is_frozen)
+      set_kinematic_pose(*context.world.physics,
+                         player->entity_id,
+                         player->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                         player->velocity);
 
 
     // Fire is resolved inside the step loop above, at the sub-step the trigger
     // went down in -- see resolve_player_shot.
   }
 
-  // --- Apply the hits the move loop deferred ---
+  // --- Apply the hits the input loop deferred ---
   //
   // Immediately after the loop closes, and before anything else simulates. Every
   // shot this tick was resolved against the same start-of-tick world (see
@@ -1316,6 +1584,27 @@ bool Tick()
 
   inflict_damage_batch(context, context.outgoing.pending_hits);
   context.outgoing.pending_hits.clear();
+
+  // --- Land the reloads that finished inside this tick ---
+  //
+  // The AUTHORITATIVE answer is already exact: the fire path completes a due
+  // reload itself, at the slot the trigger went down in, so no shot this tick
+  // was judged against stale ammo. This sweep exists for the REPLICATED copy --
+  // `ammo` is @Networked, and without it a player who reloads and does not
+  // immediately fire keeps broadcasting the old magazine until they do.
+  //
+  // A deadline anywhere inside this tick has passed by the time the tick ends,
+  // which is the moment this snapshot describes, so completing it here is
+  // exact rather than early -- and a reload landing at slot 30 was already
+  // handled at slot 30 for anything that could observe it sooner.
+  const shared::subtick_time_t end_of_tick =
+      shared::subtick_time(context.tick_number + 1, 0);
+  for (entities::Player_Entity &player :
+       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+  {
+    if (is_reloading(player) && player.reload_complete_time <= end_of_tick)
+      finish_reload(player);
+  }
 
   // --- Simulate server-side entities ---
   float tick_dt = static_cast<float>(get_tick_interval());
@@ -1517,16 +1806,16 @@ bool Tick()
     // this packet is a full update.
     const network::snapshot_frame_t *baseline =
         context.replication.snapshot_history.find(context.clients[slot].held_snapshot_tick);
-    const uint32_t baseline_tick = baseline != nullptr ? baseline->tick : 0;
 
     network::serialize_snapshot(writer, frame, baseline);
 
     // Create and send package
     game::S2C_EntityPackage package;
     package.set_server_tick(context.tick_number);
-    package.set_latest_processed_command(context.clients[slot].latest_processed_command);
-    package.set_delta_from_tick(baseline_tick);
-    package.set_is_delta(baseline_tick != 0);
+    package.set_latest_processed_input_number(context.clients[slot].latest_processed_input_number);
+    // The one baseline the encoder actually used, so what we announce and what
+    // we encoded cannot disagree.
+    network::set_snapshot_baseline(package, baseline);
     package.set_entity_data(writer.buffer.data(), writer.buffer.size());
 
     std::vector<network::uint8> buffer(package.ByteSizeLong());

@@ -2,9 +2,20 @@
 
 #include "imgui.h"
 #include <SDL.h>
+#include "../shared/log.hpp"
+#include "raw_input_win32.hpp"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
+#include <iterator>
 #include <vector>
 
 namespace client::input
@@ -121,6 +132,76 @@ constexpr std::array<key_t, SDL_NUM_SCANCODES> build_scancode_to_key()
 constexpr auto g_key_to_scancode = build_key_to_scancode();
 constexpr auto g_scancode_to_key = build_scancode_to_key();
 
+// --- key_t <-> Windows virtual-key table --------------------------------------
+//
+// The raw-input thread reports VK codes, not SDL scancodes, so this is the
+// second half of the same job as the table above and is written the same way:
+// one row list, one built lookup, no chance of the two directions drifting.
+// The codes are numeric rather than VK_* names so the table survives a
+// non-Windows build; they are a frozen part of the Windows ABI.
+//
+// Only the keys whose EDGE is worth a sub-tick slot need a row -- everything
+// else reaches the game through SDL's levels and shortcut queue, which raw
+// input does not replace. Adding a button to Button::Subtick_Tracked means
+// adding its row here.
+
+struct vk_mapping_t
+{
+  key_t    key;
+  uint16_t virtual_key;
+};
+
+constexpr vk_mapping_t vk_mappings[] = {
+    {key_t::W, 0x57},
+    {key_t::A, 0x41},
+    {key_t::S, 0x53},
+    {key_t::D, 0x44},
+    {key_t::R, 0x52},
+    {key_t::Space, 0x20},
+    {key_t::Num_0, 0x30},
+    {key_t::Num_1, 0x31},
+    {key_t::Num_2, 0x32},
+    {key_t::Num_3, 0x33},
+    {key_t::Num_4, 0x34},
+    {key_t::Num_5, 0x35},
+    {key_t::Num_6, 0x36},
+    {key_t::Num_7, 0x37},
+    {key_t::Num_8, 0x38},
+    {key_t::Num_9, 0x39},
+};
+
+constexpr size_t virtual_key_count = 256;
+
+constexpr std::array<key_t, virtual_key_count> build_virtual_key_to_key()
+{
+  std::array<key_t, virtual_key_count> table{};
+  for (auto &slot : table)
+    slot = key_t::Unknown;
+  for (const auto &mapping : vk_mappings)
+    table[mapping.virtual_key] = mapping.key;
+  return table;
+}
+
+// Which keys raw input can ever report, so a resync after a focus change only
+// pushes edges for keys that will get a matching release later.
+constexpr std::array<bool, key_count> build_key_is_raw_reportable()
+{
+  std::array<bool, key_count> table{};
+  for (const auto &mapping : vk_mappings)
+    table[static_cast<size_t>(mapping.key)] = true;
+  return table;
+}
+
+constexpr auto g_virtual_key_to_key    = build_virtual_key_to_key();
+constexpr auto g_key_is_raw_reportable = build_key_is_raw_reportable();
+
+key_t virtual_key_to_key(uint16_t virtual_key)
+{
+  if (virtual_key >= virtual_key_count)
+    return key_t::Unknown;
+  return g_virtual_key_to_key[virtual_key];
+}
+
 key_t scancode_to_key(int scancode)
 {
   if (scancode <= 0 || scancode >= SDL_NUM_SCANCODES)
@@ -176,11 +257,250 @@ int g_mouse_delta_x = 0;
 int g_mouse_delta_y = 0;
 float g_scroll_delta = 0.0f;
 
+linalg::vec2i g_mouse_position{};
+modifiers_t   g_modifiers{};
+
 std::vector<key_event_t> g_key_events;
 std::vector<mouse_button_event_t> g_mouse_button_events;
 std::vector<input_edge_t> g_input_edges;
 
+// --- Arrival clock -----------------------------------------------------------
+//
+// The domain input_edge_t is stamped in, and the one the raw-input thread uses.
+// QueryPerformanceCounter on Windows so the two are literally the same counter;
+// steady_clock elsewhere, where there is no raw-input thread and the stamps are
+// frame-granular anyway.
+
+uint64_t g_arrival_clock_frequency = 1'000'000'000ull;
+bool     g_raw_input_active        = false;
+bool     g_raw_input_focused       = false;
+
+input_frame_span_t g_frame_span{};
+
+uint64_t read_arrival_clock()
+{
+#ifdef _WIN32
+  LARGE_INTEGER now{};
+  QueryPerformanceCounter(&now);
+  return static_cast<uint64_t>(now.QuadPart);
+#else
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count());
+#endif
+}
+
+// --- Raw-input drain ---------------------------------------------------------
+//
+// The level arrays above are the OTHER way of knowing which buttons are down,
+// and these two are deliberately not derived from each other: the disagreement
+// between them is what catches a transition the game never saw (see the
+// lost-transition check in play_state.cpp).
+
+std::array<bool, key_count>          g_raw_key_down{};
+std::array<bool, mouse_button_count> g_raw_mouse_down{};
+
+// --- Motion source ---
+//
+// A MODE, not a per-frame decision, and that is the whole reason it exists.
+// Choosing per frame ("no raw motion arrived, so use SDL's delta") double-counts
+// the moment the two drains straddle a frame boundary differently, which at low
+// travel rates is most frames. So raw owns the aim outright once it is live.
+//
+// The one way it is not live while raw input is up is an absolute-coordinate
+// device (a tablet, a touchscreen, an RDP session): those report no travel at
+// all, so nothing would ever reach the aim. That is what the starvation counter
+// below catches -- SDL saying the mouse moved while raw says it did not, for a
+// second straight, means the deltas are not coming and we say so and fall back.
+bool     g_motion_edges_are_live      = false;
+uint32_t g_motion_starved_frame_count = 0;
+bool     g_saw_raw_motion_this_frame  = false;
+
+constexpr uint32_t MOTION_STARVED_FRAMES_BEFORE_FALLBACK = 60;
+
+void push_motion_edge(int32_t delta_x, int32_t delta_y, uint64_t arrival_qpc_ticks)
+{
+  if (delta_x == 0 && delta_y == 0)
+    return;
+
+  input_edge_t edge{};
+  edge.device            = input_device_t::Mouse_Motion;
+  edge.motion            = {delta_x, delta_y};
+  edge.arrival_qpc_ticks = arrival_qpc_ticks;
+  g_input_edges.push_back(edge);
+}
+
+// Auto-repeat is a make code with no break behind it, so raw input reports a
+// held key over and over. An edge is a CHANGE; this is where that is enforced,
+// which is the job SDL's event.key.repeat flag does on the fallback path.
+void push_raw_key_edge(key_t key, bool down, uint64_t arrival_qpc_ticks)
+{
+  const size_t index = static_cast<size_t>(key);
+  if (index >= key_count || g_raw_key_down[index] == down)
+    return;
+  g_raw_key_down[index] = down;
+
+  input_edge_t edge{};
+  edge.device            = input_device_t::Key;
+  edge.key               = key;
+  edge.down              = down;
+  edge.arrival_qpc_ticks = arrival_qpc_ticks;
+  g_input_edges.push_back(edge);
+}
+
+void push_raw_mouse_edge(mouse_button_t button, bool down, uint64_t arrival_qpc_ticks)
+{
+  const size_t index = static_cast<size_t>(button);
+  if (index >= mouse_button_count || g_raw_mouse_down[index] == down)
+    return;
+  g_raw_mouse_down[index] = down;
+
+  input_edge_t edge{};
+  edge.device            = input_device_t::Mouse_Button;
+  edge.button            = button;
+  edge.down              = down;
+  edge.arrival_qpc_ticks = arrival_qpc_ticks;
+  g_input_edges.push_back(edge);
+}
+
+void discard_raw_input()
+{
+  raw_input::raw_input_event_t events[512];
+  while (raw_input::drain(events) == std::size(events))
+    ;
+}
+
+// Everything held goes up at the frame boundary. Losing focus with a key down
+// would otherwise stick it down forever, since the edges that release it are
+// delivered to whoever took the keyboard.
+void release_everything_held()
+{
+  for (size_t index = 0; index < key_count; ++index)
+    push_raw_key_edge(static_cast<key_t>(index), false, g_frame_span.end_qpc_ticks);
+  for (size_t index = 0; index < mouse_button_count; ++index)
+    push_raw_mouse_edge(static_cast<mouse_button_t>(index), false, g_frame_span.end_qpc_ticks);
+}
+
+// Coming back with a key already held is a real transition from here: the press
+// itself went to another application. Levels are the only source that knows,
+// and new_frame has just refreshed them.
+void resync_held_from_levels()
+{
+  for (size_t index = 0; index < key_count; ++index)
+    if (g_key_is_raw_reportable[index])
+      push_raw_key_edge(static_cast<key_t>(index), g_curr_key_down[index],
+                        g_frame_span.end_qpc_ticks);
+  for (size_t index = 0; index < mouse_button_count; ++index)
+    push_raw_mouse_edge(static_cast<mouse_button_t>(index), g_curr_mouse_down[index],
+                        g_frame_span.end_qpc_ticks);
+}
+
+void drain_raw_input()
+{
+  // RIDEV_INPUTSINK keeps the thread stamping while another application has the
+  // keyboard, and the gate is HERE rather than in the thread on purpose: the
+  // input thread must not learn about game state, and this side already knows
+  // whether the window has focus.
+  const bool window_focused = SDL_GetKeyboardFocus() != nullptr;
+
+  if (!window_focused)
+  {
+    discard_raw_input();
+    if (g_raw_input_focused)
+    {
+      release_everything_held();
+      g_raw_input_focused = false;
+    }
+    return;
+  }
+
+  if (!g_raw_input_focused)
+  {
+    discard_raw_input();
+    g_raw_input_focused = true;
+    resync_held_from_levels();
+    return;
+  }
+
+  raw_input::raw_input_event_t events[512];
+  for (;;)
+  {
+    const size_t count = raw_input::drain(events);
+    for (size_t index = 0; index < count; ++index)
+    {
+      const raw_input::raw_input_event_t &event = events[index];
+
+      // The span end was read just BEFORE this drain, so an input landing in
+      // the microseconds between the two reads is real and later than it.
+      // Stretch the span to hold it rather than reporting it as out of range:
+      // the next frame starts where this one ends, so nothing is double-counted
+      // and no arrival can fall in a gap.
+      g_frame_span.end_qpc_ticks =
+          std::max(g_frame_span.end_qpc_ticks, event.arrival_qpc_ticks);
+
+      switch (event.kind)
+      {
+      case raw_input::raw_input_kind_t::Key:
+      {
+        const key_t key = virtual_key_to_key(event.code);
+        if (key != key_t::Unknown)
+          push_raw_key_edge(key, event.down, event.arrival_qpc_ticks);
+        break;
+      }
+      case raw_input::raw_input_kind_t::Mouse_Button:
+        if (event.code < mouse_button_count)
+          push_raw_mouse_edge(static_cast<mouse_button_t>(event.code), event.down,
+                              event.arrival_qpc_ticks);
+        break;
+      case raw_input::raw_input_kind_t::Mouse_Motion:
+        // SDL still owns the POINTER -- where the cursor is, what a menu clicks
+        // on. This is travel, which is what the aim integrates, and it is in
+        // the same ordered list as the transitions so a shot can be resolved
+        // against the motion that preceded it rather than the frame's total.
+        g_saw_raw_motion_this_frame = true;
+        push_motion_edge(event.delta_x, event.delta_y, event.arrival_qpc_ticks);
+        break;
+      }
+    }
+    if (count < std::size(events))
+      break;
+  }
+}
+
 } // namespace
+
+void init()
+{
+  const std::optional<uint64_t> frequency = raw_input::try_start();
+  if (frequency.has_value() && *frequency != 0)
+  {
+    g_arrival_clock_frequency = *frequency;
+    g_raw_input_active        = true;
+    g_motion_edges_are_live   = true;
+  }
+  else
+  {
+    g_raw_input_active = false;
+#ifdef _WIN32
+    LARGE_INTEGER counter_frequency{};
+    QueryPerformanceFrequency(&counter_frequency);
+    g_arrival_clock_frequency = static_cast<uint64_t>(counter_frequency.QuadPart);
+#endif
+    log_warning("input: the raw-input thread did not start; falling back to SDL "
+                "transitions stamped at the frame boundary. Sub-tick edge times "
+                "are frame-granular until it does");
+  }
+
+  g_frame_span.start_qpc_ticks = read_arrival_clock();
+  g_frame_span.end_qpc_ticks   = g_frame_span.start_qpc_ticks;
+}
+
+void shutdown()
+{
+  raw_input::stop();
+  g_raw_input_active = false;
+}
 
 void new_frame()
 {
@@ -196,10 +516,15 @@ void new_frame()
     g_curr_key_down[i] = (scancode > 0) && (sdl_state[scancode] != 0);
   }
 
-  // Same treatment for the mouse buttons, so is_mouse_pressed can answer
-  // "became down this frame" without every caller keeping its own last-frame
-  // copy. is_mouse_down stays a live SDL query — this pair is only the edge.
-  uint32_t mouse_state = SDL_GetMouseState(nullptr, nullptr);
+  // Same treatment for the mouse, read at the same instant as the keyboard
+  // above so the two can be folded into one bitfield and compared against the
+  // edges. Position and modifiers ride along for the same reason: one instant
+  // for every level this layer reports.
+  int mouse_x = 0;
+  int mouse_y = 0;
+  uint32_t mouse_state = SDL_GetMouseState(&mouse_x, &mouse_y);
+  g_mouse_position = {mouse_x, mouse_y};
+  g_modifiers = modifiers_from_sdl_keymod(static_cast<uint16_t>(SDL_GetModState()));
   g_prev_mouse_down = g_curr_mouse_down;
   for (size_t i = 0; i < mouse_button_count; ++i)
   {
@@ -210,6 +535,45 @@ void new_frame()
   g_key_events.clear();
   g_mouse_button_events.clear();
   g_input_edges.clear();
+
+  // The span endpoints are both read here, so consecutive frames tile the
+  // timeline with no gap and every edge drained below falls inside this one.
+  g_frame_span.start_qpc_ticks = g_frame_span.end_qpc_ticks;
+  g_frame_span.end_qpc_ticks   = read_arrival_clock();
+
+  // After the level snapshot above, which resync_held_from_levels reads.
+  g_saw_raw_motion_this_frame = false;
+  if (g_raw_input_active)
+    drain_raw_input();
+
+  const bool sdl_reports_motion = (g_mouse_delta_x != 0 || g_mouse_delta_y != 0);
+
+  if (g_motion_edges_are_live)
+  {
+    // Only SDL seeing travel means the raw deltas are not coming -- an
+    // absolute-coordinate device, whose reports were dropped at the source
+    // because a screen coordinate is not a delta. Loud and one-way: silently
+    // limping along on a frame-granular aim is exactly what this whole path
+    // exists to stop doing.
+    g_motion_starved_frame_count =
+        (sdl_reports_motion && !g_saw_raw_motion_this_frame) ? g_motion_starved_frame_count + 1 : 0;
+
+    if (g_motion_starved_frame_count >= MOTION_STARVED_FRAMES_BEFORE_FALLBACK)
+    {
+      log_error("input: raw input reported no mouse travel for {} frames while SDL did. "
+                "The device is reporting absolute coordinates rather than deltas; falling "
+                "back to SDL motion, which makes the aim frame-granular",
+                g_motion_starved_frame_count);
+      g_motion_edges_are_live = false;
+    }
+  }
+
+  // One synthetic edge carrying the whole frame's travel, stamped at the span
+  // end exactly like the fallback transitions are. Sub-tick aim then degrades
+  // to what it was before raw input: every step of the tick runs under the
+  // frame's finished angle, with no second code path anywhere above this.
+  if (!g_motion_edges_are_live)
+    push_motion_edge(g_mouse_delta_x, g_mouse_delta_y, g_frame_span.end_qpc_ticks);
 }
 
 void process_sdl_event(const void *sdl_event)
@@ -227,13 +591,17 @@ void process_sdl_event(const void *sdl_event)
     // A key REPEAT is the OS typing for you, not a transition, so it reaches the
     // shortcut queue (where holding backspace should keep deleting) and never
     // the edge queue (where it would be a press with no release behind it).
-    if (event->key.repeat == 0)
+    // The FALLBACK edge source, live only when the raw-input thread is not.
+    // SDL stamps at pump time, so there is no moment inside the frame to
+    // recover -- the frame boundary is the honest place to put it, and the
+    // sub-tick fold then behaves exactly as it did before raw input existed.
+    if (!g_raw_input_active && event->key.repeat == 0)
     {
       input_edge_t edge{};
-      edge.device                 = input_device_t::Key;
-      edge.key                    = key;
-      edge.down                   = event->type == SDL_KEYDOWN;
-      edge.timestamp_milliseconds = event->key.timestamp;
+      edge.device            = input_device_t::Key;
+      edge.key               = key;
+      edge.down              = event->type == SDL_KEYDOWN;
+      edge.arrival_qpc_ticks = g_frame_span.end_qpc_ticks;
       g_input_edges.push_back(edge);
     }
 
@@ -262,12 +630,15 @@ void process_sdl_event(const void *sdl_event)
     button_event.mods = modifiers_from_sdl_keymod(SDL_GetModState());
     g_mouse_button_events.push_back(button_event);
 
-    input_edge_t edge{};
-    edge.device                 = input_device_t::Mouse_Button;
-    edge.button                 = button;
-    edge.down                   = event->type == SDL_MOUSEBUTTONDOWN;
-    edge.timestamp_milliseconds = event->button.timestamp;
-    g_input_edges.push_back(edge);
+    if (!g_raw_input_active)
+    {
+      input_edge_t edge{};
+      edge.device            = input_device_t::Mouse_Button;
+      edge.button            = button;
+      edge.down              = event->type == SDL_MOUSEBUTTONDOWN;
+      edge.arrival_qpc_ticks = g_frame_span.end_qpc_ticks;
+      g_input_edges.push_back(edge);
+    }
     break;
   }
   case SDL_MOUSEWHEEL:
@@ -296,10 +667,10 @@ bool is_key_pressed(key_t key)
 
 bool is_mouse_down(mouse_button_t button)
 {
-  uint32_t mask = mouse_button_to_sdl_mask(button);
-  if (mask == 0)
+  size_t index = static_cast<size_t>(button);
+  if (index >= mouse_button_count)
     return false;
-  return (SDL_GetMouseState(nullptr, nullptr) & mask) != 0;
+  return g_curr_mouse_down[index];
 }
 
 bool is_mouse_pressed(mouse_button_t button)
@@ -312,15 +683,12 @@ bool is_mouse_pressed(mouse_button_t button)
 
 modifiers_t current_modifiers()
 {
-  return modifiers_from_sdl_keymod(static_cast<uint16_t>(SDL_GetModState()));
+  return g_modifiers;
 }
 
 linalg::vec2i mouse_position()
 {
-  int x = 0;
-  int y = 0;
-  SDL_GetMouseState(&x, &y);
-  return {x, y};
+  return g_mouse_position;
 }
 
 linalg::vec2i mouse_delta()
@@ -353,9 +721,24 @@ Span<const input_edge_t> frame_input_edges()
   return g_input_edges;
 }
 
-uint32_t event_clock_milliseconds()
+input_frame_span_t frame_arrival_span()
 {
-  return SDL_GetTicks();
+  return g_frame_span;
+}
+
+uint64_t arrival_clock_now()
+{
+  return read_arrival_clock();
+}
+
+uint64_t arrival_clock_frequency()
+{
+  return g_arrival_clock_frequency;
+}
+
+bool raw_input_is_active()
+{
+  return g_raw_input_active;
 }
 
 bool imgui_wants_mouse()

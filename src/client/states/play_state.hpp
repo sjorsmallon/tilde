@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../shared/hitbox_rig.hpp" // posed_hitbox_t, for the overlay scratch below
+#include "../shot_debug.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../../shared/skinning.hpp"
 #include "../camera.hpp"
@@ -68,8 +69,6 @@ private:
     bool console_was_open      = false;
     bool show_menu_overlay     = false;
     bool menu_overlay_was_open = false;
-
-    bool logged_first_server_update = false;
   };
 
   per_connection_ui_t connection_ui;
@@ -90,6 +89,12 @@ private:
   // drawn on the spot and the debug list copies them -- it is here purely so the
   // overlay stops allocating per player per frame.
   std::vector<assets::posed_hitbox_t> hitbox_scratch;
+
+  // What this client believed at each recent trigger pull, waiting to be paired
+  // with the server's S2C_ShotDebug reply a round trip later. Lives here rather
+  // than on client_context_t because nothing outside this state records into it
+  // or draws out of it.
+  client::shot_debug_history_t shot_debug_history;
 
 };
 

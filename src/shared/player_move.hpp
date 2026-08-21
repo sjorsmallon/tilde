@@ -35,17 +35,28 @@ constexpr uint64_t Key0     = 1 << 14;
 constexpr uint64_t Fire     = 1 << 15;
 constexpr uint64_t Zoom     = 1 << 16;
 constexpr uint64_t P        = 1 << 17; // Placeholder that you can use to hijack.
+constexpr uint64_t Reload   = 1 << 18;
 
 // The buttons whose EDGE is worth a sub-tick slot, and therefore an extra
-// movement step (shared/subtick.hpp). Movement plus the trigger: those are the
-// ones where a press landing 8 units of travel from where it was meant to is
-// something a player can feel.
+// movement step (shared/subtick.hpp).
 //
-// Everything else is deliberately left tick-granular. A weapon switch or a zoom
-// toggle resolving up to 16.7ms late is invisible, and every button admitted
-// here costs a pmove pass on the server whenever it moves.
+// Movement and the trigger are here because a press landing 8 units of travel
+// from where it was meant to is something a player can feel. The weapon keys
+// and Reload are here for a different reason: ORDERING. The server applies a
+// switch from the press edge and fires from the trigger edge inside the same
+// step loop, so switch-then-fire and fire-then-switch inside one tick are
+// different outcomes -- and with the switch tick-granular they were
+// indistinguishable.
+//
+// Zoom is deliberately NOT here, and it is not an oversight: it is a
+// client-side TOGGLE derived from a right-click, not the click itself, so there
+// is no raw edge to stamp and it rides in as tick-granular state
+// (raw_input_plan.md, D1). It is what `buttons & ~Subtick_Tracked` still
+// carries at the two merge sites in play_state.cpp.
 constexpr uint64_t Subtick_Tracked =
-    Forward | Backward | Left | Right | Jump | Fire;
+    Forward | Backward | Left | Right | Jump | Fire |
+    Key0 | Key1 | Key2 | Key3 | Key4 | Key5 | Key6 | Key7 | Key8 | Key9 |
+    Reload;
 } // namespace Button
 
 // Initializers are load-bearing, not decoration. `Move_Input input;` at block

@@ -225,12 +225,12 @@ ImGui composites last, so the UI list draws UNDER it: an open console covers the
 
 ### Sub-tick input
 
-**A move command is the buttons at the START of the tick plus the EDGES inside
-it**, not a state sampled once per tick. Quantizing a press to the 16.7ms grid is
+**A client's input for a tick is the buttons at the START of it plus the EDGES
+inside it**, not a state sampled once per tick. Quantizing a press to the 16.7ms grid is
 a modeling error — the press happened at a time, and the grid is an
 implementation detail of the simulator — so one tick runs as one movement step
 per interval between its edges. `shared/subtick.hpp` is the format and
-`split_tick` is the driver both sides run; `subtick_plan.md` is the design, and
+`split_input_per_tick_into_subtick_steps` is the driver both sides run; `subtick_plan.md` is the design, and
 its first two steps (making `player_move` step-invariant, then
 `player_move_step_invariance_test`) are what had to land before any of this was
 safe.
@@ -250,7 +250,7 @@ coarser than a slot and whose order is whatever the queue handed us, so two
 inside one slot collapse and a press-plus-release inside one records nothing.
 
 `shared/network/subtick_codec.{hpp,cpp}` is the ONE place that value becomes a
-move command and back — the client writes it and the server reads it, and the two
+`C2S_ClientInput` and back — the client writes it and the server reads it, and the two
 drifting is not something either side could notice, since a slot written into the
 wrong field decodes as a plausible tick. It carries the buttons AND the edges
 together, because a start state without the transitions that follow it is a tick
@@ -260,29 +260,142 @@ of input that never happened.
 the single `tick_dt` step it replaced. That is what let bots, tests and every
 other `player_move` caller go untouched.
 
+**Edge times come from a DEDICATED INPUT THREAD, not from SDL.** Every clock the
+game thread can read is read during the pump, so all of them are pump clocks
+whatever their precision — SDL2's `event.timestamp` measured constant across a
+frame, Windows' own `msg.time` is 15.6ms granular, and SDL3's nanosecond stamps
+derive from that same `msg.time`. Only a thread *blocked waiting on input* can
+say when input arrived. `client/raw_input_win32.{hpp,cpp}` is that thread: it
+blocks in `GetMessageW` on a message-only window and reads
+`QueryPerformanceCounter` **before it inspects the message**, so the stamp is
+arrival to microseconds. `raw_input_plan.md` has the four measurements; do not
+re-derive them from first principles, re-run the probe.
+
+`input::init` starts it and **failure is never fatal** — `process_sdl_event`
+keeps a fallback path that stamps SDL's transitions at the frame boundary, one
+frame coarse and logged. `input::raw_input_is_active()` says which is live.
+
 Client side, `input::frame_input_edges` is a third queue beside
 `frame_key_events` / `frame_mouse_button_events`, and it is the one that carries
 RELEASES and a timestamp; the older two are presses without one, because a menu
 does not care when inside the frame you clicked. Edges are placed in
-**accumulator space, not wall-clock**: SDL's clock and the physics accumulator
-share no origin, so position comes from the edge's AGE against the frame's real
-duration, mapped onto the accumulator's advance. Ticks consume the pending edges
-and rebase the leftovers by `tick_dt`. Only `Button::Subtick_Tracked` (the four
-directions, jump, fire) gets a slot; everything else is tick-granular on purpose.
+**accumulator space** via a real SPAN: `input::frame_arrival_span()` is
+`[previous drain, this drain]`, both read at the same point in the frame, so an
+edge's place inside it is a unitless ratio that multiplies straight onto the
+accumulator's `dt` — no calibration between the two clocks, no `cl_timescale`
+correction, and **no clamp**, because a ratio of a real span is in range by
+construction. An arrival outside it is a bug and says so. Ticks consume the
+pending edges and rebase the leftovers by `tick_dt`.
 
-`is_key_down` is a frame stale — `input::new_frame` snapshots SDL's keyboard
-before the frame's events are pumped — and that is what makes it comparable to
-the edge-folded state as a **lost-transition check**: a disagreement means a
-KEYUP never reached us (focus loss), which would otherwise stick a button down
-forever now that nothing else resamples. It logs and resyncs. Opening the console
-releases everything as an edge; closing it resamples.
+**The AIM is sub-tick too, and it does not get edges of its own.** Timing a
+press to 0.26ms and then pointing it wherever the mouse finished the frame
+leaves a flick shot exactly as wrong as it was — the same modeling error, moved
+off the button and onto the angle. So mouse TRAVEL is a third `input_device_t`
+in the same arrival-ordered list as the transitions (`input_edge_t::motion`,
+stamped by the same thread), and the angle is sampled at the edges that already
+exist: `subtick_edge_t::view_after`, plus `view_at_start` / `view_at_end` on the
+input. That set is not a compromise — the trigger edge *is* the moment a shot is
+aimed, and every other edge opens a step that needs a basis anyway. Giving
+motion its own edges would spend the whole `MAX_SUBTICK_EDGES` budget (which is
+a count of pmove passes, not a resolution) on a 1000Hz mouse.
+
+`view_at_end` exists because the common tick is one where the mouse moved and
+nothing was pressed: there is no edge to hang that motion on, and it is what the
+next tick starts from and what the server writes to `view_angle_*` for everyone
+else to draw. **Each step runs under the aim in effect when it OPENED**, on both
+sides — `Saved_Input` no longer carries a yaw/pitch pair beside the input,
+because a replay re-deriving the basis from a second copy is free to disagree
+with the run it exists to reproduce. `viewangles_at_start` absent on the wire
+falls back to `viewangles`, so a bot, a replay or any single-angle sender still
+splits into the whole tick it always did.
+
+`Button::Subtick_Tracked` is movement, the trigger, the weapon keys and reload.
+The weapon keys are there for ORDERING, not feel: switch-then-fire and
+fire-then-switch inside one tick end the tick in the same state, so at tick
+granularity they were indistinguishable (`subtick_test` guards it).
+
+**Every button ACTION resolves inside the server's step loop**, at
+`step.start_slot` — the weapon switch, the reload and the shot alike. The server
+never calls `subtick_slot_of_press`: a press is what *opens* a step, so the
+split already handed the slot to the site that consumes it.
+
+**A moment is `subtick_time_t`** (`tick * SUBTICK_SLOT_COUNT + slot`), not a
+tick number, and it is deliberately **not a wire type** — one snapshot per tick
+means the wire has no finer grid, so a replicated sub-tick stamp costs bytes for
+a reader that cannot use them. Hence the split: `last_fire_tick` is `@Networked`
+for the client's gunshot change-detector, and the server-only `last_fire_slot`
+beside it *refines* that stamp rather than duplicating it (a second whole stamp
+could disagree; a refinement cannot). A reload stores a **deadline**, not a
+start, because the duration belongs to the weapon held at the press and the
+weapon can change mid-reload — at a sub-tick moment, in that same loop. A switch
+cancels the reload.
+`Button::Zoom` is deliberately outside the set — it is a client-side *toggle*
+derived from a right-click, not the click, so it rides in as tick-granular
+state, and it is what the `buttons & ~Button::Subtick_Tracked` merges still
+carry.
+
+The keyboard has two independent readings and **neither derives from the
+other**, which is what makes their disagreement mean something. SDL owns LEVELS,
+the input thread owns TIMES.
+
+**Every level accessor answers at ONE instant** — `input::new_frame`, before the
+frame's events are pumped. None is a live query, and that is not a limitation:
+SDL's state only moves during a pump and there is exactly one pump per frame, so
+a "live" read was never *now*, it was the same snapshot one frame later. Having
+`is_mouse_down` on that later instant while `is_key_down` was on the earlier one
+cost a real bug and an `is_mouse_down_at_frame_start` twin to work around it;
+both are gone. Sampling before the pump is what makes the levels comparable with
+the edges.
+
+The comparison is the **lost-transition check**, and it is a BRACKET, not an
+equality. The poll reflects the last pump, the edges reflect the last drain, and
+the pump sits between the previous drain and this one — so the poll legitimately
+matches either the state before this frame's edges or the state after them,
+depending on which side of the pump each edge landed. Matching **neither** is
+the failure: a transition that never reached us, which would otherwise stick a
+button down forever now that nothing else resamples. It logs and resyncs.
+Comparing against one end alone reported the other as a loss, which is a race
+that cost a press its sub-tick position. Opening the console releases everything
+as an edge; closing it resamples.
+
+**Focus is gated in the DRAIN, on the game thread.** The thread registers with
+`RIDEV_INPUTSINK`, so it keeps stamping while another application has the
+keyboard — the input thread must not learn about game state, and the game thread
+already knows whether it has focus. Losing it releases everything held and
+discards the backlog; regaining it discards the backlog and resyncs from the
+levels, which is a real transition here because the press itself went elsewhere.
+Raw keyboard auto-repeat is a make code with no break behind it, so the drain
+also enforces that an edge is a CHANGE — the job `event.key.repeat` does on the
+fallback path.
 
 **A shot has a sub-tick moment too, on both ends.** `resolve_player_shot` is
 called from inside the server's step loop, after the step the trigger press
-landed in, so the shot is taken from where the shooter had actually reached — and
-the client reads its interpolation bracket at the moment of the press
-(`bracket_at(clock, ticks_before_now)`) rather than at command-build time, since
-the world it was drawing then is that fraction of a tick older.
+landed in, so the shot is taken from where the shooter had actually reached, and
+along `step.view` — the aim at the press, not at the end of the tick.
+
+**What the shooter was LOOKING at is MEASURED, not derived.** The client records
+one `drawn_frame_t` per presented frame (`remote_interpolation.hpp`,
+`drawn_history_t`): the interpolation cursor the remote players were drawn at,
+stamped on the input clock at `render_frame`. A trigger press then looks its own
+arrival time up in that ring. This replaced winding the live cursor back by a
+sub-tick fraction (`bracket_at(clock, ticks_before_now)`, gone), which was wrong
+three ways at once, all from mixing clocks: the cursor advances on the FRAME
+clock while ticks are cut from the ACCUMULATOR; two ticks stepped in one frame
+read one cursor, leaving one of them a tick stale; and neither could represent
+that what the player saw was a frame BOUNDARY rather than the instant of the
+press. Recording the answer where it becomes true costs a ring and removes all
+three.
+
+`cl_display_latency_ms` crosses the last gap: a frame is *presented* at
+`render_frame`, and its pixels reach the eye some milliseconds later through
+queued frames, the compositor and the panel. Compensating that is fair because
+it is a property of the MACHINE — a fixed offset that corrupted the timestamp of
+what the player saw. **Human reaction time is not, and must never be folded in
+here**, however symmetric it looks: it is unmeasurable per shot (a pre-aimed
+corner is ~0ms, a flick ~250ms), it is already priced into where the player chose
+to aim, and at 9–15 ticks it would eat `sv_max_rewind_ticks` whole and kill
+people who were behind cover on both screens. The rule is **compensate for what
+the machine did to the signal, never for what the human did.**
 
 ### Player hit volumes
 
@@ -296,7 +409,7 @@ A player is hit-tested against the **posed skeletal volumes**, not a static box 
 
 **Lag compensation: the server rewinds the targets to what the shooter saw.**
 The client reports the interpolation **bracket** it was drawing through on every
-move command (`interpolated_from_tick` / `interpolated_towards_tick` /
+input (`interpolated_from_tick` / `interpolated_towards_tick` /
 `interpolation_fraction` — remote players are drawn *between* two snapshots, so
 the world under the crosshair is at no whole tick). `shared/lag_compensation.hpp`
 is the two halves: `classify_bracket` decides whether a request is one an honest
@@ -313,6 +426,29 @@ truth misses a crosshair that was dead on the drawn model. And the policy is
 **shooter-favored** — a victim already behind cover on both screens can still
 take damage, bounded by `sv_max_rewind_ticks`. Both have a test that fails if
 they are undone (`lag_compensation_test`).
+
+**Seeing a disagreement: `sv_shot_debug` + `cl_shot_debug_seconds`.** The server
+sends the shooter one `S2C_ShotDebug` per shot — the ray it took, the
+`bracket_status_t` verdict, whether a rewind was actually used, and the pose of
+every target it ranked — and the client draws that in RED against its own
+recorded half in BLUE, held for `cl_shot_debug_seconds`
+(`client/shot_debug.{hpp,cpp}`). Both halves are needed and neither is optional:
+the client cannot know which bracket the server accepted or what its snapshot
+ring held, so a client redrawing "where the server probably tested" would audit
+its own guess and agree every time.
+
+Three things the picture separates that feel identical in game: the two RAYS
+apart is a prediction problem (the shooter was somewhere else); the two
+SILHOUETTES apart is lag compensation; and a status of anything but `Ok` or
+`Clamped` means **no rewind happened at all** and the shot was judged against the
+present tick, which is the single most common reason a dead-on shot misses. The
+pair is keyed by `input_number`, the one sequence both ends already agree on.
+
+It ships POSES, not volumes: `compute_player_hitboxes` is one shared function and
+the `sv_aim_*` extents it reads are `@Mirrored`, so re-posing reproduces the
+volumes exactly at 16 bytes a target. What is genuinely the server's answer is
+the pose — the rewind's output — and turning it into volumes is arithmetic both
+sides already agree on.
 
 Damage is **deferred** to a pass immediately after the move loop
 (`tick_output_t::pending_hits`) rather than applied inside it. Every shot in a
@@ -375,9 +511,11 @@ Protobuf for message definitions (`proto/game.proto`). Custom UDP with delta-com
 
 The connect handshake exchanges `entities::SCHEMA_HASH` (in `CmdConnect`); the server refuses a client whose hash differs, reporting both. A mismatch means the two builds disagree about entity layout or the asset manifest, so every snapshot after it would be misparsed.
 
-**Snapshot deltas are built against the snapshot the client says it HOLDS, never the last-sent one.** This is the load-bearing rule of the whole delta path: snapshots are unreliable, so deltaing against what was last sent means one dropped datagram permanently desyncs every field that then stops changing. The client names the newest snapshot it holds a complete copy of in `C2S_PlayerMoveCommand.held_snapshot_tick`; the server names what it deltaed against in `S2C_EntityPackage.delta_from_tick` (0 = full update). Both ends keep the same 32-tick ring, `network::Snapshot_History` (`shared/network/snapshot_history.hpp`) — the server keeps what it sent, the client keeps what it reconstructed. A client that no longer holds `delta_from_tick` drops the packet whole and logs it; the number it reports doesn't advance, so the server falls back to a full update within a round trip. Server ticks start at 1 because 0 is the "no baseline" sentinel. Client cvar `net_snapshot_debug` prints the baseline tick and payload size every 120 ticks.
+**Snapshot deltas are built against the snapshot the client says it HOLDS, never the last-sent one.** This is the load-bearing rule of the whole delta path: snapshots are unreliable, so deltaing against what was last sent means one dropped datagram permanently desyncs every field that then stops changing. The client names the newest snapshot it holds a complete copy of in `C2S_ClientInput.held_snapshot_tick`; the server names what it deltaed against in `S2C_EntityPackage.delta_from_tick`, whose **presence is the discriminator** — absent means full update, present means a delta against that tick, and no tick number is reserved to mean "not a delta". Both ends go through `set_snapshot_baseline` / `snapshot_baseline_tick` (`shared/network/entity_snapshot.hpp`) rather than open-coding it; the sender passes the baseline frame the encoder actually used, so what is announced and what was encoded cannot disagree. The old second field `is_delta` is gone (proto slot 2 is reserved) — nothing read it, so it could contradict the tick beside it unnoticed. Both ends keep the same 32-tick ring, `network::Snapshot_History` (`shared/network/snapshot_history.hpp`) — the server keeps what it sent, the client keeps what it reconstructed. A client that no longer holds `delta_from_tick` drops the packet whole and logs it; the number it reports doesn't advance, so the server falls back to a full update within a round trip. Server ticks start at 1 because 0 is the ring's "empty slot / nothing acked" value — local to `Snapshot_History` and to `held_snapshot_tick`, not something S2C sends. Client cvar `net_snapshot_debug` prints the baseline tick and payload size every 120 ticks.
 
-`held_snapshot_tick` **rides on the move command but is not part of the move** — moves are the only regular C2S traffic, so it hitches a ride rather than paying for a datagram of its own. The server therefore drains it in a pass of its own in `Tick()`, *before* the move loop: that loop skips a client with no body, and a spectator still receives snapshots. `client_slot_t::held_snapshot_tick` is the server's **note about** the client, and it grows only (`std::max`, not assignment) — UDP reorders and duplicates, so a later packet can carry an older number, and a stale one must not make the server forget what the client already confirmed.
+**The C2S input message is `C2S_ClientInput`, and the name is load-bearing.** It is **one tick of a client's input, plus what that client was seeing when it made it** — and roughly half of it is not input: `input_number` sequences, while `held_snapshot_tick` and the `interpolated_*` bracket are documented **riders**, hitching along because this is the only regular C2S traffic. It was `C2S_PlayerMoveCommand`, and all three words were wrong: the move fields (`forwardmove`/`sidemove`/`upmove`) went dead at the sub-tick cutover and are now reserved, movement travels as `buttons_bitfield` + `subtick_edges` which also carry FIRE; a **spectator** has no player and still sends these (see "Client vs Player"); and `C2S_Command`, a console line, is a different message on the same socket. `client_slot_t::latest_processed_input_number` is the server's high-water mark over that stream — "consumed through N", **not** "the last input that moved you": a spectator's input and one whose sub-tick grammar was refused both advance it, and only an over-budget drop does not, since that one never ran and its button edges must not be skipped. The client mirrors it as `latest_input_number_processed_by_server`, which both trims `unacked_inputs` and is where reconciliation starts replaying.
+
+`held_snapshot_tick` **rides on `C2S_ClientInput` but is not part of the input** — client input is the only regular C2S traffic, so it hitches a ride rather than paying for a datagram of its own. The server therefore drains it in a pass of its own in `Tick()`, *before* the input loop: that loop skips a client with no body, and a spectator still receives snapshots. `client_slot_t::held_snapshot_tick` is the server's **note about** the client, and it grows only (`std::max`, not assignment) — UDP reorders and duplicates, so a later packet can carry an older number, and a stale one must not make the server forget what the client already confirmed.
 
 Per-leaf change masks come from `networked_leaf_fields(type)` on both ends, so bit N is the same field by construction; `deserialize_entity` can hand that mask back via an optional `network::changed_fields_t*` out-param.
 

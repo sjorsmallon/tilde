@@ -40,13 +40,29 @@ inline bool is_valid_client_slot(int32_t slot)
   return slot >= 0 && slot < network::sv_max_client_count;
 }
 
+// Input numbers start at 0, so "none consumed yet" has to sit below that. Its
+// own constant rather than invalid_slot_idx: that one names SLOT indices, and a
+// client's input stream is a different number space that merely happens to
+// spell its empty value the same way.
+static constexpr int32_t no_input_processed_yet = -1;
+
 struct client_slot_t
 {
   shared::entity_uid_t player_uid = shared::null_entity_uid;
-  int32_t  latest_processed_command = invalid_slot_idx;
-  // What the client's buttons were when its last processed command ENDED, which
+
+  // How far this client's input stream has been CONSUMED -- a high-water mark
+  // over C2S_ClientInput.input_number, not "the last input that moved you". A spectator's input and one whose
+  // sub-tick grammar was refused both advance it, because both were consumed;
+  // only an over-budget drop does not, since that one never ran and its button
+  // edges must not be skipped. Echoed back in every snapshot, where it both
+  // trims the client's resend tail and starts its reconciliation replay. No
+  // "server" in the name: this struct is the server's note about a client, so
+  // both sides of that are already said. The client's copy has to spell it out.
+  int32_t  latest_processed_input_number = no_input_processed_yet;
+
+  // What the client's buttons were when its last processed input ENDED, which
   // is what the next one's rising edges are measured against. Not "what it sent
-  // last": a command is a start state plus the edges inside the tick, so a press
+  // last": an input is a start state plus the edges inside the tick, so a press
   // and its release between two boundaries is a press this sees and a naive
   // compare of the two boundaries does not. See shared/subtick.hpp.
   uint64_t latest_buttons_bitmap    = 0;

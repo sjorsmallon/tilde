@@ -38,6 +38,7 @@ struct Client_Inbox
   std::vector<game::S2C_EntityPackage> entity_updates;
   std::vector<game::S2C_ServerMessage> server_text_messages;
   std::vector<game::S2C_BotDebug> bot_debug_updates;
+  std::vector<game::S2C_ShotDebug> shot_debug_updates;
   std::vector<game::S2C_GameEventBatch> game_event_batches;
   std::vector<game::S2C_EffectBatch> effect_batches;
   // Raw reassembled payloads of bitstream-native CmdChangeMap messages. Decoded
@@ -130,6 +131,9 @@ constexpr client_message_handler_table_t make_client_message_handlers()
   handlers[static_cast<size_t>(Message_Type::S2C_BotDebug)] =
       &deliver_protobuf_message<game::S2C_BotDebug,
                                 &Client_Inbox::bot_debug_updates>;
+  handlers[static_cast<size_t>(Message_Type::S2C_ShotDebug)] =
+      &deliver_protobuf_message<game::S2C_ShotDebug,
+                                &Client_Inbox::shot_debug_updates>;
   handlers[static_cast<size_t>(Message_Type::S2C_GameEventBatch)] =
       &deliver_protobuf_message<game::S2C_GameEventBatch,
                                 &Client_Inbox::game_event_batches>;

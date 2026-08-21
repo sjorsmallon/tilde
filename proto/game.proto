@@ -9,29 +9,29 @@ message ViewAngle {
   float yaw = 2;
   float roll = 3;
 }
-// Client -> Server: every move command the client has not seen acknowledged,
-// oldest first. This is the ONLY move message on the wire; a single command is
-// a batch of one.
+// Client -> Server: every input the client has not seen acknowledged, oldest
+// first. This is the ONLY input message on the wire; a single input is a batch
+// of one.
 //
-// Redundancy instead of retransmission. Moves are the client's half of a
+// Redundancy instead of retransmission. These are the client's half of a
 // prediction the server re-runs, so a lost datagram is a lost tick of input --
 // the player pressed forward and the world disagrees. Re-sending the unacked
 // tail in every datagram costs a few dozen bytes and needs no timers, no acks
-// per command and no state on either side, because the pieces were already
-// here: S2C_EntityPackage.latest_processed_command is a HIGH-WATER mark, and
+// per input and no state on either side, because the pieces were already
+// here: S2C_EntityPackage.latest_processed_input_number is a HIGH-WATER mark, and
 // the server already drops anything at or below it. A duplicate is therefore
 // free by construction rather than by agreement.
 //
-// It also converts the move budget's failure mode: a command dropped for want
+// It also converts the move budget's failure mode: an input dropped for want
 // of a credit (server/move_budget.hpp) is still unacked, so it arrives again
 // next tick and runs when the credit does. The budget throttles rather than
 // discards, with the queue living on the client where the data already was.
-message C2S_PlayerMoveBatch {
-  repeated C2S_PlayerMoveCommand moves = 1;
+message C2S_ClientInputBatch {
+  repeated C2S_ClientInput inputs = 1;
 }
 
-// One button transition inside the tick a move command covers: WHEN it happened,
-// and the whole bitfield in effect from that moment on.
+// One button transition inside the tick a C2S_ClientInput covers: WHEN it
+// happened, and the whole bitfield in effect from that moment on.
 //
 // A slot INDEX, not a fraction: 64 slots per tick, so 0.26ms at 60Hz. The client
 // predicts and the server re-simulates, and those two runs must agree exactly --
@@ -42,19 +42,65 @@ message C2S_PlayerMoveBatch {
 message C2S_SubtickEdge {
   optional uint32 slot = 1;          // 1..63, strictly ascending across edges
   optional uint64 buttons_after = 2; // the FULL bitfield, not a delta
+
+  // Where the player was AIMING from this slot onward. Sampled at the edge
+  // rather than given edges of its own: the angle is continuous, a 1000Hz mouse
+  // would spend the whole MAX_SUBTICK_EDGES budget on motion, and an edge costs
+  // a full pmove pass on the server. The moments that already exist are the
+  // ones that matter -- the trigger edge IS the moment a shot is aimed.
+  //
+  // Absent means "unchanged from the previous edge", which is what a client
+  // with no per-edge aim to report sends. That degrades exactly to the old
+  // behaviour: every step runs under viewangles_at_start.
+  optional ViewAngle view_after = 3;
 }
 
-message C2S_PlayerMoveCommand {
-  optional int32 command_number = 1; // this is just for sequencing!
-  optional int32 tick_count = 2;
-  
-  // View Angles (High precision)
-  optional ViewAngle viewangles = 3; 
+// ONE TICK OF A CLIENT'S INPUT, PLUS WHAT THAT CLIENT WAS SEEING WHEN IT MADE
+// IT. Every word of the old name (C2S_PlayerMoveCommand) was wrong, which is
+// why it is worth spelling out what this actually is:
+//
+//   not "Move"    -- forwardmove/sidemove/upmove are gone (reserved below).
+//                    Movement travels as buttons_bitfield + subtick_edges, and
+//                    those also carry FIRE, which is a shot, not a move.
+//   not "Player"  -- a SPECTATOR has no player entity and still sends these;
+//                    the server has a branch for exactly that. A client sends
+//                    this. See CLAUDE.md, "Client vs Player".
+//   not "Command" -- C2S_Command, a console line, is a different message on
+//                    this same socket.
+//
+// Roughly half of it is not input at all. `input_number` sequences, and
+// `held_snapshot_tick` / `interpolated_*` are RIDERS: they describe the client,
+// not the tick's input, and they hitch along because this is the only regular
+// c2s traffic. Each says so at its own field.
+message C2S_ClientInput {
+  // Sequencing only, and the client's own counter -- unrelated to any server
+  // tick. The server acks a high-water mark of it (S2C_EntityPackage), which is
+  // both what trims the resend tail and where the client's reconciliation
+  // replay starts.
+  optional int32 input_number = 1;
 
-  // Movement (Forward/Side/Up)
-  optional float forwardmove = 4;
-  optional float sidemove = 5;
-  optional float upmove = 6;
+  // Where the aim ENDED UP this tick. Nothing simulates under it: it is what
+  // the next tick starts from and what the server writes to
+  // Player_Entity::view_angle_*, so everyone else draws where this player is
+  // looking now. A tick whose mouse moved and whose buttons did not has no edge
+  // to hang the motion on, which is why this cannot be folded into the edges.
+  optional ViewAngle viewangles = 3;
+
+  // Where it STARTED, which is what the tick's first step runs under. Split
+  // from `viewangles` when the aim became sub-tick: one angle per tick meant a
+  // press timed to 0.26ms was still pointed wherever the mouse finished the
+  // frame, which on a flick is the whole error sub-tick exists to delete.
+  //
+  // Absent falls back to `viewangles`, reproducing the single-angle tick a bot,
+  // a replay or any pre-sub-tick-aim client sends.
+  optional ViewAngle viewangles_at_start = 13;
+
+  // 2 was `tick_count`, which the client set to a verbatim copy of
+  // input_number and nothing ever read. 4/5/6 were forwardmove/sidemove/upmove,
+  // dead since the sub-tick cutover moved movement into the buttons and their
+  // edges -- they outlived their readers and only the message's NAME still
+  // referred to them.
+  reserved 2, 4, 5, 6;
 
   // The buttons at the START of this tick, and every transition that followed,
   // in order. Together they are the tick's input: the server runs one movement
@@ -77,18 +123,18 @@ message C2S_PlayerMoveCommand {
   // The newest snapshot this client holds a complete copy of, named by the
   // server tick it was taken at. 0 = none yet, send a full update.
   //
-  // It RIDES on the move command but describes nothing about the move -- moves
-  // are the only regular c2s traffic, so it hitches a ride rather than paying
-  // for a datagram of its own. This is the ONLY thing that makes delta
+  // A RIDER: it describes what the client HOLDS, not the tick's input. Client
+  // input is the only regular c2s traffic, so it hitches a ride rather than
+  // paying for a datagram of its own. This is the ONLY thing that makes delta
   // compression correct over UDP: the server may not build a diff against what
   // it last SENT (that packet may have been dropped), only against what the
   // client says it actually HAS.
   optional uint32 held_snapshot_tick = 8;
 
-  // The blend this move was aimed THROUGH: remote players are DRAWN
-  // interpolated between two snapshots (play_state.cpp, "Interpolate remote
-  // players"), never at either one, so the world the crosshair was on is at no
-  // whole tick.
+  // A RIDER, like held_snapshot_tick above: the blend this input was aimed
+  // THROUGH. Remote players are DRAWN interpolated between two snapshots
+  // (play_state.cpp, "Interpolate remote players"), never at either one, so the
+  // world the crosshair was on is at no whole tick.
   //
   // The server lerps these SAME two endpoints before testing a shot, rather
   // than posing the true state at the moment they work out to. After packet
@@ -97,14 +143,14 @@ message C2S_PlayerMoveCommand {
   // what makes "if it was under your crosshair, you hit it" true.
   // See shared/lag_compensation.hpp.
   //
-  // Distinct from `command_number`, which stamps the same press on the client's
+  // Distinct from `input_number`, which stamps the same press on the client's
   // OTHER clock: prediction runs its own body AHEAD of the server while
   // rendering everyone else BEHIND it. That clock needs no compensation -- the
   // server re-derives the shooter's own position from the inputs in this very
   // message.
   //
-  // Read at the moment of the SHOT when the command carries one, not at the
-  // moment the command was built: the trigger goes down at a sub-tick slot
+  // Read at the moment of the SHOT when this input carries one, not at the
+  // moment the input was built: the trigger goes down at a sub-tick slot
   // inside the tick (see subtick_edges above), and the world the shooter was
   // drawing then is that fraction of a tick older. With no press in the tick it
   // is the read it always was, and nothing consumes it.
@@ -130,18 +176,32 @@ message S2C_EntityPackage {
     // know how many to expect. Removals are explicit records now and unchanged
     // entities are omitted, so a record count is not an entity count and the
     // one at the head of entity_data is the only count that means anything.
-    reserved 1, 3;
+    // 2 was `is_delta`, a second field for the fact delta_from_tick's presence
+    // already carries. Nothing ever read it, so it could disagree with the tick
+    // beside it and no receiver would notice. One field, one fact.
+    reserved 1, 2, 3;
 
-    optional bool  is_delta = 2;
     optional bytes entity_data = 4; // this is the reflective snapshot data
     optional int32 server_tick = 5;
-    optional int32 latest_processed_command = 6; // per-client ack for reconciliation
+    // How far this client's input stream has been CONSUMED -- a HIGH-WATER MARK
+    // over C2S_ClientInput.input_number, not "the last input that moved you".
+    // A number, not an input: it is what trims the client's resend tail and
+    // where its reconciliation replay starts.
+    optional int32 latest_processed_input_number = 6;
 
-    // Which snapshot entity_data is a delta AGAINST. 0 = full update (every
-    // networked leaf present, no baseline needed). Otherwise the client must
-    // still hold its reconstructed snapshot for this tick, or the packet is
-    // undecodable and must be dropped whole -- applying a delta to the wrong
-    // baseline is worse than missing a frame.
+    // A package is exactly ONE of two kinds, and this field's PRESENCE is which:
+    //
+    //   absent  -- FULL UPDATE. Every networked leaf is on the wire; the
+    //              receiver needs no baseline and decodes it standalone.
+    //   present -- DELTA against this tick. The receiver must still hold its
+    //              reconstructed snapshot for it, or the packet is undecodable
+    //              and must be dropped whole -- applying a delta to the wrong
+    //              baseline is worse than missing a frame.
+    //
+    // Presence, not a sentinel value: there is no tick number that means "not a
+    // delta", so the field never carries two meanings at once. Both ends go
+    // through set_snapshot_baseline / snapshot_baseline_tick
+    // (network/entity_snapshot.hpp) so neither open-codes that.
     optional uint32 delta_from_tick = 7;
 }
 
@@ -306,6 +366,68 @@ message BotDebugEntry {
 
 message S2C_BotDebug {
     repeated BotDebugEntry bots = 1;
+}
+
+// Server -> Client: everything the server used to judge ONE shot, sent only to
+// the shooter and only while sv_shot_debug is on.
+//
+// This exists because the client cannot reconstruct any of it. It does not know
+// which bracket the server accepted, whether the rewind was clamped or refused,
+// or what the snapshot ring held -- so a client that redrew "where the server
+// probably tested" would be auditing its own guess. The disagreement is only
+// meaningful if this side of it arrives over the wire.
+//
+// POSES, not volumes. compute_player_hitboxes is one shared function and the
+// three sv_aim_* extents it reads are @Mirrored, so posing a pose reproduces the
+// volumes exactly -- at 16 bytes per target instead of a whole volume set. What
+// is genuinely the server's answer is the POSE (the rewind's output); turning it
+// into volumes is arithmetic both sides already agree on.
+message ShotDebugTarget {
+    uint32 player_uid    = 1;
+    Vec3   feet_position = 2;
+    float  body_yaw      = 3;
+    float  view_yaw      = 4;
+    float  view_pitch    = 5;
+}
+
+message S2C_ShotDebug {
+    // The key the client pairs its own stash against. Client input numbers are
+    // the one sequence both ends already agree on, and a shot is identified by
+    // the input that fired it.
+    uint32 input_number = 1;
+    uint32 server_tick  = 2;
+    // Which sub-tick slot the trigger went down in (shared/subtick.hpp).
+    uint32 fire_slot    = 3;
+
+    // The ray as the server took it: post-move eye, along the aim in effect at
+    // the step the press opened.
+    Vec3 eye       = 4;
+    Vec3 direction = 5;
+
+    // bracket_status_t: 0=Ok 1=Clamped 2=Absent 3=Malformed 4=Unheld. Anything
+    // but Ok/Clamped means NO REWIND HAPPENED and the targets below are
+    // present-tick -- which is the single most common reason a dead-on shot
+    // misses, and is invisible without this field.
+    uint32 bracket_status = 6;
+    bool   used_rewind    = 7;
+
+    uint32 requested_from_tick    = 8;
+    uint32 requested_towards_tick = 9;
+    float  requested_fraction     = 10;
+    uint32 used_from_tick         = 11;
+    uint32 used_towards_tick      = 12;
+    float  used_fraction          = 13;
+
+    // Every target the hitscan actually ranked, posed as the server posed them.
+    repeated ShotDebugTarget targets = 14;
+
+    // 0 = miss. On a miss, nearest_miss_distance is how far the ray passed from
+    // the closest target's bounding sphere -- 3 units is a pose problem, 200 is
+    // a rewind that never happened.
+    uint32 hit_uid               = 15;
+    uint32 hit_region            = 16;
+    Vec3   impact_point          = 17;
+    float  nearest_miss_distance = 18;
 }
 
 // Server → Client: a batch of reliable gameplay events produced this tick.

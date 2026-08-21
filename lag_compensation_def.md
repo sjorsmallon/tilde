@@ -56,7 +56,7 @@
 >    chord-not-truth test exists to stop it coming back.
 > 2. **Prediction-ahead needs no wire field at all.** `command_number` already
 >    covers it; the server re-derives the shooter's own position from the inputs
->    in the same message. Only the render clock is unrepresented.
+>    in the same message. Only the interpolation cursor is unrepresented.
 
 ## Context
 
@@ -188,7 +188,7 @@ go on the wire.
 
 Prediction needs nothing added: the move carries the inputs, the server applies
 them at `server_impl.cpp:825` and takes the eye from the result at `:866`, and
-`command_number` already reconciles the drift. Only the render clock is
+`command_number` already reconciles the drift. Only the interpolation cursor is
 unrepresented, and these three fields are it.
 
 `proto/game.proto`, on `C2S_PlayerMoveCommand` (append after

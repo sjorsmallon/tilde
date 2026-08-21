@@ -42,16 +42,16 @@ void test_receive_and_reassembly()
 
   occupy_client_slot(state, 0, client_addr, 100);
 
-  // A batch of two, because the batch is the only move message on the wire and
-  // unpacking it into one inbox entry per move is the part worth exercising.
-  game::C2S_PlayerMoveBatch batch;
-  for (int command_number : {9, 10})
+  // A batch of two, because the batch is the only input message on the wire and
+  // unpacking it into one inbox entry per input is the part worth exercising.
+  game::C2S_ClientInputBatch batch;
+  for (int input_number : {9, 10})
   {
-    game::C2S_PlayerMoveCommand *move = batch.add_moves();
-    move->set_command_number(command_number);
-    move->set_forwardmove(127.0f);
-    move->set_sidemove(0.0f);
-    auto *va = move->mutable_viewangles();
+    game::C2S_ClientInput *input = batch.add_inputs();
+    input->set_input_number(input_number);
+    input->set_buttons_bitfield(0xABCDull); // a payload marker, to prove the
+                                            // bytes survive the round trip
+    auto *va = input->mutable_viewangles();
     va->set_yaw(45.0f);
     va->set_pitch(0.0f);
   }
@@ -61,7 +61,7 @@ void test_receive_and_reassembly()
 
   uint8 next_message_id = 0;
   auto packets = convert_to_packets(
-      serialized_data, static_cast<uint8>(Message_Type::C2S_PlayerMoveBatch),
+      serialized_data, static_cast<uint8>(Message_Type::C2S_ClientInputBatch),
       next_message_id);
 
   // Send packets
@@ -81,7 +81,7 @@ void test_receive_and_reassembly()
   poll_network(state, server_socket, 0.1, 140, inbox); // 100ms window
 
   // Verify
-  if (inbox.moves.empty())
+  if (inbox.inputs.empty())
   {
     std::cerr << "Failed to receive/reassemble moves!" << std::endl;
     // Debug
@@ -90,22 +90,22 @@ void test_receive_and_reassembly()
     assert(false);
   }
 
-  // Both moves of the batch, as separate inbox entries and in the order they
+  // Both inputs of the batch, as separate inbox entries and in the order they
   // were packed: the receive side unpacks, it does not deduplicate or reorder.
-  std::vector<const game::C2S_PlayerMoveCommand *> moves_for_player_0;
-  for (const auto &[pidx, move] : inbox.moves)
+  std::vector<const game::C2S_ClientInput *> inputs_for_player_0;
+  for (const auto &[pidx, input] : inbox.inputs)
   {
     if (pidx == 0)
-      moves_for_player_0.push_back(&move);
+      inputs_for_player_0.push_back(&input);
   }
 
-  assert(moves_for_player_0.size() == 2 &&
-         "a batch of two must land as two inbox moves");
-  assert(moves_for_player_0[0]->command_number() == 9);
-  assert(moves_for_player_0[1]->command_number() == 10);
-  assert(moves_for_player_0[0]->forwardmove() == 127.0f);
-  assert(moves_for_player_0[1]->forwardmove() == 127.0f);
-  std::cout << "  -> Move batch reassembled and unpacked correctly!" << std::endl;
+  assert(inputs_for_player_0.size() == 2 &&
+         "a batch of two must land as two inbox inputs");
+  assert(inputs_for_player_0[0]->input_number() == 9);
+  assert(inputs_for_player_0[1]->input_number() == 10);
+  assert(inputs_for_player_0[0]->buttons_bitfield() == 0xABCDull);
+  assert(inputs_for_player_0[1]->buttons_bitfield() == 0xABCDull);
+  std::cout << "  -> Input batch reassembled and unpacked correctly!" << std::endl;
 
   // Arrival stamps the slot: this is what sv_timeout measures silence against.
   assert(state.latest_packet_tick[0] == 140);

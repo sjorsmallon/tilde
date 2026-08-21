@@ -125,6 +125,12 @@ Lag_Compensation :: cvars {
     sv_lag_compensation:       bool = true   @Server  "Rewind targets to what the shooter saw"
     sv_max_rewind_ticks:       i32  = 12     @Server  "Cap on how far back a shot may reach (~200ms at 60Hz)"
     sv_lag_compensation_debug: bool = false  @Server  "Log every rewind: requested bracket, clamped bracket, disparity, hit"
+    // The VISUAL half of the above. Sends S2C_ShotDebug to the shooter for every
+    // shot they resolve: the ray, the rewind verdict, and the pose of every
+    // target the server ranked. Shooter-only and off by default -- it is one
+    // message per shot per client, which is fine for two people debugging and
+    // not fine for a full server.
+    sv_shot_debug:             bool = false  @Server  "Send each shooter the server's view of their own shots (S2C_ShotDebug)"
 }
 
 // ---------------------------------------------------------------------------
@@ -158,12 +164,12 @@ Client :: cvars {
     // tail may grow: past it the oldest moves are dropped, because a move older
     // than this is one the server will refuse to rewind to anyway. Eight moves
     // is roughly 500 bytes against the 1200-byte packet cap.
-    cl_max_unacked_moves:   i32 = 8         @Client    "Unacknowledged move commands resent in every move datagram"
+    cl_max_unacked_inputs:   i32 = 8         @Client    "Unacknowledged client inputs resent in every input datagram"
 
     r_fov:                  f32 = 90.0      @Client    "Field of view in degrees"
 
     // Zoom is presentation, so all of it is @Client. The server learns only
-    // that the client is zoomed, via Button::Zoom in the move command --
+    // that the client is zoomed, via Button::Zoom in the client's input --
     // right-click toggles that state, and the toggle edge stays client-side.
     // which is what it would need to apply a movement or accuracy penalty. It
     // never needs the angle.
@@ -207,6 +213,25 @@ Client :: cvars {
     // visibly froze. This is what distinguishes "the network is bad" from "the
     // buffer is mis-sized", and without it those two look identical.
     cl_interpolation_debug: bool = false      @Client    "Log interpolation buffer stalls and clock snaps"
+
+    // How long after a frame is handed to the presenter its pixels reach the
+    // player's eyes: queued frames, the compositor, scanout, and whatever the
+    // panel does. A shot is aimed at what was ON SCREEN, so this is what
+    // decides which drawn frame a trigger press is judged against
+    // (remote_interpolation.hpp, drawn_history_t).
+    //
+    // Compensating it is fair because it is a property of the MACHINE -- a
+    // fixed offset that corrupted the timestamp of what the player saw. Human
+    // reaction time is not, and must never be folded in here however tempting
+    // the symmetry looks: it is unmeasurable per shot (a pre-aimed corner is
+    // ~0ms, a flick is ~250ms), it is already priced into where the player
+    // chose to aim, and at 9-15 ticks it would eat sv_max_rewind_ticks whole
+    // and kill people who were behind cover on both screens.
+    //
+    // 0 is the honest default: it means "assume the pixels landed when
+    // render_frame returned", which is what the client did before this existed.
+    // Raise it to what you measure. Capped at half the rewind budget on read.
+    cl_display_latency_ms: f32 = 0.0          @Client    "Present-to-photons latency a shot is rewound by, in milliseconds"
 
 
     cl_draw_player_hull:    bool = false     @Client    "Draw remote players as their collision hull, over the model"
@@ -306,6 +331,11 @@ Debugging :: cvars {
     // Play_State bools, which put three of the seven checkboxes in one HUD
     // block out of the console's reach for no reason.
     debug_hide_geometry:       bool = false @Client     "Skip drawing map geometry"
+    // How long a shot-debug pair stays on screen. A shot is one frame and you
+    // cannot see 16ms, so the draw has to outlive the frame that made it --
+    // debug_draw_list_t entries carry their own lifetime, which is what this
+    // feeds. 0 disables the draw without turning off the server's send.
+    cl_shot_debug_seconds:     f32 = 4.0 @Client     "Seconds a shot-debug overlay stays on screen (0 = off)"
     debug_show_entity_counts:  bool = false @Client     "Per-type entity count overlay"
     debug_show_physics_bodies: bool = false @Client     "Draw Jolt bodies and constraints (JPH_DEBUG_RENDERER builds)"
 

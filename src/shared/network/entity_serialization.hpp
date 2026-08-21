@@ -119,10 +119,6 @@ inline void pack_entity_delta_for_update(game::S2C_EntityPackage& out_packet,
                                          const entities::Entity& entity,
                                          const entities::Entity* baseline = nullptr)
 {
-  // No baseline means every networked leaf is on the wire, which is a full
-  // update, not a delta. The flag says which one the receiver is holding.
-  out_packet.set_is_delta(baseline != nullptr);
-
   Bit_Writer writer;
   serialize_entity(writer, entity, baseline);
 

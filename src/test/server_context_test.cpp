@@ -57,7 +57,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   died.attacker_id = 7;
   shared::fire_player_died(context.outgoing.events, died);
 
-  // A hit the move loop resolved but has not applied. Normally drained the
+  // A hit the input loop resolved but has not applied. Normally drained the
   // instant that loop closes; it is a group member so that a tick which died
   // halfway cannot replay it.
   pending_hit_t pending{};
@@ -72,7 +72,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   {
     client_slot_t& client = context.clients[slot];
     client.player_uid               = 1000 + slot;
-    client.latest_processed_command = 70 + slot;
+    client.latest_processed_input_number = 70 + slot;
     client.latest_buttons_bitmap    = 0b1011;
     client.held_snapshot_tick       = 880 + slot;
     client.map_ready                = true;
@@ -144,7 +144,7 @@ void test_reset_state_in_preparation_for_new_map_load()
     // Survives: the command stream describes the CLIENT, not the world. Wiping
     // latest_buttons_bitmap would make every held button look like a fresh
     // rising edge on the first tick after the switch.
-    assert(client.latest_processed_command == 70 + slot);
+    assert(client.latest_processed_input_number == 70 + slot);
     assert(client.latest_buttons_bitmap == 0b1011);
 
     // Survives, but only because clearing it would be dead: change_map_to sends
@@ -176,7 +176,7 @@ void test_reset_client_slot()
   // of the previous one's command cursor, ack or map-ready gate.
   const client_slot_t& reset_client = context.clients[target_slot];
   assert(reset_client.player_uid == shared::null_entity_uid);
-  assert(reset_client.latest_processed_command == invalid_slot_idx);
+  assert(reset_client.latest_processed_input_number == server::no_input_processed_yet);
   assert(reset_client.latest_buttons_bitmap == 0);
   assert(reset_client.held_snapshot_tick == 0);
   assert(!reset_client.map_ready);
@@ -213,7 +213,7 @@ void test_clear_tick_groups()
   clear_incoming(context);
   clear_outgoing(context);
 
-  assert(context.incoming.moves.empty());
+  assert(context.incoming.inputs.empty());
   assert(context.incoming.potential_joins.empty());
   assert(context.incoming.net_commands.empty());
   assert(context.incoming.commands.empty());

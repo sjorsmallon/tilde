@@ -69,6 +69,7 @@
 #include "bitstream.hpp"
 #include "entity_serialization.hpp"
 
+#include <optional>
 #include <unordered_map>
 
 namespace network
@@ -113,5 +114,38 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
 // including anything appended after the snapshot.
 bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
                           snapshot_frame_t& out_frame);
+
+// ---------------------------------------------------------------------------
+// Which kind of package this is
+// ---------------------------------------------------------------------------
+//
+// A package is a FULL UPDATE or a DELTA AGAINST ONE TICK, never a mixture, and
+// the two kinds are told apart by the PRESENCE of delta_from_tick -- not by a
+// tick number reserved to mean "no tick". These two functions are the only
+// places that touch the field, so the sentinel cannot leak back in: the sender
+// hands over the baseline frame it actually used, and the receiver gets back a
+// value whose two states are the two kinds.
+
+// Records which frame `writer` deltaed against. Null baseline => full update,
+// so the field is left absent rather than written as zero.
+inline void set_snapshot_baseline(game::S2C_EntityPackage& package,
+                                  const snapshot_frame_t* baseline)
+{
+  if (baseline != nullptr)
+    package.set_delta_from_tick(baseline->tick);
+  else
+    package.clear_delta_from_tick();
+}
+
+// The tick this package is a delta against, or nothing at all when it is a full
+// update. Absence is one of the two answers, not a failure, which is why this
+// is not a try_.
+[[nodiscard]] inline std::optional<uint32_t> snapshot_baseline_tick(
+    const game::S2C_EntityPackage& package)
+{
+  if (!package.has_delta_from_tick())
+    return std::nullopt;
+  return package.delta_from_tick();
+}
 
 } // namespace network

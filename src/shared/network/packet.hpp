@@ -15,7 +15,7 @@ namespace network
 // (see shared/network/map_transfer.hpp) and so have no Packet_Traits mapping.
 enum class Message_Type : uint8
 {
-  C2S_PlayerMoveBatch, // C2S: the client's unacked move commands, oldest first
+  C2S_ClientInputBatch, // C2S: the client's unacked input tail, oldest first
   S2C_EntityPackage,
   NetCommand,
   S2C_ServerMessage,
@@ -28,6 +28,7 @@ enum class Message_Type : uint8
   C2S_RequestMapData, // C2S: client lacks the compiled package; stream it
   S2C_MapData,        // S2C: the compiled map package blob (bitstream-native)
   S2C_CvarValues,     // S2C: @Mirrored cvar values (bitstream-native)
+  S2C_ShotDebug,      // S2C: one shot's rewind evidence, to the shooter only
 
   // Not a wire value: one past the last type, so a table indexed by
   // Message_Type sizes itself (see the client's handler table).
@@ -75,12 +76,12 @@ template <> struct Packet_Traits<game::S2C_EntityPackage>
   static constexpr Message_Type type = Message_Type::S2C_EntityPackage;
 };
 
-// The batch, not the command: a lone C2S_PlayerMoveCommand is never sent on its
+// The batch, not the input: a lone C2S_ClientInput is never sent on its
 // own, so it has no mapping and reaching for one is a compile error rather than
 // a datagram the server has no handler for.
-template <> struct Packet_Traits<game::C2S_PlayerMoveBatch>
+template <> struct Packet_Traits<game::C2S_ClientInputBatch>
 {
-  static constexpr Message_Type type = Message_Type::C2S_PlayerMoveBatch;
+  static constexpr Message_Type type = Message_Type::C2S_ClientInputBatch;
 };
 
 template <> struct Packet_Traits<game::S2C_ServerMessage>
@@ -91,6 +92,11 @@ template <> struct Packet_Traits<game::S2C_ServerMessage>
 template <> struct Packet_Traits<game::C2S_Command>
 {
   static constexpr Message_Type type = Message_Type::C2S_Command;
+};
+
+template <> struct Packet_Traits<game::S2C_ShotDebug>
+{
+  static constexpr Message_Type type = Message_Type::S2C_ShotDebug;
 };
 
 template <> struct Packet_Traits<game::S2C_BotDebug>

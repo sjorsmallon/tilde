@@ -9,7 +9,7 @@ step-invariant, guarded by `src/test/player_move_step_invariance_test.cpp` —
 read that file before touching `player_move.cpp` step sizes, it says which
 divergences are defects and which are air control). Then step 3: a move command
 carries the buttons at the START of the tick plus the EDGES inside it, as 6-bit
-slot indices; `shared/subtick.hpp` is the format and `split_tick` is the driver
+slot indices; `shared/subtick.hpp` is the format and `split_input_per_tick_into_subtick_steps` is the driver
 both sides run; the client stamps SDL transitions and places them in accumulator
 space; the server runs one movement step per interval and resolves a shot at the
 sub-step the trigger went down in. `subtick_test` guards the format's two
@@ -17,7 +17,7 @@ grammars. The plan's closing section lists what is deliberately still whole-tick
 (view angles, the bracket's frame-vs-tick phase, bots).
 
 **Remote interpolation: `interpolation_buffer_plan.md` — LANDED 2026-08-19.**
-The arrival-reset clock is gone. `client::render_clock_t` is a fractional server
+The arrival-reset clock is gone. `client::interpolation_cursor_t` is a fractional server
 tick advanced by `dt * tickrate` and never reset; each remote player has its own
 `interpolation_ring_t`; the delay is `cl_interpolation_delay_ticks` (2); drift is
 closed by a rate trim rather than a snap. `remote_interpolation_test` is the
@@ -742,7 +742,7 @@ did not fix.
 
 - [ ] **Snapshot smoothing for rockets and physics bodies.** Remote-PLAYER
       smoothing is done properly as of 2026-08-19: a per-player
-      `client::interpolation_ring_t` read through one `client::render_clock_t`
+      `client::interpolation_ring_t` read through one `client::interpolation_cursor_t`
       (`client/remote_interpolation.hpp`). Rockets and physics bodies still
       SNAP; the work is bringing them onto that same clock.
       * **Physics bodies** are the reason to do it, and integrated mode is why
@@ -757,7 +757,7 @@ did not fix.
         its own clock.** The shared-accumulator fragility this bullet described
         is gone with `ctx.interpolation_time`. Add an `interpolation_ring_t`
         beside each smoothed entity and sample it at
-        `ctx.replication.render_clock.render_tick`. A rocket wants
+        `ctx.replication.interpolation_cursor.tick`. A rocket wants
         extrapolation along `velocity` rather than a lerp — but off that same
         clock. A second clock here would be the third one and the second bug.
 

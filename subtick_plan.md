@@ -245,7 +245,7 @@ ever addressed the remote half.
 part: the wire's is **strict** (an edge that breaks it is a client we did not
 ship, so the command is refused rather than simulated), the client's recorder
 **folds** (it is fed raw SDL transitions, whose resolution is coarser than a slot
-and whose order is whatever the queue handed us). `split_tick` is what both sides
+and whose order is whatever the queue handed us). `split_input_per_tick_into_subtick_steps` is what both sides
 run, and a command with no edges splits into exactly the one `tick_dt` step it
 replaced — which is what let bots, `server_loop_test` and every other caller go
 untouched.
@@ -255,12 +255,14 @@ is a third queue beside the two that were already there, and the difference is
 that it carries RELEASES and a timestamp; the two old ones are presses without
 one, because a menu does not care when inside the frame you clicked. The
 placement is in **accumulator space, not wall-clock**: an edge's position is
-`accumulator_at_frame_start + fraction_into_frame * dt`, and the fraction comes
-from the edge's AGE against the frame's real duration. SDL's clock and the
-accumulator share no origin, so aligning them would need a calibration that
-drifts; how long ago something happened is the one quantity both agree on. Ticks
-consume the pending edges in order and rebase the leftovers by `tick_dt`, exactly
-as the accumulator itself is rebased.
+`accumulator_at_frame_start + fraction_into_frame * dt`. Ticks consume the
+pending edges in order and rebase the leftovers by `tick_dt`, exactly as the
+accumulator itself is rebased.
+
+> The fraction originally came from the edge's AGE against the frame's real
+> duration, because SDL's clock and the accumulator share no origin. That is
+> gone — see "Where the timestamps actually come from" below. It is now a ratio
+> of a real span, which needs no calibration and no clamp.
 
 Three things fell out of building it that were not on the list:
 
@@ -274,16 +276,20 @@ Three things fell out of building it that were not on the list:
 - **The console is an edge.** Opening it releases every tracked button at the
   moment it opened rather than at the next boundary; closing it resamples,
   because the releases that happened while it held the keyboard were never read.
-- **`cl_timescale` scales `dt` but not SDL's clock.** The age has to be measured
-  against the frame's real duration and then mapped onto the accumulator's, which
-  are the same number only at timescale 1.
+- **`cl_timescale` scales `dt` but not the input clock.** The age had to be
+  measured against the frame's real duration and then mapped onto the
+  accumulator's, which are the same number only at timescale 1. This one did not
+  survive the span rewrite either: a fraction is unitless, so it multiplies onto
+  the already-scaled `dt` with nothing left to correct.
 
-**Only six buttons are tracked** (`Button::Subtick_Tracked`: the four directions,
-jump, fire). Everything else stays tick-granular on purpose — a weapon switch
-resolving 16.7ms late is invisible, and every button admitted costs a pmove pass
-on the server whenever it moves. `MAX_SUBTICK_EDGES = 8` is the sub-step budget,
-not a guess about typing speed: it is what bounds the work one datagram can ask
-for, and the move budget bounds the rate of datagrams rather than this.
+**Six buttons were tracked** (`Button::Subtick_Tracked`: the four directions,
+jump, fire) on the argument that everything else resolving 16.7ms late is
+invisible, and that every button admitted costs a pmove pass on the server
+whenever it moves. The set is wider now — the weapon keys and reload joined it,
+not for feel but for ORDERING; see the raw-input section below.
+`MAX_SUBTICK_EDGES = 8` is the sub-step budget, not a guess about typing speed:
+it is what bounds the work one datagram can ask for, and the move budget bounds
+the rate of datagrams rather than this.
 
 **`buttons_bitfield` changed meaning** — it is the state at the START of the
 tick, not at the moment the command was built. Everything that read it as "the
@@ -306,8 +312,117 @@ travel sub-tick exists to stop rounding away, on the other end of the shot.
   the whole tick did. A mouse delta has no edge to timestamp the way a key does —
   it is a rate, sampled per frame — so this needs a different mechanism than the
   one built here, and wants a reason before it gets one.
-- **The bracket's phase.** `advance_render_clock` runs once per frame while the
+- **The bracket's phase.** `advance_interpolation_cursor` runs once per frame while the
   tick loop may run zero or more times, so the clock the bracket is read from is
   the frame's, not the tick's. The sub-tick offset above is a first-order
   correction on top of that, and it is bounded by one tick either way.
 - **Bots.** No edges, one step, the simulation they always had.
+
+
+---
+
+## Where the timestamps actually come from
+
+Everything above was correct about the FORMAT and wrong about the data feeding
+it. The 64-slot grid resolves 0.26ms; the client was handing it edges resolved
+to one frame, and the code claimed otherwise. `raw_input_plan.md` is the repair
+and has the full argument. The short version and the numbers:
+
+**Every clock the game thread can read is read during the pump, so all of them
+are pump clocks whatever their precision.** Only a thread *blocked waiting on
+input* can say when input arrived.
+
+| Clock | Measurement | Verdict |
+|---|---|---|
+| SDL2 `event.timestamp` | 40 edges: age min 1.000ms, max 2.000ms, mean **1.125ms**, on 6.283ms frames | Pump time. Constant. Carries **no** input timing. |
+| Windows `msg.time` | 300 motion messages: **276 deltas of 0ms**, 21 of 15-17ms | `GetTickCount` domain, 15.6ms granular — coarser than a frame. |
+| `msg.time` + `timeBeginPeriod(1)` | statistically identical | No effect. Tickless kernel. |
+| SDL3 | `WIN_GetEventTimestamp` derives from `msg.time` | ns-*typed* values off a 15.6ms clock. Migrating would LOSE ground. |
+| **Raw-input thread + QPC** | 300 motion events: 0 identical, smallest **0.5892ms**, 0 dropped | Sub-millisecond, no quantization floor. |
+
+`client/raw_input_win32.{hpp,cpp}` blocks in `GetMessageW` on a message-only
+window and reads `QueryPerformanceCounter` **before it inspects the message**.
+`input::init` starts it; failure is never fatal, and `process_sdl_event` keeps a
+fallback that stamps at the frame boundary.
+
+**The end-to-end result, measured through the shipping path** (40 real edges,
+raw-input thread live):
+
+```
+fraction min 0.0121   max 0.9856   mean 0.5068
+smallest gap between arrivals 0.2078 ms   (one sub-tick slot is 0.26 ms)
+0 raw events dropped
+```
+
+Uniform across the frame, and the arrival spacing is now finer than a slot —
+which is the first time the grid, not the input, is the limit. **Do not
+re-litigate any of this from first principles; re-run the probe instead** (the
+probe itself is deleted, so re-running it means restoring it from
+`raw_input_plan.md` §2).
+
+Two things changed shape as a consequence:
+
+- **The fraction is a ratio of a real SPAN.** `input::frame_arrival_span()` is
+  `[previous drain, this drain]`, both read at the same point in the frame, so
+  an arrival inside it is in range *by construction*. The clamp is gone and an
+  out-of-range arrival is a `log_warning`, because it would now be a bug.
+- **`Button::Subtick_Tracked` widened** to the weapon keys and `Reload`. The
+  argument is not feel, it is ordering: switch-then-fire and fire-then-switch
+  inside one tick end the tick in the same state, so tick granularity could not
+  tell them apart. The wire carries the distinction now;
+  `test_ordering_within_a_tick_is_preserved` guards it.
+
+---
+
+## Acting on the ordering — **done**
+
+The server applied weapon switches in one whole-tick pass *before* the step
+loop, so every edge it had just paid a pmove pass to decode was thrown away at
+the moment it mattered. `Button::Reload` was worse: tracked, stamped, shipped,
+and read by nothing at all.
+
+Every button ACTION now resolves inside the step loop, at `step.start_slot`.
+That is why the server never calls `subtick_slot_of_press` — a press is what
+*opens* a step, so the split already delivered the slot to the site that
+consumes it. `test_the_step_a_press_opens_carries_its_slot` is the guard on that
+identity, because if it ever stops holding, every cadence below silently rounds
+back to the tick with nothing failing.
+
+**The moment got a type.** `subtick_time_t` is `tick * SUBTICK_SLOT_COUNT +
+slot` — one monotonic integer, with `subtick_seconds_between` and
+`subtick_time_after` as the two directions. The fire-rate gate ran on
+`tick_number - last_fire_tick`, which quantized every weapon's cadence to
+16.7ms: the one gate deciding whether a shot happens at all was still doing the
+rounding the rest of the feature exists to delete.
+
+**It is deliberately not a wire type.** The wire has no grid finer than a tick —
+one snapshot per tick — so a replicated sub-tick stamp costs bytes for a reader
+that cannot use them. `Player_Entity::last_fire_tick` stays a tick and stays
+`@Networked`, because its consumer is `weapon_fire_audio`, a change detector.
+Beside it sits `last_fire_slot` (u8, server-only), which *refines* that stamp
+rather than duplicating it: read together as `subtick_time(last_fire_tick,
+last_fire_slot)`. A second whole stamp could disagree with the first; a
+refinement cannot.
+
+**Reload is the first action that outlives its input.** It spans ~120 ticks, so
+the input for tick N carries nothing about a press at tick N-120 and retained
+state is unavoidable. What is retained is the **deadline**, not the start:
+the duration belongs to the weapon in hand *at the press*, and the weapon can
+now change at a sub-tick moment inside the same loop. Storing the start would
+leave "whose duration applies" to be re-decided every tick against a weapon that
+is no longer the one being reloaded. Switching cancels the reload, which is the
+ordering payoff the weapon keys were admitted to `Subtick_Tracked` for.
+
+Completion is checked **twice, on purpose**. The fire path completes a due
+reload itself at the trigger's slot, which is the authoritative answer and is
+exact. An end-of-tick sweep completes the rest, which is the *replicated* answer
+and is tick-granular because `ammo` rides a snapshot. Same split as above: the
+simulation is exact, the wire is not, and neither pretends to be the other.
+
+### Still to do
+
+- **The rewind bracket is per-input, not per-press.** `resolve_player_shot`
+  reads `interpolated_*` off the whole `C2S_ClientInput`, so a tick containing
+  two trigger presses judges both through the bracket the client measured at the
+  first. Unreachable today — the fire interval is longer than a tick for every
+  weapon — and it becomes real the moment one is not.
