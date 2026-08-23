@@ -27,12 +27,12 @@ int main()
   entities::Player_Entity server_tick_1;
   server_tick_1.health   = 100;
   server_tick_1.position = {10.0f, 20.0f, 0.0f};
-  server_tick_1.ammo     = 30;
+  server_tick_1.last_fire_tick = 30;
 
   entities::Player_Entity server_tick_2 = server_tick_1;
   server_tick_2.health     = 90;    // took damage
   server_tick_2.position.x = 12.0f; // moved
-  // position.y, position.z and ammo deliberately unchanged.
+  // position.y, position.z and last_fire_tick deliberately unchanged.
 
   entities::Player_Entity client;
 
@@ -48,7 +48,7 @@ int main()
     assert(client.health == 100);
     assert(client.position.x == 10.0f);
     assert(client.position.y == 20.0f);
-    assert(client.ammo == 30);
+    assert(client.last_fire_tick == 30);
 
     std::cout << "    PASSED!" << std::endl;
   }
@@ -67,7 +67,7 @@ int main()
     assert(client.health == 90);
     assert(client.position.x == 12.0f);
     assert(client.position.y == 20.0f); // unchanged, so untouched by the delta
-    assert(client.ammo == 30);          // unchanged
+    assert(client.last_fire_tick == 30);          // unchanged
 
     std::cout << "    PASSED!" << std::endl;
   }

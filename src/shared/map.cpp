@@ -112,7 +112,7 @@ static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
 //
 //   map_file := block*
 //   block    := keyword '{' property* '}'
-//   keyword  := 'entity' | 'box' | 'static_mesh' | 'displacement'
+//   keyword  := 'entity' | 'box' | 'static_mesh' | 'displacement' | 'cvars'
 //   property := string string                  -- key, then value
 //   string   := '"' char* '"'                  -- no escapes; may contain spaces
 //
@@ -126,6 +126,11 @@ static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
 // "worldspawn" as the pseudo-class holding the map's own properties); every
 // other keyword names a geometry kind and is read by parse_geometry(). Geometry
 // used to live in 'entity' blocks too — see convert_legacy_geometry_entity().
+//
+// The 'cvars' block is the map's own settings: each property is a cvar NAME and
+// the value it is set to when the server loads the map (map_t::attached_cvars).
+// A block's properties are a map, so one name appears at most once and the
+// order in the file is not preserved.
 // ============================================================================
 
 struct map_block_t
@@ -1013,6 +1018,30 @@ std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const entiti
   return compute_face_polygons(t);
 }
 
+cvar_line_t split_cvar_line(std::string_view line)
+{
+  const size_t name_start = line.find_first_not_of(" \t");
+  if (name_start == std::string_view::npos)
+    return {};
+
+  const size_t name_end = line.find_first_of(" \t", name_start);
+  if (name_end == std::string_view::npos)
+    return {std::string(line.substr(name_start)), {}};
+
+  const size_t value_start = line.find_first_not_of(" \t", name_end);
+  return {std::string(line.substr(name_start, name_end - name_start)),
+          value_start == std::string_view::npos
+              ? std::string()
+              : std::string(line.substr(value_start))};
+}
+
+std::string make_cvar_line(std::string_view name, std::string_view value)
+{
+  if (value.empty())
+    return std::string(name);
+  return std::string(name) + " " + std::string(value);
+}
+
 map_t parse_map_from_string(const std::string &content)
 {
   const std::vector<map_block_t> blocks = parse_map_content(content);
@@ -1042,6 +1071,14 @@ map_t parse_map_from_string(const std::string &content)
   for (const map_block_t &block : blocks)
   {
     const entity_uid_t uid = read_uid(block);
+
+    // --- the map's own cvar settings ---
+    if (block.keyword == "cvars")
+    {
+      for (const auto &[name, value] : block.properties)
+        out_map.attached_cvars.push_back(make_cvar_line(name, value));
+      continue;
+    }
 
     // --- geometry blocks ---
     if (block.keyword != "entity")
@@ -1153,6 +1190,23 @@ std::string serialize_map_to_string(const map_t &map)
     worldspawn.properties.emplace_back("classname", "worldspawn");
     worldspawn.properties.emplace_back("name", map.name);
     blocks.push_back(std::move(worldspawn));
+  }
+
+  // The map's own cvar settings, split back into the name/value pairs the block
+  // format stores. A line with nothing but a name writes an empty value.
+  if (!map.attached_cvars.empty())
+  {
+    map_block_out_t block;
+    block.keyword = "cvars";
+    for (const std::string &line : map.attached_cvars)
+    {
+      const cvar_line_t split = split_cvar_line(line);
+      if (split.name.empty())
+        continue;
+      block.properties.emplace_back(split.name, split.value);
+    }
+    if (!block.properties.empty())
+      blocks.push_back(std::move(block));
   }
 
   // Geometry first, so a level's structure reads before its props.

@@ -200,6 +200,45 @@ Render :: component {
     material:     Material
 }
 
+// What a player CARRIES, and the one gate that belongs to switching rather than
+// to any weapon. Per-weapon state -- ammo, and when that weapon may next fire --
+// lives on the Weapon_Entity itself, so this holds handles and nothing else.
+//
+// The inventory is STORED, not derived. Scanning every Weapon_Entity for one
+// whose owner is this player would leave the invariant with no home and make
+// "what am I carrying" a linear walk over the world.
+Inventory :: component {
+    // uid of the Weapon_Entity for each weapon type; null_entity_uid for one
+    // not carried. Keyed by the weapon rather than a flat list because this
+    // game carries at most one of each, which makes `weapons[active_weapon]`
+    // an index instead of a search.
+    //
+    // REPLICATED, because the client resolves its own ammo the same way the
+    // server does -- `weapons[active_weapon]`, one index into a stored list --
+    // rather than scanning every Weapon_Entity for one that claims this owner.
+    // Deriving it client-side would be a second answer to "what am I carrying"
+    // built out of a back-reference, and the two are free to disagree. It costs
+    // one full update per player and then nothing: an inventory that does not
+    // change is absent from every delta after the spawn.
+    weapons:              u32[Weapon]     @Networked
+
+    // Which of the above is in hand. The KEY, not a uid: resolution is
+    // `weapons[active_weapon]`, one index, so there is no reference here that
+    // can name a weapon the inventory does not hold.
+    active_weapon:        Weapon = .Knife  @Networked
+
+    // WHEN the switch in flight finishes, in sub-tick time; 0 means none. A
+    // deadline like reload_complete_time above it, and for the same reason:
+    // the duration belongs to the weapon being raised at the moment the key was
+    // pressed, so settling it there beats re-deciding it every tick.
+    //
+    // This is the gate that is genuinely the PLAYER's -- it blocks every weapon
+    // at once. A weapon's own fire interval is on the weapon, runs while
+    // holstered, and the two must not be folded together: doing so is what made
+    // firing a Scout delay a Knife swing.
+    deploy_complete_time: u64
+}
+
 // ---------------------------------------------------------------------------
 // Entities
 // ---------------------------------------------------------------------------
@@ -252,25 +291,10 @@ Player_Entity :: entity @runtime_only {
     body_yaw:          f32              @Networked
 
     health:            i32              @Networked
-    ammo:              i32              @Networked
-    active_weapon_id:  Weapon = .Knife  @Networked
 
     death_tick:        u32              @Networked
     last_fire_tick:    u32              @Networked
     last_fire_weapon:  Weapon = .Knife  @Networked
-
-    // The SLOT inside last_fire_tick the trigger actually went down in, which
-    // refines that stamp to 0.26ms (shared/subtick.hpp). Not a second copy of
-    // the moment -- the tick above is the only tick, and the two are read
-    // together as subtick_time(last_fire_tick, last_fire_slot). A whole second
-    // stamp could disagree with the first; a refinement cannot.
-    //
-    // Server-only on purpose. Its one consumer is the fire-interval gate, which
-    // runs inside the server's step loop. The client's consumer of
-    // last_fire_tick is weapon_fire_audio, a change detector on a wire that has
-    // no grid finer than a tick, so replicating this would cost bytes per
-    // player per snapshot for a reader that cannot use them.
-    last_fire_slot:    u8
 
     // WHEN the in-flight reload finishes, in sub-tick time; 0 means not
     // reloading. A DEADLINE rather than a start stamp, because the duration is
@@ -294,14 +318,53 @@ Player_Entity :: entity @runtime_only {
     // Feeds remote-player interpolation.
     velocity:          v3               @Networked
 
+    inventory:         Inventory
+
     render:            Render = { mesh = .Leet_Full }
     team_allegiance: Team_Allegiance = .Free_For_All @Networked
 }
 
 // this is supposed to be a thing you pick up.
+//
+// REPLICATED as of the inventory work: entity_snapshot.cpp carries a map for
+// these, so the two flags below are live rather than the inert pair TODO.md
+// used to name. The client needs ammo -- it is the HUD's number and one of the
+// gates play_predicted_local_gunshot re-runs -- and ammo belongs to the weapon,
+// so the weapon is what has to arrive.
 Weapon_Entity :: entity {
+    // THE magazine. Was Player_Entity::ammo, one field for every weapon, which
+    // is why switching had to hand out a fresh magazine to keep "ammo is the
+    // held weapon's count" true -- a free instant reload on every keypress.
     ammo:             i32               @Networked
     weapon_id:        Weapon            @Networked
+
+    // Whose inventory this is in; null_entity_uid means lying in the world.
+    // The BACK-reference: Player_Entity::inventory.weapons is the authoritative
+    // list, and this is what lets a weapon answer for itself -- teardown walks
+    // it rather than trusting a player it may no longer belong to.
+    //
+    // NOT replicated, though the entity now is. The client resolves through the
+    // forward list like the server does, so nothing over there reads this; a
+    // @Networked here would be a second copy of the ownership edge on the wire
+    // with no reader, which is exactly the inert flag TODO.md is about. A world
+    // model on someone else's back is what would earn it.
+    owner_uid:        u32
+
+    // WHEN this weapon may next fire, in sub-tick time; 0 means immediately.
+    // A deadline, not a last-fire stamp, so the interval is applied by the shot
+    // that knows which weapon it came from.
+    //
+    // Per WEAPON, and it keeps running while holstered -- that is the whole
+    // point. One clock per player meant the interval of whatever was in hand
+    // was measured from whatever fired last, so firing a Scout delayed a Knife
+    // swing and vice versa. The player-wide gate that DOES exist is
+    // Inventory::deploy_complete_time, and the two are not the same thing.
+    //
+    // Server-only. The client re-runs this gate for its own predicted gunshot
+    // audio, but off its own predicted clock -- a tick-granular copy on the
+    // wire would be a second answer that could disagree with this one.
+    next_fire_time:   u64
+
     render:           Render
 }
 

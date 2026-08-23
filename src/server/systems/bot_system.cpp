@@ -1,6 +1,7 @@
 #include "../../shared/player_constants.hpp"
 #include "../../shared/entities/entity_reflection.hpp"
 #include "bot_system.hpp"
+#include "inventory_system.hpp"
 
 #include "../entity_lifecycle.hpp"
 #include "respawn_system.hpp"
@@ -33,10 +34,15 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
   {
     bot->client_slot_index = slot;
 
+    // A bot is a player with no client, so it carries what a player carries --
+    // and the fire gate reads the inventory, so one without weapons could not
+    // shoot at all.
+    grant_default_inventory(session, bot_uid);
+
     // The same placement a human gets -- a bot IS a Player_Entity, so it gets
     // the marker's orientation, view angles and body_yaw too, not just its
     // position.
-    place_player_at_spawn(*bot, marker);
+    place_player_at_spawn(session, *bot, marker);
 
     register_kinematic_capsule(physics,
                                bot_uid,
@@ -312,7 +318,7 @@ void update_bots(server_context_t &context,
           // Bots never reach the human fire path in server_impl.cpp, so they
           // have to stamp the shot themselves or a bot shoots silently on
           // every client. The weapon is written out rather than read from
-          // active_weapon_id because a bot's is whatever it spawned with while
+          // inventory.active_weapon because a bot's is whatever it spawned with while
           // this path always launches a rocket -- latch what actually fired.
           bot_ent->last_fire_tick   = current_tick;
           bot_ent->last_fire_weapon = entities::Weapon::Rocket_Launcher;

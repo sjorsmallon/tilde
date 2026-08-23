@@ -24,8 +24,10 @@ struct Client_Transport_Layer
   Address server_address;
 
   // Incoming fragments awaiting reassembly, keyed by header.message_id; each
-  // value is a vector sized to that message's fragment_count.
-  std::map<uint8, std::vector<Packet>> partial_packets;
+  // value holds a vector sized to that message's fragment_count and the time its
+  // last fragment landed. Buckets are expired by poll_client_network -- see
+  // Partial_Message in packet.hpp for why that is mandatory rather than tidy.
+  std::map<uint8, Partial_Message> partial_packets;
 
   // Rolling counter passed to convert_to_packets() so each logical message the
   // client sends gets a distinct message_id (see packet.hpp).
@@ -56,6 +58,24 @@ struct Client_Inbox
   // the two above.
   std::vector<std::vector<uint8>> cvar_value_messages;
 };
+
+// clear() per member rather than `= {}` on the whole struct: this is refilled
+// from scratch every frame, and assigning would free and re-grow every vector's
+// capacity each time -- the allocation churn keeping the inbox on the context
+// exists to avoid. Same trade, and same reason, as the server's clear_incoming.
+inline void clear_client_inbox(Client_Inbox &inbox)
+{
+  inbox.net_commands.clear();
+  inbox.entity_updates.clear();
+  inbox.server_text_messages.clear();
+  inbox.bot_debug_updates.clear();
+  inbox.shot_debug_updates.clear();
+  inbox.game_event_batches.clear();
+  inbox.effect_batches.clear();
+  inbox.change_map_messages.clear();
+  inbox.map_data_messages.clear();
+  inbox.cvar_value_messages.clear();
+}
 
 template <typename T>
 inline void send_protobuf_message(Client_Transport_Layer &state, const T &msg)
@@ -170,11 +190,15 @@ inline bool reassemble_fragment(Client_Transport_Layer &state,
                                 const Packet &packet,
                                 std::vector<uint8> &out_payload)
 {
-  std::vector<Packet> &fragments =
-      state.partial_packets[packet.header.message_id];
+  Partial_Message &message = state.partial_packets[packet.header.message_id];
+  std::vector<Packet> &fragments = message.fragments;
 
   if (fragments.empty())
     fragments.resize(packet.header.fragment_count);
+
+  // Every arrival refreshes the bucket, so a transfer that is progressing at any
+  // rate at all is never expired out from under itself.
+  message.last_fragment_time = std::chrono::steady_clock::now();
 
   // A fragment_index past the end means this packet disagrees with the
   // fragment_count the bucket was sized from — corrupt or forged. Ignore the
@@ -209,23 +233,34 @@ inline bool reassemble_fragment(Client_Transport_Layer &state,
 
 } // namespace detail
 
+// Drains what the kernel has queued for us and returns.
+//
+// Reception is asynchronous -- the network stack fills the socket queue while we
+// render -- so sitting in this loop does not make packets arrive sooner. It only
+// decides how much of an already-arrived backlog we take now versus next frame.
+// We therefore stop the instant the queue is empty, which is the normal exit.
+//
+// max_datagrams is a livelock guard and nothing else: the queue is finite, so a
+// real backlog always fits well inside it (see receive_drain_cap_in_datagrams),
+// and only a sender refilling it as fast as we empty it can reach the cap.
+// Deliberately NOT logged: the sole condition that trips it is a sustained
+// flood, and complaining once per frame would add our own disk I/O to a machine
+// already being overwhelmed.
 inline void poll_client_network(Client_Transport_Layer &state,
-                                double time_window, Client_Inbox &out_inbox)
+                                size_t max_datagrams, Client_Inbox &out_inbox)
 {
-  using clock = std::chrono::high_resolution_clock;
-  const clock::time_point start_time = clock::now();
-  const std::chrono::duration<double> timeout(time_window);
+  expire_stale_partial_messages(state.partial_packets, "client");
 
   // Reused across iterations so a completed message costs at most one
   // allocation, and usually none.
   std::vector<uint8> payload;
 
-  while (clock::now() - start_time < timeout)
+  for (size_t drained = 0; drained < max_datagrams; ++drained)
   {
     Packet packet;
     Address sender;
     if (!state.socket.receive(packet, sender))
-      continue;
+      break; // the kernel queue is empty -- nothing more has arrived yet
 
     if (sender != state.server_address)
       continue;
@@ -247,8 +282,9 @@ inline void poll_client_network(Client_Transport_Layer &state,
       // bucket it lands in is created and freed inside that one call. Not
       // completing means the bucket was already occupied by a stale, never
       // completed message that reused this message_id (the counter is a uint8
-      // and wraps every 256 sends), so the whole message was just eaten. Say so
-      // rather than dropping it on the floor.
+      // and wraps every 256 sends), so the whole message was just eaten. The
+      // expiry pass above bounds how long that can persist; it cannot prevent
+      // the collision itself. Say so rather than dropping it on the floor.
       log_error("message type {} (id {}) arrived unfragmented but did not "
                 "reassemble — its message_id bucket still holds an incomplete "
                 "message; the payload was dropped",

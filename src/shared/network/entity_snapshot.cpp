@@ -123,6 +123,7 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
 {
   const uint32_t record_count =
       count_records(current.players, baseline ? &baseline->players : nullptr) +
+      count_records(current.weapons, baseline ? &baseline->weapons : nullptr) +
       count_records(current.rockets, baseline ? &baseline->rockets : nullptr) +
       count_records(current.physics_bodies,
                     baseline ? &baseline->physics_bodies : nullptr);
@@ -130,6 +131,7 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
   write_var_uint(writer, record_count);
 
   write_records(writer, current.players, baseline ? &baseline->players : nullptr);
+  write_records(writer, current.weapons, baseline ? &baseline->weapons : nullptr);
   write_records(writer, current.rockets, baseline ? &baseline->rockets : nullptr);
   write_records(writer, current.physics_bodies,
                 baseline ? &baseline->physics_bodies : nullptr);
@@ -143,12 +145,14 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
   if (baseline != nullptr)
   {
     out_frame.players        = baseline->players;
+    out_frame.weapons        = baseline->weapons;
     out_frame.rockets        = baseline->rockets;
     out_frame.physics_bodies = baseline->physics_bodies;
   }
   else
   {
     out_frame.players.clear();
+    out_frame.weapons.clear();
     out_frame.rockets.clear();
     out_frame.physics_bodies.clear();
   }
@@ -171,6 +175,11 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
           return false;
         continue;
 
+      case entities::entity_type::Weapon_Entity:
+        if (!apply_record(reader, out_frame.weapons, uid, removed))
+          return false;
+        continue;
+
       case entities::entity_type::Rocket_Entity:
         if (!apply_record(reader, out_frame.rockets, uid, removed))
           return false;
@@ -189,7 +198,6 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
       // here, and the compiler is what says so.
       case entities::entity_type::Invalid:
       case entities::entity_type::Player_Spawn_Entity:
-      case entities::entity_type::Weapon_Entity:
       case entities::entity_type::Player_Spectate_Entity:
       case entities::entity_type::Particle_Emitter_Entity:
       case entities::entity_type::Trigger_Volume_Entity:

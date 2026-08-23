@@ -107,6 +107,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
   for (const auto& [uid, player] : decoded.frame.players)
     context.replication.latest_player_entities[player.client_slot_index] = player;
 
+  context.replication.latest_weapon_entities = decoded.frame.weapons;
   context.replication.remote_rockets = decoded.frame.rockets;
   context.replication.remote_physics_bodies = decoded.frame.physics_bodies;
   context.replication.latest_processed_tick = server_tick;

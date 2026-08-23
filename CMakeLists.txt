@@ -492,6 +492,7 @@ add_library(game_client SHARED
     src/client/hud/kill_feed.cpp
     src/client/hud/crosshair.cpp
     src/client/hud/announcement.cpp
+    src/client/hud/deploy_timer.cpp
     # The render clock and sample rings behind remote interpolation. Its own TU
     # so remote_interpolation_test can compile it with no device (see ui/font.cpp,
     # same reason).
@@ -524,6 +525,7 @@ add_library(game_client SHARED
     src/client/editor/entity_inspector.cpp
     src/client/editor/entity_editor_traits.cpp
     src/client/editor/geometry_editor.cpp
+    src/client/editor/map_cvars_panel.cpp
     src/client/input.cpp
     src/client/geometry_renderer.cpp
     src/client/render_assets.cpp
@@ -583,6 +585,7 @@ add_library(game_server SHARED
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
     src/server/systems/physics_body_system.cpp
+    src/server/systems/inventory_system.cpp
     src/server/systems/respawn_system.cpp
 )
 target_include_directories(game_server PUBLIC src/server)
@@ -648,6 +651,12 @@ target_link_libraries(file_watcher_test PRIVATE game_shared)
 add_executable(network_test src/test/test_network_serialization.cpp)
 target_include_directories(network_test PRIVATE src)
 target_link_libraries(network_test PRIVATE game_shared)
+
+# 12b. Paced bulk transfer + reassembly bucket expiry (the two halves of making
+# a map download converge over UDP).
+add_executable(paced_transfer_test src/test/paced_transfer_test.cpp)
+target_include_directories(paced_transfer_test PRIVATE src)
+target_link_libraries(paced_transfer_test PRIVATE game_shared)
 
 # 13. UDP Socket Test
 add_executable(udp_socket_test src/test/test_udp_socket.cpp)
@@ -739,7 +748,9 @@ target_link_libraries(navmesh_test PRIVATE game_shared)
 # memcmp diffing) and derived-to-base conversion, which the inheritance layout
 # was chosen to preserve.
 add_executable(entity_layout_test src/test/entity_layout_test.cpp ${ENTITY_GEN_SOURCE}
-                                  ${ASSET_GEN_SOURCE})
+                                  ${ASSET_GEN_SOURCE}
+                                  src/shared/entities/entity_reflection.cpp
+                                  src/shared/reflection.cpp)
 target_include_directories(entity_layout_test PRIVATE src/shared)
 
 
@@ -806,6 +817,15 @@ add_executable(server_context_test src/test/server_context_test.cpp
     src/server/systems/game_rules_system.cpp)
 target_include_directories(server_context_test PRIVATE src src/shared src/server)
 target_link_libraries(server_context_test PRIVATE game_shared)
+
+# 26b. Per-weapon fire clocks -- the inventory and the gate that reads it.
+add_executable(inventory_test src/test/inventory_test.cpp
+    src/server/systems/inventory_system.cpp
+    src/server/entity_lifecycle.cpp
+    src/server/server_context.cpp
+    src/server/systems/game_rules_system.cpp)
+target_include_directories(inventory_test PRIVATE src src/shared src/server)
+target_link_libraries(inventory_test PRIVATE game_shared)
 
 # 27. Player move step invariance — one tick of dt vs N sub-steps of dt/N.
 # Step 2 of subtick_plan.md, and the prerequisite for sub-tick rather than a
@@ -888,6 +908,7 @@ set(GAME_TESTS
     linalg_test
     file_watcher_test
     network_test
+    paced_transfer_test
     udp_socket_test
     server_loop_test
     session_test
@@ -907,6 +928,7 @@ set(GAME_TESTS
     lag_compensation_test
     array_test
     server_context_test
+    inventory_test
     events_test
     ui_test
     player_move_step_invariance_test

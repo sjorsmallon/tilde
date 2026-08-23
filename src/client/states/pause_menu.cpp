@@ -41,10 +41,11 @@ ui::list_menu_t build_pause_menu(linalg::vec2 screen_size)
   for (uint32_t index = 0; index < PAUSE_MENU_ITEM_COUNT; ++index)
     labels[index] = PAUSE_MENU_ROWS.values[index].label;
 
-  return ui::build_list_menu(labels, pause_menu_style(), screen_size);
+  return ui::build_list_menu(labels, pause_menu_style(), screen_size,
+                             renderer::display_scale());
 }
 
-std::optional<pause_menu_item_t> update_pause_menu(ui::list_menu_t &menu,
+std::optional<pause_menu_item_t> process_pause_menu_input(ui::list_menu_t &menu,
                                                    const ui::ui_input_t &input,
                                                    float delta_seconds, linalg::vec2 screen_size)
 {

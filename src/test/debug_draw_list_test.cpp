@@ -10,11 +10,13 @@
 // `main` unless told not to. This test owns its own entry point.
 #define SDL_MAIN_HANDLED
 
+#include "client/hitbox_debug_draw.hpp"
 #include "client/renderer.hpp"
 
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 using client::renderer::debug_draw_list_t;
 
@@ -141,6 +143,119 @@ void test_clear_drops_everything()
   std::cout << "test_clear_drops_everything passed" << std::endl;
 }
 
+// The hit-volume faces are wound counter-clockwise seen from OUTSIDE
+// (HOUSE_FRONT_FACE), and NOTHING IN THE GAME SHOWS IT: the overlay pipeline is
+// CULL_MODE_NONE, so a volume wound inside-out draws identically today. That is
+// precisely why it is tested here rather than looked at -- the day a face
+// pipeline starts culling, or a shader reads a real normal instead of an
+// absolute one, a silent wrong winding becomes a bug with no visible cause.
+//
+// The check is the definition: every volume is convex, so a polygon faces
+// outward exactly when its normal points away from any interior point.
+void assert_faces_wound_outward(const assets::posed_hitbox_t &hitbox,
+                                const linalg::vec3f &interior, const char *what)
+{
+  uint32_t polygons = 0;
+
+  const auto face = [&](Span<const linalg::vec3f> corners, color_t) {
+    assert(corners.size() >= 3);
+    ++polygons;
+
+    const linalg::vec3f normal =
+        linalg::cross(corners[1] - corners[0], corners[2] - corners[1]);
+
+    linalg::vec3f centroid{0, 0, 0};
+    for (const linalg::vec3f &corner : corners)
+      centroid = centroid + corner;
+    centroid = centroid * (1.0f / (float)corners.size());
+
+    // Not normalized on either side: only the SIGN is the claim, and a
+    // degenerate polygon would divide by zero to make a nicer-looking assert.
+    const float outward = linalg::dot(normal, centroid - interior);
+    if (outward <= 0.0f)
+    {
+      std::cout << "  " << what << ": a face is wound inward (" << outward << ")" << std::endl;
+      assert(false);
+    }
+  };
+
+  client::draw_posed_hitbox_faces(face, hitbox, colors::white);
+  assert(polygons > 0);
+}
+
+void test_hitbox_faces_are_wound_outward()
+{
+  assets::posed_hitbox_t sphere;
+  sphere.shape  = assets::hitbox_shape_t::Sphere;
+  sphere.start  = {3, -2, 1};
+  sphere.radius = 0.4f;
+  assert_faces_wound_outward(sphere, sphere.start, "sphere");
+
+  // Deliberately off every world axis, so basis_around's seed choice and the
+  // ring winding are exercised together rather than landing on a lucky case.
+  assets::posed_hitbox_t capsule;
+  capsule.shape  = assets::hitbox_shape_t::Capsule;
+  capsule.start  = {0.2f, 1.0f, -0.3f};
+  capsule.end    = {-0.6f, 1.7f, 0.9f};
+  capsule.radius = 0.25f;
+  assert_faces_wound_outward(capsule, capsule.center(), "capsule");
+
+  // The same axis, so the only difference under test is the flat discs the
+  // rounded caps are replaced by -- which are the one place the winding is
+  // reversed by hand.
+  assets::posed_hitbox_t cylinder = capsule;
+  cylinder.shape                  = assets::hitbox_shape_t::Cylinder;
+  assert_faces_wound_outward(cylinder, cylinder.center(), "cylinder");
+
+  // A ROTATED frame, or all six rows of the face table would be checked against
+  // an axis-aligned box that cannot tell right from forward.
+  assets::posed_hitbox_t box;
+  box.shape        = assets::hitbox_shape_t::Box;
+  box.start        = {1, 2, 3};
+  box.end          = {1, 2, 3};
+  box.half_extents = {0.3f, 0.5f, 0.2f};
+  box.frame        = {linalg::normalize(linalg::vec3f{1, 1, 0}),
+                      linalg::normalize(linalg::vec3f{-1, 1, 0}), {0, 0, 1}};
+  assert_faces_wound_outward(box, box.center(), "box");
+
+  std::cout << "test_hitbox_faces_are_wound_outward passed" << std::endl;
+}
+
+// A capsule's faces have to sit on the same surface its wireframe traces, or the
+// rings float off the shape they are drawn on. Both come out of the shared
+// HITBOX_RING_SEGMENTS, so this is really a check that the parametrisation of
+// the two agrees -- every face corner is exactly `radius` from the volume's
+// medial segment.
+void test_hitbox_face_corners_lie_on_the_surface()
+{
+  assets::posed_hitbox_t capsule;
+  capsule.shape  = assets::hitbox_shape_t::Capsule;
+  capsule.start  = {0.2f, 1.0f, -0.3f};
+  capsule.end    = {-0.6f, 1.7f, 0.9f};
+  capsule.radius = 0.25f;
+
+  const auto face = [&](Span<const linalg::vec3f> corners, color_t) {
+    for (const linalg::vec3f &corner : corners)
+    {
+      const float outside = assets::distance_outside_hitbox(capsule, corner);
+      assert(outside < 1e-4f); // never OUTSIDE the volume it bounds
+
+      // ...and never inside it either: a corner pulled in would be a face that
+      // does not reach the wireframe ring drawn at the same angle.
+      const linalg::vec3f along   = capsule.end - capsule.start;
+      const float         squared = linalg::dot(along, along);
+      float t = linalg::dot(corner - capsule.start, along) / squared;
+      t       = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+      const float distance = linalg::length(corner - (capsule.start + along * t));
+      assert(std::fabs(distance - capsule.radius) < 1e-4f);
+    }
+  };
+
+  client::draw_posed_hitbox_faces(face, capsule, colors::white);
+
+  std::cout << "test_hitbox_face_corners_lie_on_the_surface passed" << std::endl;
+}
+
 } // namespace
 
 int main()
@@ -150,6 +265,8 @@ int main()
   test_retire_compacts_the_polygon_pool();
   test_compositions_bottom_out_in_lines();
   test_clear_drops_everything();
+  test_hitbox_faces_are_wound_outward();
+  test_hitbox_face_corners_lie_on_the_surface();
 
   std::cout << "All debug_draw_list tests passed!" << std::endl;
   return 0;

@@ -116,7 +116,7 @@ struct Move_Events
 //
 // `debug_faces`, if non-null AND debug_show_collisions is set, receives the
 // contact face polygons this tick. Null means record nothing. Only the CLIENT
-// passes a sink: recording happens in shared code but the drawing is
+// passes a bucket: recording happens in shared code but the drawing is
 // client-side, so a server-side recording has no reader (see debug_collision.hpp).
 //
 // `bvh` is STATIC geometry, and taking nothing else about the world is
@@ -145,4 +145,4 @@ std::tuple<vec3, vec3> player_move(
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const float half_width, const float half_height,
     const float dt, Move_Events *out_events = nullptr,
-    debug_collision::Face_Sink *debug_faces = nullptr);
+    debug_collision::Face_Bucket *debug_faces = nullptr);

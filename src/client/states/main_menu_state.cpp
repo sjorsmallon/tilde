@@ -41,7 +41,8 @@ static_assert(rows_in_enum_order<&main_menu_row_t::item>(MAIN_MENU_ROWS));
   // Every style member left at its default: this screen is the one the widget's
   // defaults were taken from, and a menu that restates them would just be a
   // second place to change them.
-  return ui::build_list_menu(labels, ui::list_menu_style_t{}, screen_size);
+  return ui::build_list_menu(labels, ui::list_menu_style_t{}, screen_size,
+                             renderer::display_scale());
 }
 
 // This screen's own bound value -- the widget writes the rects and the tints,

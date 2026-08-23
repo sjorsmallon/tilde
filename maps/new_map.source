@@ -3,6 +3,13 @@ entity
   "classname" "worldspawn"
   "name" "new_map.source"
 }
+cvars
+{
+  "g_gravity" "220"
+  "pm_air_acceleration" "7"
+  "pm_friction" "5"
+  "pm_maxspeed" "340"
+}
 box
 {
   "_uid" "4"

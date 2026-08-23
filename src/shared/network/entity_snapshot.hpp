@@ -88,6 +88,12 @@ struct snapshot_frame_t
   uint32_t tick = 0;
 
   std::unordered_map<shared::entity_uid_t, entities::Player_Entity>       players;
+  // A player's inventory, one entity per carried weapon. Spawned in the SAME
+  // tick as its owner, which is what makes a frame self-consistent: a frame
+  // reassembles or is dropped whole, so a player and the weapons its
+  // inventory names arrive together and `weapons[active_weapon]` can never
+  // resolve to an entity this receiver has not seen.
+  std::unordered_map<shared::entity_uid_t, entities::Weapon_Entity>       weapons;
   std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity>       rockets;
   std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> physics_bodies;
 
@@ -95,6 +101,7 @@ struct snapshot_frame_t
   {
     tick = 0;
     players.clear();
+    weapons.clear();
     rockets.clear();
     physics_bodies.clear();
   }

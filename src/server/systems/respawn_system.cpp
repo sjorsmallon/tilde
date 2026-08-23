@@ -1,6 +1,8 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "respawn_system.hpp"
 
+#include "inventory_system.hpp"
+
 #include "../../shared/events/generated/events_generated.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/player_constants.hpp"
@@ -29,7 +31,7 @@ const entities::Player_Spawn_Entity& origin_fallback_spawn()
 }
 
 // Declared in respawn_system.hpp — see there for why this takes the marker.
-void place_player_at_spawn(entities::Player_Entity &player,
+void place_player_at_spawn(shared::game_session_t &session, entities::Player_Entity &player,
                            const entities::Player_Spawn_Entity &marker)
 {
   player.position    = marker.position;
@@ -48,12 +50,15 @@ void place_player_at_spawn(entities::Player_Entity &player,
   // Back to alive: this is what stops clients drawing the death clip.
   player.death_tick = 0;
 
-  // A fresh magazine and no reload in flight. Both are accumulators like
+  // Fresh magazines and no reload in flight. Both are accumulators like
   // body_yaw above: a corpse dies mid-reload, and a spawn that leaves the
   // deadline standing hands the new body a reload it never started -- or, worse,
   // one whose deadline has already passed, which the next shot silently
   // completes into a full magazine.
-  player.ammo = shared::get_weapon_definition(player.active_weapon_id).magazine_size;
+  //
+  // Magazines are plural now: one per carried weapon, plus each one's fire
+  // clock and the deploy gate, all of which refill_inventory clears.
+  refill_inventory(session, player);
   player.reload_complete_time = 0;
 }
 
@@ -100,13 +105,17 @@ try_pick_human_spawn(shared::game_session_t &session, uint32_t rotation_index)
 
 void update_respawns(server_context_t &context,
                      uint32_t current_tick,
-                     uint32_t tickrate_hz)
+                     uint32_t tickrate_hz,
+                     const float respawn_delay_seconds)
 {
   if (context.world.death_tick_by_player_uid.empty())
     return;
 
-  const uint32_t delay_ticks =
-      static_cast<uint32_t>(respawn_delay_seconds * static_cast<float>(tickrate_hz));
+  // Clamped because the value comes from a cvar, and a map or a console can
+  // hand us a negative one: a negative delay means "as soon as possible", and
+  // casting it to uint32_t would mean the opposite by a wide margin.
+  const uint32_t delay_ticks = static_cast<uint32_t>(
+      std::max(0.f, respawn_delay_seconds) * static_cast<float>(tickrate_hz));
 
   // Collect uids to respawn this tick. Two-pass so we can erase from the
   // map without invalidating the iteration over it.
@@ -141,7 +150,8 @@ void update_respawns(server_context_t &context,
                 "respawning player uid {} at origin",
                 static_cast<uint64_t>(uid));
 
-    place_player_at_spawn(*player, marker ? *marker : origin_fallback_spawn());
+    place_player_at_spawn(context.world.session, *player,
+                          marker ? *marker : origin_fallback_spawn());
 
     // Move the kinematic Jolt capsule so subsequent overlap/swept queries
     // this tick (rocket splash, trigger volumes) see the player at the new

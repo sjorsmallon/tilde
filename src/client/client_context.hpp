@@ -220,11 +220,36 @@ struct prediction_t
   // state member it survived a disconnect, so you rejoined still zoomed.
   bool zoom_active = false;
 
-  // Real seconds since our own last predicted gunshot, for re-running the
-  // server's fire-rate gate locally (weapons.hpp is shared, so it is the same
-  // number). Audio only -- the authoritative limit is the server's
-  // last_fire_tick -- but it is per-connection like the health above it.
-  float seconds_since_local_fire = 0.f;
+  // Real seconds since our own last predicted gunshot, PER WEAPON, for
+  // re-running the server's fire-rate gate locally (weapons.hpp is shared, so
+  // it is the same number). Audio only -- the authoritative limit is the
+  // server's -- but it is per-connection like the health above it.
+  //
+  // Keyed by weapon because the SERVER's clock is: Weapon_Entity::next_fire_time
+  // is per weapon and runs while holstered. One float here was the client half
+  // of exactly the bug the inventory work fixed on the server, and it would now
+  // be a second answer that disagrees -- swinging a Knife would silence a Scout
+  // the server is perfectly willing to fire.
+  //
+  // Starts at zero, which reads as "fired just now" for one interval after a
+  // connect. That is the safe direction: this gate can only suppress a sound,
+  // never invent one, and the first shot of a session is the server's answer
+  // anyway.
+  Enum_Array<entities::Weapon, float> seconds_since_local_fire = {};
+
+  // Real seconds left on our own predicted weapon switch, or 0 when none is
+  // running -- the client half of Inventory::deploy_complete_time.
+  //
+  // PREDICTED rather than replicated for the same reason the reload clock below
+  // is: the deadline is a sub-tick value on a wire with no grid finer than a
+  // tick, and the reader wants "how long left", which a client that pressed the
+  // key already knows a round trip sooner than the server can say it.
+  //
+  // Unlike the two clocks around it this one is also DRAWN -- see
+  // cl_show_deploy_timer and hud/deploy_timer.hpp -- so a disagreement with the
+  // server is visible rather than merely audible. It is still not simulation:
+  // being wrong costs a wrong number on screen and a wrong bang, never a desync.
+  float seconds_until_local_deploy_complete = 0.f;
 
   // Real seconds left on our own predicted reload, or 0 when none is running.
   //
@@ -368,6 +393,13 @@ struct replication_t
   // separate because the rest of the client wants "the current world", not
   // "frame N".
   std::unordered_map<int32_t, entities::Player_Entity> latest_player_entities;
+  // Every weapon in the world, keyed by uid -- ours and everyone else's, since
+  // the server has no relevance filtering. Resolved through our own
+  // Player_Entity::inventory.weapons, the same forward list the server uses,
+  // rather than by scanning for one whose owner_uid is us: deriving the
+  // inventory from the back-reference is a second answer to "what am I
+  // carrying" and the two are free to disagree.
+  std::unordered_map<shared::entity_uid_t, entities::Weapon_Entity> latest_weapon_entities;
   std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> remote_rockets;
   // Physics bodies received from server. State is replaced wholesale each
   // snapshot — no interpolation yet (see todo.md). Renders correctly in
@@ -415,7 +447,7 @@ struct visual_effects_t
 
   // Client only, since the server cannot visualize. Filled by player_move
   // during prediction, drawn and cleared in build_frame.
-  debug_collision::Face_Sink debug_collision_faces;
+  debug_collision::Face_Bucket debug_collision_faces;
 };
 
 struct client_context_t
@@ -430,6 +462,13 @@ struct client_context_t
 
   const shared::game_session_t* server_session = nullptr;
   ::network::Client_Transport_Layer transport_layer;
+
+  // One frame's drained messages. Not reset-scoped: it is refilled from scratch
+  // and fully consumed every frame, and lives here only so its vectors keep
+  // their capacity instead of reallocating at the frame rate. Reassembly state
+  // is NOT here -- it is transport_layer.partial_packets, a stratum down, which
+  // is what lets a fragmented message span as many frames as it needs.
+  ::network::Client_Inbox incoming;
 
   ::network::Address requested_server_address =
       ::network::Address(127, 0, 0, 1, ::network::server_port_number);

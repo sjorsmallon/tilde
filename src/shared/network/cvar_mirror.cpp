@@ -126,21 +126,26 @@ bool apply_cvar_values(cvars::cvar_state_t&         state,
   return all_applied;
 }
 
-void revert_mirrored_cvars_to_defaults(cvars::cvar_state_t& state)
+void revert_cvars_to_defaults(cvars::cvar_state_t& state, Span<const cvars::cvar_id> ids)
 {
   // cvar_state_t's member initializers ARE the cvars.def defaults, so a
-  // default-constructed one is the authority on what "no server has told us"
+  // default-constructed one is the authority on what "nobody has told us"
   // means. Static because it is immutable and identical on every call.
   static const cvars::cvar_state_t defaults{};
 
   // Byte-copied through the same offset/size pair collect_changed compares
-  // through, so the two cannot disagree about what a mirrored value IS.
-  for (cvars::cvar_id id : cvars::mirrored_cvars())
+  // through, so the two cannot disagree about what a value IS.
+  for (cvars::cvar_id id : ids)
   {
     const cvars::cvar_info_t& info = cvars::cvar_info(id);
     std::memcpy(mutable_value_bytes(state, info), value_bytes(defaults, info),
                 info.size);
   }
+}
+
+void revert_mirrored_cvars_to_defaults(cvars::cvar_state_t& state)
+{
+  revert_cvars_to_defaults(state, cvars::mirrored_cvars());
 }
 
 } // namespace shared

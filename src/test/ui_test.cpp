@@ -830,7 +830,7 @@ void test_list_menu_rows_layout_and_activate()
   style.highlight_slide_seconds = 0.0f;
 
   const linalg::vec2 screen_size = {800.0f, 600.0f};
-  list_menu_t        menu        = client::ui::build_list_menu(labels, style, screen_size);
+  list_menu_t        menu = client::ui::build_list_menu(labels, style, screen_size, 1.0f);
 
   assert(menu.row_count() == 3);
 
@@ -870,6 +870,24 @@ void test_list_menu_rows_layout_and_activate()
   miss.pointer_position = {700.0f, 500.0f};
   miss.pointer_activate = true;
   assert(!client::ui::update_list_menu(menu, miss, screen_size));
+
+  // The SAME style at 2x display scale puts every length at twice the pixels,
+  // which is the whole DPI contract: a screen authors logical units once and
+  // they hold on a denser display. Colours and durations are not lengths and
+  // must not move.
+  const list_menu_t scaled = client::ui::build_list_menu(labels, style, screen_size, 2.0f);
+
+  assert(std::fabs(scaled.style.width - style.width * 2.0f) < 0.01f);
+  assert(std::fabs(scaled.style.row_height - style.row_height * 2.0f) < 0.01f);
+  assert(std::fabs(scaled.style.label_inset - style.label_inset * 2.0f) < 0.01f);
+  assert(std::fabs(scaled.style.highlight_bar_width - style.highlight_bar_width * 2.0f) < 0.01f);
+  assert(scaled.style.row_idle_color.r == style.row_idle_color.r);
+  assert(std::fabs(scaled.style.highlight_slide_seconds - style.highlight_slide_seconds) < 0.01f);
+
+  const ui_rect_t scaled_second = client::ui::resolve_node(scaled.screen, scaled.rows[1]).rect;
+  assert(std::fabs(scaled_second.min.x - 40.0f) < 0.01f);
+  assert(std::fabs(scaled_second.min.y - 80.0f) < 0.01f);
+  assert(std::fabs(scaled_second.max.y - 160.0f) < 0.01f);
 
   std::cout << "test_list_menu_rows_layout_and_activate passed" << std::endl;
 }

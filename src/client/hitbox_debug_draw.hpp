@@ -1,15 +1,27 @@
 #pragma once
 
-// Wireframes for the posed hit volumes, in ONE place because two callers draw
-// them: the Animation tool (over the preview model, through an
-// overlay_renderer_t) and the in-game overlay (over a remote player, through
-// renderer::draw_line). Two copies would be two chances for the tool to show a
-// shape the game does not.
+// Wireframes AND solid faces for the posed hit volumes, in ONE place because
+// three callers draw them: the Animation tool (over the preview model, through
+// an overlay_renderer_t), the in-game overlay (over a remote player) and the
+// shot-debug diff. Two copies would be two chances for the tool to show a shape
+// the game does not.
 //
-// Everything here is line segments, so the only thing a caller supplies is
-// somewhere to put a line -- any `void(const vec3f& start, const vec3f& end,
-// color_t)` callable. That is what lets one implementation serve two sinks that
-// share no base class.
+// A caller supplies somewhere to put geometry -- a BUCKET, which is any callable
+// of the right shape. That is what lets one implementation serve callers that
+// share no base class:
+//
+//   Line_Bucket   void(const vec3f& start, const vec3f& end, color_t)
+//   Face_Bucket   void(Span<const vec3f> convex_polygon, color_t)
+//
+// A face bucket is handed CONVEX polygons wound counter-clockwise seen from
+// OUTSIDE (renderer::HOUSE_FRONT_FACE), so it can be fed straight to
+// debug_draw_list_t::filled_polygon, which fan-decomposes.
+//
+// Edges and faces are two buckets and not one call because they want different
+// colours and very different alpha -- the whole readable overlay is a solid edge
+// over a barely-there face -- and because a caller may want only one of them
+// (the shot-debug diff draws two whole skeletons at once, where faces would be
+// mush).
 //
 // The volumes must already be in the space being drawn in; see
 // shared::compute_player_hitboxes for the world-space placement.
@@ -19,11 +31,21 @@
 #include "../shared/hitbox_rig.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/log.hpp"
+#include "../shared/span.hpp"
 
 #include <cmath>
 
 namespace client
 {
+
+// Longitude segments in every ring, wire and solid alike. ONE constant on
+// purpose: a face ring coarser than the wire ring sitting on it reads as the
+// wireframe floating off its own surface.
+constexpr uint32_t HITBOX_RING_SEGMENTS = 16;
+
+// Latitude bands per hemispherical cap. Three is where a capsule end stops
+// reading as a cone.
+constexpr uint32_t HITBOX_CAP_BANDS = 3;
 
 // Damage region, not volume: ten volumes share three colours, so a forearm that
 // costs Torso damage reads as one at a glance.
@@ -38,31 +60,55 @@ inline color_t hit_region_color(shared::hit_region_t region)
   }
 }
 
-template <typename Line_Sink>
-void draw_wire_circle(const Line_Sink &line, const linalg::vec3f &center, float radius,
-                      const linalg::vec3f &normal, color_t color)
+// An orthonormal pair spanning the plane perpendicular to `axis`, right-handed
+// in the order (side, up, axis) -- which is what makes every winding rule below
+// come out outward-facing with no per-shape sign.
+struct hitbox_basis_t
 {
-  constexpr uint32_t SEGMENTS = 16;
+  linalg::vec3f side;
+  linalg::vec3f up;
+};
 
-  const linalg::vec3f axis = linalg::normalize(normal);
+inline hitbox_basis_t basis_around(const linalg::vec3f &axis)
+{
+  // Any vector not parallel to the axis works; picking the world axis the shape
+  // is least aligned with keeps the cross product well conditioned.
   const linalg::vec3f seed =
       std::fabs(axis.y) < 0.9f ? linalg::vec3f{0, 1, 0} : linalg::vec3f{1, 0, 0};
   const linalg::vec3f side = linalg::normalize(linalg::cross(axis, seed));
-  const linalg::vec3f up   = linalg::cross(axis, side);
+  return {side, linalg::cross(axis, side)};
+}
 
-  linalg::vec3f previous = center + side * radius;
-  for (uint32_t step = 1; step <= SEGMENTS; ++step)
+inline float hitbox_ring_angle(uint32_t step)
+{
+  return (float)step / (float)HITBOX_RING_SEGMENTS * 2.0f * linalg::PI;
+}
+
+inline linalg::vec3f hitbox_ring_point(const linalg::vec3f &center, const hitbox_basis_t &basis,
+                                       float radius, float angle)
+{
+  return center + basis.side * (std::cos(angle) * radius) + basis.up * (std::sin(angle) * radius);
+}
+
+// --- Wireframe ---
+
+template <typename Line_Bucket>
+void draw_wire_circle(const Line_Bucket &line, const linalg::vec3f &center, float radius,
+                      const linalg::vec3f &normal, color_t color)
+{
+  const hitbox_basis_t basis = basis_around(linalg::normalize(normal));
+
+  linalg::vec3f previous = hitbox_ring_point(center, basis, radius, 0.0f);
+  for (uint32_t step = 1; step <= HITBOX_RING_SEGMENTS; ++step)
   {
-    const float         angle = (float)step / (float)SEGMENTS * 2.0f * linalg::PI;
-    const linalg::vec3f point =
-        center + side * (std::cos(angle) * radius) + up * (std::sin(angle) * radius);
+    const linalg::vec3f point = hitbox_ring_point(center, basis, radius, hitbox_ring_angle(step));
     line(previous, point, color);
     previous = point;
   }
 }
 
-template <typename Line_Sink>
-void draw_wire_sphere(const Line_Sink &line, const linalg::vec3f &center, float radius,
+template <typename Line_Bucket>
+void draw_wire_sphere(const Line_Bucket &line, const linalg::vec3f &center, float radius,
                       color_t color)
 {
   // Three great circles -- enough to read as a sphere from any angle.
@@ -75,8 +121,8 @@ void draw_wire_sphere(const Line_Sink &line, const linalg::vec3f &center, float 
 // two differ only in the caps -- a capsule gets rings THROUGH the ends so they
 // read as rounded, a cylinder does not, which is the whole visible difference
 // and also the whole difference in the hit test.
-template <typename Line_Sink>
-void draw_wire_tube(const Line_Sink &line, const linalg::vec3f &start, const linalg::vec3f &end,
+template <typename Line_Bucket>
+void draw_wire_tube(const Line_Bucket &line, const linalg::vec3f &start, const linalg::vec3f &end,
                     float radius, bool rounded_caps, color_t color)
 {
   const linalg::vec3f along  = end - start;
@@ -87,31 +133,26 @@ void draw_wire_tube(const Line_Sink &line, const linalg::vec3f &start, const lin
     return;
   }
 
-  const linalg::vec3f axis = along * (1.0f / length);
-
-  // Any vector not parallel to the axis works; picking the world axis the tube
-  // is least aligned with keeps the cross product well conditioned.
-  const linalg::vec3f seed =
-      std::fabs(axis.y) < 0.9f ? linalg::vec3f{0, 1, 0} : linalg::vec3f{1, 0, 0};
-  const linalg::vec3f side = linalg::normalize(linalg::cross(axis, seed));
-  const linalg::vec3f up   = linalg::cross(axis, side);
+  const linalg::vec3f  axis  = along * (1.0f / length);
+  const hitbox_basis_t basis = basis_around(axis);
 
   draw_wire_circle(line, start, radius, axis, color);
   draw_wire_circle(line, end, radius, axis, color);
 
-  for (const linalg::vec3f &offset : {side * radius, side * -radius, up * radius, up * -radius})
+  for (const linalg::vec3f &offset :
+       {basis.side * radius, basis.side * -radius, basis.up * radius, basis.up * -radius})
     line(start + offset, end + offset, color);
 
   if (rounded_caps)
   {
-    draw_wire_circle(line, start, radius, side, color);
-    draw_wire_circle(line, end, radius, up, color);
+    draw_wire_circle(line, start, radius, basis.side, color);
+    draw_wire_circle(line, end, radius, basis.up, color);
   }
 }
 
 // An ORIENTED box: twelve edges built from the volume's own axes.
-template <typename Line_Sink>
-void draw_wire_oriented_box(const Line_Sink &line, const linalg::vec3f &center,
+template <typename Line_Bucket>
+void draw_wire_oriented_box(const Line_Bucket &line, const linalg::vec3f &center,
                             const assets::hitbox_frame_t &frame,
                             const linalg::vec3f &half_extents, color_t color)
 {
@@ -132,8 +173,9 @@ void draw_wire_oriented_box(const Line_Sink &line, const linalg::vec3f &center,
         line(corners[from], corners[from | bit], color);
 }
 
-template <typename Line_Sink>
-void draw_posed_hitbox(const Line_Sink &line, const assets::posed_hitbox_t &hitbox, color_t color)
+template <typename Line_Bucket>
+void draw_posed_hitbox(const Line_Bucket &line, const assets::posed_hitbox_t &hitbox,
+                       color_t color)
 {
   switch (hitbox.shape)
   {
@@ -148,6 +190,160 @@ void draw_posed_hitbox(const Line_Sink &line, const assets::posed_hitbox_t &hitb
       break;
     case assets::hitbox_shape_t::Box:
       draw_wire_oriented_box(line, hitbox.center(), hitbox.frame, hitbox.half_extents, color);
+      break;
+    default:
+      log_warning("[hitbox] unknown shape {}", (uint32_t)hitbox.shape);
+      break;
+  }
+}
+
+// --- Solid faces ---
+
+// A hemisphere around `axis`: latitude 0 is the equator ring, latitude pi/2 the
+// pole at center + axis * radius. The polar band is a triangle rather than a
+// quad with two coincident corners, so nothing downstream fans a zero-area
+// triangle.
+template <typename Face_Bucket>
+void draw_solid_cap(const Face_Bucket &face, const linalg::vec3f &center, float radius,
+                    const linalg::vec3f &axis, color_t color)
+{
+  const hitbox_basis_t basis = basis_around(axis);
+
+  const auto point = [&](uint32_t band, uint32_t step) {
+    const float latitude = (float)band / (float)HITBOX_CAP_BANDS * 0.5f * linalg::PI;
+    const float angle    = hitbox_ring_angle(step);
+    return center + (basis.side * (std::cos(angle) * std::cos(latitude)) +
+                     basis.up * (std::sin(angle) * std::cos(latitude)) +
+                     axis * std::sin(latitude)) *
+                        radius;
+  };
+
+  const linalg::vec3f pole = center + axis * radius;
+
+  for (uint32_t band = 0; band < HITBOX_CAP_BANDS; ++band)
+    for (uint32_t step = 0; step < HITBOX_RING_SEGMENTS; ++step)
+    {
+      const linalg::vec3f lower_start = point(band, step);
+      const linalg::vec3f lower_end   = point(band, step + 1);
+
+      if (band + 1 == HITBOX_CAP_BANDS)
+      {
+        const linalg::vec3f triangle[3] = {lower_start, lower_end, pole};
+        face(Span<const linalg::vec3f>(triangle, 3), color);
+        continue;
+      }
+
+      const linalg::vec3f quad[4] = {lower_start, lower_end, point(band + 1, step + 1),
+                                     point(band + 1, step)};
+      face(Span<const linalg::vec3f>(quad, 4), color);
+    }
+}
+
+template <typename Face_Bucket>
+void draw_solid_sphere(const Face_Bucket &face, const linalg::vec3f &center, float radius,
+                       color_t color)
+{
+  draw_solid_cap(face, center, radius, {0, 1, 0}, color);
+  draw_solid_cap(face, center, radius, {0, -1, 0}, color);
+}
+
+template <typename Face_Bucket>
+void draw_solid_tube(const Face_Bucket &face, const linalg::vec3f &start, const linalg::vec3f &end,
+                     float radius, bool rounded_caps, color_t color)
+{
+  const linalg::vec3f along  = end - start;
+  const float         length = linalg::length(along);
+  if (length < 1e-4f)
+  {
+    draw_solid_sphere(face, start, radius, color);
+    return;
+  }
+
+  const linalg::vec3f  axis  = along * (1.0f / length);
+  const hitbox_basis_t basis = basis_around(axis);
+
+  for (uint32_t step = 0; step < HITBOX_RING_SEGMENTS; ++step)
+  {
+    const float angle_start = hitbox_ring_angle(step);
+    const float angle_end   = hitbox_ring_angle(step + 1);
+
+    const linalg::vec3f quad[4] = {hitbox_ring_point(start, basis, radius, angle_start),
+                                   hitbox_ring_point(start, basis, radius, angle_end),
+                                   hitbox_ring_point(end, basis, radius, angle_end),
+                                   hitbox_ring_point(end, basis, radius, angle_start)};
+    face(Span<const linalg::vec3f>(quad, 4), color);
+  }
+
+  if (rounded_caps)
+  {
+    draw_solid_cap(face, end, radius, axis, color);
+    draw_solid_cap(face, start, radius, axis * -1.0f, color);
+    return;
+  }
+
+  // Flat discs. A ring is convex, so each is one polygon the bucket fans itself;
+  // the start disc is wound backwards because its outward normal is -axis.
+  linalg::vec3f disc[HITBOX_RING_SEGMENTS];
+  for (uint32_t step = 0; step < HITBOX_RING_SEGMENTS; ++step)
+    disc[step] = hitbox_ring_point(end, basis, radius, hitbox_ring_angle(step));
+  face(Span<const linalg::vec3f>(disc, HITBOX_RING_SEGMENTS), color);
+
+  for (uint32_t step = 0; step < HITBOX_RING_SEGMENTS; ++step)
+    disc[step] =
+        hitbox_ring_point(start, basis, radius, hitbox_ring_angle(HITBOX_RING_SEGMENTS - step));
+  face(Span<const linalg::vec3f>(disc, HITBOX_RING_SEGMENTS), color);
+}
+
+// Bit 0 is +right, bit 1 is +up, bit 2 is +forward -- the same corner indexing
+// draw_wire_oriented_box uses, so the edges and the faces cannot disagree about
+// which corner is which.
+template <typename Face_Bucket>
+void draw_solid_oriented_box(const Face_Bucket &face, const linalg::vec3f &center,
+                             const assets::hitbox_frame_t &frame,
+                             const linalg::vec3f &half_extents, color_t color)
+{
+  linalg::vec3f corners[8];
+  for (uint32_t index = 0; index < 8; ++index)
+  {
+    const float x  = (index & 1) ? half_extents.x : -half_extents.x;
+    const float y  = (index & 2) ? half_extents.y : -half_extents.y;
+    const float z  = (index & 4) ? half_extents.z : -half_extents.z;
+    corners[index] = center + frame.right * x + frame.up * y + frame.forward * z;
+  }
+
+  // Each row is wound counter-clockwise seen from OUTSIDE, so
+  // cross(b - a, c - b) is the outward normal.
+  static constexpr uint32_t FACES[6][4] = {
+      {1, 3, 7, 5}, {0, 4, 6, 2}, // +right,   -right
+      {2, 6, 7, 3}, {0, 1, 5, 4}, // +up,      -up
+      {4, 5, 7, 6}, {0, 2, 3, 1}, // +forward, -forward
+  };
+
+  for (const uint32_t *quad : FACES)
+  {
+    const linalg::vec3f face_corners[4] = {corners[quad[0]], corners[quad[1]], corners[quad[2]],
+                                           corners[quad[3]]};
+    face(Span<const linalg::vec3f>(face_corners, 4), color);
+  }
+}
+
+template <typename Face_Bucket>
+void draw_posed_hitbox_faces(const Face_Bucket &face, const assets::posed_hitbox_t &hitbox,
+                             color_t color)
+{
+  switch (hitbox.shape)
+  {
+    case assets::hitbox_shape_t::Sphere:
+      draw_solid_sphere(face, hitbox.start, hitbox.radius, color);
+      break;
+    case assets::hitbox_shape_t::Capsule:
+      draw_solid_tube(face, hitbox.start, hitbox.end, hitbox.radius, true, color);
+      break;
+    case assets::hitbox_shape_t::Cylinder:
+      draw_solid_tube(face, hitbox.start, hitbox.end, hitbox.radius, false, color);
+      break;
+    case assets::hitbox_shape_t::Box:
+      draw_solid_oriented_box(face, hitbox.center(), hitbox.frame, hitbox.half_extents, color);
       break;
     default:
       log_warning("[hitbox] unknown shape {}", (uint32_t)hitbox.shape);

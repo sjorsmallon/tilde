@@ -520,6 +520,67 @@ void test_mixed_batch_delete()
   std::cout << "Mixed Batch Delete Passed." << std::endl;
 }
 
+void test_map_cvars()
+{
+  std::cout << "Testing Map Cvars..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  // Add.
+  {
+    transaction_builder_t builder;
+    builder.add_map_cvars_modified(map.attached_cvars, {"g_gravity 200"});
+    map.attached_cvars = {"g_gravity 200"};
+    ts.push(builder.take());
+  }
+
+  // Edit the value.
+  {
+    transaction_builder_t builder;
+    builder.add_map_cvars_modified(map.attached_cvars, {"g_gravity 120"});
+    map.attached_cvars = {"g_gravity 120"};
+    ts.push(builder.take());
+  }
+
+  assert(map.attached_cvars.size() == 1);
+  assert(map.attached_cvars[0] == "g_gravity 120");
+
+  ts.undo(map);
+  assert(map.attached_cvars[0] == "g_gravity 200");
+  ts.undo(map);
+  assert(map.attached_cvars.empty());
+
+  ts.redo(map);
+  assert(map.attached_cvars[0] == "g_gravity 200");
+  ts.redo(map);
+  assert(map.attached_cvars[0] == "g_gravity 120");
+
+  // An edit that changes nothing must not push an entry the author has to undo
+  // twice -- clicking into a value box and back out is not an edit.
+  {
+    transaction_builder_t builder;
+    builder.add_map_cvars_modified(map.attached_cvars, map.attached_cvars);
+    assert(builder.diffs.empty());
+  }
+
+  // The list is independent of the object lists: undoing a cvar edit must not
+  // disturb geometry, and vice versa.
+  {
+    const entity_uid_t box_uid = map.add_geometry(make_test_box(1.f));
+
+    transaction_builder_t builder;
+    builder.add_map_cvars_modified(map.attached_cvars, {});
+    map.attached_cvars = {};
+    ts.push(builder.take());
+
+    ts.undo(map);
+    assert(map.attached_cvars.size() == 1);
+    assert(map.has_object(box_uid));
+  }
+
+  std::cout << "Map Cvars Passed." << std::endl;
+}
+
 int main()
 {
   test_add_remove();
@@ -533,6 +594,7 @@ int main()
   test_geometry_modify_thresholds();
   test_geometry_displacement_grid();
   test_mixed_batch_delete();
+  test_map_cvars();
   std::cout << "All Transaction Logic Tests Passed." << std::endl;
   return 0;
 }

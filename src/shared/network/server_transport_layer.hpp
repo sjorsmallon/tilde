@@ -44,6 +44,16 @@ struct ServerInbox
   std::vector<std::pair<int, std::vector<uint8>>> map_data_requests;
 };
 
+// One bulk message in flight to one peer, handed out a few fragments at a time.
+// Pure transport: it knows a byte range and a rate, never what the bytes mean.
+struct Outbound_Transfer
+{
+  std::vector<Packet> fragments;
+  size_t next_fragment_index = 0;
+
+  bool in_progress() const { return next_fragment_index < fragments.size(); }
+};
+
 // How bytes reach each peer, one entry per slot, and nothing about what they
 // mean. The client's counterpart is Client_Transport_Layer; game-level
 // connection state (who is in a slot, what they are doing) lives in the
@@ -63,9 +73,18 @@ struct Server_Transport_Layer
   // that bytes showed up.
   std::array<uint32_t, sv_max_client_count> latest_packet_tick{};
 
-  // Packet reassembly only
-  std::array<std::map<uint8, std::vector<Packet>>, sv_max_client_count>
+  // Packet reassembly only. Buckets are expired by poll_network -- see
+  // Partial_Message in packet.hpp for why that is mandatory rather than tidy.
+  std::array<std::map<uint8, Partial_Message>, sv_max_client_count>
       partial_packets{};
+
+  // Bulk messages being fed to the socket a few fragments per tick instead of
+  // all at once. This is the flow control UDP does not have, and it is the
+  // sender-side half of the problem: a whole map package is up to 255 datagrams,
+  // and handing them to the socket in one loop overruns the receiver's kernel
+  // queue -- most are discarded before its first recvfrom, and NO receive-side
+  // change can recover them. Pacing is what makes a download converge.
+  std::array<Outbound_Transfer, sv_max_client_count> outbound_transfers{};
 
   // Rolling counter passed to convert_to_packets() so each logical message the
   // server sends gets a distinct message_id (see packet.hpp). One counter for
@@ -97,6 +116,7 @@ inline void release_client_slot(Server_Transport_Layer &transport_layer,
   transport_layer.addresses[slot] = {};
   transport_layer.slot_occupied[slot] = false;
   transport_layer.partial_packets[slot].clear();
+  transport_layer.outbound_transfers[slot] = {};
   transport_layer.latest_packet_tick[slot] = 0;
 }
 
@@ -111,141 +131,207 @@ inline void occupy_client_slot(Server_Transport_Layer &transport_layer,
   transport_layer.addresses[slot] = address;
   transport_layer.byte_buffers[slot] = {};
   transport_layer.partial_packets[slot].clear();
+  transport_layer.outbound_transfers[slot] = {};
   transport_layer.latest_packet_tick[slot] = current_tick;
 }
 
+// Fragments `payload` and queues it for paced delivery to one peer, REPLACING
+// whatever that slot was already sending.
+//
+// Replacing rather than queueing is deliberate: the only caller is a re-request,
+// and a client re-requests precisely because it gave up on the previous attempt
+// and stopped reassembling it. Finishing the old transfer would spend the link
+// on bytes nobody is collecting.
+inline void begin_paced_transfer(Server_Transport_Layer &state, int32_t slot,
+                                 const std::vector<uint8> &payload,
+                                 uint8 message_type)
+{
+  Outbound_Transfer &transfer = state.outbound_transfers[slot];
+
+  if (transfer.in_progress())
+    log_warning("slot {} re-requested a bulk message while {} of {} fragments of "
+                "the previous one were still unsent; restarting the transfer",
+                slot, transfer.fragments.size() - transfer.next_fragment_index,
+                transfer.fragments.size());
+
+  transfer.fragments =
+      convert_to_packets(payload, message_type, state.next_message_id);
+  transfer.next_fragment_index = 0;
+}
+
+// Hands every in-progress transfer its next few fragments. Call once per tick.
+//
+// fragments_per_tick is the rate knob: at 60Hz, 8 fragments is ~576 KB/s, which
+// a receiver draining once per frame absorbs without ever letting its queue grow
+// past a frame's worth. Raising it trades download time for the risk of
+// outrunning a slow or busy client.
+inline void service_paced_transfers(Server_Transport_Layer &state,
+                                    Udp_Socket &socket,
+                                    size_t fragments_per_tick)
+{
+  for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
+  {
+    if (!state.slot_occupied[slot])
+      continue;
+
+    Outbound_Transfer &transfer = state.outbound_transfers[slot];
+    if (!transfer.in_progress())
+      continue;
+
+    const size_t send_through = std::min(
+        transfer.next_fragment_index + fragments_per_tick, transfer.fragments.size());
+
+    for (; transfer.next_fragment_index < send_through; ++transfer.next_fragment_index)
+      socket.send(transfer.fragments[transfer.next_fragment_index], state.addresses[slot]);
+
+    // Freed on completion so in_progress() is the whole answer to "is this slot
+    // still downloading" and nothing has to track a separate done flag.
+    if (!transfer.in_progress())
+    {
+      log_terminal("Finished streaming {} fragments to slot {}.",
+                   transfer.fragments.size(), slot);
+      transfer = {};
+    }
+  }
+}
+
+// Drains what the kernel has queued for us and returns. The client's
+// poll_client_network is the same shape and carries the reasoning; the one
+// difference here is that this socket takes every peer's traffic rather than one
+// connection's, so its cap is derived from the larger server buffer.
 inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
-                         double time_window_seconds, uint32_t current_tick,
+                         size_t max_datagrams, uint32_t current_tick,
                          ServerInbox &out_inbox)
 {
-  using clock = std::chrono::high_resolution_clock;
-  auto start_time = clock::now();
-  auto timeout = std::chrono::duration<double>(time_window_seconds);
+  for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
+    if (state.slot_occupied[slot])
+      expire_stale_partial_messages(state.partial_packets[slot], "server");
 
-  while (true)
+  for (size_t drained = 0; drained < max_datagrams; ++drained)
   {
-    auto now = clock::now();
-    if (now - start_time >= timeout)
-      break;
-
     Packet packet;
     Address sender;
-    if (socket.receive(packet, sender))
+    if (!socket.receive(packet, sender))
+      break; // the kernel queue is empty -- nothing more has arrived yet
+
+    if (packet.header.message_type ==
+        static_cast<uint8>(Message_Type::NetCommand))
     {
-      if (packet.header.message_type ==
-          static_cast<uint8>(Message_Type::NetCommand))
+      // For now, assume NetCommands are single-packet for simplicity
+      // regarding unknown senders. Or use a temporary buffer. Since Connect
+      // is small, strict single-packet check.
+      if (packet.header.fragment_count == 1)
       {
-        // For now, assume NetCommands are single-packet for simplicity
-        // regarding unknown senders. Or use a temporary buffer. Since Connect
-        // is small, strict single-packet check.
-        if (packet.header.fragment_count == 1)
+        game::NetCommand cmd;
+        if (cmd.ParseFromArray(packet.buffer, packet.header.payload_size))
         {
-          game::NetCommand cmd;
-          if (cmd.ParseFromArray(packet.buffer, packet.header.payload_size))
-          {
-            out_inbox.net_commands.push_back({sender, cmd});
-          }
+          out_inbox.net_commands.push_back({sender, cmd});
         }
       }
+    }
 
-      const std::optional<int32_t> sender_slot =
-          try_find_client_slot(state, sender);
-      if (!sender_slot)
+    const std::optional<int32_t> sender_slot =
+        try_find_client_slot(state, sender);
+    if (!sender_slot)
+    {
+      // Not connected yet — maybe they want to join.
+      // Deduplicate? For now, just add.
+      out_inbox.potential_joins.push_back(sender);
+      continue;
+    }
+    const int32_t client_slot = *sender_slot;
+    state.latest_packet_tick[client_slot] = current_tick;
+
+    // Store packet fragment
+    Partial_Message &message =
+        state.partial_packets[client_slot][packet.header.message_id];
+    auto &fragments = message.fragments;
+
+    // Resize if this is the first fragment seen for this message
+    if (fragments.empty())
+    {
+      fragments.resize(packet.header.fragment_count);
+    }
+
+    // Every arrival refreshes the bucket, so a transfer that is progressing at
+    // any rate at all is never expired out from under itself.
+    message.last_fragment_time = std::chrono::steady_clock::now();
+    // Ensure we don't overflow if fragment_count changed (malicious/buggy?)
+    if (packet.header.fragment_index < fragments.size())
+    {
+      fragments[packet.header.fragment_index] = packet;
+    }
+
+    // Check if complete
+    bool complete = true;
+    size_t total_payload = 0;
+    for (const auto &frag : fragments)
+    {
+      if (frag.header.fragment_count == 0)
       {
-        // Not connected yet — maybe they want to join.
-        // Deduplicate? For now, just add.
-        out_inbox.potential_joins.push_back(sender);
-        continue;
+        complete = false;
+        break;
       }
-      const int32_t client_slot = *sender_slot;
-      state.latest_packet_tick[client_slot] = current_tick;
+      total_payload += frag.header.payload_size;
+    }
 
-      // Store packet fragment
-      auto &fragments =
-          state.partial_packets[client_slot][packet.header.message_id];
-
-      // Resize if this is the first fragment seen for this message
-      if (fragments.empty())
-      {
-        fragments.resize(packet.header.fragment_count);
-      }
-      // Ensure we don't overflow if fragment_count changed (malicious/buggy?)
-      if (packet.header.fragment_index < fragments.size())
-      {
-        fragments[packet.header.fragment_index] = packet;
-      }
-
-      // Check if complete
-      bool complete = true;
-      size_t total_payload = 0;
+    if (complete)
+    {
+      // Reassemble
+      std::vector<uint8> buffer;
+      buffer.reserve(total_payload);
       for (const auto &frag : fragments)
       {
-        if (frag.header.fragment_count == 0)
-        {
-          complete = false;
-          break;
-        }
-        total_payload += frag.header.payload_size;
+        buffer.insert(buffer.end(), frag.buffer,
+                      frag.buffer + frag.header.payload_size);
       }
 
-      if (complete)
+      // Parse
+      if (packet.header.message_type ==
+          static_cast<uint8>(Message_Type::C2S_ClientInputBatch))
       {
-        // Reassemble
-        std::vector<uint8> buffer;
-        buffer.reserve(total_payload);
-        for (const auto &frag : fragments)
+        // Every move the client has not seen acked, oldest first. Most of
+        // them are usually duplicates of inputs already run; the input loop's
+        // `input_number <= latest_processed_input_number` check is what makes
+        // that free, so nothing is deduplicated here.
+        game::C2S_ClientInputBatch batch;
+        if (batch.ParseFromArray(buffer.data(), buffer.size()))
         {
-          buffer.insert(buffer.end(), frag.buffer,
-                        frag.buffer + frag.header.payload_size);
+          for (const game::C2S_ClientInput& input : batch.inputs())
+            out_inbox.inputs.push_back({client_slot, input});
         }
-
-        // Parse
-        if (packet.header.message_type ==
-            static_cast<uint8>(Message_Type::C2S_ClientInputBatch))
+        else
         {
-          // Every move the client has not seen acked, oldest first. Most of
-          // them are usually duplicates of inputs already run; the input loop's
-          // `input_number <= latest_processed_input_number` check is what makes
-          // that free, so nothing is deduplicated here.
-          game::C2S_ClientInputBatch batch;
-          if (batch.ParseFromArray(buffer.data(), buffer.size()))
-          {
-            for (const game::C2S_ClientInput& input : batch.inputs())
-              out_inbox.inputs.push_back({client_slot, input});
-          }
-          else
-          {
-            log_error("poll_network: slot {} sent a move batch of {} bytes that "
-                      "would not parse — dropped",
-                      client_slot, buffer.size());
-          }
+          log_error("poll_network: slot {} sent a move batch of {} bytes that "
+                    "would not parse — dropped",
+                    client_slot, buffer.size());
         }
-        else if (packet.header.message_type ==
-                 static_cast<uint8>(Message_Type::C2S_Command))
-        {
-          game::C2S_Command cmd;
-          if (cmd.ParseFromArray(buffer.data(), buffer.size()))
-          {
-            out_inbox.commands.push_back({client_slot, cmd.line()});
-          }
-        }
-        else if (packet.header.message_type ==
-                 static_cast<uint8>(Message_Type::C2S_MapLoaded))
-        {
-          // Bitstream-native: keep the raw payload; server_impl decodes it with
-          // shared::deserialize_map_loaded() and matches the echoed hash.
-          out_inbox.map_loaded_acks.push_back({client_slot, buffer});
-        }
-        else if (packet.header.message_type ==
-                 static_cast<uint8>(Message_Type::C2S_RequestMapData))
-        {
-          // Bitstream-native: keep the raw payload; server_impl decodes it with
-          // shared::deserialize_request_map_data() and streams S2C_MapData back.
-          out_inbox.map_data_requests.push_back({client_slot, buffer});
-        }
-        // Message fully reassembled — drop its fragment buffer
-        state.partial_packets[client_slot].erase(packet.header.message_id);
       }
+      else if (packet.header.message_type ==
+               static_cast<uint8>(Message_Type::C2S_Command))
+      {
+        game::C2S_Command cmd;
+        if (cmd.ParseFromArray(buffer.data(), buffer.size()))
+        {
+          out_inbox.commands.push_back({client_slot, cmd.line()});
+        }
+      }
+      else if (packet.header.message_type ==
+               static_cast<uint8>(Message_Type::C2S_MapLoaded))
+      {
+        // Bitstream-native: keep the raw payload; server_impl decodes it with
+        // shared::deserialize_map_loaded() and matches the echoed hash.
+        out_inbox.map_loaded_acks.push_back({client_slot, buffer});
+      }
+      else if (packet.header.message_type ==
+               static_cast<uint8>(Message_Type::C2S_RequestMapData))
+      {
+        // Bitstream-native: keep the raw payload; server_impl decodes it with
+        // shared::deserialize_request_map_data() and streams S2C_MapData back.
+        out_inbox.map_data_requests.push_back({client_slot, buffer});
+      }
+      // Message fully reassembled — drop its fragment buffer
+      state.partial_packets[client_slot].erase(packet.header.message_id);
     }
   }
 }

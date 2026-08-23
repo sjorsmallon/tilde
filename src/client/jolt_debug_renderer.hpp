@@ -16,7 +16,7 @@ public:
 
     // Where the lines go. Null means "not drawing this frame" -- Jolt calls
     // DrawLine from inside its own traversal, so there is no return value to
-    // check and the sink has to be set before and cleared after.
+    // check and the bucket has to be set before and cleared after.
     void set_debug_list(renderer::debug_draw_list_t *debug) { debug_ = debug; }
 
     void DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::ColorArg color) override;

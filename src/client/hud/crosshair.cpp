@@ -6,15 +6,15 @@
 namespace client::hud
 {
 
-void draw_crosshair(renderer::ui_draw_list_t &list, linalg::vec2 screen,
+void draw_crosshair(renderer::ui_draw_list_t &list, linalg::vec2 screen, float display_scale,
                     const crosshair_settings_t &settings)
 {
   if (screen.x <= 0.f || screen.y <= 0.f) // degenerate (or minimized)
     return;
 
-  const float thickness  = std::max(settings.thickness, 1.f);
-  const float arm_length = std::max(settings.arm_length, 0.f);
-  const float gap        = std::max(settings.gap, 0.f);
+  const float thickness  = std::max(settings.thickness * display_scale, 1.f);
+  const float arm_length = std::max(settings.arm_length * display_scale, 0.f);
+  const float gap        = std::max(settings.gap * display_scale, 0.f);
 
   // align to whole pixels
   const float center_x = std::floor(screen.x * 0.5f);

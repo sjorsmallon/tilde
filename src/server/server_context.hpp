@@ -117,6 +117,14 @@ struct world_t
 
   std::unordered_map<shared::entity_uid_t, uint32_t> death_tick_by_player_uid;
   game_rules_state_t rules;
+
+  // Which cvars this map's attached_cvars list actually set. Ids, not values:
+  // unloading the map puts them back to the cvars.def defaults, and a third
+  // copy of the values would be a third thing that can disagree. This is why
+  // the cvars at the top of server_context_t are "nothing resets them" EXCEPT
+  // the named few a map claimed -- see
+  // reset_state_in_preparation_for_new_map_load.
+  std::vector<cvars::cvar_id> cvars_applied_by_map;
 };
 
 

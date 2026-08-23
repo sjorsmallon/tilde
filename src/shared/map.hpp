@@ -12,6 +12,7 @@
 #include <optional>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -50,8 +51,11 @@ struct map_t
 
   std::vector<map_entity_t> entities;
   std::vector<map_geometry_t> geometry;
+
+  // Console lines the server runs when this map loads ("sv_gravity 200"), one
+  // per cvar name -- per-map game settings.
   std::vector<std::string> attached_cvars;
-  
+
 
   // Populated by bake_map(). Loaded from a .navmesh sidecar alongside the map file.
   navmesh_t navmesh;
@@ -292,6 +296,22 @@ std::vector<Plane> compute_entity_collision_planes(const entities::Entity *entit
 
 // Returns polygon vertices for each face, parallel to compute_entity_collision_planes().
 std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const entities::Entity *entity);
+
+// --- The map's cvar list -----------------------------------------------------
+//
+// map_t::attached_cvars holds whole console lines ("g_gravity 200"), but the
+// file format and the editor panel both work in name/value pairs. These two are
+// the ONE split and the ONE join, so the writer, the reader and the panel cannot
+// disagree about where a name ends.
+
+struct cvar_line_t
+{
+  std::string name;
+  std::string value; // empty for a line that is nothing but a name
+};
+
+cvar_line_t split_cvar_line(std::string_view line);
+std::string make_cvar_line(std::string_view name, std::string_view value);
 
 // --- Uniform per-uid accessors over both regimes -----------------------------
 //

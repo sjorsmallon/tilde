@@ -78,7 +78,11 @@ void test_receive_and_reassembly()
 
   // Server Receive
   ServerInbox inbox;
-  poll_network(state, server_socket, 0.1, 140, inbox); // 100ms window
+  // The 50ms sleep above is what makes this deterministic: the datagrams are
+  // already queued, so the drain finds them and stops. The cap is the livelock
+  // guard, not a window to wait in.
+  poll_network(state, server_socket, server_receive_drain_cap_in_datagrams, 140,
+               inbox);
 
   // Verify
   if (inbox.inputs.empty())

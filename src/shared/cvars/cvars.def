@@ -156,6 +156,18 @@ Server :: cvars {
     // moves are dropped and the client rubber-bands. See server/move_budget.hpp
     // for why a per-tick cap does not bound the exploit at all.
     sv_max_move_backlog:    i32 = 8         @Server    "Move commands a client may bank and execute in one tick after a stall"
+
+    // UDP has no flow control, so a bulk send is bounded here or not at all. A
+    // map package is up to 255 datagrams; handed to the socket in one loop it
+    // overruns the receiver's kernel queue and most of it is discarded before
+    // the client's first recvfrom -- which no receive-side change can recover,
+    // and which made a download retry forever without ever converging.
+    //
+    // At 60Hz, 8 fragments is ~576 KB/s: fast enough that a map arrives in under
+    // a second, slow enough that a client draining once per frame never lets its
+    // queue grow past a frame's worth. This is the same knob Source spells
+    // sv_maxrate, in fragments rather than bytes because our fragments are fixed.
+    sv_map_transfer_fragments_per_tick: i32 = 8 @Server "Map-package fragments sent per client per tick"
 }
 
 Client :: cvars {
@@ -261,6 +273,14 @@ Client :: cvars {
     cl_aim_debug_pitch:     f32 = 0.0        @Client    "Aim blend pitch forced while cl_aim_debug is on, degrees"
     cl_aim_debug_yaw:       f32 = 0.0        @Client    "Aim blend yaw DEVIATION forced while cl_aim_debug is on, degrees"
 
+    // The deploy gate, on screen. A weapon switch blocks every weapon until the
+    // incoming one is up (Inventory::deploy_complete_time), and that is
+    // invisible from inside the game -- the shot simply does not happen, which
+    // is indistinguishable from a broken fire path at the only moment anyone
+    // looks. Off by default: it draws the CLIENT's predicted clock, which is a
+    // number, and a number on screen is not what a shipped HUD shows for this.
+    cl_show_deploy_timer:   bool = false     @Client    "Draw the seconds left on a weapon switch before anything may fire"
+
     // Crosshair. All pixel units, unscaled -- there is no UI scale factor in
     // the client yet, so these are literal framebuffer pixels.
     cl_crosshair:           bool = true      @Client    "Draw the crosshair"
@@ -313,6 +333,15 @@ Audio :: cvars {
     sound_max_distance_cutoff: f32 = 4000.0 @Client    "Distance (world units) past which 3D attenuation stops increasing"
     sound_rolloff_factor:      f32 = 1.0    @Client    "3D distance attenuation rolloff factor"
 }
+
+
+Map :: cvars {
+    map_respawn_delay_seconds: f32 = 3.0      @Mirrored    "Time between respawns."
+    map_kill_limit: i32 = 25                  @Mirrored    "Maximum amount of kills for a round."
+    map_round_time_limit_seconds: f32 = 6000  @Mirrored    "Maximum round duration limit."
+}
+
+
 
 // ---------------------------------------------------------------------------
 // Debugging -- was debug_collision.cpp and play_state.cpp

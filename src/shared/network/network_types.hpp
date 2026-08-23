@@ -173,4 +173,20 @@ constexpr auto server_port_number = 9999;
 // the second of replies. The server keys players by the address recvfrom
 // reports, so the client port never needs to be known in advance.
 
+// How much the KERNEL will hold for us between two drains. Reception is
+// asynchronous -- the NIC and the network stack fill this queue while the game
+// thread renders, and recvfrom only pops what is already there -- so the queue's
+// depth, not how long we sit in the receive loop, is what decides whether a
+// burst survives. Past it the kernel tail-drops silently, which is loss no
+// receive-side change can recover.
+//
+// The default (~64KB on Windows) holds roughly 50 of our 1200-byte packets: two
+// ticks of ordinary traffic, and a fraction of any bulk transfer.
+constexpr size_t client_receive_buffer_size_in_bytes = 512 * 1024;
+
+// Larger because the server has ONE socket for every peer, so its queue takes
+// the aggregate arrival rate rather than one connection's. A tick of a full
+// server is sv_max_client_count * 1200 bytes; this is roughly a 25-tick backlog.
+constexpr size_t server_receive_buffer_size_in_bytes = 1024 * 1024;
+
 } // namespace network

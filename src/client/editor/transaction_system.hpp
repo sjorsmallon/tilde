@@ -78,10 +78,22 @@ struct diff_geometry_modified_t
   shared::geometry_value_t after;
 };
 
+// --- The third entry flavor: the map's cvar list -----------------------------
+//
+// A whole-value swap like geometry, and for the same reason: attached_cvars is a
+// plain value with no schema, no uid and no fields to diff. The list is a
+// handful of short strings, so before/after copies cost nothing.
+
+struct diff_map_cvars_t
+{
+  std::vector<std::string> before;
+  std::vector<std::string> after;
+};
+
 using edit_diff_t =
     std::variant<diff_entity_created_t, diff_entity_removed_t, diff_entity_modified_t,
                  diff_geometry_created_t, diff_geometry_removed_t,
-                 diff_geometry_modified_t>;
+                 diff_geometry_modified_t, diff_map_cvars_t>;
 
 struct transaction_t
 {
@@ -189,6 +201,18 @@ struct transaction_builder_t
     diffs.push_back(diff_geometry_modified_t{uid, std::move(before), std::move(after)});
   }
 
+  // --- the map's cvar list ---
+
+  // Whole-list before/after. No-op when the panel's edit changed nothing, so
+  // clicking into a value box and back out doesn't push an empty transaction.
+  void add_map_cvars_modified(std::vector<std::string> before,
+                              std::vector<std::string> after)
+  {
+    if (before == after)
+      return;
+    diffs.push_back(diff_map_cvars_t{std::move(before), std::move(after)});
+  }
+
   transaction_t take()
   {
     transaction_t txn;
@@ -265,7 +289,9 @@ private:
             [&](const diff_geometry_removed_t &d)
             { map.remove_geometry(d.uid); },
             [&](const diff_geometry_modified_t &d)
-            { set_geometry_value(map, d.uid, d.after); }},
+            { set_geometry_value(map, d.uid, d.after); },
+            [&](const diff_map_cvars_t &d)
+            { map.attached_cvars = d.after; }},
         diff);
   }
 
@@ -284,7 +310,9 @@ private:
             [&](const diff_geometry_removed_t &d)
             { map.add_geometry_with_uid(d.uid, d.value); },
             [&](const diff_geometry_modified_t &d)
-            { set_geometry_value(map, d.uid, d.before); }},
+            { set_geometry_value(map, d.uid, d.before); },
+            [&](const diff_map_cvars_t &d)
+            { map.attached_cvars = d.before; }},
         diff);
   }
 

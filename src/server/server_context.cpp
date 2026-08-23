@@ -1,6 +1,7 @@
 #include "server_context.hpp"
 
 #include "../shared/log.hpp"
+#include "../shared/network/cvar_mirror.hpp"
 #include "systems/game_rules_system.hpp"
 
 // The one place that answers "what resets when, and why". Each group's presence
@@ -16,6 +17,17 @@ namespace server
 
 void reset_state_in_preparation_for_new_map_load(server_context_t& context)
 {
+  // The outgoing map's own settings, back to their defaults before the incoming
+  // map's list runs. A map's cvars are the MAP's for as long as it is loaded --
+  // without this, scoutzknivez's gravity follows you to the next map, and the
+  // @Mirrored half follows every connected client there too.
+  //
+  // Read BEFORE the wipe below, which owns the list. Only the cvars that map
+  // actually set are touched; everything else in cvar_state_t still lives for
+  // the process, which is why this is a named subset rather than a group reset.
+  if (context.cvars != nullptr)
+    shared::revert_cvars_to_defaults(*context.cvars, context.world.cvars_applied_by_map);
+
   // Session, the retained map, bots, trigger overlaps, pending deaths.
   //
   // This NULLS world.physics rather than rebuilding it: jolt_init() must have

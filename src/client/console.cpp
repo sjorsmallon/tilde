@@ -17,7 +17,7 @@ namespace client
 console::console()
 {
   memset(InputBuf, 0, sizeof(InputBuf));
-  history_position = -1;
+  history_position_cursor = -1;
   scroll_to_bottom = false;
   is_folded_open = true;
   should_draw = false;
@@ -91,7 +91,7 @@ void console::execute_command(const char *command_line)
   print("# %s", command_line);
 
   // Insert into history (if new)
-  history_position = -1;
+  history_position_cursor = -1;
   for (int i = (int)history.size() - 1; i >= 0; i--)
   {
     if (history[i] == command_line)
@@ -115,7 +115,7 @@ void console::execute_command(const char *command_line)
   // line arriving over the wire take identical paths. Ownership (run it here
   // vs. forward it) is decided inside, from the declared flags plus whether a
   // forwarder is installed.
-  std::string reply;
+  auto reply = std::string{};
   cvars::console_result_t result = cvars::execute_console_line(
       *cvar_state_, *command_table_, command_line, cvars::command_context_t{},
       &reply);
@@ -225,6 +225,60 @@ int console::TextEditCallback(ImGuiInputTextCallbackData *data)
         print("- %s", cand.c_str());
     }
   }
+  // support history up-downing.
+  if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory)
+  {
+    if (data->EventKey == ImGuiKey_UpArrow)
+    {
+      if (history_position_cursor == -1)
+      {
+         history_position_cursor = history.size() - 1;
+      }
+      else if (history_position_cursor > 0) 
+      {
+        history_position_cursor = history_position_cursor - 1;
+      }
+      if (history_position_cursor >= 0)
+      {
+          const std::string& history_entry = history[history_position_cursor];
+
+          data->DeleteChars(0, data->BufTextLen);
+          data->InsertChars(0, history_entry.c_str());
+      }
+      else
+      {
+          // Down past the newest history entry -> empty input
+          data->DeleteChars(0, data->BufTextLen);
+      }
+    }
+
+    if (data->EventKey == ImGuiKey_DownArrow)
+    {
+      if (history_position_cursor == -1)
+      {
+        // noop.
+      }
+      else
+      {
+        history_position_cursor = (history_position_cursor == history.size() - 1) ? -1 : history_position_cursor + 1;
+
+        if (history_position_cursor == -1)
+        {
+          // back to empty input.
+          data->DeleteChars(0, data->BufTextLen);
+
+        }
+        else
+        {
+          const std::string& history_entry = history[history_position_cursor];
+          data->DeleteChars(0, data->BufTextLen);
+          data->InsertChars(0, history_entry.c_str());
+        }
+        
+      }
+    }
+  }
+
   return 0;
 }
 

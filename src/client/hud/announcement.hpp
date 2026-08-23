@@ -24,6 +24,7 @@ void set_announcement(std::string_view text);
 void advance_announcement(announcement_t &announcement, float delta_seconds);
 
 void draw_announcement(renderer::ui_draw_list_t &list, const ui::ui_font_t &font,
-                       linalg::vec2 screen, const announcement_t &announcement);
+                       linalg::vec2 screen, float display_scale,
+                       const announcement_t &announcement);
 
 } // namespace client::hud

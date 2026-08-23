@@ -5,6 +5,7 @@
 #include "../console.hpp"
 #include "../hud/announcement.hpp"
 #include "../hud/crosshair.hpp"
+#include "../hud/deploy_timer.hpp"
 #include "../weapon_fire_audio.hpp"
 #include "../hit_confirm_audio.hpp"
 #include "../held_snapshot.hpp"
@@ -87,18 +88,6 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
   }
 }
 
-// Every button the server treats as "equip weapon N", as one mask.
-//
-// Spelled out rather than derived from Button::Subtick_Tracked: that set is
-// about which edges are worth a sub-tick slot, which is a different question
-// from which edges change the weapon, and conflating them would make Reload
-// cancel itself.
-static constexpr uint64_t weapon_select_buttons()
-{
-  return Button::Key0 | Button::Key1 | Button::Key2 | Button::Key3 | Button::Key4 |
-         Button::Key5 | Button::Key6 | Button::Key7 | Button::Key8 | Button::Key9;
-}
-
 // Our own gunshot. Played off the trigger EDGE inside the tick that carries it,
 // not off the server's replicated last_fire_tick a round trip later -- the one
 // sound where that delay is most audible, which is why update_weapon_fire_audio
@@ -120,6 +109,27 @@ static constexpr uint64_t weapon_select_buttons()
 // game-rules state the client does not have, so during a countdown this plays a
 // shot the server drops. Audible only, and it cannot desync anything -- no
 // state is predicted.
+// Our own active Weapon_Entity out of the last snapshot, or nullptr.
+//
+// The same resolution the server does -- `weapons[active_weapon]`, one index
+// into the stored forward list -- rather than a scan for a weapon claiming us
+// as its owner. FALLIBLE at every step for the reason everything decoded off
+// the wire is: active_weapon is an enum with no range check, and the uid it
+// selects is a number a packet chose. Callers want "no shot" out of that.
+static const entities::Weapon_Entity *
+try_find_active_weapon(const client_context_t &ctx, const entities::Player_Entity &player)
+{
+  const uint32_t *weapon_uid = player.inventory.weapons.try_get(player.inventory.active_weapon);
+  if (weapon_uid == nullptr || *weapon_uid == shared::null_entity_uid)
+    return nullptr;
+
+  const auto found = ctx.replication.latest_weapon_entities.find(*weapon_uid);
+  if (found == ctx.replication.latest_weapon_entities.end())
+    return nullptr;
+
+  return &found->second;
+}
+
 static void play_predicted_local_gunshot(client_context_t &ctx)
 {
   if (!ctx.audio)
@@ -129,32 +139,55 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
   if (my_entity == ctx.replication.latest_player_entities.end())
     return;
 
-  // active_weapon_id came off the wire, and enum fields are deserialized without
+  // inventory.active_weapon came off the wire, and enum fields are deserialized without
   // a range check, so it is looked up through try_fire_sound_for FIRST -- that
   // bounds-checks and logs. get_weapon_definition only asserts, which is nothing
   // in a release build, so it is reached only once the id is known good.
-  const entities::Weapon my_weapon = my_entity->second.active_weapon_id;
+  const entities::Weapon my_weapon = my_entity->second.inventory.active_weapon;
   const std::optional<assets::sound_asset> sound = try_fire_sound_for(my_weapon);
   if (!sound)
     return;
 
   const shared::weapon_definition_t &weapon = shared::get_weapon_definition(my_weapon);
-  if (ctx.prediction.seconds_since_local_fire < weapon.fire_interval_seconds)
+
+  // THIS WEAPON's clock, not the player's. The server's gate is
+  // Weapon_Entity::next_fire_time, which is per weapon and keeps running while
+  // holstered; one clock here would silence a Scout because a Knife just swung,
+  // which is the client half of the bug the inventory work fixed.
+  const float *seconds_since_this_weapon_fired =
+      ctx.prediction.seconds_since_local_fire.try_get(my_weapon);
+  if (seconds_since_this_weapon_fired == nullptr ||
+      *seconds_since_this_weapon_fired < weapon.fire_interval_seconds)
     return;
 
-  // An EMPTY magazine, off our own replicated ammo. A round trip stale in
-  // principle; not in practice, because the rate gate above is longer than any
-  // round trip we care about, so the count cannot have moved since the snapshot
-  // that carried it. A magazine_size of 0 is the knife, which has no magazine
-  // and is never empty.
-  if (weapon.magazine_size > 0 && my_entity->second.ammo <= 0)
+  // MID-DEPLOY. The server's second gate, and the one that belongs to the
+  // player rather than to any weapon: nothing fires until the weapon being
+  // raised is up.
+  if (ctx.prediction.seconds_until_local_deploy_complete > 0.f)
     return;
+
+  // An EMPTY magazine, off the replicated ammo of the WEAPON we are holding --
+  // that is where the magazine lives now, so switching no longer hands us a
+  // fresh one. A round trip stale in principle; not in practice, because the
+  // rate gate above is longer than any round trip we care about, so the count
+  // cannot have moved since the snapshot that carried it. A magazine_size of 0
+  // is the knife, which has no magazine and is never empty.
+  //
+  // A weapon we cannot resolve is a refusal, not an assert: it is one snapshot
+  // where the inventory named something we have not decoded, and the cost is
+  // one missing bang.
+  if (weapon.magazine_size > 0)
+  {
+    const entities::Weapon_Entity *held = try_find_active_weapon(ctx, my_entity->second);
+    if (held == nullptr || held->ammo <= 0)
+      return;
+  }
 
   // MID-RELOAD, off the local prediction rather than the server's deadline.
   if (ctx.prediction.seconds_until_local_reload_complete > 0.f)
     return;
 
-  ctx.prediction.seconds_since_local_fire = 0.f;
+  ctx.prediction.seconds_since_local_fire[my_weapon] = 0.f;
   ctx.audio->play_2d(*sound);
 }
 
@@ -399,7 +432,7 @@ void Play_State::on_enter()
     // to whichever socket bound first — the second client hangs on connect.
     // The server keys players by the address recvfrom reports, so it never
     // cares which port a client uses.
-    transport.socket.open(0);
+    transport.socket.open(0, network::client_receive_buffer_size_in_bytes);
   }
 
 
@@ -452,22 +485,27 @@ void Play_State::on_exit()
 
 }
 
+// to reiterate: input can be understood as a reaction on the previously presented frame.
+// input is gathered by a thread from hardware reads before entering this function, with the most precision that we can.
+// all edges (meaning: press / release) are recorded temporally.
 void Play_State::update(float dt)
 {
+  timed_function();
+  
   auto &ctx = state_manager::get_client_context();
 
   // first execute bound keys because the bound key could close the console.
   console::get().execute_pressed_bindings();
 
   // pause menu handling.
-  if (connection_ui.show_menu_overlay)
+  if (connection_ui.show_pause_menu)
   {
-    const std::optional<pause_menu_item_t> chosen = update_pause_menu(
+    const std::optional<pause_menu_item_t> chosen = process_pause_menu_input(
         pause_menu, ui::gather_ui_input(), dt, renderer::screen_size());
 
     if (chosen)
     {
-      connection_ui.show_menu_overlay = false;
+      connection_ui.show_pause_menu = false;
 
       switch (*chosen)
       {
@@ -490,10 +528,6 @@ void Play_State::update(float dt)
   }
   else
   {
-    // The menu owns the keyboard while it is up, so these live in its else
-    // rather than beside it: F1 used to jump to the editor from inside the
-    // pause menu, and U flipped mouse_captured underneath it -- invisible
-    // until you resumed with the capture inverted.
     if (input::is_key_pressed(input::key_t::Escape))
     {
       if (console::get().is_open())
@@ -503,8 +537,8 @@ void Play_State::update(float dt)
       }
       else
       {
-        connection_ui.show_menu_overlay = true;
-        pause_menu                      = build_pause_menu(renderer::screen_size());
+        connection_ui.show_pause_menu = true;
+        pause_menu = build_pause_menu(renderer::screen_size());
       }
     }
 
@@ -524,32 +558,36 @@ void Play_State::update(float dt)
 
   const bool console_open = console::get().is_open();
 
+  
+
 
   // suppress gameplay input instead of early returning
-  // because there's more dt bookkeeping.
+  // because there's more dt bookkeeping later in this function.
   const bool gameplay_input_allowed =
-      !console_open && !connection_ui.show_menu_overlay;
+      !console_open && !connection_ui.show_pause_menu;
 
   if (connection_ui.console_was_open && !console_open)
     connection_ui.mouse_captured = true;
   connection_ui.console_was_open = console_open;
 
-  if (connection_ui.menu_overlay_was_open && !connection_ui.show_menu_overlay)
+  if (connection_ui.menu_overlay_was_open && !connection_ui.show_pause_menu)
     connection_ui.mouse_captured = true;
-  connection_ui.menu_overlay_was_open = connection_ui.show_menu_overlay;
+  connection_ui.menu_overlay_was_open = connection_ui.show_pause_menu;
 
-  // Re-assert relative mouse mode every frame so the console can transparently
-  // release the cursor while it's open. Without this, SDL stays in relative
-  // mode (cursor hidden and warped to center) even when the console is up,
-  // making the console unusable with the mouse. The menu overlay releases it
-  // for the same reason — its buttons need a real cursor to click.
+  // relative mouse mode (report only delta moves instead of absolute cursor position)
   input::set_relative_mouse_mode(connection_ui.mouse_captured && gameplay_input_allowed);
 
-  auto &transport = ctx.transport_layer;
+  auto& transport = ctx.transport_layer;
 
   // actually network related stuff.
-  network::Client_Inbox inbox;
-  network::poll_client_network(transport, 0.001, inbox); // 1ms receive window
+  // receive_drain_cap_in_datagrams is the maximum packet count we'll be reading
+  // while in that function. it's a cap. if it's more than that, something is flooding traffic.
+  network::Client_Inbox& inbox = ctx.incoming;
+  network::clear_client_inbox(inbox);
+  network::poll_client_network(transport,
+                               network::client_receive_drain_cap_in_datagrams,
+                               inbox);
+
 
   // in case I forget again: poll_client_network already does all the reassembly for us.
   // this iterates over fully constructed messages. that's why the apply_map_package
@@ -663,11 +701,14 @@ void Play_State::update(float dt)
 
   for (const auto &payload : inbox.map_data_messages)
   {
-    // we're not loading into anything. we should ignore incoming map data retransmit messages.
+    // Not loading into anything, so this is a package we did not ask for (or
+    // asked for and already applied). continue, not break: the rest of this
+    // frame's messages are unrelated and dropping them would be a second bug.
     if (ctx.connection.phase != Connection_Phase::Loading)
     {
-      log_warning("receiving map_data_messages while loading. retransmit issues? or eager server?");
-      break;
+      log_warning("received map data while phase is not Loading; ignoring it "
+                  "(late retransmit, or an eager server?)");
+      continue;
     }
 
     network::Bit_Reader reader(payload.data(), payload.size());
@@ -712,12 +753,14 @@ void Play_State::update(float dt)
                  ctx.world.map_content_hash);
   }
 
+  // messages from the server that are forwarded to the console (not announcements.)
   for (const auto &msg : inbox.server_text_messages)
   {
     log_terminal("[SERVER] {}", msg.message());
     console::get().print("%s", msg.message().c_str());
   }
 
+  // take on any cvar changes.
   for (const auto &payload : inbox.cvar_value_messages)
   {
     network::Bit_Reader reader(payload.data(), payload.size());
@@ -729,6 +772,7 @@ void Play_State::update(float dt)
                    cvars::cvar_info(value.id).name, value.text);
   }
 
+  
   for (const auto &msg : inbox.bot_debug_updates)
   {
     ctx.replication.bot_debug_entries.clear();
@@ -750,18 +794,13 @@ void Play_State::update(float dt)
     }
   }
 
-  // --- The shot-debug pair ---
-  //
-  // Appended straight into `scene.debug` with a lifetime rather than retained
-  // and re-emitted per frame: pass_builder_t::begin_frame RETIRES the debug list
-  // instead of clearing it, precisely so an entry made outside a render frame
-  // survives. A shot is one frame and nobody can see 16ms.
+  // find the move history.
+  // take the poses at that moment?
   for (const auto &msg : inbox.shot_debug_updates)
   {
-    // Null when the pair has aged out of the ring, which is routine for the
-    // first shots after turning the cvar on. The server's half still draws --
-    // it is the half that carries the verdict.
-    const client::shot_debug_local_t *local =
+    
+
+    const client::shot_debug_local_t* local =
         shot_debug_history.find(msg.input_number());
 
     client::draw_shot_debug_pair(scene.debug, local, msg,
@@ -823,14 +862,11 @@ void Play_State::update(float dt)
     return fx.time_remaining <= 0.f;
   });
 
-  // Nothing below here means anything without a world to simulate against: the
-  // BVH prediction moves through, the session the spectate camera poses in, the
-  // entities interpolation reads. Everything that does NOT need one now runs
-  // above.
+  // no use for reconciling or moving if the world is not ready yet.
   if (!ctx.world.ready)
     return;
 
-  // --- Reconciliation ---
+  // reconcile our locally predicted position with the server's simulated position of us.
   if (ctx.prediction.received_server_update &&
       ctx.connection.phase == Connection_Phase::Connected)
   {
@@ -856,10 +892,7 @@ void Play_State::update(float dt)
 
       for (const shared::subtick_step_t& step : subtick_steps)
       {
-        // The SAME per-step aim the live prediction ran, because it is the same
-        // field: a replay that re-derived the basis from one angle saved beside
-        // the input would diverge from the run it is supposed to reproduce, and
-        // divergence here is rubber-banding.
+        // per-step aim because that's just correct.
         camera_t step_look;
         step_look.yaw   = step.view.yaw;
         step_look.pitch = step.view.pitch;
@@ -872,6 +905,7 @@ void Play_State::update(float dt)
             &ctx.visuals.debug_collision_faces);
       }
     }
+    
 
     vec3f error = {reconciled_position.x - ctx.prediction.player_position.x,
                    reconciled_position.y - ctx.prediction.player_position.y,
@@ -900,17 +934,16 @@ void Play_State::update(float dt)
       ctx.prediction.player_position = reconciled_position;
       ctx.prediction.player_velocity = reconciled_velocity;
     }
-    // else: error is below quantization noise — keep local prediction and
-    // leave visual_error_offset alone so it can decay to zero.
+    // else: error is below quantization noise, that's fine.
   }
 
-// now our position is subtick-accurate: based on the latest baseline provded
-// by the server with our "local" moves recalculated on top of it.
-
-
+  // now our position is subtick-accurate: based on the latest baseline provded
+  // by the server with our "local" moves recalculated on top of it.
   const bool zoom_input_allowed = connection_ui.mouse_captured && gameplay_input_allowed;
 
   // if zoom is not allowed, just cancel the effect.
+  // most of this zoom FOV / stepping looks confusing but we are just interpolating between the zoom FOV and the normal FOV based on the zoom easing time.
+  // in cs, the easing time is, afaik, 0, so you'd just snap back.
   if (!zoom_input_allowed)
   {
     ctx.prediction.zoom_active = false;
@@ -942,14 +975,6 @@ void Play_State::update(float dt)
   const float fov_degrees = shared::lerp_clamped(
       ctx.cvars->r_fov, ctx.cvars->r_zoom_fov, connection_ui.zoom_fraction);
 
-  // --- Mouse look ---
-  //
-  // The SENSITIVITY is resolved here; the travel is applied below, one motion
-  // edge at a time in arrival order. That split is the point: a frame's travel
-  // summed into one delta and applied at once has no time on it, so a trigger
-  // press timed to 0.26ms was still aimed wherever the mouse finished the
-  // frame. On a flick that is the entire error sub-tick exists to delete,
-  // moved from the button onto the aim. See shared/subtick.hpp, subtick_view_t.
   const bool mouse_look_allowed = connection_ui.mouse_captured && gameplay_input_allowed;
 
   // Scale by tan(fov/2) so a given hand movement sweeps the same distance
@@ -981,7 +1006,8 @@ void Play_State::update(float dt)
     return {ctx.prediction.player_yaw, ctx.prediction.player_pitch};
   };
 
-  // gather move input at frame start.
+  // this _evaluates_ the input that was already gathered. it's not a live call.
+  // although it reflects the most up-to-date stuff, I guess.
   uint64_t buttons = 0;
   if (gameplay_input_allowed)
   {
@@ -1019,20 +1045,28 @@ void Play_State::update(float dt)
   // and the predicted move on it.
   const bool local_player_is_dead = ctx.prediction.local_player_health <= 0;
 
-  // Real time, advanced once per frame -- the interval this feeds is a duration
-  // in seconds, not a tick count, so this is the clock it belongs on. Two ticks
-  // stepped in one frame therefore see the same value, which is what we want:
-  // the first that fires resets it and the second is inside the interval.
-  ctx.prediction.seconds_since_local_fire += dt;
+  // Every weapon's clock, held or not: the server's per-weapon deadlines run
+  // while holstered, so a clock that only advanced for the weapon in hand would
+  // report a Scout still recovering after a minute of knife.
+  for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
+    ctx.prediction.seconds_since_local_fire[(entities::Weapon)index] += dt;
 
-  // A corpse has no reload in flight. The server clears reload_complete_time in
-  // place_player_at_spawn, so a client that kept its clock running through a
-  // death would come back silent for the remainder of a reload the server has
-  // already thrown away.
+  // A corpse has no reload and no switch in flight. The server clears both in
+  // place_player_at_spawn (the deploy gate through refill_inventory), so a
+  // client that kept its clocks running through a death would come back silent
+  // for the remainder of a reload the server has already thrown away, and would
+  // draw a deploy countdown for a switch that died with the body.
+  const bool local_player_is_a_corpse = ctx.prediction.local_player_health <= 0;
+
   ctx.prediction.seconds_until_local_reload_complete =
-      ctx.prediction.local_player_health <= 0
+      local_player_is_a_corpse
           ? 0.f
           : std::max(0.f, ctx.prediction.seconds_until_local_reload_complete - dt);
+
+  ctx.prediction.seconds_until_local_deploy_complete =
+      local_player_is_a_corpse
+          ? 0.f
+          : std::max(0.f, ctx.prediction.seconds_until_local_deploy_complete - dt);
 
   // --- Place this frame's button transitions on the tick timeline ---
   //
@@ -1453,26 +1487,53 @@ void Play_State::update(float dt)
           // disagreeing is one wrong bang; the cost of not predicting it at all
           // is a bang on every trigger pull for the whole reload.
           //
-          // A weapon key CANCELS it, which is not a detail: the server cancels
-          // on switch, so a client that kept its clock running would go silent
-          // for a reload that is no longer happening.
-          if (pressed_in_this_step & weapon_select_buttons())
-            ctx.prediction.seconds_until_local_reload_complete = 0.f;
+          // Looked up once for both blocks below. Absent means we have no body
+          // this frame -- a spectator, or a connect not yet answered -- and
+          // neither a reload nor a switch means anything then.
+          const auto my_entity =
+              ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
+          const bool have_own_body =
+              my_entity != ctx.replication.latest_player_entities.end();
 
-          if (pressed_in_this_step & Button::Reload)
+          // A SWITCH, predicted off the same edge and the same table the server
+          // applies it from (shared::try_weapon_selected_by), which is why an
+          // unbound number key does nothing here rather than cancelling a
+          // reload the server keeps running.
+          //
+          // The deploy duration comes from the weapon the key SELECTS, not from
+          // active_weapon -- that is still the outgoing weapon, and it is what
+          // the server charges too.
+          //
+          // Compared against the replicated active_weapon, which is a round
+          // trip stale: re-pressing the key for the weapon in hand is a no-op on
+          // the server, and this reproduces that except across a switch faster
+          // than a round trip, where it can charge a deploy the server does not.
+          // Audio and a countdown, so the cost of being wrong is a number on
+          // screen; the fix is a predicted copy of active_weapon, which is a
+          // second answer worth more than it buys today.
+          if (have_own_body)
           {
-            const auto my_entity =
-                ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
-            if (my_entity != ctx.replication.latest_player_entities.end())
+            const std::optional<entities::Weapon> selected =
+                shared::try_weapon_selected_by(pressed_in_this_step);
+            if (selected && *selected != my_entity->second.inventory.active_weapon)
             {
-              const shared::weapon_definition_t &held =
-                  shared::get_weapon_definition(my_entity->second.active_weapon_id);
-              if (held.magazine_size > 0 &&
-                  ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
-                  my_entity->second.ammo < held.magazine_size)
-                ctx.prediction.seconds_until_local_reload_complete =
-                    held.reload_duration_seconds;
+              ctx.prediction.seconds_until_local_reload_complete = 0.f;
+              ctx.prediction.seconds_until_local_deploy_complete =
+                  shared::get_weapon_definition(*selected).deploy_duration_seconds;
             }
+          }
+
+          if ((pressed_in_this_step & Button::Reload) && have_own_body)
+          {
+            const shared::weapon_definition_t &held =
+                shared::get_weapon_definition(my_entity->second.inventory.active_weapon);
+            const entities::Weapon_Entity *held_entity =
+                try_find_active_weapon(ctx, my_entity->second);
+            if (held.magazine_size > 0 && held_entity != nullptr &&
+                ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
+                held_entity->ammo < held.magazine_size)
+              ctx.prediction.seconds_until_local_reload_complete =
+                  held.reload_duration_seconds;
           }
 
           // The basis is PER STEP now, from the aim in effect when the step
@@ -1682,7 +1743,7 @@ void Play_State::draw_imgui_panels()
 {
   auto &ctx = state_manager::get_client_context();
 
-  if (connection_ui.show_menu_overlay)
+  if (connection_ui.show_pause_menu)
     return;
 
   ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
@@ -1914,7 +1975,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // has no session to draw and can still open the menu, and "Disconnect" is the
   // only way out of a stalled download. It draws under any ImGui window either
   // way -- an open console covers it, which is the intended precedence.
-  if (connection_ui.show_menu_overlay)
+  if (connection_ui.show_pause_menu)
   {
     if (const ui::ui_font_t *font = ctx.font)
       ui::draw_screen(ui, pause_menu.screen, *font);
@@ -2111,11 +2172,32 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                                        .view_pitch    = remote_player.render_pitch},
                                       aim_settings_from(*ctx.cvars), volumes);
 
+      // Solid faces UNDER the edges, and the face alpha is deliberately tiny.
+      // Two "over" layers composited in the wrong order differ by
+      // alpha1*alpha2*(colour1 - colour2) -- O(alpha^2) -- so at 12% the ten
+      // volumes landing in append order rather than depth order are within ~1.4%
+      // of the sorted answer. That is the whole reason none of this needs a
+      // sort: the transparency-ordering problem only bites at high alpha.
+      //
+      // Both halves draw when occluded, because a hit volume lives INSIDE the
+      // model it belongs to -- depth-tested only, the overlay is the few slivers
+      // that poke past the silhouette, which is what made it unreadable.
+      constexpr uint8_t HITBOX_FACE_ALPHA = 30;
+
+      const auto face = [&](Span<const vec3f> polygon, color_t color)
+      {
+        scene.debug.filled_polygon(polygon, color, 0.f, {.draw_when_occluded = true});
+      };
+
       const auto line = [&](const vec3f &start, const vec3f &end, color_t color)
-      { scene.debug.line(start, end, color); };
+      { scene.debug.line(start, end, color, 0.f, 0.f, /*draw_when_occluded*/ true); };
 
       for (const assets::posed_hitbox_t &hitbox : volumes)
-        client::draw_posed_hitbox(line, hitbox, client::hit_region_color(hitbox.region));
+      {
+        const color_t color = client::hit_region_color(hitbox.region);
+        client::draw_posed_hitbox_faces(face, hitbox, with_alpha(color, HITBOX_FACE_ALPHA));
+        client::draw_posed_hitbox(line, hitbox, color);
+      }
     }
   }
 
@@ -2340,7 +2422,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // --- Screen-space UI ---
   // Only while actually looking around: an uncaptured cursor is the player's
   // aiming device at that point, and a second one in the middle reads as a bug.
-  if (connection_ui.mouse_captured && !connection_ui.show_menu_overlay &&
+  if (connection_ui.mouse_captured && !connection_ui.show_pause_menu &&
       ctx.cvars->cl_crosshair)
   {
     hud::crosshair_settings_t crosshair;
@@ -2352,7 +2434,23 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                             clamp_crosshair_color_channel(ctx.cvars->cl_crosshair_g),
                             clamp_crosshair_color_channel(ctx.cvars->cl_crosshair_b),
                             clamp_crosshair_color_channel(ctx.cvars->cl_crosshair_a)};
-    hud::draw_crosshair(ui, renderer::screen_size(), crosshair);
+    hud::draw_crosshair(ui, renderer::screen_size(), renderer::display_scale(), crosshair);
+  }
+
+  // POLLED off the predicted clock every frame, not pushed at the keypress:
+  // there is no second copy of "how long is left" to go stale, and an
+  // unconditional read cannot be forgotten on the frame the switch ends.
+  //
+  // Hidden behind the pause menu, like every other HUD element, but NOT gated on
+  // mouse capture the way the crosshair above is -- that gate is about the
+  // cursor being the aiming device, which has nothing to do with a countdown.
+  if (ctx.cvars->cl_show_deploy_timer && !connection_ui.show_pause_menu)
+  {
+    if (const ui::ui_font_t *font = ctx.font)
+      hud::draw_deploy_timer(ui, *font, renderer::screen_size(), renderer::display_scale(),
+                             ctx.prediction.seconds_until_local_deploy_complete);
+    else
+      log_error("[hud] no UI font registered; cl_show_deploy_timer cannot draw");
   }
 }
 

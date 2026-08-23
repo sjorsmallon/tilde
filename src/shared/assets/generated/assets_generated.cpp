@@ -66,6 +66,14 @@ constexpr asset_info_t hitbox_rig_MANIFEST[] = {
 
 constexpr asset_info_t font_asset_MANIFEST[] = {
   {"Missing", nullptr},
+  {"Consolas_Regular", "resources/fonts/Consolas_Regular.ttf"},
+  {"CourierPrime_Bold", "resources/fonts/CourierPrime_Bold.ttf"},
+  {"CourierPrime_BoldItalic", "resources/fonts/CourierPrime_BoldItalic.ttf"},
+  {"CourierPrime_Italic", "resources/fonts/CourierPrime_Italic.ttf"},
+  {"CourierPrime_Regular", "resources/fonts/CourierPrime_Regular.ttf"},
+  {"FiraMono_Bold", "resources/fonts/FiraMono_Bold.ttf"},
+  {"FiraMono_Medium", "resources/fonts/FiraMono_Medium.ttf"},
+  {"FiraMono_Regular", "resources/fonts/FiraMono_Regular.ttf"},
   {"Roboto_Medium", "resources/fonts/Roboto_Medium.ttf"},
   {"anwb_uu_regular", "resources/fonts/anwb_uu_regular.ttf"},
 };

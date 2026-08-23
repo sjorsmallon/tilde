@@ -15,6 +15,7 @@
 #include "../shared/network/entity_serialization.hpp"
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
+#include "../shared/weapons.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -168,13 +169,13 @@ int main()
 
     entities::Player_Entity server_state;
     server_state.health   = 100;
-    server_state.ammo     = 30;
+    server_state.last_fire_tick = 30;
     server_state.position = {10.0f, 20.0f, 30.0f};
 
     entities::Player_Entity client_state;
     const size_t full_size = transmit(server_state, nullptr, client_state);
     assert(client_state.health == 100);
-    assert(client_state.ammo == 30);
+    assert(client_state.last_fire_tick == 30);
 
     // One field moves. The client holds the exact baseline, so the delta only
     // has to carry that field.
@@ -183,7 +184,7 @@ int main()
 
     const size_t delta_size = transmit(server_state, &acked_baseline, client_state);
     assert(client_state.health == 75);
-    assert(client_state.ammo == 30);           // untouched, carried by the baseline
+    assert(client_state.last_fire_tick == 30);           // untouched, carried by the baseline
     assert(client_state.position.x == 10.0f);  // ditto
 
     std::cout << "    Full update: " << full_size << " bytes, delta: " << delta_size
@@ -311,6 +312,85 @@ int main()
     transmit_snapshot(server_frame, &idle_baseline, idle_client_frame, &record_count);
     assert(record_count == 0);
     assert(idle_client_frame.rockets.size() == 3);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] A player's weapons replicate, one entity each..." << std::endl;
+
+    // Ammo lives on the Weapon_Entity, so the weapons have to arrive for the
+    // client to have a magazine at all. They spawn in the SAME tick as their
+    // owner, which is what makes a frame self-consistent -- a receiver that
+    // decodes the player decodes the weapons its inventory names.
+    entities::Player_Entity shooter;
+    shooter.entity_id                    = 1;
+    shooter.client_slot_index            = 0;
+    shooter.inventory.active_weapon      = entities::Weapon::Scout;
+    shooter.inventory.weapons[entities::Weapon::Knife]           = 20;
+    shooter.inventory.weapons[entities::Weapon::Scout]           = 21;
+    shooter.inventory.weapons[entities::Weapon::Rocket_Launcher] = 22;
+
+    network::snapshot_frame_t server_frame;
+    server_frame.tick       = 1;
+    server_frame.players[1] = shooter;
+    for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
+    {
+      const entities::Weapon weapon = (entities::Weapon)index;
+      entities::Weapon_Entity carried;
+      carried.entity_id = shooter.inventory.weapons[weapon];
+      carried.weapon_id = weapon;
+      carried.ammo      = shared::get_weapon_definition(weapon).magazine_size;
+      server_frame.weapons[carried.entity_id] = carried;
+    }
+
+    network::snapshot_frame_t client_frame;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, nullptr, client_frame, &record_count);
+
+    assert(record_count == 4); // the player and its three weapons
+    assert(client_frame.weapons.size() == 3);
+
+    // The client resolves the same way the server does: one index into the
+    // replicated forward list, never a scan for a weapon claiming this owner.
+    const entities::Player_Entity& received = client_frame.players.at(1);
+    const shared::entity_uid_t     held_uid =
+        received.inventory.weapons[received.inventory.active_weapon];
+    assert(held_uid == 21);
+    assert(client_frame.weapons.at(held_uid).weapon_id == entities::Weapon::Scout);
+    assert(client_frame.weapons.at(held_uid).ammo ==
+           shared::get_weapon_definition(entities::Weapon::Scout).magazine_size);
+
+    // One shot costs ONE record. A holstered weapon's fields do not change, so
+    // it costs nothing at all after the spawn -- which is the whole answer to
+    // "three entities per player is expensive".
+    network::snapshot_frame_t acked = client_frame;
+    server_frame.tick               = 2;
+    server_frame.weapons[21].ammo -= 1;
+
+    network::snapshot_frame_t next_client_frame;
+    transmit_snapshot(server_frame, &acked, next_client_frame, &record_count);
+
+    assert(record_count == 1);
+    assert(next_client_frame.weapons.at(21).ammo ==
+           shared::get_weapon_definition(entities::Weapon::Scout).magazine_size - 1);
+    assert(next_client_frame.weapons.at(20).ammo ==
+           shared::get_weapon_definition(entities::Weapon::Knife).magazine_size);
+    assert(next_client_frame.players.at(1).inventory.weapons[entities::Weapon::Scout] == 21);
+
+    // And a SWITCH costs one record on the player and none on either weapon:
+    // the magazine stays where the last shot left it, which is the free instant
+    // reload that used to hide in the switch handler.
+    network::snapshot_frame_t acked_after_shot = next_client_frame;
+    server_frame.tick                          = 3;
+    server_frame.players[1].inventory.active_weapon = entities::Weapon::Knife;
+
+    network::snapshot_frame_t after_switch;
+    transmit_snapshot(server_frame, &acked_after_shot, after_switch, &record_count);
+
+    assert(record_count == 1);
+    assert(after_switch.weapons.at(21).ammo ==
+           shared::get_weapon_definition(entities::Weapon::Scout).magazine_size - 1);
 
     std::cout << "    -> Success!" << std::endl;
   }

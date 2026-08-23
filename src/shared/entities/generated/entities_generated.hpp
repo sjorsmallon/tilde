@@ -185,9 +185,84 @@ enum class component_type : uint16_t
   Box_Volume = 0,
   Material = 1,
   Render = 2,
+  Inventory = 3,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 3;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 4;
+
+} // namespace entities
+
+
+// --- Enum_Array support ---------------------------------------------
+//
+// Global scope on purpose: enum_traits is declared in shared/array.hpp,
+// which knows nothing about this namespace. `count` is what sizes an
+// Enum_Array<entities::Foo, T>, so adding a value to the .def resizes
+// every table over that enum. It does not fill the new row -- see
+// rows_in_enum_order in array.hpp for the check that catches that.
+
+template <> struct enum_traits<entities::Light_Type>
+{
+  static constexpr uint32_t count = entities::Light_Type_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Light_Type;
+};
+
+template <> struct enum_traits<entities::Spawn_Type>
+{
+  static constexpr uint32_t count = entities::Spawn_Type_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Spawn_Type;
+};
+
+template <> struct enum_traits<entities::Team_Allegiance>
+{
+  static constexpr uint32_t count = entities::Team_Allegiance_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Team_Allegiance;
+};
+
+template <> struct enum_traits<entities::Weapon>
+{
+  static constexpr uint32_t count = entities::Weapon_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Weapon;
+};
+
+template <> struct enum_traits<entities::Weapon_Kind>
+{
+  static constexpr uint32_t count = entities::Weapon_Kind_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Weapon_Kind;
+};
+
+template <> struct enum_traits<entities::Shader_Type>
+{
+  static constexpr uint32_t count = entities::Shader_Type_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Shader_Type;
+};
+
+template <> struct enum_traits<entities::Shape_Kind>
+{
+  static constexpr uint32_t count = entities::Shape_Kind_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Shape_Kind;
+};
+
+template <> struct enum_traits<entities::Trigger_Action>
+{
+  static constexpr uint32_t count = entities::Trigger_Action_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Trigger_Action;
+};
+
+template <> struct enum_traits<entities::Fire_Mode>
+{
+  static constexpr uint32_t count = entities::Fire_Mode_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Fire_Mode;
+};
+
+template <> struct enum_traits<entities::Aim_Pose>
+{
+  static constexpr uint32_t count = entities::Aim_Pose_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Aim_Pose;
+};
+
+namespace entities
+{
 
 struct Box_Volume
 {
@@ -217,6 +292,15 @@ struct Render
   linalg::vec3f scale = {1.0f, 1.0f, 1.0f};
   linalg::vec3f rotation = {0.0f, 0.0f, 0.0f};
   Material material = {};
+};
+
+struct Inventory
+{
+  static constexpr component_type static_component = component_type::Inventory;
+
+  Enum_Array<Weapon, uint32_t> weapons = {};
+  Weapon active_weapon = Weapon::Knife;
+  uint64_t deploy_complete_time = {};
 };
 
 struct Entity
@@ -257,18 +341,16 @@ struct Player_Entity : Entity
   float view_angle_pitch = {};
   float body_yaw = {};
   int32_t health = {};
-  int32_t ammo = {};
-  Weapon active_weapon_id = Weapon::Knife;
   uint32_t death_tick = {};
   uint32_t last_fire_tick = {};
   Weapon last_fire_weapon = Weapon::Knife;
-  uint8_t last_fire_slot = {};
   uint64_t reload_complete_time = {};
   uint32_t last_empty_fire_warning_tick = {};
   uint32_t last_hit_tick = {};
   bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};
   linalg::vec3f velocity = {};
+  Inventory inventory = {};
   Render render = {.mesh = assets::mesh_asset::Leet_Full};
   Team_Allegiance team_allegiance = Team_Allegiance::Free_For_All;
 };
@@ -281,6 +363,8 @@ struct Weapon_Entity : Entity
 
   int32_t ammo = {};
   Weapon weapon_id = {};
+  uint32_t owner_uid = {};
+  uint64_t next_fire_time = {};
   Render render = {};
 };
 
@@ -556,72 +640,3 @@ Span<const entity_type> placeable_entity_types();
 extern const uint32_t SCHEMA_HASH;
 
 } // namespace entities
-
-// --- Enum_Array support ---------------------------------------------
-//
-// Global scope on purpose: enum_traits is declared in shared/array.hpp,
-// which knows nothing about this namespace. `count` is what sizes an
-// Enum_Array<entities::Foo, T>, so adding a value to the .def resizes
-// every table over that enum. It does not fill the new row -- see
-// rows_in_enum_order in array.hpp for the check that catches that.
-
-template <> struct enum_traits<entities::Light_Type>
-{
-  static constexpr uint32_t count = entities::Light_Type_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Light_Type;
-};
-
-template <> struct enum_traits<entities::Spawn_Type>
-{
-  static constexpr uint32_t count = entities::Spawn_Type_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Spawn_Type;
-};
-
-template <> struct enum_traits<entities::Team_Allegiance>
-{
-  static constexpr uint32_t count = entities::Team_Allegiance_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Team_Allegiance;
-};
-
-template <> struct enum_traits<entities::Weapon>
-{
-  static constexpr uint32_t count = entities::Weapon_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Weapon;
-};
-
-template <> struct enum_traits<entities::Weapon_Kind>
-{
-  static constexpr uint32_t count = entities::Weapon_Kind_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Weapon_Kind;
-};
-
-template <> struct enum_traits<entities::Shader_Type>
-{
-  static constexpr uint32_t count = entities::Shader_Type_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Shader_Type;
-};
-
-template <> struct enum_traits<entities::Shape_Kind>
-{
-  static constexpr uint32_t count = entities::Shape_Kind_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Shape_Kind;
-};
-
-template <> struct enum_traits<entities::Trigger_Action>
-{
-  static constexpr uint32_t count = entities::Trigger_Action_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Trigger_Action;
-};
-
-template <> struct enum_traits<entities::Fire_Mode>
-{
-  static constexpr uint32_t count = entities::Fire_Mode_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Fire_Mode;
-};
-
-template <> struct enum_traits<entities::Aim_Pose>
-{
-  static constexpr uint32_t count = entities::Aim_Pose_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Aim_Pose;
-};
-

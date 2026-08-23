@@ -20,7 +20,7 @@ int main()
   entities::Player_Entity player;
   player.health   = 100;
   player.position = {10.0f, 20.0f, 0.0f};
-  player.ammo     = 30;
+  player.last_fire_tick = 30;
 
   {
     std::cout << "  [Subtest] Packing full update..." << std::endl;
@@ -41,7 +41,7 @@ int main()
     assert(received.health == 100);
     assert(received.position.x == 10.0f);
     assert(received.position.y == 20.0f);
-    assert(received.ammo == 30);
+    assert(received.last_fire_tick == 30);
     std::cout << "    -> Success!" << std::endl;
   }
 
@@ -51,7 +51,7 @@ int main()
     entities::Player_Entity baseline;
     baseline.health   = 100;
     baseline.position = {10.0f, 20.0f, 0.0f};
-    baseline.ammo     = 30;
+    baseline.last_fire_tick = 30;
 
     player.health = 90; // the only difference from the baseline
 
@@ -73,7 +73,7 @@ int main()
 
     assert(received.health == 90);
     assert(received.position.x == 10.0f); // unchanged
-    assert(received.ammo == 30);          // unchanged
+    assert(received.last_fire_tick == 30);          // unchanged
     std::cout << "    -> Success!" << std::endl;
   }
 

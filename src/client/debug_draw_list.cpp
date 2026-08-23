@@ -78,13 +78,13 @@ void debug_draw_list_t::clear()
 }
 
 void debug_draw_list_t::line(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
-                             float depth_bias, float seconds)
+                             float depth_bias, float seconds, bool draw_when_occluded)
 {
-  lines.push_back({start, end, color, depth_bias, seconds});
+  lines.push_back({start, end, color, depth_bias, seconds, draw_when_occluded});
 }
 
 void debug_draw_list_t::aabb(const linalg::vec3f &min, const linalg::vec3f &max, color_t color,
-                             fill_mode_t fill, float depth_bias, float seconds)
+                             fill_mode_t fill, float depth_bias, float seconds, bool draw_when_occluded)
 {
   const linalg::vec3f corners[8] = {
       {min.x, min.y, min.z}, {max.x, min.y, min.z}, {max.x, max.y, min.z}, {min.x, max.y, min.z},
@@ -104,31 +104,33 @@ void debug_draw_list_t::aabb(const linalg::vec3f &min, const linalg::vec3f &max,
     {
       const linalg::vec3f quad[4] = {corners[face[0]], corners[face[1]], corners[face[2]],
                                      corners[face[3]]};
-      filled_polygon(Span<const linalg::vec3f>(quad, 4), color, seconds, /*shaded*/ true);
+      filled_polygon(Span<const linalg::vec3f>(quad, 4), color, seconds,
+                     {.shaded = true, .draw_when_occluded = draw_when_occluded});
     }
   }
 
   static constexpr int EDGES[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
                                        {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
   for (const int *edge : EDGES)
-    line(corners[edge[0]], corners[edge[1]], color, depth_bias, seconds);
+    line(corners[edge[0]], corners[edge[1]], color, depth_bias, seconds, draw_when_occluded);
 }
 
 void debug_draw_list_t::box(const linalg::vec3f &center, const linalg::vec3f &half_extents,
-                            color_t color, fill_mode_t fill, float depth_bias, float seconds)
+                            color_t color, fill_mode_t fill, float depth_bias, float seconds,
+                            bool draw_when_occluded)
 {
-  aabb(center - half_extents, center + half_extents, color, fill, depth_bias, seconds);
+  aabb(center - half_extents, center + half_extents, color, fill, depth_bias, seconds, draw_when_occluded);
 }
 
 void debug_draw_list_t::filled_polygon(Span<const linalg::vec3f> vertices, color_t color,
-                                       float seconds, bool shaded)
+                                       float seconds, debug_face_style_t style)
 {
   if (vertices.size() < 3)
     return;
 
   const uint32_t first = (uint32_t)polygon_vertices.size();
   polygon_vertices.insert(polygon_vertices.end(), vertices.begin(), vertices.end());
-  polygons.push_back({first, (uint32_t)vertices.size(), color, seconds, shaded});
+  polygons.push_back({first, (uint32_t)vertices.size(), color, seconds, style});
 }
 
 void debug_draw_list_t::arrow(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,

@@ -34,6 +34,9 @@ namespace client::ui
 
 // Everything a menu differs on that is not its rows or what they do. Every
 // member has a default, so a screen names only what it cares about.
+// Every length below is in LOGICAL units -- what the sizes meant back when a
+// pixel was a pixel. build_list_menu multiplies them by the display scale, so a
+// screen authors one set of numbers and they hold at 96 and 192 DPI alike.
 struct list_menu_style_t
 {
   // Where the block of rows sits, and how big it is.
@@ -104,9 +107,14 @@ struct list_menu_t
 //
 // `labels` is borrowed only for the duration of the call; the text is copied
 // into the nodes.
+// `display_scale` converts the style's LOGICAL lengths into the framebuffer
+// pixels every rect is in -- renderer::display_scale() at the call site. It is
+// applied ONCE, here, and the scaled style is what lands in list_menu_t::style,
+// so every pass after this one is already in pixels and cannot forget.
 [[nodiscard]] list_menu_t build_list_menu(Span<const char *const> labels,
                                           const list_menu_style_t &style,
-                                          linalg::vec2             screen_size);
+                                          linalg::vec2             screen_size,
+                                          float                    display_scale);
 
 // The nav / hover / activate step, and the ONLY one that reads input. Returns
 // the row that was activated this frame, if any -- not a failure channel, which

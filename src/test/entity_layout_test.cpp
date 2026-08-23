@@ -1,9 +1,11 @@
 // Verifies the properties the inheritance layout was chosen for, plus the
 // factory / placeable-type surface the generator emits on top of it.
+#include "entities/entity_reflection.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
+#include <vector>
 
 using namespace entities;
 
@@ -352,6 +354,73 @@ int main()
         every_render_field_is_networked = false;
     check(every_render_field_is_networked,
           "Render IS replicated -- runtime-spawned rockets and bodies have no other source");
+  }
+
+  // --- enum-keyed arrays ---
+  //
+  // A `u32[Weapon]` field is one declaration and one TABLE ROW PER KEY, minted
+  // by def_gen. Nothing downstream has an array case, so what has to hold is
+  // that the rows it mints describe the real Enum_Array: right count, right
+  // names, and an offset that lands on the element the key indexes. The last
+  // one is what a wrong stride would break, and it would break it silently --
+  // element 0 reads correctly and every element after it is garbage.
+  {
+    Span<const field_info_t> fields = component_info(component_type::Inventory).fields;
+
+    int32_t weapon_row_count = 0;
+    for (const field_info_t& field : fields)
+      if (strncmp(field.name, "weapons.", 8) == 0)
+        ++weapon_row_count;
+    check(weapon_row_count == (int32_t)Weapon_COUNT,
+          "an enum-keyed array mints one row per key");
+
+    const char* expected_names[] = {"weapons.Knife", "weapons.Scout", "weapons.Rocket_Launcher"};
+    bool        names_in_order   = true;
+    for (int32_t index = 0; index < (int32_t)Weapon_COUNT; ++index)
+      if (strcmp(fields[index].name, expected_names[index]) != 0)
+        names_in_order = false;
+    check(names_in_order, "array rows are named field.KEY, in enum declaration order");
+
+    // The offsets, against the storage they claim to describe. Writing through
+    // the enum and reading back through the reflected offset is the whole
+    // contract: it is what map I/O and the wire codec will do.
+    Inventory inventory{};
+    inventory.weapons[Weapon::Knife]           = 11u;
+    inventory.weapons[Weapon::Scout]           = 22u;
+    inventory.weapons[Weapon::Rocket_Launcher] = 33u;
+
+    const uint32_t expected_values[] = {11u, 22u, 33u};
+    bool           offsets_land_right = true;
+    for (int32_t index = 0; index < (int32_t)Weapon_COUNT; ++index)
+    {
+      uint32_t value = 0;
+      memcpy(&value, (const uint8_t*)&inventory + fields[index].offset,
+             fields[index].size_in_bytes);
+      if (fields[index].size_in_bytes != sizeof(uint32_t) || value != expected_values[index])
+        offsets_land_right = false;
+    }
+    check(offsets_land_right, "each array row's offset and size address its own element");
+
+    // An array inside a component composes with the component's own offset the
+    // way any leaf does -- no extra rule, which is the point of expanding into
+    // ordinary rows.
+    std::vector<leaf_field_t> leaves = collect_leaf_fields(entity_type::Player_Entity);
+
+    bool found_dotted_leaf = false;
+    for (const leaf_field_t& leaf : leaves)
+      if (leaf.name == "inventory.weapons.Scout")
+        found_dotted_leaf = true;
+    check(found_dotted_leaf, "an array inside a component flattens to inventory.weapons.Scout");
+
+    Player_Entity player{};
+    player.inventory.weapons[Weapon::Scout] = 77u;
+    for (const leaf_field_t& leaf : leaves)
+      if (leaf.name == "inventory.weapons.Scout")
+      {
+        uint32_t value = 0;
+        memcpy(&value, (const uint8_t*)&player + leaf.offset, sizeof(value));
+        check(value == 77u, "the flattened leaf offset addresses the element through the entity");
+      }
   }
 
   printf("schema hash: 0x%08x\n", SCHEMA_HASH);

@@ -480,8 +480,19 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draw
   {
     // Through the same wireframes the in-game overlay uses, so the tool cannot
     // show a shape the game does not.
+    // The same solid-face-under-edges treatment the in-game overlay uses, and
+    // drawn when occluded for the same reason: a volume sits inside the preview
+    // mesh, so depth-tested alone it is the slivers that poke out. See
+    // play_state's overlay for why the low face alpha makes the order moot.
+    constexpr uint8_t HITBOX_FACE_ALPHA = 30;
+
+    const auto face = [&](Span<const linalg::vec3f> polygon, color_t color)
+    {
+      draws.debug.filled_polygon(polygon, color, 0.f, {.draw_when_occluded = true});
+    };
+
     const auto line = [&](const linalg::vec3f &start, const linalg::vec3f &end, color_t color)
-    { draws.debug.line(start, end, color); };
+    { draws.debug.line(start, end, color, 0.f, 0.f, /*draw_when_occluded*/ true); };
 
     for (uint32_t index = 0; index < (uint32_t)hitboxes.size(); ++index)
     {
@@ -504,6 +515,7 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draw
                                        to_world_direction(hitbox.frame.up),
                                        to_world_direction(hitbox.frame.forward)};
 
+      draw_posed_hitbox_faces(face, placed, with_alpha(color, HITBOX_FACE_ALPHA));
       draw_posed_hitbox(line, placed, color);
 
       if ((int)index == selected_volume_idx)

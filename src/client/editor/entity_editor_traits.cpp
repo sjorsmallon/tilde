@@ -237,7 +237,7 @@ bool draw_entity_in_editor(const entities::Entity *e,
 color_t compute_selection_pulse_color(float time)
 {
   // Pulsate between hot pink and white at ~2 Hz.
-  float t = std::sin(time * 4.0f) * 0.5f + 0.5f; // 0..1
+  float t = std::sin(time * 2.0f) * 0.5f + 0.5f; // 0..1
 
   auto lerp_byte = [](uint8_t a, uint8_t b, float t) -> uint8_t
   {

@@ -3,7 +3,9 @@
 #include "../log.hpp"
 #include "game.pb.h"
 #include "network_types.hpp"
+#include <chrono>
 #include <cstring>
+#include <map>
 #include <vector>
 
 namespace network
@@ -147,6 +149,34 @@ constexpr size_t PACKET_PAYLOAD_OFFSET_IN_BYTES = 8;
 constexpr size_t MAX_PAYLOAD_SIZE_IN_BYTES =
     MAX_PACKET_SIZE_IN_BYTES - PACKET_PAYLOAD_OFFSET_IN_BYTES;
 
+// How many datagrams one drain may take before it gives up and returns.
+//
+// DERIVED, not guessed, and that is the point: reception is asynchronous, so a
+// drain finds whatever the kernel queued while we were busy -- and the queue
+// holds at most receive_buffer_size / MAX_PACKET_SIZE_IN_BYTES datagrams (fewer
+// in practice, since the kernel charges per-datagram overhead against it). No
+// legitimate backlog can exceed that. Doubled so a drain racing a live sender
+// still finishes what it found; past it, something is refilling the queue as
+// fast as we empty it, which is a flood rather than a backlog.
+//
+// A COUNT rather than a time budget, for three reasons. It costs an integer
+// compare instead of a clock read on the hot path; it makes a drain
+// deterministic, so identical traffic drains identically instead of varying with
+// scheduler noise; and it is a claim that can be checked against the buffer size
+// rather than a duration that merely feels safe.
+constexpr size_t receive_drain_cap_in_datagrams(size_t receive_buffer_size_in_bytes)
+{
+  return 2 * (receive_buffer_size_in_bytes / MAX_PACKET_SIZE_IN_BYTES);
+}
+
+// Beside MAX_PACKET_SIZE_IN_BYTES rather than beside the buffer sizes they are
+// derived from: network_types.hpp is included BY this header, so it cannot see
+// the packet size the division needs.
+constexpr size_t client_receive_drain_cap_in_datagrams =
+    receive_drain_cap_in_datagrams(client_receive_buffer_size_in_bytes);
+constexpr size_t server_receive_drain_cap_in_datagrams =
+    receive_drain_cap_in_datagrams(server_receive_buffer_size_in_bytes);
+
 struct Packet
 {
   Packet_Header header;
@@ -162,6 +192,61 @@ static_assert(offsetof(Packet, buffer) == PACKET_PAYLOAD_OFFSET_IN_BYTES,
 static_assert(sizeof(Packet) <= MAX_PACKET_SIZE_IN_BYTES,
               "a Packet must fit in one datagram");
 
+// Fragments of one inbound message, with the time the most recent one arrived.
+//
+// The stamp is what bounds the bucket's lifetime. There is no per-fragment
+// retransmit, so a message that loses one fragment can never complete; without
+// expiry its bucket lives for the whole connection and silently swallows the
+// next message that draws the same wrapped message_id.
+struct Partial_Message
+{
+  std::vector<Packet> fragments;
+  std::chrono::steady_clock::time_point last_fragment_time{};
+};
+
+// Generous: it only has to outlast the gap between two fragments of a healthy
+// transfer, and a paced bulk send deliberately spreads those over many ticks.
+// Anything still incomplete after this lost a fragment and is never completing.
+constexpr double partial_message_timeout_in_seconds = 5.0;
+
+// Drops every bucket that has not seen a fragment recently. `owner` is only what
+// the log line says. Loudly, not silently: an expiring bucket means real packet
+// loss, and that is worth seeing rather than inferring from a message that never
+// arrived.
+inline void
+expire_stale_partial_messages(std::map<uint8, Partial_Message> &partial_packets,
+                              const char *owner)
+{
+  if (partial_packets.empty())
+    return;
+
+  const std::chrono::steady_clock::time_point now =
+      std::chrono::steady_clock::now();
+  const std::chrono::duration<double> timeout(partial_message_timeout_in_seconds);
+
+  for (auto it = partial_packets.begin(); it != partial_packets.end();)
+  {
+    if (now - it->second.last_fragment_time < timeout)
+    {
+      ++it;
+      continue;
+    }
+
+    size_t arrived = 0;
+    for (const Packet &fragment : it->second.fragments)
+      if (fragment.header.fragment_count != 0)
+        ++arrived;
+
+    log_warning("{}: dropping incomplete message id {} after {:.0f}s "
+                "({}/{} fragments arrived); the rest were lost in transit",
+                owner, static_cast<int>(it->first),
+                partial_message_timeout_in_seconds, arrived,
+                it->second.fragments.size());
+
+    it = partial_packets.erase(it);
+  }
+}
+
 // Helper: Chunk a large buffer into serialized packets (fragments of a message)
 //
 // next_message_id is the sender's rolling counter: every fragment of THIS
@@ -173,10 +258,11 @@ static_assert(sizeof(Packet) <= MAX_PACKET_SIZE_IN_BYTES,
 // The id is assigned here rather than by the caller so a fragmented message can
 // never accidentally go out with a zeroed id (all of which alias into one bucket).
 //
-// The counter is a uint8 and wraps at 256. That's safe: a bucket is freed the
-// moment its message completes, and only a handful of messages are ever in
-// flight at once, so a wrap can't alias a still-open bucket in practice. (True
-// reliability — ack/retransmit — is separate future work; see todo.md.)
+// The counter is a uint8 and wraps at 256, which is safe only because a bucket
+// is freed the moment its message completes OR expires. The expiry half is not
+// optional: a message that loses a fragment never completes, and a bucket left
+// open forever eats the message that reuses its id 256 sends later. See
+// expire_stale_partial_messages below.
 inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
                                               uint8 message_type,
                                               uint8 &next_message_id)

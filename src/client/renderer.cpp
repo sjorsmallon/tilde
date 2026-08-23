@@ -89,6 +89,12 @@ static VkPipeline       g_debug_box_pipeline    = VK_NULL_HANDLE; // triangles, 
 static VkPipeline       g_debug_line_pipeline   = VK_NULL_HANDLE; // lines, dynamic depth bias
 static VkPipeline       g_debug_face_pipeline   = VK_NULL_HANDLE; // triangles, alpha, no depth write
 
+// The occluded halves: the same two programs with the depth test INVERTED, so
+// they paint exactly the fragments their depth-tested twin rejected. Used for
+// the dimmed second draw of an entry flagged debug_line_t::draw_when_occluded.
+static VkPipeline g_debug_line_occluded_pipeline = VK_NULL_HANDLE;
+static VkPipeline g_debug_face_occluded_pipeline = VK_NULL_HANDLE;
+
 static bool g_supports_wireframe = false;
 
 // --- The mesh pipeline cache ---
@@ -268,13 +274,20 @@ struct debug_vertex_t
   float color[4]; // RGBA -- per-vertex because lines and polygons batch into one
                   // buffer and a per-draw colour could not give each its own
   float barycentric[3];
+  // 0 opts the rim term out entirely, which is how a line (no surface, so no
+  // meaningful normal) and an opaque box share the one program with the overlay
+  // faces that do want it. Per VERTEX for the same reason the colour is: one
+  // draw covers polygons that disagree about it.
+  float rim_strength;
 };
 
-// debug.vert's push block: 64 + 16 = 80 bytes.
+// debug.vert's push block: 64 + 16 + 16 = 96 bytes, inside the 128 every
+// implementation guarantees.
 struct debug_push_constants_t
 {
   float mvp[16];
   float color[4];
+  float camera_position[4]; // world space; .w unused
 };
 
 // mesh.vert / mesh_skinned.vert's push block, shared by both fragment shaders.
@@ -489,16 +502,26 @@ static void create_swapchain()
   vkGetPhysicalDeviceSurfacePresentModesKHR(
       g_physical_device, g_surface, &present_mode_count, present_modes.data());
 
+  // TEMPORARY GAMMA PROBE -- delete this block and restore the SRGB search below.
+  constexpr bool probe_ui_gamma_with_unorm_swapchain = false;
+
+  const VkFormat wanted_swapchain_format =
+      probe_ui_gamma_with_unorm_swapchain ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_B8G8R8A8_SRGB;
+
   VkSurfaceFormatKHR surface_format = formats[0];
   for (const auto &available_format : formats)
   {
-    if (available_format.format == VK_FORMAT_B8G8R8A8_SRGB &&
+    if (available_format.format == wanted_swapchain_format &&
         available_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
     {
       surface_format = available_format;
       break;
     }
   }
+
+  if (surface_format.format != wanted_swapchain_format)
+    log_warning("[gamma probe] wanted format {} but the surface offers none; using {}",
+                (int32_t)wanted_swapchain_format, (int32_t)surface_format.format);
 
   VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
   VkExtent2D extent;
@@ -511,6 +534,18 @@ static void create_swapchain()
     int width, height;
     SDL_Vulkan_GetDrawableSize(g_window, &width, &height);
     extent = {(uint32_t)width, (uint32_t)height};
+  }
+
+  // TEMPORARY DPI PROBE -- delete with the gamma probe above.
+  {
+    int32_t logical_width = 0, logical_height = 0;
+    SDL_GetWindowSize(g_window, &logical_width, &logical_height);
+    int32_t drawable_width = 0, drawable_height = 0;
+    SDL_Vulkan_GetDrawableSize(g_window, &drawable_width, &drawable_height);
+    log_warning("[dpi probe] swapchain {}x{}, drawable {}x{}, logical window {}x{} -- menu is "
+                "460x42 px per row, announcement is 48 px tall",
+                extent.width, extent.height, drawable_width, drawable_height, logical_width,
+                logical_height);
   }
 
   uint32_t image_count = capabilities.minImageCount + 1;
@@ -758,12 +793,20 @@ static void create_depth_resources()
 // for frame N-1.
 constexpr uint32_t DEBUG_VERTEX_CAPACITY = 262144;
 
+// How much of an entry's alpha survives into its occluded copy. Low enough that
+// the hidden half never competes with the visible one for attention, high enough
+// to still read against a lit surface. Applied through the push-constant tint,
+// which the vertex shader already multiplies into the vertex alpha -- so the
+// occluded pass re-draws the SAME vertices and needs no second copy of
+// anything.
+constexpr float DEBUG_OCCLUDED_ALPHA_SCALE = 0.3f;
+
 static VkBuffer        g_debug_vertex_buffer[MAX_FRAMES_IN_FLIGHT] = {};
 static VkDeviceMemory  g_debug_vertex_memory[MAX_FRAMES_IN_FLIGHT] = {};
 static debug_vertex_t *g_debug_vertex_mapped[MAX_FRAMES_IN_FLIGHT] = {};
 static uint32_t        g_debug_vertex_used                         = 0;
 
-// Everything a debug pipeline can differ in. Three instances exist; nothing here
+// Everything a debug pipeline can differ in. Five instances exist; nothing here
 // is worth a cache, because unlike materials the set is closed.
 struct debug_pipeline_options_t
 {
@@ -773,6 +816,10 @@ struct debug_pipeline_options_t
   bool                dynamic_depth_bias = false;
   float               line_width         = 1.0f;
   VkCullModeFlags     cull_mode          = VK_CULL_MODE_BACK_BIT;
+  // GREATER is the occluded half: it draws exactly where LESS would have
+  // rejected, so a pair of pipelines covers every fragment of the geometry once
+  // and neither can double up on the other.
+  VkCompareOp depth_compare = VK_COMPARE_OP_LESS;
 };
 
 static VkPipeline create_debug_pipeline(const debug_pipeline_options_t &options)
@@ -810,16 +857,17 @@ static VkPipeline create_debug_pipeline(const debug_pipeline_options_t &options)
   binding.stride    = sizeof(debug_vertex_t);
   binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-  VkVertexInputAttributeDescription attributes[3]{};
+  VkVertexInputAttributeDescription attributes[4]{};
   attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(debug_vertex_t, position)};
   attributes[1] = {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(debug_vertex_t, color)};
   attributes[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(debug_vertex_t, barycentric)};
+  attributes[3] = {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(debug_vertex_t, rim_strength)};
 
   VkPipelineVertexInputStateCreateInfo vertex_input{
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
   vertex_input.vertexBindingDescriptionCount   = 1;
   vertex_input.pVertexBindingDescriptions      = &binding;
-  vertex_input.vertexAttributeDescriptionCount = 3;
+  vertex_input.vertexAttributeDescriptionCount = 4;
   vertex_input.pVertexAttributeDescriptions    = attributes;
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly{
@@ -847,7 +895,7 @@ static VkPipeline create_debug_pipeline(const debug_pipeline_options_t &options)
       VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
   depth_stencil.depthTestEnable  = VK_TRUE;
   depth_stencil.depthWriteEnable = options.depth_write ? VK_TRUE : VK_FALSE;
-  depth_stencil.depthCompareOp   = VK_COMPARE_OP_LESS;
+  depth_stencil.depthCompareOp   = options.depth_compare;
 
   VkPipelineColorBlendAttachmentState blend_attachment{};
   blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -929,6 +977,22 @@ static void create_debug_resources()
                                                  .depth_write = false,
                                                  .cull_mode   = VK_CULL_MODE_NONE});
 
+  // The occluded halves. Neither writes depth -- one of these draws is a hint
+  // about something that is BEHIND the scene, and letting it write would sort
+  // real geometry against a hint.
+  g_debug_line_occluded_pipeline =
+      create_debug_pipeline({.topology           = VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
+                             .blend              = true,
+                             .depth_write        = false,
+                             .dynamic_depth_bias = true,
+                             .line_width         = 2.0f,
+                             .cull_mode          = VK_CULL_MODE_NONE,
+                             .depth_compare      = VK_COMPARE_OP_GREATER});
+  g_debug_face_occluded_pipeline = create_debug_pipeline({.blend         = true,
+                                                      .depth_write   = false,
+                                                      .cull_mode     = VK_CULL_MODE_NONE,
+                                                      .depth_compare = VK_COMPARE_OP_GREATER});
+
   const VkDeviceSize buffer_size = sizeof(debug_vertex_t) * DEBUG_VERTEX_CAPACITY;
   for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
   {
@@ -953,7 +1017,8 @@ static void destroy_debug_resources()
       vkDestroyBuffer(g_device, g_debug_vertex_buffer[frame], nullptr);
   }
 
-  for (VkPipeline pipeline : {g_debug_box_pipeline, g_debug_line_pipeline, g_debug_face_pipeline})
+  for (VkPipeline pipeline : {g_debug_box_pipeline, g_debug_line_pipeline, g_debug_face_pipeline,
+                              g_debug_line_occluded_pipeline, g_debug_face_occluded_pipeline})
     if (pipeline)
       vkDestroyPipeline(g_device, pipeline, nullptr);
 
@@ -2768,6 +2833,21 @@ linalg::vec2 screen_size()
   return {(float)g_swapchain_extent.width, (float)g_swapchain_extent.height};
 }
 
+float display_scale()
+{
+  // Derived from the DISPLAY's DPI, not from drawable-vs-window: declaring
+  // per-monitor-v2 awareness without SDL_WINDOWS_DPI_SCALING makes SDL
+  // coordinates equal pixels, so that ratio is now 1.0 on every display and
+  // says nothing.
+  const int32_t display_index = SDL_GetWindowDisplayIndex(g_window);
+  float         diagonal_dpi  = 0.0f;
+  if (display_index < 0 || SDL_GetDisplayDPI(display_index, &diagonal_dpi, nullptr, nullptr) != 0 ||
+      diagonal_dpi <= 0.0f)
+    return 1.0f;
+
+  return diagonal_dpi / 96.0f;
+}
+
 linalg::vec2 logical_window_points_to_framebuffer_pixels(linalg::vec2 window_point)
 {
   int window_width  = 0;
@@ -2879,7 +2959,8 @@ std::optional<linalg::vec2> try_project_to_screen(const render_view_t &view,
 // --- Debug primitive recording ---
 
 static void write_debug_vertex(debug_vertex_t &vertex, const linalg::vec3f &position, color_t color,
-                               float barycentric_x, float barycentric_y, float barycentric_z)
+                               float barycentric_x, float barycentric_y, float barycentric_z,
+                               float rim_strength = 0.0f)
 {
   vertex.position[0]    = position.x;
   vertex.position[1]    = position.y;
@@ -2891,9 +2972,11 @@ static void write_debug_vertex(debug_vertex_t &vertex, const linalg::vec3f &posi
   vertex.barycentric[0] = barycentric_x;
   vertex.barycentric[1] = barycentric_y;
   vertex.barycentric[2] = barycentric_z;
+  vertex.rim_strength   = rim_strength;
 }
 
-static void push_debug_constants(VkCommandBuffer cmd, const linalg::mat4f &mvp, color_t tint)
+static void push_debug_constants(VkCommandBuffer cmd, const linalg::mat4f &mvp, color_t tint,
+                                 const linalg::vec3f &camera_position)
 {
   debug_push_constants_t push{};
   memcpy(push.mvp, &mvp, sizeof(push.mvp));
@@ -2901,6 +2984,11 @@ static void push_debug_constants(VkCommandBuffer cmd, const linalg::mat4f &mvp, 
   push.color[1] = tint.g / 255.0f;
   push.color[2] = tint.b / 255.0f;
   push.color[3] = tint.a / 255.0f;
+  // The rim term needs a per-pixel vector to the eye, and the vertex stage is
+  // where it is cheapest to start one. Nothing else in the debug path reads it.
+  push.camera_position[0] = camera_position.x;
+  push.camera_position[1] = camera_position.y;
+  push.camera_position[2] = camera_position.z;
   vkCmdPushConstants(cmd, g_debug_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
                      &push);
 }
@@ -2919,7 +3007,8 @@ static void shaded_corner_barycentric(uint32_t corner, float &out_x, float &out_
 }
 
 static void record_debug_lines(VkCommandBuffer cmd, const debug_draw_list_t &debug,
-                               const linalg::mat4f &view_projection_matrix)
+                               const linalg::mat4f &view_projection_matrix,
+                               const linalg::vec3f &camera_position)
 {
   if (debug.lines.empty() || g_debug_line_pipeline == VK_NULL_HANDLE)
     return;
@@ -2940,7 +3029,7 @@ static void record_debug_lines(VkCommandBuffer cmd, const debug_draw_list_t &deb
   const VkDeviceSize offset = 0;
   vkCmdBindVertexBuffers(cmd, 0, 1, &g_debug_vertex_buffer[g_current_frame_idx_in_swapchain],
                          &offset);
-  push_debug_constants(cmd, view_projection_matrix, colors::white);
+  push_debug_constants(cmd, view_projection_matrix, colors::white, camera_position);
 
   // Depth bias is pipeline DYNAMIC state, so one draw can only carry one value.
   // Lines are emitted in runs of equal bias -- which is what makes a -200
@@ -2961,6 +3050,46 @@ static void record_debug_lines(VkCommandBuffer cmd, const debug_draw_list_t &deb
               1, first_vertex + (uint32_t)run_start * 2, 0);
     run_start = run_end;
   }
+
+  // The hidden halves, dimmed, over runs of consecutive flagged lines. The
+  // vertices are the ones already written above -- the second copy costs draws,
+  // not geometry -- which is also why the runs are found rather than sorted: a
+  // reorder would invalidate the offsets the pass above just drew from.
+  if (g_debug_line_occluded_pipeline == VK_NULL_HANDLE)
+    return;
+
+  bool occluded_pipeline_bound = false;
+  size_t occluded_start = 0;
+  while (occluded_start < debug.lines.size())
+  {
+    if (!debug.lines[occluded_start].draw_when_occluded)
+    {
+      ++occluded_start;
+      continue;
+    }
+
+    size_t occluded_end = occluded_start + 1;
+    while (occluded_end < debug.lines.size() && debug.lines[occluded_end].draw_when_occluded)
+      ++occluded_end;
+
+    if (!occluded_pipeline_bound)
+    {
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_debug_line_occluded_pipeline);
+      push_debug_constants(
+          cmd, view_projection_matrix,
+          with_alpha(colors::white, color_channel_from_float(DEBUG_OCCLUDED_ALPHA_SCALE)),
+          camera_position);
+      // One bias for the whole pass: the per-line values exist to stop an
+      // outline z-fighting the surface it traces, and nothing drawn here is
+      // coplanar with anything by construction -- it is all strictly behind.
+      vkCmdSetDepthBias(cmd, -2.0f, 0.0f, -1.0f);
+      occluded_pipeline_bound = true;
+    }
+
+    vkCmdDraw(cmd, (uint32_t)(occluded_end - occluded_start) * 2, 1,
+              first_vertex + (uint32_t)occluded_start * 2, 0);
+    occluded_start = occluded_end;
+  }
 }
 
 // Polygons split by ALPHA, not by who appended them: a fully opaque face writes
@@ -2968,7 +3097,8 @@ static void record_debug_lines(VkCommandBuffer cmd, const debug_draw_list_t &deb
 // would hide what is behind it. That is the whole difference between the two
 // pipelines, and reading it off the colour means a caller never picks.
 static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &debug,
-                                  const linalg::mat4f &view_projection_matrix, bool opaque_pass)
+                                  const linalg::mat4f &view_projection_matrix,
+                                  const linalg::vec3f &camera_position, bool opaque_pass)
 {
   const VkPipeline pipeline = opaque_pass ? g_debug_box_pipeline : g_debug_face_pipeline;
   if (debug.polygons.empty() || pipeline == VK_NULL_HANDLE)
@@ -2993,16 +3123,17 @@ static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &
   if (!storage)
     return;
 
+  // Written in two groups -- everything unflagged, then everything flagged -- so
+  // the occluded copy is one contiguous sub-range and one extra draw. Grouping
+  // at WRITE time is what keeps it to one; the alternative is a draw per flagged
+  // polygon.
   uint32_t written = 0;
-  for (const debug_polygon_t &polygon : debug.polygons)
-  {
-    if (polygon.vertex_count < 3 || !belongs(polygon))
-      continue;
 
+  const auto write_polygon = [&](const debug_polygon_t &polygon) {
     // (1,1,1) saturates the shader's smoothstep, so an unshaded polygon opts out
     // of the edge darkening without the shader needing a mode.
     const auto corner_barycentric = [&polygon](uint32_t corner, float &x, float &y, float &z) {
-      if (!polygon.shaded)
+      if (!polygon.style.shaded)
       {
         x = y = z = 1.0f;
         return;
@@ -3010,25 +3141,47 @@ static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &
       shaded_corner_barycentric(corner, x, y, z);
     };
 
+    const float rim = polygon.style.rim ? 1.0f : 0.0f;
+
     const linalg::vec3f *vertices = &debug.polygon_vertices[polygon.first_vertex];
     for (uint32_t corner = 1; corner + 1 < polygon.vertex_count; ++corner)
     {
       float x = 0, y = 0, z = 0;
       corner_barycentric(0, x, y, z);
-      write_debug_vertex(storage[written++], vertices[0], polygon.color, x, y, z);
+      write_debug_vertex(storage[written++], vertices[0], polygon.color, x, y, z, rim);
       corner_barycentric(corner, x, y, z);
-      write_debug_vertex(storage[written++], vertices[corner], polygon.color, x, y, z);
+      write_debug_vertex(storage[written++], vertices[corner], polygon.color, x, y, z, rim);
       corner_barycentric(corner + 1, x, y, z);
-      write_debug_vertex(storage[written++], vertices[corner + 1], polygon.color, x, y, z);
+      write_debug_vertex(storage[written++], vertices[corner + 1], polygon.color, x, y, z, rim);
     }
-  }
+  };
+
+  for (const debug_polygon_t &polygon : debug.polygons)
+    if (polygon.vertex_count >= 3 && belongs(polygon) && !polygon.style.draw_when_occluded)
+      write_polygon(polygon);
+
+  const uint32_t first_occluded_vertex = written;
+
+  for (const debug_polygon_t &polygon : debug.polygons)
+    if (polygon.vertex_count >= 3 && belongs(polygon) && polygon.style.draw_when_occluded)
+      write_polygon(polygon);
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
   const VkDeviceSize offset = 0;
   vkCmdBindVertexBuffers(cmd, 0, 1, &g_debug_vertex_buffer[g_current_frame_idx_in_swapchain],
                          &offset);
-  push_debug_constants(cmd, view_projection_matrix, colors::white);
+  push_debug_constants(cmd, view_projection_matrix, colors::white, camera_position);
   vkCmdDraw(cmd, written, 1, first_vertex, 0);
+
+  if (written == first_occluded_vertex || g_debug_face_occluded_pipeline == VK_NULL_HANDLE)
+    return;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_debug_face_occluded_pipeline);
+  push_debug_constants(
+      cmd, view_projection_matrix,
+      with_alpha(colors::white, color_channel_from_float(DEBUG_OCCLUDED_ALPHA_SCALE)),
+      camera_position);
+  vkCmdDraw(cmd, written - first_occluded_vertex, 1, first_vertex + first_occluded_vertex, 0);
 }
 
 // The whole screen-space UI, in one bind and one draw per batch. Recorded once
@@ -3490,6 +3643,27 @@ bool init(SDL_Window *window)
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
   ImGui::StyleColorsDark();
 
+  // BAKED AT THE REAL PIXEL SIZE, not scaled after the fact. io.FontGlobalScale
+  // would resample a 13px bitmap atlas and reintroduce exactly the blur the DPI
+  // fix just removed; ScaleAllSizes only moves padding and borders, which have
+  // no atlas to go soft.
+  {
+    const float scale = display_scale();
+
+    const Span<const uint8_t> font_bytes =
+        assets::read_asset_bytes("resources/fonts/CourierPrime_Regular.ttf");
+
+    // ImGui frees font data it owns, and these bytes belong to the asset source
+    // for the process lifetime.
+    ImFontConfig font_config;
+    font_config.FontDataOwnedByAtlas = false;
+
+    io.Fonts->AddFontFromMemoryTTF((void *)font_bytes.data, (int32_t)font_bytes.count,
+                                   std::floor(15.0f * scale), &font_config);
+
+    ImGui::GetStyle().ScaleAllSizes(scale);
+  }
+
   ImGui_ImplSDL2_InitForVulkan(g_window);
   ImGui_ImplVulkan_InitInfo init_info = {};
   init_info.Instance = g_instance;
@@ -3709,9 +3883,10 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
 
     if (pass.debug)
     {
-      record_debug_polygons(cmd, *pass.debug, view_projection_matrix, /*opaque_pass*/ true);
-      record_debug_polygons(cmd, *pass.debug, view_projection_matrix, /*opaque_pass*/ false);
-      record_debug_lines(cmd, *pass.debug, view_projection_matrix);
+      const linalg::vec3f &eye = pass.view.camera.position;
+      record_debug_polygons(cmd, *pass.debug, view_projection_matrix, eye, /*opaque_pass*/ true);
+      record_debug_polygons(cmd, *pass.debug, view_projection_matrix, eye, /*opaque_pass*/ false);
+      record_debug_lines(cmd, *pass.debug, view_projection_matrix, eye);
     }
 
     // Last in the pass, with the viewport already applied: this is how the

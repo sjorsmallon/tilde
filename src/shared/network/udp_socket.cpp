@@ -121,7 +121,7 @@ Udp_Socket::Udp_Socket() : m_socket_handle(INVALID_SOCKET) {}
 
 Udp_Socket::~Udp_Socket() { close(); }
 
-bool Udp_Socket::open(uint16 port)
+bool Udp_Socket::open(uint16 port, size_t receive_buffer_size_in_bytes)
 {
     printf("[UDP] Attempting to open socket on port %d\n", port);
     close();
@@ -180,6 +180,49 @@ bool Udp_Socket::open(uint16 port)
 #endif
         close();
         return false;
+    }
+
+    // SO_RCVBUF: how many bytes of arrived datagrams the kernel holds for us
+    // between drains. Reception happens asynchronously on the kernel's schedule,
+    // so this depth -- not our polling cadence -- is what absorbs a burst. The
+    // default is ~64KB, about 50 packets, and everything past a full queue is
+    // discarded before we ever call recvfrom.
+    int requested_receive_buffer = static_cast<int>(receive_buffer_size_in_bytes);
+    printf("[UDP] Setting SO_RCVBUF to %d bytes...\n", requested_receive_buffer);
+#ifdef _WIN32
+    if (setsockopt(m_socket_handle, SOL_SOCKET, SO_RCVBUF, (const char *)&requested_receive_buffer, sizeof(requested_receive_buffer)) == SOCKET_ERROR)
+#else
+    if (setsockopt(m_socket_handle, SOL_SOCKET, SO_RCVBUF, &requested_receive_buffer, sizeof(requested_receive_buffer)) < 0)
+#endif
+    {
+        // Not fatal: a smaller queue still works, it just tolerates smaller
+        // bursts. Saying so beats a mystery packet loss under load later.
+#ifdef _WIN32
+        log_error("setsockopt(SO_RCVBUF, {}) failed: {}", requested_receive_buffer, WSAGetLastError());
+#else
+        log_error("setsockopt(SO_RCVBUF, {}) failed: {} ({})", requested_receive_buffer, errno, std::strerror(errno));
+#endif
+    }
+
+    // Read back what we were actually granted -- the request is a hint, and a
+    // silently clamped buffer is exactly the condition that makes a bulk
+    // transfer fail in a way that looks like a protocol bug.
+    int granted_receive_buffer = 0;
+    socklen_t granted_size = sizeof(granted_receive_buffer);
+#ifdef _WIN32
+    if (getsockopt(m_socket_handle, SOL_SOCKET, SO_RCVBUF, (char *)&granted_receive_buffer, &granted_size) == 0)
+#else
+    if (getsockopt(m_socket_handle, SOL_SOCKET, SO_RCVBUF, &granted_receive_buffer, &granted_size) == 0)
+#endif
+    {
+        printf("[UDP] SO_RCVBUF granted: %d bytes (~%d packets)\n",
+               granted_receive_buffer,
+               static_cast<int>(granted_receive_buffer / MAX_PACKET_SIZE_IN_BYTES));
+        if (granted_receive_buffer < requested_receive_buffer)
+            log_warning("socket receive buffer clamped to {} bytes (asked for {}); "
+                        "bursts larger than ~{} packets will be dropped by the kernel",
+                        granted_receive_buffer, requested_receive_buffer,
+                        granted_receive_buffer / static_cast<int>(MAX_PACKET_SIZE_IN_BYTES));
     }
 
     struct sockaddr_in address;

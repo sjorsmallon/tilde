@@ -8,6 +8,7 @@
 #include "../editor/editor_bvh.hpp"
 #include "../editor/entity_editor_traits.hpp"
 #include "../editor/geometry_editor.hpp"
+#include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
@@ -679,6 +680,10 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   else
     result.name = base + "_baked";
 
+  // Everything about the map that is not geometry rides along: a bake
+  // simplifies brushes, it does not author a different map.
+  result.attached_cvars = src.attached_cvars;
+
   // CSG is box-only on both the input and the output side, and stays that way:
   // the output is a box brush, so subtracting a displacement or a trigger volume
   // through here would silently drop its payload (heightmap, action_name, ...).
@@ -860,6 +865,9 @@ void Tool_Editor_State::draw_imgui_panels()
                   &state_manager::get_client_context().cvars->debug_show_navmesh);
 
   ImGui::End();
+
+  draw_map_cvars_panel(map, *state_manager::get_client_context().cvars,
+                       transaction_system);
 
   if (should_open_popup)
   {

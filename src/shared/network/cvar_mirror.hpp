@@ -80,4 +80,14 @@ bool apply_cvar_values(cvars::cvar_state_t&         state,
 // values and this must not run there. See reset_for_new_connection.
 void revert_mirrored_cvars_to_defaults(cvars::cvar_state_t& state);
 
+// The same revert over an arbitrary set, which is what the server unloading a
+// map needs: a map's attached_cvars list is a set of cvars that were the MAP's
+// while it was loaded, so unloading it puts exactly those back. One
+// implementation for both, because "what a default is" (a default-constructed
+// cvar_state_t) and "how a value is written" (the generated offset/size) must
+// have one answer -- the mirrored revert is just this one over
+// cvars::mirrored_cvars().
+void revert_cvars_to_defaults(cvars::cvar_state_t&      state,
+                              Span<const cvars::cvar_id> ids);
+
 } // namespace shared

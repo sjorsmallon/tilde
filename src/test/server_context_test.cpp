@@ -68,6 +68,16 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   pending.region            = shared::hit_region_t::Head;
   context.outgoing.pending_hits.push_back(pending);
 
+  // A map whose attached_cvars claimed two values. Set through the state the
+  // context points at, exactly as apply_map_cvars does.
+  cvar_state.g_gravity   = 200.f;
+  cvar_state.pm_maxspeed = 400.f;
+  context.world.cvars_applied_by_map = {cvars::cvar_id::g_gravity,
+                                        cvars::cvar_id::pm_maxspeed};
+
+  // An operator setting, claimed by no map: the revert must leave it alone.
+  cvar_state.sv_tickrate = 30.f;
+
   for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
     client_slot_t& client = context.clients[slot];
@@ -103,6 +113,22 @@ void test_reset_state_in_preparation_for_new_map_load()
 
   // The ring, so the next snapshot to every client is a full update.
   assert(context.replication.snapshot_history.find(900) == nullptr);
+
+  // The cvars that map claimed are back at their cvars.def defaults, and the
+  // record of them is gone with the map. Without this a map's settings outlive
+  // it -- on the server AND, through the @Mirrored broadcast, on every client
+  // that follows it to the next map.
+  {
+    const cvars::cvar_state_t defaults{};
+    assert(cvar_state.g_gravity == defaults.g_gravity);
+    assert(cvar_state.pm_maxspeed == defaults.pm_maxspeed);
+    assert(context.world.cvars_applied_by_map.empty());
+  }
+
+  // Survives: a cvar NO map claimed. The revert is a named subset, not a group
+  // reset -- an operator's console and config settings are not the map's to
+  // undo.
+  assert(cvar_state.sv_tickrate == 30.f);
 
   assert(context.incoming.commands.empty());
   assert(context.incoming.map_loaded_acks.empty());

@@ -8,6 +8,7 @@
 #include "state_manager.hpp"
 #include "ui/font.hpp"
 
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -64,6 +65,14 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   cvars::bind_client_commands(*command_table);
   console::get().set_cvar_state(cvar_state, command_table);
 
+  // Before SDL_Init, because SDL declares process DPI awareness during video
+  // init and Windows refuses the change afterwards. Without it the process is
+  // DPI-UNAWARE: Windows hands us a virtualized desktop (2560x1440 on a 4K
+  // panel at 150%), we render every pixel at that size, and DWM bilinearly
+  // upscales the finished frame to 3840x2160. Every glyph is resampled, which
+  // no amount of care in the rasterizer or the blend can undo.
+  SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
   {
     log_error("SDL_Init Error: {}", SDL_GetError());
@@ -95,8 +104,14 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
 
   // load a font.
   {
-    const std::optional<ui::font_atlas_t> atlas =
-        ui::try_bake_font(assets::read_asset_bytes(ui::DEFAULT_FONT_PATH), {18.f, 28.f, 48.f});
+    // BAKED at the real pixel height, never scaled at draw time: a raster atlas
+    // resampled to fit a denser display is the same blur the DPI fix removed.
+    // The three logical sizes stay the design; the scale is applied here.
+    const float scale = renderer::display_scale();
+
+    const std::optional<ui::font_atlas_t> atlas = ui::try_bake_font(
+        assets::read_asset_bytes(ui::DEFAULT_FONT_PATH),
+        {std::floor(18.f * scale), std::floor(28.f * scale), std::floor(48.f * scale)});
     if (!atlas)
       fatal_error("client::init: could not bake the UI font from '{}'", ui::DEFAULT_FONT_PATH);
 
@@ -193,7 +208,8 @@ bool Tick()
   // from thirty call sites that share no state.
   hud::announcement_t &announcement = hud::current_announcement();
   hud::advance_announcement(announcement, dt);
-  hud::draw_announcement(frame_ui, *g_ui_font, renderer::screen_size(), announcement);
+  hud::draw_announcement(frame_ui, *g_ui_font, renderer::screen_size(),
+                         renderer::display_scale(), announcement);
 
   state_manager::draw_imgui_panels();
 

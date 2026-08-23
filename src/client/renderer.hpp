@@ -202,6 +202,11 @@ struct mesh_draw_t
 // is what makes a one-shot event (a hitscan trace fired in a fixed tick) able
 // to outlive the single frame it was appended in.
 
+// `draw_when_occluded` asks for a SECOND, dimmed draw of the same geometry where the depth
+// test FAILS, so the part of an entry hidden behind something reads as faint
+// instead of as absent. It is per entry and not per pass because an editor gizmo
+// being occluded is information, where a hit volume buried inside the player
+// model it belongs to is just invisible.
 struct debug_line_t
 {
   linalg::vec3f start;
@@ -209,19 +214,42 @@ struct debug_line_t
   color_t       color;
   float         depth_bias;
   float         remaining_seconds; // <= 0 dies on the next retire()
+  bool          draw_when_occluded;
+};
+
+// How a filled polygon is shaded, as one value rather than a tail of bools --
+// past three, positional flags at a call site stop being readable. Every member
+// defaults to the plain flat overlay, so `{}` is the polygon nobody asked
+// anything of.
+struct debug_face_style_t
+{
+  // Darken toward the triangle edges, so an untextured solid box reads as a box
+  // instead of a silhouette. True for the faces of a solid aabb/box; false for
+  // an overlay face (a collision polygon), where the darkening would just be
+  // noise over geometry you are trying to see through.
+  bool shaded = false;
+
+  // Also draw the hidden part, dimmed. See debug_line_t.
+  bool draw_when_occluded = false;
+
+  // Fade the face out as it turns to face the camera, leaving the silhouette --
+  // the classic rim term. What it buys is DEPTH COMPLEXITY: ten overlapping
+  // volumes drawn flat pile their face-on interiors into one wash, and this
+  // removes exactly the part that carries no shape information.
+  //
+  // Wrong for a collision polygon, which is a flat quad you look at face-on
+  // precisely to see which plane you hit -- which is why it is per polygon and
+  // not a property of the overlay pipeline.
+  bool rim = false;
 };
 
 struct debug_polygon_t
 {
   uint32_t first_vertex; // slice of debug_draw_list_t::polygon_vertices
   uint32_t vertex_count;
-  color_t  color;
-  float    remaining_seconds;
-  // Darken toward the triangle edges, so an untextured solid box reads as a box
-  // instead of a silhouette. True for the faces of a solid aabb/box; false for
-  // an overlay face (a collision polygon), where the darkening would just be
-  // noise over geometry you are trying to see through.
-  bool shaded;
+  color_t             color;
+  float               remaining_seconds;
+  debug_face_style_t  style;
 };
 
 struct debug_text_t
@@ -257,21 +285,21 @@ struct debug_draw_list_t
   // `seconds` is how long the entry outlives this frame: 0 (the default) = this
   // frame only; > 0 = survives retire() until the time runs out.
   void line(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
-            float depth_bias = 0.0f, float seconds = 0.0f);
+            float depth_bias = 0.0f, float seconds = 0.0f, bool draw_when_occluded = false);
   void aabb(const linalg::vec3f &min, const linalg::vec3f &max, color_t color,
             fill_mode_t fill = fill_mode_t::wireframe, float depth_bias = 0.0f,
-            float seconds = 0.0f);
+            float seconds = 0.0f, bool draw_when_occluded = false);
   // The same shape, spelled the way the EDITOR holds it: an object has a
   // position and half-extents, where a bounds computation produces min/max.
   // Both spellings exist because converting at every call site is how a sign
   // error gets in.
   void box(const linalg::vec3f &center, const linalg::vec3f &half_extents, color_t color,
            fill_mode_t fill = fill_mode_t::wireframe, float depth_bias = 0.0f,
-           float seconds = 0.0f);
+           float seconds = 0.0f, bool draw_when_occluded = false);
   // Triangle-fan decomposed, and alpha-blended when the colour says so. There is
   // no once-per-frame reset to remember -- the list IS the frame scope.
   void filled_polygon(Span<const linalg::vec3f> vertices, color_t color, float seconds = 0.0f,
-                      bool shaded = false);
+                      debug_face_style_t style = {});
 
   // Compositions -- these decompose into `lines` entries at append time.
   void arrow(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
@@ -411,6 +439,13 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui);
 // The swapchain extent in pixels, which is the coordinate space ui_draw_list_t
 // works in. Exposed so layout code has it without reaching into ImGui's io.
 [[nodiscard]] linalg::vec2 screen_size();
+
+// Pixels per logical UI unit on the display the window is currently on: 1.0 at
+// 96 DPI, 1.5 at Windows' 150%. The ONE owner of that factor -- the process is
+// per-monitor-v2 DPI aware, so nothing upscales the finished frame any more and
+// every fixed pixel size in the UI is now a size in REAL pixels that has to be
+// multiplied by this or it shrinks as the display gets denser.
+[[nodiscard]] float display_scale();
 
 // Convert a point in LOGICAL WINDOW POINTS -- what SDL_GetMouseState and every
 // SDL event report -- into the FRAMEBUFFER PIXELS this UI draws in.

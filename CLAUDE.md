@@ -18,7 +18,7 @@ cmake --build cmake_build -j8
 cmake -S . -B cmake_build_pkg -DTILDE_ASSET_SOURCE=pkg     # one assets.pkg beside the exe
 cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in .rodata
 
-# Run the whole test suite (~2s, all 31)
+# Run the whole test suite (~2s, all 33)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -81,6 +81,14 @@ src/
 - `geometry` — plain C++ values: `box_geometry_t`, `static_mesh_geometry_t`, `displacement_geometry_t` in a `std::variant` (`shared/map_geometry.hpp`). Geometry is **not** an entity and has no schema: it is never networked, so it doesn't pay the schema system's blittable/fixed-size/memcmp constraints, and a displacement's grid is a `std::vector` with no subdivision cap.
 
 The session copies the geometry list (`game_session_t::geometry`), so map and session never alias the same object. `Collision_Id.index` in the session BVH is an index into that copy.
+
+`map_t::attached_cvars` is the third thing a map holds: console lines the **server** runs when it loads the map (`apply_map_cvars`, before `build_session`), so game settings can be per-map. They are written as a `cvars` block whose properties are cvar name -> value, so one name appears at most once and file order is not preserved. They go through `execute_console_line`, which means a `@Mirrored` value replicates to clients for free and a bad line reports itself instead of being dropped. A map's settings are the MAP's for as long as it is loaded: `apply_map_cvars` records the id of every cvar a line actually set (`world_t::cvars_applied_by_map`), and `reset_state_in_preparation_for_new_map_load` puts exactly those back to their `cvars.def` defaults before the incoming map's list runs. It is a **named subset, not a group reset** — an operator's console and config settings are not the map's to undo — which is the one exception to "nothing resets the cvars at the top of `server_context_t`". `shared::revert_cvars_to_defaults(state, ids)` is the one byte-copy that does it; `revert_mirrored_cvars_to_defaults` is that same function over `cvars::mirrored_cvars()`, and the client's disconnect revert is the other caller.
+
+Note which side that fixes. The client's revert restores its **mirror**, and a mirror is a copy: it stops a dead server's constants steering the offline session, but it never restored the server, and the integrated build gates it off entirely (one `cvar_state_t`, and an in-process server still owns those values). The server reverting on map unload is what actually puts gravity back — and because the mirror broadcast is memcmp-based, every connected client gets the reverted values without a second mechanism.
+
+The authoring half is the editor's **Map Cvars panel** (`client/editor/map_cvars_panel.{hpp,cpp}`), and it exists because the alternative — hand-editing the block in the `.source` file — made a setting nothing in the editor showed into a setting the next edit could silently drop. A name is **picked from the generated cvar table, never typed**, so a map carrying a cvar this build does not have is not representable from the panel; a value is checked through the same `try_cvar_from_text` the console parses with, against a scratch `cvar_state_t` that is written and never read. Edits go through the transaction system like any other map edit. `shared::split_cvar_line` / `make_cvar_line` (`map.hpp`) are the ONE split and the ONE join, shared by the file writer, the file reader and the panel, so none of the three can disagree about where a name ends.
+
+Anything that rebuilds a `map_t` from another one has to carry the list — `bake_map_csg` did not, and a Bake CSG silently dropped it.
 
 Everything editor-side is keyed by uid and works across both lists through the seam in `map.hpp`: `has_object` / `remove_object` / `object_count`, plus the free functions `compute_object_bounds`, `get_object_position` / `set_object_position`, `get_object_box` / `set_object_box`, and `collect_object_bounds`. Tools use those and generally don't branch on which regime backs an object.
 
@@ -493,10 +501,11 @@ health, which is the trade fix falling out for free.
 
 Geometry drawing, inspector panels and placement ghosts live in `editor/geometry_editor.{hpp,cpp}` — the geometry counterpart to `entity_editor_traits`, and much smaller (three kinds, all boxes, so it's switches rather than a trait template per type). `client/geometry_renderer.{hpp,cpp}` is the one geometry draw path shared by the game and the editor.
 
-The transaction system (`editor/transaction_system.hpp`) has **two diff flavors**:
+The transaction system (`editor/transaction_system.hpp`) has **three diff flavors**:
 
 - entities: `entities::field_change_t` **binary** field diffs (`capture_field_changes` / `write_field_changes`), snapshots via `clone_entity`. No text round-trip — the old formatted-float compare silently dropped sub-threshold changes.
 - geometry: **value swap** (`diff_geometry_created/removed/modified_t`) — whole-value before/after snapshots, since geometry copies. No schema, no text round-trip, bit-exact.
+- the map's cvar list: **value swap** too (`diff_map_cvars_t`), whole-list before/after. `attached_cvars` has no schema, no uid and no fields to diff, and the list is a handful of short strings.
 
 The editor picking BVH is built by `build_editor_bvh()` (`editor/editor_bvh.hpp`) over BOTH lists. Its `Collision_Id.index` holds the object uid, unlike the runtime session BVH whose index is a `game_session_t::geometry` array position.
 

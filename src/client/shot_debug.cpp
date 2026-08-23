@@ -72,7 +72,7 @@ const shot_debug_local_t *shot_debug_history_t::find(uint32_t input_number) cons
   return nullptr;
 }
 
-void draw_shot_debug_pair(renderer::debug_draw_list_t &out, const shot_debug_local_t *local,
+void draw_shot_debug_pair(renderer::debug_draw_list_t &out, const shot_debug_local_t* local_recording_of_shot,
                           const game::S2C_ShotDebug &server,
                           const aim_settings_t &settings, float seconds)
 {
@@ -92,11 +92,12 @@ void draw_shot_debug_pair(renderer::debug_draw_list_t &out, const shot_debug_loc
   const float         ray_length       = 4000.f;
   out.line(server_eye, server_eye + server_direction * ray_length, SERVER_COLOR, 0.f, seconds);
 
-  if (local)
-    out.line(local->eye, local->eye + local->direction * ray_length, CLIENT_COLOR, 0.f,
+  if (local_recording_of_shot)
+    out.line(local_recording_of_shot->eye, local_recording_of_shot->eye + local_recording_of_shot->direction * ray_length, CLIENT_COLOR, 0.f,
              seconds);
-
-  // --- The target silhouettes ---
+ 
+  // which targets were near enough?
+  // reconstruct the pose from the provided protobuf data.
   for (const game::ShotDebugTarget &target : server.targets())
   {
     const shared::player_pose_t pose{.feet_position = vector_from_proto(target.feet_position()),
@@ -106,17 +107,18 @@ void draw_shot_debug_pair(renderer::debug_draw_list_t &out, const shot_debug_loc
     draw_pose(out, pose, settings, SERVER_COLOR, seconds, scratch);
   }
 
-  if (local)
+ // do we have a local_recording_of_shot copy of that timestamp?
+  if (local_recording_of_shot)
   {
-    for (const shot_debug_pose_t &drawn : local->drawn)
+    for (const shot_debug_pose_t& drawn : local_recording_of_shot->drawn)
       draw_pose(out, drawn.pose, settings, CLIENT_COLOR, seconds, scratch);
 
     // The separation itself, as a line you can read a length off. Drawn only
     // between the same player's two silhouettes -- a line between two different
     // players would be a number with no meaning.
-    for (const shot_debug_pose_t &drawn : local->drawn)
+    for (const shot_debug_pose_t& drawn : local_recording_of_shot->drawn)
     {
-      for (const game::ShotDebugTarget &target : server.targets())
+      for (const game::ShotDebugTarget& target : server.targets())
       {
         if (target.player_uid() != drawn.uid)
           continue;
@@ -130,9 +132,9 @@ void draw_shot_debug_pair(renderer::debug_draw_list_t &out, const shot_debug_loc
     }
   }
 
-  // --- The verdict, at the impact ---
+
   const bool  hit    = server.hit_uid() != shared::null_entity_uid;
-  const char *status = bracket_status_name(server.bracket_status());
+  const char* status = bracket_status_name(server.bracket_status());
 
   const linalg::vec3f caption_at =
       hit ? vector_from_proto(server.impact_point()) : server_eye + server_direction * 200.f;
@@ -146,10 +148,9 @@ void draw_shot_debug_pair(renderer::debug_draw_list_t &out, const shot_debug_loc
                   hit ? std::string{}
                       : std::format(" | nearest miss {:.1f}u", server.nearest_miss_distance()));
 
-  // Said explicitly, because "no blue drawn" and "blue agreed exactly with red"
-  // look the same on screen and mean opposite things.
+  // locally this could have aged out (most likely, it isn't, but still.)
   const std::string client_half =
-      local ? std::string{}
+      local_recording_of_shot ? std::string{}
             : std::string{"  [no client half: input aged out of the ring]"};
 
   out.text(caption_at, (caption + client_half).c_str(), colors::white, seconds);

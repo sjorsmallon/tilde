@@ -318,6 +318,38 @@ int main()
       return fail("package: deserialize accepted a corrupted magic");
   }
 
+  // --- 8. Per-map cvar settings round-trip --------------------------------
+  // map_t::attached_cvars is written as a 'cvars' block and read back as one
+  // line per property. The block's properties are a std::map, so the reloaded
+  // order is by cvar name -- the fixture below is already in that order.
+  {
+    map_t cvar_map;
+    cvar_map.name = "cvar_roundtrip";
+    cvar_map.attached_cvars = {"g_gravity 200", "pm_maxspeed 400"};
+
+    const std::string canonical = serialize_map_to_string(cvar_map);
+    if (canonical.find("\ncvars\n{") == std::string::npos)
+      return fail("cvars: saved text has no cvars block");
+
+    const map_t reparsed = parse_map_from_string(canonical);
+    if (reparsed.attached_cvars != cvar_map.attached_cvars)
+      return fail("cvars: attached_cvars drift through a round-trip");
+
+    // A cvars block must not become an object in either list, and the text must
+    // be stable (so the content hash is).
+    if (!reparsed.entities.empty() || !reparsed.geometry.empty())
+      return fail("cvars: a cvars block produced a map object");
+    if (serialize_map_to_string(reparsed) != canonical)
+      return fail("cvars: re-serialized text is not stable");
+
+    // A value with spaces survives, and a bare name (no value) stays bare.
+    map_t odd_map;
+    odd_map.attached_cvars = {"announce hello there", "sv_lag_compensation"};
+    const map_t odd_reparsed = parse_map_from_string(serialize_map_to_string(odd_map));
+    if (odd_reparsed.attached_cvars != odd_map.attached_cvars)
+      return fail("cvars: a spaced value or a bare name did not survive");
+  }
+
   printf("map_migration_test: OK (%zu boxes, %zu displacements converted from "
          "legacy entity blocks, wedges dropped, trigger round-trip OK, "
          "canonical hash stable, package round-trip OK)\n",

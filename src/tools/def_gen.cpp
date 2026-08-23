@@ -89,7 +89,23 @@
 //                                               enum declared in the same file
 //
 //   type              -> 'string' '<' NUMBER '>'
+//                      | IDENTIFIER '[' IDENTIFIER ']'  -- element type, keyed
+//                                                          by a declared enum
 //                      | IDENTIFIER
+//
+// An array is `u32[Weapon]`: one element per value of the named enum, emitted as
+// an Enum_Array. Postfix and bracketed so the two parameterised types stay
+// distinct -- '<>' sizes a string, '[]' keys an array -- and so the declaration
+// matches the use site, `inventory.weapons[Weapon::Scout]`.
+//
+// It is a FRONT-END feature. emit_field_table expands one array field into one
+// field_info_t row per key, named "weapons.Scout", each with a final offset, so
+// nothing downstream -- the wire codec, the text conversion, the change masks,
+// the runtime leaf walk -- has an array case. Two consequences worth knowing:
+// every emitted span length comes from emitted_row_count() rather than a
+// declared field count, and an array is refused in a channel, whose row count
+// is its declared field count by construction. An array OF A COMPONENT is
+// refused too, pending a look at how capture_field_changes indexes one.
 //
 //   default_value     -> NUMBER
 //                      | '{' NUMBER (',' NUMBER)* '}'
@@ -390,7 +406,19 @@ struct type_reference_t
   string_view_t name;              // exactly as written, for errors and codegen
   int32_t       capacity;          // string<N>, otherwise 0
   int32_t       declaration_index; // resolved target, -1 until then
+
+  // `u32[Weapon]` -- one element per value of an enum, emitted as an
+  // Enum_Array. The KEY is held here; `kind` and `name` above stay the
+  // ELEMENT's, so every existing reader of a type sees the element and needs no
+  // array case. Zero length and -1 when the field is not an array.
+  string_view_t array_key_name;
+  int32_t       array_key_declaration_index;
 };
+
+static bool type_is_array(const type_reference_t* type)
+{
+  return type->array_key_name.length > 0;
+}
 
 enum default_kind_t : uint8_t
 {
@@ -714,8 +742,9 @@ static field_t* push_field(program_t* program)
 {
   assert(program->field_count < program->field_capacity);
   field_t* field = &program->fields[program->field_count++];
-  *field                        = {};
-  field->type.declaration_index = -1;
+  *field                                   = {};
+  field->type.declaration_index            = -1;
+  field->type.array_key_declaration_index  = -1;
   field->first_annotation       = program->annotation_count;
   field->first_parameter        = program->parameter_count;
   return field;
@@ -725,8 +754,9 @@ static parameter_t* push_parameter(program_t* program)
 {
   assert(program->parameter_count < program->parameter_capacity);
   parameter_t* parameter = &program->parameters[program->parameter_count++];
-  *parameter                        = {};
-  parameter->type.declaration_index = -1;
+  *parameter                                   = {};
+  parameter->type.declaration_index            = -1;
+  parameter->type.array_key_declaration_index  = -1;
   return parameter;
 }
 
@@ -1142,7 +1172,8 @@ static bool parse_type(parser_t* parser, type_reference_t* out_type, bool bare_s
 {
   if (check(parser, TOKEN_OPEN_BRACKET))
   {
-    parse_error(parser, "fixed capacity arrays ('[N]T') are not supported");
+    parse_error(parser, "an array is written element-first, keyed by an enum: 'u32[Weapon]', "
+                        "not '[N]T'");
     return false;
   }
 
@@ -1150,10 +1181,12 @@ static bool parse_type(parser_t* parser, type_reference_t* out_type, bool bare_s
   if (!expect(parser, TOKEN_IDENTIFIER, "a type name"))
     return false;
 
-  out_type->name              = token_text(parser->program, name_token);
-  out_type->kind              = builtin_type_kind(out_type->name);
-  out_type->capacity          = 0;
-  out_type->declaration_index = -1;
+  out_type->name                          = token_text(parser->program, name_token);
+  out_type->kind                          = builtin_type_kind(out_type->name);
+  out_type->capacity                      = 0;
+  out_type->declaration_index             = -1;
+  out_type->array_key_name                = {};
+  out_type->array_key_declaration_index   = -1;
 
   if (out_type->kind == TYPE_STRING)
   {
@@ -1203,6 +1236,30 @@ static bool parse_type(parser_t* parser, type_reference_t* out_type, bool bare_s
     parse_error(parser, "only 'string' takes a capacity, '%.*s' does not", out_type->name.length,
                 out_type->name.data);
     return false;
+  }
+
+  // `u32[Weapon]` -- one element per value of the named enum. Postfix, and
+  // spelled with '[' rather than the '<' a capacity takes, so the two
+  // parameterised types stay visually distinct: '<>' sizes, '[]' keys. It also
+  // matches the USE site, which is `inventory.weapons[Weapon::Scout]`.
+  if (accept(parser, TOKEN_OPEN_BRACKET))
+  {
+    if (bare_string_allowed)
+    {
+      // A command parameter. Its value is one console token, and there is no
+      // spelling for a list of them.
+      parse_error(parser, "a command parameter may not be an array");
+      return false;
+    }
+
+    token_t key_token = peek(parser);
+    if (!expect(parser, TOKEN_IDENTIFIER, "the name of an enum to key the array by"))
+      return false;
+
+    out_type->array_key_name = token_text(parser->program, key_token);
+
+    if (!expect(parser, TOKEN_CLOSE_BRACKET, "']' to close the array key"))
+      return false;
   }
 
   return true;
@@ -2048,6 +2105,33 @@ static void resolve_types(program_t* program, const name_table_t* table)
     {
       field_t* field = &program->fields[declaration->first_field + offset];
 
+      // The array KEY resolves independently of the element type: `u32[Weapon]`
+      // has a builtin element that never enters the switch below, and
+      // `Material[Team]` has a named one that does.
+      if (type_is_array(&field->type))
+      {
+        int32_t key_target = find_declaration(table, program, field->type.array_key_name);
+        if (key_target < 0)
+        {
+          report_error(program, field->offset, field->line,
+                       "unknown enum '%.*s' keying the array on field '%.*s'",
+                       field->type.array_key_name.length, field->type.array_key_name.data,
+                       field->name.length, field->name.data);
+        }
+        else if (program->declarations[key_target].kind != DECLARATION_ENUM)
+        {
+          report_error(program, field->offset, field->line,
+                       "an array is keyed by an enum; '%.*s' on field '%.*s' is a %s",
+                       field->type.array_key_name.length, field->type.array_key_name.data,
+                       field->name.length, field->name.data,
+                       declaration_kind_name(program->declarations[key_target].kind));
+        }
+        else
+        {
+          field->type.array_key_declaration_index = key_target;
+        }
+      }
+
       if (field->type.kind != TYPE_UNRESOLVED)
         continue;
 
@@ -2076,6 +2160,17 @@ static void resolve_types(program_t* program, const name_table_t* table)
         case DECLARATION_COMPONENT:
           field->type.kind              = TYPE_COMPONENT;
           field->type.declaration_index = target;
+          // An array of components would expand into rows the runtime walk then
+          // recurses into per key -- which works, but `capture_field_changes`
+          // indexes a component as ONE opaque blob, and that interaction is
+          // unexercised. Refused until something needs it, rather than shipped
+          // untested.
+          if (type_is_array(&field->type))
+            report_error(program, field->offset, field->line,
+                         "field '%.*s' is an array of the component '%.*s'; only scalar and enum "
+                         "elements are supported today",
+                         field->name.length, field->name.data, target_declaration->name.length,
+                         target_declaration->name.data);
           // A component-typed field takes a component literal or nothing. Any
           // other default is a category error -- `render: Render = 3` -- and
           // resolve_component_defaults never sees it.
@@ -2558,6 +2653,16 @@ static void check_event_family(program_t* program)
                      "field '%.*s' is an asset class. An asset id is a per-build table index -- "
                      "it is not stable, and a channel payload has no manifest to resolve it "
                      "against. Send it as a u32, or send what the consumer actually needs",
+                     field->name.length, field->name.data);
+        continue;
+      }
+
+      if (type_is_array(&field->type))
+      {
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is an array. A channel member's row count is its DECLARED field "
+                     "count (channel_member_field_count), which an expanded array would silently "
+                     "disagree with. Inline the elements you need",
                      field->name.length, field->name.data);
         continue;
       }
@@ -3479,7 +3584,23 @@ static int32_t* build_enum_ids(const program_t* program, int32_t* out_enum_count
   return ids;
 }
 
+static void write_cpp_element_type(FILE* out, const type_reference_t* type);
+
+// An array is spelled by wrapping the ELEMENT spelling, so every element type
+// works here the day it works there and nothing below grew an array case.
 static void write_cpp_type(FILE* out, const type_reference_t* type)
+{
+  if (type_is_array(type))
+  {
+    fprintf(out, "Enum_Array<%.*s, ", type->array_key_name.length, type->array_key_name.data);
+    write_cpp_element_type(out, type);
+    fprintf(out, ">");
+    return;
+  }
+  write_cpp_element_type(out, type);
+}
+
+static void write_cpp_element_type(FILE* out, const type_reference_t* type)
 {
   switch (type->kind)
   {
@@ -3945,6 +4066,25 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "};\n\n");
   fprintf(out, "constexpr uint32_t COMPONENT_TYPE_COUNT = %d;\n\n", component_count);
 
+  // --- enum_traits, before anything that can hold an Enum_Array ---
+  //
+  // A field declared `u32[Weapon]` emits as Enum_Array<Weapon, uint32_t>, whose
+  // Indexing_Enum constraint reads enum_traits<Weapon>::count. The primary
+  // template lives at global scope (shared/array.hpp), so the specializations
+  // cannot go inside `namespace entities` -- and they have to precede the first
+  // component that uses one. Hence the close/reopen here rather than the single
+  // block at the end of the file this used to be: by this point the enums,
+  // their _COUNT constants and the enum_type tag all exist, and no struct has
+  // been emitted yet.
+  fprintf(out, "} // namespace entities\n\n");
+  {
+    int32_t  enum_count = 0;
+    int32_t* enum_ids   = build_enum_ids(program, &enum_count);
+    emit_enum_traits(out, program, "entities", enum_ids);
+    free(enum_ids);
+  }
+  fprintf(out, "namespace entities\n{\n\n");
+
   // --- components ---
   {
     visit_state_t* states =
@@ -4174,14 +4314,104 @@ static void emit_generated_header(FILE* out, const program_t* program)
 
   fprintf(out, "} // namespace entities\n");
 
+  free(component_ids);
+}
+
+// How many field_info_t rows a declaration's fields become. Not its field
+// count: an array is one declared field and one row PER KEY (write_field_rows).
+// Every emitted span length has to come from here, because a span that claims a
+// declared count over an expanded table reads past its end -- or, worse, stops
+// short and silently hides the tail.
+static int32_t emitted_row_count(const program_t* program, const declaration_t* declaration)
+{
+  int32_t rows = 0;
+  for (int32_t offset = 0; offset < declaration->field_count; ++offset)
   {
-    int32_t enum_count = 0;
-    int32_t* enum_ids  = build_enum_ids(program, &enum_count);
-    emit_enum_traits(out, program, "entities", enum_ids);
-    free(enum_ids);
+    const field_t* field = &program->fields[declaration->first_field + offset];
+    if (!type_is_array(&field->type))
+    {
+      rows += 1;
+      continue;
+    }
+
+    // An unresolved key was already reported; count it as one row so the
+    // emitted table stays self-consistent for whatever else this run prints.
+    if (field->type.array_key_declaration_index < 0)
+      rows += 1;
+    else
+      rows += program->declarations[field->type.array_key_declaration_index].enum_value_count;
+  }
+  return rows;
+}
+
+// One field becomes one row -- or, for an array, one row PER KEY.
+//
+// Expanding here is what keeps an array a front-end feature: every row that
+// leaves this function is an ordinary scalar/enum record with a FINAL offset, so
+// the wire codec, the text conversion, the change masks and the runtime leaf
+// walk never learn that arrays exist. The dotted name it mints ("weapons.Scout")
+// is the shape collect_leaf_fields already joins for a component, so an array
+// inside one reads as "inventory.weapons.Scout" with no extra rule anywhere.
+static void write_field_rows(FILE* out, const program_t* program, const field_t* field,
+                             const char* struct_name_prefix, int32_t struct_name_length,
+                             const char* component_id, const char* string_capacity,
+                             const char* asset_class_id, const char* enum_id)
+{
+  // Designated initializers: the table is read far more often than it is
+  // written, and nine positional values in a row is where a reader starts
+  // counting commas.
+  auto write_row = [&](const char* row_name, int32_t row_name_length,
+                       const char* offset_expression, const char* size_expression) {
+    fprintf(out, "  {.name = \"%.*s\",\n", row_name_length, row_name);
+    fprintf(out, "   .type = %s,\n", field_type_enum_name(field->type.kind));
+    fprintf(out, "   .offset = %s,\n", offset_expression);
+    fprintf(out, "   .size_in_bytes = %s,\n", size_expression);
+    fprintf(out, "   .flags = %uu,\n", field->flags);
+    fprintf(out, "   .component_id = %s,\n", component_id);
+    fprintf(out, "   .string_capacity = %s,\n", string_capacity);
+    fprintf(out, "   .asset_class_id = %s,\n", asset_class_id);
+    fprintf(out, "   .enum_info = %s},\n", enum_id);
+  };
+
+  char offset_expression[256];
+  char size_expression[256];
+
+  if (!type_is_array(&field->type))
+  {
+    snprintf(offset_expression, sizeof(offset_expression), "(uint32_t)offsetof(%.*s, %.*s)",
+             struct_name_length, struct_name_prefix, field->name.length, field->name.data);
+    snprintf(size_expression, sizeof(size_expression), "(uint32_t)sizeof(%.*s::%.*s)",
+             struct_name_length, struct_name_prefix, field->name.length, field->name.data);
+    write_row(field->name.data, field->name.length, offset_expression, size_expression);
+    return;
   }
 
-  free(component_ids);
+  // Offsets and sizes stay C++ EXPRESSIONS rather than numbers computed here:
+  // the compiler is the authority on layout everywhere else in this table, and
+  // an array is not the place to start keeping a second opinion. `values` is
+  // Enum_Array's public storage, so element 0 names the element type without
+  // the generator having to spell it a second time.
+  const declaration_t* key = &program->declarations[field->type.array_key_declaration_index];
+
+  for (int32_t value_index = 0; value_index < key->enum_value_count; ++value_index)
+  {
+    const string_view_t* value_name = &program->enum_values[key->first_enum_value + value_index];
+
+    char          row_name[256];
+    const int32_t row_name_length =
+        snprintf(row_name, sizeof(row_name), "%.*s.%.*s", field->name.length, field->name.data,
+                 value_name->length, value_name->data);
+
+    snprintf(offset_expression, sizeof(offset_expression),
+             "(uint32_t)(offsetof(%.*s, %.*s) + %d * sizeof(%.*s::%.*s.values[0]))",
+             struct_name_length, struct_name_prefix, field->name.length, field->name.data,
+             value_index, struct_name_length, struct_name_prefix, field->name.length,
+             field->name.data);
+    snprintf(size_expression, sizeof(size_expression), "(uint32_t)sizeof(%.*s::%.*s.values[0])",
+             struct_name_length, struct_name_prefix, field->name.length, field->name.data);
+
+    write_row(row_name, row_name_length, offset_expression, size_expression);
+  }
 }
 
 static void emit_field_table(FILE* out, const program_t* program, const declaration_t* owner,
@@ -4223,20 +4453,8 @@ static void emit_field_table(FILE* out, const program_t* program, const declarat
       if (field->type.kind == TYPE_STRING)
         snprintf(string_capacity, sizeof(string_capacity), "%u", (uint32_t)field->type.capacity);
 
-      // Designated initializers: the table is read far more often than it is
-      // written, and nine positional values in a row is where a reader starts
-      // counting commas.
-      fprintf(out, "  {.name = \"%.*s\",\n", field->name.length, field->name.data);
-      fprintf(out, "   .type = %s,\n", field_type_enum_name(field->type.kind));
-      fprintf(out, "   .offset = (uint32_t)offsetof(%.*s, %.*s),\n", struct_name_length,
-              struct_name_prefix, field->name.length, field->name.data);
-      fprintf(out, "   .size_in_bytes = (uint32_t)sizeof(%.*s::%.*s),\n", struct_name_length,
-              struct_name_prefix, field->name.length, field->name.data);
-      fprintf(out, "   .flags = %uu,\n", field->flags);
-      fprintf(out, "   .component_id = %s,\n", component_id);
-      fprintf(out, "   .string_capacity = %s,\n", string_capacity);
-      fprintf(out, "   .asset_class_id = %s,\n", asset_class_id);
-      fprintf(out, "   .enum_info = %s},\n", enum_id);
+      write_field_rows(out, program, field, struct_name_prefix, struct_name_length, component_id,
+                       string_capacity, asset_class_id, enum_id);
     }
   }
 }
@@ -4448,8 +4666,8 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     const declaration_t* declaration = &program->declarations[index];
     fprintf(out, "  {\"%.*s\", {%.*s_FIELDS, %d}, (uint32_t)sizeof(%.*s)},\n",
             declaration->name.length, declaration->name.data, declaration->name.length,
-            declaration->name.data, declaration->field_count, declaration->name.length,
-            declaration->name.data);
+            declaration->name.data, emitted_row_count(program, declaration),
+            declaration->name.length, declaration->name.data);
   }
   fprintf(out, "};\n\n");
 
@@ -4508,7 +4726,8 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
         component_mask |= 1u << component_ids[field->type.declaration_index];
     }
 
-    int32_t total_field_count = declaration->field_count + (base != nullptr ? base->field_count : 0);
+    int32_t total_field_count = emitted_row_count(program, declaration) +
+                                (base != nullptr ? emitted_row_count(program, base) : 0);
 
     fprintf(out, "  {\"");
     write_classname(out, declaration->name);

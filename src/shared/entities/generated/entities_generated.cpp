@@ -207,6 +207,54 @@ constexpr field_info_t Render_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Inventory_FIELDS[] = {
+  {.name = "weapons.Knife",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)(offsetof(Inventory, weapons) + 0 * sizeof(Inventory::weapons.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Inventory::weapons.values[0]),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "weapons.Scout",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)(offsetof(Inventory, weapons) + 1 * sizeof(Inventory::weapons.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Inventory::weapons.values[0]),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "weapons.Rocket_Launcher",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)(offsetof(Inventory, weapons) + 2 * sizeof(Inventory::weapons.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Inventory::weapons.values[0]),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "active_weapon",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Inventory, active_weapon),
+   .size_in_bytes = (uint32_t)sizeof(Inventory::active_weapon),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[3]},
+  {.name = "deploy_complete_time",
+   .type = FIELD_TYPE_U64,
+   .offset = (uint32_t)offsetof(Inventory, deploy_complete_time),
+   .size_in_bytes = (uint32_t)sizeof(Inventory::deploy_complete_time),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t Player_Spawn_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_U32,
@@ -349,24 +397,6 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "ammo",
-   .type = FIELD_TYPE_I32,
-   .offset = (uint32_t)offsetof(Player_Entity, ammo),
-   .size_in_bytes = (uint32_t)sizeof(Player_Entity::ammo),
-   .flags = 1u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "active_weapon_id",
-   .type = FIELD_TYPE_ENUM,
-   .offset = (uint32_t)offsetof(Player_Entity, active_weapon_id),
-   .size_in_bytes = (uint32_t)sizeof(Player_Entity::active_weapon_id),
-   .flags = 1u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[3]},
   {.name = "death_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Player_Entity, death_tick),
@@ -394,15 +424,6 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[3]},
-  {.name = "last_fire_slot",
-   .type = FIELD_TYPE_U8,
-   .offset = (uint32_t)offsetof(Player_Entity, last_fire_slot),
-   .size_in_bytes = (uint32_t)sizeof(Player_Entity::last_fire_slot),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
   {.name = "reload_complete_time",
    .type = FIELD_TYPE_U64,
    .offset = (uint32_t)offsetof(Player_Entity, reload_complete_time),
@@ -454,6 +475,15 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::velocity),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "inventory",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Player_Entity, inventory),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::inventory),
+   .flags = 0u,
+   .component_id = 3,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -523,6 +553,24 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[3]},
+  {.name = "owner_uid",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Weapon_Entity, owner_uid),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::owner_uid),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "next_fire_time",
+   .type = FIELD_TYPE_U64,
+   .offset = (uint32_t)offsetof(Weapon_Entity, next_fire_time),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::next_fire_time),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Weapon_Entity, render),
@@ -1102,6 +1150,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Material", {Material_FIELDS, 3}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
+  {"Inventory", {Inventory_FIELDS, 5}, (uint32_t)sizeof(Inventory)},
 };
 
 Entity* construct_Player_Spawn_Entity(void* memory) { return new (memory) Player_Spawn_Entity(); }
@@ -1128,8 +1177,8 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 3}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 21}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 4u, true, construct_Player_Entity, as_base_Player_Entity},
-  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 6}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 19}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 12u, true, construct_Player_Entity, as_base_Player_Entity},
+  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 8}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 4u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
   {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 1u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
@@ -1137,17 +1186,17 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 8}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 4u, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
 };
 
-constexpr int32_t COMPONENT_OFFSETS[][3] = {
-  {-1, -1, -1}, // Invalid
-  {-1, -1, -1}, // Player_Spawn_Entity
-  {-1, -1, -1}, // Player_Spectate_Entity
-  {-1, -1, (int32_t)offsetof(Player_Entity, render)}, // Player_Entity
-  {-1, -1, (int32_t)offsetof(Weapon_Entity, render)}, // Weapon_Entity
-  {-1, -1, (int32_t)offsetof(Rocket_Entity, render)}, // Rocket_Entity
-  {-1, -1, -1}, // Particle_Emitter_Entity
-  {(int32_t)offsetof(Trigger_Volume_Entity, volume), -1, -1}, // Trigger_Volume_Entity
-  {-1, -1, -1}, // Light_Entity
-  {-1, -1, (int32_t)offsetof(Physics_Body_Entity, render)}, // Physics_Body_Entity
+constexpr int32_t COMPONENT_OFFSETS[][4] = {
+  {-1, -1, -1, -1}, // Invalid
+  {-1, -1, -1, -1}, // Player_Spawn_Entity
+  {-1, -1, -1, -1}, // Player_Spectate_Entity
+  {-1, -1, (int32_t)offsetof(Player_Entity, render), (int32_t)offsetof(Player_Entity, inventory)}, // Player_Entity
+  {-1, -1, (int32_t)offsetof(Weapon_Entity, render), -1}, // Weapon_Entity
+  {-1, -1, (int32_t)offsetof(Rocket_Entity, render), -1}, // Rocket_Entity
+  {-1, -1, -1, -1}, // Particle_Emitter_Entity
+  {(int32_t)offsetof(Trigger_Volume_Entity, volume), -1, -1, -1}, // Trigger_Volume_Entity
+  {-1, -1, -1, -1}, // Light_Entity
+  {-1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1}, // Physics_Body_Entity
 };
 
 constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 7;
@@ -1456,6 +1505,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x1019777eu;
+const uint32_t SCHEMA_HASH = 0x300f6b02u;
 
 } // namespace entities

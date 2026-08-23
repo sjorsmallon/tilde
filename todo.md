@@ -1,5 +1,40 @@
 # TODO
 
+> **Formalize `@Networked` across a component embedding.** Field flags are
+> declared on a component's own members — a component-typed field carries no
+> flags by generator rule — so `@Networked` is a property of the COMPONENT, not
+> of the (entity, component) pair. Two gaps fall out of that:
+>
+> - An entity embedding a component gets that component's `@Networked` members
+>   on the wire whether it wants them or not, and has no way to opt out.
+> - An entity that is not replicated AT ALL still carries `@Networked` flags
+>   that do nothing, and nothing says so. `Weapon_Entity` used to be the live
+>   instance; it is replicated now (2026-08-23), so those two flags are real and
+>   the gap has no example left. That makes it cheaper to ignore, not fixed:
+>   nothing stops the next one, and it would be just as silent.
+>
+> The crux is that `def_gen` cannot currently know which entity types are
+> replicated — that is decided by a hand-written switch in
+> `entity_snapshot.cpp`, which the generator never sees. So any real fix
+> probably means the `.def` declares replication, which in turn makes that
+> switch generated or at least checkable against the declarations.
+>
+> Options to weigh, roughly in order of how much they buy:
+> - `@no_network` on an entity declaration (already floated in the
+>   annotation "room to grow" comment in `entities.def`), making any
+>   `@Networked` leaf under it a generator error.
+> - Declare the replicated set in the `.def`, then make an inert `@Networked`
+>   an error and check the switch against it.
+> - A per-embedding flag override on the component-typed field — reopens
+>   "component-typed fields carry no flags", so this is the expensive one and
+>   probably not worth it unless a second case shows up.
+>
+> Came up 2026-08-23 while designing the `Inventory` component for per-weapon
+> fire clocks (`Inventory.active_weapon` is `@Networked`, and `Weapon_Entity`
+> has to start replicating at step 3 of that work — see
+> `weapon_inventory_plan.md`, which is where that work is written down).
+
+
 **Current priorities**
 
 1. **Scope overlay** — the client half of right-click zoom.

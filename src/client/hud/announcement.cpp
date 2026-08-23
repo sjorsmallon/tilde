@@ -3,6 +3,7 @@
 #include "../../shared/cvars/generated/cvars_generated.hpp"
 #include "../ui/layout.hpp"
 
+#include <cmath>
 #include <string>
 
 namespace client::hud
@@ -42,7 +43,8 @@ void advance_announcement(announcement_t &announcement, float delta_seconds)
 }
 
 void draw_announcement(renderer::ui_draw_list_t &list, const ui::ui_font_t &font,
-                       linalg::vec2 screen, const announcement_t &announcement)
+                       linalg::vec2 screen, float display_scale,
+                       const announcement_t &announcement)
 {
   if (announcement.remaining_seconds <= 0.0f || announcement.text.empty())
     return;
@@ -65,8 +67,9 @@ void draw_announcement(renderer::ui_draw_list_t &list, const ui::ui_font_t &font
   // A drop shadow, because a white banner over a white wall is not readable and
   // an outline pass would be a shader for one caller. One offset copy in black
   // at a third the alpha is enough and costs six vertices per glyph.
-  ui::draw_text(list, font, size, {box.min.x + 2.0f, box.min.y + 2.0f}, announcement.text,
-                color_t{0, 0, 0, (uint8_t)(alpha / 3)});
+  const float shadow_offset = std::floor(2.0f * display_scale);
+  ui::draw_text(list, font, size, {box.min.x + shadow_offset, box.min.y + shadow_offset},
+                announcement.text, color_t{0, 0, 0, (uint8_t)(alpha / 3)});
   ui::draw_text(list, font, size, box.min, announcement.text, with_alpha(colors::white, alpha));
 }
 

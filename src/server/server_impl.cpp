@@ -12,6 +12,7 @@
 #include "systems/bot_system.hpp"
 #include "systems/game_rules_system.hpp"
 #include "systems/physics_body_system.hpp"
+#include "systems/inventory_system.hpp"
 #include "systems/respawn_system.hpp"
 #include "systems/rocket_system.hpp"
 #include "../shared/hitscan.hpp"
@@ -147,7 +148,11 @@ void drop_client(server_context_t &context, int32_t slot,
 
   const shared::entity_uid_t player_uid = context.clients[slot].player_uid;
   if (player_uid != shared::null_entity_uid)
+  {
+    // Before the player, because the list of what to destroy lives on it.
+    destroy_inventory(context, player_uid);
     destroy_entity(context, player_uid);
+  }
 
   reset_client_slot(context, slot);
 
@@ -201,6 +206,38 @@ static void drop_timed_out_clients(server_context_t &context)
 }
 
 
+// The map's own settings (map_t::attached_cvars), run through the one console
+// dispatcher so a @Mirrored value replicates and a bad line reports itself.
+//
+// Applied BEFORE the session is built, so spawning reads the settings this map
+// asked for. Each cvar a line actually set is recorded on the world, which is
+// what lets unloading the map put it back -- see
+// reset_state_in_preparation_for_new_map_load. A line naming a COMMAND records
+// nothing: running one is not a value to restore.
+static void apply_map_cvars(server_context_t &context, const shared::map_t &map)
+{
+  for (const std::string &line : map.attached_cvars)
+  {
+    std::string reply;
+    const cvars::command_context_t command_context{};
+    const cvars::console_result_t result = cvars::execute_console_line(
+        *context.cvars, *context.commands, line, command_context, &reply);
+
+    if (result != cvars::console_result_t::ok)
+    {
+      log_error("Map '{}': cvar line '{}' was not applied: {}", map.name, line,
+                reply.empty() ? "unknown name" : reply);
+      continue;
+    }
+
+    log_terminal("Map cvar: {}", line);
+
+    const shared::cvar_line_t split = shared::split_cvar_line(line);
+    if (const std::optional<cvars::cvar_id> id = cvars::try_find_cvar(split.name))
+      context.world.cvars_applied_by_map.push_back(*id);
+  }
+}
+
 static bool load_map_file_into_context(server_context_t &context,
                                 const std::string &map_path)
 {
@@ -225,6 +262,8 @@ static bool load_map_file_into_context(server_context_t &context,
 
   world.current_map         = std::move(*loaded);
   shared::map_t& server_map = world.current_map;
+
+  apply_map_cvars(context, server_map);
 
   world.session = shared::build_session(server_map);
   world.current_map_path  = map_path;
@@ -286,7 +325,8 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *cvar_command_
     jolt_initialized = true;
   }
 
-  if (!g_server_context.socket.open(network::server_port_number))
+  if (!g_server_context.socket.open(network::server_port_number,
+                                    network::server_receive_buffer_size_in_bytes))
   {
     log_error("Failed to open server socket on port {}. Port may be in use or insufficient permissions.",
                  network::server_port_number);
@@ -333,6 +373,11 @@ static shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t
 
   context.clients[slot].player_uid = player_uid;
 
+  // Same tick as the player, so the two ride one snapshot frame -- see
+  // grant_default_inventory for why that is load-bearing rather than tidy.
+  // It spawns into the Weapon_Entity pool, which cannot move `player`.
+  grant_default_inventory(context.world.session, player_uid);
+
   player->client_slot_index = slot;
 
   // Cycled by slot so two players joining an empty server don't stack.
@@ -343,7 +388,8 @@ static shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t
               "spawning slot {} at origin",
               context.world.session.map_name, slot);
 
-  place_player_at_spawn(*player, marker ? *marker : origin_fallback_spawn());
+  place_player_at_spawn(context.world.session, *player,
+                        marker ? *marker : origin_fallback_spawn());
 
   log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
                slot, player->entity_id, player->position.x, player->position.y, player->position.z);
@@ -741,9 +787,19 @@ static bool is_reloading(const entities::Player_Entity &player)
   return player.reload_complete_time != 0;
 }
 
-static void finish_reload(entities::Player_Entity &player)
+// The magazine belongs to the WEAPON, so completing a reload needs the session
+// to resolve it. The deadline is cleared either way: a reload that finishes
+// against a weapon nobody can resolve is still a reload that is over, and
+// leaving it standing would park the player mid-reload forever.
+static void finish_reload(shared::game_session_t &session, entities::Player_Entity &player)
 {
-  player.ammo = shared::get_weapon_definition(player.active_weapon_id).magazine_size;
+  entities::Weapon_Entity *active = try_find_active_weapon(session, player);
+  if (active == nullptr)
+    log_error("finish_reload: player {} finished reloading {}, which is not in the inventory",
+              player.entity_id, to_string(player.inventory.active_weapon));
+  else
+    active->ammo = shared::get_weapon_definition(active->weapon_id).magazine_size;
+
   player.reload_complete_time = 0;
 }
 
@@ -780,7 +836,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   const vec3f eye = player->position + vec3f{0.f, shared::player_eye_height, 0.f};
 
   const shared::weapon_definition_t& weapon =
-      shared::get_weapon_definition(player->active_weapon_id);
+      shared::get_weapon_definition(player->inventory.active_weapon);
 
   // The MOMENT the trigger went down, not the tick it went down in. The step
   // this runs at the end of was opened by that very press, so `fire_slot` is
@@ -792,14 +848,34 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   const shared::subtick_time_t fire_time =
       shared::subtick_time(context.tick_number, fire_slot);
 
-  const float seconds_since_last_fire = shared::subtick_seconds_between(
-      shared::subtick_time(player->last_fire_tick, player->last_fire_slot), fire_time,
-      tick_dt);
+  // THE WEAPON'S OWN CLOCK, not the player's. One deadline per player measured
+  // the interval of whatever was in hand from whatever fired last, so firing a
+  // Scout delayed a Knife swing and swinging a Knife delayed a Scout that had
+  // been holstered for a minute. Each weapon now recovers on its own, including
+  // while it is not held -- which is what makes a quick switch cost the switch
+  // and nothing more.
+  entities::Weapon_Entity* active_weapon =
+      try_find_active_weapon(context.world.session, *player);
+  if (active_weapon == nullptr)
+  {
+    log_error("slot {}: pulled the trigger holding {}, which is not in the inventory -- no shot "
+              "resolved",
+              client_slot, weapon.display_name);
+    return;
+  }
 
-  // Still inside the weapon's interval. Was a `continue` while this lived in
+  // Still inside this weapon's interval. Was a `continue` while this lived in
   // the input loop; the joke about continue meaning skip does not survive the
   // extraction, but the gate does.
-  if (seconds_since_last_fire < weapon.fire_interval_seconds)
+  if (fire_time < active_weapon->next_fire_time)
+    return;
+
+  // THE OTHER CLOCK. The weapon is not yet up: a switch in flight blocks every
+  // weapon at once, which is exactly what the per-weapon clock above does not
+  // do. Two gates, deliberately, and this is the one that made the single
+  // field wrong -- it was doing this job with the incoming weapon's FIRE
+  // interval standing in for a deploy time.
+  if (fire_time < player->inventory.deploy_complete_time)
     return;
 
   // Mid-reload, judged on the same clock: a trigger press in the slot the
@@ -810,7 +886,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   {
     if (fire_time < player->reload_complete_time)
       return;
-    finish_reload(*player);
+    finish_reload(context.world.session, *player);
   }
 
   // Empty. A magazine-less weapon never reaches this: `magazine_size == 0` is
@@ -821,7 +897,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   // looks -- which is exactly how the switch above shipped without its magazine.
   if (weapon.magazine_size > 0)
   {
-    if (player->ammo <= 0)
+    if (active_weapon->ammo <= 0)
     {
       const uint32_t warning_interval =
           std::max(1u, static_cast<uint32_t>(context.cvars->sv_tickrate));
@@ -833,15 +909,21 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
       }
       return;
     }
-    --player->ammo;
+    --active_weapon->ammo;
   }
 
   // update metadata about firing so clients don't get confused about what happened.
   // The tick is the replicated stamp the client's gunshot audio watches; the
   // slot beside it is the refinement only this gate reads.
   player->last_fire_tick   = context.tick_number;
-  player->last_fire_slot   = static_cast<uint8_t>(fire_slot);
-  player->last_fire_weapon = player->active_weapon_id;
+  player->last_fire_weapon = player->inventory.active_weapon;
+
+  // The weapon's own recovery, applied by the shot that knows which weapon it
+  // came from. last_fire_tick above stays a per-player REPLICATION stamp for
+  // weapon_fire_audio's change detector; this is the authority, and the two
+  // answer different questions rather than duplicating one.
+  active_weapon->next_fire_time =
+      shared::subtick_time_after(fire_time, weapon.fire_interval_seconds, tick_dt);
 
   switch (weapon.kind)
   {
@@ -924,7 +1006,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
         info.victim_uid      = hit.hit_uid;
         info.attacker_uid    = player->entity_id;
         info.inflictor_uid   = player->entity_id;
-        info.weapon_id       = static_cast<uint16_t>(player->active_weapon_id);
+        info.weapon_id       = static_cast<uint16_t>(player->inventory.active_weapon);
         info.amount          = weapon.damage *
                               (was_headshot ? weapon.headshot_multiplier : 1.f);
         info.source_position = eye;
@@ -983,8 +1065,9 @@ bool Tick()
   clear_incoming(context);
   network::ServerInbox &inbox = context.incoming;
 
-  network::poll_network(context.transport_layer, context.socket, 0.005,
-                        context.tick_number, inbox); // 5ms receive window
+  network::poll_network(context.transport_layer, context.socket,
+                        network::server_receive_drain_cap_in_datagrams,
+                        context.tick_number, inbox);
 
   // Ahead of everything that reads a slot, so this tick's work never runs for a
   // peer that is already gone.
@@ -1166,24 +1249,28 @@ bool Tick()
 
     network::Bit_Writer writer;
     shared::serialize_map_data(writer, msg);
-    auto packets = network::convert_to_packets(
-        writer.buffer,
-        static_cast<network::uint8>(network::Message_Type::S2C_MapData),
-        context.transport_layer.next_message_id);
-    for (const auto &p : packets)
-      context.socket.send(p, context.transport_layer.addresses[client_slot]);
+    // QUEUED, not sent: service_paced_transfers below feeds it to the socket a
+    // few fragments per tick. Sending it here in one loop is what overran the
+    // client's receive queue and made a download retry forever.
+    network::begin_paced_transfer(
+        context.transport_layer, client_slot, writer.buffer,
+        static_cast<network::uint8>(network::Message_Type::S2C_MapData));
 
     context.clients[client_slot].map_ready = false;
-    // Starts the retransmit clock: the client has everything it needs now, so
-    // resending CmdChangeMap before it has had time to assemble and load the
-    // package would only make it re-request the whole thing.
-    context.clients[client_slot].last_map_switch_send_tick = context.tick_number;
 
-    log_terminal("Streamed map package '{}' ({} bytes, {} packets, hash {:#x}) "
-                 "to slot {} (requested '{}').",
-                 msg.map_name, msg.bytes.size(), packets.size(),
+    log_terminal("Queued map package '{}' ({} bytes, {} fragments, hash {:#x}) "
+                 "for slot {} (requested '{}').",
+                 msg.map_name, msg.bytes.size(),
+                 context.transport_layer.outbound_transfers[client_slot].fragments.size(),
                  msg.package_hash, client_slot, request.map_name);
   }
+
+  // Hand every in-flight bulk transfer its next few fragments. UDP has no flow
+  // control, so this rate limit is the only thing between a map package and the
+  // receiver's kernel queue -- see sv_map_transfer_fragments_per_tick.
+  network::service_paced_transfers(
+      context.transport_layer, context.socket,
+      static_cast<size_t>(std::max(1, context.cvars->sv_map_transfer_fragments_per_tick)));
 
   // Resend CmdChangeMap to any connected-but-not-ready client. UDP has no
   // ack/retransmit yet, so this idempotent resend is how a dropped switch
@@ -1195,6 +1282,17 @@ bool Tick()
     if (!context.transport_layer.slot_occupied[slot] ||
         context.clients[slot].map_ready)
       continue;
+
+    // A slot mid-transfer is being nudged toward map_ready every tick already.
+    // Stamping it here both suppresses the resend for the duration and starts
+    // the client's load interval at COMPLETION rather than at the request --
+    // otherwise the resend fires during the download and the client, still
+    // Loading, re-requests and restarts the whole thing.
+    if (context.transport_layer.outbound_transfers[slot].in_progress())
+    {
+      context.clients[slot].last_map_switch_send_tick = context.tick_number;
+      continue;
+    }
 
     const uint32_t ticks_since_send =
         context.tick_number - context.clients[slot].last_map_switch_send_tick;
@@ -1400,32 +1498,39 @@ bool Tick()
 
       // Weapon switching is allowed even though moving isn't, and even while
       // the round is frozen -- both were true before this moved into the loop.
-      const entities::Weapon weapon_before_switch = player->active_weapon_id;
-      if (pressed_in_this_step & Button::Key1)
-        player->active_weapon_id = entities::Weapon::Scout;
-      if (pressed_in_this_step & Button::Key2)
-        player->active_weapon_id = entities::Weapon::Rocket_Launcher;
-      if (pressed_in_this_step & Button::Key3)
-        player->active_weapon_id = entities::Weapon::Knife;
+      const entities::Weapon weapon_before_switch = player->inventory.active_weapon;
+      if (const std::optional<entities::Weapon> selected =
+              shared::try_weapon_selected_by(pressed_in_this_step))
+        player->inventory.active_weapon = *selected;
 
-      if (player->active_weapon_id != weapon_before_switch)
+      if (player->inventory.active_weapon != weapon_before_switch)
       {
         cancel_reload(*player);
-        // EQUIPPING BRINGS ITS MAGAZINE. A magazine belongs to the weapon and
-        // `ammo` is one field, so without this the invariant "ammo is the held
-        // weapon's magazine" is false the instant anyone switches -- a player
-        // spawns holding the knife (magazine 0), presses 1, and cannot fire at
-        // all, silently, because the empty check below has no idea the count it
-        // is reading belongs to a different gun.
+
+        // THE DEPLOY GATE, and it is the PLAYER's: it blocks every weapon at
+        // once until the incoming one is up, which is what makes a quick switch
+        // cost something. The weapon's own next_fire_time is untouched here --
+        // it kept running while holstered and is a different question.
         //
-        // The cost is that switching is a free instant reload. That is a real
-        // cheese and the honest fix is per-weapon ammo, which needs a field
-        // shape (Enum_Array<Weapon, i32>) the .def has no spelling for yet.
-        player->ammo =
-            shared::get_weapon_definition(player->active_weapon_id).magazine_size;
+        // Settled at the press, from the weapon being RAISED, for the same
+        // reason reload_complete_time is: the duration belongs to the incoming
+        // weapon and the weapon can change again before this lands, so storing
+        // a deadline settles "whose number applies" at the one moment that
+        // knows. A second switch simply overwrites it with its own.
+        //
+        // No magazine is handed out here any more. That refill existed only
+        // because `ammo` was one field per player, and it made every keypress a
+        // free instant reload; the magazine now belongs to the Weapon_Entity
+        // and stays exactly where the last shot left it.
+        player->inventory.deploy_complete_time = shared::subtick_time_after(
+            step_time,
+            shared::get_weapon_definition(player->inventory.active_weapon)
+                .deploy_duration_seconds,
+            tick_dt);
+
         broadcast_server_text_message(
             context, std::format("Slot {} equipped this weapon: {}", client_slot,
-                                 to_string(player->active_weapon_id)));
+                                 to_string(player->inventory.active_weapon)));
       }
 
       // A reload STARTS here and finishes on its own clock. Refused rather than
@@ -1434,9 +1539,11 @@ bool Tick()
       if (pressed_in_this_step & Button::Reload)
       {
         const shared::weapon_definition_t &held =
-            shared::get_weapon_definition(player->active_weapon_id);
-        if (held.magazine_size > 0 && !is_reloading(*player) &&
-            player->ammo < held.magazine_size)
+            shared::get_weapon_definition(player->inventory.active_weapon);
+        const entities::Weapon_Entity *held_entity =
+            try_find_active_weapon(context.world.session, *player);
+        if (held.magazine_size > 0 && held_entity != nullptr && !is_reloading(*player) &&
+            held_entity->ammo < held.magazine_size)
         {
           player->reload_complete_time = shared::subtick_time_after(
               step_time, held.reload_duration_seconds, tick_dt);
@@ -1590,8 +1697,8 @@ bool Tick()
   // The AUTHORITATIVE answer is already exact: the fire path completes a due
   // reload itself, at the slot the trigger went down in, so no shot this tick
   // was judged against stale ammo. This sweep exists for the REPLICATED copy --
-  // `ammo` is @Networked, and without it a player who reloads and does not
-  // immediately fire keeps broadcasting the old magazine until they do.
+  // Weapon_Entity::ammo is @Networked, and without it a player who reloads and
+  // does not immediately fire keeps broadcasting the old magazine until they do.
   //
   // A deadline anywhere inside this tick has passed by the time the tick ends,
   // which is the moment this snapshot describes, so completing it here is
@@ -1603,7 +1710,7 @@ bool Tick()
        context.world.session.entity_system.entities_of<entities::Player_Entity>())
   {
     if (is_reloading(player) && player.reload_complete_time <= end_of_tick)
-      finish_reload(player);
+      finish_reload(context.world.session, player);
   }
 
   // --- Simulate server-side entities ---
@@ -1640,7 +1747,8 @@ bool Tick()
   // tick are eligible for the deadline check (delay is >0 ticks, so a
   // same-tick death-respawn never happens — but ordering is the intent).
   update_respawns(context, context.tick_number,
-                  static_cast<uint32_t>(context.cvars->sv_tickrate));
+                  static_cast<uint32_t>(context.cvars->sv_tickrate),
+                  context.cvars->map_respawn_delay_seconds);
 
   // Match-level phase FSM, after the gameplay systems so a win condition
   // firing this tick (once win conditions exist) is reflected before the
@@ -1760,6 +1868,8 @@ bool Tick()
   // at the point of use, per entities_of()'s contract.
   Span<entities::Player_Entity> snapshot_player_pool =
       context.world.session.entity_system.entities_of<entities::Player_Entity>();
+  Span<entities::Weapon_Entity> weapon_pool =
+      context.world.session.entity_system.entities_of<entities::Weapon_Entity>();
   Span<entities::Rocket_Entity> rocket_pool =
       context.world.session.entity_system.entities_of<entities::Rocket_Entity>();
   Span<entities::Physics_Body_Entity> physics_body_pool =
@@ -1780,6 +1890,13 @@ bool Tick()
 
   for (const entities::Player_Entity &entity : snapshot_player_pool)
     frame.players[entity.entity_id] = entity;
+
+  // Every weapon in the world, not just the ones a client carries: the pool is
+  // the truth about what exists, and filtering it per client would need a
+  // relevance pass this codebase has nowhere else. A holstered weapon's fields
+  // never change, so each costs a spawn record and then nothing.
+  for (const entities::Weapon_Entity &weapon : weapon_pool)
+    frame.weapons[weapon.entity_id] = weapon;
 
   for (const entities::Rocket_Entity &rocket : rocket_pool)
     frame.rockets[rocket.entity_id] = rocket;

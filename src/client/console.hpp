@@ -61,7 +61,7 @@ private:
   std::vector<char *> items;
   bool scroll_to_bottom;
   std::vector<std::string> candidates;
-  int history_position; // -1: new line, 0..history.Size-1 browsing history.
+  int history_position_cursor; // -1: new line, 0..history.Size-1 browsing history.
   std::vector<std::string> history;
 
   // Borrowed from the launcher via set_cvar_state. Null before client::init().

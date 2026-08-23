@@ -73,11 +73,19 @@ void write_focus_colors(list_menu_t &menu)
 } // namespace
 
 list_menu_t build_list_menu(Span<const char *const> labels, const list_menu_style_t &style,
-                            linalg::vec2 screen_size)
+                            linalg::vec2 screen_size, float display_scale)
 {
   list_menu_t  menu;
   ui_screen_t &screen = menu.screen;
   menu.style          = style;
+
+  // Logical -> pixels, once. Lengths only: colours, durations and the two
+  // policy flags are not lengths, and font_size_t is already baked scaled.
+  menu.style.margin              = {style.margin.x * display_scale, style.margin.y * display_scale};
+  menu.style.width               = style.width * display_scale;
+  menu.style.row_height          = style.row_height * display_scale;
+  menu.style.label_inset         = style.label_inset * display_scale;
+  menu.style.highlight_bar_width = style.highlight_bar_width * display_scale;
 
   // Every rect here is a placeholder: the layout pass at the bottom overwrites
   // all of them from the live screen size before anything draws.

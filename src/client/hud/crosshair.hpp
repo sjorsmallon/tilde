@@ -7,6 +7,9 @@
 namespace client::hud
 {
 
+// The three lengths are LOGICAL units: a crosshair the player tuned at 96 DPI
+// must keep its apparent size on a denser display, or their aim reference moves
+// when they change monitor.
 struct crosshair_settings_t
 {
   float   arm_length = 7.f;
@@ -17,7 +20,7 @@ struct crosshair_settings_t
 };
 
 // Call from a state's build_frame().
-void draw_crosshair(renderer::ui_draw_list_t &list, linalg::vec2 screen,
+void draw_crosshair(renderer::ui_draw_list_t &list, linalg::vec2 screen, float display_scale,
                     const crosshair_settings_t &settings);
 
 } // namespace client::hud

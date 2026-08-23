@@ -124,11 +124,19 @@ template <> std::optional<hitbox_rig> try_from_string<hitbox_rig>(std::string_vi
 enum class font_asset : uint16_t
 {
   Missing = 0,
-  Roboto_Medium = 1,
-  anwb_uu_regular = 2,
+  Consolas_Regular = 1,
+  CourierPrime_Bold = 2,
+  CourierPrime_BoldItalic = 3,
+  CourierPrime_Italic = 4,
+  CourierPrime_Regular = 5,
+  FiraMono_Bold = 6,
+  FiraMono_Medium = 7,
+  FiraMono_Regular = 8,
+  Roboto_Medium = 9,
+  anwb_uu_regular = 10,
 };
 
-constexpr uint32_t font_asset_COUNT = 3;
+constexpr uint32_t font_asset_COUNT = 11;
 
 const char* to_string(font_asset value);
 template <> std::optional<font_asset> try_from_string<font_asset>(std::string_view text);

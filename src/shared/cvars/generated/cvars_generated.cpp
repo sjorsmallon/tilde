@@ -171,6 +171,13 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, sv_max_move_backlog),
      .size = sizeof(cvar_state_t::sv_max_move_backlog),
      .string_capacity = 0},
+    {.name = "sv_map_transfer_fragments_per_tick",
+     .description = "Map-package fragments sent per client per tick",
+     .flags = CVAR_FLAG_SERVER,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, sv_map_transfer_fragments_per_tick),
+     .size = sizeof(cvar_state_t::sv_map_transfer_fragments_per_tick),
+     .string_capacity = 0},
     {.name = "cl_max_unacked_inputs",
      .description = "Unacknowledged client inputs resent in every input datagram",
      .flags = CVAR_FLAG_CLIENT,
@@ -283,6 +290,13 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, cl_aim_debug_yaw),
      .size = sizeof(cvar_state_t::cl_aim_debug_yaw),
      .string_capacity = 0},
+    {.name = "cl_show_deploy_timer",
+     .description = "Draw the seconds left on a weapon switch before anything may fire",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, cl_show_deploy_timer),
+     .size = sizeof(cvar_state_t::cl_show_deploy_timer),
+     .string_capacity = 0},
     {.name = "cl_crosshair",
      .description = "Draw the crosshair",
      .flags = CVAR_FLAG_CLIENT,
@@ -380,6 +394,27 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, sound_rolloff_factor),
      .size = sizeof(cvar_state_t::sound_rolloff_factor),
+     .string_capacity = 0},
+    {.name = "map_respawn_delay_seconds",
+     .description = "Time between respawns.",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, map_respawn_delay_seconds),
+     .size = sizeof(cvar_state_t::map_respawn_delay_seconds),
+     .string_capacity = 0},
+    {.name = "map_kill_limit",
+     .description = "Maximum amount of kills for a round.",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, map_kill_limit),
+     .size = sizeof(cvar_state_t::map_kill_limit),
+     .string_capacity = 0},
+    {.name = "map_round_time_limit_seconds",
+     .description = "Maximum round duration limit.",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, map_round_time_limit_seconds),
+     .size = sizeof(cvar_state_t::map_round_time_limit_seconds),
      .string_capacity = 0},
     {.name = "debug_show_collisions",
      .description = "Show collision faces in green",
@@ -499,7 +534,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[15] = {
+const cvar_id MIRRORED_CVAR_TABLE[18] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -515,6 +550,9 @@ const cvar_id MIRRORED_CVAR_TABLE[15] = {
     cvar_id::sv_aim_max_pitch,
     cvar_id::sv_aim_max_yaw,
     cvar_id::sv_aim_body_turn_rate,
+    cvar_id::map_respawn_delay_seconds,
+    cvar_id::map_kill_limit,
+    cvar_id::map_round_time_limit_seconds,
 };
 
 // The value's bytes inside the state struct. Every text conversion goes
@@ -576,7 +614,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 15};
+  return {MIRRORED_CVAR_TABLE, 18};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)

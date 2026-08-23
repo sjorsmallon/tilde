@@ -67,7 +67,7 @@ private:
 
     bool mouse_captured        = true;
     bool console_was_open      = false;
-    bool show_menu_overlay     = false;
+    bool show_pause_menu     = false;
     bool menu_overlay_was_open = false;
   };
 
