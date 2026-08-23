@@ -492,9 +492,11 @@ int main()
 
   test_classify_bracket();
 
-  // player_rig() goes through the asset cache; one state for the whole file.
+  // player_rig() goes through the asset cache, which reads through the byte
+  // layer; one state for the whole file, mounted as a launcher would.
   static assets::asset_state_t asset_state;
   assets::set_state(&asset_state);
+  assets::mount_asset_source();
 
   const shared::player_rig_t& rig = shared::player_rig();
   const aim_settings_t        settings;

@@ -134,7 +134,7 @@ void Animation_Tool::advance_clip(float dt)
   if (pose_source != Pose_Source::Clip || !clip_playing)
     return;
 
-  const assets::animation_clip_t* clip = assets::get(clip_handle);
+  const assets::animation_asset_t* clip = assets::get(clip_handle);
   
   if (!clip) return;
 
@@ -219,10 +219,16 @@ void Animation_Tool::load_rig()
 
   rig_path = std::string(MODELS_DIRECTORY) + skeleton->name + ".hitboxes";
 
+  // The one caller of this parser that may legitimately find nothing: the tool
+  // exists to SEED a rig for a skeleton that has no file yet, so absence is an
+  // answer here and asset_exists is the probe for it.
+  if (!assets::asset_exists(rig_path.c_str()))
+    return;
+
   // Both loaders name the file, the volume and the bones they could not find,
   // so a failure here has already said everything there is to say.
   std::optional<assets::hitbox_rig_file_t> parsed =
-      models::try_parse_hitbox_rig_file(rig_path.c_str());
+      models::try_parse_hitbox_rig(assets::read_asset_bytes(rig_path.c_str()), rig_path.c_str());
   if (!parsed)
     return;
 
@@ -329,7 +335,7 @@ bool Animation_Tool::update_pose()
     case Pose_Source::Clip:
     {
       
-      const assets::animation_clip_t* clip = assets::get(clip_handle);
+      const assets::animation_asset_t* clip = assets::get(clip_handle);
       if (!clip)
       {
         if (report)
@@ -756,7 +762,7 @@ void Animation_Tool::draw_clip_panel()
   if (ImGui::Button("Rescan directory"))
     scan_clips();
 
-  const assets::animation_clip_t *clip = assets::get(clip_handle);
+  const assets::animation_asset_t *clip = assets::get(clip_handle);
   if (!clip)
   {
     ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "No clip loaded -- see the console");

@@ -39,6 +39,7 @@ int main(int argc, char *argv[])
   // loudly if it is called before this. set_state comes first: init() fills the
   // state this module points at, and server::Init points the DLL at the same one.
   assets::set_state(&g_asset_state);
+  assets::mount_asset_source();
   assets::init();
 
   if (!server::init(&g_cvar_state, &g_command_table, &g_asset_state))

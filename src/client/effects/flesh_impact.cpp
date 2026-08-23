@@ -12,11 +12,11 @@ namespace
 
 // PLACEHOLDER CONTENT: these are the knife hit sounds, standing in until there
 // are bullet-flesh ones. They are the only wet impacts in resources/sounds.
-constexpr const char *FLESH_IMPACT_SOUNDS[] = {
-    "resources/sounds/knife_hit1.wav",
-    "resources/sounds/knife_hit2.wav",
-    "resources/sounds/knife_hit3.wav",
-    "resources/sounds/knife_hit4.wav",
+constexpr assets::sound_asset FLESH_IMPACT_SOUNDS[] = {
+    assets::sound_asset::knife_hit1,
+    assets::sound_asset::knife_hit2,
+    assets::sound_asset::knife_hit3,
+    assets::sound_asset::knife_hit4,
 };
 
 } // namespace
@@ -37,7 +37,8 @@ void on_flesh_impact(client_context_t &context,
   // Cycled rather than randomised: four identical thuds in a row is what makes
   // a sound read as canned, and a counter costs no RNG and no state to seed.
   static uint32_t next_variant = 0;
-  const char     *sound = FLESH_IMPACT_SOUNDS[next_variant % std::size(FLESH_IMPACT_SOUNDS)];
+  const assets::sound_asset sound =
+      FLESH_IMPACT_SOUNDS[next_variant % std::size(FLESH_IMPACT_SOUNDS)];
   ++next_variant;
 
   // A headshot is louder, not different -- the distinct headshot sound belongs

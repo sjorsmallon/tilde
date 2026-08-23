@@ -60,6 +60,7 @@ int main(int argc, char *argv[])
   // Point this module at the one asset state, then register eagerly before
   // anything resolves an id. client::Init points the DLL's copy at it too.
   assets::set_state(&g_asset_state);
+  assets::mount_asset_source();
   assets::init();
 
   if (!client::init(&g_cvar_state, &g_command_table, &g_asset_state))

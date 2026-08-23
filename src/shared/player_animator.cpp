@@ -37,16 +37,12 @@ aim_pose_set_t load_aim_pose_set(const char *directory, const char *suffix)
     std::string              path = std::string(directory) + "/" + filename_prefix_of(pose) + "_" +
                        suffix + ".animation";
 
-    set.poses[pose] = assets::load_animation(path.c_str());
-
     // ANY missing pose is fatal, not just Forward. A set of five is meaningless
     // partial: falling back to Forward for a missing extreme ships a player who
     // stares straight ahead while looking up, which reads as a rig bug and gets
-    // chased in the wrong place. Dying here names the file instead.
-    if (!set.poses[pose].valid())
-      fatal_error("aim pose set '{}' is missing '{}'. All {} poses ({}) must load; a partial set "
-                  "would silently fall back to forward and look like a rigging bug",
-                  suffix, path, entities::Aim_Pose_COUNT, entities::to_string(pose));
+    // chased in the wrong place. load_animation dies naming the file, so there
+    // is no partial set to represent.
+    set.poses[pose] = assets::load_animation(path.c_str());
   }
 
   return set;
@@ -132,7 +128,7 @@ void compute_aim_posed_skeleton(const aim_pose_set_t &pose_set, const assets::sk
   assets::compute_posed_skeleton(skeleton, pose, out);
 }
 
-const assets::animation_clip_t &death_clip()
+const assets::animation_asset_t &death_clip()
 {
   static const char *path = "resources/models/Death.animation";
 
@@ -140,18 +136,13 @@ const assets::animation_clip_t &death_clip()
   // resolved once resolves forever -- but the POINTER is re-resolved per call
   // rather than stored, which is what keeps this correct if the pool ever
   // relocates its storage.
-  static const assets::asset_handle_t<assets::animation_clip_t> handle = []
-  {
-    assets::asset_handle_t<assets::animation_clip_t> loaded = assets::load_animation(path);
-    if (!loaded.valid())
-      fatal_error("the death clip '{}' failed to load; a player has no pose to die in", path);
-    return loaded;
-  }();
+  static const assets::asset_handle_t<assets::animation_asset_t> handle =
+      assets::load_animation(path);
 
   return *assets::get(handle);
 }
 
-void compute_clip_posed_skeleton(const assets::animation_clip_t &clip,
+void compute_clip_posed_skeleton(const assets::animation_asset_t &clip,
                                  const assets::skeleton_t &skeleton, float seconds, bool looping,
                                  assets::posed_skeleton_t &out)
 {

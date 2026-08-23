@@ -1,6 +1,7 @@
 #include "weapon_fire_audio.hpp"
 
 #include "../shared/array.hpp"
+#include "../shared/assets/generated/assets_generated.hpp"
 #include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/log.hpp"
 #include "../shared/player_constants.hpp"
@@ -20,9 +21,9 @@ namespace
 // plays, short enough that a stall stays quiet.
 constexpr uint32_t max_fire_stamp_age_ticks = 12;
 
-// One entry per Weapon, indexed by the enum. Sound paths are a CLIENT fact, so
-// they stay here rather than growing a column on the shared weapon table that a
-// dedicated server would carry and never read.
+// One entry per Weapon, indexed by the enum. Which sound a weapon makes is a
+// CLIENT fact, so it stays here rather than growing a column on the shared
+// weapon table that a dedicated server would carry and never read.
 //
 // An array rather than a switch because a switch only WARNS when a new
 // enumerator appears (-Wswitch, and nothing here is built -Werror) — it would
@@ -41,17 +42,18 @@ constexpr uint32_t max_fire_stamp_age_ticks = 12;
 // file growing a second parallel array.
 struct weapon_fire_sound_t
 {
-  entities::Weapon weapon;
-  const char*      path;
+  entities::Weapon     weapon;
+  assets::sound_asset  sound;
 };
 
 constexpr Enum_Array<entities::Weapon, weapon_fire_sound_t> WEAPON_FIRE_SOUNDS = {{
-    {entities::Weapon::Knife, "resources/sounds/knife_slash1.wav"},
-    {entities::Weapon::Scout, "resources/sounds/scout_fire-1.wav"},
+    {entities::Weapon::Knife, assets::sound_asset::knife_slash1},
+    {entities::Weapon::Scout, assets::sound_asset::scout_fire_1},
     // No launch sound on disk — rocket_explosion.wav is the detonation, not
-    // the firing. play_3d logs the missing file once, which is the content gap
-    // saying so out loud rather than silently playing nothing.
-    {entities::Weapon::Rocket_Launcher, "resources/sounds/rocket_fire.wav"},
+    // the firing. Missing is how that content gap is written down now that a
+    // sound is an id: there is no path left to misspell, so the row says
+    // "nothing yet" rather than naming a file nobody will ever add.
+    {entities::Weapon::Rocket_Launcher, assets::sound_asset::Missing},
 }};
 
 static_assert(rows_in_enum_order<&weapon_fire_sound_t::weapon>(WEAPON_FIRE_SOUNDS),
@@ -60,22 +62,22 @@ static_assert(rows_in_enum_order<&weapon_fire_sound_t::weapon>(WEAPON_FIRE_SOUND
 
 } // namespace
 
-const char *fire_sound_for(entities::Weapon weapon)
+std::optional<assets::sound_asset> try_fire_sound_for(entities::Weapon weapon)
 {
   // try_get rather than operator[], and this is the part the switch was quietly
   // doing for us. Enum fields are deserialized with no range validation at all
   // -- entity_serialization.cpp's FIELD_TYPE_ENUM memcpys the varint straight
   // into the field -- so last_fire_weapon holds whatever arrived on the wire.
   // Indexing on that unchecked is an out-of-bounds read driven by a packet.
-  const weapon_fire_sound_t* sound = WEAPON_FIRE_SOUNDS.try_get(weapon);
-  if (sound == nullptr)
+  const weapon_fire_sound_t* row = WEAPON_FIRE_SOUNDS.try_get(weapon);
+  if (row == nullptr)
   {
-    log_error("fire_sound_for: weapon id {} is outside the Weapon enum "
+    log_error("try_fire_sound_for: weapon id {} is outside the Weapon enum "
               "(count {}) -- corrupt or hostile snapshot",
               (uint32_t)weapon, WEAPON_FIRE_SOUNDS.size());
-    return nullptr;
+    return std::nullopt;
   }
-  return sound->path;
+  return row->sound;
 }
 
 void update_weapon_fire_audio(client_context_t &context)
@@ -110,14 +112,15 @@ void update_weapon_fire_audio(client_context_t &context)
     if (!context.audio)
       continue;
 
-    const char *sound = fire_sound_for(player.last_fire_weapon);
+    const std::optional<assets::sound_asset> sound =
+        try_fire_sound_for(player.last_fire_weapon);
     if (!sound)
       continue;
 
     // The muzzle is at the eye, matching where the server casts the shot from.
     const vec3f muzzle = player.position +
                          vec3f{0.f, shared::player_eye_height, 0.f};
-    context.audio->play_3d(sound, muzzle);
+    context.audio->play_3d(*sound, muzzle);
   }
 
   // Drop players who left, or the map grows for the life of the session and a

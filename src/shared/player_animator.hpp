@@ -21,7 +21,7 @@
 // returning a half-built one, so there is no `valid()` for callers to forget.
 struct aim_pose_set_t
 {
-  Enum_Array<entities::Aim_Pose, assets::asset_handle_t<assets::animation_clip_t>> poses;
+  Enum_Array<entities::Aim_Pose, assets::asset_handle_t<assets::animation_asset_t>> poses;
 };
 
 struct aim_settings_t
@@ -111,7 +111,7 @@ void compute_aim_posed_skeleton(const aim_pose_set_t &pose_set, const assets::sk
 // the same reasoning as holding_gun_aim_poses() above. A missing one is a broken
 // build, not a runtime condition, so this dies naming the file rather than
 // handing back a corpse frozen in the bind pose.
-const assets::animation_clip_t &death_clip();
+const assets::animation_asset_t &death_clip();
 
 // A clip played on a CLOCK rather than sampled at a phase: `seconds` is time
 // into the playback and the phase is derived from clip_duration_seconds, which
@@ -122,6 +122,6 @@ const assets::animation_clip_t &death_clip();
 // Not folded into compute_aim_posed_skeleton: that one blends five poses off
 // two angles, this one plays one clip off a time, and the only thing they share
 // is the tail below -- which is now a single compute_posed_skeleton call.
-void compute_clip_posed_skeleton(const assets::animation_clip_t &clip,
+void compute_clip_posed_skeleton(const assets::animation_asset_t &clip,
                                  const assets::skeleton_t &skeleton, float seconds, bool looping,
                                  assets::posed_skeleton_t &out);

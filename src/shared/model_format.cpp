@@ -24,17 +24,48 @@ namespace
 
 struct line_reader_t
 {
-  const char *path         = nullptr;
+  const char *debug_name   = nullptr;
   const char *cursor       = nullptr;
   int32_t     line_number  = 0;
   bool        failed       = false;
+
+  // The blob being walked. These readers take BYTES, not a path: the byte layer
+  // (assets::read_asset_bytes) is the one place a file is opened, so a `.mesh`
+  // parses the same whether it came off disk, out of a pkg, or out of a test's
+  // string literal.
+  const char *bytes_cursor = nullptr;
+  const char *bytes_end    = nullptr;
 };
 
-// True when a whole line was pulled and it is not blank or a comment.
-bool next_line(std::ifstream &file, std::string &storage, line_reader_t &reader)
+line_reader_t make_line_reader(Span<const uint8_t> bytes, const char *debug_name)
 {
-  while (std::getline(file, storage))
+  line_reader_t reader;
+  reader.debug_name   = debug_name;
+  reader.bytes_cursor = reinterpret_cast<const char *>(bytes.data);
+  reader.bytes_end    = reader.bytes_cursor + bytes.size();
+  return reader;
+}
+
+// True when a whole line was pulled and it is not blank or a comment.
+//
+// Strips a trailing '\r'. The ifstream this replaced was opened in TEXT mode,
+// which did that; bytes are bytes, and a '\r' left on the end would ride into
+// the line's last token.
+bool next_line(std::string &storage, line_reader_t &reader)
+{
+  while (reader.bytes_cursor < reader.bytes_end)
   {
+    const char *line_start = reader.bytes_cursor;
+    while (reader.bytes_cursor < reader.bytes_end && *reader.bytes_cursor != '\n')
+      reader.bytes_cursor += 1;
+
+    const char *line_end = reader.bytes_cursor;
+    if (reader.bytes_cursor < reader.bytes_end)
+      reader.bytes_cursor += 1; // step past the '\n'
+    if (line_end > line_start && line_end[-1] == '\r')
+      line_end -= 1;
+
+    storage.assign(line_start, (size_t)(line_end - line_start));
     reader.line_number += 1;
 
     const char *scan = storage.c_str();
@@ -53,7 +84,7 @@ bool next_line(std::ifstream &file, std::string &storage, line_reader_t &reader)
 void fail(line_reader_t &reader, const char *what)
 {
   if (!reader.failed)
-    log_error("{}:{}: expected {}", reader.path, reader.line_number, what);
+    log_error("{}:{}: expected {}", reader.debug_name, reader.line_number, what);
   reader.failed = true;
 }
 
@@ -156,7 +187,7 @@ bool expect_keyword(line_reader_t &reader, const char *keyword)
   std::string token = take_token(reader);
   if (token != keyword)
   {
-    log_error("{}:{}: expected '{}', found '{}'", reader.path, reader.line_number, keyword,
+    log_error("{}:{}: expected '{}', found '{}'", reader.debug_name, reader.line_number, keyword,
               token.empty() ? "end of line" : token.c_str());
     reader.failed = true;
     return false;
@@ -168,28 +199,20 @@ bool expect_keyword(line_reader_t &reader, const char *keyword)
 
 // --- .skeleton -------------------------------------------------------------
 
-bool parse_skeleton_file(const char *path, assets::skeleton_t &out)
+bool parse_skeleton(Span<const uint8_t> bytes, const char *debug_name, assets::skeleton_t &out)
 {
-  std::ifstream file(path);
-  if (!file.is_open())
-  {
-    log_error("skeleton '{}' could not be opened", path);
-    return false;
-  }
+  line_reader_t reader = make_line_reader(bytes, debug_name);
+  std::string   storage;
 
-  line_reader_t reader;
-  reader.path = path;
-  std::string storage;
-
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "skeleton"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "skeleton"))
     return false;
   std::string skeleton_name = take_identifier(reader, "the skeleton name");
 
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "hash"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "hash"))
     return false;
   uint64_t declared_hash = take_hex64(reader, "the skeleton hash, in hex");
 
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "bones"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "bones"))
     return false;
   int32_t bone_count = take_int(reader, "the bone count");
 
@@ -200,7 +223,7 @@ bool parse_skeleton_file(const char *path, assets::skeleton_t &out)
   {
     log_error("skeleton '{}' declares {} bones; the budget is 1..{} (the GPU skinning UBO is "
               "mat4 bones[{}] and bone indices are uint8_t)",
-              path, bone_count, assets::MAX_BONES, assets::MAX_BONES);
+              debug_name, bone_count, assets::MAX_BONES, assets::MAX_BONES);
     return false;
   }
 
@@ -209,9 +232,9 @@ bool parse_skeleton_file(const char *path, assets::skeleton_t &out)
 
   for (int32_t expected_index = 0; expected_index < bone_count; ++expected_index)
   {
-    if (!next_line(file, storage, reader))
+    if (!next_line(storage, reader))
     {
-      log_error("skeleton '{}' declares {} bones but the file ends after {}", path, bone_count,
+      log_error("skeleton '{}' declares {} bones but the file ends after {}", debug_name, bone_count,
                 expected_index);
       return false;
     }
@@ -222,7 +245,7 @@ bool parse_skeleton_file(const char *path, assets::skeleton_t &out)
     if (index != expected_index)
     {
       log_error("{}:{}: bone index {} out of order; bones are written 0..n-1 in file order",
-                path, reader.line_number, index);
+                debug_name, reader.line_number, index);
       return false;
     }
 
@@ -238,7 +261,7 @@ bool parse_skeleton_file(const char *path, assets::skeleton_t &out)
     {
       log_error("{}:{}: bone '{}' (index {}) has parent {}; a parent must be -1 or an earlier "
                 "index, so that one forward pass resolves the hierarchy",
-                path, reader.line_number, bone.name, index, bone.parent_index);
+                debug_name, reader.line_number, bone.name, index, bone.parent_index);
       return false;
     }
 
@@ -258,7 +281,7 @@ bool parse_skeleton_file(const char *path, assets::skeleton_t &out)
   {
     log_error("skeleton '{}' declares hash {:016x} but its bone names hash to {:016x}; the file "
               "was edited without re-exporting, or the two hash functions have drifted",
-              path, declared_hash, computed_hash);
+              debug_name, declared_hash, computed_hash);
     return false;
   }
 
@@ -270,26 +293,19 @@ bool parse_skeleton_file(const char *path, assets::skeleton_t &out)
 
 // --- .mesh -----------------------------------------------------------------
 
-bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_reference_t &out_reference)
+bool parse_mesh(Span<const uint8_t> bytes, const char *debug_name, assets::mesh_asset_t &out,
+                skeleton_reference_t &out_reference)
 {
-  std::ifstream file(path);
-  if (!file.is_open())
-  {
-    log_error("mesh '{}' could not be opened", path);
-    return false;
-  }
+  line_reader_t reader = make_line_reader(bytes, debug_name);
+  std::string   storage;
 
-  line_reader_t reader;
-  reader.path = path;
-  std::string storage;
-
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "mesh"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "mesh"))
     return false;
   take_identifier(reader, "the mesh name");
 
-  if (!next_line(file, storage, reader))
+  if (!next_line(storage, reader))
   {
-    log_error("mesh '{}' ends after its name line", path);
+    log_error("mesh '{}' ends after its name line", debug_name);
     return false;
   }
 
@@ -307,9 +323,9 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
       if (reader.failed)
         return false;
 
-      if (!next_line(file, storage, reader))
+      if (!next_line(storage, reader))
       {
-        log_error("mesh '{}' ends after its skeleton line", path);
+        log_error("mesh '{}' ends after its skeleton line", debug_name);
         return false;
       }
     }
@@ -332,7 +348,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
   {
     log_error("mesh '{}' was exported at scale {} but this build expects {}; the exporter and "
               "the engine disagree about metres-to-units",
-              path, reference.scale, METRES_TO_UNITS);
+              debug_name, reference.scale, METRES_TO_UNITS);
     return false;
   }
 
@@ -340,9 +356,9 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
   std::vector<assets::material_t> materials;
   while (true)
   {
-    if (!next_line(file, storage, reader))
+    if (!next_line(storage, reader))
     {
-      log_error("mesh '{}' has no 'vertices' block", path);
+      log_error("mesh '{}' has no 'vertices' block", debug_name);
       return false;
     }
 
@@ -357,7 +373,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
     int32_t material_index = take_int(reader, "the material index");
     if (material_index != (int32_t)materials.size())
     {
-      log_error("{}:{}: material index {} out of order; materials are written 0..n-1", path,
+      log_error("{}:{}: material index {} out of order; materials are written 0..n-1", debug_name,
                 reader.line_number, material_index);
       return false;
     }
@@ -381,7 +397,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
     return false;
   if (vertex_count < 0)
   {
-    log_error("mesh '{}' declares a negative vertex count ({})", path, vertex_count);
+    log_error("mesh '{}' declares a negative vertex count ({})", debug_name, vertex_count);
     return false;
   }
 
@@ -395,9 +411,9 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
 
   for (int32_t which = 0; which < vertex_count; ++which)
   {
-    if (!next_line(file, storage, reader))
+    if (!next_line(storage, reader))
     {
-      log_error("mesh '{}' declares {} vertices but the file ends after {}", path, vertex_count,
+      log_error("mesh '{}' declares {} vertices but the file ends after {}", debug_name, vertex_count,
                 which);
       return false;
     }
@@ -433,7 +449,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
       {
         if (bone_indices[slot] < 0 || (uint32_t)bone_indices[slot] >= assets::MAX_BONES)
         {
-          log_error("{}:{}: vertex {} names bone {}, outside 0..{}", path, reader.line_number,
+          log_error("{}:{}: vertex {} names bone {}, outside 0..{}", debug_name, reader.line_number,
                     which, bone_indices[slot], assets::MAX_BONES - 1);
           return false;
         }
@@ -447,7 +463,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
       // an obvious place.
       if (std::fabs(weight_sum - 1.0f) > 1e-3f)
       {
-        log_error("{}:{}: vertex {} has weights summing to {}, not 1.0", path,
+        log_error("{}:{}: vertex {} has weights summing to {}, not 1.0", debug_name,
                   reader.line_number, which, weight_sum);
         return false;
       }
@@ -459,7 +475,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
   }
 
   // --- indices ---
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "indices"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "indices"))
     return false;
   int32_t index_count = take_int(reader, "the index count");
   if (reader.failed)
@@ -468,7 +484,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
   {
     log_error("mesh '{}' declares {} indices; the count is indices, not triangles, so it must "
               "be a non-negative multiple of 3",
-              path, index_count);
+              debug_name, index_count);
     return false;
   }
 
@@ -477,9 +493,9 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
 
   for (int32_t triangle = 0; triangle < index_count / 3; ++triangle)
   {
-    if (!next_line(file, storage, reader))
+    if (!next_line(storage, reader))
     {
-      log_error("mesh '{}' declares {} indices but the file ends after {}", path, index_count,
+      log_error("mesh '{}' declares {} indices but the file ends after {}", debug_name, index_count,
                 triangle * 3);
       return false;
     }
@@ -493,7 +509,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
         return false;
       if (index < 0 || index >= vertex_count)
       {
-        log_error("{}:{}: triangle {} references vertex {}, outside 0..{}", path,
+        log_error("{}:{}: triangle {} references vertex {}, outside 0..{}", debug_name,
                   reader.line_number, triangle, index, vertex_count - 1);
         return false;
       }
@@ -503,7 +519,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
 
   // --- submeshes: zero or more `sub` lines to end of file ---
   std::vector<assets::submesh_t> submeshes;
-  while (next_line(file, storage, reader))
+  while (next_line(storage, reader))
   {
     if (!expect_keyword(reader, "sub"))
       return false;
@@ -511,7 +527,7 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
     int32_t submesh_index = take_int(reader, "the submesh index");
     if (submesh_index != (int32_t)submeshes.size())
     {
-      log_error("{}:{}: submesh index {} out of order; submeshes are written 0..n-1", path,
+      log_error("{}:{}: submesh index {} out of order; submeshes are written 0..n-1", debug_name,
                 reader.line_number, submesh_index);
       return false;
     }
@@ -524,13 +540,13 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
 
     if (offset < 0 || count < 0 || offset + count > index_count)
     {
-      log_error("{}:{}: submesh {} covers indices [{}, {}) but the mesh has {}", path,
+      log_error("{}:{}: submesh {} covers indices [{}, {}) but the mesh has {}", debug_name,
                 reader.line_number, submesh_index, offset, offset + count, index_count);
       return false;
     }
     if (material_index < 0 || material_index >= (int32_t)materials.size())
     {
-      log_error("{}:{}: submesh {} names material {}, but the mesh declares {}", path,
+      log_error("{}:{}: submesh {} names material {}, but the mesh declares {}", debug_name,
                 reader.line_number, submesh_index, material_index, materials.size());
       return false;
     }
@@ -553,37 +569,30 @@ bool parse_mesh_file(const char *path, assets::mesh_asset_t &out, skeleton_refer
 
 // --- .animation ------------------------------------------------------------
 
-bool parse_animation_file(const char *path, assets::animation_clip_t &out)
+bool parse_animation(Span<const uint8_t> bytes, const char *debug_name,
+                     assets::animation_asset_t &out)
 {
-  std::ifstream file(path);
-  if (!file.is_open())
-  {
-    log_error("animation '{}' could not be opened", path);
-    return false;
-  }
+  line_reader_t reader = make_line_reader(bytes, debug_name);
+  std::string   storage;
 
-  line_reader_t reader;
-  reader.path = path;
-  std::string storage;
-
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "animation"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "animation"))
     return false;
   std::string clip_name = take_identifier(reader, "the clip name");
 
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "skeleton"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "skeleton"))
     return false;
   std::string skeleton_name = take_identifier(reader, "the skeleton name");
   uint64_t    skeleton_hash = take_hex64(reader, "the skeleton hash, in hex");
 
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "bones"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "bones"))
     return false;
   int32_t bone_count = take_int(reader, "the bone count");
 
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "fps"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "fps"))
     return false;
   float fps = take_float(reader, "the frame rate");
 
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "frames"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "frames"))
     return false;
   int32_t frame_count = take_int(reader, "the frame count");
 
@@ -592,7 +601,7 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
 
   if (bone_count <= 0 || (uint32_t)bone_count > assets::MAX_BONES)
   {
-    log_error("animation '{}' declares {} bones; the budget is 1..{}", path, bone_count,
+    log_error("animation '{}' declares {} bones; the budget is 1..{}", debug_name, bone_count,
               assets::MAX_BONES);
     return false;
   }
@@ -600,12 +609,12 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
   {
     log_error("animation '{}' declares {} frames; a clip with nothing in it cannot be sampled, "
               "and an authored pose is one frame, not zero",
-              path, frame_count);
+              debug_name, frame_count);
     return false;
   }
   if (!(fps > 0.0f))
   {
-    log_error("animation '{}' declares fps {}; phase-to-frame would divide by it", path, fps);
+    log_error("animation '{}' declares fps {}; phase-to-frame would divide by it", debug_name, fps);
     return false;
   }
 
@@ -615,9 +624,9 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
   // authored pose has no cycle, so it has no stride.
   float stride_distance = 0.0f;
 
-  if (!next_line(file, storage, reader))
+  if (!next_line(storage, reader))
   {
-    log_error("animation '{}' ends before its first frame", path);
+    log_error("animation '{}' ends before its first frame", debug_name);
     return false;
   }
   {
@@ -628,9 +637,9 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
       stride_distance = take_float(reader, "the stride distance");
       if (reader.failed)
         return false;
-      if (!next_line(file, storage, reader))
+      if (!next_line(storage, reader))
       {
-        log_error("animation '{}' ends after its stride line", path);
+        log_error("animation '{}' ends after its stride line", debug_name);
         return false;
       }
     }
@@ -647,9 +656,9 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
   {
     // The first frame's header line was already pulled above (it is where the
     // optional `stride` had to be ruled out); every later one is pulled here.
-    if (frame != 0 && !next_line(file, storage, reader))
+    if (frame != 0 && !next_line(storage, reader))
     {
-      log_error("animation '{}' declares {} frames but the file ends after {}", path, frame_count,
+      log_error("animation '{}' declares {} frames but the file ends after {}", debug_name, frame_count,
                 frame);
       return false;
     }
@@ -660,15 +669,15 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
     if (frame_index != frame)
     {
       log_error("{}:{}: frame index {} out of order; frames are written 0..n-1 in file order",
-                path, reader.line_number, frame_index);
+                debug_name, reader.line_number, frame_index);
       return false;
     }
 
     for (int32_t expected_bone = 0; expected_bone < bone_count; ++expected_bone)
     {
-      if (!next_line(file, storage, reader))
+      if (!next_line(storage, reader))
       {
-        log_error("animation '{}' frame {} ends after {} of {} channels", path, frame,
+        log_error("animation '{}' frame {} ends after {} of {} channels", debug_name, frame,
                   expected_bone, bone_count);
         return false;
       }
@@ -680,7 +689,7 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
       {
         log_error("{}:{}: channel for bone {} out of order; a frame writes every bone 0..n-1, so "
                   "the clip's bone index IS the skeleton's",
-                  path, reader.line_number, bone);
+                  debug_name, reader.line_number, bone);
         return false;
       }
 
@@ -709,7 +718,7 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
       if (std::fabs(rotation_length - 1.0f) > 1e-3f)
       {
         log_error("{}:{}: frame {} bone {} has a rotation of length {}, not a unit quaternion",
-                  path, reader.line_number, frame, bone, rotation_length);
+                  debug_name, reader.line_number, frame, bone, rotation_length);
         return false;
       }
     }
@@ -727,26 +736,19 @@ bool parse_animation_file(const char *path, assets::animation_clip_t &out)
 
 // --- .hitboxes -------------------------------------------------------------
 
-std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *path)
+std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig(Span<const uint8_t> bytes,
+                                                              const char *debug_name)
 {
-  std::ifstream file(path);
-  if (!file.is_open())
-  {
-    log_error("hitbox rig '{}' could not be opened", path);
-    return std::nullopt;
-  }
-
-  line_reader_t reader;
-  reader.path = path;
-  std::string storage;
+  line_reader_t reader = make_line_reader(bytes, debug_name);
+  std::string   storage;
 
   assets::hitbox_rig_file_t rig;
 
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "hitboxes"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "hitboxes"))
     return std::nullopt;
   rig.name = take_identifier(reader, "the rig name");
 
-  if (!next_line(file, storage, reader) || !expect_keyword(reader, "skeleton"))
+  if (!next_line(storage, reader) || !expect_keyword(reader, "skeleton"))
     return std::nullopt;
   rig.skeleton_name = take_identifier(reader, "the skeleton name");
   rig.skeleton_hash = take_hex64(reader, "the skeleton hash, in hex");
@@ -758,7 +760,7 @@ std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *p
   // is handwritten, so a count is a second thing to keep in step that can only
   // ever fall out of it. The exporter's formats declare theirs because a
   // generated file can be truncated and nobody would be there to notice.
-  while (next_line(file, storage, reader))
+  while (next_line(storage, reader))
   {
     if (!expect_keyword(reader, "v"))
       return std::nullopt;
@@ -774,7 +776,7 @@ std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *p
         assets::try_hitbox_shape_from_string(shape_token.c_str());
     if (!shape)
     {
-      log_error("{}:{}: '{}' is not a shape; expected Sphere, Capsule, Cylinder or Box", path,
+      log_error("{}:{}: '{}' is not a shape; expected Sphere, Capsule, Cylinder or Box", debug_name,
                 reader.line_number, shape_token);
       return std::nullopt;
     }
@@ -795,7 +797,7 @@ std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *p
         shared::try_hit_region_from_string(region_token.c_str());
     if (!region)
     {
-      log_error("{}:{}: '{}' is not a damage region; expected Head, Torso or Legs", path,
+      log_error("{}:{}: '{}' is not a damage region; expected Head, Torso or Legs", debug_name,
                 reader.line_number, region_token);
       return std::nullopt;
     }
@@ -813,7 +815,7 @@ std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *p
       if (volume.radius <= 0.0f)
       {
         log_error("{}:{}: volume '{}' has radius {}; a volume with no thickness can never be hit",
-                  path, reader.line_number, volume.name, volume.radius);
+                  debug_name, reader.line_number, volume.name, volume.radius);
         return std::nullopt;
       }
     }
@@ -830,7 +832,7 @@ std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *p
       {
         log_error("{}:{}: volume '{}' has half-extents ({}, {}, {}); a box with a zero side can "
                   "never be hit",
-                  path, reader.line_number, volume.name, volume.half_extents.x,
+                  debug_name, reader.line_number, volume.name, volume.half_extents.x,
                   volume.half_extents.y, volume.half_extents.z);
         return std::nullopt;
       }
@@ -850,7 +852,7 @@ std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *p
 
   if (rig.volumes.empty())
   {
-    log_error("hitbox rig '{}' has no volumes; that is a player who cannot be hit", path);
+    log_error("hitbox rig '{}' has no volumes; that is a player who cannot be hit", debug_name);
     return std::nullopt;
   }
 

@@ -8,7 +8,6 @@
 #include "../../shared/stb_truetype.h"
 
 #include <cmath>
-#include <cstdio>
 #include <vector>
 
 namespace client::ui
@@ -215,41 +214,6 @@ std::optional<font_atlas_t> try_bake_font(Span<const uint8_t>                   
   log_error("[ui] try_bake_font: {} sizes did not fit in a {}x{} atlas", FONT_SIZE_COUNT,
             ATLAS_WIDTH, ATLAS_MAX_HEIGHT);
   return std::nullopt;
-}
-
-std::optional<font_atlas_t>
-try_bake_font_from_file(const char *path, const Enum_Array<font_size_t, float> &pixel_heights)
-{
-  FILE *file = fopen(path, "rb");
-  if (!file)
-  {
-    log_error("[ui] try_bake_font_from_file: cannot open '{}'", path);
-    return std::nullopt;
-  }
-
-  fseek(file, 0, SEEK_END);
-  const long size = ftell(file);
-  fseek(file, 0, SEEK_SET);
-
-  if (size <= 0)
-  {
-    log_error("[ui] try_bake_font_from_file: '{}' is empty", path);
-    fclose(file);
-    return std::nullopt;
-  }
-
-  std::vector<uint8_t> bytes((size_t)size);
-  const size_t         read = fread(bytes.data(), 1, bytes.size(), file);
-  fclose(file);
-
-  if (read != bytes.size())
-  {
-    log_error("[ui] try_bake_font_from_file: short read on '{}' ({} of {} bytes)", path, read,
-              bytes.size());
-    return std::nullopt;
-  }
-
-  return try_bake_font(Span<const uint8_t>(bytes.data(), (uint32_t)bytes.size()), pixel_heights);
 }
 
 linalg::vec2 measure_text(const ui_font_t &font, font_size_t size, std::string_view text)

@@ -212,6 +212,17 @@ resolve_surface_mesh(const geometry_surface_t &surface)
   if (surface.mesh_path.empty())
     return {};
 
+  // A surface's mesh_path is deliberately FREE-FORM -- a level author adding a
+  // prop should not have to touch a .def -- so it is one of the two places a
+  // path is a caller parameter and therefore probed rather than assumed. An
+  // invalid handle here means "no mesh", which this function already returns
+  // for the empty path; load_mesh itself stays infallible.
+  if (!assets::asset_exists(surface.mesh_path.c_str()))
+  {
+    log_error("geometry surface names mesh '{}', which is not there", surface.mesh_path);
+    return {};
+  }
+
   return assets::load_mesh(surface.mesh_path.c_str());
 }
 
@@ -225,17 +236,13 @@ bool compute_static_mesh_extents(const static_mesh_geometry_t &static_mesh,
                                  linalg::vec3 &out_center_offset,
                                  linalg::vec3 &out_half_extents)
 {
-  const assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
-      resolve_surface_mesh(static_mesh.surface);
-  if (!mesh_handle.valid())
+  const assets::mesh_asset_t *mesh = assets::get(resolve_surface_mesh(static_mesh.surface));
+  if (!mesh || mesh->vertices.empty())
     return false;
 
-  linalg::vec3 mesh_min, mesh_max;
-  if (!assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min, mesh_max))
-    return false;
-
-  const linalg::vec3 mesh_center = (mesh_min + mesh_max) * 0.5f;
-  const linalg::vec3 mesh_half = (mesh_max - mesh_min) * 0.5f;
+  const aabb_bounds_t mesh_bounds = assets::compute_mesh_bounds(mesh);
+  const linalg::vec3 mesh_center = (mesh_bounds.min + mesh_bounds.max) * 0.5f;
+  const linalg::vec3 mesh_half = (mesh_bounds.max - mesh_bounds.min) * 0.5f;
   const linalg::vec3 &scale = static_mesh.scale;
 
   out_center_offset = {mesh_center.x * scale.x, mesh_center.y * scale.y,

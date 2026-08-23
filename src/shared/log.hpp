@@ -7,6 +7,9 @@
 #include <string_view>
 #include <cstdio>
 #include <cstdlib>
+#ifdef _WIN32
+#include <crtdbg.h> // _set_abort_behavior: fatal_error must not open a dialog
+#endif
 #include <memory>
 #include <type_traits>
 #include <typeinfo>
@@ -28,6 +31,38 @@ namespace logging
 {
 namespace detail
 {
+
+// --- Die without a dialog ----------------------------------------------------
+//
+// On Windows both ways this codebase dies open a MODAL BOX by default: abort()
+// pops the CRT's "abnormal program termination" window, and a failed assert()
+// pops _CrtDbgReport's. Both BLOCK, so a failing test under ctest is not a
+// failing test, it is a hung one waiting for somebody to click OK -- which is
+// why one broken asset made the suite take four minutes instead of two seconds.
+// The reason is already on stderr in every case; a box adds nothing.
+//
+// An inline variable rather than a call every main() has to remember, and a
+// HEADER rather than a TU in game_shared: a static initializer in a static lib
+// gets dropped by the linker when nothing references its object file, which
+// this codebase has already been bitten by once. Every TU that can die includes
+// log.hpp, so this runs.
+inline const int crash_dialogs_disabled = []
+{
+#ifdef _WIN32
+  _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#ifdef _DEBUG
+  // assert() goes through _CrtDbgReport, whose default for a console app is the
+  // window. Send all three report kinds to stderr instead, where the rest of
+  // the failure already is.
+  for (int report_kind : {_CRT_WARN, _CRT_ERROR, _CRT_ASSERT})
+  {
+    _CrtSetReportMode(report_kind, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(report_kind, _CRTDBG_FILE_STDERR);
+  }
+#endif
+#endif
+  return 0;
+}();
 
 // --- FIX 2: Cross-platform Demangling ---
 template <typename T>

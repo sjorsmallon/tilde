@@ -201,7 +201,7 @@ make_placement_prototype(shared::geometry_kind_t kind)
     {
       shared::static_mesh_geometry_t static_mesh;
       // placeholder mesh.
-      static_mesh.surface.mesh_path = "resources/obj/error.obj";
+      static_mesh.surface.mesh_path = "resources/obj/Error.obj";
       return static_mesh;
     }
 

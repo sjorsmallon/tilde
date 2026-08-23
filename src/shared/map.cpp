@@ -732,24 +732,20 @@ aabb_bounds_t mesh_or_point_bounds(const entities::Entity *entity,
 {
   if (const entities::Render *render = entities::get_render(entity))
   {
-    assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
-        assets::get_mesh(render->mesh);
+    const assets::mesh_asset_t *mesh = assets::get(assets::get_mesh(render->mesh));
 
-    if (mesh_handle.valid())
+    if (mesh && !mesh->vertices.empty())
     {
-      vec3f mesh_min, mesh_max;
-      if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min, mesh_max))
-      {
-        vec3f mesh_center = (mesh_min + mesh_max) * 0.5f;
-        vec3f mesh_half = (mesh_max - mesh_min) * 0.5f;
-        vec3f s = render->scale;
-        vec3f world_center =
-            entity->position + vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
-                                     mesh_center.z * s.z};
-        vec3f world_half = vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
-                                 mesh_half.z * s.z};
-        return {world_center - world_half, world_center + world_half};
-      }
+      aabb_bounds_t mesh_bounds = assets::compute_mesh_bounds(mesh);
+      vec3f mesh_center = (mesh_bounds.min + mesh_bounds.max) * 0.5f;
+      vec3f mesh_half = (mesh_bounds.max - mesh_bounds.min) * 0.5f;
+      vec3f s = render->scale;
+      vec3f world_center =
+          entity->position + vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
+                                   mesh_center.z * s.z};
+      vec3f world_half = vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
+                               mesh_half.z * s.z};
+      return {world_center - world_half, world_center + world_half};
     }
   }
   return {entity->position -
@@ -795,13 +791,11 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
     {
       // Drawn as the pyramid marker, so it picks as one -- the Render component
       // is not what a player is drawn from.
-      assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
-          assets::get_mesh(assets::mesh_asset::Pyramid);
-      if (mesh_handle.valid())
+      const assets::mesh_asset_t *mesh = assets::get(assets::get_mesh(assets::mesh_asset::Pyramid));
+      if (mesh && !mesh->vertices.empty())
       {
-        vec3f mesh_min, mesh_max;
-        if (assets::compute_mesh_bounds(assets::get(mesh_handle), mesh_min, mesh_max))
-          return {entity->position + mesh_min, entity->position + mesh_max};
+        aabb_bounds_t mesh_bounds = assets::compute_mesh_bounds(mesh);
+        return {entity->position + mesh_bounds.min, entity->position + mesh_bounds.max};
       }
       return player_hull_bounds(entity);
     }

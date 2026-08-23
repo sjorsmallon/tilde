@@ -17,7 +17,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -43,21 +42,15 @@ static const char *SKELETON_PATH = "resources/models/rig.skeleton";
 static const char *MESH_PATH     = "resources/models/Leet_Full.mesh";
 
 // --- Fixtures --------------------------------------------------------------
+//
+// The readers take BYTES, so a malformed fixture is a string literal and there
+// is no temp file, no cleanup and nothing for a crashed run to leave behind.
+// `debug_name` is only what the error messages say, so it need not exist.
 
-static std::string fixture_path(const char *name)
+static Span<const uint8_t> fixture(const std::string &text)
 {
-  return (std::filesystem::temp_directory_path() / name).string();
-}
-
-static void write_fixture(const std::string &path, const std::string &contents)
-{
-  std::ofstream file(path);
-  file << contents;
-  if (!file)
-  {
-    printf("  FAIL: could not write fixture '%s'\n", path.c_str());
-    abort();
-  }
+  return Span<const uint8_t>(reinterpret_cast<const uint8_t *>(text.data()),
+                             (uint32_t)text.size());
 }
 
 // --- The real exporter output ----------------------------------------------
@@ -67,7 +60,8 @@ static void test_real_skeleton()
   printf("test_real_skeleton\n");
 
   assets::skeleton_t skeleton;
-  CHECK(models::parse_skeleton_file(SKELETON_PATH, skeleton), "'%s' must parse", SKELETON_PATH);
+  CHECK(models::parse_skeleton(assets::read_asset_bytes(SKELETON_PATH), SKELETON_PATH, skeleton),
+        "'%s' must parse", SKELETON_PATH);
 
   CHECK(skeleton.name == "rig", "name was '%s'", skeleton.name.c_str());
   CHECK(skeleton.bones.size() == 35, "expected 35 deform bones, got %zu", skeleton.bones.size());
@@ -115,7 +109,8 @@ static void test_real_mesh()
 
   assets::mesh_asset_t         mesh;
   models::skeleton_reference_t reference;
-  CHECK(models::parse_mesh_file(MESH_PATH, mesh, reference), "'%s' must parse", MESH_PATH);
+  CHECK(models::parse_mesh(assets::read_asset_bytes(MESH_PATH), MESH_PATH, mesh, reference),
+        "'%s' must parse", MESH_PATH);
 
   CHECK(reference.skeleton_name == "rig", "skeleton reference was '%s'",
         reference.skeleton_name.c_str());
@@ -276,41 +271,36 @@ static void test_rejects_bad_skeletons()
 
   assets::skeleton_t skeleton;
 
-  std::string forward_parent = fixture_path("bad_forward_parent.skeleton");
-  write_fixture(forward_parent,
-                "skeleton bad\n"
-                "hash 0000000000000000\n"
-                "bones 2\n"
-                "b 0 root 1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n"
-                "b 1 child -1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n");
-  CHECK(!models::parse_skeleton_file(forward_parent.c_str(), skeleton),
+  const std::string forward_parent = "skeleton bad\n"
+                                     "hash 0000000000000000\n"
+                                     "bones 2\n"
+                                     "b 0 root 1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n"
+                                     "b 1 child -1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n";
+  CHECK(!models::parse_skeleton(fixture(forward_parent), "bad_forward_parent.skeleton", skeleton),
         "a bone parented to a later bone must be refused");
 
-  std::string wrong_hash = fixture_path("bad_hash.skeleton");
-  write_fixture(wrong_hash,
-                "skeleton bad\n"
-                "hash deadbeefdeadbeef\n"
-                "bones 1\n"
-                "b 0 root -1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n");
-  CHECK(!models::parse_skeleton_file(wrong_hash.c_str(), skeleton),
+  const std::string wrong_hash = "skeleton bad\n"
+                                 "hash deadbeefdeadbeef\n"
+                                 "bones 1\n"
+                                 "b 0 root -1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n";
+  CHECK(!models::parse_skeleton(fixture(wrong_hash), "bad_hash.skeleton", skeleton),
         "a hash that does not match the bone names must be refused");
 
-  std::string truncated = fixture_path("bad_truncated.skeleton");
-  write_fixture(truncated,
-                "skeleton bad\n"
-                "hash 0000000000000000\n"
-                "bones 3\n"
-                "b 0 root -1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n");
-  CHECK(!models::parse_skeleton_file(truncated.c_str(), skeleton),
+  const std::string truncated = "skeleton bad\n"
+                                "hash 0000000000000000\n"
+                                "bones 3\n"
+                                "b 0 root -1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n";
+  CHECK(!models::parse_skeleton(fixture(truncated), "bad_truncated.skeleton", skeleton),
         "a file with fewer bones than it declares must be refused");
 
-  std::string over_budget = fixture_path("bad_budget.skeleton");
-  write_fixture(over_budget, "skeleton bad\nhash 0000000000000000\nbones 129\n");
-  CHECK(!models::parse_skeleton_file(over_budget.c_str(), skeleton),
+  const std::string over_budget = "skeleton bad\nhash 0000000000000000\nbones 129\n";
+  CHECK(!models::parse_skeleton(fixture(over_budget), "bad_budget.skeleton", skeleton),
         "more than MAX_BONES must be refused, not truncated");
 
-  CHECK(!models::parse_skeleton_file("resources/models/does_not_exist.skeleton", skeleton),
-        "a missing file must be refused");
+  // A file that is not there is no longer the parser's business: the byte layer
+  // owns presence and dies on it, and asset_exists is the one probe.
+  CHECK(!assets::asset_exists("resources/models/does_not_exist.skeleton"),
+        "presence is the byte layer's question, and this one is absent");
 }
 
 static void test_rejects_bad_meshes()
@@ -321,44 +311,42 @@ static void test_rejects_bad_meshes()
   assets::mesh_asset_t         mesh;
   models::skeleton_reference_t reference;
 
-  const char *header = "mesh bad\nskeleton rig 0000000000000000\nscale 39.37000\n";
+  const std::string header = "mesh bad\nskeleton rig 0000000000000000\nscale 39.37000\n";
 
-  std::string unnormalized = fixture_path("bad_weights.mesh");
-  write_fixture(unnormalized,
-                std::string(header) + "vertices 1\n" +
-                    "v 0 0 0 0 1 0 0 0 0 0 0 0 0.5 0.2 0 0\n" + "indices 0\n");
-  CHECK(!models::parse_mesh_file(unnormalized.c_str(), mesh, reference),
+  const std::string unnormalized =
+      header + "vertices 1\n" + "v 0 0 0 0 1 0 0 0 0 0 0 0 0.5 0.2 0 0\n" + "indices 0\n";
+  CHECK(!models::parse_mesh(fixture(unnormalized), "bad_weights.mesh", mesh, reference),
         "weights that do not sum to 1 must be refused");
 
-  std::string bad_index = fixture_path("bad_index.mesh");
-  write_fixture(bad_index,
-                std::string(header) + "vertices 1\n" +
-                    "v 0 0 0 0 1 0 0 0 0 0 0 0 1 0 0 0\n" + "indices 3\n" + "i 0 0 7\n");
-  CHECK(!models::parse_mesh_file(bad_index.c_str(), mesh, reference),
+  const std::string bad_index =
+      header + "vertices 1\n" + "v 0 0 0 0 1 0 0 0 0 0 0 0 1 0 0 0\n" + "indices 3\n" + "i 0 0 7\n";
+  CHECK(!models::parse_mesh(fixture(bad_index), "bad_index.mesh", mesh, reference),
         "a triangle referencing a vertex that does not exist must be refused");
 
-  std::string bad_scale = fixture_path("bad_scale.mesh");
-  write_fixture(bad_scale, "mesh bad\nskeleton rig 0000000000000000\nscale 1.0\nvertices 0\nindices 0\n");
-  CHECK(!models::parse_mesh_file(bad_scale.c_str(), mesh, reference),
+  const std::string bad_scale =
+      "mesh bad\nskeleton rig 0000000000000000\nscale 1.0\nvertices 0\nindices 0\n";
+  CHECK(!models::parse_mesh(fixture(bad_scale), "bad_scale.mesh", mesh, reference),
         "an exporter/engine scale disagreement must be refused");
 
-  std::string bad_submesh = fixture_path("bad_submesh.mesh");
-  write_fixture(bad_submesh,
-                std::string(header) + "mat 0 only -\n" + "vertices 1\n" +
-                    "v 0 0 0 0 1 0 0 0 0 0 0 0 1 0 0 0\n" + "indices 3\n" + "i 0 0 0\n" +
-                    "sub 0 0 6 0\n");
-  CHECK(!models::parse_mesh_file(bad_submesh.c_str(), mesh, reference),
+  const std::string bad_submesh = header + "mat 0 only -\n" + "vertices 1\n" +
+                                  "v 0 0 0 0 1 0 0 0 0 0 0 0 1 0 0 0\n" + "indices 3\n" +
+                                  "i 0 0 0\n" + "sub 0 0 6 0\n";
+  CHECK(!models::parse_mesh(fixture(bad_submesh), "bad_submesh.mesh", mesh, reference),
         "a submesh running past the index buffer must be refused");
 
-  // A .mesh whose skeleton hash does not match the sibling .skeleton: the
-  // asset layer's check, not the parser's.
-  std::string mismatched = "resources/models/hash_mismatch_fixture.mesh";
-  write_fixture(mismatched,
-                "mesh bad\nskeleton rig 1111111111111111\nscale 39.37000\n"
-                "vertices 1\nv 0 0 0 0 1 0 0 0 0 0 0 0 1 0 0 0\nindices 0\n");
-  CHECK(!assets::load_mesh(mismatched.c_str()).valid(),
-        "a mesh skinned against a different skeleton revision must be refused");
-  std::filesystem::remove(mismatched);
+  // A .mesh whose skeleton hash does not match the sibling .skeleton. The
+  // REFUSAL is the asset layer's, and it is a fatal_error now rather than an
+  // invalid handle -- a stale export is a broken install, and this process
+  // cannot survive its own assertion to report on it. So what is checked here
+  // is the DISAGREEMENT the refusal keys on: the parser reads the hash the mesh
+  // was authored against, and it is not the one the sibling skeleton has.
+  const std::string mismatched = "mesh bad\nskeleton rig 1111111111111111\nscale 39.37000\n"
+                                 "vertices 1\nv 0 0 0 0 1 0 0 0 0 0 0 0 1 0 0 0\nindices 0\n";
+  CHECK(models::parse_mesh(fixture(mismatched), "hash_mismatch_fixture.mesh", mesh, reference),
+        "the mismatch fixture must parse -- the disagreement is not a parse error");
+  CHECK(reference.skeleton_name == "rig", "the fixture names the sibling skeleton");
+  CHECK(reference.skeleton_hash != assets::get(assets::load_skeleton(SKELETON_PATH))->hash,
+        "a mesh skinned against a different skeleton revision must disagree with it");
 }
 
 // A .mesh with no `skeleton` line is a static mesh, and nothing downstream
@@ -367,22 +355,21 @@ static void test_static_mesh()
 {
   printf("test_static_mesh\n");
 
-  std::string path = fixture_path("static.mesh");
-  write_fixture(path,
-                "mesh flat\n"
-                "scale 39.37000\n"
-                "mat 0 default -\n"
-                "vertices 3\n"
-                "v 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0\n"
-                "v 1 0 0 0 1 0 1 0 0 0 0 0 0 0 0 0\n"
-                "v 0 0 1 0 1 0 0 1 0 0 0 0 0 0 0 0\n"
-                "indices 3\n"
-                "i 0 1 2\n"
-                "sub 0 0 3 0\n");
+  const std::string text = "mesh flat\n"
+                           "scale 39.37000\n"
+                           "mat 0 default -\n"
+                           "vertices 3\n"
+                           "v 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0\n"
+                           "v 1 0 0 0 1 0 1 0 0 0 0 0 0 0 0 0\n"
+                           "v 0 0 1 0 1 0 0 1 0 0 0 0 0 0 0 0\n"
+                           "indices 3\n"
+                           "i 0 1 2\n"
+                           "sub 0 0 3 0\n";
 
   assets::mesh_asset_t         mesh;
   models::skeleton_reference_t reference;
-  CHECK(models::parse_mesh_file(path.c_str(), mesh, reference), "a static .mesh must parse");
+  CHECK(models::parse_mesh(fixture(text), "static.mesh", mesh, reference),
+        "a static .mesh must parse");
   CHECK(reference.skeleton_name.empty(), "a static mesh names no skeleton");
   CHECK(!mesh.is_skinned(), "a static mesh must carry no skin data");
   CHECK(mesh.skin.empty(), "skin.empty() IS the not-skinned test");
@@ -410,7 +397,8 @@ static void test_bind_pose_skinning_is_identity()
   printf("test_bind_pose_skinning_is_identity\n");
 
   assets::skeleton_t skeleton;
-  CHECK(models::parse_skeleton_file(SKELETON_PATH, skeleton), "'%s' must parse", SKELETON_PATH);
+  CHECK(models::parse_skeleton(assets::read_asset_bytes(SKELETON_PATH), SKELETON_PATH, skeleton),
+        "'%s' must parse", SKELETON_PATH);
 
   std::vector<linalg::mat4f> parent_space(skeleton.bones.size());
   std::vector<linalg::mat4f> skinning(skeleton.bones.size());
@@ -460,8 +448,8 @@ static void test_real_clip()
 {
   printf("test_real_clip\n");
 
-  assets::asset_handle_t<assets::animation_clip_t> handle = assets::load_animation(CLIP_PATH);
-  const assets::animation_clip_t                  *clip   = assets::get(handle);
+  assets::asset_handle_t<assets::animation_asset_t> handle = assets::load_animation(CLIP_PATH);
+  const assets::animation_asset_t                  *clip   = assets::get(handle);
   CHECK(clip != nullptr, "'%s' must load", CLIP_PATH);
 
   const uint32_t frame_count = clip->frame_count();
@@ -499,7 +487,7 @@ static void test_clip_sampling_and_duration()
 {
   printf("test_clip_sampling_and_duration\n");
 
-  const assets::animation_clip_t *clip = assets::get(assets::load_animation(CLIP_PATH));
+  const assets::animation_asset_t *clip = assets::get(assets::load_animation(CLIP_PATH));
   CHECK(clip != nullptr, "'%s' must load", CLIP_PATH);
   const uint32_t frame_count = clip->frame_count();
 
@@ -579,7 +567,7 @@ static void test_real_aim_poses()
     const entities::Aim_Pose pose = (entities::Aim_Pose)index;
     const char              *path = AIM_POSE_PATHS[pose];
 
-    assets::asset_handle_t<assets::animation_clip_t> handle = assets::load_animation(path);
+    assets::asset_handle_t<assets::animation_asset_t> handle = assets::load_animation(path);
     CHECK(handle.valid(), "load_animation('%s') failed", path);
     poses[pose] = assets::get(handle);
     CHECK(poses[pose] != nullptr, "handle for '%s' did not resolve", path);
@@ -680,8 +668,8 @@ static void test_posed_skinning_stays_a_person()
   {
     const char *path = AIM_POSE_PATHS[(entities::Aim_Pose)index];
 
-    assets::asset_handle_t<assets::animation_clip_t> handle = assets::load_animation(path);
-    const assets::animation_clip_t                  *clip   = assets::get(handle);
+    assets::asset_handle_t<assets::animation_asset_t> handle = assets::load_animation(path);
+    const assets::animation_asset_t                  *clip   = assets::get(handle);
     CHECK(clip != nullptr, "'%s' must load", path);
 
     assets::pose_t pose;
@@ -759,9 +747,9 @@ static void test_blend_and_aim_space()
         "aiming past the pose set must clamp to Upward");
 
   // --- blend_into against real poses ---
-  const assets::animation_clip_t *forward =
+  const assets::animation_asset_t *forward =
       assets::get(assets::load_animation(AIM_POSE_PATHS[entities::Aim_Pose::Forward]));
-  const assets::animation_clip_t *upward =
+  const assets::animation_asset_t *upward =
       assets::get(assets::load_animation(AIM_POSE_PATHS[entities::Aim_Pose::Upward]));
   CHECK(forward && upward, "the two poses must load");
 
@@ -838,53 +826,53 @@ static void test_rejects_bad_animations()
   printf("test_rejects_bad_animations\n");
   printf("  (the errors below are expected)\n");
 
-  assets::animation_clip_t clip;
+  assets::animation_asset_t clip;
 
-  const char *header = "animation bad\nskeleton rig 0000000000000000\nbones 1\nfps 30\n";
+  const std::string header = "animation bad\nskeleton rig 0000000000000000\nbones 1\nfps 30\n";
 
-  std::string unnormalized = fixture_path("bad_rotation.animation");
-  write_fixture(unnormalized,
-                std::string(header) + "frames 1\n" + "f 0\n" + "b 0 0 0 0 0 0 0 0.5 1 1 1\n");
-  CHECK(!models::parse_animation_file(unnormalized.c_str(), clip),
+  const std::string unnormalized = header + "frames 1\n" + "f 0\n" + "b 0 0 0 0 0 0 0 0.5 1 1 1\n";
+  CHECK(!models::parse_animation(fixture(unnormalized), "bad_rotation.animation", clip),
         "a rotation that is not a unit quaternion must be refused");
 
-  std::string truncated = fixture_path("bad_truncated.animation");
-  write_fixture(truncated, std::string(header) + "frames 3\n" + "f 0\n" + "b 0 0 0 0 0 0 0 1 1 1 1\n");
-  CHECK(!models::parse_animation_file(truncated.c_str(), clip),
+  const std::string truncated = header + "frames 3\n" + "f 0\n" + "b 0 0 0 0 0 0 0 1 1 1 1\n";
+  CHECK(!models::parse_animation(fixture(truncated), "bad_truncated.animation", clip),
         "a file with fewer frames than it declares must be refused");
 
-  std::string out_of_order = fixture_path("bad_channel_order.animation");
-  write_fixture(out_of_order, "animation bad\nskeleton rig 0000000000000000\nbones 2\nfps 30\n"
-                              "frames 1\nf 0\nb 1 0 0 0 0 0 0 1 1 1 1\nb 0 0 0 0 0 0 0 1 1 1 1\n");
-  CHECK(!models::parse_animation_file(out_of_order.c_str(), clip),
-        "channels out of bone order must be refused: the clip's bone index IS the skeleton's");
+  const std::string out_of_order =
+      "animation bad\nskeleton rig 0000000000000000\nbones 2\nfps 30\n"
+      "frames 1\nf 0\nb 1 0 0 0 0 0 0 1 1 1 1\nb 0 0 0 0 0 0 0 1 1 1 1\n";
+  CHECK(!models::parse_animation(fixture(out_of_order), "bad_channel_order.animation", clip),
+        "channels out of bone order must be refused: the bone index IS the skeleton's");
 
-  std::string zero_frames = fixture_path("bad_zero_frames.animation");
-  write_fixture(zero_frames, std::string(header) + "frames 0\n");
-  CHECK(!models::parse_animation_file(zero_frames.c_str(), clip),
+  const std::string zero_frames = header + "frames 0\n";
+  CHECK(!models::parse_animation(fixture(zero_frames), "bad_zero_frames.animation", clip),
         "a clip with no frames must be refused, not sampled");
 
-  // The asset layer's checks, not the parser's: a clip is refused against a
-  // skeleton it was not authored for, exactly like a mesh.
-  std::string mismatched = "resources/models/hash_mismatch_fixture.animation";
-  write_fixture(mismatched, "animation bad\nskeleton rig 1111111111111111\nbones 35\nfps 30\n"
-                            "frames 1\nf 0\n" +
-                                [] {
-                                  std::string body;
-                                  for (int bone = 0; bone < 35; ++bone)
-                                    body += "b " + std::to_string(bone) + " 0 0 0 0 0 0 1 1 1 1\n";
-                                  return body;
-                                }());
-  CHECK(!assets::load_animation(mismatched.c_str()).valid(),
-        "a clip authored against a different skeleton revision must be refused");
-  std::filesystem::remove(mismatched);
+  // The asset layer's two checks, as for a mesh above: both are fatal_error now
+  // rather than an invalid handle, so what is checked here is the disagreement
+  // each one keys on, not the refusal itself.
+  const assets::skeleton_t &rig = *assets::get(assets::load_skeleton(SKELETON_PATH));
 
-  std::string wrong_bone_count = "resources/models/bone_count_fixture.animation";
-  write_fixture(wrong_bone_count, "animation bad\nskeleton rig b1e51a1238f88001\nbones 2\nfps 30\n"
-                                  "frames 1\nf 0\nb 0 0 0 0 0 0 0 1 1 1 1\nb 1 0 0 0 0 0 0 1 1 1 1\n");
-  CHECK(!assets::load_animation(wrong_bone_count.c_str()).valid(),
-        "a clip posing a different number of bones than the skeleton has must be refused");
-  std::filesystem::remove(wrong_bone_count);
+  const std::string mismatched = "animation bad\nskeleton rig 1111111111111111\nbones 35\nfps 30\n"
+                                 "frames 1\nf 0\n" +
+                                 [] {
+                                   std::string body;
+                                   for (int bone = 0; bone < 35; ++bone)
+                                     body += "b " + std::to_string(bone) + " 0 0 0 0 0 0 1 1 1 1\n";
+                                   return body;
+                                 }();
+  CHECK(models::parse_animation(fixture(mismatched), "hash_mismatch_fixture.animation", clip),
+        "the mismatch fixture must parse -- the disagreement is not a parse error");
+  CHECK(clip.skeleton_hash != rig.hash,
+        "a clip authored against a different skeleton revision must disagree with it");
+
+  const std::string wrong_bone_count =
+      "animation bad\nskeleton rig b1e51a1238f88001\nbones 2\nfps 30\n"
+      "frames 1\nf 0\nb 0 0 0 0 0 0 0 1 1 1 1\nb 1 0 0 0 0 0 0 1 1 1 1\n";
+  CHECK(models::parse_animation(fixture(wrong_bone_count), "bone_count_fixture.animation", clip),
+        "the bone-count fixture must parse -- the disagreement is not a parse error");
+  CHECK(clip.bone_count != rig.bones.size(),
+        "a clip posing a different number of bones than the skeleton has must disagree with it");
 }
 
 int main()
@@ -901,6 +889,7 @@ int main()
   }
 
   assets::set_state(&g_asset_state);
+  assets::mount_asset_source();
 
   test_real_skeleton();
   test_real_mesh();

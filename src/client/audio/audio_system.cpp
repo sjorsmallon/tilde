@@ -1,5 +1,6 @@
 #include "audio_system.hpp"
 
+#include "../../shared/asset.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/array.hpp"
 
@@ -7,7 +8,6 @@
 
 #include <bit>
 #include <optional>
-#include <unordered_set>
 
 namespace client
 {
@@ -62,9 +62,53 @@ struct audio_impl_t
   ma_engine engine{};
   voices_t voices;
 
-  // diagnostic nonsense.
-  std::unordered_set<std::string> sound_paths_that_failed_to_load;
+  // One bit per id rather than a set of paths: the id space is closed, so
+  // "complain once" is an array index.
+  Enum_Array<assets::sound_asset, bool> play_failure_reported;
 };
+
+// The path a sound was registered with, which is the key every
+// ma_sound_init_from_file below uses. Empty for sound_asset::Missing, the one
+// id with no file behind it.
+static const char* registered_path_for(assets::sound_asset sound)
+{
+  return assets::get(assets::get_sound(sound))->registered_path.c_str();
+}
+
+// Hand every enumerated sound's ENCODED bytes to miniaudio's resource manager
+// under its manifest path, once, at init. After this,
+// ma_sound_init_from_file(path) is served from memory and never touches the
+// filesystem -- which is the whole point, and why neither the call sites nor
+// the voice pool had to move.
+//
+// register_encoded_data DOES NOT COPY, so the bytes must outlive the engine.
+// assets::read_asset_bytes guarantees exactly that (see asset_source_t).
+//
+// There is no asset_exists probe here any more, and that is step 5 of
+// asset_pipeline_def.md landing: a sound is a manifest id, so there is no name
+// to misspell and no file that can be absent -- read_asset_bytes is fatal on a
+// broken install rather than a branch every caller writes.
+static void register_every_sound(audio_impl_t* impl)
+{
+  ma_resource_manager* resource_manager = ma_engine_get_resource_manager(&impl->engine);
+
+  // Id 0 is Missing, which has no file: it is the declared absence of a sound,
+  // not a sound.
+  for (uint32_t which = 1; which < assets::sound_asset_COUNT; ++which)
+  {
+    const char*               path  = registered_path_for((assets::sound_asset)which);
+    const Span<const uint8_t> bytes = assets::read_asset_bytes(path);
+
+    const ma_result result = ma_resource_manager_register_encoded_data(
+        resource_manager, path, bytes.data, bytes.size());
+    if (result != MA_SUCCESS)
+    {
+      log_error("audio_system_t: could not register '{}' with the resource manager "
+                "(ma_result {})",
+                path, static_cast<int>(result));
+    }
+  }
+}
 
 audio_system_t::~audio_system_t() { shutdown(); }
 
@@ -91,6 +135,8 @@ bool audio_system_t::init(const cvars::cvar_state_t& rhs_cvars)
   }
 
   impl = implementation;
+
+  register_every_sound(impl);
 
   // Report the actual output endpoint miniaudio opened. With a default config
   // this is the OS default playback device (WASAPI on Windows); the device is
@@ -152,14 +198,31 @@ void audio_system_t::update(const linalg::vec3f &listener_position,
   }
 }
 
-// Shared helper: claim a voice slot and init its ma_sound from `path`, applying
-// `flags`. Returns the slot index, or nullopt when the pool is exhausted or the
-// file failed to load (the latter logged once per path). On success the caller
-// owns the slot until update() reaps it.
+// Shared helper: claim a voice slot and init its ma_sound from `sound`, applying
+// `flags`. Returns the slot index, or nullopt when the id names no file, the
+// pool is exhausted, or the sound failed to load (the first and last logged once
+// per id). On success the caller owns the slot until update() reaps it.
 [[nodiscard]] static std::optional<uint32_t> try_start_voice(audio_impl_t* impl,
-                                                             const char* path,
+                                                             assets::sound_asset sound,
                                                              ma_uint32 flags)
 {
+  const char* path = registered_path_for(sound);
+
+  // Missing is the id a call site names when the content does not exist yet
+  // (there is no footstep.wav and no rocket launch sound). Silence is the right
+  // outcome; saying so once is what keeps it from being a silent failure.
+  if (path[0] == '\0')
+  {
+    bool* reported = impl->play_failure_reported.try_get(sound);
+    if (reported != nullptr && !*reported)
+    {
+      *reported = true;
+      log_error("audio_system_t: '{}' has no file behind it — nothing to play",
+                assets::to_string(sound));
+    }
+    return std::nullopt;
+  }
+
   const std::optional<uint32_t> slot = try_acquire_voice(impl->voices);
   if (!slot)
   {
@@ -173,8 +236,10 @@ void audio_system_t::update(const linalg::vec3f &listener_position,
       ma_sound_init_from_file(&impl->engine, path, flags, nullptr, nullptr, voice);
   if (result != MA_SUCCESS)
   {
-    if (impl->sound_paths_that_failed_to_load.insert(path).second)
+    bool* reported = impl->play_failure_reported.try_get(sound);
+    if (reported != nullptr && !*reported)
     {
+      *reported = true;
       log_error("audio_system_t: failed to load sound '{}' (ma_result {})", path,
                 static_cast<int>(result));
     }
@@ -184,7 +249,7 @@ void audio_system_t::update(const linalg::vec3f &listener_position,
   return slot;
 }
 
-void audio_system_t::play_3d(const char *path, const linalg::vec3f &position,
+void audio_system_t::play_3d(assets::sound_asset sound, const linalg::vec3f &position,
                              float volume)
 {
   if (!impl)
@@ -192,7 +257,7 @@ void audio_system_t::play_3d(const char *path, const linalg::vec3f &position,
 
   // MA_SOUND_FLAG_DECODE fully decodes into the resource-manager cache so the
   // first play pays the decode cost and subsequent plays are allocation-cheap.
-  const std::optional<uint32_t> slot = try_start_voice(impl, path, MA_SOUND_FLAG_DECODE);
+  const std::optional<uint32_t> slot = try_start_voice(impl, sound, MA_SOUND_FLAG_DECODE);
   if (!slot)
     return;
 
@@ -209,12 +274,12 @@ void audio_system_t::play_3d(const char *path, const linalg::vec3f &position,
   ma_sound_start(voice);
 }
 
-void audio_system_t::play_2d(const char *path, float volume)
+void audio_system_t::play_2d(assets::sound_asset sound, float volume)
 {
   if (!impl)
     return;
 
-  const std::optional<uint32_t> slot = try_start_voice(impl, path, MA_SOUND_FLAG_DECODE);
+  const std::optional<uint32_t> slot = try_start_voice(impl, sound, MA_SOUND_FLAG_DECODE);
   if (!slot)
     return;
 

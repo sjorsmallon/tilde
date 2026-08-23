@@ -16,10 +16,10 @@ namespace
 // worse than a missing one because it points at the wrong moment.
 constexpr uint32_t max_hit_stamp_age_ticks = 12;
 
-constexpr const char *HEADSHOT_SOUNDS[] = {
-    "resources/sounds/headshot1.wav",
-    "resources/sounds/headshot2.wav",
-    "resources/sounds/headshot3.wav",
+constexpr assets::sound_asset HEADSHOT_SOUNDS[] = {
+    assets::sound_asset::headshot1,
+    assets::sound_asset::headshot2,
+    assets::sound_asset::headshot3,
 };
 
 } // namespace
@@ -73,7 +73,8 @@ void play_hitmarker_audio_and_update_hit_tick_state(client_context_t &context)
   if (!player_entity.last_hit_was_headshot) return;
 
   static uint32_t next_variant_idx = 0;
-  const char     *sound = HEADSHOT_SOUNDS[next_variant_idx % std::size(HEADSHOT_SOUNDS)];
+  const assets::sound_asset sound =
+      HEADSHOT_SOUNDS[next_variant_idx % std::size(HEADSHOT_SOUNDS)];
   ++next_variant_idx;
 
   // play non-diegetic headshot sound for the shooter. 

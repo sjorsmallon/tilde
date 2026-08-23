@@ -93,7 +93,7 @@ bool draw_player_entity_mesh(pass_builder_t &draws,
                              const entities::Player_Entity *e, color_t color,
                              bool tinted)
 {
-  return push_mesh(draws, assets::load_mesh("resources/obj/pyramid.obj"), e->position,
+  return push_mesh(draws, assets::load_mesh("resources/obj/Pyramid.obj"), e->position,
                    e->orientation, {1, 1, 1}, tinted ? color : colors::white,
                    renderer::fill_mode_t::wireframe);
 }

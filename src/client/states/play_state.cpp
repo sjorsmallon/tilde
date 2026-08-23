@@ -130,11 +130,11 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
     return;
 
   // active_weapon_id came off the wire, and enum fields are deserialized without
-  // a range check, so it is looked up through fire_sound_for FIRST -- that
+  // a range check, so it is looked up through try_fire_sound_for FIRST -- that
   // bounds-checks and logs. get_weapon_definition only asserts, which is nothing
   // in a release build, so it is reached only once the id is known good.
   const entities::Weapon my_weapon = my_entity->second.active_weapon_id;
-  const char *sound = fire_sound_for(my_weapon);
+  const std::optional<assets::sound_asset> sound = try_fire_sound_for(my_weapon);
   if (!sound)
     return;
 
@@ -155,7 +155,7 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
     return;
 
   ctx.prediction.seconds_since_local_fire = 0.f;
-  ctx.audio->play_2d(sound);
+  ctx.audio->play_2d(*sound);
 }
 
 static uint8_t clamp_crosshair_color_channel(uint32_t value)
@@ -1562,11 +1562,11 @@ void Play_State::update(float dt)
   if (ctx.audio)
   {
     if (frame_move_events.jumped)
-      ctx.audio->play_2d("resources/sounds/player_jump.wav");
+      ctx.audio->play_2d(assets::sound_asset::player_jump);
     if (frame_move_events.landed &&
         frame_move_events.land_impact_speed >
             ctx.cvars->pm_minimum_land_impact_speed)
-      ctx.audio->play_2d("resources/sounds/player_land.wav");
+      ctx.audio->play_2d(assets::sound_asset::player_land);
   }
 
   // --- Decay visual error offset (frame-rate independent) ---

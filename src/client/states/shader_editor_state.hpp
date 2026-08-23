@@ -67,7 +67,7 @@ private:
   camera_t camera;
 
   // Mesh
-  std::string mesh_path = "resources/obj/isosphere.obj";
+  std::string mesh_path = "resources/obj/Isosphere.obj";
   assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
 
   // sloppy_mortar_stone

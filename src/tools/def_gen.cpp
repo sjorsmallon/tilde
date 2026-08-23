@@ -346,7 +346,7 @@ enum type_kind_t : uint8_t
   TYPE_V4,
   TYPE_V4I,
   TYPE_STRING,    // capacity lives in type_reference_t::capacity
-  TYPE_ASSET,     // mesh_asset / sprite_asset, closed sets from the asset manifest
+  TYPE_ASSET,     // mesh_asset / texture_asset, closed sets from the asset manifest
   TYPE_ENUM,      // resolved: declaration_index points at a DECLARATION_ENUM
   TYPE_COMPONENT, // resolved: declaration_index points at a DECLARATION_COMPONENT
   // A command: a name and a handler, no value. It is written into the same
@@ -432,45 +432,25 @@ struct component_override_t
   int32_t         line;
 };
 
-// Where an asset's bytes come from. This is the ONLY place the distinction
-// exists: it is a column in the generated manifest, read by the asset system's
-// init and by nothing else. No consumer of an asset id ever asks which kind it
-// is -- that is the whole point of the manifest modelling identity rather than
-// paths.
-enum asset_source_kind_t : uint8_t
-{
-  ASSET_SOURCE_MISSING = 0, // slot 0 of every class: no asset assigned
-  ASSET_SOURCE_FILE,        // `source` is a path, relative to the working directory
-  ASSET_SOURCE_PROCEDURAL,  // `source` is a generator key
-};
+// One line of the asset manifest: an id's name and the file behind it. TWO
+// columns, and there is deliberately no third -- a `source_kind` used to say
+// whether the bytes came off disk or out of a generator, and no consumer of an
+// asset id ever asked. `path` is null for entry 0 of every class (Missing),
+// whose bytes are a compiled-in constant.
+//
+// Names here are NUL terminated and arena owned rather than views into a source
+// buffer, because they come from asset_pack's walk of the filesystem, not from
+// a .def.
+// A class decodes a handful of on-disk forms at most -- a mesh is a .obj or a
+// .mesh, a texture a .png or a .tga.
+constexpr int32_t MAX_CLASS_EXTENSIONS = 8;
 
-// Names here are NUL terminated and arena owned rather than views into the
-// source, because a scanned entry's name comes from the filesystem.
 struct asset_entry_t
 {
-  const char*         name;
-  const char*         source;
-  asset_source_kind_t source_kind;
-  int32_t             offset; // declaration site, for diagnostics; -1 if scanned
-  int32_t             line;
+  const char* name;
+  const char* path;
+  int32_t     line; // in the manifest, for diagnostics
 };
-
-// One `scan <directory> <extension>` directive. Several may appear in one asset
-// class; see declaration_t::scans.
-constexpr int32_t MAX_ASSET_SCANS = 4;
-
-struct asset_scan_t
-{
-  const char* directory;
-  const char* extension;
-  int32_t     offset; // the directive's own token, for diagnostics
-  int32_t     line;
-};
-
-// Imports are one level deep by design: only an asset .def may be imported, and
-// an asset .def may not itself import. Four is already more asset .def files
-// than the design admits.
-constexpr int32_t MAX_IMPORTS = 4;
 
 // Every node keeps the source offset and line of the token it started at, so
 // the resolve pass can point at real file positions long after the tokens are
@@ -582,20 +562,17 @@ struct declaration_t
   int32_t first_annotation; // into program_t::annotations, the class level ones
   int32_t annotation_count;
 
-  // DECLARATION_ASSETS only. Scan directives are kept unexpanded until the
-  // resolve pass, so parsing stays a pure function of the .def text and only
-  // one clearly marked pass ever touches the filesystem.
-  //
-  // A class may declare SEVERAL scans, because one asset kind can have more than
-  // one on-disk form: a mesh is a .obj in resources/obj or a .mesh (skinned,
-  // exported from Blender) in resources/models, and a call site that resolves a
-  // mesh_asset must not have to know which. They expand in declaration order,
-  // files sorted within each, so ids stay deterministic.
-  int32_t      first_asset_entry; // into program_t::asset_entries
-  int32_t      asset_entry_count;
-  asset_scan_t scans[MAX_ASSET_SCANS];
-  int32_t      scan_count;
-  const char*  placeholder_path; // nullptr if the class declares no placeholder
+  // DECLARATION_ASSETS only, and such a declaration can only come from the
+  // asset manifest -- there is no `assets` grammar in a .def any more.
+  int32_t     first_asset_entry; // into program_t::asset_entries
+  int32_t     asset_entry_count;
+  const char* value_type;   // the C++ type an id of this class loads into
+  const char* value_header; // where that type is declared
+  // What this class DECODES, dot included, from the manifest's `class` line.
+  // Not derived from the entries: a class's loader also serves path-referenced
+  // files that were never enumerated, so the set is a property of the class.
+  const char* extensions[MAX_CLASS_EXTENSIONS];
+  int32_t     extension_count;
 
   // DECLARATION_CHANNEL_MEMBER only: the channel named on the right-hand side
   // of '::', and its mandatory description. Resolved after parsing, because a
@@ -604,11 +581,12 @@ struct declaration_t
   int32_t       base_declaration; // -1 until resolved
   string_view_t description;
 
-  // Came in through `import`. Resolvable as a type and counted when class ids
-  // are assigned, but never emitted and never hashed -- the file it came from is
-  // its own input and does both. Its name and asset entries point into THAT
-  // file's buffers, which is why an imported program is never freed.
-  bool is_imported;
+  // Copied in from the asset manifest so an entity field can be typed
+  // `mesh_asset`. Resolvable as a type and counted when class ids are assigned,
+  // but never emitted and never hashed from here -- the manifest is its own
+  // input and does both, once. Its name and asset entries point into the
+  // MANIFEST's buffers, which is why the manifest program is never freed.
+  bool from_asset_manifest;
 
   int32_t offset;
   int32_t line;
@@ -620,12 +598,12 @@ struct declaration_t
 // emits the entity artifacts, one that declares a channel and its members emits
 // the event artifacts, and a file that mixes two is an error (see
 // check_family). `enum` claims no family -- every family declares them.
-// Imported declarations do not count toward the decision.
+// Asset classes do not count toward the decision either: they arrive from the
+// manifest, which is not a .def and claims no family of its own.
 enum def_family_t : uint8_t
 {
   DEF_FAMILY_EMPTY = 0,
   DEF_FAMILY_ENTITY,
-  DEF_FAMILY_ASSET,
   DEF_FAMILY_CVAR,
   DEF_FAMILY_EVENT,
 };
@@ -669,22 +647,11 @@ struct program_t
   int32_t        asset_entry_count;
   int32_t        asset_entry_capacity;
 
-  // Backing store for strings that do not exist in the source buffer: scanned
-  // filenames, and the NUL terminated copies of declared asset names.
+  // Backing store for strings that do not exist in the source buffer: the
+  // manifest's asset names and paths.
   char*   string_arena;
   int32_t string_arena_used;
   int32_t string_arena_capacity;
-
-  // Asset scan paths in the .def are relative to this, so that the .def can say
-  // "resources/obj" -- what the game says at runtime -- rather than something
-  // relative to wherever the build happens to invoke the generator from.
-  const char* asset_root;
-
-  // Resolved paths of the files this one imported, to reject importing the same
-  // file twice. Kept as paths rather than as program pointers because that is
-  // what identifies a file; the programs themselves are leaked (see load_import).
-  const char* imports[MAX_IMPORTS];
-  int32_t     import_count;
 
   int32_t error_count;
 };
@@ -820,7 +787,6 @@ static asset_entry_t* push_asset_entry(program_t* program)
 
   asset_entry_t* entry = &program->asset_entries[program->asset_entry_count++];
   *entry               = {};
-  entry->offset        = -1;
   entry->line          = -1;
   return entry;
 }
@@ -1147,8 +1113,8 @@ static type_kind_t builtin_type_kind(string_view_t name)
 
   // Asset classes are NOT builtin: `mesh_asset` and `sprite_asset` used to be
   // two magic identifiers baked in here, which meant the generator knew the
-  // name of every asset class in the game. They are declared in the .def now
-  // and resolve through the name table like an enum or a component.
+  // name of every asset class in the game. They arrive in the asset manifest
+  // now and resolve through the name table like an enum or a component.
   return TYPE_UNRESOLVED;
 }
 
@@ -1688,141 +1654,6 @@ static bool parse_enum_body(parser_t* parser, declaration_t* declaration)
   return expect(parser, TOKEN_CLOSE_BRACE, "'}' to close the enum body");
 }
 
-// An asset class body. Each entry is one line, in the same spirit as a field.
-//
-//   placeholder "resources/obj/error.obj"
-//   scan        "resources/obj" ".obj"
-//   procedural  Box "box"
-//
-// `scan` is recorded, not expanded: the filesystem is not touched until the
-// resolve pass, so parsing stays a pure function of the .def text.
-static bool parse_assets_body(parser_t* parser, declaration_t* declaration)
-{
-  if (!expect(parser, TOKEN_OPEN_BRACE, "'{' to open the asset class body"))
-    return false;
-
-  declaration->first_asset_entry = parser->program->asset_entry_count;
-
-  while (!check(parser, TOKEN_CLOSE_BRACE) && !check(parser, TOKEN_END_OF_FILE))
-  {
-    token_t keyword_token = peek(parser);
-    if (!expect(parser, TOKEN_IDENTIFIER, "'placeholder', 'scan' or 'procedural'"))
-      return false;
-
-    string_view_t keyword = token_text(parser->program, keyword_token);
-
-    if (string_view_matches(keyword, "placeholder"))
-    {
-      if (declaration->placeholder_path != nullptr)
-      {
-        parse_error_at(parser, keyword_token, "'%.*s' already declares a placeholder",
-                       declaration->name.length, declaration->name.data);
-        return false;
-      }
-
-      token_t path_token = peek(parser);
-      if (!expect(parser, TOKEN_STRING_LITERAL, "a path after 'placeholder'"))
-        return false;
-
-      string_view_t path = token_text(parser->program, path_token);
-      declaration->placeholder_path = arena_copy(parser->program, path.data, path.length);
-      if (declaration->placeholder_path == nullptr)
-        return false;
-      continue;
-    }
-
-    if (string_view_matches(keyword, "scan"))
-    {
-      if (declaration->scan_count >= MAX_ASSET_SCANS)
-      {
-        parse_error_at(parser, keyword_token,
-                       "'%.*s' declares more than %d scan directives",
-                       declaration->name.length, declaration->name.data, MAX_ASSET_SCANS);
-        return false;
-      }
-
-      token_t directory_token = peek(parser);
-      if (!expect(parser, TOKEN_STRING_LITERAL, "a directory after 'scan'"))
-        return false;
-
-      token_t extension_token = peek(parser);
-      if (!expect(parser, TOKEN_STRING_LITERAL, "a file extension after the scan directory"))
-        return false;
-
-      string_view_t directory = token_text(parser->program, directory_token);
-      string_view_t extension = token_text(parser->program, extension_token);
-
-      asset_scan_t* scan = &declaration->scans[declaration->scan_count];
-      scan->directory    = arena_copy(parser->program, directory.data, directory.length);
-      scan->extension    = arena_copy(parser->program, extension.data, extension.length);
-      scan->offset       = keyword_token.offset;
-      scan->line         = keyword_token.line;
-
-      if (scan->directory == nullptr || scan->extension == nullptr)
-        return false;
-
-      // Two scans of the same directory AND extension would give every file two
-      // ids under one name, which the uniqueness check below reports as a
-      // collision -- but pointing at the duplicate directive is the more useful
-      // diagnostic, and it is free here.
-      for (int32_t which = 0; which < declaration->scan_count; ++which)
-      {
-        if (strcmp(declaration->scans[which].directory, scan->directory) == 0 &&
-            strcmp(declaration->scans[which].extension, scan->extension) == 0)
-        {
-          parse_error_at(parser, keyword_token,
-                         "'%.*s' already scans '%s' for '%s'",
-                         declaration->name.length, declaration->name.data, scan->directory,
-                         scan->extension);
-          return false;
-        }
-      }
-
-      declaration->scan_count += 1;
-      continue;
-    }
-
-    if (string_view_matches(keyword, "procedural"))
-    {
-      token_t name_token = peek(parser);
-      if (!expect(parser, TOKEN_IDENTIFIER, "a name after 'procedural'"))
-        return false;
-
-      token_t key_token = peek(parser);
-      if (!expect(parser, TOKEN_STRING_LITERAL,
-                  "the generator key, as a string, after the procedural name"))
-        return false;
-
-      string_view_t name = token_text(parser->program, name_token);
-      string_view_t key  = token_text(parser->program, key_token);
-
-      asset_entry_t* entry = push_asset_entry(parser->program);
-      if (entry == nullptr)
-        return false;
-
-      entry->name        = arena_copy(parser->program, name.data, name.length);
-      entry->source      = arena_copy(parser->program, key.data, key.length);
-      entry->source_kind = ASSET_SOURCE_PROCEDURAL;
-      entry->offset      = name_token.offset;
-      entry->line        = name_token.line;
-
-      if (entry->name == nullptr || entry->source == nullptr)
-        return false;
-      continue;
-    }
-
-    parse_error_at(parser, keyword_token,
-                   "'%.*s' is not an asset entry; expected 'placeholder', 'scan' or 'procedural'",
-                   keyword.length, keyword.data);
-    return false;
-  }
-
-  declaration->asset_entry_count =
-      parser->program->asset_entry_count - declaration->first_asset_entry;
-
-  return expect(parser, TOKEN_CLOSE_BRACE, "'}' to close the asset class body");
-}
-
 static bool parse_flagset_body(parser_t* parser, declaration_t* declaration)
 {
   declaration->kind = DECLARATION_FLAGSET;
@@ -1902,11 +1733,6 @@ static declaration_t* parse_declaration(parser_t* parser)
     declaration->kind = DECLARATION_ENUM;
     parsed            = parse_enum_body(parser, declaration);
   }
-  else if (string_view_matches(kind_text, "assets"))
-  {
-    declaration->kind = DECLARATION_ASSETS;
-    parsed            = parse_assets_body(parser, declaration);
-  }
   else if (string_view_matches(kind_text, "cvars") || string_view_matches(kind_text, "commands"))
   {
     const bool is_commands = string_view_matches(kind_text, "commands");
@@ -1951,27 +1777,10 @@ static declaration_t* parse_declaration(parser_t* parser)
   return declaration;
 }
 
-// Defined below the resolve pass: an import runs the whole front end over the
-// imported file, because what gets copied out is the EXPANDED manifest.
-static bool load_import(parser_t* parser, token_t path_token);
-
 static void parse_program(parser_t* parser)
 {
   while (!check(parser, TOKEN_END_OF_FILE))
   {
-    token_t token = peek(parser);
-    if (token.kind == TOKEN_IDENTIFIER &&
-        string_view_matches(token_text(parser->program, token), "import"))
-    {
-      advance(parser);
-
-      token_t path_token = peek(parser);
-      if (!expect(parser, TOKEN_STRING_LITERAL, "a quoted path after 'import'") ||
-          !load_import(parser, path_token))
-        synchronize_to_next_declaration(parser);
-      continue;
-    }
-
     if (parse_declaration(parser) == nullptr)
       synchronize_to_next_declaration(parser);
   }
@@ -2330,13 +2139,13 @@ static void resolve_types(program_t* program, const name_table_t* table)
 // namespace, one rule -- and it costs a declaration nothing to avoid seven words.
 static void check_declaration_names(program_t* program)
 {
-  static const char* KEYWORDS[] = {"base",   "component", "entity",   "enum",   "channel",
-                                   "assets", "cvars",     "commands", "import"};
+  static const char* KEYWORDS[] = {"base",  "component", "entity",
+                                   "enum",  "channel",   "cvars",   "commands"};
 
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
-    if (declaration->is_imported)
+    if (declaration->from_asset_manifest)
       continue;
 
     for (const char* keyword : KEYWORDS)
@@ -2476,273 +2285,6 @@ static void check_component_cycles(program_t* program)
   free(states);
 }
 
-// ---------------------------------------------------------------------------
-// Asset manifest expansion
-// ---------------------------------------------------------------------------
-//
-// The only pass that touches the filesystem. It turns each `assets`
-// declaration into its final, ordered entry list:
-//
-//   slot 0    Missing        -- so a zeroed field reads as "no asset assigned"
-//   then      scanned files  -- alphabetical, for a deterministic build
-//   then      procedural     -- declaration order
-//
-// Ids are therefore NOT stable across adding a file to a scanned directory.
-// That is safe because names are the on-disk identity (a map file stores
-// "Cube", never 3), and because the resolved manifest is mixed into
-// SCHEMA_HASH -- two builds with different asset sets refuse to connect to
-// each other loudly instead of silently disagreeing about what id 3 means.
-
-// "cube" -> "Cube", "smoke_puff" -> "Smoke_Puff". Anything that cannot become a
-// C++ identifier is an error rather than a silent mangling: the file is in a
-// scanned directory, so somebody meant it to be an asset.
-static bool derive_asset_name(program_t* program, const asset_scan_t* scan,
-                              const char* stem, char* buffer, int32_t buffer_size)
-{
-  int32_t length = (int32_t)strlen(stem);
-  if (length == 0 || length >= buffer_size)
-  {
-    report_error(program, scan->offset, scan->line,
-                 "asset file name '%s' is empty or too long to become an identifier", stem);
-    return false;
-  }
-
-  if (character_has_class(stem[0], CHAR_CLASS_DIGIT))
-  {
-    report_error(program, scan->offset, scan->line,
-                 "asset file name '%s' starts with a digit, so it cannot become an identifier; "
-                 "rename the file",
-                 stem);
-    return false;
-  }
-
-  bool capitalize_next = true;
-  for (int32_t index = 0; index < length; ++index)
-  {
-    char character = stem[index];
-
-    if (character == '-' || character == '_')
-    {
-      buffer[index]   = '_';
-      capitalize_next = true;
-      continue;
-    }
-
-    if (!character_has_class(character, CHAR_CLASS_IDENTIFIER_BODY))
-    {
-      report_error(program, scan->offset, scan->line,
-                   "asset file name '%s' contains '%c', which cannot appear in an identifier; "
-                   "rename the file",
-                   stem, character);
-      return false;
-    }
-
-    if (capitalize_next && character >= 'a' && character <= 'z')
-      character = (char)(character - 'a' + 'A');
-    buffer[index]   = character;
-    capitalize_next = false;
-  }
-
-  buffer[length] = '\0';
-  return true;
-}
-
-static int compare_scanned_names(const void* left, const void* right)
-{
-  return strcmp(*(const char* const*)left, *(const char* const*)right);
-}
-
-static void expand_asset_manifests(program_t* program)
-{
-  int32_t has_any_asset_class = 0;
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-    has_any_asset_class += program->declarations[index].kind == DECLARATION_ASSETS ? 1 : 0;
-  if (has_any_asset_class == 0)
-    return;
-
-  asset_entry_t* combined =
-      (asset_entry_t*)malloc((size_t)program->asset_entry_capacity * sizeof(asset_entry_t));
-  int32_t combined_count = 0;
-
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-  {
-    declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_ASSETS)
-      continue;
-
-    int32_t class_first = combined_count;
-
-    // An imported class arrives already expanded -- the file it came from ran
-    // this pass. Carry its entries across so local indices stay valid; scanning
-    // again would touch the filesystem twice and could disagree.
-    if (declaration->is_imported)
-    {
-      for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
-        combined[combined_count++] = program->asset_entries[declaration->first_asset_entry + which];
-
-      declaration->first_asset_entry = class_first;
-      continue;
-    }
-
-    // --- slot 0: Missing ---
-    //
-    // A real domain state ("this field names no asset"), not a decorative
-    // sentinel: an unset mesh must render the placeholder, which is loudly
-    // wrong, rather than whichever asset happened to sort first, which would
-    // look plausible and hide the bug.
-    {
-      asset_entry_t entry = {};
-      entry.name          = "Missing";
-      entry.offset        = declaration->offset;
-      entry.line          = declaration->line;
-      if (declaration->placeholder_path != nullptr)
-      {
-        entry.source      = declaration->placeholder_path;
-        entry.source_kind = ASSET_SOURCE_FILE;
-      }
-      else
-      {
-        entry.source      = "";
-        entry.source_kind = ASSET_SOURCE_MISSING;
-      }
-      combined[combined_count++] = entry;
-    }
-
-    // --- scanned files, one directive at a time, in declaration order ---
-    for (int32_t scan_index = 0; scan_index < declaration->scan_count; ++scan_index)
-    {
-      const asset_scan_t* scan = &declaration->scans[scan_index];
-
-      std::filesystem::path directory =
-          std::filesystem::path(program->asset_root) / scan->directory;
-
-      std::error_code                     error_code;
-      std::filesystem::directory_iterator iterator(directory, error_code);
-      if (error_code)
-      {
-        report_error(program, scan->offset, scan->line,
-                     "cannot scan asset directory '%s': %s",
-                     directory.string().c_str(), error_code.message().c_str());
-      }
-      else
-      {
-        // Collected and sorted before anything is emitted: directory_iterator
-        // order is unspecified, and an unspecified order would make asset ids
-        // differ between two builds of the same tree.
-        const char** filenames    = (const char**)malloc(4096 * sizeof(const char*));
-        int32_t      filename_count = 0;
-
-        for (const std::filesystem::directory_entry& file : iterator)
-        {
-          if (!file.is_regular_file())
-            continue;
-
-          std::string extension = file.path().extension().string();
-          if (extension.size() != strlen(scan->extension))
-            continue;
-#if defined(_WIN32)
-          if (_stricmp(extension.c_str(), scan->extension) != 0)
-            continue;
-#else
-          if (strcasecmp(extension.c_str(), scan->extension) != 0)
-            continue;
-#endif
-
-          if (filename_count >= 4096)
-          {
-            report_error(program, scan->offset, scan->line,
-                         "more than 4096 assets in '%s'", directory.string().c_str());
-            break;
-          }
-
-          std::string filename = file.path().filename().string();
-          char*       copy     = arena_copy(program, filename.c_str(), (int32_t)filename.size());
-          if (copy == nullptr)
-            break;
-          filenames[filename_count++] = copy;
-        }
-
-        qsort(filenames, (size_t)filename_count, sizeof(const char*), compare_scanned_names);
-
-        for (int32_t which = 0; which < filename_count; ++which)
-        {
-          const char* filename = filenames[which];
-
-          char    stem[512];
-          int32_t stem_length = (int32_t)strlen(filename) - (int32_t)strlen(scan->extension);
-          if (stem_length <= 0 || stem_length >= (int32_t)sizeof(stem))
-            continue;
-          memcpy(stem, filename, (size_t)stem_length);
-          stem[stem_length] = '\0';
-
-          char derived[512];
-          if (!derive_asset_name(program, scan, stem, derived, (int32_t)sizeof(derived)))
-            continue;
-
-          char path[1024];
-          snprintf(path, sizeof(path), "%s/%s", scan->directory, filename);
-
-          // The placeholder file is already slot 0 (Missing). Scanning it again
-          // would give one file two ids under two names, which is precisely the
-          // "two spellings of one concept" the collision check exists to stop --
-          // it just happens to be a collision the generator itself created, so
-          // the check could never fire on it. Skip it instead.
-          if (declaration->placeholder_path != nullptr &&
-              strcmp(path, declaration->placeholder_path) == 0)
-            continue;
-
-          asset_entry_t entry = {};
-          entry.name          = arena_copy(program, derived, (int32_t)strlen(derived));
-          entry.source        = arena_copy(program, path, (int32_t)strlen(path));
-          entry.source_kind   = ASSET_SOURCE_FILE;
-          entry.offset        = scan->offset;
-          entry.line          = scan->line;
-
-          if (entry.name == nullptr || entry.source == nullptr)
-            break;
-          combined[combined_count++] = entry;
-        }
-
-        free(filenames);
-      }
-    }
-
-    // --- declared procedural entries, in declaration order ---
-    for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
-      combined[combined_count++] = program->asset_entries[declaration->first_asset_entry + which];
-
-    declaration->first_asset_entry = class_first;
-    declaration->asset_entry_count = combined_count - class_first;
-
-    // --- names must be unique within the class ---
-    //
-    // This is where a scanned file and a procedural entry claiming the same
-    // concept collide, and the collision is information: two spellings of one
-    // thing that would otherwise diverge silently.
-    for (int32_t left = class_first; left < combined_count; ++left)
-    {
-      for (int32_t right = class_first; right < left; ++right)
-      {
-        if (strcmp(combined[left].name, combined[right].name) != 0)
-          continue;
-
-        report_error(program, combined[left].offset, combined[left].line,
-                     "asset class '%.*s' has two entries named '%s' (%s and %s); rename one",
-                     declaration->name.length, declaration->name.data, combined[left].name,
-                     combined[right].source_kind == ASSET_SOURCE_PROCEDURAL ? "a procedural entry"
-                                                                            : combined[right].source,
-                     combined[left].source_kind == ASSET_SOURCE_PROCEDURAL ? "a procedural entry"
-                                                                           : combined[left].source);
-        break;
-      }
-    }
-  }
-
-  memcpy(program->asset_entries, combined, (size_t)combined_count * sizeof(asset_entry_t));
-  program->asset_entry_count = combined_count;
-  free(combined);
-}
-
 // The three flags become REAL at the cutover -- in the macro system only
 // @Editable was ever enforced, so a flag that cannot mean anything was free to
 // sit there and read as if it did. These two checks close the cases where a
@@ -2823,10 +2365,10 @@ static void check_family(program_t* program)
   {
     const declaration_t* declaration = &program->declarations[index];
 
-    // An imported asset class claims no family in the file that imported it --
-    // that is the whole point of the crossing. It stays the asset family's, and
-    // the file it came from is what emits it.
-    if (declaration->is_imported)
+    // An asset class claims no family: it came from the manifest, which is
+    // not a .def and emits its own artifacts. The declaration is here only so
+    // an entity field can be typed by it.
+    if (declaration->from_asset_manifest)
       continue;
 
     // An enum is family-NEUTRAL: entity fields, asset classes and command
@@ -2840,8 +2382,6 @@ static void check_family(program_t* program)
     def_family_t family = DEF_FAMILY_ENTITY;
     if (declaration_is_cvar_family(declaration->kind))
       family = DEF_FAMILY_CVAR;
-    else if (declaration->kind == DECLARATION_ASSETS)
-      family = DEF_FAMILY_ASSET;
     else if (declaration->kind == DECLARATION_CHANNEL)
       family = DEF_FAMILY_EVENT;
     else if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
@@ -2872,8 +2412,7 @@ static void check_family(program_t* program)
       report_error(program, later->offset, later->line,
                    "this file mixes declaration families: '%.*s' (line %d) is %s and "
                    "'%.*s' (line %d) is %s. One .def file holds one family -- they emit "
-                   "different artifacts into different directories. To use an asset class as "
-                   "an entity field type, `import` the .def that declares it",
+                   "different artifacts into different directories",
                    claimed->name.length, claimed->name.data, claimed->line,
                    declaration_kind_name(claimed->kind), first[index]->name.length,
                    first[index]->name.data, first[index]->line,
@@ -2886,24 +2425,6 @@ static void check_family(program_t* program)
   }
 
   program->family = family;
-}
-
-// An asset .def holds asset classes and nothing else. Enums and flagsets are
-// family-neutral in the grammar, but this family emits neither, so one declared
-// here would vanish -- rejected rather than silently dropped.
-static void check_asset_family(program_t* program)
-{
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-  {
-    const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind == DECLARATION_ASSETS)
-      continue;
-
-    report_error(program, declaration->offset, declaration->line,
-                 "'%.*s' is %s; an asset .def declares asset classes only",
-                 declaration->name.length, declaration->name.data,
-                 declaration_kind_name(declaration->kind));
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2972,14 +2493,6 @@ static void check_event_family(program_t* program)
 {
   int32_t channel_count = 0;
 
-  // Nothing in an event references an entity, an asset or a cvar, and nothing
-  // may reference an event. The family has no crossing at all -- `import` is
-  // the entity family's one door, and it stays that way.
-  if (program->import_count > 0)
-    report_error(program, 0, 1,
-                 "an event .def imports nothing: its payloads are primitives and its own enums, "
-                 "and 'import' exists so an entity field can be typed by an asset class");
-
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -2997,6 +2510,11 @@ static void check_event_family(program_t* program)
     }
 
     if (declaration->kind == DECLARATION_ENUM || declaration->kind == DECLARATION_CHANNEL_MEMBER)
+      continue;
+
+    // Asset classes are in every program: they come from the manifest so that
+    // an entity field can be typed by one, and this file did not declare them.
+    if (declaration->from_asset_manifest)
       continue;
 
     report_error(program, declaration->offset, declaration->line,
@@ -3037,9 +2555,9 @@ static void check_event_family(program_t* program)
       if (field->type.kind == TYPE_ASSET)
       {
         report_error(program, field->offset, field->line,
-                     "field '%.*s' is an asset class, which would have to be 'import'ed -- and an "
-                     "event .def imports nothing. Send the id as a u32, or send what the consumer "
-                     "actually needs",
+                     "field '%.*s' is an asset class. An asset id is a per-build table index -- "
+                     "it is not stable, and a channel payload has no manifest to resolve it "
+                     "against. Send it as a u32, or send what the consumer actually needs",
                      field->name.length, field->name.data);
         continue;
       }
@@ -3630,14 +3148,6 @@ static void resolve_program(program_t* program)
     check_base_declaration(program);
     check_component_cycles(program);
     check_flag_contradictions(program);
-    // Runs here too, for imported classes only: it is what carries their
-    // already-expanded entries into this program's array.
-    expand_asset_manifests(program);
-  }
-  else if (program->family == DEF_FAMILY_ASSET)
-  {
-    check_asset_family(program);
-    expand_asset_manifests(program);
   }
   else if (program->family == DEF_FAMILY_EVENT)
   {
@@ -3652,107 +3162,227 @@ static void resolve_program(program_t* program)
 static bool read_entire_file(const char* filename, char** out_contents, int32_t* out_length);
 static void allocate_program(program_t* program);
 
-// `import "path"` -- path is relative to the importing .def's own directory, so
-// a .def reads the same wherever the build runs from.
+// ---------------------------------------------------------------------------
+// The asset manifest
+// ---------------------------------------------------------------------------
 //
-// The imported file is parsed and resolved in full, then its asset classes are
-// copied across. Only asset classes: importing an entity or a cvar would be a
-// second definition of something, whereas an asset class is being USED as a
-// type, which is the one crossing the design admits.
+// Written by asset_pack, read here, and NOT a .def: in this project ".def"
+// means hand-authored, never generated, reviewed as a diff, and a generated
+// .def would invert that rule for exactly one file. Not being one is also what
+// deleted `import` and its three validation rules -- the crossing between the
+// asset family and the entity family stopped being a special case and became an
+// argument.
 //
-// The imported program is deliberately never freed. Declaration names and asset
-// entry strings stay as pointers into its source buffer and string arena, and
-// the copies made here point at them.
-static bool load_import(parser_t* parser, token_t path_token)
-{
-  program_t* importer = parser->program;
+//   manifest     -> comment* class_block*
+//   comment      -> '#' <to end of line>
+//   class_block  -> 'class' IDENTIFIER IDENTIFIER PATH EXTENSION+ NEWLINE entry+
+//   entry        -> IDENTIFIER (PATH | '-') NEWLINE
+//
+// '-' is entry 0 of every class (Missing): no file, its bytes a compiled-in
+// constant. def_gen keeps ZERO project knowledge about assets -- no directory
+// list, no extension table, no filesystem access at all. Everything it needs
+// arrives in these two columns, which is what makes asset_pack the one walk
+// that owns what exists on disk.
+//
+// The manifest program is deliberately never freed: every declaration name is a
+// view into its source buffer and every entry string points into that same
+// buffer, and each input program holds copies of those pointers.
 
-  if (importer->import_count >= MAX_IMPORTS)
+static void report_manifest_error(program_t* manifest, int32_t line, const char* format, ...)
+{
+  va_list arguments;
+  va_start(arguments, format);
+  fprintf(stderr, "%s:%d: error: ", manifest->filename, line);
+  vfprintf(stderr, format, arguments);
+  fprintf(stderr, "\n");
+  va_end(arguments);
+  manifest->error_count += 1;
+}
+
+// One whitespace-delimited token, NUL terminated in place. The manifest is our
+// own generated text and its lines are already split, so the lexer is this.
+static char* take_manifest_token(char** cursor)
+{
+  char* text = *cursor;
+  while (*text == ' ' || *text == '\t')
+    ++text;
+  if (*text == '\0')
   {
-    parse_error_at(parser, path_token, "more than %d imports in one file", MAX_IMPORTS);
+    *cursor = text;
+    return nullptr;
+  }
+
+  char* end = text;
+  while (*end != '\0' && *end != ' ' && *end != '\t')
+    ++end;
+
+  if (*end != '\0')
+  {
+    *end    = '\0';
+    *cursor = end + 1;
+  }
+  else
+  {
+    *cursor = end;
+  }
+  return text;
+}
+
+static bool parse_asset_manifest(program_t* manifest)
+{
+  if (!read_entire_file(manifest->filename, &manifest->source, &manifest->source_length))
+  {
+    fprintf(stderr, "error: cannot read the asset manifest '%s'. It is written by asset_pack, "
+                    "which the build runs first\n",
+            manifest->filename);
     return false;
   }
 
-  string_view_t         relative = token_text(importer, path_token);
-  std::filesystem::path resolved = std::filesystem::path(importer->filename).parent_path() /
-                                   std::string(relative.data, (size_t)relative.length);
+  allocate_program(manifest);
 
-  char* path_copy = arena_copy(importer, resolved.string().c_str(), (int32_t)resolved.string().size());
-  if (path_copy == nullptr)
-    return false;
+  declaration_t* current = nullptr;
+  int32_t        line    = 0;
+  char*          cursor  = manifest->source;
 
-  for (int32_t index = 0; index < importer->import_count; ++index)
+  while (*cursor != '\0')
   {
-    if (strcmp(importer->imports[index], path_copy) == 0)
+    char* line_start = cursor;
+    while (*cursor != '\0' && *cursor != '\n')
+      ++cursor;
+    if (*cursor == '\n')
+      *cursor++ = '\0';
+    ++line;
+
+    // A CRLF manifest read in binary mode leaves the carriage return on the
+    // last token of every line, where it would ride into a path.
+    for (char* scan = line_start; *scan != '\0'; ++scan)
     {
-      parse_error_at(parser, path_token, "'%s' is imported twice", path_copy);
+      if (*scan == '\r')
+        *scan = '\0';
+    }
+
+    char* token_cursor = line_start;
+    char* first        = take_manifest_token(&token_cursor);
+    if (first == nullptr || first[0] == '#')
+      continue;
+
+    if (strcmp(first, "class") == 0)
+    {
+      char* class_name   = take_manifest_token(&token_cursor);
+      char* value_type   = take_manifest_token(&token_cursor);
+      char* value_header = take_manifest_token(&token_cursor);
+      if (class_name == nullptr || value_type == nullptr || value_header == nullptr)
+      {
+        report_manifest_error(manifest, line, "a 'class' line needs a class name, a C++ value "
+                                              "type, and the header that declares it");
+        return false;
+      }
+
+      current                    = push_declaration(manifest);
+      *current                   = {};
+      current->kind              = DECLARATION_ASSETS;
+      current->name              = {class_name, (int32_t)strlen(class_name)};
+      current->line              = line;
+      current->value_type        = value_type;
+      current->value_header      = value_header;
+
+      while (char* extension = take_manifest_token(&token_cursor))
+      {
+        if (current->extension_count >= MAX_CLASS_EXTENSIONS)
+        {
+          report_manifest_error(manifest, line, "class '%s' decodes more than %d extensions",
+                                class_name, MAX_CLASS_EXTENSIONS);
+          return false;
+        }
+        current->extensions[current->extension_count++] = extension;
+      }
+
+      if (current->extension_count == 0)
+      {
+        report_manifest_error(manifest, line,
+                              "class '%s' names no extensions, so nothing can be decoded into it",
+                              class_name);
+        return false;
+      }
+      current->first_asset_entry = manifest->asset_entry_count;
+      continue;
+    }
+
+    if (current == nullptr)
+    {
+      report_manifest_error(manifest, line, "'%s' appears before any 'class' line", first);
       return false;
     }
-  }
-  importer->imports[importer->import_count++] = path_copy;
 
-  program_t* imported  = (program_t*)calloc(1, sizeof(program_t));
-  imported->filename   = path_copy;
-  imported->asset_root = importer->asset_root;
+    char* path = take_manifest_token(&token_cursor);
+    if (path == nullptr)
+    {
+      report_manifest_error(manifest, line,
+                            "entry '%s' has no path; write '-' for an entry with no file", first);
+      return false;
+    }
 
-  if (!read_entire_file(imported->filename, &imported->source, &imported->source_length))
-  {
-    parse_error_at(parser, path_token, "cannot read imported file '%s'", imported->filename);
-    return false;
-  }
+    asset_entry_t* entry = push_asset_entry(manifest);
+    if (entry == nullptr)
+      return false;
 
-  allocate_program(imported);
-  tokenize(imported);
-
-  parser_t imported_parser = {};
-  imported_parser.program  = imported;
-  parse_program(&imported_parser);
-  resolve_program(imported);
-
-  if (imported->error_count > 0)
-  {
-    fprintf(stderr, "%s: %d error%s\n", imported->filename, imported->error_count,
-            imported->error_count == 1 ? "" : "s");
-    parse_error_at(parser, path_token, "imported file '%s' did not compile", imported->filename);
-    return false;
+    entry->name = first;
+    entry->path = strcmp(path, "-") == 0 ? nullptr : path;
+    entry->line = line;
+    current->asset_entry_count += 1;
   }
 
-  if (imported->family != DEF_FAMILY_ASSET)
+  for (int32_t index = 0; index < manifest->declaration_count; ++index)
   {
-    parse_error_at(parser, path_token,
-                   "'%s' is not an asset .def; only asset classes may be imported",
-                   imported->filename);
-    return false;
+    const declaration_t* declaration = &manifest->declarations[index];
+    if (declaration->asset_entry_count == 0)
+    {
+      report_manifest_error(manifest, declaration->line,
+                            "class '%.*s' has no entries; every class carries at least Missing",
+                            declaration->name.length, declaration->name.data);
+      continue;
+    }
+
+    // Entry 0 is Missing with no file, in EVERY class. The generated get_<class>
+    // falls back to it for an id the manifest does not name, and an id comes off
+    // the wire and out of a map file with no range validation -- so a class
+    // whose slot 0 were an ordinary asset would resolve garbage to a real thing.
+    const asset_entry_t* first = &manifest->asset_entries[declaration->first_asset_entry];
+    if (strcmp(first->name, "Missing") != 0 || first->path != nullptr)
+      report_manifest_error(manifest, first->line,
+                            "class '%.*s' does not start with 'Missing -'; entry 0 of every "
+                            "class is the placeholder and has no file",
+                            declaration->name.length, declaration->name.data);
   }
 
-  if (imported->import_count > 0)
-  {
-    parse_error_at(parser, path_token,
-                   "'%s' imports files of its own; imports are one level deep",
-                   imported->filename);
-    return false;
-  }
+  return manifest->error_count == 0;
+}
 
-  for (int32_t index = 0; index < imported->declaration_count; ++index)
+// Make the manifest's classes resolvable as field types in one input program.
+// Copies, not references, because class ids are assigned per program by walking
+// its declaration array -- and because `from_asset_manifest` is what keeps them
+// out of that program's emission and out of its half of the hash.
+static bool copy_asset_classes_into(program_t* target, const program_t* manifest)
+{
+  for (int32_t index = 0; index < manifest->declaration_count; ++index)
   {
-    const declaration_t* source = &imported->declarations[index];
+    const declaration_t* source = &manifest->declarations[index];
     if (source->kind != DECLARATION_ASSETS)
       continue;
 
-    declaration_t* copy = push_declaration(importer);
-    *copy             = *source;
-    copy->is_imported = true;
+    declaration_t* copy       = push_declaration(target);
+    *copy                     = *source;
+    copy->from_asset_manifest = true;
 
-    copy->first_asset_entry = importer->asset_entry_count;
+    copy->first_asset_entry = target->asset_entry_count;
     for (int32_t which = 0; which < source->asset_entry_count; ++which)
     {
-      asset_entry_t* entry = push_asset_entry(importer);
+      asset_entry_t* entry = push_asset_entry(target);
       if (entry == nullptr)
         return false;
-      *entry = imported->asset_entries[source->first_asset_entry + which];
+      *entry = manifest->asset_entries[source->first_asset_entry + which];
     }
   }
-
   return true;
 }
 
@@ -4635,9 +4265,9 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
   {
     const declaration_t* declaration = &program->declarations[index];
 
-    // The file it came from is its own input and mixes it there. Hashing it
-    // again here would just count it twice.
-    if (declaration->is_imported)
+    // The manifest is its own input and is mixed once, on its own. Hashing an
+    // asset class here as well would count it once per .def that names one.
+    if (declaration->from_asset_manifest)
       continue;
 
     // A cvar/command BLOCK name is a foldable section comment: never emitted,
@@ -4662,20 +4292,20 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
       mix(value->data, value->length);
     }
 
-    // The RESOLVED asset manifest, not just the declaration. Asset ids come
-    // from what is on disk, so two builds of the same .def with different
-    // asset directories disagree about what id 3 means. Mixing the expanded
-    // list in makes that a loud hash mismatch at connect instead of a silent
-    // wrong mesh. This is the reason ids are allowed to be unstable at all.
+    // The RESOLVED asset manifest, name AND path. Asset ids come from what is
+    // on disk, so two builds whose resource trees differ disagree about what id
+    // 3 means. Mixing the list in makes that a loud hash mismatch at connect
+    // instead of a silent wrong mesh, and that is the whole reason ids are
+    // allowed to be unstable.
+    for (int32_t offset = 0; offset < declaration->extension_count; ++offset)
+      mix(declaration->extensions[offset], (int32_t)strlen(declaration->extensions[offset]));
+
     for (int32_t offset = 0; offset < declaration->asset_entry_count; ++offset)
     {
       const asset_entry_t* entry = &program->asset_entries[declaration->first_asset_entry + offset];
       mix(entry->name, (int32_t)strlen(entry->name));
-      mix(entry->source, (int32_t)strlen(entry->source));
-
-      char buffer[8];
-      int  written = snprintf(buffer, sizeof(buffer), "%u", (unsigned)entry->source_kind);
-      mix(buffer, written);
+      if (entry->path != nullptr)
+        mix(entry->path, (int32_t)strlen(entry->path));
     }
 
     for (int32_t offset = 0; offset < declaration->field_count; ++offset)
@@ -5094,18 +4724,61 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 // Code generation -- the asset family
 // ---------------------------------------------------------------------------
 //
-// Two files, in namespace `assets`, which is also where the hand-written asset
+// FOUR files, in namespace `assets`, which is also where the hand-written asset
 // system lives -- an id and the pools it resolves against are one subject.
 //
-// This family knows nothing about entities. The link runs the other way: an
-// entity .def imports an asset .def, so entities_generated.hpp includes this
-// header and an entity's asset-typed field is spelled assets::mesh_asset.
+//   assets_generated.{hpp,cpp}    the ID SPACE: enums, names, the manifest
+//                                 tables. Light includes, because
+//                                 entities_generated.hpp includes it so an
+//                                 entity field can be typed `mesh_asset`.
+//   asset_state_generated.hpp     the STORAGE: asset_state_t, one pool and one
+//                                 Enum_Array per class, plus the symbols the
+//                                 bindings call. Pulls in each class's value
+//                                 header, which is why it is not the same file.
+//   assets_bindings.cpp           the per-class loaders and register_all.
+//
+// Splitting the id space from the storage is not tidiness: animation.hpp
+// includes entities_generated.hpp, so a state struct emitted into the header
+// entities include would be a cycle.
+//
+// THERE IS NO PER-CLASS HAND-WRITTEN LINE ANYWHERE. Storage is data-driven from
+// the manifest; behaviour is a named symbol that must exist or the link fails.
+// That is the split entity_system_def.md settled when make_entity_pool died --
+// a hand-written registration call list is that switch reincarnated.
+
+// A class's short name: `mesh_asset` -> `mesh`, so the accessors read
+// load_mesh / get_mesh rather than load_mesh_asset. `hitbox_rig` has no suffix
+// to drop and keeps its whole name.
+static void write_short_class_name(string_view_t name, char* buffer, size_t buffer_size)
+{
+  int32_t            length = name.length;
+  static const char* SUFFIX = "_asset";
+  const int32_t      suffix_length = 6;
+  if (length > suffix_length && strncmp(name.data + length - suffix_length, SUFFIX,
+                                        (size_t)suffix_length) == 0)
+    length -= suffix_length;
+
+  if ((size_t)length > buffer_size - 1)
+    length = (int32_t)buffer_size - 1;
+  memcpy(buffer, name.data, (size_t)length);
+  buffer[length] = '\0';
+}
+
+// An extension without its dot: the decoder's name is derived from it, so a
+// class that claims ".ogg" reaches the link step as `assets::decode_ogg` and
+// stops there until somebody writes it.
+static const char* extension_without_dot(const char* extension)
+{
+  return extension[0] == '.' ? extension + 1 : extension;
+}
 
 static void emit_assets_header(FILE* out, const program_t* program)
 {
   fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "#pragma once\n\n");
-  // Relative to src/shared, which is game_shared's public include dir.
+  // Relative to src/shared, which is game_shared's public include dir. Kept
+  // deliberately thin: entities_generated.hpp includes this file.
+  fprintf(out, "#include \"array.hpp\"\n");
   fprintf(out, "#include \"span.hpp\"\n");
   fprintf(out, "#include <cstdint>\n");
   fprintf(out, "#include <optional>\n");
@@ -5114,11 +4787,9 @@ static void emit_assets_header(FILE* out, const program_t* program)
 
   fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
 
-  // An asset id names an asset; it does NOT say where the bytes come from. That
-  // is deliberately absent from this API: a file-backed mesh and a procedurally
-  // generated one are the same kind of thing to every consumer, and the one
-  // place the difference exists is the manifest table, which the asset system
-  // reads at init and nobody else reads at all.
+  // An asset id names an asset and says nothing about where the bytes come
+  // from. There is no `source_kind` column any more: it existed to tell a file
+  // from a generator key, and no consumer of an id ever asked.
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -5127,7 +4798,8 @@ static void emit_assets_header(FILE* out, const program_t* program)
 
     fprintf(out, "// Missing is 0: an asset field that was never assigned resolves to the\n");
     fprintf(out, "// placeholder, which is loudly wrong, rather than to whichever asset\n");
-    fprintf(out, "// happened to sort first, which would look plausible.\n");
+    fprintf(out, "// happened to sort first, which would look plausible. It has no file --\n");
+    fprintf(out, "// its bytes are a compiled-in constant, so it cannot fail to load.\n");
     fprintf(out, "enum class %.*s : uint16_t\n{\n", declaration->name.length,
             declaration->name.data);
     for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
@@ -5147,19 +4819,11 @@ static void emit_assets_header(FILE* out, const program_t* program)
             declaration->name.data);
   }
 
-  fprintf(out, "// Where an asset's bytes come from. This exists for the asset system's\n");
-  fprintf(out, "// init and for nothing else -- if you are reaching for it anywhere\n");
-  fprintf(out, "// else, the code wants an asset id, not a source.\n");
-  fprintf(out, "enum asset_source_kind_t : uint8_t\n{\n");
-  fprintf(out, "  ASSET_SOURCE_MISSING = 0, // no asset assigned; `source` is empty\n");
-  fprintf(out, "  ASSET_SOURCE_FILE,        // `source` is a path, relative to the working dir\n");
-  fprintf(out, "  ASSET_SOURCE_PROCEDURAL,  // `source` is a generator key\n");
-  fprintf(out, "};\n\n");
-
+  fprintf(out, "// One manifest row. TWO columns: `path` is null for Missing and is the one\n");
+  fprintf(out, "// spelling read_asset_bytes takes for everything else.\n");
   fprintf(out, "struct asset_info_t\n{\n");
-  fprintf(out, "  const char*         name;\n");
-  fprintf(out, "  const char*         source;\n");
-  fprintf(out, "  asset_source_kind_t source_kind;\n");
+  fprintf(out, "  const char* name;\n");
+  fprintf(out, "  const char* path;\n");
   fprintf(out, "};\n\n");
 
   for (int32_t index = 0; index < program->declaration_count; ++index)
@@ -5168,9 +4832,9 @@ static void emit_assets_header(FILE* out, const program_t* program)
     if (declaration->kind != DECLARATION_ASSETS)
       continue;
 
-    fprintf(out, "// The complete %.*s manifest, indexed by id. Populate every entry at\n",
+    fprintf(out, "// The complete %.*s manifest, indexed by id. register_all populates every\n",
             declaration->name.length, declaration->name.data);
-    fprintf(out, "// init: registration must NOT be lazy, or an id resolves to nothing\n");
+    fprintf(out, "// entry: registration must NOT be lazy, or an id resolves to nothing\n");
     fprintf(out, "// depending on what ran first.\n");
     fprintf(out, "Span<const asset_info_t> %.*s_manifest();\n\n", declaration->name.length,
             declaration->name.data);
@@ -5186,6 +4850,35 @@ static void emit_assets_header(FILE* out, const program_t* program)
   fprintf(out, "Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id);\n\n");
 
   fprintf(out, "} // namespace assets\n");
+
+  // enum_traits for the asset CLASSES. An asset class is an enum like any
+  // other to Enum_Array, and the id -> handle tables are Enum_Arrays over
+  // exactly these -- which is what turns an id that came off the wire into a
+  // try_get rather than a hand-rolled bounds check.
+  bool wrote_any_traits = false;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    if (!wrote_any_traits)
+    {
+      fprintf(out, "\n// --- Enum_Array support ---------------------------------------------\n");
+      fprintf(out, "//\n");
+      fprintf(out, "// Global scope on purpose: enum_traits is declared in shared/array.hpp,\n");
+      fprintf(out, "// which knows nothing about this namespace. `count` is what sizes an\n");
+      fprintf(out, "// Enum_Array<assets::Foo, T>, so adding an asset resizes every table\n");
+      fprintf(out, "// keyed by that class.\n\n");
+      wrote_any_traits = true;
+    }
+
+    fprintf(out, "template <> struct enum_traits<assets::%.*s>\n{\n", declaration->name.length,
+            declaration->name.data);
+    fprintf(out, "  static constexpr uint32_t count = assets::%.*s_COUNT;\n",
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "};\n\n");
+  }
 }
 
 static void emit_assets_source(FILE* out, const program_t* program, const char* header_name)
@@ -5198,9 +4891,6 @@ static void emit_assets_source(FILE* out, const program_t* program, const char* 
   fprintf(out, "#include <cassert>\n\n");
   fprintf(out, "namespace assets\n{\n\nnamespace\n{\n\n");
 
-  // The source column lives here and only here. Every other consumer of an
-  // asset id goes through the enum and never learns whether the bytes came off
-  // disk or out of a generator.
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -5212,14 +4902,10 @@ static void emit_assets_source(FILE* out, const program_t* program, const char* 
     for (int32_t which = 0; which < declaration->asset_entry_count; ++which)
     {
       const asset_entry_t* entry = &program->asset_entries[declaration->first_asset_entry + which];
-
-      const char* kind_name = "ASSET_SOURCE_MISSING";
-      if (entry->source_kind == ASSET_SOURCE_FILE)
-        kind_name = "ASSET_SOURCE_FILE";
-      else if (entry->source_kind == ASSET_SOURCE_PROCEDURAL)
-        kind_name = "ASSET_SOURCE_PROCEDURAL";
-
-      fprintf(out, "  {\"%s\", \"%s\", %s},\n", entry->name, entry->source, kind_name);
+      if (entry->path == nullptr)
+        fprintf(out, "  {\"%s\", nullptr},\n", entry->name);
+      else
+        fprintf(out, "  {\"%s\", \"%s\"},\n", entry->name, entry->path);
     }
     fprintf(out, "};\n\n");
   }
@@ -5272,6 +4958,224 @@ static void emit_assets_source(FILE* out, const program_t* program, const char* 
   fprintf(out, "} // namespace assets\n");
 
   free(asset_class_ids);
+}
+
+// asset_state_t and the symbols the bindings reach for. One pool and one
+// Enum_Array per class, both named from the class, so a new asset kind grows
+// the state without a line being written anywhere.
+static void emit_asset_state_header(FILE* out, const program_t* program, const char* id_header)
+{
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "#pragma once\n\n");
+  fprintf(out, "#include \"%s\"\n", id_header);
+  fprintf(out, "#include \"array.hpp\"\n");
+  fprintf(out, "#include \"span.hpp\"\n");
+
+  // Each class's value type, from the manifest's third column. Emitted once
+  // each, in first-seen order, so the include list is a fact about the classes
+  // rather than a list def_gen carries.
+  const char* headers[64];
+  int32_t     header_count = 0;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS || declaration->value_type == nullptr)
+      continue;
+
+    bool seen = false;
+    for (int32_t which = 0; which < header_count && !seen; ++which)
+      seen = strcmp(headers[which], declaration->value_header) == 0;
+    if (seen || header_count >= 64)
+      continue;
+    headers[header_count++] = declaration->value_header;
+    fprintf(out, "#include \"%s\"\n", declaration->value_header);
+  }
+  fprintf(out, "\nnamespace assets\n{\n\n");
+
+  fprintf(out, "// The whole mutable state of the asset system. ONE per process, owned by\n");
+  fprintf(out, "// the launcher -- never one per module. See the ownership note in\n");
+  fprintf(out, "// asset_types.hpp for what a per-module copy cost.\n");
+  fprintf(out, "struct asset_state_t\n{\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    fprintf(out, "  Asset_Pool<%s> %.*s_pool;\n", declaration->value_type,
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "  Enum_Array<%.*s, asset_handle_t<%s>> %.*s_handles;\n\n",
+            declaration->name.length, declaration->name.data, declaration->value_type,
+            declaration->name.length, declaration->name.data);
+  }
+  fprintf(out, "  bool manifest_initialized = false;\n\n");
+  fprintf(out, "  // The two members no class owns: the byte layer under everything, and the\n");
+  fprintf(out, "  // pools whose contents are named by PATH from inside another asset rather\n");
+  fprintf(out, "  // than by id. Both are hand-written in asset_types.hpp.\n");
+  fprintf(out, "  asset_source_t          source;\n");
+  fprintf(out, "  path_referenced_pools_t path_referenced;\n");
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "// This module's pointer to the launcher's state. Hand-written in asset.cpp;\n");
+  fprintf(out, "// declared here because it names the generated type. Fatal if unset.\n");
+  fprintf(out, "asset_state_t& state_for(const char* who);\n\n");
+
+  // The decoders, one per distinct extension across every class. THIS is the
+  // forced stop: a file whose extension has no decoder reaches the link step
+  // and names the symbol nobody wrote.
+  fprintf(out, "// --- Decoders: one per extension, hand-written ------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// The second of the two forced stops when a new asset kind arrives. The\n");
+  fprintf(out, "// first is asset_pack refusing an unknown extension; this one is a LINK\n");
+  fprintf(out, "// ERROR naming the function nobody wrote. There is no registry and no bind\n");
+  fprintf(out, "// step, so \"forgot to register\" is not representable -- only \"forgot to\n");
+  fprintf(out, "// write it\". None of them can fail: a file the manifest names and the\n");
+  fprintf(out, "// build shipped is either there and parses, or the install is broken.\n\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    for (int32_t which = 0; which < declaration->extension_count; ++which)
+      fprintf(out, "[[nodiscard]] %s decode_%s(Span<const uint8_t> bytes, const char* path);\n",
+              declaration->value_type, extension_without_dot(declaration->extensions[which]));
+  }
+  fprintf(out, "\n");
+
+  fprintf(out, "// --- Placeholders: one per class, hand-written ------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// The bytes behind id 0, compiled in rather than loaded, which is the whole\n");
+  fprintf(out, "// job of a placeholder: it cannot itself be missing.\n\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    char short_name[128];
+    write_short_class_name(declaration->name, short_name, sizeof(short_name));
+    fprintf(out, "[[nodiscard]] %s make_missing_%s();\n", declaration->value_type, short_name);
+  }
+  fprintf(out, "\n");
+
+  fprintf(out, "// --- Per class: the cached loader and the id accessor -----------------\n\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    char short_name[128];
+    write_short_class_name(declaration->name, short_name, sizeof(short_name));
+
+    fprintf(out, "// Cached by path, dispatching on extension. No try_ prefix and no failure\n");
+    fprintf(out, "// path: the path names a file the build put there.\n");
+    fprintf(out, "[[nodiscard]] asset_handle_t<%s> load_%s(const char* path);\n",
+            declaration->value_type, short_name);
+    fprintf(out, "// An id outside the class resolves to Missing rather than to a bounds check\n");
+    fprintf(out, "// the caller has to write: ids come off the wire and out of map files.\n");
+    fprintf(out, "[[nodiscard]] asset_handle_t<%s> get_%s(%.*s id);\n\n", declaration->value_type,
+            short_name, declaration->name.length, declaration->name.data);
+  }
+
+  fprintf(out, "// Register every entry of every class. This is all assets::init() does.\n");
+  fprintf(out, "void register_all(asset_state_t& state);\n\n");
+
+  fprintf(out, "} // namespace assets\n");
+}
+
+static void emit_assets_bindings(FILE* out, const program_t* program, const char* state_header)
+{
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// The seam between the manifest and the loaders, and it is a SYMBOL\n");
+  fprintf(out, "// REFERENCE rather than a table: every decode_* and make_missing_* below is\n");
+  fprintf(out, "// a function somebody wrote by hand, and a missing one is a link error\n");
+  fprintf(out, "// naming it.\n");
+  fprintf(out, "#include \"%s\"\n\n", state_header);
+  fprintf(out, "#include \"log.hpp\"\n\n");
+  fprintf(out, "namespace assets\n{\n\n");
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    char short_name[128];
+    write_short_class_name(declaration->name, short_name, sizeof(short_name));
+
+    fprintf(out, "asset_handle_t<%s> load_%s(const char* path)\n{\n", declaration->value_type,
+            short_name);
+    fprintf(out, "  asset_state_t&    state = state_for(\"load_%s\");\n", short_name);
+    fprintf(out, "  const std::string key   = asset_cache_key(path);\n\n");
+    fprintf(out, "  const asset_handle_t<%s> cached = state.%.*s_pool.find(key.c_str());\n",
+            declaration->value_type, declaration->name.length, declaration->name.data);
+    fprintf(out, "  if (cached.valid())\n    return cached;\n\n");
+    fprintf(out, "  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());\n");
+    for (int32_t which = 0; which < declaration->extension_count; ++which)
+    {
+      const char* bare = extension_without_dot(declaration->extensions[which]);
+      fprintf(out, "  %sif (path_has_extension(key.c_str(), \".%s\"))\n",
+              which == 0 ? "" : "else ", bare);
+      fprintf(out, "    return state.%.*s_pool.add(key.c_str(), decode_%s(bytes, key.c_str()));\n",
+              declaration->name.length, declaration->name.data, bare);
+    }
+    fprintf(out, "\n");
+    fprintf(out, "  fatal_error(\"assets: '{}' has no extension the %.*s class decodes\", "
+                 "key.c_str());\n",
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "}\n\n");
+
+    fprintf(out, "asset_handle_t<%s> get_%s(%.*s id)\n{\n", declaration->value_type, short_name,
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "  asset_state_t& state = state_for(\"get_%s\");\n", short_name);
+    fprintf(out, "  if (!state.manifest_initialized)\n");
+    fprintf(out, "    fatal_error(\"assets: get_%s called before assets::init() -- registration \"\n",
+            short_name);
+    fprintf(out, "                \"is eager and must run first, or every id resolves to \"\n");
+    fprintf(out, "                \"nothing\");\n\n");
+    fprintf(out, "  const asset_handle_t<%s>* handle = state.%.*s_handles.try_get(id);\n",
+            declaration->value_type, declaration->name.length, declaration->name.data);
+    fprintf(out, "  if (handle == nullptr || !handle->valid())\n");
+    fprintf(out, "    return state.%.*s_handles[%.*s::Missing];\n\n", declaration->name.length,
+            declaration->name.data, declaration->name.length, declaration->name.data);
+    fprintf(out, "  return *handle;\n}\n\n");
+  }
+
+  fprintf(out, "void register_all(asset_state_t& state)\n{\n");
+  fprintf(out, "  if (state.manifest_initialized)\n    return;\n");
+  fprintf(out, "  state.manifest_initialized = true;\n\n");
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ASSETS)
+      continue;
+
+    char short_name[128];
+    write_short_class_name(declaration->name, short_name, sizeof(short_name));
+
+    fprintf(out, "  // Id 0 first, and from a constant rather than a file, so the fallback\n");
+    fprintf(out, "  // every other id falls back to exists before any of them are tried.\n");
+    fprintf(out, "  state.%.*s_handles[%.*s::Missing] =\n", declaration->name.length,
+            declaration->name.data, declaration->name.length, declaration->name.data);
+    fprintf(out, "      state.%.*s_pool.add(\"assets://%.*s/Missing\", make_missing_%s());\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data, short_name);
+    fprintf(out, "  {\n");
+    fprintf(out, "    const Span<const asset_info_t> entries = %.*s_manifest();\n",
+            declaration->name.length, declaration->name.data);
+    fprintf(out, "    for (uint32_t which = 1; which < entries.size(); ++which)\n");
+    fprintf(out, "      state.%.*s_handles[(%.*s)which] = load_%s(entries[which].path);\n",
+            declaration->name.length, declaration->name.data, declaration->name.length,
+            declaration->name.data, short_name);
+    fprintf(out, "  }\n\n");
+  }
+
+  fprintf(out, "}\n\n");
+  fprintf(out, "} // namespace assets\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -7035,10 +6939,8 @@ static void dump_program(const program_t* program)
       for (int32_t offset = 0; offset < declaration->asset_entry_count; ++offset)
       {
         const asset_entry_t* entry = &program->asset_entries[declaration->first_asset_entry + offset];
-        const char*          kind  = entry->source_kind == ASSET_SOURCE_FILE       ? "file"
-                                     : entry->source_kind == ASSET_SOURCE_PROCEDURAL ? "procedural"
-                                                                                     : "missing";
-        printf("  %d: %-16s %-12s %s\n", offset, entry->name, kind, entry->source);
+        printf("  %d: %-20s %s\n", offset, entry->name,
+               entry->path == nullptr ? "(compiled-in placeholder)" : entry->path);
       }
     }
     else if (declaration->kind == DECLARATION_CVARS)
@@ -7240,24 +7142,44 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
   return true;
 }
 
-static bool emit_asset_family(const program_t* program, const char* output_dir)
+// The asset artifacts come from the MANIFEST, not from a .def, so this runs
+// once per invocation rather than once per input file. Its output directory is
+// derived from the manifest's own path, exactly as every other family's is
+// derived from its .def's.
+static bool emit_asset_artifacts(const program_t* manifest, const char* output_dir)
 {
-  const char* header_name = "assets_generated.hpp";
+  const char* id_header    = "assets_generated.hpp";
+  const char* state_header = "asset_state_generated.hpp";
   char        path[1024];
 
-  FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
+  FILE* header_file = open_generated_file(output_dir, id_header, path, sizeof(path));
   if (header_file == nullptr)
     return false;
-  emit_assets_header(header_file, program);
+  emit_assets_header(header_file, manifest);
   fclose(header_file);
 
   FILE* source_file = open_generated_file(output_dir, "assets_generated.cpp", path, sizeof(path));
   if (source_file == nullptr)
     return false;
-  emit_assets_source(source_file, program, header_name);
+  emit_assets_source(source_file, manifest, id_header);
   fclose(source_file);
 
-  fprintf(stderr, "def_gen: wrote %s/assets_generated.{hpp,cpp}\n", output_dir);
+  FILE* state_file = open_generated_file(output_dir, state_header, path, sizeof(path));
+  if (state_file == nullptr)
+    return false;
+  emit_asset_state_header(state_file, manifest, id_header);
+  fclose(state_file);
+
+  FILE* bindings_file = open_generated_file(output_dir, "assets_bindings.cpp", path, sizeof(path));
+  if (bindings_file == nullptr)
+    return false;
+  emit_assets_bindings(bindings_file, manifest, state_header);
+  fclose(bindings_file);
+
+  fprintf(stderr,
+          "def_gen: wrote %s/assets_generated.{hpp,cpp}, asset_state_generated.hpp and "
+          "assets_bindings.cpp\n",
+          output_dir);
   return true;
 }
 
@@ -7507,10 +7429,10 @@ int main(int argument_count, char** arguments)
   int32_t     input_count           = 0;
 
   const char* output_dir_override = nullptr;
-  // Asset scan paths in the .def are written the way the game writes them at
-  // runtime ("resources/obj"), so they resolve against the repo root, not
-  // against wherever the build invoked the generator from.
-  const char* asset_root  = ".";
+  // Written by asset_pack, read here. Optional only so that --dump on a single
+  // .def still works without a build having run; an entity field typed by an
+  // asset class then fails to resolve, which is the honest answer.
+  const char* asset_manifest_path = nullptr;
   bool        should_dump     = false;
   bool        should_emit     = false;
   bool        should_scaffold = false;
@@ -7555,14 +7477,14 @@ int main(int argument_count, char** arguments)
       output_dir_override = arguments[++index];
       continue;
     }
-    if (strcmp(arguments[index], "--asset-root") == 0)
+    if (strcmp(arguments[index], "--asset-manifest") == 0)
     {
       if (index + 1 >= argument_count)
       {
-        fprintf(stderr, "error: --asset-root needs a directory\n");
+        fprintf(stderr, "error: --asset-manifest needs a file\n");
         return 1;
       }
-      asset_root = arguments[++index];
+      asset_manifest_path = arguments[++index];
       continue;
     }
     if (arguments[index][0] == '-')
@@ -7581,7 +7503,7 @@ int main(int argument_count, char** arguments)
   if (input_count == 0)
   {
     fprintf(stderr, "usage: def_gen <file.def>... [--emit] [--dump] [--output-dir <dir>] "
-                    "[--asset-root <dir>]\n"
+                    "[--asset-manifest <file>]\n"
                     "\n"
                     "  --emit          write the generated files. Output goes to\n"
                     "                  <dir of the .def>/generated unless --output-dir says\n"
@@ -7594,7 +7516,10 @@ int main(int argument_count, char** arguments)
                     "  --client-root   where --scaffold writes (default src/client)\n"
                     "  --output-dir    override the derived output directory; legal only with\n"
                     "                  exactly one input\n"
-                    "  --asset-root    resolve the .def's asset scan paths against this\n"
+                    "  --asset-manifest\n"
+                    "                  the asset manifest asset_pack wrote. Its classes become\n"
+                    "                  usable as entity field types, and its own artifacts are\n"
+                    "                  emitted beside it.\n"
                     "\n"
                     "Pass EVERY .def in one run: the schema hash is computed across all of\n"
                     "them, so a partial run writes a hash that disagrees with a full build.\n");
@@ -7609,14 +7534,24 @@ int main(int argument_count, char** arguments)
     return 1;
   }
 
+  // Parsed once, then copied into every input program that needs to resolve an
+  // asset-typed field. Never freed: each copy points into its buffers.
+  program_t* manifest = nullptr;
+  if (asset_manifest_path != nullptr)
+  {
+    manifest           = (program_t*)calloc(1, sizeof(program_t));
+    manifest->filename = asset_manifest_path;
+    if (!parse_asset_manifest(manifest))
+      return 1;
+  }
+
   program_t programs[MAX_INPUTS] = {};
   int32_t   total_errors         = 0;
 
   for (int32_t index = 0; index < input_count; ++index)
   {
-    program_t* program  = &programs[index];
-    program->filename   = filenames[index];
-    program->asset_root = asset_root;
+    program_t* program = &programs[index];
+    program->filename  = filenames[index];
 
     if (!read_entire_file(program->filename, &program->source, &program->source_length))
       return 1;
@@ -7627,6 +7562,9 @@ int main(int argument_count, char** arguments)
     parser_t parser = {};
     parser.program  = program;
     parse_program(&parser);
+
+    if (manifest != nullptr && !copy_asset_classes_into(program, manifest))
+      return 1;
 
     resolve_program(program);
 
@@ -7643,6 +7581,12 @@ int main(int argument_count, char** arguments)
   // ONE digest over every input, in command-line order. This is why the tool
   // takes all the .def files at once rather than being run per file.
   uint32_t schema_hash = 2166136261u;
+  // The RESOLVED manifest, mixed ONCE and before the inputs. Asset ids are
+  // positional, so two builds whose resource trees differ must refuse to talk
+  // rather than silently disagree about what id 3 means. Once, not once per
+  // .def that names a class, because a copy is not a second declaration.
+  if (manifest != nullptr)
+    schema_hash = mix_schema_hash(schema_hash, manifest);
   for (int32_t index = 0; index < input_count; ++index)
     schema_hash = mix_schema_hash(schema_hash, &programs[index]);
 
@@ -7672,6 +7616,18 @@ int main(int argument_count, char** arguments)
   if (!should_emit)
     return 0;
 
+  if (manifest != nullptr)
+  {
+    char derived[1024];
+    derive_output_directory(manifest->filename, derived, sizeof(derived));
+    // The manifest already lives in the generated/ directory it feeds, so its
+    // artifacts go beside it rather than into a generated/generated.
+    snprintf(derived, sizeof(derived), "%s",
+             std::filesystem::path(manifest->filename).parent_path().string().c_str());
+    if (!emit_asset_artifacts(manifest, derived))
+      return 1;
+  }
+
   for (int32_t index = 0; index < input_count; ++index)
   {
     const program_t* program = &programs[index];
@@ -7685,10 +7641,6 @@ int main(int argument_count, char** arguments)
     {
       case DEF_FAMILY_ENTITY:
         wrote = emit_entity_family(program, output_dir, schema_hash);
-        break;
-
-      case DEF_FAMILY_ASSET:
-        wrote = emit_asset_family(program, output_dir);
         break;
 
       case DEF_FAMILY_CVAR:

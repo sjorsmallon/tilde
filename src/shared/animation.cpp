@@ -107,7 +107,7 @@ transform_t lerp_transform(const transform_t &from, const transform_t &to, float
 
 // --- The primitives --------------------------------------------------------
 
-void sample_animation_clip_at(pose_t &out, const animation_clip_t &clip, const float phase, const bool looping)
+void sample_animation_clip_at(pose_t &out, const animation_asset_t &clip, const float phase, const bool looping)
 {
   const uint32_t frame_count = clip.frame_count();
   out.parent_space.assign(clip.bone_count, transform_t{});
@@ -166,7 +166,7 @@ void sample_animation_clip_at(pose_t &out, const animation_clip_t &clip, const f
     out.parent_space[bone] = lerp_transform(a[bone], b[bone], blend);
 }
 
-float clip_duration_seconds(const animation_clip_t &clip, const bool looping)
+float clip_duration_seconds(const animation_asset_t &clip, const bool looping)
 {
   const uint32_t frame_count = clip.frame_count();
   if (frame_count == 0 || !(clip.fps > 0.0f))
@@ -301,7 +301,7 @@ aim_poses_blend_weights_t compute_aim_blend(float pitch_degrees, float yaw_degre
 void sample_aim_pose(pose_t &out, const aim_pose_clips_t &poses,
                      const aim_poses_blend_weights_t &blend)
 {
-  const animation_clip_t *forward = poses[entities::Aim_Pose::Forward];
+  const animation_asset_t *forward = poses[entities::Aim_Pose::Forward];
   if (!forward)
     fatal_error("sample_aim_pose: the Forward pose is missing. Every other pose falls back to it, "
                 "so there is no way to draw a player without one");

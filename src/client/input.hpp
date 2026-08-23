@@ -187,6 +187,12 @@ linalg::vec2i mouse_delta();
 float scroll_delta();
 void set_relative_mouse_mode(bool enabled);
 
+// Whether the pointer is hidden and held by the game right now, i.e. the last
+// thing set_relative_mouse_mode was told. Anything else that touches cursor
+// VISIBILITY has to agree with this rather than keep its own answer -- ImGui's
+// SDL2 backend is the one that does, and it rewrites the cursor every frame.
+[[nodiscard]] bool pointer_is_captured();
+
 // --- Frame event queues (one-shot events this frame) -------------------------
 
 Span<const key_event_t> frame_key_events();

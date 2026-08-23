@@ -19,6 +19,7 @@
 #include "client/ui/list_menu.hpp"
 #include "client/ui/navigation.hpp"
 #include "client/ui/screen.hpp"
+#include "shared/asset.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -69,11 +70,32 @@ struct baked_font_t
 
 // Baked once and shared: the pack is the slow part of this test and nothing
 // below mutates it.
+// The byte layer is the only way to read a file now, and it hangs off the one
+// launcher-owned state -- so a test that reads anything has to own that state
+// and mount it, exactly as a launcher does. This test still links no device, no
+// swapchain and no window.
+assets::asset_state_t &test_asset_state()
+{
+  static assets::asset_state_t state = [] {
+    assets::asset_state_t fresh;
+    return fresh;
+  }();
+  static const bool mounted = [] {
+    assets::set_state(&state);
+    assets::mount_asset_source();
+    return true;
+  }();
+  (void)mounted;
+  return state;
+}
+
 const baked_font_t &shipped()
 {
   static const baked_font_t baked = [] {
-    const std::optional<font_atlas_t> atlas = client::ui::try_bake_font_from_file(
-        client::ui::DEFAULT_FONT_PATH, {SMALL_HEIGHT, MEDIUM_HEIGHT, LARGE_HEIGHT});
+    test_asset_state();
+    const std::optional<font_atlas_t> atlas = client::ui::try_bake_font(
+        assets::read_asset_bytes(client::ui::DEFAULT_FONT_PATH),
+        {SMALL_HEIGHT, MEDIUM_HEIGHT, LARGE_HEIGHT});
     if (!atlas)
     {
       std::cerr << "could not bake " << client::ui::DEFAULT_FONT_PATH
@@ -394,12 +416,15 @@ void test_bake_rejects_bad_input()
   assert(!client::ui::try_bake_font(Span<const uint8_t>(garbage, 16), {18.f, 28.f, 48.f})
               .has_value());
 
-  assert(!client::ui::try_bake_font_from_file(client::ui::DEFAULT_FONT_PATH, {18.f, 0.f, 48.f})
+  test_asset_state();
+  assert(!client::ui::try_bake_font(assets::read_asset_bytes(client::ui::DEFAULT_FONT_PATH),
+                                    {18.f, 0.f, 48.f})
               .has_value());
 
-  assert(!client::ui::try_bake_font_from_file("resources/fonts/does_not_exist.ttf",
-                                              {18.f, 28.f, 48.f})
-              .has_value());
+  // A font that is not there is no longer this function's failure to report: the
+  // byte layer owns presence, and asset_exists is the probe. try_bake_font keeps
+  // its prefix because the SIZES are a caller parameter and the file is not.
+  assert(!assets::asset_exists("resources/fonts/does_not_exist.ttf"));
 
   std::cout << "test_bake_rejects_bad_input passed" << std::endl;
 }

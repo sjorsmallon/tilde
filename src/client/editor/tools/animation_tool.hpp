@@ -74,7 +74,7 @@ private:
   std::vector<std::string> clip_paths;
   int selected_clip_idx = NO_CLIP_SELECTED;
 
-  assets::asset_handle_t<assets::animation_clip_t> clip_handle;
+  assets::asset_handle_t<assets::animation_asset_t> clip_handle;
   float clip_phase          = 0.0f;
   bool  clip_playing        = false;
   bool  clip_looping        = true;

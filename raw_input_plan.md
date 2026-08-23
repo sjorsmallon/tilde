@@ -50,6 +50,67 @@ measured above — **effective resolution would go from ~6.3ms (one frame, today
 15.6ms (one tick)**. Migrating for this reason would lose ground. Migrate for other
 reasons if you like; it does not solve this.
 
+### Why SDL must never own relative mouse mode here
+
+Found the hard way on 2026-08-23: joining a game killed mouse look for ~60
+frames while WASD kept working, then the aim silently dropped to frame
+granularity for the rest of the process.
+
+`SDL_SetRelativeMouseMode` is four things bundled -- hide the cursor, confine it
+to the window, stop reporting its position, and deliver raw device movement.
+Only the first two are wanted. The fourth is THIS thread's job, and SDL's
+Windows backend implements it as
+
+```c
+RAWINPUTDEVICE rawMouse = { 0x01, 0x02, 0, NULL };   /* SDL_windowsmouse.c, ToggleRawInput */
+RegisterRawInputDevices(&rawMouse, 1, sizeof(RAWINPUTDEVICE));
+```
+
+which is the same usage `raw_input_win32.cpp` registers. **Windows keeps one
+registration per usage per process, and the later call wins.** Measured with
+`probes/rawinput_collision_probe.cpp` -- both registrations reproduced exactly,
+input injected with `SendInput`:
+
+```
+BEFORE SDL-style registration:  mouse=1  keyboard=2
+AFTER  SDL-style registration:  mouse=0  keyboard=2
+AFTER  SDL-style RIDEV_REMOVE:  mouse=0  keyboard=2   <- and it is not handed back
+```
+
+The keyboard survives because SDL never registers usage `0x06`. That asymmetry
+is the whole diagnostic signature: **keys work, mouse does not.**
+
+Downstream, all three of these were the same bug: the 60-frame starvation
+fallback in `new_frame` firing and blaming an absolute-coordinate device; every
+left click logging "input edges disagree with the keyboard"; and right-click
+zoom dying outright, because `Button::Zoom` is not in `Subtick_Tracked` so
+nothing resynced it, and the SDL fallback for mouse-button edges is gated on the
+thread being INACTIVE -- and the thread was alive, just robbed.
+
+**The rule:** while this thread is running, SDL gets the POINTER and never the
+TRAVEL. `set_relative_mouse_mode` therefore calls `SDL_ShowCursor` +
+`SDL_SetWindowMouseGrab` instead, and only falls back to real relative mode when
+the thread did not start -- there being no second reader to collide with then.
+`ToggleRawInput` has exactly two call sites in SDL2, both under
+`WIN_SetRelativeMouseMode`, so not calling it is sufficient; grab reaches
+`WIN_UpdateClipCursor` and nothing else.
+
+**And relative mode was hiding the cursor for a second reason nobody asked it
+to.** `SDL_SetCursor` gates visibility on `cursor_shown && !relative_mode`, so
+relative mode suppressed the cursor *regardless of what anyone set*. That was
+masking ImGui: `ImGui_ImplSDL2_NewFrame` calls
+`ImGui_ImplSDL2_UpdateMouseCursor` every frame, which calls
+`SDL_ShowCursor(SDL_TRUE)` from ImGui's own idea of the cursor. Dropping
+relative mode removed the mask and the cursor became visible during play, since
+ImGui's per-frame write lands after ours.
+
+So capture has a second obligation: while the game holds the pointer, ImGui is
+told to keep its hands off via `ImGuiConfigFlags_NoMouseCursorChange`, set in
+`renderer::begin_frame` straight from `input::pointer_is_captured()` — every
+frame, from the one owner, rather than on a transition. Clearing it again on
+release is what keeps ImGui's cursor SHAPES (resize arrows on window borders,
+the text I-beam) working in the editor and the console.
+
 ---
 
 ## 2. What exists right now

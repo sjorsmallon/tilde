@@ -85,14 +85,17 @@ static model_t load_model()
 {
   model_t model;
 
-  CHECK(models::parse_skeleton_file(SKELETON_PATH, model.skeleton), "'%s' must parse",
-        SKELETON_PATH);
+  CHECK(models::parse_skeleton(assets::read_asset_bytes(SKELETON_PATH), SKELETON_PATH,
+                               model.skeleton),
+        "'%s' must parse", SKELETON_PATH);
 
   models::skeleton_reference_t reference;
-  CHECK(models::parse_mesh_file(MESH_PATH, model.mesh, reference), "'%s' must parse", MESH_PATH);
+  CHECK(models::parse_mesh(assets::read_asset_bytes(MESH_PATH), MESH_PATH, model.mesh, reference),
+        "'%s' must parse", MESH_PATH);
   CHECK(model.mesh.is_skinned(), "the preview mesh must carry skin data");
 
-  std::optional<assets::hitbox_rig_file_t> file = models::try_parse_hitbox_rig_file(RIG_PATH);
+  std::optional<assets::hitbox_rig_file_t> file =
+      models::try_parse_hitbox_rig(assets::read_asset_bytes(RIG_PATH), RIG_PATH);
   CHECK(file.has_value(), "'%s' must parse", RIG_PATH);
 
   CHECK(file->skeleton_name == model.skeleton.name, "rig names skeleton '%s', not '%s'",
@@ -213,8 +216,9 @@ static void test_hull_excursion(const model_t &model)
 
   for (const char *pose_path : AIM_POSE_PATHS)
   {
-    assets::animation_clip_t clip;
-    CHECK(models::parse_animation_file(pose_path, clip), "'%s' must parse", pose_path);
+    assets::animation_asset_t clip;
+    CHECK(models::parse_animation(assets::read_asset_bytes(pose_path), pose_path, clip),
+          "'%s' must parse", pose_path);
     CHECK(clip.skeleton_hash == model.skeleton.hash, "'%s' was authored against another skeleton",
           pose_path);
 
@@ -255,11 +259,6 @@ static void test_hull_excursion(const model_t &model)
 static void test_hitscan_against_the_real_rig()
 {
   printf("test_hitscan_against_the_real_rig\n");
-
-  // player_rig() goes through the asset cache, which the rest of this file
-  // bypasses (it parses files directly). One state for this test.
-  static assets::asset_state_t asset_state;
-  assets::set_state(&asset_state);
 
   const shared::player_rig_t &rig = shared::player_rig();
   const aim_settings_t        settings;
@@ -401,11 +400,23 @@ static std::string fixture_path(const char *name)
   return (std::filesystem::temp_directory_path() / name).string();
 }
 
-static void write_fixture(const std::string &path, const std::string &contents)
+// The round-trip tests write a REAL file, because try_write_hitbox_rig_file is
+// what the tool's Save button calls and writing is still a filesystem act. The
+// reader is not: parse takes bytes, so the test hands them over itself rather
+// than through assets::read_asset_bytes, whose paths are project-root-relative
+// and whose blobs are cached for the process -- neither of which suits a temp
+// file written moments ago.
+static std::string read_fixture(const std::string &path)
 {
-  std::ofstream file(path);
-  file << contents;
-  CHECK((bool)file, "could not write fixture '%s'", path.c_str());
+  std::ifstream file(path, std::ios::binary);
+  CHECK((bool)file, "could not read fixture '%s'", path.c_str());
+  return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+static Span<const uint8_t> fixture(const std::string &text)
+{
+  return Span<const uint8_t>(reinterpret_cast<const uint8_t *>(text.data()),
+                             (uint32_t)text.size());
 }
 
 static void test_round_trip(const model_t &model)
@@ -415,8 +426,9 @@ static void test_round_trip(const model_t &model)
   const std::string path = fixture_path("round_trip.hitboxes");
   CHECK(models::try_write_hitbox_rig_file(path.c_str(), model.rig), "the writer must succeed");
 
+  const std::string                        written = read_fixture(path);
   std::optional<assets::hitbox_rig_file_t> reloaded =
-      models::try_parse_hitbox_rig_file(path.c_str());
+      models::try_parse_hitbox_rig(fixture(written), path.c_str());
   CHECK(reloaded.has_value(), "what the writer wrote must parse");
 
   CHECK(reloaded->name == model.rig.name, "name changed");
@@ -484,8 +496,9 @@ static void test_every_shape_round_trips(const model_t &model)
   const std::string path = fixture_path("shapes.hitboxes");
   CHECK(models::try_write_hitbox_rig_file(path.c_str(), *rig), "the writer must succeed");
 
+  const std::string                        written = read_fixture(path);
   std::optional<assets::hitbox_rig_file_t> reloaded =
-      models::try_parse_hitbox_rig_file(path.c_str());
+      models::try_parse_hitbox_rig(fixture(written), path.c_str());
   CHECK(reloaded.has_value(), "what the writer wrote must parse");
   CHECK(reloaded->volumes.size() == authored.volumes.size(), "volume count changed: %zu",
         reloaded->volumes.size());
@@ -534,13 +547,10 @@ static void test_malformed(const model_t &model)
 {
   printf("test_malformed\n");
 
-  const std::string path = fixture_path("bad.hitboxes");
-
-  auto refuses = [&path](const char *what, const std::string &contents)
+  auto refuses = [](const char *what, const std::string &contents)
   {
-    write_fixture(path, contents);
     const std::optional<assets::hitbox_rig_file_t> rig =
-        models::try_parse_hitbox_rig_file(path.c_str());
+        models::try_parse_hitbox_rig(fixture(contents), "bad.hitboxes");
     g_checks += 1;
     if (rig.has_value())
     {
@@ -669,6 +679,12 @@ int main(int argument_count, char **arguments)
       g_dump = true;
 
   printf("=== hitbox_rig_test ===\n");
+
+  // The byte layer hangs off the one launcher-owned state, so a test that reads
+  // an asset owns that state and mounts it exactly as a launcher does.
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::mount_asset_source();
 
   const model_t model = load_model();
 

@@ -1,27 +1,6 @@
 #pragma once
 
-// The declarative bone -> hit volume mapping, and the tool-time math that seeds
-// and audits it. See animation_def.md §4 and todo.md §2e.
-//
-// A volume is a SHAPE over a bone SPAN: a named shape, two named deform bones,
-// and the shape's own size. A span rather than one bone because Rigify splits a
-// torso into seven `spine*` bones, any one of which is a seventh of a torso,
-// while §4 wants ONE torso volume. Endpoints are the two named bones' HEADS --
-// the skeleton stores no tail, and picking the bone whose head is the far end is
-// a rule with no reconstruction in it.
-//
-// This lives in game_shared, not in the exporter and not in the client, because
-// both sides evaluate it: the client draws the volumes, the server hit-tests
-// against them, and both walk the same pose out of the same skeleton (the bake
-// reversal at the top of animation_def.md §4).
-//
-// Sizes are AUTHORED. `derive_hitbox_size` seeds them from the skin weights and
-// re-running shows drift against a mesh that has moved, but the numbers that
-// ship are the ones in the file -- deriving at runtime would need the mesh, and
-// the server has no meshes. Derivation is tool-time only; nothing in the runtime
-// path calls it.
-
-#include "asset.hpp"
+#include "asset_types.hpp"
 #include "linalg.hpp"
 #include "hit_region.hpp"
 #include "skeleton.hpp"

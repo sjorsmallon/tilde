@@ -30,13 +30,10 @@ player_rig_t load_player_rig()
   const std::string skeleton_path =
       std::string(MODELS_DIRECTORY) + "/" + SKELETON_NAME + ".skeleton";
   loaded.skeleton = assets::get(assets::load_skeleton(skeleton_path.c_str()));
-  if (!loaded.skeleton)
-    fatal_error("player skeleton '{}' did not load; there is no player to shoot at",
-                skeleton_path);
 
   const std::string rig_path = std::string(MODELS_DIRECTORY) + "/" + SKELETON_NAME + ".hitboxes";
   std::optional<assets::hitbox_rig_file_t> parsed =
-      models::try_parse_hitbox_rig_file(rig_path.c_str());
+      models::try_parse_hitbox_rig(assets::read_asset_bytes(rig_path.c_str()), rig_path.c_str());
   if (!parsed)
     fatal_error("player hit volumes '{}' did not parse; without them nothing can be hit",
                 rig_path);

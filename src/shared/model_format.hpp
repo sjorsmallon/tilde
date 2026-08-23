@@ -66,14 +66,18 @@
 // A `.mesh` with no `skeleton` line is a static mesh: the skin array stays empty
 // and nothing downstream changes.
 //
-// Everything here is a pure function over a file path. Resolving the skeleton a
-// mesh names, and checking the two hashes agree, belongs to the asset layer that
-// owns the pools -- not here.
+// Everything here is a pure function over BYTES. Nothing in this file opens a
+// file: `assets::read_asset_bytes` is the one place that happens, which is what
+// lets the same reader serve a loose file, a pkg entry and a test's string
+// literal. `debug_name` is what the error messages name and nothing else reads
+// it. Resolving the skeleton a mesh names, and checking the two hashes agree,
+// belongs to the asset layer that owns the pools -- not here.
 
 #include "animation.hpp"
 #include "asset.hpp"
 #include "hitbox_rig.hpp"
 #include "skeleton.hpp"
+#include "span.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -100,24 +104,26 @@ struct skeleton_reference_t
 
 // Both return false and log_error naming the file and line on any malformed or
 // self-inconsistent input. Neither ever half-fills its output silently.
-bool parse_skeleton_file(const char *path, assets::skeleton_t &out);
-bool parse_mesh_file(const char *path, assets::mesh_asset_t &out,
-                     skeleton_reference_t &out_reference);
+bool parse_skeleton(Span<const uint8_t> bytes, const char *debug_name, assets::skeleton_t &out);
+bool parse_mesh(Span<const uint8_t> bytes, const char *debug_name, assets::mesh_asset_t &out,
+                skeleton_reference_t &out_reference);
 
-// A clip carries its own skeleton name and hash (`animation_clip_t`), so unlike
+// A clip carries its own skeleton name and hash (`animation_asset_t`), so unlike
 // a mesh it needs no separate reference out-param. Checking that hash against a
 // LOADED skeleton is still the asset layer's job, not this one's.
 //
 // The five authored aim poses come through here as single-frame clips. There is
 // deliberately no `.pose` format: one format, one loader, one hash check.
-bool parse_animation_file(const char *path, assets::animation_clip_t &out);
+bool parse_animation(Span<const uint8_t> bytes, const char *debug_name,
+                     assets::animation_asset_t &out);
 
 // The `.hitboxes` mapping, which is HANDWRITTEN rather than exported -- which
 // bones are volumes and what they cost is game-design data, not model data
 // (todo.md §2e). Resolving the bone names against a loaded skeleton is
 // `assets::try_resolve_hitbox_rig`, not this; here the file is only checked for
 // being well-formed.
-[[nodiscard]] std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig_file(const char *path);
+[[nodiscard]] std::optional<assets::hitbox_rig_file_t>
+try_parse_hitbox_rig(Span<const uint8_t> bytes, const char *debug_name);
 
 // The writer half, so the Animation tool can emit a template for a rig that has
 // no file yet and save a radius you filled from the derived column. The output

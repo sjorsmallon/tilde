@@ -15,6 +15,7 @@
 
 #include "log.hpp" // Utilizing existing log system
 #include "asset.hpp"
+#include "input.hpp" // pointer_is_captured, for the ImGui cursor handoff below
 #include "skinning.hpp"
 #include "vertex.hpp"
 #include <algorithm>
@@ -2144,13 +2145,16 @@ static void end_single_command(VkCommandBuffer cmd)
 
 static void create_particle_texture()
 {
-  int w, h, channels;
-  stbi_uc *pixels = stbi_load("resources/sprites/smoke.png", &w, &h, &channels, STBI_rgb_alpha);
+  static const char *PARTICLE_SPRITE_PATH = "resources/sprites/Smoke.png";
+
+  const Span<const uint8_t> encoded = assets::read_asset_bytes(PARTICLE_SPRITE_PATH);
+
+  int      w, h, channels;
+  stbi_uc *pixels =
+      stbi_load_from_memory(encoded.data, (int)encoded.size(), &w, &h, &channels, STBI_rgb_alpha);
   if (!pixels)
-  {
-    log_error("Failed to load particle sprite: resources/sprites/smoke.png");
-    return;
-  }
+    fatal_error("particle sprite '{}' did not decode: {}", PARTICLE_SPRITE_PATH,
+                stbi_failure_reason());
 
   VkDeviceSize image_size = w * h * 4;
 
@@ -3634,6 +3638,21 @@ bool new_frame()
   }
 
   ImGui_ImplVulkan_NewFrame();
+
+  // ImGui's SDL2 backend rewrites cursor visibility EVERY frame from its own
+  // idea of what the cursor should be (ImGui_ImplSDL2_UpdateMouseCursor, called
+  // out of NewFrame below), so while the game holds the pointer it has to be
+  // told to keep its hands off -- otherwise its SDL_ShowCursor(TRUE) lands
+  // after ours and the cursor is visible during play. This never came up while
+  // capture went through SDL_SetRelativeMouseMode, because relative mode
+  // suppressed the cursor in SDL_SetCursor regardless of what anyone asked for
+  // (`cursor_shown && !relative_mode`). Set unconditionally from input's state
+  // rather than on a transition: one owner, nothing to drift.
+  if (input::pointer_is_captured())
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+  else
+    ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+
   ImGui_ImplSDL2_NewFrame();
   ImGui::NewFrame();
 

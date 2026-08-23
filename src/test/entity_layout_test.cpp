@@ -206,16 +206,17 @@ int main()
 
   // --- asset manifest ---
   //
-  // The manifest models identity. A consumer holding a mesh_asset must have no
-  // way to ask where the bytes come from, and no reason to want to: the source
-  // column below is read by the asset system's init and by nothing else.
+  // The manifest models IDENTITY and nothing else. There is no source column
+  // any more: it existed to tell a file-backed asset from a generated one, and
+  // no consumer of an id ever asked. Two columns is the whole table.
   {
     Render render;
     check(render.mesh == assets::mesh_asset::Missing,
           "an unassigned mesh field reads as Missing, not as whichever asset sorted first");
 
     Particle_Emitter_Entity emitter;
-    check(emitter.sprite == assets::sprite_asset::Smoke, "a declared asset default resolves by name");
+    check(emitter.sprite == assets::texture_asset::Smoke,
+          "a declared asset default resolves by name");
 
     check(strcmp(to_string(assets::mesh_asset::Pyramid), "Pyramid") == 0, "asset to_string");
     check(assets::try_from_string<assets::mesh_asset>("Sphere") == assets::mesh_asset::Sphere,
@@ -226,39 +227,55 @@ int main()
     Span<const assets::asset_info_t> meshes = assets::mesh_asset_manifest();
 
     check(meshes.size() == assets::mesh_asset_COUNT, "the manifest covers every id in the enum");
-    check(meshes[0].source_kind == assets::ASSET_SOURCE_FILE &&
-              strcmp(meshes[0].source, "resources/obj/error.obj") == 0,
-          "slot 0 resolves to the declared placeholder, so nothing renders as a plausible cube");
 
-    // The placeholder's own file must not ALSO be scanned in under its stem, or
-    // one file would hold two ids under two names. That is a collision the
-    // generator creates itself, so its duplicate-name check could never catch
-    // it -- the scan skips the placeholder path instead.
-    uint32_t entries_naming_the_placeholder = 0;
-    for (const assets::asset_info_t& mesh : meshes)
-      if (strcmp(mesh.source, "resources/obj/error.obj") == 0)
-        ++entries_naming_the_placeholder;
-    check(entries_naming_the_placeholder == 1,
-          "the placeholder file has one id, not one as Missing and another as its own stem");
+    // Slot 0 has NO PATH, in every class. Its bytes are a compiled-in constant,
+    // which is the whole job of a placeholder -- a placeholder that is a file
+    // can be the thing that is missing. resources/obj/Error.obj is still an
+    // asset, it is just an ordinary one now.
+    check(strcmp(meshes[0].name, "Missing") == 0 && meshes[0].path == nullptr,
+          "slot 0 is Missing with no file behind it");
 
-    // Both source kinds are present and neither is distinguishable through the
-    // id -- only through this table, which is the point.
-    bool saw_file       = false;
-    bool saw_procedural = false;
-    bool every_entry_is_resolvable = true;
-    for (const assets::asset_info_t& mesh : meshes)
+    bool every_other_entry_has_a_path = true;
+    for (uint32_t index = 1; index < meshes.size(); ++index)
+      every_other_entry_has_a_path &= meshes[index].path != nullptr && meshes[index].path[0] != 0;
+    check(every_other_entry_has_a_path,
+          "every id but 0 names a file, so register_all can populate the manifest eagerly");
+
+    // One class, two on-disk forms: a .obj static prop and a .mesh exported
+    // with skin weights. Nothing that resolves a mesh_asset has to know which,
+    // and that is why they are deliberately not two classes.
+    auto ends_with = [](const char* text, const char* suffix)
     {
-      if (mesh.source_kind == assets::ASSET_SOURCE_FILE)
-        saw_file = true;
-      if (mesh.source_kind == assets::ASSET_SOURCE_PROCEDURAL)
-        saw_procedural = true;
-      if (mesh.source[0] == '\0')
-        every_entry_is_resolvable = false;
-    }
+      const size_t text_length   = strlen(text);
+      const size_t suffix_length = strlen(suffix);
+      return text_length >= suffix_length &&
+             strcmp(text + text_length - suffix_length, suffix) == 0;
+    };
 
-    check(saw_file && saw_procedural, "one class carries both file-backed and generated meshes");
-    check(every_entry_is_resolvable,
-          "every mesh id has a source, so init can populate the whole manifest eagerly");
+    bool saw_obj      = false;
+    bool saw_dot_mesh = false;
+    for (uint32_t index = 1; index < meshes.size(); ++index)
+    {
+      saw_obj |= ends_with(meshes[index].path, ".obj");
+      saw_dot_mesh |= ends_with(meshes[index].path, ".mesh");
+    }
+    check(saw_obj && saw_dot_mesh, "one class carries both .obj and .mesh files");
+
+    // Every class starts at Missing, not just this one -- the generated
+    // get_<class> falls back to slot 0 for an id that came off the wire, so a
+    // class whose slot 0 were an ordinary asset would resolve garbage to a real
+    // thing.
+    const Span<const assets::asset_info_t> classes[] = {
+        assets::mesh_asset_manifest(),  assets::texture_asset_manifest(),
+        assets::sound_asset_manifest(), assets::animation_asset_manifest(),
+        assets::hitbox_rig_manifest(),  assets::font_asset_manifest(),
+    };
+    bool every_class_starts_at_missing = true;
+    for (const Span<const assets::asset_info_t>& entries : classes)
+      every_class_starts_at_missing &=
+          entries.size() > 0 && strcmp(entries[0].name, "Missing") == 0 &&
+          entries[0].path == nullptr;
+    check(every_class_starts_at_missing, "id 0 of every class is the pathless placeholder");
 
     // The field table records which class a field draws from, so a generic
     // consumer (the editor inspector) can offer the right closed set without

@@ -43,10 +43,8 @@ void set_state(asset_state_t *state)
   g_asset_state = state;
 }
 
-namespace
-{
-
-// Every accessor goes through this. A null state is a broken build, not a
+// Every accessor goes through this, including the generated per-class loaders,
+// which is why it is not file-local. A null state is a broken build, not a
 // runtime condition: this module was never pointed at the launcher's state, so
 // every asset it resolves would come back empty forever.
 asset_state_t &state_for(const char *who)
@@ -57,6 +55,9 @@ asset_state_t &state_for(const char *who)
                 who);
   return *g_asset_state;
 }
+
+namespace
+{
 
 } // namespace
 
@@ -141,24 +142,53 @@ obj_index_t parse_face_vertex(const char *token)
   return idx;
 }
 
-// Parse a .mtl file and return materials keyed by name.
-std::unordered_map<std::string, material_t> load_mtl(const char *path)
+// One line at a time out of a blob, so a decoder that used to say
+// `std::getline(file, line)` says the same thing over bytes.
+//
+// It strips a trailing '\r' because the ifstream these decoders used was opened
+// in TEXT mode, which did that for them; the byte layer reads binary, and a '\r'
+// left on the end silently becomes part of the last token on the line.
+struct byte_line_reader_t
+{
+  const char *cursor = nullptr;
+  const char *end    = nullptr;
+
+  explicit byte_line_reader_t(Span<const uint8_t> bytes)
+      : cursor(reinterpret_cast<const char *>(bytes.data)),
+        end(reinterpret_cast<const char *>(bytes.data) + bytes.size())
+  {
+  }
+
+  bool next(std::string &out_line)
+  {
+    if (cursor >= end)
+      return false;
+
+    const char *line_start = cursor;
+    while (cursor < end && *cursor != '\n')
+      cursor += 1;
+
+    const char *line_end = cursor;
+    if (line_end > line_start && line_end[-1] == '\r')
+      line_end -= 1;
+
+    out_line.assign(line_start, (size_t)(line_end - line_start));
+
+    if (cursor < end)
+      cursor += 1; // step past the '\n'
+    return true;
+  }
+};
+
+// Parse a .mtl blob and return materials keyed by name.
+std::unordered_map<std::string, material_t> load_mtl(Span<const uint8_t> bytes, const char *path)
 {
   std::unordered_map<std::string, material_t> materials;
-  std::ifstream file(path);
-  if (!file.is_open())
-  {
-    printf("[assets] WARNING: Could not open MTL file: '%s' (cwd: ", path);
-    char cwd[512];
-    if (getcwd(cwd, sizeof(cwd)))
-      printf("%s", cwd);
-    printf(")\n");
-    return materials;
-  }
+  byte_line_reader_t lines(bytes);
 
   material_t *current = nullptr;
   std::string line;
-  while (std::getline(file, line))
+  while (lines.next(line))
   {
     if (line.empty() || line[0] == '#')
       continue;
@@ -188,12 +218,8 @@ std::unordered_map<std::string, material_t> load_mtl(const char *path)
   return materials;
 }
 
-bool load_obj(const char *path, mesh_asset_t &out)
+bool load_obj(Span<const uint8_t> bytes, const char *path, mesh_asset_t &out)
 {
-  std::ifstream file(path);
-  if (!file.is_open())
-    return false;
-
   // Derive the directory of the OBJ file for resolving mtllib paths
   std::string obj_dir;
   {
@@ -227,8 +253,9 @@ bool load_obj(const char *path, mesh_asset_t &out)
     submesh_start = static_cast<uint32_t>(out.indices.size());
   };
 
+  byte_line_reader_t lines(bytes);
   std::string line;
-  while (std::getline(file, line))
+  while (lines.next(line))
   {
     if (line.empty() || line[0] == '#')
       continue;
@@ -239,12 +266,18 @@ bool load_obj(const char *path, mesh_asset_t &out)
 
     if (prefix == "mtllib")
     {
+      // A DERIVED SIBLING PATH: the .obj names its .mtl from inside the file,
+      // so nobody at a call site ever spells this one. It still goes through
+      // the byte layer under the same key rule as everything else -- and it is
+      // fatal rather than the warning it used to be, because a path the file
+      // itself chose is not a caller parameter, so its absence is a broken
+      // asset rather than something to draw untextured around.
       std::string mtl_filename;
       ss >> mtl_filename;
       std::string mtl_path = obj_dir + mtl_filename;
       printf("[assets] OBJ '%s' references mtllib '%s' -> resolved to '%s'\n",
              path, mtl_filename.c_str(), mtl_path.c_str());
-      mtl_lib = load_mtl(mtl_path.c_str());
+      mtl_lib = load_mtl(read_asset_bytes(mtl_path.c_str()), mtl_path.c_str());
     }
     else if (prefix == "usemtl")
     {
@@ -408,536 +441,233 @@ bool load_obj(const char *path, mesh_asset_t &out)
   return !out.vertices.empty();
 }
 
-// --- Primitive mesh generators ---
-
-mesh_asset_t generate_box_mesh()
-{
-  mesh_asset_t mesh;
-
-  // Generate a 1x1x1 box centered at origin (from -0.5 to +0.5)
-  // 24 vertices (4 per face, 6 faces) for proper normals
-
-  const vec3f positions[8] = {
-    {-0.5f, -0.5f, -0.5f}, {0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, -0.5f}, {-0.5f, 0.5f, -0.5f},
-    {-0.5f, -0.5f,  0.5f}, {0.5f, -0.5f,  0.5f}, {0.5f, 0.5f,  0.5f}, {-0.5f, 0.5f,  0.5f}
-  };
-
-  // Define faces with proper normals
-  struct face_t { int idx[4]; vec3f normal; };
-  const face_t faces[6] = {
-    {{0, 1, 2, 3}, {0, 0, -1}},  // front (-Z)
-    {{5, 4, 7, 6}, {0, 0,  1}},  // back (+Z)
-    {{4, 0, 3, 7}, {-1, 0, 0}},  // left (-X)
-    {{1, 5, 6, 2}, { 1, 0, 0}},  // right (+X)
-    {{4, 5, 1, 0}, {0, -1, 0}},  // bottom (-Y)
-    {{3, 2, 6, 7}, {0,  1, 0}}   // top (+Y)
-  };
-
-  for (const auto &face : faces) {
-    int base = mesh.vertices.size();
-    for (int i = 0; i < 4; i++) {
-      vertex_xnu v;
-      v.position = positions[face.idx[i]];
-      v.normal = face.normal;
-      v.uv = {i & 1 ? 1.0f : 0.0f, i & 2 ? 1.0f : 0.0f};
-      mesh.vertices.push_back(v);
-    }
-    // Two triangles per face
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(base), uint32_t(base + 1), uint32_t(base + 2),
-      uint32_t(base), uint32_t(base + 2), uint32_t(base + 3)
-    });
-  }
-
-  return mesh;
-}
-
-mesh_asset_t generate_arrow_mesh()
-{
-  mesh_asset_t mesh;
-
-  // Arrow pointing along +X axis, total length 1.0
-  // Shaft: cylinder from (0,0,0) to (0.7,0,0), radius 0.05
-  // Head: cone from (0.7,0,0) to (1.0,0,0), base radius 0.15
-
-  const int segments = 12;
-  const float shaft_length = 0.7f;
-  const float shaft_radius = 0.05f;
-  const float head_base = 0.7f;
-  const float head_tip = 1.0f;
-  const float head_radius = 0.15f;
-
-  // Generate shaft (cylinder)
-  for (int i = 0; i <= segments; i++) {
-    float angle = (float)i / segments * 2.0f * 3.14159265f;
-    float c = std::cos(angle);
-    float s = std::sin(angle);
-    vec3f normal = {0, c, s};
-
-    // Start cap
-    mesh.vertices.push_back({{0, c * shaft_radius, s * shaft_radius}, normal, {0, (float)i / segments}});
-    // End cap
-    mesh.vertices.push_back({{shaft_length, c * shaft_radius, s * shaft_radius}, normal, {1, (float)i / segments}});
-  }
-
-  // Shaft triangles
-  for (int i = 0; i < segments; i++) {
-    int base = i * 2;
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(base), uint32_t(base + 2), uint32_t(base + 1),
-      uint32_t(base + 1), uint32_t(base + 2), uint32_t(base + 3)
-    });
-  }
-
-  // Generate head (cone)
-  int head_base_idx = mesh.vertices.size();
-  for (int i = 0; i <= segments; i++) {
-    float angle = (float)i / segments * 2.0f * 3.14159265f;
-    float c = std::cos(angle);
-    float s = std::sin(angle);
-    vec3f normal = {0.6f, c * 0.8f, s * 0.8f}; // Approximate cone normal
-    normal = normal * (1.0f / std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z));
-
-    mesh.vertices.push_back({{head_base, c * head_radius, s * head_radius}, normal, {0, (float)i / segments}});
-  }
-
-  int tip_idx = mesh.vertices.size();
-  mesh.vertices.push_back({{head_tip, 0, 0}, {1, 0, 0}, {0.5f, 0.5f}});
-
-  // Cone triangles
-  for (int i = 0; i < segments; i++) {
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(head_base_idx + i), uint32_t(head_base_idx + i + 1), uint32_t(tip_idx)
-    });
-  }
-
-  return mesh;
-}
-
-mesh_asset_t generate_sphere_mesh(int lat_segments = 16, int lon_segments = 16)
-{
-  mesh_asset_t mesh;
-
-  // Generate UV sphere with radius 0.5 (diameter 1.0)
-  const float radius = 0.5f;
-
-  for (int lat = 0; lat <= lat_segments; lat++) {
-    float theta = (float)lat / lat_segments * 3.14159265f;
-    float sin_theta = std::sin(theta);
-    float cos_theta = std::cos(theta);
-
-    for (int lon = 0; lon <= lon_segments; lon++) {
-      float phi = (float)lon / lon_segments * 2.0f * 3.14159265f;
-      float sin_phi = std::sin(phi);
-      float cos_phi = std::cos(phi);
-
-      vec3f position = {
-        radius * sin_theta * cos_phi,
-        radius * cos_theta,
-        radius * sin_theta * sin_phi
-      };
-
-      vec3f normal = position * (1.0f / radius); // Normalized
-      vec2f uv = {(float)lon / lon_segments, (float)lat / lat_segments};
-
-      mesh.vertices.push_back({position, normal, uv});
-    }
-  }
-
-  // Generate indices
-  for (int lat = 0; lat < lat_segments; lat++) {
-    for (int lon = 0; lon < lon_segments; lon++) {
-      int first = lat * (lon_segments + 1) + lon;
-      int second = first + lon_segments + 1;
-
-      mesh.indices.insert(mesh.indices.end(), {
-        uint32_t(first), uint32_t(second), uint32_t(first + 1),
-        uint32_t(second), uint32_t(second + 1), uint32_t(first + 1)
-      });
-    }
-  }
-
-  return mesh;
-}
-
-mesh_asset_t generate_cylinder_mesh(int segments = 16)
-{
-  mesh_asset_t mesh;
-
-  // Cylinder along Y axis, height 1.0, radius 0.5
-  const float radius = 0.5f;
-  const float half_height = 0.5f;
-
-  // Side vertices
-  for (int i = 0; i <= segments; i++) {
-    float angle = (float)i / segments * 2.0f * 3.14159265f;
-    float c = std::cos(angle);
-    float s = std::sin(angle);
-    vec3f normal = {c, 0, s};
-
-    mesh.vertices.push_back({{c * radius, -half_height, s * radius}, normal, {(float)i / segments, 0}});
-    mesh.vertices.push_back({{c * radius,  half_height, s * radius}, normal, {(float)i / segments, 1}});
-  }
-
-  // Side triangles
-  for (int i = 0; i < segments; i++) {
-    int base = i * 2;
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(base), uint32_t(base + 2), uint32_t(base + 1),
-      uint32_t(base + 1), uint32_t(base + 2), uint32_t(base + 3)
-    });
-  }
-
-  // Caps
-  int bottom_center = mesh.vertices.size();
-  mesh.vertices.push_back({{0, -half_height, 0}, {0, -1, 0}, {0.5f, 0.5f}});
-  int top_center = mesh.vertices.size();
-  mesh.vertices.push_back({{0,  half_height, 0}, {0,  1, 0}, {0.5f, 0.5f}});
-
-  for (int i = 0; i <= segments; i++) {
-    float angle = (float)i / segments * 2.0f * 3.14159265f;
-    float c = std::cos(angle);
-    float s = std::sin(angle);
-
-    mesh.vertices.push_back({{c * radius, -half_height, s * radius}, {0, -1, 0}, {c * 0.5f + 0.5f, s * 0.5f + 0.5f}});
-    mesh.vertices.push_back({{c * radius,  half_height, s * radius}, {0,  1, 0}, {c * 0.5f + 0.5f, s * 0.5f + 0.5f}});
-  }
-
-  // Cap triangles
-  int cap_start = bottom_center + 2;
-  for (int i = 0; i < segments; i++) {
-    // Bottom cap
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(bottom_center), uint32_t(cap_start + i * 2), uint32_t(cap_start + (i + 1) * 2)
-    });
-    // Top cap
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(top_center), uint32_t(cap_start + (i + 1) * 2 + 1), uint32_t(cap_start + i * 2 + 1)
-    });
-  }
-
-  return mesh;
-}
-
-mesh_asset_t generate_cone_mesh(int segments = 16)
-{
-  mesh_asset_t mesh;
-
-  // Cone pointing up along +Y, height 1.0, base radius 0.5
-  const float radius = 0.5f;
-  const float height = 1.0f;
-
-  // Base vertices
-  int base_center = mesh.vertices.size();
-  mesh.vertices.push_back({{0, 0, 0}, {0, -1, 0}, {0.5f, 0.5f}});
-
-  for (int i = 0; i <= segments; i++) {
-    float angle = (float)i / segments * 2.0f * 3.14159265f;
-    float c = std::cos(angle);
-    float s = std::sin(angle);
-
-    // Base ring
-    mesh.vertices.push_back({{c * radius, 0, s * radius}, {0, -1, 0}, {c * 0.5f + 0.5f, s * 0.5f + 0.5f}});
-  }
-
-  // Base triangles
-  for (int i = 0; i < segments; i++) {
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(base_center), uint32_t(base_center + i + 1), uint32_t(base_center + i + 2)
-    });
-  }
-
-  // Side vertices (for proper normals)
-  int side_start = mesh.vertices.size();
-  for (int i = 0; i <= segments; i++) {
-    float angle = (float)i / segments * 2.0f * 3.14159265f;
-    float c = std::cos(angle);
-    float s = std::sin(angle);
-
-    // Approximate cone normal
-    vec3f normal = {c * 0.8f, 0.6f, s * 0.8f};
-    float len = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
-    normal = normal * (1.0f / len);
-
-    mesh.vertices.push_back({{c * radius, 0, s * radius}, normal, {(float)i / segments, 0}});
-  }
-
-  int tip = mesh.vertices.size();
-  mesh.vertices.push_back({{0, height, 0}, {0, 1, 0}, {0.5f, 1.0f}});
-
-  // Side triangles
-  for (int i = 0; i < segments; i++) {
-    mesh.indices.insert(mesh.indices.end(), {
-      uint32_t(side_start + i), uint32_t(side_start + i + 1), uint32_t(tip)
-    });
-  }
-
-  return mesh;
-}
-
-mesh_asset_t generate_wedge_mesh()
-{
-  mesh_asset_t mesh;
-
-  // Wedge: 1x1x1 box with one edge collapsed (orientation 0: ridge along X at -Z)
-  // Bottom: 4 corners, top: 2 corners (ridge)
-
-  vec3f bottom[4] = {
-    {-0.5f, -0.5f, -0.5f},
-    { 0.5f, -0.5f, -0.5f},
-    { 0.5f, -0.5f,  0.5f},
-    {-0.5f, -0.5f,  0.5f}
-  };
-
-  vec3f top[2] = {
-    {-0.5f, 0.5f, -0.5f},
-    { 0.5f, 0.5f, -0.5f}
-  };
-
-  // Bottom face
-  int b = mesh.vertices.size();
-  for (int i = 0; i < 4; i++) {
-    mesh.vertices.push_back({bottom[i], {0, -1, 0}, {i & 1 ? 1.0f : 0.0f, i & 2 ? 1.0f : 0.0f}});
-  }
-  mesh.indices.insert(mesh.indices.end(), {
-    uint32_t(b), uint32_t(b + 2), uint32_t(b + 1),
-    uint32_t(b), uint32_t(b + 3), uint32_t(b + 2)
-  });
-
-  // Back face (vertical rectangle)
-  b = mesh.vertices.size();
-  mesh.vertices.push_back({bottom[0], {0, 0, -1}, {0, 0}});
-  mesh.vertices.push_back({bottom[1], {0, 0, -1}, {1, 0}});
-  mesh.vertices.push_back({top[1], {0, 0, -1}, {1, 1}});
-  mesh.vertices.push_back({top[0], {0, 0, -1}, {0, 1}});
-  mesh.indices.insert(mesh.indices.end(), {
-    uint32_t(b), uint32_t(b + 1), uint32_t(b + 2),
-    uint32_t(b), uint32_t(b + 2), uint32_t(b + 3)
-  });
-
-  // Left face (triangle)
-  vec3f left_normal = {-1, 0, 0};
-  b = mesh.vertices.size();
-  mesh.vertices.push_back({bottom[0], left_normal, {0, 0}});
-  mesh.vertices.push_back({top[0], left_normal, {0, 1}});
-  mesh.vertices.push_back({bottom[3], left_normal, {1, 0}});
-  mesh.indices.push_back(b);
-  mesh.indices.push_back(b + 1);
-  mesh.indices.push_back(b + 2);
-
-  // Right face (triangle)
-  vec3f right_normal = {1, 0, 0};
-  b = mesh.vertices.size();
-  mesh.vertices.push_back({bottom[1], right_normal, {0, 0}});
-  mesh.vertices.push_back({bottom[2], right_normal, {1, 0}});
-  mesh.vertices.push_back({top[1], right_normal, {0, 1}});
-  mesh.indices.push_back(b);
-  mesh.indices.push_back(b + 1);
-  mesh.indices.push_back(b + 2);
-
-  // Slope face (the angled quad)
-  vec3f edge1 = top[1] - top[0];
-  vec3f edge2 = bottom[2] - top[0];
-  vec3f slope_normal = {
-    edge1.y * edge2.z - edge1.z * edge2.y,
-    edge1.z * edge2.x - edge1.x * edge2.z,
-    edge1.x * edge2.y - edge1.y * edge2.x
-  };
-  float len = std::sqrt(slope_normal.x * slope_normal.x + slope_normal.y * slope_normal.y + slope_normal.z * slope_normal.z);
-  slope_normal = slope_normal * (1.0f / len);
-
-  b = mesh.vertices.size();
-  mesh.vertices.push_back({top[0], slope_normal, {0, 1}});
-  mesh.vertices.push_back({top[1], slope_normal, {1, 1}});
-  mesh.vertices.push_back({bottom[2], slope_normal, {1, 0}});
-  mesh.vertices.push_back({bottom[3], slope_normal, {0, 0}});
-  mesh.indices.insert(mesh.indices.end(), {
-    uint32_t(b), uint32_t(b + 1), uint32_t(b + 2),
-    uint32_t(b), uint32_t(b + 2), uint32_t(b + 3)
-  });
-
-  return mesh;
-}
-
 } // namespace
 
-// --- Path resolution ---
+// --- Paths ---
 
-static bool path_has_extension(const std::string &path, const char *extension)
+bool path_has_extension(const char *path, const char *extension)
 {
-  size_t length = strlen(extension);
-  return path.size() >= length && path.compare(path.size() - length, length, extension) == 0;
+  const size_t path_length      = strlen(path);
+  const size_t extension_length = strlen(extension);
+  if (path_length < extension_length)
+    return false;
+
+  const char *tail = path + (path_length - extension_length);
+  for (size_t index = 0; index < extension_length; ++index)
+  {
+    if (tolower((unsigned char)tail[index]) != tolower((unsigned char)extension[index]))
+      return false;
+  }
+  return true;
 }
 
-// Resolves a raw mesh path to an actual file on disk.
-// Handles missing "resources/obj/" prefix and missing ".obj" extension.
-// Returns the resolved path, or empty string if no candidate was found.
-static std::string resolve_mesh_path(const char *raw)
+// ONE cache key rule, for every pool. This used to be three: skeletons and
+// animations canonicalised, meshes keyed on a resolved path, textures on the
+// raw string as given -- so the same file could sit in a pool twice, and two
+// copies means two handles means bone 7 is no longer one bone. That is the
+// exact failure sharing a pool exists to prevent.
+//
+// It is a NORMALISATION, not a resolution: forward slashes and no "." or ".."
+// components, and nothing touches the filesystem. weakly_canonical did, which
+// made the key absolute and therefore dependent on the working directory --
+// wrong now that a path has one spelling and about to be wronger, since a pkg
+// or an embedded blob has no directory to be canonical against.
+//
+// It has to normalise separators because the two DERIVED sibling paths do not
+// go through a call site: parent_path() / (name + ".skeleton") hands back
+// "resources/models\rig.skeleton" on Windows.
+std::string asset_cache_key(const char *path)
 {
-  std::string s = raw;
-
-  // A .mesh lives in resources/models and is a different format entirely, so it
-  // gets its own candidates rather than being run through the OBJ ones -- an
-  // "almost resolved" .mesh would land in load_obj and parse as an empty mesh.
-  if (path_has_extension(s, ".mesh"))
-  {
-    std::string models_relative = "resources/models/" + s;
-    if (std::filesystem::exists(s))
-      return s;
-    if (std::filesystem::exists(models_relative))
-    {
-      printf("[assets] Resolved mesh '%s' -> '%s'\n", raw, models_relative.c_str());
-      return models_relative;
-    }
-
-    printf("[assets] ERROR: Cannot find mesh file for '%s'. Tried:\n", raw);
-    printf("[assets]   '%s'\n", s.c_str());
-    printf("[assets]   '%s'\n", models_relative.c_str());
-    return {};
-  }
-
-  // Strip trailing .obj to get the stem, so we can try combinations.
-  std::string stem = s;
-  if (stem.size() >= 4 && stem.substr(stem.size() - 4) == ".obj")
-    stem = stem.substr(0, stem.size() - 4);
-
-  // candidates in priority order (deduplicated below).
-  std::string candidates[] = {
-    s,                                // exactly as given
-    stem + ".obj",                    // ensure .obj extension
-    "resources/obj/" + stem + ".obj", // resources prefix + .obj
-    "resources/obj/" + s,             // resources prefix, as given
-  };
-
-  for (const auto &c : candidates)
-  {
-    // Skip duplicates (e.g. if s already ends in .obj, first two are the same).
-    bool seen = false;
-    for (const auto &prev : candidates)
-    {
-      if (&prev == &c)
-        break;
-      if (prev == c)
-      {
-        seen = true;
-        break;
-      }
-    }
-    if (seen)
-      continue;
-
-    if (std::filesystem::exists(c))
-    {
-      if (c != s)
-        printf("[assets] Resolved mesh '%s' -> '%s'\n", raw, c.c_str());
-      return c;
-    }
-  }
-
-  // Nothing found — emit a clear diagnostic.
-  printf("[assets] ERROR: Cannot find mesh file for '%s'. Tried:\n", raw);
-  bool printed[4] = {};
-  for (int i = 0; i < 4; ++i)
-  {
-    bool dup = false;
-    for (int j = 0; j < i; ++j)
-      if (candidates[j] == candidates[i]) { dup = true; break; }
-    if (!dup)
-      printf("[assets]   '%s'\n", candidates[i].c_str());
-  }
-  printf("[assets] Make sure the working directory is the project root and the file exists under resources/obj/\n");
-  return {};
+  return std::filesystem::path(path).lexically_normal().generic_string();
 }
 
-// --- Public API ---
+bool asset_exists(const char *path)
+{
+  asset_state_t &state = state_for("asset_exists");
+
+  // A packaged build has no filesystem to probe: the index IS the answer, and
+  // consulting the disk instead would let a stray loose file next to the exe
+  // change what a shipped game thinks it holds.
+  if (state.source.package)
+    return try_find_asset_in_package(*state.source.package, asset_cache_key(path).c_str()).has_value();
+
+  std::error_code error_code;
+  return std::filesystem::is_regular_file(path, error_code);
+}
+
+// --- The byte layer ---
 
 namespace
 {
 
-// The cache key is CANONICAL, not as-spelled. A skeleton reached two ways --
-// "resources/models/rig.skeleton" from a call site and
-// "resources/models\rig.skeleton" from the sibling lookup in load_skinned_mesh
-// -- would otherwise land in the pool twice, and two copies means two handles
-// means bone 7 is no longer one bone. That is the exact failure sharing the pool
-// exists to prevent, so it is fixed here rather than by asking every caller to
-// spell paths the same way.
-std::string canonical_cache_key(const char *path)
+// pkg and embed share every line below the byte range: one opened index, one
+// lookup, spans pointing straight into bytes nothing frees. All that differs is
+// which range is handed in, which is the whole reason #embed is not a third code
+// path (see asset_source_t).
+void open_package_or_die(asset_state_t &state, Span<const uint8_t> bytes, const char *what)
 {
-  std::error_code       error_code;
-  std::filesystem::path canonical = std::filesystem::weakly_canonical(path, error_code);
-  return error_code ? std::filesystem::path(path).lexically_normal().generic_string()
-                    : canonical.generic_string();
+  std::string reason;
+  state.source.package = try_open_asset_package(bytes, reason);
+  if (!state.source.package)
+    fatal_error("assets: {} {} — rebuild it with asset_pack --package", what, reason);
+
+  log_terminal("assets: mounted {} ({} entries, {} bytes)", what,
+               state.source.package->entry_count, bytes.size());
 }
 
 } // namespace
 
+void mount_asset_source()
+{
+  asset_state_t &state = state_for("mount_asset_source");
+  if (state.source.mounted)
+    return;
+
+#if defined(TILDE_ASSET_SOURCE_EMBED)
+
+  open_package_or_die(state, embedded_asset_package(), "the embedded asset package");
+
+#elif defined(TILDE_ASSET_SOURCE_PKG)
+
+  const char *from_environment = getenv(ASSET_PACKAGE_ENV_VARIABLE);
+  const std::string package_path =
+      from_environment != nullptr ? from_environment : ASSET_PACKAGE_FILENAME;
+
+  std::ifstream file(package_path, std::ios::binary | std::ios::ate);
+  if (!file.is_open())
+  {
+    char working_directory[512] = {};
+    if (!getcwd(working_directory, sizeof(working_directory)))
+      working_directory[0] = '?';
+    fatal_error("assets: no '{}' under the working directory '{}' — a pkg build carries its "
+                "assets in that one file (set {} to move it)",
+                package_path, working_directory, ASSET_PACKAGE_ENV_VARIABLE);
+  }
+
+  const std::streamoff size = file.tellg();
+  file.seekg(0, std::ios::beg);
+  state.source.package_storage.resize((size_t)std::max<std::streamoff>(size, 0));
+  if (size > 0 &&
+      !file.read(reinterpret_cast<char *>(state.source.package_storage.data()), size))
+    fatal_error("assets: short read on '{}' ({} bytes expected)", package_path, (uint64_t)size);
+
+  open_package_or_die(state, Span<const uint8_t>(state.source.package_storage), package_path.c_str());
+
+#else
+
+  // Loose mode: paths are spelled from the project root, so the working
+  // directory IS the mount. Checking it here is what turns "launched from the
+  // wrong directory" into one message rather than a fatal on whichever asset
+  // loaded first, which reads as a missing file and sends you looking at the
+  // file.
+  std::error_code error_code;
+  if (!std::filesystem::is_directory("resources", error_code))
+  {
+    char working_directory[512] = {};
+    if (!getcwd(working_directory, sizeof(working_directory)))
+      working_directory[0] = '?';
+    fatal_error("assets: no 'resources' directory under the working directory '{}' — the asset "
+                "source is mounted at the project root and every path is spelled from there",
+                working_directory);
+  }
+
+#endif
+
+  state.source.mounted = true;
+}
+
+Span<const uint8_t> read_asset_bytes(const char *path)
+{
+  asset_state_t &state = state_for("read_asset_bytes");
+  if (!state.source.mounted)
+    fatal_error("assets: read_asset_bytes('{}') before assets::mount_asset_source() — nothing "
+                "knows where the bytes come from yet",
+                path);
+
+  const std::string key = asset_cache_key(path);
+
+  if (state.source.package)
+  {
+    const std::optional<Span<const uint8_t>> found =
+        try_find_asset_in_package(*state.source.package, key.c_str());
+    if (!found)
+      fatal_error("assets: '{}' is not in the asset package. A path is spelled one way, relative "
+                  "to the project root -- there is no candidate list, and the package was built "
+                  "from the same walk that minted the ids",
+                  key);
+    return *found;
+  }
+
+  auto existing = state.source.blobs.find(key);
+  if (existing != state.source.blobs.end())
+    return Span<const uint8_t>(existing->second);
+
+  std::ifstream file(key, std::ios::binary | std::ios::ate);
+  if (!file.is_open())
+    fatal_error("assets: '{}' is not there. A path in the asset system is spelled one way, "
+                "relative to the project root -- there is no candidate list",
+                key);
+
+  const std::streamoff size = file.tellg();
+  if (size < 0)
+    fatal_error("assets: '{}' is there but its size could not be read", key);
+  file.seekg(0, std::ios::beg);
+
+  std::vector<uint8_t> bytes((size_t)size);
+  if (size > 0 && !file.read(reinterpret_cast<char *>(bytes.data()), size))
+    fatal_error("assets: short read on '{}' ({} bytes expected)", key, (uint64_t)size);
+
+  const std::vector<uint8_t> &stored = state.source.blobs.emplace(key, std::move(bytes)).first->second;
+  return Span<const uint8_t>(stored);
+}
+
 asset_handle_t<skeleton_t> load_skeleton(const char *path)
 {
   asset_state_t &state = state_for("load_skeleton");
-  std::string key = canonical_cache_key(path);
+  std::string key = asset_cache_key(path);
 
-  asset_handle_t<skeleton_t> existing = state.skeletons.find(key.c_str());
+  asset_handle_t<skeleton_t> existing = state.path_referenced.skeletons.find(key.c_str());
   if (existing.valid())
     return existing;
 
   skeleton_t skeleton;
-  if (!models::parse_skeleton_file(path, skeleton))
-    return {};
+  if (!models::parse_skeleton(read_asset_bytes(key.c_str()), key.c_str(), skeleton))
+    fatal_error("skeleton '{}' is there but did not parse", key);
 
-  printf("[assets] Loaded skeleton '%s': %zu bones, hash %016llx\n", path,
+  printf("[assets] Loaded skeleton '%s': %zu bones, hash %016llx\n", key.c_str(),
          skeleton.bones.size(), (unsigned long long)skeleton.hash);
-  return state.skeletons.add(key.c_str(), std::move(skeleton));
+  return state.path_referenced.skeletons.add(key.c_str(), std::move(skeleton));
 }
 
-asset_handle_t<animation_clip_t> load_animation(const char *path)
+animation_asset_t decode_animation(Span<const uint8_t> bytes, const char *key)
 {
-  asset_state_t &state = state_for("load_animation");
-  std::string key = canonical_cache_key(path);
-
-  asset_handle_t<animation_clip_t> existing = state.animations.find(key.c_str());
-  if (existing.valid())
-    return existing;
-
-  animation_clip_t clip;
-  if (!models::parse_animation_file(path, clip))
-    return {};
+  animation_asset_t clip;
+  if (!models::parse_animation(bytes, key, clip))
+    fatal_error("animation '{}' is there but did not parse", key);
 
   // Same sibling-by-bare-name rule as a `.mesh`, and the same reason to check:
   // the clip's bone index IS the skeleton's, so a clip played against the wrong
   // skeleton revision does not fail, it animates the wrong limbs.
   std::filesystem::path skeleton_path =
-      std::filesystem::path(path).parent_path() / (clip.skeleton_name + ".skeleton");
+      std::filesystem::path(key).parent_path() / (clip.skeleton_name + ".skeleton");
 
-  asset_handle_t<skeleton_t> skeleton_handle = load_skeleton(skeleton_path.string().c_str());
-  const skeleton_t          *skeleton        = get(skeleton_handle);
-  if (!skeleton)
-  {
-    log_error("animation '{}' names skeleton '{}', which did not load from '{}'", path,
-              clip.skeleton_name, skeleton_path.string());
-    return {};
-  }
+  const skeleton_t *skeleton = get(load_skeleton(skeleton_path.string().c_str()));
 
   if (skeleton->hash != clip.skeleton_hash)
-  {
-    log_error("animation '{}' was authored against skeleton hash {:016x}, but '{}' hashes to "
-              "{:016x}; re-export the clip, or the two disagree about which bone is bone 7",
-              path, clip.skeleton_hash, skeleton_path.string(), skeleton->hash);
-    return {};
-  }
+    fatal_error("animation '{}' was authored against skeleton hash {:016x}, but '{}' hashes to "
+                "{:016x}; re-export the clip, or the two disagree about which bone is bone 7",
+                key, clip.skeleton_hash, skeleton_path.string(), skeleton->hash);
 
   // The parser bounds the bone count by MAX_BONES; the real bound is this
   // skeleton's, and a clip that poses a different number of bones cannot be
   // walked against it at all.
   if (clip.bone_count != skeleton->bones.size())
-  {
-    log_error("animation '{}' poses {} bones but skeleton '{}' has {}", path, clip.bone_count,
-              clip.skeleton_name, skeleton->bones.size());
-    return {};
-  }
+    fatal_error("animation '{}' poses {} bones but skeleton '{}' has {}", key, clip.bone_count,
+                clip.skeleton_name, skeleton->bones.size());
 
-  printf("[assets] Loaded animation '%s': %u frame(s) over %u bones, skeleton '%s'\n", path,
+  printf("[assets] Loaded animation '%s': %u frame(s) over %u bones, skeleton '%s'\n", key,
          clip.frame_count(), clip.bone_count, clip.skeleton_name.c_str());
-  return state.animations.add(key.c_str(), std::move(clip));
+  return clip;
 }
 
 namespace
@@ -947,36 +677,27 @@ namespace
 // disagree. The mesh names its skeleton by BARE NAME and the file sits beside
 // it, which is the whole resolution rule -- a skeleton is shared by the meshes
 // bound to it, so it is a sibling, not a path a level author types.
-bool load_skinned_mesh(const char *path, mesh_asset_t &out)
+void load_skinned_mesh(Span<const uint8_t> bytes, const char *path, mesh_asset_t &out)
 {
   models::skeleton_reference_t reference;
-  if (!models::parse_mesh_file(path, out, reference))
-    return false;
+  if (!models::parse_mesh(bytes, path, out, reference))
+    fatal_error("mesh '{}' did not parse", path);
 
   if (reference.skeleton_name.empty())
-    return true; // static .mesh: no skin, nothing to agree with
+    return; // static .mesh: no skin, nothing to agree with
 
   std::filesystem::path skeleton_path =
       std::filesystem::path(path).parent_path() / (reference.skeleton_name + ".skeleton");
 
   asset_handle_t<skeleton_t> skeleton_handle = load_skeleton(skeleton_path.string().c_str());
   const skeleton_t          *skeleton        = get(skeleton_handle);
-  if (!skeleton)
-  {
-    log_error("mesh '{}' names skeleton '{}', which did not load from '{}'", path,
-              reference.skeleton_name, skeleton_path.string());
-    return false;
-  }
 
   // Same shape as the SCHEMA_HASH connect handshake: report BOTH, because the
   // question is always "which of these two is stale".
   if (skeleton->hash != reference.skeleton_hash)
-  {
-    log_error("mesh '{}' was skinned against skeleton hash {:016x}, but '{}' hashes to {:016x}; "
-              "re-export the mesh, or the two disagree about which bone is bone 7",
-              path, reference.skeleton_hash, skeleton_path.string(), skeleton->hash);
-    return false;
-  }
+    fatal_error("mesh '{}' was skinned against skeleton hash {:016x}, but '{}' hashes to {:016x}; "
+                "re-export the mesh, or the two disagree about which bone is bone 7",
+                path, reference.skeleton_hash, skeleton_path.string(), skeleton->hash);
 
   // The parser can only bound bone indices by MAX_BONES; the real bound is this
   // skeleton's bone count, and it is only knowable here.
@@ -987,17 +708,13 @@ bool load_skinned_mesh(const char *path, mesh_asset_t &out)
     for (uint32_t slot = 0; slot < MAX_BONE_INFLUENCES_PER_VERTEX; ++slot)
     {
       if (influences.bone_indices[slot] >= bone_count)
-      {
-        log_error("mesh '{}' vertex {} names bone {}, but skeleton '{}' has {} bones", path,
-                  vertex_index, influences.bone_indices[slot], reference.skeleton_name,
-                  bone_count);
-        return false;
-      }
+        fatal_error("mesh '{}' vertex {} names bone {}, but skeleton '{}' has {} bones", path,
+                    vertex_index, influences.bone_indices[slot], reference.skeleton_name,
+                    bone_count);
     }
   }
 
   out.skeleton = skeleton_handle;
-  return true;
 }
 
 // material_t::texture_path is the on-disk identity written by the exporter;
@@ -1006,8 +723,9 @@ bool load_skinned_mesh(const char *path, mesh_asset_t &out)
 // than looked up per draw.
 //
 // A material that names no texture is legitimate (a flat-colour material), so
-// it is silent. A material that names one that does not load is NOT -- that is
-// a broken asset, and it says so here rather than quietly drawing untextured.
+// it is silent. A material that names one that is not there is NOT -- that is a
+// broken asset, and load_texture dies on it rather than quietly drawing
+// untextured.
 void resolve_material_textures(const char *mesh_path, mesh_asset_t &mesh)
 {
   for (material_t &material : mesh.materials)
@@ -1015,70 +733,71 @@ void resolve_material_textures(const char *mesh_path, mesh_asset_t &mesh)
     if (material.texture_path.empty())
       continue;
 
+    if (!asset_exists(material.texture_path.c_str()))
+      fatal_error("mesh '{}' material '{}' names texture '{}', which is not there", mesh_path,
+                  material.name, material.texture_path);
+
     material.texture = load_texture(material.texture_path.c_str());
-    if (!material.texture.valid())
-      log_error("mesh '{}' material '{}' names texture '{}', which failed to load", mesh_path,
-                material.name, material.texture_path);
   }
 }
 
 } // namespace
 
-asset_handle_t<mesh_asset_t> load_mesh(const char *path)
+namespace
 {
-  asset_state_t &state = state_for("load_mesh");
-  // Check cache first (by resolved key if previously loaded).
-  auto existing = state.meshes.find(path);
-  if (existing.valid())
-    return existing;
 
-  std::string resolved = resolve_mesh_path(path);
-  if (resolved.empty())
-    return {};
-
-  // Check cache again by resolved path (covers alias cases).
-  existing = state.meshes.find(resolved.c_str());
-  if (existing.valid())
-    return existing;
-
-  mesh_asset_t mesh;
-  if (path_has_extension(resolved, ".mesh"))
-  {
-    if (!load_skinned_mesh(resolved.c_str(), mesh))
-      return {};
-  }
-  else if (!load_obj(resolved.c_str(), mesh))
-  {
-    printf("[assets] ERROR: File exists but failed to parse OBJ: '%s'\n", resolved.c_str());
-    return {};
-  }
-
-  resolve_material_textures(resolved.c_str(), mesh);
-
-  printf("[assets] Loaded mesh '%s': %zu verts, %zu indices%s\n",
-         resolved.c_str(), mesh.vertices.size(), mesh.indices.size(),
-         mesh.is_skinned() ? " (skinned)" : "");
-  return state.meshes.add(resolved.c_str(), std::move(mesh));
+void report_loaded_mesh(const char *key, const mesh_asset_t &mesh)
+{
+  printf("[assets] Loaded mesh '%s': %zu verts, %zu indices%s\n", key, mesh.vertices.size(),
+         mesh.indices.size(), mesh.is_skinned() ? " (skinned)" : "");
 }
 
-asset_handle_t<texture_asset_t> load_texture(const char *path)
-{
-  asset_state_t &state = state_for("load_texture");
-  // Return cached if already loaded
-  auto existing = state.textures.find(path);
-  if (existing.valid())
-    return existing;
+} // namespace
 
+// --- The decoders -----------------------------------------------------------
+//
+// One per EXTENSION, referenced by name from the generated bindings, which is
+// what makes a new extension a link error rather than a silent fallthrough.
+// None takes a try_ prefix and none can fail: a file the manifest names is
+// either there and parses, or the install is broken.
+
+mesh_asset_t decode_mesh(Span<const uint8_t> bytes, const char *key)
+{
+  mesh_asset_t mesh;
+  load_skinned_mesh(bytes, key, mesh);
+  resolve_material_textures(key, mesh);
+  report_loaded_mesh(key, mesh);
+  return mesh;
+}
+
+mesh_asset_t decode_obj(Span<const uint8_t> bytes, const char *key)
+{
+  mesh_asset_t mesh;
+  if (!load_obj(bytes, key, mesh))
+    fatal_error("mesh '{}' is there but did not parse as OBJ", key);
+  resolve_material_textures(key, mesh);
+  report_loaded_mesh(key, mesh);
+  return mesh;
+}
+
+namespace
+{
+
+// stb_image sniffs the format out of the bytes rather than off the name, so the
+// two decoders below are one function. They are still TWO SYMBOLS, because the
+// extension set is what the generated loader dispatches on and what a new
+// format has to reach -- collapsing them into one would put back the runtime
+// question ("does this loader accept a .tga?") that the class table answers.
+texture_asset_t decode_image(Span<const uint8_t> bytes, const char *key)
+{
   int w, h, ch;
   // Always force RGBA so every texture has a uniform 4-byte stride.
   // Single-channel maps (roughness, metallic, ao) get their data in the R channel;
   // the shader samples .r which is correct regardless of the padding.
-  unsigned char *pixels = stbi_load(path, &w, &h, &ch, STBI_rgb_alpha);
+  unsigned char *pixels =
+      stbi_load_from_memory(bytes.data, (int)bytes.size(), &w, &h, &ch, STBI_rgb_alpha);
   if (!pixels)
-  {
-    printf("[assets] failed to load texture: %s\n", path);
-    return {};
-  }
+    fatal_error("texture '{}' did not decode: {}", key, stbi_failure_reason());
 
   texture_asset_t tex;
   tex.width = w;
@@ -1087,264 +806,330 @@ asset_handle_t<texture_asset_t> load_texture(const char *path)
   tex.pixels.assign(pixels, pixels + (w * h * 4));
   stbi_image_free(pixels);
 
-  printf("[assets] loaded texture: %s (%dx%d, %d->4 channels)\n", path, w, h, ch);
-  return state.textures.add(path, std::move(tex));
+  printf("[assets] loaded texture: %s (%dx%d, %d->4 channels)\n", key, w, h, ch);
+  return tex;
 }
+
+} // namespace
+
+texture_asset_t decode_png(Span<const uint8_t> bytes, const char *key)
+{
+  return decode_image(bytes, key);
+}
+
+texture_asset_t decode_tga(Span<const uint8_t> bytes, const char *key)
+{
+  return decode_image(bytes, key);
+}
+
+// A sound asset is its path: miniaudio's resource manager owns the samples, and
+// the bytes are read here so they are resident (and process-lifetime stable)
+// before the audio system registers them against this same key.
+sound_asset_t decode_wav(Span<const uint8_t> bytes, const char *key)
+{
+  printf("[assets] loaded sound: %s (%u bytes)\n", key, bytes.size());
+  return sound_asset_t{std::string(key)};
+}
+
+// A font asset is the file. Baking needs a pixel height, which is a call-site
+// parameter rather than a property of the asset, and the atlas it produces
+// belongs to the client.
+font_asset_t decode_ttf(Span<const uint8_t> bytes, const char *key)
+{
+  printf("[assets] loaded font: %s (%u bytes)\n", key, bytes.size());
+  return font_asset_t{bytes};
+}
+
+// The one decoder that RESOLVES rather than just parses: a .hitboxes file names
+// its bones by name and its skeleton as a bare sibling, exactly like a .mesh, so
+// the loaded form only exists against that skeleton. The hash check between the
+// two halves is the same one a .mesh does -- bone indices are the skeleton's, so
+// a stale rig sizes volumes for whatever limb now occupies the index.
+hitbox_rig_t decode_hitboxes(Span<const uint8_t> bytes, const char *key)
+{
+  std::optional<hitbox_rig_file_t> parsed = models::try_parse_hitbox_rig(bytes, key);
+  if (!parsed)
+    fatal_error("hit volumes '{}' are there but did not parse", key);
+
+  const std::filesystem::path skeleton_path =
+      std::filesystem::path(key).parent_path() / (parsed->skeleton_name + ".skeleton");
+  const skeleton_t *skeleton = get(load_skeleton(skeleton_path.string().c_str()));
+
+  if (parsed->skeleton_hash != skeleton->hash)
+    fatal_error("hit volumes '{}' were authored against skeleton hash {:016x}, but '{}' hashes "
+                "to {:016x}; re-derive the rig",
+                key, parsed->skeleton_hash, skeleton_path.string(), skeleton->hash);
+
+  std::optional<hitbox_rig_t> rig = try_resolve_hitbox_rig(*parsed, *skeleton);
+  if (!rig)
+    fatal_error("hit volumes '{}' name bones that skeleton '{}' does not have", key,
+                skeleton->name);
+
+  printf("[assets] loaded hitbox rig: %s (%zu volumes)\n", key, rig->volumes.size());
+  return std::move(*rig);
+}
+
+// --- The placeholders -------------------------------------------------------
+//
+// Id 0 of every class, compiled in rather than loaded. That is the whole job of
+// a placeholder: it cannot itself be missing, so `get_<class>` always has
+// something to fall back to and every handle this system hands out is valid.
+
+namespace
+{
+
+void append_box(mesh_asset_t &mesh, vec3f center, vec3f half_extents)
+{
+  const vec3f corners[8] = {
+      {center.x - half_extents.x, center.y - half_extents.y, center.z - half_extents.z},
+      {center.x + half_extents.x, center.y - half_extents.y, center.z - half_extents.z},
+      {center.x + half_extents.x, center.y + half_extents.y, center.z - half_extents.z},
+      {center.x - half_extents.x, center.y + half_extents.y, center.z - half_extents.z},
+      {center.x - half_extents.x, center.y - half_extents.y, center.z + half_extents.z},
+      {center.x + half_extents.x, center.y - half_extents.y, center.z + half_extents.z},
+      {center.x + half_extents.x, center.y + half_extents.y, center.z + half_extents.z},
+      {center.x - half_extents.x, center.y + half_extents.y, center.z + half_extents.z},
+  };
+
+  struct face_t
+  {
+    int   corner[4];
+    vec3f normal;
+  };
+  const face_t faces[6] = {
+      {{0, 1, 2, 3}, {0, 0, -1}}, {{5, 4, 7, 6}, {0, 0, 1}},  {{4, 0, 3, 7}, {-1, 0, 0}},
+      {{1, 5, 6, 2}, {1, 0, 0}},  {{4, 5, 1, 0}, {0, -1, 0}}, {{3, 2, 6, 7}, {0, 1, 0}},
+  };
+
+  for (const face_t &face : faces)
+  {
+    const uint32_t base = (uint32_t)mesh.vertices.size();
+    for (int which = 0; which < 4; ++which)
+    {
+      vertex_xnu vertex;
+      vertex.position = corners[face.corner[which]];
+      vertex.normal   = face.normal;
+      vertex.uv       = {which & 1 ? 1.0f : 0.0f, which & 2 ? 1.0f : 0.0f};
+      mesh.vertices.push_back(vertex);
+    }
+    mesh.indices.insert(mesh.indices.end(),
+                        {base, base + 1, base + 2, base, base + 2, base + 3});
+  }
+}
+
+} // namespace
+
+// A question mark, built out of boxes. It replaces resources/obj/Error.obj as
+// the placeholder -- that file is still there and is still an asset, but a
+// placeholder that is a FILE can be the thing that is missing, which is the one
+// failure a placeholder exists to make impossible.
+mesh_asset_t make_missing_mesh()
+{
+  mesh_asset_t mesh;
+  const float  depth = 0.08f;
+
+  append_box(mesh, {0.00f, 0.38f, 0.0f}, {0.16f, 0.07f, depth});  // top bar
+  append_box(mesh, {-0.16f, 0.28f, 0.0f}, {0.07f, 0.10f, depth}); // upper left
+  append_box(mesh, {0.16f, 0.22f, 0.0f}, {0.07f, 0.16f, depth});  // upper right
+  append_box(mesh, {0.05f, 0.06f, 0.0f}, {0.18f, 0.07f, depth});  // the turn
+  append_box(mesh, {0.00f, -0.10f, 0.0f}, {0.07f, 0.16f, depth}); // stem
+  append_box(mesh, {0.00f, -0.36f, 0.0f}, {0.08f, 0.08f, depth}); // dot
+
+  return mesh;
+}
+
+// Magenta and black, the colour nothing in this game is on purpose.
+texture_asset_t make_missing_texture()
+{
+  constexpr int32_t SIZE  = 16;
+  constexpr int32_t CHECK = 4;
+
+  texture_asset_t texture;
+  texture.width    = SIZE;
+  texture.height   = SIZE;
+  texture.channels = 4;
+  texture.pixels.resize((size_t)SIZE * SIZE * 4);
+
+  for (int32_t y = 0; y < SIZE; ++y)
+  {
+    for (int32_t x = 0; x < SIZE; ++x)
+    {
+      const bool     magenta = ((x / CHECK) + (y / CHECK)) % 2 == 0;
+      uint8_t *const pixel   = &texture.pixels[((size_t)y * SIZE + x) * 4];
+      pixel[0]               = magenta ? 255 : 0;
+      pixel[1]               = 0;
+      pixel[2]               = magenta ? 255 : 0;
+      pixel[3]               = 255;
+    }
+  }
+
+  return texture;
+}
+
+// The remaining four have no visible form to stand in for -- a silent sound and
+// an empty clip ARE the placeholder. They exist so that every class has a valid
+// handle at id 0 and `get_<class>` has the same shape everywhere.
+sound_asset_t     make_missing_sound() { return {}; }
+animation_asset_t make_missing_animation() { return {}; }
+hitbox_rig_t      make_missing_hitbox_rig() { return {}; }
+font_asset_t      make_missing_font() { return {}; }
 
 const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle)
 {
   asset_state_t &state = state_for("get(mesh)");
-  return state.meshes.get(handle);
+  return state.mesh_asset_pool.get(handle);
 }
 
 asset_handle_t<mesh_asset_t> find_mesh_in_cache(const char *path)
 {
   asset_state_t &state = state_for("find_mesh_in_cache");
-  return state.meshes.find(path);
+  return state.mesh_asset_pool.find(path);
 }
 
 mesh_asset_t *get_mutable(asset_handle_t<mesh_asset_t> handle)
 {
   asset_state_t &state = state_for("get_mutable");
-  if (!handle.valid() || handle.index >= state.meshes.items.size())
+  if (!handle.valid() || handle.index >= state.mesh_asset_pool.items.size())
     return nullptr;
-  return &state.meshes.items[handle.index];
+  return &state.mesh_asset_pool.items[handle.index];
 }
 
 asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path,
                                                     mesh_asset_t &&mesh)
 {
   asset_state_t &state = state_for("register_dynamic_mesh");
-  auto existing = state.meshes.find(path);
+  auto existing = state.mesh_asset_pool.find(path);
   if (existing.valid())
     return existing;
-  return state.meshes.add(path, std::move(mesh));
+  return state.mesh_asset_pool.add(path, std::move(mesh));
 }
 
 asset_handle_t<texture_asset_t> find_texture_in_cache(const char *path)
 {
   asset_state_t &state = state_for("find_texture_in_cache");
-  return state.textures.find(path);
+  return state.texture_asset_pool.find(path);
 }
 
 asset_handle_t<texture_asset_t> register_dynamic_texture(const char *path,
                                                          texture_asset_t &&texture)
 {
   asset_state_t &state = state_for("register_dynamic_texture");
-  auto existing = state.textures.find(path);
+  auto existing = state.texture_asset_pool.find(path);
   if (existing.valid())
     return existing;
-  return state.textures.add(path, std::move(texture));
+  return state.texture_asset_pool.add(path, std::move(texture));
 }
 
 const texture_asset_t *get(asset_handle_t<texture_asset_t> handle)
 {
   asset_state_t &state = state_for("get(texture)");
-  return state.textures.get(handle);
+  return state.texture_asset_pool.get(handle);
 }
 
-const animation_clip_t *get(asset_handle_t<animation_clip_t> handle)
+const animation_asset_t *get(asset_handle_t<animation_asset_t> handle)
 {
   asset_state_t &state = state_for("get(animation)");
-  return state.animations.get(handle);
+  return state.animation_asset_pool.get(handle);
 }
 
 const skeleton_t *get(asset_handle_t<skeleton_t> handle)
 {
   asset_state_t &state = state_for("get(skeleton)");
-  return state.skeletons.get(handle);
+  return state.path_referenced.skeletons.get(handle);
 }
 
 const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle)
 {
   asset_state_t &state = state_for("get(pbr_material)");
-  return state.pbr_materials.get(handle);
+  return state.path_referenced.pbr_materials.get(handle);
+}
+
+const sound_asset_t *get(asset_handle_t<sound_asset_t> handle)
+{
+  asset_state_t &state = state_for("get(sound)");
+  return state.sound_asset_pool.get(handle);
+}
+
+const font_asset_t *get(asset_handle_t<font_asset_t> handle)
+{
+  asset_state_t &state = state_for("get(font)");
+  return state.font_asset_pool.get(handle);
+}
+
+const hitbox_rig_t *get(asset_handle_t<hitbox_rig_t> handle)
+{
+  asset_state_t &state = state_for("get(hitbox_rig)");
+  return state.hitbox_rig_pool.get(handle);
 }
 
 asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
 {
   asset_state_t &state = state_for("load_pbr_material");
-  auto existing = state.pbr_materials.find(folder_path);
+  const std::string folder = asset_cache_key(folder_path);
+
+  asset_handle_t<pbr_material_asset_t> existing = state.path_referenced.pbr_materials.find(folder.c_str());
   if (existing.valid())
     return existing;
 
-  std::string folder(folder_path);
-
-  auto try_load = [&](const char *filename) -> asset_handle_t<texture_asset_t>
+  // The one place a probe is the right shape: a folder legitimately carries
+  // only some of the six maps, so ABSENCE is an answer here rather than a
+  // failure. A map that is present and will not decode still dies in
+  // load_texture, which is the difference the two spellings exist to draw.
+  auto load_optional_map = [&](const char *filename) -> asset_handle_t<texture_asset_t>
   {
     std::string full_path = folder + "/" + filename;
-    auto handle = load_texture(full_path.c_str());
-    if (!handle.valid())
-      printf("[assets] pbr_material: missing optional map '%s'\n", full_path.c_str());
-    return handle;
+    if (!asset_exists(full_path.c_str()))
+    {
+      printf("[assets] pbr_material: no '%s'\n", full_path.c_str());
+      return {};
+    }
+    return load_texture(full_path.c_str());
   };
 
   pbr_material_asset_t mat;
-  mat.albedo            = try_load("albedo.png");
-  mat.normal            = try_load("normal.png");
-  mat.roughness         = try_load("roughness.png");
-  mat.ambient_occlusion = try_load("ao.png");
-  mat.metallic          = try_load("metallic.png");
-  mat.height            = try_load("height.png");
+  mat.albedo            = load_optional_map("albedo.png");
+  mat.normal            = load_optional_map("normal.png");
+  mat.roughness         = load_optional_map("roughness.png");
+  mat.ambient_occlusion = load_optional_map("ao.png");
+  mat.metallic          = load_optional_map("metallic.png");
+  mat.height            = load_optional_map("height.png");
 
-  printf("[assets] loaded pbr_material from folder: %s\n", folder_path);
-  return state.pbr_materials.add(folder_path, std::move(mat));
+  printf("[assets] loaded pbr_material from folder: %s\n", folder.c_str());
+  return state.path_referenced.pbr_materials.add(folder.c_str(), std::move(mat));
 }
 
-bool compute_mesh_bounds(const mesh_asset_t *mesh, vec3f &out_min, vec3f &out_max)
+shared::aabb_bounds_t compute_mesh_bounds(const mesh_asset_t *mesh)
 {
   if (!mesh || mesh->vertices.empty())
-    return false;
+    return {{0, 0, 0}, {0, 0, 0}};
 
-  out_min = mesh->vertices[0].position;
-  out_max = mesh->vertices[0].position;
+  shared::aabb_bounds_t bounds{mesh->vertices[0].position, mesh->vertices[0].position};
 
-  for (const auto &v : mesh->vertices)
+  for (const vertex_xnu &v : mesh->vertices)
   {
-    out_min.x = std::min(out_min.x, v.position.x);
-    out_min.y = std::min(out_min.y, v.position.y);
-    out_min.z = std::min(out_min.z, v.position.z);
-    out_max.x = std::max(out_max.x, v.position.x);
-    out_max.y = std::max(out_max.y, v.position.y);
-    out_max.z = std::max(out_max.z, v.position.z);
+    bounds.min.x = std::min(bounds.min.x, v.position.x);
+    bounds.min.y = std::min(bounds.min.y, v.position.y);
+    bounds.min.z = std::min(bounds.min.z, v.position.z);
+    bounds.max.x = std::max(bounds.max.x, v.position.x);
+    bounds.max.y = std::max(bounds.max.y, v.position.y);
+    bounds.max.z = std::max(bounds.max.z, v.position.z);
   }
 
-  return true;
+  return bounds;
 }
 
 // --- The manifest ---
-
-namespace
-{
-
-// The generator keys for the procedural meshes. This is the ONE place a
-// generator key is still a string, and it is a lookup inside the asset system
-// rather than something a call site says -- which is what killed the
-// "__primitive_" prefix and its seven strncmp dispatch sites.
-mesh_asset_t generate_mesh_for_key(const char *key)
-{
-  if (std::strcmp(key, "box") == 0)      return generate_box_mesh();
-  if (std::strcmp(key, "arrow") == 0)    return generate_arrow_mesh();
-  if (std::strcmp(key, "sphere") == 0)   return generate_sphere_mesh(16, 16);
-  if (std::strcmp(key, "cylinder") == 0) return generate_cylinder_mesh(16);
-  if (std::strcmp(key, "cone") == 0)     return generate_cone_mesh(16);
-  if (std::strcmp(key, "wedge") == 0)    return generate_wedge_mesh();
-
-  log_error("assets: the manifest names a procedural mesh \"{}\" that no generator "
-            "produces — that id will resolve to the placeholder",
-            key);
-  return {};
-}
-
-} // namespace
+//
+// register_all is GENERATED (assets/generated/assets_bindings.cpp): one loop
+// per class, over the manifest asset_pack wrote, calling the decoders and
+// placeholders above by name. There is no switch here and no per-class line --
+// which is the same decision entity_system_def.md settled when make_entity_pool
+// was deleted, for the same reason: a hand-written registration list is that
+// switch reincarnated, and it is the one a new asset kind can be half-added to.
 
 void init()
 {
-  asset_state_t &state = state_for("init");
-  if (state.manifest_initialized)
-    return;
-  state.manifest_initialized = true;
-
-  const Span<const asset_info_t> meshes = mesh_asset_manifest();
-  for (uint32_t index = 0; index < meshes.size(); ++index)
-  {
-    const asset_info_t &info = meshes[index];
-
-    switch (info.source_kind)
-    {
-      case ASSET_SOURCE_FILE:
-        state.mesh_handles[index] = load_mesh(info.source);
-        if (!state.mesh_handles[index].valid())
-          log_error("assets: mesh \"{}\" could not be loaded from \"{}\"", info.name, info.source);
-        break;
-
-      case ASSET_SOURCE_PROCEDURAL:
-        state.mesh_handles[index] =
-            state.meshes.add(info.name, generate_mesh_for_key(info.source));
-        break;
-
-      case ASSET_SOURCE_MISSING:
-        // Not a skip: an id with no source is a hole in the manifest, and every
-        // Render field that names it will draw the placeholder instead.
-        log_error("assets: mesh \"{}\" (id {}) has no source in the manifest", info.name, index);
-        break;
-    }
-  }
-
-  const Span<const asset_info_t> sprites = sprite_asset_manifest();
-  for (uint32_t index = 0; index < sprites.size(); ++index)
-  {
-    const asset_info_t &info = sprites[index];
-
-    switch (info.source_kind)
-    {
-      case ASSET_SOURCE_FILE:
-        state.sprite_handles[index] = load_texture(info.source);
-        if (!state.sprite_handles[index].valid())
-          log_error("assets: sprite \"{}\" could not be loaded from \"{}\"", info.name,
-                    info.source);
-        break;
-
-      case ASSET_SOURCE_PROCEDURAL:
-        log_error("assets: sprite \"{}\" is declared procedural, but no sprite generator "
-                  "exists — that id will resolve to nothing",
-                  info.name);
-        break;
-
-      case ASSET_SOURCE_MISSING:
-        // sprite_asset has no placeholder today (there is no error.png), so
-        // slot 0 legitimately has no source. Reported rather than skipped, per
-        // the rule that nothing here fails silently.
-        log_error("assets: sprite \"{}\" (id {}) has no source in the manifest", info.name,
-                  index);
-        break;
-    }
-  }
-
-  printf("[assets] manifest registered: %u meshes, %u sprites\n", meshes.size(), sprites.size());
-}
-
-asset_handle_t<mesh_asset_t> get_mesh(mesh_asset id)
-{
-  asset_state_t &state = state_for("get_mesh");
-  if (!state.manifest_initialized)
-  {
-    log_error("assets: get_mesh called before assets::init() — registration is eager and "
-              "must run first");
-    return {};
-  }
-
-  const uint32_t index = (uint32_t)id;
-  if (index >= mesh_asset_COUNT)
-  {
-    log_error("assets: mesh id {} is outside the manifest", index);
-    return state.mesh_handles[(uint32_t)mesh_asset::Missing];
-  }
-
-  if (!state.mesh_handles[index].valid())
-    return state.mesh_handles[(uint32_t)mesh_asset::Missing];
-
-  return state.mesh_handles[index];
-}
-
-asset_handle_t<texture_asset_t> get_sprite(sprite_asset id)
-{
-  asset_state_t &state = state_for("get_sprite");
-  if (!state.manifest_initialized)
-  {
-    log_error("assets: get_sprite called before assets::init() — registration is eager and "
-              "must run first");
-    return {};
-  }
-
-  const uint32_t index = (uint32_t)id;
-  if (index >= sprite_asset_COUNT)
-  {
-    log_error("assets: sprite id {} is outside the manifest", index);
-    return {};
-  }
-
-  return state.sprite_handles[index];
+  register_all(state_for("init"));
 }
 
 } // namespace assets

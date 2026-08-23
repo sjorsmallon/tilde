@@ -6,6 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-ftime-trace)
+    # SDL_endian.h defines _m_prefetch itself, guarded by clang's own
+    # prfchwintrin.h include guard. Clang 19+ has _m_prefetch as a BUILTIN, so
+    # that definition is now an error in C++ (a warning in C, which is why SDL's
+    # own C build is unaffected and only our C++ TUs broke). Predefining the
+    # guard is the escape hatch the guard exists to provide, and the builtin is
+    # what supplies _m_prefetch instead. Still present in SDL 2.32.10, so there
+    # is no version to bump to -- and it is ABOVE the FetchContent blocks
+    # because imgui's SDL2 backend is a C++ TU declared by one of them.
+    add_compile_options(-D__PRFCHWINTRIN_H)
 endif()
 # Configure output directories for binaries (so DLLs and EXEs end up in same place)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -130,8 +139,12 @@ endif()
 # The schema compiler: parses every .def file and emits the constexpr tables and
 # plain structs the game reads. Standalone, no project dependencies. Inspect the
 # parsed IR without writing anything with:
-#   ./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def --dump
+#   ./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def #       --asset-manifest src/shared/assets/generated/assets.manifest --dump
 add_executable(def_gen src/tools/def_gen.cpp)
+
+# The asset walker: one walk of resources/, producing the manifest def_gen
+# reads. Allowed project knowledge (an extension table); def_gen has none.
+add_executable(asset_pack src/tools/asset_pack.cpp src/shared/asset_package.cpp)
 
 # Generated structs and tables. These land in the source tree rather than the
 # build dir, on purpose: they are meant to be readable, opened without building,
@@ -144,13 +157,16 @@ set(ENTITY_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entities_generated.hpp)
 set(ENTITY_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entities_generated.cpp)
 file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
 
-# The asset manifest. entities.def `import`s this file, so def_gen reads it
-# twice in one run -- once as its own input (which is what emits it) and once
-# through the import (which only resolves mesh_asset as a field type).
-set(ASSET_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/assets/assets.def)
+# The asset manifest. NOT a .def and not hand-authored: asset_pack walks
+# resources/ and writes it, def_gen reads it through --asset-manifest. That is
+# the one crossing between the two tools, and it is why def_gen carries no
+# directory list, no extension table and no filesystem access at all.
 set(ASSET_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/assets/generated)
+set(ASSET_MANIFEST_FILE ${ASSET_GEN_OUT_DIR}/assets.manifest)
 set(ASSET_GEN_HEADER ${ASSET_GEN_OUT_DIR}/assets_generated.hpp)
 set(ASSET_GEN_SOURCE ${ASSET_GEN_OUT_DIR}/assets_generated.cpp)
+set(ASSET_GEN_STATE_HEADER ${ASSET_GEN_OUT_DIR}/asset_state_generated.hpp)
+set(ASSET_GEN_BINDINGS ${ASSET_GEN_OUT_DIR}/assets_bindings.cpp)
 file(MAKE_DIRECTORY ${ASSET_GEN_OUT_DIR})
 
 set(CVAR_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/cvars/cvars.def)
@@ -182,35 +198,62 @@ set(EVENT_GEN_SOURCE ${EVENT_GEN_OUT_DIR}/events_generated.cpp)
 set(EVENT_GEN_CLIENT_BINDINGS ${EVENT_GEN_OUT_DIR}/client_events_bindings.cpp)
 file(MAKE_DIRECTORY ${EVENT_GEN_OUT_DIR})
 
-# assets.def's classes scan these directories, so the generated manifest
-# depends on their CONTENTS, not just on the .def. CONFIGURE_DEPENDS re-runs the
-# glob on build, so adding a mesh regenerates rather than silently producing a
-# manifest that is missing it. Paths inside the .def are relative to
-# --asset-root, which is why they can read the same way the game reads them.
-file(GLOB ASSET_GEN_SCANNED_FILES CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/resources/obj/*.obj
-    ${CMAKE_CURRENT_SOURCE_DIR}/resources/models/*.mesh
-    ${CMAKE_CURRENT_SOURCE_DIR}/resources/sprites/*.png
+# The manifest depends on what is IN the resource tree, not on any declaration,
+# so the glob is over everything asset_pack classifies. CONFIGURE_DEPENDS
+# re-runs it on build, and asset_pack itself is write-if-different -- so
+# dropping in a mesh regenerates, and touching nothing rebuilds nothing.
+#
+# This replaces a hand-maintained mirror of assets.def's scan list. Nothing
+# checked that the two agreed, which is exactly the class of bug the one-walk
+# rule exists to delete.
+file(GLOB_RECURSE ASSET_PACK_INPUTS CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/*
 )
+list(FILTER ASSET_PACK_INPUTS EXCLUDE REGEX "/resources/(blender|shaders)/")
+
+add_custom_command(
+    OUTPUT ${ASSET_MANIFEST_FILE}
+    COMMAND asset_pack ${CMAKE_CURRENT_SOURCE_DIR}/resources
+            --manifest ${ASSET_MANIFEST_FILE}
+    DEPENDS asset_pack ${ASSET_PACK_INPUTS}
+    COMMENT "Walking resources/ for the asset manifest..."
+)
+
+# assets.pkg -- the SAME walk that wrote the manifest, carrying bytes as well as
+# names. Built unconditionally so `pkg` mode is one CMake flag away and never a
+# stale artifact; write-if-different, so an unchanged tree copies nothing.
+set(ASSET_PACKAGE_FILE ${CMAKE_CURRENT_BINARY_DIR}/assets.pkg)
+
+add_custom_command(
+    OUTPUT ${ASSET_PACKAGE_FILE}
+    COMMAND asset_pack ${CMAKE_CURRENT_SOURCE_DIR}/resources
+            --manifest ${ASSET_MANIFEST_FILE}
+            --package ${ASSET_PACKAGE_FILE}
+    DEPENDS asset_pack ${ASSET_PACK_INPUTS}
+    COMMENT "Packing resources/ into assets.pkg..."
+)
+add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
 
 # ONE invocation over EVERY .def, not one per file. SCHEMA_HASH is computed
 # across all of them and emitted once, so a per-file run would write a hash that
-# disagrees with a full build.
+# disagrees with a full build. The manifest is mixed in too, and it is an INPUT
+# here rather than an output: asset_pack owns it.
 add_custom_command(
     OUTPUT ${ENTITY_GEN_HEADER} ${ENTITY_GEN_SOURCE}
            ${ASSET_GEN_HEADER} ${ASSET_GEN_SOURCE}
+           ${ASSET_GEN_STATE_HEADER} ${ASSET_GEN_BINDINGS}
            ${CVAR_GEN_HEADER} ${CVAR_GEN_SOURCE}
            ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS}
            ${EFFECT_GEN_HEADER} ${EFFECT_GEN_SOURCE} ${EFFECT_GEN_CLIENT_BINDINGS}
            ${EVENT_GEN_HEADER} ${EVENT_GEN_SOURCE} ${EVENT_GEN_CLIENT_BINDINGS}
-    COMMAND def_gen ${ENTITY_DEF_FILE} ${ASSET_DEF_FILE} ${CVAR_DEF_FILE}
+    COMMAND def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
             ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
             --emit
-            --asset-root ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS def_gen ${ENTITY_DEF_FILE} ${ASSET_DEF_FILE} ${CVAR_DEF_FILE}
+            --asset-manifest ${ASSET_MANIFEST_FILE}
+    DEPENDS def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
             ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
-            ${ASSET_GEN_SCANNED_FILES}
-    COMMENT "Generating definitions from entities.def, assets.def, cvars.def, effects.def and events.def..."
+            ${ASSET_MANIFEST_FILE}
+    COMMENT "Generating definitions from entities.def, cvars.def, effects.def, events.def and the asset manifest..."
 )
 
 
@@ -228,6 +271,10 @@ add_library(game_shared STATIC
     src/shared/task_system.hpp
     src/shared/task_system.cpp
     ${ASSET_GEN_SOURCE}
+    # The per-class loaders and register_all. References decode_* and
+    # make_missing_* by name, which is what makes a class with no decoder a
+    # link error rather than a silent gap.
+    ${ASSET_GEN_BINDINGS}
     ${ENTITY_GEN_SOURCE}
     # The cvar tables and text conversion. Holds no reference to any command
     # handler, so it compiles here without either side being present -- the two
@@ -258,6 +305,11 @@ add_library(game_shared STATIC
     src/shared/game_session.cpp
     src/shared/asset.hpp
     src/shared/asset.cpp
+    # The container pkg and embed both read, and the one place its layout is
+    # spelled. asset_pack compiles the same TU, which is what keeps the writer
+    # and the reader from being two descriptions of one format.
+    src/shared/asset_package.hpp
+    src/shared/asset_package.cpp
     src/shared/skeleton.hpp
     src/shared/model_format.hpp
     src/shared/model_format.cpp
@@ -324,6 +376,31 @@ target_include_directories(game_shared PUBLIC
 )
 target_link_libraries(game_shared PUBLIC libprotobuf Jolt)
 target_include_directories(game_shared PUBLIC ${joltphysics_SOURCE_DIR})
+
+# Where a built game reads its bytes from. loose is dev (files under the project
+# root); pkg ships one assets.pkg beside the exe; embed puts that same package in
+# .rodata via #embed. It is a BUILD-TIME choice because a shipped exe has exactly
+# one answer -- see asset_source_t.
+set(TILDE_ASSET_SOURCE "loose" CACHE STRING "Asset byte source: loose, pkg or embed")
+set_property(CACHE TILDE_ASSET_SOURCE PROPERTY STRINGS loose pkg embed)
+
+if(TILDE_ASSET_SOURCE STREQUAL "pkg")
+    target_compile_definitions(game_shared PUBLIC TILDE_ASSET_SOURCE_PKG)
+    add_dependencies(game_shared asset_package)
+elseif(TILDE_ASSET_SOURCE STREQUAL "embed")
+    target_compile_definitions(game_shared PUBLIC TILDE_ASSET_SOURCE_EMBED)
+    # #embed is C23; clang accepts it in C++ as an extension and says so, which
+    # is noise rather than news here.
+    target_sources(game_shared PRIVATE src/shared/assets/embedded_package.cpp)
+    set_source_files_properties(src/shared/assets/embedded_package.cpp PROPERTIES
+        COMPILE_OPTIONS "--embed-dir=${CMAKE_CURRENT_BINARY_DIR};-Wno-c23-extensions"
+        OBJECT_DEPENDS "${ASSET_PACKAGE_FILE}"
+    )
+    add_dependencies(game_shared asset_package)
+elseif(NOT TILDE_ASSET_SOURCE STREQUAL "loose")
+    message(FATAL_ERROR "TILDE_ASSET_SOURCE must be loose, pkg or embed (got '${TILDE_ASSET_SOURCE}')")
+endif()
+
 
 
 # 2. Game Client (Shared Library / DLL)
@@ -786,8 +863,8 @@ target_link_libraries(map_convert PRIVATE game_shared)
 #
 # `ctest --test-dir cmake_build` runs everything below. The list is written out
 # rather than globbed on purpose: a glob over bin/ would also catch MyGame,
-# def_gen and map_convert, and the exclusion list needed to keep them out rots
-# faster than this does.
+# def_gen, asset_pack and map_convert, and the exclusion list needed to keep them
+# out rots faster than this does.
 #
 # WORKING_DIRECTORY is the load-bearing part. map_migration_test loads
 # `maps/test` by a path relative to the project root, so running it from

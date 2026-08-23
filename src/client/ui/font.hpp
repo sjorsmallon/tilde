@@ -36,7 +36,7 @@ namespace client::ui
 // The font the game ships. A named constant rather than an assets.def class
 // because there is exactly one font: promote it when there is a second, which is
 // also when "which font" becomes a thing a call site has to say.
-inline constexpr const char *DEFAULT_FONT_PATH = "resources/fonts/anwb-uu-regular.ttf";
+inline constexpr const char *DEFAULT_FONT_PATH = "resources/fonts/anwb_uu_regular.ttf";
 
 // Codepoints 32..126 -- space through '~'. Everything a HUD, a kill feed and a
 // console banner needs. A wider range is a longer pack_range and a bigger atlas,
@@ -116,11 +116,6 @@ struct ui_font_t
 // is the honest reading: a game that cannot draw text cannot run.
 [[nodiscard]] std::optional<font_atlas_t>
 try_bake_font(Span<const uint8_t> ttf_bytes, const Enum_Array<font_size_t, float> &pixel_heights);
-
-// Reads the whole file and bakes it. The convenience form, and the only caller
-// that needs to know a font lives on disk.
-[[nodiscard]] std::optional<font_atlas_t>
-try_bake_font_from_file(const char *path, const Enum_Array<font_size_t, float> &pixel_heights);
 
 // The advance width and line height a string would occupy. Height is one line's
 // line_height regardless of content, so a row of text does not change height

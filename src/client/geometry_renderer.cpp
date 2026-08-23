@@ -36,7 +36,7 @@ Span<const renderer::material_handle_t> displacement_material_table()
 {
   static const renderer::material_handle_t table[1] = {[] {
     renderer::material_t built{};
-    built.parameters.base_color_texture = get_render_texture("resources/textures/128x128.png");
+    built.parameters.base_color_texture = get_render_texture("resources/textures/dev_128x128.png");
     return renderer::register_material(built);
   }()};
   return Span<const renderer::material_handle_t>(table);

@@ -93,7 +93,7 @@ void Shader_Editor_State::on_enter()
   param_colors[0][3] = 1.0f;
 
   // Mesh path
-  mesh_path = "resources/obj/isosphere.obj";
+  mesh_path = "resources/obj/Isosphere.obj";
   strncpy(mesh_path_buffer, mesh_path.c_str(), sizeof(mesh_path_buffer) - 1);
 
   // Shader paths — default to PBR shaders
@@ -214,15 +214,18 @@ void Shader_Editor_State::recompile_preview_shaders()
 
 void Shader_Editor_State::load_preview_mesh()
 {
+  // This path is TYPED, into the tool's text box, so presence really is a
+  // caller parameter here and the probe belongs at the call site. load_mesh
+  // itself is infallible; handing it a typo would kill the process.
+  if (!assets::asset_exists(mesh_path.c_str()))
+  {
+    log_error("[ShaderEditor] no mesh at '{}'", mesh_path);
+    mesh_handle = {};
+    return;
+  }
+
   mesh_handle = assets::load_mesh(mesh_path.c_str());
-  if (!mesh_handle.valid())
-  {
-    log_error("[ShaderEditor] Failed to load mesh: {}", mesh_path);
-  }
-  else
-  {
-    log_terminal("[ShaderEditor] Loaded mesh: {}", mesh_path);
-  }
+  log_terminal("[ShaderEditor] Loaded mesh: {}", mesh_path);
 }
 
 // ---------------------------------------------------------------------------

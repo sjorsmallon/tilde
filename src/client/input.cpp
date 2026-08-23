@@ -275,6 +275,11 @@ uint64_t g_arrival_clock_frequency = 1'000'000'000ull;
 bool     g_raw_input_active        = false;
 bool     g_raw_input_focused       = false;
 
+// Whether the pointer is currently hidden and grabbed. Only set_relative_mouse_mode
+// reads it, and only to find the release EDGE -- the call itself is re-asserted
+// every frame.
+bool     g_pointer_is_captured     = false;
+
 input_frame_span_t g_frame_span{};
 
 uint64_t read_arrival_clock()
@@ -701,9 +706,53 @@ float scroll_delta()
   return g_scroll_delta;
 }
 
+// CAPTURE IS THE POINTER'S HALF ONLY. SDL_SetRelativeMouseMode also delivers
+// raw device movement, and on Windows it does that by registering usage
+// 0x01/0x02 -- the same usage raw_input_win32.cpp registers, and Windows keeps
+// one per process, so calling it silently steals the mouse from the thread.
+// raw_input_plan.md, "Why SDL must never own relative mouse mode here", has the
+// measurement; probes/rawinput_collision_probe.cpp reproduces it.
 void set_relative_mouse_mode(bool enabled)
 {
-  SDL_SetRelativeMouseMode(enabled ? SDL_TRUE : SDL_FALSE);
+  // The condition is the THREAD being alive, not "is raw motion still live":
+  // after a starvation fallback the aim is SDL's again, but re-enabling
+  // relative mode would steal the registration a second time and cost the mouse
+  // BUTTON edges, which have no fallback while the thread runs.
+  if (!g_raw_input_active)
+  {
+    SDL_SetRelativeMouseMode(enabled ? SDL_TRUE : SDL_FALSE);
+    g_pointer_is_captured = enabled;
+    return;
+  }
+
+  // Both no-op when unchanged, so Play_State's per-frame re-assert is a flag
+  // compare, and SDL re-applies the grab across focus changes on its own.
+  SDL_ShowCursor(enabled ? SDL_DISABLE : SDL_ENABLE);
+
+  // Mouse grab, not SDL_SetWindowGrab: that one also takes the keyboard under
+  // SDL_HINT_GRAB_KEYBOARD, and swallowing alt-tab is not something a
+  // mouse-capture call should be able to do.
+  SDL_Window* window = SDL_GetKeyboardFocus();
+  if (window != nullptr)
+    SDL_SetWindowMouseGrab(window, enabled ? SDL_TRUE : SDL_FALSE);
+
+  // On the RELEASE EDGE only: hidden and grabbed, the cursor pins against
+  // whichever window edge you last turned into, and relative mode used to
+  // restore it for us. Every frame would peg it to the centre instead and make
+  // the menu unusable, which is the only reason the previous state is tracked.
+  if (g_pointer_is_captured && !enabled && window != nullptr)
+  {
+    int window_width  = 0;
+    int window_height = 0;
+    SDL_GetWindowSize(window, &window_width, &window_height);
+    SDL_WarpMouseInWindow(window, window_width / 2, window_height / 2);
+  }
+  g_pointer_is_captured = enabled;
+}
+
+bool pointer_is_captured()
+{
+  return g_pointer_is_captured;
 }
 
 Span<const key_event_t> frame_key_events()

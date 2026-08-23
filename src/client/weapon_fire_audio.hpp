@@ -1,6 +1,9 @@
 #pragma once
 
+#include "../shared/assets/generated/assets_generated.hpp"
 #include "../shared/entities/generated/entities_generated.hpp"
+
+#include <optional>
 
 namespace client
 {
@@ -10,8 +13,12 @@ struct client_context_t;
 // The one weapon -> gunshot sound table. Shared with Play_State's predicted
 // local shot deliberately: two tables would let your own gun and everyone
 // else's drift apart, which is the same class of bug last_fire_weapon exists
-// to prevent. Returns nullptr and log_errors for an unmapped weapon.
-const char *fire_sound_for(entities::Weapon weapon);
+// to prevent.
+//
+// Fallible, and the caller is what makes it so: last_fire_weapon comes off the
+// wire with no range check, so a weapon id outside the enum is a hostile or
+// corrupt snapshot rather than a missing asset. Empty optional, log_error'd.
+[[nodiscard]] std::optional<assets::sound_asset> try_fire_sound_for(entities::Weapon weapon);
 
 // Plays a gunshot for every player whose Player_Entity::last_fire_tick advanced
 // since the last call. Call once per received snapshot, right after

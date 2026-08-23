@@ -14,7 +14,11 @@ cmake --build cmake_build -j8
 # Run
 ./cmake_build/bin/MyGame
 
-# Run the whole test suite (~2s, all 27)
+# Ship builds: where the game reads its asset bytes from (default: loose)
+cmake -S . -B cmake_build_pkg -DTILDE_ASSET_SOURCE=pkg     # one assets.pkg beside the exe
+cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in .rodata
+
+# Run the whole test suite (~2s, all 31)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -37,10 +41,10 @@ Adding a test means adding the target *and* its name to `GAME_TESTS`; the list i
 Inspect what the DSL parsed, without building the game or writing anything:
 
 ```bash
-./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/assets/assets.def src/shared/cvars/cvars.def src/shared/effects/effects.def src/shared/events/events.def --dump
+./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def src/shared/effects/effects.def src/shared/events/events.def --asset-manifest src/shared/assets/generated/assets.manifest --dump
 ```
 
-Pass **every** `.def` in one run — `SCHEMA_HASH` is computed across all of them, so a partial run with `--emit` writes a hash that disagrees with a full build. Emission is opt-in (`--emit`); output goes to a `generated/` directory beside each `.def`.
+Pass **every** `.def` in one run, and the asset manifest with them — `SCHEMA_HASH` is computed across all of them, so a partial run with `--emit` writes a hash that disagrees with a full build. The manifest is not a `.def` and is not hand-authored: `asset_pack` writes it (`./cmake_build/bin/asset_pack resources --manifest src/shared/assets/generated/assets.manifest [--package cmake_build/assets.pkg]`), write-if-different, and the build runs it first. Emission is opt-in (`--emit`); output goes to a `generated/` directory beside each `.def`.
 
 `--scaffold` (also opt-in, never part of a build) writes the empty handler file for any event member that has none. It is write-if-absent and reports every file it writes: it never opens an existing file, never merges, never backs up. `--client-root` moves where it writes.
 
@@ -54,7 +58,7 @@ Three libraries: `game_shared` (static lib), `game_client` (shared lib, Vulkan/S
 src/
 ├── shared/           Core logic, networking, entities, map system
 │   ├── entities/     entities.def (the DSL), entity_reflection, generated/
-│   ├── assets/       assets.def (the asset manifest), generated/
+│   ├── assets/       generated/ only — the manifest is written by asset_pack
 │   ├── cvars/        cvars.def, cvar_runtime.hpp, generated/
 │   ├── effects/      effects.def (the cosmetic channel), generated/
 │   ├── events/       events.def (the gameplay channel), generated/
@@ -63,7 +67,7 @@ src/
 │   ├── states/       Game state machine (Play_State, Tool_Editor_State)
 │   └── editor/       Tool-based editor (Selection, Placement, Sculpting)
 ├── server/           Authoritative game server
-├── tools/            def_gen (the schema compiler: .def parser + code generator)
+├── tools/            def_gen (the schema compiler), asset_pack (the asset walker)
 └── launcher/         main_integrated.cpp, main_dedicated.cpp
 ```
 
@@ -127,7 +131,7 @@ An enum-typed field row holds `const enum_type_info_t* enum_info` rather than a 
 
 ### CVars and commands — a `.def` family
 
-`def_gen` is **the schema compiler**, not the entity generator: `src/shared/cvars/cvars.def` is one of its five inputs, declaring every console variable and command. It emits `src/shared/cvars/generated/`:
+`def_gen` is **the schema compiler**, not the entity generator: `src/shared/cvars/cvars.def` is one of its four `.def` inputs, declaring every console variable and command. It emits `src/shared/cvars/generated/`:
 
 ```
 cvars_generated.hpp            cvar_state_t, cvar_id / command_id, the info
@@ -138,11 +142,11 @@ server_command_bindings.cpp    fills the @Server slots — into game_server
 client_command_bindings.cpp    the @Client slots — into game_client
 ```
 
-The four families are fenced: one `.def` holds one family (mixing them is a generator error), a cvar may not reference an entity type, and the flag vocabularies are disjoint — `@Networked` on a cvar, `@Client` on an entity field and a flag on any event field at all are errors, not no-ops. What they share is the lexer, the primitive type table and `SCHEMA_HASH`. The event family is the one with **two** input files, one channel each.
+The three `.def` families are fenced: one `.def` holds one family (mixing them is a generator error), a cvar may not reference an entity type, and the flag vocabularies are disjoint — `@Networked` on a cvar, `@Client` on an entity field and a flag on any event field at all are errors, not no-ops. What they share is the lexer, the primitive type table and `SCHEMA_HASH`. The event family is the one with **two** input files, one channel each. (Assets used to be a fourth family; they are the asset manifest now, which is not a `.def` and claims no family.)
 
 **`enum` is the one family-neutral declaration kind**, because every family declares them; a file of cvars plus their enums is still one family. `base` used to be neutral too, while the event family authored one — the `channel` keyword took that job, so `base` is the entity family's again.
 
-`import` is the **one** crossing, and it goes one direction only: `entities.def` imports `assets.def` so an entity field can be typed `mesh_asset`. The importing file gets those declarations for type resolution and class-id assignment; it never emits or hashes them, because the imported file is its own input and does both. An asset `.def` may not import, may not declare anything but asset classes, and nothing but an asset `.def` may be imported — each of those is a generator error naming the file. An event `.def` may not import either, and nothing may import it.
+**There is no `import`, and no asset `.def`.** There used to be both: `entities.def` imported `assets.def` so a field could be typed `mesh_asset`, and three validation rules fenced that one crossing. Asset classes now arrive through `--asset-manifest`, a **generated** file that is deliberately not a `.def` (in this project `.def` means hand-authored, reviewed as a diff — a generated one inverts that rule for exactly one file). The crossing stopped being a special case and became an argument, so `import`, its three rules and the whole asset declaration kind are gone. The classes are copied into every input program for type resolution only; the manifest is emitted and hashed once, on its own.
 
 Cvar flags are `@Client` / `@Server` / `@Mirrored`, and **no flag means shared-local** (both sides hold it, each process owns its own). `@Mirrored` is server-owned with a read-only client copy kept fresh over the wire — earned only by movement prediction today. A command must declare `@Client` or `@Server`, because that is which binder TU references its handler.
 
@@ -368,6 +372,35 @@ Raw keyboard auto-repeat is a make code with no break behind it, so the drain
 also enforces that an edge is a CHANGE — the job `event.key.repeat` does on the
 fallback path.
 
+**SDL GETS THE POINTER AND NEVER THE TRAVEL, and `set_relative_mouse_mode` is
+where that is enforced.** `SDL_SetRelativeMouseMode` bundles four things — hide
+the cursor, confine it to the window, forget its position, deliver raw device
+movement — and on Windows it implements the fourth by registering usage
+`0x01/0x02`, the same usage the input thread registers. **Windows keeps one
+registration per usage per process and the later call wins**, so entering
+Play_State silently stole the mouse from the thread; the keyboard survived
+because SDL never registers usage `0x06`, and *keys work, mouse does not* is
+therefore the signature of this bug. So capture is `SDL_ShowCursor` +
+`SDL_SetWindowMouseGrab` (the pointer half, which reaches `ClipCursor` and
+nothing else), and real relative mode is used **only when the thread did not
+start** — there being no second reader to collide with then. Not "only while raw
+motion is live": after a starvation fallback the aim is SDL's again, but turning
+relative mode back on would steal the registration a second time and cost the
+mouse BUTTON edges, which have no fallback while the thread is alive. Motion
+degrades gracefully; buttons do not. `probes/rawinput_collision_probe.cpp`
+measures it and `raw_input_plan.md` has the reasoning.
+
+Capture therefore has a **second** obligation, because relative mode was also
+hiding the cursor for a reason nobody asked for: `SDL_SetCursor` gates on
+`cursor_shown && !relative_mode`, which was masking ImGui's SDL2 backend
+rewriting cursor visibility every frame out of `NewFrame`. So while the pointer
+is held, ImGui is told to keep its hands off with
+`ImGuiConfigFlags_NoMouseCursorChange`, set in `renderer::begin_frame` straight
+from `input::pointer_is_captured()` — unconditionally, one owner, nothing to
+drift — and cleared on release so ImGui's cursor SHAPES still work in the editor
+and console. **Anything that touches cursor visibility has to agree with
+`pointer_is_captured()` rather than keep its own answer.**
+
 **A shot has a sub-tick moment too, on both ends.** `resolve_player_shot` is
 called from inside the server's step loop, after the step the trigger press
 landed in, so the shot is taken from where the shooter had actually reached, and
@@ -469,16 +502,69 @@ The editor picking BVH is built by `build_editor_bvh()` (`editor/editor_bvh.hpp`
 
 ### Asset System
 
-Two layers:
+**One walk of the resource tree owns what exists.** `asset_pack` (`src/tools/asset_pack.cpp`) walks `resources/` and writes `src/shared/assets/generated/assets.manifest`; `def_gen` reads it and emits everything else. That the names and (at step 6) the bytes come from **one** walk is the load-bearing property: two walks could disagree about what exists or about what id 3 means, and a package built from the disagreeing half ships a game that resolves the wrong mesh.
 
-- **The cache.** `assets::load_mesh(path)` / `assets::load_texture(path)` load from disk into `mesh_asset_t` / `texture_asset_t`, cached by path. Textures are always forced to RGBA (4-byte stride) regardless of what the file holds.
-- **The manifest.** Asset *classes* are declared in **`src/shared/assets/assets.def`** — its own `.def` family — and scan a directory (`resources/obj`, `resources/models`, `resources/sprites`), so the generator emits a closed enum plus the id→path table into `assets/generated/assets_generated.{hpp,cpp}`, in **namespace `assets`** beside the hand-written half that resolves the ids (`assets::mesh_asset::Sphere`, `assets::get_mesh`). An entity field typed as an asset stores that id, so a bad asset name in a map file is caught by name lookup rather than becoming a silent missing mesh. **Ids are not stable** across adding a file to a scanned directory; names are the on-disk identity, and the resolved manifest is mixed into `SCHEMA_HASH`.
+```
+resources/**  ──asset_pack──▶  generated/assets.manifest
+                                        │
+                                     def_gen
+                                        │
+     assets_generated.{hpp,cpp}   asset_state_generated.hpp   assets_bindings.cpp
+        the ID SPACE                 the STORAGE                 the SEAM
+```
 
-The dependency runs **assets → entities**, never the reverse: `entities.def` imports `assets.def`, so `entities_generated.hpp` includes `assets_generated.hpp` and an asset-typed entity field is spelled `assets::mesh_asset`. Nothing in the asset family knows entities exist. Adding a mesh means editing `assets.def`, not `entities.def`.
+**Classification is two rules, and `asset_pack`'s extension table is the only project knowledge in the pipeline.** `def_gen` has none — no directory list, no extension table, no filesystem access at all.
 
-`assets::init()` walks the manifests eagerly and must run before any `get_mesh`/`get_sprite` — all three launchers call it. Id 0 is `Missing` (`resources/obj/error.obj`, the question mark), so an unassigned mesh field renders as the placeholder by construction.
+1. **Depth 1 only.** Files directly under `resources/<dir>/` are the id space. Anything nested is the **path-referenced pool** — `models/textures/**`, `textures/harsh_bricks/**` — packed but never enumerated.
+2. **Extension decides the class**, from one table: `.obj`/`.mesh` → `mesh_asset`, `.png`/`.tga` → `texture_asset`, `.wav` → `sound_asset`, `.animation` → `animation_asset`, `.hitboxes` → `hitbox_rig`, `.ttf` → `font_asset`.
 
-Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` strings** rather than manifest ids: a level author adding a prop should not have to touch `assets.def`.
+**Directory names carry no meaning.** Merge `obj/` into `models/`, or don't — nothing regenerates differently. That is the property the old scan list destroyed, and the reason `models/` holding four kinds of file was unrepresentable before. Directory-as-class fails on `models/`; extension alone fails on `.png`, which is a sprite in `sprites/` and a material map in `textures/harsh_bricks/` — depth 1 is what resolves that one.
+
+**`.skeleton` and `.mtl` are packed but NOT enumerated**, and that is deliberate: a `.mesh` names its skeleton and an `.obj` names its `.mtl` **from inside the file**, as a bare sibling. That path is the identity the *format* uses; an id on top of it would be a second, weaker copy, and two names for one skeleton is how bone 7 stops being one bone. The ignore list is a **decision on the record** rather than a fallthrough — an extension can be ignored by the enumerator and still be mandatory at runtime.
+
+**A minted name is the basename, case preserved, and is never mangled.** It must already be a valid C++ identifier or `asset_pack` errors naming the file. There is no mangling rule because the minted name is what a `.source` map file stores, and a mangling rule is a way for two files to quietly claim one name. **Ids are positional and NOT stable** — adding a file renumbers everything after it — which is safe only because names are the identity and the resolved manifest is mixed into `SCHEMA_HASH`.
+
+**Adding a new asset kind is impossible to get half-done.** Drop `foo.ogg` into a resource directory → `asset_pack` errors: unknown extension. Add the table row → the manifest carries it → `def_gen` emits a call to `assets::decode_ogg` → **link error naming the symbol** until you write it. Two forced stops, both loud, neither skippable. Same shape as the event channels: there is no registry and no bind step, so "forgot to register" is not representable — only "forgot to write it".
+
+**Three artifacts, and the split between the first two is not tidiness.** `assets_generated.hpp` is the **id space** (one enum per class, the two-column `asset_info_t` tables, `to_string`/`try_from_string`) and is kept to light includes, because `entities_generated.hpp` includes it. `asset_state_generated.hpp` is the **storage**: `asset_state_t` with one `Asset_Pool<T>` and one `Enum_Array<class, asset_handle_t<T>>` per class, plus the declarations of `load_<class>` / `get_<class>` / `decode_<ext>` / `make_missing_<class>`. It pulls in each class's value header — and `animation.hpp` includes `entities_generated.hpp`, so emitting the state into the header entities include would be a cycle. `assets_bindings.cpp` defines the loaders and `register_all`.
+
+**There is no per-class hand-written line anywhere**, and that is the requirement rather than an aesthetic: storage is data-driven from the manifest, behavior is a named symbol. It is the same split `entity_system_def.md` settled when `make_entity_pool` was deleted — a hand-written registration call list is that switch reincarnated, and it must not come back. `assets::init()` calls `register_all(state)` and nothing else.
+
+**`asset_info_t` has TWO columns.** The `source_kind` that told a file-backed asset from a procedurally generated one is gone with `procedural` itself: no consumer of an asset id ever asked, which is what made it deletable rather than merely unused.
+
+**Entry 0 of every class is `Missing`, with NO PATH.** Its bytes are a compiled-in constant — `make_missing_mesh()` builds a question mark out of boxes, `make_missing_texture()` a magenta checker, and the other four are empty values that only have to be *valid*. That is the whole job of a placeholder: **a placeholder that is a file can be the thing that is missing.** `resources/obj/Error.obj` is still on disk and is still an asset, it is just an ordinary one (`mesh_asset::Error`) now. An id **outside** the class resolves to `Missing` too — the tables are `Enum_Array`s and the lookup is `try_get`, because an asset id comes off the wire and out of map files with no range validation. Every handle this system hands out is valid.
+
+**A class's decoders come from the class table, not from what is on disk.** `load_<class>` dispatches on the extension list the manifest's `class` line carries, because that same loader also serves **path-referenced** files that were never enumerated — deriving the list from the entries would mean a format stopped being loadable the day the last file of it left the tree. `decode_png` and `decode_tga` are one function behind two symbols for exactly this reason: stb_image sniffs the format out of the bytes, but the extension set is what a new format has to reach.
+
+`Box` and `Sphere` are **baked `.mesh` files** now, dumped once from the generators that used to run at init; `generate_mesh_for_key` and all six primitive generators are gone. `physics_body_system.cpp` scales both through `render.scale` assuming a primitive is unit-sized, so `asset_test` asserts the baked bounds rather than trusting the export — the failure mode is a physics body 100x too large and it would not be obvious which regime drifted. A `.mesh` is in engine units and skips `load_obj`'s 100-unit normalization, which is why the bake went to `.mesh` rather than to `.obj`.
+
+Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` strings** rather than manifest ids: a level author adding a prop should not have to think about the id space at all.
+
+**A PATH HAS ONE SPELLING, AND THE LOADERS CANNOT FAIL.** Both halves of that are the same decision, and `asset_pipeline_def.md` is the design.
+
+A path is relative to the project root with forward slashes (`resources/obj/Pyramid.obj`). There is no candidate list — `resolve_mesh_path`, which tried four spellings and reported through `printf`, is gone, and putting anything like it back reintroduces at runtime the question the manifest exists to answer at build time. One `asset_cache_key` normalisation (`lexically_normal().generic_string()`, no filesystem access) serves **every pool**; it used to be three different rules, so one file could sit in a pool twice — and two copies of a skeleton means bone 7 is no longer one bone. `render_assets.cpp` keys its GPU textures by the asset handle for the same reason, not by a second string.
+
+So `load_mesh` / `load_texture` / `load_sound` / `load_animation` / `load_hitbox_rig` / `load_font` / `load_skeleton` / `load_pbr_material` take **no `try_` prefix and always return a valid handle**: a file that is absent, or a `.mesh` whose skeleton hash is stale, is a broken install — the no-recovery row of the failure table above — and dies naming itself. The contrapositive is the point: `if (!handle.valid())` at a draw site means something specific again.
+
+**`skeleton_t` and `pbr_material_asset_t` are the path-referenced pools** (`path_referenced_pools_t` in `asset_types.hpp`): a skeleton is named as a bare sibling from inside another asset, a PBR material is a *folder* rather than a file. Neither has an id space, so neither is a manifest class and nothing is generated for them — their two loaders are the only ones still hand-declared in `asset.hpp`.
+
+`asset_exists(path)` is the one probe, and it takes no prefix because the `bool` **is** the answer. Exactly two callers have a path that is genuinely a caller parameter and must use it: the shader editor's text box, and a geometry surface's free-form `mesh_path`. A PBR folder's six maps are optional the same way. Everywhere else, presence is not a caller parameter.
+
+**NOTHING BUT THE BYTE LAYER OPENS A FILE.** `mount_asset_source()` / `read_asset_bytes(path)` / `asset_exists(path)` sit under everything else (all three in `src/shared/asset_types.hpp`), and every decoder in the engine — `load_obj`, `load_mtl`, `models::parse_skeleton` / `parse_mesh` / `parse_animation` / `try_parse_hitbox_rig`, `stbi_load_from_memory`, `try_bake_font` — takes `Span<const uint8_t>` plus a `debug_name` that is only what the error messages say. That is what makes `pkg` and `embed` a different way to fill the blob map rather than a second path through the decoders, and it is why a malformed fixture in a test is now a string literal instead of a temp file.
+
+The byte layer has **no `try_` prefix** for the same reason the loaders above it do not: the manifest turned "is the file there?" into a build-time question. Its state (`asset_source_t`) is a member of `asset_state_t`, not a static of its own — a per-module copy would be mounted once and empty everywhere else, which is the ownership bug `asset_types.hpp` documents. The three launchers call `mount_asset_source()` between `set_state` and `init()`; in loose mode it checks `resources/` is reachable, so "launched from the wrong directory" is one message rather than a fatal on whichever asset loaded first.
+
+**A span from `read_asset_bytes` is valid for the PROCESS LIFETIME**, in every mode, and in loose mode that means blobs are retained rather than trimmed. Both reasons are load-bearing: loads NEST (an `.obj` is mid-walk while its `.mtl` and its textures are read), so a reused scratch buffer is a dangling read rather than a saving — and miniaudio's `ma_resource_manager_register_encoded_data` **does not copy**, so a sound's bytes must outlive the engine. Registering there is what keeps miniaudio's own decode, cache and ref-counting; `ma_decoder_init_memory` would have thrown all three away and made the voice pool our problem. This is also why `sound_asset_t` is a **path**, not samples, and `font_asset_t` is the **file**, not a baked atlas: a second copy of every sound beside miniaudio's own cache is a second answer to "is this loaded", and a font's pixel height is a call-site parameter rather than a property of the asset.
+
+**Derived sibling paths go through it too, and they are fatal.** An `.obj` names its `.mtl` from inside the parser and a `.mesh` / `.animation` / `.hitboxes` names its `.skeleton` as `parent_path() / (name + ".skeleton")`. Nobody at a call site ever spells either, so neither is a caller parameter — a missing one is a broken asset, not something to draw untextured around. `decode_hitboxes` is the one decoder that *resolves* rather than just parses, for the same reason: bones are named, so the loaded form only exists against one skeleton.
+
+Because the refusals are fatal, they are not testable in-process — `test_model_format` checks the *disagreement* each one keys on (parsed hash vs. sibling skeleton's) rather than the refusal. `asset_test` covers the manifest half, the byte layer and the package format: `init()`, every id of every class resolving, the two real placeholders having real content, the baked primitives being unit-sized, out-of-range → `Missing`, `read_asset_bytes` returning the file with two spellings sharing one blob, and a package round trip (sort order, an empty asset, data alignment, a prefix that must not match, three refusals). Its two fixtures must actually be written, so they live in `cmake_build/asset_test_fixtures/` — under the mount, because an absolute `%TEMP%` path would still open and that is precisely the rule the test exists to check. The five fixture-backed tests are `#if`'d out of the packaged modes: "write a file and then load it" is a loose-mode question by construction.
+
+**Sounds are ids, and `sound_asset::Missing` is how a content gap is written down.** `play_3d` / `play_2d` take a `sound_asset` and there is no path-taking overload left; `audio_system_t::init` walks the closed enum once and hands miniaudio every blob, so registration is eager and the old `asset_exists` probe is gone (an id cannot name a file the manifest did not see). `footstep.wav` and `rocket_fire.wav` never existed, so `on_footstep` and the rocket launcher's row in `WEAPON_FIRE_SOUNDS` hold `Missing` — a declared absence at the site that has it, logged once per id rather than silently dropped. `try_fire_sound_for` keeps the prefix because `last_fire_weapon` comes off the wire unchecked.
+
+**THREE MODES, TWO IMPLEMENTATIONS, chosen at BUILD TIME** (`-DTILDE_ASSET_SOURCE=loose|pkg|embed`, default loose). `loose` reads files under the project root; `pkg` reads one `assets.pkg`; `embed` reads the same package out of `.rodata` via `#embed` (clang 19+). **`pkg` and `embed` are ONE implementation** — a package is a contiguous byte range and they differ only in where that range comes from, which is why `#embed` is not a third code path and why `embedded_package.cpp` is nine lines. Not a runtime switch: a shipped exe has exactly one answer, and a flag would be one more way to launch a build that cannot find its assets.
+
+`src/shared/asset_package.{hpp,cpp}` is the format — header, index, string table, blob, with entries sorted by path so a lookup is a binary search straight over the mapped range and nothing is parsed at mount. Entries are read out by `memcpy`, which buys the alignment question never being asked of a `#embed`ed array. **The same TU compiles into `asset_pack` and into `game_shared`**, so the writer and the reader are not two descriptions of one format. `asset_pack --package` is the **same walk** as `--manifest` — one recursive traversal producing both — so the files that got ids are the same objects that got bytes. `.mtl` and `.skeleton` are packed though never enumerated; `UNPACKED_EXTENSIONS` (`.md`) is the narrowing decision on the record. `resources/shaders/**` stays outside the package: it compiles to SPIR-V on a path of its own.
 
 ### Client vs Player
 
@@ -548,7 +634,7 @@ Three shapes, and the **name** tells you which one you are looking at. The rule 
 
 **The generated code follows this too.** `def_gen` emits `try_from_string<T>(text)`, `try_find_cvar`, `try_find_command`, `try_cvar_to_text`, `try_cvar_from_text` — so the convention holds across the seam rather than stopping at the generator. `try_from_string` is a **template specialized per enum and asset class**, not an overload set: `to_string` dispatches on its argument and its inverse has none, so the caller names the type (`try_from_string<Weapon>(text)`). Changing these means editing the `fprintf` emitters in `src/tools/def_gen.cpp` and regenerating — never the `generated/` files. `SCHEMA_HASH` is mixed from the parsed `.def` content, not the emitted text, so respellings like this leave the wire handshake alone.
 
-Not yet total: the `bool` + out-param pairs left in `map.hpp` (`get_object_position`, `get_object_box`), `asset.hpp` (`compute_mesh_bounds`, `parse_mesh_file`), `animation.hpp` (`sample_aim_pose`, `build_bone_mask`) and `reflection.hpp` (`field_to_text`, `field_from_text`). Convert them when you next touch them.
+Not yet total: the `bool` + out-param pairs left in `map.hpp` (`get_object_position`, `get_object_box`), `model_format.hpp` (`parse_skeleton`, `parse_mesh`, `parse_animation`), `animation.hpp` (`sample_aim_pose`, `build_bone_mask`) and `reflection.hpp` (`field_to_text`, `field_from_text`). Convert them when you next touch them.
 
 ### General
 

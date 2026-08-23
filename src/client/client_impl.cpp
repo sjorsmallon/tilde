@@ -1,3 +1,4 @@
+#include "../shared/asset.hpp"
 #include "../shared/entity_system.hpp"
 #include "audio/audio_system.hpp"
 #include "client_api.hpp"
@@ -95,7 +96,7 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   // load a font.
   {
     const std::optional<ui::font_atlas_t> atlas =
-        ui::try_bake_font_from_file(ui::DEFAULT_FONT_PATH, {18.f, 28.f, 48.f});
+        ui::try_bake_font(assets::read_asset_bytes(ui::DEFAULT_FONT_PATH), {18.f, 28.f, 48.f});
     if (!atlas)
       fatal_error("client::init: could not bake the UI font from '{}'", ui::DEFAULT_FONT_PATH);
 

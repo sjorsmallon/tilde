@@ -306,7 +306,7 @@ struct Particle_Emitter_Entity : Entity
 
   Particle_Emitter_Entity() { type = entity_type::Particle_Emitter_Entity; }
 
-  assets::sprite_asset sprite = assets::sprite_asset::Smoke;
+  assets::texture_asset sprite = assets::texture_asset::Smoke;
   float emit_rate = 20.0f;
   int32_t max_particles = 64;
   float lifetime_min = 0.5f;

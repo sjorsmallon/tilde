@@ -83,6 +83,7 @@ int main(int argc, char *argv[])
   // lib, so there is one pointer per module and all three must be set. See the
   // ownership note in asset.hpp.
   assets::set_state(&g_asset_state);
+  assets::mount_asset_source();
   assets::init();
 
   if (!server::init(&g_cvar_state, &g_server_command_table, &g_asset_state))
