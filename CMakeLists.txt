@@ -299,6 +299,7 @@ add_library(game_shared STATIC
     src/shared/debug_collision.cpp
     src/shared/map.cpp
     src/shared/map_geometry.cpp
+    src/shared/brush.cpp
     src/shared/map_baker.cpp
     src/shared/pathfinding.cpp
     src/shared/entity_system.cpp
@@ -412,7 +413,7 @@ set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 
-# Two vertex shaders x two fragment shaders is the whole mesh family; the
+# Two vertex shaders x three fragment shaders is the whole mesh family; the
 # pipeline cache combines them with blend/cull/depth/fill. debug.* backs every
 # debug primitive, and ui.* every screen-space quad (glyphs and solid rects
 # alike). Anything under preview/ or pbr/ is compiled at RUNTIME by the shader
@@ -424,6 +425,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mesh_skinned.vert
     ${SHADER_SRC_DIR}/mesh_lit.frag
     ${SHADER_SRC_DIR}/mesh_unlit.frag
+    ${SHADER_SRC_DIR}/mesh_grid.frag
     ${SHADER_SRC_DIR}/particle.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
@@ -522,6 +524,7 @@ add_library(game_client SHARED
     src/client/editor/tools/particle_editor_tool.cpp
     src/client/editor/tools/displacement_tool.cpp
     src/client/editor/tools/animation_tool.cpp
+    src/client/editor/tools/brush_tool.cpp
     src/client/editor/entity_inspector.cpp
     src/client/editor/entity_editor_traits.cpp
     src/client/editor/geometry_editor.cpp
@@ -738,6 +741,11 @@ add_executable(asset_test src/test/test_asset_system.cpp)
 target_include_directories(asset_test PRIVATE src)
 target_link_libraries(asset_test PRIVATE game_shared)
 
+# 20b. Brush Test (convex hull, winding, tolerances, text round trip)
+add_executable(brush_test src/test/brush_test.cpp)
+target_include_directories(brush_test PRIVATE src)
+target_link_libraries(brush_test PRIVATE game_shared)
+
 # 20. Navmesh Simplification Test
 add_executable(navmesh_test src/test/test_navmesh.cpp)
 target_include_directories(navmesh_test PRIVATE src)
@@ -921,6 +929,7 @@ set(GAME_TESTS
     entity_layout_test
     map_migration_test
     navmesh_test
+    brush_test
     cvar_test
     hitscan_test
     model_format_test

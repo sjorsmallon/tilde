@@ -3808,7 +3808,7 @@ static void write_default_initializer(FILE* out, const program_t* program, const
 }
 
 // The classname is the on-disk identity, derived from the declared name rather
-// than declared separately: Light_Entity -> "light_entity".
+// than declared separately: Spot_Light_Entity -> "spot_light_entity".
 static void write_classname(FILE* out, string_view_t name)
 {
   for (int32_t index = 0; index < name.length; ++index)

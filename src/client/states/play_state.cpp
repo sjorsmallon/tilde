@@ -286,11 +286,11 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
 // index rather than a lookup). False when the map declares none, leaving the
 // camera untouched; the caller decides whether that is worth saying out loud.
 //
-// Entity::orientation is Euler DEGREES here (.y = yaw, .x = pitch), the same
-// reading the server's spawn path uses, and camera_t's angles are degrees too
-// — so this is a copy, not a conversion. It used to atan2 the orientation as
-// if it were a direction vector and assign the resulting radians into a
-// degrees field, which pointed a rotated spectate spot roughly nowhere.
+// Entity::orientation is the MODEL euler the editor's rotation gizmo writes, so
+// this IS a conversion — the same one the server's spawn path makes. Two earlier
+// spellings were both wrong: atan2-ing the orientation as if it were a direction
+// vector and assigning radians into a degrees field, and then copying .y/.x
+// across as yaw/pitch, which mirrored the yaw and read the roll as the pitch.
 [[nodiscard]] static bool try_pose_camera_at_spectate_spot(
     camera_t &camera, shared::game_session_t &session, int32_t spot_index)
 {
@@ -304,8 +304,11 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
       spectate_spots[((spot_index % count) + count) % count];
 
   camera.position = spot.position;
-  camera.yaw      = spot.orientation.y;
-  camera.pitch    = spot.orientation.x;
+
+  const linalg::view_angles_t facing = linalg::view_angles_from_direction(
+      linalg::forward_from_model_euler(spot.orientation));
+  camera.yaw   = facing.yaw_degrees;
+  camera.pitch = facing.pitch_degrees;
   return true;
 }
 
@@ -2184,6 +2187,27 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       // that poke past the silhouette, which is what made it unreadable.
       constexpr uint8_t HITBOX_FACE_ALPHA = 30;
 
+      // The EDGES fade out with range and the faces do not, because only one of
+      // the two has a distance problem. A line is a constant width in SCREEN
+      // space, so a receding wireframe keeps all of its ink while the area it
+      // covers shrinks -- ten volumes' worth of rings pack into a few dozen
+      // pixels and read as one solid blob. A face shrinks with the shape it
+      // belongs to and stays legible the whole way out, so it takes over the
+      // silhouette exactly as the edges stop being able to carry it.
+      //
+      // Tuned against how tall a player actually is on screen: at 90 degrees
+      // and 1080p a 72-unit player is about 97px at 400 units and 28px at 1400,
+      // which is where the rings stop resolving at all.
+      constexpr float EDGE_FADE_START_UNITS = 400.0f;
+      constexpr float EDGE_FADE_END_UNITS   = 1400.0f;
+
+      const float view_distance =
+          linalg::length(remote_player.render_position - camera.position);
+      const float edge_fade =
+          1.0f - std::clamp((view_distance - EDGE_FADE_START_UNITS) /
+                                (EDGE_FADE_END_UNITS - EDGE_FADE_START_UNITS),
+                            0.0f, 1.0f);
+
       const auto face = [&](Span<const vec3f> polygon, color_t color)
       {
         scene.debug.filled_polygon(polygon, color, 0.f, {.draw_when_occluded = true});
@@ -2196,7 +2220,13 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       {
         const color_t color = client::hit_region_color(hitbox.region);
         client::draw_posed_hitbox_faces(face, hitbox, with_alpha(color, HITBOX_FACE_ALPHA));
-        client::draw_posed_hitbox(line, hitbox, color);
+
+        // Fully faded is SKIPPED, not appended at zero alpha: it is ~200 line
+        // segments per player, and they would still be built, stored and
+        // recorded to draw nothing.
+        if (edge_fade > 0.0f)
+          client::draw_posed_hitbox(line, hitbox,
+                                    with_alpha(color, color_channel_from_float(edge_fade)));
       }
     }
   }

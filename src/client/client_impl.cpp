@@ -84,10 +84,15 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   // fatal -- see input::init.
   input::init();
 
+  // MAXIMIZED, not borderless-fullscreen: the title bar and the taskbar stay,
+  // which is what you want while a console and an editor are open beside the
+  // game. 1280x720 is therefore the RESTORE size -- what un-maximizing gives
+  // back -- rather than the size it opens at. The swapchain never reads these
+  // numbers: renderer::init asks SDL_Vulkan_GetDrawableSize for the real extent.
   g_window =
       SDL_CreateWindow("MyGame Client", SDL_WINDOWPOS_CENTERED,
                        SDL_WINDOWPOS_CENTERED, 1280, 720,
-                       SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN |
+                       SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN | SDL_WINDOW_MAXIMIZED |
                            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 
   if (!g_window)

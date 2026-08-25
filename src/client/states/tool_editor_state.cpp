@@ -10,6 +10,7 @@
 #include "../editor/geometry_editor.hpp"
 #include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
+#include "../editor/tools/brush_tool.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
@@ -211,6 +212,7 @@ void Tool_Editor_State::on_enter()
     tools.push_back(std::make_unique<Particle_Editor_Tool>());
     tools.push_back(std::make_unique<Displacement_Tool>());
     tools.push_back(std::make_unique<Animation_Tool>());
+    tools.push_back(std::make_unique<Brush_Tool>());
   }
 
   // Enable first tool
@@ -1038,6 +1040,8 @@ void Tool_Editor_State::draw_imgui_panels()
     switch_tool(5);
   if (ImGui::Button("Animation"))
     switch_tool(6);
+  if (ImGui::Button("Brush"))
+    switch_tool(7);
 
   ImGui::Separator();
   ImGui::Text("Active Tool: %d", active_tool_index);

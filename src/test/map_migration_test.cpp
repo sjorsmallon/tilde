@@ -208,6 +208,83 @@ int main()
       return fail("trigger: param_float drift");
   }
 
+  // --- 5b. Spot light round-trip (the three-types-not-one-enum split) -----
+  // Lights were one Light_Entity carrying a Light_Type enum, where five of the
+  // seven fields were dead for at least one kind. Splitting them made the
+  // per-kind fields real fields, so what this checks is that the shared Light
+  // component and the kind-specific ones both survive save/load, and that the
+  // three types come back as three DISTINCT types rather than collapsing to
+  // whichever one the classname lookup saw first.
+  {
+    map_t light_map;
+    light_map.name = "light_roundtrip";
+
+    auto spot_holder = create_map_entity("spot_light_entity");
+    auto *spot = entity_as<entities::Spot_Light_Entity>(spot_holder.get());
+    if (!spot) return fail("light: factory returned wrong type for spot");
+    spot->position      = {1.f, 2.f, 3.f};
+    spot->orientation   = {0.f, 90.f, 0.f};
+    spot->light.color   = {0.25f, 0.5f, 0.75f};
+    spot->light.intensity = 3.5f;
+    spot->range         = 640.f;
+    spot->inner_degrees = 12.f;
+    spot->outer_degrees = 48.f;
+    light_map.add_entity(spot_holder);
+
+    auto point_holder = create_map_entity("point_light_entity");
+    auto *point = entity_as<entities::Point_Light_Entity>(point_holder.get());
+    if (!point) return fail("light: factory returned wrong type for point");
+    point->range = 96.f;
+    light_map.add_entity(point_holder);
+
+    auto directional_holder = create_map_entity("directional_light_entity");
+    if (!entity_as<entities::Directional_Light_Entity>(directional_holder.get()))
+      return fail("light: factory returned wrong type for directional");
+    light_map.add_entity(directional_holder);
+
+    const std::string light_path = "maps/light_roundtrip.source";
+    if (!save_map(light_path, light_map))
+      return fail("light: save_map failed");
+
+    std::optional<map_t> reloaded_opt = try_load_map(light_path);
+    if (!reloaded_opt)
+      return fail("light: try_load_map failed");
+    map_t &reloaded_lights = *reloaded_opt;
+    std::filesystem::remove(light_path);
+    std::filesystem::remove(light_path + ".navmesh");
+
+    size_t point_count = 0, spot_count = 0, directional_count = 0;
+    entities::Spot_Light_Entity *reloaded_spot = nullptr;
+    entities::Point_Light_Entity *reloaded_point = nullptr;
+    for (const auto &e : reloaded_lights.entities)
+    {
+      if (auto *p = entity_as<entities::Point_Light_Entity>(e.entity.get()))
+      { reloaded_point = p; ++point_count; }
+      if (auto *sp = entity_as<entities::Spot_Light_Entity>(e.entity.get()))
+      { reloaded_spot = sp; ++spot_count; }
+      if (entity_as<entities::Directional_Light_Entity>(e.entity.get()))
+        ++directional_count;
+    }
+    if (point_count != 1 || spot_count != 1 || directional_count != 1)
+      return fail("light: the three kinds did not come back as three distinct types");
+
+    if (reloaded_spot->light.color.x != 0.25f || reloaded_spot->light.color.y != 0.5f ||
+        reloaded_spot->light.color.z != 0.75f)
+      return fail("light: shared Light component colour drift");
+    if (reloaded_spot->light.intensity != 3.5f)
+      return fail("light: shared Light component intensity drift");
+    if (reloaded_spot->range != 640.f)
+      return fail("light: spot range drift");
+    if (reloaded_spot->inner_degrees != 12.f || reloaded_spot->outer_degrees != 48.f)
+      return fail("light: spot cone angle drift");
+    if (reloaded_spot->orientation.y != 90.f)
+      return fail("light: spot orientation drift -- it is what replaced the direction field");
+    if (reloaded_point->range != 96.f)
+      return fail("light: point range drift");
+    if (reloaded_point->light.intensity != 1.0f)
+      return fail("light: a field left at its default did not come back as the default");
+  }
+
   // --- 6. Canonical serialization + content hash --------------------------
   // serialize_map_to_string / parse_map_from_string are the pure (no-I/O) core
   // of save_map / load_map, and compute_map_content_hash hashes that canonical

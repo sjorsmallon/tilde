@@ -94,13 +94,13 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
       {
         shared::entity_uid_t uid = hit.id.index;
 
-        shared::aabb_t aabb;
-        if (shared::get_object_box(*ctx.map, uid, aabb.center, aabb.half_extents))
+        if (const std::optional<shared::aabb_t> aabb =
+                shared::try_get_object_box(*ctx.map, uid))
         {
           float t;
           shared::box_face_t face;
           if (shared::ray_aabb_face_intersection(view.mouse_ray.origin,
-                                                 view.mouse_ray.direction, aabb,
+                                                 view.mouse_ray.direction, *aabb,
                                                  t, face))
           {
             hovered_uid = uid;
@@ -123,9 +123,11 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
     sculpt_start_entity.reset();
     sculpt_start_geometry.reset();
 
-    if (!shared::get_object_box(*ctx.map, dragging_uid, original_aabb.center,
-                                original_aabb.half_extents))
+    const std::optional<shared::aabb_t> box =
+        shared::try_get_object_box(*ctx.map, dragging_uid);
+    if (!box)
       return;
+    original_aabb = *box;
 
     if (const shared::map_geometry_t *geometry =
             ctx.map->find_geometry_by_uid(dragging_uid))
@@ -143,12 +145,12 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
   {
     using namespace linalg;
 
-    vec3 current_center;
-    vec3 current_half_extents;
-
-    if (shared::get_object_box(*ctx.map, dragging_uid, current_center,
-                               current_half_extents))
+    const std::optional<shared::aabb_t> current_box =
+        shared::try_get_object_box(*ctx.map, dragging_uid);
+    if (current_box)
     {
+      const vec3 current_center       = current_box->center;
+      const vec3 current_half_extents = current_box->half_extents;
       vec3 normal = shared::get_box_face_normal(dragging_face);
       vec3 center_offset = {
           normal.x * current_half_extents.x,
@@ -220,8 +222,10 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
             new_center[axis] -= face_sign * diff;
           }
 
-          shared::set_object_box(*ctx.map, dragging_uid, new_center,
-                                 new_half_extents);
+          if (!shared::try_set_object_box(*ctx.map, dragging_uid,
+                                          {new_center, new_half_extents}))
+            log_error("sculpting tool: object {} took a resize it cannot store",
+                      dragging_uid);
         }
       }
     }
@@ -246,13 +250,12 @@ void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
 {
   if (hovered_uid != 0 && !dragging)
   {
-    shared::aabb_t aabb;
-    if (shared::get_object_box(*ctx.map, hovered_uid, aabb.center,
-                               aabb.half_extents))
+    if (const std::optional<shared::aabb_t> aabb =
+            shared::try_get_object_box(*ctx.map, hovered_uid))
     {
-      linalg::vec3 extents = aabb.half_extents;
+      linalg::vec3 extents = aabb->half_extents;
       linalg::vec3 normal = shared::get_box_face_normal(hovered_face);
-      linalg::vec3 p = aabb.center +
+      linalg::vec3 p = aabb->center +
                        linalg::vec3{normal.x * extents.x, normal.y * extents.y, normal.z * extents.z};
       linalg::vec3 size = extents;
       // [0,1,2] -> [x,y,z].

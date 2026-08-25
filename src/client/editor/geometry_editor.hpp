@@ -10,9 +10,20 @@ namespace client
 // Editor-side drawing and UI for map geometry.
 
 // ghost_position -> placement center, lifting the object so it sits ON the
-// surface under the cursor rather than centered in it.
+// surface under the cursor rather than centered in it, and aligning its BOUNDS
+// to `grid_step`.
+//
+// Aligning the bounds rather than the centre is what makes one grid mean one
+// thing. Snapping the centre put a 128-wide object placed on a 128 grid at
+// x = +/-64 -- half a cell off every grid line, and off the very lattice the
+// brush tool then snapped its vertices to. Corners on the grid is also the
+// convention every brush editor uses, because corners are what you align
+// against a neighbour.
+//
+// A grid_step of 0 means no alignment.
 linalg::vec3 compute_geometry_placement_center(const shared::geometry_value_t &geometry,
-                                               const linalg::vec3 &ghost_position);
+                                               const linalg::vec3 &ghost_position,
+                                               float grid_step);
 
 // Placement preview at `center`.
 void draw_geometry_ghost(const shared::geometry_value_t &geometry,

@@ -20,11 +20,15 @@ namespace client
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid);
 
-// Rebuild the cached mesh for a displacement whose grid was just edited,
-// re-uploading it to the GPU. Registers the mesh if this is the first time.
-// Call after any change to half_extents / active_face / subdivision /
-// displacements — the cache is keyed by uid only, so it cannot notice by itself.
-void refresh_displacement_mesh(const shared::displacement_geometry_t &displacement,
-                               shared::entity_uid_t uid);
+// Rebuild the cached mesh for an object whose GENERATED form just changed -- a
+// displacement grid, or a brush point set -- and re-upload it. Registers the
+// mesh if this is the first time. The cache is keyed by uid only, so it cannot
+// notice an edit by itself: call this after one.
+//
+// Takes the whole geometry rather than one kind, because both kinds that
+// generate a mesh need exactly this, and a per-kind entry point is two things
+// to remember instead of one.
+void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
+                                     shared::entity_uid_t uid);
 
 } // namespace client

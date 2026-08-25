@@ -6,6 +6,7 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
@@ -71,6 +72,48 @@ void step_physics(physics_state_t &state, float dt)
     // Increase to 2 if you run at variable dt or need sub-step accuracy.
     constexpr int collision_steps = 1;
     state.physics_system.Update(dt, collision_steps, &state.scratch_allocator, &state.job_system);
+}
+
+void register_static_convex_hull(physics_state_t &state, shared::entity_uid_t uid,
+                                 Span<const vec3f> points)
+{
+    if (points.count < 4)
+    {
+        log_error("register_static_convex_hull: uid {} has {} points, need 4", uid,
+                  points.count);
+        return;
+    }
+
+    JPH::Array<JPH::Vec3> hull_points;
+    hull_points.reserve(points.count);
+    for (const vec3f &point : points)
+        hull_points.push_back(to_jolt(point));
+
+    JPH::ConvexHullShapeSettings hull_settings(hull_points);
+    JPH::ShapeSettings::ShapeResult hull = hull_settings.Create();
+    if (hull.HasError())
+    {
+        log_error("register_static_convex_hull: uid {} did not hull: {}", uid,
+                  hull.GetError().c_str());
+        return;
+    }
+
+    // The points are already world space, so the body sits at the origin rather
+    // than carrying a position the points would be added to twice.
+    JPH::BodyCreationSettings settings(hull.Get(), JPH::RVec3::sZero(),
+                                       JPH::Quat::sIdentity(), JPH::EMotionType::Static,
+                                       Physics_Layers::STATIC);
+
+    JPH::BodyInterface &body_interface = state.physics_system.GetBodyInterface();
+    JPH::Body *body = body_interface.CreateBody(settings);
+    if (!body)
+    {
+        log_error("register_static_convex_hull: body limit reached for uid {}", uid);
+        return;
+    }
+    body_interface.AddBody(body->GetID(), JPH::EActivation::DontActivate);
+    state.entity_body_map[uid]           = body->GetID();
+    state.body_entity_map[body->GetID()] = uid;
 }
 
 void register_static_box(physics_state_t &state, shared::entity_uid_t uid,

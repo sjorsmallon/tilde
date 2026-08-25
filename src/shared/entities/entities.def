@@ -92,12 +92,6 @@
 // interpolation lands (todo.md, physics bodies), revisit: that is the point at
 // which euler starts costing correctness rather than just elegance.
 //
-// KNOWN INCONSISTENCY, left alone deliberately: editor_gizmo.cpp:385-399 packs
-// euler xyz into a vec4 with w=0 in one branch and writes an identity
-// QUATERNION {0,0,0,1} in another. Those two cannot both be right. It is a
-// gizmo-local bug, not an ambiguity about what `orientation` means, so it is
-// tracked under Correctness in todo.md rather than resolved here.
-//
 // NOT the same thing as heading. A Player's facing direction is
 // view_angle_yaw / view_angle_pitch, and its motion is `velocity`, a vector.
 // `orientation` on a Player is written once at spawn (server_impl.cpp:455) and
@@ -129,8 +123,6 @@ Entity :: base {
 // ---------------------------------------------------------------------------
 // Enums -- every one of these was a string or a bare int in the macro system
 // ---------------------------------------------------------------------------
-
-Light_Type :: enum { Point, Spot, Directional }
 
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum {Red, Blu, Free_For_All}
@@ -198,6 +190,25 @@ Render :: component {
     scale:        v3 = {1, 1, 1}        @Fully_Serializable
     rotation:     v3 = {0, 0, 0}        @Fully_Serializable
     material:     Material
+}
+
+// What all three light types share, and nothing more. Split out because that
+// list is short: everything else about a light -- range, cone, direction --
+// belongs to some of the kinds and not others, which is why there are three
+// entity types below instead of one carrying a kind enum.
+//
+// NOT @Networked, for the same reason the three entities are not: a light is
+// placed in the editor and read back out of the MAP, and the client loads the
+// same map.
+//
+// `intensity` is one slot whose UNIT differs by kind -- a punctual light's is
+// radiant power falling off with distance, a directional light's is irradiance
+// that does not. That is a property of the lighting model, not a reason to
+// split the field: the same slot is what a gather pass writes into one
+// gpu_light_t, and what every engine that separates these types still shares.
+Light :: component {
+    color:     v3 = {1, 1, 1}   @Editable @Saveable
+    intensity: f32 = 1.0        @Editable @Saveable
 }
 
 // What a player CARRIES, and the one gate that belongs to switching rather than
@@ -447,24 +458,68 @@ Trigger_Volume_Entity :: entity {
     param_float:       f32 = 0.0                @Editable @Saveable
 }
 
-// Lights are placed in the editor and read back out of the MAP -- and the
-// client loads the same map, so it already has every one of them.
-// @Networked on all seven fields was inherited from the macro declaration and
-// replicated static config the client could not fail to have.
+// THREE TYPES, NOT ONE WITH A KIND ENUM. This was `Light_Entity` plus a
+// Light_Type of {Point, Spot, Directional}, and of its seven fields only color
+// and intensity were meaningful for all three: `range` is dead for
+// directional, `direction` for point, and both cone angles for everything but
+// spot. An enum that selects WHICH FIELDS ARE LIVE is a type; an enum that
+// selects a behavior over fields that are all live is an enum, which is what
+// Shape_Kind above still correctly is.
 //
-// Worth knowing while reading this: nothing in the renderer reads a
-// Light_Entity yet. Its only consumers are the editor traits and picking
-// bounds. When dynamic lights (muzzle flash, explosion) arrive they are
-// runtime-spawned, and that is the change that earns @Networked back -- the
-// same shape of argument as Render above.
-Light_Entity :: entity {
-    direction:          v3                     @Editable @Saveable
-    color:              v3 = {1, 1, 1}         @Editable @Saveable
-    intensity:          f32 = 1.0              @Editable @Saveable
-    range:              f32                    @Editable @Saveable
-    spot_inner_degrees: f32                    @Editable @Saveable
-    spot_outer_degrees: f32                    @Editable @Saveable
-    kind:               Light_Type = .Point    @Editable @Saveable
+// The split is authoring-side ONLY. A GPU light array is homogeneous, so the
+// shader keeps one struct with a type tag in it (pbr.frag reads that tag out of
+// spot_params.w) and a gather pass turns all three of these into it. Plural at
+// authoring time, singular at the GPU, and conflating the two is what makes the
+// enum look mandatory when it is not.
+//
+// What it buys, and the reason it was worth doing: the editor's five per-type
+// switches each draw the RIGHT helper -- the falloff sphere, the cone, the
+// direction arrow -- instead of one yellow cross plus an inner switch on `kind`
+// at every one of them.
+//
+// `direction` is gone with the enum, and not because it was per-kind: base
+// Entity already carries `orientation`, so it was a second copy of the same
+// fact. Spot and directional read their facing off that, which is what makes
+// the rotate gizmo work on a light. Point lights have no facing to be wrong
+// about, which is precisely the ambiguity that kept the duplicate alive.
+//
+// None of these is @Networked, and that is not an oversight: a light is placed
+// in the editor and read back out of the MAP, and the client loads the same
+// map, so replicating it is bandwidth spent telling the client what it already
+// knows. When dynamic lights (muzzle flash, explosion) arrive they are
+// runtime-spawned, and THAT is the change that earns @Networked back.
+
+Point_Light_Entity :: entity {
+    light: Light
+    // Where the falloff reaches zero, in engine units -- 1 unit = 1 inch, the
+    // scale player_constants.hpp's 32x32x72 hull fixes. So 256 is a 21-foot
+    // (6.5m) radius: one room, two editor grid cells. Between Godot's 5m
+    // OmniLight3D default and Unreal's 10m PointLight one, and deliberately
+    // smaller than the spot below, which is a directed beam rather than a bulb.
+    //
+    // Do NOT read the scale off g_gravity: 800 is arcade gravity, ~2x real, and
+    // the only constant here that does not respect the inch mapping.
+    range: f32 = 256.0                  @Editable @Saveable
+}
+
+Spot_Light_Entity :: entity {
+    light:         Light
+    // 512 units = 42 feet (13m): a beam down a corridor rather than a room.
+    range:         f32 = 512.0          @Editable @Saveable
+    // HALF-angle in degrees, measured from the cone axis -- which is what
+    // pbr.frag's `dot(-L, direction)` compares against, and what Unreal and
+    // Godot both mean by a spot angle. Inner is where falloff starts, outer
+    // where it reaches zero; inner > outer inverts the gradient rather than
+    // being rejected, and the editor cone draws what the value says.
+    inner_degrees: f32 = 20.0           @Editable @Saveable
+    outer_degrees: f32 = 35.0           @Editable @Saveable
+}
+
+// No range and no position falloff -- a directional light is a direction and a
+// colour. It still has a `position`, inherited from the base, and the editor
+// draws its gizmo there; nothing shading reads it.
+Directional_Light_Entity :: entity {
+    light: Light
 }
 
 // Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console

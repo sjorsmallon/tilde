@@ -57,6 +57,39 @@ bool push_wireframe_mesh(pass_builder_t &draws,
   return true;
 }
 
+// Contours read as an ink line over the grey, not as another light source.
+constexpr color_t BRUSH_CONTOUR_COLOR{30, 32, 38};
+
+// Every hull edge as a line loop per face. Shared edges are drawn twice, which
+// costs nothing at brush sizes and keeps this to one loop with no edge table.
+void draw_brush_wireframe(pass_builder_t &draws, const shared::brush_geometry_t &brush,
+                          color_t color, float depth_bias)
+{
+  std::optional<shared::brush_polyhedron_t> polyhedron =
+      shared::try_build_brush_polyhedron(brush.vertices);
+
+  if (!polyhedron)
+  {
+    // A brush that does not hull has no edges to trace. Show the bound so the
+    // object is still selectable and visibly WRONG rather than invisible.
+    const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush.vertices);
+    draws.debug.box((bounds.min + bounds.max) * 0.5f, (bounds.max - bounds.min) * 0.5f,
+                    colors::red, renderer::fill_mode_t::wireframe, depth_bias);
+    return;
+  }
+
+  for (const shared::brush_face_t &face : polyhedron->faces)
+  {
+    for (size_t i = 0; i < face.vertex_indices.size(); ++i)
+    {
+      const linalg::vec3 &start = polyhedron->vertices[face.vertex_indices[i]];
+      const linalg::vec3 &end =
+          polyhedron->vertices[face.vertex_indices[(i + 1) % face.vertex_indices.size()]];
+      draws.debug.line(start, end, color, depth_bias);
+    }
+  }
+}
+
 } // namespace
 
 // ============================================================================
@@ -64,11 +97,25 @@ bool push_wireframe_mesh(pass_builder_t &draws,
 // ============================================================================
 
 linalg::vec3 compute_geometry_placement_center(const shared::geometry_value_t &geometry,
-                                               const linalg::vec3 &ghost_position)
+                                               const linalg::vec3 &ghost_position,
+                                               float grid_step)
 {
+  const linalg::vec3 half_extents = shared::get_half_extents(geometry);
+
   linalg::vec3 center = ghost_position;
-  center.y += shared::get_half_extents(geometry).y;
-  return center;
+  center.y += half_extents.y;
+
+  if (grid_step <= 0.0f)
+    return center;
+
+  // Put the LOW corner on a grid line and derive the centre from it, so an
+  // object of any size lands where the brush tool would snap a vertex.
+  const linalg::vec3 low_corner = center - half_extents;
+  const linalg::vec3 aligned{editor::snap(low_corner.x, grid_step),
+                             editor::snap(low_corner.y, grid_step),
+                             editor::snap(low_corner.z, grid_step)};
+
+  return aligned + half_extents;
 }
 
 void draw_geometry_ghost(const shared::geometry_value_t &geometry,
@@ -98,6 +145,20 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
                              bool solid)
 {
+  // Brushes carry their shape in their EDGES, not in a surface texture -- the
+  // flat grey they draw as says nothing on its own. Contours here rather than in
+  // draw_geometry because that one is shared with the game, where an outline
+  // around every wall would be a rendering style nobody asked for.
+  if (shared::get_kind(geometry) == shared::geometry_kind_t::Brush)
+  {
+    const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
+    if (solid)
+      draw_geometry(draws, geometry, uid);
+
+    draw_brush_wireframe(draws, brush, BRUSH_CONTOUR_COLOR, -60.0f);
+    return;
+  }
+
   // A box with no mesh is the one case the editor draws differently from the
   // game: random per-uid colors so adjacent brushes are visually separable, and
   // wireframe when the user has solid mode off.
@@ -237,6 +298,13 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
                     renderer::fill_mode_t::wireframe, highlight_bias);
     break;
   }
+
+  case shared::geometry_kind_t::Brush:
+    // The hull itself, not its bound: a brush is usually not box-shaped, and a
+    // box around a ramp says nothing about what is selected.
+    draw_brush_wireframe(draws, std::get<shared::brush_geometry_t>(geometry), color,
+                         highlight_bias);
+    break;
   }
 }
 
@@ -351,6 +419,36 @@ bool draw_displacement_inspector(shared::displacement_geometry_t &displacement)
   return changed;
 }
 
+bool draw_brush_inspector(shared::brush_geometry_t &brush)
+{
+  bool changed = false;
+  ImGui::TextDisabled("brush");
+
+  const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush.vertices);
+  const linalg::vec3          size   = bounds.max - bounds.min;
+
+  ImGui::Text("%zu vertices", brush.vertices.size());
+  ImGui::Text("size  %.1f  %.1f  %.1f", size.x, size.y, size.z);
+
+  if (!shared::try_build_brush_polyhedron(brush.vertices))
+    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "does not form a solid");
+
+  // The bounds centre is the only position a brush has, and writing it back
+  // translates the point set. There are no half_extents to edit here: resizing a
+  // brush is what dragging its faces is for.
+  linalg::vec3 center = (bounds.min + bounds.max) * 0.5f;
+  if (ImGui::DragFloat3("position", &center.x, 0.5f))
+  {
+    shared::geometry_value_t value = brush;
+    shared::set_position(value, center);
+    brush = std::get<shared::brush_geometry_t>(value);
+    changed = true;
+  }
+
+  changed |= draw_surface_inspector(brush.surface);
+  return changed;
+}
+
 } // namespace
 
 bool draw_geometry_inspector(shared::geometry_value_t &geometry)
@@ -366,6 +464,9 @@ bool draw_geometry_inspector(shared::geometry_value_t &geometry)
   case shared::geometry_kind_t::Displacement:
     return draw_displacement_inspector(
         std::get<shared::displacement_geometry_t>(geometry));
+
+  case shared::geometry_kind_t::Brush:
+    return draw_brush_inspector(std::get<shared::brush_geometry_t>(geometry));
   }
 
   log_error("draw_geometry_inspector: unhandled geometry kind {}",

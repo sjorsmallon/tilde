@@ -84,7 +84,11 @@ struct material_handle_t
 enum class shader_t : uint8_t
 {
   lit,
-  unlit
+  unlit,
+  // Lit, plus a world-space grid ruled onto the surface. Only meaningful on a
+  // mesh whose UV is a world-axis projection over the 128-unit cell -- the
+  // generated brush mesh -- since the grid is read straight out of fragUV.
+  grid
 };
 
 enum class blend_mode_t : uint8_t
@@ -302,8 +306,12 @@ struct debug_draw_list_t
                       debug_face_style_t style = {});
 
   // Compositions -- these decompose into `lines` entries at append time.
+  // `draw_when_occluded` rides through to every line the head decomposes into.
+  // A manipulator is the case that needs it: a gizmo drawn at an object centre
+  // is INSIDE that object, so depth-tested it is invisible exactly when you want
+  // to grab it.
   void arrow(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
-             float seconds = 0.0f);
+             float seconds = 0.0f, bool draw_when_occluded = false);
   void wire_circle(const linalg::vec3f &center, float radius, const linalg::vec3f &normal,
                    color_t color, float seconds = 0.0f);
   void wire_sphere(const linalg::vec3f &center, float radius, color_t color, float seconds = 0.0f);

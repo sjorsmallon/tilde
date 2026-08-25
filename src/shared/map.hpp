@@ -323,20 +323,31 @@ std::string make_cvar_line(std::string_view name, std::string_view value);
 // box at the origin if nothing does.
 aabb_bounds_t compute_object_bounds(const map_t &map, entity_uid_t uid);
 
-// Position of whichever object holds `uid`. False (and out untouched) if none does.
-bool get_object_position(const map_t &map, entity_uid_t uid, linalg::vec3 &out_position);
-bool set_object_position(map_t &map, entity_uid_t uid, const linalg::vec3 &position);
+// Position of whichever object holds `uid`. Empty if none does.
+[[nodiscard]] std::optional<linalg::vec3> try_get_object_position(const map_t &map,
+                                                                  entity_uid_t uid);
+[[nodiscard]] bool try_set_object_position(map_t &map, entity_uid_t uid,
+                                           const linalg::vec3 &position);
 
 // The axis-aligned box an object is resized through — its own center and
-// half-extents, not its derived bounds. False (outputs untouched, nothing
-// written) for objects that have no editable box: a static mesh takes its size
-// from its asset, a point entity has none. That "false" is what makes an object
-// un-sculptable and turns the gizmo's reshape handles off, in one place instead
-// of a type test per tool.
-bool get_object_box(const map_t &map, entity_uid_t uid, linalg::vec3 &out_center,
-                    linalg::vec3 &out_half_extents);
-bool set_object_box(map_t &map, entity_uid_t uid, const linalg::vec3 &center,
-                    const linalg::vec3 &half_extents);
+// half-extents, not its derived bounds. Empty (and nothing written) for objects
+// that have no editable box: a static mesh takes its size from its asset, a
+// point entity has none. That emptiness is what makes an object un-sculptable
+// and turns the gizmo's reshape handles off, in one place instead of a type
+// test per tool.
+[[nodiscard]] std::optional<aabb_t> try_get_object_box(const map_t &map, entity_uid_t uid);
+[[nodiscard]] bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box);
+
+// Euler-degree orientation of whichever object holds `uid`. Empty (and nothing
+// written) for the objects that have none, which is the same decision
+// map_geometry.hpp records: a box, a displacement and a brush are axis-aligned
+// BY DEFINITION, so an orientation on one would be written and never read —
+// exactly the lie the `orientation` field on box_geometry_t was deleted for.
+// A static mesh and every entity do have one.
+[[nodiscard]] std::optional<linalg::vec3> try_get_object_orientation(const map_t &map,
+                                                                     entity_uid_t uid);
+[[nodiscard]] bool try_set_object_orientation(map_t &map, entity_uid_t uid,
+                                              const linalg::vec3 &orientation);
 
 // Every editable object's uid and world bounds, geometry first then entities.
 // This is what "iterate the editable map objects" means for the tools: box

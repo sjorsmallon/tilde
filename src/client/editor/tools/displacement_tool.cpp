@@ -260,7 +260,7 @@ void Displacement_Tool::on_update(editor_context_t &ctx,
     {
       bool invert = input::current_modifiers().shift;
       apply_brush(*displacement_ptr, dt, invert);
-      refresh_displacement_mesh(*displacement_ptr, selected_uid);
+      refresh_generated_geometry_mesh(*displacement_ptr, selected_uid);
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
   }
@@ -295,7 +295,7 @@ void Displacement_Tool::on_mouse_down(editor_context_t &ctx,
             // edit, so snapshot and commit right here.
             const shared::geometry_value_t before = *displacement_ptr;
             displacement_ptr->init_grid(hovered_face, pending_subdivision);
-            refresh_displacement_mesh(*displacement_ptr, selected_uid);
+            refresh_generated_geometry_mesh(*displacement_ptr, selected_uid);
 
             if (ctx.transaction_system)
             {
@@ -417,7 +417,7 @@ void Displacement_Tool::on_mouse_drag(editor_context_t &ctx,
           displacement_ptr->position[axis] -= correction * face_sign;
         }
 
-        refresh_displacement_mesh(*displacement_ptr, selected_uid);
+        refresh_generated_geometry_mesh(*displacement_ptr, selected_uid);
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
       }
     }
@@ -560,7 +560,7 @@ void Displacement_Tool::on_key_down(editor_context_t &ctx,
       }
     }
 
-    refresh_displacement_mesh(*displacement_ptr, selected_uid);
+    refresh_generated_geometry_mesh(*displacement_ptr, selected_uid);
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
@@ -719,7 +719,7 @@ void Displacement_Tool::on_draw_ui(editor_context_t &ctx)
             {
               const shared::geometry_value_t before = *displacement_ptr;
               displacement_ptr->resize_grid_preserving(pending_subdivision);
-              refresh_displacement_mesh(*displacement_ptr, selected_uid);
+              refresh_generated_geometry_mesh(*displacement_ptr, selected_uid);
 
               if (ctx.transaction_system)
               {

@@ -36,14 +36,20 @@ void place_player_at_spawn(shared::game_session_t &session, entities::Player_Ent
 {
   player.position    = marker.position;
   player.orientation = marker.orientation;
-  // The marker's orientation is Euler degrees: .y = yaw, .x = pitch.
-  player.view_angle_yaw   = marker.orientation.y;
-  player.view_angle_pitch = marker.orientation.x;
+  // The marker's orientation is the MODEL euler the editor's rotation gizmo
+  // writes, not a yaw/pitch pair. Copying .y and .x straight across mirrored the
+  // yaw and read the roll as the pitch -- the editor showed no facing at all
+  // then, so it went unnoticed. Going through the direction is what makes the
+  // spawned player look where the editor's arrow points.
+  const linalg::view_angles_t facing = linalg::view_angles_from_direction(
+      linalg::forward_from_model_euler(marker.orientation));
+  player.view_angle_yaw   = facing.yaw_degrees;
+  player.view_angle_pitch = facing.pitch_degrees;
   // The feet are an accumulator, so they have to be PLACED, not left: a corpse
   // froze them wherever it died, and a spawn that only writes the view yaw
   // makes the fresh player spin their legs around to catch up while the server
   // hit-tests the twist. A first spawn has the same problem from zero.
-  player.body_yaw = marker.orientation.y;
+  player.body_yaw = facing.yaw_degrees;
 
   player.health   = 100;
   player.velocity = {0.f, 0.f, 0.f};

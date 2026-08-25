@@ -9,6 +9,8 @@
 #include "../frame_builder.hpp"
 #include "../input.hpp"
 
+#include <optional>
+
 namespace client
 {
 
@@ -25,6 +27,30 @@ struct viewport_state_t
   // FOV is not duplicated here — it belongs to `camera`, and a second copy is a
   // second thing that can disagree with the projection the frame was drawn with.
 };
+
+// World position to framebuffer pixels, for tools that draw screen-space handles
+// or hit-test against them.
+//
+// try_ because a point BEHIND the camera has no screen position: the
+// perspective divide flips its sign and projects it, mirrored, into the visible
+// half of the screen. Tools that ignored that drew handles for the geometry
+// behind them.
+[[nodiscard]] inline std::optional<linalg::vec2>
+try_project_to_screen(const viewport_state_t &view, const linalg::vec3 &world_position)
+{
+  const linalg::vec3 view_position =
+      linalg::world_to_view(world_position, view.camera.position, view.camera.yaw,
+                            view.camera.pitch);
+
+  // View space looks down -Z, so anything at or behind the eye has z >= 0.
+  // Orthographic has no divide and no such half.
+  if (!view.camera.orthographic && view_position.z > -0.01f)
+    return std::nullopt;
+
+  return linalg::view_to_screen(view_position, view.display_size,
+                                view.camera.orthographic, view.camera.ortho_height,
+                                view.camera.fov_degrees);
+}
 
 // Forward declaration of the editor state or game state if needed
 struct editor_context_t

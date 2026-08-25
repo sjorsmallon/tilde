@@ -494,6 +494,40 @@ inline vec3f direction_from_angles(float yaw_degrees, float pitch_degrees)
 // is already a model rotation.
 inline float model_yaw_from_view_yaw(float yaw_degrees) { return -yaw_degrees; }
 
+// Where a model authored facing +X points after `euler_degrees`: the +X column
+// of rotation_from_euler_degrees, which is precisely what the editor's rotation
+// gizmo manipulates.
+//
+// Deriving a facing this way rather than reading .y as a yaw is what makes a
+// gizmo ring and the marker it turns agree at every angle. The two-angle reading
+// cannot: the euler's pitch lives in .z (a +X-facing model tilts about world Z),
+// while .x is its roll, so copying .x across as a pitch reads the wrong field
+// and copying .y across mirrors the yaw -- the failure the comment above
+// describes, one field further along.
+inline vec3f forward_from_model_euler(const vec3f &euler_degrees)
+{
+  const mat4f rotation = rotation_from_euler_degrees(euler_degrees);
+  return {rotation[0].x, rotation[0].y, rotation[0].z};
+}
+
+struct view_angles_t
+{
+  float yaw_degrees   = 0.0f;
+  float pitch_degrees = 0.0f;
+};
+
+// The inverse of direction_from_angles. Runtime code handed an editor-authored
+// orientation reaches the view convention through here rather than spelling the
+// conversion itself, which is what place_player_at_spawn and
+// try_pose_camera_at_spectate_spot each got wrong by copying .y and .x straight
+// across.
+inline view_angles_t view_angles_from_direction(const vec3f &direction)
+{
+  const vec3f unit = normalize(direction);
+  const float clamped_y = unit.y < -1.0f ? -1.0f : (unit.y > 1.0f ? 1.0f : unit.y);
+  return {to_degrees(std::atan2(unit.z, unit.x)), to_degrees(std::asin(clamped_y))};
+}
+
 template <typename T> inline T mix(T a, T b, float t)
 {
   return a * (1.0f - t) + b * t;
@@ -614,6 +648,55 @@ inline bool intersect_ray_aabb(const vec3 &ray_origin, const vec3 &ray_dir,
     return true;
   }
   return false;
+}
+
+// Distance from a ray to a SEGMENT, at their closest approach.
+//
+// Not an intersection test and deliberately not spelled like one: two skew
+// lines in 3D almost never meet, so the useful question about a ray and a
+// segment is how close they came, which is what picking a thin handle needs.
+// There is no `t` out-param and no bool -- the float IS the answer.
+//
+// `ray_direction` need not be unit length. The segment may be degenerate.
+inline float distance_from_ray_to_segment(const vec3 &ray_origin, const vec3 &ray_direction,
+                                          const vec3 &segment_start, const vec3 &segment_end)
+{
+  const vec3  segment        = segment_end - segment_start;
+  const vec3  start_to_eye    = ray_origin - segment_start;
+  const float along_ray      = dot(ray_direction, ray_direction);
+  const float cross_term     = dot(ray_direction, segment);
+  const float along_segment  = dot(segment, segment);
+  const float eye_on_ray     = dot(ray_direction, start_to_eye);
+  const float eye_on_segment = dot(segment, start_to_eye);
+
+  const float denominator = along_ray * along_segment - cross_term * cross_term;
+
+  // Where the two INFINITE lines come closest, along the segment. Parallel
+  // lines have no such point, and any point does: the distance is the same all
+  // the way along, so the segment's start answers as well as anything.
+  float segment_parameter = 0.f;
+  if (std::abs(denominator) > 1e-6f)
+    segment_parameter = (along_ray * eye_on_segment - cross_term * eye_on_ray) / denominator;
+  segment_parameter = std::clamp(segment_parameter, 0.f, 1.f);
+
+  vec3  closest_on_segment = segment_start + segment * segment_parameter;
+  float ray_parameter      = dot(closest_on_segment - ray_origin, ray_direction) / along_ray;
+
+  // Clamping ONE parameter is not enough. If that closest point is behind the
+  // eye the ray is pinned at its origin, and the best point on the segment is
+  // then the one nearest that origin -- not the one the unclamped solution
+  // named. Solving for the second parameter again is what makes this exact.
+  if (ray_parameter < 0.f)
+  {
+    ray_parameter = 0.f;
+    segment_parameter =
+        along_segment <= 1e-6f
+            ? 0.f
+            : std::clamp(dot(ray_origin - segment_start, segment) / along_segment, 0.f, 1.f);
+    closest_on_segment = segment_start + segment * segment_parameter;
+  }
+
+  return length(closest_on_segment - (ray_origin + ray_direction * ray_parameter));
 }
 
 // Project View Space point to Screen Coordinates

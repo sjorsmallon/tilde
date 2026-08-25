@@ -170,6 +170,81 @@ void test_compose_transform_euler() {
   std::cout << "test_compose_transform_euler passed" << std::endl;
 }
 
+// Ray-to-segment distance, checked against a brute-force scan of the segment
+// rather than against hand-worked expectations.
+//
+// The reason it is checked that way: the closed form is a sign error away from
+// a function that still returns plausible small numbers, and the editor gizmo
+// shipped with exactly that. A negated segment parameter clamps to 0, so every
+// query answered with the distance to the segment's START -- which reads as a
+// handle whose grabbable part is much shorter than the arrow drawn for it, and
+// as nothing at all when read.
+void test_ray_segment_distance() {
+  auto brute_force = [](const vec3 &origin, const vec3 &direction, const vec3 &start,
+                        const vec3 &end) {
+    float best = 1e30f;
+    const int samples = 4000;
+    for (int i = 0; i <= samples; ++i) {
+      const vec3 point = start + (end - start) * ((float)i / (float)samples);
+      float ray_parameter = dot(point - origin, direction) / dot(direction, direction);
+      ray_parameter = std::max(0.0f, ray_parameter);
+      best = std::min(best, length(point - (origin + direction * ray_parameter)));
+    }
+    return best;
+  };
+
+  // A ray straight down onto the middle of a segment: the answer is zero, and
+  // it is the case the sign error got wrong by half the segment's length.
+  assert(distance_from_ray_to_segment({0.5f, 10.f, 0.f}, {0.f, -1.f, 0.f}, {0.f, 0.f, 0.f},
+                                      {1.f, 0.f, 0.f}) < 1e-5f);
+
+  // The far end must answer like the near end. This is the gizmo symptom.
+  assert(distance_from_ray_to_segment({0.95f, 10.f, 0.f}, {0.f, -1.f, 0.f}, {0.f, 0.f, 0.f},
+                                      {1.f, 0.f, 0.f}) < 1e-5f);
+
+  // Past the end, the segment stops: the answer is the distance to the endpoint.
+  assert(std::abs(distance_from_ray_to_segment({3.f, 0.f, 0.f}, {0.f, -1.f, 0.f},
+                                               {0.f, 0.f, 0.f}, {1.f, 0.f, 0.f}) -
+                  2.0f) < 1e-5f);
+
+  // Parallel: no unique closest pair, and the constant separation is the answer.
+  assert(std::abs(distance_from_ray_to_segment({0.f, 4.f, 0.f}, {1.f, 0.f, 0.f},
+                                               {0.f, 0.f, 0.f}, {1.f, 0.f, 0.f}) -
+                  4.0f) < 1e-5f);
+
+  // Degenerate segment: a point, and the ray still has a distance to it.
+  assert(std::abs(distance_from_ray_to_segment({0.f, 0.f, 0.f}, {1.f, 0.f, 0.f},
+                                               {5.f, 3.f, 0.f}, {5.f, 3.f, 0.f}) -
+                  3.0f) < 1e-5f);
+
+  // The whole domain, including the rays whose closest approach is BEHIND the
+  // eye -- the case a single clamping pass gets wrong.
+  uint32_t state = 1u;
+  auto next_float = [&state](float low, float high) {
+    state = state * 1664525u + 1013904223u;
+    return low + (high - low) * ((float)((state >> 8) & 0xFFFFFF) / (float)0xFFFFFF);
+  };
+
+  for (int trial = 0; trial < 400; ++trial) {
+    const vec3 origin = {next_float(-50.f, 50.f), next_float(-50.f, 50.f),
+                         next_float(-50.f, 50.f)};
+    const vec3 raw = {next_float(-1.f, 1.f), next_float(-1.f, 1.f), next_float(-1.f, 1.f)};
+    if (length(raw) < 1e-3f)
+      continue;
+    const vec3 direction = normalize(raw);
+    const vec3 start = {next_float(-10.f, 10.f), next_float(-10.f, 10.f),
+                        next_float(-10.f, 10.f)};
+    const vec3 end = start + vec3{next_float(-10.f, 10.f), next_float(-10.f, 10.f),
+                                  next_float(-10.f, 10.f)};
+
+    const float reference = brute_force(origin, direction, start, end);
+    const float measured = distance_from_ray_to_segment(origin, direction, start, end);
+    assert(std::abs(measured - reference) < 1e-3f);
+  }
+
+  std::cout << "ray-segment distance passed." << std::endl;
+}
+
 int main() {
   test_vec3();
   test_vec2();
@@ -178,6 +253,7 @@ int main() {
   test_projection_matrices();
   test_look_at();
   test_compose_transform_euler();
+  test_ray_segment_distance();
 
   // Size checks
   static_assert(sizeof(vec3) == 3 * sizeof(float), "vec3 size mismatch");

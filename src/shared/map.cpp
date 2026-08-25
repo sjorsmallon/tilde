@@ -477,8 +477,8 @@ bool convert_legacy_geometry_entity(const std::string &classname,
 
 // The classnames the macro system wrote, for the types whose generated
 // classname differs. The generator derives a classname from the declared type
-// name (Light_Entity -> "light_entity"); the X-macro let each entry pick its
-// own string, and five of them picked something else.
+// name (Spot_Light_Entity -> "spot_light_entity"); the X-macro let each entry
+// pick its own string, and five of them picked something else.
 //
 // This is the "renames via one-time map conversion" rule from the phase plan,
 // running on load rather than as a separate pass: a map written before the
@@ -499,6 +499,14 @@ constexpr legacy_classname_t LEGACY_CLASSNAMES[] = {
     {"trigger_volume", "trigger_volume_entity"},
     {"physics_body", "physics_body_entity"},
 };
+
+// DELIBERATELY NOT ALIASED: "light_entity", which was one type carrying a
+// Light_Type of {Point, Spot, Directional} before the split into three. An
+// alias can only name ONE successor, so a spot light in an old file would load
+// silently as a point light -- the wrong shape, with its cone angles dropped as
+// unknown fields. No map in the tree ever had one, so the loud "unknown entity
+// classname" the loader already logs is the correct outcome for a file that
+// somehow does.
 
 } // namespace
 
@@ -815,7 +823,9 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
     case entities::entity_type::Weapon_Entity:
     case entities::entity_type::Rocket_Entity:
     case entities::entity_type::Particle_Emitter_Entity:
-    case entities::entity_type::Light_Entity:
+    case entities::entity_type::Point_Light_Entity:
+    case entities::entity_type::Spot_Light_Entity:
+    case entities::entity_type::Directional_Light_Entity:
     case entities::entity_type::Physics_Body_Entity:
       return mesh_or_point_bounds(entity);
 
@@ -861,25 +871,18 @@ aabb_bounds_t compute_object_bounds(const map_t &map, entity_uid_t uid)
   return {{0, 0, 0}, {0, 0, 0}};
 }
 
-bool get_object_position(const map_t &map, entity_uid_t uid, linalg::vec3 &out_position)
+std::optional<linalg::vec3> try_get_object_position(const map_t &map, entity_uid_t uid)
 {
   if (const map_geometry_t *entry = map.find_geometry_by_uid(uid))
-  {
-    out_position = get_position(entry->value);
-    return true;
-  }
+    return get_position(entry->value);
 
   if (const map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
-  {
-    out_position = entry->entity->position;
-    return true;
-  }
+    return entry->entity->position;
 
-  return false;
+  return std::nullopt;
 }
 
-bool get_object_box(const map_t &map, entity_uid_t uid, linalg::vec3 &out_center,
-                    linalg::vec3 &out_half_extents)
+std::optional<aabb_t> try_get_object_box(const map_t &map, entity_uid_t uid)
 {
   if (const map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {
@@ -888,52 +891,52 @@ bool get_object_box(const map_t &map, entity_uid_t uid, linalg::vec3 &out_center
     case geometry_kind_t::Box:
     {
       const box_geometry_t &box = std::get<box_geometry_t>(entry->value);
-      out_center = box.position;
-      out_half_extents = box.half_extents;
-      return true;
+      return aabb_t{box.position, box.half_extents};
     }
 
     case geometry_kind_t::Displacement:
     {
       const displacement_geometry_t &displacement =
           std::get<displacement_geometry_t>(entry->value);
-      out_center = displacement.position;
-      out_half_extents = displacement.half_extents;
-      return true;
+      return aabb_t{displacement.position, displacement.half_extents};
     }
 
     case geometry_kind_t::Static_Mesh:
-      return false; // sized by its mesh asset
+      return std::nullopt; // sized by its mesh asset
+
+    case geometry_kind_t::Brush:
+    {
+      return to_aabb(
+          compute_brush_bounds(std::get<brush_geometry_t>(entry->value).vertices));
+    }
     }
 
-    return false;
+    return std::nullopt;
   }
 
   if (const map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
   {
     if (const entities::Box_Volume *volume = entities::get_box_volume(entry->entity.get()))
-    {
-      out_center = entry->entity->position + volume->position;
-      out_half_extents = volume->half_extents;
-      return true;
-    }
+      return aabb_t{entry->entity->position + volume->position, volume->half_extents};
   }
 
-  return false;
+  return std::nullopt;
 }
 
-bool set_object_box(map_t &map, entity_uid_t uid, const linalg::vec3 &center,
-                    const linalg::vec3 &half_extents)
+bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box)
 {
+  const linalg::vec3 &center       = box.center;
+  const linalg::vec3 &half_extents = box.half_extents;
+
   if (map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {
     switch (get_kind(entry->value))
     {
     case geometry_kind_t::Box:
     {
-      box_geometry_t &box = std::get<box_geometry_t>(entry->value);
-      box.position = center;
-      box.half_extents = half_extents;
+      box_geometry_t &box_geometry = std::get<box_geometry_t>(entry->value);
+      box_geometry.position = center;
+      box_geometry.half_extents = half_extents;
       return true;
     }
 
@@ -948,6 +951,32 @@ bool set_object_box(map_t &map, entity_uid_t uid, const linalg::vec3 &center,
 
     case geometry_kind_t::Static_Mesh:
       return false;
+
+    case geometry_kind_t::Brush:
+    {
+      // Scale the point set so its bound becomes the requested box. A brush has
+      // no extents of its own to assign, so a gizmo resize has to reach the
+      // vertices -- and an axis the brush is flat on has no scale factor, so it
+      // only translates.
+      brush_geometry_t   &brush = std::get<brush_geometry_t>(entry->value);
+      const aabb_bounds_t bounds = compute_brush_bounds(brush.vertices);
+      const linalg::vec3  old_center      = (bounds.min + bounds.max) * 0.5f;
+      const linalg::vec3  old_half_extents = (bounds.max - bounds.min) * 0.5f;
+
+      const linalg::vec3 scale = {
+          old_half_extents.x > 1e-4f ? half_extents.x / old_half_extents.x : 1.f,
+          old_half_extents.y > 1e-4f ? half_extents.y / old_half_extents.y : 1.f,
+          old_half_extents.z > 1e-4f ? half_extents.z / old_half_extents.z : 1.f,
+      };
+
+      for (linalg::vec3 &vertex : brush.vertices)
+      {
+        vertex = {center.x + (vertex.x - old_center.x) * scale.x,
+                  center.y + (vertex.y - old_center.y) * scale.y,
+                  center.z + (vertex.z - old_center.z) * scale.z};
+      }
+      return true;
+    }
     }
 
     return false;
@@ -987,7 +1016,44 @@ collect_object_bounds(const map_t &map)
   return result;
 }
 
-bool set_object_position(map_t &map, entity_uid_t uid, const linalg::vec3 &position)
+std::optional<linalg::vec3> try_get_object_orientation(const map_t &map, entity_uid_t uid)
+{
+  if (const map_geometry_t *entry = map.find_geometry_by_uid(uid))
+  {
+    if (get_kind(entry->value) != geometry_kind_t::Static_Mesh)
+      return std::nullopt;
+
+    return std::get<static_mesh_geometry_t>(entry->value).orientation;
+  }
+
+  if (const map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
+    return entry->entity->orientation;
+
+  return std::nullopt;
+}
+
+bool try_set_object_orientation(map_t &map, entity_uid_t uid,
+                                const linalg::vec3 &orientation)
+{
+  if (map_geometry_t *entry = map.find_geometry_by_uid(uid))
+  {
+    if (get_kind(entry->value) != geometry_kind_t::Static_Mesh)
+      return false;
+
+    std::get<static_mesh_geometry_t>(entry->value).orientation = orientation;
+    return true;
+  }
+
+  if (map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
+  {
+    entry->entity->orientation = orientation;
+    return true;
+  }
+
+  return false;
+}
+
+bool try_set_object_position(map_t &map, entity_uid_t uid, const linalg::vec3 &position)
 {
   if (map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {

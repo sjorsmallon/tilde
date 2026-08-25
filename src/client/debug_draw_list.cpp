@@ -134,9 +134,9 @@ void debug_draw_list_t::filled_polygon(Span<const linalg::vec3f> vertices, color
 }
 
 void debug_draw_list_t::arrow(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
-                              float seconds)
+                              float seconds, bool draw_when_occluded)
 {
-  line(start, end, color, 0.0f, seconds);
+  line(start, end, color, 0.0f, seconds, draw_when_occluded);
 
   const linalg::vec3f along  = end - start;
   const float         length = linalg::length(along);
@@ -154,7 +154,7 @@ void debug_draw_list_t::arrow(const linalg::vec3f &start, const linalg::vec3f &e
   const linalg::vec3f base = end - axis * head_length;
   for (const linalg::vec3f &offset : {side * head_radius, side * -head_radius, up * head_radius,
                                       up * -head_radius})
-    line(end, base + offset, color, 0.0f, seconds);
+    line(end, base + offset, color, 0.0f, seconds, draw_when_occluded);
 }
 
 void debug_draw_list_t::wire_circle(const linalg::vec3f &center, float radius,

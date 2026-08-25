@@ -16,7 +16,7 @@ using namespace entities;
 // list forgets. The one property left worth testing here is that a base
 // pointer recovered from untyped memory is the same pointer the language
 // would produce, which no static_assert can say (see "as_base" below).
-static_assert(std::is_convertible_v<Light_Entity*, Entity*>);
+static_assert(std::is_convertible_v<Spot_Light_Entity*, Entity*>);
 
 static int32_t failure_count = 0;
 
@@ -29,12 +29,13 @@ static void check(bool condition, const char* description)
 
 int main()
 {
-  Light_Entity light;
+  Spot_Light_Entity light;
   light.position = {1.0f, 2.0f, 3.0f};
 
   // No cast, no aliasing violation: a real derived-to-base conversion.
   Entity* base = &light;
-  check(base->type == entity_type::Light_Entity, "tag survives a derived-to-base conversion");
+  check(base->type == entity_type::Spot_Light_Entity,
+        "tag survives a derived-to-base conversion");
   check(base->position.x == 1.0f && base->position.y == 2.0f && base->position.z == 3.0f,
         "position readable through the base pointer");
 
@@ -44,20 +45,31 @@ int main()
   printf("classname=%s display=\"%s\" fields=%u size=%u runtime_only=%s\n", info.classname,
          info.display_name, info.fields.size(), info.size_in_bytes,
          info.runtime_only ? "true" : "false");
-  check(strcmp(info.classname, "light_entity") == 0, "classname derived from the declared name");
-  check(strcmp(info.display_name, "Light") == 0, "display name strips the _Entity suffix");
+  check(strcmp(info.classname, "spot_light_entity") == 0,
+        "classname derived from the declared name");
+  check(strcmp(info.display_name, "Spot Light") == 0,
+        "display name strips the _Entity suffix and unpacks the underscores");
 
   // memcmp diffing against a baseline.
-  Light_Entity baseline;
-  check(memcmp(&light, &baseline, sizeof(Light_Entity)) != 0,
+  Spot_Light_Entity baseline;
+  check(memcmp(&light, &baseline, sizeof(Spot_Light_Entity)) != 0,
         "a changed field is visible to a whole-struct memcmp");
 
   // Component lookup through the generated tables.
   Trigger_Volume_Entity trigger;
   check(has_component(entity_type::Trigger_Volume_Entity, component_type::Box_Volume),
         "Trigger_Volume declares a Box_Volume component");
-  check(!has_component(entity_type::Light_Entity, component_type::Box_Volume),
-        "Light declares no Box_Volume component");
+  check(!has_component(entity_type::Spot_Light_Entity, component_type::Box_Volume),
+        "Spot Light declares no Box_Volume component");
+
+  // The split's structure, pinned: three types, one shared component. Collapsing
+  // them back into one type carrying a kind enum fails right here.
+  check(has_component(entity_type::Point_Light_Entity, component_type::Light) &&
+            has_component(entity_type::Spot_Light_Entity, component_type::Light) &&
+            has_component(entity_type::Directional_Light_Entity, component_type::Light),
+        "all three light types share the Light component");
+  check(!has_component(entity_type::Directional_Light_Entity, component_type::Render),
+        "a light is not drawn from a Render component");
 
   int32_t offset = component_byte_offset(entity_type::Trigger_Volume_Entity,
                                          component_type::Box_Volume);
@@ -86,7 +98,7 @@ int main()
   check(rocket.collision_radius == 12.0f, "a rocket knows its own sweep radius");
   check(rocket.lifetime == 5.0f, "one lifetime, not one per spawn site");
 
-  check(entity_type_from_classname("light_entity") == entity_type::Light_Entity,
+  check(entity_type_from_classname("spot_light_entity") == entity_type::Spot_Light_Entity,
         "classname lookup round trip");
   check(entity_type_from_classname("no_such_entity") == entity_type::Invalid,
         "an unknown classname resolves to Invalid rather than a wrong type");
@@ -192,7 +204,7 @@ int main()
     {
       if (entity_info(type).runtime_only)
         every_type_is_placeable_and_not_runtime_only = false;
-      if (type == entity_type::Light_Entity)
+      if (type == entity_type::Spot_Light_Entity)
         contains_light = true;
     }
 
@@ -341,10 +353,14 @@ int main()
     // The two decisions most likely to be reverted by accident, pinned so that
     // reverting them is a test failure rather than a silent bandwidth change.
     bool any_light_field_is_networked = false;
-    for (const field_info_t& field : entity_info(entity_type::Light_Entity).fields)
-      if (strcmp(field.name, "position") != 0 && strcmp(field.name, "orientation") != 0 &&
-          strcmp(field.name, "entity_id") != 0 && (field.flags & FIELD_FLAG_NETWORKED) != 0)
-        any_light_field_is_networked = true;
+    const entity_type light_types[] = {entity_type::Point_Light_Entity,
+                                       entity_type::Spot_Light_Entity,
+                                       entity_type::Directional_Light_Entity};
+    for (entity_type light_type : light_types)
+      for (const field_info_t& field : entity_info(light_type).fields)
+        if (strcmp(field.name, "position") != 0 && strcmp(field.name, "orientation") != 0 &&
+            strcmp(field.name, "entity_id") != 0 && (field.flags & FIELD_FLAG_NETWORKED) != 0)
+          any_light_field_is_networked = true;
     check(!any_light_field_is_networked,
           "a light's own config is not replicated -- the client loaded the same map");
 

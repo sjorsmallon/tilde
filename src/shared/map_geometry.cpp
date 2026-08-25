@@ -172,6 +172,7 @@ const char *get_kind_name(geometry_kind_t kind)
   case geometry_kind_t::Box:          return "box";
   case geometry_kind_t::Static_Mesh:  return "static_mesh";
   case geometry_kind_t::Displacement: return "displacement";
+  case geometry_kind_t::Brush:        return "brush";
   }
 
   log_error("get_kind_name: unhandled geometry kind {}", (int)kind);
@@ -185,6 +186,7 @@ geometry_value_t make_default_geometry(geometry_kind_t kind)
   case geometry_kind_t::Box:          return box_geometry_t{};
   case geometry_kind_t::Static_Mesh:  return static_mesh_geometry_t{};
   case geometry_kind_t::Displacement: return displacement_geometry_t{};
+  case geometry_kind_t::Brush:        return brush_geometry_t{};
   }
 
   log_error("make_default_geometry: unhandled geometry kind {} — defaulting to box",
@@ -196,14 +198,63 @@ geometry_value_t make_default_geometry(geometry_kind_t kind)
 // The uniform editing seam
 // ============================================================================
 
+// A brush has no `position` member -- its points ARE its position -- so these
+// two stopped being a one-line std::visit over a common field and became the
+// switch every other seam function already is.
 linalg::vec3 get_position(const geometry_value_t &geometry)
 {
-  return std::visit([](const auto &value) { return value.position; }, geometry);
+  switch (get_kind(geometry))
+  {
+  case geometry_kind_t::Box:
+    return std::get<box_geometry_t>(geometry).position;
+
+  case geometry_kind_t::Static_Mesh:
+    return std::get<static_mesh_geometry_t>(geometry).position;
+
+  case geometry_kind_t::Displacement:
+    return std::get<displacement_geometry_t>(geometry).position;
+
+  case geometry_kind_t::Brush:
+  {
+    const aabb_bounds_t bounds =
+        compute_brush_bounds(std::get<brush_geometry_t>(geometry).vertices);
+    return (bounds.min + bounds.max) * 0.5f;
+  }
+  }
+
+  log_error("get_position: unhandled geometry kind {}", (int)get_kind(geometry));
+  return {};
 }
 
 void set_position(geometry_value_t &geometry, const linalg::vec3 &position)
 {
-  std::visit([&](auto &value) { value.position = position; }, geometry);
+  switch (get_kind(geometry))
+  {
+  case geometry_kind_t::Box:
+    std::get<box_geometry_t>(geometry).position = position;
+    return;
+
+  case geometry_kind_t::Static_Mesh:
+    std::get<static_mesh_geometry_t>(geometry).position = position;
+    return;
+
+  case geometry_kind_t::Displacement:
+    std::get<displacement_geometry_t>(geometry).position = position;
+    return;
+
+  case geometry_kind_t::Brush:
+  {
+    // Translate the whole point set. Snapping is the caller's business (see the
+    // three rules in brush.hpp), so this does not round anything.
+    brush_geometry_t  &brush = std::get<brush_geometry_t>(geometry);
+    const linalg::vec3 delta = position - get_position(geometry);
+    for (linalg::vec3 &vertex : brush.vertices)
+      vertex = vertex + delta;
+    return;
+  }
+  }
+
+  log_error("set_position: unhandled geometry kind {}", (int)get_kind(geometry));
 }
 
 assets::asset_handle_t<assets::mesh_asset_t>
@@ -288,6 +339,13 @@ linalg::vec3 get_half_extents(const geometry_value_t &geometry)
     return {static_mesh_fallback_half_extent, static_mesh_fallback_half_extent,
             static_mesh_fallback_half_extent};
   }
+
+  case geometry_kind_t::Brush:
+  {
+    const aabb_bounds_t bounds =
+        compute_brush_bounds(std::get<brush_geometry_t>(geometry).vertices);
+    return (bounds.max - bounds.min) * 0.5f;
+  }
   }
 
   log_error("get_half_extents: unhandled geometry kind {}", (int)get_kind(geometry));
@@ -314,6 +372,9 @@ aabb_bounds_t get_bounds(const geometry_value_t &geometry)
     return {displacement.position - displacement.half_extents,
             displacement.position + displacement.half_extents};
   }
+
+  case geometry_kind_t::Brush:
+    return compute_brush_bounds(std::get<brush_geometry_t>(geometry).vertices);
 
   case geometry_kind_t::Static_Mesh:
   {
@@ -369,6 +430,24 @@ std::vector<Plane> get_collision_planes(const geometry_value_t &geometry)
         to_world_aabb((bounds.min + bounds.max) * 0.5f,
                       (bounds.max - bounds.min) * 0.5f));
   }
+
+  case geometry_kind_t::Brush:
+  {
+    // The one kind that collides as its real shape rather than its bound: a
+    // brush IS a convex hull, which is exactly what BVH_Primitive documents its
+    // plane list to be.
+    const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
+    std::optional<brush_polyhedron_t> polyhedron =
+        try_build_brush_polyhedron(brush.vertices);
+    if (!polyhedron)
+    {
+      log_error("get_collision_planes: brush with {} vertices does not hull — "
+                "it will not collide",
+                brush.vertices.size());
+      return {};
+    }
+    return brush_collision_planes(*polyhedron);
+  }
   }
 
   log_error("get_collision_planes: unhandled geometry kind {}", (int)get_kind(geometry));
@@ -399,6 +478,17 @@ std::vector<std::vector<linalg::vec3>> get_face_polygons(const geometry_value_t 
     return compute_face_polygons(
         to_world_aabb((bounds.min + bounds.max) * 0.5f,
                       (bounds.max - bounds.min) * 0.5f));
+  }
+
+  case geometry_kind_t::Brush:
+  {
+    const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
+    std::optional<brush_polyhedron_t> polyhedron =
+        try_build_brush_polyhedron(brush.vertices);
+    if (!polyhedron)
+      return {}; // get_collision_planes already logged it
+
+    return brush_face_polygons(*polyhedron);
   }
   }
 
@@ -478,6 +568,41 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
         return false;
     return true;
   }
+
+  case geometry_kind_t::Brush:
+  {
+    const brush_geometry_t &a = std::get<brush_geometry_t>(lhs);
+    const brush_geometry_t &b = std::get<brush_geometry_t>(rhs);
+    if (a.vertices.size() != b.vertices.size() || !surfaces_equal(a.surface, b.surface))
+      return false;
+
+    // ORDER CARRIES NO MEANING. A brush is the hull of a SET, so two lists with
+    // the same points are the same brush however they are arranged -- and this
+    // function answers "did the edit change anything", to which a reorder is no.
+    //
+    // Order-sensitive was tried and is wrong: serialize_geometry writes a sorted
+    // list for git's sake, so every saved-and-reloaded brush compared unequal to
+    // itself and pushed a phantom undo entry. Coordinates are still compared
+    // BIT-exactly; it is only the arrangement that is free.
+    std::vector<bool> matched(b.vertices.size(), false);
+    for (const linalg::vec3 &vertex : a.vertices)
+    {
+      bool found = false;
+      for (size_t i = 0; i < b.vertices.size(); ++i)
+      {
+        if (matched[i] || !vec3_equal(vertex, b.vertices[i]))
+          continue;
+
+        matched[i] = true;
+        found      = true;
+        break;
+      }
+
+      if (!found)
+        return false;
+    }
+    return true;
+  }
   }
 
   log_error("geometry_values_equal: unhandled geometry kind {}", (int)get_kind(lhs));
@@ -539,6 +664,19 @@ void add_box_faces(assets::mesh_asset_t &mesh, const linalg::vec3 &half_extents,
 }
 
 } // namespace
+
+assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush)
+{
+  std::optional<brush_polyhedron_t> polyhedron = try_build_brush_polyhedron(brush.vertices);
+  if (!polyhedron)
+  {
+    log_error("generate_brush_mesh: {} vertices do not form a solid — drawing nothing",
+              brush.vertices.size());
+    return {};
+  }
+
+  return generate_brush_mesh(*polyhedron);
+}
 
 assets::mesh_asset_t generate_displacement_mesh(const displacement_geometry_t &displacement)
 {
@@ -896,6 +1034,14 @@ void serialize_geometry(const geometry_value_t &geometry, std::string &out_keywo
     write_surface(displacement.surface, out_properties);
     return;
   }
+
+  case geometry_kind_t::Brush:
+  {
+    const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
+    out_properties.emplace_back("vertices", brush_vertices_to_text(brush.vertices));
+    write_surface(brush.surface, out_properties);
+    return;
+  }
   }
 
   log_error("serialize_geometry: unhandled geometry kind {}", (int)get_kind(geometry));
@@ -954,6 +1100,41 @@ bool parse_geometry(const std::string &keyword,
     read_displacements(properties, displacement);
     read_surface(properties, displacement.surface);
     out_geometry = std::move(displacement);
+    return true;
+  }
+
+  if (keyword == get_kind_name(geometry_kind_t::Brush))
+  {
+    brush_geometry_t brush;
+
+    const std::string *raw = find_property(properties, "vertices");
+    if (!raw)
+    {
+      log_error("brush: no \"vertices\" property — skipping the object");
+      return false;
+    }
+
+    std::optional<std::vector<linalg::vec3>> vertices = try_brush_vertices_from_text(*raw);
+    if (!vertices)
+    {
+      log_error("brush \"vertices\": \"{}\" is not four or more x/y/z triples — "
+                "skipping the object",
+                *raw);
+      return false;
+    }
+
+    // Refuse a brush that does not hull rather than loading an object with no
+    // faces and no collision, which reads in game as a hole nothing explains.
+    if (!try_build_brush_polyhedron(*vertices))
+    {
+      log_error("brush: {} vertices do not form a solid — skipping the object",
+                vertices->size());
+      return false;
+    }
+
+    brush.vertices = std::move(*vertices);
+    read_surface(properties, brush.surface);
+    out_geometry = std::move(brush);
     return true;
   }
 

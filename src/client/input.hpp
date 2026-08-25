@@ -29,8 +29,10 @@ enum class key_t : uint16_t
   // Modifiers, kept left/right-distinct because the code distinguishes them.
   Left_Shift, Right_Shift, Left_Ctrl, Right_Ctrl,
   Left_Alt, Right_Alt, Left_Gui, Right_Gui,
-  // Arrows.
+  // Arrows, and the two keys that go with them: editors nudge a selection
+  // horizontally with the arrows and vertically with Page Up / Page Down.
   Arrow_Left, Arrow_Right, Arrow_Up, Arrow_Down,
+  Page_Up, Page_Down,
   // Punctuation.
   Left_Bracket, Right_Bracket, Tilde,
   // Keypad digits, contiguous like the top row so key_t::Keypad_0 + digit

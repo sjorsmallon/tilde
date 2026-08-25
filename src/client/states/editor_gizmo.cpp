@@ -1,821 +1,576 @@
-#include "../../shared/entities/entity_reflection.hpp"
 #include "editor_gizmo.hpp"
-#include "../editor/transaction_system.hpp"
+
 #include "../renderer.hpp"
-#include "../shared/map.hpp" // Full definition needed
-#include "../shared/shapes.hpp"
-#include <algorithm>         // for min/max
+#include "../shared/color.hpp"
+
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace client
 {
 
 using namespace linalg;
 
-// Helper to draw a ring (circle) in 3D
-static void draw_ring(pass_builder_t &draws, const vec3 &center, float radius,
-                      int axis, color_t color)
+namespace
 {
-  const int segments = 64;
-  const float step = (2.0f * 3.1415926535f) / float(segments);
 
-  for (int i = 0; i < segments; ++i)
+// The arm is this fraction of the viewport's half-height, so the gizmo covers
+// the same screen area whether you are nose-to-nose with a crate or looking at
+// the whole level.
+constexpr float ARM_SCREEN_FRACTION = 0.16f;
+
+// Handle geometry, all as multiples of the arm length so one number scales the
+// whole widget.
+constexpr float ARM_INNER_FRACTION  = 0.18f; // arrows start out from the centre
+constexpr float RING_RADIUS_FACTOR  = 0.85f;
+constexpr float RING_THICKNESS      = 0.08f;
+constexpr float FACE_ARM_FACTOR     = 0.45f;
+constexpr float PICK_RADIUS_FACTOR  = 0.13f;
+
+// The two-axis quad, as a span along each of its axes. It sits clear of the
+// arrows' pick radius on the inside and of the rotation band on the outside --
+// its far corner is at 0.5*sqrt(2) = 0.71 arms, where the ring band starts
+// at 0.77.
+constexpr float PLANE_QUAD_INNER = 0.20f;
+constexpr float PLANE_QUAD_OUTER = 0.50f;
+
+// How square-on a plane handle has to be before it is offered at all, as
+// |dot(plane normal, view direction)|. Below this it is a sliver.
+constexpr float PLANE_QUAD_MIN_FACING = 0.25f;
+
+constexpr int RING_SEGMENTS = 48;
+
+vec3 axis_direction(int axis)
+{
+  vec3 direction = {0, 0, 0};
+  direction[axis] = 1.f;
+  return direction;
+}
+
+// Face index 0..5 -> +x,-x,+y,-y,+z,-z.
+int  face_axis(int face) { return face / 2; }
+float face_sign(int face) { return (face % 2 == 0) ? 1.f : -1.f; }
+
+vec3 face_normal(int face) { return axis_direction(face_axis(face)) * face_sign(face); }
+
+// The plane containing `axis` that most faces the camera. Dragging against it
+// keeps the pointer's motion mapped to the axis at every viewing angle except
+// straight down it, where the intersection test itself rejects.
+vec3 camera_facing_plane_normal(const vec3 &axis, const vec3 &point, const vec3 &camera_position)
+{
+  const vec3 to_camera = point - camera_position;
+  return cross(cross(axis, to_camera), axis);
+}
+
+// The two in-plane basis vectors for a ring about `axis`, ordered so a positive
+// atan2 angle is a positive rotation about it.
+void ring_basis(int axis, vec3 &out_u, vec3 &out_v)
+{
+  out_u = axis_direction((axis + 1) % 3);
+  out_v = axis_direction((axis + 2) % 3);
+}
+
+// The four corners of a plane handle's quad, in winding order, for the plane
+// whose NORMAL is `normal_axis`. It sits in the ++ quadrant of its two axes so
+// it reads as belonging to the two arrows it sits between.
+void plane_quad_corners(const vec3 &center, int normal_axis, float arm_length,
+                        vec3 (&out_corners)[4])
+{
+  vec3 u, v;
+  ring_basis(normal_axis, u, v);
+
+  const vec3 inner_u = u * (arm_length * PLANE_QUAD_INNER);
+  const vec3 outer_u = u * (arm_length * PLANE_QUAD_OUTER);
+  const vec3 inner_v = v * (arm_length * PLANE_QUAD_INNER);
+  const vec3 outer_v = v * (arm_length * PLANE_QUAD_OUTER);
+
+  out_corners[0] = center + inner_u + inner_v;
+  out_corners[1] = center + outer_u + inner_v;
+  out_corners[2] = center + outer_u + outer_v;
+  out_corners[3] = center + inner_u + outer_v;
+}
+
+float wrap_radians(float angle)
+{
+  while (angle > PI)
+    angle -= 2.f * PI;
+  while (angle < -PI)
+    angle += 2.f * PI;
+  return angle;
+}
+
+// Handle picking is a DISTANCE to the handle's line, via
+// linalg::distance_from_ray_to_segment, rather than a ray test against a padded
+// box around it: the three axis boxes all contained the gizmo centre, so a click
+// anywhere near the middle picked whichever happened to be nearest, which is to
+// say an arbitrary axis.
+
+// One candidate handle, ranked by how far the ray passed from it.
+struct pick_t
+{
+  gizmo_handle_t handle;
+  float          separation = std::numeric_limits<float>::max();
+};
+
+void consider(pick_t &best, gizmo_handle_t handle, float separation, float threshold)
+{
+  if (separation <= threshold && separation < best.separation)
+    best = {handle, separation};
+}
+
+// One axis of a snapped translation. With an origin the OBJECT lands on the
+// grid; without one the MOVEMENT is a multiple of the step. See set_target.
+float snapped_translation(const std::optional<vec3> &origin, int axis, float travelled,
+                          float snap_step)
+{
+  if (!origin)
+    return editor::snap(travelled, snap_step);
+
+  return editor::snap((*origin)[axis] + travelled, snap_step) - (*origin)[axis];
+}
+
+} // namespace
+
+void Editor_Gizmo::set_target(const shared::aabb_bounds_t &bounds,
+                              gizmo_capabilities_t target_capabilities,
+                              const gizmo_view_t &view,
+                              const std::optional<linalg::vec3> &target_snap_origin)
+{
+  if (is_dragging())
+    return;
+
+  targeted     = true;
+  box          = shared::to_aabb(bounds);
+  capabilities = target_capabilities;
+  snap_origin  = target_snap_origin;
+
+  // Perspective: the arm subtends a constant angle, so its world length grows
+  // with distance. Orthographic: there is no divide, so it tracks the zoom.
+  if (view.orthographic)
   {
-    float theta1 = float(i) * step;
-    float theta2 = float(i + 1) * step;
-
-    vec3 p1, p2;
-
-    // Axis 0: X (Ring in YZ plane)
-    // Axis 1: Y (Ring in XZ plane)
-    // Axis 2: Z (Ring in XY plane)
-
-    if (axis == 0) // X-axis ring
-    {
-      p1 = {center.x, center.y + std::cos(theta1) * radius,
-            center.z + std::sin(theta1) * radius};
-      p2 = {center.x, center.y + std::cos(theta2) * radius,
-            center.z + std::sin(theta2) * radius};
-    }
-    else if (axis == 1) // Y-axis ring
-    {
-      p1 = {center.x + std::cos(theta1) * radius, center.y,
-            center.z + std::sin(theta1) * radius};
-      p2 = {center.x + std::cos(theta2) * radius, center.y,
-            center.z + std::sin(theta2) * radius};
-    }
-    else // Z-axis ring
-    {
-      p1 = {center.x + std::cos(theta1) * radius,
-            center.y + std::sin(theta1) * radius, center.z};
-      p2 = {center.x + std::cos(theta2) * radius,
-            center.y + std::sin(theta2) * radius, center.z};
-    }
-
-    draws.debug.line(p1, p2, color);
-
-    // draw a box every 8 segments
-    if (i % 8 == 0)
-    {
-      float s = radius * 0.05f;
-      draws.debug.aabb(p1 - vec3{s, s, s}, p1 + vec3{s, s, s}, color);
-    }
+    arm_length = view.ortho_height * ARM_SCREEN_FRACTION;
   }
-}
-
-void draw_reshape_gizmo(pass_builder_t &draws, const reshape_gizmo_t &gizmo)
-{
-  // Note: We do NOT draw the AABB here, as the editor draws the selection
-  // separately (wireframe/filled). We only draw the handles.
-
-  // Draw handles on faces using Arrows
-  float handle_length = 1.0f; // Matching previous variable
-  vec3 c = gizmo.aabb.center;
-  vec3 e = gizmo.aabb.half_extents;
-
-  struct handle_def_t
+  else
   {
-    vec3 origin;
-    vec3 direction;
-    int index;
-  };
-
-  handle_def_t handles[6] = {
-      {{c.x + e.x, c.y, c.z}, {1, 0, 0}, 0},  // +X
-      {{c.x - e.x, c.y, c.z}, {-1, 0, 0}, 1}, // -X
-      {{c.x, c.y + e.y, c.z}, {0, 1, 0}, 2},  // +Y
-      {{c.x, c.y - e.y, c.z}, {0, -1, 0}, 3}, // -Y
-      {{c.x, c.y, c.z + e.z}, {0, 0, 1}, 4},  // +Z
-      {{c.x, c.y, c.z - e.z}, {0, 0, -1}, 5}  // -Z
-  };
-
-  for (const auto &handle : handles)
-  {
-    color_t color = colors::white;
-    if (gizmo.hovered_handle_index == handle.index ||
-        gizmo.dragging_handle_index == handle.index)
-    {
-      color = colors::green;
-    }
-
-    vec3 end = handle.origin + handle.direction * handle_length;
-    draws.debug.arrow(handle.origin, end, color);
-  }
-}
-
-void draw_transform_gizmo(pass_builder_t &draws, const transform_gizmo_t &gizmo)
-{
-  vec3 position = gizmo.position;
-  float s = gizmo.size;
-
-  // Standard Axis Colors: X=Red, Y=Green, Z=Blue
-  color_t col_x = colors::red;
-  color_t col_y = colors::green;
-  color_t col_z = colors::blue;
-  color_t col_sel = colors::white; // White for selection
-
-  // Draw Arrows
-  // X Axis
-  draws.debug.arrow(position, position + vec3{s, 0, 0},
-                       (gizmo.hovered_axis_index == 0) ? col_sel : col_x);
-  // Y Axis
-  draws.debug.arrow(position, position + vec3{0, s, 0},
-                       (gizmo.hovered_axis_index == 1) ? col_sel : col_y);
-  // Z Axis
-  draws.debug.arrow(position, position + vec3{0, 0, s},
-                       (gizmo.hovered_axis_index == 2) ? col_sel : col_z);
-
-  // Draw Rings
-  // Rings usually are at the center, radius proportional to size?
-  // Let's make rings slightly larger than arrows or same size?
-  // Usually rings are around the origin.
-
-  float r_radius = s * 0.8f;
-
-  draw_ring(draws, position, r_radius, 0,
-            (gizmo.hovered_ring_index == 0) ? col_sel : col_x);
-  draw_ring(draws, position, r_radius, 1,
-            (gizmo.hovered_ring_index == 1) ? col_sel : col_y);
-  draw_ring(draws, position, r_radius, 2,
-            (gizmo.hovered_ring_index == 2) ? col_sel : col_z);
-}
-
-// --- Logic ---
-
-static float intersect_aabb(const vec3 &origin, const vec3 &direction,
-                            const vec3 &min, const vec3 &max)
-{
-  float t = 0;
-  if (linalg::intersect_ray_aabb(origin, direction, min, max, t))
-    return t;
-  return 1e9f;
-}
-
-bool hit_test_reshape_gizmo(const linalg::ray_t &ray, reshape_gizmo_t &gizmo)
-{
-  gizmo.hovered_handle_index = -1;
-  float min_t = 1e9f;
-  float handle_length = 1.0f;
-
-  vec3 c = gizmo.aabb.center;
-  vec3 e = gizmo.aabb.half_extents;
-
-  // Normals for indices 0..5
-  constexpr int axis_count = 6;
-  vec3 normals[axis_count] = {
-      {1, 0, 0},  // +X
-      {-1, 0, 0}, // -X
-      {0, 1, 0},  // +Y
-      {0, -1, 0}, // -Y
-      {0, 0, 1},  // +Z
-      {0, 0, -1}  // -Z
-  };
-
-  // Position offsets for indices 0..5
-  vec3 pos[axis_count] = 
-  {{c.x + e.x, c.y, c.z}, {c.x - e.x, c.y, c.z},
-                 {c.x, c.y + e.y, c.z}, {c.x, c.y - e.y, c.z},
-                 {c.x, c.y, c.z + e.z}, {c.x, c.y, c.z - e.z}};
-
-  for (int i = 0; i < axis_count; ++i)
-  {
-    vec3 position = pos[i];
-    vec3 n = normals[i];
-    vec3 end = position + n * handle_length;
-
-    // Approximate arrow with AABB for picking
-    // Standard logic from previous editor_state_update
-    vec3 bmin = {.x = std::min(position.x, end.x),
-                 .y = std::min(position.y, end.y),
-                 .z = std::min(position.z, end.z)};
-    vec3 bmax = {.x = std::max(position.x, end.x),
-                 .y = std::max(position.y, end.y),
-                 .z = std::max(position.z, end.z)};
-    float pad = 0.2f;
-    bmin = bmin - vec3{.x = pad, .y = pad, .z = pad};
-    bmax = bmax + vec3{.x = pad, .y = pad, .z = pad};
-
-    float t = intersect_aabb(ray.origin, ray.direction, bmin, bmax);
-    if (t < min_t)
-    {
-      min_t = t;
-      gizmo.hovered_handle_index = i;
-    }
+    const float distance = length(box.center - view.camera_position);
+    arm_length = std::max(distance, 1.f) *
+                 std::tan(to_radians(view.fov_degrees) * 0.5f) * ARM_SCREEN_FRACTION;
   }
 
-  return gizmo.hovered_handle_index != -1;
+  arm_length = std::max(arm_length, 1e-2f);
+
+  // Derived from the eye rather than from the camera's forward vector: for a
+  // perspective view that is the direction the gizmo is actually seen along,
+  // which is what decides whether a quad reads as a sliver. An ortho editor
+  // camera looks down an axis from far back, so the two agree there anyway.
+  const vec3 to_gizmo = box.center - view.camera_position;
+  const vec3 view_direction =
+      length(to_gizmo) > 1e-4f ? normalize(to_gizmo) : vec3{0, 0, 1};
+  for (int normal_axis = 0; normal_axis < 3; ++normal_axis)
+    plane_handle_usable[normal_axis] =
+        std::abs(view_direction[normal_axis]) >= PLANE_QUAD_MIN_FACING;
 }
 
-bool hit_test_transform_gizmo(const linalg::ray_t &ray,
-                              transform_gizmo_t &gizmo)
+void Editor_Gizmo::clear_target()
 {
-  gizmo.hovered_axis_index = -1;
-  gizmo.hovered_ring_index = -1;
-  float min_t = 1e9f;
+  targeted = false;
+  hovered  = {};
+  dragged  = {};
+}
 
-  vec3 position = gizmo.position;
-  float s = gizmo.size;
+void Editor_Gizmo::update_hover(const linalg::ray_t &ray)
+{
+  hovered = {};
+  if (!targeted || is_dragging())
+    return;
 
-  // Axis Picking (Arrows)
-  // X (0), Y (1), Z (2)
-  const int axes_count = 3;
-  vec3 axes[axes_count] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-
-  for (int axis_idx = 0; axis_idx < axes_count; ++axis_idx)
+  // Plane handles first, and a hit on one WINS OUTRIGHT rather than competing
+  // on distance: containment in a solid region is a stronger statement than
+  // passing near a line, and the quad is placed so no arrow crosses it. Two
+  // quads can be pierced by one ray at a shallow angle, so those tie-break on
+  // depth.
   {
-    vec3 end = position + axes[axis_idx] * s;
-    // Approximating arrow as AABB
-    vec3 bmin = {.x = std::min(position.x, end.x),
-                 .y = std::min(position.y, end.y),
-                 .z = std::min(position.z, end.z)};
-    vec3 bmax = {.x = std::max(position.x, end.x),
-                 .y = std::max(position.y, end.y),
-                 .z = std::max(position.z, end.z)};
-    float pad = s * 0.1f;
-    bmin = bmin - vec3{pad, pad, pad};
-    bmax = bmax + vec3{pad, pad, pad};
-
-    float t = intersect_aabb(ray.origin, ray.direction, bmin, bmax);
-    if (t < min_t)
+    float nearest_quad = std::numeric_limits<float>::max();
+    for (int normal_axis = 0; normal_axis < 3; ++normal_axis)
     {
-      min_t = t;
-      gizmo.hovered_axis_index = axis_idx;
+      if (!plane_handle_usable[normal_axis])
+        continue;
+
+      float distance_along_ray = 0.f;
+      if (!intersect_ray_plane(ray.origin, ray.direction, box.center,
+                               axis_direction(normal_axis), distance_along_ray) ||
+          distance_along_ray <= 0.f || distance_along_ray >= nearest_quad)
+        continue;
+
+      vec3 u, v;
+      ring_basis(normal_axis, u, v);
+      const vec3  local     = (ray.origin + ray.direction * distance_along_ray) - box.center;
+      const float along_u   = dot(local, u) / arm_length;
+      const float along_v   = dot(local, v) / arm_length;
+
+      if (along_u < PLANE_QUAD_INNER || along_u > PLANE_QUAD_OUTER ||
+          along_v < PLANE_QUAD_INNER || along_v > PLANE_QUAD_OUTER)
+        continue;
+
+      nearest_quad = distance_along_ray;
+      hovered      = {gizmo_handle_t::kind_t::Translate_Plane, (uint8_t)normal_axis};
     }
+
+    if (hovered)
+      return;
   }
 
-  // Ring Picking (Rotation)
-  // Approximate ring as a torus or plane intersection?
-  // User asked for translate/rotate.
-  // We can do a plane intersection for the ring plane, check distance to
-  // center. Radius = s * 0.8f. Thickness = something small.
-  float r_radius = s * 0.8f;
-  float thickness = s * 0.1f;
+  const float threshold = arm_length * PICK_RADIUS_FACTOR;
+  pick_t      best;
 
-  // Check if we hit closer than current min_t
-  for (int axes_idx = 0; axes_idx < axes_count; ++axes_idx)
+  // Translate arrows. They start out from the centre rather than at it, which
+  // removes the region where all three overlap instead of tie-breaking it.
+  for (int axis = 0; axis < 3; ++axis)
   {
-    vec3 normal = axes[axes_idx]; // Ring axes_idx lies in plane perpendicular to axis axes_idx?
-    // Convention:
-    // X Ring (Pitch) -> Plane YZ -> Normal X
-    // Y Ring (Yaw) -> Plane XZ -> Normal Y
-    // Z Ring (Roll) -> Plane XY -> Normal Z
+    const vec3  direction = axis_direction(axis);
+    const float separation =
+        distance_from_ray_to_segment(ray.origin, ray.direction,
+                                     box.center + direction * (arm_length * ARM_INNER_FRACTION),
+                                     box.center + direction * arm_length);
+    consider(best, {gizmo_handle_t::kind_t::Translate, (uint8_t)axis}, separation, threshold);
+  }
 
-    float t = 0;
-    if (linalg::intersect_ray_plane(ray.origin, ray.direction, position, normal, t))
+  if (capabilities.reshape)
+  {
+    for (int face = 0; face < 6; ++face)
     {
-      if (t > 0 && t < min_t)
-      {
-        vec3 hit = ray.origin + ray.direction * t;
-        float d = linalg::length(hit - position);
-        if (d >= r_radius - thickness && d <= r_radius + thickness)
-        {
-          min_t = t;
-          gizmo.hovered_ring_index = axes_idx;
-          gizmo.hovered_axis_index = -1; // Ring overrides Axis if closer
-        }
-      }
+      const vec3  normal = face_normal(face);
+      const vec3  root   = box.center + normal * box.half_extents[face_axis(face)];
+      const float separation = distance_from_ray_to_segment(
+          ray.origin, ray.direction, root, root + normal * (arm_length * FACE_ARM_FACTOR));
+      consider(best, {gizmo_handle_t::kind_t::Reshape, (uint8_t)face}, separation, threshold);
     }
   }
 
-  return (gizmo.hovered_axis_index != -1 || gizmo.hovered_ring_index != -1);
+  if (capabilities.rotate)
+  {
+    const float radius = arm_length * RING_RADIUS_FACTOR;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      float distance_along_ray = 0.f;
+      if (!intersect_ray_plane(ray.origin, ray.direction, box.center, axis_direction(axis),
+                               distance_along_ray) ||
+          distance_along_ray <= 0.f)
+        continue;
+
+      const vec3  hit          = ray.origin + ray.direction * distance_along_ray;
+      const float from_centre  = length(hit - box.center);
+      consider(best, {gizmo_handle_t::kind_t::Rotate, (uint8_t)axis},
+               std::abs(from_centre - radius), arm_length * RING_THICKNESS);
+    }
+  }
+
+  hovered = best.handle;
 }
 
-bool update_reshape_gizmo(reshape_gizmo_t &gizmo, const linalg::ray_t &ray,
-                          bool is_dragging)
+bool Editor_Gizmo::try_begin_drag(const linalg::ray_t &ray, const gizmo_view_t &view)
 {
-  // Just update hovered state if not dragging
-  if (!is_dragging)
-  {
-    hit_test_reshape_gizmo(ray, gizmo);
-    gizmo.dragging_handle_index = -1;
+  if (!targeted || !hovered)
     return false;
-  }
 
-  // If wanting to drag..
-  if (gizmo.dragging_handle_index == -1)
+  dragged           = hovered;
+  start_box         = box;
+  start_snap_origin = snap_origin;
+  previous_angle    = 0.f;
+  total_angle       = 0.f;
+
+  const vec3 &camera_position = view.camera_position;
+
+  switch (dragged.kind)
   {
-    // start dragging.
-    if (gizmo.hovered_handle_index != -1)
+  case gizmo_handle_t::kind_t::Translate:
+  case gizmo_handle_t::kind_t::Reshape:
+  {
+    const bool is_reshape = dragged.kind == gizmo_handle_t::kind_t::Reshape;
+    const vec3 axis       = is_reshape ? face_normal(dragged.index) : axis_direction(dragged.index);
+    const vec3 anchor =
+        is_reshape ? start_box.center + axis * start_box.half_extents[face_axis(dragged.index)]
+                   : start_box.center;
+
+    float distance_along_ray = 0.f;
+    if (!intersect_ray_plane(ray.origin, ray.direction, anchor,
+                             camera_facing_plane_normal(axis, anchor, camera_position),
+                             distance_along_ray))
     {
-      gizmo.dragging_handle_index = gizmo.hovered_handle_index;
+      dragged = {};
+      return false;
     }
-    else
-    {
-      return false; // Not dragging anything
-    }
+
+    start_hit = ray.origin + ray.direction * distance_along_ray;
+    return true;
   }
 
+  case gizmo_handle_t::kind_t::Translate_Plane:
+  {
+    float distance_along_ray = 0.f;
+    if (!intersect_ray_plane(ray.origin, ray.direction, start_box.center,
+                             axis_direction(dragged.index), distance_along_ray))
+    {
+      dragged = {};
+      return false;
+    }
+
+    start_hit = ray.origin + ray.direction * distance_along_ray;
+    return true;
+  }
+
+  case gizmo_handle_t::kind_t::Rotate:
+  {
+    const vec3 axis = axis_direction(dragged.index);
+
+    float distance_along_ray = 0.f;
+    if (!intersect_ray_plane(ray.origin, ray.direction, start_box.center, axis,
+                             distance_along_ray))
+    {
+      dragged = {};
+      return false;
+    }
+
+    vec3 u, v;
+    ring_basis(dragged.index, u, v);
+    const vec3 local = (ray.origin + ray.direction * distance_along_ray) - start_box.center;
+    previous_angle   = std::atan2(dot(local, v), dot(local, u));
+    return true;
+  }
+
+  case gizmo_handle_t::kind_t::None:
+    break;
+  }
+
+  dragged = {};
   return false;
 }
 
-// Editor_Gizmo Implementation
-
-void Editor_Gizmo::start_interaction(Transaction_System* transactions,
-                                     shared::map_t* map,
-                                     shared::entity_uid_t uid)
+std::optional<gizmo_drag_t> Editor_Gizmo::try_update_drag(const linalg::ray_t &ray,
+                                                          const gizmo_view_t &view)
 {
-  if (!map || uid == 0)
+  if (!dragged)
+    return std::nullopt;
+
+  const vec3 &camera_position = view.camera_position;
+
+  switch (dragged.kind)
+  {
+  case gizmo_handle_t::kind_t::Translate:
+  {
+    const int  axis      = dragged.index;
+    const vec3 direction = axis_direction(axis);
+
+    float distance_along_ray = 0.f;
+    if (!intersect_ray_plane(
+            ray.origin, ray.direction, start_box.center,
+            camera_facing_plane_normal(direction, start_box.center, camera_position),
+            distance_along_ray))
+      return std::nullopt;
+
+    const float travelled =
+        dot(ray.origin + ray.direction * distance_along_ray - start_hit, direction);
+
+    // Snap the DRAGGED component only. Snapping the whole vector re-gridded the
+    // two axes the drag never touched, which silently moved any object that was
+    // not already on the grid.
+    gizmo_drag_t result;
+    result.pivot = start_box.center;
+    result.translation[axis] =
+        snapped_translation(start_snap_origin, axis, travelled, snap_step);
+
+    box.center = start_box.center + result.translation;
+    return result;
+  }
+
+  case gizmo_handle_t::kind_t::Translate_Plane:
+  {
+    const int normal_axis = dragged.index;
+
+    float distance_along_ray = 0.f;
+    if (!intersect_ray_plane(ray.origin, ray.direction, start_box.center,
+                             axis_direction(normal_axis), distance_along_ray))
+      return std::nullopt;
+
+    const vec3 travelled = (ray.origin + ray.direction * distance_along_ray) - start_hit;
+
+    // The two in-plane components are snapped independently and the normal one
+    // is left at exactly zero, so a plane drag can never nudge the third axis.
+    gizmo_drag_t result;
+    result.pivot = start_box.center;
+    for (const int axis : {(normal_axis + 1) % 3, (normal_axis + 2) % 3})
+      result.translation[axis] =
+          snapped_translation(start_snap_origin, axis, travelled[axis], snap_step);
+
+    box.center = start_box.center + result.translation;
+    return result;
+  }
+
+  case gizmo_handle_t::kind_t::Rotate:
+  {
+    const int  axis      = dragged.index;
+    const vec3 direction = axis_direction(axis);
+
+    float distance_along_ray = 0.f;
+    if (!intersect_ray_plane(ray.origin, ray.direction, start_box.center, direction,
+                             distance_along_ray))
+      return std::nullopt;
+
+    vec3 u, v;
+    ring_basis(axis, u, v);
+    const vec3  local = (ray.origin + ray.direction * distance_along_ray) - start_box.center;
+    const float angle = std::atan2(dot(local, v), dot(local, u));
+
+    total_angle += wrap_radians(angle - previous_angle);
+    previous_angle = angle;
+
+    gizmo_drag_t result;
+    result.pivot = start_box.center;
+    result.rotation[axis] = editor::snap(to_degrees(total_angle), editor::ROTATION_SNAP);
+    return result;
+  }
+
+  case gizmo_handle_t::kind_t::Reshape:
+  {
+    const int   axis   = face_axis(dragged.index);
+    const float sign   = face_sign(dragged.index);
+    const vec3  normal = face_normal(dragged.index);
+    const vec3  anchor = start_box.center + normal * start_box.half_extents[axis];
+
+    float distance_along_ray = 0.f;
+    if (!intersect_ray_plane(ray.origin, ray.direction, anchor,
+                             camera_facing_plane_normal(normal, anchor, camera_position),
+                             distance_along_ray))
+      return std::nullopt;
+
+    // Outward-positive along the face normal, which is why the minus faces need
+    // no sign correction of their own.
+    const float travelled =
+        dot(ray.origin + ray.direction * distance_along_ray - start_hit, normal);
+
+    // Only the face being dragged moves, and only it is snapped. Snapping both
+    // ends moved the opposite face of any box that started off-grid.
+    const shared::aabb_bounds_t start_bounds = shared::get_bounds(start_box);
+    float                       minimum      = start_bounds.min[axis];
+    float                       maximum      = start_bounds.max[axis];
+
+    if (sign > 0.f)
+      maximum = std::max(editor::snap(maximum + travelled, snap_step),
+                         minimum + editor::MIN_EXTENT);
+    else
+      minimum = std::min(editor::snap(minimum - travelled, snap_step),
+                         maximum - editor::MIN_EXTENT);
+
+    gizmo_drag_t result;
+    result.pivot = start_box.center;
+    shared::aabb_t reshaped        = start_box;
+    reshaped.center[axis]          = (minimum + maximum) * 0.5f;
+    reshaped.half_extents[axis]    = (maximum - minimum) * 0.5f;
+    result.box                     = reshaped;
+    result.translation             = reshaped.center - start_box.center;
+
+    box = reshaped;
+    return result;
+  }
+
+  case gizmo_handle_t::kind_t::None:
+    break;
+  }
+
+  return std::nullopt;
+}
+
+void Editor_Gizmo::end_drag()
+{
+  dragged        = {};
+  previous_angle = 0.f;
+  total_angle    = 0.f;
+}
+
+void Editor_Gizmo::draw(pass_builder_t &draws) const
+{
+  if (!targeted)
     return;
 
-  // Geometry: capture the whole value. Its transform IS its position plus
-  // half-extents, so there's nothing to route on — no virtual, no dynamic_cast
-  // chain, and the "scale" the reshape gizmo drags is the real field rather than
-  // a render component's multiplier standing in for one.
-  if (const shared::map_geometry_t *geometry_entry = map->find_geometry_by_uid(uid))
+  // Everything here is drawn when occluded: the gizmo sits at the object's
+  // centre, which for a solid brush is inside it, so depth-tested it is buried
+  // exactly when it is needed. The rings used to be the one part that was not,
+  // and they vanished into anything they were placed in.
+  const auto handle_color = [&](gizmo_handle_t handle, color_t base)
+  { return (hovered == handle || dragged == handle) ? colors::white : base; };
+
+  constexpr color_t axis_colors[3] = {colors::red, colors::green, colors::blue};
+
+  for (int axis = 0; axis < 3; ++axis)
   {
-    target_map = map;
-    target_uid = uid;
-    transaction_system = transactions;
-
-    interacting_ = true;
-    start_entity.reset();
-    start_geometry = geometry_entry->value;
-
-    // A static mesh is the one kind with an orientation; the other two are
-    // axis-aligned, so their rotation start state is identity.
-    linalg::vec3 start_orientation = {0, 0, 0};
-    if (const auto *static_mesh =
-            std::get_if<shared::static_mesh_geometry_t>(&geometry_entry->value))
-      start_orientation = static_mesh->orientation;
-
-    original_transform.position = shared::get_position(geometry_entry->value);
-    original_transform.scale = shared::get_half_extents(geometry_entry->value);
-    original_transform.orientation = start_orientation;
-
-    transform_state.position = original_transform.position;
-    transform_state.rotation = start_orientation;
-    transform_state.size = 64.0f;
-    return;
+    const vec3 direction = axis_direction(axis);
+    draws.debug.arrow(box.center + direction * (arm_length * ARM_INNER_FRACTION),
+                      box.center + direction * arm_length,
+                      handle_color({gizmo_handle_t::kind_t::Translate, (uint8_t)axis},
+                                   axis_colors[axis]),
+                      0.f, true);
   }
 
-  auto *entry = map->find_by_uid(uid);
-  if (!entry || !entry->entity)
-    return;
-
-  target_map = map;
-  target_uid = uid;
-  transaction_system = transactions;
-
-  // Snapshot entity before modification
-  interacting_ = true;
-  start_geometry.reset();
-  start_entity = snapshot_entity(entry->entity.get());
-
-  // Store original for drag calculations
-  auto &ent = entry->entity;
-
-  // Every entity has a position -- write it unconditionally. Making this the
-  // Box_Volume branch's job left a point entity (light, spawn, weapon) dragging
-  // from a stale or zeroed origin, which snapped it to 0,0,0 on the first move.
-  original_transform.position = ent->position;
-
-  const entities::Box_Volume *volume = entities::get_box_volume(ent.get());
-  original_transform.scale = volume ? volume->half_extents : linalg::vec3{1, 1, 1};
-
-  // Initialize Transform Gizmo State. Orientation is set once here for every
-  // entity kind rather than per branch above -- the per-branch writes it
-  // replaced were dead, since this line ran unconditionally after them.
-  transform_state.position = original_transform.position;
-  transform_state.rotation = ent->orientation;
-  original_transform.orientation = ent->orientation;
-  transform_state.size = 64.0f;
-}
-
-void Editor_Gizmo::end_interaction()
-{
-  if (interacting_ && target_map && target_uid != 0 && transaction_system)
+  for (int normal_axis = 0; normal_axis < 3; ++normal_axis)
   {
-    transaction_builder_t builder;
+    if (!plane_handle_usable[normal_axis])
+      continue;
 
-    if (start_geometry)
+    const gizmo_handle_t handle = {gizmo_handle_t::kind_t::Translate_Plane,
+                                   (uint8_t)normal_axis};
+    const color_t        color  = handle_color(handle, axis_colors[normal_axis]);
+
+    vec3 corners[4];
+    plane_quad_corners(box.center, normal_axis, arm_length, corners);
+
+    // Translucent fill plus an opaque border: the fill is what you aim at, the
+    // border is what makes it legible against whatever is behind it. `rim` is
+    // off because this IS a flat quad looked at face-on, which is the case the
+    // rim term is documented as wrong for.
+    draws.debug.filled_polygon(Span<const linalg::vec3f>(corners, 4),
+                               with_alpha(color, hovered == handle ? 0xAA : 0x55), 0.f,
+                               {.shaded = false, .draw_when_occluded = true, .rim = false});
+
+    for (int corner = 0; corner < 4; ++corner)
+      draws.debug.line(corners[corner], corners[(corner + 1) % 4], color, 0.f, 0.f, true);
+  }
+
+  if (capabilities.reshape)
+  {
+    for (int face = 0; face < 6; ++face)
     {
-      if (const shared::map_geometry_t *entry =
-              target_map->find_geometry_by_uid(target_uid))
-        builder.add_geometry_modified(target_uid, *start_geometry, entry->value);
+      const vec3 normal = face_normal(face);
+      const vec3 root   = box.center + normal * box.half_extents[face_axis(face)];
+      draws.debug.arrow(root, root + normal * (arm_length * FACE_ARM_FACTOR),
+                        handle_color({gizmo_handle_t::kind_t::Reshape, (uint8_t)face},
+                                     colors::gold),
+                        0.f, true);
     }
-    else if (auto *entry = target_map->find_by_uid(target_uid);
-             entry && entry->entity)
+  }
+
+  if (capabilities.rotate)
+  {
+    const float radius = arm_length * RING_RADIUS_FACTOR;
+    for (int axis = 0; axis < 3; ++axis)
     {
-      builder.add_modified_from_diff(target_uid, start_entity,
-                                     entry->entity.get());
-    }
+      const color_t color =
+          handle_color({gizmo_handle_t::kind_t::Rotate, (uint8_t)axis}, axis_colors[axis]);
 
-    auto txn = builder.take();
-    if (!txn.empty())
-      transaction_system->push(std::move(txn));
-  }
+      vec3 u, v;
+      ring_basis(axis, u, v);
 
-  start_entity.reset();
-  start_geometry.reset();
-  interacting_ = false;
-  target_map = nullptr;
-  target_uid = 0;
-  transaction_system = nullptr;
-}
-
-bool Editor_Gizmo::apply_target_position(const linalg::vec3 &position)
-{
-  if (!target_map || target_uid == 0)
-    return false;
-
-  return shared::set_object_position(*target_map, target_uid, position);
-}
-
-bool Editor_Gizmo::apply_target_box(const linalg::vec3 &center,
-                                    const linalg::vec3 &half_extents)
-{
-  if (!target_map || target_uid == 0)
-    return false;
-
-  return shared::set_object_box(*target_map, target_uid, center, half_extents);
-}
-
-bool Editor_Gizmo::is_interacting() const
-{
-  return interacting_;
-}
-
-bool Editor_Gizmo::is_hovered() const
-{
-  return reshape_state.hovered_handle_index != -1 ||
-         transform_state.hovered_axis_index != -1 ||
-         transform_state.hovered_ring_index != -1;
-}
-
-void Editor_Gizmo::update(const linalg::ray_t &ray, bool is_mouse_down)
-{
-  if (is_interacting())
-    return; // Don't update hover if already dragging
-
-  // Update hover state
-  if (current_mode == Gizmo_Mode::Reshape)
-  {
-    hit_test_reshape_gizmo(ray, reshape_state);
-  }
-  // For Unified, we might want both, but let's prioritize Transform for now or
-  // separate tools?
-  // The user asked for "rings to be drawn".
-  // Let's Always hit test Transform if not reshaping?
-  // Or if mode is Unified/Translate/Rotate.
-  // Let's assume we want to show Transform gizmo by default if Reshape isn't
-  // specifically active? Or maybe we just check both?
-  // If we check both, who wins?
-  // Usually Transform gizmo handles (arrows) are outside the object, Reshape
-  // handles are on faces. Let's check Transform first.
-
-  bool hit_transform = hit_test_transform_gizmo(ray, transform_state);
-  if (!hit_transform &&
-      (current_mode == Gizmo_Mode::Reshape || current_mode == Gizmo_Mode::Unified))
-  {
-    hit_test_reshape_gizmo(ray, reshape_state);
-  }
-  else
-  {
-    reshape_state.hovered_handle_index = -1;
-  }
-}
-
-void Editor_Gizmo::draw(pass_builder_t &draws)
-{
-  if (current_mode == Gizmo_Mode::Reshape ||
-      current_mode == Gizmo_Mode::Unified)
-    draw_reshape_gizmo(draws, reshape_state);
-
-  // Always draw transform gizmo if it exists/initialized?
-  // Or only if mode allows.
-  // User wants to see rings.
-  draw_transform_gizmo(draws, transform_state);
-}
-
-void Editor_Gizmo::handle_input(const linalg::ray_t &ray, bool is_mouse_down,
-                                const linalg::vec3 &cam_pos)
-{
-  if (!target_map || target_uid == 0)
-    return;
-
-  if (reshape_state.dragging_handle_index != -1)
-  {
-    if (!is_mouse_down)
-    {
-      reshape_state.dragging_handle_index = -1;
-      end_interaction();
-      return;
-    }
-    // Continue Dragging Reshape
-    // ... (Existing Reshape Logic) ...
-    // Refactoring: The existing logic was modifying map directly.
-    // I will keep it mostly as is but fix variable names.
-
-    int i = reshape_state.dragging_handle_index;
-    int axis = i / 2;
-    vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
-                            {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
-
-    vec3 axis_dir = face_normals[i];
-    vec3 orig_center = original_transform.position;
-    vec3 orig_half = original_transform.scale;
-    vec3 handle_pos = orig_center + axis_dir * orig_half[axis];
-
-    vec3 cam_to_obj = orig_center - cam_pos;
-    vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
-    plane_normal = linalg::cross(plane_normal, axis_dir);
-
-    float t = 0;
-    if (linalg::intersect_ray_plane(ray.origin, ray.direction, handle_pos,
-                                    plane_normal, t))
-    {
-      vec3 hit = ray.origin + ray.direction * t;
-      float current_proj = linalg::dot(hit, axis_dir);
-      float delta = current_proj - drag_start_offset;
-
-      vec3 old_min = orig_center - orig_half;
-      vec3 old_max = orig_center + orig_half;
-      float new_min_val = old_min[axis];
-      float new_max_val = old_max[axis];
-
-      if (i % 2 == 0) // + Face
-        new_max_val += delta;
-      else // - Face
-        new_min_val += (axis_dir[axis] * delta);
-
-      // Grid Snap
-      new_max_val = editor::snap(new_max_val, snap_step);
-      new_min_val = editor::snap(new_min_val, snap_step);
-
-      if (new_max_val < new_min_val + editor::MIN_EXTENT)
+      vec3 previous = box.center + u * radius;
+      for (int segment = 1; segment <= RING_SEGMENTS; ++segment)
       {
-        if (i % 2 == 0)
-          new_max_val = new_min_val + editor::MIN_EXTENT;
-        else
-          new_min_val = new_max_val - editor::MIN_EXTENT;
-      }
-
-      float new_center_val = (new_min_val + new_max_val) * 0.5f;
-      float new_half_val = (new_max_val - new_min_val) * 0.5f;
-
-      // Only the dragged axis changes; the other two keep the values the drag
-      // started from.
-      vec3 new_center = original_transform.position;
-      vec3 new_half = original_transform.scale;
-      new_center[axis] = new_center_val;
-      new_half[axis] = new_half_val;
-
-      if (apply_target_box(new_center, new_half))
-      {
-        reshape_state.aabb.center = new_center;
-        reshape_state.aabb.half_extents = new_half;
-
-        // Also update transform gizmo
-        transform_state.position = new_center;
+        const float angle = (float)segment / (float)RING_SEGMENTS * 2.f * PI;
+        const vec3  point =
+            box.center + u * (std::cos(angle) * radius) + v * (std::sin(angle) * radius);
+        draws.debug.line(previous, point, color, 0.f, 0.f, true);
+        previous = point;
       }
     }
   }
-  else if (transform_state.dragging_axis_index != -1 ||
-           transform_state.dragging_ring_index != -1)
-  {
-    if (!is_mouse_down)
-    {
-      transform_state.dragging_axis_index = -1;
-      transform_state.dragging_ring_index = -1;
-      end_interaction();
-      return;
-    }
-
-    // Handle Transform Drag
-    if (transform_state.dragging_axis_index != -1)
-    {
-      // Axis Drag (Translation)
-      int axis = transform_state.dragging_axis_index;
-      vec3 axis_dir = {0, 0, 0};
-      if (axis == 0)
-        axis_dir = {1, 0, 0};
-      else if (axis == 1)
-        axis_dir = {0, 1, 0};
-      else
-        axis_dir = {0, 0, 1};
-
-      vec3 orig_pos = original_transform.position;
-      vec3 cam_to_obj = orig_pos - cam_pos;
-      vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
-      plane_normal = linalg::cross(plane_normal, axis_dir);
-
-      float t = 0;
-      if (linalg::intersect_ray_plane(ray.origin, ray.direction, orig_pos,
-                                      plane_normal, t))
-      {
-        vec3 hit = ray.origin + ray.direction * t;
-        float current_proj = linalg::dot(hit, axis_dir);
-        float delta = current_proj - drag_start_offset;
-
-        vec3 new_pos = orig_pos + axis_dir * delta;
-        new_pos.x = editor::snap(new_pos.x, snap_step);
-        new_pos.y = editor::snap(new_pos.y, snap_step);
-        new_pos.z = editor::snap(new_pos.z, snap_step);
-
-        if (!apply_target_position(new_pos))
-          return;
-        reshape_state.aabb.center = new_pos;
-        transform_state.position = new_pos;
-      }
-    }
-    else if (transform_state.dragging_ring_index != -1)
-    {
-      // Ring Drag (Rotation)
-      // For now, simple rotation visual or basic entity rotation (if supported)
-      // AABB doesn't support rotation.
-      // Wedge supports 90 degree steps (0-3).
-
-      int axis = transform_state.dragging_ring_index;
-      vec3 axis_dir = {0, 0, 0};
-      if (axis == 0)
-        axis_dir = {1, 0, 0};
-      else if (axis == 1)
-        axis_dir = {0, 1, 0};
-      else
-        axis_dir = {0, 0, 1};
-
-      // Project ray onto plane perpendicular to axis
-      float t = 0;
-      if (linalg::intersect_ray_plane(ray.origin, ray.direction,
-                                      transform_state.position, axis_dir, t))
-      {
-        vec3 hit = ray.origin + ray.direction * t;
-        vec3 local = hit - transform_state.position;
-        // Calculate angle?
-        // We need start angle.
-        // Let's use `drag_start_offset` as "start angle" (radians).
-
-        // But `drag_start_offset` was float.
-        // Re-calculate current angle
-        // We need a basis on the plane.
-        vec3 u, v;
-        if (axis == 0)
-        {
-          u = {0, 1, 0};
-          v = {0, 0, 1};
-        }
-        else if (axis == 1)
-        {
-          u = {0, 0, 1};
-          v = {1, 0, 0};
-        } // Z, X
-        else
-        {
-          u = {1, 0, 0};
-          v = {0, 1, 0};
-        }
-
-        float x = linalg::dot(local, u);
-        float y = linalg::dot(local, v);
-        float angle = std::atan2(y, x);
-
-        float delta_angle = angle - drag_start_offset;
-
-        float delta_degrees = delta_angle * (180.0f / 3.14159f);
-        delta_degrees = editor::snap(delta_degrees, editor::ROTATION_SNAP);
-
-        vec3 new_orient = original_transform.orientation;
-        new_orient[axis] = new_orient[axis] + delta_degrees;
-
-        // Rotation applies to an entity's euler orientation, and to a static
-        // mesh — the one geometry kind that has an orientation. Boxes and
-        // displacements are axis-aligned by definition, so the ring does nothing
-        // to them (it silently did nothing before too: their orientation field
-        // was written but only ever read by the draw call).
-        if (shared::map_geometry_t *geometry_entry =
-                target_map->find_geometry_by_uid(target_uid))
-        {
-          if (shared::get_kind(geometry_entry->value) ==
-              shared::geometry_kind_t::Static_Mesh)
-          {
-            std::get<shared::static_mesh_geometry_t>(geometry_entry->value)
-                .orientation = new_orient;
-            transform_state.rotation = new_orient;
-          }
-          return;
-        }
-
-        auto *re = target_map->find_by_uid(target_uid);
-        if (!re || !re->entity) return;
-        re->entity->orientation = new_orient;
-        transform_state.rotation = new_orient;
-      }
-    }
-  }
-  else
-  {
-    // New Drag Start?
-    if (is_mouse_down)
-    {
-      if (transform_state.hovered_axis_index != -1)
-      {
-        transform_state.dragging_axis_index =
-            transform_state.hovered_axis_index;
-        // Init Drag
-        int axis = transform_state.dragging_axis_index;
-        vec3 axis_dir = {0, 0, 0};
-        if (axis == 0)
-          axis_dir = {1, 0, 0};
-        else if (axis == 1)
-          axis_dir = {0, 1, 0};
-        else
-          axis_dir = {0, 0, 1};
-
-        vec3 center = transform_state.position;
-        vec3 cam_to_obj = center - cam_pos;
-        vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
-        plane_normal = linalg::cross(plane_normal, axis_dir);
-
-        float t = 0;
-        if (linalg::intersect_ray_plane(ray.origin, ray.direction, center,
-                                        plane_normal, t))
-        {
-          vec3 hit = ray.origin + ray.direction * t;
-          drag_start_offset = linalg::dot(hit, axis_dir);
-        }
-      }
-      else if (transform_state.hovered_ring_index != -1)
-      {
-        transform_state.dragging_ring_index =
-            transform_state.hovered_ring_index;
-
-        // Init Rotate Drag
-        int axis = transform_state.dragging_ring_index;
-        vec3 axis_dir = {0, 0, 0};
-        if (axis == 0)
-          axis_dir = {1, 0, 0};
-        else if (axis == 1)
-          axis_dir = {0, 1, 0};
-        else
-          axis_dir = {0, 0, 1};
-
-        float t = 0;
-        if (linalg::intersect_ray_plane(ray.origin, ray.direction,
-                                        transform_state.position, axis_dir, t))
-        {
-          vec3 hit = ray.origin + ray.direction * t;
-          vec3 local = hit - transform_state.position;
-          vec3 u, v;
-          if (axis == 0)
-          {
-            u = {0, 1, 0};
-            v = {0, 0, 1};
-          }
-          else if (axis == 1)
-          {
-            u = {0, 0, 1};
-            v = {1, 0, 0};
-          }
-          else
-          {
-            u = {1, 0, 0};
-            v = {0, 1, 0};
-          }
-
-          float x = linalg::dot(local, u);
-          float y = linalg::dot(local, v);
-          drag_start_offset = std::atan2(y, x); // Store start angle
-        }
-      }
-      else if (reshape_state.hovered_handle_index != -1)
-      {
-        reshape_state.dragging_handle_index =
-            reshape_state.hovered_handle_index;
-        // ... duplicate init logic from before or call function?
-        // Since we inline here, copy paste logic:
-
-        int i = reshape_state.dragging_handle_index;
-        int axis = i / 2;
-        vec3 face_normals[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
-                                {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
-        vec3 axis_dir = face_normals[i];
-        vec3 center = original_transform.position;
-        vec3 half = original_transform.scale;
-        vec3 handles_pos = center + axis_dir * half[axis];
-        vec3 cam_to_obj = center - cam_pos;
-        vec3 plane_normal = linalg::cross(axis_dir, cam_to_obj);
-        plane_normal = linalg::cross(plane_normal, axis_dir);
-        float t = 0;
-        if (linalg::intersect_ray_plane(ray.origin, ray.direction, handles_pos,
-                                        plane_normal, t))
-        {
-          vec3 hit = ray.origin + ray.direction * t;
-          drag_start_offset = linalg::dot(hit, axis_dir);
-        }
-      }
-    }
-  }
-}
-
-void Editor_Gizmo::set_geometry(const shared::aabb_bounds_t &bounds)
-{
-  reshape_state.aabb.center = (bounds.min + bounds.max) * 0.5f;
-  reshape_state.aabb.half_extents = (bounds.max - bounds.min) * 0.5f;
-  // Sync transform
-  transform_state.position = reshape_state.aabb.center;
-  // Size? default
-  transform_state.size = 64.0f; // Reset size on new geometry? Or keep?
-  // It's fine.
 }
 
 } // namespace client

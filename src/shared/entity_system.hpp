@@ -222,8 +222,8 @@ struct Entity_System
   //
   // Replaces `for (pool) for (slot) if (get_render(entity))`, which evaluated a
   // filter that is CONSTANT PER POOL once per entity — every element of the
-  // Light_Entity pool paying a COMPONENT_OFFSETS lookup that could only return
-  // -1. See Component_View below for what it costs instead.
+  // Point_Light_Entity pool paying a COMPONENT_OFFSETS lookup that could only
+  // return -1. See Component_View below for what it costs instead.
   //
   // Same lifetime rule as entities_of<T>(): a view, not a container, invalidated
   // by the next spawn or destroy in any pool it covers.

@@ -33,6 +33,7 @@ struct conversion_report_t
   size_t boxes = 0;
   size_t static_meshes = 0;
   size_t displacements = 0;
+  size_t brushes = 0;
   size_t entities = 0;
   bool was_legacy = false;      // the file still held geometry as entity blocks
   bool needs_rewrite = false;   // the file's text is not what save_map writes
@@ -49,6 +50,7 @@ conversion_report_t inspect(const shared::map_t &map, const std::string &origina
     case shared::geometry_kind_t::Box:          ++report.boxes; break;
     case shared::geometry_kind_t::Static_Mesh:  ++report.static_meshes; break;
     case shared::geometry_kind_t::Displacement: ++report.displacements; break;
+    case shared::geometry_kind_t::Brush:        ++report.brushes; break;
     }
   }
 
@@ -126,9 +128,10 @@ bool convert_one(const std::string &path, bool check_only)
   else if (report.needs_rewrite)
     status = "  [not canonical]";
 
-  std::printf("%s: %zu box, %zu static_mesh, %zu displacement, %zu entities%s\n",
+  std::printf("%s: %zu box, %zu static_mesh, %zu displacement, %zu brush, "
+              "%zu entities%s\n",
               path.c_str(), report.boxes, report.static_meshes,
-              report.displacements, report.entities, status);
+              report.displacements, report.brushes, report.entities, status);
 
   if (check_only)
     return true;

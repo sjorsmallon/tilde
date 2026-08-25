@@ -62,6 +62,13 @@ void populate_static_physics_bodies(physics_state_t &state, const map_t &map)
     case geometry_kind_t::Static_Mesh:
       // Skipped on purpose — see the note on the declaration.
       break;
+
+    case geometry_kind_t::Brush:
+    {
+      const brush_geometry_t &brush = std::get<brush_geometry_t>(entry.value);
+      register_static_convex_hull(state, entry.uid, brush.vertices);
+      break;
+    }
     }
   }
 }

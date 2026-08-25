@@ -49,6 +49,7 @@ static const std::vector<placeable_t> &placeables()
          entities::entity_type::Invalid},
         {"DISPLACEMENT", true, shared::geometry_kind_t::Displacement,
          entities::entity_type::Invalid},
+        {"BRUSH", true, shared::geometry_kind_t::Brush, entities::entity_type::Invalid},
     };
 
     for (entities::entity_type type : entities::placeable_entity_types())
@@ -134,7 +135,9 @@ void Placement_Tool::on_mouse_down(editor_context_t &ctx,
   if (geometry_to_place)
   {
     shared::geometry_value_t placed = *geometry_to_place;
-    shared::set_position(placed, compute_geometry_placement_center(placed, ghost_position));
+    shared::set_position(
+        placed, compute_geometry_placement_center(placed, ghost_position,
+                                                  ctx.grid ? ctx.grid->step() : 0.0f));
 
     const shared::entity_uid_t uid = ctx.map->add_geometry(placed);
 
@@ -213,6 +216,13 @@ make_placement_prototype(shared::geometry_kind_t kind)
       displacement.init_grid(shared::box_face_t::Invalid,
                             displacement.subdivision_level);
       return displacement;
+    }
+
+    case shared::geometry_kind_t::Brush:
+    {
+      shared::brush_geometry_t brush;
+      brush.vertices = shared::make_box_brush_vertices({0, 0, 0}, default_extents);
+      return brush;
     }
   }
 
@@ -293,7 +303,8 @@ void Placement_Tool::on_draw_overlay(editor_context_t &ctx,
   if (geometry_to_place)
   {
     const linalg::vec3 center =
-        compute_geometry_placement_center(*geometry_to_place, ghost_position);
+        compute_geometry_placement_center(*geometry_to_place, ghost_position,
+                                          ctx.grid ? ctx.grid->step() : 0.0f);
     draw_geometry_ghost(*geometry_to_place, draws, center);
     return;
   }

@@ -6,6 +6,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include "entity_uid.hpp"
+#include "span.hpp"
 #include "linalg.hpp"
 
 #include <map>
@@ -116,6 +117,13 @@ void step_physics(physics_state_t &state, float dt);
 // Call this on both server and client after build_session.
 void register_static_box(physics_state_t &state, shared::entity_uid_t uid,
                           linalg::vec3f position, linalg::vec3f half_extents);
+
+// A static convex hull from world-space points. Brushes use this rather than
+// their bounding box for the same reason static meshes register nothing at all:
+// a box around a ramp is an invisible wall, and a brush is exactly the kind of
+// object that is usually not box-shaped.
+void register_static_convex_hull(physics_state_t &state, shared::entity_uid_t uid,
+                                 Span<const linalg::vec3f> points);
 
 // Register a dynamic sphere body for a spawned game entity (e.g. Rocket_Entity).
 // Only call this on the server — dynamic simulation is authoritative.

@@ -47,6 +47,10 @@ const uint32_t mesh_unlit_frag_spv[] =
 #include "mesh_unlit.frag.spv.h"
     ;
 
+const uint32_t mesh_grid_frag_spv[] =
+#include "mesh_grid.frag.spv.h"
+    ;
+
 const uint32_t particle_comp_spv[] =
 #include "particle.comp.spv.h"
     ;
@@ -1208,10 +1212,20 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
 
   const uint32_t *vert_spv  = skinned ? mesh_skinned_vert_spv : mesh_vert_spv;
   const size_t    vert_size = skinned ? sizeof(mesh_skinned_vert_spv) : sizeof(mesh_vert_spv);
-  const uint32_t *frag_spv =
-      key.state.shader == shader_t::lit ? mesh_lit_frag_spv : mesh_unlit_frag_spv;
-  const size_t frag_size =
-      key.state.shader == shader_t::lit ? sizeof(mesh_lit_frag_spv) : sizeof(mesh_unlit_frag_spv);
+  const uint32_t *frag_spv  = mesh_lit_frag_spv;
+  size_t          frag_size = sizeof(mesh_lit_frag_spv);
+  switch (key.state.shader)
+  {
+  case shader_t::lit: break;
+  case shader_t::unlit:
+    frag_spv  = mesh_unlit_frag_spv;
+    frag_size = sizeof(mesh_unlit_frag_spv);
+    break;
+  case shader_t::grid:
+    frag_spv  = mesh_grid_frag_spv;
+    frag_size = sizeof(mesh_grid_frag_spv);
+    break;
+  }
 
   VkShaderModule vert_module = VK_NULL_HANDLE;
   VkShaderModule frag_module = VK_NULL_HANDLE;

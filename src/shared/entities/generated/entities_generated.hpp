@@ -23,18 +23,6 @@ template <typename T> std::optional<T> try_from_string(std::string_view text);
 // sparse enum values today; the day it grows them, every _COUNT user
 // has to be revisited.
 
-enum class Light_Type : uint8_t
-{
-  Point = 0,
-  Spot = 1,
-  Directional = 2,
-};
-
-constexpr uint32_t Light_Type_COUNT = 3;
-
-const char* to_string(Light_Type value);
-template <> std::optional<Light_Type> try_from_string<Light_Type>(std::string_view text);
-
 enum class Spawn_Type : uint8_t
 {
   Human = 0,
@@ -145,19 +133,18 @@ template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view t
 
 enum class enum_type : uint16_t
 {
-  Light_Type = 0,
-  Spawn_Type = 1,
-  Team_Allegiance = 2,
-  Weapon = 3,
-  Weapon_Kind = 4,
-  Shader_Type = 5,
-  Shape_Kind = 6,
-  Trigger_Action = 7,
-  Fire_Mode = 8,
-  Aim_Pose = 9,
+  Spawn_Type = 0,
+  Team_Allegiance = 1,
+  Weapon = 2,
+  Weapon_Kind = 3,
+  Shader_Type = 4,
+  Shape_Kind = 5,
+  Trigger_Action = 6,
+  Fire_Mode = 7,
+  Aim_Pose = 8,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 10;
+constexpr uint32_t ENUM_TYPE_COUNT = 9;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -172,23 +159,26 @@ enum class entity_type : uint16_t
   Rocket_Entity = 5,
   Particle_Emitter_Entity = 6,
   Trigger_Volume_Entity = 7,
-  Light_Entity = 8,
-  Physics_Body_Entity = 9,
+  Point_Light_Entity = 8,
+  Spot_Light_Entity = 9,
+  Directional_Light_Entity = 10,
+  Physics_Body_Entity = 11,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 10;
+constexpr uint32_t ENTITY_TYPE_COUNT = 12;
 
 enum class component_type : uint16_t
 {
   Box_Volume = 0,
   Material = 1,
   Render = 2,
-  Inventory = 3,
+  Light = 3,
+  Inventory = 4,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 4;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 5;
 
 } // namespace entities
 
@@ -200,12 +190,6 @@ constexpr uint32_t COMPONENT_TYPE_COUNT = 4;
 // Enum_Array<entities::Foo, T>, so adding a value to the .def resizes
 // every table over that enum. It does not fill the new row -- see
 // rows_in_enum_order in array.hpp for the check that catches that.
-
-template <> struct enum_traits<entities::Light_Type>
-{
-  static constexpr uint32_t count = entities::Light_Type_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Light_Type;
-};
 
 template <> struct enum_traits<entities::Spawn_Type>
 {
@@ -292,6 +276,14 @@ struct Render
   linalg::vec3f scale = {1.0f, 1.0f, 1.0f};
   linalg::vec3f rotation = {0.0f, 0.0f, 0.0f};
   Material material = {};
+};
+
+struct Light
+{
+  static constexpr component_type static_component = component_type::Light;
+
+  linalg::vec3f color = {1.0f, 1.0f, 1.0f};
+  float intensity = 1.0f;
 };
 
 struct Inventory
@@ -426,19 +418,35 @@ struct Trigger_Volume_Entity : Entity
   float param_float = 0.0f;
 };
 
-struct Light_Entity : Entity
+struct Point_Light_Entity : Entity
 {
-  static constexpr entity_type static_type = entity_type::Light_Entity;
+  static constexpr entity_type static_type = entity_type::Point_Light_Entity;
 
-  Light_Entity() { type = entity_type::Light_Entity; }
+  Point_Light_Entity() { type = entity_type::Point_Light_Entity; }
 
-  linalg::vec3f direction = {};
-  linalg::vec3f color = {1.0f, 1.0f, 1.0f};
-  float intensity = 1.0f;
-  float range = {};
-  float spot_inner_degrees = {};
-  float spot_outer_degrees = {};
-  Light_Type kind = Light_Type::Point;
+  Light light = {};
+  float range = 256.0f;
+};
+
+struct Spot_Light_Entity : Entity
+{
+  static constexpr entity_type static_type = entity_type::Spot_Light_Entity;
+
+  Spot_Light_Entity() { type = entity_type::Spot_Light_Entity; }
+
+  Light light = {};
+  float range = 512.0f;
+  float inner_degrees = 20.0f;
+  float outer_degrees = 35.0f;
+};
+
+struct Directional_Light_Entity : Entity
+{
+  static constexpr entity_type static_type = entity_type::Directional_Light_Entity;
+
+  Directional_Light_Entity() { type = entity_type::Directional_Light_Entity; }
+
+  Light light = {};
 };
 
 struct Physics_Body_Entity : Entity
@@ -528,14 +536,34 @@ static_assert(std::is_base_of_v<Entity, Trigger_Volume_Entity>,
               "Trigger_Volume_Entity must derive from Entity: the generated tables hand out "
               "Entity* for every entity type");
 
-static_assert(std::is_trivially_copyable_v<Light_Entity>,
-              "Light_Entity must stay trivially copyable: pooled storage, snapshot "
+static_assert(std::is_trivially_copyable_v<Point_Light_Entity>,
+              "Point_Light_Entity must stay trivially copyable: pooled storage, snapshot "
               "baselines and undo all copy entities with memcpy");
-static_assert(std::is_trivially_destructible_v<Light_Entity>,
-              "Light_Entity must stay trivially destructible: the entity pool frees a "
+static_assert(std::is_trivially_destructible_v<Point_Light_Entity>,
+              "Point_Light_Entity must stay trivially destructible: the entity pool frees a "
               "slot by overwriting it and runs no destructor");
-static_assert(std::is_base_of_v<Entity, Light_Entity>,
-              "Light_Entity must derive from Entity: the generated tables hand out "
+static_assert(std::is_base_of_v<Entity, Point_Light_Entity>,
+              "Point_Light_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Spot_Light_Entity>,
+              "Spot_Light_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Spot_Light_Entity>,
+              "Spot_Light_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Spot_Light_Entity>,
+              "Spot_Light_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Directional_Light_Entity>,
+              "Directional_Light_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Directional_Light_Entity>,
+              "Directional_Light_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Directional_Light_Entity>,
+              "Directional_Light_Entity must derive from Entity: the generated tables hand out "
               "Entity* for every entity type");
 
 static_assert(std::is_trivially_copyable_v<Physics_Body_Entity>,

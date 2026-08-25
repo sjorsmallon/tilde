@@ -49,19 +49,51 @@ private:
   bool grid_hover_valid = false;
   linalg::vec3 grid_hover_position;
 
-  // Gizmo
+  // Gizmo. It owns no target of its own -- it is handed a box and reports a
+  // transform, and everything below is what applies that transform.
   Editor_Gizmo editor_gizmo;
 
   // Direct object drag (Ctrl+LMB to move in camera view plane)
-  bool is_dragging_object = false;
-  std::vector<std::pair<shared::entity_uid_t, linalg::vec3>> drag_start_positions;
-  linalg::vec3 drag_plane_hit_start;    // initial plane hit point
-  linalg::vec3 drag_plane_normal;       // normal of the drag plane
+  bool         is_dragging_object = false;
+  linalg::vec3 drag_plane_hit_start;
+  linalg::vec3 drag_plane_normal;
+
+  // The transform every selected object held when the drag opened. BOTH drag
+  // styles -- the gizmo and Ctrl+LMB -- measure against this rather than
+  // against the previous frame, so neither accumulates rounding and both are
+  // idempotent if a frame produces no answer.
+  struct drag_origin_t
+  {
+    shared::entity_uid_t uid = 0;
+    linalg::vec3         position{0, 0, 0};
+    linalg::vec3         orientation{0, 0, 0};
+  };
+  std::vector<drag_origin_t>                        drag_origins;
   std::map<shared::entity_uid_t, object_snapshot_t> drag_start_snapshots;
 
-  // Snapshot / commit for the multi-object drag, regime-agnostic at the call site.
+  // Snapshot / commit for a multi-object drag, regime-agnostic at the call site.
   void capture_drag_snapshots(editor_context_t &ctx);
   void commit_drag_snapshots(editor_context_t &ctx);
+
+  void apply_gizmo_drag(editor_context_t &ctx, const gizmo_drag_t &drag);
+
+  // The panel's buttons go through apply_gizmo_drag too, wrapped in their own
+  // snapshot/commit. Sharing the application path is what stops a typed offset
+  // and a dragged one meaning different things.
+  void apply_transform_as_one_edit(editor_context_t &ctx, const gizmo_drag_t &transform);
+  void draw_multi_selection_panel(editor_context_t &ctx);
+
+  // What the panel's offset fields hold. Not applied until Apply is pressed:
+  // an edit-per-keystroke would push a transaction per digit typed.
+  linalg::vec3 panel_offset{0, 0, 0};
+
+  [[nodiscard]] gizmo_view_t make_gizmo_view() const;
+
+  // World bounds of the whole selection. Empty when nothing is selected -- the
+  // union of no boxes is not a box at the origin, and three call sites would
+  // otherwise each have to remember that.
+  [[nodiscard]] std::optional<shared::aabb_bounds_t>
+  try_compute_selection_bounds(editor_context_t &ctx) const;
 };
 
 } // namespace client

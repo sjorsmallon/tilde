@@ -2,6 +2,7 @@
 
 #include "asset.hpp"
 #include "box_face.hpp"
+#include "brush.hpp"
 #include "linalg.hpp"
 #include "plane.hpp"
 #include "shapes.hpp"
@@ -129,11 +130,33 @@ struct displacement_geometry_t
   linalg::vec3 get_vertex_world(int i, int j) const;
 };
 
+// A convex solid, stored as the point set whose hull it is. See brush.hpp for
+// why the vertices are canonical and the planes derived, and for the three rules
+// that keep off-grid vertices representable.
+//
+// Unlike the three above it, a brush has no `position` member: its position IS
+// its points, and a second copy of that would be a second thing to keep in step.
+// get_position/set_position work off the bounds centre.
+struct brush_geometry_t
+{
+  // A SET, not a sequence: the order these are in carries no meaning, and
+  // geometry_values_equal compares them as a set for that reason. The file
+  // writer sorts them so one shape has one spelling on disk, which is a
+  // property of the FILE rather than of the value.
+  //
+  // Defaults to a 128-unit cube so a default-constructed brush is a valid solid
+  // rather than a degenerate one nothing downstream can hull.
+  std::vector<linalg::vec3> vertices =
+      make_box_brush_vertices({0.f, 0.f, 0.f}, {64.f, 64.f, 64.f});
+
+  geometry_surface_t surface;
+};
+
 // One geometry object. `std::variant` rather than a tagged struct so a
 // whole-value copy is the snapshot, and so adding a kind is a compile error at
 // every site that switches over it.
-using geometry_value_t =
-    std::variant<box_geometry_t, static_mesh_geometry_t, displacement_geometry_t>;
+using geometry_value_t = std::variant<box_geometry_t, static_mesh_geometry_t,
+                                      displacement_geometry_t, brush_geometry_t>;
 
 // Kind tags, kept in lockstep with geometry_value_t's alternatives so the
 // variant index and this enum are interchangeable.
@@ -142,9 +165,10 @@ enum class geometry_kind_t : uint8_t
   Box = 0,
   Static_Mesh = 1,
   Displacement = 2,
+  Brush = 3,
 };
 
-inline constexpr size_t geometry_kind_count = 3;
+inline constexpr size_t geometry_kind_count = 4;
 
 inline geometry_kind_t get_kind(const geometry_value_t &geometry)
 {
@@ -177,8 +201,10 @@ linalg::vec3 get_half_extents(const geometry_value_t &geometry);
 aabb_bounds_t get_bounds(const geometry_value_t &geometry);
 
 // Outward-facing collision planes, and the polygon of each face parallel to
-// them. Every kind is a box today; displacement's true heightmap surface is
-// still TODO (it was equally flat as an entity — see the note in
+// them. Box, static mesh and displacement all collide as their axis-aligned
+// bound; a brush collides as its actual hull, which is what BVH_Primitive
+// already documents its plane list to be. Displacement's true heightmap surface
+// is still TODO (it was equally flat as an entity — see the note in
 // get_collision_planes).
 std::vector<Plane> get_collision_planes(const geometry_value_t &geometry);
 std::vector<std::vector<linalg::vec3>> get_face_polygons(const geometry_value_t &geometry);
@@ -200,6 +226,13 @@ resolve_surface_mesh(const geometry_surface_t &surface);
 // Build a mesh for a displacement's current state: the subdivided displaced
 // face plus the five undisplaced box faces. With no active face, a plain box.
 assets::mesh_asset_t generate_displacement_mesh(const displacement_geometry_t &displacement);
+
+// The same for a brush: hull its points, then triangulate the faces. An
+// overload rather than a second name because it IS generate_brush_mesh, just
+// entered one level up. A brush whose points do not hull logs and returns an
+// empty mesh -- it draws as nothing, which is what a broken solid should look
+// like rather than silently becoming a box.
+assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush);
 
 // --- Text serialization ------------------------------------------------------
 //
