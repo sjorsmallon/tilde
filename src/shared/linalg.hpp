@@ -3,8 +3,10 @@
 #include "log.hpp"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
 namespace linalg
 {
@@ -619,35 +621,64 @@ inline bool intersect_ray_sphere(const vec3 &ray_origin, const vec3 &ray_dir,
 }
 
 
-// Ray-AABB Intersection (Slab Method)
+// Ray-AABB Intersection (Slab Method).
+//
+// The overload additionally reports where the ray LEAVES the box and the
+// OUTWARD normal of the face it enters through -- the axis whose near slab
+// produced t_min. A ray starting inside gets a negative t_min and the normal of
+// the face it would have come in through.
+inline bool intersect_ray_aabb(const vec3 &ray_origin, const vec3 &ray_dir,
+                               const vec3 &aabb_min, const vec3 &aabb_max,
+                               float &t_min, float &t_max_out, vec3 &entry_normal)
+{
+  float tmin = -FLT_MAX;
+  float tmax = FLT_MAX;
+  int   entry_axis = 0;
+  float entry_sign = -1.f;
+
+  for (int axis = 0; axis < 3; ++axis)
+  {
+    const float inverse_direction = 1.0f / ray_dir[axis];
+    float near_t = (aabb_min[axis] - ray_origin[axis]) * inverse_direction;
+    float far_t  = (aabb_max[axis] - ray_origin[axis]) * inverse_direction;
+
+    // A negative component swaps which slab plane is the near one, and with it
+    // which face the entry normal points out of.
+    float near_sign = -1.f;
+    if (near_t > far_t)
+    {
+      std::swap(near_t, far_t);
+      near_sign = 1.f;
+    }
+
+    if (near_t > tmin)
+    {
+      tmin       = near_t;
+      entry_axis = axis;
+      entry_sign = near_sign;
+    }
+    tmax = std::min(tmax, far_t);
+  }
+
+  if (tmax >= tmin && tmax >= 0.0f)
+  {
+    t_min        = tmin;
+    t_max_out    = tmax;
+    entry_normal = {0.f, 0.f, 0.f};
+    entry_normal[entry_axis] = entry_sign;
+    return true;
+  }
+  return false;
+}
+
 inline bool intersect_ray_aabb(const vec3 &ray_origin, const vec3 &ray_dir,
                                const vec3 &aabb_min, const vec3 &aabb_max,
                                float &t_min)
 {
-  float tx1 = (aabb_min.x - ray_origin.x) / ray_dir.x;
-  float tx2 = (aabb_max.x - ray_origin.x) / ray_dir.x;
-
-  float tmin = (tx1 < tx2) ? tx1 : tx2;
-  float tmax = (tx1 > tx2) ? tx1 : tx2;
-
-  float ty1 = (aabb_min.y - ray_origin.y) / ray_dir.y;
-  float ty2 = (aabb_max.y - ray_origin.y) / ray_dir.y;
-
-  tmin = (ty1 < ty2) ? std::max(tmin, ty1) : std::max(tmin, ty2);
-  tmax = (ty1 > ty2) ? std::min(tmax, ty1) : std::min(tmax, ty2);
-
-  float tz1 = (aabb_min.z - ray_origin.z) / ray_dir.z;
-  float tz2 = (aabb_max.z - ray_origin.z) / ray_dir.z;
-
-  tmin = (tz1 < tz2) ? std::max(tmin, tz1) : std::max(tmin, tz2);
-  tmax = (tz1 > tz2) ? std::min(tmax, tz1) : std::min(tmax, tz2);
-
-  if (tmax >= tmin && tmax >= 0.0f)
-  {
-    t_min = tmin;
-    return true;
-  }
-  return false;
+  float ignored_t_max;
+  vec3  ignored_normal;
+  return intersect_ray_aabb(ray_origin, ray_dir, aabb_min, aabb_max, t_min,
+                            ignored_t_max, ignored_normal);
 }
 
 // Distance from a ray to a SEGMENT, at their closest approach.

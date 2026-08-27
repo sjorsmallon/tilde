@@ -17,6 +17,10 @@ void reset_for_new_connection(client_context_t& context)
   context.replication = {};
   context.visuals     = {};
 
+  // The transport's connection-scoped half, a stratum below the four groups
+  // above. Not the whole layer: the socket outlives a connection.
+  network::reset_connection_scoped_state(context.transport_layer);
+
   // The one piece of connection-scoped state we do not own. Gated because the
   // integrated launcher hands ONE cvar_state_t to both client::Init and
   // server::Init, so an in-process server is still the authority on these

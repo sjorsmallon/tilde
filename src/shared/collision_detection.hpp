@@ -2,6 +2,7 @@
 #include "aabb.hpp"
 #include "network/network_types.hpp"
 #include "plane.hpp"
+#include "span.hpp"
 #include <cmath>
 #include <vector>
 
@@ -90,7 +91,30 @@ struct ray_hit_result_t
   bool hit;
   float t;
   Collision_Id id;
+
+  // Outward normal of the face the ray entered through: the hull plane it
+  // crossed, or the AABB face for a primitive carrying no planes. Always set
+  // when `hit` -- a caller asking which surface it found must never read a
+  // stale value from a previous query.
+  vec3f normal;
+
+  // Where the ray LEAVES the solid it hit. A convex solid occupies one
+  // contiguous interval along a ray, so this is what a caller marching through
+  // overlapping solids must step past -- stepping a hair beyond `t` instead
+  // re-enters the same solid from inside.
+  float t_exit;
 };
+
+// Ray against a convex polytope, by slab-clipping the plane set. `planes` must
+// be the outward-facing faces of ONE convex solid, which is what
+// BVH_Primitive::collision_planes documents itself to be.
+//
+// Reports the ENTRY parameter, negative when the origin is already inside, and
+// the outward normal of the face entered. An empty plane set is not a solid and
+// returns false rather than a degenerate hit.
+bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f &origin,
+                               const vec3f &dir, float &out_t, float &out_t_exit,
+                               vec3f &out_normal);
 
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
                        const vec3f &origin, const vec3f &dir, ray_hit_result_t &out_hit);

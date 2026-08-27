@@ -86,7 +86,7 @@ void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
 
 void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
 {
-  ImGui::Begin("Particle Editor", nullptr, ImGuiWindowFlags_NoNav);
+  ImGui::Begin("Particle Editor");
 
   // Emitter selector dropdown
   if (ImGui::BeginCombo("Emitter",

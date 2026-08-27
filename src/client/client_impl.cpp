@@ -134,7 +134,7 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   // audio init is non-fatal — the engine becomes inert and play_* no-op — so
   // a machine with no sound device still runs.
   g_audio = std::make_unique<audio_system_t>();
-  g_audio->init(*cvar_state);
+  g_audio->init();
   state_manager::get_client_context().audio = g_audio.get();
 
   return true;

@@ -1,57 +1,40 @@
 #include "player_rig.hpp"
 
 #include "animation.hpp"
+#include "assets/generated/asset_state_generated.hpp"
 #include "log.hpp"
-#include "model_format.hpp"
 #include "skinning.hpp"
 
 #include <cmath>
-#include <string>
 
 namespace shared
 {
 namespace
 {
 
-constexpr const char *MODELS_DIRECTORY = "resources/models";
-constexpr const char *SKELETON_NAME    = "rig";
-constexpr const char *AIM_POSE_SUFFIX  = "holding_gun";
+// The one rig the player is hit-tested against. An id rather than a path: the
+// manifest already knows where `rig.hitboxes` is, and `decode_hitboxes` is the
+// one place the parse, the skeleton resolve and the hash check happen -- this
+// used to repeat all three, which is three chances to disagree with the loader
+// every other caller goes through.
+constexpr assets::hitbox_rig PLAYER_RIG = assets::hitbox_rig::rig;
 
 player_rig_t load_player_rig()
 {
   player_rig_t loaded;
 
-  // The aim poses first, because loading a `.animation` loads and hash-checks
-  // the skeleton it names as a side effect -- so by the time these are in, the
-  // skeleton below is the one they were authored against or the process is
-  // already dead.
-  loaded.aim_poses = load_aim_pose_set(MODELS_DIRECTORY, AIM_POSE_SUFFIX);
+  loaded.aim_poses = holding_gun_aim_poses();
 
-  const std::string skeleton_path =
-      std::string(MODELS_DIRECTORY) + "/" + SKELETON_NAME + ".skeleton";
-  loaded.skeleton = assets::get(assets::load_skeleton(skeleton_path.c_str()));
+  // Resolved, hash-checked and fatal on any of that failing before it gets
+  // here, so there is nothing left to branch on. The skeleton comes with it:
+  // a resolved rig's bone indices are indices into exactly one skeleton, and
+  // loading a second copy by path was how they could stop being the same one.
+  loaded.rig      = *assets::get(assets::get_hitbox_rig(PLAYER_RIG));
+  loaded.skeleton = loaded.rig.skeleton;
 
-  const std::string rig_path = std::string(MODELS_DIRECTORY) + "/" + SKELETON_NAME + ".hitboxes";
-  std::optional<assets::hitbox_rig_file_t> parsed =
-      models::try_parse_hitbox_rig(assets::read_asset_bytes(rig_path.c_str()), rig_path.c_str());
-  if (!parsed)
-    fatal_error("player hit volumes '{}' did not parse; without them nothing can be hit",
-                rig_path);
-
-  // The rig names the skeleton revision it was authored against. A mismatch is
-  // not a rounding error: bone indices are the skeleton's, so volumes would sit
-  // on whatever limb now occupies the index they were sized for.
-  if (parsed->skeleton_hash != loaded.skeleton->hash)
-    fatal_error("hit volumes '{}' were authored against skeleton hash {:016x}, but '{}' hashes to "
-                "{:016x}; re-derive the rig",
-                rig_path, parsed->skeleton_hash, skeleton_path, loaded.skeleton->hash);
-
-  std::optional<assets::hitbox_rig_t> rig =
-      assets::try_resolve_hitbox_rig(*parsed, *loaded.skeleton);
-  if (!rig)
-    fatal_error("hit volumes '{}' name bones that skeleton '{}' does not have", rig_path,
-                loaded.skeleton->name);
-  loaded.rig = std::move(*rig);
+  if (loaded.rig.volumes.empty() || !loaded.skeleton)
+    fatal_error("player hit volumes '{}' resolved to nothing; without them nothing can be hit",
+                assets::to_string(PLAYER_RIG));
 
   log_terminal("[hitbox] player rig '{}': {} volumes on skeleton '{}' ({} bones)",
                loaded.rig.name, loaded.rig.volumes.size(), loaded.skeleton->name,
@@ -59,35 +42,22 @@ player_rig_t load_player_rig()
   return loaded;
 }
 
-// Model space to world: rotate about +Y by the body yaw, then translate to the
-// feet.
-//
-// The rotation is the RENDERER's, not `direction_from_angles`': a model matrix
-// with rotation.y sweeps +X toward -Z (renderer.cpp's T * Rz * Ry * Rx * S),
-// while a view yaw sweeps +X toward +Z. `model_yaw_from_view_yaw` is that
-// conversion and both sides call it -- a volume has to land on the limb you can
-// see, so this angle and play_state's draw call must be the same angle or the
-// overlay stops being evidence of anything.
-struct model_to_world_t
-{
-  float         cosine = 1.0f;
-  float         sine   = 0.0f;
-  linalg::vec3f translation{};
+} // namespace
 
-  linalg::vec3f direction(const linalg::vec3f &v) const
-  {
-    return {cosine * v.x + sine * v.z, v.y, -sine * v.x + cosine * v.z};
-  }
-  linalg::vec3f point(const linalg::vec3f &v) const { return direction(v) + translation; }
-};
-
-model_to_world_t transform_for(const player_pose_t &pose)
+model_to_world_t model_to_world(float model_yaw_degrees, const linalg::vec3f &translation)
 {
-  const float angle = linalg::to_radians(linalg::model_yaw_from_view_yaw(pose.body_yaw));
-  return {std::cos(angle), std::sin(angle), pose.feet_position};
+  const float angle = linalg::to_radians(model_yaw_degrees);
+  return {std::cos(angle), std::sin(angle), translation};
 }
 
-} // namespace
+void place_hitbox(assets::posed_hitbox_t &hitbox, const model_to_world_t &transform)
+{
+  hitbox.start         = transform.point(hitbox.start);
+  hitbox.end           = transform.point(hitbox.end);
+  hitbox.frame.right   = transform.direction(hitbox.frame.right);
+  hitbox.frame.up      = transform.direction(hitbox.frame.up);
+  hitbox.frame.forward = transform.direction(hitbox.frame.forward);
+}
 
 const player_rig_t &player_rig()
 {
@@ -135,17 +105,10 @@ void compute_player_hitboxes(const player_rig_t &rig, const player_pose_t &pose,
 
   assets::compute_posed_hitboxes(rig.rig, Span<const linalg::mat4f>{model_space, bone_count}, out);
 
-  const model_to_world_t transform = transform_for(pose);
+  const model_to_world_t transform =
+      model_to_world(linalg::model_yaw_from_view_yaw(pose.body_yaw), pose.feet_position);
   for (assets::posed_hitbox_t &hitbox : out)
-  {
-    hitbox.start = transform.point(hitbox.start);
-    hitbox.end   = transform.point(hitbox.end);
-    // A Box reads its half-extents in this frame, so the frame turns too or the
-    // box stays pointing wherever the model was authored facing.
-    hitbox.frame.right   = transform.direction(hitbox.frame.right);
-    hitbox.frame.up      = transform.direction(hitbox.frame.up);
-    hitbox.frame.forward = transform.direction(hitbox.frame.forward);
-  }
+    place_hitbox(hitbox, transform);
 }
 
 } // namespace shared

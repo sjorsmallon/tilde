@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../shared/events/generated/events_generated.hpp"
+#include "../game_mode.hpp"
 #include "../server_context.hpp"
 
 #include <cstdint>
@@ -37,8 +38,33 @@ void update_respawns(server_context_t &context,
 
 
 
+// Put EVERY player back on a spawn marker, alive, right now — the round-start
+// reset. Called from enter_phase, which is the one writer of the phase, so a
+// round boundary and the snap that goes with it cannot come apart.
+//
+// Ignores the respawn delay entirely: this is not a respawn, it is the round
+// starting, and a player who died two seconds before the bell must not spend the
+// freeze as a corpse. It also DROPS every pending respawn, because a timer that
+// survived would fire mid-round and teleport a live player.
+//
+// Markers are cycled across the players so a full server does not stack
+// everyone on marker 0.
+void respawn_all_players(server_context_t &context);
+
+// A Spawn_Type::Human marker for a player of `team`, or null when the map
+// declares none at all.
+//
+// The policy and the team arrive as VALUES rather than as the mode row or the
+// player: this is the one function that knows how a marker is chosen, and every
+// caller has a different reason for the rotation index it passes (slot, bot
+// count, position in the round-start sweep). Team_Markers with no marker for
+// that team logs and falls back to the rotation, because spawning a player
+// inside the other team is worse than spawning them somewhere neutral.
 [[nodiscard]]
-const entities::Player_Spawn_Entity* try_pick_human_spawn(shared::game_session_t &session, uint32_t rotation_index);
+const entities::Player_Spawn_Entity* try_pick_human_spawn(shared::game_session_t &session,
+                                                          Spawn_Policy policy,
+                                                          entities::Team_Allegiance team,
+                                                          uint32_t rotation_index);
 
 
 const entities::Player_Spawn_Entity& origin_fallback_spawn();

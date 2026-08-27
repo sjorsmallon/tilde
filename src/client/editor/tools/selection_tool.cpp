@@ -307,7 +307,7 @@ void Selection_Tool::on_draw_ui(editor_context_t &ctx)
   // group does have instead of showing nothing.
   if (!selected_uids.empty() && ctx.map)
   {
-    if (ImGui::Begin("Entity Inspector"))
+    if (ImGui::Begin("Entity Inspector", nullptr, ImGuiWindowFlags_NoFocusOnAppearing))
     {
       const shared::entity_uid_t uid = selected_uids[0];
 

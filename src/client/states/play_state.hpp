@@ -1,11 +1,13 @@
 #pragma once
 
 #include "../../shared/hitbox_rig.hpp" // posed_hitbox_t, for the overlay scratch below
+#include "../../shared/array.hpp"
 #include "../shot_debug.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../../shared/skinning.hpp"
 #include "../camera.hpp"
 #include "../game_state.hpp"
+#include "../hud/scoreboard.hpp"
 #include "pause_menu.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/network/client_transport_layer.hpp"
@@ -73,6 +75,12 @@ private:
 
   per_connection_ui_t connection_ui;
   ui::list_menu_t pause_menu;
+
+  // Storage, not state: refilled from the latest snapshot every frame the board
+  // is up. Sized by the connection slot count because that IS the row bound --
+  // one row per player, and a player needs a slot -- so collect_scoreboard_rows
+  // is handed the whole thing and hands back the prefix it filled.
+  Array<hud::scoreboard_row_t, network::sv_max_client_count> scoreboard_rows;
 
   // debug / tracking information.
   static constexpr int FPS_HISTORY_SIZE = 64;

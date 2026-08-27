@@ -53,6 +53,10 @@ void reset_state_in_preparation_for_new_map_load(server_context_t& context)
   {
     client.player_uid         = shared::null_entity_uid;
     client.held_snapshot_tick = 0;
+    // The client is still running the OLD map for at least a round trip. It
+    // reports the new one on an input once it has loaded it, and this comes
+    // back on its own -- so this line is the correct answer right now rather
+    // than a flag someone has to remember to clear later.
     client.map_ready          = false;
   }
 }
@@ -69,6 +73,15 @@ void reset_client_slot(server_context_t& context, int32_t slot)
   // clear the uid alone and let the next join re-clear the rest, which held only
   // because the two sites happened to agree.
   context.clients[slot] = {};
+
+  // The reliable stream is the one piece of this client's state that lives a
+  // stratum down, in the transport layer, and it MUST go with the rest: the next
+  // occupant would otherwise inherit a block number and a half-reassembled
+  // inbound buffer from its predecessor. release_client_slot and
+  // occupy_client_slot clear it too -- both edges are already paired with one of
+  // them -- but this is what makes the guarantee unconditional rather than a
+  // fact about how the two call sites happen to be written.
+  context.transport_layer.reliable_streams[slot] = {};
 }
 
 // Both tick functions clear() per member rather than assigning `= {}` to the
@@ -83,7 +96,6 @@ void clear_incoming(server_context_t& context)
   context.incoming.potential_joins.clear();
   context.incoming.net_commands.clear();
   context.incoming.commands.clear();
-  context.incoming.map_loaded_acks.clear();
   context.incoming.map_data_requests.clear();
 }
 

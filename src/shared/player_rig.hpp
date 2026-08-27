@@ -39,6 +39,35 @@ struct player_rig_t
 // against.
 const player_rig_t &player_rig();
 
+// Model space to world: rotate about +Y by a MODEL yaw, then translate.
+//
+// The rotation is the RENDERER's, not `direction_from_angles`': a model matrix
+// with rotation.y sweeps +X toward -Z (renderer.cpp's T * Rz * Ry * Rx * S),
+// while a view yaw sweeps +X toward +Z. A caller holding a VIEW yaw converts
+// with `linalg::model_yaw_from_view_yaw` first -- a volume has to land on the
+// limb you can see, so the server's hit test, play_state's draw call and the
+// Animation tool's overlay must all be the same angle or the overlay stops
+// being evidence of anything.
+struct model_to_world_t
+{
+  float         cosine = 1.0f;
+  float         sine   = 0.0f;
+  linalg::vec3f translation{};
+
+  linalg::vec3f direction(const linalg::vec3f &v) const
+  {
+    return {cosine * v.x + sine * v.z, v.y, -sine * v.x + cosine * v.z};
+  }
+  linalg::vec3f point(const linalg::vec3f &v) const { return direction(v) + translation; }
+};
+
+model_to_world_t model_to_world(float model_yaw_degrees, const linalg::vec3f &translation);
+
+// Turns one volume out of model space: both endpoints, and -- for a Box -- the
+// frame its half-extents are read in, which turns too or the box stays pointing
+// wherever the model was authored facing.
+void place_hitbox(assets::posed_hitbox_t &hitbox, const model_to_world_t &transform);
+
 // What a player's volumes are placed from. Every field is either replicated or
 // server-owned -- there is no client-local input here, which is the property
 // that makes the client's overlay and the server's hit test the same volumes.

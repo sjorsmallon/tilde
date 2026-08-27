@@ -17,7 +17,7 @@ namespace server
 
 Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
                     const entities::Player_Spawn_Entity &marker,
-                    int32_t slot, BotType type, BotPersonality personality)
+                    int32_t slot, bot_behavior_t type, bot_personality_t personality)
 {
   const shared::entity_uid_t bot_uid =
       session.entity_system.spawn<entities::Player_Entity>();
@@ -33,15 +33,9 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
   if (bot)
   {
     bot->client_slot_index = slot;
-
-    // A bot is a player with no client, so it carries what a player carries --
-    // and the fire gate reads the inventory, so one without weapons could not
-    // shoot at all.
+    bot->team_allegiance = marker.team_allegiance;
+    bot->name.set(std::format("Bot {}", slot).c_str());
     grant_default_inventory(session, bot_uid);
-
-    // The same placement a human gets -- a bot IS a Player_Entity, so it gets
-    // the marker's orientation, view angles and body_yaw too, not just its
-    // position.
     place_player_at_spawn(session, *bot, marker);
 
     register_kinematic_capsule(physics,
@@ -53,12 +47,12 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
   }
 
   Bot_State state;
-  state.entity_uid  = bot_uid; // null_entity_uid if the spawn failed
+  state.entity_uid = bot_uid; // null_entity_uid if the spawn failed
   state.player_slot = slot;
-  state.type        = type;
+  state.type = type;
   state.personality = personality;
-  if (type == BotType::Chase)
-    state.goal = BotGoal::Chase;
+  if (type == bot_behavior_t::Chase)
+    state.goal = bot_goal_t::Chase;
   return state;
 }
 
@@ -202,63 +196,63 @@ void update_bots(server_context_t &context,
       if (d < best_dist) { best_dist = d; target = &p; }
     }
 
-    bot.state_timer  += dt;
+    bot.time_spent_in_current_state  += dt;
     bot.path_refresh -= dt;
     bot.fire_cooldown -= dt;
 
     // ---- state transitions ----
     {
-      BotGoal next = bot.goal;
+      bot_goal_t next = bot.goal;
 
-      if (bot.type == BotType::Idle)
+      if (bot.type == bot_behavior_t::Idle)
       {
         // Idle bots never leave the Idle state.
-        next = BotGoal::Idle;
+        next = bot_goal_t::Idle;
       }
-      else if (bot.type == BotType::Chase)
+      else if (bot.type == bot_behavior_t::Chase)
       {
         // Chase bots follow players but never attack or retreat.
-        next = target ? BotGoal::Chase : BotGoal::Idle;
+        next = target ? bot_goal_t::Chase : bot_goal_t::Idle;
       }
-      else // BotType::Regular — full state machine
+      else // bot_behavior_t::Regular — full state machine
       {
         // Retreat takes priority if health is low and personality calls for it.
         if (bot.personality.retreat_health > 0.f &&
             bot_ent->health > 0 &&
             static_cast<float>(bot_ent->health) < bot.personality.retreat_health)
         {
-          next = BotGoal::Retreat;
+          next = bot_goal_t::Retreat;
         }
-        else if (bot.goal == BotGoal::Retreat)
+        else if (bot.goal == bot_goal_t::Retreat)
         {
           // Exit retreat after timer or if health recovered.
-          if (bot.state_timer > 4.f ||
+          if (bot.time_spent_in_current_state > 4.f ||
               static_cast<float>(bot_ent->health) >= bot.personality.retreat_health * 2.f)
-            next = BotGoal::Idle;
+            next = bot_goal_t::Idle;
         }
         else if (!target)
         {
-          next = BotGoal::Idle;
+          next = bot_goal_t::Idle;
         }
         else if (best_dist <= bot.personality.engage_range)
         {
-          next = BotGoal::Attack;
+          next = bot_goal_t::Attack;
         }
-        else if (bot.goal == BotGoal::Attack &&
+        else if (bot.goal == bot_goal_t::Attack &&
                  best_dist <= bot.personality.engage_range * 1.5f)
         {
-          next = BotGoal::Attack;
+          next = bot_goal_t::Attack;
         }
         else
         {
-          next = BotGoal::Chase;
+          next = bot_goal_t::Chase;
         }
       }
 
       if (next != bot.goal)
       {
         bot.goal        = next;
-        bot.state_timer = 0.f;
+        bot.time_spent_in_current_state = 0.f;
         bot.path.clear();
         bot.path_index   = 0;
         bot.path_refresh = 0.f;
@@ -274,13 +268,13 @@ void update_bots(server_context_t &context,
 
     switch (bot.goal)
     {
-      case BotGoal::Idle:
+      case bot_goal_t::Idle:
       {
         // Stand still, keep facing where we already face.
         break;
       }
 
-      case BotGoal::Chase:
+      case bot_goal_t::Chase:
       {
         if (!target) break;
 
@@ -297,7 +291,7 @@ void update_bots(server_context_t &context,
         break;
       }
 
-      case BotGoal::Attack:
+      case bot_goal_t::Attack:
       {
         if (!target) break;
 
@@ -350,7 +344,7 @@ void update_bots(server_context_t &context,
         break;
       }
 
-      case BotGoal::Retreat:
+      case bot_goal_t::Retreat:
       {
         // Pathfind to a point directly away from the threat.
         if (bot.path_refresh <= 0.f || bot.path.empty())

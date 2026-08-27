@@ -28,19 +28,6 @@ change_map_message_t deserialize_change_map(network::Bit_Reader &reader)
   return msg;
 }
 
-void serialize_map_loaded(network::Bit_Writer &writer,
-                          const map_loaded_message_t &msg)
-{
-  network::write_var_uint(writer, msg.content_hash);
-}
-
-map_loaded_message_t deserialize_map_loaded(network::Bit_Reader &reader)
-{
-  map_loaded_message_t msg{};
-  msg.content_hash = network::read_var_uint(reader);
-  return msg;
-}
-
 // --- Compiled map package ---
 
 // Package container tag. Bump PACKAGE_VERSION on any layout change (e.g. a new

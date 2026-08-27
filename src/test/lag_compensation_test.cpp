@@ -492,11 +492,14 @@ int main()
 
   test_classify_bracket();
 
-  // player_rig() goes through the asset cache, which reads through the byte
-  // layer; one state for the whole file, mounted as a launcher would.
+  // player_rig() resolves manifest ids, which read through the byte layer; one
+  // state for the whole file, mounted AND registered exactly as a launcher does.
+  // init() is not optional here: registration is eager, so an id looked up
+  // before it resolves to nothing.
   static assets::asset_state_t asset_state;
   assets::set_state(&asset_state);
   assets::mount_asset_source();
+  assets::init();
 
   const shared::player_rig_t& rig = shared::player_rig();
   const aim_settings_t        settings;

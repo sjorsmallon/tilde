@@ -2708,13 +2708,18 @@ static void check_event_family(program_t* program)
 
 // A cvar's value has to survive a memcmp against a retained copy (that is how
 // mirroring detects a change) and has to be one plain member of a trivially
-// copyable struct. That rules out everything but the scalars and the
-// fixed-capacity string; enums and components are entity-family concepts and
-// have no console text form.
+// copyable struct. That rules out the components, which are an entity-family
+// concept with no console text form.
+//
+// An ENUM passes both tests -- it is one uint8_t, and its console text form is
+// the value name the command binders already parse -- and it is the right type
+// for a cvar whose value is a CHOICE rather than a number. sv_gamemode is the
+// declaration that earned it: as a string<24> it was a name resolved by hand at
+// map load, which is a second parser for something the generator already knows.
 static bool cvar_type_is_allowed(type_kind_t kind)
 {
   return kind == TYPE_F32 || kind == TYPE_I32 || kind == TYPE_U32 || kind == TYPE_BOOL ||
-         kind == TYPE_STRING;
+         kind == TYPE_STRING || kind == TYPE_ENUM;
 }
 
 static void check_cvar_lines(program_t* program)
@@ -2735,9 +2740,9 @@ static void check_cvar_lines(program_t* program)
       if (!is_commands && !cvar_type_is_allowed(field->type.kind))
       {
         report_error(program, field->offset, field->line,
-                     "cvar '%.*s' has type '%.*s'; a cvar must be f32, i32, u32, bool or "
-                     "string<N> -- it is one member of a trivially copyable struct and has to "
-                     "have a console text form",
+                     "cvar '%.*s' has type '%.*s'; a cvar must be f32, i32, u32, bool, "
+                     "string<N> or an enum declared in this .def -- it is one member of a "
+                     "trivially copyable struct and has to have a console text form",
                      field->name.length, field->name.data, field->type.name.length,
                      field->type.name.data);
       }
@@ -3684,6 +3689,7 @@ static const char* cvar_type_enum_name(type_kind_t kind)
     case TYPE_U32:    return "CVAR_TYPE_U32";
     case TYPE_BOOL:   return "CVAR_TYPE_BOOL";
     case TYPE_STRING: return "CVAR_TYPE_STRING";
+    case TYPE_ENUM:   return "CVAR_TYPE_ENUM";
     default:          break;
   }
   // check_cvar_lines rejects everything else, so reaching here is a generator bug.
@@ -5556,6 +5562,10 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
 
   fprintf(out, "#include \"array.hpp\"\n");
   fprintf(out, "#include \"cvars/cvar_runtime.hpp\"\n");
+  // enum_type_info_t, which an enum cvar's info row points at. It sits at
+  // global scope in reflection.hpp precisely so no one family owns it: the
+  // console needs the same value-name table the entity walker does.
+  fprintf(out, "#include \"reflection.hpp\"\n");
   if (program_has_string_cvar(cvars, cvar_count))
     fprintf(out, "#include \"network/network_types.hpp\"\n");
   fprintf(out, "#include \"span.hpp\"\n\n");
@@ -5679,6 +5689,7 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "  CVAR_TYPE_U32,\n");
   fprintf(out, "  CVAR_TYPE_BOOL,\n");
   fprintf(out, "  CVAR_TYPE_STRING,\n");
+  fprintf(out, "  CVAR_TYPE_ENUM,\n");
   fprintf(out, "};\n\n");
 
   fprintf(out, "// The console's whole view of a cvar. `offset` and `size` locate the\n");
@@ -5692,6 +5703,11 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "  uint16_t    offset;\n");
   fprintf(out, "  uint16_t    size;\n");
   fprintf(out, "  uint16_t    string_capacity; // string<N>'s N, otherwise 0\n");
+  fprintf(out, "\n");
+  fprintf(out, "  // CVAR_TYPE_ENUM only, else NOT_AN_ENUM. The same record an\n");
+  fprintf(out, "  // enum-typed entity or event field carries, which is what keeps the\n");
+  fprintf(out, "  // text conversion below a fixed set of cases with no per-cvar code.\n");
+  fprintf(out, "  const enum_type_info_t* enum_info;\n");
   fprintf(out, "};\n\n");
 
   fprintf(out, "struct command_info_t\n{\n");
@@ -5834,7 +5850,22 @@ static void emit_cvar_text_conversion(FILE* out)
   fprintf(out, "      // hands out a void*, not a typed pointer.\n");
   fprintf(out, "      const uint8_t* raw = static_cast<const uint8_t*>(bytes);\n");
   fprintf(out, "      return std::string(reinterpret_cast<const char*>(raw + 1), raw[0]);\n");
-  fprintf(out, "    }\n");
+  fprintf(out, "    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_ENUM:\n    {\n");
+  fprintf(out, "      // Every generated enum is dense, starts at 0 and has uint8_t as its\n");
+  fprintf(out, "      // underlying type, so the stored byte indexes value_names directly.\n");
+  fprintf(out, "      const uint8_t value = *static_cast<const uint8_t*>(bytes);\n");
+  fprintf(out, "      if (value >= info.enum_info->value_names.size())\n");
+  fprintf(out, "      {\n");
+  fprintf(out, "        // Out of range means someone wrote the member as a raw number\n");
+  fprintf(out, "        // rather than through try_cvar_from_text, so there is no name to\n");
+  fprintf(out, "        // report and no way for a caller to recover one.\n");
+  fprintf(out, "        fatal_error(\"try_cvar_to_text: cvar '{}' holds {}, which is not a \"\n");
+  fprintf(out, "                    \"value of enum {}\",\n");
+  fprintf(out, "                    info.name, (int)value, info.enum_info->name);\n");
+  fprintf(out, "      }\n");
+  fprintf(out, "      return std::string(info.enum_info->value_names[value]);\n    }\n");
 
   fprintf(out, "  }\n\n");
   // An invalid type tag is a corrupted table, not input: nothing the caller can
@@ -5906,7 +5937,21 @@ static void emit_cvar_text_conversion(FILE* out)
   fprintf(out, "      // zero, or two equal strings stop comparing equal under memcmp and\n");
   fprintf(out, "      // the mirror replicates a phantom change every tick.\n");
   fprintf(out, "      std::memset(raw + 1 + text.size(), 0, info.size - 1 - text.size());\n");
-  fprintf(out, "      return true;\n    }\n");
+  fprintf(out, "      return true;\n    }\n\n");
+
+  fprintf(out, "    case CVAR_TYPE_ENUM:\n    {\n");
+  fprintf(out, "      // By NAME only. A number would let `sv_gamemode 7` set a value the\n");
+  fprintf(out, "      // enum does not have, and a name is what a config file, a map's\n");
+  fprintf(out, "      // attached_cvars block and the console all spell it with anyway.\n");
+  fprintf(out, "      const Span<const char* const> names = info.enum_info->value_names;\n");
+  fprintf(out, "      for (uint32_t value = 0; value < names.size(); ++value)\n");
+  fprintf(out, "      {\n");
+  fprintf(out, "        if (text != names[value])\n          continue;\n");
+  fprintf(out, "        const uint8_t stored = (uint8_t)value;\n");
+  fprintf(out, "        std::memcpy(bytes, &stored, sizeof(stored));\n");
+  fprintf(out, "        return true;\n");
+  fprintf(out, "      }\n");
+  fprintf(out, "      return false;\n    }\n");
 
   fprintf(out, "  }\n\n");
   fprintf(out, "  fatal_error(\"try_cvar_from_text: cvar '{}' carries an invalid type tag {}\",\n");
@@ -5931,6 +5976,44 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
 
   // --- tables ---
   fprintf(out, "namespace\n{\n\n");
+
+  // The value names an enum cvar's info row points at, indexed by the enum's
+  // own numeric value. Duplicated from the to_string switch below for the same
+  // reason the entity family duplicates them: the switch is what warns on an
+  // unhandled enumerator, and reading it out of a table would silence exactly
+  // that.
+  int32_t cvar_enum_count = 0;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENUM)
+      continue;
+
+    fprintf(out, "constexpr const char* %.*s_VALUE_NAMES[] = {\n", declaration->name.length,
+            declaration->name.data);
+    for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
+    {
+      const string_view_t* value = &program->enum_values[declaration->first_enum_value + offset];
+      fprintf(out, "  \"%.*s\",\n", value->length, value->data);
+    }
+    fprintf(out, "};\n\n");
+    ++cvar_enum_count;
+  }
+
+  if (cvar_enum_count > 0)
+  {
+    fprintf(out, "constexpr enum_type_info_t ENUM_INFOS[] = {\n");
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      const declaration_t* declaration = &program->declarations[index];
+      if (declaration->kind != DECLARATION_ENUM)
+        continue;
+      fprintf(out, "  {\"%.*s\", {%.*s_VALUE_NAMES, %d}},\n", declaration->name.length,
+              declaration->name.data, declaration->name.length, declaration->name.data,
+              declaration->enum_value_count);
+    }
+    fprintf(out, "};\n\n");
+  }
 
   fprintf(out, "const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {\n");
   for (int32_t index = 0; index < cvar_count; ++index)
@@ -5957,8 +6040,20 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
     fprintf(out, "     .offset = offsetof(cvar_state_t, %.*s),\n", cvar->name.length,
             cvar->name.data);
     fprintf(out, "     .size = sizeof(cvar_state_t::%.*s),\n", cvar->name.length, cvar->name.data);
-    fprintf(out, "     .string_capacity = %d},\n",
+    fprintf(out, "     .string_capacity = %d,\n",
             cvar->type.kind == TYPE_STRING ? cvar->type.capacity : 0);
+
+    if (cvar->type.kind == TYPE_ENUM && cvar->type.declaration_index >= 0)
+    {
+      int32_t enum_index = 0;
+      for (int32_t which = 0; which < cvar->type.declaration_index; ++which)
+        enum_index += program->declarations[which].kind == DECLARATION_ENUM ? 1 : 0;
+      fprintf(out, "     .enum_info = &ENUM_INFOS[%d]},\n", enum_index);
+    }
+    else
+    {
+      fprintf(out, "     .enum_info = NOT_AN_ENUM},\n");
+    }
   }
   fprintf(out, "};\n\n");
 

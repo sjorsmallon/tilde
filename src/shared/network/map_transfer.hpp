@@ -36,17 +36,13 @@ void serialize_change_map(network::Bit_Writer &writer,
                           const change_map_message_t &msg);
 change_map_message_t deserialize_change_map(network::Bit_Reader &reader);
 
-// Client -> server: finished (re)loading the map. content_hash echoes the map
-// the client actually has, so the server can confirm a match before it resumes
-// streaming snapshots to this client.
-struct map_loaded_message_t
-{
-  uint32_t content_hash;
-};
-
-void serialize_map_loaded(network::Bit_Writer &writer,
-                          const map_loaded_message_t &msg);
-map_loaded_message_t deserialize_map_loaded(network::Bit_Reader &reader);
+// There is deliberately no map-loaded ACK here any more. "I hold this map" is
+// client STATE the server needs, not an occurrence, so it is a rider on
+// C2S_ClientInput (`map_content_hash`) reported every tick -- state that gates
+// behavior is replicated as state, never delivered as an event. A one-shot ack
+// could be lost, and losing it withheld snapshots forever; a value that is
+// continuously true self-heals in one tick with no retransmit anywhere. See
+// reliable_stream_def.md §12.
 
 // --- Compiled map package (the wire artifact / .bsp analogue) ---
 //

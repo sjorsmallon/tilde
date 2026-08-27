@@ -45,7 +45,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   context.replication.snapshot_history.slot_for(900).tick = 900;
 
   context.incoming.commands.push_back({0, "noclip 1"});
-  context.incoming.map_loaded_acks.push_back({1, {1, 2, 3}});
+  context.incoming.map_data_requests.push_back({1, {1, 2, 3}});
   // Both channels hold encoded bytes rather than values, so "dirty" is a fired
   // event rather than a pushed one.
   shared::Jump jump{};
@@ -78,6 +78,12 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   // An operator setting, claimed by no map: the revert must leave it alone.
   cvar_state.sv_tickrate = 30.f;
 
+  // Non-zero on purpose: mp_warmup_seconds defaults to 0, meaning "no deadline,
+  // wait for start_match", and a phase with no deadline cannot demonstrate the
+  // thing the assert below exists for -- that a deadline is computed off the
+  // CURRENT tick rather than seeded from zero.
+  cvar_state.mp_warmup_seconds = 5.f;
+
   for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
     client_slot_t& client = context.clients[slot];
@@ -86,8 +92,19 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
     client.latest_buttons_bitmap    = 0b1011;
     client.held_snapshot_tick       = 880 + slot;
     client.map_ready                = true;
-    client.last_map_switch_send_tick = 890 + slot;
     client.last_rewind_warning_tick  = 870 + slot;
+    client.wants_to_play             = true;
+
+    // The reliable stream lives a stratum down, on the transport layer, and it
+    // is the one piece of per-client state whose two resets DISAGREE on purpose:
+    // it survives a map switch (the CmdChangeMap is a message riding it) and it
+    // must not survive a change of occupant.
+    network::Reliable_Stream& stream = context.transport_layer.reliable_streams[slot];
+    stream.outbound = {1, 2, 3};
+    stream.block_length = 3;
+    stream.block_number = static_cast<network::uint8>(5 + slot);
+    stream.inbound = {9};
+    stream.received_through = static_cast<network::uint8>(2 + slot);
   }
 }
 
@@ -131,7 +148,7 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(cvar_state.sv_tickrate == 30.f);
 
   assert(context.incoming.commands.empty());
-  assert(context.incoming.map_loaded_acks.empty());
+  assert(context.incoming.map_data_requests.empty());
   assert(context.outgoing.effects.empty());
 
   // A THIRD category, besides cleared and survives: PRODUCED by the reset.
@@ -146,11 +163,14 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(context.outgoing.pending_hits.empty());
 
   // Rules restart the match — by a CALL, so this is not `= {}`: Warmup for
-  // round 0 (the first Countdown takes it to 1) with a deadline computed off
-  // the CURRENT tick, not off zero.
+  // round 0 (entering the mode's first cycle phase takes it to 1) with a
+  // deadline computed off the CURRENT tick, not off zero. make_dirty set
+  // mp_warmup_seconds non-zero so there is a deadline to check at all.
   assert(context.world.rules.phase == shared::Round_Phase::Warmup);
   assert(context.world.rules.round_number == 0);
   assert(context.world.rules.phase_end_tick > context.tick_number);
+  // The mode is reset state too, and it is what the phase cycle is read from.
+  assert(context.world.rules.mode == Game_Mode::deathmatch);
 
   // Survives: the tick clock. Absolute stamps (phase_end_tick above,
   // last_fire_tick / death_tick on entities) and both snapshot rings are keyed
@@ -165,6 +185,10 @@ void test_reset_state_in_preparation_for_new_map_load()
     // fresh session's restarted counter and resolve to someone else's player.
     assert(client.player_uid == shared::null_entity_uid);
     assert(client.held_snapshot_tick == 0);
+    // Cleared, and it comes back on its own: map_ready is derived every tick
+    // from the hash riding C2S_ClientInput, so the client re-earns it one input
+    // after it has loaded the new map. Nothing re-sends anything to make that
+    // happen.
     assert(!client.map_ready);
 
     // Survives: the command stream describes the CLIENT, not the world. Wiping
@@ -173,15 +197,25 @@ void test_reset_state_in_preparation_for_new_map_load()
     assert(client.latest_processed_input_number == 70 + slot);
     assert(client.latest_buttons_bitmap == 0b1011);
 
-    // Survives, but only because clearing it would be dead: change_map_to sends
-    // a CmdChangeMap to every OCCUPIED slot right after this reset, and that
-    // send stamps the field. An unoccupied slot is never in the retransmit loop.
-    assert(client.last_map_switch_send_tick == static_cast<uint32_t>(890 + slot));
-
     // Survives for the same reason latest_buttons_bitmap does: it describes the
     // CLIENT's connection quality, which a map change does not improve. Wiping
     // it would let one warning through per map load, per slot, for free.
     assert(client.last_rewind_warning_tick == static_cast<uint32_t>(870 + slot));
+
+    // Survives, and it is the whole reason the stream lives under
+    // transport_layer rather than on client_slot_t: the CmdChangeMap announcing
+    // the new map is a message riding it, so a reset here would drop the very
+    // bytes the switch depends on -- and any block already in flight with it.
+    const network::Reliable_Stream& stream = context.transport_layer.reliable_streams[slot];
+    assert(stream.outbound.size() == 3);
+    assert(stream.block_number == static_cast<network::uint8>(5 + slot));
+    assert(stream.received_through == static_cast<network::uint8>(2 + slot));
+
+    // Survives, and change_map_to reads it right after this reset to decide who
+    // gets a body on the new map. It is the client's ANSWER to "player or
+    // spectator", which a map change does not ask again -- and player_uid, the
+    // line above that would otherwise stand in for it, has just been cleared.
+    assert(client.wants_to_play);
   }
 
   printf("  reset_state_in_preparation_for_new_map_load: ok\n");
@@ -206,8 +240,21 @@ void test_reset_client_slot()
   assert(reset_client.latest_buttons_bitmap == 0);
   assert(reset_client.held_snapshot_tick == 0);
   assert(!reset_client.map_ready);
-  assert(reset_client.last_map_switch_send_tick == 0);
   assert(reset_client.last_rewind_warning_tick == 0);
+  // A new occupant is a spectator until they ask, whatever the last one wanted.
+  assert(!reset_client.wants_to_play);
+
+  // And the transport-layer half goes with it: a block number inherited from the
+  // previous occupant would make this client's first block look like a
+  // duplicate, and a half-reassembled inbound buffer would frame the first
+  // record it does take against the wrong bytes.
+  const network::Reliable_Stream& reset_stream =
+      context.transport_layer.reliable_streams[target_slot];
+  assert(reset_stream.outbound.empty());
+  assert(reset_stream.inbound.empty());
+  assert(reset_stream.block_length == 0);
+  assert(reset_stream.block_number == 0);
+  assert(reset_stream.received_through == 0);
 
   // Every other slot, and the world, are none of this reset's business.
   for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
@@ -215,6 +262,8 @@ void test_reset_client_slot()
     if (slot == target_slot) continue;
     assert(context.clients[slot].player_uid == static_cast<shared::entity_uid_t>(1000 + slot));
     assert(context.clients[slot].map_ready);
+    assert(context.transport_layer.reliable_streams[slot].block_number ==
+           static_cast<network::uint8>(5 + slot));
   }
   assert(context.world.bots.size() == 2);
   assert(context.world.session.map_name == "old_map");
@@ -243,7 +292,6 @@ void test_clear_tick_groups()
   assert(context.incoming.potential_joins.empty());
   assert(context.incoming.net_commands.empty());
   assert(context.incoming.commands.empty());
-  assert(context.incoming.map_loaded_acks.empty());
   assert(context.incoming.map_data_requests.empty());
   assert(context.outgoing.effects.empty());
   assert(context.outgoing.events.empty());
@@ -253,7 +301,7 @@ void test_clear_tick_groups()
   // tickrate, so the capacity has to survive. An `= {}` "simplification" fails
   // here rather than silently reintroducing a per-tick realloc.
   assert(context.incoming.commands.capacity() > 0);
-  assert(context.incoming.map_loaded_acks.capacity() > 0);
+  assert(context.incoming.map_data_requests.capacity() > 0);
   assert(context.outgoing.pending_hits.capacity() > 0);
   // Same intent, different member: a stream keeps its buffer's allocation.
   assert(context.outgoing.effects.writer.buffer.capacity() > 0);

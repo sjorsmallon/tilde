@@ -43,7 +43,10 @@ bool value_parses(cvars::cvar_id id, const std::string &text)
   return cvars::try_cvar_from_text(scratch, id, text);
 }
 
-const char *value_hint_for(const cvars::cvar_info_t &info)
+// What a valid value looks like, for the "that isn't one" tooltip. An enum
+// spells out its whole value set rather than saying "an enum": the set is the
+// only thing an author could not have guessed, and it is short by construction.
+std::string value_hint_for(const cvars::cvar_info_t &info)
 {
   switch (info.type)
   {
@@ -52,6 +55,17 @@ const char *value_hint_for(const cvars::cvar_info_t &info)
     case cvars::CVAR_TYPE_I32:
     case cvars::CVAR_TYPE_U32:    return "a whole number";
     case cvars::CVAR_TYPE_STRING: return "text";
+    case cvars::CVAR_TYPE_ENUM:
+    {
+      std::string hint = "one of: ";
+      for (uint32_t value = 0; value < info.enum_info->value_names.size(); ++value)
+      {
+        if (value > 0)
+          hint += ", ";
+        hint += info.enum_info->value_names[value];
+      }
+      return hint;
+    }
   }
   return "";
 }
@@ -95,7 +109,7 @@ void draw_row_status(const shared::cvar_line_t &row,
   {
     ImGui::TextColored(error_color, "bad value");
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("'%s' is not %s", row.value.c_str(), value_hint_for(info));
+      ImGui::SetTooltip("'%s' is not %s", row.value.c_str(), value_hint_for(info).c_str());
     return;
   }
 
@@ -126,7 +140,7 @@ void draw_row_status(const shared::cvar_line_t &row,
 void draw_map_cvars_panel(shared::map_t &map, const cvars::cvar_state_t &live_values,
                           Transaction_System &transactions)
 {
-  ImGui::Begin("Map Cvars", nullptr, ImGuiWindowFlags_NoNav);
+  ImGui::Begin("Map Cvars");
 
   ImGui::TextWrapped("Run by the server when it loads this map, and saved with "
                      "the map, so they travel with it.");

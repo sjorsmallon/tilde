@@ -90,6 +90,12 @@ struct hitbox_rig_t
   std::string                         skeleton_name;
   uint64_t                            skeleton_hash = 0;
   std::vector<rigged_hitbox_volume_t> volumes;
+
+  // The skeleton the bone indices above are indices INTO. A resolved rig only
+  // exists against one skeleton, so carrying it here is what stops a caller
+  // pairing it with a second one it built its own path to. Pool storage is a
+  // deque, so this outlives every rig resolved from it.
+  const skeleton_t* skeleton = nullptr;
 };
 
 // Every bone name must exist and `start_bone` must be an ancestor of (or equal
@@ -158,17 +164,17 @@ struct hitbox_ray_hit_t
 // the half-extents a Box would, both from the same vertices. Both are filled
 // regardless of the volume's current shape, so switching shape in the tool has
 // a seed waiting rather than a zero.
-struct hitbox_seed_t
+struct guesstimated_hitbox_from_bone_t
 {
   float         radius       = 0.0f;
   linalg::vec3f half_extents = {0, 0, 0};
 };
 
-hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
+guesstimated_hitbox_from_bone_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
                                  const rigged_hitbox_volume_t &rigged);
 
 void derive_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
-                         const hitbox_rig_t &rig, Span<hitbox_seed_t> out);
+                         const hitbox_rig_t &rig, Span<guesstimated_hitbox_from_bone_t> out);
 
 hitbox_rig_t make_hitbox_rig_template(const mesh_asset_t &mesh, const skeleton_t &skeleton);
 

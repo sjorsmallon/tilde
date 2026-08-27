@@ -15,6 +15,10 @@ namespace network
 // entries (CmdChangeMap onward) are bitstream-native map-transfer control
 // messages with no protobuf equivalent — they carry a hand-serialized payload
 // (see shared/network/map_transfer.hpp) and so have no Packet_Traits mapping.
+//
+// A type says WHAT a payload is, never how it got here: the same C2S_Command
+// arrives as an ordinary datagram or as a record inside a reliable block, and
+// nothing above the transport can tell which. See reliable_stream.hpp.
 enum class Message_Type : uint8
 {
   C2S_ClientInputBatch, // C2S: the client's unacked input tail, oldest first
@@ -26,11 +30,20 @@ enum class Message_Type : uint8
   S2C_GameEventBatch,
   S2C_EffectBatch,
   CmdChangeMap,       // S2C: switch to a new map (bitstream-native)
-  C2S_MapLoaded,      // C2S: client finished (re)loading the map (bitstream-native)
   C2S_RequestMapData, // C2S: client lacks the compiled package; stream it
   S2C_MapData,        // S2C: the compiled map package blob (bitstream-native)
   S2C_CvarValues,     // S2C: @Mirrored cvar values (bitstream-native)
   S2C_ShotDebug,      // S2C: one shot's rewind evidence, to the shooter only
+
+  // One block of a peer's reliable byte stream, and the ONE type with no
+  // direction in its name. Every other entry names a message with a sender and
+  // a meaning; a block is a transport parcel whose direction is already said by
+  // who sent it, and both ends run the same symmetric Reliable_Stream. Two
+  // entries would be two ordinals for one thing, free to disagree about which
+  // one make_reliable_packet stamps.
+  Reliable,
+  C2S_TransferReceipt, // C2S: which fragments of a bulk message we hold
+
 
   // Not a wire value: one past the last type, so a table indexed by
   // Message_Type sizes itself (see the client's handler table).
@@ -132,6 +145,24 @@ struct Packet_Header
   uint8 fragment_index;  // this fragment's index within the message
   uint8 message_type;    // what KIND of message this is (enum)
   uint16 payload_size;   // how big is the payload?
+
+  // The reliable stream, carried by EVERY datagram. They look like a matched
+  // pair and are not: the first describes MY outbound stream, the second
+  // describes YOURS. They share a datagram because it is free, and they consume
+  // exactly the padding the header used to carry -- see Packet below.
+  //
+  // reliable_block_number does not increment per datagram, it increments per
+  // BLOCK, so five retransmissions of block 7 all carry 7. That is what makes
+  // it "which block is this" rather than "which packet is this".
+  //
+  // latest_reliable_block_received is a high-water mark: reporting 7 implies
+  // 1..6 as well, since blocks arrive in order. That is what makes a lost or
+  // reordered ack harmless -- the next datagram carries a newer one.
+  //
+  // Both are 0 when there is nothing to say, which is why blocks are numbered
+  // 1..255 and wrap skipping 0. See network/reliable_stream.hpp.
+  uint8 reliable_block_number;          // 0 = no block attached
+  uint8 latest_reliable_block_received; // 0 = nothing received yet
 };
 
 // Alignment and sizing
@@ -179,14 +210,16 @@ constexpr size_t server_receive_drain_cap_in_datagrams =
 
 struct Packet
 {
+  // No padding member any more: the header was 6 bytes padded to 8 by a
+  // uint16 that carried nothing, and the reliable stream's two uint8s consume
+  // exactly it. The header is 8 bytes, the payload offset is unchanged, and the
+  // static_assert below is what says so.
   Packet_Header header;
-  // Pads the payload up to PACKET_PAYLOAD_OFFSET_IN_BYTES. Not `int`: the header
-  // is 2-aligned, so an int here would make the compiler insert padding of its
-  // own ahead of it and the offset would stop being the sum of the sizes.
-  uint16 payload_alignment_padding;
   uint8  buffer[MAX_PAYLOAD_SIZE_IN_BYTES];
 };
 
+static_assert(sizeof(Packet_Header) == PACKET_PAYLOAD_OFFSET_IN_BYTES,
+              "the two reliable-stream fields must consume the old padding exactly");
 static_assert(offsetof(Packet, buffer) == PACKET_PAYLOAD_OFFSET_IN_BYTES,
               "the payload offset both ends serialize against must match the struct");
 static_assert(sizeof(Packet) <= MAX_PACKET_SIZE_IN_BYTES,
@@ -202,12 +235,57 @@ struct Partial_Message
 {
   std::vector<Packet> fragments;
   std::chrono::steady_clock::time_point last_fragment_time{};
+
+  // A MULTI-FRAGMENT bucket briefly OUTLIVES the message it reassembled, with
+  // `fragments` released and only the count kept. Two things need that, and both
+  // are about the tail of a transfer.
+  //
+  // The sender is waiting to be told the last fragments landed, and if that one
+  // report is lost there is nothing left to re-derive it from -- so a completed
+  // bucket keeps answering "I have all N" for a couple of seconds. Same rule as
+  // everywhere else here: the receiver states what it HAS, repeatedly, and
+  // nothing depends on any one report arriving.
+  //
+  // And a duplicate crossing the completion in flight must be DISCARDED rather
+  // than opening a fresh bucket, which would report "5 of 40" and have the
+  // sender re-stream 35 fragments of a map the receiver already holds. That
+  // overlap is real: a repair pass is sent against a receipt the receiver had
+  // already moved past.
+  //
+  // ONLY for fragment_count >= 2, and a packet declaring a DIFFERENT count takes
+  // the bucket over. message_id is a uint8 and wraps every 256 sends, which at
+  // this tickrate is a second or two -- so a retained bucket must never be able
+  // to eat the next message that draws its id, and single-fragment messages
+  // (which is nearly all of them) never retain at all.
+  bool   complete = false;
+  uint16 fragment_count = 0;
+
+  // When we last told the sender which fragments we hold. A bucket still
+  // incomplete this long after its last receipt has lost something, and the
+  // sender cannot know that without being told -- see network/transfer_receipt.hpp.
+  //
+  // Also what keeps the report off the ordinary path: a two-fragment snapshot
+  // either completes inside one drain or was lost for good, so gating on an
+  // interval means only a genuinely spread-out transfer ever emits one.
+  std::chrono::steady_clock::time_point last_receipt_time{};
 };
+
+// How often a receiver reports its fragment bitmap. Four times a second, and
+// only while a bucket is genuinely incomplete: a 2MB map's bitmap is ~213 bytes,
+// so this is under a kilobyte a second of upstream during a download and
+// nothing at all the rest of the time.
+constexpr double transfer_receipt_interval_in_seconds = 0.25;
 
 // Generous: it only has to outlast the gap between two fragments of a healthy
 // transfer, and a paced bulk send deliberately spreads those over many ticks.
 // Anything still incomplete after this lost a fragment and is never completing.
 constexpr double partial_message_timeout_in_seconds = 5.0;
+
+// How long a COMPLETED multi-fragment bucket keeps answering. Much shorter than
+// the timeout above, and deliberately so: it only has to outlast the duplicates
+// still in flight plus a handful of receipt retries, and every extra second is
+// another second in which a wrapped message_id could collide with it.
+constexpr double completed_transfer_retention_in_seconds = 2.0;
 
 // Drops every bucket that has not seen a fragment recently. `owner` is only what
 // the log line says. Loudly, not silently: an expiring bucket means real packet
@@ -223,25 +301,35 @@ expire_stale_partial_messages(std::map<uint8, Partial_Message> &partial_packets,
   const std::chrono::steady_clock::time_point now =
       std::chrono::steady_clock::now();
   const std::chrono::duration<double> timeout(partial_message_timeout_in_seconds);
+  const std::chrono::duration<double> retention(completed_transfer_retention_in_seconds);
 
   for (auto it = partial_packets.begin(); it != partial_packets.end();)
   {
-    if (now - it->second.last_fragment_time < timeout)
+    const std::chrono::duration<double> &lifetime =
+        it->second.complete ? retention : timeout;
+
+    if (now - it->second.last_fragment_time < lifetime)
     {
       ++it;
       continue;
     }
 
-    size_t arrived = 0;
-    for (const Packet &fragment : it->second.fragments)
-      if (fragment.header.fragment_count != 0)
-        ++arrived;
+    // A completed bucket going quiet is the NORMAL end of a transfer -- the
+    // sender stopped asking, which is what it was being kept alive for. Only an
+    // incomplete one is real loss, and that is the one worth seeing.
+    if (!it->second.complete)
+    {
+      size_t arrived = 0;
+      for (const Packet &fragment : it->second.fragments)
+        if (fragment.header.fragment_count != 0)
+          ++arrived;
 
-    log_warning("{}: dropping incomplete message id {} after {:.0f}s "
-                "({}/{} fragments arrived); the rest were lost in transit",
-                owner, static_cast<int>(it->first),
-                partial_message_timeout_in_seconds, arrived,
-                it->second.fragments.size());
+      log_warning("{}: dropping incomplete message id {} after {:.0f}s "
+                  "({}/{} fragments arrived); the rest were lost in transit",
+                  owner, static_cast<int>(it->first),
+                  partial_message_timeout_in_seconds, arrived,
+                  it->second.fragments.size());
+    }
 
     it = partial_packets.erase(it);
   }

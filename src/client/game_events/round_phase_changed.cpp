@@ -31,6 +31,15 @@ namespace
 
 void on_round_phase_changed(client_context_t &context, const shared::Round_Phase_Changed &value)
 {
+  // Purely the banner. This used to also write context.replication.round, and
+  // then had to work out whether it was looking at a real transition or at the
+  // once-a-second re-send that healed a dropped one -- a discriminator that
+  // existed only because the phase reached the client one way and that way was
+  // lossy.
+  //
+  // Both halves are gone: the phase is replicated as state on every snapshot,
+  // and this event now rides the reliable stream, so it fires exactly once per
+  // transition and there is nothing left to discriminate.
   (void)context;
 
   const std::string text = announcement_for(value);

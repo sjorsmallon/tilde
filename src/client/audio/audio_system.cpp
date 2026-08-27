@@ -36,19 +36,23 @@ struct voices_t
   uint32_t free_slots = (uint32_t)((1ull << MAX_VOICE_COUNT) - 1ull);
 };
 
-[[nodiscard]] static std::optional<uint32_t> try_acquire_voice(voices_t& voices)
+[[nodiscard]] static std::optional<uint32_t> try_find_free_voice(const voices_t& voices)
 {
   if (voices.free_slots == 0)
     return std::nullopt;
 
-  const uint32_t index = (uint32_t)std::countr_zero(voices.free_slots);
-  voices.free_slots &= ~(1u << index);
-  return index;
+  return (uint32_t)std::countr_zero(voices.free_slots);
 }
 
-// Hand a slot back. The ma_sound must already be uninit'd (or never inited).
+// Claimed only once the ma_sound is inited, so live implies inited.
+static void make_voice_live(voices_t& voices, uint32_t index)
+{
+  voices.free_slots &= ~(1u << index);
+}
+
 static void release_voice(voices_t& voices, uint32_t index)
 {
+  ma_sound_uninit(&voices.sounds[index]);
   voices.free_slots |= 1u << index;
 }
 
@@ -112,10 +116,8 @@ static void register_every_sound(audio_impl_t* impl)
 
 audio_system_t::~audio_system_t() { shutdown(); }
 
-bool audio_system_t::init(const cvars::cvar_state_t& rhs_cvars)
+bool audio_system_t::init()
 {
-  cvars = &rhs_cvars;
-
   if (impl)
   {
     log_warning("audio_system is inited twice, which shouldn't happen.");
@@ -157,10 +159,8 @@ void audio_system_t::shutdown()
 
   for (uint32_t index = 0; index < MAX_VOICE_COUNT; ++index)
   {
-    if (!is_voice_live(impl->voices, index))
-      continue;
+    if (!is_voice_live(impl->voices, index)) continue;
 
-    ma_sound_uninit(&impl->voices.sounds[index]);
     release_voice(impl->voices, index);
   }
 
@@ -171,10 +171,12 @@ void audio_system_t::shutdown()
 
 void audio_system_t::update(const linalg::vec3f &listener_position,
                             const linalg::vec3f &listener_forward,
-                            const linalg::vec3f &listener_up)
+                            const linalg::vec3f &listener_up,
+                            const sound_attenuation_t &rhs_attenuation)
 {
-  if (!impl)
-    return;
+  attenuation = rhs_attenuation;
+
+  if (!impl) return;
 
   ma_engine_listener_set_position(&impl->engine, 0, listener_position.x,
                                   listener_position.y, listener_position.z);
@@ -183,34 +185,27 @@ void audio_system_t::update(const linalg::vec3f &listener_position,
   ma_engine_listener_set_world_up(&impl->engine, 0, listener_up.x,
                                   listener_up.y, listener_up.z);
 
-  // Reap finished voices, returning their slots to the pool.
+  // if voices are no longer live, release them.
   for (uint32_t index = 0; index < MAX_VOICE_COUNT; ++index)
   {
     if (!is_voice_live(impl->voices, index))
       continue;
 
-    ma_sound* voice = &impl->voices.sounds[index];
-    if (!ma_sound_at_end(voice))
+    // if it's not done playing, skip this sound.
+    if (!ma_sound_at_end(&impl->voices.sounds[index]))
       continue;
 
-    ma_sound_uninit(voice);
     release_voice(impl->voices, index);
   }
 }
 
-// Shared helper: claim a voice slot and init its ma_sound from `sound`, applying
-// `flags`. Returns the slot index, or nullopt when the id names no file, the
-// pool is exhausted, or the sound failed to load (the first and last logged once
-// per id). On success the caller owns the slot until update() reaps it.
 [[nodiscard]] static std::optional<uint32_t> try_start_voice(audio_impl_t* impl,
                                                              assets::sound_asset sound,
                                                              ma_uint32 flags)
 {
   const char* path = registered_path_for(sound);
 
-  // Missing is the id a call site names when the content does not exist yet
-  // (there is no footstep.wav and no rocket launch sound). Silence is the right
-  // outcome; saying so once is what keeps it from being a silent failure.
+  // this shouldn't happen but whatever.
   if (path[0] == '\0')
   {
     bool* reported = impl->play_failure_reported.try_get(sound);
@@ -223,7 +218,7 @@ void audio_system_t::update(const linalg::vec3f &listener_position,
     return std::nullopt;
   }
 
-  const std::optional<uint32_t> slot = try_acquire_voice(impl->voices);
+  const std::optional<uint32_t> slot = try_find_free_voice(impl->voices);
   if (!slot)
   {
     log_warning("audio_system_t: all {} voices are busy — dropping '{}'",
@@ -232,8 +227,7 @@ void audio_system_t::update(const linalg::vec3f &listener_position,
   }
 
   ma_sound* voice = &impl->voices.sounds[*slot];
-  ma_result result =
-      ma_sound_init_from_file(&impl->engine, path, flags, nullptr, nullptr, voice);
+  ma_result result = ma_sound_init_from_file(&impl->engine, path, flags, nullptr, nullptr, voice);
   if (result != MA_SUCCESS)
   {
     bool* reported = impl->play_failure_reported.try_get(sound);
@@ -243,32 +237,28 @@ void audio_system_t::update(const linalg::vec3f &listener_position,
       log_error("audio_system_t: failed to load sound '{}' (ma_result {})", path,
                 static_cast<int>(result));
     }
-    release_voice(impl->voices, *slot);
     return std::nullopt;
   }
+
+  make_voice_live(impl->voices, *slot);
   return slot;
 }
 
 void audio_system_t::play_3d(assets::sound_asset sound, const linalg::vec3f &position,
                              float volume)
 {
-  if (!impl)
-    return;
+  if (!impl) return;
 
-  // MA_SOUND_FLAG_DECODE fully decodes into the resource-manager cache so the
-  // first play pays the decode cost and subsequent plays are allocation-cheap.
+  // no free slots means no play. this will be addressed somewhere later.
   const std::optional<uint32_t> slot = try_start_voice(impl, sound, MA_SOUND_FLAG_DECODE);
-  if (!slot)
-    return;
+  if (!slot) return;
 
   ma_sound* voice = &impl->voices.sounds[*slot];
   ma_sound_set_spatialization_enabled(voice, MA_TRUE);
-  // Match attenuation to the game's world scale (see cvar comments above).
-  // Without this, miniaudio's default minDistance=1 makes sounds inaudible
-  // within a few units.
-  ma_sound_set_min_distance(voice, cvars->sound_reference_distance);
-  ma_sound_set_max_distance(voice, cvars->sound_max_distance_cutoff);
-  ma_sound_set_rolloff(voice, cvars->sound_rolloff_factor);
+  // set the correct attenuation.
+  ma_sound_set_min_distance(voice, attenuation.reference_distance);
+  ma_sound_set_max_distance(voice, attenuation.max_distance_cutoff);
+  ma_sound_set_rolloff(voice, attenuation.rolloff_factor);
   ma_sound_set_position(voice, position.x, position.y, position.z);
   ma_sound_set_volume(voice, volume);
   ma_sound_start(voice);

@@ -326,6 +326,18 @@ Player_Entity :: entity @runtime_only {
 
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
+
+    // Display name, sanitized from CmdConnect at the connect site. On the
+    // ENTITY rather than in a message of its own so a late joiner gets every
+    // name in its first full snapshot, with no backlog to replay -- and so a
+    // bot, which has no client, still has a name.
+    name:   string<32>                  @Networked
+
+    // The scoreboard, and the only score the wire carries: team score changes
+    // once per phase and rides Round_Phase_Changed instead. Awarded at the
+    // one health crossing in damage.cpp.
+    kills:  i32                         @Networked
+    deaths: i32                         @Networked
     // Feeds remote-player interpolation.
     velocity:          v3               @Networked
 

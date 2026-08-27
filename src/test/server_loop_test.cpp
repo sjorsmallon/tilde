@@ -1,3 +1,4 @@
+#include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/packet.hpp"
 #include "../shared/network/server_transport_layer.hpp"
 #include "../shared/network/udp_socket.hpp"
@@ -120,9 +121,295 @@ void test_receive_and_reassembly()
   std::cout << "  -> Slot liveness stamped and released!" << std::endl;
 }
 
+// The reliable stream over a REAL socket pair, which is the half
+// reliable_stream_test deliberately cannot reach: that one drives both sides by
+// hand, so it says nothing about whether the two Packet_Header fields survive
+// the wire, whether the client intercepts a block before reassembly, or whether
+// the ack actually rides an ordinary outbound datagram.
+void test_reliable_stream_round_trip()
+{
+  std::cout << "[TEST] Testing the reliable stream over UDP..." << std::endl;
+
+  Server_Transport_Layer server_state;
+  Udp_Socket server_socket;
+  Client_Transport_Layer client_state;
+
+  if (!server_socket.open(9003))
+  {
+    std::cerr << "Failed to open server socket on 9003" << std::endl;
+    exit(1);
+  }
+  if (!client_state.socket.open(9004))
+  {
+    std::cerr << "Failed to open client socket on 9004" << std::endl;
+    exit(1);
+  }
+
+  const Address server_address(127, 0, 0, 1, 9003);
+  const Address client_address(127, 0, 0, 1, 9004);
+  client_state.server_address = server_address;
+  occupy_client_slot(server_state, 0, client_address, 100);
+
+  // A message with no protobuf behind it: the record's type is opaque to the
+  // stream, and CmdChangeMap is one the client files as a raw payload.
+  game::S2C_ServerMessage message;
+  message.set_message("the stream carries this");
+  std::vector<uint8> payload(message.ByteSizeLong());
+  message.SerializeToArray(payload.data(), static_cast<int>(payload.size()));
+
+  queue_reliable_message(server_state.reliable_streams[0],
+                         static_cast<uint8>(Message_Type::S2C_ServerMessage),
+                         payload);
+
+  send_reliable_block(server_state, server_socket, 0);
+  assert(server_state.reliable_streams[0].block_number == 1);
+  assert(server_state.reliable_streams[0].block_length != 0);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  Client_Inbox inbox;
+  poll_client_network(client_state, client_receive_drain_cap_in_datagrams, inbox);
+
+  assert(inbox.server_text_messages.size() == 1 &&
+         "the record came out of the block and through the handler table");
+  assert(inbox.server_text_messages[0].message() == "the stream carries this");
+  assert(client_state.reliable_stream.received_through == 1);
+  std::cout << "  -> Block delivered and framed back into a message!" << std::endl;
+
+  // The ack is not a message: it rides the header of whatever the client sends
+  // next, which in the live client is its per-tick input.
+  game::C2S_Command any_outbound;
+  any_outbound.set_line("noclip 1");
+  send_protobuf_message(client_state, any_outbound);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  ServerInbox server_inbox;
+  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
+               141, server_inbox);
+
+  assert(server_state.reliable_streams[0].block_length == 0 &&
+         "an ordinary datagram's header freed the block");
+  assert(server_state.reliable_streams[0].outbound.empty() &&
+         "and the drained stream reclaimed its buffer");
+  std::cout << "  -> Ack rode an ordinary datagram and freed the block!" << std::endl;
+
+  release_client_slot(server_state, 0);
+  client_state.socket.close();
+  server_socket.close();
+}
+
+// The C2S half of the same stream, which is the direction that closes the map
+// handshake: a lost C2S_RequestMapData used to leave a client waiting forever
+// for a transfer the server never started.
+//
+// Two things are worth the socket here, and neither is reachable by driving the
+// halves by hand. The record has to come out of the block and through the SAME
+// delivery the unreliable path uses -- reliability is the transport's business,
+// so nothing above it may be able to tell which route a message took. And the
+// server's ack has to ride an ordinary S2C datagram: the client sends nothing
+// while it is Loading, so if the ack did not ride the snapshot, the map package's
+// own fragments or the server's blocks, this stream would stall exactly when it
+// is carrying the request.
+void test_reliable_stream_round_trip_c2s()
+{
+  std::cout << "[TEST] Testing the C2S reliable stream over UDP..." << std::endl;
+
+  Server_Transport_Layer server_state;
+  Udp_Socket server_socket;
+  Client_Transport_Layer client_state;
+
+  if (!server_socket.open(9007) || !client_state.socket.open(9008))
+  {
+    std::cerr << "Failed to open the socket pair" << std::endl;
+    exit(1);
+  }
+
+  const Address server_address(127, 0, 0, 1, 9007);
+  const Address client_address(127, 0, 0, 1, 9008);
+  client_state.server_address = server_address;
+  occupy_client_slot(server_state, 0, client_address, 300);
+
+  // The two riders, queued in one frame so they share a block -- which is also
+  // what makes "rely on order, never on grouping" checkable: they arrive in the
+  // order they were queued because the stream cannot reorder them.
+  game::C2S_Command command;
+  command.set_line("changelevel new_map");
+  queue_reliable_protobuf_message(client_state, command);
+
+  const std::vector<uint8> request_payload = {0x11, 0x22, 0x33};
+  queue_reliable_client_message(
+      client_state, static_cast<uint8>(Message_Type::C2S_RequestMapData),
+      request_payload);
+
+  service_client_reliable_stream(client_state);
+  assert(client_state.reliable_stream.block_number == 1);
+  assert(client_state.reliable_stream.block_length != 0);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  ServerInbox inbox;
+  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
+               301, inbox);
+
+  assert(inbox.commands.size() == 1 &&
+         "the console line came out of the block and into the inbox the "
+         "unreliable path files into");
+  assert(inbox.commands[0].first == 0);
+  assert(inbox.commands[0].second == "changelevel new_map");
+  assert(inbox.map_data_requests.size() == 1 &&
+         "and so did the bitstream-native map request, still raw");
+  assert(inbox.map_data_requests[0].second == request_payload);
+  assert(server_state.reliable_streams[0].received_through == 1);
+  std::cout << "  -> Both records delivered, in the order they were queued!"
+            << std::endl;
+
+  // Nothing has freed the block yet: the ack lives in the header of whatever the
+  // server sends next, and it has not sent anything.
+  assert(client_state.reliable_stream.block_length != 0);
+
+  // An ORDINARY S2C datagram -- not a reliable one. This is the property the
+  // Loading client depends on, since the only S2C traffic it gets is the map
+  // package's fragments.
+  Packet snapshot = {};
+  snapshot.header.message_type =
+      static_cast<uint8>(Message_Type::S2C_EntityPackage);
+  snapshot.header.message_id     = 77;
+  snapshot.header.fragment_count = 1;
+  snapshot.header.fragment_index = 0;
+  snapshot.header.payload_size   = 0;
+  send_packet_to_client(server_state, server_socket, 0, snapshot);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  Client_Inbox client_inbox;
+  poll_client_network(client_state, client_receive_drain_cap_in_datagrams,
+                      client_inbox);
+
+  assert(client_state.reliable_stream.block_length == 0 &&
+         "an ordinary S2C datagram's header freed our block");
+  assert(client_state.reliable_stream.outbound.empty() &&
+         "and the drained stream reclaimed its buffer");
+  std::cout << "  -> Server ack rode an ordinary datagram and freed the block!"
+            << std::endl;
+
+  release_client_slot(server_state, 0);
+  client_state.socket.close();
+  server_socket.close();
+}
+
+// A lossy download, all the way round: the receiver reports a bitmap over the
+// real socket, the sender applies it and re-sends exactly the gaps, and the
+// completing report frees the transfer.
+//
+// The S2C fragments are handed to the reassembler directly rather than pushed
+// through the socket, which is the one shortcut here -- it is how the test
+// chooses WHICH fragments are lost, and paced_transfer_test already covers those
+// same fragments going over the wire. Everything in the C2S direction is real.
+void test_lossy_transfer_converges()
+{
+  std::cout << "[TEST] Testing transfer recovery over UDP..." << std::endl;
+
+  Server_Transport_Layer server_state;
+  Udp_Socket server_socket;
+  Client_Transport_Layer client_state;
+
+  if (!server_socket.open(9005) || !client_state.socket.open(9006))
+  {
+    std::cerr << "Failed to open the socket pair" << std::endl;
+    exit(1);
+  }
+
+  const Address server_address(127, 0, 0, 1, 9005);
+  const Address client_address(127, 0, 0, 1, 9006);
+  client_state.server_address = server_address;
+  occupy_client_slot(server_state, 0, client_address, 200);
+
+  std::vector<uint8> payload(20 * MAX_PAYLOAD_SIZE_IN_BYTES);
+  for (size_t index = 0; index < payload.size(); ++index)
+    payload[index] = static_cast<uint8>(index * 13 + 5);
+
+  begin_paced_transfer(server_state, 0, payload,
+                       static_cast<uint8>(Message_Type::S2C_MapData));
+  const std::vector<Packet> fragments = server_state.outbound_transfers[0].fragments;
+  assert(fragments.size() == 20);
+
+  // Fragments 4 and 17 are lost.
+  std::vector<uint8> reassembled;
+  for (size_t index = 0; index < fragments.size(); ++index)
+  {
+    if (index == 4 || index == 17)
+      continue;
+    assert(!detail::reassemble_fragment(client_state, fragments[index], reassembled) &&
+           "the message cannot complete while two fragments are missing");
+  }
+
+  report_transfer_progress(client_state);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  ServerInbox server_inbox;
+  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
+               201, server_inbox);
+
+  size_t confirmed_count = 0;
+  for (bool confirmed : server_state.outbound_transfers[0].confirmed)
+    if (confirmed)
+      ++confirmed_count;
+  assert(confirmed_count == 18 && "the bitmap named exactly what arrived");
+  assert(!server_state.outbound_transfers[0].confirmed[4]);
+  assert(!server_state.outbound_transfers[0].confirmed[17]);
+  std::cout << "  -> Bitmap crossed the wire and named the two gaps!" << std::endl;
+
+  // The repair pass, which must be two fragments and not a restart.
+  service_paced_transfers(server_state, server_socket, 8);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  std::vector<Packet> repaired;
+  Packet packet;
+  Address from;
+  while (client_state.socket.receive(packet, from))
+    repaired.push_back(packet);
+
+  assert(repaired.size() == 2 && "a two-fragment gap costs two fragments");
+  for (const Packet &fragment : repaired)
+    assert(fragment.header.fragment_index == 4 || fragment.header.fragment_index == 17);
+
+  // Feeding them in completes the message.
+  assert(!detail::reassemble_fragment(client_state, repaired[0], reassembled));
+  assert(detail::reassemble_fragment(client_state, repaired[1], reassembled) &&
+         "the last missing fragment completes the message");
+  assert(reassembled == payload && "and the bytes survived the repair");
+  std::cout << "  -> Repair was proportional to the loss and rebuilt the payload!"
+            << std::endl;
+
+  // A duplicate arriving after completion must not reopen the bucket -- that is
+  // what would report "1 of 20" and re-stream a map we already hold.
+  assert(!detail::reassemble_fragment(client_state, fragments[0], reassembled) &&
+         "a duplicate after completion is discarded, not re-delivered");
+
+  // And the completing report frees the transfer, so the sender stops waiting.
+  std::this_thread::sleep_for(std::chrono::milliseconds(
+      static_cast<int>(transfer_receipt_interval_in_seconds * 1000) + 20));
+  report_transfer_progress(client_state);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
+               202, server_inbox);
+  assert(server_state.outbound_transfers[0].fragments.empty() &&
+         "a completed bucket keeps confirming, which is what ends the transfer");
+  std::cout << "  -> The completing report freed the transfer!" << std::endl;
+
+  release_client_slot(server_state, 0);
+  client_state.socket.close();
+  server_socket.close();
+}
+
 int main()
 {
   test_receive_and_reassembly();
+  test_reliable_stream_round_trip();
+  test_reliable_stream_round_trip_c2s();
+  test_lossy_transfer_converges();
   std::cout << "[TEST] All tests passed." << std::endl;
   return 0;
 }

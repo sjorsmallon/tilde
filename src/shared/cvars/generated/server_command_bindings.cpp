@@ -159,6 +159,20 @@ bool invoke_join_game(Span<std::string_view> args, const command_context_t& cont
   return true;
 }
 
+// spectate
+bool invoke_spectate(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::spectate, args.size());
+    return false;
+  }
+
+  commands::spectate(context);
+  return true;
+}
+
 } // namespace
 
 void bind_server_commands(command_table_t& table)
@@ -169,6 +183,7 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::map] = &invoke_map;
   table.binders[(uint32_t)command_id::noclip] = &invoke_noclip;
   table.binders[(uint32_t)command_id::join_game] = &invoke_join_game;
+  table.binders[(uint32_t)command_id::spectate] = &invoke_spectate;
 }
 
 } // namespace cvars

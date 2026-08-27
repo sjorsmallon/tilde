@@ -1,17 +1,96 @@
 #pragma once
 
-#include "../../../shared/player_animator.hpp"
 #include "../../../shared/animation.hpp"
 #include "../../../shared/asset.hpp"
+#include "../../../shared/assets/generated/assets_generated.hpp"
 #include "../../../shared/hitbox_rig.hpp"
+#include "../../../shared/player_animator.hpp"
 #include "../../../shared/skinning.hpp"
 #include "../editor_tool.hpp"
 
-#include <string>
+#include <optional>
 #include <vector>
 
 namespace client
 {
+
+// what is the source of the pose currently on the screen.
+enum class pose_source_t
+{
+  Bind,        // T-Pose,
+  Single_Pose, // one authored aim pose at full weight, no blending
+  Aim_Blend,   // the live (pitch, yaw) blend, exactly as the game drives it
+  Clip         // one `.animation` played on a clock, scrubbable
+};
+
+struct preview_model_t
+{
+  assets::asset_handle_t<assets::mesh_asset_t> mesh;
+  const assets::skeleton_t* skeleton = nullptr;
+  assets::pose_t sampled_pose;
+  assets::posed_skeleton_t posed_skeleton;
+  bool posed = false;
+
+  // Set pessimistically each attempt and cleared on success, so a run of
+  // failing frames logs once and the frame after a success logs again.
+  bool failure_logged = false;
+};
+
+struct pose_controls_t
+{
+  pose_source_t source = pose_source_t::Aim_Blend;
+  entities::Aim_Pose single_pose = entities::Aim_Pose::Forward;
+  float pitch_degrees = 0.0f;
+  float yaw_deviation_degrees = 0.0f;
+};
+
+struct clip_playback_t
+{
+  // missing is used as a placeholder, I guess.
+  assets::animation_asset selected = assets::animation_asset::Missing;
+  assets::asset_handle_t<assets::animation_asset_t> handle;
+  float phase = 0.0f;
+  float playback_speed = 1.0f;
+  bool playing = false;
+  bool looping = true;
+};
+
+struct hitbox_workspace_t
+{
+  static constexpr int NO_HITBOX_VOLUME_SELECTED = -1;
+
+  // nullopt means the manifest has no `.hitboxes` for this skeleton -- which is
+  // the tool's seeding case, not a failure.
+  std::optional<assets::hitbox_rig> source;
+  assets::hitbox_rig_t rig;
+  // this is used as a base to actually create the hitbox rig from.
+  std::vector<assets::guesstimated_hitbox_from_bone_t> guesstimated_hitboxes_from_bones;
+  std::vector<assets::posed_hitbox_t> posed_hitboxes; // refilled every frame from the live pose
+
+  // coverage is a bind-pose property and is computed at load; excursion is
+  // per-pose and is recomputed with the volumes.
+  assets::hitbox_coverage_t coverage;
+  assets::hull_excursion_t  excursion;
+
+  int selected_volume_index = NO_HITBOX_VOLUME_SELECTED;
+  bool load_attempted = false;
+};
+
+struct display_options_t
+{
+  static constexpr int NO_BONE_SELECTED = -1;
+
+  bool mesh = true;
+  bool wireframe = false;
+  bool unlit = false;
+  bool skeleton = true;
+  bool bone_names = false;
+  bool hitboxes = true;
+  bool movement_hull = true;
+
+  float model_yaw_degrees = 0.0f;
+  int selected_bone_index = NO_BONE_SELECTED;
+};
 
 class Animation_Tool : public Editor_Tool
 {
@@ -32,95 +111,16 @@ public:
   std::optional<view_focus_t> view_focus() const override;
 
 private:
-  
-  enum class Pose_Source
-  {
-    Bind,        // T-Pose,
-    Single_Pose, // one authored aim pose at full weight, no blending
-    Aim_Blend,   // the live (pitch, yaw) blend, exactly as the game drives it
-    Clip         // one `.animation` played on a clock, scrubbable
-  };
+  preview_model_t model;
+  pose_controls_t pose_controls;
+  clip_playback_t clip;
+  hitbox_workspace_t workspace;
+  display_options_t display;
 
-
-  bool update_pose();
-
-
-  linalg::vec3f bone_head(uint32_t bone_index) const;
-
-  
-  linalg::vec3f to_world(const linalg::vec3f &model_space_point) const;
-  linalg::vec3f to_world_direction(const linalg::vec3f &model_space_vector) const;
-  void load_rig();
-
-  void refresh_derivation();
-  void draw_hitbox_panel();
-  void draw_clip_panel();
-  void scan_clips();
-  void load_selected_clip_idx();
-  void advance_clip(float dt);
-
-  Pose_Source        pose_source = Pose_Source::Aim_Blend;
-  entities::Aim_Pose single_pose = entities::Aim_Pose::Forward;
-
-  // used for blending. yaw_deviation instead of absolute yaw because left/right blending
-  // should happen w.r.t the forward pose.
-
-  float pitch_degrees         = 0.0f;
-  float yaw_deviation_degrees = 0.0f;
-
-  float model_yaw_degrees = 0.0f;
-
-  static constexpr int NO_CLIP_SELECTED = -1;
-  std::vector<std::string> clip_paths;
-  int selected_clip_idx = NO_CLIP_SELECTED;
-
-  assets::asset_handle_t<assets::animation_asset_t> clip_handle;
-  float clip_phase          = 0.0f;
-  bool  clip_playing        = false;
-  bool  clip_looping        = true;
-  float clip_playback_speed = 1.0f;
-
-  // visual toggles
-  bool show_mesh            = true;
-  bool show_hitboxes        = true;
-  bool wireframe            = false;
-  bool show_skeleton        = true;
-  bool show_bone_names      = false;
-  bool show_movement_hull   = true;
-  bool unlit                = false;
-
-  // Highlighted in the overlay and named in the panel. -1 is none.
-  static constexpr int NO_BONE_SELECTED = -1;
-  static constexpr int NO_VOLUME_SELECTED = -1;
-  int selected_bone_idx   = NO_BONE_SELECTED;
-  int selected_volume_idx = NO_VOLUME_SELECTED;
-
-  // Resized once, reused every frame.
-  assets::pose_t           pose;
-  assets::posed_skeleton_t posed_skeleton;
-
-  assets::asset_handle_t<assets::mesh_asset_t> mesh_handle;
-  const assets::skeleton_t* skeleton = nullptr;
-
-  // toggle to silence repeat failures.
-  bool model_failure_logged = false;
-
-
-
-  std::string                        rig_path;
-  assets::hitbox_rig_t               rig;
-  std::vector<assets::hitbox_seed_t> seeds;
-
-  // Refilled every frame from the live pose
-  std::vector<assets::posed_hitbox_t> hitboxes;
-
-  
-  // diagnostics
-  // Audit readouts. Coverage is a bind-pose property and is computed at load;
-  // excursion is per-pose and is recomputed with the capsules.
-  assets::hitbox_coverage_t coverage;
-  assets::hull_excursion_t  excursion;
-  bool rig_load_attempted = false;
+  // Read once per frame in on_update rather than at each use, so the sliders,
+  // the blend readout and the pose the game would draw cannot be reading
+  // different cvars.
+  aim_settings_t aim_settings;
 };
 
 } // namespace client

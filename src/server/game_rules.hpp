@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../shared/events/generated/events_generated.hpp"
+#include "game_mode.hpp"
 
 #include <cstdint>
 
@@ -26,10 +27,16 @@ namespace server
 // Rules state deliberately does NOT live on game_session_t. The session is
 // shared between client and server and the client's is snapshot-derived; a
 // round counter is not an entity, so it would never replicate from there and
-// would just be a dead field on the client side. Phase transitions reach the
-// client as Round_Phase_Changed on the reliable event channel instead, fired
-// from enter_phase() -- the one place `phase` is written. What each phase means
-// is documented beside the declaration in events.def.
+// would just be a dead field on the client side.
+//
+// It reaches the client TWICE, and the split is deliberate. The phase, its
+// deadline and the round number are replicated as STATE on S2C_EntityPackage,
+// every tick, because the client PREDICTS against them -- and state that gates
+// behavior must never be the thing an event is the only source of, or a dropped
+// packet mispredicts a whole phase. Round_Phase_Changed, fired from
+// enter_phase() (the one place `phase` is written), is the OCCURRENCE: the
+// banner, once per real transition. What each phase means is documented beside
+// the declaration in events.def.
 
 // The whole of the match-level rules state. One instance, on
 // server_context_t, so a map reload resets it along with everything else that
@@ -48,12 +55,29 @@ struct game_rules_state_t
   // whose deadline is non-zero and reached.
   uint32_t phase_end_tick = 0;
 
-  // 1-based, incremented on each entry into Countdown -- the per-round
-  // boundary, since Warmup happens once at match start. 0 only
-  // before the first begin_round().
+  // 1-based, incremented on each entry into the mode's phase_cycle[0] -- the
+  // per-round boundary. Warmup is outside the cycle and happens once at match
+  // start, so counting there would leave this stuck at 1. 0 before the first
+  // round begins.
   uint32_t round_number = 0;
-  uint32_t max_rounds = 15;
-  
+
+  // Which mode is running. LATCHED ONCE, at map load, from sv_gamemode -- see
+  // apply_game_mode_cvar. A copy rather than a read-through so that changing the
+  // cvar mid-match cannot change the rules under a round in progress; the enum
+  // cvar is what makes this a latch instead of the parse it used to be.
+  // max_rounds moved out of this struct and onto the mode row: it is a property
+  // of the mode, not of the match in progress.
+  Game_Mode mode = Game_Mode::deathmatch;
+
+  // Game_Over's deadline has elapsed and the map is to be reloaded, restarting
+  // the match. A REQUEST rather than the reload itself, because the phase FSM
+  // runs in the middle of a tick that is still holding entity spans, physics
+  // bodies and this very struct: tearing the world down there would be a use
+  // after free with a plausible-looking stack. Serviced at the top of the next
+  // tick, before anything reads the world -- see service_pending_map_restart.
+  //
+  // Cleared by the reload itself, which resets this whole struct.
+  bool map_restart_requested = false;
 };
 
 } // namespace server

@@ -1,9 +1,11 @@
 #include "player_animator.hpp"
 
+#include "assets/generated/asset_state_generated.hpp"
 #include "log.hpp"
 #include "skinning.hpp"
 
 #include <cmath>
+#include <optional>
 #include <string>
 
 namespace
@@ -27,22 +29,27 @@ std::string filename_prefix_of(entities::Aim_Pose pose)
 
 using linalg::wrap_degrees;
 
-aim_pose_set_t load_aim_pose_set(const char *directory, const char *suffix)
+aim_pose_set_t load_aim_pose_set(const char *suffix)
 {
   aim_pose_set_t set;
 
   for (uint32_t index = 0; index < entities::Aim_Pose_COUNT; ++index)
   {
     const entities::Aim_Pose pose = (entities::Aim_Pose)index;
-    std::string              path = std::string(directory) + "/" + filename_prefix_of(pose) + "_" +
-                       suffix + ".animation";
+    const std::string        name = filename_prefix_of(pose) + "_" + suffix;
 
     // ANY missing pose is fatal, not just Forward. A set of five is meaningless
     // partial: falling back to Forward for a missing extreme ships a player who
     // stares straight ahead while looking up, which reads as a rig bug and gets
-    // chased in the wrong place. load_animation dies naming the file, so there
-    // is no partial set to represent.
-    set.poses[pose] = assets::load_animation(path.c_str());
+    // chased in the wrong place.
+    const std::optional<assets::animation_asset> id =
+        assets::try_from_string<assets::animation_asset>(name);
+    if (!id)
+      fatal_error("aim pose '{}' is not in the asset manifest, so the '{}' set is missing a "
+                  "member; a partial set draws a player who stares ahead while looking up",
+                  name, suffix);
+
+    set.poses[pose] = assets::get_animation(*id);
   }
 
   return set;
@@ -92,7 +99,7 @@ float advance_body_yaw(float &body_yaw, float view_yaw, float delta_time,
 
 const aim_pose_set_t &holding_gun_aim_poses()
 {
-  static const aim_pose_set_t poses = load_aim_pose_set("resources/models", "holding_gun");
+  static const aim_pose_set_t poses = load_aim_pose_set("holding_gun");
   return poses;
 }
 
@@ -130,14 +137,12 @@ void compute_aim_posed_skeleton(const aim_pose_set_t &pose_set, const assets::sk
 
 const assets::animation_asset_t &death_clip()
 {
-  static const char *path = "resources/models/Death.animation";
-
   // The handle is the cache -- Asset_Pool has no eviction, so a handle that
   // resolved once resolves forever -- but the POINTER is re-resolved per call
   // rather than stored, which is what keeps this correct if the pool ever
   // relocates its storage.
   static const assets::asset_handle_t<assets::animation_asset_t> handle =
-      assets::load_animation(path);
+      assets::get_animation(assets::animation_asset::Death);
 
   return *assets::get(handle);
 }

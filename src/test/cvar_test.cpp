@@ -80,6 +80,7 @@ call_record_t g_spawn_sphere;
 call_record_t g_map;
 call_record_t g_noclip;
 call_record_t g_join_game;
+call_record_t g_spectate;
 call_record_t g_bind;
 call_record_t g_connect;
 call_record_t g_announce;
@@ -87,7 +88,7 @@ call_record_t g_announce;
 void reset_records()
 {
   g_spawn_bot = g_spawn_cube = g_spawn_sphere = {};
-  g_map = g_noclip = g_join_game = g_bind = g_connect = g_announce = {};
+  g_map = g_noclip = g_join_game = g_spectate = g_bind = g_connect = g_announce = {};
 }
 
 // The line buffer a console command's argument views point into must outlive
@@ -139,6 +140,12 @@ void join_game(const command_context_t& context)
 {
   ++g_join_game.count;
   g_join_game.caller_slot = context.caller_slot;
+}
+
+void spectate(const command_context_t& context)
+{
+  ++g_spectate.count;
+  g_spectate.caller_slot = context.caller_slot;
 }
 
 void map(std::string_view path, const command_context_t& context)
@@ -325,6 +332,34 @@ void test_text_conversion()
         "an unrecognised bool token is rejected");
   check(state.debug_show_navmesh,
         "a rejected bool leaves the value alone -- it does not fall back to false");
+
+  // Enums convert by VALUE NAME in both directions, which is the whole reason
+  // sv_gamemode stopped being a string<24> resolved by hand at map load.
+  text = cvars::try_cvar_to_text(state, cvars::cvar_id::sv_gamemode);
+  check(text.has_value(), "try_cvar_to_text succeeds for an enum");
+  check_equal(*text, "deathmatch", "an enum formats as its value name");
+
+  for (uint32_t value = 0; value < cvars::Game_Mode_COUNT; ++value)
+  {
+    const cvars::Game_Mode mode = (cvars::Game_Mode)value;
+    check(cvars::try_cvar_from_text(state, cvars::cvar_id::sv_gamemode, to_string(mode)),
+          "every declared mode name parses");
+    check(state.sv_gamemode == mode, "the parsed name landed as its own value");
+    text = cvars::try_cvar_to_text(state, cvars::cvar_id::sv_gamemode);
+    check(text.has_value() && *text == to_string(mode), "an enum round-trips through text");
+  }
+
+  // A NUMBER is not a spelling of an enum value. Accepting one would let a map's
+  // attached_cvars block name a mode by index, which survives exactly until a
+  // value is inserted ahead of it -- and `sv_gamemode 7` would name none at all.
+  const cvars::Game_Mode before = state.sv_gamemode;
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::sv_gamemode, "0"),
+        "an enum rejects a numeric value");
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::sv_gamemode, "no_such_mode"),
+        "an enum rejects an undeclared name");
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::sv_gamemode, "Deathmatch"),
+        "an enum name is case sensitive, like every other declared name");
+  check(state.sv_gamemode == before, "a rejected enum write leaves the value alone");
 }
 
 // --- 3. The console dispatcher ----------------------------------------------

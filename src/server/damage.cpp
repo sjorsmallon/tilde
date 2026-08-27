@@ -3,6 +3,7 @@
 
 #include "../shared/log.hpp"
 #include "server_api.hpp"
+#include "systems/game_rules_system.hpp"
 #include "systems/respawn_system.hpp"
 
 namespace server
@@ -54,6 +55,17 @@ static void apply_player_damage_total(server_context_t &context,
 {
   player.velocity = player.velocity + knockback_velocity;
 
+  // Knockback is deliberately ABOVE the gate and health is below it: a shove is
+  // not damage, so a frozen player can still be rocket-jumped by someone whose
+  // round has not started. Everything that follows -- the crossing, PLAYER_DIED
+  // and the respawn timer -- hangs off the health write, so gating it here gates
+  // them together rather than in three places that can drift.
+  //
+  // The SCORE is the one thing that does not hang off it, because damage
+  // applies in warmup and a warmup frag counts for nothing. See below.
+  if (!can_take_damage(context))
+    return;
+
   const int32_t health_before = player.health;
   player.health -= static_cast<int32_t>(total_damage);
 
@@ -72,8 +84,41 @@ static void apply_player_damage_total(server_context_t &context,
     died.weapon_id    = credited.weapon_id;
     died.was_headshot = credited.was_headshot;
     shared::fire_player_died(context.outgoing.events, died);
+
+    // Scored at the crossing rather than off Player_Died, so the score and the
+    // event cannot disagree about what happened. A world kill and a suicide
+    // both count as a death and award nobody; `get` returning null for a
+    // non-player attacker (a trigger volume, a destroyed rocket owner) is the
+    // same answer, not a special case.
+    //
+    // is_round_live, not can_take_damage: the kill happened -- it fired
+    // Player_Died and the kill feed shows it -- but a warmup frag is not a frag.
+    // This is the one place the two gates are supposed to differ.
+    if (is_round_live(context))
+    {
+      ++player.deaths;
+      if (credited.attacker_uid != victim_uid)
+      {
+        if (entities::Player_Entity* attacker =
+                context.world.session.entity_system.get<entities::Player_Entity>(
+                    credited.attacker_uid))
+          ++attacker->kills;
+      }
+    }
+
     // Bots and humans share this path — both are Player_Entity instances.
-    schedule_respawn(context, victim_uid, get_tick_number());
+    //
+    // The one field that separates a deathmatch from an elimination round: with
+    // respawn_during_round false nothing is scheduled, so the corpse stays down
+    // until the round boundary puts every player back on a marker. No branch on
+    // Game_Mode anywhere, which is the point of the table.
+    //
+    // OUTSIDE a live round it always schedules, whatever the mode says: staying
+    // down is what makes a round a round, and there is no round to be out of in
+    // warmup. Without this an elimination mode's warmup is a room that fills up
+    // with corpses until the match starts.
+    if (current_mode(context).respawn_during_round || !is_round_live(context))
+      schedule_respawn(context, victim_uid, get_tick_number());
   }
 }
 

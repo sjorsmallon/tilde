@@ -1,6 +1,7 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "respawn_system.hpp"
 
+#include "game_rules_system.hpp"
 #include "inventory_system.hpp"
 
 #include "../../shared/events/generated/events_generated.hpp"
@@ -80,33 +81,96 @@ void schedule_respawn(server_context_t &context,
 
 // Declared in respawn_system.hpp — see there for the contract.
 const entities::Player_Spawn_Entity*
-try_pick_human_spawn(shared::game_session_t &session, uint32_t rotation_index)
+try_pick_human_spawn(shared::game_session_t &session, Spawn_Policy policy,
+                     entities::Team_Allegiance team, uint32_t rotation_index)
 {
   Span<entities::Player_Spawn_Entity> spawns =
       session.entity_system.entities_of<entities::Player_Spawn_Entity>();
 
+  // One predicate, applied by both passes below, so "which markers are
+  // eligible" cannot be answered differently by the count and by the pick --
+  // which would walk off the end of the second pass.
+  const auto eligible = [&](const entities::Player_Spawn_Entity &spawn, bool honor_team)
+  {
+    if (spawn.spawn_type != entities::Spawn_Type::Human)
+      return false;
+    if (!honor_team)
+      return true;
+    return spawn.team_allegiance == team;
+  };
+
   // Two passes rather than a collected vector: this runs on player join and on
   // every respawn, and the pool is small enough that counting is cheaper than
   // allocating.
-  uint32_t human_count = 0;
-  for (const entities::Player_Spawn_Entity &spawn : spawns)
-    if (spawn.spawn_type == entities::Spawn_Type::Human) ++human_count;
+  bool honor_team = policy == Spawn_Policy::Team_Markers;
 
-  if (human_count == 0)
+  uint32_t candidate_count = 0;
+  for (const entities::Player_Spawn_Entity &spawn : spawns)
+    candidate_count += eligible(spawn, honor_team) ? 1 : 0;
+
+  if (honor_team && candidate_count == 0)
+  {
+    // A team mode on a map authored for free-for-all. Loud, then any human
+    // marker: refusing to spawn would be a player stuck spectating their own
+    // match, and picking an enemy spawn on purpose is worse than picking one by
+    // accident.
+    log_error("try_pick_human_spawn: map '{}' declares no {} spawn marker — "
+              "falling back to any human marker",
+              session.map_name, to_string(team));
+    honor_team = false;
+    for (const entities::Player_Spawn_Entity &spawn : spawns)
+      candidate_count += eligible(spawn, honor_team) ? 1 : 0;
+  }
+
+  if (candidate_count == 0)
     return nullptr;
 
-  const uint32_t wanted = rotation_index % human_count;
+  const uint32_t wanted = rotation_index % candidate_count;
   uint32_t       seen   = 0;
   for (const entities::Player_Spawn_Entity &spawn : spawns)
   {
-    if (spawn.spawn_type != entities::Spawn_Type::Human) continue;
+    if (!eligible(spawn, honor_team)) continue;
     if (seen == wanted) return &spawn;
     ++seen;
   }
 
-  fatal_error("try_pick_human_spawn: counted %u human spawns then failed to "
+  fatal_error("try_pick_human_spawn: counted %u eligible spawns then failed to "
               "reach index %u — the pool changed under us",
-              human_count, wanted);
+              candidate_count, wanted);
+}
+
+void respawn_all_players(server_context_t &context)
+{
+  // Dropped BEFORE the loop: every player is about to be alive at a marker, so
+  // a surviving deadline could only fire on someone who no longer needs it.
+  context.world.death_tick_by_player_uid.clear();
+
+  const Spawn_Policy policy = current_mode(context).spawn_policy;
+
+  uint32_t rotation_index = 0;
+  for (entities::Player_Entity &player :
+       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+  {
+    const entities::Player_Spawn_Entity *marker =
+        try_pick_human_spawn(context.world.session, policy, player.team_allegiance,
+                             rotation_index);
+    if (marker == nullptr)
+      log_error("respawn_all_players: map '{}' declares no Spawn_Type::Human "
+                "marker — respawning player uid {} at origin",
+                context.world.session.map_name,
+                static_cast<uint64_t>(player.entity_id));
+
+    place_player_at_spawn(context.world.session, player,
+                          marker ? *marker : origin_fallback_spawn());
+
+    set_kinematic_pose(*context.world.physics, player.entity_id,
+                       player.position +
+                           vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                       vec3f{0.f, 0.f, 0.f});
+
+    fire_player_spawned_event(context, player);
+    ++rotation_index;
+  }
 }
 
 void update_respawns(server_context_t &context,
@@ -150,7 +214,8 @@ void update_respawns(server_context_t &context,
     // 0: the respawn drain always takes the first marker. Cycling here is a
     // gameplay decision, not a mechanism one — change the argument, not this.
     const entities::Player_Spawn_Entity *marker =
-        try_pick_human_spawn(context.world.session, 0);
+        try_pick_human_spawn(context.world.session, current_mode(context).spawn_policy,
+                             player->team_allegiance, 0);
     if (marker == nullptr)
       log_error("update_respawns: no Player_Spawn_Entity available, "
                 "respawning player uid {} at origin",

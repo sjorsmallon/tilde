@@ -571,13 +571,10 @@ void bake_map(map_t &map, float cell_size)
 
         const float floor_y = ray_origin.y - floor_hit.t;
 
-        // Slope check: the hit primitive must have at least one upward-facing plane.
-        const auto &planes = bvh.primitives[floor_hit.id.index].collision_planes;
-        float best_up = -FLT_MAX;
-        for (const auto &pl : planes)
-          best_up = std::max(best_up, pl.normal.y);
-
-        if (best_up >= NAVMESH_WALKABLE_SLOPE)
+        // Slope check against the face actually hit. This used to take the max
+        // normal.y over ALL of the primitive's planes, which every closed solid
+        // passes -- a 60-degree brush ramp read as flat walkable floor.
+        if (floor_hit.normal.y >= NAVMESH_WALKABLE_SLOPE)
         {
           // Headroom check: must have enough clearance above the floor.
           vec3f ceil_origin = {cx, floor_y + 0.01f, cz};
@@ -594,8 +591,12 @@ void bake_map(map_t &map, float cell_size)
           }
         }
 
-        // Advance below this surface to look for deeper floors.
-        ray_origin.y = floor_y - 0.01f;
+        // Advance below the whole SOLID, not a hair below the surface: a
+        // convex solid covers one interval of this column, so the next floor
+        // can only be past its underside. Re-entering it from inside instead
+        // cost a duplicate span wherever the on-surface headroom probe flapped,
+        // and crawled 0.01 at a time through everything tall.
+        ray_origin.y -= std::max(floor_hit.t_exit, floor_hit.t) + 0.01f;
       }
     }
   }

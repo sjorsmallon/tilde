@@ -3,6 +3,8 @@
 
 #include "array.hpp"
 #include "cvars/cvar_runtime.hpp"
+#include "reflection.hpp"
+#include "network/network_types.hpp"
 #include "span.hpp"
 
 #include <cstdint>
@@ -30,6 +32,17 @@ enum cvar_flags : uint32_t
 // Every enum below is DENSE and starts at 0, so its _COUNT is both the
 // number of declared names and one past the largest value -- which is
 // what makes it safe as an array size.
+
+enum class Game_Mode : uint8_t
+{
+  deathmatch = 0,
+  rounds = 1,
+};
+
+constexpr uint32_t Game_Mode_COUNT = 2;
+
+const char* to_string(Game_Mode value);
+template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view text);
 
 enum class Bot_Mode : uint8_t
 {
@@ -67,6 +80,14 @@ struct cvar_state_t
   float pm_step_height = 18.0f;
   float pm_minimum_land_impact_speed = 150.0f;
   float game_rocket_speed = 600.0f;
+  Game_Mode sv_gamemode = Game_Mode::deathmatch;
+  float mp_warmup_seconds = 0.0f;
+  float mp_countdown_seconds = 3.0f;
+  float mp_round_seconds = 180.0f;
+  float mp_round_end_seconds = 5.0f;
+  float mp_game_over_seconds = 10.0f;
+  int32_t mp_players_to_start = 1;
+  int32_t mp_frag_limit = 20;
   float sv_aim_max_pitch = 45.0f;
   float sv_aim_max_yaw = 45.0f;
   float sv_aim_body_turn_rate = 540.0f;
@@ -78,6 +99,7 @@ struct cvar_state_t
   float sv_timeout = 30.0f;
   int32_t sv_max_move_backlog = 8;
   int32_t sv_map_transfer_fragments_per_tick = 8;
+  network::pascal_string_t<32> name = "Player";
   int32_t cl_max_unacked_inputs = 8;
   float r_fov = 90.0f;
   float r_zoom_fov = 30.0f;
@@ -123,6 +145,7 @@ struct cvar_state_t
   bool net_snapshot_debug = false;
   bool sv_event_debug = false;
   bool cl_event_debug = false;
+  bool sv_reliable_debug = false;
 };
 
 // Load-bearing for mirroring: change detection is a member compare
@@ -147,67 +170,77 @@ enum class cvar_id : uint16_t
   pm_step_height = 9,
   pm_minimum_land_impact_speed = 10,
   game_rocket_speed = 11,
-  sv_aim_max_pitch = 12,
-  sv_aim_max_yaw = 13,
-  sv_aim_body_turn_rate = 14,
-  sv_lag_compensation = 15,
-  sv_max_rewind_ticks = 16,
-  sv_lag_compensation_debug = 17,
-  sv_shot_debug = 18,
-  sv_tickrate = 19,
-  sv_timeout = 20,
-  sv_max_move_backlog = 21,
-  sv_map_transfer_fragments_per_tick = 22,
-  cl_max_unacked_inputs = 23,
-  r_fov = 24,
-  r_zoom_fov = 25,
-  r_zoom_easing_time_between_fovs = 26,
-  m_sensitivity = 27,
-  m_zoom_sensitivity_ratio = 28,
-  cl_maxfps = 29,
-  cl_interpolation_delay_ticks = 30,
-  cl_interpolation_debug = 31,
-  cl_display_latency_ms = 32,
-  cl_draw_player_hull = 33,
-  cl_spectate_slot = 34,
-  cl_player_unlit = 35,
-  cl_aim_debug = 36,
-  cl_aim_debug_pitch = 37,
-  cl_aim_debug_yaw = 38,
-  cl_show_deploy_timer = 39,
-  cl_crosshair = 40,
-  cl_crosshair_dot = 41,
-  cl_crosshair_size = 42,
-  cl_crosshair_gap = 43,
-  cl_crosshair_thickness = 44,
-  cl_crosshair_r = 45,
-  cl_crosshair_g = 46,
-  cl_crosshair_b = 47,
-  cl_crosshair_a = 48,
-  editor_speed = 49,
-  cl_timescale = 50,
-  sound_reference_distance = 51,
-  sound_max_distance_cutoff = 52,
-  sound_rolloff_factor = 53,
-  map_respawn_delay_seconds = 54,
-  map_kill_limit = 55,
-  map_round_time_limit_seconds = 56,
-  debug_show_collisions = 57,
-  debug_show_hitboxes = 58,
-  debug_show_navmesh = 59,
-  debug_show_box_volumes = 60,
-  debug_hide_geometry = 61,
-  cl_shot_debug_seconds = 62,
-  debug_show_entity_counts = 63,
-  debug_show_physics_bodies = 64,
-  net_snapshot_debug = 65,
-  sv_event_debug = 66,
-  cl_event_debug = 67,
+  sv_gamemode = 12,
+  mp_warmup_seconds = 13,
+  mp_countdown_seconds = 14,
+  mp_round_seconds = 15,
+  mp_round_end_seconds = 16,
+  mp_game_over_seconds = 17,
+  mp_players_to_start = 18,
+  mp_frag_limit = 19,
+  sv_aim_max_pitch = 20,
+  sv_aim_max_yaw = 21,
+  sv_aim_body_turn_rate = 22,
+  sv_lag_compensation = 23,
+  sv_max_rewind_ticks = 24,
+  sv_lag_compensation_debug = 25,
+  sv_shot_debug = 26,
+  sv_tickrate = 27,
+  sv_timeout = 28,
+  sv_max_move_backlog = 29,
+  sv_map_transfer_fragments_per_tick = 30,
+  name = 31,
+  cl_max_unacked_inputs = 32,
+  r_fov = 33,
+  r_zoom_fov = 34,
+  r_zoom_easing_time_between_fovs = 35,
+  m_sensitivity = 36,
+  m_zoom_sensitivity_ratio = 37,
+  cl_maxfps = 38,
+  cl_interpolation_delay_ticks = 39,
+  cl_interpolation_debug = 40,
+  cl_display_latency_ms = 41,
+  cl_draw_player_hull = 42,
+  cl_spectate_slot = 43,
+  cl_player_unlit = 44,
+  cl_aim_debug = 45,
+  cl_aim_debug_pitch = 46,
+  cl_aim_debug_yaw = 47,
+  cl_show_deploy_timer = 48,
+  cl_crosshair = 49,
+  cl_crosshair_dot = 50,
+  cl_crosshair_size = 51,
+  cl_crosshair_gap = 52,
+  cl_crosshair_thickness = 53,
+  cl_crosshair_r = 54,
+  cl_crosshair_g = 55,
+  cl_crosshair_b = 56,
+  cl_crosshair_a = 57,
+  editor_speed = 58,
+  cl_timescale = 59,
+  sound_reference_distance = 60,
+  sound_max_distance_cutoff = 61,
+  sound_rolloff_factor = 62,
+  map_respawn_delay_seconds = 63,
+  map_kill_limit = 64,
+  map_round_time_limit_seconds = 65,
+  debug_show_collisions = 66,
+  debug_show_hitboxes = 67,
+  debug_show_navmesh = 68,
+  debug_show_box_volumes = 69,
+  debug_hide_geometry = 70,
+  cl_shot_debug_seconds = 71,
+  debug_show_entity_counts = 72,
+  debug_show_physics_bodies = 73,
+  net_snapshot_debug = 74,
+  sv_event_debug = 75,
+  cl_event_debug = 76,
+  sv_reliable_debug = 77,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 68;
+constexpr uint32_t CVAR_COUNT = 78;
 
 enum class command_id : uint16_t
 {
@@ -217,12 +250,13 @@ enum class command_id : uint16_t
   map = 3,
   noclip = 4,
   join_game = 5,
-  bind = 6,
-  connect = 7,
-  announce = 8,
+  spectate = 6,
+  bind = 7,
+  connect = 8,
+  announce = 9,
 };
 
-constexpr uint32_t COMMAND_COUNT = 9;
+constexpr uint32_t COMMAND_COUNT = 10;
 
 enum cvar_type : uint8_t
 {
@@ -231,6 +265,7 @@ enum cvar_type : uint8_t
   CVAR_TYPE_U32,
   CVAR_TYPE_BOOL,
   CVAR_TYPE_STRING,
+  CVAR_TYPE_ENUM,
 };
 
 // The console's whole view of a cvar. `offset` and `size` locate the
@@ -245,6 +280,11 @@ struct cvar_info_t
   uint16_t    offset;
   uint16_t    size;
   uint16_t    string_capacity; // string<N>'s N, otherwise 0
+
+  // CVAR_TYPE_ENUM only, else NOT_AN_ENUM. The same record an
+  // enum-typed entity or event field carries, which is what keeps the
+  // text conversion below a fixed set of cases with no per-cvar code.
+  const enum_type_info_t* enum_info;
 };
 
 struct command_info_t
@@ -317,6 +357,9 @@ void noclip(bool enabled, const command_context_t& context);
 // @Server  Leave spectate and spawn into the match
 // usage: join_game
 void join_game(const command_context_t& context);
+// @Server  Leave the match and return to spectating
+// usage: spectate
+void spectate(const command_context_t& context);
 // @Client  Bind a key (a-z) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);
@@ -362,6 +405,11 @@ void bind_client_commands(command_table_t& table);
 // Enum_Array<cvars::Foo, T>, so adding a value to the .def resizes
 // every table over that enum. It does not fill the new row -- see
 // rows_in_enum_order in array.hpp for the check that catches that.
+
+template <> struct enum_traits<cvars::Game_Mode>
+{
+  static constexpr uint32_t count = cvars::Game_Mode_COUNT;
+};
 
 template <> struct enum_traits<cvars::Bot_Mode>
 {

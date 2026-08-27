@@ -116,14 +116,77 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
   return bvh;
 }
 
+bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f &origin,
+                               const vec3f &dir, float &out_t, float &out_t_exit,
+                               vec3f &out_normal)
+{
+  if (planes.count == 0)
+    return false;
+
+  // Parallel means the ray never crosses that face's plane, so the face can
+  // only reject (origin outside it) and never bound the interval.
+  constexpr float parallel_epsilon = 1e-8f;
+
+  float t_enter = -FLT_MAX;
+  float t_exit  = FLT_MAX;
+  vec3f enter_normal{0.f, 0.f, 0.f};
+
+  for (const Plane &plane : planes)
+  {
+    const float denominator   = linalg::dot(dir, plane.normal);
+    const float signed_distance = linalg::dot(origin - plane.point, plane.normal);
+
+    if (std::abs(denominator) < parallel_epsilon)
+    {
+      if (signed_distance > 0.f)
+        return false; // outside a face the ray runs alongside
+      continue;
+    }
+
+    const float t = -signed_distance / denominator;
+
+    if (denominator < 0.f)
+    {
+      // Ray runs against the outward normal: this face is entered.
+      if (t > t_enter)
+      {
+        t_enter      = t;
+        enter_normal = plane.normal;
+      }
+    }
+    else if (t < t_exit)
+    {
+      t_exit = t;
+    }
+
+    if (t_enter > t_exit)
+      return false;
+  }
+
+  if (t_exit < 0.f)
+    return false; // hull is entirely behind the origin
+
+  // A closed hull always has a face opposing the ray, so an unset entry here
+  // means the plane set was not one.
+  if (t_enter == -FLT_MAX)
+    return false;
+
+  out_t      = t_enter;
+  out_t_exit = t_exit;
+  out_normal = enter_normal;
+  return true;
+}
+
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
                        const vec3f &origin, const vec3f &dir, ray_hit_result_t &out_hit)
 {
   if (bvh.nodes.empty())
     return false;
 
-  out_hit.hit = false;
-  out_hit.t = FLT_MAX;
+  out_hit.hit    = false;
+  out_hit.t      = FLT_MAX;
+  out_hit.t_exit = FLT_MAX;
+  out_hit.normal = {0.f, 0.f, 0.f};
 
   // Use a simple stack for traversal to avoid deep recursion overhead
   // Stack stores node indices
@@ -167,36 +230,41 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
       {
         const BVH_Primitive &prim = bvh.primitives[node.first_entity_index + i];
 
+        // The AABB is the broad phase here exactly as it is in
+        // resolve_collisions: it rejects cheaply, and a primitive that carries
+        // its hull is then clipped against it for the real hit. Reporting the
+        // bound as the answer is what made a brush navmesh as its box -- the
+        // extruded shape was in the BVH the whole time, just never consulted.
         float t_prim;
-        if (intersect_ray_aabb(origin, dir, prim.aabb.min, prim.aabb.max,
-                               t_prim))
+        float t_exit_prim;
+        vec3f normal_prim;
+        if (!intersect_ray_aabb(origin, dir, prim.aabb.min, prim.aabb.max, t_prim,
+                                t_exit_prim, normal_prim))
+          continue;
+
+        if (t_prim > out_hit.t)
+          continue; // the bound alone is already further than the closest hit
+
+        // No planes means the caller built this BVH to pick by bound (the
+        // editor's does), so the AABB hit stands.
+        if (!prim.collision_planes.empty() &&
+            !intersect_ray_convex_hull(prim.collision_planes, origin, dir, t_prim,
+                                       t_exit_prim, normal_prim))
+          continue;
+
+        // A negative t is an origin inside the solid, which counts as a hit at
+        // zero distance -- that is what picking from inside a box means.
+        if (t_prim < 0.0f)
+          t_prim = 0.0f;
+
+        if (t_prim < out_hit.t)
         {
-          // We only care about forward hits
-          if (t_prim < 0.0f)
-            t_prim =
-                0.0f; // Treat start-inside as 0 distance hit? Or keep t_prim?
-
-          // If we are strictly checking "ray starts at origin", t must be >= 0
-          // (or close to 0) But if t_prim is negative, it means we are inside.
-          // Usually for "picking", we want the first positive t, OR if we are
-          // inside, we hit it immediately. Let's assume t_prim >= 0 check, or
-          // logic: If t_prim < 0, but max > 0, we hit. intersect_ray_aabb
-          // returns t_min. If start inside, t_min < 0.
-
-          if (t_prim < out_hit.t)
-          {
-            // If t_prim is negative, we might want to discard if we strictly
-            // want points in front. But usually you want "what am I pointing
-            // at". If I am inside a box, I am 'hitting' it. Let's clamp to 0 if
-            // negative for comparison, or just accept it? If I use t_prim < 0,
-            // then t_prim < out_hit.t (which initializes to MAX) is true.
-
-            // Simplest: accept it.
-            out_hit.hit = true;
-            out_hit.t = t_prim;
-            out_hit.id = prim.id;
-            hit_anything = true;
-          }
+          out_hit.hit    = true;
+          out_hit.t      = t_prim;
+          out_hit.t_exit = t_exit_prim;
+          out_hit.id     = prim.id;
+          out_hit.normal = normal_prim;
+          hit_anything   = true;
         }
       }
     }

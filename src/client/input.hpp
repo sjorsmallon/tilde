@@ -228,4 +228,8 @@ bool raw_input_is_active();
 bool imgui_wants_mouse();
 bool imgui_wants_keyboard();
 
+// A focused panel is not a panel being typed into. This is the gate for an
+// editor shortcut; imgui_wants_keyboard() also covers a merely-active widget.
+bool imgui_wants_text_input();
+
 } // namespace client::input

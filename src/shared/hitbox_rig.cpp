@@ -373,6 +373,7 @@ std::optional<hitbox_rig_t> try_resolve_hitbox_rig(const hitbox_rig_file_t &file
   rig.name          = file.name;
   rig.skeleton_name = file.skeleton_name;
   rig.skeleton_hash = file.skeleton_hash;
+  rig.skeleton      = &skeleton;
   rig.volumes.reserve(file.volumes.size());
 
   for (const hitbox_volume_t &volume : file.volumes)
@@ -557,7 +558,7 @@ std::optional<hitbox_ray_hit_t> intersect_ray_hitbox(const posed_hitbox_t &hitbo
   }
 }
 
-hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
+guesstimated_hitbox_from_bone_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
                                  const rigged_hitbox_volume_t &rigged)
 {
   if (!mesh.is_skinned() || skeleton.bones.empty())
@@ -599,7 +600,7 @@ hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &ske
     along_forward.push_back(std::fabs(linalg::dot(relative, frame.forward)));
   }
 
-  hitbox_seed_t seed;
+  guesstimated_hitbox_from_bone_t seed;
   seed.radius       = percentile_of(from_axis, HITBOX_SIZE_PERCENTILE);
   seed.half_extents = {percentile_of(along_right, HITBOX_SIZE_PERCENTILE),
                        percentile_of(along_up, HITBOX_SIZE_PERCENTILE),
@@ -608,7 +609,7 @@ hitbox_seed_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &ske
 }
 
 void derive_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
-                         const hitbox_rig_t &rig, Span<hitbox_seed_t> out)
+                         const hitbox_rig_t &rig, Span<guesstimated_hitbox_from_bone_t> out)
 {
   if (out.size() != rig.volumes.size())
     fatal_error("derive_hitbox_sizes: {} volumes, {} outputs", rig.volumes.size(), out.size());
@@ -635,6 +636,7 @@ hitbox_rig_t make_hitbox_rig_template(const mesh_asset_t &mesh, const skeleton_t
   rig.name          = skeleton.name;
   rig.skeleton_name = skeleton.name;
   rig.skeleton_hash = skeleton.hash;
+  rig.skeleton      = &skeleton;
 
   for (uint32_t index = 0; index < (uint32_t)skeleton.bones.size(); ++index)
   {
@@ -652,7 +654,7 @@ hitbox_rig_t make_hitbox_rig_template(const mesh_asset_t &mesh, const skeleton_t
     entry.end_bone   = index;
     entry.span_bones = {index};
 
-    const hitbox_seed_t seed  = derive_hitbox_size(mesh, skeleton, entry);
+    const guesstimated_hitbox_from_bone_t seed  = derive_hitbox_size(mesh, skeleton, entry);
     entry.volume.radius       = seed.radius;
     entry.volume.half_extents = seed.half_extents;
     rig.volumes.push_back(std::move(entry));

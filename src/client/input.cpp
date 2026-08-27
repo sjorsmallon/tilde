@@ -802,4 +802,9 @@ bool imgui_wants_keyboard()
   return ImGui::GetIO().WantCaptureKeyboard;
 }
 
+bool imgui_wants_text_input()
+{
+  return ImGui::GetIO().WantTextInput;
+}
+
 } // namespace client::input

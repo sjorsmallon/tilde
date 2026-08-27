@@ -49,14 +49,17 @@ inline aim_settings_t aim_settings_from(const cvars::cvar_state_t &cvars)
                         .body_turn_rate_degrees_per_second = cvars.sv_aim_body_turn_rate};
 }
 
-// Loads `<directory>/{forward,upward,downward,left,right}_<suffix>.animation`.
-// ANY of the five missing is fatal and names the file. The set is meaningless
-// partial: sample_aim_pose would give the missing pose's weight back to Forward
-// and draw a player who stares ahead while looking up, which reads as a rigging
-// bug rather than as a missing file.
-//@NOTE(SJM): this is super fragile and hacky since it depends on the directory structure and naming convention
-// but it works for now.
-aim_pose_set_t load_aim_pose_set(const char *directory, const char *suffix);
+// The five `{forward,upward,downward,left,right}_<suffix>` clips, looked up in
+// the asset manifest by name. ANY of the five missing is fatal and names it: the
+// set is meaningless partial, since sample_aim_pose would give the missing
+// pose's weight back to Forward and draw a player who stares ahead while looking
+// up, which reads as a rigging bug rather than as a missing file.
+//
+// The name is still DERIVED from the enum rather than listed a second time --
+// see filename_prefix_of. What is gone is the directory: the manifest knows
+// where a clip lives, so a naming convention no longer has to also be a path
+// convention.
+aim_pose_set_t load_aim_pose_set(const char *suffix);
 
 // The one `holding_gun` set, loaded on first use and held forever. Both the
 // player draw path and the Animation tool want it, and two caches would be two

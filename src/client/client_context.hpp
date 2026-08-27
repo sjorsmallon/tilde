@@ -11,6 +11,7 @@
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/player_move.hpp"
+#include "../shared/round_phase_rules.hpp"
 #include "../shared/subtick.hpp"
 
 #include <memory>
@@ -39,14 +40,21 @@ static constexpr int32_t invalid_slot_idx = -1;
 //   Connected ──CmdChangeMap (new map)─────────▶ Loading
 //             ──on_exit: send CmdDisconnect─────▶ Disconnected
 //
-//   Loading ──local copy present & hash matches─▶ Connected (send C2S_MapLoaded)
-//           ──S2C_MapData arrives & verifies────▶ Connected (send C2S_MapLoaded)
+//   Loading ──local copy present & hash matches─▶ Connected
+//           ──S2C_MapData arrives & verifies────▶ Connected
 //           ──load/verify fails─────────────────▶ (stay Loading; re-request)
 //
+// Nothing is SENT on the two Loading -> Connected edges, and that is the point:
+// the map we hold rides every C2S_ClientInput as `map_content_hash`, so the
+// server derives client_slot_t::map_ready by comparing it rather than waiting
+// for an ack it could lose. Entering Connected starts the input flow, and
+// snapshots resume one tick later.
+//
 // Invariants: we only send client input / run prediction+reconciliation while
-// Connected; the server withholds snapshots (its client_slot_t::map_ready) until it sees
-// our C2S_MapLoaded, so a Loading client receives no entity deltas. See
-// play_state.cpp update() and connection_t::awaiting_stream_content_hash.
+// Connected; the server withholds snapshots (its client_slot_t::map_ready)
+// until an input reports the hash it is running, so a Loading client -- which
+// sends no input at all -- receives no entity deltas. See play_state.cpp
+// update() and connection_t::awaiting_stream_content_hash.
 enum class Connection_Phase { Disconnected, Connecting, Loading, Connected };
 
 // --- Client-side prediction ring buffer entry ---
@@ -162,9 +170,10 @@ struct connection_t
   // Non-zero while we're in Loading because we lacked (cache miss) or
   // mismatched the server's map and asked it to stream the compiled package:
   // holds the content_hash we're waiting to receive. Guards the CmdChangeMap
-  // handler so a resent switch message re-requests the stream (a cheap
-  // retransmit stand-in) instead of tearing down and reloading the world every
-  // tick. Cleared once S2C_MapData applies.
+  // handler so a second switch message naming the map we are ALREADY
+  // downloading is ignored rather than restarting the transfer under us --
+  // begin_paced_transfer replaces whatever a slot was sending. Cleared once
+  // S2C_MapData applies.
   uint32_t awaiting_stream_content_hash = 0;
 
   // The slot we occupy on the server.
@@ -359,8 +368,8 @@ struct prediction_t
 struct bot_debug_entry_t
 {
   int32_t            slot       = -1;
-  int                goal       = 0; // BotGoal: 0=Idle 1=Chase 2=Attack 3=Retreat
-  int                type       = 0; // BotType: 0=Idle 1=Chase 2=Regular
+  int                goal       = 0; // bot_goal_t: 0=Idle 1=Chase 2=Attack 3=Retreat
+  int                type       = 0; // bot_behavior_t: 0=Idle 1=Chase 2=Regular
   std::vector<vec3f> path;
   int                path_index = 0;
 };
@@ -368,9 +377,38 @@ struct bot_debug_entry_t
 // Everything the server tells us about the world other than ourselves. Keyed by
 // entity uid / slot, both of which mean nothing in a different map or a
 // different connection -- which is why this is the one group BOTH resets clear.
+// What the server has told us about the match, as opposed to about the world.
+// The client holds this because it PREDICTS against it: the freeze suppresses
+// movement, and a client that does not know it is frozen predicts three seconds
+// of walking the server discards.
+//
+// A MIRROR, never a second authority -- nothing here is advanced locally. It is
+// rewritten wholesale from EVERY snapshot (S2C_EntityPackage carries the three
+// values), which is what makes a dropped packet cost one tick of staleness
+// instead of a whole phase of mispredicted walking. Round_Phase_Changed writes
+// nothing here: that event is the banner, and a banner is an occurrence.
+struct round_state_t
+{
+  shared::Round_Phase phase = shared::Round_Phase::Warmup;
+
+  // Server tick this phase ends on; 0 means it ends on a win condition. Carried
+  // so a round timer counts down against the tick the client already tracks,
+  // rather than costing per-tick traffic.
+  uint32_t phase_end_tick = 0;
+  uint32_t round_number   = 0;
+
+  // Whether a snapshot has ever arrived. Until one has, the client must NOT gate
+  // its own movement: defaulting to Warmup above is a guess, and guessing
+  // "frozen" would lock a joining player in place until the first packet lands.
+  // Movement is gated only once this is true.
+  bool received = false;
+};
+
 struct replication_t
 {
   std::unordered_map<int32_t, Remote_Player_State> remote_players;
+
+  round_state_t round;
 
   // WHERE ON THE SERVER'S TICK AXIS THE CLIENT IS DRAWING. One per connection:
   // every remote entity's ring is indexed by this same clock, which is what a

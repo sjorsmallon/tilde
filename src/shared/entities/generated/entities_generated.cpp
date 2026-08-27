@@ -483,6 +483,33 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Player_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::name),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "kills",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Player_Entity, kills),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::kills),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "deaths",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Player_Entity, deaths),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::deaths),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "velocity",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Player_Entity, velocity),
@@ -1256,7 +1283,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 3}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 19}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 20u, true, construct_Player_Entity, as_base_Player_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 22}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 20u, true, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 8}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 4u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
@@ -1574,6 +1601,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xfcfab397u;
+const uint32_t SCHEMA_HASH = 0x984b33bau;
 
 } // namespace entities

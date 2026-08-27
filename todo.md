@@ -1,6 +1,11 @@
 # TODO
 
-> **Formalize `@Networked` across a component embedding.** Field flags are
+Team score, and teams on the scoreboard. Per-player kills/deaths replicate; the team's number is nothing yet. It wants to ride Round_Phase_Changed — which is another thing that gets better after the channel is reliable. The scoreboard also doesn't show team at all, so a Rounds match currently reads as a free-for-all with odd spawns.
+Team assignment beyond "the smaller team." No switching, no locking, no picking. auto_assign_teams only says whether teams happen.
+After Game_Over, anything other than reloading the same map. Rotation, a vote, back to Warmup without a reload. 
+
+
+**Formalize `@Networked` across a component embedding.** Field flags are
 > declared on a component's own members — a component-typed field carries no
 > flags by generator rule — so `@Networked` is a property of the COMPONENT, not
 > of the (entity, component) pair. Two gaps fall out of that:
@@ -34,6 +39,34 @@
 > has to start replicating at step 3 of that work — see
 > `weapon_inventory_plan.md`, which is where that work is written down).
 
+
+> **Reliable event channel — DONE 2026-08-27.** `shared/network/reliable_stream.hpp`
+> is the mechanism and `reliable_stream_def.md` is the design; the short version
+> is one block outstanding, sender-driven recovery, and an ack riding
+> `Packet_Header` on every datagram. It runs both directions.
+>
+> All three consumers this entry was written for are covered, and every stopgap
+> it named is deleted:
+>
+> - **Kill feed** — `S2C_GameEventBatch` rides the stream, exactly once.
+> - **Round phase** — solved a layer up instead, and better: `round_phase` /
+>   `phase_end_tick` / `round_number` are STATE on `S2C_EntityPackage`, sent
+>   every tick. The once-a-second re-send and the client's transition/re-send
+>   discriminator are gone. `Round_Phase_Changed` is purely the banner now.
+> - **Score updates** — will ride the stream when anything reports them.
+>
+> Two things it guessed wrong, both worth keeping on the record. It wanted
+> sequence numbers PER CHANNEL and a retransmit queue; one block outstanding
+> makes gaps unrepresentable, so there is no queue, no window and no per-message
+> ack state. And it wanted the ack to ride `C2S_ClientInput`; the ack rides the
+> packet HEADER instead, which is what makes it work for a client that is not
+> sending input at all — a spectator, or one mid-download.
+>
+> The rule the round-phase half established, which then caught a hang on the
+> other side of the connection too (see `reliable_stream_def.md` §12): **state
+> that gates behavior is replicated as state, never delivered as an event.**
+>
+> Came up 2026-08-25 while wiring the round-phase gates into client prediction.
 
 **Current priorities**
 
@@ -746,8 +779,11 @@ did not fix.
 - [ ] Cache received packages to disk under `maps/` keyed by
       (name, package_hash) — this cache IS the player-side "do I have the map"
       store.
-- [ ] `CmdChangeMap` reliability: currently resent every tick to not-ready
-      clients (idempotent). Fold into the reliable channel when it lands.
+- [x] `CmdChangeMap` reliability — DONE 2026-08-27. It rides the reliable
+      stream, the client's `C2S_RequestMapData` rides the C2S half of it, and
+      `map_ready` is derived from a hash on `C2S_ClientInput` rather than acked.
+      The 0.25s resend and `last_map_switch_send_tick` are gone; see
+      `reliable_stream_def.md` §12.
 - [ ] A pre-P1 client streaming a post-P1 map silently loads a world with no
       geometry (can't read the new blocks). The package hash catches the
       mismatch; verify the failure is loud rather than an empty world.
@@ -764,6 +800,19 @@ did not fix.
       `audio_system_t::init`; needs `ma_context_get_devices()` +
       `ma_engine_config.pPlaybackDeviceID`), plus master/sfx volume sliders and
       a backend selector.
+
+- [ ] **Voice exhaustion drops whatever asked last.** With all `MAX_VOICE_COUNT`
+      voices busy, `try_start_voice` logs a warning and returns `nullopt`, so
+      which sound is lost is decided by arrival order — a rocket explosion two
+      rooms away can cost you the shot that killed you. The fix is not more
+      voices: it is a PRIORITY split on the sound, a subset that MUST play
+      (the local weapon, hit confirms, announcer) against a subset that MAY
+      (footsteps, ambient impacts). A must-play with a full pool steals the
+      oldest may-play voice; a may-play with a full pool still drops. Where the
+      class lives is the open question — a column on the manifest's sound rows
+      would put it on the asset, a `play_3d` parameter would put it at the call
+      site, and only the call site knows that MY gunshot matters and the same
+      id fired across the map does not. Low priority; noted 2026-08-27.
 
 # Correctness / consistency
 

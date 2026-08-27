@@ -166,6 +166,24 @@ message C2S_ClientInput {
   optional uint32 interpolated_from_tick    = 9;
   optional uint32 interpolated_towards_tick = 10;
   optional float  interpolation_fraction    = 11;   // 0..1, from -> towards
+
+  // A RIDER, and the third of them: the content hash of the map this client
+  // currently holds. The server compares it to its own and sets
+  // client_slot_t::map_ready, which is what gates snapshots and effects.
+  //
+  // STATE, not an ack, and that distinction is the whole design. This replaced a
+  // one-shot C2S_MapLoaded message, whose loss left map_ready false forever and
+  // therefore withheld snapshots forever -- healed only by a 0.25s CmdChangeMap
+  // retransmit that existed for no other reason. A value that is continuously
+  // true has nothing to lose: it self-corrects on the next input, one tick
+  // later, with no retransmit anywhere. State that gates behavior is replicated
+  // as state, never delivered as an event -- the same rule that put round_phase
+  // on S2C_EntityPackage, applied in the other direction.
+  //
+  // 0 means "no map", which never matches a loaded server map. A client that is
+  // still downloading sends no input at all (prediction only runs Connected), so
+  // the absence is not what the server is reading here.
+  optional uint32 map_content_hash = 14;
 }
 
 // s2c is server to client.
@@ -203,6 +221,34 @@ message S2C_EntityPackage {
     // through set_snapshot_baseline / snapshot_baseline_tick
     // (network/entity_snapshot.hpp) so neither open-codes that.
     optional uint32 delta_from_tick = 7;
+
+    // THE MATCH-LEVEL STATE, replicated as STATE rather than delivered as an
+    // event, and the distinction is load-bearing.
+    //
+    // The client PREDICTS against the phase (shared/round_phase_rules.hpp): the
+    // Countdown freeze suppresses movement, so a client that does not know it is
+    // frozen predicts seconds of walking the server discards. A phase that
+    // arrived only as a reliable event would be a round trip behind the
+    // snapshots describing the world it governs -- the two channels are on
+    // different clocks, and a snapshot never waits.
+    //
+    // So the phase is IN the snapshot, which is what makes the skew
+    // unrepresentable rather than merely small: the gate reads state that
+    // self-heals every tick, and Round_Phase_Changed goes back to being purely
+    // the banner occurrence it should always have been. Same rule as
+    // held_snapshot_tick in the other direction -- state that gates behavior is
+    // replicated as state, never delivered as an event.
+    //
+    // Not an entity, so not in entity_data: this is per-tick SERVER state, and
+    // the client's session is reconstructed from entities alone.
+    //
+    // phase is shared::Round_Phase, whose enum lives in events.def because the
+    // banner event carries it too. A value the client's build does not know is
+    // out of range and the client keeps the phase it had -- SCHEMA_HASH already
+    // refuses a build that could disagree, so this is belt and braces.
+    optional uint32 round_phase    = 8;
+    optional uint32 phase_end_tick = 9;  // server tick; 0 = ends on a win condition
+    optional uint32 round_number   = 10; // 1-based; 0 before the first round
 }
 
 // --------------------------------------------- things that are uncertain
@@ -359,7 +405,7 @@ message S2C_ServerMessage {
 message BotDebugEntry {
     int32 slot       = 1;
     int32 goal       = 2; // BotGoal: 0=Idle 1=Chase 2=Attack 3=Retreat
-    int32 type       = 3; // BotType: 0=Idle 1=Chase 2=Regular
+    int32 type       = 3; // bot_behavior_t: 0=Idle 1=Chase 2=Regular
     repeated Vec3 path = 4;
     int32 path_index = 5;
 }

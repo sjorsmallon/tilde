@@ -50,6 +50,58 @@
 namespace client
 {
 
+// Whether the local player may move itself right now, mirroring the server's
+// world_is_frozen. Answers TRUE until the first snapshot arrives:
+// client_context's default phase is a guess, and guessing "frozen" would pin a
+// joining player in place until the first packet lands.
+//
+// KNOWN LIMITATION, stated because it is invisible otherwise: this is the
+// CURRENT phase, while reconciliation replays inputs from up to
+// cl_max_unacked_inputs ticks ago. A replay straddling a freeze boundary
+// therefore applies the wrong gate for the few ticks on the far side of it. The
+// error is bounded by the replay window and only occurs at a transition. Fixing
+// it means keeping the phase per saved input rather than reading the live one --
+// which is worth doing when the freeze is actually used for something, and is
+// unrelated to how the phase gets here.
+static bool local_movement_is_allowed(const client_context_t &ctx)
+{
+  if (!ctx.replication.round.received)
+    return true;
+
+  return shared::is_movement_allowed(ctx.replication.round.phase);
+}
+
+
+// The match-level state, off the snapshot rather than off the phase event.
+//
+// Wholesale and unconditional every tick, which is what makes it a MIRROR
+// rather than a second authority: nothing here is advanced locally, and a
+// dropped packet costs one tick of staleness instead of a whole phase of
+// mispredicted walking.
+//
+// An out-of-range phase means a server whose build declares a phase this one
+// does not. SCHEMA_HASH already refuses that connection, so this branch is belt
+// and braces -- but keeping the phase we had beats decoding a garbage enum into
+// the movement gate.
+static void apply_round_state(client_context_t &ctx,
+                              const game::S2C_EntityPackage &package)
+{
+  const uint32_t phase = package.round_phase();
+  if (phase >= static_cast<uint32_t>(shared::Round_Phase_COUNT))
+  {
+    log_error("snapshot carried round phase {}, which this build has no name "
+              "for; keeping the phase we had",
+              phase);
+    return;
+  }
+
+  ctx.replication.round.phase          = static_cast<shared::Round_Phase>(phase);
+  ctx.replication.round.phase_end_tick = package.phase_end_tick();
+  ctx.replication.round.round_number   = package.round_number();
+  ctx.replication.round.received       = true;
+}
+
+
 // cadence for cvar 'net_snapshot_debug'.
 
 // cl_crosshair_* channels are unclamped u32, so we narrow / clamp/
@@ -204,24 +256,10 @@ static void forward_console_line_to_server(std::string_view line)
   auto &ctx = state_manager::get_client_context();
   game::C2S_Command cmd;
   cmd.set_line(std::string(line));
-  network::send_protobuf_message(ctx.transport_layer, cmd);
-}
-
-// C2S_MapLoaded ack so the server knows this client
-// finished loading the current map and can resume streaming snapshots to it.
-static void send_map_loaded_ack_message(network::Client_Transport_Layer &transport,
-                                uint32_t content_hash)
-{
-  shared::map_loaded_message_t msg{content_hash};
-  network::Bit_Writer writer;
-  shared::serialize_map_loaded(writer, msg);
-
-  auto packets = network::convert_to_packets(
-      writer.buffer,
-      static_cast<network::uint8>(network::Message_Type::C2S_MapLoaded),
-      transport.next_message_id);
-  for (const auto &p : packets)
-    transport.socket.send(p, transport.server_address);
+  // Reliably: a dropped console line is a line that silently does nothing, and
+  // unlike an input there is no next one restating it. The server's reply rides
+  // its own reliable stream back for the same reason.
+  network::queue_reliable_protobuf_message(ctx.transport_layer, cmd);
 }
 
 // default maps directory where the client tries to find maps.
@@ -234,18 +272,23 @@ static std::string client_maps_directory()
 }
 
 // message to the server we need the map data for the map name they just sent us to switch to.
+//
+// Reliably, and this is the request that closed the design out: a lost one left
+// us waiting for a transfer the server never started, and the ONLY thing that
+// used to heal it was the server's CmdChangeMap retransmit arriving and us
+// asking again. Exactly-once delivery is also why asking twice is no longer a
+// thing that happens -- begin_paced_transfer RESTARTS a transfer, so a duplicate
+// request threw away a download in progress.
 static void send_request_map_data(network::Client_Transport_Layer &transport,
                                   const std::string &map_name)
 {
   shared::request_map_data_message_t msg{map_name};
   network::Bit_Writer writer;
   shared::serialize_request_map_data(writer, msg);
-  auto packets = network::convert_to_packets(
-      writer.buffer,
+  network::queue_reliable_client_message(
+      transport,
       static_cast<network::uint8>(network::Message_Type::C2S_RequestMapData),
-      transport.next_message_id);
-  for (const auto &p : packets)
-    transport.socket.send(p, transport.server_address);
+      writer.buffer);
 }
 
 bool Play_State::load_client_map(const std::string &map_path)
@@ -447,7 +490,7 @@ void Play_State::on_enter()
   game::NetCommand net_command;
   auto* connect_cmd = net_command.mutable_connect();
   connect_cmd->set_protocol_version(1);
-  connect_cmd->set_player_name("SJM");
+  connect_cmd->set_player_name(ctx.cvars->name.c_str());
   connect_cmd->set_schema_hash(entities::SCHEMA_HASH);
 
   network::send_protobuf_message(transport, net_command);
@@ -658,23 +701,19 @@ void Play_State::update(float dt)
     network::Bit_Reader reader(payload.data(), payload.size());
     shared::change_map_message_t change = shared::deserialize_change_map(reader);
 
-    // tell the server the map is the same and we are "ready".
+    // Already running exactly this map. Nothing to do and nothing to say: the
+    // hash we hold rides every input we send, so the server works out that we
+    // are ready without being told.
     if (ctx.connection.phase == Connection_Phase::Connected &&
         ctx.world.map_content_hash == change.content_hash)
-    {
-      send_map_loaded_ack_message(transport, change.content_hash);
       continue;
-    }
 
-    //@FIXME(SJM):
-    // do we just continuously send this without a cooldown?
-    // or only if we receive a change map message?
+    // Already downloading exactly this map. The request is on the reliable
+    // stream, so it is still in flight or already delivered -- asking again
+    // would restart the transfer we are in the middle of receiving.
     if (ctx.connection.phase == Connection_Phase::Loading &&
         ctx.connection.awaiting_stream_content_hash == change.content_hash)
-    {
-      send_request_map_data(transport, change.map_name);
       continue;
-    }
 
     log_terminal("Server switching map to '{}' (path '{}', hash {:#x})",
                  change.map_name, change.map_path, change.content_hash);
@@ -694,11 +733,11 @@ void Play_State::update(float dt)
       continue;
     }
 
-    // Loaded and verified locally — ack so the server resumes snapshots for us.
-    send_map_loaded_ack_message(transport, change.content_hash);
+    // Loaded and verified locally. Snapshots resume on their own: our input
+    // carries this hash from the next tick on, and the server compares it.
     ctx.connection.awaiting_stream_content_hash = 0;
     ctx.connection.phase = Connection_Phase::Connected;
-    log_terminal("Map switch to '{}' complete; acked hash {:#x}",
+    log_terminal("Map switch to '{}' complete; now reporting hash {:#x}",
                  change.map_name, change.content_hash);
   }
 
@@ -748,13 +787,33 @@ void Play_State::update(float dt)
     }
 
     // map loaded.
-    send_map_loaded_ack_message(transport, ctx.world.map_content_hash);
     ctx.connection.awaiting_stream_content_hash = 0;
     enter_connected_phase();
-    log_terminal("Downloaded map '{}' (package hash {:#x}); acked content hash "
-                 "{:#x}", package.map_name, data.package_hash,
+    log_terminal("Downloaded map '{}' (package hash {:#x}); now reporting "
+                 "content hash {:#x}", package.map_name, data.package_hash,
                  ctx.world.map_content_hash);
   }
+
+  // Directly after the inbox loops above, because they are what QUEUE onto this
+  // stream -- a map request cut from this frame's CmdChangeMap or CmdAccept
+  // rides this frame's block rather than waiting for the next one. The server's
+  // service_reliable_streams is the tick-clocked mirror and carries the same
+  // reasoning.
+  //
+  // Here and not at the end of update, which is where it belongs by that
+  // reasoning and is NOT a place every frame reaches: `if (!ctx.world.ready)
+  // return` sits between the two, and a client with no map has world.ready
+  // false -- which is exactly the client whose map request this is. At the tail
+  // it queued the request and never sent it, and since a Loading client sends
+  // nothing else, the connection went silent until sv_timeout dropped it.
+  //
+  // The one phase test it makes is Disconnected, which means there is no peer:
+  // a rejected connect would otherwise resend its unacked block at the frame
+  // rate to a server that is not listening. Connecting, Loading and Connected
+  // are all live, and the one that matters is Loading -- no tick loop, no ready
+  // world, and the request that gets it out of there is on this stream.
+  if (ctx.connection.phase != Connection_Phase::Disconnected)
+    network::service_client_reliable_stream(transport);
 
   // messages from the server that are forwarded to the console (not announcements.)
   for (const auto &msg : inbox.server_text_messages)
@@ -821,6 +880,11 @@ void Play_State::update(float dt)
 
     // we have a complete new snapshot now, so we move the cursor to it.
     client::advance_newest_held_snapshot(ctx, std::move(*decoded));
+
+    // Match state rides the same package, and is applied under the same
+    // staleness check: try_decode_snapshot already refused anything not newer
+    // than what we hold, so a reordered duplicate cannot roll the phase back.
+    apply_round_state(ctx, pkg);
   }
 
 
@@ -879,6 +943,10 @@ void Play_State::update(float dt)
     vec3f reconciled_position = ctx.prediction.latest_server_position;
     vec3f reconciled_velocity = ctx.prediction.latest_server_velocity;
 
+    // Hoisted: the replay is a loop over past ticks and this does not vary
+    // within it. See local_movement_is_allowed for why that is a stopgap.
+    const bool movement_allowed = local_movement_is_allowed(ctx);
+
     float prediction_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
 
     for (int replayed = ctx.prediction.latest_input_number_processed_by_server + 1;
@@ -900,6 +968,12 @@ void Play_State::update(float dt)
         step_look.yaw   = step.view.yaw;
         step_look.pitch = step.view.pitch;
         const camera_basis_t step_basis = get_orientation_vectors(step_look);
+
+        if (!movement_allowed)
+        {
+          reconciled_velocity = {0.f, 0.f, 0.f};
+          continue;
+        }
 
         std::tie(reconciled_position, reconciled_velocity) = player_move(
             *ctx.cvars, move_input_from_buttons(step.buttons), ctx.world.session.bvh,
@@ -1358,6 +1432,13 @@ void Play_State::update(float dt)
       network::write_subtick_input(input_message, subtick_input);
       input_message.set_held_snapshot_tick(ctx.replication.snapshot_history.acked_tick);
 
+      // A RIDER, like held_snapshot_tick above, and the thing that replaced the
+      // C2S_MapLoaded ack: "the map I hold" is STATE the server needs, so it is
+      // restated every tick rather than announced once. The server compares it
+      // to its own and sets map_ready off the answer, which means a map switch
+      // needs no ack, no retransmit and no timer in either direction.
+      input_message.set_map_content_hash(ctx.world.map_content_hash);
+
       // The blend this move was aimed THROUGH, which is a different question
       // from what we hold: remote players are drawn interpolated BETWEEN two
       // snapshots, so the world the crosshair was on is at no whole tick. See
@@ -1548,15 +1629,27 @@ void Play_State::update(float dt)
           step_look.pitch = step.view.pitch;
           const camera_basis_t step_basis = get_orientation_vectors(step_look);
 
+          // The freeze SUPPRESSES THE MOVE and lets the rest of the step run,
+          // exactly as the server's world_is_frozen does: a weapon switch during
+          // the freeze is legal on both sides, and it lives in this loop now.
+          // Zeroing velocity matches the server so nothing accumulates across
+          // the freeze and lurches when it lifts.
           Move_Events step_events{};
-          auto [new_position, new_velocity] = player_move(
-              *ctx.cvars, move_input_from_buttons(step.buttons), ctx.world.session.bvh,
-              ctx.prediction.player_position, ctx.prediction.player_velocity,
-              step_basis.forward, step_basis.right, player_half_width, player_half_height,
-              step.dt, &step_events, &ctx.visuals.debug_collision_faces);
+          if (!local_movement_is_allowed(ctx))
+          {
+            ctx.prediction.player_velocity = {0.f, 0.f, 0.f};
+          }
+          else
+          {
+            auto [new_position, new_velocity] = player_move(
+                *ctx.cvars, move_input_from_buttons(step.buttons), ctx.world.session.bvh,
+                ctx.prediction.player_position, ctx.prediction.player_velocity,
+                step_basis.forward, step_basis.right, player_half_width, player_half_height,
+                step.dt, &step_events, &ctx.visuals.debug_collision_faces);
 
-          ctx.prediction.player_position = new_position;
-          ctx.prediction.player_velocity = new_velocity;
+            ctx.prediction.player_position = new_position;
+            ctx.prediction.player_velocity = new_velocity;
+          }
 
           // Stashed HERE, and here specifically: after the step the press
           // opened, so the eye is the post-move eye the server's fire path
@@ -1737,7 +1830,11 @@ void Play_State::update(float dt)
   if (ctx.audio)
   {
     const camera_basis_t listener_basis = get_orientation_vectors(camera);
-    ctx.audio->update(camera.position, listener_basis.forward, listener_basis.up);
+    const sound_attenuation_t attenuation = {ctx.cvars->sound_reference_distance,
+                                             ctx.cvars->sound_max_distance_cutoff,
+                                             ctx.cvars->sound_rolloff_factor};
+    ctx.audio->update(camera.position, listener_basis.forward, listener_basis.up,
+                      attenuation);
   }
 
 }
@@ -2481,6 +2578,28 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                              ctx.prediction.seconds_until_local_deploy_complete);
     else
       log_error("[hud] no UI font registered; cl_show_deploy_timer cannot draw");
+  }
+
+  // POLLED like the deploy timer above, and for the same reason: "is Tab held"
+  // is a continuous read of a key, so there is no press to latch and nothing to
+  // release on. is_key_down answers at the one instant input::new_frame sampled,
+  // which is what makes it comparable with everything else this frame.
+  //
+  // Not gated on mouse capture -- looking at the board is exactly when the
+  // cursor is not the aiming device -- but hidden behind the pause menu like
+  // every other HUD element.
+  if (input::is_key_down(input::key_t::Tab) && !connection_ui.show_pause_menu)
+  {
+    if (const ui::ui_font_t *font = ctx.font)
+    {
+      const Span<hud::scoreboard_row_t> rows = hud::collect_scoreboard_rows(
+          ctx.replication.latest_player_entities, ctx.connection.my_slot, scoreboard_rows);
+      hud::draw_scoreboard(ui, *font, renderer::screen_size(), renderer::display_scale(), rows);
+    }
+    else
+    {
+      log_error("[hud] no UI font registered; the scoreboard cannot draw");
+    }
   }
 }
 

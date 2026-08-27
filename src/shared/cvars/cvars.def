@@ -51,10 +51,20 @@
 // ---------------------------------------------------------------------------
 // TYPES
 // ---------------------------------------------------------------------------
-// f32 / i32 / u32 / bool / string<N>. The current set is ENTIRELY f32 and bool:
-// `map` was the only string cvar and it becomes a command below, so string<N>
-// has zero users in v1. Noted here so the generator work can decide whether to
-// implement it now or on first use.
+// f32 / i32 / u32 / bool / string<N> / an enum declared in this file. string<N>
+// was parked with zero users in v1 -- `map` was the only string cvar and became
+// a command below -- but the generator implemented it anyway, and `name` in the
+// Client block is its first user (2026-08-25). It emits a
+// network::pascal_string_t<N> member and goes through the same
+// try_cvar_to_text / try_cvar_from_text as every other type.
+//
+// An ENUM cvar is one uint8_t and converts by VALUE NAME in both directions, so
+// `sv_gamemode 7` is a rejection rather than a mode nobody declared. Reach for
+// it when the value is a CHOICE: a number that could be anything is an i32 or
+// an f32, and a name picked from a closed set is an enum. The alternative --
+// a string<N> resolved by hand at the read site -- is a second parser for
+// something the generator already knows, which is exactly what sv_gamemode was
+// until 2026-08-26.
 
 // ---------------------------------------------------------------------------
 // Player movement -- was player_move.cpp
@@ -81,6 +91,77 @@ Player_Movement :: cvars {
 
 Gameplay :: cvars {
     game_rocket_speed:      f32 = 600.0       @Mirrored "Rocket velocity"
+}
+
+// ---------------------------------------------------------------------------
+// Match rules -- game_modes_def.md
+// ---------------------------------------------------------------------------
+//
+// @Server, every one of them: a client neither simulates the clock nor judges
+// the win condition, and it learns the phase from Round_Phase_Changed rather
+// than by reading a cvar. Nothing here is @Mirrored for that reason.
+//
+// These are the "how long and how many" half of a mode. The "which behaviors"
+// half is the GAME_MODES table in server/game_mode.hpp, and the split is
+// deliberate: a number that could be any value is a cvar, a choice between
+// named behaviors is a row in the table. A map tunes the numbers and picks the
+// mode in its attached_cvars block.
+
+// The mode names, and the one place they are written down. Lowercase because
+// these are console tokens -- `sv_gamemode deathmatch` -- the same reason
+// Bot_Mode's values are.
+//
+// This enum is the KEY of the GAME_MODES table in server/game_mode.hpp, which
+// is where a mode's behavior lives; declaring it here rather than there is what
+// lets sv_gamemode be typed by it. The two halves cannot drift: a value added
+// here with no row breaks the rows_in_enum_order static_assert on that table.
+Game_Mode :: enum { deathmatch, rounds }
+
+Match :: cvars {
+    // Which GAME_MODES row is running. Latched into game_rules_state_t::mode at
+    // map load by apply_game_mode_cvar, so a change takes effect on the next map
+    // load -- a mode is not something to swap mid-round.
+    sv_gamemode:            Game_Mode = .deathmatch  @Server  "Which game mode to run on the next map load"
+
+    // A phase whose duration is 0 has no deadline and ends only on a win
+    // condition. Game_Over has no cvar at all: it is terminal.
+    // 0 means warmup has NO deadline and ends only when start_match says enough
+    // players have connected -- which is what a warmup is for. A non-zero value
+    // auto-starts the match after that many seconds whether anyone is there or
+    // not, and at the old default of 5 the match reliably began with an empty
+    // server before the first player finished loading.
+    mp_warmup_seconds:      f32 = 0.0     @Server  "Warmup length before the match auto-starts (0 = wait for players)"
+    mp_countdown_seconds:   f32 = 3.0     @Server  "Per-round freeze length (unused by modes with no freeze phase)"
+    mp_round_seconds:       f32 = 180.0   @Server  "Round time limit"
+    mp_round_end_seconds:   f32 = 5.0     @Server  "Post-round settle length before the next round begins"
+
+    // Game_Over is terminal for the MATCH, not for the server: when it expires
+    // the map reloads and the whole thing starts again at Warmup. 0 holds the
+    // final scoreboard forever, which is what a server being handed to a map
+    // vote or a rotation wants -- neither of which exists yet.
+    mp_game_over_seconds:   f32 = 10.0    @Server  "How long the final scoreboard is held before the map restarts (0 = hold it forever)"
+
+    // How many CLIENTS WITH A BODY end warmup and start the match. Joined
+    // players, not connections: four people who are all spectating are not a
+    // match. Bots do not count -- they have no client slot at all -- or a map
+    // with bot spawns would start a match with nobody watching.
+    //
+    // 0 never auto-starts, which leaves start_match to something else entirely.
+    // Replaced a hardcoded `player_count == 4` in the connect handler.
+    //
+    // 1, so a server starts playing when someone shows up. At 2 the normal solo
+    // case -- one player and a console-spawned bot -- sat in warmup forever,
+    // where nothing scores and no win condition is tested, which reads as a
+    // broken game rather than as a lobby. Bots deliberately do not count toward
+    // this, so no value here would have fixed that.
+    //
+    // Raise it in a map's attached_cvars block for a match that should wait for
+    // a full lobby.
+    mp_players_to_start:    i32 = 1       @Server  "Joined players needed to leave warmup (0 = never auto-start)"
+
+    // Win_Condition::Frag_Limit. 0 disables it, leaving mp_round_seconds as the
+    // only thing that ends a deathmatch.
+    mp_frag_limit:          i32 = 20      @Server  "Kills one player needs to end a Frag_Limit match (0 = no limit)"
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +252,13 @@ Server :: cvars {
 }
 
 Client :: cvars {
+    // Sent once in CmdConnect and never again: the server sanitizes it, holds
+    // it on the slot, and copies it onto the Player_Entity, which is what
+    // actually replicates it. Changing this mid-session therefore does nothing
+    // until the next connect -- deliberate, since a rename would otherwise need
+    // a C2S message of its own for a prototype that has no rename UI.
+    name:                   string<32> = "Player"  @Client  "Name shown to other players"
+
     // Every move the client has not seen acked rides in every move datagram, so
     // one lost packet is not one lost tick of input. This bounds how far that
     // tail may grow: past it the oldest moves are dropped, because a move older
@@ -377,6 +465,11 @@ Debugging :: cvars {
     // so they cover every event with no per-event print code.
     sv_event_debug:         bool = false    @Server     "Log each gameplay event as the server fires it"
     cl_event_debug:         bool = false    @Client     "Log each gameplay event as this client dispatches it"
+
+    // Walks the records pending in each client's reliable stream. The buffer is
+    // self-describing, which is why there is no {type, offset, length} index
+    // beside it to print instead -- see network/reliable_stream.hpp.
+    sv_reliable_debug:      bool = false    @Server     "Log the records pending in each client's reliable stream"
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +529,11 @@ Server_Commands :: commands {
     // the server's to do; the caller is command_context_t::caller_slot, so
     // there is nothing to name and no parameters.
     join_game()                        @Server  "Leave spectate and spawn into the match"
+    // A VERB, so a command rather than a cvar -- the same reason `map` stopped
+    // being one. There is no spectator state to hold: a client with no
+    // player_uid IS a spectator (see "Client vs Player" in CLAUDE.md), so this
+    // destroys the body and nothing needs remembering.
+    spectate()                         @Server  "Leave the match and return to spectating"
 }
 
 Client_Commands :: commands {

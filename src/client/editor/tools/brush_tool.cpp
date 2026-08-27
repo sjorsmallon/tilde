@@ -567,7 +567,10 @@ void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, 
           {
             hovered_uid = uid;
 
-            // The BVH only tested the bound, so pick the real face here.
+            // The BVH hits the hull now, so hit.normal already names this
+            // face. Refining here anyway is what keeps a camera INSIDE a brush
+            // from hovering the entry face behind it: the hull clip reports
+            // that face at t=0, this rejects every face it is behind.
             std::optional<shared::brush_polyhedron_t> hovered_hull =
                 shared::try_build_brush_polyhedron(brush->vertices);
             if (hovered_hull)

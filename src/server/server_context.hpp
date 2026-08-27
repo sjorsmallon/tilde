@@ -50,6 +50,12 @@ struct client_slot_t
 {
   shared::entity_uid_t player_uid = shared::null_entity_uid;
 
+  // Sanitized at the connect site, held here because a client is accepted as a
+  // spectator and its Player_Entity -- where the name actually replicates from
+  // -- may not exist until much later. Same capacity as that field, so the
+  // copy across cannot truncate a second time.
+  network::pascal_string_t<32> player_name;
+
   // How far this client's input stream has been CONSUMED -- a high-water mark
   // over C2S_ClientInput.input_number, not "the last input that moved you". A spectator's input and one whose
   // sub-tick grammar was refused both advance it, because both were consumed;
@@ -67,14 +73,23 @@ struct client_slot_t
   // compare of the two boundaries does not. See shared/subtick.hpp.
   uint64_t latest_buttons_bitmap    = 0;
   uint32_t held_snapshot_tick = 0;
+
+  // This client holds the map we are running. DERIVED every tick from
+  // C2S_ClientInput::map_content_hash, never announced -- see the pass at the
+  // top of Tick(). False on a fresh slot and false after a map load, and it
+  // comes back on its own one input later; there is no ack to wait for and
+  // nothing that retransmits.
   bool map_ready = false;
 
-  // Tick we last sent this slot something that moves it toward map_ready: the
-  // CmdChangeMap itself, or the streamed map package. The tick loop's
-  // CmdChangeMap retransmit paces itself off this, so a slot that just received
-  // a whole package gets an interval to load it before being nudged again.
-  // 0 means "never", which fires on the next tick.
-  uint32_t last_map_switch_send_tick = 0;
+  // This client wants a body, whether or not it has one yet. The two are not
+  // the same question in a mode with join_in_progress = false: a player who
+  // asks to join mid-round waits as a spectator until the round boundary, and
+  // player_uid alone cannot tell that player from one who chose to spectate.
+  //
+  // Set by join_game, cleared by spectate, and read at the round boundary by
+  // admit_waiting_players. False on a fresh slot: a connecting client is
+  // accepted as a spectator and joins on request.
+  bool wants_to_play = false;
 
   // Tick we last complained that this client's rewind request had to be clamped
   // to sv_max_rewind_ticks. A client sitting at 300ms over-clamps on EVERY shot,

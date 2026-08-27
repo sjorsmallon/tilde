@@ -1,3 +1,5 @@
+#include "shared/brush.hpp"
+#include "shared/map.hpp"
 #include "shared/map_baker.hpp"
 #include "shared/navmesh.hpp"
 #include <cassert>
@@ -423,6 +425,204 @@ static void test_3x1_strip()
   std::println("test_3x1_strip PASSED");
 }
 
+
+// ---------------------------------------------------------------------------
+// The bake half. Everything above tests simplify_navmesh() on a hand-built
+// navmesh; these run bake_map() over real geometry, which is where a brush's
+// hull has to survive the trip through the BVH.
+
+static shared::map_t map_with_one_brush(std::vector<linalg::vec3> vertices)
+{
+  shared::brush_geometry_t brush;
+  brush.vertices = std::move(vertices);
+
+  shared::map_t map;
+  map.geometry.push_back({1, brush});
+  return map;
+}
+
+// Highest navmesh vertex sitting over (x, z), or -1e9 if the mesh covers nothing
+// within half a cell of that column.
+static float navmesh_height_at(const navmesh_t &nav, float x, float z, float cell_size)
+{
+  const float reach = cell_size * 0.5f + 0.01f;
+  float best = -1e9f;
+  for (const nav_polygon_t &poly : nav.polygons)
+    for (int32_t vi : poly.vertices)
+    {
+      const linalg::vec3f &position = nav.vertices[vi].position;
+      if (std::abs(position.x - x) <= reach && std::abs(position.z - z) <= reach)
+        best = std::max(best, position.y);
+    }
+  return best;
+}
+
+// TEST 6: an extruded FOOTPRINT -- a prism whose triangular cross-section fills
+// only half its bounding box.
+//
+// This is the bug that started this: bvh_intersect_ray reported the primitive's
+// AABB and stopped, so the baker floored the whole rectangle at the box lid and
+// the extruded shape was never consulted. The far corner of the AABB is outside
+// the solid and must carry no navmesh.
+static void test_bake_respects_extruded_footprint()
+{
+  // Right triangle in XZ with the hypotenuse from (0,0,256) to (256,0,0), so
+  // the +x/+z corner is outside the solid and the origin corner is inside.
+  const std::vector<linalg::vec3> footprint = {
+      {0.f, 0.f, 0.f}, {256.f, 0.f, 0.f}, {0.f, 0.f, 256.f}};
+
+  shared::map_t map = map_with_one_brush(
+      shared::extrude_brush_hull(footprint, {0.f, 1.f, 0.f}, 128.f));
+
+  constexpr float cell_size = 16.f;
+  shared::bake_map(map, cell_size);
+  const navmesh_t &nav = map.navmesh;
+
+  assert(nav.valid() && "extruded prism produced no navmesh at all");
+
+  // Inside the triangle: floor at the extruded top, 128.
+  const float inside = navmesh_height_at(nav, 40.f, 40.f, cell_size);
+  assert(inside > -1e8f && "no navmesh over a column well inside the solid");
+  assert(std::abs(inside - 128.f) < 1.f && "floor is not the extruded top face");
+
+  // Outside the hypotenuse but inside the AABB: this is the half the bounding
+  // box covers and the solid does not.
+  const float outside = navmesh_height_at(nav, 216.f, 216.f, cell_size);
+  assert(outside < -1e8f &&
+         "navmesh covers the AABB corner the extruded solid does not fill");
+
+  std::println("test_bake_respects_extruded_footprint PASSED");
+}
+
+// TEST 7: a RAMP -- the extrusion is in Y, so every column of the AABB is
+// covered but at a height that varies. The old AABB hit reported one flat lid
+// for the whole footprint.
+static void test_bake_follows_ramp_surface()
+{
+  // Wedge rising along +x: 32 units of climb over 256, walkable at ~7 degrees.
+  const std::vector<linalg::vec3> vertices = {
+      {0.f,   0.f, 0.f}, {256.f,  0.f, 0.f}, {0.f,   0.f, 256.f}, {256.f,  0.f, 256.f},
+      {0.f, -64.f, 0.f}, {256.f, -64.f, 0.f}, {0.f, -64.f, 256.f}, {256.f, -64.f, 256.f}};
+
+  std::vector<linalg::vec3> ramp = vertices;
+  for (linalg::vec3 &vertex : ramp)
+    if (vertex.y > -1.f)
+      vertex.y = vertex.x * (32.f / 256.f); // top face tilts, bottom stays flat
+
+  shared::map_t map = map_with_one_brush(std::move(ramp));
+
+  constexpr float cell_size = 16.f;
+  shared::bake_map(map, cell_size);
+  const navmesh_t &nav = map.navmesh;
+
+  assert(nav.valid() && "ramp produced no navmesh");
+
+  const float low  = navmesh_height_at(nav, 24.f,  128.f, cell_size);
+  const float high = navmesh_height_at(nav, 232.f, 128.f, cell_size);
+
+  assert(low  > -1e8f && "no navmesh at the bottom of the ramp");
+  assert(high > -1e8f && "no navmesh at the top of the ramp");
+
+  // A flat lid would put these at the same height. The surface climbs 32 over
+  // the run, so the two ends must differ by most of that.
+  assert(high - low > 20.f && "ramp baked as a flat lid at the bounding-box top");
+
+  std::println("test_bake_follows_ramp_surface PASSED");
+}
+
+// TEST 8: the slope gate reads the face actually hit. It used to take the max
+// normal.y over ALL of the primitive's planes, which every closed solid passes.
+static void test_bake_rejects_steep_face()
+{
+  // Same wedge, but climbing 512 over 256 -- about 63 degrees, past the 45
+  // degree cutoff. Nothing on that face is walkable.
+  std::vector<linalg::vec3> steep = {
+      {0.f,   0.f, 0.f}, {256.f,  0.f, 0.f}, {0.f,   0.f, 256.f}, {256.f,  0.f, 256.f},
+      {0.f, -64.f, 0.f}, {256.f, -64.f, 0.f}, {0.f, -64.f, 256.f}, {256.f, -64.f, 256.f}};
+  for (linalg::vec3 &vertex : steep)
+    if (vertex.y > -1.f)
+      vertex.y = vertex.x * 2.f;
+
+  shared::map_t map = map_with_one_brush(std::move(steep));
+  shared::bake_map(map, 16.f);
+
+  assert(!map.navmesh.valid() && "a 63-degree face baked as walkable floor");
+
+  std::println("test_bake_rejects_steep_face PASSED");
+}
+
+// TEST 9: a plain axis-aligned box brush, where the hull and the bound are the
+// same solid. The narrow phase must not change what this bakes to -- one span
+// per column of the lid and nothing underneath it.
+static void test_bake_box_brush_is_one_span_per_column()
+{
+  shared::map_t map = map_with_one_brush(
+      shared::make_box_brush_vertices({128.f, 0.f, 128.f}, {128.f, 64.f, 128.f}));
+
+  constexpr float cell_size = 16.f;
+  shared::bake_map(map, cell_size);
+  const navmesh_t &nav = map.navmesh;
+
+  // 256 wide / 16 = a 16x16 grid, every column standing on the lid.
+  assert(nav.polygons.size() == 16u * 16u &&
+         "a solid box must bake to exactly one span per column");
+
+  for (const nav_polygon_t &poly : nav.polygons)
+    for (int32_t vi : poly.vertices)
+      assert(std::abs(nav.vertices[vi].position.y - 64.f) < 0.01f &&
+             "box span is not on the lid");
+
+  std::println("test_bake_box_brush_is_one_span_per_column PASSED");
+}
+
+// TEST 10: stacked floors in one column -- the property the t_exit descent
+// step has to preserve.
+//
+// The baker walks a column downward collecting EVERY walkable floor, not just
+// the topmost, so a balcony over a floor is two spans. Stepping past the solid
+// just hit must not skip the floor beneath it.
+static void test_bake_finds_stacked_floors()
+{
+  shared::brush_geometry_t ground;
+  ground.vertices = shared::make_box_brush_vertices({128.f, -32.f, 128.f}, {128.f, 32.f, 128.f});
+
+  // A platform over the -x/-z quadrant, its underside 100 units up: clearance
+  // over the ground below it beats the 72-unit player height, so BOTH surfaces
+  // are walkable and the column carries two spans.
+  shared::brush_geometry_t platform;
+  platform.vertices = shared::make_box_brush_vertices({64.f, 114.f, 64.f}, {64.f, 14.f, 64.f});
+
+  shared::map_t map;
+  map.geometry.push_back({1, ground});
+  map.geometry.push_back({2, platform});
+
+  constexpr float cell_size = 16.f;
+  shared::bake_map(map, cell_size);
+  const navmesh_t &nav = map.navmesh;
+
+  // 16x16 columns of ground, plus 8x8 of platform stacked on top of them.
+  assert(nav.polygons.size() == 16u * 16u + 8u * 8u &&
+         "descent skipped a floor under the solid it just hit");
+
+  // Under the platform, both heights must be present.
+  bool found_ground = false;
+  bool found_platform = false;
+  for (const nav_polygon_t &poly : nav.polygons)
+    for (int32_t vi : poly.vertices)
+    {
+      const linalg::vec3f &position = nav.vertices[vi].position;
+      if (std::abs(position.x - 40.f) > 8.01f || std::abs(position.z - 40.f) > 8.01f)
+        continue;
+      if (std::abs(position.y -   0.f) < 0.01f) found_ground = true;
+      if (std::abs(position.y - 128.f) < 0.01f) found_platform = true;
+    }
+
+  assert(found_ground && "lost the ground floor beneath the platform");
+  assert(found_platform && "lost the platform surface");
+
+  std::println("test_bake_finds_stacked_floors PASSED");
+}
+
 int main()
 {
   test_single_span();
@@ -430,6 +630,11 @@ int main()
   test_vertex_dedup();
   test_2x2_grid();
   test_3x1_strip();
+  test_bake_respects_extruded_footprint();
+  test_bake_follows_ramp_surface();
+  test_bake_rejects_steep_face();
+  test_bake_box_brush_is_one_span_per_column();
+  test_bake_finds_stacked_floors();
   std::println("All navmesh tests passed.");
   return 0;
 }

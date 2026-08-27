@@ -18,7 +18,7 @@ cmake --build cmake_build -j8
 cmake -S . -B cmake_build_pkg -DTILDE_ASSET_SOURCE=pkg     # one assets.pkg beside the exe
 cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in .rodata
 
-# Run the whole test suite (~2s, all 33)
+# Run the whole test suite (~2s, all 35)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -577,6 +577,55 @@ Because the refusals are fatal, they are not testable in-process — `test_model
 
 `src/shared/asset_package.{hpp,cpp}` is the format — header, index, string table, blob, with entries sorted by path so a lookup is a binary search straight over the mapped range and nothing is parsed at mount. Entries are read out by `memcpy`, which buys the alignment question never being asked of a `#embed`ed array. **The same TU compiles into `asset_pack` and into `game_shared`**, so the writer and the reader are not two descriptions of one format. `asset_pack --package` is the **same walk** as `--manifest` — one recursive traversal producing both — so the files that got ids are the same objects that got bytes. `.mtl` and `.skeleton` are packed though never enumerated; `UNPACKED_EXTENSIONS` (`.md`) is the narrowing decision on the record. `resources/shaders/**` stays outside the package: it compiles to SPIR-V on a path of its own.
 
+### Game modes
+
+**A mode is a ROW OF VALUES, and nothing switches on the mode enum.**
+`server/game_mode.hpp` holds `GAME_MODES`, an `Enum_Array` keyed by
+`cvars::Game_Mode` with one `game_mode_settings_t` per mode; `game_modes_def.md`
+is the design and argues the shape against a vtable, virtuals, a bag of cvars
+and a scripting VM. The short version: there will be two or three modes ever,
+and decision points will keep being discovered, so the compiler must police the
+axis that CHURNS — adding a row member is a compile error at every row, while a
+function-pointer table would silently null it.
+
+The row's two enums (`Win_Condition`, `Spawn_Policy`) are deliberately NOT the
+mode enum, which is what lets a third mode recombine existing behaviors with no
+new code. They are the only two switches in the system.
+
+**The key enum lives in `cvars.def`**, because `sv_gamemode` is typed by it —
+enum cvars convert by value name in both directions, so an undeclared mode is
+refused at the console line or the map's `attached_cvars` line that wrote it,
+and `apply_game_mode_cvar` is a LATCH (map load copies it into
+`game_rules_state_t::mode`) rather than a parse. A name with no row breaks the
+`rows_in_enum_order` static_assert, so the two halves cannot drift.
+
+The phase FSM (`server/systems/game_rules_system.cpp`) is mode-generic: a mode
+declares the per-round **cycle** it repeats (`{Live}` for a deathmatch,
+`{Countdown, Live, Round_End}` for rounds) and `next_phase` names no phase at
+all. Warmup and Game_Over bookend the match and sit outside every cycle.
+Game_Over's deadline is the one that names no transition — it REQUESTS a map
+reload (`map_restart_requested`), serviced at the top of the next tick by
+`service_pending_map_restart`, because the reload frees the world the FSM is
+running inside.
+
+The predicates are gates in `shared/round_phase_rules.hpp` — pure functions of
+the phase, so the client's prediction and the server's simulation run one rule
+rather than two that agree by inspection.
+
+**The phase reaches the client TWICE, and the split is the rule.** `round_phase`,
+`phase_end_tick` and `round_number` are replicated as **state on
+`S2C_EntityPackage`**, unconditionally every tick — it is per-tick server state,
+not an entity — because the client PREDICTS against the phase and **state that
+gates behavior is replicated as state, never delivered as an event**. Delivered
+only as an event it would be a round trip behind the snapshots describing the
+world it governs, since the two channels are on different clocks and a snapshot
+never waits; a dropped one cost a whole phase of mispredicted walking, which is
+what the once-a-second heartbeat re-send existed to bound. `Round_Phase_Changed`
+is now purely the **banner occurrence**, fired once per real transition — and the
+transition/re-send discriminator in `on_round_phase_changed` died with the
+heartbeat, because there is nothing left to discriminate. `game_rules_test` guards the table,
+both cycles, the restart and both win conditions.
+
 ### Client vs Player
 
 Two words, and they are **not** interchangeable:
@@ -606,6 +655,34 @@ Two deliberate irregularities, both with the reason written at the site: `world.
 
 Protobuf for message definitions (`proto/game.proto`). Custom UDP with delta-compressed entity serialization via bitstream. Server port 9999, clients bind an ephemeral port (a fixed client port made two local clients indistinguishable), max packet 1200 bytes (`network_types.hpp`).
 
+**The reliable stream runs BOTH WAYS, and it is ONE BLOCK OUTSTANDING.** `shared/network/reliable_stream.hpp` is the type, `reliable_stream_def.md` is the design. A **block** is a parcel of bytes cut from an outbound byte stream — not a message, and a block boundary may fall in the middle of one. Exactly one is in flight at a time, and that constraint is what buys everything else: gaps become *unrepresentable*, so there is no hole to request, no receive window, no out-of-order buffering and no per-block ack state.
+
+The two directions are **independent streams that share a datagram's header**, not one stream with two ends. `reliable_block_number` describes MY outbound stream; `latest_reliable_block_received` describes YOURS.
+
+Three clocks, and conflating them is easy. **Cutting** is opportunistic (whenever the stream is free and bytes are pending, so the stream self-batches as RTT and loss worsen). **Sending** is a fixed cadence — unconditionally, until confirmed; the send path cannot tell a first transmission from a fortieth, which is what makes retransmission "what still unconfirmed looks like at send time" rather than a recovery path that is entered. **Freeing** is event-driven: the ack, and nothing else.
+
+The cadence is the one thing the two sides spell differently: the server sends once per TICK (`service_reliable_streams`, the tick's last send), the client once per FRAME (`service_client_reliable_stream`, `update`'s last statement). Per frame because the client has no tick loop while it is `Loading` — prediction only runs `Connected` — and `Loading` is exactly when the map request it carries matters. It costs a few extra copies of a ~50-byte block at a high frame rate, which is the same trade the server's "deliberately wasteful" cadence already makes.
+
+Recovery is **sender-driven**. The receiver never asks for anything; its only utterance is `latest_reliable_block_received`, which rides `Packet_Header` on every datagram it was sending anyway. A receiver-requests-missing scheme cannot detect tail loss, doubles recovery latency, saves no retention, and is an unsolicited request from a peer.
+
+The two header fields **consumed the padding exactly**: the header was `1+1+1+1+2 = 6` bytes padded to 8 by a `uint16` that carried nothing, so `Packet::payload_alignment_padding` is gone and `PACKET_PAYLOAD_OFFSET_IN_BYTES` is unchanged. `reliable_block_number` describes MY outbound stream, `latest_reliable_block_received` describes YOURS — they look like a matched pair and are not. Blocks are numbered 1..255 and wrap skipping 0, so 0 means "no block attached" with no extra flag.
+
+The stream is **bytes, framed** — `[message_type: u8][length: u32][payload]`, records concatenated — so a record larger than a datagram simply takes several blocks. The buffer is **self-describing**, which is why there is deliberately no `{type, offset, length}` index beside it (`sv_reliable_debug` walks the records instead). Blocks are the **sender's** units: the receiver appends and never reassembles by block number. It uses the number for exactly one thing, spotting a **duplicate** — the sender had not yet seen our ack — which must be discarded, not re-delivered. Exactly-once is the stream's job, not the consumer's, which is what lets the handlers stop caring that a re-delivered `Player_Died` would be a second kill-feed row.
+
+Rely on **order, never on grouping**: which messages share a block depends on RTT and loss, so a handler assuming co-arrival works on a LAN and breaks on a connection.
+
+Riders S2C: `S2C_GameEventBatch`, `CmdChangeMap`, `S2C_CvarValues` (which closes the documented lost-update hole in the mirrored-cvar broadcast) and `S2C_ServerMessage` — a dropped console line is a line nobody ever sees, and unlike a snapshot there is no next one to correct it. The one `S2C_ServerMessage` that still goes out unreliably is the one told to a peer with **no slot**: a rejected connect has no stream to ride. Riders C2S: `C2S_RequestMapData` and `C2S_Command`.
+
+The test for a rider is whether anything else restates it. `C2S_ClientInputBatch` and `C2S_TransferReceipt` stay unreliable because both are continuously restated, so the next one corrects a lost one; a map request and a console line are said once and nothing follows them. **The effect channel stays unreliable** for the other half of that rule — a lost effect has nothing to correct it and does not need one, which is the split `events.def` argues, and head-of-line blocking is why it must hold.
+
+`Message_Type::Reliable` is the **one type with no direction in its name**, because a block is a transport parcel whose direction is already said by who sent it. And a type says WHAT a payload is, never how it arrived: `deliver_client_message` on the server and `CLIENT_MESSAGE_HANDLERS` on the client each file a record and a datagram of the same type identically, so **nothing above the transport can tell which route a message took**. Putting `C2S_Command` on the stream changed no handler.
+
+It lives on `Server_Transport_Layer`, one per slot, beside `partial_packets` — the same stratum as `Outbound_Transfer`, which knows a byte range and a rate where this knows a byte range and an ack rule. It **survives** `reset_state_in_preparation_for_new_map_load` (the map switch is a message riding it) and **must be cleared by** `reset_client_slot`; `server_context_test` asserts both halves. Client-side it is one instance on `Client_Transport_Layer`, cleared per connection by `reset_connection_scoped_state` — a retained block number makes the next connection's first block look like a duplicate, and the failure is silent in both directions.
+
+**Each side has ONE send choke point, and both exist to stamp the ack**: `send_packet_to_server` on the client, `send_packet_to_client(state, socket, slot, packet)` on the server. Only the rejected connect bypasses the server's, and it has no slot and therefore no stream to ack. This is not bookkeeping — a client mid-download receives no snapshots, so what carries the ack for its in-flight map request is the **map package's own fragments** and the server's own blocks. A send site that forgot to stamp would stall the other side's stream in a way neither end could notice.
+
+It cannot get stuck while the connection is alive: acks ride every datagram, so if any traffic flows at all, acks flow. A permanently stuck stream means a silent peer, which `sv_timeout` handles — hence no stream timeout, no retry counter and no give-up path. Overflow is the one failure that is ours, and it is a **loud disconnect** naming the slot and the buffer size, never a silent drop of the oldest records.
+
 The connect handshake exchanges `entities::SCHEMA_HASH` (in `CmdConnect`); the server refuses a client whose hash differs, reporting both. A mismatch means the two builds disagree about entity layout or the asset manifest, so every snapshot after it would be misparsed.
 
 **Snapshot deltas are built against the snapshot the client says it HOLDS, never the last-sent one.** This is the load-bearing rule of the whole delta path: snapshots are unreliable, so deltaing against what was last sent means one dropped datagram permanently desyncs every field that then stops changing. The client names the newest snapshot it holds a complete copy of in `C2S_ClientInput.held_snapshot_tick`; the server names what it deltaed against in `S2C_EntityPackage.delta_from_tick`, whose **presence is the discriminator** — absent means full update, present means a delta against that tick, and no tick number is reserved to mean "not a delta". Both ends go through `set_snapshot_baseline` / `snapshot_baseline_tick` (`shared/network/entity_snapshot.hpp`) rather than open-coding it; the sender passes the baseline frame the encoder actually used, so what is announced and what was encoded cannot disagree. The old second field `is_delta` is gone (proto slot 2 is reserved) — nothing read it, so it could contradict the tick beside it unnoticed. Both ends keep the same 32-tick ring, `network::Snapshot_History` (`shared/network/snapshot_history.hpp`) — the server keeps what it sent, the client keeps what it reconstructed. A client that no longer holds `delta_from_tick` drops the packet whole and logs it; the number it reports doesn't advance, so the server falls back to a full update within a round trip. Server ticks start at 1 because 0 is the ring's "empty slot / nothing acked" value — local to `Snapshot_History` and to `held_snapshot_tick`, not something S2C sends. Client cvar `net_snapshot_debug` prints the baseline tick and payload size every 120 ticks.
@@ -622,7 +699,32 @@ Two levels, two files. `entity_serialization.{hpp,cpp}` encodes one entity's **f
 
 Geometry is never replicated — clients get it from their own map load or from map streaming, never from snapshots.
 
-Map streaming: a client that lacks the server's map (cache miss / hash mismatch) requests it and the server streams the compiled package (`S2C_MapData`). The wire map id is maps-relative (a basename like `new_map.source`), resolved per-side against a maps dir — the client's is `maps/` by default, overridable via the `MAPS_DIR` env var. To test streaming locally, run a "cold" client whose maps dir is empty so it must download: `scripts/run_client_cold.cmd` (starts `MyGame_Client` with `MAPS_DIR=cold_maps`) against a running `MyGame_Server`.
+**Bulk transfers are reliable too, and NOT by riding the reliable stream.** `Outbound_Transfer` gets `C2S_TransferReceipt` (`shared/network/transfer_receipt.hpp`): the receiver reports **which fragments it holds** as a bitmap, the sender re-sends exactly the rest.
+
+Both mechanisms obey **one rule** — *the receiver states what it HAS, the sender resends what it lacks, forever; no timer, no retry counter, no give-up path* — and differ only in the SHAPE of the report, because the two things being delivered are different shapes:
+
+| | the reliable stream | a bulk transfer |
+|---|---|---|
+| length | open-ended | known from the first fragment |
+| order | must be preserved | irrelevant, fragments are indexed |
+| receiver can say | "the newest thing I have" | "exactly which pieces I lack" |
+| so the sender | keeps ONE parcel in flight | pipelines freely, resends the gaps |
+
+That is why a transfer must **not** simply ride the stream: one block per round trip is ~24KB/s at 50ms RTT, and while it ran it would head-of-line block every death, phase change and cvar value behind it. Ordering is the stream's whole cost, and a transfer does not need it.
+
+A **bitmap**, not "highest contiguous plus a gap list". The gap list is smaller — one integer when nothing was lost — but it needs a maximum length and therefore a decision about what happens when loss exceeds it. The bitmap has no cap to overflow and represents any loss pattern exactly; a 2MB map is ~1700 fragments, so 213 bytes a few times a second and only while a download runs. Go-back-N was the other option and re-sends everything after a gap, which is why the transfer's state is a **set** (`Outbound_Transfer::confirmed`) and not a cursor.
+
+`awaiting_receipt` is the load-bearing part of the send loop: after a pass has covered every fragment the sender **stops** until a report comes back, so the retransmit rate is the *receipt rate* rather than a timer somebody picked. Without it a 1700-fragment map re-sends itself in full before the receiver could physically have reported one fragment. The identity is the existing `message_id` — already what groups fragments into a reassembly bucket, so a second transfer id would be a second thing that can disagree.
+
+A **completed multi-fragment bucket outlives its message** for `completed_transfer_retention_in_seconds`, holding only the count. Two reasons, both about the tail: the sender is waiting to hear the last fragments landed and a lost report has nothing to re-derive it from, so the receiver keeps answering; and a duplicate crossing the completion in flight must be **discarded** rather than opening a fresh bucket that would report "5 of 40" and re-stream a map already held. Only for `fragment_count >= 2`, and a packet declaring a different count **takes the bucket over** — `message_id` wraps every 256 sends, so retention must never eat the next message that draws its id.
+
+**`map_ready` is DERIVED, never announced.** The client reports the content hash of the map it holds on every `C2S_ClientInput` (`map_content_hash`, a rider like `held_snapshot_tick`), and the server sets `client_slot_t::map_ready` by comparing it to its own — one assignment, in the pass at the top of `Tick()`. There is no ack, no retransmit and no timer anywhere in the map handshake.
+
+This replaced a `C2S_MapLoaded` message, and the rule it cost to learn is the one §8 already established in the other direction: **state that gates behavior is replicated as state, never delivered as an event.** A one-shot ack can be lost, and losing that one left `map_ready` false forever, which withheld snapshots forever — healed only by a 0.25s `CmdChangeMap` resend that existed for no other reason. A value that is continuously true has nothing to lose. That the same rule caught a hang on *each* side of the connection is the argument for it.
+
+So the client's two `Loading -> Connected` edges send **nothing**: entering `Connected` starts the input flow, and the hash rides it. And the server keeps no manual write — the optimistic `map_ready = true` at accept sent snapshots to a client that turned out to need a download, and the `= false` when a transfer starts is what the map-load reset already does.
+
+Map streaming: a client that lacks the server's map (cache miss / hash mismatch) requests it and the server streams the compiled package (`S2C_MapData`). The request rides the C2S reliable stream — a lost one left the client waiting for a transfer that never started, and that was the last job the `CmdChangeMap` resend was doing. The wire map id is maps-relative (a basename like `new_map.source`), resolved per-side against a maps dir — the client's is `maps/` by default, overridable via the `MAPS_DIR` env var. To test streaming locally, run a "cold" client whose maps dir is empty so it must download: `scripts/run_client_cold.cmd` (starts `MyGame_Client` with `MAPS_DIR=cold_maps`) against a running `MyGame_Server`.
 
 ## Key Conventions
 

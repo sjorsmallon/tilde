@@ -495,6 +495,7 @@ add_library(game_client SHARED
     src/client/hud/crosshair.cpp
     src/client/hud/announcement.cpp
     src/client/hud/deploy_timer.cpp
+    src/client/hud/scoreboard.cpp
     # The render clock and sample rings behind remote interpolation. Its own TU
     # so remote_interpolation_test can compile it with no device (see ui/font.cpp,
     # same reason).
@@ -822,16 +823,37 @@ target_include_directories(array_test PRIVATE src src/shared)
 # what is really pure struct manipulation.
 add_executable(server_context_test src/test/server_context_test.cpp
     src/server/server_context.cpp
-    src/server/systems/game_rules_system.cpp)
+    src/server/systems/game_rules_system.cpp
+    # enter_phase snaps every player to a marker at a round boundary, so the
+    # rules FSM now references the respawn system, which in turn refills the
+    # inventory. Their physics half resolves through game_shared below.
+    src/server/systems/respawn_system.cpp
+    src/server/systems/inventory_system.cpp
+    src/server/entity_lifecycle.cpp)
 target_include_directories(server_context_test PRIVATE src src/shared src/server)
 target_link_libraries(server_context_test PRIVATE game_shared)
 
 # 26b. Per-weapon fire clocks -- the inventory and the gate that reads it.
+# 26b. Game rules — the match FSM, the mode table and the win conditions.
+# Compiles the server sources directly, like server_context_test, rather than
+# linking game_server: none of this is on the module's GAME_SERVER_API surface.
+# Unlike that test it DOES stand Jolt up, because a round boundary moves every
+# player's kinematic capsule.
+add_executable(game_rules_test src/test/game_rules_test.cpp
+    src/server/server_context.cpp
+    src/server/systems/game_rules_system.cpp
+    src/server/systems/respawn_system.cpp
+    src/server/systems/inventory_system.cpp
+    src/server/entity_lifecycle.cpp)
+target_include_directories(game_rules_test PRIVATE src src/shared src/server)
+target_link_libraries(game_rules_test PRIVATE game_shared)
+
 add_executable(inventory_test src/test/inventory_test.cpp
     src/server/systems/inventory_system.cpp
     src/server/entity_lifecycle.cpp
     src/server/server_context.cpp
-    src/server/systems/game_rules_system.cpp)
+    src/server/systems/game_rules_system.cpp
+    src/server/systems/respawn_system.cpp)
 target_include_directories(inventory_test PRIVATE src src/shared src/server)
 target_link_libraries(inventory_test PRIVATE game_shared)
 
@@ -909,6 +931,13 @@ add_executable(events_test src/test/test_events.cpp)
 target_include_directories(events_test PRIVATE src)
 target_link_libraries(events_test PRIVATE game_shared)
 
+# 30. Reliable stream test (one block outstanding: order, duplicate suppression
+# on the lost-ack path, a record straddling two blocks, the datagram budget,
+# reclaim on drain, and overflow reporting rather than dropping).
+add_executable(reliable_stream_test src/test/reliable_stream_test.cpp)
+target_include_directories(reliable_stream_test PRIVATE src)
+target_link_libraries(reliable_stream_test PRIVATE game_shared)
+
 set(GAME_TESTS
     task_system_test
     log_test
@@ -937,8 +966,10 @@ set(GAME_TESTS
     lag_compensation_test
     array_test
     server_context_test
+    game_rules_test
     inventory_test
     events_test
+    reliable_stream_test
     ui_test
     player_move_step_invariance_test
     subtick_test

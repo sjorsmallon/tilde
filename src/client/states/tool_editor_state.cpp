@@ -657,7 +657,7 @@ void Tool_Editor_State::update(float dt)
 
     // Forward this frame's key-down events to the active tool. The input
     // system collects these from the SDL event pump, so no scancode polling.
-    if (!input::imgui_wants_keyboard())
+    if (!input::imgui_wants_text_input())
     {
       for (const input::key_event_t &key_event : input::frame_key_events())
       {

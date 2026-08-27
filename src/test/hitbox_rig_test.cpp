@@ -159,13 +159,13 @@ static void test_sizes_against_derived(const model_t &model)
 {
   printf("test_sizes_against_derived\n");
 
-  std::vector<assets::hitbox_seed_t> seeds(model.rig.volumes.size());
+  std::vector<assets::guesstimated_hitbox_from_bone_t> seeds(model.rig.volumes.size());
   assets::derive_hitbox_sizes(model.mesh, model.skeleton, model.rig, seeds);
 
   for (size_t index = 0; index < model.rig.volumes.size(); ++index)
   {
     const assets::hitbox_volume_t &volume = model.rig.volumes[index].volume;
-    const assets::hitbox_seed_t   &seed   = seeds[index];
+    const assets::guesstimated_hitbox_from_bone_t   &seed   = seeds[index];
 
     CHECK(seed.radius > 0.0f, "volume '%s' covers no vertex -- its span_bones own no skin",
           volume.name.c_str());
@@ -681,10 +681,13 @@ int main(int argument_count, char **arguments)
   printf("=== hitbox_rig_test ===\n");
 
   // The byte layer hangs off the one launcher-owned state, so a test that reads
-  // an asset owns that state and mounts it exactly as a launcher does.
+  // an asset owns that state and mounts it exactly as a launcher does -- init()
+  // included, since player_rig() resolves manifest ids and registration is
+  // eager.
   static assets::asset_state_t asset_state;
   assets::set_state(&asset_state);
   assets::mount_asset_source();
+  assets::init();
 
   const model_t model = load_model();
 
