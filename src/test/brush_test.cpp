@@ -551,8 +551,8 @@ bool bounds_match(const shared::aabb_bounds_t &bounds, const linalg::vec3 &min,
 void test_filled_grid_cells_split_a_concave_footprint()
 {
   // The same L as the hull test above, but PICKED rather than outlined: every
-  // lattice point the two rubber-band drags cover, which is eight of the nine on
-  // a 3x3 lattice. Read as cells that has exactly one meaning, so it comes back
+  // grid point the two rubber-band drags cover, which is eight of the nine on
+  // a 3x3 grid. Read as cells that has exactly one meaning, so it comes back
   // as two rectangles instead of a hull that swallows the reflex corner.
   const float               step = 64.0f;
   std::vector<linalg::vec3> footprint;
@@ -668,7 +668,7 @@ void test_footprints_the_cell_reading_cannot_account_for()
 
 void test_cells_on_a_slanted_face_stay_on_its_plane()
 {
-  // The face you get by cutting a corner off a box. The lattice is walked in the
+  // The face you get by cutting a corner off a box. The grid is walked in the
   // same basis there, so a cell is a square in the plane, not in world x/z.
   const linalg::vec3 normal = linalg::normalize(linalg::vec3{1, 0, 1});
   const float        step   = 64.0f;

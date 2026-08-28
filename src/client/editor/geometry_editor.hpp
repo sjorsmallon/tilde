@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../shared/brush.hpp"
 #include "../../shared/entity_uid.hpp"
 #include "../../shared/map_geometry.hpp"
 #include "editor_types.hpp"
@@ -15,7 +16,7 @@ namespace client
 //
 // Aligning the bounds rather than the centre is what makes one grid mean one
 // thing. Snapping the centre put a 128-wide object placed on a 128 grid at
-// x = +/-64 -- half a cell off every grid line, and off the very lattice the
+// x = +/-64 -- half a cell off every grid line, and off the very grid the
 // brush tool then snapped its vertices to. Corners on the grid is also the
 // convention every brush editor uses, because corners are what you align
 // against a neighbour.
@@ -28,6 +29,19 @@ linalg::vec3 compute_geometry_placement_center(const shared::geometry_value_t &g
 // Placement preview at `center`.
 void draw_geometry_ghost(const shared::geometry_value_t &geometry,
                          pass_builder_t &draws, const linalg::vec3 &center);
+
+// Every edge of an ALREADY-BUILT hull, translated by `translation`.
+//
+// Exposed because building the hull is the expensive half and some callers can
+// hoist it: try_build_brush_polyhedron tests every point triple against every
+// point, so it is O(n^4) in a count that runs to MAX_BRUSH_VERTICES. Anything
+// drawing a brush that is not changing -- a paste preview holding a clipboard
+// snapshot -- should build once and call this per frame, rather than rebuild a
+// hull per brush per frame for a point set nothing is editing.
+void draw_brush_hull_wireframe(pass_builder_t &draws,
+                               const shared::brush_polyhedron_t &hull,
+                               const linalg::vec3 &translation, color_t color,
+                               float depth_bias);
 
 // Draw geometry in the editor viewport. `solid` follows the editor's
 // "Solid Entities" toggle.

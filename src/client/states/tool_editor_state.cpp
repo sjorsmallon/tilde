@@ -1060,6 +1060,10 @@ void Tool_Editor_State::draw_imgui_panels()
     }
     else
     {
+      // Clicking play in the editor means play, so the trip carries the
+      // `join_game` a spectating connection would otherwise wait for you to
+      // type. Play_State sends it once it is connected.
+      state_manager::get_client_context().requested_match_join = true;
       state_manager::switch_to(game_state::play);
     }
   }

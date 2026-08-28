@@ -64,6 +64,17 @@ inline const int crash_dialogs_disabled = []
   return 0;
 }();
 
+// std::source_location::file_name() is the path the compiler was handed, which
+// under CMake is absolute -- 80 columns of build directory before the message.
+// Only the basename identifies the site, and the line number is beside it.
+constexpr std::string_view file_basename(std::string_view path)
+{
+  const size_t last_separator = path.find_last_of("/\\");
+  return last_separator == std::string_view::npos
+             ? path
+             : path.substr(last_separator + 1);
+}
+
 // --- FIX 2: Cross-platform Demangling ---
 template <typename T>
 std::string demangle_type_name() {
@@ -84,7 +95,7 @@ template <typename... Args>
 void log_terminal_fmt(const std::source_location &loc,
                       std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stdout, "[{}:{}] {}", loc.file_name(), loc.line(),
+  std::println(stdout, "[{}:{}] {}", file_basename(loc.file_name()), loc.line(),
                std::format(fmt, std::forward<Args>(args)...));
 }
 
@@ -92,20 +103,20 @@ template <typename... Args>
 void log_dispatch(const std::source_location &loc, const char *name,
                   std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stdout, "[{}:{}] {}", loc.file_name(), loc.line(),
+  std::println(stdout, "[{}:{}] {}", file_basename(loc.file_name()), loc.line(),
                std::format(fmt, std::forward<Args>(args)...));
 }
 
 inline void log_dispatch(const std::source_location &loc, const char *name,
                          const char *msg)
 {
-  std::println(stdout, "[{}:{}] {}", loc.file_name(), loc.line(), msg);
+  std::println(stdout, "[{}:{}] {}", file_basename(loc.file_name()), loc.line(), msg);
 }
 
 template <typename T>
 void log_dispatch(const std::source_location &loc, const char *name, T &&val)
 {
-  std::println(stdout, "[{}:{}] {}: ({}): {}", loc.file_name(), loc.line(),
+  std::println(stdout, "[{}:{}] {}: ({}): {}", file_basename(loc.file_name()), loc.line(),
                name, demangle_type_name<std::decay_t<T>>(), val);
 }
 
@@ -113,7 +124,7 @@ template <typename... Args>
 void log_error_impl(const std::source_location &loc,
                     std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stderr, "\033[1;31m[ERROR] [{}:{}] {}\033[0m", loc.file_name(),
+  std::println(stderr, "\033[1;31m[ERROR] [{}:{}] {}\033[0m", file_basename(loc.file_name()),
                loc.line(), std::format(fmt, std::forward<Args>(args)...));
 
 #if HAS_STACKTRACE
@@ -134,7 +145,7 @@ template <typename... Args>
 [[noreturn]] void fatal_error_impl(const std::source_location &loc,
                                    std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stderr, "\033[1;31m[FATAL] [{}:{}] {}\033[0m", loc.file_name(),
+  std::println(stderr, "\033[1;31m[FATAL] [{}:{}] {}\033[0m", file_basename(loc.file_name()),
                loc.line(), std::format(fmt, std::forward<Args>(args)...));
 
 #if HAS_STACKTRACE
@@ -152,7 +163,7 @@ template <typename... Args>
 void log_warning_impl(const std::source_location &loc,
                       std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stdout, "\033[1;33m[WARNING] [{}:{}] {}\033[0m", loc.file_name(),
+  std::println(stdout, "\033[1;33m[WARNING] [{}:{}] {}\033[0m", file_basename(loc.file_name()),
                loc.line(), std::format(fmt, std::forward<Args>(args)...));
 }
 

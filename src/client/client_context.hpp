@@ -511,6 +511,15 @@ struct client_context_t
   ::network::Address requested_server_address =
       ::network::Address(127, 0, 0, 1, ::network::server_port_number);
 
+  // Asked for by whoever sent us to Play_State: the editor's play button means
+  // "play this map", not "spectate the map I just saved". Play_State reads it
+  // once in on_enter and clears it, so the request belongs to that one trip
+  // into the match rather than to whatever connects next -- unlike the address
+  // above, which is deliberately remembered.
+  //
+  // Not in the connection group: it is set BEFORE on_enter, which resets that.
+  bool requested_match_join = false;
+
   // --- Reset-scoped state ---
   local_world_t    world;
   connection_t     connection;

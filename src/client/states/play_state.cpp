@@ -10,6 +10,7 @@
 #include "../hit_confirm_audio.hpp"
 #include "../held_snapshot.hpp"
 #include "../event_handlers.hpp"
+#include "../../shared/cvars/cvar_console.hpp"
 #include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../../shared/hit_region.hpp"
@@ -424,6 +425,24 @@ void Play_State::enter_connected_phase()
   // what makes execute_console_line stop running them locally: a connected
   // client does not own server state.
   ctx.commands->forward_to_server = &forward_console_line_to_server;
+
+  // A connection starts as a spectator and `join_game` is the ONE door into the
+  // match, so an editor "play" states its intent through that same door instead
+  // of getting a second one. Straight through the one dispatcher, which the
+  // line above has just told to forward @Server names upstream -- the same path
+  // the line takes when it is typed.
+  if (pending_match_join)
+  {
+    pending_match_join = false;
+
+    std::string reply;
+    const cvars::console_result_t result = cvars::execute_console_line(
+        *ctx.cvars, *ctx.commands, "join_game", cvars::command_context_t{}, &reply);
+
+    if (result != cvars::console_result_t::forwarded &&
+        result != cvars::console_result_t::ok)
+      log_error("auto join_game on connect failed: {}", reply);
+  }
 }
 
 void Play_State::on_enter()
@@ -434,6 +453,10 @@ void Play_State::on_enter()
   // nothing to a new connection. The context's three groups go below.
   connection_ui = {};
   reset_for_new_connection(ctx);
+
+  // Read once and cleared: whoever asked for this trip asked for THIS trip.
+  pending_match_join = ctx.requested_match_join;
+  ctx.requested_match_join = false;
 
   // Jolt must be initialized before load_client_map builds a physics_state_t.
   static bool jolt_initialized = false;

@@ -70,6 +70,41 @@ struct editor_context_t
   editor::grid_settings_t *grid = nullptr;
 };
 
+// Where a placement gesture would put something: the surface point under the
+// cursor, snapped to the grid. The picking BVH answers first and the Y=0 plane
+// is the fallback -- only the fallback's X/Z are snapped, its Y being zero
+// already. Empty means the ray missed both, which is a cursor with nowhere to
+// place.
+[[nodiscard]] inline std::optional<linalg::vec3>
+try_pick_placement_point(const editor_context_t &ctx, const viewport_state_t &view)
+{
+  const float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+
+  if (ctx.bvh && !ctx.bvh->nodes.empty())
+  {
+    ray_hit_result_t hit{};
+    if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.direction, hit))
+    {
+      const linalg::vec3 point =
+          view.mouse_ray.origin + view.mouse_ray.direction * hit.t;
+      return linalg::vec3{editor::snap(point.x, step), editor::snap(point.y, step),
+                          editor::snap(point.z, step)};
+    }
+  }
+
+  const linalg::vec3 plane_point{0, 0, 0};
+  const linalg::vec3 plane_normal{0, 1.0f, 0};
+  float              t = 0.0f;
+  if (!linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.direction,
+                                   plane_point, plane_normal, t))
+    return std::nullopt;
+
+  linalg::vec3 point = view.mouse_ray.origin + view.mouse_ray.direction * t;
+  point.x = editor::snap(point.x, step);
+  point.z = editor::snap(point.z, step);
+  return point;
+}
+
 // What an axis view centres on and how much of it to fit. `radius` is the
 // half-extent to frame, so a tool looking at a 72-unit-tall player asks for ~36
 // and gets a viewport filled by the model rather than by empty map.

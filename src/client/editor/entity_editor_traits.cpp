@@ -32,34 +32,6 @@ constexpr float SPAWN_SIGHTLINE_LENGTH   = 56.f;
 constexpr float SPAWN_WEDGE_LENGTH       = 48.f;
 constexpr float SPAWN_WEDGE_HALF_WIDTH   = 14.f;
 constexpr float SPAWN_WEDGE_GROUND_LIFT  = 1.f;
-constexpr float SPECTATE_FRUSTUM_DEPTH   = 72.f;
-
-// Matches r_fov's default, and is deliberately NOT read from the live cvar: the
-// gizmo is a diagram of where this camera points, not a prediction of one
-// player's screen. Reading r_fov would make the same map draw differently per
-// user and change shape when somebody zooms.
-constexpr float SPECTATE_FRUSTUM_FOV_DEGREES = 90.f;
-
-// An orthonormal basis around a view direction. Straight up or straight down
-// leaves cross(forward, world_up) at zero length, which a spectate spot looking
-// at the floor reaches exactly -- the same guard camera.hpp carries.
-struct view_basis_t
-{
-  linalg::vec3 forward;
-  linalg::vec3 right;
-  linalg::vec3 up;
-};
-
-view_basis_t view_basis_from_orientation(const linalg::vec3 &orientation)
-{
-  const linalg::vec3 forward = linalg::forward_from_model_euler(orientation);
-
-  linalg::vec3 right = linalg::cross(forward, linalg::vec3{0.f, 1.f, 0.f});
-  right = (linalg::length(right) < 0.001f) ? linalg::vec3{0.f, 0.f, 1.f}
-                                           : linalg::normalize(right);
-
-  return {forward, right, linalg::cross(right, forward)};
-}
 
 void draw_player_spawn_shape(pass_builder_t &draws, const linalg::vec3 &position,
                              const linalg::vec3 &orientation, color_t color)
@@ -78,7 +50,7 @@ void draw_player_spawn_shape(pass_builder_t &draws, const linalg::vec3 &position
   // so this earns its ink on the case where it is not: staring into a wall or
   // at the sky was otherwise indistinguishable from facing down a corridor.
   const linalg::vec3 eye = position + linalg::vec3{0, shared::player_eye_height, 0};
-  const view_basis_t basis = view_basis_from_orientation(orientation);
+  const linalg::basis_t basis = linalg::basis_from_model_euler(orientation);
   draws.debug.arrow(eye, eye + basis.forward * SPAWN_SIGHTLINE_LENGTH, color);
 
   // Yaw again, flat on the ground. Redundant with the arrow when pitch is 0 and
@@ -114,31 +86,21 @@ void draw_player_spawn_shape(pass_builder_t &draws, const linalg::vec3 &position
 void draw_spectate_camera_shape(pass_builder_t &draws, const linalg::vec3 &position,
                                 const linalg::vec3 &orientation, color_t color)
 {
-  const view_basis_t basis = view_basis_from_orientation(orientation);
+  // shapes.hpp owns the frustum, because compute_entity_bounds picks with the
+  // same one -- a shape authored here would be a second description of it.
+  const shared::spectate_frustum_t frustum =
+      shared::make_spectate_frustum(position, orientation);
 
-  const float half_width =
-      SPECTATE_FRUSTUM_DEPTH *
-      std::tan(linalg::to_radians(SPECTATE_FRUSTUM_FOV_DEGREES * 0.5f));
-  const float half_height = half_width * 0.5625f; // 16:9
-
-  const linalg::vec3 center = position + basis.forward * SPECTATE_FRUSTUM_DEPTH;
-  const linalg::vec3 corners[4] = {
-      center + basis.right * half_width + basis.up * half_height,
-      center - basis.right * half_width + basis.up * half_height,
-      center - basis.right * half_width - basis.up * half_height,
-      center + basis.right * half_width - basis.up * half_height,
-  };
-
-  for (int i = 0; i < 4; ++i)
+  for (uint32_t i = 0; i < 4; ++i)
   {
-    draws.debug.line(position, corners[i], color);
-    draws.debug.line(corners[i], corners[(i + 1) % 4], color);
+    draws.debug.line(frustum.apex, frustum.far_corners[i], color);
+    draws.debug.line(frustum.far_corners[i], frustum.far_corners[(i + 1) % 4], color);
   }
 
   // The up tick over the top edge. There is no roll to read, but a frustum
   // pitched steeply enough is otherwise the same picture upside down.
-  draws.debug.line(corners[0], center + basis.up * (half_height * 1.6f), color);
-  draws.debug.line(corners[1], center + basis.up * (half_height * 1.6f), color);
+  draws.debug.line(frustum.far_corners[0], frustum.up_tick, color);
+  draws.debug.line(frustum.far_corners[1], frustum.up_tick, color);
 }
 
 void draw_particle_emitter_shape(pass_builder_t &draws,
@@ -203,7 +165,7 @@ void draw_spot_light_shape(pass_builder_t &draws, const entities::Spot_Light_Ent
   if (light->range <= 0.f)
     return;
 
-  const view_basis_t basis    = view_basis_from_orientation(light->orientation);
+  const linalg::basis_t basis = linalg::basis_from_model_euler(light->orientation);
   const linalg::vec3 cone_end = position + basis.forward * light->range;
   const color_t      dim      = with_alpha(color, LIGHT_VOLUME_ALPHA);
 
@@ -242,7 +204,7 @@ void draw_directional_light_shape(pass_builder_t &draws,
 {
   draw_light_marker(draws, position, color);
 
-  const view_basis_t basis = view_basis_from_orientation(light->orientation);
+  const linalg::basis_t basis = linalg::basis_from_model_euler(light->orientation);
   const color_t      dim   = with_alpha(color, LIGHT_VOLUME_ALPHA);
 
   for (int x = -1; x <= 1; ++x)

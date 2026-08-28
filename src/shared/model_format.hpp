@@ -126,7 +126,7 @@ bool parse_animation(Span<const uint8_t> bytes, const char *debug_name,
 try_parse_hitbox_rig(Span<const uint8_t> bytes, const char *debug_name);
 
 // The writer half, so the Animation tool can emit a template for a rig that has
-// no file yet and save a radius you filled from the derived column. The output
+// no file yet and save a radius you filled from the guess column. The output
 // is the same text a human writes -- there is no generated-file convention here,
 // because this file is authored and the tool only ever seeds it.
 //

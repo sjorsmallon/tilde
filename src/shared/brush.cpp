@@ -11,10 +11,29 @@ namespace shared
 namespace
 {
 
+
+// intuitively, you want to project to 2D so you can express a counter-clockwise rotation.
+// AH, I understand. I was fiddlign with how you would know if your next points is in +u, +v,
+// -u, -v. z
+// the way to think about it is way simpler. u and V are two arbitrary axis on the plane described by the 
+// centroid and the face's normal.
+// imagine you map u,v to a x,y plane. the normal is a vector pointing _OUT_ of the screen. now all points 
+// are just points expressable in x,y. that does not help us because you don't know how to express which point
+// should be next. you can visually see the points are a perimeter ring now.
+// however, you _know_ that you can order the points when they are expressed as a function of the angle w.r.t the base x.
+// like polar coordinates. that's a linear expression, and every point has a "unique" angle.
+// you can also see that it does not matter what u and v are here. they can be arbitrary because it should be radially symmetrical
+// the intuition is then that you can express the dot product between normalize((point - centroid)) and (u). (or v, doesn't matter.)
+// to begin with.
+// a sidenote is that this only works if the polygon is convex.
+//projection of a onto b = dot(a,b) / |b| = |a| cos θ
+// projection of b onto a = dot(a,b) / |a| = |b| cos θ
+
+
 // cross(u, v) == normal, so increasing atan2(dot(p, v), dot(p, u)) walks
 // counter-clockwise seen from the +normal side, which is from outside.
-void compute_face_tangents(const linalg::vec3 &normal, linalg::vec3 &out_u,
-                           linalg::vec3 &out_v)
+void compute_face_tangents(const linalg::vec3& normal, linalg::vec3& out_u,
+                           linalg::vec3& out_v)
 {
   const linalg::vec3 reference =
       (std::abs(normal.x) < 0.9f) ? linalg::vec3{1, 0, 0} : linalg::vec3{0, 1, 0};
@@ -22,12 +41,15 @@ void compute_face_tangents(const linalg::vec3 &normal, linalg::vec3 &out_u,
   out_v = linalg::cross(normal, out_u);
 }
 
-void sort_face_loop(const std::vector<linalg::vec3> &vertices, const linalg::vec3 &normal,
-                    std::vector<uint32_t> &loop)
+void sort_face_loop(const std::vector<linalg::vec3>& vertices, const linalg::vec3& normal,
+                    std::vector<uint32_t>& loop)
 {
+  // calculate the center point.
   linalg::vec3 centroid{0, 0, 0};
   for (uint32_t index : loop)
+  {
     centroid = centroid + vertices[index];
+  }
   centroid = centroid * (1.0f / (float)loop.size());
 
   linalg::vec3 tangent_u;
@@ -61,6 +83,8 @@ linalg::vec2 compute_face_uv(const linalg::vec3 &world_position, const linalg::v
 
 } // namespace
 
+// I am not settled on welding as a name of merging things that are close together.
+// welding, in my brain, seems to imply two things that are joined at the hip.
 std::vector<linalg::vec3> weld_brush_points(Span<const linalg::vec3> points)
 {
   std::vector<linalg::vec3> welded;
@@ -95,24 +119,22 @@ std::optional<brush_polyhedron_t> try_build_brush_polyhedron(Span<const linalg::
   if (count < 4 || count > MAX_BRUSH_VERTICES)
     return std::nullopt;
 
-  // --- Supporting planes -----------------------------------------------------
-  //
-  // A face is identified by WHICH POINTS LIE ON IT, not by its plane parameters.
-  // Every triple on one face is found C(m,3) times and has to collapse to one
-  // entry, and comparing normals and distances would need a second tolerance
-  // beside BRUSH_COPLANAR_EPSILON -- one that can disagree with it, dropping a
-  // real face where two of them meet at a shallow angle. The point set is
-  // derived FROM that epsilon, so it cannot.
 
   struct supporting_plane_t
   {
-    linalg::vec3          normal;
+    linalg::vec3 normal;
     std::vector<uint32_t> points_on_plane;
   };
 
-  std::vector<supporting_plane_t> supporting_planes;
-  std::vector<uint32_t>           on_plane;
+  auto supporting_planes = std::vector<supporting_plane_t>{};
+  auto on_plane = std::vector<uint32_t>{};
 
+
+  // first, collect all the planes that describe this polyhedron. we "weld" all brushpoints that are too close together
+  // (deduplicate). this initial pass _only_ constructs the planes that would describe this polyhedron,
+  // it does not create the rings or the boundary or whatever. that happens later.
+  
+  // for any point triplet (triangle):
   for (size_t i = 0; i + 2 < count; ++i)
   {
     for (size_t j = i + 1; j + 1 < count; ++j)
@@ -121,36 +143,40 @@ std::optional<brush_polyhedron_t> try_build_brush_polyhedron(Span<const linalg::
       {
         linalg::vec3 normal = linalg::cross(welded[j] - welded[i], welded[k] - welded[i]);
 
+        // actually, the length of the normal is the surface area of the parallelogram by these two lines,
+        // but it doesn't really matter here.
         const float area = linalg::length(normal);
-        if (area < 1e-4f)
-          continue; // collinear triple spans no plane
+        if (area < 1e-4f) continue; // collinear triple spans no plane
 
-        normal         = normal * (1.0f / area);
+        normal = normal * (1.0f / area);
         float distance = linalg::dot(normal, welded[i]);
 
         bool any_in_front = false;
         bool any_behind   = false;
         on_plane.clear();
 
-        for (size_t p = 0; p < count; ++p)
+        // so for any triangle in the point cloud, check for every point if it's in front or behind.
+        for (size_t point_idx = 0; point_idx < count; ++point_idx)
         {
-          const float signed_distance = linalg::dot(normal, welded[p]) - distance;
+          const float signed_distance = linalg::dot(normal, welded[point_idx]) - distance;
 
           if (signed_distance > BRUSH_COPLANAR_EPSILON)
             any_in_front = true;
           else if (signed_distance < -BRUSH_COPLANAR_EPSILON)
             any_behind = true;
           else
-            on_plane.push_back((uint32_t)p);
+            on_plane.push_back((uint32_t)point_idx);
         }
 
-        if (any_in_front && any_behind)
-          continue; // cuts through the set, so not a hull face
+        if (any_in_front && any_behind) continue; // cannot be on the edge.
 
-        if (on_plane.size() < 3)
-          continue;
+        // if less than three on this plane, it's not a face, I guess? that shouldn't be possible.
+        if (on_plane.size() < 3) continue;
 
-        // Gathered in ascending index order, so equality is set equality.
+        // ah, this is not a recording of this triangle being recorded, but probably many triangles
+        // will yield the same face. imagine a face that's a hexagon, for example. many triangles. same face.
+        // for the first triangle of that face, it will probably record all the other points that are also on that face.
+        // therefore, there's this break.
         bool already_recorded = false;
         for (const supporting_plane_t &recorded : supporting_planes)
         {
@@ -160,11 +186,11 @@ std::optional<brush_polyhedron_t> try_build_brush_polyhedron(Span<const linalg::
             break;
           }
         }
-        if (already_recorded)
-          continue;
+        if (already_recorded) continue;
 
-        // Every point behind the plane means the normal points away from the
-        // solid, which is the outward direction collision expects.
+        // this reads weird, but it means the following:  the plane is not straddling, all other points are either 
+        // in front or behind this plane. if they're behind this plane, the normal is facing outwards, and that's what 
+        // we expect. if the normal is facing inwards, we want the normals to be flipped.
         if (any_in_front)
           normal = normal * -1.0f;
 
@@ -174,19 +200,11 @@ std::optional<brush_polyhedron_t> try_build_brush_polyhedron(Span<const linalg::
   }
 
   // Four is the floor for a solid. Fewer means the input was coplanar or
-  // collinear -- the case the supporting-plane test above lets through, because
+  // collinear. the case the supporting-plane test above lets through, because
   // a flat set has no point in front of its own plane and no point behind it.
-  if (supporting_planes.size() < 4)
-    return std::nullopt;
+  if (supporting_planes.size() < 4) return std::nullopt;
 
-  // --- Hull vertices ---------------------------------------------------------
-  //
-  // ON a face is not the same as being a CORNER of one. The reflex point of an
-  // L-shaped footprint lies on the bottom plane but strictly inside that face's
-  // polygon; left in, the angular sort threads it into the loop and produces a
-  // self-intersecting face. A hull vertex lies on at least THREE faces -- a
-  // point interior to a face lies on one, a point along an edge on two.
-
+  // how many faces does each point belong to?
   std::vector<uint32_t> face_count_per_point(count, 0);
   for (const supporting_plane_t &plane : supporting_planes)
   {
@@ -194,13 +212,18 @@ std::optional<brush_polyhedron_t> try_build_brush_polyhedron(Span<const linalg::
       ++face_count_per_point[index];
   }
 
-  brush_polyhedron_t    polyhedron;
+  // start with 5 points, numbered [0,1,2,3,4].
+  // decide point 2 is junk and throw it away.
+   // 4 survivors go into a new list, and in that new list they get new numbers: 0,1,2,3.
+  // we then need a mapping from this new index to the old one.
+  // uint32_max is a sentinel indicating that it got trashed.
+  auto polyhedron = brush_polyhedron_t{};
   std::vector<uint32_t> remapped_index(count, UINT32_MAX);
 
   for (size_t p = 0; p < count; ++p)
   {
-    if (face_count_per_point[p] < 3)
-      continue; // interior to a face, along an edge, or inside the solid
+    // intuitively, for a cube, a point along the edge would be redundant because it's collinear.
+    if (face_count_per_point[p] < 3) continue; // interior to a face, along an edge, or inside the solid
 
     remapped_index[p] = (uint32_t)polyhedron.vertices.size();
     polyhedron.vertices.push_back(welded[p]);
@@ -209,14 +232,10 @@ std::optional<brush_polyhedron_t> try_build_brush_polyhedron(Span<const linalg::
   if (polyhedron.vertices.size() < 4)
     return std::nullopt;
 
-  // --- Face loops ------------------------------------------------------------
-  //
-  // Dropping non-corners cannot change the hull -- they were not extreme -- so
-  // the planes found above stay valid and only their loops shrink.
-
+  // drop non-corners (so if it's not part of remapped_index.)
   for (const supporting_plane_t &plane : supporting_planes)
   {
-    std::vector<uint32_t> loop;
+    auto loop = std::vector<uint32_t>{};
     loop.reserve(plane.points_on_plane.size());
 
     for (uint32_t index : plane.points_on_plane)
@@ -225,9 +244,11 @@ std::optional<brush_polyhedron_t> try_build_brush_polyhedron(Span<const linalg::
         loop.push_back(remapped_index[index]);
     }
 
+    // this is just an edge if it's two points?
     if (loop.size() < 3)
       continue;
 
+    // sorting, as described in that function.
     sort_face_loop(polyhedron.vertices, plane.normal, loop);
 
     polyhedron.faces.push_back(
@@ -304,6 +325,7 @@ void brush_face_grid_tangents(const linalg::vec3 &normal, linalg::vec3 &out_u,
   out_v = linalg::cross(normal, out_u);
 }
 
+// look at the header for a more descriptive explanation.
 std::optional<std::vector<std::vector<linalg::vec3>>>
 try_decompose_footprint_into_rectangles(Span<const linalg::vec3> footprint,
                                         const linalg::vec3 &normal, float grid_step)

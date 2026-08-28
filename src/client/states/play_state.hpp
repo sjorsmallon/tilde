@@ -76,6 +76,11 @@ private:
   per_connection_ui_t connection_ui;
   ui::list_menu_t pause_menu;
 
+  // This trip's pending `join_game`, taken off client_context_t in on_enter and
+  // sent by enter_connected_phase. It cannot be sent any earlier: the line is
+  // @Server, so it needs the forwarder that entering Connected installs.
+  bool pending_match_join = false;
+
   // Storage, not state: refilled from the latest snapshot every frame the board
   // is up. Sized by the connection slot count because that IS the row bound --
   // one row per player, and a player needs a slot -- so collect_scoreboard_rows

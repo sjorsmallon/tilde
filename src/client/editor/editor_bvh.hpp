@@ -39,7 +39,11 @@ build_editor_bvh(const shared::map_t &map)
       log_error("wile iterating over map entities, encountered a non_entity?");
       continue;
     }
-    add_leaf(entry.uid, shared::compute_entity_bounds(entry.entity.get()));
+    // Entities carry their hull for the same reason geometry does: for every
+    // type but the spectate spot the hull IS the bound, and for that one the
+    // frustum's empty corner should fall through to what is behind it.
+    add_leaf(entry.uid, shared::compute_entity_bounds(entry.entity.get()),
+             shared::compute_entity_collision_planes(entry.entity.get()));
   }
 
   return build_bvh(inputs);

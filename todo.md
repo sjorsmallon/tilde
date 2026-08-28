@@ -1,5 +1,45 @@
 # TODO
 
+**A brush is far too easy to modify by accident: the select click IS the drag.**
+The base floor of the working map keeps getting wrecked by ordinary clicking
+around. It is not a discipline problem — in the Brush tool's Face mode (the
+default), `brush_tool.cpp:805` arms `gestures.dragging_face` on mouse-DOWN with
+no travel threshold, so the click that selects a brush has already armed a face
+drag and the first drag frame pushes that face along its normal. Nothing
+separates "select this brush" from "move this face"; they are the same press.
+
+Three gestures begin on mouse-down with no threshold: the face drag
+(`brush_tool.cpp:805`), the vertex drag (`brush_tool.cpp:752`), and the
+Selection tool's gizmo drag. The pattern and the constant already exist in the
+same file — the rubber band twenty lines below guards itself with
+`BAND_DRAG_THRESHOLD = 4.0f` before it commits to being a band, and box-select
+in `selection_tool.cpp` has its own 5px guard. So the fix is to apply what is
+already there, not to invent anything.
+
+**Do the threshold first; it is the bug.** Arm the gesture on press, and let it
+become a drag only once the cursor has travelled — which also makes the press
+that never travelled a clean select, with no transaction pushed.
+
+**A per-object lock is a separate, later feature, and it is not the fix for
+this.** It is canonical, but the unit in level editors is usually a LAYER or
+group rather than an object (TrenchBroom locks and hides per layer, Hammer's
+visgroups hide per group), because the thing you want to protect is forty
+brushes and you will toggle it as a set. Per-object locks exist as the secondary
+mechanism (Unreal's `bLockLocation`, Unity's hierarchy pick toggle, Blender's
+outliner selectability). Two things to decide if it gets built:
+
+- **Locked must mean selectable-but-immovable, not unpickable.** If a locked
+  object cannot be selected, the unlock UI can no longer live in the viewport
+  and the feature needs an object list before it is usable at all.
+- It costs a field on both regimes, a spelling in the `.source` format, and a
+  check in the drag paths — so it wants to arrive with layers rather than
+  before them.
+
+A lock says geometry is FINISHED. That is worth having, and it is a different
+statement from "this gesture is too easy to trigger".
+
+Raised 2026-08-28.
+
 Team score, and teams on the scoreboard. Per-player kills/deaths replicate; the team's number is nothing yet. It wants to ride Round_Phase_Changed — which is another thing that gets better after the channel is reliable. The scoreboard also doesn't show team at all, so a Rounds match currently reads as a free-for-all with odd spawns.
 Team assignment beyond "the smaller team." No switching, no locking, no picking. auto_assign_teams only says whether teams happen.
 After Game_Over, anything other than reloading the same map. Rotation, a vote, back to Warmup without a reload. 

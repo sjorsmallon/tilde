@@ -17,15 +17,6 @@
 
 
 
-namespace
-{
-  linalg::vec3 snap(const linalg::vec3 &v, float step)
-  {
-    return {editor::snap(v.x, step), editor::snap(v.y, step), editor::snap(v.z, step)};
-  }
-
-  
-}
 namespace client
 {
 
@@ -87,43 +78,10 @@ void Placement_Tool::on_disable(editor_context_t &ctx) { cursor_is_currently_ove
 void Placement_Tool::on_update(editor_context_t &ctx,
                                const viewport_state_t &view, float /*dt*/)
 {
-  float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
-
-  // if we don't hit any level geometry, fall back on the ground plane (y = 0), I believe.
-  bool hit_geometry = false;
-
-  if (ctx.bvh && !ctx.bvh->nodes.empty())
-  {
-    auto hit_result = ray_hit_result_t{};
-    if (bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.direction,
-                          hit_result))
-    {
-      ghost_position = view.mouse_ray.origin + view.mouse_ray.direction * hit_result.t;
-      ghost_position = ::snap(ghost_position, step);
-      cursor_is_currently_over_surface = true;
-      hit_geometry = true;
-    }
-  }
-
-  // Fallback: intersect with the Y=0 plane
-  if (!hit_geometry)
-  {
-    linalg::vec3 plane_point = {0, 0.0f, 0};
-    linalg::vec3 plane_normal = {0, 1.0f, 0};
-    float t = 0.0f;
-    if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.direction,
-                                    plane_point, plane_normal, t))
-    {
-      ghost_position = view.mouse_ray.origin + view.mouse_ray.direction * t;
-      ghost_position.x = editor::snap(ghost_position.x, step);
-      ghost_position.z = editor::snap(ghost_position.z, step);
-      cursor_is_currently_over_surface = true;
-    }
-    else
-    {
-      cursor_is_currently_over_surface = false;
-    }
-  }
+  const std::optional<linalg::vec3> point = try_pick_placement_point(ctx, view);
+  cursor_is_currently_over_surface = point.has_value();
+  if (point)
+    ghost_position = *point;
 }
 
 void Placement_Tool::on_mouse_down(editor_context_t &ctx,

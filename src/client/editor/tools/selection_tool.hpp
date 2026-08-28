@@ -3,6 +3,7 @@
 #include "../../states/editor_gizmo.hpp"
 #include "../editor_tool.hpp"
 #include "../transaction_system.hpp"
+#include "../../../shared/brush.hpp"
 #include "../../../shared/map.hpp"
 #include <optional>
 #include <vector>
@@ -86,6 +87,49 @@ private:
   // What the panel's offset fields hold. Not applied until Apply is pressed:
   // an edit-per-keystroke would push a transaction per digit typed.
   linalg::vec3 panel_offset{0, 0, 0};
+
+  // --- Clipboard, and the pending paste ---------------------------------------
+  //
+  // Two keys, not one: Ctrl+C fills the clipboard, Ctrl+V opens a pending paste
+  // that follows the cursor until LMB commits it or Escape drops it. Splitting
+  // them is what makes a cancelled paste cost nothing and one copy stampable
+  // repeatedly. The clipboard outlives the paste and the tool switch; the
+  // pending paste does not.
+  //
+  // An entry holds one regime or the other, plus where it sat relative to the
+  // clipboard's anchor. Only the ANCHOR meets the grid at paste time -- snapping
+  // each member on its own would deform the arrangement that was copied, which
+  // is usually the reason it was copied.
+  struct clipboard_entry_t
+  {
+    std::optional<shared::geometry_value_t> geometry;
+    entity_snapshot_t                       entity;
+    linalg::vec3                            offset_from_anchor{0, 0, 0};
+
+    // A brush's ghost is its hull, and building one is O(n^4) in the point
+    // count. A clipboard entry never changes, so the hull is built once here at
+    // copy time rather than per brush per frame for the whole life of a paste.
+    std::optional<shared::brush_polyhedron_t> brush_hull;
+  };
+
+  std::vector<clipboard_entry_t> clipboard;
+
+  // The copied group's low corner, relative to its anchor. Paste puts THAT
+  // corner on a grid line, which is the rule compute_geometry_placement_center
+  // already follows for a single object.
+  linalg::vec3 clipboard_low_corner_offset{0, 0, 0};
+
+  bool         paste_is_pending   = false;
+  bool         paste_anchor_valid = false;
+  // Bottom-centre of where the group would land, already grid-aligned. Written
+  // once per frame in on_update; the overlay and the commit both read it, so
+  // what you see and what gets stored cannot disagree.
+  linalg::vec3 paste_anchor{0, 0, 0};
+
+  void copy_selection_to_clipboard(editor_context_t &ctx);
+  void begin_paste();
+  void cancel_paste();
+  void commit_paste(editor_context_t &ctx);
 
   [[nodiscard]] gizmo_view_t make_gizmo_view() const;
 

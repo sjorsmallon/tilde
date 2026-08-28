@@ -1,5 +1,6 @@
 #include "../../../shared/entities/entity_reflection.hpp"
 #include "selection_tool.hpp"
+#include "../../hud/announcement.hpp"
 #include "../../renderer.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../entity_inspector.hpp"
@@ -267,6 +268,131 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t &ctx)
   }
 }
 
+// --- Clipboard and paste -----------------------------------------------------
+
+void Selection_Tool::copy_selection_to_clipboard(editor_context_t &ctx)
+{
+  if (!ctx.map || selected_uids.empty())
+    return;
+
+  const std::optional<shared::aabb_bounds_t> bounds = try_compute_selection_bounds(ctx);
+  if (!bounds)
+    return;
+
+  // Bottom-centre of the whole selection. The cursor drives THAT, so a pasted
+  // group sits on the surface under it the way one placed object does.
+  const linalg::vec3 anchor{(bounds->min.x + bounds->max.x) * 0.5f, bounds->min.y,
+                            (bounds->min.z + bounds->max.z) * 0.5f};
+
+  clipboard.clear();
+  clipboard_low_corner_offset = bounds->min - anchor;
+
+  for (shared::entity_uid_t uid : selected_uids)
+  {
+    if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
+    {
+      clipboard_entry_t entry;
+      entry.geometry           = geometry->value;
+      entry.offset_from_anchor = shared::get_position(geometry->value) - anchor;
+
+      if (const shared::brush_geometry_t *brush =
+              std::get_if<shared::brush_geometry_t>(&geometry->value))
+        entry.brush_hull = shared::try_build_brush_polyhedron(brush->vertices);
+
+      clipboard.push_back(std::move(entry));
+      continue;
+    }
+
+    const shared::map_entity_t *in_map = ctx.map->find_by_uid(uid);
+    if (!in_map || !in_map->entity)
+      continue;
+
+    clipboard_entry_t entry;
+    entry.entity = snapshot_entity(in_map->entity.get());
+    if (!entry.entity)
+    {
+      log_error("selection_tool: uid {} would not clone and was not copied", uid);
+      continue;
+    }
+    entry.offset_from_anchor = in_map->entity->position - anchor;
+    clipboard.push_back(std::move(entry));
+  }
+
+  hud::set_announcement(std::format("copied {} object(s)", clipboard.size()));
+}
+
+void Selection_Tool::begin_paste()
+{
+  if (clipboard.empty())
+  {
+    log_warning("selection_tool: nothing on the clipboard to paste");
+    return;
+  }
+
+  paste_is_pending = true;
+  // Nothing is placeable until on_update has aimed the cursor at a surface.
+  paste_anchor_valid = false;
+}
+
+void Selection_Tool::cancel_paste()
+{
+  // The clipboard deliberately survives: cancelling says "not there", not
+  // "forget what I copied".
+  paste_is_pending   = false;
+  paste_anchor_valid = false;
+}
+
+void Selection_Tool::commit_paste(editor_context_t &ctx)
+{
+  if (!paste_is_pending || !paste_anchor_valid || clipboard.empty() || !ctx.map)
+    return;
+
+  transaction_builder_t             builder;
+  std::vector<shared::entity_uid_t> pasted_uids;
+
+  for (const clipboard_entry_t &entry : clipboard)
+  {
+    const linalg::vec3 position = paste_anchor + entry.offset_from_anchor;
+
+    if (entry.geometry)
+    {
+      shared::geometry_value_t value = *entry.geometry;
+      shared::set_position(value, position);
+
+      const shared::entity_uid_t uid = ctx.map->add_geometry(value);
+      builder.add_geometry_created(uid, std::move(value));
+      pasted_uids.push_back(uid);
+      continue;
+    }
+
+    std::shared_ptr<entities::Entity> copy = restore_entity(entry.entity);
+    if (!copy)
+    {
+      log_error("selection_tool: a clipboard entry would not clone and was not pasted");
+      continue;
+    }
+    copy->position = position;
+
+    const shared::entity_uid_t uid = ctx.map->add_entity(copy);
+    builder.add_created(uid, snapshot_entity(copy.get()));
+    pasted_uids.push_back(uid);
+  }
+
+  // One transaction for the whole paste, so Ctrl+Z takes all of it back at once
+  // -- the same rule the multi-object delete follows.
+  if (ctx.transaction_system)
+    ctx.transaction_system->push(builder.take());
+
+  // The copies become the selection: what you just placed is what the gizmo and
+  // the arrow keys should be aimed at.
+  selected_uids = std::move(pasted_uids);
+  hovered_uid   = 0;
+  cancel_paste();
+
+  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+}
+
 void Selection_Tool::on_enable(editor_context_t &ctx)
 {
   hovered_uid = 0;
@@ -278,6 +404,7 @@ void Selection_Tool::on_disable(editor_context_t &ctx)
 {
   hovered_uid = 0;
   editor_gizmo.clear_target();
+  cancel_paste();
 }
 
 void Selection_Tool::on_draw_ui(editor_context_t &ctx)
@@ -347,6 +474,35 @@ void Selection_Tool::on_update(editor_context_t &ctx,
                                const viewport_state_t &view, float /*dt*/)
 {
   cached_viewport = view;
+
+  // A pending paste owns the cursor: no hover, no gizmo, no box drag, because
+  // every one of those wants the same LMB that commits the placement.
+  if (paste_is_pending)
+  {
+    editor_gizmo.clear_target();
+    hovered_uid      = 0;
+    grid_hover_valid = false;
+
+    const std::optional<linalg::vec3> point = try_pick_placement_point(ctx, view);
+    paste_anchor_valid                      = point.has_value();
+    if (!point)
+      return;
+
+    paste_anchor = *point;
+
+    // Put the GROUP's low corner on a grid line and carry the anchor with it, so
+    // a pasted arrangement lands where the brush tool would snap a vertex and
+    // every member keeps the offset it was copied with.
+    const float step = ctx.grid ? ctx.grid->step() : 0.0f;
+    if (step > 0.0f)
+    {
+      const linalg::vec3 low = paste_anchor + clipboard_low_corner_offset;
+      paste_anchor = paste_anchor + linalg::vec3{editor::snap(low.x, step) - low.x,
+                                                 editor::snap(low.y, step) - low.y,
+                                                 editor::snap(low.z, step) - low.z};
+    }
+    return;
+  }
 
   if (ctx.grid)
     editor_gizmo.snap_step = ctx.grid->step();
@@ -479,6 +635,12 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
 {
   if (e.button == input::mouse_button_t::Left)
   {
+    if (paste_is_pending)
+    {
+      commit_paste(ctx);
+      return;
+    }
+
     if (editor_gizmo.try_begin_drag(cached_viewport.mouse_ray, make_gizmo_view()))
     {
       capture_drag_snapshots(ctx);
@@ -637,7 +799,10 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
 
       for (const auto &[uid, bounds] : shared::collect_object_bounds(*ctx.map))
       {
-        linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
+        // The object's own anchor, not the bound's middle: a spectate spot's
+        // bound is its frustum, whose centre is 36 units out in front of it.
+        linalg::vec3 p = shared::try_get_object_position(*ctx.map, uid)
+                             .value_or((bounds.min + bounds.max) * 0.5f);
 
         linalg::vec3 view_pos = linalg::world_to_view(
             p, {view.camera.position.x, view.camera.position.y, view.camera.position.z}, view.camera.yaw,
@@ -709,6 +874,27 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
 
 void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
+  if (e.key == input::key_t::C && e.mods.ctrl)
+  {
+    copy_selection_to_clipboard(ctx);
+    return;
+  }
+
+  if (e.key == input::key_t::V && e.mods.ctrl)
+  {
+    begin_paste();
+    return;
+  }
+
+  // Escape is the cancel, not a right click: only LMB reaches a tool at all, and
+  // RMB is the camera's -- an RMB click is an orbit drag that happened not to
+  // move, so cancelling on it would fire every time you stopped looking around.
+  if (e.key == input::key_t::Escape)
+  {
+    cancel_paste();
+    return;
+  }
+
   if (e.key == input::key_t::Delete || e.key == input::key_t::Backspace)
   {
     if (!selected_uids.empty() && ctx.map && ctx.transaction_system)
@@ -746,6 +932,36 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 {
   if (!ctx.map)
     return;
+
+  // The paste preview is the placement tool's ghost, deliberately: a wireframe
+  // is what "not placed yet" already looks like in this editor, and the
+  // pulsating outline below already means "selected".
+  if (paste_is_pending && paste_anchor_valid)
+  {
+    for (const clipboard_entry_t &entry : clipboard)
+    {
+      const linalg::vec3 position = paste_anchor + entry.offset_from_anchor;
+
+      if (entry.brush_hull)
+      {
+        // Traced from the hull captured at copy time, carried to where the
+        // brush would land. draw_geometry_ghost would rebuild it every frame.
+        draw_brush_hull_wireframe(draws, *entry.brush_hull,
+                                  position - shared::get_position(*entry.geometry),
+                                  colors::yellow, 0.0f);
+        continue;
+      }
+
+      if (entry.geometry)
+      {
+        draw_geometry_ghost(*entry.geometry, draws, position);
+        continue;
+      }
+
+      if (entry.entity && !draw_entity_ghost(entry.entity.get(), draws, position))
+        draw_default_ghost(entry.entity.get(), draws, position);
+    }
+  }
 
   // Hover / box-select preview only ever needs the bound, so it works off the
   // uniform bounds accessor and doesn't care which regime an object is in.
@@ -794,7 +1010,8 @@ void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
 
     for (const auto &[uid, bounds] : shared::collect_object_bounds(*ctx.map))
     {
-      linalg::vec3 p = (bounds.min + bounds.max) * 0.5f;
+      linalg::vec3 p = shared::try_get_object_position(*ctx.map, uid)
+                           .value_or((bounds.min + bounds.max) * 0.5f);
 
       linalg::vec3 view_pos = linalg::world_to_view(
           p, {view.camera.position.x, view.camera.position.y, view.camera.position.z}, view.camera.yaw,

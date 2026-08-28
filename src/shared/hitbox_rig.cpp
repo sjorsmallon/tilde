@@ -558,7 +558,7 @@ std::optional<hitbox_ray_hit_t> intersect_ray_hitbox(const posed_hitbox_t &hitbo
   }
 }
 
-guesstimated_hitbox_from_bone_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
+guesstimated_hitbox_from_bone_t guesstimate_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
                                  const rigged_hitbox_volume_t &rigged)
 {
   if (!mesh.is_skinned() || skeleton.bones.empty())
@@ -600,26 +600,26 @@ guesstimated_hitbox_from_bone_t derive_hitbox_size(const mesh_asset_t &mesh, con
     along_forward.push_back(std::fabs(linalg::dot(relative, frame.forward)));
   }
 
-  guesstimated_hitbox_from_bone_t seed;
-  seed.radius       = percentile_of(from_axis, HITBOX_SIZE_PERCENTILE);
-  seed.half_extents = {percentile_of(along_right, HITBOX_SIZE_PERCENTILE),
-                       percentile_of(along_up, HITBOX_SIZE_PERCENTILE),
-                       percentile_of(along_forward, HITBOX_SIZE_PERCENTILE)};
-  return seed;
+  guesstimated_hitbox_from_bone_t guesstimated;
+  guesstimated.radius       = percentile_of(from_axis, HITBOX_SIZE_PERCENTILE);
+  guesstimated.half_extents = {percentile_of(along_right, HITBOX_SIZE_PERCENTILE),
+                               percentile_of(along_up, HITBOX_SIZE_PERCENTILE),
+                               percentile_of(along_forward, HITBOX_SIZE_PERCENTILE)};
+  return guesstimated;
 }
 
-void derive_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
-                         const hitbox_rig_t &rig, Span<guesstimated_hitbox_from_bone_t> out)
+void guesstimate_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
+                              const hitbox_rig_t &rig, Span<guesstimated_hitbox_from_bone_t> out)
 {
   if (out.size() != rig.volumes.size())
-    fatal_error("derive_hitbox_sizes: {} volumes, {} outputs", rig.volumes.size(), out.size());
+    fatal_error("guesstimate_hitbox_sizes: {} volumes, {} outputs", rig.volumes.size(), out.size());
 
-  printf("[hitbox] derived sizes for '%s' against mesh of %zu vertices\n", rig.name.c_str(),
+  printf("[hitbox] guesstimated sizes for '%s' against mesh of %zu vertices\n", rig.name.c_str(),
          mesh.vertices.size());
   for (uint32_t index = 0; index < out.size(); ++index)
   {
     const hitbox_volume_t &volume = rig.volumes[index].volume;
-    out[index] = derive_hitbox_size(mesh, skeleton, rig.volumes[index]);
+    out[index] = guesstimate_hitbox_size(mesh, skeleton, rig.volumes[index]);
 
     printf("[hitbox]   %-12s %-8s %-12s -> %-12s  radius %6.2f (authored %6.2f)  extents "
            "%5.2f %5.2f %5.2f%s\n",
@@ -654,9 +654,10 @@ hitbox_rig_t make_hitbox_rig_template(const mesh_asset_t &mesh, const skeleton_t
     entry.end_bone   = index;
     entry.span_bones = {index};
 
-    const guesstimated_hitbox_from_bone_t seed  = derive_hitbox_size(mesh, skeleton, entry);
-    entry.volume.radius       = seed.radius;
-    entry.volume.half_extents = seed.half_extents;
+    const guesstimated_hitbox_from_bone_t guesstimated =
+        guesstimate_hitbox_size(mesh, skeleton, entry);
+    entry.volume.radius       = guesstimated.radius;
+    entry.volume.half_extents = guesstimated.half_extents;
     rig.volumes.push_back(std::move(entry));
   }
   return rig;

@@ -9,7 +9,7 @@
 // shots that do not register.
 //
 // `hitbox_rig_test --dump` additionally prints every bone's bind-pose head and
-// axes and the full derived-size table, which is how the authored sizes were
+// axes and the full guesstimated-size table, which is how the authored sizes were
 // seeded.
 //
 // Run from the project root (ctest pins WORKING_DIRECTORY for exactly this).
@@ -155,36 +155,37 @@ static void test_authored_rig(const model_t &model)
 // but a mesh that has moved out from under it should be loud. The band is wide
 // on purpose -- the head and hands are documented overrides (todo.md §2e), and a
 // test that fails on a deliberate correction is a test people stop reading.
-static void test_sizes_against_derived(const model_t &model)
+static void test_sizes_against_guesstimated(const model_t &model)
 {
-  printf("test_sizes_against_derived\n");
+  printf("test_sizes_against_guesstimated\n");
 
-  std::vector<assets::guesstimated_hitbox_from_bone_t> seeds(model.rig.volumes.size());
-  assets::derive_hitbox_sizes(model.mesh, model.skeleton, model.rig, seeds);
+  std::vector<assets::guesstimated_hitbox_from_bone_t> guesstimated_sizes(model.rig.volumes.size());
+  assets::guesstimate_hitbox_sizes(model.mesh, model.skeleton, model.rig, guesstimated_sizes);
 
   for (size_t index = 0; index < model.rig.volumes.size(); ++index)
   {
     const assets::hitbox_volume_t &volume = model.rig.volumes[index].volume;
-    const assets::guesstimated_hitbox_from_bone_t   &seed   = seeds[index];
+    const assets::guesstimated_hitbox_from_bone_t &guesstimated = guesstimated_sizes[index];
 
-    CHECK(seed.radius > 0.0f, "volume '%s' covers no vertex -- its span_bones own no skin",
+    CHECK(guesstimated.radius > 0.0f, "volume '%s' covers no vertex -- its span_bones own no skin",
           volume.name.c_str());
 
     if (assets::hitbox_shape_uses_radius(volume.shape))
     {
-      CHECK(volume.radius > seed.radius * 0.4f && volume.radius < seed.radius * 2.5f,
-            "volume '%s' is authored at r%.2f but derives r%.2f; the model has moved under it",
-            volume.name.c_str(), volume.radius, seed.radius);
+      CHECK(volume.radius > guesstimated.radius * 0.4f && volume.radius < guesstimated.radius * 2.5f,
+            "volume '%s' is authored at r%.2f but guesses r%.2f; the model has moved under it",
+            volume.name.c_str(), volume.radius, guesstimated.radius);
     }
     else
     {
       const float authored[3] = {volume.half_extents.x, volume.half_extents.y,
                                  volume.half_extents.z};
-      const float derived[3]  = {seed.half_extents.x, seed.half_extents.y, seed.half_extents.z};
+      const float guess[3]    = {guesstimated.half_extents.x, guesstimated.half_extents.y,
+                                 guesstimated.half_extents.z};
       for (uint32_t axis = 0; axis < 3; ++axis)
-        CHECK(authored[axis] > derived[axis] * 0.4f && authored[axis] < derived[axis] * 2.5f,
-              "volume '%s' half-extent %u is authored at %.2f but derives %.2f", volume.name.c_str(),
-              axis, authored[axis], derived[axis]);
+        CHECK(authored[axis] > guess[axis] * 0.4f && authored[axis] < guess[axis] * 2.5f,
+              "volume '%s' half-extent %u is authored at %.2f but guesses %.2f", volume.name.c_str(),
+              axis, authored[axis], guess[axis]);
     }
   }
 }
@@ -697,7 +698,7 @@ int main(int argument_count, char **arguments)
     dump(model);
 
   test_authored_rig(model);
-  test_sizes_against_derived(model);
+  test_sizes_against_guesstimated(model);
   test_hull_excursion(model);
   test_coverage(model);
   test_hitscan_against_the_real_rig();

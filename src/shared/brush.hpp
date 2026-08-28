@@ -22,7 +22,7 @@ inline constexpr uint32_t MAX_BRUSH_VERTICES = 64;
 inline constexpr float BRUSH_WELD_EPSILON     = 0.05f;
 inline constexpr float BRUSH_COPLANAR_EPSILON = 0.05f;
 
-// A guard against a runaway lattice, not a budget: the editor caps its own span
+// A guard against a runaway grid, not a budget: the editor caps its own span
 // well below this.
 inline constexpr int MAX_BRUSH_FOOTPRINT_GRID_SPAN = 128;
 
@@ -52,21 +52,16 @@ std::vector<linalg::vec3> make_box_brush_vertices(const linalg::vec3 &center,
 std::vector<linalg::vec3> extrude_brush_hull(Span<const linalg::vec3> footprint,
                                              const linalg::vec3 &normal, float depth);
 
-// The tangent pair a face's grid lattice is walked in -- axis-aligned normals
+// The tangent pair a face's grid is walked in -- axis-aligned normals
 // get world axes back, so the common case lands on the world grid exactly. NOT
 // the winding basis: cross(u, v) is not the normal for a negative axis.
 void brush_face_grid_tangents(const linalg::vec3 &normal, linalg::vec3 &out_u,
                               linalg::vec3 &out_v);
 
-// A footprint read as FILLED GRID CELLS rather than as a point set: a cell is in
-// when all four of its corners are picked. That reading is unambiguous where a
-// point set is not -- an L-shaped footprint and its convex hull are the same
-// points, and only the hull is derivable from a set. So a concave footprint
-// comes back as several rectangles, one convex brush each.
-//
-// nullopt means the cell reading cannot account for every pick -- one off the
-// grid, off the plane, or belonging to no filled cell -- and the caller should
-// fall back to hulling the whole set, which is what it did before this existed.
+
+// if this footprint (read: selected vertices) can be decomposed into rectangles (like an L-shape)
+// we do that and you can build multiple brushes. if that fails, just go for 
+// the convex hull of this selection because there's nothing better to do.
 [[nodiscard]] std::optional<std::vector<std::vector<linalg::vec3>>>
 try_decompose_footprint_into_rectangles(Span<const linalg::vec3> footprint,
                                         const linalg::vec3 &normal, float grid_step);

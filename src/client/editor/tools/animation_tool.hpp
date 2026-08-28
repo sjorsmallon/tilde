@@ -38,7 +38,7 @@ struct preview_model_t
 
 struct pose_controls_t
 {
-  pose_source_t source = pose_source_t::Aim_Blend;
+  pose_source_t pose_source = pose_source_t::Aim_Blend;
   entities::Aim_Pose single_pose = entities::Aim_Pose::Forward;
   float pitch_degrees = 0.0f;
   float yaw_deviation_degrees = 0.0f;
@@ -58,10 +58,7 @@ struct clip_playback_t
 struct hitbox_workspace_t
 {
   static constexpr int NO_HITBOX_VOLUME_SELECTED = -1;
-
-  // nullopt means the manifest has no `.hitboxes` for this skeleton -- which is
-  // the tool's seeding case, not a failure.
-  std::optional<assets::hitbox_rig> source;
+  std::optional<assets::hitbox_rig> file_based_hitbox_rig;
   assets::hitbox_rig_t rig;
   // this is used as a base to actually create the hitbox rig from.
   std::vector<assets::guesstimated_hitbox_from_bone_t> guesstimated_hitboxes_from_bones;
@@ -73,7 +70,11 @@ struct hitbox_workspace_t
   assets::hull_excursion_t  excursion;
 
   int selected_volume_index = NO_HITBOX_VOLUME_SELECTED;
-  bool load_attempted = false;
+
+  // The rig is a cache of one skeleton's volumes, and this is the key it was
+  // filled for -- set even when the load finds nothing, so a skeleton with no
+  // rig file is not retried every frame.
+  const assets::skeleton_t* loaded_for_skeleton = nullptr;
 };
 
 struct display_options_t
@@ -111,6 +112,8 @@ public:
   std::optional<view_focus_t> view_focus() const override;
 
 private:
+  void refresh_preview();
+
   preview_model_t model;
   pose_controls_t pose_controls;
   clip_playback_t clip;

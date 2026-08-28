@@ -60,10 +60,12 @@ bool push_wireframe_mesh(pass_builder_t &draws,
 // Contours read as an ink line over the grey, not as another light source.
 constexpr color_t BRUSH_CONTOUR_COLOR{30, 32, 38};
 
-// Every hull edge as a line loop per face. Shared edges are drawn twice, which
-// costs nothing at brush sizes and keeps this to one loop with no edge table.
+// Build the hull, then trace it. The callers here all draw a brush the user is
+// editing, so the hull has to be rebuilt anyway; a caller holding a brush that
+// is NOT changing should hoist the build and call draw_brush_hull_wireframe.
 void draw_brush_wireframe(pass_builder_t &draws, const shared::brush_geometry_t &brush,
-                          color_t color, float depth_bias)
+                          color_t color, float depth_bias,
+                          const linalg::vec3 &translation = {0, 0, 0})
 {
   std::optional<shared::brush_polyhedron_t> polyhedron =
       shared::try_build_brush_polyhedron(brush.vertices);
@@ -73,24 +75,36 @@ void draw_brush_wireframe(pass_builder_t &draws, const shared::brush_geometry_t 
     // A brush that does not hull has no edges to trace. Show the bound so the
     // object is still selectable and visibly WRONG rather than invisible.
     const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush.vertices);
-    draws.debug.box((bounds.min + bounds.max) * 0.5f, (bounds.max - bounds.min) * 0.5f,
-                    colors::red, renderer::fill_mode_t::wireframe, depth_bias);
+    draws.debug.box((bounds.min + bounds.max) * 0.5f + translation,
+                    (bounds.max - bounds.min) * 0.5f, colors::red,
+                    renderer::fill_mode_t::wireframe, depth_bias);
     return;
   }
 
-  for (const shared::brush_face_t &face : polyhedron->faces)
+  draw_brush_hull_wireframe(draws, *polyhedron, translation, color, depth_bias);
+}
+
+} // namespace
+
+// Every hull edge as a line loop per face. Shared edges are drawn twice, which
+// costs nothing at brush sizes and keeps this to one loop with no edge table.
+void draw_brush_hull_wireframe(pass_builder_t &draws,
+                               const shared::brush_polyhedron_t &hull,
+                               const linalg::vec3 &translation, color_t color,
+                               float depth_bias)
+{
+  for (const shared::brush_face_t &face : hull.faces)
   {
     for (size_t i = 0; i < face.vertex_indices.size(); ++i)
     {
-      const linalg::vec3 &start = polyhedron->vertices[face.vertex_indices[i]];
-      const linalg::vec3 &end =
-          polyhedron->vertices[face.vertex_indices[(i + 1) % face.vertex_indices.size()]];
+      const linalg::vec3 start = hull.vertices[face.vertex_indices[i]] + translation;
+      const linalg::vec3 end =
+          hull.vertices[face.vertex_indices[(i + 1) % face.vertex_indices.size()]] +
+          translation;
       draws.debug.line(start, end, color, depth_bias);
     }
   }
 }
-
-} // namespace
 
 // ============================================================================
 // Placement
@@ -132,6 +146,18 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
     if (push_wireframe_mesh(draws, mesh_handle, center, static_mesh.orientation,
                             static_mesh.scale, colors::yellow))
       return;
+  }
+
+  // A brush's shape IS its point set, so a box around its bound previews a solid
+  // it is usually not -- the same reason the selection highlight traces the hull
+  // rather than the bound. The hull sits at the brush's own position, so it is
+  // traced with the offset that would carry it to `center`.
+  if (shared::get_kind(geometry) == shared::geometry_kind_t::Brush)
+  {
+    draw_brush_wireframe(draws, std::get<shared::brush_geometry_t>(geometry),
+                         colors::yellow, 0.0f,
+                         center - shared::get_position(geometry));
+    return;
   }
 
   draws.debug.box(center, shared::get_half_extents(geometry), colors::yellow);

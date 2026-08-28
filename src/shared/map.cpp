@@ -795,7 +795,10 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
   switch (entity->type)
   {
     case entities::entity_type::Player_Spectate_Entity:
-      return player_hull_bounds(entity);
+      // Drawn as the camera frustum, so it picks as one. A spectate spot is a
+      // camera and nothing ever stands there, so the player hull it used to
+      // report was a volume the picture never occupies.
+      return get_bounds(make_spectate_frustum(entity->position, entity->orientation));
 
     case entities::entity_type::Player_Spawn_Entity:
       return player_hull_bounds(entity);
@@ -847,6 +850,12 @@ std::vector<Plane> compute_entity_collision_planes(const entities::Entity *entit
   // has one (trigger volumes), otherwise its picking bounds.
   if (const entities::Box_Volume *volume = entities::get_box_volume(entity))
     return compute_collision_planes(to_aabb(*volume, entity->position));
+
+  // The one entity whose hull is not its bound: the frustum's corner is empty
+  // space, and a click there should fall through to whatever is behind it.
+  if (entity->type == entities::entity_type::Player_Spectate_Entity)
+    return compute_collision_planes(
+        make_spectate_frustum(entity->position, entity->orientation));
 
   auto bounds = compute_entity_bounds(entity);
   aabb_t t;
@@ -1075,6 +1084,12 @@ std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const entiti
   // Any entity that owns a box volume -> 6 axis-aligned face quads
   if (const entities::Box_Volume *volume = entities::get_box_volume(entity))
     return compute_face_polygons(to_aabb(*volume, entity->position));
+
+  // Parallel to compute_entity_collision_planes above, which means this one
+  // needs the frustum too.
+  if (entity->type == entities::entity_type::Player_Spectate_Entity)
+    return compute_face_polygons(
+        make_spectate_frustum(entity->position, entity->orientation));
 
   // Fallback: use entity bounds as an AABB
   auto bounds = compute_entity_bounds(entity);

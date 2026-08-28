@@ -170,11 +170,11 @@ struct guesstimated_hitbox_from_bone_t
   linalg::vec3f half_extents = {0, 0, 0};
 };
 
-guesstimated_hitbox_from_bone_t derive_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
+guesstimated_hitbox_from_bone_t guesstimate_hitbox_size(const mesh_asset_t &mesh, const skeleton_t &skeleton,
                                  const rigged_hitbox_volume_t &rigged);
 
-void derive_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
-                         const hitbox_rig_t &rig, Span<guesstimated_hitbox_from_bone_t> out);
+void guesstimate_hitbox_sizes(const mesh_asset_t &mesh, const skeleton_t &skeleton,
+                              const hitbox_rig_t &rig, Span<guesstimated_hitbox_from_bone_t> out);
 
 hitbox_rig_t make_hitbox_rig_template(const mesh_asset_t &mesh, const skeleton_t &skeleton);
 

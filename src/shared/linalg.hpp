@@ -512,6 +512,26 @@ inline vec3f forward_from_model_euler(const vec3f &euler_degrees)
   return {rotation[0].x, rotation[0].y, rotation[0].z};
 }
 
+// An orthonormal basis around the direction a model euler faces. Straight up or
+// straight down leaves cross(forward, world_up) at zero length, which a spectate
+// spot looking at the floor reaches exactly -- the same guard camera.hpp carries.
+struct basis_t
+{
+  vec3f forward = {1.f, 0.f, 0.f};
+  vec3f right   = {0.f, 0.f, 1.f};
+  vec3f up      = {0.f, 1.f, 0.f};
+};
+
+inline basis_t basis_from_model_euler(const vec3f &euler_degrees)
+{
+  const vec3f forward = forward_from_model_euler(euler_degrees);
+
+  vec3f right = cross(forward, vec3f{0.f, 1.f, 0.f});
+  right = (length(right) < 0.001f) ? vec3f{0.f, 0.f, 1.f} : normalize(right);
+
+  return {forward, right, cross(right, forward)};
+}
+
 struct view_angles_t
 {
   float yaw_degrees   = 0.0f;

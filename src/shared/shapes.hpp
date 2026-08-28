@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aabb.hpp"
+#include "array.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "linalg.hpp"
 #include "plane.hpp"
@@ -91,6 +92,101 @@ inline std::array<linalg::vec3, 5> get_pyramid_points(const pyramid_t &pyramid)
       {pos.x + half_size, pos.y, pos.z + half_size}, // Base 3
       {pos.x - half_size, pos.y, pos.z + half_size}  // Base 4
   }};
+}
+
+// The spectate spot's camera gizmo. It lives here rather than beside the code
+// that draws it because the frustum is the shape a spectate spot is DRAWN as,
+// and therefore the shape it has to PICK as: compute_entity_bounds handed back
+// a player hull at the apex, which is a volume the picture never occupies.
+constexpr float SPECTATE_FRUSTUM_DEPTH = 72.f;
+
+// Matches r_fov's default, and is deliberately NOT read from the live cvar: the
+// gizmo is a diagram of where this camera points, not a prediction of one
+// player's screen. Reading r_fov would make the same map draw differently per
+// user and change shape when somebody zooms.
+constexpr float SPECTATE_FRUSTUM_FOV_DEGREES   = 90.f;
+constexpr float SPECTATE_FRUSTUM_ASPECT        = 0.5625f; // 16:9
+constexpr float SPECTATE_FRUSTUM_UP_TICK_SCALE = 1.6f;
+
+struct spectate_frustum_t
+{
+  linalg::vec3           apex        = {};
+  Array<linalg::vec3, 4> far_corners = {}; // top-right, top-left, bottom-left, bottom-right
+  linalg::vec3           up_tick     = {}; // tip of the marker over the top edge
+};
+
+inline spectate_frustum_t make_spectate_frustum(const linalg::vec3 &position,
+                                                const linalg::vec3 &orientation)
+{
+  const linalg::basis_t basis = linalg::basis_from_model_euler(orientation);
+
+  const float half_width =
+      SPECTATE_FRUSTUM_DEPTH *
+      std::tan(linalg::to_radians(SPECTATE_FRUSTUM_FOV_DEGREES * 0.5f));
+  const float half_height = half_width * SPECTATE_FRUSTUM_ASPECT;
+
+  const linalg::vec3 center = position + basis.forward * SPECTATE_FRUSTUM_DEPTH;
+
+  spectate_frustum_t frustum;
+  frustum.apex        = position;
+  frustum.far_corners = {
+      center + basis.right * half_width + basis.up * half_height,
+      center - basis.right * half_width + basis.up * half_height,
+      center - basis.right * half_width - basis.up * half_height,
+      center + basis.right * half_width - basis.up * half_height,
+  };
+  frustum.up_tick = center + basis.up * (half_height * SPECTATE_FRUSTUM_UP_TICK_SCALE);
+  return frustum;
+}
+
+inline aabb_bounds_t get_bounds(const spectate_frustum_t &frustum)
+{
+  aabb_bounds_t bounds{frustum.apex, frustum.apex};
+  for (const linalg::vec3 &corner : frustum.far_corners)
+    expand_aabb_to_include_point(bounds, corner);
+  expand_aabb_to_include_point(bounds, frustum.up_tick);
+  return bounds;
+}
+
+// Five faces: the far rectangle plus the four sides meeting at the apex. The
+// up tick is outside the hull on purpose -- it is a marker, not part of the
+// solid, and the bounds above are already the broad phase that covers it.
+inline std::vector<Plane> compute_collision_planes(const spectate_frustum_t &frustum)
+{
+  linalg::vec3 interior = frustum.apex;
+  for (const linalg::vec3 &corner : frustum.far_corners)
+    interior = interior + corner;
+  interior = interior * 0.2f;
+
+  auto face = [&interior](const linalg::vec3 &a, const linalg::vec3 &b,
+                          const linalg::vec3 &c) -> Plane {
+    linalg::vec3 normal = linalg::normalize(linalg::cross(b - a, c - a));
+    if (linalg::dot(normal, interior - a) > 0.f)
+      normal = normal * -1.f;
+    return {a, normal};
+  };
+
+  std::vector<Plane> planes;
+  planes.reserve(5);
+  planes.push_back(face(frustum.far_corners[0], frustum.far_corners[1],
+                        frustum.far_corners[2]));
+  for (uint32_t i = 0; i < 4; ++i)
+    planes.push_back(face(frustum.apex, frustum.far_corners[i],
+                          frustum.far_corners[(i + 1) % 4]));
+  return planes;
+}
+
+inline std::vector<std::vector<linalg::vec3>>
+compute_face_polygons(const spectate_frustum_t &frustum)
+{
+  std::vector<std::vector<linalg::vec3>> faces;
+  faces.reserve(5);
+  faces.push_back({frustum.far_corners[0], frustum.far_corners[1],
+                   frustum.far_corners[2], frustum.far_corners[3]});
+  for (uint32_t i = 0; i < 4; ++i)
+    faces.push_back({frustum.apex, frustum.far_corners[i],
+                     frustum.far_corners[(i + 1) % 4]});
+  return faces;
 }
 
 } // namespace shared
