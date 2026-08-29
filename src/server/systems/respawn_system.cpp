@@ -31,19 +31,18 @@ const entities::Player_Spawn_Entity& origin_fallback_spawn()
   return fallback;
 }
 
-// Declared in respawn_system.hpp — see there for why this takes the marker.
-void place_player_at_spawn(shared::game_session_t &session, entities::Player_Entity &player,
-                           const entities::Player_Spawn_Entity &marker)
+void place_player_at(shared::game_session_t &session, entities::Player_Entity &player,
+                     const vec3f &position, const vec3f &orientation)
 {
-  player.position    = marker.position;
-  player.orientation = marker.orientation;
+  player.position    = position;
+  player.orientation = orientation;
   // The marker's orientation is the MODEL euler the editor's rotation gizmo
   // writes, not a yaw/pitch pair. Copying .y and .x straight across mirrored the
   // yaw and read the roll as the pitch -- the editor showed no facing at all
   // then, so it went unnoticed. Going through the direction is what makes the
   // spawned player look where the editor's arrow points.
   const linalg::view_angles_t facing = linalg::view_angles_from_direction(
-      linalg::forward_from_model_euler(marker.orientation));
+      linalg::forward_from_model_euler(orientation));
   player.view_angle_yaw   = facing.yaw_degrees;
   player.view_angle_pitch = facing.pitch_degrees;
   // The feet are an accumulator, so they have to be PLACED, not left: a corpse
@@ -67,6 +66,27 @@ void place_player_at_spawn(shared::game_session_t &session, entities::Player_Ent
   // clock and the deploy gate, all of which refill_inventory clears.
   refill_inventory(session, player);
   player.reload_complete_time = 0;
+}
+
+// Declared in respawn_system.hpp — see there for why this takes the marker.
+void place_player_at_spawn(shared::game_session_t &session, entities::Player_Entity &player,
+                           const entities::Player_Spawn_Entity &marker)
+{
+  place_player_at(session, player, marker.position, marker.orientation);
+}
+
+const entities::Trigger_Volume_Entity *
+try_find_checkpoint(shared::game_session_t &session, const entities::Player_Entity &player)
+{
+  if (player.checkpoint_uid == shared::null_entity_uid)
+    return nullptr;
+
+  const entities::Trigger_Volume_Entity *checkpoint =
+      session.entity_system.get<entities::Trigger_Volume_Entity>(player.checkpoint_uid);
+  if (checkpoint == nullptr || checkpoint->action != entities::Trigger_Action::Checkpoint)
+    return nullptr;
+
+  return checkpoint;
 }
 
 void schedule_respawn(server_context_t &context,
@@ -102,6 +122,14 @@ try_pick_human_spawn(shared::game_session_t &session, Spawn_Policy policy,
   // Two passes rather than a collected vector: this runs on player join and on
   // every respawn, and the pool is small enough that counting is cheaper than
   // allocating.
+  if (policy == Spawn_Policy::Single_Fixed_Start)
+  {
+    for (const entities::Player_Spawn_Entity &spawn : spawns)
+      if (spawn.spawn_type == entities::Spawn_Type::Human)
+        return &spawn;
+    return nullptr;
+  }
+
   bool honor_team = policy == Spawn_Policy::Team_Markers;
 
   uint32_t candidate_count = 0;
@@ -139,6 +167,16 @@ try_pick_human_spawn(shared::game_session_t &session, Spawn_Policy policy,
               candidate_count, wanted);
 }
 
+void seed_damageable_health(shared::game_session_t &session)
+{
+  for (entities::Damageable_Entity &damageable :
+       session.entity_system.entities_of<entities::Damageable_Entity>())
+  {
+    damageable.health         = damageable.max_health;
+    damageable.render.visible = true;
+  }
+}
+
 void respawn_all_players(server_context_t &context)
 {
   // Dropped BEFORE the loop: every player is about to be alive at a marker, so
@@ -151,6 +189,8 @@ void respawn_all_players(server_context_t &context)
   for (entities::Player_Entity &player :
        context.world.session.entity_system.entities_of<entities::Player_Entity>())
   {
+    player.checkpoint_uid = shared::null_entity_uid;
+
     const entities::Player_Spawn_Entity *marker =
         try_pick_human_spawn(context.world.session, policy, player.team_allegiance,
                              rotation_index);
@@ -211,18 +251,28 @@ void update_respawns(server_context_t &context,
       continue;
     }
 
-    // 0: the respawn drain always takes the first marker. Cycling here is a
-    // gameplay decision, not a mechanism one — change the argument, not this.
-    const entities::Player_Spawn_Entity *marker =
-        try_pick_human_spawn(context.world.session, current_mode(context).spawn_policy,
-                             player->team_allegiance, 0);
-    if (marker == nullptr)
-      log_error("update_respawns: no Player_Spawn_Entity available, "
-                "respawning player uid {} at origin",
-                static_cast<uint64_t>(uid));
+    const entities::Trigger_Volume_Entity *checkpoint =
+        try_find_checkpoint(context.world.session, *player);
+    if (checkpoint != nullptr)
+    {
+      place_player_at(context.world.session, *player, checkpoint->position,
+                      checkpoint->orientation);
+    }
+    else
+    {
+      // 0: the respawn drain always takes the first marker. Cycling here is a
+      // gameplay decision, not a mechanism one — change the argument, not this.
+      const entities::Player_Spawn_Entity *marker =
+          try_pick_human_spawn(context.world.session, current_mode(context).spawn_policy,
+                               player->team_allegiance, 0);
+      if (marker == nullptr)
+        log_error("update_respawns: no Player_Spawn_Entity available, "
+                  "respawning player uid {} at origin",
+                  static_cast<uint64_t>(uid));
 
-    place_player_at_spawn(context.world.session, *player,
-                          marker ? *marker : origin_fallback_spawn());
+      place_player_at_spawn(context.world.session, *player,
+                            marker ? *marker : origin_fallback_spawn());
+    }
 
     // Move the kinematic Jolt capsule so subsequent overlap/swept queries
     // this tick (rocket splash, trigger volumes) see the player at the new

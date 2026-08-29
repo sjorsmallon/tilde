@@ -14,7 +14,10 @@
 
 #include "../shared/entity_system.hpp"
 #include "../shared/game_session.hpp"
+#include "../shared/linalg.hpp"
 #include "../shared/log.hpp"
+#include "../shared/weapons.hpp"
+#include "systems/inventory_system.hpp"
 
 #include <algorithm>
 #include <string>
@@ -107,6 +110,58 @@ void action_warp_to_spawn(server::server_context_t &context,
   player.position = target->position;
 }
 
+void action_complete_level(server::server_context_t &context,
+                           entities::Trigger_Volume_Entity & /*trigger*/,
+                           entities::Player_Entity &player)
+{
+  if (context.world.rules.objective_reached)
+    return;
+
+  context.world.rules.objective_reached = true;
+  log_terminal("trigger fired by player {}: objective reached", player.entity_id);
+}
+
+void action_checkpoint(server::server_context_t & /*context*/,
+                       entities::Trigger_Volume_Entity &trigger,
+                       entities::Player_Entity &player)
+{
+  if (player.checkpoint_uid == trigger.entity_id)
+    return;
+
+  player.checkpoint_uid = trigger.entity_id;
+  log_terminal("trigger fired by player {}: checkpoint {} taken", player.entity_id,
+               trigger.entity_id);
+}
+
+void action_grant_weapon(server::server_context_t &context,
+                         entities::Trigger_Volume_Entity &trigger,
+                         entities::Player_Entity &player)
+{
+  const std::optional<entities::Weapon> weapon =
+      entities::try_from_string<entities::Weapon>(trigger.param_string.c_str());
+  if (!weapon.has_value())
+  {
+    log_error("grant_weapon: trigger {} names weapon '{}', which is not an entities::Weapon "
+              "value in this build",
+              trigger.entity_id, trigger.param_string.c_str());
+    return;
+  }
+
+  if (server::try_grant_weapon(context, player, *weapon) == shared::null_entity_uid)
+    log_error("grant_weapon: trigger {} could not give player {} a {}", trigger.entity_id,
+              player.entity_id, to_string(*weapon));
+}
+
+// The trigger's own facing is the launch direction, so a pad is aimed with the
+// editor's rotate gizmo rather than with three more param fields.
+void action_set_velocity(server::server_context_t & /*context*/,
+                         entities::Trigger_Volume_Entity &trigger,
+                         entities::Player_Entity &player)
+{
+  player.velocity =
+      linalg::forward_from_model_euler(trigger.orientation) * trigger.param_float;
+}
+
 } // namespace
 
 namespace server
@@ -129,6 +184,18 @@ void fire_trigger_action(server_context_t &context,
       return;
     case entities::Trigger_Action::Warp_To_Spawn:
       action_warp_to_spawn(context, trigger, player);
+      return;
+    case entities::Trigger_Action::Complete_Level:
+      action_complete_level(context, trigger, player);
+      return;
+    case entities::Trigger_Action::Checkpoint:
+      action_checkpoint(context, trigger, player);
+      return;
+    case entities::Trigger_Action::Grant_Weapon:
+      action_grant_weapon(context, trigger, player);
+      return;
+    case entities::Trigger_Action::Set_Velocity:
+      action_set_velocity(context, trigger, player);
       return;
   }
 

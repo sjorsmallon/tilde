@@ -103,6 +103,14 @@ static void enter_phase(server_context_t &context,
     // (start_match and the Round_End rollover) and a round that snapped on only
     // one path is the kind of bug that reads as a physics glitch.
     respawn_all_players(context);
+
+    // The other half of the world. A round that put the players back but left
+    // every target destroyed is a round only the first one of which is
+    // playable -- and this is the boundary, the one place a change like that
+    // is MADE rather than asked about.
+    seed_damageable_health(context.world.session);
+
+    context.world.rules.objective_reached = false;
   }
 
   log_terminal("Round {}: entering phase {} (ends tick {})",
@@ -367,6 +375,17 @@ void check_win_condition(server_context_t &context,
                      to_string(red.alive == 0 ? entities::Team_Allegiance::Blu
                                               : entities::Team_Allegiance::Red));
 
+      end_round(context, current_tick, tickrate_hz);
+      return;
+    }
+
+    case Win_Condition::Objective_Reached:
+    {
+      if (!context.world.rules.objective_reached)
+        return;
+
+      log_terminal("Round {}: objective reached — ending the round",
+                   context.world.rules.round_number);
       end_round(context, current_tick, tickrate_hz);
       return;
     }

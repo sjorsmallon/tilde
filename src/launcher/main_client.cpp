@@ -4,6 +4,9 @@
 #include "shared/cvars/generated/cvars_generated.hpp"
 #include "shared/detached_console.hpp"
 #include "shared/log.hpp"
+#include "shared/cpu_topology.hpp"
+#include "shared/frame_timing.hpp"
+#include "shared/memory_audit.hpp"
 #include "shared/timed_function.hpp"
 
 #include <chrono>
@@ -32,6 +35,16 @@ static cvars::command_table_t g_command_table{};
 // at this one object. See the ownership note in asset.hpp.
 static assets::asset_state_t  g_asset_state{};
 
+// The one allocation-audit state for this process; see the note in
+// main_integrated.cpp. Constant-initialized, so it is usable before any dynamic
+// initializer has run.
+static memory_audit::memory_audit_state_t g_memory_audit_state{};
+
+// The one frame-time distribution for this process. Unlike the audit above this
+// is installed in EVERY build: a QPC read and a histogram bump per frame costs
+// nothing, and a hitch is what we are trying not to have.
+static frame_timing::frame_timing_state_t g_frame_timing_state{};
+
 int main(int argc, char *argv[])
 {
   // Change working directory to the project root (parent of cmake_build/), same
@@ -57,6 +70,13 @@ int main(int argc, char *argv[])
 
   log_terminal("=== Starting MyGame (Networked Client) ===");
 
+#if TILDE_MEMORY_AUDIT
+  memory_audit::set_state(&g_memory_audit_state);
+  client::install_memory_audit(&g_memory_audit_state);
+#endif
+  frame_timing::set_state(&g_frame_timing_state);
+  client::install_frame_timing(&g_frame_timing_state);
+
   // Point this module at the one asset state, then register eagerly before
   // anything resolves an id. client::Init points the DLL's copy at it too.
   assets::set_state(&g_asset_state);
@@ -76,14 +96,40 @@ int main(int argc, char *argv[])
   log_terminal("=== Initialization Complete, Entering Loop ===");
 
   bool running = true;
-  auto previous_time = std::chrono::high_resolution_clock::now();
+  std::chrono::high_resolution_clock::time_point previous_time{};
+
+  // Before the loop, and read once: on a hybrid CPU the scheduler moving the
+  // main thread to an E-core costs ~40% of its throughput for that frame, which
+  // is a hitch no allocation or cache profiler can see. The framerate cap below
+  // SLEEPS every frame, and a thread that sleeps is exactly what Thread
+  // Director demotes -- so this matters more here than it would otherwise.
+  if (g_cvar_state.pin_main_thread)
+    cpu_topology::try_pin_current_thread_to_performance_cores();
+
+  // Closes the load out as STARTUP so it is not attributed to frame 1. Without
+  // this the worst frame is always the load, which hides the worst gameplay
+  // frame -- the one hitches actually come from.
+  memory_audit::mark_startup_complete();
+
+  // AFTER the two above, so the pin's processor enumeration is not measured as
+  // the first frame.
+  previous_time = std::chrono::high_resolution_clock::now();
 
   while (running)
   {
     auto current_time = std::chrono::high_resolution_clock::now();
+    const double raw_frame_milliseconds =
+        std::chrono::duration<double>(current_time - previous_time).count() * 1000.0;
     previous_time = current_time;
 
-    // Client frame (renders at display rate; the server ticks in its own process)
+    // Closes the previous frame. Both calls cover the SAME interval -- the
+    // period between loop iterations -- so the duration and the allocation
+    // count describe one frame and can be reported together. The period is what
+    // the player experiences, cap sleep included; timing only the work would
+    // hide a stall in the cap or in the present.
+    memory_audit::mark_frame();
+    frame_timing::end_frame(raw_frame_milliseconds, memory_audit::last_frame_allocations());
+
     if (!client::Tick())
     {
       running = false;
@@ -111,6 +157,12 @@ int main(int argc, char *argv[])
   client::shutdown();
 
   print_timing_stats();
+
+  frame_timing::report();
+
+#if TILDE_MEMORY_AUDIT
+  memory_audit::report(30);
+#endif
 
   return 0;
 }

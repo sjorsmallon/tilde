@@ -1,3 +1,5 @@
+#include "../shared/frame_timing.hpp"
+#include "../shared/memory_audit.hpp"
 #include "console.hpp"
 #include "cvars/cvar_console.hpp"
 #include "input.hpp"
@@ -401,6 +403,48 @@ void connect(std::string_view address, const command_context_t &)
   client::console::get().print("connecting to %s...",
                                server_address.to_string().c_str());
   client::state_manager::switch_to(client::game_state::play);
+}
+
+void mem_report(int32_t top, const command_context_t &)
+{
+  memory_audit::report(top <= 0 ? 20u : static_cast<uint32_t>(top));
+  client::console::get().print("mem_report: written to the terminal");
+}
+
+void mem_frame(const command_context_t &)
+{
+  memory_audit::report_frame();
+  client::console::get().print("mem_frame: written to the terminal");
+}
+
+void mem_stacks(bool capture, const command_context_t &)
+{
+  memory_audit::set_capture_stacks(capture);
+  client::console::get().print("mem_stacks: stack capture %s",
+                               capture ? "on" : "off");
+}
+
+void frame_report(const command_context_t &)
+{
+  frame_timing::report();
+  client::console::get().print("frame_report: written to the terminal");
+}
+
+void hitch_report(int32_t top, const command_context_t &)
+{
+  // Zones first: they say WHERE the time went, which is the question. The
+  // allocation sites say what the frame allocated, which is a different one --
+  // and on a frame that stalled on the GPU or a subprocess, the answer is
+  // "almost nothing" and the zones are the whole story.
+  frame_timing::report_worst_frame_zones();
+  memory_audit::report_captured_frame(top <= 0 ? 15u : static_cast<uint32_t>(top));
+  client::console::get().print("hitch_report: written to the terminal");
+}
+
+void frame_reset(const command_context_t &)
+{
+  frame_timing::reset();
+  client::console::get().print("frame_reset: distribution cleared");
 }
 
 } // namespace cvars::commands

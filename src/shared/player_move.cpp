@@ -1,6 +1,7 @@
 #include "player_move.hpp"
 #include "network/network_types.hpp"
 #include "debug_collision.hpp"
+#include <algorithm>
 #include <cmath>
 #include <print>
 #include "timed_function.hpp"
@@ -663,6 +664,7 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
 std::tuple<vec3, vec3> player_move(
     const cvars::cvar_state_t &cvars,
     const Move_Input &input,
+    entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const float half_width, const float half_height,
@@ -694,6 +696,37 @@ std::tuple<vec3, vec3> player_move(
   // - y velocity is going down. (at least not going up.)
   bool grounded = has_ground && (old_velocity.y <= 0.0f);
 
+  // --- ABILITIES: the only place per-player movement state is read ---
+  //
+  // A GROUND jump reads the LEVEL, unchanged: holding space to bunnyhop is the
+  // behavior, not a bug, and nothing is spent by it.
+  //
+  // An AIR jump reads the rising EDGE, because it spends a charge. Reading the
+  // level would empty the whole budget inside one tick -- and at 64 sub-tick
+  // slots per tick that is not a rounding error, it is every charge on one
+  // press. The edge is derived HERE from movement.jump_was_held rather than at
+  // the call sites, because the four callers (server, live prediction,
+  // reconciliation, bots) would each have to diff two inputs identically, and a
+  // replay that diffed differently is exactly the silent divergence this state
+  // has to avoid.
+  const bool jump_edge = input.jump_pressed && !movement.jump_was_held;
+
+  const bool air_jump_fired =
+      !grounded && jump_edge &&
+      (int32_t)movement.air_jumps_used < cvars.pm_air_jump_count;
+
+  // Applied to the velocity ENTERING the move, not after it, for the same
+  // reason my_walk_move sets the ground jump before step_slide_move: the
+  // impulse is integrated into this step's position rather than showing up one
+  // step late. A step boundary is 0.26ms, so "one step late" is invisible --
+  // but it would also be step-count-dependent, which is what
+  // player_move_step_invariance_test exists to refuse.
+  vec3 velocity_entering_move = old_velocity;
+  if (air_jump_fired)
+  {
+    velocity_entering_move.y = cvars.pm_air_jump_speed;
+    ++movement.air_jumps_used;
+  }
 
   vec3 new_pos, new_vel;
 
@@ -830,17 +863,20 @@ std::tuple<vec3, vec3> player_move(
     }
     else
     {
+      // velocity_entering_move, not old_velocity: an air jump replaced the Y
+      // component above and this is the path that integrates it. They are the
+      // same vector on every step where no air jump fired.
       std::tie(new_pos, new_vel) =
           my_air_move(cvars, input, has_ground, ground_normal, has_ceiling,
                       ceiling_normal, collider_planes, player_pos,
-                      old_velocity, front, right, dt);
+                      velocity_entering_move, front, right, dt);
     }
   }
 
   // A jump impulse is applied exactly when we ran the grounded walk path (not
   // the step-glide path) with jump held — that's where my_walk_move sets
   // new_velocity.y = jumpspeed. The step path discards any jump, so exclude it.
-  bool jumped = grounded && input.jump_pressed && !used_step;
+  bool jumped = (grounded && input.jump_pressed && !used_step) || air_jump_fired;
 
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.
@@ -881,6 +917,50 @@ std::tuple<vec3, vec3> player_move(
     if (dot(new_vel, plane.normal) < 0.f)
       new_vel = clip_vector(new_vel, plane.normal, overbounce);
   }
+
+  // --- ABILITIES: the only place per-player movement state is written ---
+  //
+  // Off the POST-move resolve, which is the honest end-of-step answer: the
+  // pre-move `grounded` above also demands a non-rising velocity, because that
+  // is what makes a jump leave the ground, so it answers "may I walk" rather
+  // than "am I touching floor". An ability budget keys off the second question
+  // -- a player rising off a ledge has not left the ground yet.
+  const bool grounded_after_move = !post_planes.ground_planes.empty();
+
+  if (grounded_after_move)
+  {
+    // Landing is what refills the budget, not jumping. Tying it to the jump
+    // would let a player who walked off a ledge spend charges they never
+    // earned back, and tying it to the pre-move test would refill them on the
+    // rising half of a ground jump.
+    movement.air_jumps_used              = 0;
+    movement.time_since_grounded_seconds = 0.f;
+  }
+  else
+  {
+    // ACCUMULATED rather than re-derived from a tick number, which is what
+    // makes it step-invariant: N sub-steps summing to one tick's dt add the
+    // same total as one step of it.
+    movement.time_since_grounded_seconds += dt;
+  }
+
+  movement.is_grounded = grounded_after_move;
+
+  // Counted down HERE rather than at the fire site for the same reason
+  // time_since_grounded_seconds is accumulated here: N sub-steps summing to one
+  // tick's dt have to spend the same cooldown as one step of it, and this is
+  // the function every step goes through. The impulse itself is applied by
+  // try_apply_self_impulse (weapons.hpp) at the trigger edge, which is outside
+  // -- player_move knows about movement state, not about what is in the hand.
+  //
+  // Clamped at zero rather than allowed to run negative, so "ready" is one
+  // value and not any of them.
+  movement.seconds_until_impulse_ready =
+      std::max(0.f, movement.seconds_until_impulse_ready - dt);
+
+  // The edge's other half, written last so the next step compares against what
+  // this one actually saw.
+  movement.jump_was_held = input.jump_pressed;
 
   if (out_events)
   {

@@ -32,13 +32,21 @@ constexpr const char* Weapon_VALUE_NAMES[] = {
   "Knife",
   "Scout",
   "Rocket_Launcher",
+  "Dash",
 };
 
-constexpr const char* Weapon_Kind_VALUE_NAMES[] = {
-  "Melee",
+constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
   "Hitscan",
   "Projectile",
-  "Sniper",
+  "Self_Impulse",
+};
+
+constexpr const char* Inventory_Slot_VALUE_NAMES[] = {
+  "Primary",
+  "Secondary",
+  "Melee",
+  "Utility_1",
+  "Utility_2",
 };
 
 constexpr const char* Shader_Type_VALUE_NAMES[] = {
@@ -56,6 +64,10 @@ constexpr const char* Trigger_Action_VALUE_NAMES[] = {
   "Set_Health",
   "Print_Message",
   "Warp_To_Spawn",
+  "Complete_Level",
+  "Checkpoint",
+  "Grant_Weapon",
+  "Set_Velocity",
 };
 
 constexpr const char* Fire_Mode_VALUE_NAMES[] = {
@@ -74,11 +86,12 @@ constexpr const char* Aim_Pose_VALUE_NAMES[] = {
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
-  {"Weapon", {Weapon_VALUE_NAMES, 3}},
-  {"Weapon_Kind", {Weapon_Kind_VALUE_NAMES, 4}},
+  {"Weapon", {Weapon_VALUE_NAMES, 4}},
+  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 3}},
+  {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Shader_Type", {Shader_Type_VALUE_NAMES, 2}},
   {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 2}},
-  {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 4}},
+  {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 8}},
   {"Fire_Mode", {Fire_Mode_VALUE_NAMES, 2}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
 };
@@ -113,7 +126,7 @@ constexpr field_info_t Material_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[4]},
+   .enum_info = &ENUM_INFOS[5]},
   {.name = "color",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Material, color),
@@ -221,8 +234,56 @@ constexpr field_info_t Light_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Movement_FIELDS[] = {
+  {.name = "air_jumps_used",
+   .type = FIELD_TYPE_U8,
+   .offset = (uint32_t)offsetof(Movement, air_jumps_used),
+   .size_in_bytes = (uint32_t)sizeof(Movement::air_jumps_used),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "is_grounded",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Movement, is_grounded),
+   .size_in_bytes = (uint32_t)sizeof(Movement::is_grounded),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "time_since_grounded_seconds",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Movement, time_since_grounded_seconds),
+   .size_in_bytes = (uint32_t)sizeof(Movement::time_since_grounded_seconds),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "jump_was_held",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Movement, jump_was_held),
+   .size_in_bytes = (uint32_t)sizeof(Movement::jump_was_held),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "seconds_until_impulse_ready",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Movement, seconds_until_impulse_ready),
+   .size_in_bytes = (uint32_t)sizeof(Movement::seconds_until_impulse_ready),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t Inventory_FIELDS[] = {
-  {.name = "weapons.Knife",
+  {.name = "weapons.Primary",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)(offsetof(Inventory, weapons) + 0 * sizeof(Inventory::weapons.values[0])),
    .size_in_bytes = (uint32_t)sizeof(Inventory::weapons.values[0]),
@@ -231,7 +292,7 @@ constexpr field_info_t Inventory_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "weapons.Scout",
+  {.name = "weapons.Secondary",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)(offsetof(Inventory, weapons) + 1 * sizeof(Inventory::weapons.values[0])),
    .size_in_bytes = (uint32_t)sizeof(Inventory::weapons.values[0]),
@@ -240,7 +301,7 @@ constexpr field_info_t Inventory_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "weapons.Rocket_Launcher",
+  {.name = "weapons.Melee",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)(offsetof(Inventory, weapons) + 2 * sizeof(Inventory::weapons.values[0])),
    .size_in_bytes = (uint32_t)sizeof(Inventory::weapons.values[0]),
@@ -249,15 +310,33 @@ constexpr field_info_t Inventory_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "active_weapon",
-   .type = FIELD_TYPE_ENUM,
-   .offset = (uint32_t)offsetof(Inventory, active_weapon),
-   .size_in_bytes = (uint32_t)sizeof(Inventory::active_weapon),
+  {.name = "weapons.Utility_1",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)(offsetof(Inventory, weapons) + 3 * sizeof(Inventory::weapons.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Inventory::weapons.values[0]),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[2]},
+   .enum_info = NOT_AN_ENUM},
+  {.name = "weapons.Utility_2",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)(offsetof(Inventory, weapons) + 4 * sizeof(Inventory::weapons.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Inventory::weapons.values[0]),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "active_slot",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Inventory, active_slot),
+   .size_in_bytes = (uint32_t)sizeof(Inventory::active_slot),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[4]},
   {.name = "deploy_complete_time",
    .type = FIELD_TYPE_U64,
    .offset = (uint32_t)offsetof(Inventory, deploy_complete_time),
@@ -456,6 +535,15 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "checkpoint_uid",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Player_Entity, checkpoint_uid),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::checkpoint_uid),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "last_hit_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Player_Entity, last_hit_tick),
@@ -523,6 +611,15 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Player_Entity, inventory),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::inventory),
+   .flags = 0u,
+   .component_id = 5,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "movement",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Player_Entity, movement),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::movement),
    .flags = 0u,
    .component_id = 4,
    .string_capacity = NOT_A_STRING,
@@ -935,6 +1032,72 @@ constexpr field_info_t Particle_Emitter_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Damageable_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Damageable_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Damageable_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::position),
+   .flags = 7u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Damageable_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::orientation),
+   .flags = 7u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "max_health",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Damageable_Entity, max_health),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::max_health),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "health",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Damageable_Entity, health),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::health),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "hitbox_half_extents",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Damageable_Entity, hitbox_half_extents),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::hitbox_half_extents),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Damageable_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::render),
+   .flags = 0u,
+   .component_id = 2,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_U32,
@@ -980,7 +1143,7 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[6]},
+   .enum_info = &ENUM_INFOS[7]},
   {.name = "fire_mode",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Trigger_Volume_Entity, fire_mode),
@@ -989,7 +1152,7 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[7]},
+   .enum_info = &ENUM_INFOS[8]},
   {.name = "param_target_name",
    .type = FIELD_TYPE_STRING,
    .offset = (uint32_t)offsetof(Trigger_Volume_Entity, param_target_name),
@@ -1208,7 +1371,7 @@ constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[5]},
+   .enum_info = &ENUM_INFOS[6]},
   {.name = "size",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Physics_Body_Entity, size),
@@ -1252,7 +1415,8 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Material", {Material_FIELDS, 3}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
   {"Light", {Light_FIELDS, 2}, (uint32_t)sizeof(Light)},
-  {"Inventory", {Inventory_FIELDS, 5}, (uint32_t)sizeof(Inventory)},
+  {"Movement", {Movement_FIELDS, 5}, (uint32_t)sizeof(Movement)},
+  {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
 };
 
 Entity* construct_Player_Spawn_Entity(void* memory) { return new (memory) Player_Spawn_Entity(); }
@@ -1261,6 +1425,7 @@ Entity* construct_Player_Entity(void* memory) { return new (memory) Player_Entit
 Entity* construct_Weapon_Entity(void* memory) { return new (memory) Weapon_Entity(); }
 Entity* construct_Rocket_Entity(void* memory) { return new (memory) Rocket_Entity(); }
 Entity* construct_Particle_Emitter_Entity(void* memory) { return new (memory) Particle_Emitter_Entity(); }
+Entity* construct_Damageable_Entity(void* memory) { return new (memory) Damageable_Entity(); }
 Entity* construct_Trigger_Volume_Entity(void* memory) { return new (memory) Trigger_Volume_Entity(); }
 Entity* construct_Point_Light_Entity(void* memory) { return new (memory) Point_Light_Entity(); }
 Entity* construct_Spot_Light_Entity(void* memory) { return new (memory) Spot_Light_Entity(); }
@@ -1273,6 +1438,7 @@ Entity* as_base_Player_Entity(void* memory) { return static_cast<Entity*>((Playe
 Entity* as_base_Weapon_Entity(void* memory) { return static_cast<Entity*>((Weapon_Entity*)memory); }
 Entity* as_base_Rocket_Entity(void* memory) { return static_cast<Entity*>((Rocket_Entity*)memory); }
 Entity* as_base_Particle_Emitter_Entity(void* memory) { return static_cast<Entity*>((Particle_Emitter_Entity*)memory); }
+Entity* as_base_Damageable_Entity(void* memory) { return static_cast<Entity*>((Damageable_Entity*)memory); }
 Entity* as_base_Trigger_Volume_Entity(void* memory) { return static_cast<Entity*>((Trigger_Volume_Entity*)memory); }
 Entity* as_base_Point_Light_Entity(void* memory) { return static_cast<Entity*>((Point_Light_Entity*)memory); }
 Entity* as_base_Spot_Light_Entity(void* memory) { return static_cast<Entity*>((Spot_Light_Entity*)memory); }
@@ -1283,10 +1449,11 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 3}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 22}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 20u, true, construct_Player_Entity, as_base_Player_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 24}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 52u, true, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 8}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 4u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
+  {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 7}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 4u, false, construct_Damageable_Entity, as_base_Damageable_Entity},
   {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 1u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
   {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 5}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 8u, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
   {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 8u, false, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
@@ -1294,27 +1461,29 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 8}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 4u, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
 };
 
-constexpr int32_t COMPONENT_OFFSETS[][5] = {
-  {-1, -1, -1, -1, -1}, // Invalid
-  {-1, -1, -1, -1, -1}, // Player_Spawn_Entity
-  {-1, -1, -1, -1, -1}, // Player_Spectate_Entity
-  {-1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, inventory)}, // Player_Entity
-  {-1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1}, // Weapon_Entity
-  {-1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1}, // Rocket_Entity
-  {-1, -1, -1, -1, -1}, // Particle_Emitter_Entity
-  {(int32_t)offsetof(Trigger_Volume_Entity, volume), -1, -1, -1, -1}, // Trigger_Volume_Entity
-  {-1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1}, // Point_Light_Entity
-  {-1, -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1}, // Spot_Light_Entity
-  {-1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1}, // Directional_Light_Entity
-  {-1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1}, // Physics_Body_Entity
+constexpr int32_t COMPONENT_OFFSETS[][6] = {
+  {-1, -1, -1, -1, -1, -1}, // Invalid
+  {-1, -1, -1, -1, -1, -1}, // Player_Spawn_Entity
+  {-1, -1, -1, -1, -1, -1}, // Player_Spectate_Entity
+  {-1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory)}, // Player_Entity
+  {-1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1}, // Weapon_Entity
+  {-1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1}, // Rocket_Entity
+  {-1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
+  {-1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1}, // Damageable_Entity
+  {(int32_t)offsetof(Trigger_Volume_Entity, volume), -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
+  {-1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1}, // Point_Light_Entity
+  {-1, -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1, -1}, // Spot_Light_Entity
+  {-1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1}, // Directional_Light_Entity
+  {-1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1}, // Physics_Body_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 9;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 10;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
   entity_type::Weapon_Entity,
   entity_type::Particle_Emitter_Entity,
+  entity_type::Damageable_Entity,
   entity_type::Trigger_Volume_Entity,
   entity_type::Point_Light_Entity,
   entity_type::Spot_Light_Entity,
@@ -1369,6 +1538,7 @@ const char* to_string(Weapon value)
     case Weapon::Knife: return "Knife";
     case Weapon::Scout: return "Scout";
     case Weapon::Rocket_Launcher: return "Rocket_Launcher";
+    case Weapon::Dash: return "Dash";
   }
   assert(false && "invalid Weapon");
   return "";
@@ -1379,28 +1549,51 @@ template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
   if (text == "Knife") return Weapon::Knife;
   if (text == "Scout") return Weapon::Scout;
   if (text == "Rocket_Launcher") return Weapon::Rocket_Launcher;
+  if (text == "Dash") return Weapon::Dash;
   return std::nullopt;
 }
 
-const char* to_string(Weapon_Kind value)
+const char* to_string(Fire_Resolution value)
 {
   switch (value)
   {
-    case Weapon_Kind::Melee: return "Melee";
-    case Weapon_Kind::Hitscan: return "Hitscan";
-    case Weapon_Kind::Projectile: return "Projectile";
-    case Weapon_Kind::Sniper: return "Sniper";
+    case Fire_Resolution::Hitscan: return "Hitscan";
+    case Fire_Resolution::Projectile: return "Projectile";
+    case Fire_Resolution::Self_Impulse: return "Self_Impulse";
   }
-  assert(false && "invalid Weapon_Kind");
+  assert(false && "invalid Fire_Resolution");
   return "";
 }
 
-template <> std::optional<Weapon_Kind> try_from_string<Weapon_Kind>(std::string_view text)
+template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text)
 {
-  if (text == "Melee") return Weapon_Kind::Melee;
-  if (text == "Hitscan") return Weapon_Kind::Hitscan;
-  if (text == "Projectile") return Weapon_Kind::Projectile;
-  if (text == "Sniper") return Weapon_Kind::Sniper;
+  if (text == "Hitscan") return Fire_Resolution::Hitscan;
+  if (text == "Projectile") return Fire_Resolution::Projectile;
+  if (text == "Self_Impulse") return Fire_Resolution::Self_Impulse;
+  return std::nullopt;
+}
+
+const char* to_string(Inventory_Slot value)
+{
+  switch (value)
+  {
+    case Inventory_Slot::Primary: return "Primary";
+    case Inventory_Slot::Secondary: return "Secondary";
+    case Inventory_Slot::Melee: return "Melee";
+    case Inventory_Slot::Utility_1: return "Utility_1";
+    case Inventory_Slot::Utility_2: return "Utility_2";
+  }
+  assert(false && "invalid Inventory_Slot");
+  return "";
+}
+
+template <> std::optional<Inventory_Slot> try_from_string<Inventory_Slot>(std::string_view text)
+{
+  if (text == "Primary") return Inventory_Slot::Primary;
+  if (text == "Secondary") return Inventory_Slot::Secondary;
+  if (text == "Melee") return Inventory_Slot::Melee;
+  if (text == "Utility_1") return Inventory_Slot::Utility_1;
+  if (text == "Utility_2") return Inventory_Slot::Utility_2;
   return std::nullopt;
 }
 
@@ -1448,6 +1641,10 @@ const char* to_string(Trigger_Action value)
     case Trigger_Action::Set_Health: return "Set_Health";
     case Trigger_Action::Print_Message: return "Print_Message";
     case Trigger_Action::Warp_To_Spawn: return "Warp_To_Spawn";
+    case Trigger_Action::Complete_Level: return "Complete_Level";
+    case Trigger_Action::Checkpoint: return "Checkpoint";
+    case Trigger_Action::Grant_Weapon: return "Grant_Weapon";
+    case Trigger_Action::Set_Velocity: return "Set_Velocity";
   }
   assert(false && "invalid Trigger_Action");
   return "";
@@ -1459,6 +1656,10 @@ template <> std::optional<Trigger_Action> try_from_string<Trigger_Action>(std::s
   if (text == "Set_Health") return Trigger_Action::Set_Health;
   if (text == "Print_Message") return Trigger_Action::Print_Message;
   if (text == "Warp_To_Spawn") return Trigger_Action::Warp_To_Spawn;
+  if (text == "Complete_Level") return Trigger_Action::Complete_Level;
+  if (text == "Checkpoint") return Trigger_Action::Checkpoint;
+  if (text == "Grant_Weapon") return Trigger_Action::Grant_Weapon;
+  if (text == "Set_Velocity") return Trigger_Action::Set_Velocity;
   return std::nullopt;
 }
 
@@ -1555,6 +1756,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Weapon_Entity: return new Weapon_Entity();
     case entity_type::Rocket_Entity: return new Rocket_Entity();
     case entity_type::Particle_Emitter_Entity: return new Particle_Emitter_Entity();
+    case entity_type::Damageable_Entity: return new Damageable_Entity();
     case entity_type::Trigger_Volume_Entity: return new Trigger_Volume_Entity();
     case entity_type::Point_Light_Entity: return new Point_Light_Entity();
     case entity_type::Spot_Light_Entity: return new Spot_Light_Entity();
@@ -1587,6 +1789,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Weapon_Entity: delete static_cast<Weapon_Entity*>(entity); return;
     case entity_type::Rocket_Entity: delete static_cast<Rocket_Entity*>(entity); return;
     case entity_type::Particle_Emitter_Entity: delete static_cast<Particle_Emitter_Entity*>(entity); return;
+    case entity_type::Damageable_Entity: delete static_cast<Damageable_Entity*>(entity); return;
     case entity_type::Trigger_Volume_Entity: delete static_cast<Trigger_Volume_Entity*>(entity); return;
     case entity_type::Point_Light_Entity: delete static_cast<Point_Light_Entity*>(entity); return;
     case entity_type::Spot_Light_Entity: delete static_cast<Spot_Light_Entity*>(entity); return;
@@ -1601,6 +1804,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x984b33bau;
+const uint32_t SCHEMA_HASH = 0xcb88e4cbu;
 
 } // namespace entities

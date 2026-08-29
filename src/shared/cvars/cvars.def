@@ -87,6 +87,17 @@ Player_Movement :: cvars {
     pm_speed_threshold:     f32 = 1.0         @Mirrored  "Speed below which friction snaps to zero"
     pm_step_height:         f32 = 18.0        @Mirrored  "Maximum step height the player can glide up"
     pm_minimum_land_impact_speed: f32 = 150.0 @Mirrored  "Threshold for speed to cause audio to play when landing"
+
+    // The first ability built on Movement (generalization_def.md §2), and it
+    // ships OFF. A seam with no user is a seam nobody has checked, so the
+    // plumbing is proven by turning this on -- while zero keeps CS movement and
+    // every existing test exactly as they were.
+    //
+    // @Mirrored like the rest of pm_: the client predicts air jumps, so the two
+    // sides disagreeing about the budget is a mispredict every time a charge
+    // runs out on one side and not the other.
+    pm_air_jump_count:      i32 = 0          @Mirrored  "Air jumps allowed before touching ground again (0 = none)"
+    pm_air_jump_speed:      f32 = 270.0      @Mirrored  "Upward velocity an air jump sets"
 }
 
 Gameplay :: cvars {
@@ -115,7 +126,7 @@ Gameplay :: cvars {
 // is where a mode's behavior lives; declaring it here rather than there is what
 // lets sv_gamemode be typed by it. The two halves cannot drift: a value added
 // here with no row breaks the rows_in_enum_order static_assert on that table.
-Game_Mode :: enum { deathmatch, rounds }
+Game_Mode :: enum { deathmatch, rounds, speedrun }
 
 Match :: cvars {
     // Which GAME_MODES row is running. Latched into game_rules_state_t::mode at
@@ -437,6 +448,12 @@ Map :: cvars {
 
 Debugging :: cvars {
 
+    // No flag, so shared-local: both a client and a dedicated server pin their
+    // own main thread and neither cares what the other did. Read ONCE at
+    // startup, before the loop -- changing it later would have to un-pin, and
+    // "which cores am I on" is not a thing worth making settable mid-session.
+    pin_main_thread:        bool = true                 "Pin the main thread to the CPU's performance cores on a hybrid CPU"
+
     debug_show_collisions:  bool = false                "Show collision faces in green"
     debug_show_hitboxes:    bool = true                "Show entity hitboxes in wireframe"
     debug_show_navmesh:     bool = false                "Show baked navmesh as a line grid"
@@ -534,6 +551,16 @@ Server_Commands :: commands {
     // player_uid IS a spectator (see "Client vs Player" in CLAUDE.md), so this
     // destroys the body and nothing needs remembering.
     spectate()                         @Server  "Leave the match and return to spectating"
+
+    // The dedicated server's half of mem_report below. A separate name rather
+    // than a @Mirrored anything: the audit state is one object per PROCESS, so
+    // on the integrated build mem_report already covers both sides, and this
+    // exists for the build where there is no client console to type into.
+    sv_mem_report(top: i32 = 20)       @Server  "Print the top allocation sites by live bytes"
+    // The server's unit is a TICK, not a frame: its loop period is set by the
+    // accumulator, so what is measured here is how long a tick took to run.
+    sv_frame_report()                  @Server  "Print the tick time distribution and the worst ticks so far"
+    sv_hitch_report(top: i32 = 15)     @Server  "What the worst tick allocated, by call site"
 }
 
 Client_Commands :: commands {
@@ -554,4 +581,30 @@ Client_Commands :: commands {
     // shows both words with the spacing intact rather than the first token
     // alone.
     announce(text: string...)              @Client  "Show a banner on screen for a few seconds"
+
+    // Allocation attribution (vector_def.md, Track A). COMMANDS rather than
+    // cvars for the same reason `map` is one: each is a verb that prints
+    // something now, and none has a current value anybody could ask for.
+    // mem_stacks is the exception that proves it -- it does set a flag, but the
+    // flag lives on the audit state the launcher owns, not in cvar_state_t,
+    // because a non-audit build has no state for it to sit in.
+    //
+    // All three print to the TERMINAL, not to the in-game console: a site
+    // listing is tens of lines of symbolized stack.
+    mem_report(top: i32 = 20)              @Client  "Print the top allocation sites by live bytes"
+    mem_frame()                            @Client  "Print how much the last frame allocated"
+    mem_stacks(capture: bool = true)       @Client  "Capture a call stack per allocation (off = totals only)"
+
+    // Frame time DISTRIBUTION, not an average -- a hitch is a tail event and a
+    // mean is the one statistic that hides it. Unlike the mem_* commands above
+    // this works in every build: a QPC read per frame costs nothing, so there
+    // is no reason to gate it behind the audit.
+    frame_report()                         @Client  "Print the frame time distribution and the worst frames so far"
+    frame_reset()                          @Client  "Discard the frame time distribution and start measuring again"
+
+    // What the single worst frame ALLOCATED, by call site. The cumulative
+    // mem_report answers "what allocates in this game"; this answers "what
+    // happened in frame 8412", which is the question a hitch actually poses.
+    // Needs -DTILDE_MEMORY_AUDIT=ON, since the per-site deltas come from there.
+    hitch_report(top: i32 = 15)            @Client  "What the worst frame allocated, by call site"
 }

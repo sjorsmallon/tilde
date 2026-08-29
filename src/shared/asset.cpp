@@ -980,7 +980,7 @@ const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle)
   return state.mesh_asset_pool.get(handle);
 }
 
-asset_handle_t<mesh_asset_t> find_mesh_in_cache(const char *path)
+asset_handle_t<mesh_asset_t> find_mesh_in_cache(std::string_view path)
 {
   asset_state_t &state = state_for("find_mesh_in_cache");
   return state.mesh_asset_pool.find(path);
@@ -994,7 +994,7 @@ mesh_asset_t *get_mutable(asset_handle_t<mesh_asset_t> handle)
   return &state.mesh_asset_pool.items[handle.index];
 }
 
-asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path,
+asset_handle_t<mesh_asset_t> register_dynamic_mesh(std::string_view path,
                                                     mesh_asset_t &&mesh)
 {
   asset_state_t &state = state_for("register_dynamic_mesh");
@@ -1004,13 +1004,13 @@ asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path,
   return state.mesh_asset_pool.add(path, std::move(mesh));
 }
 
-asset_handle_t<texture_asset_t> find_texture_in_cache(const char *path)
+asset_handle_t<texture_asset_t> find_texture_in_cache(std::string_view path)
 {
   asset_state_t &state = state_for("find_texture_in_cache");
   return state.texture_asset_pool.find(path);
 }
 
-asset_handle_t<texture_asset_t> register_dynamic_texture(const char *path,
+asset_handle_t<texture_asset_t> register_dynamic_texture(std::string_view path,
                                                          texture_asset_t &&texture)
 {
   asset_state_t &state = state_for("register_dynamic_texture");

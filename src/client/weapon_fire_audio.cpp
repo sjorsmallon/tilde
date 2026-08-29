@@ -54,6 +54,11 @@ constexpr Enum_Array<entities::Weapon, weapon_fire_sound_t> WEAPON_FIRE_SOUNDS =
     // sound is an id: there is no path left to misspell, so the row says
     // "nothing yet" rather than naming a file nobody will ever add.
     {entities::Weapon::Rocket_Launcher, assets::sound_asset::Missing},
+    // Same gap, different reason: a dash is a movement ability held in a slot
+    // (generalization_def.md §4), so what it wants is a whoosh rather than a
+    // gunshot, and there is no file for one. The row exists because the table
+    // is keyed by Weapon and every weapon has to answer.
+    {entities::Weapon::Dash, assets::sound_asset::Missing},
 }};
 
 static_assert(rows_in_enum_order<&weapon_fire_sound_t::weapon>(WEAPON_FIRE_SOUNDS),

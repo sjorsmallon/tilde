@@ -2,6 +2,7 @@
 #include "collision_detection.hpp"
 #include "cvars/generated/cvars_generated.hpp"
 #include "debug_collision.hpp"
+#include "entities/generated/entities_generated.hpp"
 #include "plane.hpp"
 #include <tuple>
 #include <vector>
@@ -138,9 +139,27 @@ struct Move_Events
 // values into this function or the client mispredicts every frame. A reference
 // makes that a signature obligation instead of a hope about which copy of a
 // static-lib global each module happened to link.
+//
+// `movement` is the ONE mutable parameter, and it is in/out on purpose: it is
+// this function's per-player state (jump charges, ground contact, the coyote
+// clock), read at the top of a step and written at the bottom of it. Everything
+// else here is still a pure function of its arguments.
+//
+// It is a REFERENCE rather than a return value because it is about STORAGE --
+// the caller owns it, across ticks, and player_move refills it. That is the
+// out-param case the failure convention keeps (see CLAUDE.md, "Failure"), the
+// same one skinning.hpp's Span<T> occupies.
+//
+// THE CALLER MUST REPLAY IT. Client reconciliation re-runs past ticks from a
+// stored position and velocity; a replay that starts from the CURRENT movement
+// state re-derives a different one, silently, and the divergence looks like
+// packet loss. Saved_Input carries a copy for exactly this reason -- the same
+// reason it stopped carrying a yaw/pitch pair beside the input it can derive
+// them from.
 std::tuple<vec3, vec3> player_move(
     const cvars::cvar_state_t &cvars,
     const Move_Input &input,
+    entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const float half_width, const float half_height,

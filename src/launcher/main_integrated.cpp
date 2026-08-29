@@ -5,6 +5,9 @@
 #include "shared/cvars/generated/cvars_generated.hpp"
 #include "shared/detached_console.hpp"
 #include "shared/log.hpp"
+#include "shared/cpu_topology.hpp"
+#include "shared/frame_timing.hpp"
+#include "shared/memory_audit.hpp"
 #include "shared/timed_function.hpp"
 
 #include <chrono>
@@ -51,6 +54,18 @@ static cvars::command_table_t g_server_command_table{};
 // pointers.
 static assets::asset_state_t g_asset_state{};
 
+// The one allocation-audit state for this process, lent to all three modules
+// for exactly the reason the three above are. Constant-initialized (integers,
+// pointers and an atomic_flag), so it is usable from the first instruction of
+// the process rather than from whenever a dynamic initializer would have run --
+// which matters here, because static initializers allocate.
+static memory_audit::memory_audit_state_t g_memory_audit_state{};
+
+// The one frame-time distribution for this process. Unlike the audit above this
+// is installed in EVERY build: a QPC read and a histogram bump per frame costs
+// nothing, and a hitch is what we are trying not to have.
+static frame_timing::frame_timing_state_t g_frame_timing_state{};
+
 int main(int argc, char *argv[])
 {
   // Change working directory to the project root (parent of cmake_build/).
@@ -76,6 +91,18 @@ int main(int argc, char *argv[])
   timed_function();
 
   log_terminal("=== Starting MyGame (Integrated) ===");
+
+#if TILDE_MEMORY_AUDIT
+  // Before anything else this main() does. Each module replaces operator new
+  // separately (see memory_audit_hook.cpp), so each needs its own pointer at
+  // this one object -- otherwise a block allocated in the client and freed in
+  // the server would be an insert in one table and a miss in another.
+  memory_audit::set_state(&g_memory_audit_state);
+  client::install_memory_audit(&g_memory_audit_state);
+  server::install_memory_audit(&g_memory_audit_state);
+#endif
+  frame_timing::set_state(&g_frame_timing_state);
+  client::install_frame_timing(&g_frame_timing_state);
 
   // Point THIS module (the exe) at the one asset state, then register eagerly
   // before anything resolves an id. Each DLL points its own copy of the state
@@ -113,8 +140,26 @@ int main(int argc, char *argv[])
   log_terminal("=== Initialization Complete, Entering Loop ===");
 
   bool running = true;
-  auto previous_time = std::chrono::high_resolution_clock::now();
+  std::chrono::high_resolution_clock::time_point previous_time{};
   double server_accumulator = 0.0;
+
+  // Before the loop, and read once: on a hybrid CPU the scheduler moving the
+  // main thread to an E-core costs ~40% of its throughput for that frame, which
+  // is a hitch no allocation or cache profiler can see. The framerate cap below
+  // SLEEPS every frame, and a thread that sleeps is exactly what Thread
+  // Director demotes -- so this matters more here than it would otherwise.
+  if (g_cvar_state.pin_main_thread)
+    cpu_topology::try_pin_current_thread_to_performance_cores();
+
+  // Closes the load out as STARTUP so it is not attributed to frame 1. Without
+  // this the worst frame is always the load, which hides the worst gameplay
+  // frame -- the one hitches actually come from.
+  memory_audit::mark_startup_complete();
+
+  // AFTER the two above, so the pin's processor enumeration is not measured as
+  // the first frame.
+  previous_time = std::chrono::high_resolution_clock::now();
+
 
   while (running)
   {
@@ -122,6 +167,12 @@ int main(int argc, char *argv[])
     double frame_time =
         std::chrono::duration<double>(current_time - previous_time).count();
     previous_time = current_time;
+
+    // Captured BEFORE the clamp and the timescale below. A frame that took
+    // longer than 250ms is exactly the frame worth recording, and the clamp
+    // exists to protect the simulation rather than to describe what happened;
+    // timescale would make slow-mo look like a stall.
+    const double raw_frame_milliseconds = frame_time * 1000.0;
 
     if (frame_time > 0.25)
       frame_time = 0.25;
@@ -132,6 +183,14 @@ int main(int argc, char *argv[])
     if (timescale < 0.01)
       timescale = 0.01;
     frame_time *= timescale;
+
+    // Closes the previous frame. Both calls cover the SAME interval -- the
+    // period between loop iterations -- so the duration and the allocation
+    // count describe one frame and can be reported together. The period is what
+    // the player experiences, cap sleep included; timing only the work would
+    // hide a stall in the cap or in the present.
+    memory_audit::mark_frame();
+    frame_timing::end_frame(raw_frame_milliseconds, memory_audit::last_frame_allocations());
 
     // Client frame (renders at display rate)
     if (!client::Tick())
@@ -145,6 +204,7 @@ int main(int argc, char *argv[])
     server_accumulator += frame_time;
     while (server_accumulator >= tick_interval)
     {
+      FRAME_ZONE("server::Tick");
       server::Tick();
       server_accumulator -= tick_interval;
     }
@@ -171,6 +231,12 @@ int main(int argc, char *argv[])
   server::shutdown();
 
   print_timing_stats();
+
+  frame_timing::report();
+
+#if TILDE_MEMORY_AUDIT
+  memory_audit::report(30);
+#endif
 
 // #ifdef _WIN32
 //   log_terminal("Press Enter to exit...");

@@ -18,7 +18,11 @@ cmake --build cmake_build -j8
 cmake -S . -B cmake_build_pkg -DTILDE_ASSET_SOURCE=pkg     # one assets.pkg beside the exe
 cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in .rodata
 
-# Run the whole test suite (~2s, all 35)
+# Allocation attribution: every allocation tracked and blamed on a call stack.
+# OFF by default and never shipped -- it costs 100-500ns per allocation.
+cmake -S . -B cmake_build_audit -DTILDE_MEMORY_AUDIT=ON
+
+# Run the whole test suite (~2s, all 38)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -118,7 +122,82 @@ Entities are **plain structs with no virtuals** (hence blittable, hence memcmp-d
 - `destroy_entity()`, not `delete` through a base pointer — there is no virtual destructor to dispatch through.
 - Per-type behavior is a handwritten **exhaustive switch** over the closed enum (`create_map_entity`, `fire_trigger_action`, `compute_entity_bounds`, the editor's `ENTITY_DISPATCH`). That's the sanctioned pattern; adding an entity makes each switch a compile error, which is the point. **Storage is not on that list** — `Entity_System` sizes one byte pool per tag from `ENTITY_INFOS` directly, so a new entity needs no case anywhere in it (`make_entity_pool` was the fifth switch and is gone; see `entity_system_def.md`).
 
-Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entity`, `Player_Spectate_Entity`, `Player_Entity`, `Weapon_Entity`, `Rocket_Entity`, `Particle_Emitter_Entity`, `Trigger_Volume_Entity`, `Point_Light_Entity`, `Spot_Light_Entity`, `Directional_Light_Entity`, `Physics_Body_Entity`.
+Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entity`, `Player_Spectate_Entity`, `Player_Entity`, `Weapon_Entity`, `Rocket_Entity`, `Particle_Emitter_Entity`, `Trigger_Volume_Entity`, `Point_Light_Entity`, `Spot_Light_Entity`, `Directional_Light_Entity`, `Physics_Body_Entity`, `Damageable_Entity`.
+
+### Generalizing toward two games
+
+`generalization_def.md` is the design of record for making this engine hold both
+a CS-shaped shooter and a Neon-White-shaped movement game. Its audit found the
+netcode already game-agnostic and the specificity concentrated in five places;
+all five are done and are described in their own sections below (slot-indexed
+inventory, `Movement` through `player_move`, the non-player target set, the
+`Fire_Resolution` axis, and the three closed enums under "Game modes"). Read it
+before generalizing anything else — in particular it argues AGAINST a scripting
+layer, a dynamic component registry, a single-player code path and a generic
+scoring bag, and it names `shared/rng.hpp`'s global mutable state as the thing
+weapon spread must not be built on.
+
+**The inventory is keyed by SLOT, not by weapon type.** `Inventory::weapons` is
+`u32[Inventory_Slot]` and the hand is `active_slot`; WHICH weapon a slot holds is
+the `Weapon_Entity`'s own `weapon_id`, so there is exactly one answer to that and
+it lives with the thing it describes. Resolution is still one index and never a
+search (`try_find_active_weapon`), which is the property the old weapon-keyed
+spelling was protecting — but two of a kind are now representable, which
+"at most one of each" made impossible. A weapon declares where it lands
+(`weapon_definition_t::slot`), so "a scout is a primary" is a fact about the
+scout rather than a rule at the granting site, and the number keys bind to slots
+(`try_slot_selected_by`), so `Key1` means "hold whatever is in Primary" rather
+than "equip the scout". **An empty slot is a legal hand**: selecting one is a
+real switch on both sides, the deploy clock runs, and the fire path finds no
+weapon and returns quietly.
+
+**A trigger pull resolves one of three ways, and `Fire_Resolution` is that
+axis.** It replaced `Weapon_Kind {Melee, Hitscan, Projectile, Sniper}`, which was
+the same axis conflated with weapon FLAVOUR: `Sniper` had no reader at all,
+`Melee` and `Sniper` shared `Hitscan`'s switch arm, and the one thing `Melee`
+decided — a knife swing leaves no bullet decal — was asked outside the switch.
+Four values funding two arms and a predicate. Flavour that earns a difference is
+a row field now (`leaves_bullet_impact`); flavour that earns nothing is gone. The
+set is `{Hitscan, Projectile, Self_Impulse}`; `Consume_For_Ability` waits for an
+ability set to consume into, and `None` is unrepresentable because an empty slot
+already is a legal hand. Not named `Fire_Effect` (`effects.def` owns "effect"),
+`Fire_Mode` (taken by trigger volumes, and means semi/burst/auto everywhere
+else) or `Fire_Action` (`Trigger_Action`, `fire_trigger_action`).
+
+A weapon row is **union-shaped** with the resolution as its discriminant, which
+is the one place the lights rule above is deliberately not followed: a variant
+over a four-row constexpr table read by one switch costs more than the zeros.
+
+**`Self_Impulse` is the only resolution the CLIENT simulates**, and that is what
+decides where its gate lives. Every other resolution lands on somebody else and
+can wait a round trip; a shove to your own velocity cannot. So
+`shared::try_apply_self_impulse` is called from **three** sites against one table
+row — the server's `resolve_player_shot`, the client's live step loop, and the
+client's **reconciliation replay**. The replay is the one that is easy to miss:
+it restarts from the server's velocity and re-runs the unacked inputs, so a dash
+it does not re-apply is undone for a round trip and then reinstated.
+
+A replay holds only the position/velocity it restarts from and
+`prediction_t::latest_server_movement`, and both clocks gating every other weapon
+(`Weapon_Entity::next_fire_time`, `Inventory::deploy_complete_time`) are
+server-only. So the cooldown is `Movement::seconds_until_impulse_ready`,
+`@Networked`, counted down inside `player_move` beside
+`time_since_grounded_seconds` — step-invariant for free. **A self-impulse is a
+movement ability that happens to be held in a slot**: the weapon row says how
+hard and which way, the state it spends is movement state.
+
+**One gate, and a `static_assert` keeps it one.** A `Self_Impulse` row must carry
+zero `fire_interval_seconds`, zero `deploy_duration_seconds` and no magazine —
+a weapon-side clock beside the movement one is two gates that agree today and
+drift the first time either is tuned, and the drift is a dash the server refuses
+and the client took. A raise time is earned by a *predicted* deploy clock in the
+replay, never by a second gate.
+
+Unlike `pm_air_jump_count 0`, the demonstrator cannot ship off: an impulse has no
+meaning without a hand to hold it, so `Dash` is a real `WEAPON_DEFINITIONS` row
+granted into `Utility_1` (Key4). Both client loops resolve the held weapon from
+the latest snapshot's `active_slot`, a round trip stale — the same staleness the
+predicted deploy clock already accepts, and the same one-line fix.
 
 **Lights are three types, not one with a kind enum.** `Light_Entity` + `Light_Type {Point, Spot, Directional}` was seven fields of which only `color` and `intensity` were live for all three kinds. The rule that decided it: **an enum that selects WHICH FIELDS ARE LIVE is a type; an enum that selects a behavior over fields that are all live is an enum** — which is what `Physics_Body_Entity::shape` still correctly is. The shared half is a `Light` component; `direction` is gone because base `Entity` already carries `orientation`, so the rotate gizmo now aims a spot light. The split is **authoring-side only**: a GPU light array is homogeneous, so the shader keeps one struct with a type tag and a gather pass folds all three into it. What it buys is that the editor's five per-type switches draw the right helper (falloff sphere / cone / parallel rays) instead of one cross plus an inner switch on `kind` at each of them. No map ever held a `light_entity`, so there is deliberately **no `LEGACY_CLASSNAMES` alias** — an alias can only name one successor, and a spot light silently loading as a point light is worse than the loud unknown-classname error the loader already gives.
 
@@ -440,6 +519,48 @@ to aim, and at 9–15 ticks it would eat `sv_max_rewind_ticks` whole and kill
 people who were behind cover on both screens. The rule is **compensate for what
 the machine did to the signal, never for what the human did.**
 
+### Movement state
+
+**`player_move` is no longer stateless, and the one mutable parameter is
+`entities::Movement`.** It was `(pos, vel) = f(cvars, input, bvh, pos, vel,
+basis, hull, dt)`, which is a beautiful property — it is why prediction is exact
+and why movement needs no lag compensation — and also why the engine could
+express exactly one movement verb set: walk, jump, gravity. Every verb past that
+(air jumps, dashes with charges, wall-cling, coyote windows, duck) needs
+somewhere to put a counter. `generalization_def.md` §2 is the argument.
+
+The state is a **component in `entities.def`**, not a hand-written struct, so
+there is ONE of it: a plain `movement_state_t` mirrored by a component for
+replication is two spellings free to disagree, the failure `body_yaw` and
+`last_broadcast_cvars` each already paid for. Being a component makes it
+`@Networked`, diffable, clonable and reflected for free.
+
+Three rules, and none is optional:
+
+- **Every field is `@Networked`.** The client predicts against all of it.
+- **A replay must RESTART it**, from `prediction_t::latest_server_movement` —
+  latched beside the position and velocity reconciliation already restarts from.
+  It is deliberately NOT stored per tick in `Saved_Input`: that struct's
+  `predicted_position` / `predicted_velocity` are write-only (filled when an
+  input is banked, read by nothing), so a third one would be a second answer
+  free to disagree with the replay. Reconciliation adopts the reconciled state
+  **unconditionally**, outside the error thresholds — those exist because a
+  position is a float with a noise floor, and a jump count is not.
+- **A JUMP IS AN EDGE, NOT A LEVEL.** A ground jump still reads the level
+  (holding space bunnyhops, unchanged). An air jump spends a charge, so it reads
+  the rising edge — and at 64 sub-tick slots a level-read would empty the whole
+  budget on one press. `Movement::jump_was_held` is what makes the edge derivable
+  INSIDE `player_move`, rather than having each of the four callers (server, live
+  prediction, reconciliation, bots) diff two inputs identically.
+
+**Air jumps are the demonstrator and ship OFF** (`pm_air_jump_count 0`), because
+a seam with no user is a seam nobody has checked — turning one cvar on proves the
+plumbing while CS movement and every existing test stay exactly as they were.
+`player_move_step_invariance_test` covers both halves: an edge fires once
+however many sub-steps the tick had, and the coyote clock accumulates to the
+same total. Crouch is the next obvious ability and is nearly free — `half_width`
+/ `half_height` are already parameters.
+
 ### Player hit volumes
 
 A player is hit-tested against the **posed skeletal volumes**, not a static box table. Three files, in order of who calls whom:
@@ -447,6 +568,35 @@ A player is hit-tested against the **posed skeletal volumes**, not a static box 
 - `shared/hitbox_rig.hpp` — the bone→volume mapping (`resources/models/rig.hitboxes`), the shape math, and `intersect_ray_hitbox`. Four shapes composed out of a sphere, a cylinder side and a disc; every one reports the ENTRY point, so a ray starting inside a volume misses.
 - `shared/player_rig.hpp` — `compute_player_hitboxes(rig, pose, settings, out)`: the aim blend, the hierarchy walk and the world placement, from a `player_pose_t` of `{feet, body_yaw, view_yaw, view_pitch}`. **Both the server's fire path and the client's `debug_show_hitboxes` overlay call this one function**, which is what makes the silhouette you shoot at the volume that gets tested.
 - `shared/hitscan.hpp` — `resolve_hitscan` over targets that each carry a `Span<const posed_hitbox_t>` in world space. It only ranks; it knows nothing about skeletons, and neither does its test.
+
+**A TARGET IS NOT NECESSARILY A PLAYER.** `resolve_hitscan` never knew what it
+was testing — a target is a uid plus posed volumes plus a bound — so the only
+thing making a shot player-only was that the list came from walking the
+`Player_Entity` pool. `pose_all_players` is now `pose_all_targets` and appends
+every living `Damageable_Entity` after the players, as ONE `hitbox_shape_t::Box`
+built from `position` (start == end, so `center()` is exact) and
+`hitbox_half_extents`, in the default world-axis frame. That is what a Neon White
+demon and a CS breakable both are; a skinned enemy wanting per-limb damage is a
+later type with a rig field, not a bigger version of this one.
+
+Two consequences with reasons:
+
+- **The two volume counts differ**, so the slice is cut with a running offset
+  rather than `targets.size() * volume_count`. That expression was only ever
+  right while every target had the same stride and would have silently handed
+  out overlapping spans the moment one did not.
+- **`poses` describes a PREFIX of `targets`** — players only, since shot debug
+  ships poses for the client to re-pose a rig with and a crate has no rig. The
+  `min(targets, poses)` guard in `send_shot_debug` was written as
+  belt-and-braces; it is now load-bearing, and it is what `append_static_targets`
+  keys off to tell a static target from a rewindable one.
+
+**Lag compensation deliberately does not rewind them**, for the same reason
+movement needs no rewind: a rewind exists because a target MOVED between the tick
+the shooter saw and the tick the server is on. A static damageable did not, so
+its present-tick pose is not an approximation of what the shooter saw, it IS what
+the shooter saw. `try_pose_players_across_bracket` therefore keeps its player-only
+scope and `append_static_targets` adds the rest onto the rewound list.
 
 `Player_Entity::body_yaw` (where the feet point, lagging the view yaw) is **server-owned and `@Networked`**: the server advances it once per fixed tick over every player entity, and clients read it. A client integrating its own copy would draw a pose the server is not testing. The three `sv_aim_*` extents are `@Mirrored` for the same reason.
 
@@ -492,6 +642,11 @@ the `sv_aim_*` extents it reads are `@Mirrored`, so re-posing reproduces the
 volumes exactly at 16 bytes a target. What is genuinely the server's answer is
 the pose — the rewind's output — and turning it into volumes is arithmetic both
 sides already agree on.
+
+`inflict_damage_batch` sums for a `Damageable_Entity` too, not just a player:
+it has health, so the per-hit fallthrough would let the first shot cross zero
+and the corpse gate discard the rest. A physics body still takes the per-hit
+path, because impulses are additive and it has no health to contend over.
 
 Damage is **deferred** to a pass immediately after the move loop
 (`tick_output_t::pending_hits`) rather than applied inside it. Every shot in a
@@ -549,6 +704,24 @@ resources/**  ──asset_pack──▶  generated/assets.manifest
 
 `Box` and `Sphere` are **baked `.mesh` files** now, dumped once from the generators that used to run at init; `generate_mesh_for_key` and all six primitive generators are gone. `physics_body_system.cpp` scales both through `render.scale` assuming a primitive is unit-sized, so `asset_test` asserts the baked bounds rather than trusting the export — the failure mode is a physics body 100x too large and it would not be obvious which regime drifted. A `.mesh` is in engine units and skips `load_obj`'s 100-unit normalization, which is why the bake went to `.mesh` rather than to `.obj`.
 
+**A LOOKUP MUST NOT ALLOCATE, and `unordered_map<std::string, T>` does.** Its
+`find` takes `const std::string&`, so handing it a `const char*` or a
+string_view builds a TEMPORARY std::string for the duration of the call —
+heap-allocating for any key past the 15-character small-string buffer. That is
+not theoretical: the per-frame `find_mesh_in_cache` in `draw_geometry` was
+measured at **121,216 allocations in one session, all of them dead on the next
+line**. `Asset_Pool::path_to_index` therefore uses `transparent_string_hash_t` +
+`std::equal_to<>` and `find` takes a `std::string_view`; the standard guarantees
+`hash<string_view>(sv) == hash<string>(s)` when `s == sv`, so nothing else
+changes. `add` still builds a string, and must — the map owns its keys. That is
+once per asset rather than once per lookup, which is the whole distinction.
+
+`generated_mesh_cache_key` was the other half of the same per-frame pair: it
+returned `"__geometry_" + std::to_string(uid)`, ~21 characters and so past SSO
+too. It formats into a caller-owned `Span<char>` and returns a `string_view`
+now — the out-param-is-about-STORAGE case the failure convention keeps a Span
+for.
+
 Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` strings** rather than manifest ids: a level author adding a prop should not have to think about the id space at all.
 
 **A PATH HAS ONE SPELLING, AND THE LOADERS CANNOT FAIL.** Both halves of that are the same decision, and `asset_pipeline_def.md` is the design.
@@ -591,6 +764,30 @@ function-pointer table would silently null it.
 The row's two enums (`Win_Condition`, `Spawn_Policy`) are deliberately NOT the
 mode enum, which is what lets a third mode recombine existing behaviors with no
 new code. They are the only two switches in the system.
+
+**`speedrun` is that third mode, and it is a row.** It recombines
+`Win_Condition::Objective_Reached` (a `Trigger_Action::Complete_Level` volume was
+touched — one `game_rules_state_t::objective_reached` flag, not a per-player set,
+because a PARTY finishes a level) with `Spawn_Policy::Single_Fixed_Start` (the
+first `Spawn_Type::Human` marker for everyone, ignoring the team and the rotation:
+a level has one start line) over a one-element `{Live}` cycle. Nothing switches on
+`Game_Mode` for it; the only new code is the two arms the two new enum values earn
+in `check_win_condition` and `try_pick_human_spawn`.
+
+The four Neon-White trigger actions landed with it — `Complete_Level`,
+`Checkpoint`, `Grant_Weapon`, `Set_Velocity`. A checkpoint is a **uid**
+(`Player_Entity::checkpoint_uid`, server-only) naming the volume last touched,
+resolved at the respawn rather than copied, so nothing can disagree with the
+volume the author moved; only the DEATH respawn honours it, and
+`respawn_all_players` clears it, because a round boundary is the start line.
+`Set_Velocity` is aimed with the trigger's own `orientation` and needs nothing
+from `Movement` — `player_move`'s `grounded` is `has_ground && old_velocity.y <=
+0`, so a positive Y survives the next step by construction. `Grant_Weapon` is what
+made `try_grant_weapon` public, and it had to start destroying the weapon it
+displaces: writing the slot in place was a leak per pickup.
+
+What is deliberately NOT built is the mode-owned state variant (an attempt clock,
+a bomb timer) — see the closing comment below and `generalization_def.md` §5.
 
 **The key enum lives in `cvars.def`**, because `sv_gamemode` is typed by it —
 enum cvars convert by value name in both directions, so an undeclared mode is
@@ -725,6 +922,203 @@ This replaced a `C2S_MapLoaded` message, and the rule it cost to learn is the on
 So the client's two `Loading -> Connected` edges send **nothing**: entering `Connected` starts the input flow, and the hash rides it. And the server keeps no manual write — the optimistic `map_ready = true` at accept sent snapshots to a client that turned out to need a download, and the `= false` when a transfer starts is what the map-load reset already does.
 
 Map streaming: a client that lacks the server's map (cache miss / hash mismatch) requests it and the server streams the compiled package (`S2C_MapData`). The request rides the C2S reliable stream — a lost one left the client waiting for a transfer that never started, and that was the last job the `CmdChangeMap` resend was doing. The wire map id is maps-relative (a basename like `new_map.source`), resolved per-side against a maps dir — the client's is `maps/` by default, overridable via the `MAPS_DIR` env var. To test streaming locally, run a "cold" client whose maps dir is empty so it must download: `scripts/run_client_cold.cmd` (starts `MyGame_Client` with `MAPS_DIR=cold_maps`) against a running `MyGame_Server`.
+
+### Allocation attribution
+
+**Which function allocated what is a question about `operator new`, not about
+one container.** `-DTILDE_MEMORY_AUDIT=ON` replaces the global operator
+new/delete, hashes a `RtlCaptureStackBackTrace` per allocation into a site
+table, and `mem_report` ranks the sites by live bytes. `vector_def.md` is the
+design; this is Track A of it, and it is the measurement that decides which of
+the 608 `std::vector` sites are worth converting — **nothing else in that plan
+should be started before it has run.** A house Vector would report on vectors
+and on nothing else, while this also sees `std::string` (758 references),
+the hash maps, protobuf, Vulkan, SDL, miniaudio and stb, with no call site
+touched.
+
+```
+memory_audit_hook.cpp   operator new/delete — ONE COPY PER MODULE
+memory_audit.{hpp,cpp}  the tables, the capture, the report — in game_shared
+```
+
+**The hook cannot live in `game_shared`, and that is not a preference.** A
+replacement sitting in a static ARCHIVE is only pulled into the link if
+something already references a symbol in its object file; nothing does, because
+the CRT resolves `operator new` long before the archive is searched. That is the
+same linker-drop that silently emptied the old static-init registries, and it
+fails the same way — no error, no hook, an audit reporting zero. So the TU is
+named once as `${MEMORY_AUDIT_HOOK}` in CMakeLists.txt and added **directly to
+each of the five modules**: `game_client`, `game_server`, and the three
+launchers. Operator-new replacement is per module on Windows, so a hook in the
+exe alone would see the launcher and nothing else.
+
+**The state is the launcher's**, exactly like `cvar_state_t` and
+`asset_state_t`, and for exactly the same reason: `game_shared` is a static lib,
+so `memory_audit.cpp`'s file-scope pointer exists once per module. Three
+pointers, one object — otherwise a block allocated in the client and freed in
+the server is an insert in one table and a miss in another, and `live_bytes`
+drifts in a direction nothing can explain. `memory_audit_state_t` is
+constant-initialized on purpose, so it is usable before any dynamic initializer
+has run; static initializers allocate.
+
+**The tables never use `operator new`** — malloc'd, open-addressed, grown by
+hand. The tracking list in the deleted `audited_vector.hpp` draft was a
+`std::vector`, which is fine under a per-container allocator and infinitely
+recurses under a global hook. A per-thread reentrancy guard covers the rest:
+`report()` prints and symbolizes, both of which allocate, and without the guard
+it would deadlock on the lock it already holds.
+
+A free of a pointer the table never saw is **counted, not dropped**
+(`untracked_free_count`) — it is the routine case for everything allocated
+before a module installed the audit, and a number that grew unexpectedly is the
+only way to tell that apart from a bug in the table.
+
+**`mem_report` prints TWO rankings, and needing both is the point.** Live bytes
+is FOOTPRINT — what is holding memory now. Lifetime allocation count is CHURN —
+what goes through the allocator over and over, which is what costs frame time
+even though every one of those allocations is freed again and so contributes
+nothing to the first list. A per-frame scratch vector is invisible in the
+footprint ranking and is routinely the whole answer in the churn one; ranking
+only by live bytes (the first cut did) hides exactly the thing an arena is for.
+
+**STARTUP IS NOT A FRAME.** Asset loading, device init, the map load and the
+font bake all happen before the first frame, and folding them into frame 1 made
+"worst frame" mean "the load" permanently — both the largest number and the
+least interesting one, and it hid the worst GAMEPLAY frame, which is where
+hitches come from. Each launcher calls `mark_startup_complete()` immediately
+before its loop, and the report prints startup on its own line. The worst frame
+is reported WITH ITS INDEX, because a spike at frame 3 is still part of a load
+and a spike at frame 9000 is a bug.
+
+`mem_report [top]` / `mem_frame` / `mem_stacks 0|1` are `@Client`;
+`sv_mem_report [top]` is the dedicated server's half, since the audit state is
+one object per PROCESS and the integrated build's `mem_report` already covers
+both sides. All of them print to the TERMINAL — a site listing is tens of lines
+of symbolized stack, which is not a widget shape. Each launcher also reports
+once at shutdown.
+
+### Frame time, and which cores it runs on
+
+**A hitch is a TAIL event, and an average is the one statistic guaranteed to
+hide it.** 26,000 good frames and 40 terrible ones is a mean that looks perfect
+and a game that feels broken. So `shared/frame_timing.{hpp,cpp}` keeps a
+histogram (0.1ms buckets to 50ms) and reports p50 / p95 / p99 / p99.9 / max,
+plus the **worst 16 frames by index** and what each of them allocated.
+
+That pairing is the point. A histogram says how many frames were bad; the
+outlier list says WHICH, and the allocation count beside it says what was
+different about them — "frame 8412 took 41ms and allocated 12,000 times" is
+actionable in a way that either half alone is not. `memory_audit::mark_frame()`
+and `frame_timing::end_frame()` are called back to back so both cover the SAME
+interval; that adjacency is load-bearing, not stylistic.
+
+**It is NOT behind `TILDE_MEMORY_AUDIT`.** A stack per allocation costs
+100-500ns and must never ship; a QPC read and a histogram bump costs nothing, so
+this is installed in every build. The "frames over 2x median" line is
+self-calibrating on purpose — a fixed millisecond threshold is meaningless at
+300fps and hysterical at 60.
+
+**What is measured differs by launcher, deliberately.** A client measures the
+PERIOD between loop iterations — what the player experiences, framerate-cap
+sleep included — captured before the 0.25s clamp and before `cl_timescale`,
+since a frame over 250ms is exactly the one worth recording and slow-mo is not a
+stall. A dedicated server measures the DURATION of a tick, because its period is
+fixed by the accumulator and would say nothing; that is also why its
+`mark_frame()` comes AFTER `server::Tick()` rather than before it.
+
+**Two numbers per bad frame, and the second is the one people forget.**
+Allocations explain allocator work; **page faults** explain the kernel's. A soft
+fault is the FIRST TOUCH of a page the process already committed — which is what
+freshly allocated memory is made of — so the fault count separates "this frame
+allocated a lot" from "this frame allocated a lot of NEW memory and paid the
+kernel for every page". One `GetProcessMemoryInfo` per frame buys it, and it is
+the number that tells you whether an arena would have helped.
+
+**`hitch_report` answers "what happened in frame 8412".** The cumulative site
+table cannot: it answers "what allocates in this game" and names the same sites
+every session. So `memory_audit` snapshots the per-site totals at every frame
+boundary, and when a frame turns out to be the worst yet, the DIFFERENCE against
+that snapshot is exactly what that one frame did — ranked, symbolized, with each
+site's share of the frame. A memcpy of two counters per site per frame (~60KB,
+a microsecond or two), paid only in an audit build; the O(sites) diff runs only
+when a new worst frame appears.
+
+A missing baseline means "nothing allocated before this frame", i.e. zeros — NOT
+a reason to skip the capture. Bailing there made frame 1 permanently
+uncapturable, and if frame 1 was the worst of the session then no later frame
+ever became a new worst and nothing was captured at all.
+
+**FRAME ZONES answer the question the allocation capture cannot.** The first
+real hitch was 537ms with **200 allocations** — allocation was not merely a
+minor cause, it was absent, and the site capture had nothing to say. A frame
+that slow is *waiting*, not computing. So `FRAME_ZONE("name")` records a named
+span of the current frame (a string literal, never copied; two
+QueryPerformanceCounter reads, ~20ns each), and the worst frame's zones are
+captured beside its allocation sites. Zones are stored in ENTRY order with a
+depth, which is a pre-order walk — so printing them in order with indentation is
+already the tree, with no second pass and no parent pointers.
+
+The instrumented stall points are chosen, not sprinkled: `renderer::new_frame`
+(swapchain acquire and the in-flight fence), `rebuild_swapchain`,
+`end_single_time_commands` (a **full `vkQueueWaitIdle`, run on every texture and
+buffer upload** — the most likely home of a long stall that allocates nothing),
+`update_mesh`'s `vkDeviceWaitIdle`, and the `glslc` **subprocess** in
+`shader_tool_runtime.cpp`, which blocks the main thread for hundreds of
+milliseconds and allocates nearly nothing. Add a zone where you suspect a wait,
+not where you suspect work.
+
+Overflow past `MAX_ZONES_PER_FRAME` still tracks depth and counts the drops:
+losing the depth would mis-nest every sibling after it and print a wrong tree
+that looks plausible.
+
+**A LEVEL LOAD IS NOT A FRAME**, and that is `mark_startup_complete`'s rule one
+level up. The first zone tree came back as 99.8ms of `Main_Menu_State::update`
+-> `switch_to` -> `Play_State::on_enter` -> `load_client_map` -> parse the map.
+That is a load screen without a load screen, not a stutter — and left in the
+ranking it wins forever, hiding the worst GAMEPLAY frame, which is the only one
+a player experiences as a hitch. `frame_timing::exclude_current_frame(reason)`
+marks the frame in progress as a load: still measured, still reported on its own
+line with its duration and allocations, but kept out of the histogram, the
+percentiles and the worst-frame competition. Called from
+`state_manager::switch_to` and from `Play_State::load_client_map` /
+`apply_map_package` (the latter two because a server map change is a load
+without being a state transition). The FIRST reason in a frame wins, so the
+outer transition keeps its label when an inner load nests inside it.
+
+`frame_count` (the INDEX that names a frame) and `measured_frame_count` (the
+divisor for every statistic) are therefore two different numbers. Using one for
+both diluted the mean with frames deliberately excluded from it.
+
+`timed_function` is NOT this and cannot be made into it — it keeps a five-sample
+moving average keyed by function name, with no per-frame association, and it
+allocates.
+
+`frame_report` / `frame_reset` / `hitch_report` are `@Client`,
+`sv_frame_report` / `sv_hitch_report` the server's; each launcher also reports at
+shutdown.
+
+**Core pinning: `shared/cpu_topology.{hpp,cpp}`.** On a hybrid CPU (Intel 12th
+gen and later) the scheduler moving the main thread from a P-core to an E-core
+costs it roughly 40% of its throughput instantly. That is a real hitch, and it
+is invisible to an allocation profiler AND to a cache profiler. The framerate
+cap SLEEPS every frame, which makes it likelier rather than less: a thread that
+sleeps looks idle to Thread Director, and idle threads are what it demotes.
+
+Windows reports an `EfficiencyClass` per core where a **HIGHER value means
+greater performance** — the name reads backwards, and getting it wrong pins the
+main thread to the slow cores, which is worse than not pinning. Nothing
+hardcodes a vendor or a core count: the P-cores are whatever sits in the highest
+class present, and a non-hybrid machine reports one class and is correctly left
+alone. It pins to the SET of performance cores, never to one core — a single
+core means anything else scheduled there stalls you, trading a rare hitch for a
+common one.
+
+Only the MAIN thread wants this; the task system's workers should be free to use
+E-cores and the raw-input thread lives blocked in `GetMessageW`. The `pin_main_thread`
+cvar is unflagged (shared-local) and read once before the loop.
+`frame_timing_test` asserts the pin actually TOOK — that the thread's affinity
+mask equals the performance mask afterwards — rather than trusting the API's
+return code.
 
 ## Key Conventions
 

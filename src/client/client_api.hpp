@@ -15,8 +15,19 @@
 namespace shared { struct game_session_t; }
 namespace cvars { struct cvar_state_t; struct command_table_t; }
 namespace assets { struct asset_state_t; }
+namespace memory_audit { struct memory_audit_state_t; }
+namespace frame_timing { struct frame_timing_state_t; }
 
 namespace client {
+// Point this DLL's copy of the audit state pointer at the launcher's one
+// object. Separate from init() and meant to be called BEFORE it: the earlier it
+// runs the fewer allocations are missed, and unlike the three states above this
+// one is a diagnostic that a non-audit build never installs at all.
+GAME_CLIENT_API void install_memory_audit(memory_audit::memory_audit_state_t *state);
+// Same shape, and needed for the same reason: the frame_report handler lives in
+// this DLL, so this DLL needs its own pointer at the launcher's one state.
+GAME_CLIENT_API void install_frame_timing(frame_timing::frame_timing_state_t *state);
+
 // `cvar_state`, `command_table` and `asset_state` are owned by the LAUNCHER and
 // outlive the client module. Init stashes the first two on the client context
 // and calls cvars::bind_client_commands(*command_table), which fills the

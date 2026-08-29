@@ -37,9 +37,10 @@ enum class Game_Mode : uint8_t
 {
   deathmatch = 0,
   rounds = 1,
+  speedrun = 2,
 };
 
-constexpr uint32_t Game_Mode_COUNT = 2;
+constexpr uint32_t Game_Mode_COUNT = 3;
 
 const char* to_string(Game_Mode value);
 template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view text);
@@ -79,6 +80,8 @@ struct cvar_state_t
   float pm_speed_threshold = 1.0f;
   float pm_step_height = 18.0f;
   float pm_minimum_land_impact_speed = 150.0f;
+  int32_t pm_air_jump_count = 0;
+  float pm_air_jump_speed = 270.0f;
   float game_rocket_speed = 600.0f;
   Game_Mode sv_gamemode = Game_Mode::deathmatch;
   float mp_warmup_seconds = 0.0f;
@@ -134,6 +137,7 @@ struct cvar_state_t
   float map_respawn_delay_seconds = 3.0f;
   int32_t map_kill_limit = 25;
   float map_round_time_limit_seconds = 6000.0f;
+  bool pin_main_thread = true;
   bool debug_show_collisions = false;
   bool debug_show_hitboxes = true;
   bool debug_show_navmesh = false;
@@ -169,78 +173,81 @@ enum class cvar_id : uint16_t
   pm_speed_threshold = 8,
   pm_step_height = 9,
   pm_minimum_land_impact_speed = 10,
-  game_rocket_speed = 11,
-  sv_gamemode = 12,
-  mp_warmup_seconds = 13,
-  mp_countdown_seconds = 14,
-  mp_round_seconds = 15,
-  mp_round_end_seconds = 16,
-  mp_game_over_seconds = 17,
-  mp_players_to_start = 18,
-  mp_frag_limit = 19,
-  sv_aim_max_pitch = 20,
-  sv_aim_max_yaw = 21,
-  sv_aim_body_turn_rate = 22,
-  sv_lag_compensation = 23,
-  sv_max_rewind_ticks = 24,
-  sv_lag_compensation_debug = 25,
-  sv_shot_debug = 26,
-  sv_tickrate = 27,
-  sv_timeout = 28,
-  sv_max_move_backlog = 29,
-  sv_map_transfer_fragments_per_tick = 30,
-  name = 31,
-  cl_max_unacked_inputs = 32,
-  r_fov = 33,
-  r_zoom_fov = 34,
-  r_zoom_easing_time_between_fovs = 35,
-  m_sensitivity = 36,
-  m_zoom_sensitivity_ratio = 37,
-  cl_maxfps = 38,
-  cl_interpolation_delay_ticks = 39,
-  cl_interpolation_debug = 40,
-  cl_display_latency_ms = 41,
-  cl_draw_player_hull = 42,
-  cl_spectate_slot = 43,
-  cl_player_unlit = 44,
-  cl_aim_debug = 45,
-  cl_aim_debug_pitch = 46,
-  cl_aim_debug_yaw = 47,
-  cl_show_deploy_timer = 48,
-  cl_crosshair = 49,
-  cl_crosshair_dot = 50,
-  cl_crosshair_size = 51,
-  cl_crosshair_gap = 52,
-  cl_crosshair_thickness = 53,
-  cl_crosshair_r = 54,
-  cl_crosshair_g = 55,
-  cl_crosshair_b = 56,
-  cl_crosshair_a = 57,
-  editor_speed = 58,
-  cl_timescale = 59,
-  sound_reference_distance = 60,
-  sound_max_distance_cutoff = 61,
-  sound_rolloff_factor = 62,
-  map_respawn_delay_seconds = 63,
-  map_kill_limit = 64,
-  map_round_time_limit_seconds = 65,
-  debug_show_collisions = 66,
-  debug_show_hitboxes = 67,
-  debug_show_navmesh = 68,
-  debug_show_box_volumes = 69,
-  debug_hide_geometry = 70,
-  cl_shot_debug_seconds = 71,
-  debug_show_entity_counts = 72,
-  debug_show_physics_bodies = 73,
-  net_snapshot_debug = 74,
-  sv_event_debug = 75,
-  cl_event_debug = 76,
-  sv_reliable_debug = 77,
+  pm_air_jump_count = 11,
+  pm_air_jump_speed = 12,
+  game_rocket_speed = 13,
+  sv_gamemode = 14,
+  mp_warmup_seconds = 15,
+  mp_countdown_seconds = 16,
+  mp_round_seconds = 17,
+  mp_round_end_seconds = 18,
+  mp_game_over_seconds = 19,
+  mp_players_to_start = 20,
+  mp_frag_limit = 21,
+  sv_aim_max_pitch = 22,
+  sv_aim_max_yaw = 23,
+  sv_aim_body_turn_rate = 24,
+  sv_lag_compensation = 25,
+  sv_max_rewind_ticks = 26,
+  sv_lag_compensation_debug = 27,
+  sv_shot_debug = 28,
+  sv_tickrate = 29,
+  sv_timeout = 30,
+  sv_max_move_backlog = 31,
+  sv_map_transfer_fragments_per_tick = 32,
+  name = 33,
+  cl_max_unacked_inputs = 34,
+  r_fov = 35,
+  r_zoom_fov = 36,
+  r_zoom_easing_time_between_fovs = 37,
+  m_sensitivity = 38,
+  m_zoom_sensitivity_ratio = 39,
+  cl_maxfps = 40,
+  cl_interpolation_delay_ticks = 41,
+  cl_interpolation_debug = 42,
+  cl_display_latency_ms = 43,
+  cl_draw_player_hull = 44,
+  cl_spectate_slot = 45,
+  cl_player_unlit = 46,
+  cl_aim_debug = 47,
+  cl_aim_debug_pitch = 48,
+  cl_aim_debug_yaw = 49,
+  cl_show_deploy_timer = 50,
+  cl_crosshair = 51,
+  cl_crosshair_dot = 52,
+  cl_crosshair_size = 53,
+  cl_crosshair_gap = 54,
+  cl_crosshair_thickness = 55,
+  cl_crosshair_r = 56,
+  cl_crosshair_g = 57,
+  cl_crosshair_b = 58,
+  cl_crosshair_a = 59,
+  editor_speed = 60,
+  cl_timescale = 61,
+  sound_reference_distance = 62,
+  sound_max_distance_cutoff = 63,
+  sound_rolloff_factor = 64,
+  map_respawn_delay_seconds = 65,
+  map_kill_limit = 66,
+  map_round_time_limit_seconds = 67,
+  pin_main_thread = 68,
+  debug_show_collisions = 69,
+  debug_show_hitboxes = 70,
+  debug_show_navmesh = 71,
+  debug_show_box_volumes = 72,
+  debug_hide_geometry = 73,
+  cl_shot_debug_seconds = 74,
+  debug_show_entity_counts = 75,
+  debug_show_physics_bodies = 76,
+  net_snapshot_debug = 77,
+  sv_event_debug = 78,
+  cl_event_debug = 79,
+  sv_reliable_debug = 80,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 78;
+constexpr uint32_t CVAR_COUNT = 81;
 
 enum class command_id : uint16_t
 {
@@ -251,12 +258,21 @@ enum class command_id : uint16_t
   noclip = 4,
   join_game = 5,
   spectate = 6,
-  bind = 7,
-  connect = 8,
-  announce = 9,
+  sv_mem_report = 7,
+  sv_frame_report = 8,
+  sv_hitch_report = 9,
+  bind = 10,
+  connect = 11,
+  announce = 12,
+  mem_report = 13,
+  mem_frame = 14,
+  mem_stacks = 15,
+  frame_report = 16,
+  frame_reset = 17,
+  hitch_report = 18,
 };
 
-constexpr uint32_t COMMAND_COUNT = 10;
+constexpr uint32_t COMMAND_COUNT = 19;
 
 enum cvar_type : uint8_t
 {
@@ -360,6 +376,15 @@ void join_game(const command_context_t& context);
 // @Server  Leave the match and return to spectating
 // usage: spectate
 void spectate(const command_context_t& context);
+// @Server  Print the top allocation sites by live bytes
+// usage: sv_mem_report [top]
+void sv_mem_report(int32_t top, const command_context_t& context);
+// @Server  Print the tick time distribution and the worst ticks so far
+// usage: sv_frame_report
+void sv_frame_report(const command_context_t& context);
+// @Server  What the worst tick allocated, by call site
+// usage: sv_hitch_report [top]
+void sv_hitch_report(int32_t top, const command_context_t& context);
 // @Client  Bind a key (a-z) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);
@@ -369,6 +394,24 @@ void connect(std::string_view address, const command_context_t& context);
 // @Client  Show a banner on screen for a few seconds
 // usage: announce <text...>
 void announce(std::string_view text, const command_context_t& context);
+// @Client  Print the top allocation sites by live bytes
+// usage: mem_report [top]
+void mem_report(int32_t top, const command_context_t& context);
+// @Client  Print how much the last frame allocated
+// usage: mem_frame
+void mem_frame(const command_context_t& context);
+// @Client  Capture a call stack per allocation (off = totals only)
+// usage: mem_stacks [capture]
+void mem_stacks(bool capture, const command_context_t& context);
+// @Client  Print the frame time distribution and the worst frames so far
+// usage: frame_report
+void frame_report(const command_context_t& context);
+// @Client  Discard the frame time distribution and start measuring again
+// usage: frame_reset
+void frame_reset(const command_context_t& context);
+// @Client  What the worst frame allocated, by call site
+// usage: hitch_report [top]
+void hitch_report(int32_t top, const command_context_t& context);
 } // namespace commands
 
 // The runtime dispatch surface. Each slot holds the command's generated

@@ -152,6 +152,34 @@ static void apply_damage_to_physics_body(server_context_t &context,
                       direction * info.knockback_force);
 }
 
+// Damageable_Entity path: HP and nothing else. No knockback (it is placed
+// geometry, not a body), no respawn timer, no kill credit -- a crate is not a
+// frag. What a death DOES do is hide the thing, because the alternative is a
+// destroyed target that still draws: `visible` is @Networked precisely so this
+// one write reaches every client.
+//
+// It is NOT despawned. Removing the entity would take the map-placed object out
+// of a world the client loaded from the same map, so the two would then
+// disagree about what exists -- and a round reset has nothing to put back. A
+// dead damageable is a damageable with no health, which pose_all_targets
+// already skips and seed_damageable_health puts back at the round boundary.
+static void apply_damage_to_damageable(server_context_t &context,
+                                       const damage_info_t &info,
+                                       entities::Damageable_Entity &damageable)
+{
+  if (damageable.health <= 0)
+    return; // already destroyed; same corpse gate the player path has
+
+  if (!can_take_damage(context))
+    return;
+
+  const int32_t health_before = damageable.health;
+  damageable.health -= static_cast<int32_t>(info.amount);
+
+  if (health_before > 0 && damageable.health <= 0)
+    damageable.render.visible = false;
+}
+
 void inflict_damage(server_context_t &context, const damage_info_t &info)
 {
   if (info.victim_uid == 0)
@@ -163,7 +191,7 @@ void inflict_damage(server_context_t &context, const damage_info_t &info)
 
   shared::game_session_t &session = context.world.session;
 
-  // Dispatch on entity type. Two damageable types today; if this grows past
+  // Dispatch on entity type. Three damageable types today; if this grows past
   // ~6 cases or any case past ~50 lines, promote to a registration table
   // keyed by entity_type (see events_plan.md §"Per-entity damage dispatch").
   //
@@ -180,9 +208,14 @@ void inflict_damage(server_context_t &context, const damage_info_t &info)
     apply_damage_to_physics_body(context, info, *body);
     return;
   }
+  if (auto *damageable = session.entity_system.get<entities::Damageable_Entity>(info.victim_uid))
+  {
+    apply_damage_to_damageable(context, info, *damageable);
+    return;
+  }
 
   log_error("inflict_damage: no damageable entity matches victim_uid {} "
-            "(neither Player_Entity nor Physics_Body_Entity)",
+            "(none of Player_Entity, Physics_Body_Entity, Damageable_Entity)",
             static_cast<uint64_t>(info.victim_uid));
 }
 
@@ -210,9 +243,31 @@ void inflict_damage_batch(server_context_t &context, Span<const pending_hit_t> h
 
     if (!player)
     {
-      // Not a player. Nothing to resolve — impulses are additive and a physics
-      // body has no health to contend over — so each hit takes the single-hit
-      // path unchanged, including its uid == 0 and not-damageable diagnostics.
+      // A Damageable_Entity DOES have health to contend over, so it sums like a
+      // player. Two shots landing on one crate in a tick must both count, and
+      // the per-hit loop below would drop the second: the first can cross zero,
+      // and the corpse gate then discards everything after it. With co-op on
+      // the table that stops being exotic — two players shooting one demon in a
+      // tick is the routine case.
+      //
+      // It needs none of the REST of the player path — no kill credit, no
+      // knockback, no respawn — so this is a sum and one call rather than a
+      // second copy of that block.
+      if (session.entity_system.get<entities::Damageable_Entity>(victim_uid))
+      {
+        damage_info_t summed = hits[i].info;
+        summed.amount        = 0.f;
+        for (uint32_t j = i; j < hits.size(); ++j)
+          if (hits[j].info.victim_uid == victim_uid)
+            summed.amount += hits[j].info.amount;
+
+        inflict_damage(context, summed);
+        continue;
+      }
+
+      // Anything else has nothing to resolve — impulses are additive and a
+      // physics body has no health — so each hit takes the single-hit path
+      // unchanged, including its uid == 0 and not-damageable diagnostics.
       for (uint32_t j = i; j < hits.size(); ++j)
         if (hits[j].info.victim_uid == victim_uid)
           inflict_damage(context, hits[j].info);

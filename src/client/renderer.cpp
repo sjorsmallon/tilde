@@ -1,3 +1,4 @@
+#include "../shared/frame_timing.hpp"
 #include "renderer.hpp"
 
 #include <iostream>
@@ -657,6 +658,7 @@ static void create_framebuffers()
 
 static void rebuild_swapchain()
 {
+  FRAME_ZONE("rebuild_swapchain");
   int width = 0, height = 0;
   SDL_Vulkan_GetDrawableSize(g_window, &width, &height);
   if (width == 0 || height == 0)
@@ -2107,6 +2109,7 @@ void update_mesh(mesh_handle_t handle, const assets::mesh_asset_t &mesh)
   // The old buffers may still be in flight, so this waits. It is the price of
   // re-uploading geometry mid-session (displacement sculpting); it is paid here,
   // where the caller asked for it, rather than inside a draw.
+  FRAME_ZONE("update_mesh (vkDeviceWaitIdle)");
   vkDeviceWaitIdle(g_device);
 
   gpu_mesh_t &gpu_mesh = g_meshes[handle.index];
@@ -2217,6 +2220,9 @@ static void end_single_command(VkCommandBuffer cmd)
   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
   submit.commandBufferCount = 1;
   submit.pCommandBuffers = &cmd;
+  // A FULL queue drain, and it runs on every texture and buffer upload. This
+  // is the single most likely home of a long stall that allocates nothing.
+  FRAME_ZONE("end_single_time_commands (vkQueueWaitIdle)");
   vkQueueSubmit(g_graphics_queue, 1, &submit, VK_NULL_HANDLE);
   vkQueueWaitIdle(g_graphics_queue);
   vkFreeCommandBuffers(g_device, g_command_pool, 1, &cmd);

@@ -326,21 +326,29 @@ int main()
     entities::Player_Entity shooter;
     shooter.entity_id                    = 1;
     shooter.client_slot_index            = 0;
-    shooter.inventory.active_weapon      = entities::Weapon::Scout;
-    shooter.inventory.weapons[entities::Weapon::Knife]           = 20;
-    shooter.inventory.weapons[entities::Weapon::Scout]           = 21;
-    shooter.inventory.weapons[entities::Weapon::Rocket_Launcher] = 22;
+    shooter.inventory.active_slot = entities::Inventory_Slot::Primary;
+
+    // One uid per WEAPON, placed in the slot its definition names -- the same
+    // route grant_default_inventory takes, so adding a weapon to the .def
+    // extends this rather than leaving a slot holding uid 0.
+    for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
+      shooter.inventory.weapons[shared::get_weapon_definition((entities::Weapon)index).slot] =
+          20 + index;
 
     network::snapshot_frame_t server_frame;
     server_frame.tick       = 1;
     server_frame.players[1] = shooter;
+    // Walked by WEAPON, placed by SLOT: each definition names where it is held,
+    // which is the same route grant_default_inventory takes.
     for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
     {
-      const entities::Weapon weapon = (entities::Weapon)index;
+      const entities::Weapon             weapon     = (entities::Weapon)index;
+      const shared::weapon_definition_t& definition = shared::get_weapon_definition(weapon);
+
       entities::Weapon_Entity carried;
-      carried.entity_id = shooter.inventory.weapons[weapon];
+      carried.entity_id = shooter.inventory.weapons[definition.slot];
       carried.weapon_id = weapon;
-      carried.ammo      = shared::get_weapon_definition(weapon).magazine_size;
+      carried.ammo      = definition.magazine_size;
       server_frame.weapons[carried.entity_id] = carried;
     }
 
@@ -348,14 +356,15 @@ int main()
     uint32_t                  record_count = 0;
     transmit_snapshot(server_frame, nullptr, client_frame, &record_count);
 
-    assert(record_count == 4); // the player and its three weapons
-    assert(client_frame.weapons.size() == 3);
+    // The player plus one entity per carried weapon.
+    assert(record_count == 1 + enum_traits<entities::Weapon>::count);
+    assert(client_frame.weapons.size() == enum_traits<entities::Weapon>::count);
 
     // The client resolves the same way the server does: one index into the
     // replicated forward list, never a scan for a weapon claiming this owner.
     const entities::Player_Entity& received = client_frame.players.at(1);
     const shared::entity_uid_t     held_uid =
-        received.inventory.weapons[received.inventory.active_weapon];
+        received.inventory.weapons[received.inventory.active_slot];
     assert(held_uid == 21);
     assert(client_frame.weapons.at(held_uid).weapon_id == entities::Weapon::Scout);
     assert(client_frame.weapons.at(held_uid).ammo ==
@@ -376,14 +385,15 @@ int main()
            shared::get_weapon_definition(entities::Weapon::Scout).magazine_size - 1);
     assert(next_client_frame.weapons.at(20).ammo ==
            shared::get_weapon_definition(entities::Weapon::Knife).magazine_size);
-    assert(next_client_frame.players.at(1).inventory.weapons[entities::Weapon::Scout] == 21);
+    assert(next_client_frame.players.at(1)
+               .inventory.weapons[entities::Inventory_Slot::Primary] == 21);
 
     // And a SWITCH costs one record on the player and none on either weapon:
     // the magazine stays where the last shot left it, which is the free instant
     // reload that used to hide in the switch handler.
     network::snapshot_frame_t acked_after_shot = next_client_frame;
     server_frame.tick                          = 3;
-    server_frame.players[1].inventory.active_weapon = entities::Weapon::Knife;
+    server_frame.players[1].inventory.active_slot = entities::Inventory_Slot::Melee;
 
     network::snapshot_frame_t after_switch;
     transmit_snapshot(server_frame, &acked_after_shot, after_switch, &record_count);
@@ -578,6 +588,70 @@ int main()
     assert(next_client_frame.players.empty());
     assert(next_client_frame.physics_bodies.size() == 1);
     assert(next_client_frame.rockets.size() == 1);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] A damageable replicates only what the map cannot say..."
+              << std::endl;
+
+    // Damageable_Entity is the one MAP-PLACED type that is replicated
+    // (generalization_def.md §3). The client already has its position and its
+    // mesh from its own map load, so what has to survive the wire is the two
+    // things that change at runtime: health, and whether it is still drawn.
+    network::snapshot_frame_t server_frame;
+    server_frame.tick = 1;
+
+    entities::Damageable_Entity crate;
+    crate.entity_id           = 70;
+    crate.position            = {100.f, 0.f, 200.f};
+    crate.health              = 100;
+    crate.hitbox_half_extents = {16.f, 32.f, 16.f};
+    crate.render.visible      = true;
+    server_frame.damageables[70] = crate;
+
+    network::snapshot_frame_t client_frame;
+    transmit_snapshot(server_frame, nullptr, client_frame);
+
+    assert(client_frame.damageables.size() == 1);
+    assert(client_frame.damageables.at(70).health == 100);
+    assert(client_frame.damageables.at(70).render.visible);
+
+    // hitbox_half_extents is deliberately NOT @Networked, so it arrives as the
+    // struct default rather than as what the server holds -- the client reads
+    // the real one out of the map. Asserted so that flagging it later is a
+    // decision somebody makes on purpose rather than a silent bandwidth
+    // increase.
+    const entities::Damageable_Entity fresh{};
+    assert(client_frame.damageables.at(70).hitbox_half_extents.y ==
+           fresh.hitbox_half_extents.y);
+
+    // Destroyed: health crosses zero and the server hides it. That is TWO
+    // changed leaves on one entity and must cost exactly one record.
+    network::snapshot_frame_t acked = client_frame;
+    server_frame.tick                        = 2;
+    server_frame.damageables[70].health       = 0;
+    server_frame.damageables[70].render.visible = false;
+
+    network::snapshot_frame_t after_death;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, &acked, after_death, &record_count);
+
+    assert(record_count == 1);
+    assert(after_death.damageables.at(70).health == 0);
+    assert(!after_death.damageables.at(70).render.visible);
+
+    // And an untouched one costs nothing at all, which is what makes a level
+    // full of crates free after the first full update.
+    network::snapshot_frame_t acked_after_death = after_death;
+    server_frame.tick                           = 3;
+
+    network::snapshot_frame_t idle;
+    transmit_snapshot(server_frame, &acked_after_death, idle, &record_count);
+
+    assert(record_count == 0);
+    assert(idle.damageables.at(70).health == 0);
 
     std::cout << "    -> Success!" << std::endl;
   }

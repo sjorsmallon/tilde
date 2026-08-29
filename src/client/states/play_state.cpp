@@ -1,3 +1,4 @@
+#include "../../shared/frame_timing.hpp"
 #include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/network/entity_serialization.hpp"
 #include "play_state.hpp"
@@ -164,15 +165,18 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
 // state is predicted.
 // Our own active Weapon_Entity out of the last snapshot, or nullptr.
 //
-// The same resolution the server does -- `weapons[active_weapon]`, one index
-// into the stored forward list -- rather than a scan for a weapon claiming us
-// as its owner. FALLIBLE at every step for the reason everything decoded off
-// the wire is: active_weapon is an enum with no range check, and the uid it
-// selects is a number a packet chose. Callers want "no shot" out of that.
+// The same resolution the server does -- `weapons[active_slot]`, one index into
+// the stored forward list -- rather than a scan for a weapon claiming us as its
+// owner. FALLIBLE at every step for the reason everything decoded off the wire
+// is: active_slot is an enum with no range check, and the uid it selects is a
+// number a packet chose. An empty slot is a legal hand rather than a decode
+// failure, and lands here as the same nullptr. Callers want "no shot" out of
+// all of it.
 static const entities::Weapon_Entity *
-try_find_active_weapon(const client_context_t &ctx, const entities::Player_Entity &player)
+try_find_weapon_in_slot(const client_context_t &ctx, const entities::Player_Entity &player,
+                        entities::Inventory_Slot slot)
 {
-  const uint32_t *weapon_uid = player.inventory.weapons.try_get(player.inventory.active_weapon);
+  const uint32_t *weapon_uid = player.inventory.weapons.try_get(slot);
   if (weapon_uid == nullptr || *weapon_uid == shared::null_entity_uid)
     return nullptr;
 
@@ -181,6 +185,47 @@ try_find_active_weapon(const client_context_t &ctx, const entities::Player_Entit
     return nullptr;
 
   return &found->second;
+}
+
+static const entities::Weapon_Entity *
+try_find_active_weapon(const client_context_t &ctx, const entities::Player_Entity &player)
+{
+  return try_find_weapon_in_slot(ctx, player, player.inventory.active_slot);
+}
+
+// The table row for whatever is in our own hand, or nullptr for an empty slot,
+// a body we have no snapshot of, or a weapon id this snapshot did not carry.
+//
+// Exists for the self-impulse prediction, which needs the row in two places
+// that do not share a scope: the live step loop and the reconciliation replay.
+// It reads the LATEST snapshot's active_slot in both, which is a round trip
+// stale -- the same staleness the predicted deploy clock beside it already
+// accepts, and the same fix (a predicted copy of active_slot) would settle
+// both. It costs a dash taken within a round trip of a switch BETWEEN two
+// impulse weapons of different strengths, which is not a state that exists yet.
+static const shared::weapon_definition_t *
+try_find_local_weapon_definition(const client_context_t &ctx)
+{
+  const auto my_entity = ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
+  if (my_entity == ctx.replication.latest_player_entities.end())
+    return nullptr;
+
+  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, my_entity->second);
+  if (held == nullptr)
+    return nullptr;
+
+  // weapon_id came off the wire and enum fields are deserialized with no range
+  // check, so it is bounds-checked here rather than asserted inside
+  // get_weapon_definition, which is nothing in a release build.
+  if ((uint32_t)held->weapon_id >= shared::WEAPON_DEFINITIONS.size())
+  {
+    log_error("try_find_local_weapon_definition: weapon id {} is outside the Weapon enum "
+              "(count {}) -- corrupt or hostile snapshot",
+              (uint32_t)held->weapon_id, shared::WEAPON_DEFINITIONS.size());
+    return nullptr;
+  }
+
+  return &shared::get_weapon_definition(held->weapon_id);
 }
 
 static void play_predicted_local_gunshot(client_context_t &ctx)
@@ -192,11 +237,18 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
   if (my_entity == ctx.replication.latest_player_entities.end())
     return;
 
-  // inventory.active_weapon came off the wire, and enum fields are deserialized without
-  // a range check, so it is looked up through try_fire_sound_for FIRST -- that
+  // WHAT IS IN THE HAND, resolved through the slot exactly as the server does.
+  // A null is an empty slot or a weapon this snapshot did not carry, and both
+  // mean no bang -- the second is one missing sound, not an assert.
+  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, my_entity->second);
+  if (held == nullptr)
+    return;
+
+  // weapon_id came off the wire, and enum fields are deserialized without a
+  // range check, so it is looked up through try_fire_sound_for FIRST -- that
   // bounds-checks and logs. get_weapon_definition only asserts, which is nothing
   // in a release build, so it is reached only once the id is known good.
-  const entities::Weapon my_weapon = my_entity->second.inventory.active_weapon;
+  const entities::Weapon my_weapon = held->weapon_id;
   const std::optional<assets::sound_asset> sound = try_fire_sound_for(my_weapon);
   if (!sound)
     return;
@@ -226,15 +278,8 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
   // cannot have moved since the snapshot that carried it. A magazine_size of 0
   // is the knife, which has no magazine and is never empty.
   //
-  // A weapon we cannot resolve is a refusal, not an assert: it is one snapshot
-  // where the inventory named something we have not decoded, and the cost is
-  // one missing bang.
-  if (weapon.magazine_size > 0)
-  {
-    const entities::Weapon_Entity *held = try_find_active_weapon(ctx, my_entity->second);
-    if (held == nullptr || held->ammo <= 0)
-      return;
-  }
+  if (weapon.magazine_size > 0 && held->ammo <= 0)
+    return;
 
   // MID-RELOAD, off the local prediction rather than the server's deadline.
   if (ctx.prediction.seconds_until_local_reload_complete > 0.f)
@@ -294,6 +339,10 @@ static void send_request_map_data(network::Client_Transport_Layer &transport,
 
 bool Play_State::load_client_map(const std::string &map_path)
 {
+  // Also reachable mid-session on a server map change, which is not a state
+  // transition -- so it marks the frame itself rather than relying on switch_to.
+  frame_timing::exclude_current_frame("map load");
+
   if (map_path.empty())
   {
     log_warning("load_client_map: empty map path");
@@ -313,6 +362,8 @@ bool Play_State::load_client_map(const std::string &map_path)
 
 bool Play_State::apply_map_package(const shared::map_package_t &package)
 {
+  frame_timing::exclude_current_frame("map package applied");
+
   // Build the map from the streamed package: entities from the canonical text,
   // navmesh from the baked sidecar the package carries. parse_map_from_string
   // returns a fresh map (no navmesh), so the navmesh is attached afterward
@@ -965,10 +1016,25 @@ void Play_State::update(float dt)
     // intiialize from the server's authoritative state, then replay every command the server has not acked yet.
     vec3f reconciled_position = ctx.prediction.latest_server_position;
     vec3f reconciled_velocity = ctx.prediction.latest_server_velocity;
+    // Restarted from the SERVER's copy, exactly like the two above it -- this
+    // whole block exists to re-run our inputs against the server's answer, and
+    // a replay that kept the local movement state would be re-running them
+    // against our own guess.
+    entities::Movement reconciled_movement = ctx.prediction.latest_server_movement;
 
     // Hoisted: the replay is a loop over past ticks and this does not vary
     // within it. See local_movement_is_allowed for why that is a stopgap.
     const bool movement_allowed = local_movement_is_allowed(ctx);
+
+    // The one thing the replay needs beyond movement, and the reason it needs
+    // it: a Fire_Resolution::Self_Impulse lands on OUR OWN velocity
+    // (generalization_def.md §4), so an unacked dash that the replay does not
+    // re-apply is a dash undone for a round trip and then reinstated -- a
+    // rubber-band on the one ability whose whole point is that it is instant.
+    // Every other resolution's outcome is somewhere else and correctly absent
+    // from this loop.
+    const shared::weapon_definition_t *replayed_weapon =
+        try_find_local_weapon_definition(ctx);
 
     float prediction_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
 
@@ -984,6 +1050,8 @@ void Play_State::update(float dt)
       const shared::subtick_steps_t subtick_steps =
           shared::split_input_per_tick_into_subtick_steps(pending_input.input, prediction_dt);
 
+      uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
+
       for (const shared::subtick_step_t& step : subtick_steps)
       {
         // per-step aim because that's just correct.
@@ -992,6 +1060,10 @@ void Play_State::update(float dt)
         step_look.pitch = step.view.pitch;
         const camera_basis_t step_basis = get_orientation_vectors(step_look);
 
+        const uint64_t replay_pressed_in_this_step =
+            step.buttons & ~replay_previous_buttons;
+        replay_previous_buttons = step.buttons;
+
         if (!movement_allowed)
         {
           reconciled_velocity = {0.f, 0.f, 0.f};
@@ -999,13 +1071,34 @@ void Play_State::update(float dt)
         }
 
         std::tie(reconciled_position, reconciled_velocity) = player_move(
-            *ctx.cvars, move_input_from_buttons(step.buttons), ctx.world.session.bvh,
+            *ctx.cvars, move_input_from_buttons(step.buttons), reconciled_movement,
+            ctx.world.session.bvh,
             reconciled_position, reconciled_velocity, step_basis.forward,
             step_basis.right, player_half_width, player_half_height, step.dt, nullptr,
             &ctx.visuals.debug_collision_faces);
+
+        // AFTER the move, exactly where the server applies it: the impulse
+        // steers the steps that follow the press, not the one it opened. The
+        // gate lives in reconciled_movement, which was seeded from the server
+        // a few lines up -- so a dash the server has already applied is not
+        // applied twice, and one it has not seen yet is applied here on the
+        // same cooldown the server will charge.
+        if ((replay_pressed_in_this_step & Button::Fire) && replayed_weapon != nullptr)
+          (void)shared::try_apply_self_impulse(
+              *replayed_weapon,
+              linalg::direction_from_angles(step.view.yaw, step.view.pitch),
+              reconciled_movement, reconciled_velocity);
       }
     }
     
+
+    // ADOPTED UNCONDITIONALLY, and deliberately not put through the error
+    // thresholds below. Those exist because a position is a float and the last
+    // bits of it are quantization noise worth ignoring; a jump budget is a
+    // count and a ground flag is a bool, and neither has a noise floor. Half-
+    // applying a correction here would leave the predicted charge count
+    // disagreeing with the server's for as long as the player stayed airborne.
+    ctx.prediction.player_movement = reconciled_movement;
 
     vec3f error = {reconciled_position.x - ctx.prediction.player_position.x,
                    reconciled_position.y - ctx.prediction.player_position.y,
@@ -1603,44 +1696,54 @@ void Play_State::update(float dt)
               my_entity != ctx.replication.latest_player_entities.end();
 
           // A SWITCH, predicted off the same edge and the same table the server
-          // applies it from (shared::try_weapon_selected_by), which is why an
+          // applies it from (shared::try_slot_selected_by), which is why an
           // unbound number key does nothing here rather than cancelling a
           // reload the server keeps running.
           //
-          // The deploy duration comes from the weapon the key SELECTS, not from
-          // active_weapon -- that is still the outgoing weapon, and it is what
-          // the server charges too.
+          // The deploy duration comes from whatever is in the slot the key
+          // SELECTS, not from the active slot -- that still holds the outgoing
+          // weapon, and the incoming one is what the server charges too. An
+          // empty target slot deploys instantly, which is the same answer the
+          // server reaches from the same two facts.
           //
-          // Compared against the replicated active_weapon, which is a round
-          // trip stale: re-pressing the key for the weapon in hand is a no-op on
-          // the server, and this reproduces that except across a switch faster
-          // than a round trip, where it can charge a deploy the server does not.
+          // Compared against the replicated active_slot, which is a round trip
+          // stale: re-pressing the key for the slot in hand is a no-op on the
+          // server, and this reproduces that except across a switch faster than
+          // a round trip, where it can charge a deploy the server does not.
           // Audio and a countdown, so the cost of being wrong is a number on
-          // screen; the fix is a predicted copy of active_weapon, which is a
+          // screen; the fix is a predicted copy of active_slot, which is a
           // second answer worth more than it buys today.
           if (have_own_body)
           {
-            const std::optional<entities::Weapon> selected =
-                shared::try_weapon_selected_by(pressed_in_this_step);
-            if (selected && *selected != my_entity->second.inventory.active_weapon)
+            const std::optional<entities::Inventory_Slot> selected =
+                shared::try_slot_selected_by(pressed_in_this_step);
+            if (selected && *selected != my_entity->second.inventory.active_slot)
             {
+              const entities::Weapon_Entity *raised =
+                  try_find_weapon_in_slot(ctx, my_entity->second, *selected);
+
               ctx.prediction.seconds_until_local_reload_complete = 0.f;
               ctx.prediction.seconds_until_local_deploy_complete =
-                  shared::get_weapon_definition(*selected).deploy_duration_seconds;
+                  raised != nullptr
+                      ? shared::get_weapon_definition(raised->weapon_id).deploy_duration_seconds
+                      : 0.f;
             }
           }
 
           if ((pressed_in_this_step & Button::Reload) && have_own_body)
           {
-            const shared::weapon_definition_t &held =
-                shared::get_weapon_definition(my_entity->second.inventory.active_weapon);
             const entities::Weapon_Entity *held_entity =
                 try_find_active_weapon(ctx, my_entity->second);
-            if (held.magazine_size > 0 && held_entity != nullptr &&
-                ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
-                held_entity->ammo < held.magazine_size)
-              ctx.prediction.seconds_until_local_reload_complete =
-                  held.reload_duration_seconds;
+            if (held_entity != nullptr)
+            {
+              const shared::weapon_definition_t &held =
+                  shared::get_weapon_definition(held_entity->weapon_id);
+              if (held.magazine_size > 0 &&
+                  ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
+                  held_entity->ammo < held.magazine_size)
+                ctx.prediction.seconds_until_local_reload_complete =
+                    held.reload_duration_seconds;
+            }
           }
 
           // The basis is PER STEP now, from the aim in effect when the step
@@ -1665,13 +1768,35 @@ void Play_State::update(float dt)
           else
           {
             auto [new_position, new_velocity] = player_move(
-                *ctx.cvars, move_input_from_buttons(step.buttons), ctx.world.session.bvh,
+                *ctx.cvars, move_input_from_buttons(step.buttons),
+                ctx.prediction.player_movement, ctx.world.session.bvh,
                 ctx.prediction.player_position, ctx.prediction.player_velocity,
                 step_basis.forward, step_basis.right, player_half_width, player_half_height,
                 step.dt, &step_events, &ctx.visuals.debug_collision_faces);
 
             ctx.prediction.player_position = new_position;
             ctx.prediction.player_velocity = new_velocity;
+          }
+
+          // The one thing a fire press does to our OWN state, so the one thing
+          // this loop simulates about firing (generalization_def.md §4).
+          // Everything else a shot does lands on somebody else and correctly
+          // waits for the server.
+          //
+          // After the move and behind the same movement gate the server reads,
+          // off the same table row and the same arithmetic -- and the
+          // reconciliation replay above runs the identical call, which is what
+          // stops an unacked dash being undone for a round trip.
+          if (fire_pressed_in_this_step && have_own_body &&
+              local_movement_is_allowed(ctx))
+          {
+            const shared::weapon_definition_t *held_definition =
+                try_find_local_weapon_definition(ctx);
+            if (held_definition != nullptr)
+              (void)shared::try_apply_self_impulse(
+                  *held_definition,
+                  linalg::direction_from_angles(step.view.yaw, step.view.pitch),
+                  ctx.prediction.player_movement, ctx.prediction.player_velocity);
           }
 
           // Stashed HERE, and here specifically: after the step the press

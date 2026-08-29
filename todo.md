@@ -678,10 +678,24 @@ did not fix.
       handle and drew nothing. Assign a mesh in `entities.def` (server log:
       `Rocket spawned ... mesh='Missing'`).
 - [ ] Arrow / spear projectile.
-- [ ] `entities::Weapon_Kind::Hitscan` has no weapon using it. Knife is `Melee`
-      and Scout is `Sniper`, and both hit the same case in the fire path
-      (`server_impl.cpp`), so `Hitscan` is a value nothing selects. Give it to a
-      weapon (a plain rifle) or drop it — a third name for a path that has two.
+- [x] ~~`entities::Weapon_Kind::Hitscan` has no weapon using it~~ — done
+      2026-08-29, and the answer was "drop it, and `Melee` and `Sniper` with it".
+      The enum was the fire-RESOLUTION axis conflated with weapon flavour: four
+      values funding two switch arms and one predicate asked outside the switch.
+      It is `Fire_Resolution {Hitscan, Projectile, Self_Impulse}` now, `Melee`'s
+      one real job is the row field `leaves_bullet_impact`, and both Knife and
+      Scout select `Hitscan`. See `generalization_def.md` §4.
+- [x] ~~The three closed enums are all deathmatch-shaped~~ — done 2026-08-29.
+      `Win_Condition::Objective_Reached`, `Spawn_Policy::Single_Fixed_Start` and
+      the four Neon-White trigger actions (`Complete_Level`, `Checkpoint`,
+      `Grant_Weapon`, `Set_Velocity`), plus the `speedrun` mode ROW that names
+      the two new enum values — an enum value with no reader is the `Sniper`
+      mistake, so they shipped together. Two bugs fell out: `try_grant_weapon`
+      leaked the weapon it displaced (harmless while the only caller granted
+      into empty slots), and `place_player_at_spawn` was the whole respawn reset
+      welded to a marker, so a checkpoint would have had to be a teleport. Mode-
+      owned state (an attempt clock, a bomb timer) deliberately NOT built — it
+      arrives with the second mode that needs it. See `generalization_def.md` §5.
 
 # Networking
 

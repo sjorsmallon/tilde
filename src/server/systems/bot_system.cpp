@@ -104,9 +104,13 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
   if (rlen > 0.001f) right = right * (1.f / rlen);
 
   Move_Events move_events{};
+  // A bot is a Player_Entity, so it carries the same movement state and gets
+  // every ability for free -- which is the point of putting the state on the
+  // entity rather than in a per-client side table.
   auto [new_pos, new_vel] =
-      player_move(*context.cvars, input, session.bvh, bot_ent.position, bot_ent.velocity, front,
-                  right, half_width, shared::player_half_height, dt, &move_events);
+      player_move(*context.cvars, input, bot_ent.movement, session.bvh, bot_ent.position,
+                  bot_ent.velocity, front, right, half_width, shared::player_half_height, dt,
+                  &move_events);
 
   bot_ent.position = new_pos;
   bot_ent.velocity = new_vel;

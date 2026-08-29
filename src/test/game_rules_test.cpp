@@ -195,6 +195,20 @@ void test_mode_table()
   check(!rounds.join_in_progress, "an elimination round makes a joiner wait");
   check(rounds.auto_assign_teams, "a round mode assigns teams");
   check(rounds.phase_cycle.size() == 3, "a round is freeze, play, settle");
+
+  // The third mode is a ROW, not a case: it recombines the two enums and adds
+  // no code of its own, which is the claim game_modes_def.md makes and the one
+  // generalization_def.md §5 was written to test.
+  const game_mode_settings_t& speedrun = GAME_MODES[cvars::Game_Mode::speedrun];
+  check(speedrun.win_condition == Win_Condition::Objective_Reached,
+        "a speedrun ends when the objective is reached");
+  check(speedrun.spawn_policy == Spawn_Policy::Single_Fixed_Start,
+        "a speedrun puts everyone on the start line");
+  check(speedrun.respawn_during_round, "a speedrun respawns you mid-run");
+  check(!speedrun.auto_assign_teams, "a speedrun assigns no teams");
+  check(speedrun.phase_cycle.size() == 1 &&
+            speedrun.phase_cycle[0] == shared::Round_Phase::Live,
+        "a speedrun is one Live phase");
 }
 
 // --- 2. The gates ----------------------------------------------------------
@@ -472,6 +486,86 @@ void test_team_elimination()
 
 // --- 6. Teams and spawn markers ---------------------------------------------
 
+void test_objective_reached()
+{
+  std::printf("[objective reached]\n");
+
+  test_world_t world;
+  stand_up(world, cvars::Game_Mode::speedrun);
+  spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
+
+  start_match(world.context, world.context.tick_number, tickrate);
+  check_phase(world.context, shared::Round_Phase::Live, "a speedrun starts running");
+
+  // The flag is what Trigger_Action::Complete_Level writes, and it is the only
+  // thing this condition reads: no volume, no player, no proximity.
+  check_win_condition(world.context, world.context.tick_number, tickrate);
+  check_phase(world.context, shared::Round_Phase::Live,
+              "an unreached objective leaves the run going");
+
+  world.context.world.rules.objective_reached = true;
+  check_win_condition(world.context, world.context.tick_number, tickrate);
+  check_phase(world.context, shared::Round_Phase::Game_Over,
+              "reaching the objective ends the one-round match");
+}
+
+// --- 6. Checkpoints ---------------------------------------------------------
+
+shared::entity_uid_t spawn_checkpoint(server_context_t& context, const vec3f& position,
+                                      entities::Trigger_Action action)
+{
+  const shared::entity_uid_t uid =
+      context.world.session.entity_system.spawn<entities::Trigger_Volume_Entity>();
+  entities::Trigger_Volume_Entity* volume =
+      context.world.session.entity_system.get<entities::Trigger_Volume_Entity>(uid);
+  volume->action   = action;
+  volume->position = position;
+  return uid;
+}
+
+void test_checkpoint_respawn()
+{
+  std::printf("[checkpoints]\n");
+
+  test_world_t world;
+  stand_up(world, cvars::Game_Mode::speedrun);
+  start_match(world.context, world.context.tick_number, tickrate);
+
+  const shared::entity_uid_t player_uid =
+      spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
+  const vec3f checkpoint_position{500.f, 0.f, 250.f};
+  const shared::entity_uid_t checkpoint_uid = spawn_checkpoint(
+      world.context, checkpoint_position, entities::Trigger_Action::Checkpoint);
+
+  // A uid naming a volume that is not a checkpoint resolves to nothing, so the
+  // respawn falls through to a marker. The action is what makes it one.
+  const shared::entity_uid_t killer_uid =
+      spawn_checkpoint(world.context, {900.f, 0.f, 0.f}, entities::Trigger_Action::Kill);
+  player_of(world.context, player_uid).checkpoint_uid = killer_uid;
+  world.context.world.death_tick_by_player_uid[player_uid] = world.context.tick_number;
+  update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
+  check(player_of(world.context, player_uid).position.x == 0.f,
+        "a uid naming a non-checkpoint volume respawns you at the start line");
+
+  player_of(world.context, player_uid).checkpoint_uid = checkpoint_uid;
+  world.context.world.death_tick_by_player_uid[player_uid] = world.context.tick_number;
+  update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
+  const vec3f respawned_at = player_of(world.context, player_uid).position;
+  check(respawned_at.x == checkpoint_position.x && respawned_at.y == checkpoint_position.y &&
+            respawned_at.z == checkpoint_position.z,
+        "a death respawns you on the checkpoint you took");
+  check(player_of(world.context, player_uid).health == 100,
+        "the checkpoint respawn is a full respawn, not a teleport");
+
+  // A round boundary is the start line again -- one player must not be able to
+  // rewind three others into the middle of a level (generalization_def.md §5).
+  respawn_all_players(world.context);
+  check(player_of(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
+        "a round boundary drops every checkpoint");
+  check(player_of(world.context, player_uid).position.x == 0.f,
+        "...and puts the player back on the start line");
+}
+
 void test_team_assignment()
 {
   std::printf("[teams]\n");
@@ -536,6 +630,22 @@ void test_spawn_policy()
   }
   check(saw_every_marker, "Rotate_Markers cycles every human marker in order");
 
+  // Single_Fixed_Start ignores BOTH of the things the other two policies read.
+  bool always_the_start_line = true;
+  for (uint32_t rotation = 0; rotation < 4; ++rotation)
+  {
+    for (const entities::Team_Allegiance team :
+         {entities::Team_Allegiance::Red, entities::Team_Allegiance::Blu})
+    {
+      const entities::Player_Spawn_Entity* marker =
+          try_pick_human_spawn(world.context.world.session, Spawn_Policy::Single_Fixed_Start,
+                               team, rotation);
+      always_the_start_line =
+          always_the_start_line && marker != nullptr && marker->position.x == 0.f;
+    }
+  }
+  check(always_the_start_line, "Single_Fixed_Start ignores the team and the rotation");
+
   // A map with no marker for a team still spawns the player -- loudly, on
   // whatever it has. Standing there spectating your own match is worse.
   shared::game_session_t neutral_only;
@@ -580,6 +690,8 @@ int main()
   test_team_elimination();
   test_team_assignment();
   test_spawn_policy();
+  test_objective_reached();
+  test_checkpoint_respawn();
 
   if (failure_count != 0)
   {

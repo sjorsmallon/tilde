@@ -51,25 +51,39 @@ enum class Weapon : uint8_t
   Knife = 0,
   Scout = 1,
   Rocket_Launcher = 2,
+  Dash = 3,
 };
 
-constexpr uint32_t Weapon_COUNT = 3;
+constexpr uint32_t Weapon_COUNT = 4;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
 
-enum class Weapon_Kind : uint8_t
+enum class Fire_Resolution : uint8_t
 {
-  Melee = 0,
-  Hitscan = 1,
-  Projectile = 2,
-  Sniper = 3,
+  Hitscan = 0,
+  Projectile = 1,
+  Self_Impulse = 2,
 };
 
-constexpr uint32_t Weapon_Kind_COUNT = 4;
+constexpr uint32_t Fire_Resolution_COUNT = 3;
 
-const char* to_string(Weapon_Kind value);
-template <> std::optional<Weapon_Kind> try_from_string<Weapon_Kind>(std::string_view text);
+const char* to_string(Fire_Resolution value);
+template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text);
+
+enum class Inventory_Slot : uint8_t
+{
+  Primary = 0,
+  Secondary = 1,
+  Melee = 2,
+  Utility_1 = 3,
+  Utility_2 = 4,
+};
+
+constexpr uint32_t Inventory_Slot_COUNT = 5;
+
+const char* to_string(Inventory_Slot value);
+template <> std::optional<Inventory_Slot> try_from_string<Inventory_Slot>(std::string_view text);
 
 enum class Shader_Type : uint8_t
 {
@@ -99,9 +113,13 @@ enum class Trigger_Action : uint8_t
   Set_Health = 1,
   Print_Message = 2,
   Warp_To_Spawn = 3,
+  Complete_Level = 4,
+  Checkpoint = 5,
+  Grant_Weapon = 6,
+  Set_Velocity = 7,
 };
 
-constexpr uint32_t Trigger_Action_COUNT = 4;
+constexpr uint32_t Trigger_Action_COUNT = 8;
 
 const char* to_string(Trigger_Action value);
 template <> std::optional<Trigger_Action> try_from_string<Trigger_Action>(std::string_view text);
@@ -136,15 +154,16 @@ enum class enum_type : uint16_t
   Spawn_Type = 0,
   Team_Allegiance = 1,
   Weapon = 2,
-  Weapon_Kind = 3,
-  Shader_Type = 4,
-  Shape_Kind = 5,
-  Trigger_Action = 6,
-  Fire_Mode = 7,
-  Aim_Pose = 8,
+  Fire_Resolution = 3,
+  Inventory_Slot = 4,
+  Shader_Type = 5,
+  Shape_Kind = 6,
+  Trigger_Action = 7,
+  Fire_Mode = 8,
+  Aim_Pose = 9,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 9;
+constexpr uint32_t ENUM_TYPE_COUNT = 10;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -158,16 +177,17 @@ enum class entity_type : uint16_t
   Weapon_Entity = 4,
   Rocket_Entity = 5,
   Particle_Emitter_Entity = 6,
-  Trigger_Volume_Entity = 7,
-  Point_Light_Entity = 8,
-  Spot_Light_Entity = 9,
-  Directional_Light_Entity = 10,
-  Physics_Body_Entity = 11,
+  Damageable_Entity = 7,
+  Trigger_Volume_Entity = 8,
+  Point_Light_Entity = 9,
+  Spot_Light_Entity = 10,
+  Directional_Light_Entity = 11,
+  Physics_Body_Entity = 12,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 12;
+constexpr uint32_t ENTITY_TYPE_COUNT = 13;
 
 enum class component_type : uint16_t
 {
@@ -175,10 +195,11 @@ enum class component_type : uint16_t
   Material = 1,
   Render = 2,
   Light = 3,
-  Inventory = 4,
+  Movement = 4,
+  Inventory = 5,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 5;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 6;
 
 } // namespace entities
 
@@ -209,10 +230,16 @@ template <> struct enum_traits<entities::Weapon>
   static constexpr entities::enum_type type = entities::enum_type::Weapon;
 };
 
-template <> struct enum_traits<entities::Weapon_Kind>
+template <> struct enum_traits<entities::Fire_Resolution>
 {
-  static constexpr uint32_t count = entities::Weapon_Kind_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Weapon_Kind;
+  static constexpr uint32_t count = entities::Fire_Resolution_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Fire_Resolution;
+};
+
+template <> struct enum_traits<entities::Inventory_Slot>
+{
+  static constexpr uint32_t count = entities::Inventory_Slot_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Inventory_Slot;
 };
 
 template <> struct enum_traits<entities::Shader_Type>
@@ -286,12 +313,23 @@ struct Light
   float intensity = 1.0f;
 };
 
+struct Movement
+{
+  static constexpr component_type static_component = component_type::Movement;
+
+  uint8_t air_jumps_used = {};
+  bool is_grounded = {};
+  float time_since_grounded_seconds = {};
+  bool jump_was_held = {};
+  float seconds_until_impulse_ready = {};
+};
+
 struct Inventory
 {
   static constexpr component_type static_component = component_type::Inventory;
 
-  Enum_Array<Weapon, uint32_t> weapons = {};
-  Weapon active_weapon = Weapon::Knife;
+  Enum_Array<Inventory_Slot, uint32_t> weapons = {};
+  Inventory_Slot active_slot = Inventory_Slot::Melee;
   uint64_t deploy_complete_time = {};
 };
 
@@ -338,6 +376,7 @@ struct Player_Entity : Entity
   Weapon last_fire_weapon = Weapon::Knife;
   uint64_t reload_complete_time = {};
   uint32_t last_empty_fire_warning_tick = {};
+  uint32_t checkpoint_uid = {};
   uint32_t last_hit_tick = {};
   bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};
@@ -346,6 +385,7 @@ struct Player_Entity : Entity
   int32_t deaths = {};
   linalg::vec3f velocity = {};
   Inventory inventory = {};
+  Movement movement = {};
   Render render = {.mesh = assets::mesh_asset::Leet_Full};
   Team_Allegiance team_allegiance = Team_Allegiance::Free_For_All;
 };
@@ -405,6 +445,18 @@ struct Particle_Emitter_Entity : Entity
   float alpha_end = 0.0f;
   float emitter_lifetime = 0.0f;
   uint32_t parent_entity_id = 0;
+};
+
+struct Damageable_Entity : Entity
+{
+  static constexpr entity_type static_type = entity_type::Damageable_Entity;
+
+  Damageable_Entity() { type = entity_type::Damageable_Entity; }
+
+  int32_t max_health = 100;
+  int32_t health = 100;
+  linalg::vec3f hitbox_half_extents = {16.0f, 32.0f, 16.0f};
+  Render render = {};
 };
 
 struct Trigger_Volume_Entity : Entity
@@ -527,6 +579,16 @@ static_assert(std::is_trivially_destructible_v<Particle_Emitter_Entity>,
               "slot by overwriting it and runs no destructor");
 static_assert(std::is_base_of_v<Entity, Particle_Emitter_Entity>,
               "Particle_Emitter_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
+static_assert(std::is_trivially_copyable_v<Damageable_Entity>,
+              "Damageable_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Damageable_Entity>,
+              "Damageable_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Damageable_Entity>,
+              "Damageable_Entity must derive from Entity: the generated tables hand out "
               "Entity* for every entity type");
 
 static_assert(std::is_trivially_copyable_v<Trigger_Volume_Entity>,

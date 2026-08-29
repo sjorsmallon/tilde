@@ -78,6 +78,9 @@ struct game_rules_state_t
   //
   // Cleared by the reload itself, which resets this whole struct.
   bool map_restart_requested = false;
+
+  // Set by Trigger_Action::Complete_Level, read by Win_Condition::Objective_Reached.
+  bool objective_reached = false;
 };
 
 } // namespace server

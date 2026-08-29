@@ -19,6 +19,7 @@ namespace
 constexpr const char* Game_Mode_VALUE_NAMES[] = {
   "deathmatch",
   "rounds",
+  "speedrun",
 };
 
 constexpr const char* Bot_Mode_VALUE_NAMES[] = {
@@ -28,7 +29,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 };
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
-  {"Game_Mode", {Game_Mode_VALUE_NAMES, 2}},
+  {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
@@ -119,6 +120,22 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, pm_minimum_land_impact_speed),
      .size = sizeof(cvar_state_t::pm_minimum_land_impact_speed),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_air_jump_count",
+     .description = "Air jumps allowed before touching ground again (0 = none)",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, pm_air_jump_count),
+     .size = sizeof(cvar_state_t::pm_air_jump_count),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_air_jump_speed",
+     .description = "Upward velocity an air jump sets",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_air_jump_speed),
+     .size = sizeof(cvar_state_t::pm_air_jump_speed),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "game_rocket_speed",
@@ -561,6 +578,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::map_round_time_limit_seconds),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "pin_main_thread",
+     .description = "Pin the main thread to the CPU's performance cores on a hybrid CPU",
+     .flags = CVAR_FLAG_NONE,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, pin_main_thread),
+     .size = sizeof(cvar_state_t::pin_main_thread),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "debug_show_collisions",
      .description = "Show collision faces in green",
      .flags = CVAR_FLAG_NONE,
@@ -688,6 +713,18 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .description = "Leave the match and return to spectating",
      .usage = "spectate",
      .flags = CVAR_FLAG_SERVER},
+    {.name = "sv_mem_report",
+     .description = "Print the top allocation sites by live bytes",
+     .usage = "sv_mem_report [top]",
+     .flags = CVAR_FLAG_SERVER},
+    {.name = "sv_frame_report",
+     .description = "Print the tick time distribution and the worst ticks so far",
+     .usage = "sv_frame_report",
+     .flags = CVAR_FLAG_SERVER},
+    {.name = "sv_hitch_report",
+     .description = "What the worst tick allocated, by call site",
+     .usage = "sv_hitch_report [top]",
+     .flags = CVAR_FLAG_SERVER},
     {.name = "bind",
      .description = "Bind a key (a-z) to a command line",
      .usage = "bind <key> <command...>",
@@ -700,9 +737,33 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .description = "Show a banner on screen for a few seconds",
      .usage = "announce <text...>",
      .flags = CVAR_FLAG_CLIENT},
+    {.name = "mem_report",
+     .description = "Print the top allocation sites by live bytes",
+     .usage = "mem_report [top]",
+     .flags = CVAR_FLAG_CLIENT},
+    {.name = "mem_frame",
+     .description = "Print how much the last frame allocated",
+     .usage = "mem_frame",
+     .flags = CVAR_FLAG_CLIENT},
+    {.name = "mem_stacks",
+     .description = "Capture a call stack per allocation (off = totals only)",
+     .usage = "mem_stacks [capture]",
+     .flags = CVAR_FLAG_CLIENT},
+    {.name = "frame_report",
+     .description = "Print the frame time distribution and the worst frames so far",
+     .usage = "frame_report",
+     .flags = CVAR_FLAG_CLIENT},
+    {.name = "frame_reset",
+     .description = "Discard the frame time distribution and start measuring again",
+     .usage = "frame_reset",
+     .flags = CVAR_FLAG_CLIENT},
+    {.name = "hitch_report",
+     .description = "What the worst frame allocated, by call site",
+     .usage = "hitch_report [top]",
+     .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[18] = {
+const cvar_id MIRRORED_CVAR_TABLE[20] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -714,6 +775,8 @@ const cvar_id MIRRORED_CVAR_TABLE[18] = {
     cvar_id::pm_speed_threshold,
     cvar_id::pm_step_height,
     cvar_id::pm_minimum_land_impact_speed,
+    cvar_id::pm_air_jump_count,
+    cvar_id::pm_air_jump_speed,
     cvar_id::game_rocket_speed,
     cvar_id::sv_aim_max_pitch,
     cvar_id::sv_aim_max_yaw,
@@ -782,7 +845,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 18};
+  return {MIRRORED_CVAR_TABLE, 20};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)
@@ -965,6 +1028,7 @@ const char* to_string(Game_Mode value)
   {
     case Game_Mode::deathmatch: return "deathmatch";
     case Game_Mode::rounds: return "rounds";
+    case Game_Mode::speedrun: return "speedrun";
   }
   assert(false && "invalid Game_Mode");
   return "";
@@ -974,6 +1038,7 @@ template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view
 {
   if (text == "deathmatch") return Game_Mode::deathmatch;
   if (text == "rounds") return Game_Mode::rounds;
+  if (text == "speedrun") return Game_Mode::speedrun;
   return std::nullopt;
 }
 

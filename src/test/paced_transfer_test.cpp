@@ -78,7 +78,11 @@ struct wire_t
 // "it all arrived eventually" is not what is being asserted here.
 static void test_transfer_is_paced()
 {
-  wire_t wire(9005, 9006);
+  // 91xx, not 90xx: server_loop_test owns 9001-9008 and ctest runs the two in
+  // parallel. UDP sockets here are opened with SO_REUSEADDR, so a shared port
+  // binds in BOTH processes and the datagram is delivered to whichever -- a
+  // failure that looks exactly like a lost packet in whichever test lost.
+  wire_t wire(9105, 9106);
 
   Server_Transport_Layer transport;
   transport.slot_occupied[0] = true;
@@ -122,7 +126,7 @@ static void test_transfer_is_paced()
 // reported a single fragment of it.
 static void test_a_pass_waits_for_a_receipt()
 {
-  wire_t wire(9007, 9008);
+  wire_t wire(9107, 9108);
 
   Server_Transport_Layer transport;
   transport.slot_occupied[0] = true;
@@ -147,7 +151,7 @@ static void test_a_pass_waits_for_a_receipt()
 // restart. This is the entire reason the transfer's state is a SET.
 static void test_only_the_missing_fragments_are_resent()
 {
-  wire_t wire(9009, 9010);
+  wire_t wire(9109, 9110);
 
   Server_Transport_Layer transport;
   transport.slot_occupied[0] = true;

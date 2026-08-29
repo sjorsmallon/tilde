@@ -368,6 +368,66 @@ int main()
           "the widest swept ray is outside the bound, so the reject fired");
   }
 
+  // --- a target that is not a player ---------------------------------------
+  //
+  // What generalization_def.md section 3 actually bought: resolve_hitscan never
+  // knew it was testing players, so a Damageable_Entity reaches it as ONE Box
+  // built the way pose_all_targets builds it -- start == end at the entity
+  // position, world-axis frame, half-extents off the entity. This test is that
+  // construction, verbatim, because it is the one thing that could be silently
+  // wrong (a Box reads its extents through `frame`, so a zeroed frame would
+  // collapse the volume rather than fail loudly).
+  {
+    const linalg::vec3f crate_position{200.f, 40.f, 300.f};
+    const linalg::vec3f crate_half_extents{16.f, 32.f, 16.f};
+
+    posed_hitbox_t crate{};
+    crate.shape        = hitbox_shape_t::Box;
+    crate.start        = crate_position;
+    crate.end          = crate_position;
+    crate.half_extents = crate_half_extents;
+    crate.region       = hit_region_t::Torso;
+
+    const std::vector<posed_hitbox_t> crate_volumes{crate};
+
+    check(linalg::length(crate.center() - crate_position) < 1e-4f,
+          "start == end puts a Box's centre exactly on the entity position");
+
+    // The player stand-in is at x=200 spanning a little z either side of 0, so
+    // firing down +Z from z=0 at torso height reaches the crate at z=300 with
+    // the player behind the muzzle rather than in front of it.
+    const std::vector<hitscan_target_t> mixed{make_hitscan_target(1, volumes),
+                                              make_hitscan_target(2, crate_volumes)};
+
+    const hitscan_result_t hit =
+        resolve_hitscan({200.f, 40.f, 100.f}, {0.f, 0.f, 1.f}, 1000.f, mixed);
+    check(hit.hit_uid == 2, "a non-player target is hit by the same resolve_hitscan");
+    check(std::fabs(hit.distance - (300.f - 16.f - 100.f)) < 1e-2f,
+          "the hit is the crate's near FACE, not its centre");
+
+    // The shooter's own uid still skips them, and it is the same parameter --
+    // nothing about the ignore rule knows what kind of thing it is skipping.
+    check(resolve_hitscan({200.f, 40.f, 100.f}, {0.f, 0.f, 1.f}, 1000.f, mixed, 2).hit_uid == 0,
+          "ignore_uid skips a non-player target the same way");
+
+    // Nearest still wins across the two kinds: a second crate in front of the
+    // first must take the shot.
+    posed_hitbox_t nearer = crate;
+    nearer.start = nearer.end = linalg::vec3f{200.f, 40.f, 200.f};
+    const std::vector<posed_hitbox_t> nearer_volumes{nearer};
+
+    const std::vector<hitscan_target_t> three{make_hitscan_target(1, volumes),
+                                              make_hitscan_target(2, crate_volumes),
+                                              make_hitscan_target(3, nearer_volumes)};
+    check(resolve_hitscan({200.f, 40.f, 100.f}, {0.f, 0.f, 1.f}, 1000.f, three).hit_uid == 3,
+          "ranking is by distance and does not care which kind of target it is");
+
+    // And range clamps it exactly as it does a player: this is what "a wall
+    // blocks the shot" is, since the caller passes the world hit as max_range.
+    check(resolve_hitscan({200.f, 40.f, 100.f}, {0.f, 0.f, 1.f}, 50.f, three).hit_uid == 0,
+          "a shorter max_range keeps a non-player target out of reach too");
+  }
+
   printf(failures == 0 ? "hitscan_test PASSED\n" : "hitscan_test FAILED (%d)\n", failures);
   return failures == 0 ? 0 : 1;
 }

@@ -38,6 +38,16 @@ void update_respawns(server_context_t &context,
 
 
 
+// Put every Damageable_Entity back to its AUTHORED state: full health, visible
+// again. The counterpart to respawn_all_players for the half of the world that
+// is not a player, and it lives here for the same reason that one does -- this
+// is the system that puts things back.
+//
+// Also the map-load seed, and deliberately the same function: "a fresh level"
+// and "a fresh round" are the same statement about a crate, and two functions
+// saying it would be two places for the authored value to be read wrong.
+void seed_damageable_health(shared::game_session_t &session);
+
 // Put EVERY player back on a spawn marker, alive, right now — the round-start
 // reset. Called from enter_phase, which is the one writer of the phase, so a
 // round boundary and the snap that goes with it cannot come apart.
@@ -71,6 +81,18 @@ const entities::Player_Spawn_Entity& origin_fallback_spawn();
 
 void place_player_at_spawn(shared::game_session_t &session, entities::Player_Entity &player,
                            const entities::Player_Spawn_Entity &marker);
+
+// The whole respawn reset -- transform, health, velocity, magazines -- against a
+// position and a model-euler orientation rather than a marker, so a checkpoint
+// volume can stand in for one.
+void place_player_at(shared::game_session_t &session, entities::Player_Entity &player,
+                     const vec3f &position, const vec3f &orientation);
+
+// The Trigger_Action::Checkpoint volume this player last touched, or null when
+// there is none, it no longer exists, or it is no longer a checkpoint.
+[[nodiscard]]
+const entities::Trigger_Volume_Entity *
+try_find_checkpoint(shared::game_session_t &session, const entities::Player_Entity &player);
 
 void fire_player_spawned_event(server_context_t &context,
                                const entities::Player_Entity &player);

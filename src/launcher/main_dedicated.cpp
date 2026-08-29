@@ -4,6 +4,9 @@
 #include "shared/cvars/generated/cvars_generated.hpp"
 #include "shared/detached_console.hpp"
 #include "shared/log.hpp"
+#include "shared/cpu_topology.hpp"
+#include "shared/frame_timing.hpp"
+#include "shared/memory_audit.hpp"
 #include "shared/timed_function.hpp"
 
 #include <chrono>
@@ -25,6 +28,14 @@ static cvars::command_table_t g_command_table{};
 // at this one object. See the ownership note in asset.hpp.
 static assets::asset_state_t  g_asset_state{};
 
+// The one allocation-audit state for this process; see the note in
+// main_integrated.cpp. Constant-initialized, so it is usable before any dynamic
+// initializer has run.
+static memory_audit::memory_audit_state_t g_memory_audit_state{};
+
+// The tick-time distribution. Installed in every build; see main_integrated.cpp.
+static frame_timing::frame_timing_state_t g_frame_timing_state{};
+
 int main(int argc, char *argv[])
 {
   crash_handler::install();
@@ -32,6 +43,13 @@ int main(int argc, char *argv[])
   timed_function();
 
   log_terminal("=== Starting MyGame SERVER (Dedicated) ===");
+
+#if TILDE_MEMORY_AUDIT
+  memory_audit::set_state(&g_memory_audit_state);
+  server::install_memory_audit(&g_memory_audit_state);
+#endif
+  frame_timing::set_state(&g_frame_timing_state);
+  server::install_frame_timing(&g_frame_timing_state);
 
   // Asset registration is EAGER and must run before anything resolves an asset
   // id. The lazy "__primitive_" init this replaced meant an id resolved to a
@@ -52,8 +70,22 @@ int main(int argc, char *argv[])
 
   // Fixed-timestep server loop
   bool running = true;
-  auto previous_time = std::chrono::high_resolution_clock::now();
+  std::chrono::high_resolution_clock::time_point previous_time{};
   double accumulator = 0.0;
+
+  // A dedicated server sleeps between ticks, which is what makes Thread
+  // Director demote it to an E-core -- the same reason the client launchers pin.
+  if (g_cvar_state.pin_main_thread)
+    cpu_topology::try_pin_current_thread_to_performance_cores();
+
+  // Closes the load out as STARTUP so it is not attributed to frame 1. Without
+  // this the worst frame is always the load, which hides the worst gameplay
+  // frame -- the one hitches actually come from.
+  memory_audit::mark_startup_complete();
+
+  // AFTER the two above, so the pin's processor enumeration is not measured as
+  // the first frame.
+  previous_time = std::chrono::high_resolution_clock::now();
 
   while (running)
   {
@@ -71,7 +103,19 @@ int main(int argc, char *argv[])
 
     while (accumulator >= tick_interval)
     {
+      // A dedicated server has no frames; a tick is its unit of work -- and
+      // what is worth measuring is how long a tick TOOK, not the period between
+      // ticks, which the accumulator fixes by construction. So unlike the two
+      // client launchers, the mark comes AFTER the work rather than before it,
+      // which is also what pairs the allocation count with the right tick.
+      const auto tick_start = std::chrono::high_resolution_clock::now();
       server::Tick();
+      memory_audit::mark_frame();
+      frame_timing::end_frame(std::chrono::duration<double>(
+                                  std::chrono::high_resolution_clock::now() - tick_start)
+                                      .count() *
+                                  1000.0,
+                              memory_audit::last_frame_allocations());
       accumulator -= tick_interval;
     }
 
@@ -86,6 +130,12 @@ int main(int argc, char *argv[])
 
   server::shutdown();
   print_timing_stats();
+
+  frame_timing::report();
+
+#if TILDE_MEMORY_AUDIT
+  memory_audit::report(30);
+#endif
 
   return 0;
 }

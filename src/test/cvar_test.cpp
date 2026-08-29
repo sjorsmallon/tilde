@@ -185,6 +185,20 @@ void announce(std::string_view text, const command_context_t& context)
   g_announce.caller_slot = context.caller_slot;
 }
 
+// The memory-audit commands. Stubs with no recording behind them: this test is
+// about the dispatch layer, and what these four do in the real build is print.
+// They are here because the generated binders reference every declared handler
+// by name, which is exactly the property that makes a missing one a link error.
+void mem_report(int32_t, const command_context_t&) {}
+void mem_frame(const command_context_t&) {}
+void mem_stacks(bool, const command_context_t&) {}
+void sv_mem_report(int32_t, const command_context_t&) {}
+void frame_report(const command_context_t&) {}
+void frame_reset(const command_context_t&) {}
+void sv_frame_report(const command_context_t&) {}
+void hitch_report(int32_t, const command_context_t&) {}
+void sv_hitch_report(int32_t, const command_context_t&) {}
+
 } // namespace cvars::commands
 
 namespace

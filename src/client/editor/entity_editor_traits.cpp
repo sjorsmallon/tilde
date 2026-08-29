@@ -281,6 +281,10 @@ linalg::vec3 get_placement_half_extents(const entities::Entity *e)
           ->volume.half_extents;
     case entities::entity_type::Physics_Body_Entity:
       return static_cast<const entities::Physics_Body_Entity *>(e)->size;
+    // Sized by the volume you SHOOT rather than the mesh you see: the hitbox is
+    // what an author is placing, so it is what the handle has to wrap.
+    case entities::entity_type::Damageable_Entity:
+      return static_cast<const entities::Damageable_Entity *>(e)->hitbox_half_extents;
     // The three lights included on purpose: a light PICKS as a point-sized box
     // whatever its reach. Sizing the pick volume to a 512-unit falloff sphere
     // would make one light swallow every click in the room it lights.
@@ -336,6 +340,7 @@ bool draw_entity_ghost(const entities::Entity *e, pass_builder_t &draws,
     case entities::entity_type::Player_Entity:   // falls back to default box
     case entities::entity_type::Rocket_Entity:   // runtime only
     case entities::entity_type::Physics_Body_Entity: // runtime only
+    case entities::entity_type::Damageable_Entity:   // ghosted as its hitbox
     case entities::entity_type::Invalid:
       break;
   }
@@ -404,6 +409,7 @@ bool draw_entity_in_editor(const entities::Entity *e,
     case entities::entity_type::Weapon_Entity:       // relies on render component
     case entities::entity_type::Rocket_Entity:       // runtime only
     case entities::entity_type::Physics_Body_Entity: // never appears in editor
+    case entities::entity_type::Damageable_Entity:   // relies on render component
     case entities::entity_type::Invalid:
       break;
   }
@@ -491,6 +497,11 @@ static bool dispatch_selection_wireframe(const entities::Entity *e,
     case entities::entity_type::Weapon_Entity:
     case entities::entity_type::Rocket_Entity:
     case entities::entity_type::Physics_Body_Entity:
+    // Declines on purpose: it carries a Render component, so it is already
+    // drawn by the mesh path, and the AABB fallback traces the hitbox around
+    // it -- which is exactly the pair an author wants to see when the art and
+    // the volume disagree.
+    case entities::entity_type::Damageable_Entity:
     case entities::entity_type::Invalid:
       break;
   }
@@ -572,6 +583,10 @@ float get_placement_origin_height(const entities::Entity *e)
     case entities::entity_type::Point_Light_Entity:
     case entities::entity_type::Spot_Light_Entity:
     case entities::entity_type::Directional_Light_Entity:
+    // Centered origin: `position` is the middle of the hit volume, which is
+    // what pose_all_targets builds the box around. A feet origin here would put
+    // the thing you shoot half a box above the thing you placed.
+    case entities::entity_type::Damageable_Entity:
     case entities::entity_type::Invalid:
       break;
   }

@@ -112,6 +112,33 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
   context.replication.remote_physics_bodies = decoded.frame.physics_bodies;
   context.replication.latest_processed_tick = server_tick;
 
+  // A damageable is MAP-PLACED, so unlike the four above it is not kept in a
+  // replication map and drawn from there -- the client already has the object,
+  // with its mesh and its position, out of the map it loaded. What it cannot
+  // have is the two fields that change at runtime, so those are written onto
+  // the session copy the draw loop already walks.
+  //
+  // Uids line up because both sides get them from the same place: the map file
+  // carries a uid per entry and Entity_System::populate_from_map uses it
+  // verbatim rather than minting a new one. A uid with no local entity is
+  // therefore a real disagreement about the map -- reported, not skipped,
+  // because the alternative is a target that is invulnerable on one screen.
+  for (const auto& [uid, damageable] : decoded.frame.damageables)
+  {
+    entities::Damageable_Entity* local =
+        context.world.session.entity_system.get<entities::Damageable_Entity>(uid);
+    if (local == nullptr)
+    {
+      log_error("snapshot names damageable uid {}, which this client's map does not have -- the "
+                "two sides disagree about what is in the level",
+                uid);
+      continue;
+    }
+
+    local->health         = damageable.health;
+    local->render.visible = damageable.render.visible;
+  }
+
   // --- 2. Connection facts derived from step 1 ---
   //@NOTE(SJM): this is not a particularly elegant way to do spectating. should it be a different team?
   context.connection.spectating =
@@ -155,6 +182,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
       context.prediction.local_player_health = player.health;
       context.prediction.latest_server_position = player.position;
       context.prediction.latest_server_velocity = player.velocity;
+      context.prediction.latest_server_movement = player.movement;
       context.prediction.received_server_update = true;
 
       if (!context.connection.logged_first_server_update)

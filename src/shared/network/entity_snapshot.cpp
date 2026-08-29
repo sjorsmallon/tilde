@@ -126,7 +126,9 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
       count_records(current.weapons, baseline ? &baseline->weapons : nullptr) +
       count_records(current.rockets, baseline ? &baseline->rockets : nullptr) +
       count_records(current.physics_bodies,
-                    baseline ? &baseline->physics_bodies : nullptr);
+                    baseline ? &baseline->physics_bodies : nullptr) +
+      count_records(current.damageables,
+                    baseline ? &baseline->damageables : nullptr);
 
   write_var_uint(writer, record_count);
 
@@ -135,6 +137,8 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
   write_records(writer, current.rockets, baseline ? &baseline->rockets : nullptr);
   write_records(writer, current.physics_bodies,
                 baseline ? &baseline->physics_bodies : nullptr);
+  write_records(writer, current.damageables,
+                baseline ? &baseline->damageables : nullptr);
 }
 
 bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
@@ -148,6 +152,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
     out_frame.weapons        = baseline->weapons;
     out_frame.rockets        = baseline->rockets;
     out_frame.physics_bodies = baseline->physics_bodies;
+    out_frame.damageables    = baseline->damageables;
   }
   else
   {
@@ -155,6 +160,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
     out_frame.weapons.clear();
     out_frame.rockets.clear();
     out_frame.physics_bodies.clear();
+    out_frame.damageables.clear();
   }
 
   const uint32_t record_count = read_var_uint(reader);
@@ -187,6 +193,11 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
 
       case entities::entity_type::Physics_Body_Entity:
         if (!apply_record(reader, out_frame.physics_bodies, uid, removed))
+          return false;
+        continue;
+
+      case entities::entity_type::Damageable_Entity:
+        if (!apply_record(reader, out_frame.damageables, uid, removed))
           return false;
         continue;
 

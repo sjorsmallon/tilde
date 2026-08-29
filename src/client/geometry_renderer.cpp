@@ -17,9 +17,28 @@ namespace
 // -- live in the asset cache under a synthetic path keyed by uid, so one only
 // gets rebuilt when it actually changes. The key is per OBJECT, not per kind: a
 // uid names one object and one object has one generated mesh.
-std::string generated_mesh_cache_key(shared::entity_uid_t uid)
+// Formats into CALLER-OWNED storage and returns a view of it -- no allocation.
+//
+// It used to return a std::string built as `"__geometry_" + std::to_string(uid)`,
+// which is ~21 characters and therefore past the small-string buffer: one heap
+// allocation per brush surface PER FRAME, immediately discarded. Paired with the
+// temporary string the pool lookup used to build (see transparent_string_hash_t
+// in asset_types.hpp), the per-frame geometry draw path allocated twice per
+// surface to ask a question whose answer it threw away.
+//
+// The out-param is about STORAGE, not about the return value, which is exactly
+// the case CLAUDE.md's failure convention keeps a Span for.
+std::string_view generated_mesh_cache_key(shared::entity_uid_t uid, Span<char> buffer)
 {
-  return "__geometry_" + std::to_string(uid);
+  const int written =
+      std::snprintf(buffer.data, buffer.count, "__geometry_%llu",
+                    static_cast<unsigned long long>(uid));
+  if (written <= 0)
+    fatal_error("generated_mesh_cache_key: could not format uid {}", uid);
+  if (static_cast<uint32_t>(written) >= buffer.count)
+    fatal_error("generated_mesh_cache_key: buffer of {} bytes is too small for uid {}",
+                buffer.count, uid);
+  return std::string_view(buffer.data, static_cast<size_t>(written));
 }
 
 // The points each cached brush mesh was built from.
@@ -205,11 +224,12 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     if (!surface.visible)
       return;
 
-    const std::string cache_key = generated_mesh_cache_key(uid);
+    char                   cache_key_buffer[48];
+    const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
     assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
-        assets::find_mesh_in_cache(cache_key.c_str());
+        assets::find_mesh_in_cache(cache_key);
     if (!mesh_asset.valid())
-      mesh_asset = assets::register_dynamic_mesh(cache_key.c_str(),
+      mesh_asset = assets::register_dynamic_mesh(cache_key,
                                                  generate_geometry_mesh(geometry));
 
     const renderer::mesh_handle_t mesh = get_render_mesh(mesh_asset);
@@ -246,9 +266,10 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     if (!brush_mesh_is_current(uid, brush.vertices))
       refresh_generated_geometry_mesh(geometry, uid);
 
-    const std::string cache_key = generated_mesh_cache_key(uid);
+    char                   cache_key_buffer[48];
+    const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
     assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
-        assets::find_mesh_in_cache(cache_key.c_str());
+        assets::find_mesh_in_cache(cache_key);
 
     const renderer::mesh_handle_t mesh = get_render_mesh(mesh_asset);
     if (!mesh.valid())
@@ -283,13 +304,14 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
     g_brush_mesh_source_points[uid] =
         std::get<shared::brush_geometry_t>(geometry).vertices;
 
-  const std::string cache_key = generated_mesh_cache_key(uid);
+  char                   cache_key_buffer[48];
+  const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
   const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
-      assets::find_mesh_in_cache(cache_key.c_str());
+      assets::find_mesh_in_cache(cache_key);
 
   if (!mesh_asset.valid())
   {
-    assets::register_dynamic_mesh(cache_key.c_str(), generate_geometry_mesh(geometry));
+    assets::register_dynamic_mesh(cache_key, generate_geometry_mesh(geometry));
     return;
   }
 

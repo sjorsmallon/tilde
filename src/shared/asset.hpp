@@ -82,17 +82,17 @@ void init();
 // --- Dynamic mesh registration (for procedural geometry like displacements) ---
 
 // Look up a mesh by path in cache only (no file I/O). Returns invalid handle if not found.
-[[nodiscard]] asset_handle_t<mesh_asset_t> find_mesh_in_cache(const char *path);
+[[nodiscard]] asset_handle_t<mesh_asset_t> find_mesh_in_cache(std::string_view path);
 
 // Register a new mesh with a given path key. If already registered, returns existing handle.
-asset_handle_t<mesh_asset_t> register_dynamic_mesh(const char *path, mesh_asset_t &&mesh);
+asset_handle_t<mesh_asset_t> register_dynamic_mesh(std::string_view path, mesh_asset_t &&mesh);
 
 // The same pair for textures, for pixels the engine supplies rather than loads
 // (the renderer's 1x1 white fallback). The key is a path only in the sense that
 // the cache is keyed by string; use a scheme like "renderer://white" so it can
 // never collide with a file.
-[[nodiscard]] asset_handle_t<texture_asset_t> find_texture_in_cache(const char *path);
-asset_handle_t<texture_asset_t> register_dynamic_texture(const char *path, texture_asset_t &&texture);
+[[nodiscard]] asset_handle_t<texture_asset_t> find_texture_in_cache(std::string_view path);
+asset_handle_t<texture_asset_t> register_dynamic_texture(std::string_view path, texture_asset_t &&texture);
 
 // Get a mutable pointer to a mesh asset (for updating dynamic meshes).
 [[nodiscard]] mesh_asset_t *get_mutable(asset_handle_t<mesh_asset_t> handle);

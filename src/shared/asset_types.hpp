@@ -20,6 +20,8 @@
 #include <deque>
 #include <optional>
 #include <string>
+#include <functional>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -154,12 +156,36 @@ struct pbr_material_asset_t
 // moves an element that is already in it, which makes the natural way to write
 // that code correct. (Nothing removes from a pool, so the deque's other
 // invalidation rule cannot arise.)
+// Heterogeneous lookup for the path cache below, and it is not a micro
+// optimisation. `unordered_map<std::string, T>::find` takes `const
+// std::string&`, so passing a `const char*` or a string_view CONSTRUCTS A
+// TEMPORARY std::string for the duration of the call -- which heap-allocates
+// for any path longer than the 15-character small-string buffer, i.e. all of
+// them. A per-frame lookup therefore allocated and freed a string per call:
+// 121,216 allocations in one session, every one of them immediately dead.
+//
+// `is_transparent` is what lets find() accept a string_view and compare it
+// against the stored keys directly. The standard guarantees
+// hash<string_view>(sv) == hash<string>(s) whenever s == sv, so the two agree
+// on buckets and nothing else has to change.
+struct transparent_string_hash_t
+{
+  using is_transparent = void;
+  size_t operator()(std::string_view text) const noexcept
+  {
+    return std::hash<std::string_view>{}(text);
+  }
+};
+
 template <typename T> struct Asset_Pool
 {
   std::deque<T> items;
-  std::unordered_map<std::string, uint32_t> path_to_index;
+  std::unordered_map<std::string, uint32_t, transparent_string_hash_t, std::equal_to<>>
+      path_to_index;
 
-  asset_handle_t<T> find(const char *path) const
+  // string_view, not const char*: the whole point is that no std::string is
+  // built to ask a question.
+  asset_handle_t<T> find(std::string_view path) const
   {
     auto it = path_to_index.find(path);
     if (it != path_to_index.end())
@@ -167,11 +193,13 @@ template <typename T> struct Asset_Pool
     return {};
   }
 
-  asset_handle_t<T> add(const char *path, T &&asset)
+  // Insertion DOES build a std::string, and must: the map owns its keys. That
+  // is once per asset, not once per lookup, which is the whole distinction.
+  asset_handle_t<T> add(std::string_view path, T &&asset)
   {
     uint32_t idx = static_cast<uint32_t>(items.size());
     items.push_back(std::move(asset));
-    path_to_index[path] = idx;
+    path_to_index[std::string(path)] = idx;
     return {idx};
   }
 

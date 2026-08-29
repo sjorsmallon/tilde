@@ -76,6 +76,29 @@ bool try_ray_face_intersection(const shared::brush_polyhedron_t& hull,
   return true;
 }
 
+// A face is identified by its normal, which is what survives a rebuild when
+// indices do not.
+constexpr float FACE_NORMAL_MATCH = 0.99f;
+
+std::optional<size_t>
+try_find_face_matching_normal(const shared::brush_polyhedron_t& hull,
+                              const linalg::vec3& normal)
+{
+  std::optional<size_t> best_index;
+  float best_alignment = FACE_NORMAL_MATCH;
+
+  for (size_t i = 0; i < hull.faces.size(); ++i)
+  {
+    const float alignment = linalg::dot(hull.faces[i].plane.normal, normal);
+    if (alignment > best_alignment)
+    {
+      best_alignment = alignment;
+      best_index = i;
+    }
+  }
+  return best_index;
+}
+
 // similar principle as above.
 bool point_is_inside_face(const shared::brush_polyhedron_t &hull,
                           const shared::brush_face_t& face,
@@ -95,9 +118,41 @@ bool point_is_inside_face(const shared::brush_polyhedron_t &hull,
   return true;
 }
 
+// Which of `handles` is under `screen_position`, if any. Nearest wins, so two
+// handles inside one pick radius collapse -- the caller decides WHICH set it is
+// asking about.
+[[nodiscard]] std::optional<size_t>
+try_pick_vertex_handle(Span<const linalg::vec3> handles,
+                       const viewport_state_t& view,
+                       const linalg::vec2& screen_position)
+{
+  std::optional<size_t> best_index;
+  float best_distance = HANDLE_PICK_RADIUS;
+
+  for (size_t idx = 0; idx < handles.size(); ++idx)
+  {
+    // where, on the screen, does this end point up?
+    const std::optional<linalg::vec2> projected =
+        try_project_to_screen(view, handles[idx]);
+    if (!projected) continue;
+
+    const float dx = projected->x - screen_position.x;
+    const float dy = projected->y - screen_position.y;
+    const float distance = std::sqrt(dx * dx + dy * dy);
+
+    if (distance < best_distance)
+    {
+      best_distance = distance;
+      best_index = idx;
+    }
+  }
+
+  return best_index;
+}
+
 //@NOTE(SJM): you should probably re-evaluate this later because the intuition is lacking now.
 // axis is always normal (since that's the axis you want to draw along)
-// and the anchor is like the centroid or a picked point.
+// and the anchor is like the centroid or a selected point.
 bool try_distance_along_axis(const linalg::vec3& anchor,
                              const linalg::vec3& axis,
                              const linalg::ray_t& ray,
@@ -117,23 +172,16 @@ bool try_distance_along_axis(const linalg::vec3& anchor,
   return true;
 }
 
-// How many picks did not survive as corners of the solid they were pulled into.
-// Only the hull path can swallow one; the cell path accounts for every pick or
-// declines the whole footprint.
-// Why a point set will not become a brush, or nullptr when nothing here can
-// say. Cheap on purpose -- it counts distinct points and NEVER builds a hull,
-// because try_build_brush_polyhedron is O(n^4) in that same count and the
-// footprint this most needs to explain is the big one.
-//
-// try_ and a nullable pointer for the same reason try_get_selected_brush uses
-// them: the lookup can come up empty, and an optional over an already-nullable
-// pointer would be a second way to spell that.
+
+// this footprint cannot be built. why?
 [[nodiscard]] const char *try_explain_unbuildable_footprint(Span<const linalg::vec3> points)
 {
+  // consolidate.
   const size_t distinct = shared::weld_brush_points(points).size();
 
+  // arbitrary but just so it isn't slow.
   if (distinct > shared::MAX_BRUSH_VERTICES)
-    return "too many points for one brush -- pick a rectilinear area so it "
+    return "too many points for one brush -- select a rectilinear area so it "
            "splits into rectangles, or raise the grid with ]";
 
   if (distinct < 4)
@@ -142,10 +190,7 @@ bool try_distance_along_axis(const linalg::vec3& anchor,
   return nullptr;
 }
 
-// The same question, once the hull build has ALREADY come back empty. Every
-// remaining way to fail -- fewer than four supporting planes, fewer than four
-// corners, fewer than four faces -- means one thing to the person holding the
-// mouse.
+// some functions call this, other functions call try. not quite sure why we make the distinction?
 [[nodiscard]] const char *explain_unbuildable_footprint(Span<const linalg::vec3> points)
 {
   if (const char *cheap = try_explain_unbuildable_footprint(points))
@@ -154,19 +199,21 @@ bool try_distance_along_axis(const linalg::vec3& anchor,
   return "the footprint is flat -- points in a line enclose no volume";
 }
 
-size_t count_picks_swallowed_by(const std::vector<linalg::vec3>& picks,
-                                const shared::brush_polyhedron_t& solid)
+// how many vertices were swallowed in the construction of the solid?
+// note that welding vertices together does not count as swallowing here.
+size_t count_selected_points_swallowed_by(const std::vector<linalg::vec3>& selected_points,
+                                          const shared::brush_polyhedron_t& solid)
 {
   size_t swallowed = 0;
 
-  for (const linalg::vec3 &pick : picks)
+  for (const linalg::vec3 &selected_point : selected_points)
   {
     bool kept = false;
     for (const linalg::vec3 &vertex : solid.vertices)
     {
-      if (std::abs(pick.x - vertex.x) <= shared::BRUSH_WELD_EPSILON &&
-          std::abs(pick.y - vertex.y) <= shared::BRUSH_WELD_EPSILON &&
-          std::abs(pick.z - vertex.z) <= shared::BRUSH_WELD_EPSILON)
+      if (std::abs(selected_point.x - vertex.x) <= shared::BRUSH_WELD_EPSILON &&
+          std::abs(selected_point.y - vertex.y) <= shared::BRUSH_WELD_EPSILON &&
+          std::abs(selected_point.z - vertex.z) <= shared::BRUSH_WELD_EPSILON)
       {
         kept = true;
         break;
@@ -188,11 +235,10 @@ void Brush_Tool::on_enable(editor_context_t &ctx)
   assert(ctx.transaction_system);
 
   mode = Mode::Face;
-  potential_selection = {};
-  selection = {};
+  select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
   hover = {};
   cancel_pending_extrusion();
-  cancel_in_progress_gestures();
+  end_drag();
 }
 
 void Brush_Tool::on_disable(editor_context_t &ctx)
@@ -201,24 +247,24 @@ void Brush_Tool::on_disable(editor_context_t &ctx)
   // so leaving the tool keeps it rather than dropping it on the floor.
   commit_pending_extrusion(ctx);
 
-  cancel_in_progress_gestures();
+  end_drag();
 }
 
-shared::brush_geometry_t*
-Brush_Tool::try_get_selected_brush(editor_context_t &ctx)
+shared::brush_geometry_t* Brush_Tool::try_get_selected_brush(editor_context_t& ctx)
 {
-  if (potential_selection.uid == shared::invalid_entity_uid || !ctx.map)
+  if (selection.uid == shared::invalid_entity_uid || !ctx.map)
     return nullptr;
 
-  shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(potential_selection.uid);
+  shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selection.uid);
+
   if (!entry) return nullptr;
 
   return std::get_if<shared::brush_geometry_t>(&entry->value);
 }
 
-void Brush_Tool::clear_point_selection() { potential_selection.points.clear(); }
+void Brush_Tool::clear_point_selection() { selection.points.clear(); }
 
-void Brush_Tool::cancel_in_progress_gestures() { gestures = {}; }
+void Brush_Tool::end_drag() { drag = {}; }
 
 void Brush_Tool::cancel_pending_extrusion() { extrusion = {}; }
 
@@ -233,7 +279,7 @@ float Brush_Tool::grid_step_for(const editor_context_t& ctx,
 
 bool Brush_Tool::point_is_selected(const linalg::vec3 &point) const
 {
-  for (const linalg::vec3 &selected : potential_selection.points)
+  for (const linalg::vec3 &selected : selection.points)
   {
     if (std::abs(point.x - selected.x) <= shared::BRUSH_WELD_EPSILON &&
         std::abs(point.y - selected.y) <= shared::BRUSH_WELD_EPSILON &&
@@ -247,139 +293,114 @@ void Brush_Tool::toggle_point_selection(const linalg::vec3 &point,
                                         bool additive)
 {
 
-  // if a point is selected while additive mode is not on, replace whatever was there with this point.
+  // if a point is selected while additive mode is not on, replace whatever was there with this individual point.
   if (!additive)
   {
-    potential_selection.points.assign(1, point);
+    selection.points.assign(1, point);
     return;
   }
 
-  // otherwise, if a point is selected that _was_ already selected, remove it from the selection.
-  for (size_t i = 0; i < potential_selection.points.size(); ++i)
+  // otherwise, if a point is selected that _was_ already selected, remove it from the selection_geometry.
+  for (size_t i = 0; i < selection.points.size(); ++i)
   {
-    const linalg::vec3& selected = potential_selection.points[i];
+    const linalg::vec3& selected = selection.points[i];
     if (std::abs(point.x - selected.x) <= shared::BRUSH_WELD_EPSILON &&
         std::abs(point.y - selected.y) <= shared::BRUSH_WELD_EPSILON &&
         std::abs(point.z - selected.z) <= shared::BRUSH_WELD_EPSILON)
     {
-      potential_selection.points.erase(potential_selection.points.begin() + (long)i);
+      selection.points.erase(selection.points.begin() + (long)i);
       return;
     }
   }
 
-  // if none of those are true, we must just be adding this point to the selection.
-  potential_selection.points.push_back(point);
+  // if none of those are true, we must just be adding this point to the selection_geometry.
+  selection.points.push_back(point);
 }
 
 
-int Brush_Tool::try_pick_vertex_handle(const linalg::vec2 &screen_position) const
+// A press that armed a band whose cursor never travelled was a click after all.
+void Brush_Tool::resolve_band_press_as_click(editor_context_t &ctx)
 {
-  int best_index = -1;
-  float best_distance = HANDLE_PICK_RADIUS;
-
-  for (size_t idx = 0; idx < selection.vertex_handles.size(); ++idx)
-  {
-    // where screen position does this point end up?
-    const std::optional<linalg::vec2> projected =
-        try_project_to_screen(cached_view, selection.vertex_handles[idx]);
-    if (!projected)
-      continue;
-
-    const float dx = projected->x - screen_position.x;
-    const float dy = projected->y - screen_position.y;
-    const float distance = std::sqrt(dx * dx + dy * dy);
-
-    if (distance < best_distance)
-    {
-      best_distance = distance;
-      best_index = (int)idx;
-    }
-  }
-
-  return best_index;
-}
-
-void Brush_Tool::resolve_band_press_as_click()
-{
-  const band_t &band = gestures.band;
+  const band_t& band = drag.band;
 
   // Empty space: the click clears the whole selection, which is what the old
   // press-time reselect did when it hovered nothing.
   if (band.press_uid == shared::invalid_entity_uid)
   {
-    potential_selection.uid = shared::invalid_entity_uid;
-    potential_selection.face_normal.reset();
-    clear_point_selection();
+    select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
     return;
   }
 
-  // A face is named by its NORMAL, not its index: the index is renumbered by
-  // every edit, which is the same reason rebuild_hull_and_handles re-finds it
-  // that way.
-  const bool same_brush = band.press_uid == potential_selection.uid;
+  const bool same_brush = band.press_uid == selection.uid;
   const bool same_face =
-      same_brush && band.press_face_normal && potential_selection.face_normal &&
-      linalg::dot(*band.press_face_normal, *potential_selection.face_normal) > 0.99f;
+      same_brush && band.press_face_normal && selection.face_normal &&
+      linalg::dot(*band.press_face_normal, *selection.face_normal) >
+          FACE_NORMAL_MATCH;
 
   if (same_face)
   {
-    // Bare area of the face already being edited. Dropping the points is what
-    // this click has always meant, and an additive one still means "keep".
-    if (!band.adds)
-      clear_point_selection();
+    if (!band.adds_to_point_selection) clear_point_selection();
     return;
   }
 
-  potential_selection.uid         = band.press_uid;
-  potential_selection.face_normal = band.press_face_normal;
-  clear_point_selection();
+  select_brush_face(ctx, band.press_uid, band.press_face_normal);
+}
+
+void Brush_Tool::select_brush_face(editor_context_t &ctx,
+                                   shared::entity_uid_t uid,
+                                   std::optional<linalg::vec3> face_normal)
+{
+  // Points are handles ON a face, so leaving a face drops them. The two call
+  // sites used to disagree about this: a click kept points from the face it
+  // just left, which then extruded along the NEW face's normal.
+  const bool same_face =
+      uid != shared::invalid_entity_uid && uid == selection.uid &&
+      face_normal && selection.face_normal &&
+      linalg::dot(*face_normal, *selection.face_normal) > FACE_NORMAL_MATCH;
+
+  if (!same_face) clear_point_selection();
+
+  selection.uid = uid;
+  selection.face_normal = face_normal;
+
+  rebuild_hull_and_handles(ctx);
 }
 
 void Brush_Tool::rebuild_hull_and_handles(editor_context_t &ctx)
 {
-  selection.hull.reset();
-  selection.face = INVALID_FACE;
-  selection.vertex_handles.clear();
+  selection_geometry.hull.reset();
+  selection_geometry.face_idx = INVALID_FACE;
+  selection_geometry.vertex_handles.clear();
 
   const shared::brush_geometry_t* brush = try_get_selected_brush(ctx);
  
   if (!brush) return;
 
-  selection.hull = shared::try_build_brush_polyhedron(brush->vertices);
+  selection_geometry.hull = shared::try_build_brush_polyhedron(brush->vertices);
 
-  if (!selection.hull) return;
+  if (!selection_geometry.hull) return;
 
-  if (!potential_selection.face_normal) return;
+  if (!selection.face_normal) return;
 
-  // Re-find the face by normal. On a convex solid a normal names one face, so
-  // this survives every edit that renumbers them.
-  float best_alignment = 0.99f;
-  for (size_t i = 0; i < selection.hull->faces.size(); ++i)
-  {
-    const float alignment = linalg::dot(selection.hull->faces[i].plane.normal,
-                                        *potential_selection.face_normal);
-    if (alignment > best_alignment)
-    {
-      best_alignment = alignment;
-      selection.face = (int)i;
-    }
-  }
+  const std::optional<size_t> matched =
+      try_find_face_matching_normal(*selection_geometry.hull, *selection.face_normal);
 
-  if (selection.face < 0)
-    return;
+  if (!matched) return;
 
-  // Track the face as it tilts: the key is what the LAST rebuild matched.
-  potential_selection.face_normal =
-      selection.hull->faces[(size_t)selection.face].plane.normal;
+  selection_geometry.face_idx = (int)*matched;
+
+  // track the face.
+  selection.face_normal =
+      selection_geometry.hull->faces[(size_t)selection_geometry.face_idx].plane.normal;
 
   // fetch the handles of the face that we were selecting.
-  const shared::brush_face_t& face = selection.hull->faces[(size_t)selection.face];
+  const shared::brush_face_t& face = selection_geometry.hull->faces[(size_t)selection_geometry.face_idx];
 
   const float step = ctx.grid ? ctx.grid->step() : 128.0f;
 
   // Real corners are always handles, on the grid or not.
   for (uint32_t index : face.vertex_indices)
-    selection.vertex_handles.push_back(selection.hull->vertices[index]);
+    selection_geometry.vertex_handles.push_back(selection_geometry.hull->vertices[index]);
 
   if (step <= 0.0f) return;
 
@@ -397,10 +418,19 @@ void Brush_Tool::rebuild_hull_and_handles(editor_context_t &ctx)
   float min_v = 0.0f;
   float max_v = 0.0f;
 
-
+  // ALL OF THIS IS IN SERVICE OF DRAWING GRID LINES ON THE FACE.
+  //@NOTE(SJM): this loops over indices to initialize minuv? weird.)
+  // it's ipmortant to conceptualize that we are asking:
+  // How much of this position vector points in the u direction?
+  // this is _NOT_ in relation to any point on the face.
+  // so it's not:
+  // measure this vertex relative to the u arrow sitting on the face.
+  // it's:
+  // project this world-space position onto the u direction.
+  // find the u,v span of this face in world space coordinates?
   for (size_t i = 0; i < face.vertex_indices.size(); ++i)
   {
-    const linalg::vec3& vertex = selection.hull->vertices[face.vertex_indices[i]];
+    const linalg::vec3& vertex = selection_geometry.hull->vertices[face.vertex_indices[i]];
     const float u = linalg::dot(vertex, tangent_u);
     const float v = linalg::dot(vertex, tangent_v);
 
@@ -417,7 +447,7 @@ void Brush_Tool::rebuild_hull_and_handles(editor_context_t &ctx)
     max_v = std::max(max_v, v);
   }
 
-  // Walking in world u/v means an axis-aligned face gets exactly the world
+  // walking in world u/v means an axis-aligned face gets exactly the world
   // grid, which is what makes the handles line up with everything else in the
   // editor.
   const float plane_distance = linalg::dot(face.plane.normal, face.plane.point);
@@ -442,24 +472,25 @@ void Brush_Tool::rebuild_hull_and_handles(editor_context_t &ctx)
           tangent_u * ((float)iu * step) + tangent_v * ((float)iv * step);
       const linalg::vec3 point = in_plane + face.plane.normal * (plane_distance - linalg::dot(face.plane.normal, in_plane));
 
-      if (!point_is_inside_face(*selection.hull, face, point)) continue;
+      if (!point_is_inside_face(*selection_geometry.hull, face, point)) continue;
 
       bool duplicates_a_corner = false;
       for (uint32_t index : face.vertex_indices)
       {
-        const linalg::vec3 &corner = selection.hull->vertices[index];
+        const linalg::vec3 &corner = selection_geometry.hull->vertices[index];
         if (std::abs(point.x - corner.x) <= shared::BRUSH_WELD_EPSILON &&
             std::abs(point.y - corner.y) <= shared::BRUSH_WELD_EPSILON &&
             std::abs(point.z - corner.z) <= shared::BRUSH_WELD_EPSILON)
           duplicates_a_corner = true;
       }
 
-      if (!duplicates_a_corner) selection.vertex_handles.push_back(point);
+      if (!duplicates_a_corner) selection_geometry.vertex_handles.push_back(point);
     }
   }
 }
 
-bool Brush_Tool::try_rebuild_selected_brush(editor_context_t &ctx, std::vector<linalg::vec3> vertices)
+// rebuild after a modification.
+bool Brush_Tool::try_rebuild_selected_brush(editor_context_t& ctx, std::vector<linalg::vec3> vertices)
 {
   shared::brush_geometry_t* brush = try_get_selected_brush(ctx);
   if (!brush) return false;
@@ -472,12 +503,10 @@ bool Brush_Tool::try_rebuild_selected_brush(editor_context_t &ctx, std::vector<l
     return false;
   }
 
-  // Store the hull CORNERS, not the points that were fed in: the hull already
-  // dropped anything that is not a corner, and keeping the rest would leave
-  // handles that do nothing.
+  // hand the candidate data back over.
   brush->vertices = candidate->vertices;
 
-  refresh_generated_geometry_mesh(*brush, potential_selection.uid);
+  refresh_generated_geometry_mesh(*brush, selection.uid);
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -485,13 +514,12 @@ bool Brush_Tool::try_rebuild_selected_brush(editor_context_t &ctx, std::vector<l
   return true;
 }
 
-// nuding means meaneuver in the x,z plane, I think.
+// nudging means meaneuver in the x,z plane, I think.
 void Brush_Tool::nudge_selected_brush(editor_context_t &ctx,
                                       const linalg::vec3 &direction)
 {
   shared::brush_geometry_t* brush = try_get_selected_brush(ctx);
-  if (!brush)
-    return;
+  if (!brush) return;
 
   // nudge by a grid step.
   const float step = ctx.grid ? ctx.grid->step() : 0.0f;
@@ -501,18 +529,22 @@ void Brush_Tool::nudge_selected_brush(editor_context_t &ctx,
 
   // move all vertices in the brush.
   for (linalg::vec3 &vertex : brush->vertices)
+  {
     vertex = vertex + direction * step;
+  }
 
   // because the vertices have moved, we need to update the mesh, since they are fully decoupled.
-  refresh_generated_geometry_mesh(*brush, potential_selection.uid);
+  refresh_generated_geometry_mesh(*brush, selection.uid);
 
-  for (linalg::vec3& point : potential_selection.points)
+  for (linalg::vec3& point : selection.points)
+  {
     point = point + direction * step;
+  }
 
   if (ctx.transaction_system)
   {
     transaction_builder_t builder;
-    builder.add_geometry_modified(potential_selection.uid, before, *brush);
+    builder.add_geometry_modified(selection.uid, before, *brush);
     ctx.transaction_system->push(builder.take());
   }
 
@@ -525,7 +557,7 @@ void Brush_Tool::delete_selected_brush(editor_context_t &ctx)
   if (!try_get_selected_brush(ctx))
     return;
 
-  const shared::entity_uid_t uid = potential_selection.uid;
+  const shared::entity_uid_t uid = selection.uid;
   const shared::geometry_value_t removed = ctx.map->find_geometry_by_uid(uid)->value;
 
   ctx.map->remove_geometry(uid);
@@ -538,10 +570,9 @@ void Brush_Tool::delete_selected_brush(editor_context_t &ctx)
   }
 
   // Everything below is keyed to the brush that no longer exists.
-  cancel_in_progress_gestures();
+  end_drag();
   cancel_pending_extrusion();
-  potential_selection = {};
-  selection = {};
+  select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
   hover = {};
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -550,48 +581,44 @@ void Brush_Tool::delete_selected_brush(editor_context_t &ctx)
 
 Brush_Tool::pending_extrusion_solids_t Brush_Tool::build_pending_extrusion_solids(float grid_step) const
 {
-  if (potential_selection.points.empty() || !potential_selection.face_normal)
+  if (selection.points.empty() || !selection.face_normal)
     return {};
 
   // a brush is by definition convex so a concave footprint (footprint meaning the selected vertices, think like an L-shape) needs one brush per rectangle.
   std::optional<std::vector<std::vector<linalg::vec3>>> rectangles =
       shared::try_decompose_footprint_into_rectangles(
-          potential_selection.points, *potential_selection.face_normal, grid_step);
+          selection.points, *selection.face_normal, grid_step);
   
   // the footprint decomposed into multiple brushes:
   if (rectangles)
   {
     pending_extrusion_solids_t pending;
-    pending.every_pick_accounted_for = true;
+    pending.every_selected_point_accounted_for = true;
     pending.point_sets.reserve(rectangles->size());
 
-    for (const std::vector<linalg::vec3> &rectangle : *rectangles)
+    for (const std::vector<linalg::vec3>& rectangle : *rectangles)
       pending.point_sets.push_back(shared::extrude_brush_hull(
-          rectangle, *potential_selection.face_normal, extrusion.depth));
+          rectangle, *selection.face_normal, extrusion.depth));
 
     return pending;
   }
 
   // it's just a single brush.
-  return {{shared::extrude_brush_hull(potential_selection.points, *potential_selection.face_normal,
+  return {{shared::extrude_brush_hull(selection.points, *selection.face_normal,
                                       extrusion.depth)},
           false};
 }
 
-void Brush_Tool::commit_pending_extrusion(editor_context_t &ctx)
+void Brush_Tool::commit_pending_extrusion(editor_context_t& ctx)
 {
-  if (!extrusion.pending)
-    return;
+  if (!extrusion.pending) return;
 
-  const pending_extrusion_solids_t pending =
-      build_pending_extrusion_solids(ctx.grid ? ctx.grid->step() : 0.0f);
-  const std::vector<linalg::vec3> picks = potential_selection.points;
+  const pending_extrusion_solids_t pending = build_pending_extrusion_solids(ctx.grid ? ctx.grid->step() : 0.0f);
+  const std::vector<linalg::vec3> selected_points = selection.points;
   cancel_pending_extrusion();
 
-  // Read before the first add_geometry: adding one can move the map's geometry
-  // out from under the pointer.
   shared::geometry_surface_t surface;
-  if (const shared::brush_geometry_t *source = try_get_selected_brush(ctx))
+  if (const shared::brush_geometry_t* source = try_get_selected_brush(ctx))
     surface = source->surface;
 
   transaction_builder_t builder;
@@ -602,27 +629,24 @@ void Brush_Tool::commit_pending_extrusion(editor_context_t &ctx)
   {
     std::optional<shared::brush_polyhedron_t> solid =
         shared::try_build_brush_polyhedron(points);
-    if (!solid)
-      continue;
+    if (!solid) continue;
 
-    if (!pending.every_pick_accounted_for)
+    if (!pending.every_selected_point_accounted_for)
     {
-      const size_t swallowed = count_picks_swallowed_by(picks, *solid);
-      if (swallowed > 0)
+      const size_t number_of_selected_points_swallowed =
+          count_selected_points_swallowed_by(selected_points, *solid);
+      if (number_of_selected_points_swallowed > 0)
         log_warning(
-            "brush_tool: {} picked point(s) ended up inside the new brush — a "
-            "brush is convex, so a concave footprint fills in. Pick the whole "
-            "area rather than its outline and it splits into a brush per "
-            "rectangle instead",
-            swallowed);
+            "brush_tool: {} selected point(s) ended up inside the new brush. brush is convex, so a concave footprint fills in. Select the whole area rather than its outline and it splits into a brush per rectangle instead",
+            number_of_selected_points_swallowed);
     }
 
-    shared::brush_geometry_t created;
-    created.vertices = solid->vertices;
-    created.surface = surface;
+    auto created_brush_geometry = shared::brush_geometry_t{};
+    created_brush_geometry.vertices = solid->vertices;
+    created_brush_geometry.surface = surface;
 
-    const shared::entity_uid_t uid = ctx.map->add_geometry(created);
-    builder.add_geometry_created(uid, created);
+    const shared::entity_uid_t uid = ctx.map->add_geometry(created_brush_geometry);
+    builder.add_geometry_created(uid, created_brush_geometry);
 
     last_created = uid;
     ++created_count;
@@ -630,13 +654,11 @@ void Brush_Tool::commit_pending_extrusion(editor_context_t &ctx)
 
   if (created_count == 0)
   {
-    // The console is usually shut, so the banner is what the person pressing
-    // Enter actually sees. The log keeps the detail.
-    const char *why = pending.point_sets.empty()
-                          ? "nothing picked"
+    const char* why = pending.point_sets.empty()
+                          ? "nothing selected"
                           : explain_unbuildable_footprint(pending.point_sets.front());
-    hud::set_announcement("extrusion discarded — not a solid");
-    log_warning("brush_tool: the pending extrusion is not a solid — discarded ({})",
+    hud::set_announcement("extrusion discarded: not a solid");
+    log_warning("brush_tool: the pending extrusion is not a solid: discarded ({})",
                 why);
     return;
   }
@@ -648,28 +670,25 @@ void Brush_Tool::commit_pending_extrusion(editor_context_t &ctx)
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 
-  // Follow the thing that was just made, the way every other create does.
-  potential_selection.uid = last_created;
-  potential_selection.face_normal.reset();
-  clear_point_selection();
+  // Follow the thing that was just made, on the face we just extruded to.
+  select_brush_face(ctx, last_created, selection.face_normal);
 }
-
-// ============================================================================
-// Update
-// ============================================================================
 
 void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view,
                            float dt)
 {
-  cached_view = view;
+  // stop barking warnings that dt is not used.
   (void)dt;
 
-  if (!gestures.dragging_face && !gestures.dragging_vertices &&
-      !extrusion.dragging && !gestures.band.active)
+  cached_view = view;
+
+  // A live drag owns the cursor, so hover stops tracking under it.
+  if (!drag_is_live())
   {
     hover.uid = shared::invalid_entity_uid;
     hover.face_normal.reset();
 
+    //raycast to find hovered brush / face.
     if (ctx.bvh)
     {
       ray_hit_result_t hit{};
@@ -686,16 +705,13 @@ void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view,
           {
             hover.uid = uid;
 
-            // The BVH hits the hull now, so hit.normal already names this
-            // face. Refining here anyway is what keeps a camera INSIDE a brush
-            // from hovering the entry face behind it: the hull clip reports
-            // that face at t=0, this rejects every face it is behind.
             std::optional<shared::brush_polyhedron_t> hovered_hull =
                 shared::try_build_brush_polyhedron(brush->vertices);
+
             if (hovered_hull)
             {
-              float nearest = 0.0f;
-              for (const shared::brush_face_t &face : hovered_hull->faces)
+              float distance_to_nearest_face = 0.0f;
+              for (const shared::brush_face_t& face : hovered_hull->faces)
               {
                 float distance = 0.0f;
                 if (!try_ray_face_intersection(
@@ -703,9 +719,9 @@ void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view,
                         view.mouse_ray.direction, distance))
                   continue;
 
-                if (!hover.face_normal || distance < nearest)
+                if (!hover.face_normal || distance < distance_to_nearest_face)
                 {
-                  nearest = distance;
+                  distance_to_nearest_face = distance;
                   hover.face_normal = face.plane.normal;
                 }
               }
@@ -717,17 +733,6 @@ void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view,
   }
 
   rebuild_hull_and_handles(ctx);
-
-  hover.face = -1;
-  if (selection.hull && hover.uid == potential_selection.uid && hover.face_normal)
-  {
-    for (size_t i = 0; i < selection.hull->faces.size(); ++i)
-    {
-      if (linalg::dot(selection.hull->faces[i].plane.normal,
-                      *hover.face_normal) > 0.99f)
-        hover.face = (int)i;
-    }
-  }
 }
 
 // ============================================================================
@@ -737,162 +742,141 @@ void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view,
 void Brush_Tool::on_mouse_down(editor_context_t &ctx,
                                const input::mouse_event_t &e)
 {
-  if (e.button != input::mouse_button_t::Left)
-    return;
+  // only lmb does anything.
+  if (e.button != input::mouse_button_t::Left) return;
 
   const linalg::vec2 screen_position{(float)e.position.x, (float)e.position.y};
 
-  // SHIFT MEANS EXTRUDE AND NEVER ANYTHING ELSE. It does not need the press to
-  // land on a handle, and it can never start a box selection.
-  //
-  // It used to: shift only reached the extrude path when the press was inside a
-  // 14px handle circle, and otherwise fell through to arming an ADDITIVE band.
-  // So the same gesture extruded or box-dragged depending on pixels the user
-  // could not see, which is exactly as unreliable as it sounds. Additive
-  // banding moved to ctrl, which has nothing else to do here.
-  if (mode == Mode::Vertex && selection.hull && selection.face >= 0 &&
+  // shift means extrude.
+  if (mode == Mode::Vertex && selection_geometry.hull && selection_geometry.face_idx >= 0 &&
       e.mods.shift)
   {
-    const int picked = try_pick_vertex_handle(screen_position);
+    const std::optional<size_t> clicked_handle = try_pick_vertex_handle(
+        selection_geometry.vertex_handles, cached_view, screen_position);
 
-    if (potential_selection.points.empty())
+    if (selection.points.empty())
     {
-      // Nothing picked yet: shift on a handle extrudes that one handle, and
-      // shift on bare face has nothing to act on. Arming a band here is the one
-      // thing it must not do.
-      if (picked < 0)
+      // nothing to extrude.
+      if (!clicked_handle)
         return;
 
-      toggle_point_selection(selection.vertex_handles[(size_t)picked], false);
+      toggle_point_selection(selection_geometry.vertex_handles[*clicked_handle],
+                             false);
     }
 
-    axis_drag.axis = *potential_selection.face_normal;
+    drag.axis.direction = *selection.face_normal;
 
-    // Anchor on the handle if there is one, otherwise on the middle of the
-    // footprint -- the axis projection only needs a point on the drag line.
-    if (picked >= 0)
+    if (clicked_handle)
     {
-      axis_drag.anchor = selection.vertex_handles[(size_t)picked];
+      drag.axis.anchor = selection_geometry.vertex_handles[*clicked_handle];
     }
-    else
+    else // middle of the footprint.
     {
-      axis_drag.anchor = {0, 0, 0};
-      for (const linalg::vec3 &point : potential_selection.points)
-        axis_drag.anchor = axis_drag.anchor + point;
-      axis_drag.anchor = axis_drag.anchor * (1.0f / (float)potential_selection.points.size());
+      drag.axis.anchor = {0, 0, 0};
+      for (const linalg::vec3 &point : selection.points)
+        drag.axis.anchor = drag.axis.anchor + point;
+      drag.axis.anchor = drag.axis.anchor * (1.0f / (float)selection.points.size());
     }
 
-    float distance_along_axis = 0.0f;
-    try_distance_along_axis(axis_drag.anchor, axis_drag.axis, cached_view.mouse_ray,
-                            distance_along_axis);
+    float cursor_distance_along_face_normal = 0.0f;
+    try_distance_along_axis(drag.axis.anchor, drag.axis.direction, cached_view.mouse_ray,
+                            cursor_distance_along_face_normal);
 
-    // Resume from the depth already set rather than snapping back to zero, so a
-    // second shift-drag on a standing extrusion adjusts it instead of resetting
-    // it.
-    axis_drag.start_distance = distance_along_axis - extrusion.depth;
+  
+    // continue dragging from already-extruded height (depth?)
+    drag.axis.start_distance = cursor_distance_along_face_normal - extrusion.depth;
 
     extrusion.pending = true;
-    extrusion.dragging = true;
+    drag.kind = Drag::Extrusion_Depth;
     return;
   }
 
-  // A standing extrusion swallows clicks on handles: that is how the
-  // hull grows. Everything else commits it first.
+
   if (extrusion.pending)
   {
-    const int picked = try_pick_vertex_handle(screen_position);
-    if (picked >= 0)
+    const std::optional<size_t> clicked_handle = try_pick_vertex_handle(
+        selection_geometry.vertex_handles, cached_view, screen_position);
+    if (clicked_handle)
     {
-      toggle_point_selection(selection.vertex_handles[(size_t)picked], true);
+      toggle_point_selection(selection_geometry.vertex_handles[*clicked_handle],
+                             true);
       return;
     }
+
+    // click anywhere there isn't an handle while we are extruding.
 
     commit_pending_extrusion(ctx);
     return;
   }
 
-  if (mode == Mode::Vertex && selection.hull && selection.face >= 0)
+  if (mode == Mode::Vertex && selection_geometry.hull && selection_geometry.face_idx >= 0)
   {
-    const int picked = try_pick_vertex_handle(screen_position);
-    if (picked >= 0)
+    const std::optional<size_t> clicked_handle = try_pick_vertex_handle(
+        selection_geometry.vertex_handles, cached_view, screen_position);
+   
+    if (clicked_handle)
     {
-      const linalg::vec3 point = selection.vertex_handles[(size_t)picked];
+      const linalg::vec3 point = selection_geometry.vertex_handles[*clicked_handle];
 
       if (point_is_selected(point) && e.mods.ctrl)
       {
-        toggle_point_selection(point, true); // ctrl on a picked point drops it
+        toggle_point_selection(point, true); // ctrl on a selected point drops it
         return;
       }
 
       if (!point_is_selected(point))
         toggle_point_selection(point, e.mods.ctrl);
 
-      gestures.dragging_vertices = true;
-      gestures.vertex_start_points = potential_selection.points;
-      axis_drag.axis = *potential_selection.face_normal;
-      axis_drag.anchor = point;
-      try_distance_along_axis(axis_drag.anchor, axis_drag.axis, cached_view.mouse_ray,
-                              axis_drag.start_distance);
+      drag.kind = Drag::Vertices;
+      drag.vertex_start_points = selection.points;
+      drag.axis.direction = *selection.face_normal;
+      drag.axis.anchor = point;
+      try_distance_along_axis(drag.axis.anchor, drag.axis.direction, cached_view.mouse_ray,
+                              drag.axis.start_distance);
 
       if (shared::brush_geometry_t *brush = try_get_selected_brush(ctx))
-        gestures.start_geometry = *brush;
+        drag.geometry_at_the_start_of_drag = *brush;
       return;
     }
 
-    // ARM a band, FROM ANYWHERE. It does not become one, and nothing is
-    // selected or deselected, until the cursor actually travels.
-    //
-    // Arming from anywhere is the whole point: a rubber band over a face's
-    // handles naturally starts beside the face, and while the press decided
-    // what it meant, starting there picked whatever was under it instead --
-    // so the only legal way to band a face was to begin on that same face.
-    // Nothing here can pick a face, so nothing here can pick the wrong one.
-    //
-    // The cost is that picking a DIFFERENT face moves to the release, which is
-    // where resolve_band_press_as_click does it. That is the same
-    // arm-on-press / decide-on-release split the point selection above already
-    // used, widened from "clear the points" to "what did this press mean".
-    gestures.band.armed             = true;
-    gestures.band.start             = screen_position;
-    gestures.band.end               = screen_position;
-    gestures.band.adds              = e.mods.ctrl;
-    gestures.band.press_uid         = hover.uid;
-    gestures.band.press_face_normal = hover.face_normal;
+
+    // if there's _no other way_ to interpret this click, we are box selecting (banding).
+
+    drag.kind                         = Drag::Band_Armed;
+    drag.band.start                   = screen_position;
+    drag.band.end                     = screen_position;
+    drag.band.adds_to_point_selection = e.mods.ctrl;
+    drag.band.press_uid               = hover.uid;
+    drag.band.press_face_normal       = hover.face_normal;
     return;
   }
 
-  // Nothing tool-specific under the cursor: (re)select whatever is.
+  // nothing meaningful to select -> this is actually awful style. we should just clear the selection and fuck off instead of relying on select brush face
+  // to filter out our nonsense. early return is fine but whatever.,
   if (hover.uid == shared::invalid_entity_uid)
   {
-    potential_selection.uid = shared::invalid_entity_uid;
-    potential_selection.face_normal.reset();
-    clear_point_selection();
+    select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
     return;
   }
 
-  if (hover.uid != potential_selection.uid)
-  {
-    potential_selection.uid = hover.uid;
-    clear_point_selection();
-  }
+  // we have something to hover over.
+  select_brush_face(ctx, hover.uid, hover.face_normal);
 
-  potential_selection.face_normal = hover.face_normal;
-
-  if (mode == Mode::Face && potential_selection.face_normal)
+  if (mode == Mode::Face && selection.face_normal)
   {
-    rebuild_hull_and_handles(ctx);
-    if (selection.face < 0)
+    // invalid face? 
+    if (selection_geometry.face_idx == INVALID_FACE) return;
+
+
+    drag.axis.direction = *selection.face_normal;
+    drag.axis.anchor = selection_geometry.hull->faces[(size_t)selection_geometry.face_idx].plane.point;
+    if (!try_distance_along_axis(drag.axis.anchor, drag.axis.direction, cached_view.mouse_ray,
+                                 drag.axis.start_distance))
       return;
 
-    gestures.dragging_face = true;
-    axis_drag.axis = *potential_selection.face_normal;
-    axis_drag.anchor = selection.hull->faces[(size_t)selection.face].plane.point;
-    if (!try_distance_along_axis(axis_drag.anchor, axis_drag.axis, cached_view.mouse_ray,
-                                 axis_drag.start_distance))
-      gestures.dragging_face = false;
-
+    drag.kind = Drag::Face;
     if (shared::brush_geometry_t *brush = try_get_selected_brush(ctx))
-      gestures.start_geometry = *brush;
+      drag.geometry_at_the_start_of_drag = *brush;
   }
 }
 
@@ -902,168 +886,163 @@ void Brush_Tool::on_mouse_drag(editor_context_t &ctx,
   const linalg::vec2 screen_position{(float)e.position.x, (float)e.position.y};
   const float step = grid_step_for(ctx, e.mods);
 
-  if (gestures.band.armed && !gestures.band.active)
+  if (drag.kind == Drag::Band_Armed)
   {
-    const float travelled_x = screen_position.x - gestures.band.start.x;
-    const float travelled_y = screen_position.y - gestures.band.start.y;
-    if (std::sqrt(travelled_x * travelled_x + travelled_y * travelled_y) <
+    const float band_x_extent = screen_position.x - drag.band.start.x;
+    const float band_y_extent = screen_position.y - drag.band.start.y;
+    if (std::sqrt(band_x_extent * band_x_extent + band_y_extent * band_y_extent) <
         BAND_DRAG_THRESHOLD)
       return;
 
-    gestures.band.active = true;
-    if (!gestures.band.adds)
-      clear_point_selection();
+    drag.kind = Drag::Band_Sizing;
   }
 
-  if (gestures.band.active)
+  // The rect is rebuilt from scratch every frame, which is what lets shrinking
+  // it take a point back. A ctrl-band skips the clear and so only ever adds.
+  if (drag.kind == Drag::Band_Sizing)
   {
-    gestures.band.end = screen_position;
+    drag.band.end = screen_position;
 
-    const float min_x = std::min(gestures.band.start.x, gestures.band.end.x);
-    const float max_x = std::max(gestures.band.start.x, gestures.band.end.x);
-    const float min_y = std::min(gestures.band.start.y, gestures.band.end.y);
-    const float max_y = std::max(gestures.band.start.y, gestures.band.end.y);
+    const float min_x = std::min(drag.band.start.x, drag.band.end.x);
+    const float max_x = std::max(drag.band.start.x, drag.band.end.x);
+    const float min_y = std::min(drag.band.start.y, drag.band.end.y);
+    const float max_y = std::max(drag.band.start.y, drag.band.end.y);
 
-    if (!gestures.band.adds)
+    if (!drag.band.adds_to_point_selection)
       clear_point_selection();
 
-    for (const linalg::vec3 &point : selection.vertex_handles)
+    for (const linalg::vec3& point : selection_geometry.vertex_handles)
     {
-      const std::optional<linalg::vec2> projected =
+      const std::optional<linalg::vec2> point_screen_position =
           try_project_to_screen(cached_view, point);
-      if (!projected)
-        continue;
+      if (!point_screen_position) continue;
 
-      if (projected->x >= min_x && projected->x <= max_x &&
-          projected->y >= min_y && projected->y <= max_y &&
+      // point is in selection range and wasn't already selected.
+      if (point_screen_position->x >= min_x && point_screen_position->x <= max_x &&
+          point_screen_position->y >= min_y && point_screen_position->y <= max_y &&
           !point_is_selected(point))
-        potential_selection.points.push_back(point);
+        selection.points.push_back(point);
     }
     return;
   }
 
+  // Everything left drags along drag.axis, and nothing else has one.
+  if (drag.kind != Drag::Face && drag.kind != Drag::Vertices &&
+      drag.kind != Drag::Extrusion_Depth)
+    return;
+
   float distance_along_axis = 0.0f;
-  if (!try_distance_along_axis(axis_drag.anchor, axis_drag.axis, cached_view.mouse_ray,
+  if (!try_distance_along_axis(drag.axis.anchor, drag.axis.direction, cached_view.mouse_ray,
                                distance_along_axis))
     return;
 
-  float travel = distance_along_axis - axis_drag.start_distance;
+  float travel_distance_along_axis = distance_along_axis - drag.axis.start_distance;
   if (step > 0.0f)
-    travel = std::round(travel / step) * step;
+    travel_distance_along_axis = std::round(travel_distance_along_axis / step) * step;
 
-  if (extrusion.dragging)
+  if (drag.kind == Drag::Extrusion_Depth)
   {
-    extrusion.depth = travel;
+    extrusion.depth = travel_distance_along_axis;
     return;
   }
 
-  if (gestures.dragging_face && gestures.start_geometry)
+  if (drag.kind == Drag::Face && drag.geometry_at_the_start_of_drag)
   {
     // Move only the vertices that were ON the face when the drag began.
-    const shared::brush_geometry_t &start =
-        std::get<shared::brush_geometry_t>(*gestures.start_geometry);
+    // the brush_geometry is _not_ the brush polyhedron: we don't have particular faces here.
+    // therefore, we need to re-find the vertices on the plane.
+    const shared::brush_geometry_t& start =
+        std::get<shared::brush_geometry_t>(*drag.geometry_at_the_start_of_drag);
 
-    const float face_distance = linalg::dot(axis_drag.axis, axis_drag.anchor);
+    const float face_distance = linalg::dot(drag.axis.direction, drag.axis.anchor);
 
     std::vector<linalg::vec3> moved = start.vertices;
     for (linalg::vec3 &vertex : moved)
     {
-      if (std::abs(linalg::dot(axis_drag.axis, vertex) - face_distance) <=
+      if (std::abs(linalg::dot(drag.axis.direction, vertex) - face_distance) <=
           shared::BRUSH_COPLANAR_EPSILON)
-        vertex = vertex + axis_drag.axis * travel;
+        vertex = vertex + drag.axis.direction * travel_distance_along_axis;
     }
 
     try_rebuild_selected_brush(ctx, std::move(moved));
     return;
   }
 
-  if (gestures.dragging_vertices && gestures.start_geometry)
+  if (drag.kind == Drag::Vertices && drag.geometry_at_the_start_of_drag)
   {
     const shared::brush_geometry_t &start =
-        std::get<shared::brush_geometry_t>(*gestures.start_geometry);
+        std::get<shared::brush_geometry_t>(*drag.geometry_at_the_start_of_drag);
 
-    // The footprint follows the points it names. Without this the handles read
-    // as deselected the moment the drag starts, because the handles are rebuilt
-    // at the new positions while the selection still holds the old ones.
-    potential_selection.points = gestures.vertex_start_points;
-    for (linalg::vec3 &point : potential_selection.points)
-      point = point + axis_drag.axis * travel;
+
+    selection.points = drag.vertex_start_points;
+    for (linalg::vec3 &point : selection.points)
+      point = point + drag.axis.direction * travel_distance_along_axis;
 
     std::vector<linalg::vec3> moved = start.vertices;
     for (linalg::vec3 &vertex : moved)
     {
-      for (const linalg::vec3 &picked : gestures.vertex_start_points)
+      for (const linalg::vec3 &start_point : drag.vertex_start_points)
       {
-        if (std::abs(vertex.x - picked.x) <= shared::BRUSH_WELD_EPSILON &&
-            std::abs(vertex.y - picked.y) <= shared::BRUSH_WELD_EPSILON &&
-            std::abs(vertex.z - picked.z) <= shared::BRUSH_WELD_EPSILON)
+        if (std::abs(vertex.x - start_point.x) <= shared::BRUSH_WELD_EPSILON &&
+            std::abs(vertex.y - start_point.y) <= shared::BRUSH_WELD_EPSILON &&
+            std::abs(vertex.z - start_point.z) <= shared::BRUSH_WELD_EPSILON)
         {
-          vertex = vertex + axis_drag.axis * travel;
+          vertex = vertex + drag.axis.direction * travel_distance_along_axis;
           break;
         }
       }
     }
 
-    // A drag that would collapse the brush holds at the last good state rather
-    // than destroying it -- try_rebuild_selected_brush refuses and says so.
+    // try to rebuild the brush if possible.
     try_rebuild_selected_brush(ctx, std::move(moved));
     return;
   }
 }
 
-void Brush_Tool::on_mouse_up(editor_context_t &ctx,
-                             const input::mouse_event_t &e)
+void Brush_Tool::on_mouse_up(editor_context_t& ctx,
+                             const input::mouse_event_t& e)
 {
-  if (e.button != input::mouse_button_t::Left)
-    return;
+  // only lmb here.
+  if (e.button != input::mouse_button_t::Left) return;
 
   // A press that never travelled was a CLICK, and only the release can know
   // that. Everything the press deliberately did not do happens here.
-  if (gestures.band.armed && !gestures.band.active)
-    resolve_band_press_as_click();
+  if (drag.kind == Drag::Band_Armed)
+    resolve_band_press_as_click(ctx);
 
-  gestures.band.armed = false;
-  gestures.band.active = false;
-
-  // Releasing ENDS THE DRAG, not the extrusion: it stands until Enter or Escape
-  // so more points can be added to its hull.
-  extrusion.dragging = false;
-
-  if ((gestures.dragging_face || gestures.dragging_vertices) &&
-      gestures.start_geometry)
+  if ((drag.kind == Drag::Face || drag.kind == Drag::Vertices) &&
+      drag.geometry_at_the_start_of_drag)
   {
     // The drag wrote straight into the map so it could be seen; the transaction
     // is the whole gesture, pushed once here.
-    if (shared::brush_geometry_t *brush = try_get_selected_brush(ctx))
+    if (shared::brush_geometry_t* brush = try_get_selected_brush(ctx))
     {
       if (ctx.transaction_system)
       {
         transaction_builder_t builder;
-        builder.add_geometry_modified(potential_selection.uid, *gestures.start_geometry,
+        builder.add_geometry_modified(selection.uid, *drag.geometry_at_the_start_of_drag,
                                       *brush);
         ctx.transaction_system->push(builder.take());
       }
     }
   }
 
-  gestures.dragging_face = false;
-  gestures.dragging_vertices = false;
-  gestures.start_geometry.reset();
+  // Releasing ends the DRAG, not the extrusion: that stands until Enter or
+  // Escape so more points can be added to its hull.
+  end_drag();
 }
 
-// ============================================================================
-// Keyboard
-// ============================================================================
-
+//@FIXME(SMIA): the direction_from_angles here is not really intuitive and I don't understand.
 void Brush_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 {
-  // Arrows nudge along the ground, Page Up / Page Down along Y -- the binding
-  // every brush editor uses. The arrows are CAMERA-RELATIVE and then snapped to
-  // whichever world axis they most point along, so "left" is screen-left from
-  // wherever you happen to be orbiting rather than a fixed world direction.
-  const linalg::vec3 forward =
-      linalg::direction_from_angles(cached_view.camera.yaw, 0.0f);
+
+  // what this boils down to is, dependent on the camera angle, the arrow keys mean somethng different.
+  const linalg::vec3 forward = linalg::direction_from_angles(cached_view.camera.yaw, 0.0f);
   const linalg::vec3 right{-forward.z, 0.0f, forward.x};
+  const linalg::vec3 back = forward * -1.f;
+  const linalg::vec3 left = right *  -1.f;
+  const linalg::vec3 up = {0, 1, 0};
+  const lingalg::vec3 down = {0, -1, 0};
 
   auto dominant_axis = [](const linalg::vec3 &direction) -> linalg::vec3
   {
@@ -1075,7 +1054,7 @@ void Brush_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
   switch (e.key)
   {
   case input::key_t::Arrow_Left:
-    nudge_selected_brush(ctx, dominant_axis(right * -1.0f));
+    nudge_selected_brush(ctx, dominant_axis(left));
     return;
   case input::key_t::Arrow_Right:
     nudge_selected_brush(ctx, dominant_axis(right));
@@ -1084,21 +1063,19 @@ void Brush_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     nudge_selected_brush(ctx, dominant_axis(forward));
     return;
   case input::key_t::Arrow_Down:
-    nudge_selected_brush(ctx, dominant_axis(forward * -1.0f));
+    nudge_selected_brush(ctx, dominant_axis(back));
     return;
   case input::key_t::Page_Up:
-    nudge_selected_brush(ctx, {0, 1, 0});
+    nudge_selected_brush(ctx, up);
     return;
   case input::key_t::Page_Down:
-    nudge_selected_brush(ctx, {0, -1, 0});
+    nudge_selected_brush(ctx, down);
     return;
 
   case input::key_t::Tab:
-    // Tab is also the way OUT of a stuck gesture, so it clears them all. A
-    // mode switch changes what every subsequent input means; carrying a live
-    // band across it is how the tool ends up box-selecting forever.
+    // tab is another failsafe "get me out of here" to switch between selection modes.
     commit_pending_extrusion(ctx);
-    cancel_in_progress_gestures();
+    end_drag();
     mode = (mode == Mode::Face) ? Mode::Vertex : Mode::Face;
     clear_point_selection();
     return;
@@ -1114,49 +1091,50 @@ void Brush_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     delete_selected_brush(ctx);
     return;
 
+  // get me out of this thing.
   case input::key_t::Escape:
-    cancel_in_progress_gestures();
+  {
+    end_drag();
     if (extrusion.pending)
     {
       cancel_pending_extrusion();
       return;
     }
-    clear_point_selection();
-    potential_selection.face_normal.reset();
+    select_brush_face(ctx, selection.uid, std::nullopt);
     return;
-
+  }
+    
+  // select all vertices on the face.
   case input::key_t::A:
-    // Select the whole face grid, which is the fast path to extruding all of
-    // it.
+  {
     if (mode == Mode::Vertex && e.mods.ctrl)
-      potential_selection.points = selection.vertex_handles;
+      selection.points = selection_geometry.vertex_handles;
     return;
+  }
 
   default:
     return;
   }
 }
 
-// ============================================================================
-// Overlay
-// ============================================================================
-
 void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
 {
-  // Only the HOVERED brush gets an outline from the tool. Every brush already
-  // has contour lines from draw_geometry_in_editor, so repeating them here
-  // would be two lines down one edge, fighting over depth bias.
-  if (hover.uid != shared::invalid_entity_uid && hover.uid != potential_selection.uid)
+  // hovering over a valid thing.
+  if (hover.uid != shared::invalid_entity_uid && hover.uid != selection.uid)
   {
-    if (const shared::map_geometry_t *entry =
+    // it's a geometrical thing.
+    if (const shared::map_geometry_t* entry =
             ctx.map->find_geometry_by_uid(hover.uid))
     {
-      if (const shared::brush_geometry_t *brush =
+      // it's a brush.
+      if (const shared::brush_geometry_t* brush =
               std::get_if<shared::brush_geometry_t>(&entry->value))
       {
+        // build the polyhedron.
         std::optional<shared::brush_polyhedron_t> outline =
             shared::try_build_brush_polyhedron(brush->vertices);
 
+        // if that succeeded, for all faces, draw the faces.
         if (outline)
         {
           for (const shared::brush_face_t &face : outline->faces)
@@ -1175,31 +1153,35 @@ void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
     }
   }
 
-  if (!selection.hull)
+  if (!selection_geometry.hull)
+  {
+    log_warning("selection_geometry has no hull?");
     return;
+  }
 
-  for (const shared::brush_face_t &face : selection.hull->faces)
+  // selecting a valid thing.
+  for (const shared::brush_face_t &face : selection_geometry.hull->faces)
   {
     for (size_t i = 0; i < face.vertex_indices.size(); ++i)
     {
       draws.debug.line(
-          selection.hull->vertices[face.vertex_indices[i]],
-          selection.hull->vertices
+          selection_geometry.hull->vertices[face.vertex_indices[i]],
+          selection_geometry.hull->vertices
               [face.vertex_indices[(i + 1) % face.vertex_indices.size()]],
           colors::yellow, OVERLAY_DEPTH_BIAS);
     }
   }
 
-  // The picked face, tinted.
-  if (selection.face >= 0)
+  // highlight the selected face.
+  if (selection_geometry.face_idx >= 0)
   {
     const shared::brush_face_t &face =
-        selection.hull->faces[(size_t)selection.face];
+        selection_geometry.hull->faces[(size_t)selection_geometry.face_idx];
 
     std::vector<linalg::vec3f> polygon;
     polygon.reserve(face.vertex_indices.size());
     for (uint32_t index : face.vertex_indices)
-      polygon.push_back(selection.hull->vertices[index]);
+      polygon.push_back(selection_geometry.hull->vertices[index]);
 
     draws.debug.filled_polygon(polygon, color_t{255, 200, 60, 60});
 
@@ -1208,9 +1190,7 @@ void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
                       colors::yellow);
   }
 
-  // The pending extrusion, translucent until it is committed. Drawn piece by
-  // piece from the same function the commit builds from, so a footprint that
-  // splits is previewed split rather than as the hull it is not going to be.
+  // if there's an extrusion, draw it transparent.
   if (extrusion.pending)
   {
     const pending_extrusion_solids_t pending =
@@ -1218,17 +1198,14 @@ void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
 
     std::vector<linalg::vec3> previewed_vertices;
 
-    for (const std::vector<linalg::vec3> &points : pending.point_sets)
+    // there can be multiple pending solids (think the L shape which ocntains of two rectangles.)
+    for (const std::vector<linalg::vec3>& points : pending.point_sets)
     {
-      std::optional<shared::brush_polyhedron_t> preview =
-          shared::try_build_brush_polyhedron(points);
+      std::optional<shared::brush_polyhedron_t> preview = shared::try_build_brush_polyhedron(points);
+
       if (!preview)
       {
-        // The convention draw_brush_wireframe already set for a brush that does
-        // not hull: show the bound in RED so the piece is visibly wrong rather
-        // than invisible. Skipping it silently is what made a doomed extrusion
-        // look like nothing was happening at all, while the panel went on
-        // reporting a depth.
+        // preview failed: tell me why. draw at least the bounds of the shape.
         const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(points);
         const linalg::vec3          middle = (bounds.min + bounds.max) * 0.5f;
 
@@ -1238,27 +1215,33 @@ void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
         continue;
       }
 
-      for (const shared::brush_face_t &face : preview->faces)
+      auto nice_shade_of_blue_for_extrusion_preview =  color_t{80, 200, 255, 70};
+      for (const shared::brush_face_t& face : preview->faces)
       {
-        std::vector<linalg::vec3f> polygon;
+        auto polygon = std::vector<linalg::vec3f>{};
         polygon.reserve(face.vertex_indices.size());
+
         for (uint32_t index : face.vertex_indices)
+        {
           polygon.push_back(preview->vertices[index]);
+        }
+        
+        draws.debug.filled_polygon(polygon,nice_shade_of_blue_for_extrusion_preview);
 
-        draws.debug.filled_polygon(polygon, color_t{80, 200, 255, 70});
-
+        // draw the borders.
         for (size_t i = 0; i < face.vertex_indices.size(); ++i)
         {
           draws.debug.line(
               preview->vertices[face.vertex_indices[i]],
-              preview->vertices
-                  [face.vertex_indices[(i + 1) % face.vertex_indices.size()]],
+              preview->vertices[face.vertex_indices[(i + 1) % face.vertex_indices.size()]],
               colors::cyan, OVERLAY_DEPTH_BIAS);
         }
       }
 
-      for (const linalg::vec3 &vertex : preview->vertices)
+      for (const linalg::vec3& vertex : preview->vertices)
+      {
         previewed_vertices.push_back(vertex);
+      }
     }
 
     if (!previewed_vertices.empty())
@@ -1279,10 +1262,11 @@ void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
       draws.debug.text(middle, label, colors::cyan);
     }
   }
-  else if (gestures.dragging_face && selection.face >= 0)
+  // we're dragging a face.
+  else if (drag.kind == Drag::Face && selection_geometry.face_idx >= 0)
   {
     const shared::aabb_bounds_t bounds =
-        shared::compute_brush_bounds(selection.hull->vertices);
+        shared::compute_brush_bounds(selection_geometry.hull->vertices);
     const linalg::vec3 size = bounds.max - bounds.min;
 
     char label[64];
@@ -1292,17 +1276,13 @@ void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
   }
 }
 
-// ============================================================================
-// 2D: the handles, and the panel
-// ============================================================================
-
 void Brush_Tool::on_draw_ui(editor_context_t &ctx)
 {
-  // Circles go through ImGui rather than the debug pipeline: an antialiased
-  // disc at a constant pixel size is what a handle has to look like, and the
-  // debug pipeline draws world-space lines. The BACKGROUND list puts them over
-  // the scene but under the editor panels, which is the right precedence.
-  if (mode == Mode::Vertex && selection.face >= 0)
+  // a convoluted reason to draw the vertex selection discs here is that the debug mode draws in world space.
+  // this thing draws in screen space. sounds like a crutch.
+
+   // we have a face selected.so draw all those points.
+  if (mode == Mode::Vertex && selection_geometry.face_idx >= 0)
   {
     ImDrawList *list = ImGui::GetBackgroundDrawList();
 
@@ -1310,28 +1290,35 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
     const ImU32 plain_fill = IM_COL32(40, 40, 48, 220);
     const ImU32 outline = IM_COL32(255, 255, 255, 230);
 
-    for (const linalg::vec3 &point : selection.vertex_handles)
+    for (const linalg::vec3& point : selection_geometry.vertex_handles)
     {
-      const std::optional<linalg::vec2> projected =
+      const std::optional<linalg::vec2> vertex_position_in_screen_space =
           try_project_to_screen(cached_view, point);
-      if (!projected)
+      if (!vertex_position_in_screen_space)
         continue;
 
-      const bool picked = point_is_selected(point);
-      const float radius = picked ? CORNER_HANDLE_RADIUS : HANDLE_RADIUS;
+      const bool is_selected = point_is_selected(point);
+      const float radius = is_selected ? CORNER_HANDLE_RADIUS : HANDLE_RADIUS;
 
-      list->AddCircleFilled({projected->x, projected->y}, radius,
-                            picked ? selected_fill : plain_fill);
-      list->AddCircle({projected->x, projected->y}, radius, outline, 0, 1.5f);
+      list->AddCircleFilled(
+        {vertex_position_in_screen_space->x, vertex_position_in_screen_space->y},
+         radius,
+        is_selected ? selected_fill : plain_fill);
+      list->AddCircle(
+        {vertex_position_in_screen_space->x, vertex_position_in_screen_space->y},
+         radius,
+         outline,
+          0, 1.5f);
     }
 
-    if (gestures.band.active)
+    // draw the drag overlay.
+    if (drag.kind == Drag::Band_Sizing)
     {
-      list->AddRect({gestures.band.start.x, gestures.band.start.y},
-                    {gestures.band.end.x, gestures.band.end.y},
+      list->AddRect({drag.band.start.x, drag.band.start.y},
+                    {drag.band.end.x, drag.band.end.y},
                     IM_COL32(255, 220, 120, 220));
-      list->AddRectFilled({gestures.band.start.x, gestures.band.start.y},
-                          {gestures.band.end.x, gestures.band.end.y},
+      list->AddRectFilled({drag.band.start.x, drag.band.start.y},
+                          {drag.band.end.x, drag.band.end.y},
                           IM_COL32(255, 220, 120, 40));
     }
   }
@@ -1341,16 +1328,16 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
   // Both drawn unconditionally: || would short-circuit and stop drawing the
   // second button on the frame the first is clicked.
   int mode_index = (mode == Mode::Face) ? 0 : 1;
-  const bool picked_face = ImGui::RadioButton("Face", &mode_index, 0);
-  const bool picked_vertex = ImGui::RadioButton("Vertex", &mode_index, 1);
+  const bool chose_face_mode = ImGui::RadioButton("Face", &mode_index, 0);
+  const bool chose_vertex_mode = ImGui::RadioButton("Vertex", &mode_index, 1);
 
-  if (picked_face || picked_vertex)
+  if (chose_face_mode || chose_vertex_mode)
   {
     const Mode wanted = (mode_index == 0) ? Mode::Face : Mode::Vertex;
     if (wanted != mode)
     {
       commit_pending_extrusion(ctx);
-      cancel_in_progress_gestures();
+      end_drag();
       mode = wanted;
       clear_point_selection();
     }
@@ -1358,19 +1345,19 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
 
   ImGui::Separator();
 
-  if (potential_selection.uid == shared::invalid_entity_uid)
+  if (selection.uid == shared::invalid_entity_uid)
     ImGui::TextDisabled("no brush selected");
-  else if (!selection.hull)
+  else if (!selection_geometry.hull)
     ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "brush %u does not hull",
-                       potential_selection.uid);
+                       selection.uid);
   else
-    ImGui::Text("brush %u — %zu vertices, %zu faces", potential_selection.uid,
-                selection.hull->vertices.size(), selection.hull->faces.size());
+    ImGui::Text("brush %u — %zu vertices, %zu faces", selection.uid,
+                selection_geometry.hull->vertices.size(), selection_geometry.hull->faces.size());
 
   if (mode == Mode::Vertex)
   {
-    ImGui::Text("%zu of %zu points picked", potential_selection.points.size(),
-                selection.vertex_handles.size());
+    ImGui::Text("%zu of %zu points selected", selection.points.size(),
+                selection_geometry.vertex_handles.size());
 
     // Worth saying out loud: the handles ARE the editor grid sampled on the
     // face, so at the default 128 a 128-unit brush face carries its four
@@ -1379,7 +1366,7 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
     // on screen.
     ImGui::Text("grid %.0f  ( [ and ] )", ctx.grid ? ctx.grid->step() : 0.0f);
 
-    if (selection.face >= 0 && selection.vertex_handles.size() <= 5)
+    if (selection_geometry.face_idx >= 0 && selection_geometry.vertex_handles.size() <= 5)
       ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1),
                          "few points — lower the grid with [");
   }
@@ -1393,12 +1380,11 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
     // per frame and that is the O(n^4) call, so a second pass here would double
     // the cost of the exact footprint this is trying to explain. The overlay is
     // where the remaining reasons get named, against the piece they belong to.
-    const char *why_not = nullptr;
+    const char* why_not = nullptr;
     for (const std::vector<linalg::vec3> &points : pending.point_sets)
     {
       why_not = try_explain_unbuildable_footprint(points);
-      if (why_not)
-        break;
+      if (why_not) break;
     }
 
     if (why_not)
@@ -1408,12 +1394,12 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
       // line, which reads as the tool ignoring the keystroke.
       ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "cannot extrude this footprint");
       ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", why_not);
-      ImGui::TextDisabled("Esc cancels");
+      ImGui::TextDisabled("<Esc> cancels");
     }
     else
     {
       ImGui::TextColored(ImVec4(0.4f, 0.8f, 1, 1),
-                         "extruding %.0f — Enter commits, Esc cancels",
+                         "extruding %.0f.  <Enter> commits, <Esc> cancels",
                          extrusion.depth);
 
       // A concave footprint is not one convex brush, so say how many it is
@@ -1421,7 +1407,7 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
       // commit.
       if (pending.point_sets.size() > 1)
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1, 1),
-                           "concave — splits into %zu brushes",
+                           "concave footprint: splits into %zu brushes",
                            pending.point_sets.size());
     }
   }
@@ -1431,9 +1417,9 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::TextDisabled("drag        move face (Face mode)");
   ImGui::TextDisabled("drag        box-select points (Vertex mode)");
   ImGui::TextDisabled("ctrl+drag   box-select, adding");
-  ImGui::TextDisabled("drag handle move the picked points");
-  ImGui::TextDisabled("shift+drag  extrude the picked points, anywhere");
-  ImGui::TextDisabled("ctrl+A      pick the whole face grid");
+  ImGui::TextDisabled("drag handle move the selected points");
+  ImGui::TextDisabled("shift+drag  extrude the selected points, anywhere");
+  ImGui::TextDisabled("ctrl+A      select the whole face grid");
   ImGui::TextDisabled("alt         ignore the grid while dragging");
   ImGui::TextDisabled("arrows      nudge the brush, camera-relative");
   ImGui::TextDisabled("pgup/pgdn   nudge the brush up / down");

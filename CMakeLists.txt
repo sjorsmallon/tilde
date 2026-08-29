@@ -133,6 +133,33 @@ elseif(MSVC)
     add_compile_options(/we4062) # enumerator not handled in switch
 endif()
 
+# Allocation attribution (Track A of vector_def.md). OFF by default and a
+# BUILD-time choice for the same reason TILDE_ASSET_SOURCE is one: capturing a
+# stack per allocation costs 100-500ns, which perturbs the very frame times an
+# audit exists to explain, and a shipping build must not pay it. A runtime
+# switch would just be one more way to ship the wrong thing.
+#
+# Debug info comes with it, because the whole output is symbolized stacks: a
+# release build reports module+offset and tells you nothing. -gcodeview is what
+# produces a PDB under the MSVC ABI clang++ targets here, and the matching
+# link flag is what makes the linker emit it.
+option(TILDE_MEMORY_AUDIT "Track every allocation and attribute it to a call stack" OFF)
+if(TILDE_MEMORY_AUDIT)
+    add_compile_definitions(TILDE_MEMORY_AUDIT=1)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        add_compile_options(-g -gcodeview)
+        add_link_options(-g)
+    endif()
+    message(STATUS "TILDE_MEMORY_AUDIT is ON: every allocation is tracked. Do not ship this build.")
+endif()
+
+# EVERY module that allocates needs its own copy of this TU -- operator-new
+# replacement is per module on Windows, and it cannot live in game_shared
+# because a static archive member nothing references is never pulled into the
+# link. Named once here so a new DLL or executable is an obvious omission.
+# The file compiles to nothing when TILDE_MEMORY_AUDIT is off.
+set(MEMORY_AUDIT_HOOK src/shared/memory_audit_hook.cpp)
+
 
 # --- Host Tools ---
 
@@ -270,6 +297,18 @@ add_library(game_shared STATIC
     src/shared/replay_system.hpp
     src/shared/task_system.hpp
     src/shared/task_system.cpp
+    # The audit tables and the report. The operator new REPLACEMENT is not here
+    # on purpose -- see the header of memory_audit_hook.cpp for why a static lib
+    # is the one place it cannot go.
+    src/shared/memory_audit.hpp
+    src/shared/memory_audit.cpp
+    # Frame time DISTRIBUTION (p50/p99/max and the worst frames), and which
+    # cores are the fast ones. Neither is behind TILDE_MEMORY_AUDIT: both cost
+    # nothing and a hitch is what they exist to catch.
+    src/shared/frame_timing.hpp
+    src/shared/frame_timing.cpp
+    src/shared/cpu_topology.hpp
+    src/shared/cpu_topology.cpp
     ${ASSET_GEN_SOURCE}
     # The per-class loaders and register_all. References decode_* and
     # make_missing_* by name, which is what makes a class with no decoder a
@@ -377,6 +416,14 @@ target_include_directories(game_shared PUBLIC
 )
 target_link_libraries(game_shared PUBLIC libprotobuf Jolt)
 target_include_directories(game_shared PUBLIC ${joltphysics_SOURCE_DIR})
+if(WIN32)
+    # dbghelp turns the captured return addresses into names and file:line at
+    # report time. PUBLIC so every module carrying the hook gets it too.
+    # dbghelp symbolizes the audit's stacks; psapi supplies the per-frame page
+    # fault count, which is what separates "this frame allocated a lot" from
+    # "this frame touched a lot of NEW pages and paid the kernel for each".
+    target_link_libraries(game_shared PUBLIC dbghelp psapi)
+endif()
 
 # Where a built game reads its bytes from. loose is dev (files under the project
 # root); pkg ships one assets.pkg beside the exe; embed puts that same package in
@@ -458,6 +505,7 @@ configure_file(
 )
 
 add_library(game_client SHARED
+    ${MEMORY_AUDIT_HOOK}
     # Fills the @Client command slots. Compiled HERE, into the module that owns
     # those handlers, so this DLL never references a server handler symbol --
     # and a missing/misspelled @Client handler is a link error on this target.
@@ -571,6 +619,7 @@ endif()
 # 3. Game Server (Shared Library / DLL)
 # Contains Game Logic
 add_library(game_server SHARED
+    ${MEMORY_AUDIT_HOOK}
     # Fills the @Server command slots -- the other half of the split above.
     ${CVAR_GEN_SERVER_BINDINGS}
     src/server/server_impl.cpp
@@ -602,20 +651,20 @@ endif()
 # --- Executables ---
 
 # 4. Integrated Game (Client + Server)
-add_executable(MyGame src/launcher/main_integrated.cpp)
+add_executable(MyGame src/launcher/main_integrated.cpp ${MEMORY_AUDIT_HOOK})
 target_include_directories(MyGame PRIVATE src)
 target_link_libraries(MyGame PRIVATE game_client game_server game_shared SDL2::SDL2main)
 # For macOS app bundle (optional, keeping as console app for now since detached_console used)
 
 
 # 5. Dedicated Server (Server only)
-add_executable(MyGame_Server src/launcher/main_dedicated.cpp)
+add_executable(MyGame_Server src/launcher/main_dedicated.cpp ${MEMORY_AUDIT_HOOK})
 target_include_directories(MyGame_Server PRIVATE src)
 target_link_libraries(MyGame_Server PRIVATE game_server game_shared)
 
 
 # 5b. Networked Client (Client only, connects to a separate MyGame_Server)
-add_executable(MyGame_Client src/launcher/main_client.cpp)
+add_executable(MyGame_Client src/launcher/main_client.cpp ${MEMORY_AUDIT_HOOK})
 target_include_directories(MyGame_Client PRIVATE src)
 target_link_libraries(MyGame_Client PRIVATE game_client game_shared SDL2::SDL2main)
 
@@ -811,6 +860,34 @@ target_link_libraries(lag_compensation_test PRIVATE game_shared)
 add_executable(array_test src/test/array_test.cpp)
 target_include_directories(array_test PRIVATE src src/shared)
 
+# The allocation audit. Compiles memory_audit.cpp directly rather than linking
+# game_shared, the same way server_context_test does: the table logic is pure
+# struct manipulation and pulling in protobuf and Jolt to reach it would be
+# noise. The hook goes in too, so that under -DTILDE_MEMORY_AUDIT=ON the test
+# also proves a real `new` reaches the audit -- which is the one thing the
+# table-level checks cannot show.
+add_executable(memory_audit_test src/test/memory_audit_test.cpp
+    src/shared/memory_audit.cpp
+    ${MEMORY_AUDIT_HOOK})
+target_include_directories(memory_audit_test PRIVATE src src/shared)
+if(WIN32)
+    target_link_libraries(memory_audit_test PRIVATE dbghelp)
+endif()
+
+# Frame time distribution and CPU topology. Compiled directly for the same
+# reason memory_audit_test is: both are self-contained and pulling in protobuf
+# and Jolt to reach a histogram would be noise.
+add_executable(frame_timing_test src/test/frame_timing_test.cpp
+    src/shared/frame_timing.cpp
+    src/shared/cpu_topology.cpp
+    # frame_timing asks the audit to capture the worst frame's per-site deltas,
+    # so it needs the symbol even though this test installs no audit state.
+    src/shared/memory_audit.cpp)
+target_include_directories(frame_timing_test PRIVATE src src/shared)
+if(WIN32)
+    target_link_libraries(frame_timing_test PRIVATE dbghelp psapi)
+endif()
+
 # 26. Server context test — the reset seams in src/server/server_context.cpp.
 # Asserts BOTH halves of each reset: what is cleared and what deliberately
 # survives. The half that survives is the one a future edit is likely to get
@@ -965,6 +1042,8 @@ set(GAME_TESTS
     hitbox_rig_test
     lag_compensation_test
     array_test
+    memory_audit_test
+    frame_timing_test
     server_context_test
     game_rules_test
     inventory_test

@@ -37,6 +37,11 @@ enum class Win_Condition : uint8_t
   // which is the field's first reader -- it was declared on the spawn marker
   // and the player, and until now nothing anywhere consulted either.
   Team_Elimination,
+
+  // A Trigger_Action::Complete_Level volume was reached. The round ends for
+  // everyone, which is what makes it the co-op shape rather than a per-player
+  // one: game_rules_state_t::objective_reached is one flag, not a set.
+  Objective_Reached,
 };
 
 // Which spawn markers a player may be placed on. The third recombination axis,
@@ -53,18 +58,23 @@ enum class Spawn_Policy : uint8_t
   // marker for a team is a content error and says so, then falls back to
   // Rotate_Markers -- spawning inside the enemy is worse than being loud.
   Team_Markers,
+
+  // The FIRST Spawn_Type::Human marker, for everyone, ignoring both the team
+  // and the rotation index. A level has one start line, and rotating would put
+  // the second player somewhere the level was not designed to begin at.
+  Single_Fixed_Start,
 };
 
 } // namespace server
 
 template <> struct enum_traits<server::Win_Condition>
 {
-  static constexpr uint32_t count = 2;
+  static constexpr uint32_t count = 3;
 };
 
 template <> struct enum_traits<server::Spawn_Policy>
 {
-  static constexpr uint32_t count = 2;
+  static constexpr uint32_t count = 3;
 };
 
 namespace server
@@ -78,9 +88,10 @@ namespace server
 // that REPEATS. Entering element 0 is the round boundary -- that is where
 // round_number increments and where every player snaps to a spawn.
 //
-// Deathmatch's cycle is one element, and that is the honest shape rather than a
-// degenerate one: a deathmatch is a single round that ends on a frag limit.
-inline constexpr shared::Round_Phase DEATHMATCH_PHASE_CYCLE[] = {
+// A one-element cycle is the honest shape rather than a degenerate one: a
+// deathmatch is a single round that ends on a frag limit, and a speedrun a
+// single round that ends when the objective is reached.
+inline constexpr shared::Round_Phase SINGLE_ROUND_PHASE_CYCLE[] = {
     shared::Round_Phase::Live,
 };
 
@@ -143,7 +154,7 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .auto_assign_teams    = false,
         .join_in_progress     = true,
         .max_rounds           = 1,
-        .phase_cycle          = DEATHMATCH_PHASE_CYCLE,
+        .phase_cycle          = SINGLE_ROUND_PHASE_CYCLE,
     },
     {
         .key                  = Game_Mode::rounds,
@@ -154,6 +165,16 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .join_in_progress     = false,
         .max_rounds           = 15,
         .phase_cycle          = ROUNDS_PHASE_CYCLE,
+    },
+    {
+        .key                  = Game_Mode::speedrun,
+        .win_condition        = Win_Condition::Objective_Reached,
+        .spawn_policy         = Spawn_Policy::Single_Fixed_Start,
+        .respawn_during_round = true,
+        .auto_assign_teams    = false,
+        .join_in_progress     = true,
+        .max_rounds           = 1,
+        .phase_cycle          = SINGLE_ROUND_PHASE_CYCLE,
     },
 }};
 

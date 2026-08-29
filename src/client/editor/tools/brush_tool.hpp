@@ -43,17 +43,18 @@ private:
   static constexpr int INVALID_FACE = -1;
 
 
-  struct potential_selection_t
+  struct selection_t
   {
     shared::entity_uid_t uid = shared::invalid_entity_uid;
     std::optional<linalg::vec3> face_normal;
     std::vector<linalg::vec3> points;
   };
-  
-  struct selection_t
+
+  // Derived from `selection`. Only select_brush_face and on_update write it.
+  struct selection_geometry_t
   {
     std::optional<shared::brush_polyhedron_t> hull;
-    int face = INVALID_FACE;
+    int face_idx = INVALID_FACE;
     std::vector<linalg::vec3> vertex_handles;
   };
 
@@ -61,54 +62,73 @@ private:
   {
     shared::entity_uid_t uid = shared::invalid_entity_uid;
     std::optional<linalg::vec3> face_normal;
-    int face = INVALID_FACE;
   };
 
+  // the mouse is, at most, only doing one of these things when dragging (or only not dragging)
+  enum class Drag
+  {
+    None,
+    Band_Armed,      // pressed on the face, not yet travelled: still a click
+    Band_Sizing,     // travelled past BAND_DRAG_THRESHOLD, the rect is live
+    Face,            // the picked face, along its normal
+    Vertices,        // the selected points, along the face normal
+    Extrusion_Depth, // the pending extrusion's height
+  };
+
+  // Face, Vertices and Extrusion_Depth all drag along ONE axis: the cursor ray
+  // projects onto it and the travel since the press is the whole answer.
   struct axis_drag_t
   {
-    linalg::vec3 axis{0, 0, 0};
+    linalg::vec3 direction{0, 0, 0};
     linalg::vec3 anchor{0, 0, 0};
     float start_distance = 0.0f;
   };
 
+  // Latched at the press, because a band outlives the modifiers and the hover
+  // that started it.
   struct band_t
   {
-    bool armed = false;
-    bool active = false;
     linalg::vec2 start{0, 0};
     linalg::vec2 end{0, 0};
-    bool adds = false; // ctrl held when the band was armed
-
-    // What the press was over. A band arms from ANYWHERE, so which face the
-    // press landed on is only acted on if the cursor never travels -- and by
-    // then `hover` has moved on, which is why the press records its own.
+    bool adds_to_point_selection = false; // ctrl at arm time; releasing it mid-drag still adds
     shared::entity_uid_t        press_uid = shared::invalid_entity_uid;
     std::optional<linalg::vec3> press_face_normal;
   };
 
-  struct gestures_t
+  struct drag_t
   {
-    bool dragging_face = false;
-    bool dragging_vertices = false;
-    std::optional<shared::geometry_value_t> start_geometry;
-    std::vector<linalg::vec3> vertex_start_points;
-    band_t band;
+    Drag kind = Drag::None;
+
+    axis_drag_t axis; // Face, Vertices, Extrusion_Depth
+    band_t band;      // Band_Armed, Band_Sizing
+
+    // Face, Vertices: the brush as it was at the press. The drag writes
+    // straight into the map so it can be seen, so this is both what each frame
+    // recomputes from and the transaction's before-image.
+    std::optional<shared::geometry_value_t> geometry_at_the_start_of_drag;
+    std::vector<linalg::vec3> vertex_start_points; // Vertices
   };
 
+  // Outlives the drag that sized it: it stands until Enter or Escape.
   struct extrusion_t
   {
     bool pending = false;
-    bool dragging = false;
     float depth = 0.0f;
   };
 
   Mode mode = Mode::Face;
-  potential_selection_t potential_selection;
   selection_t selection;
+  selection_geometry_t selection_geometry;
   hover_t hover;
-  axis_drag_t axis_drag;
-  gestures_t gestures;
+  drag_t drag;
   extrusion_t extrusion;
+
+  // Band_Armed is not a drag yet -- until the cursor travels, the press is
+  // still a click, so the hover keeps tracking under it.
+  bool drag_is_live() const
+  {
+    return drag.kind != Drag::None && drag.kind != Drag::Band_Armed;
+  }
 
   // This frame. Written at the top of on_update, read by handlers that run
   // later in it.
@@ -116,7 +136,7 @@ private:
 
   shared::brush_geometry_t* try_get_selected_brush(editor_context_t &ctx);
 
-  void cancel_in_progress_gestures();
+  void end_drag();
 
   // one grid step along `direction`, applied to the whole brush.
   void nudge_selected_brush(editor_context_t &ctx,
@@ -126,7 +146,12 @@ private:
 
   // An armed band whose cursor never travelled was a click after all. This is
   // what it would have meant on press.
-  void resolve_band_press_as_click();
+  void resolve_band_press_as_click(editor_context_t &ctx);
+
+  // The ONE way the selection changes: writes it and rebuilds selection_geometry,
+  // so the two cannot disagree.
+  void select_brush_face(editor_context_t &ctx, shared::entity_uid_t uid,
+                         std::optional<linalg::vec3> face_normal);
 
   void rebuild_hull_and_handles(editor_context_t &ctx);
   void clear_point_selection();
@@ -139,7 +164,7 @@ private:
   struct pending_extrusion_solids_t
   {
     std::vector<std::vector<linalg::vec3>> point_sets;
-    bool every_pick_accounted_for = false;
+    bool every_selected_point_accounted_for = false;
   };
 
   pending_extrusion_solids_t build_pending_extrusion_solids(float grid_step) const;
@@ -147,7 +172,6 @@ private:
   float grid_step_for(const editor_context_t &ctx,
                       const input::modifiers_t &mods) const;
 
-  int try_pick_vertex_handle(const linalg::vec2 &screen_position) const;
   bool point_is_selected(const linalg::vec3 &point) const;
   void toggle_point_selection(const linalg::vec3 &point, bool additive);
 };

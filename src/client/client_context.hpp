@@ -72,6 +72,17 @@ struct Saved_Input
   // on -- two spellings of the same thing, free to disagree. A replay now runs
   // the identical basis the live step did because it reads the identical field.
   shared::subtick_input_t input = {};
+
+  // WRITE-ONLY as of today: both are filled when the input is banked and
+  // nothing reads either. Reconciliation does not need them -- it restarts from
+  // the SERVER's position and velocity and re-runs the inputs forward, so a
+  // per-tick record of what we predicted is a comparison nobody makes.
+  //
+  // This is why Movement has no third field here. The state player_move now
+  // carries is reseeded from prediction_t::latest_server_movement at the top of
+  // the replay, on the same footing as these two, and a per-tick copy of it
+  // would be a third write-only field -- a second answer that can disagree with
+  // the replay, which is the shape this codebase keeps deleting.
   vec3f predicted_position = {0, 0, 0};
   vec3f predicted_velocity = {0, 0, 0};
 };
@@ -211,6 +222,13 @@ struct prediction_t
 {
   vec3f player_position = {0, 36, 0};
   vec3f player_velocity = {0, 0, 0};
+
+  // Our predicted copy of Player_Entity::movement, advanced by the same
+  // player_move the server runs. The server's copy is @Networked and is what
+  // reconciliation snaps this back to; between corrections this is what the
+  // local player's abilities are actually spending.
+  entities::Movement player_movement = {};
+
   float player_yaw = 0.0f;
   float player_pitch = 0.0f;
   float physics_accumulator = 0.0f;
@@ -342,6 +360,10 @@ struct prediction_t
   // --- Server reconciliation ---
   vec3f latest_server_position = {0, 0, 0};
   vec3f latest_server_velocity = {0, 0, 0};
+  // The server's word on our movement state, and the third thing a replay
+  // restarts from. Position and velocity alone are not the state player_move
+  // reads any more.
+  entities::Movement latest_server_movement = {};
   // Our copy of the server's high-water mark over our own input stream. Spelled
   // out to the last word because both halves are load-bearing: it is a NUMBER,
   // not an input, and the processing is the SERVER'S -- we process our own

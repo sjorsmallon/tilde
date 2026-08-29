@@ -1,3 +1,5 @@
+#include "../shared/frame_timing.hpp"
+#include "../shared/memory_audit.hpp"
 #include "../shared/player_constants.hpp"
 #include "../shared/hitscan.hpp"
 #include "../shared/player_animator.hpp"
@@ -332,9 +334,25 @@ static bool load_map_file_into_context(server_context_t &context,
       ++human_spawn_count;
   }
 
+  // The authored health is in the map file; the runtime health is not, so a
+  // freshly loaded level needs it seeded. Same function the round boundary
+  // calls, because "a fresh level" and "a fresh round" mean the same thing to a
+  // crate.
+  seed_damageable_health(context.world.session);
+
   log_terminal("Loaded map='{}', {} human spawns, {} bot spawns",
                world.session.map_name, human_spawn_count, bot_spawn_count);
   return true;
+}
+
+void install_memory_audit(memory_audit::memory_audit_state_t *state)
+{
+  memory_audit::set_state(state);
+}
+
+void install_frame_timing(frame_timing::frame_timing_state_t *state)
+{
+  frame_timing::set_state(state);
 }
 
 bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *cvar_command_table,
@@ -570,8 +588,14 @@ bool change_map_to(const std::string &map_path)
   return true;
 }
 
-// Poses every living player's hit volumes into context.posed_players, once, for
+// Poses every living target's hit volumes into context.posed_players, once, for
 // every shot this tick to share.
+//
+// TARGETS, not players: a Damageable_Entity is appended after the players and
+// resolve_hitscan cannot tell the difference, because it never knew what it was
+// testing -- a target is a uid plus a span of posed volumes plus a bound
+// (hitscan.hpp). Walking the Player_Entity pool was the ONLY thing making a
+// shot player-only. See generalization_def.md §3.
 //
 // Called at the TOP of the tick, before the input loop advances anybody. That
 // ordering is the point: the fire path runs inside that loop, so rebuilding per
@@ -580,8 +604,9 @@ bool change_map_to(const std::string &map_path)
 // same start-of-tick world.
 //
 // Corpses are skipped -- the fire path already ignored health <= 0, and the
-// client's overlay draws none for the same reason.
-static void pose_all_players(server_context_t &context)
+// client's overlay draws none for the same reason. A destroyed damageable is
+// skipped by the same rule and for the same reason.
+static void pose_all_targets(server_context_t &context)
 {
   shared::posed_players_t &posed = context.posed_players;
   // `volumes` is resized rather than cleared: every element it ends up holding
@@ -595,18 +620,35 @@ static void pose_all_players(server_context_t &context)
 
   Span<entities::Player_Entity> players =
       context.world.session.entity_system.entities_of<entities::Player_Entity>();
+  Span<entities::Damageable_Entity> damageables =
+      context.world.session.entity_system.entities_of<entities::Damageable_Entity>();
 
   // Sized in full before a single target is pushed: each target holds a SPAN
   // into this vector, so filling the two in lockstep would leave every span
   // taken before a reallocation pointing at freed storage.
-  uint32_t living_count = 0;
+  //
+  // Two volume counts now, and they are not the same number: a player is
+  // rig.volume_count() volumes and a damageable is exactly ONE box. That is why
+  // the slice below is cut with a running offset rather than
+  // `targets.size() * volume_count` -- that expression was only ever right
+  // while every target had the same stride, and it would have silently handed
+  // out overlapping spans the moment one did not.
+  uint32_t living_player_count = 0;
   for (const entities::Player_Entity &player : players)
-    living_count += player.health > 0 ? 1 : 0;
+    living_player_count += player.health > 0 ? 1 : 0;
 
-  posed.volumes.resize((size_t)living_count * volume_count);
-  posed.targets.reserve(living_count);
+  uint32_t living_damageable_count = 0;
+  for (const entities::Damageable_Entity &damageable : damageables)
+    living_damageable_count += damageable.health > 0 ? 1 : 0;
+
+  const size_t total_target_count = (size_t)living_player_count + living_damageable_count;
+
+  posed.volumes.resize((size_t)living_player_count * volume_count + living_damageable_count);
+  posed.targets.reserve(total_target_count);
   posed.poses.clear();
-  posed.poses.reserve(living_count);
+  posed.poses.reserve(living_player_count);
+
+  size_t next_volume = 0;
 
   for (const entities::Player_Entity &player : players)
   {
@@ -615,8 +657,8 @@ static void pose_all_players(server_context_t &context)
 
     // this constness confused the fuck out of me: it's the span that can't be modified, not that the entities it points to cannot.
     // so no reassignment to point to some other thing.
-    const Span<assets::posed_hitbox_t> slice{
-        posed.volumes.data() + (size_t)posed.targets.size() * volume_count, volume_count};
+    const Span<assets::posed_hitbox_t> slice{posed.volumes.data() + next_volume, volume_count};
+    next_volume += volume_count;
 
     const shared::player_pose_t pose{.feet_position = player.position,
                                      .body_yaw      = player.body_yaw,
@@ -629,6 +671,60 @@ static void pose_all_players(server_context_t &context)
     posed.targets.push_back(shared::make_hitscan_target(
         player.entity_id, Span<const assets::posed_hitbox_t>{slice}));
   }
+
+  // The damageables, AFTER every player, and deliberately NOT pushed to
+  // `poses`. That vector is what shot debug ships so the client can re-pose a
+  // player rig, and a damageable has no rig to re-pose -- send_shot_debug walks
+  // min(targets, poses), which is what keeps it to the player prefix. That
+  // guard was written as belt-and-braces; this is what makes it load-bearing.
+  //
+  // Ordering matters for one reason only: `poses` describes a PREFIX of
+  // `targets`, so the players have to come first. resolve_hitscan itself ranks
+  // by distance and does not care.
+  for (const entities::Damageable_Entity &damageable : damageables)
+  {
+    if (damageable.health <= 0)
+      continue;
+
+    const Span<assets::posed_hitbox_t> slice{posed.volumes.data() + next_volume, 1};
+    next_volume += 1;
+
+    // A world-axis box centred on the entity's own position. `start == end`
+    // makes posed_hitbox_t::center() the position exactly, and the default
+    // frame is the identity basis -- a Box reads its extents through `frame`,
+    // so leaving it alone is what makes this axis-aligned rather than
+    // accidentally rotated.
+    //
+    // The entity's `orientation` is deliberately ignored: turning it into a
+    // frame is the obvious next step and it is not free (the editor gizmo, the
+    // bounds in map.cpp and this would all have to agree about the euler
+    // order), so it waits for a level that actually wants a rotated crate.
+    slice[0]              = assets::posed_hitbox_t{};
+    slice[0].shape        = assets::hitbox_shape_t::Box;
+    slice[0].start        = damageable.position;
+    slice[0].end          = damageable.position;
+    slice[0].half_extents = damageable.hitbox_half_extents;
+    slice[0].region       = shared::hit_region_t::Torso;
+
+    posed.targets.push_back(shared::make_hitscan_target(
+        damageable.entity_id, Span<const assets::posed_hitbox_t>{slice}));
+  }
+}
+
+// Copy the NON-REWOUND targets out of this tick's pose set and onto the end of
+// a rewound one.
+//
+// `poses` describes the player prefix of `targets` (see pose_all_targets), so
+// everything from poses.size() on is a target with no pose -- which today means
+// exactly the damageables, and tomorrow means anything else static enough not to
+// need a rewind. Keying off the prefix length rather than re-walking the entity
+// pool is what keeps the two functions from having to agree twice about what a
+// "static" target is.
+static void append_static_targets(const shared::posed_players_t &present,
+                                  shared::posed_players_t       &rewound)
+{
+  for (size_t index = present.poses.size(); index < present.targets.size(); ++index)
+    rewound.targets.push_back(present.targets[index]);
 }
 
 // The blend this move claims to have been aimed through, as far back as this
@@ -852,8 +948,8 @@ static void finish_reload(shared::game_session_t &session, entities::Player_Enti
 {
   entities::Weapon_Entity *active = try_find_active_weapon(session, player);
   if (active == nullptr)
-    log_error("finish_reload: player {} finished reloading {}, which is not in the inventory",
-              player.entity_id, to_string(player.inventory.active_weapon));
+    log_error("finish_reload: player {} finished reloading {}, which is empty",
+              player.entity_id, to_string(player.inventory.active_slot));
   else
     active->ammo = shared::get_weapon_definition(active->weapon_id).magazine_size;
 
@@ -892,8 +988,37 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   const vec3f direction = linalg::direction_from_angles(yaw, pitch);
   const vec3f eye = player->position + vec3f{0.f, shared::player_eye_height, 0.f};
 
+  // THE WEAPON'S OWN CLOCK, not the player's. One deadline per player measured
+  // the interval of whatever was in hand from whatever fired last, so firing a
+  // Scout delayed a Knife swing and swinging a Knife delayed a Scout that had
+  // been holstered for a minute. Each weapon now recovers on its own, including
+  // while it is not held -- which is what makes a quick switch cost the switch
+  // and nothing more.
+  //
+  // Resolved FIRST now, because the stats come from the weapon rather than from
+  // the slot: a slot is a place and has no damage number. An empty hand is a
+  // legal state and not an error -- selecting an empty slot is a switch the
+  // client predicted too -- so this is a quiet return rather than a report.
+  entities::Weapon_Entity* active_weapon =
+      try_find_active_weapon(context.world.session, *player);
+  if (active_weapon == nullptr)
+    return;
+
   const shared::weapon_definition_t& weapon =
-      shared::get_weapon_definition(player->inventory.active_weapon);
+      shared::get_weapon_definition(active_weapon->weapon_id);
+
+  // A SELF-IMPULSE IS NOT A SHOT, and none of the clocks below are its. Its one
+  // gate is the movement cooldown (weapons.hpp says why), and it is read here
+  // rather than only in the arm at the bottom so that a press refused on
+  // cooldown does not stamp last_fire_tick -- the client watches that stamp to
+  // decide it fired, and an ability still recovering did nothing.
+  //
+  // The same field is read again inside try_apply_self_impulse, which is not a
+  // second gate: the client calls that function directly and has no equivalent
+  // of this function to run first.
+  if (weapon.fire_resolution == entities::Fire_Resolution::Self_Impulse &&
+      player->movement.seconds_until_impulse_ready > 0.f)
+    return;
 
   // The MOMENT the trigger went down, not the tick it went down in. The step
   // this runs at the end of was opened by that very press, so `fire_slot` is
@@ -904,22 +1029,6 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   const float tick_dt = static_cast<float>(get_tick_interval());
   const shared::subtick_time_t fire_time =
       shared::subtick_time(context.tick_number, fire_slot);
-
-  // THE WEAPON'S OWN CLOCK, not the player's. One deadline per player measured
-  // the interval of whatever was in hand from whatever fired last, so firing a
-  // Scout delayed a Knife swing and swinging a Knife delayed a Scout that had
-  // been holstered for a minute. Each weapon now recovers on its own, including
-  // while it is not held -- which is what makes a quick switch cost the switch
-  // and nothing more.
-  entities::Weapon_Entity* active_weapon =
-      try_find_active_weapon(context.world.session, *player);
-  if (active_weapon == nullptr)
-  {
-    log_error("slot {}: pulled the trigger holding {}, which is not in the inventory -- no shot "
-              "resolved",
-              client_slot, weapon.display_name);
-    return;
-  }
 
   // Still inside this weapon's interval. Was a `continue` while this lived in
   // the input loop; the joke about continue meaning skip does not survive the
@@ -973,7 +1082,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   // The tick is the replicated stamp the client's gunshot audio watches; the
   // slot beside it is the refinement only this gate reads.
   player->last_fire_tick   = context.tick_number;
-  player->last_fire_weapon = player->inventory.active_weapon;
+  player->last_fire_weapon = active_weapon->weapon_id;
 
   // The weapon's own recovery, applied by the shot that knows which weapon it
   // came from. last_fire_tick above stays a per-player REPLICATION stamp for
@@ -982,11 +1091,9 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   active_weapon->next_fire_time =
       shared::subtick_time_after(fire_time, weapon.fire_interval_seconds, tick_dt);
 
-  switch (weapon.kind)
+  switch (weapon.fire_resolution)
   {
-    case entities::Weapon_Kind::Melee:
-    case entities::Weapon_Kind::Hitscan:
-    case entities::Weapon_Kind::Sniper:
+    case entities::Fire_Resolution::Hitscan:
     {
       float range = weapon.range;
 
@@ -1001,7 +1108,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
 
       if (context.posed_players.built_for_tick != context.tick_number)
         fatal_error("hit volumes were posed for tick {} but this is tick {}; "
-                    "pose_all_players must run before the input loop",
+                    "pose_all_targets must run before the input loop",
                     context.posed_players.built_for_tick, context.tick_number);
 
       // --- Lag compensation ---
@@ -1034,6 +1141,18 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
                 context.replication.snapshot_history, shared::player_rig(),
                 aim_settings_from(*context.cvars), verdict.bracket, context.rewind_scratch))
         {
+          // The rewound set is PLAYERS ONLY, so the static targets are appended
+          // rather than lost. A rewind exists because a target moved between
+          // the tick the shooter saw and the tick we are on; a damageable did
+          // not move, so its present-tick pose is not an approximation of what
+          // the shooter saw, it IS what the shooter saw.
+          //
+          // The spans these carry point into context.posed_players.volumes,
+          // which was sized once at the top of the tick and is not touched
+          // again until the next one -- so copying the target values is safe
+          // for exactly as long as this shot needs them.
+          append_static_targets(context.posed_players, context.rewind_scratch);
+
           targets     = Span<const shared::hitscan_target_t>{context.rewind_scratch.targets};
           used_rewind = true;
         }
@@ -1063,7 +1182,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
         info.victim_uid      = hit.hit_uid;
         info.attacker_uid    = player->entity_id;
         info.inflictor_uid   = player->entity_id;
-        info.weapon_id       = static_cast<uint16_t>(player->inventory.active_weapon);
+        info.weapon_id       = static_cast<uint16_t>(active_weapon->weapon_id);
         info.amount          = weapon.damage *
                               (was_headshot ? weapon.headshot_multiplier : 1.f);
         info.source_position = eye;
@@ -1073,17 +1192,18 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
         context.outgoing.pending_hits.push_back(
             {info, hit.impact_point, hit.impact_normal, hit.region});
       }
-      else if (shot_collided_with_static_geometry && weapon.kind != entities::Weapon_Kind::Melee)
+      else if (shot_collided_with_static_geometry && weapon.leaves_bullet_impact)
       {
-        // Melee deliberately produces no impact effect: a knife swing that
-        // reaches a wall should not spray a bullet decal.
+        // Asked of the ROW rather than of the resolution: a knife swing that
+        // reaches a wall should not spray a bullet decal, and "is this melee"
+        // was only ever a proxy for that.
         shared::Bullet_Impact fx{};
         fx.origin = eye + direction * world_hit.t;
         shared::fire_bullet_impact(context.outgoing.effects, fx);
       }
       break;
     }
-    case entities::Weapon_Kind::Projectile:
+    case entities::Fire_Resolution::Projectile:
     {
       log_terminal("Player {} fired a rocket!", client_slot);
 
@@ -1106,6 +1226,27 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
               rocket->position.x, rocket->position.y, rocket->position.z,
               assets::to_string(rocket->render.mesh), rocket->render.visible);
       }
+      break;
+    }
+    case entities::Fire_Resolution::Self_Impulse:
+    {
+      // The one arm whose outcome lands on the SHOOTER, so the one arm the
+      // client runs too -- through this same function, at the same trigger
+      // edge, off the same table row (generalization_def.md §4). A shot's
+      // outcome is somewhere else and can wait a round trip; a shove to your
+      // own velocity cannot.
+      //
+      // Applied AFTER this step's move, like the shot arms above it: the
+      // impulse steers the steps that follow rather than the one the press
+      // opened, which is what both client loops also do.
+      //
+      // Refused quietly while the cooldown runs, and that is not a silent
+      // failure -- an ability on cooldown is a legal outcome, and the client
+      // refused it identically half a round trip ago. The gates at the top of
+      // this function cannot express it: they are the weapon's clocks, and this
+      // row's are all zero by static_assert.
+      (void)shared::try_apply_self_impulse(weapon, direction, player->movement,
+                                           player->velocity);
       break;
     }
   }
@@ -1408,7 +1549,7 @@ bool Tick()
   // internalize:
   // Posing after the move would test a world no client has ever been shown,
   // and would make the fallback arm disagree with the rewind arm by one tick.
-  pose_all_players(context);
+  pose_all_targets(context);
 
   // actually move players.
   for (const auto &[client_slot, input] : inbox.inputs)
@@ -1559,12 +1700,18 @@ bool Tick()
 
       // Weapon switching is allowed even though moving isn't, and even while
       // the round is frozen -- both were true before this moved into the loop.
-      const entities::Weapon weapon_before_switch = player->inventory.active_weapon;
-      if (const std::optional<entities::Weapon> selected =
-              shared::try_weapon_selected_by(pressed_in_this_step))
-        player->inventory.active_weapon = *selected;
+      //
+      // A key names a SLOT, so switching no longer needs to know what is in it,
+      // and equipping an EMPTY slot is a legal switch: the hand comes up holding
+      // nothing, the deploy clock still runs, and the fire path below finds no
+      // weapon. Refusing it would make the two sides disagree about whether the
+      // switch happened, since the client predicts this off the same edge.
+      const entities::Inventory_Slot slot_before_switch = player->inventory.active_slot;
+      if (const std::optional<entities::Inventory_Slot> selected =
+              shared::try_slot_selected_by(pressed_in_this_step))
+        player->inventory.active_slot = *selected;
 
-      if (player->inventory.active_weapon != weapon_before_switch)
+      if (player->inventory.active_slot != slot_before_switch)
       {
         cancel_reload(*player);
 
@@ -1583,15 +1730,27 @@ bool Tick()
         // because `ammo` was one field per player, and it made every keypress a
         // free instant reload; the magazine now belongs to the Weapon_Entity
         // and stays exactly where the last shot left it.
-        player->inventory.deploy_complete_time = shared::subtick_time_after(
-            step_time,
-            shared::get_weapon_definition(player->inventory.active_weapon)
-                .deploy_duration_seconds,
-            tick_dt);
+        //
+        // An empty slot deploys instantly -- there is nothing to raise -- which
+        // is a real answer rather than a fallback, and it is the same answer the
+        // client's predicted copy reaches from the same two facts.
+        const entities::Weapon_Entity *raised =
+            try_find_active_weapon(context.world.session, *player);
+        const float deploy_seconds =
+            raised != nullptr
+                ? shared::get_weapon_definition(raised->weapon_id).deploy_duration_seconds
+                : 0.f;
+
+        player->inventory.deploy_complete_time =
+            shared::subtick_time_after(step_time, deploy_seconds, tick_dt);
 
         broadcast_server_text_message(
-            context, std::format("Slot {} equipped this weapon: {}", client_slot,
-                                 to_string(player->inventory.active_weapon)));
+            context,
+            std::format("Slot {} equipped {} ({})", client_slot,
+                        raised != nullptr
+                            ? shared::get_weapon_definition(raised->weapon_id).display_name
+                            : "an empty hand",
+                        to_string(player->inventory.active_slot)));
       }
 
       // A reload STARTS here and finishes on its own clock. Refused rather than
@@ -1599,15 +1758,21 @@ bool Tick()
       // the deadline permanently one reload away.
       if (pressed_in_this_step & Button::Reload)
       {
-        const shared::weapon_definition_t &held =
-            shared::get_weapon_definition(player->inventory.active_weapon);
+        // Resolved through the slot: an empty hand has nothing to reload, and
+        // the magazine size belongs to the weapon rather than to the place it
+        // is being held.
         const entities::Weapon_Entity *held_entity =
             try_find_active_weapon(context.world.session, *player);
-        if (held.magazine_size > 0 && held_entity != nullptr && !is_reloading(*player) &&
-            held_entity->ammo < held.magazine_size)
+        if (held_entity != nullptr)
         {
-          player->reload_complete_time = shared::subtick_time_after(
-              step_time, held.reload_duration_seconds, tick_dt);
+          const shared::weapon_definition_t &held =
+              shared::get_weapon_definition(held_entity->weapon_id);
+          if (held.magazine_size > 0 && !is_reloading(*player) &&
+              held_entity->ammo < held.magazine_size)
+          {
+            player->reload_complete_time = shared::subtick_time_after(
+                step_time, held.reload_duration_seconds, tick_dt);
+          }
         }
       }
 
@@ -1645,9 +1810,13 @@ bool Tick()
       if (!world_is_frozen)
       {
         Move_Events step_events{};
+        // The player's OWN movement state, advanced in place. This is the
+        // authoritative copy -- it is @Networked, so it is also what the client
+        // reconciles its predicted copy against.
         auto [new_pos, new_vel] = player_move(
             *context.cvars,
             allowed_to_move ? move_input_from_buttons(step.buttons) : Move_Input{},
+            player->movement,
             context.world.session.bvh, player->position, player->velocity, front, right,
             16.f, 36.f, step.dt, &step_events);
 
@@ -1712,7 +1881,7 @@ bool Tick()
   //
   // Immediately after the loop closes, and before anything else simulates. Every
   // shot this tick was resolved against the same start-of-tick world (see
-  // pose_all_players), so the damage from all of them has to land after all of
+  // pose_all_targets), so the damage from all of them has to land after all of
   // them or move order decides who wins a trade. Nothing mutated health during
   // the loop, which is what makes its `is_dead` gate read start-of-tick health.
   //
@@ -1986,6 +2155,12 @@ bool Tick()
 
   for (const entities::Physics_Body_Entity &body : physics_body_pool)
     frame.physics_bodies[body.entity_id] = body;
+
+  // Map-placed, and replicated anyway: `health` and `visible` are the two
+  // things about one of these that the map file cannot tell the client.
+  for (const entities::Damageable_Entity &damageable :
+       context.world.session.entity_system.entities_of<entities::Damageable_Entity>())
+    frame.damageables[damageable.entity_id] = damageable;
 
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_client_count; ++slot)
@@ -2390,5 +2565,21 @@ void map(std::string_view requested_path, const command_context_t &)
  {
    log_terminal("noclip: {}abled", enabled ? "en" : "dis");
  }
+
+void sv_mem_report(int32_t top, const command_context_t &)
+{
+  memory_audit::report(top <= 0 ? 20u : static_cast<uint32_t>(top));
+}
+
+void sv_frame_report(const command_context_t &)
+{
+  frame_timing::report();
+}
+
+void sv_hitch_report(int32_t top, const command_context_t &)
+{
+  frame_timing::report_worst_frame_zones();
+  memory_audit::report_captured_frame(top <= 0 ? 15u : static_cast<uint32_t>(top));
+}
 
 } // namespace cvars::commands

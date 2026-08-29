@@ -133,16 +133,25 @@ struct move_result_t
 
 // Run `total_dt` as `sub_steps` equal steps, feeding each step's output into
 // the next -- exactly what a sub-tick split does.
+//
+// ONE Movement across the whole run, for the same reason position and velocity
+// are threaded: it is per-player state that a tick's steps share, and a fresh
+// one per step would hide precisely the step-count dependence this file exists
+// to catch (a jump edge would re-fire on every sub-step).
 static move_result_t run_split(const cvar_state_t& cvars,
                                const Bounding_Volume_Hierarchy& bvh,
                                const Move_Input& input, vec3 position,
-                               vec3 velocity, float total_dt, int sub_steps)
+                               vec3 velocity, float total_dt, int sub_steps,
+                               entities::Movement* movement = nullptr)
 {
+  entities::Movement local_movement{};
+  entities::Movement& state = movement != nullptr ? *movement : local_movement;
+
   const float step_dt = total_dt / (float)sub_steps;
   for (int i = 0; i < sub_steps; ++i)
   {
     std::tie(position, velocity) =
-        player_move(cvars, input, bvh, position, velocity, look_front,
+        player_move(cvars, input, state, bvh, position, velocity, look_front,
                     look_right, half_width, half_height, step_dt);
   }
   return {position, velocity};
@@ -561,6 +570,138 @@ static void test_accelerate_clamp_alone_composes(const cvar_state_t& cvars)
   }
 }
 
+// --- 10. the ability seam: an EDGE must not scale with the split -------------
+//
+// This is the test the Movement component exists to make possible, and it is
+// the one that fails the moment somebody reads the jump LEVEL to spend a
+// charge. player_move splits a tick into one step per sub-tick edge, so a held
+// jump key is `jump_pressed == true` on every one of them -- 1 step or 16. A
+// budget spent off the level therefore empties in proportion to how many edges
+// happened to be in the tick, which is a movement rule that depends on how fast
+// you were moving your mouse.
+//
+// The state is threaded through the whole run (one Movement, N steps), because
+// a fresh one per step is exactly the bug and would make this pass vacuously.
+static void test_air_jump_fires_once_per_press(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] air jump: an edge-triggered ability is step-invariant\n");
+
+  cvar_state_t with_air_jumps = cvars;
+  with_air_jumps.pm_air_jump_count = 1;
+  with_air_jumps.pm_air_jump_speed = 270.f;
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+
+  Move_Input holding_jump;
+  holding_jump.jump_pressed = true;
+
+  const vec3 start_position{0.f, 1000.f, 0.f};
+  const vec3 start_velocity{0.f, 0.f, 0.f};
+
+  for (int sub_steps : {1, 2, 8, 16})
+  {
+    entities::Movement movement{};
+    const move_result_t result = run_split(with_air_jumps, bvh, holding_jump, start_position,
+                                           start_velocity, tick_dt, sub_steps, &movement);
+
+    printf("    N=%-2d  charges spent = %u  vy = %.6f\n", sub_steps,
+           (unsigned)movement.air_jumps_used, result.velocity.y);
+
+    check(movement.air_jumps_used == 1,
+          "exactly one charge is spent however many sub-steps the tick had");
+    check(result.velocity.y > 0.f,
+          "the air jump actually left the player rising");
+  }
+
+  // And the budget is a budget: with the key still held on the next tick there
+  // is no new edge, so nothing more is spent. Holding jump does not levitate.
+  entities::Movement movement{};
+  vec3 position = start_position;
+  vec3 velocity = start_velocity;
+  for (int tick = 0; tick < 4; ++tick)
+  {
+    const move_result_t result = run_split(with_air_jumps, bvh, holding_jump, position, velocity,
+                                           tick_dt, 4, &movement);
+    position = result.position;
+    velocity = result.velocity;
+  }
+  check(movement.air_jumps_used == 1,
+        "holding the key across four ticks still spends exactly one charge");
+
+  // With the ability off -- which is the shipped default -- nothing is spent
+  // and the airborne player is in free fall, exactly as before Movement existed.
+  entities::Movement without{};
+  const move_result_t disabled = run_split(cvars, bvh, holding_jump, start_position,
+                                           start_velocity, tick_dt, 8, &without);
+  check(without.air_jumps_used == 0 && disabled.velocity.y < 0.f,
+        "pm_air_jump_count 0 spends nothing and leaves free fall untouched");
+}
+
+// The coyote clock is ACCUMULATED, so it has to sum to the same total whatever
+// the split -- the plainest possible statement of what "step invariant" means
+// for a piece of state rather than for a position.
+static void test_time_since_grounded_composes(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] time_since_grounded: an accumulator composes\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  const Move_Input input;
+  const vec3 start_position{0.f, 1000.f, 0.f};
+  const vec3 start_velocity{0.f, 0.f, 0.f};
+
+  for (int sub_steps : {1, 2, 8, 16})
+  {
+    entities::Movement movement{};
+    (void)run_split(cvars, bvh, input, start_position, start_velocity, tick_dt, sub_steps,
+                    &movement);
+
+    printf("    N=%-2d  airborne = %.6f\n", sub_steps, movement.time_since_grounded_seconds);
+    check_near(movement.time_since_grounded_seconds, tick_dt, 1e-5f,
+               "airborne time sums to one tick however it was split");
+    check(!movement.is_grounded, "a player in the void is not grounded");
+  }
+}
+
+// The self-impulse cooldown is the second accumulator, counted DOWN, and it has
+// to compose for the same reason the coyote clock does: a tick split eight ways
+// must charge a dash exactly as much recovery as a tick that was not split.
+//
+// The impulse itself is applied by try_apply_self_impulse OUTSIDE player_move,
+// which is what makes this the whole of player_move's obligation to it: a press
+// opens a step, so the ability fires once per press by construction -- the same
+// argument the air jump above makes, one layer up.
+static void test_impulse_cooldown_composes(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] self-impulse cooldown: a countdown composes and clamps\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  const Move_Input input;
+  const vec3 start_position{0.f, 1000.f, 0.f};
+  const vec3 start_velocity{0.f, 0.f, 0.f};
+
+  for (int sub_steps : {1, 2, 8, 16})
+  {
+    entities::Movement movement{};
+    movement.seconds_until_impulse_ready = 1.f;
+    (void)run_split(cvars, bvh, input, start_position, start_velocity, tick_dt, sub_steps,
+                    &movement);
+
+    printf("    N=%-2d  remaining = %.6f\n", sub_steps, movement.seconds_until_impulse_ready);
+    check_near(movement.seconds_until_impulse_ready, 1.f - tick_dt, 1e-5f,
+               "the cooldown spends one tick however that tick was split");
+  }
+
+  // A cooldown shorter than the tick it is spent in lands ON zero, never past
+  // it: try_apply_self_impulse tests `> 0`, so a negative remainder would be
+  // indistinguishable from ready and the clamp is what keeps that one value.
+  entities::Movement nearly_ready{};
+  nearly_ready.seconds_until_impulse_ready = tick_dt * 0.25f;
+  (void)run_split(cvars, bvh, input, start_position, start_velocity, tick_dt, 8,
+                  &nearly_ready);
+  check(nearly_ready.seconds_until_impulse_ready == 0.f,
+        "a cooldown that expires mid-tick clamps to exactly zero");
+}
+
 int main()
 {
   printf("player_move_step_invariance_test\n");
@@ -582,6 +723,9 @@ int main()
   test_ground_saturation_is_step_invariant(cvars);
   test_maxspeed_clip_diverges(cvars);
   test_accelerate_clamp_alone_composes(cvars);
+  test_air_jump_fires_once_per_press(cvars);
+  test_time_since_grounded_composes(cvars);
+  test_impulse_cooldown_composes(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

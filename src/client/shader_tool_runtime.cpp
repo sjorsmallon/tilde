@@ -1,3 +1,4 @@
+#include "../shared/frame_timing.hpp"
 #include "shader_tool_runtime.hpp"
 #include "log.hpp"
 #include "renderer.hpp"
@@ -37,6 +38,10 @@ bool compile_shader_to_spv(const std::string &source_path,
   }
   command += " 2>&1";
 
+  // A synchronous SUBPROCESS on the main thread. Hundreds of milliseconds, and
+  // it allocates almost nothing -- exactly the shape of hitch that an
+  // allocation profile cannot see.
+  FRAME_ZONE("glslc subprocess");
   FILE *pipe = popen(command.c_str(), "r");
   if (!pipe)
   {

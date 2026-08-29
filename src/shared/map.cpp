@@ -823,6 +823,19 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
       return get_bounds(*volume, entity->position);
     }
 
+    case entities::entity_type::Damageable_Entity:
+    {
+      // Picks as the volume you SHOOT, not as the mesh you see. Those can
+      // differ -- a mesh is art and a hitbox is gameplay -- and when they do it
+      // is the hitbox an author is placing, so it is the hitbox the editor's
+      // handle has to wrap.
+      const entities::Damageable_Entity *damageable =
+          entities::entity_as<entities::Damageable_Entity>(entity);
+      assert(damageable != nullptr && "Damageable_Entity failed its own type test");
+      return {entity->position - damageable->hitbox_half_extents,
+              entity->position + damageable->hitbox_half_extents};
+    }
+
     case entities::entity_type::Weapon_Entity:
     case entities::entity_type::Rocket_Entity:
     case entities::entity_type::Particle_Emitter_Entity:

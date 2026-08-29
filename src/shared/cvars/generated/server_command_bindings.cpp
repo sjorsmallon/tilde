@@ -9,6 +9,7 @@
 // there is nothing to register.
 #include "cvars_generated.hpp"
 
+#include <charconv>
 #include <format>
 #include <string>
 #include <optional>
@@ -36,6 +37,19 @@ void bad_argument(std::string* out_reply, command_id id, const char* parameter,
     *out_reply = std::format("[error] {}: '{}' is not a valid {}\nusage: {}",
                              command_info(id).name, text, parameter,
                              command_info(id).usage);
+}
+
+// Requires the WHOLE token to parse, same rule as a cvar write: accepting
+// 320 from '320abc' would pass a value the caller never typed.
+template <typename T> std::optional<T> try_parse_whole(std::string_view text)
+{
+  T           value  = {};
+  const char* begin  = text.data();
+  const char* end    = text.data() + text.size();
+  auto        result = std::from_chars(begin, end, value);
+  if (result.ec != std::errc{} || result.ptr != end)
+    return std::nullopt;
+  return value;
 }
 
 // The same closed set as a bool cvar write: unrecognised text is a
@@ -173,6 +187,72 @@ bool invoke_spectate(Span<std::string_view> args, const command_context_t& conte
   return true;
 }
 
+// sv_mem_report [top]
+bool invoke_sv_mem_report(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() > 1u)
+  {
+    usage_error(out_reply, command_id::sv_mem_report, args.size());
+    return false;
+  }
+
+  int32_t top = 20;
+  if (args.size() > 0u)
+  {
+    const std::optional<int32_t> parsed_top = try_parse_whole<int32_t>(args[0]);
+    if (!parsed_top)
+    {
+      bad_argument(out_reply, command_id::sv_mem_report, "top", args[0]);
+      return false;
+    }
+    top = *parsed_top;
+  }
+
+  commands::sv_mem_report(top, context);
+  return true;
+}
+
+// sv_frame_report
+bool invoke_sv_frame_report(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::sv_frame_report, args.size());
+    return false;
+  }
+
+  commands::sv_frame_report(context);
+  return true;
+}
+
+// sv_hitch_report [top]
+bool invoke_sv_hitch_report(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() > 1u)
+  {
+    usage_error(out_reply, command_id::sv_hitch_report, args.size());
+    return false;
+  }
+
+  int32_t top = 15;
+  if (args.size() > 0u)
+  {
+    const std::optional<int32_t> parsed_top = try_parse_whole<int32_t>(args[0]);
+    if (!parsed_top)
+    {
+      bad_argument(out_reply, command_id::sv_hitch_report, "top", args[0]);
+      return false;
+    }
+    top = *parsed_top;
+  }
+
+  commands::sv_hitch_report(top, context);
+  return true;
+}
+
 } // namespace
 
 void bind_server_commands(command_table_t& table)
@@ -184,6 +264,9 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::noclip] = &invoke_noclip;
   table.binders[(uint32_t)command_id::join_game] = &invoke_join_game;
   table.binders[(uint32_t)command_id::spectate] = &invoke_spectate;
+  table.binders[(uint32_t)command_id::sv_mem_report] = &invoke_sv_mem_report;
+  table.binders[(uint32_t)command_id::sv_frame_report] = &invoke_sv_frame_report;
+  table.binders[(uint32_t)command_id::sv_hitch_report] = &invoke_sv_hitch_report;
 }
 
 } // namespace cvars

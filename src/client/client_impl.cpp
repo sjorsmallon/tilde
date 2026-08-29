@@ -1,4 +1,6 @@
 #include "../shared/asset.hpp"
+#include "../shared/frame_timing.hpp"
+#include "../shared/memory_audit.hpp"
 #include "../shared/entity_system.hpp"
 #include "audio/audio_system.hpp"
 #include "client_api.hpp"
@@ -36,6 +38,16 @@ static std::unique_ptr<ui::ui_font_t> g_ui_font;
 void set_asset_state(assets::asset_state_t *asset_state)
 {
   assets::set_state(asset_state);
+}
+
+void install_memory_audit(memory_audit::memory_audit_state_t *state)
+{
+  memory_audit::set_state(state);
+}
+
+void install_frame_timing(frame_timing::frame_timing_state_t *state)
+{
+  frame_timing::set_state(state);
 }
 
 bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table,
@@ -142,10 +154,12 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
 
 bool Tick()
 {
-  
+  FRAME_ZONE("client::Tick");
 
   client::input::new_frame();
 
+  {
+  FRAME_ZONE("SDL event pump");
   SDL_Event event;
   while (SDL_PollEvent(&event))
   {
@@ -158,6 +172,7 @@ bool Tick()
     }
     // Resize needs no handling here: new_frame() rebuilds the swapchain when
     // vkAcquireNextImageKHR reports it out of date, and skips that frame.
+  }
   }
 
   // Compute real dt
@@ -184,17 +199,25 @@ bool Tick()
   dt *= timescale;
 
   // Update state
-  if (!state_manager::update(dt))
   {
-    return false;
+    FRAME_ZONE("state_manager::update");
+    if (!state_manager::update(dt))
+    {
+      return false;
+    }
   }
 
   // Render. The two-phase shape is ImGui's doing and nothing else's: the UI is
   // built imperatively between the calls. Everything the 3D scene needs is a
   // value collected in build_frame, and render_frame runs EXACTLY ONCE.
-  if (!renderer::new_frame())
   {
-    return true; // minimized, or the swapchain is being rebuilt
+    // Where a GPU stall shows up: this acquires a swapchain image and waits on
+    // the in-flight fence, and it is what rebuilds the swapchain on a resize.
+    FRAME_ZONE("renderer::new_frame (acquire + fence)");
+    if (!renderer::new_frame())
+    {
+      return true; // minimized, or the swapchain is being rebuilt
+    }
   }
 
   // Ordered the way the frame composites, bottom to top: the UI list first, the
@@ -206,7 +229,10 @@ bool Tick()
   static renderer::ui_draw_list_t           frame_ui;
   frame_passes.clear();
   frame_ui.clear();
-  state_manager::build_frame(dt, frame_passes, frame_ui);
+  {
+    FRAME_ZONE("state_manager::build_frame");
+    state_manager::build_frame(dt, frame_passes, frame_ui);
+  }
 
   // Appended after the state's own UI so a banner draws over it, and appended
   // HERE rather than by each state because set_announcement() is fire-and-forget
@@ -225,7 +251,10 @@ bool Tick()
   }
   client::console::get().draw();
 
-  renderer::render_frame(frame_passes, frame_ui);
+  {
+    FRAME_ZONE("renderer::render_frame (submit + present)");
+    renderer::render_frame(frame_passes, frame_ui);
+  }
 
   // WHAT WAS ON SCREEN, recorded at the moment it becomes true. A shot is
   // judged against the world the shooter was looking at, and this is the only

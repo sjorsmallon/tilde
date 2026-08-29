@@ -96,6 +96,11 @@ struct snapshot_frame_t
   std::unordered_map<shared::entity_uid_t, entities::Weapon_Entity>       weapons;
   std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity>       rockets;
   std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> physics_bodies;
+  // Map-PLACED, unlike the four above, and replicated anyway: it is the one
+  // placeable type whose state changes at runtime. Only `health` and the Render
+  // component are @Networked, so after the spawn record an untouched crate
+  // costs nothing -- the geometry the client draws it with came from the map.
+  std::unordered_map<shared::entity_uid_t, entities::Damageable_Entity>    damageables;
 
   void clear()
   {
@@ -104,6 +109,7 @@ struct snapshot_frame_t
     weapons.clear();
     rockets.clear();
     physics_bodies.clear();
+    damageables.clear();
   }
 };
 

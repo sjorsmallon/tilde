@@ -1,3 +1,4 @@
+#include "../shared/frame_timing.hpp"
 #include "state_manager.hpp"
 #include "../shared/entity_system.hpp"
 #include "log.hpp"
@@ -40,6 +41,11 @@ void init()
 
 void switch_to(game_state kind)
 {
+  // A state transition runs on_exit and on_enter inline, and on_enter is where
+  // Play_State parses the map. The frame that does that is a LOAD, not a frame
+  // -- it wins the worst-frame ranking forever and hides every real stutter.
+  frame_timing::exclude_current_frame("state transition");
+
   log_terminal("Switching to state: {}", to_string(kind));
   Game_State *next_state = g_states[kind].get();
   if (g_active_state)

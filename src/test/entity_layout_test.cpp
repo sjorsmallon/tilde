@@ -374,7 +374,7 @@ int main()
 
   // --- enum-keyed arrays ---
   //
-  // A `u32[Weapon]` field is one declaration and one TABLE ROW PER KEY, minted
+  // A `u32[Inventory_Slot]` field is one declaration and one TABLE ROW PER KEY, minted
   // by def_gen. Nothing downstream has an array case, so what has to hold is
   // that the rows it mints describe the real Enum_Array: right count, right
   // names, and an offset that lands on the element the key indexes. The last
@@ -387,12 +387,13 @@ int main()
     for (const field_info_t& field : fields)
       if (strncmp(field.name, "weapons.", 8) == 0)
         ++weapon_row_count;
-    check(weapon_row_count == (int32_t)Weapon_COUNT,
+    check(weapon_row_count == (int32_t)Inventory_Slot_COUNT,
           "an enum-keyed array mints one row per key");
 
-    const char* expected_names[] = {"weapons.Knife", "weapons.Scout", "weapons.Rocket_Launcher"};
+    const char* expected_names[] = {"weapons.Primary", "weapons.Secondary", "weapons.Melee",
+                                    "weapons.Utility_1", "weapons.Utility_2"};
     bool        names_in_order   = true;
-    for (int32_t index = 0; index < (int32_t)Weapon_COUNT; ++index)
+    for (int32_t index = 0; index < (int32_t)Inventory_Slot_COUNT; ++index)
       if (strcmp(fields[index].name, expected_names[index]) != 0)
         names_in_order = false;
     check(names_in_order, "array rows are named field.KEY, in enum declaration order");
@@ -401,13 +402,15 @@ int main()
     // the enum and reading back through the reflected offset is the whole
     // contract: it is what map I/O and the wire codec will do.
     Inventory inventory{};
-    inventory.weapons[Weapon::Knife]           = 11u;
-    inventory.weapons[Weapon::Scout]           = 22u;
-    inventory.weapons[Weapon::Rocket_Launcher] = 33u;
+    inventory.weapons[Inventory_Slot::Primary]   = 11u;
+    inventory.weapons[Inventory_Slot::Secondary] = 22u;
+    inventory.weapons[Inventory_Slot::Melee]     = 33u;
+    inventory.weapons[Inventory_Slot::Utility_1] = 44u;
+    inventory.weapons[Inventory_Slot::Utility_2] = 55u;
 
-    const uint32_t expected_values[] = {11u, 22u, 33u};
+    const uint32_t expected_values[] = {11u, 22u, 33u, 44u, 55u};
     bool           offsets_land_right = true;
-    for (int32_t index = 0; index < (int32_t)Weapon_COUNT; ++index)
+    for (int32_t index = 0; index < (int32_t)Inventory_Slot_COUNT; ++index)
     {
       uint32_t value = 0;
       memcpy(&value, (const uint8_t*)&inventory + fields[index].offset,
@@ -424,14 +427,14 @@ int main()
 
     bool found_dotted_leaf = false;
     for (const leaf_field_t& leaf : leaves)
-      if (leaf.name == "inventory.weapons.Scout")
+      if (leaf.name == "inventory.weapons.Primary")
         found_dotted_leaf = true;
-    check(found_dotted_leaf, "an array inside a component flattens to inventory.weapons.Scout");
+    check(found_dotted_leaf, "an array inside a component flattens to inventory.weapons.Primary");
 
     Player_Entity player{};
-    player.inventory.weapons[Weapon::Scout] = 77u;
+    player.inventory.weapons[Inventory_Slot::Primary] = 77u;
     for (const leaf_field_t& leaf : leaves)
-      if (leaf.name == "inventory.weapons.Scout")
+      if (leaf.name == "inventory.weapons.Primary")
       {
         uint32_t value = 0;
         memcpy(&value, (const uint8_t*)&player + leaf.offset, sizeof(value));
