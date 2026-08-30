@@ -6,6 +6,7 @@
 #include "../editor_tool.hpp"
 #include "../transaction_system.hpp"
 
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -15,33 +16,34 @@ namespace client
 class Brush_Tool : public Editor_Tool
 {
 public:
-  void on_enable(editor_context_t &ctx) override;
-  void on_disable(editor_context_t &ctx) override;
-  void on_update(editor_context_t &ctx, const viewport_state_t &view,
+  void on_enable(editor_context_t& ctx) override;
+  void on_disable(editor_context_t& ctx) override;
+  void on_update(editor_context_t& ctx, const viewport_state_t &view,
                  float dt) override;
 
-  void on_mouse_down(editor_context_t &ctx,
+  void on_mouse_down(editor_context_t& ctx,
                      const input::mouse_event_t &e) override;
-  void on_mouse_drag(editor_context_t &ctx,
+  void on_mouse_drag(editor_context_t& ctx,
                      const input::mouse_event_t &e) override;
-  void on_mouse_up(editor_context_t &ctx,
+  void on_mouse_up(editor_context_t& ctx,
                    const input::mouse_event_t &e) override;
-  void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
+  void on_key_down(editor_context_t& ctx, const key_event_t &e) override;
 
-  void on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws) override;
-  void on_draw_ui(editor_context_t &ctx) override;
+  void on_draw_overlay(editor_context_t& ctx, pass_builder_t &draws) override;
+  void on_draw_ui(editor_context_t& ctx) override;
 
   bool capture_keyboard() const override { return true; }
 
 private:
+  static constexpr int INVALID_FACE = -1;
+
+
   enum class Mode
   {
     Face,  // pick a face, drag it along its normal
-    Vertex // pick points on the face grid, drag or extrude them
+    Vertex, // pick points on the face grid, drag or extrude them
+    Paint  // brush a layer weight into the face grid
   };
-
-  static constexpr int INVALID_FACE = -1;
-
 
   struct selection_t
   {
@@ -56,6 +58,12 @@ private:
     std::optional<shared::brush_polyhedron_t> hull;
     int face_idx = INVALID_FACE;
     std::vector<linalg::vec3> vertex_handles;
+
+    // A SUBDIVIDED face's handles are its grid vertices rather than its corners
+    // and grid-line points, and they move a different thing: an offset on the
+    // face, not a point in the brush's set. One flag rather than a second handle
+    // list, because a face is one or the other and never both.
+    bool handles_are_grid_vertices = false;
   };
 
   struct hover_t
@@ -84,8 +92,7 @@ private:
     float start_distance = 0.0f;
   };
 
-  // Latched at the press, because a band outlives the modifiers and the hover
-  // that started it.
+  // different name for box select.
   struct band_t
   {
     linalg::vec2 start{0, 0};
@@ -98,67 +105,81 @@ private:
   struct drag_t
   {
     Drag kind = Drag::None;
-
     axis_drag_t axis; // Face, Vertices, Extrusion_Depth
     band_t band;      // Band_Armed, Band_Sizing
 
-    // Face, Vertices: the brush as it was at the press. The drag writes
-    // straight into the map so it can be seen, so this is both what each frame
-    // recomputes from and the transaction's before-image.
     std::optional<shared::geometry_value_t> geometry_at_the_start_of_drag;
     std::vector<linalg::vec3> vertex_start_points; // Vertices
   };
 
-  // Outlives the drag that sized it: it stands until Enter or Escape.
   struct extrusion_t
   {
     bool pending = false;
     float depth = 0.0f;
   };
 
+  // Vertex paint. The stroke is CONTINUOUS -- it accumulates in on_update off
+  // dt rather than per mouse event, so holding still keeps painting and a fast
+  // sweep does not skip. `layer` is the target, not a sign: painting toward
+  // layer 0 is the eraser (shared::paint_face_layer_weight argues it), and it
+  // is an int rather than a bool for the day BLEND_LAYER_COUNT is three.
+  struct paint_t
+  {
+    float radius = 48.0f;
+    float strength = 2.0f; // weight per second at the centre of the brush
+    int layer = 1;
+
+    std::optional<linalg::vec3> cursor;
+    linalg::vec3 cursor_normal{0, 1, 0};
+
+    bool stroking = false;
+    std::optional<shared::geometry_value_t> geometry_at_the_start_of_stroke;
+  };
+
+  std::optional<shared::face_surface_t> face_clipboard;
+
+  // The panel's "add a material" field. A path an author browses to, which is
+  // why the table holds free-form paths rather than manifest ids.
+  char material_path_input[256] = {};
+
   Mode mode = Mode::Face;
+  paint_t paint;
   selection_t selection;
   selection_geometry_t selection_geometry;
   hover_t hover;
   drag_t drag;
   extrusion_t extrusion;
-
-  // Band_Armed is not a drag yet -- until the cursor travels, the press is
-  // still a click, so the hover keeps tracking under it.
+  viewport_state_t cached_view;
+  
   bool drag_is_live() const
   {
     return drag.kind != Drag::None && drag.kind != Drag::Band_Armed;
   }
-
-  // This frame. Written at the top of on_update, read by handlers that run
-  // later in it.
-  viewport_state_t cached_view;
-
-  shared::brush_geometry_t* try_get_selected_brush(editor_context_t &ctx);
+ 
+  // started a band but never moved the cursor.
+  void resolve_band_press_as_click(editor_context_t& ctx);
 
   void end_drag();
 
+  shared::brush_geometry_t* try_get_selected_brush(editor_context_t& ctx);
+
   // one grid step along `direction`, applied to the whole brush.
-  void nudge_selected_brush(editor_context_t &ctx,
+  void nudge_selected_brush(editor_context_t& ctx,
                             const linalg::vec3 &direction);
 
-  void delete_selected_brush(editor_context_t &ctx);
-
-  // An armed band whose cursor never travelled was a click after all. This is
-  // what it would have meant on press.
-  void resolve_band_press_as_click(editor_context_t &ctx);
-
+  void delete_selected_brush(editor_context_t& ctx);
+  
   // The ONE way the selection changes: writes it and rebuilds selection_geometry,
   // so the two cannot disagree.
-  void select_brush_face(editor_context_t &ctx, shared::entity_uid_t uid,
+  void select_brush_face(editor_context_t& ctx, shared::entity_uid_t uid,
                          std::optional<linalg::vec3> face_normal);
 
-  void rebuild_hull_and_handles(editor_context_t &ctx);
+  void rebuild_hull_and_handles(editor_context_t& ctx);
   void clear_point_selection();
   void cancel_pending_extrusion();
-  void commit_pending_extrusion(editor_context_t &ctx);
+  void commit_pending_extrusion(editor_context_t& ctx);
 
-  bool try_rebuild_selected_brush(editor_context_t &ctx,
+  bool try_rebuild_selected_brush(editor_context_t& ctx,
                                  std::vector<linalg::vec3> vertices);
 
   struct pending_extrusion_solids_t
@@ -169,11 +190,38 @@ private:
 
   pending_extrusion_solids_t build_pending_extrusion_solids(float grid_step) const;
 
-  float grid_step_for(const editor_context_t &ctx,
+  float grid_step_for(const editor_context_t& ctx,
                       const input::modifiers_t &mods) const;
 
-  bool point_is_selected(const linalg::vec3 &point) const;
-  void toggle_point_selection(const linalg::vec3 &point, bool additive);
+  // The brush and plane a face operation acts on. Null when it resolves to no
+  // brush face.
+  struct face_target_t
+  {
+    shared::entity_uid_t uid = shared::invalid_entity_uid;
+    shared::brush_geometry_t* brush = nullptr;
+    Plane plane = {};
+  };
+
+  // An action AT the cursor takes the hovered face; the PANEL takes the
+  // selected one, or reaching for a widget rewrites every value on the way.
+  face_target_t resolve_face_target_under_cursor(editor_context_t& ctx);
+  face_target_t resolve_selected_face_target(editor_context_t& ctx);
+  face_target_t resolve_face_target(editor_context_t& ctx, shared::entity_uid_t uid,
+                                    const std::optional<linalg::vec3>& face_normal);
+
+  void edit_face_surface(editor_context_t& ctx, const face_target_t& target,
+                         const std::function<void(shared::face_surface_t&)> &edit);
+
+  void draw_material_ui(editor_context_t& ctx);
+  void draw_paint_ui(editor_context_t& ctx);
+
+  // Where the cursor meets the selected brush's displaced surface, and the
+  // stroke that writes there. Both no-op unless the mode is Paint.
+  void update_paint_cursor(editor_context_t& ctx, float dt);
+  void end_paint_stroke(editor_context_t& ctx);
+
+  bool point_is_selected(const linalg::vec3& point) const;
+  void toggle_point_selection(const linalg::vec3& point, bool additive);
 };
 
 } // namespace client

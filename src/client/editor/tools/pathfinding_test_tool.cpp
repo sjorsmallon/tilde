@@ -14,7 +14,7 @@ bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &navmesh,
                                               linalg::vec3 &out_hit) const
 {
   const linalg::vec3& origin = viewport.mouse_ray.origin;
-  const linalg::vec3& direction  = viewport.mouse_ray.direction;
+  const linalg::vec3& direction = viewport.mouse_ray.direction;
 
   float best_t = std::numeric_limits<float>::infinity();
   bool hit = false;
@@ -22,8 +22,7 @@ bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &navmesh,
   for (const auto &polygon : navmesh.polygons)
   {
     const int vertex_count = (int)polygon.vertices.size();
-    // Decompose convex polygon into triangle fan from verts[0].
-
+    // reconstruct triangles.
     const linalg::vec3 v0 = navmesh.vertices[polygon.vertices[0]].position;
     for (int i = 1; i + 1 < vertex_count; ++i)
     {
@@ -52,33 +51,36 @@ void Pathfinding_Test_Tool::recompute_path(const navmesh_t &navmesh)
 // ---------------------------------------------------------------------------
 // Lifecycle
 
-void Pathfinding_Test_Tool::on_enable(editor_context_t &ctx)
+void Pathfinding_Test_Tool::on_enable(editor_context_t& ctx)
 {
   start.reset();
   end.reset();
   path.clear();
 }
 
-void Pathfinding_Test_Tool::on_disable(editor_context_t &ctx) {}
+void Pathfinding_Test_Tool::on_disable(editor_context_t& ctx) {}
 
 // ---------------------------------------------------------------------------
 // Input
 
-void Pathfinding_Test_Tool::on_update(editor_context_t &ctx,
+void Pathfinding_Test_Tool::on_update(editor_context_t& ctx,
                                      const viewport_state_t &view, float /*dt*/)
 {
   viewport = view;
 }
 
-void Pathfinding_Test_Tool::on_mouse_down(editor_context_t &ctx,
+void Pathfinding_Test_Tool::on_mouse_down(editor_context_t& ctx,
                                          const input::mouse_event_t &mouse_event)
 {
-  if (mouse_event.button != input::mouse_button_t::Left)return;
-  if (!ctx.map->navmesh.valid())return;
+  // only lmb does something.
+  if (mouse_event.button != input::mouse_button_t::Left) return;
+
+  if (!ctx.map->navmesh.valid()) return;
 
   linalg::vec3 hit;
   if (!pick_navmesh_point(ctx.map->navmesh, hit)) return;
 
+  // shift means placing the end.
   if (mouse_event.mods.shift)
     end = hit;
   else
@@ -87,13 +89,13 @@ void Pathfinding_Test_Tool::on_mouse_down(editor_context_t &ctx,
   recompute_path(ctx.map->navmesh);
 }
 
-void Pathfinding_Test_Tool::on_mouse_drag(editor_context_t &ctx,
-                                         const input::mouse_event_t &e) {}
+void Pathfinding_Test_Tool::on_mouse_drag(editor_context_t& ctx,
+                                         const input::mouse_event_t& e) {}
 
-void Pathfinding_Test_Tool::on_mouse_up(editor_context_t &ctx,
-                                       const input::mouse_event_t &e) {}
+void Pathfinding_Test_Tool::on_mouse_up(editor_context_t& ctx,
+                                       const input::mouse_event_t& e) {}
 
-void Pathfinding_Test_Tool::on_key_down(editor_context_t &ctx,
+void Pathfinding_Test_Tool::on_key_down(editor_context_t& ctx,
                                        const key_event_t &key_event)
 {
   if (key_event.key == input::key_t::R)
@@ -107,17 +109,17 @@ void Pathfinding_Test_Tool::on_key_down(editor_context_t &ctx,
 // ---------------------------------------------------------------------------
 // Visuals
 
-void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
-                                           pass_builder_t &draws)
+void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t& ctx,
+                                           pass_builder_t& draw_passes)
 {
-  const navmesh_t &navmesh = ctx.map->navmesh;
-  if (!navmesh.valid())
-    return;
+  const navmesh_t& navmesh = ctx.map->navmesh;
+  if (!navmesh.valid()) return;
 
-  constexpr float y_lift = 2.f;
+  constexpr float navmesh_y_offset_above_regular_geometry = 2.f;
 
   // render the navmesh as a wireframe with each island having a different Color.
-  static constexpr color_t island_colors[] = {
+  static constexpr color_t island_colors[] =
+  {
     colors::cyan,
     colors::yellow,
     colors::green,
@@ -132,9 +134,9 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
     {
       linalg::vec3 a = navmesh.vertices[polygon.vertices[e          ]].position;
       linalg::vec3 b = navmesh.vertices[polygon.vertices[(e + 1) % vertex_count]].position;
-      a.y += y_lift;
-      b.y += y_lift;
-      draws.debug.line(a, b, color);
+      a.y += navmesh_y_offset_above_regular_geometry;
+      b.y += navmesh_y_offset_above_regular_geometry;
+      draw_passes.debug.line(a, b, color);
     }
   }
 
@@ -142,18 +144,18 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
   if (start)
   {
     constexpr color_t start_color = colors::green;
-    linalg::vec3 base = *start + linalg::vec3{0, y_lift, 0};
-    draws.debug.wire_circle(base, 16.f, {0, 1, 0}, start_color);
-    draws.debug.line(base, base + linalg::vec3{0, 48.f, 0}, start_color);
+    linalg::vec3 base = *start + linalg::vec3{0, navmesh_y_offset_above_regular_geometry, 0};
+    draw_passes.debug.wire_circle(base, 16.f, {0, 1, 0}, start_color);
+    draw_passes.debug.line(base, base + linalg::vec3{0, 48.f, 0}, start_color);
   }
 
   // End marker — red circle + vertical spike.
   if (end)
   {
     constexpr color_t end_color = colors::red;
-    linalg::vec3 base = *end + linalg::vec3{0, y_lift, 0};
-    draws.debug.wire_circle(base, 16.f, {0, 1, 0}, end_color);
-    draws.debug.line(base, base + linalg::vec3{0, 48.f, 0}, end_color);
+    linalg::vec3 base = *end + linalg::vec3{0, navmesh_y_offset_above_regular_geometry, 0};
+    draw_passes.debug.wire_circle(base, 16.f, {0, 1, 0}, end_color);
+    draw_passes.debug.line(base, base + linalg::vec3{0, 48.f, 0}, end_color);
   }
 
   // Path: yellow lines connecting waypoints, white boxes at each waypoint.
@@ -165,19 +167,19 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t &ctx,
     for (int waypoint_idx = 0; waypoint_idx < (int)path.size(); ++waypoint_idx)
     {
       linalg::vec3 waypoint = path[waypoint_idx];
-      waypoint.y += y_lift;
-      draws.debug.box(waypoint, half, node_color);
+      waypoint.y += navmesh_y_offset_above_regular_geometry;
+      draw_passes.debug.box(waypoint, half, node_color);
       if (waypoint_idx + 1 < (int)path.size())
       {
         linalg::vec3 next = path[waypoint_idx + 1];
-        next.y += y_lift;
-        draws.debug.line(waypoint, next, path_color);
+        next.y += navmesh_y_offset_above_regular_geometry;
+        draw_passes.debug.line(waypoint, next, path_color);
       }
     }
   }
 }
 
-void Pathfinding_Test_Tool::on_draw_ui(editor_context_t &ctx)
+void Pathfinding_Test_Tool::on_draw_ui(editor_context_t& ctx)
 {
   ImGui::SetNextWindowSize({300, 0}, ImGuiCond_Once);
   if (!ImGui::Begin("Pathfinding Test"))

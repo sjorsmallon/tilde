@@ -1,23 +1,5 @@
 #pragma once
 
-// Drawing the DISAGREEMENT between what this client saw and what the server
-// judged, for one shot, in one frame, in two colours.
-//
-// The technique is sv_showimpacts': both worlds drawn together, distinguished by
-// colour, persisted long enough to look at. A shot lasts one frame and nobody
-// can see 16ms, so the draw carries a lifetime (debug_draw_list_t already
-// supports one) rather than being re-emitted per frame.
-//
-// The load-bearing rule is that the SERVER's half arrives over the wire and is
-// never re-derived here. The client cannot know which bracket the server
-// accepted, whether the rewind was clamped or refused outright, or what its
-// snapshot ring held -- so a client that redrew "where the server probably
-// tested" would be auditing its own guess and would agree with itself every
-// time. S2C_ShotDebug is that half; this file only pairs and draws.
-//
-// Pairing is by `input_number`, the one sequence both ends already agree on: a
-// shot is identified by the input that fired it.
-
 #include "../shared/hitbox_rig.hpp"
 #include "../shared/lag_compensation.hpp" // interpolation_bracket_t
 #include "../shared/player_animator.hpp"  // aim_settings_t

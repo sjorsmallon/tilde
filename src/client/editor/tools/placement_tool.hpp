@@ -29,7 +29,7 @@ public:
   void on_draw_ui(editor_context_t &ctx) override;
 
 private:
-
+  static constexpr int INVALID_PLACEABLE_IDX = -1;
   void select_placeable(int index);
   int get_index_of_placeable(const std::string &label);
 

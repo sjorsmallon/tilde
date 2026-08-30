@@ -224,9 +224,14 @@ void draw_directional_light_shape(pass_builder_t &draws,
 // should fall back to a box -- the one place the editor turns an asset handle
 // into a draw, so the wireframe-support check lives here rather than at each of
 // the five call sites that used to make it.
+//
+// `material` is the entity's own, or null where the caller is drawing a GIZMO
+// rather than the entity's appearance (a selection pulse, a ghost) -- there the
+// tint IS the meaning and a base colour under it would only muddy it.
 bool push_mesh(pass_builder_t &draws, assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
                const linalg::vec3f &position, const linalg::vec3f &rotation,
-               const linalg::vec3f &scale, color_t tint, renderer::fill_mode_t fill)
+               const linalg::vec3f &scale, color_t tint, renderer::fill_mode_t fill,
+               const entities::Material *material = nullptr)
 {
   if (fill == renderer::fill_mode_t::wireframe && !renderer::wireframe_supported())
     return false;
@@ -240,6 +245,8 @@ bool push_mesh(pass_builder_t &draws, assets::asset_handle_t<assets::mesh_asset_
   draw.transform = linalg::compose_transform_euler(position, rotation, scale);
   draw.tint      = tint;
   draw.fill      = fill;
+  if (material && fill == renderer::fill_mode_t::solid)
+    draw.material_overrides = material_variant(mesh, state_for(*material));
   draws.meshes.push_back(draw);
   return true;
 }
@@ -353,15 +360,31 @@ bool draw_entity_ghost(const entities::Entity *e, pass_builder_t &draws,
 // ===================================================================
 
 // Try to draw an entity via its render_component_t. Returns true on success.
+//
+// The preview resolves the material the way Play_State does -- the base colour
+// as the tint, the shader through the same material_variant -- so an entity does
+// not look one way in the editor and another in the game. It used to be flat
+// white and always solid, which made every render setting on the inspector a
+// field you could only check by launching.
+//
+// A wireframe takes neither the colour nor the shader, exactly as the geometry
+// surface path decides it: there is no lit surface for a base colour to be the
+// base of.
 static bool try_draw_render_component(const entities::Entity *e, pass_builder_t &draws)
 {
   const entities::Render *rc = entities::get_render(e);
   if (!rc || !rc->visible)
     return false;
 
+  if (rc->is_wireframe)
+    return push_mesh(draws, assets::get_mesh(rc->mesh), e->position,
+                     e->orientation + rc->rotation, rc->scale, colors::white,
+                     renderer::fill_mode_t::wireframe);
+
   return push_mesh(draws, assets::get_mesh(rc->mesh), e->position,
-                   e->orientation + rc->rotation, rc->scale, colors::white,
-                   renderer::fill_mode_t::solid);
+                   e->orientation + rc->rotation, rc->scale,
+                   color_from_vec3(rc->material.color), renderer::fill_mode_t::solid,
+                   &rc->material);
 }
 
 bool draw_entity_in_editor(const entities::Entity *e,

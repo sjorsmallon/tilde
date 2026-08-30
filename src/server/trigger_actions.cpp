@@ -25,6 +25,7 @@
 namespace
 {
 
+
 // `kill` routes through the centralized damage helper so PLAYER_DIED and the
 // respawn timer fire exactly as they do for any other death source. Massive
 // damage amount + zero attacker/inflictor = world kill, suicide convention.
@@ -38,7 +39,7 @@ void action_kill(server::server_context_t &context,
   info.inflictor_uid   = 0;
   info.amount          = 9999.f;
   info.knockback_force = 0.f;
-  info.type            = server::damage_type_t::GENERIC;
+  info.type            = entities::Damage_Type::Normal;
   server::inflict_damage(context, info);
 }
 
@@ -137,19 +138,45 @@ void action_grant_weapon(server::server_context_t &context,
                          entities::Trigger_Volume_Entity &trigger,
                          entities::Player_Entity &player)
 {
-  const std::optional<entities::Weapon> weapon =
-      entities::try_from_string<entities::Weapon>(trigger.param_string.c_str());
-  if (!weapon.has_value())
+  // const std::optional<entities::Weapon> weapon =
+  //     entities::try_from_string<entities::Weapon>(trigger.param_string.c_str());
+  // if (!weapon.has_value())
+  // {
+  //   log_error("grant_weapon: trigger {} names weapon '{}', which is not an entities::Weapon "
+  //             "value in this build",
+  //             trigger.entity_id, trigger.param_string.c_str());
+  //   return;
+  // }
+
+  const std::optional<entities::Weapon> weapon =entities::try_from_string<entities::Weapon>("Scout");
+
+  entities::Damage_Type damage_type = entities::Damage_Type::Normal;
+  if (trigger.param_string.length > 0)
   {
-    log_error("grant_weapon: trigger {} names weapon '{}', which is not an entities::Weapon "
-              "value in this build",
-              trigger.entity_id, trigger.param_string.c_str());
-    return;
+    const std::optional<entities::Damage_Type> requested =
+        entities::try_from_string<entities::Damage_Type>(trigger.param_string.c_str());
+    if (!requested.has_value())
+    {
+      log_error("grant_weapon: trigger {} names damage type '{}', which is not an "
+                "entities::Damage_Type value in this build",
+                trigger.entity_id, trigger.param_string.c_str());
+      return;
+    }
+    else
+    {
+      log_terminal("setting damage type to {}", to_string(*requested));
+    }
+
+    damage_type = *requested;
+  }
+  else
+  {
+    log_warning("no string parameter specified though I expected that?");
   }
 
-  if (server::try_grant_weapon(context, player, *weapon) == shared::null_entity_uid)
-    log_error("grant_weapon: trigger {} could not give player {} a {}", trigger.entity_id,
-              player.entity_id, to_string(*weapon));
+  if (server::try_grant_weapon(context, player, *weapon, damage_type) == shared::null_entity_uid)
+    log_error("grant_weapon: trigger {} could not give player {} a {} ({})", trigger.entity_id,
+              player.entity_id, to_string(*weapon), to_string(damage_type));
 }
 
 // The trigger's own facing is the launch direction, so a pad is aimed with the
@@ -162,7 +189,15 @@ void action_set_velocity(server::server_context_t & /*context*/,
       linalg::forward_from_model_euler(trigger.orientation) * trigger.param_float;
 }
 
-} // namespace
+void action_give_impulse(server::server_context_t & /*context*/,
+                         entities::Trigger_Volume_Entity &trigger,
+                         entities::Player_Entity &player)
+{
+  player.velocity.y = trigger.param_float;
+  log_terminal("imbued y impulse:: {}", player.velocity.y);
+}
+
+}
 
 namespace server
 {
@@ -197,6 +232,8 @@ void fire_trigger_action(server_context_t &context,
     case entities::Trigger_Action::Set_Velocity:
       action_set_velocity(context, trigger, player);
       return;
+    case entities::Trigger_Action::Give_Impulse:
+      action_give_impulse(context, trigger, player);
   }
 
   log_error("fire_trigger_action: trigger {} carries Trigger_Action value {}, which is not "

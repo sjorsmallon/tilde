@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/entity_uid.hpp"
 #include "../shared/linalg.hpp"
 
@@ -7,14 +8,6 @@
 
 namespace server
 {
-
-// Single damage-type discriminator. GENERIC is the only value used today.
-// Grows when something genuinely needs to discriminate (resistances, armor
-// categories, fall vs explosion FX) — no DMG_* bitfield yet.
-enum class damage_type_t : uint16_t
-{
-  GENERIC = 0,
-};
 
 struct damage_info_t
 {
@@ -25,7 +18,7 @@ struct damage_info_t
   float                amount         = 0.f;
   linalg::vec3f        source_position{0.f, 0.f, 0.f};
   float                knockback_force = 0.f;
-  damage_type_t        type           = damage_type_t::GENERIC;
+  entities::Damage_Type type          = entities::Damage_Type::Normal;
   bool                 was_headshot   = false;
 };
 

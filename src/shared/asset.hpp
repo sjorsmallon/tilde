@@ -79,7 +79,7 @@ void init();
 [[nodiscard]] const font_asset_t *get(asset_handle_t<font_asset_t> handle);
 [[nodiscard]] const hitbox_rig_t *get(asset_handle_t<hitbox_rig_t> handle);
 
-// --- Dynamic mesh registration (for procedural geometry like displacements) ---
+// --- Dynamic mesh registration (for generated geometry like brush meshes) ---
 
 // Look up a mesh by path in cache only (no file I/O). Returns invalid handle if not found.
 [[nodiscard]] asset_handle_t<mesh_asset_t> find_mesh_in_cache(std::string_view path);

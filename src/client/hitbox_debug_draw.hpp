@@ -47,6 +47,13 @@ constexpr uint32_t HITBOX_RING_SEGMENTS = 16;
 // reading as a cone.
 constexpr uint32_t HITBOX_CAP_BANDS = 3;
 
+// Solid faces UNDER the edges, and deliberately tiny. Two "over" layers
+// composited in the wrong order differ by alpha1*alpha2*(colour1 - colour2) --
+// O(alpha^2) -- so at 12% a handful of volumes landing in append order rather
+// than depth order are within ~1.4% of the sorted answer. That is why none of
+// the overlays need a sort: transparency ordering only bites at high alpha.
+constexpr uint8_t HITBOX_FACE_ALPHA = 30;
+
 // Damage region, not volume: ten volumes share three colours, so a forearm that
 // costs Torso damage reads as one at a glance.
 inline color_t hit_region_color(shared::hit_region_t region)

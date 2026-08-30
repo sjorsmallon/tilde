@@ -100,120 +100,37 @@
 // answer different questions, and for the entity where both exist, only one is
 // live.
 
-// ---------------------------------------------------------------------------
-// Base
-// ---------------------------------------------------------------------------
+
 Fully_Serializable :: [@Networked, @Editable, @Saveable]
 
 Entity :: base {
-    // The receiver keys the entity by this, so it must ride the wire. It is
-    // assigned by the session, never by an author: the map file carries its
-    // own uid per entry, so this is neither editable nor saved.
     entity_id:   u32                    @Networked
-
-    // Networked because the types that MOVE (Player, Rocket, Physics_Body) all
-    // inherit it. Editable and saved because the types that DON'T move are all
-    // placed by hand.
     position:    v3                     @Fully_Serializable
     orientation: v3                     @Fully_Serializable
 }
-
-
-
-// ---------------------------------------------------------------------------
-// Enums -- every one of these was a string or a bare int in the macro system
-// ---------------------------------------------------------------------------
 
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum {Red, Blu, Free_For_All}
 
 Weapon :: enum {Knife, Scout, Rocket_Launcher, Dash}
 
-// HOW a trigger pull resolves -- the closed set of things a weapon does when
-// fired, and the axis resolve_player_shot switches over. Separate from `Weapon`
-// on purpose: the wire carries WHICH weapon it was, the fire path asks what to
-// do about it, and those do not coincide (Knife and Scout both resolve as
-// hitscan; a second sniper would share Scout's resolution and need its own id).
-//
-// Was `Weapon_Kind {Melee, Hitscan, Projectile, Sniper}`, which conflated that
-// axis with weapon FLAVOUR and paid for it: Sniper had no reader at all, Melee
-// and Sniper shared Hitscan's switch arm, and the one thing Melee genuinely
-// decided -- that a knife swing leaves no bullet decal -- was asked outside the
-// switch. Four values funding two arms and a predicate. Flavour that earns a
-// difference is a field on the row (weapon_definition_t::leaves_bullet_impact),
-// not a value here.
-//
-// Self_Impulse is the generalization (generalization_def.md §4): Neon White's
-// Elevate and Godspeed do no damage at all, they push the shooter. It is the
-// one resolution the CLIENT must simulate too -- a shot's outcome is somewhere
-// else and can wait a round trip, but a shove to your own velocity cannot -- so
-// its gate lives in Movement rather than on the weapon. weapons.hpp is where
-// that rule is enforced.
+// HOW a trigger pull resolves.
 Fire_Resolution :: enum { Hitscan, Projectile, Self_Impulse }
 
-// WHERE a weapon is held, which is not the same question as WHICH weapon it is.
-// Inventory::weapons used to be keyed by Weapon, one entry per type, on the
-// premise that a player carries at most one of each -- see generalization_def.md
-// §1 for why that premise expired. Keying by the slot keeps the property that
-// premise was protecting (resolution is one index, never a search over the
-// world) while making two of a kind representable.
-//
-// A weapon declares which slot it lands in (weapon_definition_t::slot), so
-// "a scout is a primary" is a fact about the scout rather than a rule at the
-// site that grants it. Two weapons may name the same slot; the second one
-// granted wins, which is what a pickup means.
-//
-// The names are this game's. Neon White's hand is three ordered cards and would
-// re-author this enum; nothing but the .def and one table row would change,
-// which is the point of the indirection.
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
 Shader_Type :: enum { Lit, Unlit }
-// Physics_Body_Entity's shape, and the only user. Capsule was here for the old
-// static player hitbox; nothing writes one now and spawn_physics_body has never
-// been able to build one, so a value that can only ever produce a log_error is
-// not a value worth having.
 Shape_Kind :: enum { Sphere, Box }
 
-
-
-Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn, Complete_Level, Checkpoint, Grant_Weapon, Set_Velocity }
+Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn, Complete_Level, Checkpoint, Grant_Weapon, Set_Velocity, Give_Impulse}
 Fire_Mode :: enum { On_Enter, Every_Tick }
-
-// The five authored aim poses (animation_def.md §5). No entity field has this
-// type and no id rides the wire -- it is here for the generated `_COUNT` and
-// the `enum_traits` specialization, because it sizes an Enum_Array in three
-// places and a hand-written enum can only get a count from a `Count` sentinel
-// that then needs a dead `case` in every switch.
-//
-// The ORDER is the pose space's, not alphabetical: Forward is the centre of the
-// plus that compute_aim_blend interpolates over, and the pairs are opposites.
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
 
-
-
-// ---------------------------------------------------------------------------
-// Components
-// ---------------------------------------------------------------------------
-//
-// A component's flags are shared by every entity that embeds it -- there is no
-// per-use masking, by decision (see todo.md). So a component's flags are the
-// union of what its USERS need, and the audit below reasons about the users.
-
-// was: shared::box_volume_t
-//
-// NOT @Networked. Its only user is Trigger_Volume_Entity, which is invisible
-// and entirely server-side: no client reads a trigger's bounds, and if one
-// ever did it would be reading the map it already loaded. Previously
-// @Fully_Serializable, which put a position and half-extents on the wire for
-// every trigger in the level, for nobody.
 Box_Volume :: component {
     position: v3 = {0, 0, 0}            @Editable @Saveable
     half_extents: v3 = {1, 1, 1}        @Editable @Saveable
 }
 
-// was: network::material_t
-// Reached only through Render, so it inherits Render's reasoning below.
 Material :: component {
     shader_type: Shader_Type = .Lit     @Fully_Serializable
     color:       v3 = {1, 1, 1}         @Fully_Serializable
@@ -221,7 +138,7 @@ Material :: component {
 }
 
 Render :: component {
-    mesh:         mesh_asset = .Missing @Fully_Serializable
+    mesh:         mesh_asset = .Error @Fully_Serializable
     visible:      bool = true           @Fully_Serializable
     is_wireframe: bool = false          @Fully_Serializable
     offset:       v3 = {0, 0, 0}        @Fully_Serializable
@@ -230,123 +147,26 @@ Render :: component {
     material:     Material
 }
 
-// What all three light types share, and nothing more. Split out because that
-// list is short: everything else about a light -- range, cone, direction --
-// belongs to some of the kinds and not others, which is why there are three
-// entity types below instead of one carrying a kind enum.
-//
-// NOT @Networked, for the same reason the three entities are not: a light is
-// placed in the editor and read back out of the MAP, and the client loads the
-// same map.
-//
-// `intensity` is one slot whose UNIT differs by kind -- a punctual light's is
-// radiant power falling off with distance, a directional light's is irradiance
-// that does not. That is a property of the lighting model, not a reason to
-// split the field: the same slot is what a gather pass writes into one
-// gpu_light_t, and what every engine that separates these types still shares.
 Light :: component {
     color:     v3 = {1, 1, 1}   @Editable @Saveable
     intensity: f32 = 1.0        @Editable @Saveable
 }
 
-// PER-PLAYER MOVEMENT STATE -- the thing player_move deliberately did not have,
-// and the thing every movement verb past walk/jump/gravity needs a home for.
-// generalization_def.md §2 is the argument; the short version is that a
-// stateless pmove can express exactly one verb set, and two of the games this
-// engine is for are about the others.
-//
-// It is declared HERE rather than as a plain struct in shared/ so that there is
-// ONE of it. A hand-written movement_state_t mirrored by a component for
-// replication is two spellings of one thing, free to disagree -- the failure
-// body_yaw and last_broadcast_cvars each already paid for. Being a component
-// makes it replicated, diffable, clonable and reflected for free.
-//
-// EVERY FIELD IS @Networked, and that is not generosity: the client predicts
-// against all of it and reconciliation replays past ticks from a stored copy,
-// so a field the client cannot see is a field the client mispredicts silently.
-// NOT @Editable or @Saveable -- Player_Entity is @runtime_only, so both would be
-// generator errors, and there is nothing here an author would place.
 Movement :: component {
     air_jumps_used: u8                  @Networked
     is_grounded: bool                   @Networked
-    time_since_grounded_seconds: f32     @Networked
+    time_since_grounded_seconds: f32    @Networked
     jump_was_held: bool                 @Networked
-
-    // Seconds left before a Fire_Resolution::Self_Impulse weapon may fire
-    // again, counted down by player_move like the clock above it. THE gate for
-    // a self-impulse, and the only one -- see weapons.hpp's static_assert for
-    // why the weapon-side clocks must be zero rather than agreeing with this.
-    //
-    // Here rather than on the weapon because a self-impulse is a MOVEMENT
-    // ability that happens to be held in a slot: the client predicts it, so the
-    // gate has to survive a reconciliation replay, and Movement is the only
-    // per-player state a replay restarts from (generalization_def.md §2).
-    // Weapon_Entity::next_fire_time and Inventory::deploy_complete_time are
-    // both server-only, so gating on either would mean the client's dash and
-    // the server's ran different rules.
-    seconds_until_impulse_ready: f32     @Networked
+    seconds_until_impulse_ready: f32    @Networked
 }
 
 
 Inventory :: component {
-    // uid of the Weapon_Entity in each slot; null_entity_uid for an empty one.
-    // Keyed by the SLOT rather than by the weapon: `weapons[active_slot]` is
-    // still one index and never a search, which is the property that mattered,
-    // but two of a kind are now representable and an empty hand is a value
-    // rather than an absence (see Inventory_Slot above).
-    //
-    // WHICH weapon a slot holds is the Weapon_Entity's own `weapon_id`, so
-    // there is exactly one answer to that and it lives with the thing it
-    // describes.
-    //
-    // REPLICATED, because the client resolves its own ammo the same way the
-    // server does -- `weapons[active_slot]`, one index into a stored list --
-    // rather than scanning every Weapon_Entity for one that claims this owner.
-    // Deriving it client-side would be a second answer to "what am I carrying"
-    // built out of a back-reference, and the two are free to disagree. It costs
-    // one full update per player and then nothing: an inventory that does not
-    // change is absent from every delta after the spawn.
     weapons:              u32[Inventory_Slot]  @Networked
-
-    // Which slot is in hand. The KEY, not a uid: resolution is
-    // `weapons[active_slot]`, one index, so there is no reference here that can
-    // name a weapon the inventory does not hold. An empty slot is legal and
-    // resolves to no weapon, which is what try_find_active_weapon reports.
     active_slot:          Inventory_Slot = .Melee  @Networked
-
-    // WHEN the switch in flight finishes, in sub-tick time; 0 means none. A
-    // deadline like reload_complete_time above it, and for the same reason:
-    // the duration belongs to the weapon being raised at the moment the key was
-    // pressed, so settling it there beats re-deciding it every tick.
-    //
-    // This is the gate that is genuinely the PLAYER's -- it blocks every weapon
-    // at once. A weapon's own fire interval is on the weapon, runs while
-    // holstered, and the two must not be folded together: doing so is what made
-    // firing a Scout delay a Knife swing.
     deploy_complete_time: u64
 }
 
-// ---------------------------------------------------------------------------
-// Entities
-// ---------------------------------------------------------------------------
-//
-// @runtime_only marks a type the editor never places and the map never stores:
-// it exists only inside a running session. It sits on the declaration, next to
-// the `entity` keyword it modifies, for the same reason a field's flags sit
-// next to the field -- it is a property of the type, not a member of it.
-//
-// Kept as a NEGATIVE (rather than defaulting to runtime-only and requiring
-// @placeable) because "an entity is a thing you put in a level; some are
-// spawned by code instead" is the mental model, and the majority case should
-// be the silent one -- 5 of 8 today. It is also the safer default to forget:
-// forgetting @runtime_only puts a junk type in the placement menu, which you
-// see immediately; forgetting @placeable would make a real type quietly
-// missing from it.
-//
-// It is load-bearing now, not decorative: placeable_entity_types() is
-// generated by filtering on exactly this bit, and the two @Editable/@Saveable
-// checks above key off it.
-//
 // Room to grow, if the need shows up -- same slot, same syntax:
 //   @no_network   nothing about this type is ever replicated; makes @Networked
 //                 on any of its fields an error. Trigger_Volume and
@@ -369,8 +189,6 @@ Player_Spectate_Entity:: entity {
 }
 
 
-// last_fire_weapon required because yhou need to know what you had equipped
-// when firing in case weapon is switched
 Player_Entity :: entity @runtime_only {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
@@ -432,77 +250,30 @@ Player_Entity :: entity @runtime_only {
     team_allegiance: Team_Allegiance = .Free_For_All @Networked
 }
 
-// this is supposed to be a thing you pick up.
-//
-// REPLICATED as of the inventory work: entity_snapshot.cpp carries a map for
-// these, so the two flags below are live rather than the inert pair TODO.md
-// used to name. The client needs ammo -- it is the HUD's number and one of the
-// gates play_predicted_local_gunshot re-runs -- and ammo belongs to the weapon,
-// so the weapon is what has to arrive.
+//@NOTE(SJM): this is a hacky test to embed in weapon_entity, but it's a test.
+Damage_Type :: enum {Normal, Orange, Teal}
+
+
 Weapon_Entity :: entity {
-    // THE magazine. Was Player_Entity::ammo, one field for every weapon, which
-    // is why switching had to hand out a fresh magazine to keep "ammo is the
-    // held weapon's count" true -- a free instant reload on every keypress.
     ammo:             i32               @Networked
     weapon_id:        Weapon            @Networked
-
-    // Whose inventory this is in; null_entity_uid means lying in the world.
-    // The BACK-reference: Player_Entity::inventory.weapons is the authoritative
-    // list, and this is what lets a weapon answer for itself -- teardown walks
-    // it rather than trusting a player it may no longer belong to.
-    //
-    // NOT replicated, though the entity now is. The client resolves through the
-    // forward list like the server does, so nothing over there reads this; a
-    // @Networked here would be a second copy of the ownership edge on the wire
-    // with no reader, which is exactly the inert flag TODO.md is about. A world
-    // model on someone else's back is what would earn it.
     owner_uid:        u32
-
-    // WHEN this weapon may next fire, in sub-tick time; 0 means immediately.
-    // A deadline, not a last-fire stamp, so the interval is applied by the shot
-    // that knows which weapon it came from.
-    //
-    // Per WEAPON, and it keeps running while holstered -- that is the whole
-    // point. One clock per player meant the interval of whatever was in hand
-    // was measured from whatever fired last, so firing a Scout delayed a Knife
-    // swing and vice versa. The player-wide gate that DOES exist is
-    // Inventory::deploy_complete_time, and the two are not the same thing.
-    //
-    // Server-only. The client re-runs this gate for its own predicted gunshot
-    // audio, but off its own predicted clock -- a tick-granular copy on the
-    // wire would be a second answer that could disagree with this one.
     next_fire_time:   u64
-
+    damage_type: Damage_Type = .Normal  @Editable @Saveable
     render:           Render
 }
 
 Rocket_Entity :: entity @runtime_only {
-    // Straight-line travel at 600 units/s: the client needs this the moment
-    // snapshot interpolation lands, and has nothing else to extrapolate from.
     velocity:        v3                 @Networked
-    // Server-only gameplay numbers. The client neither computes damage nor
-    // draws a radius -- rocket_system.cpp is the only reader of all four, and
-    // the server despawns on lifetime itself. Previously all @Networked, which
-    // put 16 bytes of numbers on the wire per rocket for no reader.
     lifetime: f32 = 5.0
     damage_amount: f32 = 50.0
     damage_radius: f32 = 120.0
     knockback_force: f32 = 600.0
     owner_id:        u32
-    // What rocket_system sweeps the flight path with. Was a whole Hitbox
-    // component whose shape was always Sphere and whose offset was always zero;
-    // the radius is the only part anything ever read. @Networked for the
-    // debug_show_hitboxes overlay, which is the client's only interest in it.
     collision_radius: f32 = 12.0        @Networked
     render:          Render
 }
 
-// The client builds emitters from ITS OWN MAP LOAD, not from snapshots --
-// play_state.cpp:1399 iterates map.entities_of_type<Particle_Emitter_Entity>().
-// So nothing here is @Networked, and nothing should become @Networked one
-// field at a time: the day an emitter is spawned at runtime (an explosion
-// puff), the whole entity needs replicating and this block gets revisited as a
-// block.
 Particle_Emitter_Entity :: entity {
     sprite:             texture_asset = .Smoke @Editable @Saveable
     emit_rate:          f32 = 20.0            @Editable @Saveable
@@ -522,74 +293,18 @@ Particle_Emitter_Entity :: entity {
     color_end:          v3 = {0.5, 0.5, 0.5}  @Editable @Saveable
     alpha_start:        f32 = 0.8             @Editable @Saveable
     alpha_end:          f32 = 0.0             @Editable @Saveable
-
-    // These two are DECLARED AND READ BY NOTHING -- grep finds no use outside
-    // the schema registration itself. They were @Networked @Editable, which
-    // claimed both a wire cost and an inspector row for a feature that does
-    // not exist. Audited as:
-    //   emitter_lifetime  a map author could plausibly want a one-shot emitter,
-    //                     so it stays authorable and persisted.
-    //   parent_entity_id  a uid means nothing in a map file (uids are assigned
-    //                     per session), so it can only ever be runtime state
-    //                     set by whoever spawns the emitter. No flags.
     emitter_lifetime:   f32 = 0.0             @Editable @Saveable
     parent_entity_id:   u32 = 0
 }
 
-// A THING YOU CAN SHOOT THAT IS NOT A PLAYER -- a Neon White demon, a CS
-// breakable, a Neon White target gate. generalization_def.md §3 is the argument;
-// the short version is that resolve_hitscan never knew what it was testing, and
-// the only reason a shot could not hit anything but a player was that the target
-// list was built by walking the Player_Entity pool.
-//
-// It is PLACEABLE, which is the whole point: both games want these authored
-// into a level rather than spawned by code. That also decides the flags -- the
-// geometry and the mesh are @Editable @Saveable, and health is @Networked on top
-// of that because it is the one thing that CHANGES at runtime.
-//
-// Hitboxes are ONE BOX, not a rig. A rig is a bone-to-volume map that only
-// exists against a skeleton (hitbox_rig.hpp), and a crate has no skeleton; the
-// posed form both feed into is `posed_hitbox_t`, which already has a Box shape,
-// so this reaches resolve_hitscan through exactly the same span a player does.
-// A skinned enemy that wants per-limb damage is a later type with a rig field,
-// not a bigger version of this one.
 Damageable_Entity :: entity {
-    // How tough this thing is, as AUTHORED. Editable and saved, never
-    // networked: it is in the map file, so the client already has it.
     max_health:        i32 = 100                @Editable @Saveable
-
-    // How tough it is RIGHT NOW. @Networked and nothing else -- the client has
-    // to stop drawing a destroyed one and cannot derive that from the map, and
-    // an author has no business setting a runtime value.
-    //
-    // Two fields rather than one because "restore this level to its authored
-    // state" needs a number to restore TO, and reading it back out of the map_t
-    // at every round boundary would make the map file a second, remoter copy of
-    // something the entity can simply carry. seed_damageable_health is the one
-    // writer that connects them, and a round reset is its second caller.
     health:            i32 = 100                @Networked
-
-    // Half-extents of the single Box hit volume, in world axes, centred on
-    // `position`. Not @Networked -- the client loaded the same map, so
-    // replicating it every spawn would be bandwidth spent restating what the
-    // map file already said.
-    //
-    // Deliberately NOT a Box_Volume: that component carries its own `position`
-    // offset, and a second position beside the entity's is a second answer to
-    // where the thing is. The entity's own position IS the centre.
     hitbox_half_extents: v3 = {16, 32, 16}      @Editable @Saveable
-
-    // @Networked, unlike every other placeable type's Render, and for a reason
-    // that is specific rather than inherited: the whole point of this entity is
-    // that it CHANGES, so `visible` and `color` are what a hit or a death is
-    // allowed to express. The map still carries the mesh, so the first full
-    // update restates a little -- one record per object, once.
+    weakness: Damage_Type = .Orange              @Editable @Saveable
     render:            Render
 }
 
-// Invisible and entirely server-side: the server evaluates triggers, the
-// client is never told one exists. Nothing here is @Networked, and Box_Volume
-// above dropped @Networked for the same reason.
 Trigger_Volume_Entity :: entity {
     // 64 is the editor's grid-sized starting box -- big enough to see and to
     // drag. Box_Volume's own {1,1,1} stays neutral for whatever embeds it next.

@@ -37,6 +37,11 @@ struct game_session_t
   // stops existing.
   std::vector<map_geometry_t> geometry;
 
+  // The map's material table, copied for the same reason the geometry is: a
+  // brush face holds an INDEX into it, so the two have to travel together or the
+  // index names nothing.
+  std::vector<std::string> materials;
+
   // The acceleration structure for collision queries against `geometry`.
   // Dynamic entity collision is handled separately via the Entity_System.
   Bounding_Volume_Hierarchy bvh;
@@ -59,7 +64,7 @@ struct game_session_t
 // mutated -- the session stamps uids on its OWN copies (session_test guards it).
 [[nodiscard]] game_session_t build_session(const map_t &map);
 
-// Register Jolt static bodies for the map's geometry (boxes and displacements,
+// Register Jolt static bodies for the map's geometry (brushes,
 // both as their axis-aligned bound). Call after build_session on both
 // server and client when physics is needed.
 //

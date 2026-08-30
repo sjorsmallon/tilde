@@ -117,9 +117,10 @@ enum class Trigger_Action : uint8_t
   Checkpoint = 5,
   Grant_Weapon = 6,
   Set_Velocity = 7,
+  Give_Impulse = 8,
 };
 
-constexpr uint32_t Trigger_Action_COUNT = 8;
+constexpr uint32_t Trigger_Action_COUNT = 9;
 
 const char* to_string(Trigger_Action value);
 template <> std::optional<Trigger_Action> try_from_string<Trigger_Action>(std::string_view text);
@@ -149,6 +150,18 @@ constexpr uint32_t Aim_Pose_COUNT = 5;
 const char* to_string(Aim_Pose value);
 template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view text);
 
+enum class Damage_Type : uint8_t
+{
+  Normal = 0,
+  Orange = 1,
+  Teal = 2,
+};
+
+constexpr uint32_t Damage_Type_COUNT = 3;
+
+const char* to_string(Damage_Type value);
+template <> std::optional<Damage_Type> try_from_string<Damage_Type>(std::string_view text);
+
 enum class enum_type : uint16_t
 {
   Spawn_Type = 0,
@@ -161,9 +174,10 @@ enum class enum_type : uint16_t
   Trigger_Action = 7,
   Fire_Mode = 8,
   Aim_Pose = 9,
+  Damage_Type = 10,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 10;
+constexpr uint32_t ENUM_TYPE_COUNT = 11;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -272,6 +286,12 @@ template <> struct enum_traits<entities::Aim_Pose>
   static constexpr entities::enum_type type = entities::enum_type::Aim_Pose;
 };
 
+template <> struct enum_traits<entities::Damage_Type>
+{
+  static constexpr uint32_t count = entities::Damage_Type_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Damage_Type;
+};
+
 namespace entities
 {
 
@@ -296,7 +316,7 @@ struct Render
 {
   static constexpr component_type static_component = component_type::Render;
 
-  assets::mesh_asset mesh = assets::mesh_asset::Missing;
+  assets::mesh_asset mesh = assets::mesh_asset::Error;
   bool visible = true;
   bool is_wireframe = false;
   linalg::vec3f offset = {0.0f, 0.0f, 0.0f};
@@ -400,6 +420,7 @@ struct Weapon_Entity : Entity
   Weapon weapon_id = {};
   uint32_t owner_uid = {};
   uint64_t next_fire_time = {};
+  Damage_Type damage_type = Damage_Type::Normal;
   Render render = {};
 };
 
@@ -456,6 +477,7 @@ struct Damageable_Entity : Entity
   int32_t max_health = 100;
   int32_t health = 100;
   linalg::vec3f hitbox_half_extents = {16.0f, 32.0f, 16.0f};
+  Damage_Type weakness = Damage_Type::Orange;
   Render render = {};
 };
 

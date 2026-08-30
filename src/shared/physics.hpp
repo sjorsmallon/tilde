@@ -113,11 +113,6 @@ std::unique_ptr<physics_state_t> make_physics_state();
 // Advance the simulation by dt seconds. Use a fixed timestep (e.g. 1/60 s).
 void step_physics(physics_state_t &state, float dt);
 
-// Register a static axis-aligned box body for a map entity (AABB_Entity, Wedge_Entity).
-// Call this on both server and client after build_session.
-void register_static_box(physics_state_t &state, shared::entity_uid_t uid,
-                          linalg::vec3f position, linalg::vec3f half_extents);
-
 // A static convex hull from world-space points. Brushes use this rather than
 // their bounding box for the same reason static meshes register nothing at all:
 // a box around a ramp is an invisible wall, and a brush is exactly the kind of

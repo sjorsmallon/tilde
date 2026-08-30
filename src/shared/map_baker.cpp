@@ -481,19 +481,25 @@ void bake_map(map_t &map, float cell_size)
   // mesh type filter, whose whole job was re-deriving "is this geometry?" from
   // entities — including excluding trigger volumes, which own a box volume but
   // aren't collision. The map now answers that by construction.
+  //
+  // One object is N leaves — a brush decomposes into convex pieces, all of them
+  // carrying its index. The bake only raycasts, so it never resolves the index
+  // back; what it needs is that every solid piece is there to be hit.
   std::vector<BVH_Input> bvh_inputs;
   bvh_inputs.reserve(map.geometry.size());
-  for (const map_geometry_t &entry : map.geometry)
+  for (size_t index = 0; index < map.geometry.size(); ++index)
   {
-    const aabb_bounds_t bounds = get_bounds(entry.value);
-    BVH_Input input;
-    input.aabb.min         = bounds.min;
-    input.aabb.max         = bounds.max;
-    input.id               = {Collision_Id::Type::Static_Geometry,
-                               (uint32_t)bvh_inputs.size()};
-    input.collision_planes = get_collision_planes(entry.value);
-    input.face_polygons    = get_face_polygons(entry.value);
-    bvh_inputs.push_back(std::move(input));
+    const map_geometry_t &entry = map.geometry[index];
+
+    for (const collision_piece_t &piece : get_collision_pieces(entry.value, entry.uid))
+    {
+      BVH_Input input;
+      input.aabb             = piece.bounds;
+      input.id               = {Collision_Id::Type::Static_Geometry, (uint32_t)index};
+      input.collision_planes = piece.planes;
+      input.face_polygons    = piece.face_polygons;
+      bvh_inputs.push_back(std::move(input));
+    }
   }
 
   if (bvh_inputs.empty())

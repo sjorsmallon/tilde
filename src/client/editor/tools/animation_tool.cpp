@@ -445,7 +445,6 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draw
   // draw the hitbox volumes.
   if (model.posed && display.hitboxes)
   {
-    constexpr uint8_t HITBOX_FACE_ALPHA = 30;
 
     const auto face = [&](Span<const linalg::vec3f> polygon, color_t color)
     {

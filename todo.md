@@ -1,5 +1,18 @@
 # TODO
 
+
+brushes that only allow weapons to pass through.
+weapons that only affect certain enemies.
+
+
+
+
+
+
+there's some asserts in the tool editor that a bvh is required and a map is required.
+both for picking. I think that state needs to just always be there and you should not always check in all 
+the tools if it's there. it's noisy.
+
 **A brush is far too easy to modify by accident: the select click IS the drag.**
 The base floor of the working map keeps getting wrecked by ordinary clicking
 around. It is not a discipline problem — in the Brush tool's Face mode (the
@@ -9,7 +22,7 @@ drag and the first drag frame pushes that face along its normal. Nothing
 separates "select this brush" from "move this face"; they are the same press.
 
 Three gestures begin on mouse-down with no threshold: the face drag
-(`brush_tool.cpp:805`), the vertex drag (`brush_tool.cpp:752`), and the
+(`brush_tool.cpp:805`), the vertex drag (`brush_tool.cpp:752`), and the And I guess.
 Selection tool's gizmo drag. The pattern and the constant already exist in the
 same file — the rubber band twenty lines below guards itself with
 `BAND_DRAG_THRESHOLD = 4.0f` before it commits to being a band, and box-select
@@ -870,18 +883,20 @@ did not fix.
 
 # Correctness / consistency
 
-- [ ] **Displacements have no real collision** (deliberate P1 leftover):
-      movement collides with the box bound, projectiles pass through, no Jolt
-      static body. Real fix is heightmap collision — see TODO in
-      `get_collision_planes`.
-      * **Static meshes are skipped in Jolt too** (confirmed 2026-08-03 —
-        `populate_static_physics_bodies` registers ONLY `Box` geometry). So the
-        general statement is: the BVH holds all three geometry kinds and Jolt
-        holds one. Anything querying Jolt for level geometry — rockets today —
-        passes through meshes and displacements alike. Hitscan deliberately
-        clamps against the BVH for exactly this reason. Only becomes
-        load-bearing when a `Physics_Body_Entity` has to rest on terrain; no map
-        contains one yet.
+- [x] **Displacements have no real collision** — DONE 2026-08-30 by deleting
+      the kind. A displacement is a brush with one subdivided face now
+      (geometry_def.md Track D), and a subdivided face collides as the surface
+      it draws as: `try_build_subdivided_face_columns` emits one convex piece
+      per grid triangle, all sharing the object's `Collision_Id`.
+- [ ] **Static meshes are skipped in Jolt** (confirmed 2026-08-03 —
+      `populate_static_physics_bodies` registers only brushes, as convex hulls
+      of their BASE point set). So the BVH holds both geometry kinds and Jolt
+      holds one, and Jolt's copy of a brush is its base hull rather than its
+      displaced surface. Anything querying Jolt for level geometry — rockets
+      today — passes through static meshes, and lands on the undisplaced hull of
+      a sculpted brush. Hitscan deliberately clamps against the BVH for exactly
+      this reason. Only becomes load-bearing when a `Physics_Body_Entity` has to
+      rest on terrain; no map contains one yet.
 - [ ] **Navmesh polygon LOOKUP is planar; the mesh and A* are not.** The mesh
       is 3D — `nav_vertex_t::pos` is a `vec3f`, and both the A* heuristic and
       its edge costs use full 3D `euclidean_distance_between` over polygon

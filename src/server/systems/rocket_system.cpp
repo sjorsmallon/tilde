@@ -91,7 +91,7 @@ static void detonate(const entities::Rocket_Entity &rocket,
     info.amount          = rocket.damage_amount * falloff;
     info.source_position = rocket.position;
     info.knockback_force = rocket.knockback_force * falloff;
-    info.type            = damage_type_t::GENERIC;
+    info.type            = entities::Damage_Type::Normal;
     info.was_headshot    = false;
     inflict_damage(context, info);
   }

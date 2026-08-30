@@ -150,9 +150,9 @@ void draw_map_cvars_panel(shared::map_t &map, const cvars::cvar_state_t &live_va
   // before/after pair becomes one undo entry, exactly as a geometry edit does.
   auto commit_list = [&](std::vector<std::string> next)
   {
-    transaction_builder_t builder;
-    builder.add_map_cvars_modified(map.attached_cvars, sorted_by_name(std::move(next)));
-    transaction_t transaction = builder.take();
+    transaction_t transaction;
+    transaction.add_map_cvars_modified(map.attached_cvars,
+                                       sorted_by_name(std::move(next)));
     if (transaction.empty())
       return;
 

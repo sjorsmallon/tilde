@@ -40,8 +40,16 @@ const uint32_t mesh_skinned_vert_spv[] =
 #include "mesh_skinned.vert.spv.h"
     ;
 
+const uint32_t mesh_blend_vert_spv[] =
+#include "mesh_blend.vert.spv.h"
+    ;
+
 const uint32_t mesh_lit_frag_spv[] =
 #include "mesh_lit.frag.spv.h"
+    ;
+
+const uint32_t mesh_blend_frag_spv[] =
+#include "mesh_blend.frag.spv.h"
     ;
 
 const uint32_t mesh_unlit_frag_spv[] =
@@ -126,7 +134,7 @@ struct pipeline_key_hash_t
     return (size_t)key.state.shader | ((size_t)key.state.blend_mode << 2) |
            ((size_t)key.state.cull_mode << 4) | ((size_t)key.state.depth_test << 5) |
            ((size_t)key.state.depth_write << 6) | ((size_t)key.vertex_layout << 7) |
-           ((size_t)key.fill << 8);
+           ((size_t)key.fill << 9);
   }
 };
 
@@ -177,6 +185,12 @@ struct gpu_mesh_t
   VkBuffer       skin_buffer = VK_NULL_HANDLE;
   VkDeviceMemory skin_memory = VK_NULL_HANDLE;
 
+  // Binding 2: vertex_blend_t, parallel to the vertex buffer. Present only when
+  // the asset carries painted weights -- the renderer's copy of
+  // `mesh_asset_t::is_blended()`.
+  VkBuffer       blend_buffer = VK_NULL_HANDLE;
+  VkDeviceMemory blend_memory = VK_NULL_HANDLE;
+
   uint32_t                       index_count = 0;
   std::vector<gpu_submesh_t>     submeshes;
   std::vector<material_handle_t> default_materials; // indexed by submesh material_slot
@@ -189,6 +203,11 @@ struct gpu_material_t
   pipeline_state_t      pipeline_state;
   material_parameters_t parameters;
   VkDescriptorSet       albedo_set = VK_NULL_HANDLE; // resolved from parameters
+
+  // One per layer above the base, resolved the same way and through the same
+  // single-sampler layout. Bound at set 2 by a shader_t::blend draw and by
+  // nothing else.
+  Array<VkDescriptorSet, BLEND_LAYER_COUNT - 1> blend_sets;
 };
 
 static std::vector<gpu_mesh_t>          g_meshes;
@@ -972,16 +991,19 @@ static void create_debug_resources()
   // bias so an outline can be pulled in front of the surface it traces; a filled
   // polygon is translucent and must not write depth or it would hide what is
   // behind it.
-  g_debug_box_pipeline = create_debug_pipeline({.blend = true});
+  g_debug_box_pipeline = create_debug_pipeline({.blend = true, .dynamic_depth_bias = true});
   g_debug_line_pipeline =
       create_debug_pipeline({.topology           = VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
                              .blend              = true,
                              .dynamic_depth_bias = true,
                              .line_width         = 2.0f,
                              .cull_mode          = VK_CULL_MODE_NONE});
-  g_debug_face_pipeline = create_debug_pipeline({.blend       = true,
-                                                 .depth_write = false,
-                                                 .cull_mode   = VK_CULL_MODE_NONE});
+  // A face highlight is coplanar with what it highlights, so it needs the same
+  // per-run pull toward the camera a traced outline does.
+  g_debug_face_pipeline = create_debug_pipeline({.blend              = true,
+                                                 .depth_write        = false,
+                                                 .dynamic_depth_bias = true,
+                                                 .cull_mode          = VK_CULL_MODE_NONE});
 
   // The occluded halves. Neither writes depth -- one of these draws is a hint
   // about something that is BEHIND the scene, and letting it write would sort
@@ -994,10 +1016,12 @@ static void create_debug_resources()
                              .line_width         = 2.0f,
                              .cull_mode          = VK_CULL_MODE_NONE,
                              .depth_compare      = VK_COMPARE_OP_GREATER});
-  g_debug_face_occluded_pipeline = create_debug_pipeline({.blend         = true,
-                                                      .depth_write   = false,
-                                                      .cull_mode     = VK_CULL_MODE_NONE,
-                                                      .depth_compare = VK_COMPARE_OP_GREATER});
+  g_debug_face_occluded_pipeline =
+      create_debug_pipeline({.blend              = true,
+                             .depth_write        = false,
+                             .dynamic_depth_bias = true,
+                             .cull_mode          = VK_CULL_MODE_NONE,
+                             .depth_compare      = VK_COMPARE_OP_GREATER});
 
   const VkDeviceSize buffer_size = sizeof(debug_vertex_t) * DEBUG_VERTEX_CAPACITY;
   for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
@@ -1212,8 +1236,30 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   const bool skinned   = key.vertex_layout == vertex_layout_t::skinned;
   const bool wireframe = key.fill == fill_mode_t::wireframe;
 
-  const uint32_t *vert_spv  = skinned ? mesh_skinned_vert_spv : mesh_vert_spv;
-  const size_t    vert_size = skinned ? sizeof(mesh_skinned_vert_spv) : sizeof(mesh_vert_spv);
+  // A blend fragment shader reads a vertex output only mesh_blend.vert
+  // produces, so the two are one decision. Everything else pairs freely, which
+  // is the property mesh.vert's header comment is about.
+  bool blended = key.state.shader == shader_t::blend;
+  if (blended && key.vertex_layout != vertex_layout_t::blended)
+  {
+    log_error("[renderer] a blend material was used on a mesh with no blend "
+              "weights - drawing it lit");
+    blended = false;
+  }
+
+  const uint32_t *vert_spv  = mesh_vert_spv;
+  size_t          vert_size = sizeof(mesh_vert_spv);
+  if (skinned)
+  {
+    vert_spv  = mesh_skinned_vert_spv;
+    vert_size = sizeof(mesh_skinned_vert_spv);
+  }
+  else if (blended)
+  {
+    vert_spv  = mesh_blend_vert_spv;
+    vert_size = sizeof(mesh_blend_vert_spv);
+  }
+
   const uint32_t *frag_spv  = mesh_lit_frag_spv;
   size_t          frag_size = sizeof(mesh_lit_frag_spv);
   switch (key.state.shader)
@@ -1226,6 +1272,13 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   case shader_t::grid:
     frag_spv  = mesh_grid_frag_spv;
     frag_size = sizeof(mesh_grid_frag_spv);
+    break;
+  case shader_t::blend:
+    if (blended)
+    {
+      frag_spv  = mesh_blend_frag_spv;
+      frag_size = sizeof(mesh_blend_frag_spv);
+    }
     break;
   }
 
@@ -1259,23 +1312,39 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
 
   VkVertexInputBindingDescription bindings[2]{};
   bindings[0] = {0, sizeof(vertex_xnu), VK_VERTEX_INPUT_RATE_VERTEX};
-  bindings[1] = {1, sizeof(assets::vertex_skin_t), VK_VERTEX_INPUT_RATE_VERTEX};
 
   VkVertexInputAttributeDescription attributes[5]{};
   attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, position)};
   attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, normal)};
   attributes[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex_xnu, uv)};
-  // Skin influences ride a SECOND binding rather than a widened vertex, so the
-  // static layout above is byte-identical for skinned and unskinned meshes.
-  attributes[3] = {3, 1, VK_FORMAT_R8G8B8A8_UINT, offsetof(assets::vertex_skin_t, bone_indices)};
-  attributes[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
-                   offsetof(assets::vertex_skin_t, bone_weights)};
+  uint32_t attribute_count = 3;
+
+  // Skin influences and blend weights each ride a binding of their OWN rather
+  // than a widened vertex, so the static layout above is byte-identical for
+  // every mesh in the engine. Only the shader that reads one declares it: an
+  // attribute a pipeline's vertex shader does not consume is a description
+  // nobody can check.
+  if (skinned)
+  {
+    bindings[1] = {1, sizeof(assets::vertex_skin_t), VK_VERTEX_INPUT_RATE_VERTEX};
+    attributes[3] = {3, 1, VK_FORMAT_R8G8B8A8_UINT, offsetof(assets::vertex_skin_t, bone_indices)};
+    attributes[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
+                     offsetof(assets::vertex_skin_t, bone_weights)};
+    attribute_count = 5;
+  }
+  else if (blended)
+  {
+    static_assert(BLEND_LAYER_COUNT == 2, "one attribute per stored layer weight");
+    bindings[1] = {2, sizeof(vertex_blend_t), VK_VERTEX_INPUT_RATE_VERTEX};
+    attributes[3] = {5, 2, VK_FORMAT_R32_SFLOAT, offsetof(vertex_blend_t, weight)};
+    attribute_count = 4;
+  }
 
   VkPipelineVertexInputStateCreateInfo vertex_input{
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-  vertex_input.vertexBindingDescriptionCount   = skinned ? 2 : 1;
+  vertex_input.vertexBindingDescriptionCount   = (skinned || blended) ? 2 : 1;
   vertex_input.pVertexBindingDescriptions      = bindings;
-  vertex_input.vertexAttributeDescriptionCount = skinned ? 5 : 3;
+  vertex_input.vertexAttributeDescriptionCount = attribute_count;
   vertex_input.pVertexAttributeDescriptions    = attributes;
 
   VkPipelineInputAssemblyStateCreateInfo input_assembly{
@@ -1594,7 +1663,12 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the skinning uniform allocator");
   }
 
-  VkDescriptorSetLayout set_layouts[2] = {g_albedo_ds_layout, g_skinning_uniforms.ds_layout};
+  // Set 2 is layer 1's albedo, through the SAME single-sampler layout set 0
+  // uses -- a texture is a texture, and reusing it is what keeps a blended
+  // material free of descriptor machinery of its own. A pipeline that does not
+  // blend simply never binds it, exactly as a static one never binds set 1.
+  VkDescriptorSetLayout set_layouts[2 + BLEND_LAYER_COUNT - 1] = {
+      g_albedo_ds_layout, g_skinning_uniforms.ds_layout, g_albedo_ds_layout};
 
   VkPushConstantRange push_range{};
   push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -1602,7 +1676,7 @@ static void create_mesh_resources()
   push_range.size       = sizeof(mesh_push_constants_t);
 
   VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-  layout_info.setLayoutCount         = 2;
+  layout_info.setLayoutCount         = 2 + BLEND_LAYER_COUNT - 1;
   layout_info.pSetLayouts            = set_layouts;
   layout_info.pushConstantRangeCount = 1;
   layout_info.pPushConstantRanges    = &push_range;
@@ -1894,6 +1968,9 @@ material_handle_t register_material(const material_t &material)
   entry.pipeline_state = material.pipeline_state;
   entry.parameters     = material.parameters;
   entry.albedo_set     = resolve_albedo_set(material.parameters.base_color_texture);
+  for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
+    entry.blend_sets.data[layer - 1] =
+        resolve_albedo_set(material.parameters.blend_textures.data[layer - 1]);
 
   const material_handle_t handle{(uint32_t)g_materials.size()};
   g_materials.push_back(entry);
@@ -1902,7 +1979,13 @@ material_handle_t register_material(const material_t &material)
   // fill, so the first draw through it binds rather than compiles. Wireframe is
   // left cold on purpose: it is an editor interaction, not a frame the player is
   // looking at.
-  resolve_pipeline_id({material.pipeline_state, vertex_layout_t::static_mesh, fill_mode_t::solid});
+  // Warmed against the layout this material IMPLIES: a blend material can only
+  // ever be drawn on a mesh that carries weights, so warming it static would
+  // both compile the wrong pipeline and trip the mismatch check.
+  const vertex_layout_t warm_layout = material.pipeline_state.shader == shader_t::blend
+                                          ? vertex_layout_t::blended
+                                          : vertex_layout_t::static_mesh;
+  resolve_pipeline_id({material.pipeline_state, warm_layout, fill_mode_t::solid});
 
   return handle;
 }
@@ -1918,6 +2001,9 @@ void update_material(material_handle_t handle, const material_parameters_t &para
   gpu_material_t &entry = g_materials[handle.index];
   entry.parameters      = parameters;
   entry.albedo_set      = resolve_albedo_set(parameters.base_color_texture);
+  for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
+    entry.blend_sets.data[layer - 1] =
+        resolve_albedo_set(parameters.blend_textures.data[layer - 1]);
 }
 
 // --- Mesh upload ---
@@ -1930,6 +2016,8 @@ static void destroy_mesh_buffers(gpu_mesh_t &mesh)
   if (mesh.index_memory)  vkFreeMemory(g_device, mesh.index_memory, nullptr);
   if (mesh.skin_buffer)   vkDestroyBuffer(g_device, mesh.skin_buffer, nullptr);
   if (mesh.skin_memory)   vkFreeMemory(g_device, mesh.skin_memory, nullptr);
+  if (mesh.blend_buffer)  vkDestroyBuffer(g_device, mesh.blend_buffer, nullptr);
+  if (mesh.blend_memory)  vkFreeMemory(g_device, mesh.blend_memory, nullptr);
 
   mesh.vertex_buffer = VK_NULL_HANDLE;
   mesh.vertex_memory = VK_NULL_HANDLE;
@@ -1937,13 +2025,15 @@ static void destroy_mesh_buffers(gpu_mesh_t &mesh)
   mesh.index_memory  = VK_NULL_HANDLE;
   mesh.skin_buffer   = VK_NULL_HANDLE;
   mesh.skin_memory   = VK_NULL_HANDLE;
+  mesh.blend_buffer  = VK_NULL_HANDLE;
+  mesh.blend_memory  = VK_NULL_HANDLE;
 }
 
 // Stage and copy the three buffers. This is the ONE place a mesh touches the
 // GPU, and it blocks -- deliberately, and only ever from register_mesh /
 // update_mesh, never from a draw. Vertices go up exactly as the asset holds
 // them: no barycentric expansion, which is what preserves real UVs (a
-// displacement's texture coordinates used to be overwritten here) and what lets
+// generated geometry's texture coordinates used to be overwritten here) and what lets
 // the skin array stay parallel to the vertex array.
 static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t &mesh)
 {
@@ -1964,7 +2054,7 @@ static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t
     VkBuffer      *target         = nullptr;
   };
 
-  staged_buffer_t staged[3]{};
+  staged_buffer_t staged[4]{};
   uint32_t        staged_count = 0;
 
   const auto stage = [&](const void *source, VkDeviceSize size, VkBufferUsageFlags usage,
@@ -2005,6 +2095,20 @@ static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t
     }
   }
 
+  if (mesh.is_blended())
+  {
+    if (mesh.blend.size() != mesh.vertices.size())
+    {
+      log_error("[renderer] mesh has {} blend entries for {} vertices; they must be parallel",
+                mesh.blend.size(), mesh.vertices.size());
+    }
+    else
+    {
+      stage(mesh.blend.data(), mesh.blend.size() * sizeof(vertex_blend_t),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, gpu_mesh.blend_buffer, gpu_mesh.blend_memory);
+    }
+  }
+
   VkCommandBuffer cmd = begin_single_command();
   for (uint32_t index = 0; index < staged_count; ++index)
   {
@@ -2020,8 +2124,14 @@ static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t
     vkFreeMemory(g_device, staged[index].staging_memory, nullptr);
   }
 
-  gpu_mesh.layout =
-      mesh.is_skinned() && gpu_mesh.skin_buffer ? vertex_layout_t::skinned : vertex_layout_t::static_mesh;
+  // Skinned wins if a mesh somehow carries both: the skin decides where every
+  // vertex ENDS UP, and a mesh drawn in its bind pose is wrong in a way no
+  // material can make up for.
+  gpu_mesh.layout = vertex_layout_t::static_mesh;
+  if (mesh.is_skinned() && gpu_mesh.skin_buffer)
+    gpu_mesh.layout = vertex_layout_t::skinned;
+  else if (mesh.is_blended() && gpu_mesh.blend_buffer)
+    gpu_mesh.layout = vertex_layout_t::blended;
   return true;
 }
 
@@ -2042,6 +2152,22 @@ static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_
       material.parameters.base_color_texture = register_texture_asset(source.texture);
     else if (!source.texture_path.empty())
       material.parameters.base_color_texture = g_missing_texture; // named but never loaded
+
+    // The layers above the base, through the same ladder, and the shader that
+    // reads them. A generated brush mesh is the only thing that fills these
+    // today -- blending is authored per FACE.
+    for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
+    {
+      const assets::asset_handle_t<assets::texture_asset_t> texture =
+          source.blend_texture.data[layer - 1];
+      if (texture.valid())
+        material.parameters.blend_textures.data[layer - 1] = register_texture_asset(texture);
+      else if (!source.blend_texture_path.data[layer - 1].empty())
+        material.parameters.blend_textures.data[layer - 1] = g_missing_texture;
+    }
+
+    if (source.blends())
+      material.pipeline_state.shader = shader_t::blend;
 
     gpu_mesh.default_materials.push_back(register_material(material));
   }
@@ -2107,7 +2233,7 @@ void update_mesh(mesh_handle_t handle, const assets::mesh_asset_t &mesh)
   }
 
   // The old buffers may still be in flight, so this waits. It is the price of
-  // re-uploading geometry mid-session (displacement sculpting); it is paid here,
+  // re-uploading geometry mid-session (sculpting a face grid); it is paid here,
   // where the caller asked for it, rather than inside a draw.
   FRAME_ZONE("update_mesh (vkDeviceWaitIdle)");
   vkDeviceWaitIdle(g_device);
@@ -2809,15 +2935,37 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
     {
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout, 0, 1,
                               &material.albedo_set, 0, nullptr);
+
+      // The layers above the base, at set 2 onward, bound only by the shader
+      // that reads them.
+      if (material.pipeline_state.shader == shader_t::blend)
+      {
+        for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
+        {
+          if (material.blend_sets.data[layer - 1] == VK_NULL_HANDLE)
+            continue;
+          vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout,
+                                  (uint32_t)(1 + layer), 1, &material.blend_sets.data[layer - 1],
+                                  0, nullptr);
+        }
+      }
+
       bound_material = item.material_index;
     }
 
     if (item.draw_index != bound_draw)
     {
-      VkBuffer     vertex_buffers[2] = {mesh.vertex_buffer, mesh.skin_buffer};
-      VkDeviceSize offsets[2]        = {0, 0};
-      vkCmdBindVertexBuffers(cmd, 0, mesh.layout == vertex_layout_t::skinned ? 2 : 1,
-                             vertex_buffers, offsets);
+      VkBuffer     vertex_buffers[1] = {mesh.vertex_buffer};
+      VkDeviceSize offsets[1]        = {0};
+      vkCmdBindVertexBuffers(cmd, 0, 1, vertex_buffers, offsets);
+
+      // The second array rides its own binding -- 1 for a skin, 2 for blend
+      // weights -- so the two never have to agree about an index.
+      if (mesh.layout == vertex_layout_t::skinned)
+        vkCmdBindVertexBuffers(cmd, 1, 1, &mesh.skin_buffer, offsets);
+      else if (mesh.layout == vertex_layout_t::blended)
+        vkCmdBindVertexBuffers(cmd, 2, 1, &mesh.blend_buffer, offsets);
+
       vkCmdBindIndexBuffer(cmd, mesh.index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
       if (mesh.layout == vertex_layout_t::skinned)
@@ -3176,11 +3324,34 @@ static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &
     }
   };
 
+  // Runs of equal bias, for the reason record_debug_lines already spells out:
+  // depth bias is dynamic state, so one draw carries one value.
+  struct bias_run_t
+  {
+    float    bias;
+    uint32_t first;
+    uint32_t count;
+  };
+  std::vector<bias_run_t> runs;
+
+  const auto write_polygon_into_runs = [&](const debug_polygon_t &polygon) {
+    const uint32_t before = written;
+    write_polygon(polygon);
+    if (written == before)
+      return;
+
+    if (!runs.empty() && runs.back().bias == polygon.style.depth_bias)
+      runs.back().count += written - before;
+    else
+      runs.push_back({polygon.style.depth_bias, before, written - before});
+  };
+
   for (const debug_polygon_t &polygon : debug.polygons)
     if (polygon.vertex_count >= 3 && belongs(polygon) && !polygon.style.draw_when_occluded)
-      write_polygon(polygon);
+      write_polygon_into_runs(polygon);
 
   const uint32_t first_occluded_vertex = written;
+  const size_t   visible_run_count     = runs.size();
 
   for (const debug_polygon_t &polygon : debug.polygons)
     if (polygon.vertex_count >= 3 && belongs(polygon) && polygon.style.draw_when_occluded)
@@ -3191,7 +3362,13 @@ static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &
   vkCmdBindVertexBuffers(cmd, 0, 1, &g_debug_vertex_buffer[g_current_frame_idx_in_swapchain],
                          &offset);
   push_debug_constants(cmd, view_projection_matrix, colors::white, camera_position);
-  vkCmdDraw(cmd, written, 1, first_vertex, 0);
+
+  for (size_t index = 0; index < visible_run_count; ++index)
+  {
+    const bias_run_t &run = runs[index];
+    vkCmdSetDepthBias(cmd, -2.0f + run.bias, 0.0f, -1.0f + run.bias * 0.05f);
+    vkCmdDraw(cmd, run.count, 1, first_vertex + run.first, 0);
+  }
 
   if (written == first_occluded_vertex || g_debug_face_occluded_pipeline == VK_NULL_HANDLE)
     return;
@@ -3201,6 +3378,8 @@ static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &
       cmd, view_projection_matrix,
       with_alpha(colors::white, color_channel_from_float(DEBUG_OCCLUDED_ALPHA_SCALE)),
       camera_position);
+  // One bias for the pass: everything here is strictly behind the scene.
+  vkCmdSetDepthBias(cmd, -2.0f, 0.0f, -1.0f);
   vkCmdDraw(cmd, written - first_occluded_vertex, 1, first_vertex + first_occluded_vertex, 0);
 }
 

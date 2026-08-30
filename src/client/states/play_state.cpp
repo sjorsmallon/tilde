@@ -37,6 +37,7 @@
 #include "../../shared/network/quantization.hpp"
 #include "../../shared/network/cvar_mirror.hpp"
 #include "../../shared/network/map_transfer.hpp"
+#include "../entity_hitbox_overlay.hpp"
 #include "../hitbox_debug_draw.hpp"
 #include "../input.hpp"
 #include "../../shared/player_animator.hpp"
@@ -2202,16 +2203,6 @@ explosion_parameters(uint64_t explosion_index, const vec3f &position, float time
   return parameters;
 }
 
-// A Render component's material as a pipeline_state. Only the shader varies
-// today; blend, cull and depth are the material system's growth room.
-renderer::pipeline_state_t state_for(const entities::Material &material)
-{
-  renderer::pipeline_state_t state;
-  state.shader = material.shader_type == entities::Shader_Type::Unlit ? renderer::shader_t::unlit
-                                                                      : renderer::shader_t::lit;
-  return state;
-}
-
 } // namespace
 
 void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
@@ -2245,12 +2236,12 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   pose_count = 0;
 
   // Render the session's geometry. One call per object — the mesh-path /
-  // primitive / displacement-grid decision lives in draw_geometry, shared with
+  // primitive / generated-mesh decision lives in draw_geometry, shared with
   // the editor, instead of being spelled out twice.
   if (!ctx.cvars->debug_hide_geometry)
   {
     for (const shared::map_geometry_t &entry : ctx.world.session.geometry)
-      draw_geometry(scene, entry.value, entry.uid);
+      draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials);
   }
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
@@ -2258,6 +2249,12 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     // Players are drawn below, from replication rather than from the pool.
     if (entity.type == entities::entity_type::Player_Entity)
       continue;
+
+    // ALONGSIDE the model and ahead of every skip below: a hit volume is not an
+    // alternative to the mesh, and an entity whose mesh is hidden or unresolved
+    // is exactly the one whose volume you want on screen.
+    if (ctx.cvars->debug_show_hitboxes)
+      draw_entity_hitbox_overlay(&entity, scene);
 
     if (!render.visible)
       continue;
@@ -2270,8 +2267,19 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     draw.mesh      = mesh;
     draw.transform = linalg::compose_transform_euler(
         entity.position, entity.orientation + render.rotation, render.scale);
-    draw.tint      = color_from_vec3(render.material.color);
-    draw.material_overrides = material_variant(mesh, state_for(render.material));
+
+    // Same split the geometry surface path makes, and the editor preview with
+    // it: a wireframe takes neither the base colour nor the shader, because
+    // there is no lit surface for either to apply to.
+    if (render.is_wireframe && renderer::wireframe_supported())
+    {
+      draw.fill = renderer::fill_mode_t::wireframe;
+    }
+    else
+    {
+      draw.tint               = color_from_vec3(render.material.color);
+      draw.material_overrides = material_variant(mesh, state_for(render.material));
+    }
     scene.meshes.push_back(draw);
   }
 
@@ -2420,17 +2428,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                                        .view_pitch    = remote_player.render_pitch},
                                       aim_settings_from(*ctx.cvars), volumes);
 
-      // Solid faces UNDER the edges, and the face alpha is deliberately tiny.
-      // Two "over" layers composited in the wrong order differ by
-      // alpha1*alpha2*(colour1 - colour2) -- O(alpha^2) -- so at 12% the ten
-      // volumes landing in append order rather than depth order are within ~1.4%
-      // of the sorted answer. That is the whole reason none of this needs a
-      // sort: the transparency-ordering problem only bites at high alpha.
-      //
       // Both halves draw when occluded, because a hit volume lives INSIDE the
       // model it belongs to -- depth-tested only, the overlay is the few slivers
       // that poke past the silhouette, which is what made it unreadable.
-      constexpr uint8_t HITBOX_FACE_ALPHA = 30;
 
       // The EDGES fade out with range and the faces do not, because only one of
       // the two has a distance problem. A line is a constant width in SCREEN
@@ -2597,8 +2597,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
   // Debug: collision volumes as wireframe AABBs. Magenta for trigger volumes
   // (the only box-volume entity left, and invisible otherwise), white for the
-  // map's geometry, yellow to flag a displacement's box against the heightmap it
-  // actually renders as.
+  // map's geometry.
   if (ctx.cvars->debug_show_box_volumes)
   {
     for (auto [entity, volume] : entity_system.entities_with<entities::Box_Volume>())
@@ -2609,12 +2608,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
     for (const shared::map_geometry_t &entry : ctx.world.session.geometry)
     {
-      const color_t color =
-          (shared::get_kind(entry.value) == shared::geometry_kind_t::Displacement)
-              ? colors::yellow
-              : colors::white;
       const shared::aabb_bounds_t bounds = shared::get_bounds(entry.value);
-      scene.debug.aabb(bounds.min, bounds.max, color);
+      scene.debug.aabb(bounds.min, bounds.max, colors::white);
     }
   }
 

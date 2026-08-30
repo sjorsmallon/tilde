@@ -33,7 +33,6 @@
 #include "editor_types.hpp"
 #include "transaction_system.hpp"
 #include "tools/animation_tool.hpp"
-#include "tools/displacement_tool.hpp"
 #include "tools/particle_editor_tool.hpp"
 #include "tools/pathfinding_test_tool.hpp"
 #include "tools/placement_tool.hpp"
@@ -50,12 +49,8 @@ int main()
   // A real context, not a zeroed one: the editor never runs a tool without a
   // map, a BVH, a transaction system and a grid, and some of them assert on it.
   shared::map_t map;
-  {
-    shared::box_geometry_t floor;
-    floor.position     = {0, -8, 0};
-    floor.half_extents = {256, 8, 256};
-    map.geometry.push_back({map.next_uid++, floor});
-  }
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {256, 8, 256})});
 
   const Bounding_Volume_Hierarchy bvh = client::build_editor_bvh(map);
   client::Transaction_System      transactions;
@@ -77,7 +72,6 @@ int main()
   tools.push_back(std::make_unique<client::Sculpting_Tool>());
   tools.push_back(std::make_unique<client::Pathfinding_Test_Tool>());
   tools.push_back(std::make_unique<client::Particle_Editor_Tool>());
-  tools.push_back(std::make_unique<client::Displacement_Tool>());
   tools.push_back(std::make_unique<client::Animation_Tool>());
 
   for (const std::unique_ptr<client::Editor_Tool> &tool : tools)

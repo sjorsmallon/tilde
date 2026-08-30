@@ -204,6 +204,11 @@ void update_game_rules(server_context_t &context,
     return;
   }
 
+  if (context.world.rules.objective_reached == true)
+  {
+    context.world.rules.map_restart_requested = true;
+  }
+
   // Deadline reached. Live expiring here is the timeout path and lands on the
   // same phase a win condition would; the two differ only in what the
   // round-end event will eventually report as the reason.

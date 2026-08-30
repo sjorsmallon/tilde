@@ -16,27 +16,6 @@ namespace client
 namespace
 {
 
-// A distinct colour per uid so adjacent brushes are visually separable. This
-// used to be a `use_random_color` push constant hashed in the vertex shader --
-// one caller, and a whole plumbing path to serve it. Hashing on the CPU costs
-// nothing and the shader stopped having a mode.
-color_t color_from_uid(shared::entity_uid_t uid)
-{
-  uint32_t seed = (uint32_t)uid;
-  seed ^= seed >> 17;
-  seed *= 0xbf324c81u;
-  seed ^= seed >> 11;
-  seed *= 0x9a812cd5u;
-  seed ^= seed >> 15;
-
-  // Biased toward the bright end so the colours read against a dark viewport.
-  const auto channel = [](uint32_t byte) {
-    return (uint8_t)((((float)byte / 255.0f) * 0.7f + 0.3f) * 255.0f);
-  };
-  return color_t{channel(seed & 0xFFu), channel((seed >> 8) & 0xFFu),
-                 channel((seed >> 16) & 0xFFu), 255};
-}
-
 // A wireframe preview of a mesh. False means the mesh did not resolve and the
 // caller should fall back to a box.
 bool push_wireframe_mesh(pass_builder_t &draws,
@@ -169,7 +148,7 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
 
 void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
-                             bool solid)
+                             bool solid, Span<const std::string> materials)
 {
   // Brushes carry their shape in their EDGES, not in a surface texture -- the
   // flat grey they draw as says nothing on its own. Contours here rather than in
@@ -179,28 +158,13 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
   {
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
     if (solid)
-      draw_geometry(draws, geometry, uid);
+      draw_geometry(draws, geometry, uid, materials);
 
     draw_brush_wireframe(draws, brush, BRUSH_CONTOUR_COLOR, -60.0f);
     return;
   }
 
-  // A box with no mesh is the one case the editor draws differently from the
-  // game: random per-uid colors so adjacent brushes are visually separable, and
-  // wireframe when the user has solid mode off.
-  if (shared::get_kind(geometry) == shared::geometry_kind_t::Box)
-  {
-    const shared::box_geometry_t &box = std::get<shared::box_geometry_t>(geometry);
-    if (box.surface.mesh_path.empty())
-    {
-      draws.debug.box(box.position, box.half_extents, color_from_uid(uid),
-                      solid ? renderer::fill_mode_t::solid
-                            : renderer::fill_mode_t::wireframe);
-      return;
-    }
-  }
-
-  draw_geometry(draws, geometry, uid);
+  draw_geometry(draws, geometry, uid, materials);
 }
 
 // ============================================================================
@@ -290,14 +254,6 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
 
   switch (shared::get_kind(geometry))
   {
-  case shared::geometry_kind_t::Box:
-  {
-    const shared::box_geometry_t &box = std::get<shared::box_geometry_t>(geometry);
-    draw_box_face_grid(draws, box.position, box.half_extents, color, grid_step,
-                       highlight_bias);
-    break;
-  }
-
   case shared::geometry_kind_t::Static_Mesh:
   {
     const shared::static_mesh_geometry_t &static_mesh =
@@ -314,23 +270,26 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
     break;
   }
 
-  case shared::geometry_kind_t::Displacement:
+  case shared::geometry_kind_t::Brush:
   {
-    // The box bound, not the displaced surface: it's the volume the user is
-    // resizing, and it's what the sculpting brush rays against.
-    const shared::displacement_geometry_t &displacement =
-        std::get<shared::displacement_geometry_t>(geometry);
-    draws.debug.box(displacement.position, displacement.half_extents, color,
-                    renderer::fill_mode_t::wireframe, highlight_bias);
+    // The hull itself, not its bound: a brush is usually not box-shaped, and a
+    // box around a ramp says nothing about what is selected. The one that IS a
+    // box gets the measured face grid instead -- that is what a box brush
+    // showed back when Box was its own kind, and a hull outline around it would
+    // be strictly less information.
+    const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
+    if (shared::brush_is_axis_aligned_box(brush.vertices))
+    {
+      const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
+      draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f,
+                         (bounds.max - bounds.min) * 0.5f, color, grid_step,
+                         highlight_bias);
+      break;
+    }
+
+    draw_brush_wireframe(draws, brush, color, highlight_bias);
     break;
   }
-
-  case shared::geometry_kind_t::Brush:
-    // The hull itself, not its bound: a brush is usually not box-shaped, and a
-    // box around a ramp says nothing about what is selected.
-    draw_brush_wireframe(draws, std::get<shared::brush_geometry_t>(geometry), color,
-                         highlight_bias);
-    break;
   }
 }
 
@@ -386,16 +345,6 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
   return changed;
 }
 
-bool draw_box_inspector(shared::box_geometry_t &box)
-{
-  bool changed = false;
-  ImGui::TextDisabled("box");
-  changed |= ImGui::DragFloat3("position", &box.position.x, 0.5f);
-  changed |= ImGui::DragFloat3("half_extents", &box.half_extents.x, 0.5f);
-  changed |= draw_surface_inspector(box.surface);
-  return changed;
-}
-
 bool draw_static_mesh_inspector(shared::static_mesh_geometry_t &static_mesh)
 {
   bool changed = false;
@@ -404,44 +353,6 @@ bool draw_static_mesh_inspector(shared::static_mesh_geometry_t &static_mesh)
   changed |= ImGui::DragFloat3("orientation", &static_mesh.orientation.x, 1.0f);
   changed |= ImGui::DragFloat3("scale", &static_mesh.scale.x, 0.01f);
   changed |= draw_surface_inspector(static_mesh.surface);
-  return changed;
-}
-
-bool draw_displacement_inspector(shared::displacement_geometry_t &displacement)
-{
-  bool changed = false;
-  ImGui::TextDisabled("displacement");
-  changed |= ImGui::DragFloat3("position", &displacement.position.x, 0.5f);
-  changed |= ImGui::DragFloat3("half_extents", &displacement.half_extents.x, 0.5f);
-
-  // active_face as a named dropdown. "none" is index 0 and maps to Invalid, so
-  // the enum's -1 never has to be typed into a widget.
-  const char *face_names[] = {"none", "+X", "-X", "+Y", "-Y", "+Z", "-Z"};
-  int face_index = (displacement.active_face == shared::box_face_t::Invalid)
-                       ? 0
-                       : (int)displacement.active_face + 1;
-  if (ImGui::Combo("active_face", &face_index, face_names,
-                   (int)shared::box_face_count + 1))
-  {
-    displacement.active_face = (face_index == 0)
-                                   ? shared::box_face_t::Invalid
-                                   : (shared::box_face_t)(face_index - 1);
-    changed = true;
-  }
-
-  // Changing subdivision resamples the grid rather than flattening it, so
-  // dragging this doesn't throw away sculpting work.
-  int subdivision_level = displacement.subdivision_level;
-  if (ImGui::SliderInt("subdivision", &subdivision_level, 1, 64))
-  {
-    displacement.resize_grid_preserving(subdivision_level);
-    changed = true;
-  }
-
-  ImGui::TextDisabled("%d x %d grid, %zu vertices", displacement.grid_size(),
-                      displacement.grid_size(), displacement.displacements.size());
-
-  changed |= draw_surface_inspector(displacement.surface);
   return changed;
 }
 
@@ -481,15 +392,8 @@ bool draw_geometry_inspector(shared::geometry_value_t &geometry)
 {
   switch (shared::get_kind(geometry))
   {
-  case shared::geometry_kind_t::Box:
-    return draw_box_inspector(std::get<shared::box_geometry_t>(geometry));
-
   case shared::geometry_kind_t::Static_Mesh:
     return draw_static_mesh_inspector(std::get<shared::static_mesh_geometry_t>(geometry));
-
-  case shared::geometry_kind_t::Displacement:
-    return draw_displacement_inspector(
-        std::get<shared::displacement_geometry_t>(geometry));
 
   case shared::geometry_kind_t::Brush:
     return draw_brush_inspector(std::get<shared::brush_geometry_t>(geometry));

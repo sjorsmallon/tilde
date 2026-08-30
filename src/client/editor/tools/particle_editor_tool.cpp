@@ -7,38 +7,34 @@
 namespace client
 {
 
-void Particle_Editor_Tool::on_enable(editor_context_t &ctx)
+void Particle_Editor_Tool::on_enable(editor_context_t& ctx)
 {
   assert(ctx.bvh);
+  assert(ctx.map);
+
   selected_emitter_uid = shared::invalid_entity_uid;
 
-  // Auto-select the first particle emitter if there is one
-  if (ctx.map)
+  // autoselect the first one.
+  for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
   {
-    for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
-    {
-      selected_emitter_uid = uid;
-      break;
-    }
+    selected_emitter_uid = uid;
+    break;
   }
 }
 
-void Particle_Editor_Tool::on_disable(editor_context_t &) {}
+void Particle_Editor_Tool::on_disable(editor_context_t& ctx) {}
 
-void Particle_Editor_Tool::on_update(editor_context_t &ctx,
-                                    const viewport_state_t &view, float /*dt*/)
+void Particle_Editor_Tool::on_update(editor_context_t& ctx,
+                                    const viewport_state_t& view, float /*dt*/)
 {
   viewport = view;
 }
 
-void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
-                                        const input::mouse_event_t &e)
+void Particle_Editor_Tool::on_mouse_down(editor_context_t& ctx,
+                                        const input::mouse_event_t& e)
 {
-  if (e.button != input::mouse_button_t::Left)
-    return;
-
-  // Raycast to pick a particle emitter
-  if (!ctx.bvh) return;
+  // only lmb is recognized.
+  if (e.button != input::mouse_button_t::Left) return;
 
   // Just find the closest particle emitter to the ray
   float closest_distance_so_far = 1e18f;
@@ -68,19 +64,19 @@ void Particle_Editor_Tool::on_mouse_down(editor_context_t &ctx,
     selected_emitter_uid = best_uid;
 }
 
-void Particle_Editor_Tool::on_mouse_drag(editor_context_t &, const input::mouse_event_t &) {}
-void Particle_Editor_Tool::on_mouse_up(editor_context_t &, const input::mouse_event_t &) {}
-void Particle_Editor_Tool::on_key_down(editor_context_t &, const key_event_t &) {}
+void Particle_Editor_Tool::on_mouse_drag(editor_context_t&, const input::mouse_event_t&) {}
+void Particle_Editor_Tool::on_mouse_up(editor_context_t&, const input::mouse_event_t&) {}
+void Particle_Editor_Tool::on_key_down(editor_context_t&, const key_event_t&) {}
 
 void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
-                                          pass_builder_t &draws)
+                                          pass_builder_t& draw_passes)
 {
   // Highlight all particle emitters with a circle, selected one brighter
   for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
   {
     color_t color = (uid == selected_emitter_uid) ? colors::yellow : color_t{128, 128, 0};
-    draws.debug.wire_circle(emitter->position, 16.f, {0, 1, 0}, color);
-    draws.debug.box(emitter->position, {4, 4, 4}, color);
+    draw_passes.debug.wire_circle(emitter->position, 16.f, {0, 1, 0}, color);
+    draw_passes.debug.box(emitter->position, {4, 4, 4}, color);
   }
 }
 
@@ -88,18 +84,18 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
 {
   ImGui::Begin("Particle Editor");
 
-  // Emitter selector dropdown
   if (ImGui::BeginCombo("Emitter",
                          selected_emitter_uid ? "Selected" : "None"))
   {
     for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
     {
-
       auto label = std::format("Emitter #{} ({:.0f}, {:.0f}, {:.0f})", uid, emitter->position.x, emitter->position.y, emitter->position.z);
 
       bool is_selected = (uid == selected_emitter_uid);
       if (ImGui::Selectable(label.c_str(), is_selected))
+      {
         selected_emitter_uid = uid;
+      }
     }
 
     ImGui::EndCombo();
@@ -107,6 +103,7 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
 
   if (ImGui::Button("New Emitter"))
   {
+    //@FIXME(SJM): don't make_shared, that's stupid.
     auto emitter = std::make_shared<entities::Particle_Emitter_Entity>();
     // Place at camera position
     emitter->position = {viewport.camera.position.x, viewport.camera.position.y,

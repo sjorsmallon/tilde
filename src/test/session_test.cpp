@@ -18,10 +18,8 @@ int main()
   test_map.name = "Test Map";
 
   // A box brush — map-owned geometry, not an entity.
-  box_geometry_t floor;
-  floor.position = {0, 0, 0};
-  floor.half_extents = {10, 10, 10};
-  const entity_uid_t floor_uid = test_map.add_geometry(floor);
+  const entity_uid_t floor_uid =
+      test_map.add_geometry(make_box_brush({0, 0, 0}, {10, 10, 10}));
 
   // Add a Player Spawn marker
   auto spawn_ent = shared::create_map_entity("player_spawn_entity");
@@ -75,33 +73,34 @@ int main()
   // the session must not write through into the map — the old shared_ptr path
   // did exactly that, and P7's ownership work depends on it staying broken apart.
   {
-    box_geometry_t *session_box =
-        std::get_if<box_geometry_t>(&session.geometry[0].value);
-    if (!session_box)
+    brush_geometry_t *session_brush =
+        std::get_if<brush_geometry_t>(&session.geometry[0].value);
+    if (!session_brush)
     {
-      log_error("Session geometry 0 should be a box");
+      log_error("Session geometry 0 should be a brush");
       return 1;
     }
-    session_box->half_extents = {99, 99, 99};
+    const std::vector<linalg::vec3> original_vertices = session_brush->vertices;
+    session_brush->vertices = make_box_brush_vertices({0, 0, 0}, {99, 99, 99});
 
-    const map_geometry_t *map_entry = test_map.find_geometry_by_uid(floor_uid);
-    const box_geometry_t *map_box =
-        map_entry ? std::get_if<box_geometry_t>(&map_entry->value) : nullptr;
-    if (!map_box)
+    const map_geometry_t  *map_entry = test_map.find_geometry_by_uid(floor_uid);
+    const brush_geometry_t *map_brush =
+        map_entry ? std::get_if<brush_geometry_t>(&map_entry->value) : nullptr;
+    if (!map_brush)
     {
-      log_error("Map geometry {} should still be a box", floor_uid);
+      log_error("Map geometry {} should still be a brush", floor_uid);
       return 1;
     }
-    if (map_box->half_extents.x != 10.f)
+    if (compute_brush_bounds(map_brush->vertices).max.x != 10.f)
     {
       log_error("Session aliases the map's geometry: writing the session's copy "
-                "changed the map's half_extents to {}",
-                map_box->half_extents.x);
+                "changed the map's bounds to {}",
+                compute_brush_bounds(map_brush->vertices).max.x);
       return 1;
     }
 
     // Put it back so the BVH check below still describes the real geometry.
-    session_box->half_extents = {10, 10, 10};
+    session_brush->vertices = original_vertices;
   }
 
   // Verify the runtime spawn counter was seeded past the highest map uid.

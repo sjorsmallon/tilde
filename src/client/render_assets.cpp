@@ -71,6 +71,14 @@ renderer::texture_handle_t get_render_texture(const char *path)
   return handle;
 }
 
+renderer::pipeline_state_t state_for(const entities::Material &material)
+{
+  renderer::pipeline_state_t state;
+  state.shader = material.shader_type == entities::Shader_Type::Unlit ? renderer::shader_t::unlit
+                                                                      : renderer::shader_t::lit;
+  return state;
+}
+
 Span<const renderer::material_handle_t>
 material_variant(renderer::mesh_handle_t mesh, const renderer::pipeline_state_t &state)
 {

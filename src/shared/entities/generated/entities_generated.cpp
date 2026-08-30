@@ -68,6 +68,7 @@ constexpr const char* Trigger_Action_VALUE_NAMES[] = {
   "Checkpoint",
   "Grant_Weapon",
   "Set_Velocity",
+  "Give_Impulse",
 };
 
 constexpr const char* Fire_Mode_VALUE_NAMES[] = {
@@ -83,6 +84,12 @@ constexpr const char* Aim_Pose_VALUE_NAMES[] = {
   "Right",
 };
 
+constexpr const char* Damage_Type_VALUE_NAMES[] = {
+  "Normal",
+  "Orange",
+  "Teal",
+};
+
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
@@ -91,9 +98,10 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Shader_Type", {Shader_Type_VALUE_NAMES, 2}},
   {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 2}},
-  {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 8}},
+  {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 9}},
   {"Fire_Mode", {Fire_Mode_VALUE_NAMES, 2}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
+  {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
 };
 
 constexpr field_info_t Box_Volume_FIELDS[] = {
@@ -709,6 +717,15 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "damage_type",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Weapon_Entity, damage_type),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::damage_type),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[10]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Weapon_Entity, render),
@@ -1087,6 +1104,15 @@ constexpr field_info_t Damageable_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "weakness",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Damageable_Entity, weakness),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::weakness),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[10]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Damageable_Entity, render),
@@ -1450,10 +1476,10 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 3}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
   {"player_entity", "Player", {Player_Entity_FIELDS, 24}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 52u, true, construct_Player_Entity, as_base_Player_Entity},
-  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 8}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
+  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 9}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 4u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
-  {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 7}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 4u, false, construct_Damageable_Entity, as_base_Damageable_Entity},
+  {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 4u, false, construct_Damageable_Entity, as_base_Damageable_Entity},
   {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 1u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
   {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 5}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 8u, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
   {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 8u, false, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
@@ -1645,6 +1671,7 @@ const char* to_string(Trigger_Action value)
     case Trigger_Action::Checkpoint: return "Checkpoint";
     case Trigger_Action::Grant_Weapon: return "Grant_Weapon";
     case Trigger_Action::Set_Velocity: return "Set_Velocity";
+    case Trigger_Action::Give_Impulse: return "Give_Impulse";
   }
   assert(false && "invalid Trigger_Action");
   return "";
@@ -1660,6 +1687,7 @@ template <> std::optional<Trigger_Action> try_from_string<Trigger_Action>(std::s
   if (text == "Checkpoint") return Trigger_Action::Checkpoint;
   if (text == "Grant_Weapon") return Trigger_Action::Grant_Weapon;
   if (text == "Set_Velocity") return Trigger_Action::Set_Velocity;
+  if (text == "Give_Impulse") return Trigger_Action::Give_Impulse;
   return std::nullopt;
 }
 
@@ -1702,6 +1730,26 @@ template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view t
   if (text == "Downward") return Aim_Pose::Downward;
   if (text == "Left") return Aim_Pose::Left;
   if (text == "Right") return Aim_Pose::Right;
+  return std::nullopt;
+}
+
+const char* to_string(Damage_Type value)
+{
+  switch (value)
+  {
+    case Damage_Type::Normal: return "Normal";
+    case Damage_Type::Orange: return "Orange";
+    case Damage_Type::Teal: return "Teal";
+  }
+  assert(false && "invalid Damage_Type");
+  return "";
+}
+
+template <> std::optional<Damage_Type> try_from_string<Damage_Type>(std::string_view text)
+{
+  if (text == "Normal") return Damage_Type::Normal;
+  if (text == "Orange") return Damage_Type::Orange;
+  if (text == "Teal") return Damage_Type::Teal;
   return std::nullopt;
 }
 
@@ -1804,6 +1852,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xcb88e4cbu;
+const uint32_t SCHEMA_HASH = 0xf4e37d55u;
 
 } // namespace entities

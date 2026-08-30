@@ -24,13 +24,18 @@ build_editor_bvh(const shared::map_t &map)
     inputs.push_back(input);
   };
 
-  // Geometry picks against its real shape. For box, displacement and static
-  // mesh the plane set IS the bound, so those pick exactly as they did; brush
-  // is the one kind where the hull differs, and clicking the empty corner of
-  // its bounding box should not select it.
+  // Geometry picks against its real shape. For a static mesh the
+  // plane set IS the bound, so those pick exactly as they did; brush is the one
+  // kind where the hull differs, and clicking the empty corner of its bounding
+  // box should not select it. A brush decomposes into several pieces, each its
+  // own leaf under the same uid — clicking any of them selects the object, and
+  // the notch of a concave brush now correctly falls through to what is behind.
   for (const shared::map_geometry_t &entry : map.geometry)
-    add_leaf(entry.uid, shared::get_bounds(entry.value),
-             shared::get_collision_planes(entry.value));
+  {
+    for (const shared::collision_piece_t &piece :
+         shared::get_collision_pieces(entry.value, entry.uid))
+      add_leaf(entry.uid, piece.bounds, piece.planes);
+  }
 
   for (const shared::map_entity_t &entry : map.entities)
   {

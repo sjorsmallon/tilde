@@ -87,20 +87,20 @@ void Selection_Tool::commit_drag_snapshots(editor_context_t &ctx)
     return;
   }
 
-  transaction_builder_t builder;
+  transaction_t transaction;
   for (const auto &[uid, snapshot] : drag_start_snapshots)
   {
     if (snapshot.geometry)
     {
       if (const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(uid))
-        builder.add_geometry_modified(uid, *snapshot.geometry, entry->value);
+        transaction.add_geometry_modified(uid, *snapshot.geometry, entry->value);
       continue;
     }
 
     if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      builder.add_modified_from_diff(uid, snapshot.entity, entry->entity.get());
+      transaction.add_modified_from_diff(uid, snapshot.entity, entry->entity.get());
   }
-  ctx.transaction_system->push(builder.take());
+  ctx.transaction_system->push(std::move(transaction));
   drag_start_snapshots.clear();
   drag_origins.clear();
 }
@@ -347,7 +347,7 @@ void Selection_Tool::commit_paste(editor_context_t &ctx)
   if (!paste_is_pending || !paste_anchor_valid || clipboard.empty() || !ctx.map)
     return;
 
-  transaction_builder_t             builder;
+  transaction_t                     transaction;
   std::vector<shared::entity_uid_t> pasted_uids;
 
   for (const clipboard_entry_t &entry : clipboard)
@@ -360,7 +360,7 @@ void Selection_Tool::commit_paste(editor_context_t &ctx)
       shared::set_position(value, position);
 
       const shared::entity_uid_t uid = ctx.map->add_geometry(value);
-      builder.add_geometry_created(uid, std::move(value));
+      transaction.add_geometry_created(uid, std::move(value));
       pasted_uids.push_back(uid);
       continue;
     }
@@ -374,14 +374,14 @@ void Selection_Tool::commit_paste(editor_context_t &ctx)
     copy->position = position;
 
     const shared::entity_uid_t uid = ctx.map->add_entity(copy);
-    builder.add_created(uid, snapshot_entity(copy.get()));
+    transaction.add_created(uid, snapshot_entity(copy.get()));
     pasted_uids.push_back(uid);
   }
 
   // One transaction for the whole paste, so Ctrl+Z takes all of it back at once
   // -- the same rule the multi-object delete follows.
   if (ctx.transaction_system)
-    ctx.transaction_system->push(builder.take());
+    ctx.transaction_system->push(std::move(transaction));
 
   // The copies become the selection: what you just placed is what the gizmo and
   // the arrow keys should be aimed at.
@@ -901,23 +901,23 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     {
       // One transaction for the whole selection, so Ctrl+Z brings back every
       // deleted object at once.
-      transaction_builder_t builder;
+      transaction_t transaction;
       for (auto uid : selected_uids)
       {
         if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
         {
-          builder.add_geometry_removed(uid, geometry->value);
+          transaction.add_geometry_removed(uid, geometry->value);
           ctx.map->remove_geometry(uid);
           continue;
         }
 
         if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
         {
-          builder.add_removed(uid, snapshot_entity(entry->entity.get()));
+          transaction.add_removed(uid, snapshot_entity(entry->entity.get()));
           ctx.map->remove_entity(uid);
         }
       }
-      ctx.transaction_system->push(builder.take());
+      ctx.transaction_system->push(std::move(transaction));
 
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;

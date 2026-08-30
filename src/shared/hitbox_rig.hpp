@@ -130,6 +130,26 @@ struct posed_hitbox_t
   linalg::vec3f center() const { return (start + end) * 0.5f; }
 };
 
+// A world-axis box volume centred on `center`. start == end makes center()
+// exact, and leaving `frame` at the identity is what makes it axis-aligned --
+// a Box reads its extents through its frame, so a rotated one is a decision
+// somebody has to make rather than something that happens by accident.
+//
+// One spelling, because the server tests this box and the client draws it: two
+// constructions would be a silhouette that disagrees with what you can hit.
+inline posed_hitbox_t make_box_hit_volume(const linalg::vec3f  &center,
+                                          const linalg::vec3f  &half_extents,
+                                          shared::hit_region_t  region)
+{
+  posed_hitbox_t volume{};
+  volume.shape        = hitbox_shape_t::Box;
+  volume.start        = center;
+  volume.end          = center;
+  volume.half_extents = half_extents;
+  volume.region       = region;
+  return volume;
+}
+
 // `model_space` is what compute_model_space_matrices produced for the pose being
 // drawn -- NOT the skinning matrices, which carry the inverse bind and would put
 // every volume at the origin. `out` must be rig.volumes.size() long; a wrong

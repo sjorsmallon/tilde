@@ -36,9 +36,15 @@ void grant_default_inventory(shared::game_session_t& session, shared::entity_uid
 // Fallible because the spawn is: a full pool is a real outcome and the caller
 // gets no uid. Displacing is NOT a failure -- it is what taking a second rifle
 // means -- and the displaced entity is destroyed rather than leaked.
-[[nodiscard]] shared::entity_uid_t try_grant_weapon(server_context_t&         context,
-                                                    entities::Player_Entity& player,
-                                                    entities::Weapon         weapon);
+//
+// The damage type is a property of the granted WEAPON, so it is decided here by
+// whoever hands it out -- a trigger's param, a card -- and written at the spawn
+// rather than poked onto the entity afterwards.
+[[nodiscard]] shared::entity_uid_t
+try_grant_weapon(server_context_t&         context,
+                 entities::Player_Entity& player,
+                 entities::Weapon         weapon,
+                 entities::Damage_Type    damage_type = entities::Damage_Type::Normal);
 
 // Destroy every weapon the player carries and clear the list. Same tick rule as
 // above, in reverse: a weapon outliving its owner is a leak no one holds a

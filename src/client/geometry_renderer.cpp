@@ -13,7 +13,7 @@ namespace client
 namespace
 {
 
-// Kinds whose mesh is GENERATED rather than loaded -- displacements and brushes
+// Kinds whose mesh is GENERATED rather than loaded -- brushes
 // -- live in the asset cache under a synthetic path keyed by uid, so one only
 // gets rebuilt when it actually changes. The key is per OBJECT, not per kind: a
 // uid names one object and one object has one generated mesh.
@@ -41,7 +41,7 @@ std::string_view generated_mesh_cache_key(shared::entity_uid_t uid, Span<char> b
   return std::string_view(buffer.data, static_cast<size_t>(written));
 }
 
-// The points each cached brush mesh was built from.
+// What each cached brush mesh was built from.
 //
 // A brush mesh is WORLD-space with an identity transform (a brush has no
 // position member -- its vertices are its position), so the cache goes stale
@@ -52,39 +52,52 @@ std::string_view generated_mesh_cache_key(shared::entity_uid_t uid, Span<char> b
 //
 // So the draw path checks instead of trusting. Same reasoning as the brush tool
 // re-hulling every frame: a cache nothing can forget to invalidate.
-std::unordered_map<shared::entity_uid_t, std::vector<linalg::vec3>>
-    g_brush_mesh_source_points;
-
-bool brush_mesh_is_current(shared::entity_uid_t uid, const std::vector<linalg::vec3> &vertices)
+//
+// It holds the whole geometry VALUE rather than just the point set, because a
+// face's material is now part of what the mesh was built from and changing one
+// moves no vertex. And the material TABLE beside it, because an index resolves
+// against that table: retexturing entry 3 changes the mesh of every brush whose
+// faces name it, with nothing about the brushes themselves different.
+struct generated_brush_source_t
 {
-  const auto it = g_brush_mesh_source_points.find(uid);
-  if (it == g_brush_mesh_source_points.end() || it->second.size() != vertices.size())
+  shared::geometry_value_t value;
+  std::vector<std::string> materials;
+  // Per submesh slot. Rebuilt with the mesh, so the two cannot describe
+  // different brushes.
+  std::vector<renderer::material_handle_t> overrides;
+};
+
+std::unordered_map<shared::entity_uid_t, generated_brush_source_t> g_brush_mesh_sources;
+
+bool brush_mesh_is_current(shared::entity_uid_t uid,
+                           const shared::geometry_value_t &geometry,
+                           Span<const std::string> materials)
+{
+  const auto it = g_brush_mesh_sources.find(uid);
+  if (it == g_brush_mesh_sources.end())
     return false;
 
-  // Bit-exact, and element-wise because linalg::vec3 has no operator==. Anything
-  // looser would let a sub-tolerance move leave the solid behind its contours.
-  for (size_t i = 0; i < vertices.size(); ++i)
-  {
-    if (it->second[i].x != vertices[i].x || it->second[i].y != vertices[i].y ||
-        it->second[i].z != vertices[i].z)
+  if (it->second.materials.size() != materials.count)
+    return false;
+  for (size_t i = 0; i < materials.count; ++i)
+    if (it->second.materials[i] != materials[i])
       return false;
-  }
-  return true;
+
+  // Bit-exact, which is what geometry_values_equal already promises -- anything
+  // looser would let a sub-tolerance move leave the solid behind its contours.
+  return shared::geometry_values_equal(it->second.value, geometry);
 }
 
 // Empty for the kinds with no generated form; those never reach the cache.
-assets::mesh_asset_t generate_geometry_mesh(const shared::geometry_value_t &geometry)
+assets::mesh_asset_t generate_geometry_mesh(const shared::geometry_value_t &geometry,
+                                            Span<const std::string> materials)
 {
   switch (shared::get_kind(geometry))
   {
-  case shared::geometry_kind_t::Displacement:
-    return shared::generate_displacement_mesh(
-        std::get<shared::displacement_geometry_t>(geometry));
-
   case shared::geometry_kind_t::Brush:
-    return shared::generate_brush_mesh(std::get<shared::brush_geometry_t>(geometry));
+    return shared::generate_brush_mesh(std::get<shared::brush_geometry_t>(geometry),
+                                       materials);
 
-  case shared::geometry_kind_t::Box:
   case shared::geometry_kind_t::Static_Mesh:
     return {};
   }
@@ -102,46 +115,120 @@ renderer::pipeline_state_t state_for(const shared::geometry_surface_t &surface)
   return state;
 }
 
-// The one texture a displacement surface wears. It used to have its own
-// pipeline, descriptor pool, sampler and set (the whole g_disp_texture_* global
-// cluster); a displacement is just a lit mesh with a texture, and now it says so.
-//
-// Returned as a one-slot TABLE rather than a handle, because that is the shape
-// mesh_draw_t::material_overrides takes and the storage has to outlive the call.
-Span<const renderer::material_handle_t> displacement_material_table()
-{
-  static const renderer::material_handle_t table[1] = {[] {
-    renderer::material_t built{};
-    built.parameters.base_color_texture = get_render_texture("resources/textures/dev_128x128.png");
-    return renderer::register_material(built);
-  }()};
-  return Span<const renderer::material_handle_t>(table);
-}
-
-// Brushes are BLOCKOUT geometry, and a tiling dev texture is the wrong thing to
-// read them by: it describes surface where what matters is SHAPE and SIZE. Flat
-// light grey under shader_t::grid, which rules the world grid onto the faces --
-// so a face reports its own dimensions, and the lines run on across a corner and
-// on into the editor's floor grid.
+// An UNTEXTURED brush face is BLOCKOUT geometry, and a tiling dev texture is the
+// wrong thing to read it by: it describes surface where what matters is SHAPE
+// and SIZE. Flat light grey under shader_t::grid, which rules the world grid
+// onto the face -- so it reports its own dimensions, and the lines run on across
+// a corner and on into the editor's floor grid.
 //
 // The grid costs no material parameter and no push-constant byte (the mesh block
-// is at the 128-byte minimum with none left): generate_brush_mesh's UV is the
-// world position projected on the face's dominant axis over the 128-unit cell,
-// so the shader reads the grid straight out of fragUV.
+// is at the 128-byte minimum with none left): a default face UV is the world
+// position projected on the face's dominant axis over the 128-unit cell, so the
+// shader reads the grid straight out of fragUV.
 //
 // No texture handle at all -- an invalid one resolves to the internal 1x1 white
-// through resolve_albedo_set, so this is base_color and nothing else. One shared
-// material rather than one per surface colour: a brush is untinted at this stage,
-// and a material per colour would be a material per brush.
-Span<const renderer::material_handle_t> brush_material_table()
+// through resolve_albedo_set, so this is base_color and nothing else.
+renderer::material_handle_t blockout_material()
 {
-  static const renderer::material_handle_t table[1] = {[] {
+  static const renderer::material_handle_t handle = [] {
     renderer::material_t built{};
     built.pipeline_state.shader = renderer::shader_t::grid;
     built.parameters.base_color = {0.72f, 0.72f, 0.75f, 1.0f};
     return renderer::register_material(built);
-  }()};
-  return Span<const renderer::material_handle_t>(table);
+  }();
+  return handle;
+}
+
+// One material per distinct TEXTURE, not per submesh and not per rebuild: a
+// brush mesh is re-registered on every edit, and registering a fresh material
+// each time would grow the renderer's table for the length of an editing
+// session. Keyed by the texture handle because that is the whole difference
+// between two textured faces here.
+renderer::material_handle_t textured_face_material(renderer::texture_handle_t texture)
+{
+  static std::unordered_map<uint32_t, renderer::material_handle_t> by_texture;
+
+  const auto cached = by_texture.find(texture.index);
+  if (cached != by_texture.end())
+    return cached->second;
+
+  renderer::material_t built{};
+  built.parameters.base_color_texture = texture;
+  const renderer::material_handle_t handle = renderer::register_material(built);
+  by_texture.emplace(texture.index, handle);
+  return handle;
+}
+
+// A face painted between two materials. Keyed by the pair, for
+// textured_face_material's reason: the mesh is re-registered on every edit and
+// a fresh material per rebuild would grow the renderer's table for the length
+// of an editing session.
+renderer::material_handle_t blended_face_material(const renderer::material_parameters_t &parameters)
+{
+  struct key_t
+  {
+    uint32_t base = 0;
+    uint32_t layers[BLEND_LAYER_COUNT - 1] = {};
+
+    bool operator==(const key_t &) const = default;
+  };
+  struct key_hash_t
+  {
+    size_t operator()(const key_t &key) const
+    {
+      size_t hash = key.base;
+      for (uint32_t layer : key.layers)
+        hash = hash * 1099511628211ull + layer;
+      return hash;
+    }
+  };
+
+  static std::unordered_map<key_t, renderer::material_handle_t, key_hash_t> by_textures;
+
+  key_t key;
+  key.base = parameters.base_color_texture.index;
+  for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
+    key.layers[layer - 1] = parameters.blend_textures.data[layer - 1].index;
+
+  const auto cached = by_textures.find(key);
+  if (cached != by_textures.end())
+    return cached->second;
+
+  renderer::material_t built{};
+  built.pipeline_state.shader = renderer::shader_t::blend;
+  built.parameters.base_color_texture = parameters.base_color_texture;
+  built.parameters.blend_textures = parameters.blend_textures;
+
+  const renderer::material_handle_t handle = renderer::register_material(built);
+  by_textures.emplace(key, handle);
+  return handle;
+}
+
+// The override table for a generated brush mesh: one entry per submesh slot,
+// grid-shaded where the face's material resolved to no texture and lit where it
+// did. Built from the mesh's OWN materials, which generate_brush_mesh already
+// filled with the resolved texture for each slot -- so a slot naming a texture
+// that failed to load carries the renderer's magenta checkerboard and is visible
+// rather than silently flat.
+//
+// Stored beside the source record so it is rebuilt exactly when the mesh is, and
+// the two cannot describe different brushes.
+std::vector<renderer::material_handle_t>
+build_brush_material_overrides(renderer::mesh_handle_t mesh)
+{
+  std::vector<renderer::material_handle_t> table;
+  for (renderer::material_handle_t slot : renderer::mesh_default_materials(mesh))
+  {
+    const renderer::material_parameters_t parameters = renderer::material_parameters(slot);
+
+    if (parameters.blend_textures.data[0].valid())
+      table.push_back(blended_face_material(parameters));
+    else
+      table.push_back(parameters.base_color_texture.valid()
+                          ? textured_face_material(parameters.base_color_texture)
+                          : blockout_material());
+  }
+  return table;
 }
 
 // Draw a surface's mesh if it resolves. False means "no mesh — use the kind's
@@ -178,24 +265,12 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
 } // namespace
 
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
-                   shared::entity_uid_t uid)
+                   shared::entity_uid_t uid, Span<const std::string> materials)
 {
   const shared::geometry_surface_t &surface = shared::get_surface(geometry);
 
   switch (shared::get_kind(geometry))
   {
-  case shared::geometry_kind_t::Box:
-  {
-    const shared::box_geometry_t &box = std::get<shared::box_geometry_t>(geometry);
-    if (draw_surface_mesh(draws, surface, box.position, {1, 1, 1}, {0, 0, 0}))
-      return;
-
-    // No mesh: a box draws as a box.
-    draws.debug.aabb(box.position - box.half_extents, box.position + box.half_extents,
-                     color_from_vec3(surface.color), renderer::fill_mode_t::solid);
-    return;
-  }
-
   case shared::geometry_kind_t::Static_Mesh:
   {
     const shared::static_mesh_geometry_t &static_mesh =
@@ -211,46 +286,6 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     return;
   }
 
-  case shared::geometry_kind_t::Displacement:
-  {
-    const shared::displacement_geometry_t &displacement =
-        std::get<shared::displacement_geometry_t>(geometry);
-
-    // An explicit mesh_path overrides the generated grid, same as before.
-    if (!surface.mesh_path.empty() &&
-        draw_surface_mesh(draws, surface, displacement.position, {1, 1, 1}, {0, 0, 0}))
-      return;
-
-    if (!surface.visible)
-      return;
-
-    char                   cache_key_buffer[48];
-    const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
-    assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
-        assets::find_mesh_in_cache(cache_key);
-    if (!mesh_asset.valid())
-      mesh_asset = assets::register_dynamic_mesh(cache_key,
-                                                 generate_geometry_mesh(geometry));
-
-    const renderer::mesh_handle_t mesh = get_render_mesh(mesh_asset);
-    if (!mesh.valid())
-    {
-      log_error("draw_geometry: could not build a mesh for displacement uid {}", uid);
-      return;
-    }
-
-    // Its UVs come from the undisplaced world position / 128, baked in by
-    // generate_displacement_mesh, so the texture tiles at 128 units and does not
-    // swim while sculpting.
-    renderer::mesh_draw_t draw{};
-    draw.mesh               = mesh;
-    draw.transform          = linalg::compose_transform_euler(displacement.position, {0, 0, 0},
-                                                              {1, 1, 1});
-    draw.material_overrides = displacement_material_table();
-    draws.meshes.push_back(draw);
-    return;
-  }
-
   case shared::geometry_kind_t::Brush:
   {
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
@@ -263,8 +298,8 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     if (!surface.visible)
       return;
 
-    if (!brush_mesh_is_current(uid, brush.vertices))
-      refresh_generated_geometry_mesh(geometry, uid);
+    if (!brush_mesh_is_current(uid, geometry, materials))
+      refresh_generated_geometry_mesh(geometry, uid, materials);
 
     char                   cache_key_buffer[48];
     const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
@@ -282,10 +317,13 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     // world space and the transform is identity. There is no position member to
     // put in one, which is the whole point: the vertices ARE the position.
     renderer::mesh_draw_t draw{};
-    draw.mesh               = mesh;
-    draw.transform          = linalg::compose_transform_euler({0, 0, 0}, {0, 0, 0},
-                                                              {1, 1, 1});
-    draw.material_overrides = brush_material_table();
+    draw.mesh      = mesh;
+    draw.transform = linalg::compose_transform_euler({0, 0, 0}, {0, 0, 0}, {1, 1, 1});
+
+    const auto source = g_brush_mesh_sources.find(uid);
+    if (source != g_brush_mesh_sources.end())
+      draw.material_overrides = source->second.overrides;
+
     draws.meshes.push_back(draw);
     return;
   }
@@ -295,38 +333,53 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
 }
 
 void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
-                                     shared::entity_uid_t uid)
+                                     shared::entity_uid_t uid,
+                                     Span<const std::string> materials)
 {
+  const bool is_brush = shared::get_kind(geometry) == shared::geometry_kind_t::Brush;
+
   // Record what the mesh is about to be built from, so the draw path can tell
   // whether it still matches. Only brushes need it: every other generated kind
   // keeps its position in the transform and so does not go stale on a move.
-  if (shared::get_kind(geometry) == shared::geometry_kind_t::Brush)
-    g_brush_mesh_source_points[uid] =
-        std::get<shared::brush_geometry_t>(geometry).vertices;
+  if (is_brush)
+  {
+    generated_brush_source_t &source = g_brush_mesh_sources[uid];
+    source.value                     = geometry;
+    source.materials.assign(materials.begin(), materials.end());
+  }
 
   char                   cache_key_buffer[48];
   const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
-  const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
+  assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
       assets::find_mesh_in_cache(cache_key);
 
   if (!mesh_asset.valid())
   {
-    assets::register_dynamic_mesh(cache_key, generate_geometry_mesh(geometry));
-    return;
+    mesh_asset =
+        assets::register_dynamic_mesh(cache_key, generate_geometry_mesh(geometry, materials));
   }
-
-  assets::mesh_asset_t *mesh = assets::get_mutable(mesh_asset);
-  if (!mesh)
+  else
   {
-    log_error("refresh_generated_geometry_mesh: uid {} is cached but not mutable", uid);
-    return;
+    assets::mesh_asset_t *mesh = assets::get_mutable(mesh_asset);
+    if (!mesh)
+    {
+      log_error("refresh_generated_geometry_mesh: uid {} is cached but not mutable", uid);
+      return;
+    }
+
+    *mesh = generate_geometry_mesh(geometry, materials);
+
+    // Eager re-upload, right here where the edit happened, rather than a flag
+    // the next draw would have to notice.
+    renderer::update_mesh(get_render_mesh(mesh_asset), *mesh);
   }
 
-  *mesh = generate_geometry_mesh(geometry);
-
-  // Eager re-upload, right here where the edit happened, rather than a flag the
-  // next draw would have to notice.
-  renderer::update_mesh(get_render_mesh(mesh_asset), *mesh);
+  // The slot table follows the mesh it describes -- a rebuild can change how
+  // many submeshes there are, so a stale table would name the wrong material for
+  // every slot after the one that moved.
+  if (is_brush)
+    g_brush_mesh_sources[uid].overrides =
+        build_brush_material_overrides(get_render_mesh(mesh_asset));
 }
 
 } // namespace client

@@ -116,28 +116,6 @@ void register_static_convex_hull(physics_state_t &state, shared::entity_uid_t ui
     state.body_entity_map[body->GetID()] = uid;
 }
 
-void register_static_box(physics_state_t &state, shared::entity_uid_t uid,
-                          vec3f position, vec3f half_extents)
-{
-    JPH::BodyCreationSettings settings(
-        new JPH::BoxShape(to_jolt(half_extents)),
-        to_jolt_r(position),
-        JPH::Quat::sIdentity(),
-        JPH::EMotionType::Static,
-        Physics_Layers::STATIC);
-
-    JPH::BodyInterface &body_interface = state.physics_system.GetBodyInterface();
-    JPH::Body *body = body_interface.CreateBody(settings);
-    if (!body)
-    {
-        log_error("register_static_box: body limit reached for uid {}", uid);
-        return;
-    }
-    body_interface.AddBody(body->GetID(), JPH::EActivation::DontActivate);
-    state.entity_body_map[uid]             = body->GetID();
-    state.body_entity_map[body->GetID()]   = uid;
-}
-
 void register_dynamic_sphere(physics_state_t &state, shared::entity_uid_t uid,
                                vec3f position, float radius, vec3f initial_velocity)
 {

@@ -2,11 +2,13 @@
 
 #include "entities/entity_reflection.hpp"
 #include "entity_uid.hpp"
+#include "log.hpp"
 #include "linalg.hpp"
 #include "map_geometry.hpp"
 #include "navmesh.hpp"
 #include "shapes.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -32,7 +34,7 @@ struct map_entity_t
   std::shared_ptr<entities::Entity> entity;
 };
 
-// One piece of map-owned geometry (box / static mesh / displacement). A plain
+// One piece of map-owned geometry (brush / static mesh). A plain
 // value — see map_geometry.hpp for why geometry is not an entity.
 struct map_geometry_t
 {
@@ -55,6 +57,37 @@ struct map_t
   // Console lines the server runs when this map loads ("sv_gravity 200"), one
   // per cvar name -- per-map game settings.
   std::vector<std::string> attached_cvars;
+
+  // The map's material table. A brush FACE holds a uint16_t index into this, not
+  // a path -- faces are the most numerous thing in a map, and geometry_def.md
+  // ss4 has the three ways a per-face string compounds. Entry 0 is the map
+  // default and is always present; an empty path means untextured, which is what
+  // every brush written before faces existed resolves to.
+  //
+  // Entries are never removed mid-session -- an index is only meaningful against
+  // the table it was minted from, and undo restores whole geometry values that
+  // still hold those indices. save_map is what drops the unreferenced ones and
+  // remaps in one deterministic pass.
+  std::vector<std::string> materials{std::string{}};
+
+  // The index this material path sits at, appending it if it is new.
+  uint16_t material_index_for(const std::string &path)
+  {
+    for (size_t i = 0; i < materials.size(); ++i)
+      if (materials[i] == path)
+        return (uint16_t)i;
+
+    if (materials.size() > UINT16_MAX)
+    {
+      log_error("map: material table is full ({} entries) — \"{}\" falls back to "
+                "the map default",
+                materials.size(), path);
+      return 0;
+    }
+
+    materials.push_back(path);
+    return (uint16_t)(materials.size() - 1);
+  }
 
 
   // Populated by bake_map(). Loaded from a .navmesh sidecar alongside the map file.
@@ -340,10 +373,9 @@ aabb_bounds_t compute_object_bounds(const map_t &map, entity_uid_t uid);
 
 // Euler-degree orientation of whichever object holds `uid`. Empty (and nothing
 // written) for the objects that have none, which is the same decision
-// map_geometry.hpp records: a box, a displacement and a brush are axis-aligned
-// BY DEFINITION, so an orientation on one would be written and never read —
-// exactly the lie the `orientation` field on box_geometry_t was deleted for.
-// A static mesh and every entity do have one.
+// map_geometry.hpp records: a brush carries its rotation in its own points, so an
+// orientation on one would be written and never read. A static mesh and every
+// entity do have one.
 [[nodiscard]] std::optional<linalg::vec3> try_get_object_orientation(const map_t &map,
                                                                      entity_uid_t uid);
 [[nodiscard]] bool try_set_object_orientation(map_t &map, entity_uid_t uid,

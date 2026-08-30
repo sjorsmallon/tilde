@@ -26,12 +26,10 @@ private:
 
   std::optional<linalg::vec3> start;
   std::optional<linalg::vec3> end;
-  std::vector<linalg::vec3>   path;
+  std::vector<linalg::vec3> path;
   
-  viewport_state_t             viewport; // cached from on_update for mouse picking
+  viewport_state_t viewport; 
 
-  // Intersects the current mouse ray against navmesh polygon triangles.
-  // Returns true and sets out_hit to the closest hit point.
   bool pick_navmesh_point(const navmesh_t &nav, linalg::vec3 &out_hit) const;
 
   void recompute_path(const navmesh_t &nav);

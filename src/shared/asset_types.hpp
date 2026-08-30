@@ -11,6 +11,7 @@
 // for the two it borrows from the domain.
 
 #include "aabb.hpp"
+#include "array.hpp"
 #include "asset_package.hpp"
 #include "skeleton.hpp"
 #include "span.hpp"
@@ -62,6 +63,16 @@ struct material_t
   std::string name;
   std::string texture_path;
   asset_handle_t<texture_asset_t> texture;
+
+  // The layers ABOVE the base, for a vertex-blended surface (geometry_def.md
+  // Track E). Sized by BLEND_LAYER_COUNT - 1 rather than spelled as one more
+  // member, so a third layer is a constant change here and nowhere else. Empty
+  // paths are the whole "this material does not blend" test; only the generated
+  // brush mesh fills them, since blending is authored per FACE.
+  Array<std::string, BLEND_LAYER_COUNT - 1> blend_texture_path;
+  Array<asset_handle_t<texture_asset_t>, BLEND_LAYER_COUNT - 1> blend_texture;
+
+  bool blends() const { return !blend_texture_path.data[0].empty(); }
 };
 
 struct submesh_t
@@ -84,8 +95,15 @@ struct mesh_asset_t
   std::vector<vertex_skin_t> skin;
   asset_handle_t<skeleton_t> skeleton;
 
+  // Blend weights, PARALLEL to `vertices` for the same reason `skin` is (see
+  // vertex.hpp). Empty means nothing on this mesh blends -- that is the whole
+  // test. Non-empty sizes with `vertices` even where only some submeshes blend,
+  // because a parallel array that covers only part of a buffer is not one.
+  std::vector<vertex_blend_t> blend;
+
   bool has_materials() const { return !submeshes.empty(); }
   bool is_skinned() const { return !skin.empty(); }
+  bool is_blended() const { return !blend.empty(); }
 };
 
 // A sound asset is its PATH, not its samples, and that is the whole design.

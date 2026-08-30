@@ -24,7 +24,7 @@ void Sculpting_Tool::on_disable(editor_context_t &ctx)
 }
 
 // Push the finished face-drag as one transaction. Both regimes are sculptable —
-// box brushes and displacements through their own extents, trigger volumes
+// box brushes through their own extents, trigger volumes
 // through their box_volume_t — so this commits whichever flavor was captured.
 void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
 {
@@ -39,7 +39,7 @@ void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
       !ctx.transaction_system)
     return;
 
-  transaction_builder_t builder;
+  transaction_t transaction;
 
   if (geometry_snapshot)
   {
@@ -51,7 +51,7 @@ void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
                 dragging_uid);
       return;
     }
-    builder.add_geometry_modified(dragging_uid, *geometry_snapshot, entry->value);
+    transaction.add_geometry_modified(dragging_uid, *geometry_snapshot, entry->value);
   }
   else if (entity_snapshot)
   {
@@ -63,7 +63,7 @@ void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
                 dragging_uid);
       return;
     }
-    builder.add_modified_from_diff(dragging_uid, entity_snapshot,
+    transaction.add_modified_from_diff(dragging_uid, entity_snapshot,
                                    entry->entity.get());
   }
   else
@@ -71,7 +71,7 @@ void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
     return;
   }
 
-  ctx.transaction_system->push(builder.take());
+  ctx.transaction_system->push(std::move(transaction));
 }
 
 void Sculpting_Tool::on_update(editor_context_t &ctx,

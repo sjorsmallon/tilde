@@ -110,19 +110,21 @@ static Bounding_Volume_Hierarchy empty_world()
 // A floor whose top face is y = 0.
 static Bounding_Volume_Hierarchy floor_world()
 {
-  shared::box_geometry_t box;
-  box.position = vec3{0.f, -64.f, 0.f};
-  box.half_extents = vec3{2048.f, 64.f, 2048.f};
+  const shared::geometry_value_t geometry =
+      shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
 
-  const shared::geometry_value_t geometry = box;
+  std::vector<BVH_Input> inputs;
+  for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, 1))
+  {
+    BVH_Input input;
+    input.aabb = piece.bounds;
+    input.id = {Collision_Id::Type::Static_Geometry, 0};
+    input.collision_planes = piece.planes;
+    input.face_polygons = piece.face_polygons;
+    inputs.push_back(std::move(input));
+  }
 
-  BVH_Input input;
-  input.aabb = shared::get_bounds(geometry);
-  input.id = {Collision_Id::Type::Static_Geometry, 0};
-  input.collision_planes = shared::get_collision_planes(geometry);
-  input.face_polygons = shared::get_face_polygons(geometry);
-
-  return build_bvh({input});
+  return build_bvh(inputs);
 }
 
 struct move_result_t

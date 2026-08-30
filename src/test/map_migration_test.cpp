@@ -4,7 +4,8 @@
 // geometry is still written as `entity` blocks with classname aabb_entity /
 // displacement_entity, plus one retired wedge_entity):
 //   1. Legacy geometry entities convert into map.geometry at load, and land in
-//      the geometry list rather than the entity list.
+//      the geometry list rather than the entity list -- a displacement_entity
+//      into a brush with one subdivided face (geometry_def.md Track D).
 //   2. Wedge entities are dropped at load.
 //   3. Saving the converted map and re-loading it is lossless for geometry, and
 //      the saved file no longer contains the legacy form.
@@ -41,13 +42,14 @@ static size_t count_geometry_of_kind(const map_t &m, geometry_kind_t kind)
   return n;
 }
 
-// The box brushes, in map order.
-static std::vector<const box_geometry_t *> get_boxes(const map_t &m)
+// The brushes, in map order. The fixture's legacy aabb_entity blocks convert to
+// these -- a box IS a brush since geometry_def.md Track B.
+static std::vector<const brush_geometry_t *> get_brushes(const map_t &m)
 {
-  std::vector<const box_geometry_t *> out;
+  std::vector<const brush_geometry_t *> out;
   for (const map_geometry_t &g : m.geometry)
-    if (const auto *box = std::get_if<box_geometry_t>(&g.value))
-      out.push_back(box);
+    if (const auto *brush = std::get_if<brush_geometry_t>(&g.value))
+      out.push_back(brush);
   return out;
 }
 
@@ -63,16 +65,23 @@ int main()
     return fail("try_load_map(maps/test) failed");
   map_t &loaded = *loaded_opt;
 
-  const size_t boxes = count_geometry_of_kind(loaded, geometry_kind_t::Box);
-  if (boxes == 0)
-    return fail("conversion: expected at least 1 box brush from the fixture's "
+  const size_t brushes = count_geometry_of_kind(loaded, geometry_kind_t::Brush);
+  if (brushes == 0)
+    return fail("conversion: expected at least 1 brush from the fixture's "
                 "legacy aabb_entity blocks");
 
-  const size_t displacements =
-      count_geometry_of_kind(loaded, geometry_kind_t::Displacement);
-  if (displacements == 0)
+  // A displacement is a brush with one SUBDIVIDED FACE now (geometry_def.md
+  // Track D), so the fixture's displacement_entity converts into the brush list
+  // like everything else -- and what identifies it is the grid it kept.
+  size_t subdivided_faces = 0;
+  for (const brush_geometry_t *brush : get_brushes(loaded))
+    for (const face_surface_t &face : brush->face_surfaces)
+      if (face.subdivision_level > 0)
+        ++subdivided_faces;
+
+  if (subdivided_faces != 1)
     return fail("conversion: expected the fixture's displacement_entity to "
-                "become displacement geometry");
+                "become exactly one subdivided brush face");
 
   // Geometry must NOT have landed in the entity list — that's the whole point.
   for (const auto &e : loaded.entities)
@@ -85,9 +94,14 @@ int main()
 
   // Every converted box must carry the legacy volume's half_extents, not a
   // default — a zeroed or default-sized box means the "volume" blob wasn't read.
-  for (const box_geometry_t *box : get_boxes(loaded))
+  // The extents live in the point set now, so they are read back off the bound.
+  for (const brush_geometry_t *brush : get_brushes(loaded))
   {
-    const auto &h = box->half_extents;
+    if (!brush_is_axis_aligned_box(brush->vertices))
+      return fail("conversion: a converted aabb_entity is not a box-shaped brush");
+
+    const aabb_bounds_t bounds = compute_brush_bounds(brush->vertices);
+    const linalg::vec3  h      = (bounds.max - bounds.min) * 0.5f;
     if (h.x == 0.f && h.y == 0.f && h.z == 0.f)
       return fail("conversion: box brush loaded with zeroed half_extents");
     if (h.x == 1.f && h.y == 1.f && h.z == 1.f)
@@ -95,15 +109,27 @@ int main()
                   "legacy \"volume\" blob was not parsed");
   }
 
-  // The converted displacement's grid must be sized for its subdivision level,
-  // which is the invariant the fixed-size schema array used to guarantee.
-  for (const map_geometry_t &g : loaded.geometry)
+  // A converted grid must be sized for its subdivision level, which is the
+  // invariant the fixed-size schema array used to guarantee -- and the brush it
+  // sits on must still build a displaced polyhedron, which is what says the grid
+  // landed on a QUAD.
+  for (const brush_geometry_t *brush : get_brushes(loaded))
   {
-    const auto *displacement = std::get_if<displacement_geometry_t>(&g.value);
-    if (!displacement) continue;
-    if ((int)displacement->displacements.size() != displacement->vertex_count())
-      return fail("conversion: displacement grid size does not match its "
-                  "subdivision level");
+    for (const face_surface_t &face : brush->face_surfaces)
+    {
+      if (face.subdivision_level <= 0)
+        continue;
+      if (!face_is_subdivided(face))
+        return fail("conversion: a subdivided face's grid does not match its "
+                    "subdivision level");
+      if (face.blend.size() != face.offsets.size())
+        return fail("conversion: a subdivided face's blend array is not sized "
+                    "for its grid");
+    }
+
+    if (!try_build_displaced_polyhedron(*brush))
+      return fail("conversion: a converted brush does not build a displaced "
+                  "polyhedron");
   }
 
   // --- 2. Save & re-load --------------------------------------------------
@@ -121,10 +147,17 @@ int main()
   std::filesystem::remove(out + ".navmesh");
 
   // --- 3. Compare counts --------------------------------------------------
-  if (count_geometry_of_kind(reloaded, geometry_kind_t::Box) != boxes)
-    return fail("roundtrip: box count drift");
-  if (count_geometry_of_kind(reloaded, geometry_kind_t::Displacement) != displacements)
-    return fail("roundtrip: displacement count drift");
+  if (count_geometry_of_kind(reloaded, geometry_kind_t::Brush) != brushes)
+    return fail("roundtrip: brush count drift");
+  {
+    size_t reloaded_subdivided_faces = 0;
+    for (const brush_geometry_t *brush : get_brushes(reloaded))
+      for (const face_surface_t &face : brush->face_surfaces)
+        if (face.subdivision_level > 0)
+          ++reloaded_subdivided_faces;
+    if (reloaded_subdivided_faces != subdivided_faces)
+      return fail("roundtrip: subdivided face count drift");
+  }
   if (reloaded.geometry.size() != loaded.geometry.size())
     return fail("roundtrip: geometry count drift");
   if (reloaded.entities.size() != loaded.entities.size())
@@ -151,8 +184,20 @@ int main()
         saved.find("\"wedge_entity\"") != std::string::npos)
       return fail("roundtrip: saved text still contains legacy geometry "
                   "entity blocks");
-    if (saved.find("\nbox\n{") == std::string::npos)
-      return fail("roundtrip: saved text has no box geometry block");
+    // A box is a brush now (Track B), so "box" is a READ-ONLY legacy keyword:
+    // the writer must never emit one again, or the next load converts forever.
+    if (saved.find("\nbrush\n{") == std::string::npos)
+      return fail("roundtrip: saved text has no brush geometry block");
+    if (saved.find("\nbox\n{") != std::string::npos)
+      return fail("roundtrip: saved text still writes legacy box blocks");
+    // Same for "displacement" (Track D): the kind is gone and the keyword is
+    // read-only, so the grid must have been written as a face sub-block.
+    if (saved.find("\ndisplacement\n{") != std::string::npos)
+      return fail("roundtrip: saved text still writes legacy displacement "
+                  "blocks");
+    if (saved.find("subdivision_level") == std::string::npos)
+      return fail("roundtrip: the converted grid was not written as a face "
+                  "subdivision");
   }
 
   // --- 5. Trigger volume round-trip (the "is save losing it?" check) -----
@@ -300,8 +345,8 @@ int main()
     const std::string canonical = serialize_map_to_string(loaded);
     const map_t from_canonical = parse_map_from_string(canonical);
 
-    if (count_geometry_of_kind(from_canonical, geometry_kind_t::Box) != boxes)
-      return fail("canonical: box count drift through string round-trip");
+    if (count_geometry_of_kind(from_canonical, geometry_kind_t::Brush) != brushes)
+      return fail("canonical: brush count drift through string round-trip");
 
     // Hash must be stable through a full serialize->parse->hash cycle.
     if (compute_map_content_hash(from_canonical) != hash0)
@@ -427,9 +472,81 @@ int main()
       return fail("cvars: a spaced value or a bare name did not survive");
   }
 
-  printf("map_migration_test: OK (%zu boxes, %zu displacements converted from "
+  // --- 9. Per-face surfaces and the material table ------------------------
+  // A brush's faces are written as `face` sub-blocks under its own block -- the
+  // one place the grammar nests -- and the paths they index live in a `materials`
+  // block. Three things have to hold: a brush with no face blocks reads exactly
+  // as it did before they existed, a brush WITH them survives a round trip
+  // bit-exactly, and save drops the table entries nothing names any more.
+  {
+    map_t face_map;
+    face_map.name = "face_roundtrip";
+
+    // Three declared, two used: entry 1 is what the drop-and-remap pass has to
+    // take out, which is also what moves entry 2 down to 1.
+    face_map.materials = {"", "resources/textures/unused_here",
+                          "resources/textures/harsh_bricks"};
+
+    brush_geometry_t brush;
+    brush.vertices = make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+    sync_face_surfaces(brush);
+    if (brush.face_surfaces.size() != 6)
+      return fail("faces: a box brush did not hull into six faces");
+
+    brush.face_surfaces[0].material       = 2;
+    brush.face_surfaces[1].emits_geometry = false;
+    brush.face_surfaces[2].uv.u_scale     = 32.0f;
+    brush.face_surfaces[2].uv.u_shift     = 7.5f;
+    face_map.add_geometry(brush);
+
+    const std::string canonical = serialize_map_to_string(face_map);
+    if (canonical.find("\n  face\n  {") == std::string::npos)
+      return fail("faces: saved text has no nested face block");
+    if (canonical.find("\nmaterials\n{") == std::string::npos)
+      return fail("faces: saved text has no materials block");
+    if (canonical.find("unused_here") != std::string::npos)
+      return fail("faces: save kept a material no face names");
+
+    const map_t reparsed = parse_map_from_string(canonical);
+    if (reparsed.materials.size() != 2 ||
+        reparsed.materials[1] != "resources/textures/harsh_bricks")
+      return fail("faces: the material table did not compact to the two in use");
+    if (reparsed.geometry.size() != 1)
+      return fail("faces: the brush did not survive the round trip");
+
+    const brush_geometry_t &reloaded =
+        std::get<brush_geometry_t>(reparsed.geometry.front().value);
+    if (reloaded.face_surfaces.size() != brush.face_surfaces.size())
+      return fail("faces: a face was lost across the round trip");
+    if (reloaded.face_surfaces[0].material != 1)
+      return fail("faces: the remap did not follow the material it kept");
+    if (reloaded.face_surfaces[1].emits_geometry)
+      return fail("faces: emits_geometry did not survive");
+    if (reloaded.face_surfaces[2].uv.u_scale != 32.0f ||
+        reloaded.face_surfaces[2].uv.u_shift != 7.5f)
+      return fail("faces: the uv channel did not survive bit-exactly");
+
+    if (serialize_map_to_string(reparsed) != canonical)
+      return fail("faces: re-serialized text is not stable");
+
+    // The pre-faces form: no face blocks at all. Every face falls back to the
+    // brush default, which is what makes this format change need no version.
+    brush_geometry_t faceless_brush;
+    faceless_brush.vertices = make_box_brush_vertices({0, 0, 0}, {32, 32, 32});
+    map_t faceless_map;
+    faceless_map.add_geometry(faceless_brush);
+    const map_t faceless_reparsed =
+        parse_map_from_string(serialize_map_to_string(faceless_map));
+    if (faceless_reparsed.geometry.size() != 1)
+      return fail("faces: a brush with no face blocks did not load");
+    if (!std::get<brush_geometry_t>(faceless_reparsed.geometry.front().value)
+             .face_surfaces.empty())
+      return fail("faces: a brush with no face blocks invented some");
+  }
+
+  printf("map_migration_test: OK (%zu brushes, %zu subdivided faces converted from "
          "legacy entity blocks, wedges dropped, trigger round-trip OK, "
          "canonical hash stable, package round-trip OK)\n",
-         boxes, displacements);
+         brushes, subdivided_faces);
   return 0;
 }

@@ -689,22 +689,13 @@ static void pose_all_targets(server_context_t &context)
     const Span<assets::posed_hitbox_t> slice{posed.volumes.data() + next_volume, 1};
     next_volume += 1;
 
-    // A world-axis box centred on the entity's own position. `start == end`
-    // makes posed_hitbox_t::center() the position exactly, and the default
-    // frame is the identity basis -- a Box reads its extents through `frame`,
-    // so leaving it alone is what makes this axis-aligned rather than
-    // accidentally rotated.
-    //
     // The entity's `orientation` is deliberately ignored: turning it into a
     // frame is the obvious next step and it is not free (the editor gizmo, the
     // bounds in map.cpp and this would all have to agree about the euler
     // order), so it waits for a level that actually wants a rotated crate.
-    slice[0]              = assets::posed_hitbox_t{};
-    slice[0].shape        = assets::hitbox_shape_t::Box;
-    slice[0].start        = damageable.position;
-    slice[0].end          = damageable.position;
-    slice[0].half_extents = damageable.hitbox_half_extents;
-    slice[0].region       = shared::hit_region_t::Torso;
+    slice[0] = assets::make_box_hit_volume(damageable.position,
+                                           damageable.hitbox_half_extents,
+                                           shared::hit_region_t::Torso);
 
     posed.targets.push_back(shared::make_hitscan_target(
         damageable.entity_id, Span<const assets::posed_hitbox_t>{slice}));
@@ -974,7 +965,7 @@ static void cancel_reload(entities::Player_Entity &player)
 // is what that comment always meant.
 static void resolve_player_shot(server_context_t &context, int32_t client_slot,
                                 const game::C2S_ClientInput &input,
-                                entities::Player_Entity *player, float yaw, float pitch,
+                                entities::Player_Entity* player, float yaw, float pitch,
                                 uint32_t fire_slot)
 {
   // this tripped me up 15 different times, so here we go again.
@@ -1187,6 +1178,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
                               (was_headshot ? weapon.headshot_multiplier : 1.f);
         info.source_position = eye;
         info.was_headshot    = was_headshot;
+        info.type            = active_weapon->damage_type;
 
         // defer for kill contribution.
         context.outgoing.pending_hits.push_back(
@@ -1213,11 +1205,6 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
           context.world.session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
       if (rocket)
       {
-        // Muzzle is the eye, same as the hitscan origin -- a rocket that
-        // spawns somewhere other than where the crosshair is aimed from is
-        // the same class of bug as a mismatched hitscan origin.
-        // Everything else -- lifetime, damage, radii, the render component --
-        // is a per-type constant and comes from entities.def.
         rocket->position = eye;
         rocket->velocity = direction * context.cvars->game_rocket_speed;
         rocket->owner_id = player->entity_id;
@@ -1230,21 +1217,6 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
     }
     case entities::Fire_Resolution::Self_Impulse:
     {
-      // The one arm whose outcome lands on the SHOOTER, so the one arm the
-      // client runs too -- through this same function, at the same trigger
-      // edge, off the same table row (generalization_def.md §4). A shot's
-      // outcome is somewhere else and can wait a round trip; a shove to your
-      // own velocity cannot.
-      //
-      // Applied AFTER this step's move, like the shot arms above it: the
-      // impulse steers the steps that follow rather than the one the press
-      // opened, which is what both client loops also do.
-      //
-      // Refused quietly while the cooldown runs, and that is not a silent
-      // failure -- an ability on cooldown is a legal outcome, and the client
-      // refused it identically half a round trip ago. The gates at the top of
-      // this function cannot express it: they are the weapon's clocks, and this
-      // row's are all zero by static_assert.
       (void)shared::try_apply_self_impulse(weapon, direction, player->movement,
                                            player->velocity);
       break;

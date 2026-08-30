@@ -30,6 +30,7 @@
 #include <vector>
 #include <vulkan/vulkan.h> // escape-hatch section only
 
+#include "../shared/array.hpp"
 #include "../shared/asset.hpp"
 #include "../shared/color.hpp"
 #include "../shared/linalg.hpp"
@@ -88,7 +89,12 @@ enum class shader_t : uint8_t
   // Lit, plus a world-space grid ruled onto the surface. Only meaningful on a
   // mesh whose UV is a world-axis projection over the 128-unit cell -- the
   // generated brush mesh -- since the grid is read straight out of fragUV.
-  grid
+  grid,
+  // Lit, composing BLEND_LAYER_COUNT material layers by the mesh's per-vertex
+  // weights (vertex.hpp). Requires vertex_layout_t::blended -- the weights come
+  // off a vertex binding, so a material asking for this on a mesh that carries
+  // none is a mismatch the pipeline factory refuses loudly.
+  blend
 };
 
 enum class blend_mode_t : uint8_t
@@ -115,7 +121,10 @@ enum class fill_mode_t : uint8_t
 enum class vertex_layout_t : uint8_t
 {
   static_mesh,
-  skinned
+  skinned,
+  // Carries a second binding of per-vertex blend weights. Fixed per MESH from
+  // mesh_asset_t::is_blended(), like skinned is from is_skinned().
+  blended
 };
 
 // Everything that decides WHICH pipeline a material renders through. Resolved
@@ -144,6 +153,12 @@ struct material_parameters_t
 {
   texture_handle_t base_color_texture;
   linalg::vec4f    base_color = {1, 1, 1, 1};
+
+  // Layer 0 is base_color_texture; these are the layers above it, read only by
+  // shader_t::blend. Sized by the layer count rather than spelled as one more
+  // member, so a third layer is a constant change (vertex.hpp) and a term in
+  // the shader.
+  Array<texture_handle_t, BLEND_LAYER_COUNT - 1> blend_textures;
 };
 
 struct material_t
@@ -171,7 +186,7 @@ void update_material(material_handle_t handle, const material_parameters_t &para
 // slot 0, so "has materials" stops being a branch anywhere downstream.
 mesh_handle_t register_mesh(const assets::mesh_asset_t &mesh);
 
-// Re-upload changed geometry (displacement sculpting). The upload happens NOW,
+// Re-upload changed geometry (sculpting a face grid). The upload happens NOW,
 // not lazily at the next draw.
 void update_mesh(mesh_handle_t handle, const assets::mesh_asset_t &mesh);
 
@@ -245,6 +260,10 @@ struct debug_face_style_t
   // precisely to see which plane you hit -- which is why it is per polygon and
   // not a property of the overlay pipeline.
   bool rim = false;
+
+  // As debug_line_t::depth_bias. A highlight coplanar with the surface it
+  // highlights loses the depth test against it at 0, and is never seen.
+  float depth_bias = 0.0f;
 };
 
 struct debug_polygon_t

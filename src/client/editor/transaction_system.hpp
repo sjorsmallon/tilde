@@ -55,7 +55,7 @@ struct diff_entity_modified_t
 // no reflection at all, where the entity flavor needs both to know where the
 // fields are.
 //
-// The cost is memory: a sculpted displacement's snapshot is its whole vertex
+// The cost is memory: a sculpted face's snapshot is its whole offset
 // grid. That's the right trade for an editor — the tools already captured
 // whole-grid start states by hand for exactly this reason.
 
@@ -95,12 +95,6 @@ using edit_diff_t =
                  diff_geometry_created_t, diff_geometry_removed_t,
                  diff_geometry_modified_t, diff_map_cvars_t>;
 
-struct transaction_t
-{
-  std::vector<edit_diff_t> diffs;
-  bool empty() const { return diffs.empty(); }
-};
-
 // --- Free helpers ---
 
 template <class... Ts> struct overloaded : Ts...
@@ -133,11 +127,17 @@ restore_entity(const entity_snapshot_t &snapshot)
   return std::shared_ptr<entities::Entity>(copy, &entities::destroy_entity);
 }
 
-// --- transaction_builder_t ---
+// --- transaction_t ---
+//
+// One undo entry, accumulated in place. There is deliberately no separate
+// builder type: sealing is what a builder would buy, and push() takes the
+// transaction by value into a private stack, so ownership already buys it.
 
-struct transaction_builder_t
+struct transaction_t
 {
   std::vector<edit_diff_t> diffs;
+
+  bool empty() const { return diffs.empty(); }
 
   void add_created(shared::entity_uid_t uid, entity_snapshot_t snapshot)
   {
@@ -211,13 +211,6 @@ struct transaction_builder_t
     if (before == after)
       return;
     diffs.push_back(diff_map_cvars_t{std::move(before), std::move(after)});
-  }
-
-  transaction_t take()
-  {
-    transaction_t txn;
-    txn.diffs = std::move(diffs);
-    return txn;
   }
 };
 

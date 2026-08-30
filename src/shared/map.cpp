@@ -1,6 +1,7 @@
 #include "map.hpp"
 #include "asset.hpp"
 #include "log.hpp"
+#include "map_blocks.hpp"
 #include "player_constants.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -106,128 +107,6 @@ static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
 }
 
 
-
-// ============================================================================
-// The .source file format
-//
-//   map_file := block*
-//   block    := keyword '{' property* '}'
-//   keyword  := 'entity' | 'box' | 'static_mesh' | 'displacement' | 'cvars'
-//   property := string string                  -- key, then value
-//   string   := '"' char* '"'                  -- no escapes; may contain spaces
-//
-// Tokens are whitespace-separated, so '{' and '}' must stand alone. This reader
-// doesn't know the keyword set: it reads EVERY block to its closing brace and
-// hands them all up, and parse_map_from_string reports-and-skips the ones it
-// doesn't recognize. That's what makes a map written by a newer build degrade to
-// "missing some objects" on an older one instead of derailing the whole parse.
-//
-// 'entity' blocks carry a "classname" property naming the entity class (with
-// "worldspawn" as the pseudo-class holding the map's own properties); every
-// other keyword names a geometry kind and is read by parse_geometry(). Geometry
-// used to live in 'entity' blocks too — see convert_legacy_geometry_entity().
-//
-// The 'cvars' block is the map's own settings: each property is a cvar NAME and
-// the value it is set to when the server loads the map (map_t::attached_cvars).
-// A block's properties are a map, so one name appears at most once and the
-// order in the file is not preserved.
-// ============================================================================
-
-struct map_block_t
-{
-  std::string keyword;
-  // For 'entity' blocks this holds "classname" alongside the rest, exactly as
-  // written; the entity path pulls it out itself.
-  std::map<std::string, std::string> properties;
-};
-
-// Strip the surrounding quotes from a token, if it has them.
-std::string unquote(std::string token)
-{
-  if (token.size() >= 2 && token.front() == '"' && token.back() == '"')
-    return token.substr(1, token.size() - 2);
-  return token;
-}
-
-std::vector<map_block_t> parse_map_content(const std::string &content)
-{
-  std::vector<map_block_t> blocks;
-  std::stringstream stream(content);
-  std::string token;
-
-  while (stream >> token)
-  {
-    map_block_t block;
-    block.keyword = token;
-
-    std::string brace;
-    if (!(stream >> brace) || brace != "{")
-    {
-      log_error("map parse: block \"{}\" is not followed by '{{' (got \"{}\") — "
-                "stopping",
-                block.keyword, brace);
-      break;
-    }
-
-    while (stream >> token)
-    {
-      if (token == "}")
-        break;
-
-      std::string key = unquote(token);
-
-      std::string value;
-      if (!(stream >> value))
-      {
-        log_error("map parse: key \"{}\" in block \"{}\" has no value", key,
-                  block.keyword);
-        break;
-      }
-
-      // A quoted value may contain spaces ("0 0 0"), so keep consuming tokens
-      // until the closing quote.
-      if (!value.empty() && value.front() == '"')
-      {
-        while (value.back() != '"' && !stream.eof())
-        {
-          std::string part;
-          stream >> part;
-          value += " " + part;
-        }
-        value = unquote(value);
-      }
-
-      block.properties[key] = value;
-    }
-
-    blocks.push_back(std::move(block));
-  }
-
-  return blocks;
-}
-
-// One block on the way out. Properties are an ordered vector, not a map, so a
-// writer can emit them in declaration order and the file stays git-diffable.
-// (Entity blocks still come out schema-ordered — i.e. alphabetical — until the
-// generator cutover rewrites entity save/load too.)
-struct map_block_out_t
-{
-  std::string keyword;
-  std::vector<std::pair<std::string, std::string>> properties;
-};
-
-std::string serialize_map_blocks(const std::vector<map_block_out_t> &blocks)
-{
-  std::stringstream stream;
-  for (const map_block_out_t &block : blocks)
-  {
-    stream << block.keyword << "\n{\n";
-    for (const auto &[key, value] : block.properties)
-      stream << "  \"" << key << "\" \"" << value << "\"\n";
-    stream << "}\n";
-  }
-  return stream.str();
-}
 
 // ============================================================================
 // One-time conversion of pre-exit geometry entities
@@ -372,11 +251,12 @@ bool convert_legacy_geometry_entity(const std::string &classname,
 
   if (classname == "aabb_entity")
   {
-    box_geometry_t box;
-    box.position = legacy_position();
-    box.half_extents = legacy_half_extents(box.half_extents);
-    legacy_surface(box.surface);
-    out_geometry = std::move(box);
+    // An axis-aligned box is a brush now (geometry_def.md Track B), so the
+    // legacy arm mints one directly rather than converting twice.
+    brush_geometry_t brush =
+        make_box_brush(legacy_position(), legacy_half_extents({1.f, 1.f, 1.f}));
+    legacy_surface(brush.surface);
+    out_geometry = std::move(brush);
     return true;
   }
 
@@ -403,58 +283,67 @@ bool convert_legacy_geometry_entity(const std::string &classname,
 
   if (classname == "displacement_entity")
   {
-    displacement_geometry_t displacement;
-    displacement.position = legacy_position();
-    displacement.half_extents = legacy_half_extents(displacement.half_extents);
+    // A displacement was a BOX with one subdivided face, and that is now what a
+    // brush with one subdivided face is (geometry_def.md Track D). So the arm
+    // mints the box, finds the plane of the face the grid was on, and hands the
+    // grid straight over -- the legacy row-major (i along the face's u tangent,
+    // j along its v) is the order face_grid_base_vertex walks, so no index is
+    // remapped and no vertex is resampled.
+    const linalg::vec3 position     = legacy_position();
+    const linalg::vec3 half_extents = legacy_half_extents({1.f, 1.f, 1.f});
 
-    if (const std::string *active_face = property("active_face"))
+    box_face_t active_face = box_face_t::Invalid;
+    if (const std::string *raw = property("active_face"))
     {
       try
       {
-        displacement.active_face = (box_face_t)std::stol(*active_face);
+        const int32_t parsed = (int32_t)std::stol(*raw);
+        if (parsed < 0 || parsed >= (int32_t)box_face_count)
+          log_error("map conversion: legacy active_face {} is not a box face", parsed);
+        else
+          active_face = (box_face_t)parsed;
       }
       catch (const std::exception &)
       {
-        log_error("map conversion: legacy active_face \"{}\" is not an int",
-                  *active_face);
+        log_error("map conversion: legacy active_face \"{}\" is not an int", *raw);
       }
     }
 
-    if (const std::string *subdivision = property("subdivision_level"))
+    int32_t subdivision_level = 4;
+    if (const std::string *raw = property("subdivision_level"))
     {
       try
       {
-        displacement.subdivision_level = (int32_t)std::stol(*subdivision);
+        subdivision_level = (int32_t)std::stol(*raw);
       }
       catch (const std::exception &)
       {
-        log_error("map conversion: legacy subdivision_level \"{}\" is not an int",
-                  *subdivision);
+        log_error("map conversion: legacy subdivision_level \"{}\" is not an int", *raw);
       }
     }
+    if (subdivision_level < 0)
+    {
+      log_error("map conversion: legacy subdivision_level {} is negative — flat",
+                subdivision_level);
+      subdivision_level = 0;
+    }
 
-    // The legacy array was a flat float list ("<float_count> f f f ..."), three
-    // floats per vertex; the value type stores one vec3 per vertex.
-    displacement.displacements.assign((size_t)displacement.vertex_count(),
-                                      linalg::vec3{0, 0, 0});
+    // The legacy array was "<float_count> f f f ...", three floats per vertex.
+    std::vector<linalg::vec3> grid;
     if (const std::string *raw = property("displacements"))
     {
       std::istringstream stream(*raw);
       size_t announced_float_count = 0;
       if (stream >> announced_float_count)
       {
-        std::vector<linalg::vec3> parsed;
         linalg::vec3 value;
         while (stream >> value.x >> value.y >> value.z)
-          parsed.push_back(value);
+          grid.push_back(value);
 
-        if (parsed.size() * 3 != announced_float_count)
+        if (grid.size() * 3 != announced_float_count)
           log_error("map conversion: legacy displacements announced {} floats, "
                     "read {} vertices ({} floats)",
-                    announced_float_count, parsed.size(), parsed.size() * 3);
-
-        parsed.resize((size_t)displacement.vertex_count(), linalg::vec3{0, 0, 0});
-        displacement.displacements = std::move(parsed);
+                    announced_float_count, grid.size(), grid.size() * 3);
       }
       else
       {
@@ -463,8 +352,37 @@ bool convert_legacy_geometry_entity(const std::string &classname,
       }
     }
 
-    legacy_surface(displacement.surface);
-    out_geometry = std::move(displacement);
+    brush_geometry_t brush = make_box_brush(position, half_extents);
+    legacy_surface(brush.surface);
+
+    if (active_face == box_face_t::Invalid)
+    {
+      // A displacement that never had a face was a box, and converts to one.
+      out_geometry = std::move(brush);
+      return true;
+    }
+
+    const linalg::vec3 normal = get_box_face_normal(active_face);
+    Plane plane;
+    plane.normal = normal;
+    plane.point  = position + linalg::vec3{normal.x * half_extents.x,
+                                           normal.y * half_extents.y,
+                                           normal.z * half_extents.z};
+
+    face_surface_t &face = face_surface_for(brush, plane);
+    resize_face_grid(face, subdivision_level);
+
+    const size_t expected = face.offsets.size();
+    if (grid.size() != expected)
+    {
+      log_error("map conversion: legacy displacement grid holds {} vertices, "
+                "subdivision {} wants {} — padding with flat",
+                grid.size(), subdivision_level, expected);
+      grid.resize(expected, linalg::vec3{0, 0, 0});
+    }
+    face.offsets = std::move(grid);
+
+    out_geometry = std::move(brush);
     return true;
   }
 
@@ -858,7 +776,7 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
 std::vector<Plane> compute_entity_collision_planes(const entities::Entity *entity)
 {
   // Entities are not collision geometry — that's the map's geometry list now
-  // (see get_collision_planes in map_geometry.hpp). What's left here serves the
+  // (see get_collision_pieces in map_geometry.hpp). What's left here serves the
   // callers that want an entity's shape for overlap tests: a box volume if it
   // has one (trigger volumes), otherwise its picking bounds.
   if (const entities::Box_Volume *volume = entities::get_box_volume(entity))
@@ -910,19 +828,6 @@ std::optional<aabb_t> try_get_object_box(const map_t &map, entity_uid_t uid)
   {
     switch (get_kind(entry->value))
     {
-    case geometry_kind_t::Box:
-    {
-      const box_geometry_t &box = std::get<box_geometry_t>(entry->value);
-      return aabb_t{box.position, box.half_extents};
-    }
-
-    case geometry_kind_t::Displacement:
-    {
-      const displacement_geometry_t &displacement =
-          std::get<displacement_geometry_t>(entry->value);
-      return aabb_t{displacement.position, displacement.half_extents};
-    }
-
     case geometry_kind_t::Static_Mesh:
       return std::nullopt; // sized by its mesh asset
 
@@ -954,23 +859,6 @@ bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box)
   {
     switch (get_kind(entry->value))
     {
-    case geometry_kind_t::Box:
-    {
-      box_geometry_t &box_geometry = std::get<box_geometry_t>(entry->value);
-      box_geometry.position = center;
-      box_geometry.half_extents = half_extents;
-      return true;
-    }
-
-    case geometry_kind_t::Displacement:
-    {
-      displacement_geometry_t &displacement =
-          std::get<displacement_geometry_t>(entry->value);
-      displacement.position = center;
-      displacement.half_extents = half_extents;
-      return true;
-    }
-
     case geometry_kind_t::Static_Mesh:
       return false;
 
@@ -997,6 +885,11 @@ bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box)
                   center.y + (vertex.y - old_center.y) * scale.y,
                   center.z + (vertex.z - old_center.z) * scale.z};
       }
+
+      // A non-uniform scale ROTATES every face that is not axis-aligned, so
+      // unlike a translation there is no key rewrite to do by hand -- re-key
+      // against the hull the scale produced.
+      sync_face_surfaces(brush);
       return true;
     }
     }
@@ -1136,6 +1029,80 @@ std::string make_cvar_line(std::string_view name, std::string_view value)
   return std::string(name) + " " + std::string(value);
 }
 
+namespace
+{
+
+std::optional<uint32_t> try_material_index_from_text(const std::string &text)
+{
+  if (text.empty())
+    return std::nullopt;
+
+  uint32_t value = 0;
+  for (const char character : text)
+  {
+    if (character < '0' || character > '9')
+      return std::nullopt;
+    value = value * 10 + (uint32_t)(character - '0');
+    if (value > UINT16_MAX)
+      return std::nullopt;
+  }
+  return value;
+}
+
+// Which entries of `materials` a brush face actually names, and where each one
+// lands once the unreferenced ones are dropped. Entry 0 is the map default and
+// is always kept, so a map with no textured face still writes a one-entry table
+// and every index in it stays valid.
+struct material_remap_t
+{
+  std::vector<std::string> kept;
+  std::vector<uint16_t> old_to_new;
+};
+
+material_remap_t build_material_remap(const map_t &map)
+{
+  std::vector<bool> referenced(map.materials.size(), false);
+  if (!referenced.empty())
+    referenced[0] = true;
+
+  for (const map_geometry_t &entry : map.geometry)
+  {
+    const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value);
+    if (!brush)
+      continue;
+
+    for (const face_surface_t &face : brush->face_surfaces)
+    {
+      // Every LAYER's material counts as a reference, not just the base one:
+      // an entry named only by a blend layer that got dropped here would
+      // silently retarget that layer at the next save.
+      for (int layer = 0; layer < BLEND_LAYER_COUNT; ++layer)
+      {
+        const uint16_t material = face_layer_material(face, layer);
+        if (material < referenced.size())
+          referenced[material] = true;
+      }
+    }
+  }
+
+  material_remap_t remap;
+  remap.old_to_new.assign(map.materials.size(), 0);
+  for (size_t i = 0; i < map.materials.size(); ++i)
+  {
+    if (!referenced[i])
+      continue;
+    remap.old_to_new[i] = (uint16_t)remap.kept.size();
+    remap.kept.push_back(map.materials[i]);
+  }
+
+  if (remap.kept.empty())
+    remap.kept.emplace_back();
+
+  return remap;
+}
+
+} // namespace
+
 map_t parse_map_from_string(const std::string &content)
 {
   const std::vector<map_block_t> blocks = parse_map_content(content);
@@ -1174,11 +1141,34 @@ map_t parse_map_from_string(const std::string &content)
       continue;
     }
 
+    // --- the material table brush faces index into ---
+    //
+    // Keyed by INDEX rather than written as a list, because a block's properties
+    // are a map and "10" sorts before "2": the index has to be said, not implied
+    // by position. A gap reads as the map default rather than shifting every
+    // entry after it, which is the failure that would silently retexture a map.
+    if (block.keyword == "materials")
+    {
+      for (const auto &[key, path] : block.properties)
+      {
+        const std::optional<uint32_t> index = try_material_index_from_text(key);
+        if (!index)
+        {
+          log_error("map parse: material key \"{}\" is not an index — entry skipped", key);
+          continue;
+        }
+        if (out_map.materials.size() <= *index)
+          out_map.materials.resize(*index + 1);
+        out_map.materials[*index] = path;
+      }
+      continue;
+    }
+
     // --- geometry blocks ---
     if (block.keyword != "entity")
     {
       geometry_value_t geometry;
-      if (!parse_geometry(block.keyword, block.properties, geometry))
+      if (!parse_geometry(block.keyword, block.properties, block.children, geometry))
       {
         log_error("map parse: unknown block keyword \"{}\" — block skipped",
                   block.keyword);
@@ -1225,7 +1215,7 @@ map_t parse_map_from_string(const std::string &content)
     }
 
     // Wedges were retired before the geometry exit and never came back — the
-    // geometry kinds are box / static mesh / displacement. Drop them loudly;
+    // geometry kinds are brush / static mesh. Drop them loudly;
     // they are real data being discarded.
     if (classname == "wedge_entity")
     {
@@ -1303,12 +1293,27 @@ std::string serialize_map_to_string(const map_t &map)
       blocks.push_back(std::move(block));
   }
 
+  // The material table, minus anything no face names any more. Dropping happens
+  // HERE and only here: an index is only meaningful against the table it was
+  // minted from, so compacting mid-session would invalidate every undo snapshot
+  // holding one.
+  const material_remap_t material_remap = build_material_remap(map);
+  if (material_remap.kept.size() > 1 || !material_remap.kept[0].empty())
+  {
+    map_block_out_t block;
+    block.keyword = "materials";
+    for (size_t i = 0; i < material_remap.kept.size(); ++i)
+      block.properties.emplace_back(std::to_string(i), material_remap.kept[i]);
+    blocks.push_back(std::move(block));
+  }
+
   // Geometry first, so a level's structure reads before its props.
   for (const map_geometry_t &entry : map.geometry)
   {
     map_block_out_t block;
     block.properties.emplace_back("_uid", std::to_string(entry.uid));
-    serialize_geometry(entry.value, block.keyword, block.properties);
+    serialize_geometry(entry.value, material_remap.old_to_new, block.keyword,
+                       block.properties, block.children);
     blocks.push_back(std::move(block));
   }
 

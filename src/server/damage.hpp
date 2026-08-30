@@ -3,7 +3,7 @@
 #include "../shared/linalg.hpp"
 #include "../shared/entity_uid.hpp"
 #include "../shared/span.hpp"
-// damage_type_t / damage_info_t. They live in their own header because the
+// damage_info_t. It lives in its own header because the
 // context holds a list of them -- see damage_types.hpp.
 #include "damage_types.hpp"
 #include "server_context.hpp"

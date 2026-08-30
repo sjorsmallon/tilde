@@ -2,6 +2,7 @@
 #include "client/editor/transaction_system.hpp"
 #include "shared/map.hpp"
 #include <cassert>
+#include <cmath>
 #include <iostream>
 
 using namespace client;
@@ -20,12 +21,9 @@ static std::shared_ptr<entities::Trigger_Volume_Entity> make_test_entity(float x
   return entity;
 }
 
-static box_geometry_t make_test_box(float x)
+static brush_geometry_t make_test_box(float x)
 {
-  box_geometry_t box;
-  box.position = {x, 0, 0};
-  box.half_extents = {1, 1, 1};
-  return box;
+  return make_box_brush({x, 0, 0}, {1, 1, 1});
 }
 
 void test_add_remove()
@@ -42,9 +40,9 @@ void test_add_remove()
   entity_uid_t added_uid = map.add_entity(ent);
 
   {
-    transaction_builder_t builder;
-    builder.add_created(added_uid, snapshot_entity(ent.get()));
-    ts.push(builder.take());
+    transaction_t transaction;
+    transaction.add_created(added_uid, snapshot_entity(ent.get()));
+    ts.push(std::move(transaction));
   }
 
   assert(map.entities.size() == 1);
@@ -67,10 +65,10 @@ void test_add_remove()
   // 4. Remove entity and record diff
   {
     auto *entry = map.find_by_uid(added_uid);
-    transaction_builder_t builder;
-    builder.add_removed(added_uid, snapshot_entity(entry->entity.get()));
+    transaction_t transaction;
+    transaction.add_removed(added_uid, snapshot_entity(entry->entity.get()));
     map.remove_entity(added_uid);
-    ts.push(builder.take());
+    ts.push(std::move(transaction));
   }
 
   assert(map.entities.empty());
@@ -105,9 +103,9 @@ void test_modify()
 
     entry->entity->position = {10.0f, 0, 0};
 
-    transaction_builder_t builder;
-    builder.add_modified_from_diff(uid, before, entry->entity.get());
-    ts.push(builder.take());
+    transaction_t transaction;
+    transaction.add_modified_from_diff(uid, before, entry->entity.get());
+    ts.push(std::move(transaction));
   }
 
   assert(map.find_by_uid(uid)->entity->position.x == 10.0f);
@@ -140,11 +138,11 @@ void test_modify_thresholds()
 
   // No change at all -> no transaction.
   {
-    transaction_builder_t builder;
-    builder.add_modified_from_diff(uid, snapshot_entity(entry->entity.get()),
+    transaction_t transaction;
+    transaction.add_modified_from_diff(uid, snapshot_entity(entry->entity.get()),
                                    entry->entity.get());
-    assert(builder.diffs.empty());
-    ts.push(builder.take());
+    assert(transaction.diffs.empty());
+    ts.push(std::move(transaction));
   }
   assert(!ts.can_undo());
 
@@ -154,10 +152,10 @@ void test_modify_thresholds()
     entity_snapshot_t before = snapshot_entity(entry->entity.get());
     entry->entity->position = {tiny, 0, 0};
 
-    transaction_builder_t builder;
-    builder.add_modified_from_diff(uid, before, entry->entity.get());
-    assert(builder.diffs.size() == 1);
-    ts.push(builder.take());
+    transaction_t transaction;
+    transaction.add_modified_from_diff(uid, before, entry->entity.get());
+    assert(transaction.diffs.size() == 1);
+    ts.push(std::move(transaction));
   }
   assert(ts.can_undo());
 
@@ -187,10 +185,10 @@ void test_modify_nested_field()
   trigger->volume.half_extents = {8.f, 9.f, 10.f};
 
   {
-    transaction_builder_t builder;
-    builder.add_modified_from_diff(uid, before, entry->entity.get());
-    assert(builder.diffs.size() == 1);
-    ts.push(builder.take());
+    transaction_t transaction;
+    transaction.add_modified_from_diff(uid, before, entry->entity.get());
+    assert(transaction.diffs.size() == 1);
+    ts.push(std::move(transaction));
   }
 
   ts.undo(map);
@@ -220,10 +218,10 @@ void test_snapshot_is_exact()
   entity_uid_t uid = map.add_entity(ent);
 
   {
-    transaction_builder_t builder;
-    builder.add_removed(uid, snapshot_entity(map.find_by_uid(uid)->entity.get()));
+    transaction_t transaction;
+    transaction.add_removed(uid, snapshot_entity(map.find_by_uid(uid)->entity.get()));
     map.remove_entity(uid);
-    ts.push(builder.take());
+    ts.push(std::move(transaction));
   }
   assert(map.entities.empty());
 
@@ -266,18 +264,18 @@ void test_batch_delete()
 
   // Batch delete all 3 in one transaction
   {
-    transaction_builder_t builder;
+    transaction_t transaction;
     auto *r1 = map.find_by_uid(uid1);
     auto *r2 = map.find_by_uid(uid2);
     auto *r3 = map.find_by_uid(uid3);
-    builder.add_removed(uid1, snapshot_entity(r1->entity.get()));
-    builder.add_removed(uid2, snapshot_entity(r2->entity.get()));
-    builder.add_removed(uid3, snapshot_entity(r3->entity.get()));
+    transaction.add_removed(uid1, snapshot_entity(r1->entity.get()));
+    transaction.add_removed(uid2, snapshot_entity(r2->entity.get()));
+    transaction.add_removed(uid3, snapshot_entity(r3->entity.get()));
     map.remove_entity(uid1);
     map.remove_entity(uid2);
     map.remove_entity(uid3);
-    assert(builder.diffs.size() == 3);
-    ts.push(builder.take());
+    assert(transaction.diffs.size() == 3);
+    ts.push(std::move(transaction));
   }
 
   assert(map.entities.empty());
@@ -314,12 +312,12 @@ void test_geometry_add_remove()
   assert(map.geometry.empty());
 
   // 1. Add a box brush
-  const box_geometry_t box = make_test_box(4.f);
+  const brush_geometry_t box = make_test_box(4.f);
   entity_uid_t uid = map.add_geometry(box);
   {
-    transaction_builder_t builder;
-    builder.add_geometry_created(uid, box);
-    ts.push(builder.take());
+    transaction_t transaction;
+    transaction.add_geometry_created(uid, box);
+    ts.push(std::move(transaction));
   }
 
   assert(map.geometry.size() == 1);
@@ -337,10 +335,10 @@ void test_geometry_add_remove()
 
   // 3. Remove, then undo — the whole value comes back, same uid
   {
-    transaction_builder_t builder;
-    builder.add_geometry_removed(uid, map.find_geometry_by_uid(uid)->value);
+    transaction_t transaction;
+    transaction.add_geometry_removed(uid, map.find_geometry_by_uid(uid)->value);
     map.remove_geometry(uid);
-    ts.push(builder.take());
+    ts.push(std::move(transaction));
   }
   assert(map.geometry.empty());
 
@@ -363,13 +361,14 @@ void test_geometry_modify()
   entity_uid_t uid = map.add_geometry(make_test_box(0.f));
 
   const geometry_value_t before = map.find_geometry_by_uid(uid)->value;
-  std::get<box_geometry_t>(map.find_geometry_by_uid(uid)->value).position = {10.f, 0, 0};
+  translate_brush(std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value),
+                  {10.f, 0, 0});
 
   {
-    transaction_builder_t builder;
-    builder.add_geometry_modified(uid, before,
+    transaction_t transaction;
+    transaction.add_geometry_modified(uid, before,
                                   map.find_geometry_by_uid(uid)->value);
-    ts.push(builder.take());
+    ts.push(std::move(transaction));
   }
   assert(ts.can_undo());
   assert(get_position(map.find_geometry_by_uid(uid)->value).x == 10.f);
@@ -397,77 +396,90 @@ void test_geometry_modify_thresholds()
 
   // No change at all → no transaction.
   {
-    transaction_builder_t builder;
-    builder.add_geometry_modified(uid, unchanged, unchanged);
-    assert(builder.diffs.empty());
-    ts.push(builder.take());
+    transaction_t transaction;
+    transaction.add_geometry_modified(uid, unchanged, unchanged);
+    assert(transaction.diffs.empty());
+    ts.push(std::move(transaction));
   }
   assert(!ts.can_undo());
 
-  // A change far below what "%.6f" would print → still a real change.
-  const float tiny = 1e-9f;
+  // One ULP on a single vertex: far below what "%.6f" would print, and still a
+  // real change.
   const geometry_value_t before = map.find_geometry_by_uid(uid)->value;
-  std::get<box_geometry_t>(map.find_geometry_by_uid(uid)->value).position = {tiny, 0, 0};
+  const float            original_x =
+      std::get<brush_geometry_t>(before).vertices[0].x;
+  const float nudged_x = std::nextafterf(original_x, original_x + 1.f);
+  assert(nudged_x != original_x);
+  std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value).vertices[0].x =
+      nudged_x;
 
   {
-    transaction_builder_t builder;
-    builder.add_geometry_modified(uid, before,
+    transaction_t transaction;
+    transaction.add_geometry_modified(uid, before,
                                   map.find_geometry_by_uid(uid)->value);
-    assert(builder.diffs.size() == 1);
-    ts.push(builder.take());
+    assert(transaction.diffs.size() == 1);
+    ts.push(std::move(transaction));
   }
   assert(ts.can_undo());
 
   ts.undo(map);
-  assert(get_position(map.find_geometry_by_uid(uid)->value).x == 0.f);
+  assert(std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value)
+             .vertices[0].x == original_x);
   ts.redo(map);
-  assert(get_position(map.find_geometry_by_uid(uid)->value).x == tiny);
+  assert(std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value)
+             .vertices[0].x == nudged_x);
 
   std::cout << "Geometry Modify thresholds Passed." << std::endl;
 }
 
-// A sculpted displacement's snapshot is its whole vertex grid, so verify the
-// grid actually round-trips through undo/redo rather than just the transform.
-void test_geometry_displacement_grid()
+// A sculpted face's snapshot is its whole grid, so verify the grid actually
+// round-trips through undo/redo rather than just the transform. This is what
+// the displacement test became when a displacement became a brush with one
+// subdivided face.
+void test_geometry_face_grid()
 {
-  std::cout << "Testing Geometry Displacement grid..." << std::endl;
+  std::cout << "Testing Geometry face grid..." << std::endl;
   Transaction_System ts;
   map_t map;
 
-  displacement_geometry_t displacement;
-  displacement.half_extents = {64, 16, 64};
-  displacement.init_grid(box_face_t::Plus_Y, 4);
-  entity_uid_t uid = map.add_geometry(displacement);
+  brush_geometry_t brush = make_box_brush({0, 0, 0}, {64, 16, 64});
+  sync_face_surfaces(brush);
+
+  Plane top;
+  top.normal = {0, 1, 0};
+  top.point  = {0, 16, 0};
+  resize_face_grid(face_surface_for(brush, top), 4);
+
+  entity_uid_t uid = map.add_geometry(brush);
 
   const geometry_value_t before = map.find_geometry_by_uid(uid)->value;
 
-  auto &live = std::get<displacement_geometry_t>(map.find_geometry_by_uid(uid)->value);
-  live.set_displacement(2, 2, {0, 32.f, 0});
+  auto &live = std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value);
+  face_surface_for(live, top).offsets[2 * 5 + 2] = {0, 32.f, 0};
 
   {
-    transaction_builder_t builder;
-    builder.add_geometry_modified(uid, before,
+    transaction_t transaction;
+    transaction.add_geometry_modified(uid, before,
                                   map.find_geometry_by_uid(uid)->value);
-    assert(builder.diffs.size() == 1);
-    ts.push(builder.take());
+    assert(transaction.diffs.size() == 1);
+    ts.push(std::move(transaction));
   }
 
   ts.undo(map);
   {
-    const auto &restored =
-        std::get<displacement_geometry_t>(map.find_geometry_by_uid(uid)->value);
-    assert(restored.get_displacement(2, 2).y == 0.f);
-    assert((int)restored.displacements.size() == restored.vertex_count());
+    auto &restored = std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value);
+    const face_surface_t &face = face_surface_for(restored, top);
+    assert(face.offsets[2 * 5 + 2].y == 0.f);
+    assert(face.offsets.size() == (size_t)face_grid_vertex_count(face.subdivision_level));
   }
 
   ts.redo(map);
   {
-    const auto &restored =
-        std::get<displacement_geometry_t>(map.find_geometry_by_uid(uid)->value);
-    assert(restored.get_displacement(2, 2).y == 32.f);
+    auto &restored = std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value);
+    assert(face_surface_for(restored, top).offsets[2 * 5 + 2].y == 32.f);
   }
 
-  std::cout << "Geometry Displacement grid Passed." << std::endl;
+  std::cout << "Geometry face grid Passed." << std::endl;
 }
 
 // A batch delete spanning both regimes is one transaction and one undo. This is
@@ -488,18 +500,18 @@ void test_mixed_batch_delete()
   assert(map.object_count() == 3);
 
   {
-    transaction_builder_t builder;
-    builder.add_geometry_removed(box_uid, map.find_geometry_by_uid(box_uid)->value);
-    builder.add_removed(entity_uid,
+    transaction_t transaction;
+    transaction.add_geometry_removed(box_uid, map.find_geometry_by_uid(box_uid)->value);
+    transaction.add_removed(entity_uid,
                         snapshot_entity(map.find_by_uid(entity_uid)->entity.get()));
-    builder.add_geometry_removed(box2_uid, map.find_geometry_by_uid(box2_uid)->value);
+    transaction.add_geometry_removed(box2_uid, map.find_geometry_by_uid(box2_uid)->value);
 
     assert(map.remove_object(box_uid));
     assert(map.remove_object(entity_uid));
     assert(map.remove_object(box2_uid));
 
-    assert(builder.diffs.size() == 3);
-    ts.push(builder.take());
+    assert(transaction.diffs.size() == 3);
+    ts.push(std::move(transaction));
   }
 
   assert(map.object_count() == 0);
@@ -528,18 +540,18 @@ void test_map_cvars()
 
   // Add.
   {
-    transaction_builder_t builder;
-    builder.add_map_cvars_modified(map.attached_cvars, {"g_gravity 200"});
+    transaction_t transaction;
+    transaction.add_map_cvars_modified(map.attached_cvars, {"g_gravity 200"});
     map.attached_cvars = {"g_gravity 200"};
-    ts.push(builder.take());
+    ts.push(std::move(transaction));
   }
 
   // Edit the value.
   {
-    transaction_builder_t builder;
-    builder.add_map_cvars_modified(map.attached_cvars, {"g_gravity 120"});
+    transaction_t transaction;
+    transaction.add_map_cvars_modified(map.attached_cvars, {"g_gravity 120"});
     map.attached_cvars = {"g_gravity 120"};
-    ts.push(builder.take());
+    ts.push(std::move(transaction));
   }
 
   assert(map.attached_cvars.size() == 1);
@@ -558,9 +570,9 @@ void test_map_cvars()
   // An edit that changes nothing must not push an entry the author has to undo
   // twice -- clicking into a value box and back out is not an edit.
   {
-    transaction_builder_t builder;
-    builder.add_map_cvars_modified(map.attached_cvars, map.attached_cvars);
-    assert(builder.diffs.empty());
+    transaction_t transaction;
+    transaction.add_map_cvars_modified(map.attached_cvars, map.attached_cvars);
+    assert(transaction.diffs.empty());
   }
 
   // The list is independent of the object lists: undoing a cvar edit must not
@@ -568,10 +580,10 @@ void test_map_cvars()
   {
     const entity_uid_t box_uid = map.add_geometry(make_test_box(1.f));
 
-    transaction_builder_t builder;
-    builder.add_map_cvars_modified(map.attached_cvars, {});
+    transaction_t transaction;
+    transaction.add_map_cvars_modified(map.attached_cvars, {});
     map.attached_cvars = {};
-    ts.push(builder.take());
+    ts.push(std::move(transaction));
 
     ts.undo(map);
     assert(map.attached_cvars.size() == 1);
@@ -592,7 +604,7 @@ int main()
   test_geometry_add_remove();
   test_geometry_modify();
   test_geometry_modify_thresholds();
-  test_geometry_displacement_grid();
+  test_geometry_face_grid();
   test_mixed_batch_delete();
   test_map_cvars();
   std::cout << "All Transaction Logic Tests Passed." << std::endl;

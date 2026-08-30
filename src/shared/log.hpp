@@ -5,8 +5,10 @@
 #include <source_location>
 #include <string>
 #include <string_view>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #ifdef _WIN32
 #include <crtdbg.h> // _set_abort_behavior: fatal_error must not open a dialog
 #endif
@@ -75,6 +77,25 @@ constexpr std::string_view file_basename(std::string_view path)
              : path.substr(last_separator + 1);
 }
 
+// Local wall-clock time, so a line on the terminal can be told from one left there by an earlier run.
+inline std::string timestamp_now()
+{
+  const std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+  const std::time_t seconds = std::chrono::system_clock::to_time_t(now);
+  const std::chrono::milliseconds milliseconds =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+
+  std::tm local_time{};
+#ifdef _WIN32
+  localtime_s(&local_time, &seconds);
+#else
+  localtime_r(&seconds, &local_time);
+#endif
+
+  return std::format("{:02}:{:02}:{:02}.{:03}", local_time.tm_hour, local_time.tm_min,
+                     local_time.tm_sec, milliseconds.count());
+}
+
 // --- FIX 2: Cross-platform Demangling ---
 template <typename T>
 std::string demangle_type_name() {
@@ -95,7 +116,8 @@ template <typename... Args>
 void log_terminal_fmt(const std::source_location &loc,
                       std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stdout, "[{}:{}] {}", file_basename(loc.file_name()), loc.line(),
+  std::println(stdout, "[{}] [{}:{}] {}", timestamp_now(),
+               file_basename(loc.file_name()), loc.line(),
                std::format(fmt, std::forward<Args>(args)...));
 }
 
@@ -103,29 +125,33 @@ template <typename... Args>
 void log_dispatch(const std::source_location &loc, const char *name,
                   std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stdout, "[{}:{}] {}", file_basename(loc.file_name()), loc.line(),
+  std::println(stdout, "[{}] [{}:{}] {}", timestamp_now(),
+               file_basename(loc.file_name()), loc.line(),
                std::format(fmt, std::forward<Args>(args)...));
 }
 
 inline void log_dispatch(const std::source_location &loc, const char *name,
                          const char *msg)
 {
-  std::println(stdout, "[{}:{}] {}", file_basename(loc.file_name()), loc.line(), msg);
+  std::println(stdout, "[{}] [{}:{}] {}", timestamp_now(),
+               file_basename(loc.file_name()), loc.line(), msg);
 }
 
 template <typename T>
 void log_dispatch(const std::source_location &loc, const char *name, T &&val)
 {
-  std::println(stdout, "[{}:{}] {}: ({}): {}", file_basename(loc.file_name()), loc.line(),
-               name, demangle_type_name<std::decay_t<T>>(), val);
+  std::println(stdout, "[{}] [{}:{}] {}: ({}): {}", timestamp_now(),
+               file_basename(loc.file_name()), loc.line(), name,
+               demangle_type_name<std::decay_t<T>>(), val);
 }
 
 template <typename... Args>
 void log_error_impl(const std::source_location &loc,
                     std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stderr, "\033[1;31m[ERROR] [{}:{}] {}\033[0m", file_basename(loc.file_name()),
-               loc.line(), std::format(fmt, std::forward<Args>(args)...));
+  std::println(stderr, "\033[1;31m[ERROR] [{}] [{}:{}] {}\033[0m", timestamp_now(),
+               file_basename(loc.file_name()), loc.line(),
+               std::format(fmt, std::forward<Args>(args)...));
 
 #if HAS_STACKTRACE
   std::println(stderr, "Stacktrace:\n{}",
@@ -145,8 +171,9 @@ template <typename... Args>
 [[noreturn]] void fatal_error_impl(const std::source_location &loc,
                                    std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stderr, "\033[1;31m[FATAL] [{}:{}] {}\033[0m", file_basename(loc.file_name()),
-               loc.line(), std::format(fmt, std::forward<Args>(args)...));
+  std::println(stderr, "\033[1;31m[FATAL] [{}] [{}:{}] {}\033[0m", timestamp_now(),
+               file_basename(loc.file_name()), loc.line(),
+               std::format(fmt, std::forward<Args>(args)...));
 
 #if HAS_STACKTRACE
   std::println(stderr, "Stacktrace:\n{}",
@@ -163,8 +190,9 @@ template <typename... Args>
 void log_warning_impl(const std::source_location &loc,
                       std::format_string<Args...> fmt, Args &&...args)
 {
-  std::println(stdout, "\033[1;33m[WARNING] [{}:{}] {}\033[0m", file_basename(loc.file_name()),
-               loc.line(), std::format(fmt, std::forward<Args>(args)...));
+  std::println(stdout, "\033[1;33m[WARNING] [{}] [{}:{}] {}\033[0m", timestamp_now(),
+               file_basename(loc.file_name()), loc.line(),
+               std::format(fmt, std::forward<Args>(args)...));
 }
 
 } // namespace detail

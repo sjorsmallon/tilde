@@ -152,6 +152,15 @@ static void apply_damage_to_physics_body(server_context_t &context,
                       direction * info.knockback_force);
 }
 
+static float damage_scale_against(const entities::Damageable_Entity &damageable,
+                                  entities::Damage_Type type)
+{
+  if (type == entities::Damage_Type::Normal || type == damageable.weakness)
+    return 1.f;
+
+  return 0.f;
+}
+
 // Damageable_Entity path: HP and nothing else. No knockback (it is placed
 // geometry, not a body), no respawn timer, no kill credit -- a crate is not a
 // frag. What a death DOES do is hide the thing, because the alternative is a
@@ -163,9 +172,13 @@ static void apply_damage_to_physics_body(server_context_t &context,
 // disagree about what exists -- and a round reset has nothing to put back. A
 // dead damageable is a damageable with no health, which pose_all_targets
 // already skips and seed_damageable_health puts back at the round boundary.
-static void apply_damage_to_damageable(server_context_t &context,
-                                       const damage_info_t &info,
-                                       entities::Damageable_Entity &damageable)
+//
+// Takes a TOTAL rather than one hit, for the reason the player path above does:
+// the single-hit and batched paths must not disagree about what being destroyed
+// involves. The colour scale is already in that total -- see the batch.
+static void apply_damageable_damage_total(server_context_t &context,
+                                          entities::Damageable_Entity &damageable,
+                                          float total_damage)
 {
   if (damageable.health <= 0)
     return; // already destroyed; same corpse gate the player path has
@@ -174,10 +187,18 @@ static void apply_damage_to_damageable(server_context_t &context,
     return;
 
   const int32_t health_before = damageable.health;
-  damageable.health -= static_cast<int32_t>(info.amount);
+  damageable.health -= static_cast<int32_t>(total_damage);
 
   if (health_before > 0 && damageable.health <= 0)
     damageable.render.visible = false;
+}
+
+static void apply_damage_to_damageable(server_context_t &context,
+                                       const damage_info_t &info,
+                                       entities::Damageable_Entity &damageable)
+{
+  apply_damageable_damage_total(context, damageable,
+                                info.amount * damage_scale_against(damageable, info.type));
 }
 
 void inflict_damage(server_context_t &context, const damage_info_t &info)
@@ -253,15 +274,21 @@ void inflict_damage_batch(server_context_t &context, Span<const pending_hit_t> h
       // It needs none of the REST of the player path — no kill credit, no
       // knockback, no respawn — so this is a sum and one call rather than a
       // second copy of that block.
-      if (session.entity_system.get<entities::Damageable_Entity>(victim_uid))
+      if (entities::Damageable_Entity *damageable =
+              session.entity_system.get<entities::Damageable_Entity>(victim_uid))
       {
-        damage_info_t summed = hits[i].info;
-        summed.amount        = 0.f;
+        // Each hit is weighed against the target's weakness BEFORE it joins the
+        // sum, so a wrong-colour shot contributes nothing rather than diluting
+        // or riding on a right-colour one. This is also why the total goes
+        // straight to the apply rather than back through inflict_damage, which
+        // would scale it a second time.
+        float total_damage = 0.f;
         for (uint32_t j = i; j < hits.size(); ++j)
           if (hits[j].info.victim_uid == victim_uid)
-            summed.amount += hits[j].info.amount;
+            total_damage +=
+                hits[j].info.amount * damage_scale_against(*damageable, hits[j].info.type);
 
-        inflict_damage(context, summed);
+        apply_damageable_damage_total(context, *damageable, total_damage);
         continue;
       }
 

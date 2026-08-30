@@ -113,6 +113,28 @@ if(NOT miniaudio_POPULATED)
     FetchContent_Populate(miniaudio)
 endif()
 
+# 7. tiny-optional (vendored, NOT fetched)
+# Header-only and small (two headers, no build step), so it lives in the tree at
+# src/shared/tiny/ and is included as <tiny/optional.h> -- src/shared is already
+# a PUBLIC include dir on game_shared, so this needs no CMake at all. Same
+# treatment as stb_image.h / stb_truetype.h.
+#
+# If it ever needs to become a real dependency (to track upstream, or because a
+# second consumer wants a version of its own), delete src/shared/tiny/ and
+# uncomment this:
+#
+# FetchContent_Declare(
+#     tiny_optional
+#     GIT_REPOSITORY https://github.com/Sedeniono/tiny-optional.git
+#     GIT_TAG v1.5.3
+# )
+# FetchContent_GetProperties(tiny_optional)
+# if(NOT tiny_optional_POPULATED)
+#     FetchContent_Populate(tiny_optional)
+# endif()
+# The include dir has to be added after game_shared is declared, further down.
+# target_include_directories(game_shared PUBLIC ${tiny_optional_SOURCE_DIR}/include)
+
 # this is to silence a lot of schema warnings.
 if(MSVC)
     add_compile_options(/Zc:preprocessor)
@@ -337,8 +359,16 @@ add_library(game_shared STATIC
     src/shared/collision_detection.cpp
     src/shared/debug_collision.cpp
     src/shared/map.cpp
+    # The .source block grammar, shared by map.cpp (which keywords mean what) and
+    # map_geometry.cpp (the inside of a geometry block, face sub-blocks included).
+    src/shared/map_blocks.hpp
+    src/shared/map_blocks.cpp
     src/shared/map_geometry.cpp
     src/shared/brush.cpp
+    # Convexity is a bake-time property: one brush becomes N convex BVH
+    # primitives sharing an id. See geometry_def.md section 5.
+    src/shared/convex_decomposition.hpp
+    src/shared/convex_decomposition.cpp
     src/shared/map_baker.cpp
     src/shared/pathfinding.cpp
     src/shared/entity_system.cpp
@@ -460,7 +490,7 @@ set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 
-# Two vertex shaders x three fragment shaders is the whole mesh family; the
+# Three vertex shaders x four fragment shaders is the whole mesh family; the
 # pipeline cache combines them with blend/cull/depth/fill. debug.* backs every
 # debug primitive, and ui.* every screen-space quad (glyphs and solid rects
 # alike). Anything under preview/ or pbr/ is compiled at RUNTIME by the shader
@@ -470,7 +500,9 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/debug.frag
     ${SHADER_SRC_DIR}/mesh.vert
     ${SHADER_SRC_DIR}/mesh_skinned.vert
+    ${SHADER_SRC_DIR}/mesh_blend.vert
     ${SHADER_SRC_DIR}/mesh_lit.frag
+    ${SHADER_SRC_DIR}/mesh_blend.frag
     ${SHADER_SRC_DIR}/mesh_unlit.frag
     ${SHADER_SRC_DIR}/mesh_grid.frag
     ${SHADER_SRC_DIR}/particle.comp
@@ -571,7 +603,6 @@ add_library(game_client SHARED
     src/client/editor/tools/sculpting_tool.cpp
     src/client/editor/tools/pathfinding_test_tool.cpp
     src/client/editor/tools/particle_editor_tool.cpp
-    src/client/editor/tools/displacement_tool.cpp
     src/client/editor/tools/animation_tool.cpp
     src/client/editor/tools/brush_tool.cpp
     src/client/editor/entity_inspector.cpp
@@ -583,6 +614,7 @@ add_library(game_client SHARED
     src/client/render_assets.cpp
     src/client/debug_draw_list.cpp
     src/client/hitbox_debug_draw.hpp
+    src/client/entity_hitbox_overlay.cpp
     src/client/renderer.cpp
     src/client/shader_tool_runtime.cpp
     ${SHADER_HEADERS}
@@ -795,6 +827,12 @@ target_link_libraries(asset_test PRIVATE game_shared)
 add_executable(brush_test src/test/brush_test.cpp)
 target_include_directories(brush_test PRIVATE src)
 target_link_libraries(brush_test PRIVATE game_shared)
+
+# 20c. Convex Decomposition Test (every piece convex, union bounds match, a
+# non-decomposable brush fails loudly rather than half-colliding)
+add_executable(convex_decomposition_test src/test/convex_decomposition_test.cpp)
+target_include_directories(convex_decomposition_test PRIVATE src)
+target_link_libraries(convex_decomposition_test PRIVATE game_shared)
 
 # 20. Navmesh Simplification Test
 add_executable(navmesh_test src/test/test_navmesh.cpp)
@@ -1036,6 +1074,7 @@ set(GAME_TESTS
     map_migration_test
     navmesh_test
     brush_test
+    convex_decomposition_test
     cvar_test
     hitscan_test
     model_format_test

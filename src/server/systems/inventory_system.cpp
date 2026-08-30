@@ -17,7 +17,8 @@ namespace server
 // is not reported -- it is what taking a second rifle means.
 [[nodiscard]] static shared::entity_uid_t spawn_weapon_into_slot(shared::game_session_t& session,
                                                                 entities::Player_Entity& player,
-                                                                entities::Weapon weapon)
+                                                                entities::Weapon weapon,
+                                                                entities::Damage_Type damage_type)
 {
   const shared::weapon_definition_t& definition = shared::get_weapon_definition(weapon);
 
@@ -32,9 +33,10 @@ namespace server
     return shared::null_entity_uid;
   }
 
-  weapon_entity->weapon_id = weapon;
-  weapon_entity->ammo      = definition.magazine_size;
-  weapon_entity->owner_uid = player.entity_id;
+  weapon_entity->weapon_id   = weapon;
+  weapon_entity->ammo        = definition.magazine_size;
+  weapon_entity->owner_uid   = player.entity_id;
+  weapon_entity->damage_type = damage_type;
 
   player.inventory.weapons[definition.slot] = weapon_uid;
   return weapon_uid;
@@ -64,22 +66,24 @@ void grant_default_inventory(shared::game_session_t& session, shared::entity_uid
   // anything about placement. Two weapons naming one slot would leave the later
   // one holding it, which is a loadout statement rather than a bug.
   for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
-    (void)spawn_weapon_into_slot(session, *player, (entities::Weapon)index);
+    (void)spawn_weapon_into_slot(session, *player, (entities::Weapon)index,
+                                 entities::Damage_Type::Normal);
 
   // The hand a player comes up in. Named rather than left at the field default
   // so a change to the .def default cannot silently re-arm every spawn.
   player->inventory.active_slot = entities::Inventory_Slot::Melee;
 }
 
-shared::entity_uid_t try_grant_weapon(server_context_t&         context,
+shared::entity_uid_t try_grant_weapon(server_context_t&        context,
                                      entities::Player_Entity& player,
-                                     entities::Weapon         weapon)
+                                     entities::Weapon         weapon,
+                                     entities::Damage_Type    damage_type)
 {
-  const entities::Inventory_Slot slot     = shared::get_weapon_definition(weapon).slot;
+  const entities::Inventory_Slot slot      = shared::get_weapon_definition(weapon).slot;
   const shared::entity_uid_t     displaced = player.inventory.weapons[slot];
 
   const shared::entity_uid_t granted =
-      spawn_weapon_into_slot(context.world.session, player, weapon);
+      spawn_weapon_into_slot(context.world.session, player, weapon, damage_type);
   if (granted == shared::null_entity_uid)
     return shared::null_entity_uid;
 

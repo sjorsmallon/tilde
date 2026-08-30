@@ -9,8 +9,41 @@
 #include "../shared/collision_detection.hpp"
 #include "../shared/editor_grid.hpp"
 #include "../shared/map.hpp" // For map_t ownership
+#include "../../shared/array.hpp"
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
+
+namespace client
+{
+
+// The toolbox, in display order. Row order IS the index into `tools`, the order
+// the buttons are drawn in, and the Ctrl+<digit> that selects a tool -- so
+// adding one is a row in TOOLBOX_ROWS (tool_editor_state.cpp) and nothing else.
+//
+// Ctrl and not a bare digit: the top-row digits belong to whatever tool is
+// active (the placement tool binds 1..9 to its placeable list), and a global
+// shortcut that a tool can shadow is a shortcut nobody can rely on.
+enum class editor_tool_t : uint8_t
+{
+  selection,
+  placement,
+  sculpting,
+  pathfinding,
+  particles,
+  animation,
+  brush
+};
+
+inline constexpr uint32_t EDITOR_TOOL_COUNT = 7;
+
+} // namespace client
+
+template <> struct enum_traits<client::editor_tool_t>
+{
+  static constexpr uint32_t count = client::EDITOR_TOOL_COUNT;
+};
 
 namespace client
 {
@@ -26,9 +59,12 @@ public:
                    renderer::ui_draw_list_t &ui) override;
 
 private:
-  const int no_tool_selected_index = -1;
-  std::vector<std::unique_ptr<Editor_Tool>> tools;
-  int active_tool_index = no_tool_selected_index;
+  Enum_Array<editor_tool_t, std::unique_ptr<Editor_Tool>> tools;
+
+  // Empty until the first switch_tool. Nothing but on_enter leaves it empty,
+  // but every dispatch site has to answer the question anyway, and an optional
+  // is that question rather than a -1 every reader has to remember to check.
+  std::optional<editor_tool_t> active_tool;
 
   // Own state
   shared::map_t map;
@@ -50,7 +86,7 @@ private:
   // Helper to update viewport info from camera
   viewport_state_t transform_viewport_state();
 
-  void switch_tool(int index);
+  void switch_tool(editor_tool_t tool);
   void update_bvh();
 
   Bounding_Volume_Hierarchy bvh;

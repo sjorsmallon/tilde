@@ -15,9 +15,9 @@
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
 #include "../editor/tools/particle_editor_tool.hpp"
-#include "../editor/tools/displacement_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
 #include "../console.hpp"
+#include "../entity_hitbox_overlay.hpp"
 #include "../hud/announcement.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -28,6 +28,7 @@
 #include <SDL_filesystem.h>
 #include <SDL_stdinc.h>
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -41,6 +42,33 @@ namespace client
 // in a hypothetical dedicated/networked client build) — caller should treat
 // that as "server-side reload not available" but otherwise continue.
 bool invoke_server_map_reload_hook(const std::string &map_path);
+
+struct toolbox_row_t
+{
+  editor_tool_t tool;
+  const char   *label;
+};
+
+constexpr Enum_Array<editor_tool_t, toolbox_row_t> TOOLBOX_ROWS = {{
+    {editor_tool_t::selection,   "Select"},
+    {editor_tool_t::placement,   "Place"},
+    {editor_tool_t::sculpting,   "Sculpt"},
+    {editor_tool_t::pathfinding, "Pathfinding"},
+    {editor_tool_t::particles,   "Particles"},
+    {editor_tool_t::animation,   "Animation"},
+    {editor_tool_t::brush,       "Brush"},
+}};
+static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
+
+// Ctrl+1..7 -> a toolbox row. The top-row digits are contiguous, so the digit
+// IS the row index; anything else is not a toolbox shortcut and says so.
+[[nodiscard]] static std::optional<editor_tool_t> try_toolbox_tool_for_key(input::key_t key)
+{
+  const int row = static_cast<int>(key) - static_cast<int>(input::key_t::Num_1);
+  if (row < 0 || row >= static_cast<int>(EDITOR_TOOL_COUNT))
+    return std::nullopt;
+  return static_cast<editor_tool_t>(row);
+}
 
 // Returns the absolute path to the maps/ directory, creating it if needed.
 // Resolved relative to the executable: <exe_dir>/../../maps/ which puts it at
@@ -148,11 +176,10 @@ static void snapshot_on_load(const std::string &full_path)
 // place has nothing to land against.
 static void add_default_floor(shared::map_t &map)
 {
-  shared::box_geometry_t floor;
-  floor.position = {0, editor::DEFAULT_FLOOR_Y, 0};
-  floor.half_extents = {editor::DEFAULT_FLOOR_HALF_W, editor::DEFAULT_FLOOR_HALF_H,
-                        editor::DEFAULT_FLOOR_HALF_W};
-  map.add_geometry(floor);
+  map.add_geometry(shared::make_box_brush(
+      {0, editor::DEFAULT_FLOOR_Y, 0},
+      {editor::DEFAULT_FLOOR_HALF_W, editor::DEFAULT_FLOOR_HALF_H,
+       editor::DEFAULT_FLOOR_HALF_W}));
 }
 
 void Tool_Editor_State::on_enter()
@@ -203,29 +230,28 @@ void Tool_Editor_State::on_enter()
   z_far = 16000.0f;
 
   // Initialize Tools
-  if (tools.empty())
+  if (!tools[editor_tool_t::selection])
   {
-    tools.push_back(std::make_unique<Selection_Tool>());
-    tools.push_back(std::make_unique<Placement_Tool>());
-    tools.push_back(std::make_unique<Sculpting_Tool>());
-    tools.push_back(std::make_unique<Pathfinding_Test_Tool>());
-    tools.push_back(std::make_unique<Particle_Editor_Tool>());
-    tools.push_back(std::make_unique<Displacement_Tool>());
-    tools.push_back(std::make_unique<Animation_Tool>());
-    tools.push_back(std::make_unique<Brush_Tool>());
+    tools[editor_tool_t::selection]   = std::make_unique<Selection_Tool>();
+    tools[editor_tool_t::placement]   = std::make_unique<Placement_Tool>();
+    tools[editor_tool_t::sculpting]   = std::make_unique<Sculpting_Tool>();
+    tools[editor_tool_t::pathfinding] = std::make_unique<Pathfinding_Test_Tool>();
+    tools[editor_tool_t::particles]   = std::make_unique<Particle_Editor_Tool>();
+    tools[editor_tool_t::animation]   = std::make_unique<Animation_Tool>();
+    tools[editor_tool_t::brush]       = std::make_unique<Brush_Tool>();
   }
 
   // Enable first tool
-  switch_tool(0);
+  switch_tool(editor_tool_t::selection);
 
   update_bvh();
 }
 
 void Tool_Editor_State::on_exit()
 {
-  if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
+  if (active_tool)
   {
-    tools[active_tool_index]->on_disable(context);
+    tools[*active_tool]->on_disable(context);
   }
 }
 
@@ -258,9 +284,9 @@ void Tool_Editor_State::snap_to_axis_view(ViewMode mode)
   // The active tool decides what "the thing" is. No tool with an opinion means
   // the world origin at map scale, which is the old behaviour.
   view_focus_t focus;
-  if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
+  if (active_tool)
   {
-    if (std::optional<view_focus_t> tool_focus = tools[active_tool_index]->view_focus())
+    if (std::optional<view_focus_t> tool_focus = tools[*active_tool]->view_focus())
       focus = *tool_focus;
   }
 
@@ -283,17 +309,17 @@ void Tool_Editor_State::snap_to_axis_view(ViewMode mode)
   hud::set_announcement(announcement);
 }
 
-void Tool_Editor_State::switch_tool(int index)
+void Tool_Editor_State::switch_tool(editor_tool_t tool)
 {
-  if (active_tool_index == index)
+  if (active_tool == tool)
     return;
 
-  if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
+  if (active_tool)
   {
-    tools[active_tool_index]->on_disable(context);
+    tools[*active_tool]->on_disable(context);
   }
 
-  active_tool_index = index;
+  active_tool = tool;
 
   // Update context
   context.map = &map;
@@ -304,10 +330,7 @@ void Tool_Editor_State::switch_tool(int index)
   // advanced in update(), and a tool switch is not a new clock. Resetting it
   // made every selection pulse restart mid-fade.
 
-  if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
-  {
-    tools[active_tool_index]->on_enable(context);
-  }
+  tools[*active_tool]->on_enable(context);
 }
 
 viewport_state_t Tool_Editor_State::transform_viewport_state()
@@ -568,9 +591,7 @@ void Tool_Editor_State::update(float dt)
         camera.position.y -= speed;
       }
     }
-    bool tool_captures_kb = active_tool_index >= 0 &&
-                            active_tool_index < (int)tools.size() &&
-                            tools[active_tool_index]->capture_keyboard();
+    bool tool_captures_kb = active_tool && tools[*active_tool]->capture_keyboard();
     if (!tool_captures_kb && input::is_key_down(input::key_t::Q))
     {
       if (!camera.orthographic)
@@ -618,9 +639,9 @@ void Tool_Editor_State::update(float dt)
     viewport.mouse_ray.direction = {0, 1.0f, 0};
   }
 
-  if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
+  if (active_tool)
   {
-    tools[active_tool_index]->on_update(context, viewport, dt);
+    tools[*active_tool]->on_update(context, viewport, dt);
 
     input::mouse_event_t mouse_e;
     mouse_e.button = input::mouse_button_t::Left;
@@ -635,34 +656,47 @@ void Tool_Editor_State::update(float dt)
       if (!input::imgui_wants_mouse())
       {
         tool_processing_mouse = true;
-        tools[active_tool_index]->on_mouse_down(context, mouse_e);
+        tools[*active_tool]->on_mouse_down(context, mouse_e);
       }
     }
     else if (is_lmb_down && was_lmb_down)
     {
       if (tool_processing_mouse)
       {
-        tools[active_tool_index]->on_mouse_drag(context, mouse_e);
+        tools[*active_tool]->on_mouse_drag(context, mouse_e);
       }
     }
     else if (!is_lmb_down && was_lmb_down)
     {
       if (tool_processing_mouse)
       {
-        tools[active_tool_index]->on_mouse_up(context, mouse_e);
+        tools[*active_tool]->on_mouse_up(context, mouse_e);
         tool_processing_mouse = false;
       }
     }
     was_lmb_down = is_lmb_down;
+  }
 
-    // Forward this frame's key-down events to the active tool. The input
-    // system collects these from the SDL event pump, so no scancode polling.
-    if (!input::imgui_wants_text_input())
+  // This frame's key-down events. The input system collects them from the SDL
+  // event pump, so no scancode polling. Ctrl+<digit> is resolved here rather
+  // than in a tool, because switching tools has to work from every tool --
+  // including from none, which is why this sits outside the block above.
+  if (!input::imgui_wants_text_input())
+  {
+    for (const input::key_event_t &key_event : input::frame_key_events())
     {
-      for (const input::key_event_t &key_event : input::frame_key_events())
+      if (key_event.mods.ctrl)
       {
-        tools[active_tool_index]->on_key_down(context, key_event);
+        if (std::optional<editor_tool_t> tool = try_toolbox_tool_for_key(key_event.key))
+        {
+          switch_tool(*tool);
+          hud::set_announcement(TOOLBOX_ROWS[*tool].label);
+          continue;
+        }
       }
+
+      if (active_tool)
+        tools[*active_tool]->on_key_down(context, key_event);
     }
   }
 }
@@ -685,9 +719,10 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   // Everything about the map that is not geometry rides along: a bake
   // simplifies brushes, it does not author a different map.
   result.attached_cvars = src.attached_cvars;
+  result.materials      = src.materials;
 
   // CSG is box-only on both the input and the output side, and stays that way:
-  // the output is a box brush, so subtracting a displacement or a trigger volume
+  // the output is a box brush, so subtracting a trigger volume
   // through here would silently drop its payload (heightmap, action_name, ...).
   for (const auto &entry : src.entities)
   {
@@ -704,17 +739,21 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
 
   for (const shared::map_geometry_t &entry : src.geometry)
   {
-    const auto *box = std::get_if<shared::box_geometry_t>(&entry.value);
-    if (!box)
+    // The CSG pass works in AABBs, so only a brush that IS one can go through
+    // it; anything else passes through untouched rather than being flattened to
+    // its bound.
+    const auto *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
+    if (!brush || !shared::brush_is_axis_aligned_box(brush->vertices))
     {
       result.add_geometry(entry.value);
       continue;
     }
 
+    const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush->vertices);
     shared::aabb_t shape;
-    shape.center = box->position;
-    shape.half_extents = box->half_extents;
-    inputs.push_back({shape, box->surface});
+    shape.center       = (bounds.min + bounds.max) * 0.5f;
+    shape.half_extents = (bounds.max - bounds.min) * 0.5f;
+    inputs.push_back({shape, brush->surface});
   }
 
   // CSG union: each new AABB is clipped against all already-placed ones
@@ -746,11 +785,10 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   // Emit one box brush per piece
   for (const auto &piece : baked)
   {
-    shared::box_geometry_t box;
-    box.position = piece.shape.center;
-    box.half_extents = piece.shape.half_extents;
-    box.surface = piece.surface;
-    result.add_geometry(std::move(box));
+    shared::brush_geometry_t piece_brush =
+        shared::make_box_brush(piece.shape.center, piece.shape.half_extents);
+    piece_brush.surface = piece.surface;
+    result.add_geometry(std::move(piece_brush));
   }
 
   return result;
@@ -1026,25 +1064,18 @@ void Tool_Editor_State::draw_imgui_panels()
 
   ImGui::Begin("Toolbox", nullptr, ImGuiWindowFlags_NoNav);
 
-  if (ImGui::Button("Select"))
-    switch_tool(0);
-  if (ImGui::Button("Place"))
-    switch_tool(1);
-  if (ImGui::Button("Sculpt"))
-    switch_tool(2);
-  if (ImGui::Button("Pathfinding"))
-    switch_tool(3);
-  if (ImGui::Button("Particles"))
-    switch_tool(4);
-  if (ImGui::Button("Displacement"))
-    switch_tool(5);
-  if (ImGui::Button("Animation"))
-    switch_tool(6);
-  if (ImGui::Button("Brush"))
-    switch_tool(7);
+  for (uint32_t row = 0; row < EDITOR_TOOL_COUNT; ++row)
+  {
+    const toolbox_row_t &entry = TOOLBOX_ROWS.values[row];
+    char                 label[64];
+    snprintf(label, sizeof(label), "%s (Ctrl+%u)", entry.label, row + 1);
+    if (ImGui::Button(label))
+      switch_tool(entry.tool);
+  }
 
   ImGui::Separator();
-  ImGui::Text("Active Tool: %d", active_tool_index);
+  ImGui::Text("Active Tool: %s",
+              active_tool ? TOOLBOX_ROWS[*active_tool].label : "none");
 
   ImGui::Separator();
   if (ImGui::Button("play"))
@@ -1076,9 +1107,9 @@ void Tool_Editor_State::draw_imgui_panels()
   ImGui::End();
 
   // Draw Tool UI (e.g. selection rectangle)
-  if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
+  if (active_tool)
   {
-    tools[active_tool_index]->on_draw_ui(context);
+    tools[*active_tool]->on_draw_ui(context);
   }
 
   // Camera position overlay (bottom-right)
@@ -1182,7 +1213,11 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   if (!hide_geometry)
   {
     for (const shared::map_geometry_t &entry : map.geometry)
-      draw_geometry_in_editor(entry.value, scene, entry.uid, draw_entities_solid);
+      draw_geometry_in_editor(entry.value, scene, entry.uid, draw_entities_solid,
+                              map.materials);
+
+    const bool show_hitboxes =
+        state_manager::get_client_context().cvars->debug_show_hitboxes;
 
     for (const auto &entry : map.entities)
     {
@@ -1190,13 +1225,19 @@ void Tool_Editor_State::build_frame(float delta_seconds,
         continue;
       draw_entity_in_editor(entry.entity.get(), scene, entry.uid,
                             draw_entities_solid);
+      // ALONGSIDE the model, never instead of it. draw_entity_in_editor used to
+      // return the moment the render component drew, so a crate's hit volume was
+      // visible for exactly as long as its mesh failed to resolve -- the two are
+      // not alternatives, one lives inside the other.
+      if (show_hitboxes)
+        draw_entity_hitbox_overlay(entry.entity.get(), scene);
     }
   }
 
   // Draw navmesh triangle wireframes, colored by island ID.
   // Suppressed when the pathfinding tool is active — it draws the navmesh itself.
   if (state_manager::get_client_context().cvars->debug_show_navmesh &&
-      map.navmesh.valid() && active_tool_index != 3)
+      map.navmesh.valid() && active_tool != editor_tool_t::pathfinding)
   {
     const navmesh_t &nav = map.navmesh;
     constexpr float y_lift = 2.f;
@@ -1240,9 +1281,9 @@ void Tool_Editor_State::build_frame(float delta_seconds,
     scene.particles.push_back(emitter_parameters(*pe, last_dt));
 
   // Draw Tool Overlay
-  if (active_tool_index >= 0 && active_tool_index < (int)tools.size())
+  if (active_tool)
   {
-    tools[active_tool_index]->on_draw_overlay(context, scene);
+    tools[*active_tool]->on_draw_overlay(context, scene);
   }
 
   passes.push_back(scene.to_pass());

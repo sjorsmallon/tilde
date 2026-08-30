@@ -47,7 +47,7 @@ void draw_brush_hull_wireframe(pass_builder_t &draws,
 // "Solid Entities" toggle.
 void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
-                             bool solid);
+                             bool solid, Span<const std::string> materials);
 
 // Pulsating selection highlight, in lockstep with the entity one.
 // `grid_step` drives the grid lines drawn on a box's faces.

@@ -30,10 +30,9 @@ namespace
 
 struct conversion_report_t
 {
-  size_t boxes = 0;
   size_t static_meshes = 0;
-  size_t displacements = 0;
   size_t brushes = 0;
+  size_t subdivided_faces = 0;
   size_t entities = 0;
   bool was_legacy = false;      // the file still held geometry as entity blocks
   bool needs_rewrite = false;   // the file's text is not what save_map writes
@@ -47,10 +46,18 @@ conversion_report_t inspect(const shared::map_t &map, const std::string &origina
   {
     switch (shared::get_kind(entry.value))
     {
-    case shared::geometry_kind_t::Box:          ++report.boxes; break;
-    case shared::geometry_kind_t::Static_Mesh:  ++report.static_meshes; break;
-    case shared::geometry_kind_t::Displacement: ++report.displacements; break;
-    case shared::geometry_kind_t::Brush:        ++report.brushes; break;
+    case shared::geometry_kind_t::Static_Mesh: ++report.static_meshes; break;
+    case shared::geometry_kind_t::Brush:
+    {
+      ++report.brushes;
+      // What a displacement became, and the one geometry number worth counting
+      // separately: it is what says the conversion carried the grid over.
+      for (const shared::face_surface_t &face :
+           std::get<shared::brush_geometry_t>(entry.value).face_surfaces)
+        if (face.subdivision_level > 0)
+          ++report.subdivided_faces;
+      break;
+    }
     }
   }
 
@@ -128,10 +135,10 @@ bool convert_one(const std::string &path, bool check_only)
   else if (report.needs_rewrite)
     status = "  [not canonical]";
 
-  std::printf("%s: %zu box, %zu static_mesh, %zu displacement, %zu brush, "
-              "%zu entities%s\n",
-              path.c_str(), report.boxes, report.static_meshes,
-              report.displacements, report.brushes, report.entities, status);
+  std::printf("%s: %zu static_mesh, %zu brush (%zu subdivided faces), %zu "
+              "entities%s\n",
+              path.c_str(), report.static_meshes, report.brushes,
+              report.subdivided_faces, report.entities, status);
 
   if (check_only)
     return true;
