@@ -21,6 +21,12 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
 
 constexpr asset_info_t texture_asset_MANIFEST[] = {
   {"Missing", nullptr},
+  {"glasses", "resources/models/textures/glasses.png"},
+  {"glasses_material", "resources/models/textures/glasses_material.png"},
+  {"leet_hands", "resources/models/textures/leet_hands.png"},
+  {"leet_hands_material", "resources/models/textures/leet_hands_material.png"},
+  {"leet_skin", "resources/models/textures/leet_skin.png"},
+  {"leet_skin_material", "resources/models/textures/leet_skin_material.png"},
   {"Smoke", "resources/sprites/Smoke.png"},
   {"dev_128x128", "resources/textures/dev_128x128.png"},
 };
@@ -76,6 +82,12 @@ constexpr asset_info_t font_asset_MANIFEST[] = {
   {"FiraMono_Regular", "resources/fonts/FiraMono_Regular.ttf"},
   {"Roboto_Medium", "resources/fonts/Roboto_Medium.ttf"},
   {"anwb_uu_regular", "resources/fonts/anwb_uu_regular.ttf"},
+};
+
+constexpr asset_info_t pbr_material_MANIFEST[] = {
+  {"Missing", nullptr},
+  {"harsh_bricks", "resources/textures/harsh_bricks"},
+  {"sloppy_mortar_stone", "resources/textures/sloppy_mortar_stone"},
 };
 
 } // namespace
@@ -212,6 +224,28 @@ template <> std::optional<font_asset> try_from_string<font_asset>(std::string_vi
   return std::nullopt;
 }
 
+Span<const asset_info_t> pbr_material_manifest()
+{
+  return {pbr_material_MANIFEST, pbr_material_COUNT};
+}
+
+const char* to_string(pbr_material value)
+{
+  assert((uint32_t)value < pbr_material_COUNT);
+  return pbr_material_MANIFEST[(uint16_t)value].name;
+}
+
+template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text)
+{
+  for (uint32_t index = 0; index < pbr_material_COUNT; ++index)
+  {
+    if (text != pbr_material_MANIFEST[index].name)
+      continue;
+    return (pbr_material)index;
+  }
+  return std::nullopt;
+}
+
 Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id)
 {
   switch (asset_class_id)
@@ -222,6 +256,7 @@ Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id)
     case 3: return animation_asset_manifest();
     case 4: return hitbox_rig_manifest();
     case 5: return font_asset_manifest();
+    case 6: return pbr_material_manifest();
   }
   assert(false && "asset_class_manifest: no asset class has this id");
   return {};

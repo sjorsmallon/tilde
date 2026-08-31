@@ -8,11 +8,19 @@
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
+#ifdef LIGHTMAP
+// Locations 3-5 are the skin and blend attributes; 6 is (u, v, page) into the
+// lightmap atlas array, on binding 3. See lightmap.hpp.
+layout(location = 6) in vec3 inLightmapUV;
+#endif
 
 layout(location = 0) out vec3       fragWorldNormal;
 layout(location = 1) out vec3       fragColor;
 layout(location = 2) out vec2       fragUV;
 layout(location = 3) out flat float fragAlpha;
+#ifdef LIGHTMAP
+layout(location = 5) out vec3       fragLightmapUV;
+#endif
 
 layout(push_constant) uniform PushConstants {
     mat4 mvp;
@@ -26,4 +34,7 @@ void main() {
     fragColor       = pc.color.rgb;
     fragUV          = inUV;
     fragAlpha       = pc.color.a;
+#ifdef LIGHTMAP
+    fragLightmapUV  = inLightmapUV;
+#endif
 }

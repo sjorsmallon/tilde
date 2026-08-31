@@ -101,9 +101,17 @@ struct mesh_asset_t
   // because a parallel array that covers only part of a buffer is not one.
   std::vector<vertex_blend_t> blend;
 
+  // Lightmap coordinates, PARALLEL to `vertices` for the same reason `skin` and
+  // `blend` are. THREE components: (u, v, page), because the atlas is a texture
+  // ARRAY -- pages are unavoidable, and a chart never spans one, so the layer
+  // rides per vertex where it cannot disagree with itself. Empty means this mesh
+  // has no bake and draws unlit -- that is the whole test.
+  std::vector<linalg::vec3> lightmap_uv;
+
   bool has_materials() const { return !submeshes.empty(); }
   bool is_skinned() const { return !skin.empty(); }
   bool is_blended() const { return !blend.empty(); }
+  bool is_lightmapped() const { return !lightmap_uv.empty(); }
 };
 
 // A sound asset is its PATH, not its samples, and that is the whole design.
@@ -127,15 +135,25 @@ struct font_asset_t
 };
 
 // A set of PBR texture maps loaded from a single folder.
-// Expected filenames: albedo.png, normal.png, roughness.png, ao.png, metallic.png, height.png
+// Expected filenames: albedo.png, normal.png, orm.png, height.png
 // Missing files produce an invalid handle (warning logged, not error).
+//
+// FOUR MAPS, NOT SIX: occlusion, roughness and metallic are each a single
+// channel, so they ride ONE RGB texture in glTF's order -- R occlusion, G
+// roughness, B metallic (lighting_def.md decision G). What makes that a
+// decision rather than a saving is that this struct IS the descriptor layout
+// every material pipeline is built against, so the count has to be right before
+// the layout is written rather than tuned after.
+//
+// `orm.png` is the one spelling. The three separate files it replaced are a
+// READ-ONLY concern of `src/tools/orm_pack.py`, which converted the folders on
+// disk once; nothing in the engine reads them, so there is no legacy arm here
+// to rot. Packing the normal map's Z away is the next halving and is not done.
 struct pbr_material_asset_t
 {
   asset_handle_t<texture_asset_t> albedo;
   asset_handle_t<texture_asset_t> normal;
-  asset_handle_t<texture_asset_t> roughness;
-  asset_handle_t<texture_asset_t> ambient_occlusion;
-  asset_handle_t<texture_asset_t> metallic;
+  asset_handle_t<texture_asset_t> occlusion_roughness_metallic;
   asset_handle_t<texture_asset_t> height;
 };
 
@@ -286,10 +304,15 @@ struct asset_source_t
 inline constexpr const char* ASSET_PACKAGE_FILENAME     = "assets.pkg";
 inline constexpr const char* ASSET_PACKAGE_ENV_VARIABLE = "ASSET_PACKAGE";
 
-// The pools with NO ID SPACE behind them. Both are named by path from inside
-// another asset rather than by a call site, which is exactly the line
+// The pool with NO ID SPACE behind it. It is named by path from inside another
+// asset rather than by a call site, which is exactly the line
 // asset_pipeline_def.md draws between the id space and the path-referenced
-// pool -- so neither is a manifest class and neither gets an enum.
+// pool -- so it is not a manifest class and gets no enum.
+//
+// A PBR MATERIAL used to sit here and no longer does: a material is browsed to
+// and named by a human, not by another asset, so it always belonged in the id
+// space and was only kept out because the walker's depth rule could not see a
+// FOLDER as one asset. It is a manifest class now, and its pool is generated.
 struct path_referenced_pools_t
 {
   // A .mesh and an .animation each name their skeleton as a bare SIBLING, from
@@ -297,9 +320,6 @@ struct path_referenced_pools_t
   // top of it would be a second, weaker copy, and two names for one skeleton is
   // how bone 7 stops being one bone. Several meshes share one loaded copy.
   Asset_Pool<skeleton_t> skeletons;
-  // A folder of up to six maps, not a file, so there is nothing for the
-  // depth-1 rule to enumerate.
-  Asset_Pool<pbr_material_asset_t> pbr_materials;
 };
 
 // --- Paths ---

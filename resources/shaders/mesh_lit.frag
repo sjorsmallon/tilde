@@ -14,6 +14,23 @@ layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
 
+#ifdef LIGHTMAP
+layout(location = 5) in vec3 fragLightmapUV;
+layout(set = 3, binding = 0) uniform sampler2DArray lightmapAtlas;
+
+// The bake already did radiance * attenuation * N.L, so it REPLACES the sun term
+// rather than multiplying into it -- multiplying would light a baked map twice.
+// A negative page is UNLIT_LIGHTMAP_UV: this face matched no chart, and drawing
+// it at the ambient floor is what makes a hole in the bake visible rather than
+// plausible.
+vec3 lightmap_lighting(float ambient)
+{
+    if (fragLightmapUV.z < 0.0)
+        return vec3(ambient);
+    return texture(lightmapAtlas, fragLightmapUV).rgb + vec3(ambient);
+}
+#endif
+
 void main() {
     // Hardcoded directional sun light
     vec3  sunDir  = normalize(vec3(0.4, -0.8, 0.3));
@@ -21,6 +38,11 @@ void main() {
     float diffuse = max(dot(normalize(fragWorldNormal), -sunDir), 0.0);
     // fragColor is the material's base colour times the draw's tint, so it tints
     // rather than replaces.
-    vec3 color = texture(albedo, fragUV).rgb * fragColor * (ambient + diffuse * 0.85);
+#ifdef LIGHTMAP
+    vec3 lighting = lightmap_lighting(ambient);
+#else
+    vec3 lighting = vec3(ambient + diffuse * 0.85);
+#endif
+    vec3 color = texture(albedo, fragUV).rgb * fragColor * lighting;
     outColor   = vec4(color, fragAlpha);
 }

@@ -26,7 +26,7 @@ constexpr uint32_t CIRCLE_SEGMENTS = 16;
 
 // Any vector not parallel to the axis works; picking the world axis the shape is
 // least aligned with keeps the cross product well conditioned.
-linalg::vec3f perpendicular_seed(const linalg::vec3f &axis)
+linalg::vec3f perpendicular_seed(const linalg::vec3f& axis)
 {
   return std::fabs(axis.y) < 0.9f ? linalg::vec3f{0, 1, 0} : linalg::vec3f{1, 0, 0};
 }
@@ -77,13 +77,13 @@ void debug_draw_list_t::clear()
   texts.clear();
 }
 
-void debug_draw_list_t::line(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
+void debug_draw_list_t::line(const linalg::vec3f& start, const linalg::vec3f& end, color_t color,
                              float depth_bias, float seconds, bool draw_when_occluded)
 {
   lines.push_back({start, end, color, depth_bias, seconds, draw_when_occluded});
 }
 
-void debug_draw_list_t::aabb(const linalg::vec3f &min, const linalg::vec3f &max, color_t color,
+void debug_draw_list_t::aabb(const linalg::vec3f& min, const linalg::vec3f& max, color_t color,
                              fill_mode_t fill, float depth_bias, float seconds, bool draw_when_occluded)
 {
   const linalg::vec3f corners[8] = {
@@ -115,7 +115,7 @@ void debug_draw_list_t::aabb(const linalg::vec3f &min, const linalg::vec3f &max,
     line(corners[edge[0]], corners[edge[1]], color, depth_bias, seconds, draw_when_occluded);
 }
 
-void debug_draw_list_t::box(const linalg::vec3f &center, const linalg::vec3f &half_extents,
+void debug_draw_list_t::box(const linalg::vec3f& center, const linalg::vec3f& half_extents,
                             color_t color, fill_mode_t fill, float depth_bias, float seconds,
                             bool draw_when_occluded)
 {
@@ -133,7 +133,7 @@ void debug_draw_list_t::filled_polygon(Span<const linalg::vec3f> vertices, color
   polygons.push_back({first, (uint32_t)vertices.size(), color, seconds, style});
 }
 
-void debug_draw_list_t::arrow(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
+void debug_draw_list_t::arrow(const linalg::vec3f& start, const linalg::vec3f& end, color_t color,
                               float seconds, bool draw_when_occluded)
 {
   line(start, end, color, 0.0f, seconds, draw_when_occluded);
@@ -152,13 +152,13 @@ void debug_draw_list_t::arrow(const linalg::vec3f &start, const linalg::vec3f &e
   const float head_length = std::min(length * 0.25f, 16.0f);
   const float head_radius = head_length * 0.4f;
   const linalg::vec3f base = end - axis * head_length;
-  for (const linalg::vec3f &offset : {side * head_radius, side * -head_radius, up * head_radius,
+  for (const linalg::vec3f& offset : {side * head_radius, side * -head_radius, up * head_radius,
                                       up * -head_radius})
     line(end, base + offset, color, 0.0f, seconds, draw_when_occluded);
 }
 
-void debug_draw_list_t::wire_circle(const linalg::vec3f &center, float radius,
-                                    const linalg::vec3f &normal, color_t color, float seconds)
+void debug_draw_list_t::wire_circle(const linalg::vec3f& center, float radius,
+                                    const linalg::vec3f& normal, color_t color, float seconds)
 {
   const linalg::vec3f axis = linalg::normalize(normal);
   const linalg::vec3f side = linalg::normalize(linalg::cross(axis, perpendicular_seed(axis)));
@@ -175,7 +175,7 @@ void debug_draw_list_t::wire_circle(const linalg::vec3f &center, float radius,
   }
 }
 
-void debug_draw_list_t::wire_sphere(const linalg::vec3f &center, float radius, color_t color,
+void debug_draw_list_t::wire_sphere(const linalg::vec3f& center, float radius, color_t color,
                                     float seconds)
 {
   // Three great circles -- enough to read as a sphere from any angle.
@@ -184,7 +184,7 @@ void debug_draw_list_t::wire_sphere(const linalg::vec3f &center, float radius, c
   wire_circle(center, radius, {0, 0, 1}, color, seconds);
 }
 
-void debug_draw_list_t::wire_capsule(const linalg::vec3f &center, float radius, float half_height,
+void debug_draw_list_t::wire_capsule(const linalg::vec3f& center, float radius, float half_height,
                                      color_t color, float seconds)
 {
   // A ring at each end, four lines down the sides, and rings THROUGH the ends so
@@ -198,12 +198,12 @@ void debug_draw_list_t::wire_capsule(const linalg::vec3f &center, float radius, 
   wire_circle(bottom, radius, {1, 0, 0}, color, seconds);
   wire_circle(top, radius, {0, 0, 1}, color, seconds);
 
-  for (const linalg::vec3f &offset : {linalg::vec3f{radius, 0, 0}, linalg::vec3f{-radius, 0, 0},
+  for (const linalg::vec3f& offset : {linalg::vec3f{radius, 0, 0}, linalg::vec3f{-radius, 0, 0},
                                       linalg::vec3f{0, 0, radius}, linalg::vec3f{0, 0, -radius}})
     line(bottom + offset, top + offset, color, 0.0f, seconds);
 }
 
-void debug_draw_list_t::text(const linalg::vec3f &world_position, const char *text, color_t color,
+void debug_draw_list_t::text(const linalg::vec3f& world_position, const char *text, color_t color,
                              float seconds)
 {
   texts.push_back({world_position, text, color, seconds});

@@ -17,38 +17,32 @@ class Editor_Tool
 public:
   virtual ~Editor_Tool() = default;
 
-  // Lifecycle
-  virtual void on_enable(editor_context_t &ctx) = 0;
-  virtual void on_disable(editor_context_t &ctx) = 0;
-
-  // Input Dispatch
-  // Tools logic update. dt is the real frame delta-time in seconds.
-  virtual void on_update(editor_context_t &ctx,
+  virtual void on_enable(editor_context_t& ctx) = 0;
+  virtual void on_disable(editor_context_t& ctx) = 0;
+  virtual void on_update(editor_context_t& ctx,
                          const viewport_state_t &view, float dt) = 0;
 
-  // Mouse events
-  virtual void on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e) = 0;
-  virtual void on_mouse_drag(editor_context_t &ctx, const input::mouse_event_t &e) = 0;
-  virtual void on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e) = 0;
+  // mouse events
+  virtual void on_mouse_down(editor_context_t& ctx, const input::mouse_event_t& e) = 0;
+  virtual void on_mouse_drag(editor_context_t& ctx, const input::mouse_event_t& e) = 0;
+  virtual void on_mouse_up(editor_context_t& ctx, const input::mouse_event_t& e) = 0;
 
-  // Keyboard Shortcuts
-  virtual void on_key_down(editor_context_t &ctx, const key_event_t &e) = 0;
+  // keyboard events
+  virtual void on_key_down(editor_context_t& ctx, const key_event_t& e) = 0;
 
   // Return true when the tool wants exclusive keyboard focus (suppresses
   // camera movement keys in tool_editor_state).
   virtual bool capture_keyboard() const { return false; }
 
-  // What the keypad axis views (1/3/7) should centre and frame on. `nullopt`
-  // means "no opinion" and the editor falls back to the world origin at map
-  // scale.
+  // overrides for numlock camera locking behavior.
   virtual std::optional<view_focus_t> view_focus() const { return std::nullopt; }
 
-  // Visuals
-  virtual void on_draw_overlay(editor_context_t &ctx,
+  // overlay (not ui).
+  virtual void on_draw_overlay(editor_context_t& ctx,
                                pass_builder_t &draws) = 0;
 
   // UI (2D)
-  virtual void on_draw_ui(editor_context_t &ctx) {}
+  virtual void on_draw_ui(editor_context_t& ctx) {}
 };
 
 } // namespace client

@@ -1,31 +1,5 @@
 #pragma once
 
-// Wireframes AND solid faces for the posed hit volumes, in ONE place because
-// three callers draw them: the Animation tool (over the preview model, through
-// an overlay_renderer_t), the in-game overlay (over a remote player) and the
-// shot-debug diff. Two copies would be two chances for the tool to show a shape
-// the game does not.
-//
-// A caller supplies somewhere to put geometry -- a BUCKET, which is any callable
-// of the right shape. That is what lets one implementation serve callers that
-// share no base class:
-//
-//   Line_Bucket   void(const vec3f& start, const vec3f& end, color_t)
-//   Face_Bucket   void(Span<const vec3f> convex_polygon, color_t)
-//
-// A face bucket is handed CONVEX polygons wound counter-clockwise seen from
-// OUTSIDE (renderer::HOUSE_FRONT_FACE), so it can be fed straight to
-// debug_draw_list_t::filled_polygon, which fan-decomposes.
-//
-// Edges and faces are two buckets and not one call because they want different
-// colours and very different alpha -- the whole readable overlay is a solid edge
-// over a barely-there face -- and because a caller may want only one of them
-// (the shot-debug diff draws two whole skeletons at once, where faces would be
-// mush).
-//
-// The volumes must already be in the space being drawn in; see
-// shared::compute_player_hitboxes for the world-space placement.
-
 #include "../shared/color.hpp"
 #include "../shared/hit_region.hpp"
 #include "../shared/hitbox_rig.hpp"
@@ -76,7 +50,7 @@ struct hitbox_basis_t
   linalg::vec3f up;
 };
 
-inline hitbox_basis_t basis_around(const linalg::vec3f &axis)
+inline hitbox_basis_t basis_around(const linalg::vec3f& axis)
 {
   // Any vector not parallel to the axis works; picking the world axis the shape
   // is least aligned with keeps the cross product well conditioned.
@@ -91,7 +65,7 @@ inline float hitbox_ring_angle(uint32_t step)
   return (float)step / (float)HITBOX_RING_SEGMENTS * 2.0f * linalg::PI;
 }
 
-inline linalg::vec3f hitbox_ring_point(const linalg::vec3f &center, const hitbox_basis_t &basis,
+inline linalg::vec3f hitbox_ring_point(const linalg::vec3f& center, const hitbox_basis_t &basis,
                                        float radius, float angle)
 {
   return center + basis.side * (std::cos(angle) * radius) + basis.up * (std::sin(angle) * radius);
@@ -100,8 +74,8 @@ inline linalg::vec3f hitbox_ring_point(const linalg::vec3f &center, const hitbox
 // --- Wireframe ---
 
 template <typename Line_Bucket>
-void draw_wire_circle(const Line_Bucket &line, const linalg::vec3f &center, float radius,
-                      const linalg::vec3f &normal, color_t color)
+void draw_wire_circle(const Line_Bucket &line, const linalg::vec3f& center, float radius,
+                      const linalg::vec3f& normal, color_t color)
 {
   const hitbox_basis_t basis = basis_around(linalg::normalize(normal));
 
@@ -115,7 +89,7 @@ void draw_wire_circle(const Line_Bucket &line, const linalg::vec3f &center, floa
 }
 
 template <typename Line_Bucket>
-void draw_wire_sphere(const Line_Bucket &line, const linalg::vec3f &center, float radius,
+void draw_wire_sphere(const Line_Bucket &line, const linalg::vec3f& center, float radius,
                       color_t color)
 {
   // Three great circles -- enough to read as a sphere from any angle.
@@ -129,7 +103,7 @@ void draw_wire_sphere(const Line_Bucket &line, const linalg::vec3f &center, floa
 // read as rounded, a cylinder does not, which is the whole visible difference
 // and also the whole difference in the hit test.
 template <typename Line_Bucket>
-void draw_wire_tube(const Line_Bucket &line, const linalg::vec3f &start, const linalg::vec3f &end,
+void draw_wire_tube(const Line_Bucket &line, const linalg::vec3f& start, const linalg::vec3f& end,
                     float radius, bool rounded_caps, color_t color)
 {
   const linalg::vec3f along  = end - start;
@@ -146,7 +120,7 @@ void draw_wire_tube(const Line_Bucket &line, const linalg::vec3f &start, const l
   draw_wire_circle(line, start, radius, axis, color);
   draw_wire_circle(line, end, radius, axis, color);
 
-  for (const linalg::vec3f &offset :
+  for (const linalg::vec3f& offset :
        {basis.side * radius, basis.side * -radius, basis.up * radius, basis.up * -radius})
     line(start + offset, end + offset, color);
 
@@ -159,9 +133,9 @@ void draw_wire_tube(const Line_Bucket &line, const linalg::vec3f &start, const l
 
 // An ORIENTED box: twelve edges built from the volume's own axes.
 template <typename Line_Bucket>
-void draw_wire_oriented_box(const Line_Bucket &line, const linalg::vec3f &center,
+void draw_wire_oriented_box(const Line_Bucket &line, const linalg::vec3f& center,
                             const assets::hitbox_frame_t &frame,
-                            const linalg::vec3f &half_extents, color_t color)
+                            const linalg::vec3f& half_extents, color_t color)
 {
   linalg::vec3f corners[8];
 
@@ -211,8 +185,8 @@ void draw_posed_hitbox(const Line_Bucket &line, const assets::posed_hitbox_t &hi
 // quad with two coincident corners, so nothing downstream fans a zero-area
 // triangle.
 template <typename Face_Bucket>
-void draw_solid_cap(const Face_Bucket &face, const linalg::vec3f &center, float radius,
-                    const linalg::vec3f &axis, color_t color)
+void draw_solid_cap(const Face_Bucket &face, const linalg::vec3f& center, float radius,
+                    const linalg::vec3f& axis, color_t color)
 {
   const hitbox_basis_t basis = basis_around(axis);
 
@@ -247,7 +221,7 @@ void draw_solid_cap(const Face_Bucket &face, const linalg::vec3f &center, float 
 }
 
 template <typename Face_Bucket>
-void draw_solid_sphere(const Face_Bucket &face, const linalg::vec3f &center, float radius,
+void draw_solid_sphere(const Face_Bucket &face, const linalg::vec3f& center, float radius,
                        color_t color)
 {
   draw_solid_cap(face, center, radius, {0, 1, 0}, color);
@@ -255,7 +229,7 @@ void draw_solid_sphere(const Face_Bucket &face, const linalg::vec3f &center, flo
 }
 
 template <typename Face_Bucket>
-void draw_solid_tube(const Face_Bucket &face, const linalg::vec3f &start, const linalg::vec3f &end,
+void draw_solid_tube(const Face_Bucket &face, const linalg::vec3f& start, const linalg::vec3f& end,
                      float radius, bool rounded_caps, color_t color)
 {
   const linalg::vec3f along  = end - start;
@@ -305,9 +279,9 @@ void draw_solid_tube(const Face_Bucket &face, const linalg::vec3f &start, const 
 // draw_wire_oriented_box uses, so the edges and the faces cannot disagree about
 // which corner is which.
 template <typename Face_Bucket>
-void draw_solid_oriented_box(const Face_Bucket &face, const linalg::vec3f &center,
+void draw_solid_oriented_box(const Face_Bucket &face, const linalg::vec3f& center,
                              const assets::hitbox_frame_t &frame,
-                             const linalg::vec3f &half_extents, color_t color)
+                             const linalg::vec3f& half_extents, color_t color)
 {
   linalg::vec3f corners[8];
   for (uint32_t index = 0; index < 8; ++index)

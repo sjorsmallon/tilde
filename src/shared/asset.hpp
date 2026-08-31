@@ -43,12 +43,12 @@ void set_state(asset_state_t *state);
 // it runs once per process rather than per module.
 void init();
 
-// --- Loading the path-referenced pools ---
+// --- Loading the path-referenced pool ---
 //
-// These two have no id space, so they are not manifest classes and nothing is
-// generated for them (see path_referenced_pools_t). Everything else --
-// load_mesh, load_texture, load_sound, load_animation, load_hitbox_rig,
-// load_font, and the matching get_* -- is declared in
+// A skeleton has no id space, so it is not a manifest class and nothing is
+// generated for it (see path_referenced_pools_t). Everything else -- load_mesh,
+// load_texture, load_sound, load_animation, load_hitbox_rig, load_font,
+// load_pbr_material and the matching get_* -- is declared in
 // asset_state_generated.hpp.
 //
 // NEITHER CAN FAIL, and that is why neither takes a try_ prefix. The path names
@@ -62,11 +62,6 @@ void init();
 // Loading the same skeleton twice returns the same handle; a bone index is only
 // meaningful against one loaded copy.
 [[nodiscard]] asset_handle_t<skeleton_t> load_skeleton(const char *path);
-
-// Load all PBR maps from a folder (cached by folder path). A map the folder does
-// not carry is expected and leaves that one handle invalid; a map that is there
-// and will not decode is not.
-[[nodiscard]] asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path);
 
 // --- Access ---
 

@@ -21,8 +21,14 @@
 //   i8/i16/i32, v4i    write_var_int
 //   i64                write_var_int64
 //   string<N>          a length byte, then that many characters
+//   quat               four RAW 32-bit floats
 //
-// A field needing full float precision does not belong on this wire.
+// A field needing full float precision does not belong on this wire, and `quat`
+// is the ONE exception with the reason written at its arm: its components live
+// in [-1, 1], so write_coord's 5-bit fraction is 3.6 degrees of angular error
+// and a value too far off unit for to_mat4 to be a rotation. Compressing it
+// properly is a smallest-three encoding, which rotation_def.md §5 defers to
+// whenever snapshot delta compression is the thing being worked on.
 
 #include "../reflection.hpp"
 #include "bitstream.hpp"

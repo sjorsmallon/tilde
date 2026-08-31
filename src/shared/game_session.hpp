@@ -42,6 +42,14 @@ struct game_session_t
   // index names nothing.
   std::vector<std::string> materials;
 
+  // The map's bake, copied for the same reason again: a face finds its chart by
+  // (object_uid, plane), so the charts have to travel with the geometry they key
+  // off. COPIED rather than referenced -- the map_t it came from is a local that
+  // dies at the end of the load, and a shared_ptr here would buy a few megabytes
+  // once per map load at the cost of a new ownership concept in the hottest
+  // struct in the client. Empty means this map has no bake.
+  lightmap_t lightmap;
+
   // The acceleration structure for collision queries against `geometry`.
   // Dynamic entity collision is handled separately via the Entity_System.
   Bounding_Volume_Hierarchy bvh;

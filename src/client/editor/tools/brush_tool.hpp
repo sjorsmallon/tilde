@@ -40,9 +40,10 @@ private:
 
   enum class Mode
   {
-    Face,  // pick a face, drag it along its normal
+    Face,   // pick a face, drag it along its normal
     Vertex, // pick points on the face grid, drag or extrude them
-    Paint  // brush a layer weight into the face grid
+    Paint,  // brush a layer weight into the face grid
+    Sculpt  // brush the face grid itself in or out along the face normal
   };
 
   struct selection_t
@@ -118,22 +119,48 @@ private:
     float depth = 0.0f;
   };
 
-  // Vertex paint. The stroke is CONTINUOUS -- it accumulates in on_update off
-  // dt rather than per mouse event, so holding still keeps painting and a fast
-  // sweep does not skip. `layer` is the target, not a sign: painting toward
-  // layer 0 is the eraser (shared::paint_face_layer_weight argues it), and it
-  // is an int rather than a bool for the day BLEND_LAYER_COUNT is three.
-  struct paint_t
+  // Where the cursor meets the brush's DISPLACED surface. Both stroke modes
+  // resolve it the same way and neither can use the face plane: on a sculpted
+  // face the two are far apart, and a radius measured from the plane reaches
+  // through the hill it is standing on.
+  struct grid_cursor_t
+  {
+    std::optional<linalg::vec3> position;
+    linalg::vec3 surface_normal{0, 1, 0};
+
+    // The PLANE's normal, which is the axis a sculpt pushes along -- pushing
+    // along the displaced normal instead curls a crater in over its own rim.
+    linalg::vec3 face_normal{0, 1, 0};
+  };
+
+  // A stroke in progress, in either stroke mode. One struct because the
+  // lifetime is one: the press snapshots, on_update accumulates off dt, and the
+  // release pushes ONE transaction however many frames it ran for.
+  struct stroke_t
+  {
+    bool active = false;
+
+    // Shift at PRESS time, like the band's ctrl: a sculpt pulls in instead of
+    // pushing out, and releasing the key mid-stroke does not flip it.
+    bool inverted = false;
+
+    std::optional<shared::geometry_value_t> geometry_at_the_start;
+  };
+
+  // `layer` is the target, not a sign: painting toward layer 0 is the eraser
+  // (shared::paint_face_layer_weight argues it), and it is an int rather than a
+  // bool for the day BLEND_LAYER_COUNT is three.
+  struct paint_settings_t
   {
     float radius = 48.0f;
     float strength = 2.0f; // weight per second at the centre of the brush
     int layer = 1;
+  };
 
-    std::optional<linalg::vec3> cursor;
-    linalg::vec3 cursor_normal{0, 1, 0};
-
-    bool stroking = false;
-    std::optional<shared::geometry_value_t> geometry_at_the_start_of_stroke;
+  struct sculpt_settings_t
+  {
+    float radius = 64.0f;
+    float strength = 128.0f; // world units per second at the centre
   };
 
   std::optional<shared::face_surface_t> face_clipboard;
@@ -143,7 +170,10 @@ private:
   char material_path_input[256] = {};
 
   Mode mode = Mode::Face;
-  paint_t paint;
+  paint_settings_t paint;
+  sculpt_settings_t sculpt;
+  grid_cursor_t grid_cursor;
+  stroke_t stroke;
   selection_t selection;
   selection_geometry_t selection_geometry;
   hover_t hover;
@@ -214,11 +244,17 @@ private:
 
   void draw_material_ui(editor_context_t& ctx);
   void draw_paint_ui(editor_context_t& ctx);
+  void draw_sculpt_ui(editor_context_t& ctx);
+
+  bool mode_is_a_grid_stroke() const
+  {
+    return mode == Mode::Paint || mode == Mode::Sculpt;
+  }
 
   // Where the cursor meets the selected brush's displaced surface, and the
-  // stroke that writes there. Both no-op unless the mode is Paint.
-  void update_paint_cursor(editor_context_t& ctx, float dt);
-  void end_paint_stroke(editor_context_t& ctx);
+  // stroke that writes there. Both no-op unless a stroke mode is live.
+  void update_grid_stroke(editor_context_t& ctx, float dt);
+  void end_grid_stroke(editor_context_t& ctx);
 
   bool point_is_selected(const linalg::vec3& point) const;
   void toggle_point_selection(const linalg::vec3& point, bool additive);

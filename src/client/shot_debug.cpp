@@ -48,7 +48,7 @@ void draw_pose(renderer::debug_draw_list_t &out, const shared::player_pose_t &po
   // pose instead of a volume set lossless -- see S2C_ShotDebug in game.proto.
   shared::compute_player_hitboxes(rig, pose, settings, scratch);
 
-  const auto line = [&](const linalg::vec3f &start, const linalg::vec3f &end, color_t c)
+  const auto line = [&](const linalg::vec3f& start, const linalg::vec3f& end, color_t c)
   { out.line(start, end, c, 0.f, seconds); };
 
   for (const assets::posed_hitbox_t &hitbox : scratch)

@@ -17,7 +17,7 @@ bool compile_shader_to_spv(const std::string &source_path,
                            const std::string &include_dir,
                            std::string &error_output);
 
-static constexpr int PBR_TEXTURE_SLOT_COUNT = 6;
+static constexpr int PBR_TEXTURE_SLOT_COUNT = 4;
 static constexpr int PREVIEW_MAX_FRAMES_IN_FLIGHT = 2;
 
 struct preview_pipeline_t
@@ -35,7 +35,7 @@ struct preview_pipeline_t
   void *ubo_mapped[PREVIEW_MAX_FRAMES_IN_FLIGHT] = {};
   VkDescriptorSet descriptor_set[PREVIEW_MAX_FRAMES_IN_FLIGHT] = {};
 
-  // PBR texture slots: set=0, bindings 1–6 (albedo, normal, roughness, ao, metallic, height)
+  // PBR texture slots: set=0, bindings 1-4 (albedo, normal, orm, height)
   renderer::gpu_texture_t pbr_textures[PBR_TEXTURE_SLOT_COUNT] = {};
   renderer::gpu_texture_t fallback_white_texture;
 };

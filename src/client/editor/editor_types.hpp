@@ -10,6 +10,7 @@
 #include "../input.hpp"
 
 #include <optional>
+#include <string>
 
 namespace client
 {
@@ -52,22 +53,59 @@ try_project_to_screen(const viewport_state_t &view, const linalg::vec3 &world_po
                                 view.camera.fov_degrees);
 }
 
+class Transaction_System;
+
 // Forward declaration of the editor state or game state if needed
 struct editor_context_t
 {
+  // A REFERENCE, so a tool cannot be handed a context without one and no call
+  // site has to ask. As a pointer this was checked four different ways across
+  // the tools -- an assert, an if-guard, a silent early return and an unchecked
+  // deref -- and the silent arm was the dangerous one: the edit had already
+  // landed in the map by then, so a null pointer meant the map changed and the
+  // undo entry was dropped without a word.
+  Transaction_System &transaction_system;
+
+  explicit editor_context_t(Transaction_System &transactions)
+      : transaction_system(transactions)
+  {
+  }
+
   shared::map_t *map = nullptr;
+
+  // Where `map` lives on disk, so a tool that writes a SIDECAR beside it does not
+  // have to rediscover the maps directory. Empty until the map has a home, which
+  // is what a bake button tests before it writes anything.
+  std::string map_path;
   // Seconds since the editor opened, advanced by Tool_Editor_State::update. The
   // clock every animated overlay reads; initialised here because a tool that
   // pulses on garbage is a tool that flickers.
   float time = 0.0f;
   const Bounding_Volume_Hierarchy *bvh = nullptr;
 
+  // The objects get_collision_pieces refused, filled by the same pass that built
+  // `bvh`. A tool showing an object's properties says so; the viewport draws
+  // their contour red. See build_editor_bvh.
+  Span<const shared::entity_uid_t> objects_without_collision;
+
   // dirty Flag to signal that geometry has been modified and BVH needs rebuild
   bool *geometry_updated_so_bvh_rebuild_is_needed = nullptr;
 
-  class Transaction_System *transaction_system = nullptr;
+  // The same shape, for the bake. It cannot be derived from lightmap_t's
+  // geometry_id: that id covers the charts and deliberately not the pixels, so a
+  // rebake at unchanged settings -- which is every iteration on the lighting --
+  // leaves it identical while every texel has moved.
+  bool *lightmap_updated_so_atlas_upload_is_needed = nullptr;
 
   editor::grid_settings_t *grid = nullptr;
+
+  bool object_collides(shared::entity_uid_t uid) const
+  {
+    for (shared::entity_uid_t without : objects_without_collision)
+      if (without == uid)
+        return false;
+    return true;
+  }
 };
 
 // Where a placement gesture would put something: the surface point under the
@@ -76,7 +114,7 @@ struct editor_context_t
 // already. Empty means the ray missed both, which is a cursor with nowhere to
 // place.
 [[nodiscard]] inline std::optional<linalg::vec3>
-try_pick_placement_point(const editor_context_t &ctx, const viewport_state_t &view)
+try_pick_placement_point(const editor_context_t& ctx, const viewport_state_t &view)
 {
   const float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
 

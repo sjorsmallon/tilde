@@ -44,6 +44,29 @@ const uint32_t mesh_blend_vert_spv[] =
 #include "mesh_blend.vert.spv.h"
     ;
 
+// The same sources compiled with -DLIGHTMAP. See CMakeLists.txt: a lightmap
+// composes with lit, grid and blend alike, so the variants are a define rather
+// than a GLSL file per combination.
+const uint32_t mesh_lightmapped_vert_spv[] =
+#include "mesh_lightmapped.vert.spv.h"
+    ;
+
+const uint32_t mesh_blend_lightmapped_vert_spv[] =
+#include "mesh_blend_lightmapped.vert.spv.h"
+    ;
+
+const uint32_t mesh_lit_lightmapped_frag_spv[] =
+#include "mesh_lit_lightmapped.frag.spv.h"
+    ;
+
+const uint32_t mesh_grid_lightmapped_frag_spv[] =
+#include "mesh_grid_lightmapped.frag.spv.h"
+    ;
+
+const uint32_t mesh_blend_lightmapped_frag_spv[] =
+#include "mesh_blend_lightmapped.frag.spv.h"
+    ;
+
 const uint32_t mesh_lit_frag_spv[] =
 #include "mesh_lit.frag.spv.h"
     ;
@@ -134,7 +157,7 @@ struct pipeline_key_hash_t
     return (size_t)key.state.shader | ((size_t)key.state.blend_mode << 2) |
            ((size_t)key.state.cull_mode << 4) | ((size_t)key.state.depth_test << 5) |
            ((size_t)key.state.depth_write << 6) | ((size_t)key.vertex_layout << 7) |
-           ((size_t)key.fill << 9);
+           ((size_t)key.fill << 10);
   }
 };
 
@@ -145,6 +168,12 @@ static VkPipelineLayout      g_mesh_pipeline_layout = VK_NULL_HANDLE;
 static VkDescriptorSetLayout g_albedo_ds_layout     = VK_NULL_HANDLE;
 static VkDescriptorPool      g_albedo_pool          = VK_NULL_HANDLE;
 
+// Set 3: the lightmap atlas. Its OWN layout rather than g_albedo_ds_layout's,
+// because the view type differs -- sampler2DArray against sampler2D -- and that
+// is a mismatch nothing reports until the draw reads garbage.
+static VkDescriptorSetLayout g_lightmap_ds_layout = VK_NULL_HANDLE;
+static VkDescriptorPool      g_lightmap_pool      = VK_NULL_HANDLE;
+
 // Pipelines are handed around as INDICES rather than VkPipelines so a draw list
 // can be sorted on an integer without chasing the map for every comparison.
 static std::vector<VkPipeline>                                          g_pipelines;
@@ -154,6 +183,18 @@ static std::unordered_map<pipeline_key_t, uint32_t, pipeline_key_hash_t> g_pipel
 // than a growing pool because exhausting it is a content problem worth hearing
 // about, not something to paper over by allocating another pool.
 constexpr uint32_t MAX_MATERIAL_TEXTURES = 64;
+
+// One atlas per loaded map, plus the internal white page. A small cap on
+// purpose: a second live atlas means two maps resident at once, which is a
+// lifetime question and not a budget one.
+constexpr uint32_t MAX_LIGHTMAP_ATLASES = 8;
+
+// Sets are 0 albedo, 1 the bone matrices, 2..N the blend layers above the base,
+// and the lightmap after them. The fragment shaders spell it as a literal, so
+// the static_assert is what keeps the two from drifting.
+constexpr uint32_t LIGHTMAP_DESCRIPTOR_SET = 2 + BLEND_LAYER_COUNT - 1;
+static_assert(LIGHTMAP_DESCRIPTOR_SET == 3,
+              "resources/shaders/*.frag declare the atlas at set = 3");
 
 // --- Registered resources ---
 // Handles are indices into these three vectors. Nothing is ever removed (see
@@ -191,6 +232,12 @@ struct gpu_mesh_t
   VkBuffer       blend_buffer = VK_NULL_HANDLE;
   VkDeviceMemory blend_memory = VK_NULL_HANDLE;
 
+  // Binding 3: linalg::vec3f, (u, v, page), parallel to the vertex buffer.
+  // Present only when the map this mesh was generated against has a bake --
+  // the renderer's copy of `mesh_asset_t::is_lightmapped()`.
+  VkBuffer       lightmap_buffer = VK_NULL_HANDLE;
+  VkDeviceMemory lightmap_memory = VK_NULL_HANDLE;
+
   uint32_t                       index_count = 0;
   std::vector<gpu_submesh_t>     submeshes;
   std::vector<material_handle_t> default_materials; // indexed by submesh material_slot
@@ -210,9 +257,26 @@ struct gpu_material_t
   Array<VkDescriptorSet, BLEND_LAYER_COUNT - 1> blend_sets;
 };
 
+// An atlas is a 2D ARRAY image, so it reuses gpu_texture_t's fields with a
+// different view type; `layer_count` is retained because update_lightmap has to
+// know whether a rebake still fits the image it is refilling.
+struct gpu_lightmap_t
+{
+  gpu_texture_t   texture;
+  VkDescriptorSet set         = VK_NULL_HANDLE;
+  int             size        = 0;
+  int             layer_count = 0;
+};
+
 static std::vector<gpu_mesh_t>          g_meshes;
 static std::vector<gpu_texture_entry_t> g_textures;
 static std::vector<gpu_material_t>      g_materials;
+static std::vector<gpu_lightmap_t>      g_lightmaps;
+
+// What a pass with no atlas of its own binds: one white texel on one page, so a
+// lightmapped mesh drawn in a pass that names no bake reads 1.0 and the term
+// multiplies out instead of sampling an unbound descriptor.
+static lightmap_handle_t g_white_lightmap;
 
 // The two internal textures the fallback ladder ends at, and the material every
 // mesh without one of its own gets. An invalid texture handle resolves to WHITE
@@ -526,11 +590,10 @@ static void create_swapchain()
   vkGetPhysicalDeviceSurfacePresentModesKHR(
       g_physical_device, g_surface, &present_mode_count, present_modes.data());
 
-  // TEMPORARY GAMMA PROBE -- delete this block and restore the SRGB search below.
-  constexpr bool probe_ui_gamma_with_unorm_swapchain = false;
-
-  const VkFormat wanted_swapchain_format =
-      probe_ui_gamma_with_unorm_swapchain ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_B8G8R8A8_SRGB;
+  // THE ATTACHMENT OWNS THE sRGB ENCODE and nothing else does (lighting_def.md
+  // decision F): the hardware encodes on write, so every shader hands this pass
+  // LINEAR colour and none of them writes a pow of its own.
+  constexpr VkFormat wanted_swapchain_format = VK_FORMAT_B8G8R8A8_SRGB;
 
   VkSurfaceFormatKHR surface_format = formats[0];
   for (const auto &available_format : formats)
@@ -544,8 +607,9 @@ static void create_swapchain()
   }
 
   if (surface_format.format != wanted_swapchain_format)
-    log_warning("[gamma probe] wanted format {} but the surface offers none; using {}",
-                (int32_t)wanted_swapchain_format, (int32_t)surface_format.format);
+    log_warning("[renderer] the surface offers no B8G8R8A8_SRGB format; using {}. Shader "
+                "output is linear and now nothing encodes it, so the image will look dark.",
+                (int32_t)surface_format.format);
 
   VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
   VkExtent2D extent;
@@ -1233,14 +1297,25 @@ static VkPipeline create_ui_pipeline()
 
 static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
 {
-  const bool skinned   = key.vertex_layout == vertex_layout_t::skinned;
+  const bool skinned   = has_layout(key.vertex_layout, vertex_layout_t::skinned);
   const bool wireframe = key.fill == fill_mode_t::wireframe;
+
+  // A skinned mesh is never lightmapped -- charts are flattened brush faces and
+  // a character has none -- and there is no vertex shader reading both arrays.
+  // Dropping the lightmap is the recoverable half: a bind-pose character is
+  // wrong in a way no lighting makes up for.
+  bool lightmapped = has_layout(key.vertex_layout, vertex_layout_t::lightmapped);
+  if (lightmapped && skinned)
+  {
+    log_error("[renderer] a skinned mesh carries lightmap coordinates; ignoring them");
+    lightmapped = false;
+  }
 
   // A blend fragment shader reads a vertex output only mesh_blend.vert
   // produces, so the two are one decision. Everything else pairs freely, which
   // is the property mesh.vert's header comment is about.
   bool blended = key.state.shader == shader_t::blend;
-  if (blended && key.vertex_layout != vertex_layout_t::blended)
+  if (blended && !has_layout(key.vertex_layout, vertex_layout_t::blended))
   {
     log_error("[renderer] a blend material was used on a mesh with no blend "
               "weights - drawing it lit");
@@ -1256,28 +1331,39 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   }
   else if (blended)
   {
-    vert_spv  = mesh_blend_vert_spv;
-    vert_size = sizeof(mesh_blend_vert_spv);
+    vert_spv  = lightmapped ? mesh_blend_lightmapped_vert_spv : mesh_blend_vert_spv;
+    vert_size = lightmapped ? sizeof(mesh_blend_lightmapped_vert_spv)
+                            : sizeof(mesh_blend_vert_spv);
+  }
+  else if (lightmapped)
+  {
+    vert_spv  = mesh_lightmapped_vert_spv;
+    vert_size = sizeof(mesh_lightmapped_vert_spv);
   }
 
-  const uint32_t *frag_spv  = mesh_lit_frag_spv;
-  size_t          frag_size = sizeof(mesh_lit_frag_spv);
+  const uint32_t *frag_spv = lightmapped ? mesh_lit_lightmapped_frag_spv : mesh_lit_frag_spv;
+  size_t          frag_size =
+      lightmapped ? sizeof(mesh_lit_lightmapped_frag_spv) : sizeof(mesh_lit_frag_spv);
   switch (key.state.shader)
   {
   case shader_t::lit: break;
   case shader_t::unlit:
+    // Unlit means unlit: it reads no lighting term at all, so there is nothing
+    // for a lightmap to replace and no variant to build.
     frag_spv  = mesh_unlit_frag_spv;
     frag_size = sizeof(mesh_unlit_frag_spv);
     break;
   case shader_t::grid:
-    frag_spv  = mesh_grid_frag_spv;
-    frag_size = sizeof(mesh_grid_frag_spv);
+    frag_spv  = lightmapped ? mesh_grid_lightmapped_frag_spv : mesh_grid_frag_spv;
+    frag_size = lightmapped ? sizeof(mesh_grid_lightmapped_frag_spv)
+                            : sizeof(mesh_grid_frag_spv);
     break;
   case shader_t::blend:
     if (blended)
     {
-      frag_spv  = mesh_blend_frag_spv;
-      frag_size = sizeof(mesh_blend_frag_spv);
+      frag_spv  = lightmapped ? mesh_blend_lightmapped_frag_spv : mesh_blend_frag_spv;
+      frag_size = lightmapped ? sizeof(mesh_blend_lightmapped_frag_spv)
+                              : sizeof(mesh_blend_frag_spv);
     }
     break;
   }
@@ -1310,39 +1396,48 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
        VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
 
-  VkVertexInputBindingDescription bindings[2]{};
-  bindings[0] = {0, sizeof(vertex_xnu), VK_VERTEX_INPUT_RATE_VERTEX};
+  VkVertexInputBindingDescription bindings[3]{};
+  bindings[0]            = {0, sizeof(vertex_xnu), VK_VERTEX_INPUT_RATE_VERTEX};
+  uint32_t binding_count = 1;
 
-  VkVertexInputAttributeDescription attributes[5]{};
+  VkVertexInputAttributeDescription attributes[6]{};
   attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, position)};
   attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, normal)};
   attributes[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex_xnu, uv)};
   uint32_t attribute_count = 3;
 
-  // Skin influences and blend weights each ride a binding of their OWN rather
-  // than a widened vertex, so the static layout above is byte-identical for
-  // every mesh in the engine. Only the shader that reads one declares it: an
-  // attribute a pipeline's vertex shader does not consume is a description
-  // nobody can check.
+  // Skin influences, blend weights and lightmap coordinates each ride a binding
+  // of their OWN rather than a widened vertex, so the static layout above is
+  // byte-identical for every mesh in the engine. Only the shader that reads one
+  // declares it: an attribute a pipeline's vertex shader does not consume is a
+  // description nobody can check.
   if (skinned)
   {
-    bindings[1] = {1, sizeof(assets::vertex_skin_t), VK_VERTEX_INPUT_RATE_VERTEX};
-    attributes[3] = {3, 1, VK_FORMAT_R8G8B8A8_UINT, offsetof(assets::vertex_skin_t, bone_indices)};
-    attributes[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
-                     offsetof(assets::vertex_skin_t, bone_weights)};
-    attribute_count = 5;
+    bindings[binding_count++] = {1, sizeof(assets::vertex_skin_t), VK_VERTEX_INPUT_RATE_VERTEX};
+    attributes[attribute_count++] = {3, 1, VK_FORMAT_R8G8B8A8_UINT,
+                                     offsetof(assets::vertex_skin_t, bone_indices)};
+    attributes[attribute_count++] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
+                                     offsetof(assets::vertex_skin_t, bone_weights)};
   }
   else if (blended)
   {
     static_assert(BLEND_LAYER_COUNT == 2, "one attribute per stored layer weight");
-    bindings[1] = {2, sizeof(vertex_blend_t), VK_VERTEX_INPUT_RATE_VERTEX};
-    attributes[3] = {5, 2, VK_FORMAT_R32_SFLOAT, offsetof(vertex_blend_t, weight)};
-    attribute_count = 4;
+    bindings[binding_count++]     = {2, sizeof(vertex_blend_t), VK_VERTEX_INPUT_RATE_VERTEX};
+    attributes[attribute_count++] = {5, 2, VK_FORMAT_R32_SFLOAT,
+                                     offsetof(vertex_blend_t, weight)};
+  }
+
+  // Not an `else`: a painted face in a baked level is blended AND lightmapped,
+  // which is the whole reason vertex_layout_t is flags.
+  if (lightmapped)
+  {
+    bindings[binding_count++]     = {3, sizeof(linalg::vec3f), VK_VERTEX_INPUT_RATE_VERTEX};
+    attributes[attribute_count++] = {6, 3, VK_FORMAT_R32G32B32_SFLOAT, 0};
   }
 
   VkPipelineVertexInputStateCreateInfo vertex_input{
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-  vertex_input.vertexBindingDescriptionCount   = (skinned || blended) ? 2 : 1;
+  vertex_input.vertexBindingDescriptionCount   = binding_count;
   vertex_input.pVertexBindingDescriptions      = bindings;
   vertex_input.vertexAttributeDescriptionCount = attribute_count;
   vertex_input.pVertexAttributeDescriptions    = attributes;
@@ -1663,12 +1758,47 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the skinning uniform allocator");
   }
 
+  // The atlas needs a layout of its own where a blend layer does not: it is a
+  // sampler2DArray, and a set allocated against the sampler2D layout above would
+  // pass every check and read garbage at the draw.
+  VkDescriptorSetLayoutBinding lightmap_binding{};
+  lightmap_binding.binding         = 0;
+  lightmap_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  lightmap_binding.descriptorCount = 1;
+  lightmap_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo lightmap_ds_layout_info{
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  lightmap_ds_layout_info.bindingCount = 1;
+  lightmap_ds_layout_info.pBindings    = &lightmap_binding;
+  if (vkCreateDescriptorSetLayout(g_device, &lightmap_ds_layout_info, nullptr,
+                                  &g_lightmap_ds_layout) != VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the lightmap descriptor set layout");
+  }
+
+  VkDescriptorPoolSize lightmap_pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                          MAX_LIGHTMAP_ATLASES};
+  VkDescriptorPoolCreateInfo lightmap_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  lightmap_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
+  lightmap_pool_info.poolSizeCount = 1;
+  lightmap_pool_info.pPoolSizes    = &lightmap_pool_size;
+  if (vkCreateDescriptorPool(g_device, &lightmap_pool_info, nullptr, &g_lightmap_pool) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the lightmap descriptor pool");
+  }
+
   // Set 2 is layer 1's albedo, through the SAME single-sampler layout set 0
   // uses -- a texture is a texture, and reusing it is what keeps a blended
   // material free of descriptor machinery of its own. A pipeline that does not
   // blend simply never binds it, exactly as a static one never binds set 1.
-  VkDescriptorSetLayout set_layouts[2 + BLEND_LAYER_COUNT - 1] = {
-      g_albedo_ds_layout, g_skinning_uniforms.ds_layout, g_albedo_ds_layout};
+  VkDescriptorSetLayout set_layouts[LIGHTMAP_DESCRIPTOR_SET + 1];
+  set_layouts[0] = g_albedo_ds_layout;
+  set_layouts[1] = g_skinning_uniforms.ds_layout;
+  for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
+    set_layouts[1 + layer] = g_albedo_ds_layout;
+  set_layouts[LIGHTMAP_DESCRIPTOR_SET] = g_lightmap_ds_layout;
 
   VkPushConstantRange push_range{};
   push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -1676,7 +1806,7 @@ static void create_mesh_resources()
   push_range.size       = sizeof(mesh_push_constants_t);
 
   VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-  layout_info.setLayoutCount         = 2 + BLEND_LAYER_COUNT - 1;
+  layout_info.setLayoutCount         = LIGHTMAP_DESCRIPTOR_SET + 1;
   layout_info.pSetLayouts            = set_layouts;
   layout_info.pushConstantRangeCount = 1;
   layout_info.pPushConstantRanges    = &push_range;
@@ -1852,6 +1982,142 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
   return result;
 }
 
+// The atlas image: the same staging shape as upload_texture, with page_count
+// array layers and VK_FORMAT_E5B9G9R9_UFLOAT_PACK32 over the bytes as they sit.
+// The format is the one the bake writes (lightmap.hpp), chosen so this stays a
+// memcpy and the sampler does the decoding.
+//
+// CLAMP_TO_EDGE, not REPEAT: the gutter keeps neighbouring charts from bleeding
+// into each other WITHIN a page, and wrapping at the page edge would defeat it
+// by reading the opposite side of the atlas entirely.
+static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu_lightmap_t &out)
+{
+  if (pages.format != shared::lightmap_pixel_format_t::Rgb9e5)
+  {
+    log_error("[renderer] lightmap pages are in pixel format {}, which this build cannot "
+              "upload",
+              (uint32_t)pages.format);
+    return false;
+  }
+
+  const uint32_t     size   = (uint32_t)pages.size_in_texels;
+  const uint32_t     layers = (uint32_t)pages.page_count;
+  const VkFormat     format = VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;
+  const VkDeviceSize bytes  = (VkDeviceSize)pages.bytes.size();
+
+  VkFormatProperties format_properties{};
+  vkGetPhysicalDeviceFormatProperties(g_physical_device, format, &format_properties);
+  if ((format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0)
+  {
+    log_error("[renderer] this GPU cannot sample VK_FORMAT_E5B9G9R9_UFLOAT_PACK32; the "
+              "lightmap cannot be uploaded");
+    return false;
+  }
+  // Optional in Vulkan, universal in practice. Point sampling an atlas is
+  // blocky rather than broken, so it degrades instead of refusing.
+  const bool filter_linear =
+      (format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+  if (!filter_linear)
+    log_warning("[renderer] E5B9G9R9 has no linear filtering here; the lightmap will be "
+                "point sampled");
+
+  VkBuffer       staging_buffer = VK_NULL_HANDLE;
+  VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+  create_buffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                staging_buffer, staging_memory);
+  void *mapped = nullptr;
+  vkMapMemory(g_device, staging_memory, 0, bytes, 0, &mapped);
+  memcpy(mapped, pages.bytes.data(), (size_t)bytes);
+  vkUnmapMemory(g_device, staging_memory);
+
+  const auto drop_staging = [&]() {
+    vkDestroyBuffer(g_device, staging_buffer, nullptr);
+    vkFreeMemory(g_device, staging_memory, nullptr);
+  };
+
+  VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  image_info.imageType     = VK_IMAGE_TYPE_2D;
+  image_info.format        = format;
+  image_info.extent        = {size, size, 1};
+  image_info.mipLevels     = 1;
+  image_info.arrayLayers   = layers;
+  image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+  image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+  image_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(g_device, &image_info, nullptr, &out.texture.image) != VK_SUCCESS)
+  {
+    log_error("[renderer] could not create the lightmap atlas image");
+    drop_staging();
+    return false;
+  }
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(g_device, out.texture.image, &requirements);
+  VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  allocation.allocationSize = requirements.size;
+  allocation.memoryTypeIndex =
+      find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(g_device, &allocation, nullptr, &out.texture.memory);
+  vkBindImageMemory(g_device, out.texture.image, out.texture.memory, 0);
+
+  VkCommandBuffer cmd = begin_single_command();
+
+  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image               = out.texture.image;
+  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
+
+  barrier.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                       0, nullptr, 0, nullptr, 1, &barrier);
+
+  // One copy for every layer at once -- the pages are page-major and tightly
+  // packed, which is the layout a single region with layerCount = pages already
+  // describes.
+  VkBufferImageCopy region{};
+  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, layers};
+  region.imageExtent      = {size, size, 1};
+  vkCmdCopyBufferToImage(cmd, staging_buffer, out.texture.image,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+  barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                       &barrier);
+
+  end_single_command(cmd);
+  drop_staging();
+
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image            = out.texture.image;
+  view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+  view_info.format           = format;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
+  vkCreateImageView(g_device, &view_info, nullptr, &out.texture.view);
+
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter    = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  sampler_info.minFilter    = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  vkCreateSampler(g_device, &sampler_info, nullptr, &out.texture.sampler);
+
+  out.size        = (int)size;
+  out.layer_count = (int)layers;
+  return true;
+}
+
 void destroy_texture(gpu_texture_t &tex)
 {
   if (tex.sampler) { vkDestroySampler(g_device, tex.sampler, nullptr);    tex.sampler = VK_NULL_HANDLE; }
@@ -1925,6 +2191,116 @@ texture_handle_t register_texture(const assets::texture_asset_t &texture, bool s
   const texture_handle_t handle{(uint32_t)g_textures.size()};
   g_textures.push_back(entry);
   return handle;
+}
+
+static VkDescriptorSet allocate_lightmap_descriptor_set(const gpu_texture_t &texture)
+{
+  if (g_lightmap_pool == VK_NULL_HANDLE)
+    return VK_NULL_HANDLE;
+
+  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  allocation.descriptorPool     = g_lightmap_pool;
+  allocation.descriptorSetCount = 1;
+  allocation.pSetLayouts        = &g_lightmap_ds_layout;
+
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  if (vkAllocateDescriptorSets(g_device, &allocation, &set) != VK_SUCCESS)
+  {
+    log_error("[renderer] out of lightmap descriptor sets (cap is {})", MAX_LIGHTMAP_ATLASES);
+    return VK_NULL_HANDLE;
+  }
+
+  VkDescriptorImageInfo image{};
+  image.sampler     = texture.sampler;
+  image.imageView   = texture.view;
+  image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  write.dstSet          = set;
+  write.dstBinding      = 0;
+  write.descriptorCount = 1;
+  write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo      = &image;
+  vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+  return set;
+}
+
+lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &pages)
+{
+  if (pages.empty() || pages.size_in_texels <= 0 || pages.page_count <= 0)
+    return {};
+
+  gpu_lightmap_t entry{};
+  if (!try_upload_lightmap_image(pages, entry))
+    return {};
+
+  entry.set = allocate_lightmap_descriptor_set(entry.texture);
+  if (entry.set == VK_NULL_HANDLE)
+  {
+    destroy_texture(entry.texture);
+    return {};
+  }
+
+  const lightmap_handle_t handle{(uint32_t)g_lightmaps.size()};
+  g_lightmaps.push_back(entry);
+  return handle;
+}
+
+void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &pages)
+{
+  if (!handle.valid() || handle.index >= g_lightmaps.size())
+  {
+    log_error("[renderer] update_lightmap: invalid lightmap handle {}", handle.index);
+    return;
+  }
+  if (pages.empty() || pages.size_in_texels <= 0 || pages.page_count <= 0)
+  {
+    log_error("[renderer] update_lightmap: empty pages; keeping the atlas already resident");
+    return;
+  }
+
+  // The image is replaced rather than refilled: a rebake at different settings
+  // changes the page size and the page count, so the old image is the wrong
+  // shape more often than not. The DESCRIPTOR SET is kept and rewritten, which
+  // is what stops repeated bakes from exhausting the pool.
+  gpu_lightmap_t &entry = g_lightmaps[handle.index];
+  vkDeviceWaitIdle(g_device);
+
+  gpu_lightmap_t replacement{};
+  if (!try_upload_lightmap_image(pages, replacement))
+    return;
+
+  destroy_texture(entry.texture);
+  entry.texture     = replacement.texture;
+  entry.size        = replacement.size;
+  entry.layer_count = replacement.layer_count;
+
+  VkDescriptorImageInfo image{};
+  image.sampler     = entry.texture.sampler;
+  image.imageView   = entry.texture.view;
+  image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  write.dstSet          = entry.set;
+  write.dstBinding      = 0;
+  write.descriptorCount = 1;
+  write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo      = &image;
+  vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+}
+
+// What a pass with no atlas of its own binds. Falls back to the white page, and
+// then to nothing -- a lightmapped draw with no set bound at all is a validation
+// error, which is the loudest this can be without refusing to draw.
+static VkDescriptorSet resolve_lightmap_set(lightmap_handle_t handle)
+{
+  if (handle.valid() && handle.index < g_lightmaps.size())
+    return g_lightmaps[handle.index].set;
+
+  if (g_white_lightmap.valid())
+    return g_lightmaps[g_white_lightmap.index].set;
+
+  return VK_NULL_HANDLE;
 }
 
 // The renderer-side twin of the above for a texture that arrived as an asset
@@ -2018,6 +2394,8 @@ static void destroy_mesh_buffers(gpu_mesh_t &mesh)
   if (mesh.skin_memory)   vkFreeMemory(g_device, mesh.skin_memory, nullptr);
   if (mesh.blend_buffer)  vkDestroyBuffer(g_device, mesh.blend_buffer, nullptr);
   if (mesh.blend_memory)  vkFreeMemory(g_device, mesh.blend_memory, nullptr);
+  if (mesh.lightmap_buffer) vkDestroyBuffer(g_device, mesh.lightmap_buffer, nullptr);
+  if (mesh.lightmap_memory) vkFreeMemory(g_device, mesh.lightmap_memory, nullptr);
 
   mesh.vertex_buffer = VK_NULL_HANDLE;
   mesh.vertex_memory = VK_NULL_HANDLE;
@@ -2027,6 +2405,8 @@ static void destroy_mesh_buffers(gpu_mesh_t &mesh)
   mesh.skin_memory   = VK_NULL_HANDLE;
   mesh.blend_buffer  = VK_NULL_HANDLE;
   mesh.blend_memory  = VK_NULL_HANDLE;
+  mesh.lightmap_buffer = VK_NULL_HANDLE;
+  mesh.lightmap_memory = VK_NULL_HANDLE;
 }
 
 // Stage and copy the three buffers. This is the ONE place a mesh touches the
@@ -2109,6 +2489,22 @@ static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t
     }
   }
 
+  if (mesh.is_lightmapped())
+  {
+    if (mesh.lightmap_uv.size() != mesh.vertices.size())
+    {
+      log_error("[renderer] mesh has {} lightmap coordinates for {} vertices; they must be "
+                "parallel",
+                mesh.lightmap_uv.size(), mesh.vertices.size());
+    }
+    else
+    {
+      stage(mesh.lightmap_uv.data(), mesh.lightmap_uv.size() * sizeof(linalg::vec3f),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, gpu_mesh.lightmap_buffer,
+            gpu_mesh.lightmap_memory);
+    }
+  }
+
   VkCommandBuffer cmd = begin_single_command();
   for (uint32_t index = 0; index < staged_count; ++index)
   {
@@ -2126,12 +2522,16 @@ static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t
 
   // Skinned wins if a mesh somehow carries both: the skin decides where every
   // vertex ENDS UP, and a mesh drawn in its bind pose is wrong in a way no
-  // material can make up for.
+  // material can make up for. The lightmap is not part of that contest -- it
+  // composes with either, which is why the layout is flags.
   gpu_mesh.layout = vertex_layout_t::static_mesh;
   if (mesh.is_skinned() && gpu_mesh.skin_buffer)
-    gpu_mesh.layout = vertex_layout_t::skinned;
+    gpu_mesh.layout |= vertex_layout_t::skinned;
   else if (mesh.is_blended() && gpu_mesh.blend_buffer)
-    gpu_mesh.layout = vertex_layout_t::blended;
+    gpu_mesh.layout |= vertex_layout_t::blended;
+
+  if (mesh.is_lightmapped() && gpu_mesh.lightmap_buffer)
+    gpu_mesh.layout |= vertex_layout_t::lightmapped;
   return true;
 }
 
@@ -2299,10 +2699,26 @@ static void create_default_resources()
   g_missing_texture = register_texture(missing, /*srgb*/ true);
 
   g_default_material = register_material({});
+
+  // One white texel on one page, so a lightmapped mesh drawn in a pass that
+  // names no bake reads 1.0 and the term multiplies out. Through the ordinary
+  // path, like the two textures above, so there is no second code path.
+  shared::lightmap_pages_t white_pages;
+  white_pages.format         = shared::lightmap_pixel_format_t::Rgb9e5;
+  white_pages.size_in_texels = 1;
+  white_pages.page_count     = 1;
+  white_pages.bytes.resize(4);
+  const uint32_t white_texel = shared::pack_rgb9e5({1.f, 1.f, 1.f});
+  memcpy(white_pages.bytes.data(), &white_texel, sizeof(white_texel));
+  g_white_lightmap = register_lightmap(white_pages);
 }
 
 static void cleanup_registered_resources()
 {
+  for (gpu_lightmap_t &lightmap : g_lightmaps)
+    destroy_texture(lightmap.texture);
+  g_lightmaps.clear();
+
   for (gpu_mesh_t &mesh : g_meshes)
     destroy_mesh_buffers(mesh);
   g_meshes.clear();
@@ -2862,10 +3278,18 @@ static void pack_normal_matrix(const linalg::mat4f &transform, mesh_push_constan
 }
 
 static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws,
-                              const linalg::mat4f &view_projection_matrix)
+                              const linalg::mat4f &view_projection_matrix,
+                              lightmap_handle_t lightmap)
 {
   g_draw_items.clear();
   g_draw_skinning.assign(draws.size(), {});
+
+  // Once per pass, ahead of every draw: the atlas belongs to the world being
+  // drawn, so nothing below it varies. A pipeline that reads no lightmap simply
+  // never looks at set 3, exactly as a static one never looks at set 1.
+  if (const VkDescriptorSet lightmap_set = resolve_lightmap_set(lightmap))
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout,
+                            LIGHTMAP_DESCRIPTOR_SET, 1, &lightmap_set, 0, nullptr);
 
   for (uint32_t draw_index = 0; draw_index < draws.size(); ++draw_index)
   {
@@ -2878,7 +3302,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
 
     const gpu_mesh_t &mesh = g_meshes[draw.mesh.index];
 
-    if (mesh.layout == vertex_layout_t::skinned)
+    if (has_layout(mesh.layout, vertex_layout_t::skinned))
     {
       g_draw_skinning[draw_index] = upload_skinning_matrices(mesh.skeleton, draw.pose);
       if (!g_draw_skinning[draw_index].valid())
@@ -2959,16 +3383,20 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
       VkDeviceSize offsets[1]        = {0};
       vkCmdBindVertexBuffers(cmd, 0, 1, vertex_buffers, offsets);
 
-      // The second array rides its own binding -- 1 for a skin, 2 for blend
-      // weights -- so the two never have to agree about an index.
-      if (mesh.layout == vertex_layout_t::skinned)
+      // Every parallel array rides its own binding -- 1 for a skin, 2 for blend
+      // weights, 3 for lightmap coordinates -- so no two ever have to agree
+      // about an index.
+      if (has_layout(mesh.layout, vertex_layout_t::skinned))
         vkCmdBindVertexBuffers(cmd, 1, 1, &mesh.skin_buffer, offsets);
-      else if (mesh.layout == vertex_layout_t::blended)
+      else if (has_layout(mesh.layout, vertex_layout_t::blended))
         vkCmdBindVertexBuffers(cmd, 2, 1, &mesh.blend_buffer, offsets);
+
+      if (has_layout(mesh.layout, vertex_layout_t::lightmapped))
+        vkCmdBindVertexBuffers(cmd, 3, 1, &mesh.lightmap_buffer, offsets);
 
       vkCmdBindIndexBuffer(cmd, mesh.index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
-      if (mesh.layout == vertex_layout_t::skinned)
+      if (has_layout(mesh.layout, vertex_layout_t::skinned))
       {
         const frame_uniform_allocation_t &skinning = g_draw_skinning[item.draw_index];
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout, 1, 1,
@@ -3126,7 +3554,7 @@ std::optional<linalg::vec2> try_project_to_screen(const render_view_t &view,
 
 // --- Debug primitive recording ---
 
-static void write_debug_vertex(debug_vertex_t &vertex, const linalg::vec3f &position, color_t color,
+static void write_debug_vertex(debug_vertex_t &vertex, const linalg::vec3f& position, color_t color,
                                float barycentric_x, float barycentric_y, float barycentric_z,
                                float rim_strength = 0.0f)
 {
@@ -3144,7 +3572,7 @@ static void write_debug_vertex(debug_vertex_t &vertex, const linalg::vec3f &posi
 }
 
 static void push_debug_constants(VkCommandBuffer cmd, const linalg::mat4f &mvp, color_t tint,
-                                 const linalg::vec3f &camera_position)
+                                 const linalg::vec3f& camera_position)
 {
   debug_push_constants_t push{};
   memcpy(push.mvp, &mvp, sizeof(push.mvp));
@@ -3176,7 +3604,7 @@ static void shaded_corner_barycentric(uint32_t corner, float &out_x, float &out_
 
 static void record_debug_lines(VkCommandBuffer cmd, const debug_draw_list_t &debug,
                                const linalg::mat4f &view_projection_matrix,
-                               const linalg::vec3f &camera_position)
+                               const linalg::vec3f& camera_position)
 {
   if (debug.lines.empty() || g_debug_line_pipeline == VK_NULL_HANDLE)
     return;
@@ -3266,7 +3694,7 @@ static void record_debug_lines(VkCommandBuffer cmd, const debug_draw_list_t &deb
 // pipelines, and reading it off the colour means a caller never picks.
 static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &debug,
                                   const linalg::mat4f &view_projection_matrix,
-                                  const linalg::vec3f &camera_position, bool opaque_pass)
+                                  const linalg::vec3f& camera_position, bool opaque_pass)
 {
   const VkPipeline pipeline = opaque_pass ? g_debug_box_pipeline : g_debug_face_pipeline;
   if (debug.polygons.empty() || pipeline == VK_NULL_HANDLE)
@@ -3960,8 +4388,8 @@ static void record_particle_compute(VkCommandBuffer cmd,
 static void record_particle_draw(VkCommandBuffer cmd,
                                  const particle_emitter_parameters_t &parameters,
                                  const linalg::mat4f &view_projection_matrix,
-                                 const linalg::vec3f &camera_right,
-                                 const linalg::vec3f &camera_up);
+                                 const linalg::vec3f& camera_right,
+                                 const linalg::vec3f& camera_up);
 
 bool new_frame()
 {
@@ -4070,7 +4498,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
     apply_viewport(cmd, pass.view.viewport);
     const linalg::mat4f view_projection_matrix = view_projection(pass.view);
 
-    record_mesh_draws(cmd, pass.draws, view_projection_matrix);
+    record_mesh_draws(cmd, pass.draws, view_projection_matrix, pass.lightmap);
 
     if (!pass.particles.empty())
     {
@@ -4081,7 +4509,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
 
     if (pass.debug)
     {
-      const linalg::vec3f &eye = pass.view.camera.position;
+      const linalg::vec3f& eye = pass.view.camera.position;
       record_debug_polygons(cmd, *pass.debug, view_projection_matrix, eye, /*opaque_pass*/ true);
       record_debug_polygons(cmd, *pass.debug, view_projection_matrix, eye, /*opaque_pass*/ false);
       record_debug_lines(cmd, *pass.debug, view_projection_matrix, eye);
@@ -4241,7 +4669,7 @@ static void record_particle_compute(VkCommandBuffer cmd,
 static void record_particle_draw(VkCommandBuffer cmd,
                                  const particle_emitter_parameters_t &parameters,
                                  const linalg::mat4f &view_projection_matrix,
-                                 const linalg::vec3f &camera_right, const linalg::vec3f &camera_up)
+                                 const linalg::vec3f& camera_right, const linalg::vec3f& camera_up)
 {
   if (g_particle_graphics_pipeline == VK_NULL_HANDLE || parameters.max_particles == 0)
     return;

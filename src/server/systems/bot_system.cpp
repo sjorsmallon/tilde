@@ -58,7 +58,7 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
 
 // Advance along the path. Returns the horizontal direction toward the next
 // waypoint, or {1,0,0} if no valid waypoint exists.
-static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
+static vec3f advance_path(Bot_State &bot, const vec3f& bot_pos)
 {
   if (bot.path.empty() || bot.path_index >= static_cast<int>(bot.path.size()))
     return bot.last_facing;
@@ -66,7 +66,7 @@ static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
   // Advance past waypoints we've already reached.
   while (bot.path_index < static_cast<int>(bot.path.size()))
   {
-    const vec3f &wp = bot.path[bot.path_index];
+    const vec3f& wp = bot.path[bot.path_index];
     float dx = wp.x - bot_pos.x;
     float dz = wp.z - bot_pos.z;
     float d2 = dx * dx + dz * dz;
@@ -79,7 +79,7 @@ static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
   if (bot.path_index >= static_cast<int>(bot.path.size()))
     return bot.last_facing;
 
-  const vec3f &wp = bot.path[bot.path_index];
+  const vec3f& wp = bot.path[bot.path_index];
   vec3f dir = {wp.x - bot_pos.x, 0.f, wp.z - bot_pos.z};
   float len = linalg::length(dir);
   if (len < 0.001f) return bot.last_facing;
@@ -96,7 +96,7 @@ static vec3f advance_path(Bot_State &bot, const vec3f &bot_pos)
 // two drift apart.
 static void apply_bot_movement(server_context_t &context, physics_state_t &physics,
                                const shared::game_session_t &session,
-                               entities::Player_Entity &bot_ent, const vec3f &front,
+                               entities::Player_Entity &bot_ent, const vec3f& front,
                                const Move_Input &input, float half_width, float dt)
 {
   vec3f right = linalg::cross(front, vec3f{0.f, 1.f, 0.f});

@@ -51,7 +51,7 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
   const auto face = [&](Span<const linalg::vec3f> polygon, color_t color)
   { draws.debug.filled_polygon(polygon, color, 0.f, {.draw_when_occluded = true}); };
 
-  const auto line = [&](const linalg::vec3f &start, const linalg::vec3f &end, color_t color)
+  const auto line = [&](const linalg::vec3f& start, const linalg::vec3f& end, color_t color)
   { draws.debug.line(start, end, color, 0.f, 0.f, /*draw_when_occluded*/ true); };
 
   const color_t color = hit_region_color(volume.region);

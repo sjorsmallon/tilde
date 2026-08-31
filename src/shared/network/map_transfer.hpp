@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../lightmap.hpp"
 #include "../navmesh.hpp"
 #include "bitstream.hpp"
 #include <cstdint>
@@ -49,8 +50,8 @@ change_map_message_t deserialize_change_map(network::Bit_Reader &reader);
 // This is the COMPILED PACKAGE the server hosts and streams to clients, NOT the
 // mapper-only .source (see todo.md "ARTIFACT MODEL"). It bundles the runtime
 // entity data (serialize_map_to_string() text) with the baked sidecars a client
-// needs to run the map but cannot cheaply recompute on load — the navmesh today,
-// lightmaps/PVS later. Source never goes over the wire; this does.
+// needs to run the map but cannot cheaply recompute on load — the navmesh and
+// the lightmap today, PVS later. Source never goes over the wire; this does.
 //
 // The container is a single self-describing byte blob (magic + version so a
 // future format change is detectable) that the fragmenter ships as S2C_MapData.
@@ -59,6 +60,13 @@ struct map_package_t
   std::string map_name;    // logical worldspawn name, for display / cache key
   std::string entity_text; // serialize_map_to_string() output (runtime entities)
   navmesh_t   navmesh;     // baked sidecar; may be empty (navmesh.valid()==false)
+
+  // The baked lightmap, for the same reason the navmesh is here: a client cannot
+  // recompute it and has no .lightmap sidecar of its own -- it never sees the
+  // .source the sidecar sits beside. Without it a downloaded map draws every
+  // brush unlit while the listen server looks correct, which reads as a shader
+  // bug rather than as missing data. May be empty (lightmap.empty()).
+  lightmap_t  lightmap;
 };
 
 // Pack the map's runtime entities + baked navmesh into the wire package blob.

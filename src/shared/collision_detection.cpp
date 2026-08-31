@@ -116,9 +116,9 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
   return bvh;
 }
 
-bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f &origin,
-                               const vec3f &dir, float &out_t, float &out_t_exit,
-                               vec3f &out_normal)
+bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
+                               const vec3f& dir, float &out_t, float &out_t_exit,
+                               vec3f& out_normal)
 {
   if (planes.count == 0)
     return false;
@@ -178,7 +178,7 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f &origin,
 }
 
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
-                       const vec3f &origin, const vec3f &dir, ray_hit_result_t &out_hit)
+                       const vec3f& origin, const vec3f& dir, ray_hit_result_t &out_hit)
 {
   if (bvh.nodes.empty())
     return false;

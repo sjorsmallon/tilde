@@ -6,6 +6,7 @@
 #include "../render_assets.hpp"
 #include "../renderer.hpp"
 #include "entity_editor_traits.hpp"
+#include "entity_inspector.hpp"
 #include "imgui.h"
 #include <cmath>
 #include <string>
@@ -20,8 +21,8 @@ namespace
 // caller should fall back to a box.
 bool push_wireframe_mesh(pass_builder_t &draws,
                          assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
-                         const linalg::vec3f &position, const linalg::vec3f &rotation,
-                         const linalg::vec3f &scale, color_t color)
+                         const linalg::vec3f& position, const linalg::quatf& rotation,
+                         const linalg::vec3f& scale, color_t color)
 {
   const renderer::mesh_handle_t mesh = get_render_mesh(mesh_asset);
   if (!mesh.valid() || !renderer::wireframe_supported())
@@ -29,7 +30,7 @@ bool push_wireframe_mesh(pass_builder_t &draws,
 
   renderer::mesh_draw_t draw{};
   draw.mesh      = mesh;
-  draw.transform = linalg::compose_transform_euler(position, rotation, scale);
+  draw.transform = linalg::compose_transform(position, rotation, scale);
   draw.tint      = color;
   draw.fill      = renderer::fill_mode_t::wireframe;
   draws.meshes.push_back(draw);
@@ -39,6 +40,11 @@ bool push_wireframe_mesh(pass_builder_t &draws,
 // Contours read as an ink line over the grey, not as another light source.
 constexpr color_t BRUSH_CONTOUR_COLOR{30, 32, 38};
 
+// A brush get_collision_pieces refused. Loud on purpose -- it is a hole in the
+// level, and the contour is the only thing about the brush that would otherwise
+// have changed at all.
+constexpr color_t NO_COLLISION_CONTOUR_COLOR{230, 40, 40};
+
 // Build the hull, then trace it. The callers here all draw a brush the user is
 // editing, so the hull has to be rebuilt anyway; a caller holding a brush that
 // is NOT changing should hoist the build and call draw_brush_hull_wireframe.
@@ -47,13 +53,13 @@ void draw_brush_wireframe(pass_builder_t &draws, const shared::brush_geometry_t 
                           const linalg::vec3 &translation = {0, 0, 0})
 {
   std::optional<shared::brush_polyhedron_t> polyhedron =
-      shared::try_build_brush_polyhedron(brush.vertices);
+      shared::try_build_brush_polyhedron(brush.hull_points);
 
   if (!polyhedron)
   {
     // A brush that does not hull has no edges to trace. Show the bound so the
     // object is still selectable and visibly WRONG rather than invisible.
-    const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush.vertices);
+    const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush.hull_points);
     draws.debug.box((bounds.min + bounds.max) * 0.5f + translation,
                     (bounds.max - bounds.min) * 0.5f, colors::red,
                     renderer::fill_mode_t::wireframe, depth_bias);
@@ -148,7 +154,8 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
 
 void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
-                             bool solid, Span<const std::string> materials)
+                             bool solid, Span<const std::string> materials,
+                             const shared::lightmap_t &lightmap, bool collides)
 {
   // Brushes carry their shape in their EDGES, not in a surface texture -- the
   // flat grey they draw as says nothing on its own. Contours here rather than in
@@ -158,13 +165,15 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
   {
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
     if (solid)
-      draw_geometry(draws, geometry, uid, materials);
+      draw_geometry(draws, geometry, uid, materials, lightmap);
 
-    draw_brush_wireframe(draws, brush, BRUSH_CONTOUR_COLOR, -60.0f);
+    draw_brush_wireframe(draws, brush,
+                         collides ? BRUSH_CONTOUR_COLOR : NO_COLLISION_CONTOUR_COLOR,
+                         -60.0f);
     return;
   }
 
-  draw_geometry(draws, geometry, uid, materials);
+  draw_geometry(draws, geometry, uid, materials, lightmap);
 }
 
 // ============================================================================
@@ -278,7 +287,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
     // showed back when Box was its own kind, and a hull outline around it would
     // be strictly less information.
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
-    if (shared::brush_is_axis_aligned_box(brush.vertices))
+    if (shared::brush_is_axis_aligned_box(brush.hull_points))
     {
       const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
       draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f,
@@ -350,7 +359,7 @@ bool draw_static_mesh_inspector(shared::static_mesh_geometry_t &static_mesh)
   bool changed = false;
   ImGui::TextDisabled("static mesh");
   changed |= ImGui::DragFloat3("position", &static_mesh.position.x, 0.5f);
-  changed |= ImGui::DragFloat3("orientation", &static_mesh.orientation.x, 1.0f);
+  changed |= edit_rotation_as_euler("rotation", static_mesh.orientation);
   changed |= ImGui::DragFloat3("scale", &static_mesh.scale.x, 0.01f);
   changed |= draw_surface_inspector(static_mesh.surface);
   return changed;
@@ -361,13 +370,13 @@ bool draw_brush_inspector(shared::brush_geometry_t &brush)
   bool changed = false;
   ImGui::TextDisabled("brush");
 
-  const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush.vertices);
+  const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush.hull_points);
   const linalg::vec3          size   = bounds.max - bounds.min;
 
-  ImGui::Text("%zu vertices", brush.vertices.size());
+  ImGui::Text("%zu hull points", brush.hull_points.size());
   ImGui::Text("size  %.1f  %.1f  %.1f", size.x, size.y, size.z);
 
-  if (!shared::try_build_brush_polyhedron(brush.vertices))
+  if (!shared::try_build_brush_polyhedron(brush.hull_points))
     ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "does not form a solid");
 
   // The bounds centre is the only position a brush has, and writing it back
@@ -388,8 +397,12 @@ bool draw_brush_inspector(shared::brush_geometry_t &brush)
 
 } // namespace
 
-bool draw_geometry_inspector(shared::geometry_value_t &geometry)
+bool draw_geometry_inspector(shared::geometry_value_t &geometry, bool collides)
 {
+  if (!collides)
+    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                       "no collision — players pass through this");
+
   switch (shared::get_kind(geometry))
   {
   case shared::geometry_kind_t::Static_Mesh:

@@ -143,31 +143,157 @@ void test_look_at() {
   std::cout << "test_look_at passed" << std::endl;
 }
 
-void test_compose_transform_euler() {
+void test_compose_transform() {
   const vec3f translation = {7, -2, 13};
   const vec3f scale       = {2, 3, 4};
 
-  // With no rotation the euler form must agree with the quaternion form exactly.
-  const mat4f from_euler = compose_transform_euler(translation, {0, 0, 0}, scale);
-  const mat4f from_quat  = compose_transform(translation, quatf{0, 0, 0, 1}, scale);
-  for (int column = 0; column < 4; ++column)
-    for (int row = 0; row < 4; ++row)
-      assert(std::abs(from_euler[column][row] - from_quat[column][row]) < 1e-5f);
+  const mat4f unrotated = compose_transform(translation, quatf::identity(), scale);
+  for (int axis = 0; axis < 3; ++axis)
+    assert(std::abs(unrotated[axis][axis] - scale[axis]) < 1e-5f);
 
   // 90 degrees about Y sends +X to -Z (yaw sweeps +X toward +Z, so the inverse
   // rotation of the basis vector goes the other way).
-  const mat4f yawed = compose_transform_euler({0, 0, 0}, {0, 90, 0}, {1, 1, 1});
-  const vec4  x_axis = yawed * vec4{1, 0, 0, 0};
+  const mat4f yawed =
+      compose_transform({0, 0, 0}, from_euler_degrees({0, 90, 0}), {1, 1, 1});
+  const vec4 x_axis = yawed * vec4{1, 0, 0, 0};
   assert(std::abs(x_axis.x) < 1e-5f);
   assert(std::abs(x_axis.z + 1.0f) < 1e-5f);
 
   // Translation must survive scaling untouched.
-  const vec4 origin = from_euler * vec4{0, 0, 0, 1};
+  const vec4 origin = unrotated * vec4{0, 0, 0, 1};
   assert(std::abs(origin.x - translation.x) < 1e-5f);
   assert(std::abs(origin.y - translation.y) < 1e-5f);
   assert(std::abs(origin.z - translation.z) < 1e-5f);
 
-  std::cout << "test_compose_transform_euler passed" << std::endl;
+  std::cout << "test_compose_transform passed" << std::endl;
+}
+
+// The pinning test for the quaternion migration (rotation_def.md step 1).
+//
+// Every rotation currently on disk and on the wire is an euler triple read
+// through rotation_from_euler_degrees. If to_mat4(from_euler_degrees(e)) is that
+// same matrix, then flipping the storage type is a provable no-op for all of
+// them -- which is cheap to establish now and impossible to reconstruct once the
+// euler path is gone.
+void test_quaternion_matches_euler() {
+  const float angles[] = {0.f,    17.f,  45.f,  89.99f, 90.f,  90.01f, -90.f,
+                          123.f,  180.f, -180.f, 270.f, -37.5f, 89.f,  -89.5f};
+
+  for (float x : angles)
+    for (float y : angles)
+      for (float z : angles) {
+        const vec3f euler = {x, y, z};
+        const mat4f reference = rotation_from_euler_degrees(euler);
+        const mat4f measured = to_mat4(from_euler_degrees(euler));
+
+        for (int column = 0; column < 4; ++column)
+          for (int row = 0; row < 4; ++row)
+            assert(std::abs(reference[column][row] - measured[column][row]) < 1e-5f);
+
+        // A decomposition is not unique, so the round trip is pinned on the
+        // MATRIX, not on the angles. 90/-90/270 are the gimbal poles and 89.99 /
+        // 90.01 straddle them: that is the branch that gets written wrong, and
+        // the looser tolerance is real -- within a hundredth of a degree of the
+        // pole the split between x and z is float noise amplified, and 1.5e-3 is
+        // where it bottoms out. It is a seed for a widget, not a wire format.
+        const mat4f recovered =
+            rotation_from_euler_degrees(to_euler_degrees(from_euler_degrees(euler)));
+        for (int column = 0; column < 4; ++column)
+          for (int row = 0; row < 4; ++row)
+            assert(std::abs(reference[column][row] - recovered[column][row]) < 2e-3f);
+
+        // The facing the migration replaces: forward_from_model_euler was the
+        // +X column of that same matrix, which is what forward(q) reads.
+        const vec3f euler_forward = {reference[0].x, reference[0].y, reference[0].z};
+        assert(length(euler_forward - forward(from_euler_degrees(euler))) < 1e-5f);
+      }
+
+  std::cout << "test_quaternion_matches_euler passed" << std::endl;
+}
+
+void test_quaternion_vocabulary() {
+  // A ring drag is a rotation about an axis, and composing it is what the gizmo
+  // does instead of adding into an euler component.
+  const quatf quarter_turn_about_y = from_axis_angle({0, 1, 0}, 90.f);
+  const vec3f turned = rotate(quarter_turn_about_y, vec3f{1, 0, 0});
+  assert(std::abs(turned.x) < 1e-5f);
+  assert(std::abs(turned.z + 1.0f) < 1e-5f);
+
+  // from_axis_angle about a cardinal axis must agree with the euler spelling of
+  // the same turn.
+  const float probes[] = {0.f, 30.f, -75.f, 90.f, 155.f, 180.f};
+  for (float degrees : probes) {
+    const quatf about_x = from_axis_angle({1, 0, 0}, degrees);
+    const quatf about_y = from_axis_angle({0, 1, 0}, degrees);
+    const quatf about_z = from_axis_angle({0, 0, 1}, degrees);
+    const vec3f as_euler[3] = {{degrees, 0, 0}, {0, degrees, 0}, {0, 0, degrees}};
+    const quatf built[3] = {about_x, about_y, about_z};
+
+    for (int axis = 0; axis < 3; ++axis) {
+      const mat4f reference = rotation_from_euler_degrees(as_euler[axis]);
+      const mat4f measured = to_mat4(built[axis]);
+      for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < 4; ++row)
+          assert(std::abs(reference[column][row] - measured[column][row]) < 1e-5f);
+    }
+  }
+
+  // rotate(q, v) is to_mat4(q) * v, without the matrix.
+  const quatf tumbled = normalize(from_euler_degrees({23.f, -61.f, 108.f}));
+  const mat4f tumbled_matrix = to_mat4(tumbled);
+  const vec3f probe = {0.3f, -1.7f, 2.2f};
+  const vec4 through_matrix = tumbled_matrix * vec4{probe.x, probe.y, probe.z, 0.f};
+  const vec3f through_rotate = rotate(tumbled, probe);
+  assert(std::abs(through_matrix.x - through_rotate.x) < 1e-5f);
+  assert(std::abs(through_matrix.y - through_rotate.y) < 1e-5f);
+  assert(std::abs(through_matrix.z - through_rotate.z) < 1e-5f);
+
+  // inverse undoes, and for a unit quaternion it is the conjugate.
+  const quatf undone = inverse(tumbled) * tumbled;
+  assert(std::abs(std::abs(undone.w) - 1.0f) < 1e-5f);
+  const quatf conjugated = conjugate(tumbled);
+  const quatf inverted = inverse(tumbled);
+  assert(std::abs(conjugated.x - inverted.x) < 1e-5f);
+  assert(std::abs(conjugated.w - inverted.w) < 1e-5f);
+  assert(std::abs(length(rotate(tumbled, probe)) - length(probe)) < 1e-4f);
+
+  // The aim seam crosses one way, and it must land exactly on the direction the
+  // hitscan path already fires along.
+  const float yaws[] = {0.f, 33.f, 90.f, 179.f, -145.f, 270.f};
+  const float pitches[] = {0.f, 15.f, -42.f, 89.f, -89.f};
+  for (float yaw : yaws)
+    for (float pitch : pitches) {
+      const vec3f aimed = direction_from_angles(yaw, pitch);
+      const vec3f faced = forward(from_view_angles(yaw, pitch));
+      assert(length(aimed - faced) < 1e-5f);
+
+    }
+
+  // The yaw-only seam is what model_yaw_from_view_yaw still serves for the hitbox
+  // rig, and from_view_angles has to reproduce it or every drawn body turns the
+  // wrong way from the one that gets shot at.
+  for (float yaw : yaws) {
+    const mat4f model = rotation_from_euler_degrees({0.f, model_yaw_from_view_yaw(yaw), 0.f});
+    const vec3f through_model_yaw = {model[0].x, model[0].y, model[0].z};
+    assert(length(direction_from_angles(yaw, 0.f) - through_model_yaw) < 1e-5f);
+    assert(length(forward(from_view_angles(yaw, 0.f)) - through_model_yaw) < 1e-5f);
+  }
+
+  // basis_from reads the rotation's own axes, so it is orthonormal everywhere --
+  // including straight down, which is where the world-up rebuild it replaced had
+  // to guard against a zero-length cross product.
+  const basis_t straight_down = basis_from(from_view_angles(0.f, -90.f));
+  assert(std::abs(straight_down.forward.y + 1.0f) < 1e-5f);
+  assert(std::abs(dot(straight_down.forward, straight_down.right)) < 1e-5f);
+  assert(std::abs(dot(straight_down.right, straight_down.up)) < 1e-5f);
+  assert(std::abs(length(straight_down.up) - 1.0f) < 1e-5f);
+
+  const basis_t identity_basis = basis_from(quatf::identity());
+  assert(std::abs(identity_basis.forward.x - 1.0f) < 1e-5f);
+  assert(std::abs(identity_basis.right.z - 1.0f) < 1e-5f);
+  assert(std::abs(identity_basis.up.y - 1.0f) < 1e-5f);
+
+  std::cout << "test_quaternion_vocabulary passed" << std::endl;
 }
 
 // Ray-to-segment distance, checked against a brute-force scan of the segment
@@ -252,7 +378,9 @@ int main() {
   test_math();
   test_projection_matrices();
   test_look_at();
-  test_compose_transform_euler();
+  test_compose_transform();
+  test_quaternion_matches_euler();
+  test_quaternion_vocabulary();
   test_ray_segment_distance();
 
   // Size checks

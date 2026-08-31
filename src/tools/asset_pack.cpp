@@ -18,27 +18,35 @@
 // Classification -- two rules, and between them they cover the real tree
 // ---------------------------------------------------------------------------
 //
-// 1. DEPTH 1 ONLY. Files directly under <resources>/<dir>/ are the id space.
-//    Anything nested is the path-referenced pool: packed, never enumerated.
-//    That line is not arbitrary, it is the existing split between "referenced
-//    by id from code or a map" and "referenced by path from another asset" --
-//    textures/harsh_bricks/albedo.png and models/textures/leet_skin.png are
-//    both already below it.
+// 1. A CLAIMED FILE HAS NO ID. Something else already names it, so an id on top
+//    would be a second, weaker copy of an identity the format already has.
+//    There are exactly two ways to be claimed: sit in a MATERIAL DIRECTORY (one
+//    that holds MATERIAL_MARKER -- the folder is the asset and its maps are its
+//    contents), or carry an extension on IGNORED_EXTENSIONS (.mtl, .skeleton --
+//    named as a bare sibling from inside the file that needs them). Everything
+//    unclaimed is enumerated, at ANY depth.
 //
 // 2. EXTENSION DECIDES THE CLASS, from CLASS_TABLE. Directory names carry no
 //    meaning: merge obj/ into models/ or don't, nothing regenerates
 //    differently. models/ holding four kinds of file is why directory-as-class
 //    cannot work, and .png being a sprite in sprites/ and a material map in
-//    textures/harsh_bricks/ is why extension alone cannot either. Depth 1 is
+//    textures/harsh_bricks/ is why extension alone cannot either. Rule 1 is
 //    what resolves the second one.
 //
-// An unknown extension at depth 1 is an ERROR NAMING THE FILE, not a skip --
-// that is the first of the two forced stops when a new asset kind arrives (the
-// second is the link error for its decoder). IGNORED_EXTENSIONS is therefore a
-// decision on the record rather than a fallthrough: .mtl and .skeleton are read
-// at runtime and are packed, they are simply never given an id, because the
-// file format that names them uses a sibling path as their identity and an id
-// would be a second, weaker copy of it.
+// This USED TO BE a depth rule: depth 1 was the id space and anything nested was
+// path-referenced. It was a proxy for rule 1 that happened to coincide with it
+// on the tree of the day, and it was wrong two ways. It contradicted rule 2 --
+// directory names carry no meaning, but directory DEPTH decided whether a file
+// existed in the id space at all -- and it failed SILENTLY: moving sounds into
+// sounds/weapons/ packed them, gave them no ids, and said nothing, while an
+// unknown extension one directory up was a loud error. Same mistake, opposite
+// treatment. Worse, it left a material with no id space at all, which is why
+// nothing in the build could enumerate the materials an editor wants to browse.
+//
+// An unknown extension on an unclaimed file is an ERROR NAMING THE FILE, not a
+// skip -- that is the first of the two forced stops when a new asset kind
+// arrives (the second is the link error for its decoder). IGNORED_EXTENSIONS is
+// therefore a decision on the record rather than a fallthrough.
 //
 // ---------------------------------------------------------------------------
 // Output grammar
@@ -120,7 +128,25 @@ constexpr class_row_t CLASS_TABLE[] = {
     {".ttf", "font_asset", "font_asset_t", "asset_types.hpp"},
 };
 
-// Present at depth 1, never given an id. Each one is a decision with a reason:
+// A MATERIAL is a FOLDER, which is why it needs a rule of its own: it is the one
+// asset whose unit is not a file, so no extension can reach it and the old
+// depth rule could only ever classify its maps individually. A directory
+// holding this file IS one pbr_material entry, minted from the DIRECTORY name,
+// and everything inside it is claimed -- packed, never enumerated. albedo is
+// the marker because it is the one map load_pbr_material cannot do without:
+// resolve_material_texture hands the renderer the albedo and a folder with no
+// albedo resolves to nothing.
+constexpr const char* MATERIAL_MARKER = "albedo.png";
+
+// The one class whose entries come from directories rather than files, so it is
+// not in CLASS_TABLE and claims no extension. A class with no extensions emits
+// no decoders and gets NO generated loader -- def_gen declares load_pbr_material
+// and leaves it to the hand-written one in asset.cpp, which is the same
+// link-error-names-the-symbol seam every decoder already sits behind.
+constexpr class_row_t MATERIAL_CLASS = {nullptr, "pbr_material", "pbr_material_asset_t",
+                                        "asset_types.hpp"};
+
+// Never given an id. Each one is a decision with a reason:
 //
 //   .skeleton  a .mesh and an .animation name theirs as a bare sibling from
 //              INSIDE the file, so the sibling path is the identity the format
@@ -174,6 +200,13 @@ const class_row_t* find_class_row(const std::string& extension)
       return &row;
   }
   return nullptr;
+}
+
+// A directory whose contents belong to it rather than to the id space.
+bool directory_is_material(const std::filesystem::path& directory)
+{
+  std::error_code failure;
+  return std::filesystem::is_regular_file(directory / MATERIAL_MARKER, failure);
 }
 
 bool extension_is_ignored(const std::string& extension)
@@ -273,13 +306,17 @@ bool read_whole_file(const std::filesystem::path& path, std::vector<uint8_t>& ou
   return size == 0 || (bool)file.read(reinterpret_cast<char*>(out.data()), size);
 }
 
-// ONE traversal, two outputs. Depth 1 is the id space; anything nested is the
-// path-referenced pool, packed but never enumerated. Both fall out of the same
-// pass, which is the point -- a second walk could disagree with this one about
-// what exists, and a package built from the disagreeing half ships a game that
-// resolves the wrong mesh.
+// ONE traversal, two outputs: the id space and the package. Both fall out of the
+// same pass, which is the point -- a second walk could disagree with this one
+// about what exists, and a package built from the disagreeing half ships a game
+// that resolves the wrong mesh.
+//
+// `claimed` is rule 1 carried down the recursion: inside a material directory
+// every file still gets PACKED (the game reads them at runtime) and none of them
+// is enumerated, because the directory above already became the one entry that
+// owns them.
 void walk_directory(const std::filesystem::path& root, const std::string& relative_directory,
-                    uint32_t depth, std::vector<class_bucket_t>& buckets,
+                    bool claimed, std::vector<class_bucket_t>& buckets,
                     std::vector<assets::asset_package_input_t>* package_files)
 {
   const std::filesystem::path directory = root / relative_directory;
@@ -326,13 +363,9 @@ void walk_directory(const std::filesystem::path& root, const std::string& relati
         report_error("cannot read '%s' for the package", logical.c_str());
     }
 
-    // Below depth 1 there is no id space: these are the files another asset
-    // names by path from inside itself, and giving them ids would be a second,
-    // weaker copy of an identity the file format already has.
-    if (depth != 1)
-      continue;
-
-    if (extension_is_ignored(extension))
+    // Rule 1: a claimed file has no id. Its identity is the material directory
+    // that owns it, or the sibling path the format that needs it already spells.
+    if (claimed || extension_is_ignored(extension))
       continue;
 
     const class_row_t* row = find_class_row(extension);
@@ -368,7 +401,39 @@ void walk_directory(const std::filesystem::path& root, const std::string& relati
   }
 
   for (const std::string& name : subdirectories)
-    walk_directory(root, relative_directory + "/" + name, depth + 1, buckets, package_files);
+  {
+    const std::string relative = relative_directory + "/" + name;
+
+    // The one place a DIRECTORY becomes an asset. Minted from the directory
+    // name, exactly as a file is minted from its stem -- and checked by the same
+    // rule, because a material name goes into a .source map file the same way.
+    bool contents_are_claimed = claimed;
+    if (!claimed && directory_is_material(root / relative))
+    {
+      contents_are_claimed = true;
+
+      const std::string logical = to_logical_path(relative);
+      if (!name_is_mintable(name))
+        report_error("'%s' holds %s, so it is a material, but its name cannot become an "
+                     "identifier. Rename the directory: a minted name is never mangled",
+                     logical.c_str(), MATERIAL_MARKER);
+      else
+      {
+        class_bucket_t* bucket = bucket_for(buckets, &MATERIAL_CLASS);
+        for (const entry_t& existing : bucket->entries)
+        {
+          if (existing.name != name)
+            continue;
+          report_error("asset class '%s' has two entries named '%s' ('%s' and '%s'); rename one",
+                       MATERIAL_CLASS.class_name, name.c_str(), existing.path.c_str(),
+                       logical.c_str());
+        }
+        bucket->entries.push_back({name, logical});
+      }
+    }
+
+    walk_directory(root, relative, contents_are_claimed, buckets, package_files);
+  }
 }
 
 // Write-if-different: the manifest is a build input, so rewriting it with
@@ -468,6 +533,7 @@ int main(int argument_count, char** arguments)
   std::vector<class_bucket_t> buckets;
   for (const class_row_t& row : CLASS_TABLE)
     bucket_for(buckets, &row);
+  bucket_for(buckets, &MATERIAL_CLASS);
 
   std::vector<assets::asset_package_input_t>  package_files;
   std::vector<assets::asset_package_input_t>* package_sink =
@@ -484,16 +550,17 @@ int main(int argument_count, char** arguments)
         subdirectories.push_back(name);
       continue;
     }
-    // Depth 0 is neither the id space nor the path-referenced pool, so no rule
-    // covers it. Say so rather than silently dropping it.
-    report_error("'%s/%s' sits directly in the resource root, which is neither depth 1 (the id "
-                 "space) nor nested (path-referenced); move it into a subdirectory",
+    // The resource root is where the tree starts, not a place to put an asset: a
+    // file here sits under no directory at all, and EXCLUDED_DIRECTORIES is
+    // applied one level down, so a stray file would dodge it. Say so rather than
+    // silently dropping it.
+    report_error("'%s/%s' sits directly in the resource root; move it into a subdirectory",
                  path_prefix.c_str(), item.path().filename().generic_string().c_str());
   }
   std::sort(subdirectories.begin(), subdirectories.end());
 
   for (const std::string& name : subdirectories)
-    walk_directory(root, name, 1, buckets, package_sink);
+    walk_directory(root, name, false, buckets, package_sink);
 
   if (error_count > 0)
   {
@@ -512,6 +579,9 @@ int main(int argument_count, char** arguments)
     text += bucket.value_type;
     text += " ";
     text += bucket.value_header;
+    // A class whose unit is a DIRECTORY claims no extension and therefore writes
+    // none: there is nothing to dispatch a decoder on, so def_gen emits no
+    // decode_* for it and leaves its loader hand-written.
     for (const class_row_t& row : CLASS_TABLE)
     {
       if (strcmp(row.class_name, bucket.class_name) != 0)

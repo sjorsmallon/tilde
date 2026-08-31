@@ -99,6 +99,14 @@ void clear_incoming(server_context_t& context)
   context.incoming.map_data_requests.clear();
 }
 
+// The client's clear_client_inbox carries the reasoning; this is the same
+// tripwire on the same silent failure, one connection over. An inbox member
+// nothing clears replays last tick's traffic every tick.
+static_assert(sizeof(network::ServerInbox) == 5 * sizeof(std::vector<int>),
+              "ServerInbox gained or lost a member. If you added one: clear it "
+              "above AND drain it in server_impl.cpp's Tick(), then update this "
+              "count");
+
 void clear_outgoing(server_context_t& context)
 {
   // reset(), not clear(): a stream re-reserves the 16 bits its count is

@@ -46,7 +46,7 @@ try_build_brush_polyhedron(Span<const linalg::vec3> points);
 
 std::vector<linalg::vec3> weld_brush_points(Span<const linalg::vec3> points);
 
-std::vector<linalg::vec3> make_box_brush_vertices(const linalg::vec3 &center,
+std::vector<linalg::vec3> make_box_brush_points(const linalg::vec3 &center,
                                                   const linalg::vec3 &half_extents);
 
 std::vector<linalg::vec3> extrude_brush_hull(Span<const linalg::vec3> footprint,

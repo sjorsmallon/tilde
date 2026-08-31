@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../camera.hpp"
+#include "../editor/editor_bvh.hpp"
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
 #include "../editor/transaction_system.hpp"
@@ -33,10 +34,11 @@ enum class editor_tool_t : uint8_t
   pathfinding,
   particles,
   animation,
-  brush
+  brush,
+  lightmap
 };
 
-inline constexpr uint32_t EDITOR_TOOL_COUNT = 7;
+inline constexpr uint32_t EDITOR_TOOL_COUNT = 8;
 
 } // namespace client
 
@@ -51,6 +53,11 @@ namespace client
 class Tool_Editor_State : public Game_State
 {
 public:
+  // `context` holds the transaction system by reference, so it is bound here
+  // rather than refilled per frame. `transaction_system` is declared above it
+  // for that reason: member initialisation follows declaration order.
+  Tool_Editor_State() : context(transaction_system) {}
+
   void on_enter() override;
   void on_exit() override;
   void update(float dt) override;
@@ -80,6 +87,8 @@ private:
   const float iso_yaw = 315.0f;
   const float iso_pitch = -35.264f;
 
+  Transaction_System transaction_system;
+
   editor_context_t context; // Reused context info
   viewport_state_t viewport;
 
@@ -89,10 +98,16 @@ private:
   void switch_tool(editor_tool_t tool);
   void update_bvh();
 
-  Bounding_Volume_Hierarchy bvh;
+  editor_bvh_t editor_bvh;
   bool geometry_updated_flag = false;
 
-  Transaction_System transaction_system;
+  // The bake's counterpart. Two writers, one flag: the Lightmap tool sets it on
+  // Apply, and update() sets it when the map's charts change under a load --
+  // together they cover a rebake at identical settings, which moves every texel
+  // and leaves geometry_id alone.
+  bool     lightmap_updated_flag         = false;
+  uint32_t uploaded_lightmap_geometry_id = 0;
+
 
   editor::grid_settings_t grid_settings;
 

@@ -186,7 +186,7 @@ void action_set_velocity(server::server_context_t & /*context*/,
                          entities::Player_Entity &player)
 {
   player.velocity =
-      linalg::forward_from_model_euler(trigger.orientation) * trigger.param_float;
+      linalg::forward(trigger.orientation) * trigger.param_float;
 }
 
 void action_give_impulse(server::server_context_t & /*context*/,

@@ -93,6 +93,27 @@ inline void clear_client_inbox(Client_Inbox &inbox)
   inbox.cvar_value_messages.clear();
 }
 
+// A member that exists but is never cleared, or never read, type-checks
+// perfectly -- those are the two genuinely silent sites in the whole message
+// path, and nothing above can see them. Forget the clear and last frame's
+// messages replay every frame; forget the drain and messages are filed and
+// never read, forever.
+//
+// So: a blunt tripwire. Crude, and it costs one line to convert both into
+// visit-forced sites. Bumping the count is not the fix -- doing the two things
+// it names is.
+//
+// Counted in MEMBERS rather than bytes, because every member is a std::vector
+// and a vector's size does not vary with its element type. A byte count would
+// have been a different number in a debug build than in a release one (the MSVC
+// STL widens every container under _ITERATOR_DEBUG_LEVEL), which is a tripwire
+// that fires on the build configuration rather than on the change it is
+// watching for.
+static_assert(sizeof(Client_Inbox) == 10 * sizeof(std::vector<int>),
+              "Client_Inbox gained or lost a member. If you added one: clear it "
+              "in clear_client_inbox AND drain it in play_state.cpp's "
+              "network-consume section, then update this count");
+
 // Everything here that describes ONE connection rather than the socket, cleared
 // at the start of the next one. The server's occupy_client_slot is the exact
 // counterpart and clears the same three things on its side.
@@ -242,6 +263,11 @@ using client_message_handler_table_t =
 // The client's accept list. A slot left null is a type the client is never
 // supposed to receive — the C2S half of the protocol — and one arriving anyway
 // is reported rather than dropped on the floor.
+//
+// Which slots may be null is NOT a matter of comment: message_direction() says
+// it, and the static_assert below checks the table against it. So adding an S2C
+// type is a compile error until it has a handler here, and therefore until the
+// Client_Inbox member that handler targets exists.
 constexpr client_message_handler_table_t make_client_message_handlers()
 {
   client_message_handler_table_t handlers{};
@@ -279,6 +305,36 @@ constexpr client_message_handler_table_t make_client_message_handlers()
 inline constexpr client_message_handler_table_t CLIENT_MESSAGE_HANDLERS =
     make_client_message_handlers();
 
+// Every S2C type has a handler, every C2S type has none. The one exception is
+// Reliable, which poll_client_network intercepts BEFORE the table -- a block is
+// a transport parcel, not a message, and the records inside it come back through
+// this same table afterwards.
+consteval bool client_handlers_match_message_directions()
+{
+  for (size_t index = 0; index < CLIENT_MESSAGE_HANDLERS.size(); ++index)
+  {
+    const Message_Type type = static_cast<Message_Type>(index);
+    if (type == Message_Type::Reliable)
+    {
+      if (CLIENT_MESSAGE_HANDLERS[index] != nullptr)
+        return false;
+      continue;
+    }
+
+    const bool expects_handler =
+        message_direction(type) != message_direction_t::C2S;
+    if ((CLIENT_MESSAGE_HANDLERS[index] != nullptr) != expects_handler)
+      return false;
+  }
+
+  return true;
+}
+
+static_assert(client_handlers_match_message_directions(),
+              "CLIENT_MESSAGE_HANDLERS disagrees with message_direction(): an "
+              "S2C type with no handler (add one, and the Client_Inbox member "
+              "it files into), or a C2S type with one");
+
 // Null when the type is out of range (garbage, or a newer build's message) or
 // has no slot in the table.
 inline client_message_handler_fn find_client_message_handler(uint8 message_type)
@@ -287,94 +343,6 @@ inline client_message_handler_fn find_client_message_handler(uint8 message_type)
     return nullptr;
 
   return CLIENT_MESSAGE_HANDLERS[message_type];
-}
-
-// Files one fragment into its message's bucket and, once every fragment has
-// arrived, concatenates them into out_payload and frees the bucket. Returns
-// false while the message is still incomplete.
-inline bool reassemble_fragment(Client_Transport_Layer &state,
-                                const Packet &packet,
-                                std::vector<uint8> &out_payload)
-{
-  Partial_Message &message = state.partial_packets[packet.header.message_id];
-
-  // A retained bucket for a message we already delivered. A duplicate crossing
-  // our report in flight lands here and must be DISCARDED rather than reopening
-  // it -- a fresh bucket would report "5 of 40" and have the sender re-stream
-  // what we already have. Refreshed, so it stays alive while the sender asks.
-  //
-  // A DIFFERENT fragment count is a different message that drew the same wrapped
-  // id, and it takes the bucket over. Without that, one retained transfer could
-  // eat whatever came 256 sends later -- the failure expire_stale_partial_messages
-  // exists to bound, which retention would otherwise have made more likely
-  // rather than less.
-  if (message.complete)
-  {
-    if (packet.header.fragment_count == message.fragment_count)
-    {
-      message.last_fragment_time = std::chrono::steady_clock::now();
-      return false;
-    }
-
-    message = {};
-  }
-
-  std::vector<Packet> &fragments = message.fragments;
-
-  if (fragments.empty())
-  {
-    fragments.resize(packet.header.fragment_count);
-    message.fragment_count = packet.header.fragment_count;
-  }
-
-  // Every arrival refreshes the bucket, so a transfer that is progressing at any
-  // rate at all is never expired out from under itself.
-  message.last_fragment_time = std::chrono::steady_clock::now();
-
-  // A fragment_index past the end means this packet disagrees with the
-  // fragment_count the bucket was sized from — corrupt or forged. Ignore the
-  // stray rather than writing out of bounds.
-  if (packet.header.fragment_index >= fragments.size())
-    return false;
-
-  fragments[packet.header.fragment_index] = packet;
-
-  // A slot still zeroed by resize() has fragment_count == 0, so it has not
-  // arrived yet. convert_to_packets() never emits an empty chunk, so a zero
-  // payload_size means the same thing.
-  size_t total_size = 0;
-  for (const Packet &fragment : fragments)
-  {
-    if (fragment.header.fragment_count == 0 ||
-        fragment.header.payload_size == 0)
-      return false;
-
-    total_size += fragment.header.payload_size;
-  }
-
-  out_payload.clear();
-  out_payload.reserve(total_size);
-  for (const Packet &fragment : fragments)
-    out_payload.insert(out_payload.end(), fragment.buffer,
-                       fragment.buffer + fragment.header.payload_size);
-
-  // A single-fragment message is not a transfer: nothing retransmits it and
-  // nobody is waiting to hear it landed, so its bucket goes immediately -- which
-  // is what keeps retention from competing for the wrapping id space in the
-  // common case. A transfer's bucket is kept, with the fragment storage
-  // released: it now exists only to keep saying "I have all of it" until the
-  // sender stops asking. See Partial_Message in packet.hpp.
-  if (message.fragment_count < 2)
-  {
-    state.partial_packets.erase(packet.header.message_id);
-    return true;
-  }
-
-  message.complete = true;
-  message.last_fragment_time = std::chrono::steady_clock::now();
-  fragments.clear();
-  fragments.shrink_to_fit();
-  return true;
 }
 
 } // namespace detail
@@ -502,7 +470,7 @@ inline void poll_client_network(Client_Transport_Layer &state,
       continue;
     }
 
-    if (detail::reassemble_fragment(state, packet, payload))
+    if (reassemble_fragment(state.partial_packets, packet, payload))
       handler(std::move(payload), out_inbox);
     else if (packet.header.fragment_count == 1)
       // An unfragmented message must complete the instant it arrives — the

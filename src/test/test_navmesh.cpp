@@ -434,7 +434,7 @@ static void test_3x1_strip()
 static shared::map_t map_with_one_brush(std::vector<linalg::vec3> vertices)
 {
   shared::brush_geometry_t brush;
-  brush.vertices = std::move(vertices);
+  brush.hull_points = std::move(vertices);
 
   shared::map_t map;
   map.geometry.push_back({1, brush});
@@ -450,7 +450,7 @@ static float navmesh_height_at(const navmesh_t &nav, float x, float z, float cel
   for (const nav_polygon_t &poly : nav.polygons)
     for (int32_t vi : poly.vertices)
     {
-      const linalg::vec3f &position = nav.vertices[vi].position;
+      const linalg::vec3f& position = nav.vertices[vi].position;
       if (std::abs(position.x - x) <= reach && std::abs(position.z - z) <= reach)
         best = std::max(best, position.y);
     }
@@ -557,7 +557,7 @@ static void test_bake_rejects_steep_face()
 static void test_bake_box_brush_is_one_span_per_column()
 {
   shared::map_t map = map_with_one_brush(
-      shared::make_box_brush_vertices({128.f, 0.f, 128.f}, {128.f, 64.f, 128.f}));
+      shared::make_box_brush_points({128.f, 0.f, 128.f}, {128.f, 64.f, 128.f}));
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);
@@ -584,13 +584,13 @@ static void test_bake_box_brush_is_one_span_per_column()
 static void test_bake_finds_stacked_floors()
 {
   shared::brush_geometry_t ground;
-  ground.vertices = shared::make_box_brush_vertices({128.f, -32.f, 128.f}, {128.f, 32.f, 128.f});
+  ground.hull_points = shared::make_box_brush_points({128.f, -32.f, 128.f}, {128.f, 32.f, 128.f});
 
   // A platform over the -x/-z quadrant, its underside 100 units up: clearance
   // over the ground below it beats the 72-unit player height, so BOTH surfaces
   // are walkable and the column carries two spans.
   shared::brush_geometry_t platform;
-  platform.vertices = shared::make_box_brush_vertices({64.f, 114.f, 64.f}, {64.f, 14.f, 64.f});
+  platform.hull_points = shared::make_box_brush_points({64.f, 114.f, 64.f}, {64.f, 14.f, 64.f});
 
   shared::map_t map;
   map.geometry.push_back({1, ground});
@@ -610,7 +610,7 @@ static void test_bake_finds_stacked_floors()
   for (const nav_polygon_t &poly : nav.polygons)
     for (int32_t vi : poly.vertices)
     {
-      const linalg::vec3f &position = nav.vertices[vi].position;
+      const linalg::vec3f& position = nav.vertices[vi].position;
       if (std::abs(position.x - 40.f) > 8.01f || std::abs(position.z - 40.f) > 8.01f)
         continue;
       if (std::abs(position.y -   0.f) < 0.01f) found_ground = true;

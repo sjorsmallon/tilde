@@ -165,7 +165,7 @@ void compute_bind_model_matrices(const skeleton_t &skeleton, Span<linalg::mat4f>
 // How far OUTSIDE the volume a point is; 0 anywhere inside it. The one place a
 // shape's geometry is written down -- coverage, derivation and the hit test all
 // ask this rather than each switching over the kinds.
-float distance_outside_hitbox(const posed_hitbox_t &hitbox, const linalg::vec3f &point);
+float distance_outside_hitbox(const posed_hitbox_t &hitbox, const linalg::vec3f& point);
 
 struct hitbox_ray_hit_t
 {
@@ -176,7 +176,7 @@ struct hitbox_ray_hit_t
 
 [[nodiscard]] std::optional<hitbox_ray_hit_t> intersect_ray_hitbox(const posed_hitbox_t &hitbox,
                                                                    const linalg::vec3f  &origin,
-                                                                   const linalg::vec3f &direction);
+                                                                   const linalg::vec3f& direction);
 
 // --- Tool-time: seeding and auditing ---------------------------------------
 

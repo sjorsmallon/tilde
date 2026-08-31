@@ -25,7 +25,7 @@ static vec3f player_knockback_center(const entities::Player_Entity &player)
 // Split out of the apply so a batch can SUM the deltas. Two rockets landing on
 // one player in a tick used to impart ONE rocket's push, because the second call
 // met the corpse gate and returned before reaching this.
-static vec3f knockback_velocity_for(const damage_info_t &info, const vec3f &victim_center)
+static vec3f knockback_velocity_for(const damage_info_t &info, const vec3f& victim_center)
 {
   if (info.knockback_force == 0.f)
     return {0.f, 0.f, 0.f};
@@ -50,7 +50,7 @@ static void apply_player_damage_total(server_context_t &context,
                                       entities::Player_Entity &player,
                                       shared::entity_uid_t victim_uid,
                                       float total_damage,
-                                      const vec3f &knockback_velocity,
+                                      const vec3f& knockback_velocity,
                                       const damage_info_t &credited)
 {
   player.velocity = player.velocity + knockback_velocity;

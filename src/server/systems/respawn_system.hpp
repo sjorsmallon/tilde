@@ -83,10 +83,10 @@ void place_player_at_spawn(shared::game_session_t &session, entities::Player_Ent
                            const entities::Player_Spawn_Entity &marker);
 
 // The whole respawn reset -- transform, health, velocity, magazines -- against a
-// position and a model-euler orientation rather than a marker, so a checkpoint
-// volume can stand in for one.
+// position and a rotation rather than a marker, so a checkpoint volume can stand
+// in for one.
 void place_player_at(shared::game_session_t &session, entities::Player_Entity &player,
-                     const vec3f &position, const vec3f &orientation);
+                     const vec3f& position, const linalg::quatf& orientation);
 
 // The Trigger_Action::Checkpoint volume this player last touched, or null when
 // there is none, it no longer exists, or it is no longer a checkpoint.

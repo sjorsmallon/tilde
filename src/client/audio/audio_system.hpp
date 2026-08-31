@@ -27,9 +27,9 @@ struct audio_system_t
 
   bool ready() const { return impl != nullptr; }
 
-  void update(const linalg::vec3f &listener_position,
-              const linalg::vec3f &listener_forward,
-              const linalg::vec3f &listener_up,
+  void update(const linalg::vec3f& listener_position,
+              const linalg::vec3f& listener_forward,
+              const linalg::vec3f& listener_up,
               const sound_attenuation_t &rhs_attenuation);
 
   // play a spatialized one-shot at a world-space position. `volume` is linear

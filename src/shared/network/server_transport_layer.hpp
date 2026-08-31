@@ -353,23 +353,39 @@ inline void send_reliable_block(Server_Transport_Layer &state,
 // which route a message took, which is the point -- reliability is the
 // transport's business, so putting C2S_Command on the stream changed no handler.
 //
-// A type with no case here is one the server is never supposed to receive (the
-// S2C half of the protocol, or garbage) and is REPORTED rather than dropped on
-// the floor. The client's counterpart is the null slot in
-// CLIENT_MESSAGE_HANDLERS; this side is a chain rather than a table because one
-// of the cases is a deliberate no-op.
+// A type the server is never supposed to receive (the S2C half of the protocol)
+// is REPORTED rather than dropped on the floor. The client's counterpart is the
+// null slot in CLIENT_MESSAGE_HANDLERS.
+//
+// A SWITCH with no `default:`, so -Werror=switch makes a new Message_Type a
+// compile error here -- the S2C arms are listed out one by one for exactly that
+// reason, and the deliberate no-op case (NetCommand) stays a case rather than
+// becoming a null table slot indistinguishable from a forgotten one.
 inline void deliver_client_message(int32_t client_slot, uint8 message_type,
                                    std::vector<uint8> &&payload,
                                    ServerInbox &out_inbox)
 {
-  // Already filed, above the slot lookup in poll_network -- it has to be seen
-  // there because a CmdConnect arrives from a sender with no slot yet. A
-  // connected peer's CmdDisconnect then reaches here as the ordinary
-  // fall-through, so this is a no-op and not the error below.
-  if (message_type == static_cast<uint8>(Message_Type::NetCommand))
+  // The raw byte comes off the wire with no range validation -- garbage, or a
+  // newer build's type. Checked before the cast, because casting it to the enum
+  // first would make the switch below undefined rather than merely wrong.
+  if (message_type >= static_cast<uint8>(Message_Type::Count))
+  {
+    log_error("dropping message type {} from slot {}, which is not a message "
+              "type this build knows",
+              static_cast<int>(message_type), client_slot);
+    return;
+  }
+
+  switch (static_cast<Message_Type>(message_type))
+  {
+  case Message_Type::NetCommand:
+    // Already filed, above the slot lookup in poll_network -- it has to be seen
+    // there because a CmdConnect arrives from a sender with no slot yet. A
+    // connected peer's CmdDisconnect then reaches here, so this is a deliberate
+    // no-op and not the error below.
     return;
 
-  if (message_type == static_cast<uint8>(Message_Type::C2S_ClientInputBatch))
+  case Message_Type::C2S_ClientInputBatch:
   {
     // Every move the client has not seen acked, oldest first. Most of them are
     // usually duplicates of inputs already run; the input loop's
@@ -389,7 +405,7 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
     return;
   }
 
-  if (message_type == static_cast<uint8>(Message_Type::C2S_Command))
+  case Message_Type::C2S_Command:
   {
     game::C2S_Command command;
     if (!command.ParseFromArray(payload.data(), static_cast<int>(payload.size())))
@@ -404,12 +420,34 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
     return;
   }
 
-  if (message_type == static_cast<uint8>(Message_Type::C2S_RequestMapData))
-  {
+  case Message_Type::C2S_RequestMapData:
     // Bitstream-native: keep the raw payload; server_impl decodes it with
     // shared::deserialize_request_map_data() and streams S2C_MapData back.
     out_inbox.map_data_requests.push_back({client_slot, std::move(payload)});
     return;
+
+  // Transport, handled in poll_network before reassembly ever runs -- a block
+  // is not a message, and a receipt names a message_id and a fragment set that
+  // nothing above this layer has an opinion about. Reaching here means one
+  // arrived by a path that should not exist.
+  case Message_Type::Reliable:
+  case Message_Type::C2S_TransferReceipt:
+    break;
+
+  // The S2C half of the protocol. Listed one by one so that adding a message
+  // type is a compile error here rather than a runtime log the day someone
+  // sends one.
+  case Message_Type::S2C_EntityPackage:
+  case Message_Type::S2C_ServerMessage:
+  case Message_Type::S2C_BotDebug:
+  case Message_Type::S2C_GameEventBatch:
+  case Message_Type::S2C_EffectBatch:
+  case Message_Type::S2C_ShotDebug:
+  case Message_Type::CmdChangeMap:
+  case Message_Type::S2C_MapData:
+  case Message_Type::S2C_CvarValues:
+  case Message_Type::Count:
+    break;
   }
 
   log_error("dropping message type {} from slot {}, which the server does not "
@@ -428,6 +466,10 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
   for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
     if (state.slot_occupied[slot])
       expire_stale_partial_messages(state.partial_packets[slot], "server");
+
+  // Reused across iterations so a completed message costs at most one
+  // allocation, and usually none.
+  std::vector<uint8> payload;
 
   for (size_t drained = 0; drained < max_datagrams; ++drained)
   {
@@ -503,56 +545,23 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
     }
 
 
-    // Store packet fragment
-    Partial_Message &message =
-        state.partial_packets[client_slot][packet.header.message_id];
-    auto &fragments = message.fragments;
-
-    // Resize if this is the first fragment seen for this message
-    if (fragments.empty())
-    {
-      fragments.resize(packet.header.fragment_count);
-    }
-
-    // Every arrival refreshes the bucket, so a transfer that is progressing at
-    // any rate at all is never expired out from under itself.
-    message.last_fragment_time = std::chrono::steady_clock::now();
-    // Ensure we don't overflow if fragment_count changed (malicious/buggy?)
-    if (packet.header.fragment_index < fragments.size())
-    {
-      fragments[packet.header.fragment_index] = packet;
-    }
-
-    // Check if complete
-    bool complete = true;
-    size_t total_payload = 0;
-    for (const auto &frag : fragments)
-    {
-      if (frag.header.fragment_count == 0)
-      {
-        complete = false;
-        break;
-      }
-      total_payload += frag.header.payload_size;
-    }
-
-    if (complete)
-    {
-      // Reassemble
-      std::vector<uint8> buffer;
-      buffer.reserve(total_payload);
-      for (const auto &frag : fragments)
-      {
-        buffer.insert(buffer.end(), frag.buffer,
-                      frag.buffer + frag.header.payload_size);
-      }
-
+    if (reassemble_fragment(state.partial_packets[client_slot], packet, payload))
       deliver_client_message(client_slot, packet.header.message_type,
-                             std::move(buffer), out_inbox);
-
-      // Message fully reassembled — drop its fragment buffer
-      state.partial_packets[client_slot].erase(packet.header.message_id);
-    }
+                             std::move(payload), out_inbox);
+    else if (packet.header.fragment_count == 1)
+      // An unfragmented message must complete the instant it arrives. Not
+      // completing means a stale, never-completed message still holds this
+      // message_id -- and on this side that is not a remote possibility: the id
+      // is a uint8 incremented once per message sent, so a client sending one
+      // input batch per tick wraps the whole space every 256/sv_tickrate
+      // seconds, which at 60Hz is 4.3s against a 5s bucket timeout. The wrap
+      // outlives the expiry, so the collision is reachable rather than
+      // theoretical. Say so rather than dropping it on the floor.
+      log_error("slot {}: message type {} (id {}) arrived unfragmented but did "
+                "not reassemble — its message_id bucket still holds an "
+                "incomplete message; the payload was dropped",
+                client_slot, static_cast<int>(packet.header.message_type),
+                packet.header.message_id);
   }
 
   // The streams hand back whole records, in order, exactly once. After the

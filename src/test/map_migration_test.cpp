@@ -97,10 +97,10 @@ int main()
   // The extents live in the point set now, so they are read back off the bound.
   for (const brush_geometry_t *brush : get_brushes(loaded))
   {
-    if (!brush_is_axis_aligned_box(brush->vertices))
+    if (!brush_is_axis_aligned_box(brush->hull_points))
       return fail("conversion: a converted aabb_entity is not a box-shaped brush");
 
-    const aabb_bounds_t bounds = compute_brush_bounds(brush->vertices);
+    const aabb_bounds_t bounds = compute_brush_bounds(brush->hull_points);
     const linalg::vec3  h      = (bounds.max - bounds.min) * 0.5f;
     if (h.x == 0.f && h.y == 0.f && h.z == 0.f)
       return fail("conversion: box brush loaded with zeroed half_extents");
@@ -200,6 +200,61 @@ int main()
                   "subdivision");
   }
 
+  // --- 4b. Rotations are quaternions, and the legacy euler converts once ---
+  //
+  // Two halves, and they discriminate DIFFERENTLY on purpose. A geometry block's
+  // keys are hand-written, so `orientation` became a read-only key exactly like
+  // the `box` and `displacement` keywords and the writer emits `rotation`. An
+  // entity's key IS its field name in entities.def, so it stays `orientation`
+  // and the legacy arm keys on the value having three components instead of
+  // four. Both are one-time; only the first is provably one-time.
+  {
+    map_t rotated;
+    static_mesh_geometry_t mesh;
+    mesh.position           = {10.f, 20.f, 30.f};
+    mesh.orientation        = linalg::from_view_angles(35.f, -12.f);
+    mesh.surface.mesh_path  = "resources/obj/Pyramid.obj";
+    rotated.add_geometry(mesh);
+
+    const std::string saved = serialize_map_to_string(rotated);
+    if (saved.find("\"rotation\"") == std::string::npos)
+      return fail("rotation: a saved static mesh has no \"rotation\" key");
+    if (saved.find("\"orientation\"") != std::string::npos)
+      return fail("rotation: the writer still emits the legacy \"orientation\" key");
+
+    const map_t reloaded = parse_map_from_string(saved);
+    if (reloaded.geometry.size() != 1)
+      return fail("rotation: the static mesh did not survive the round trip");
+
+    const auto *reloaded_mesh = std::get_if<static_mesh_geometry_t>(&reloaded.geometry[0].value);
+    if (!reloaded_mesh)
+      return fail("rotation: the static mesh came back as another kind");
+
+    // Bit-exact, because geometry_values_equal is and it is the undo primitive:
+    // a lossy round trip pushes a phantom undo entry the moment anything is
+    // touched. That is what %.9g in format_quat_exact is for.
+    if (!geometry_values_equal(reloaded.geometry[0].value, rotated.geometry[0].value))
+      return fail("rotation: a saved-and-reloaded static mesh compares unequal to itself");
+
+    // The legacy geometry key, converted through the same euler convention the
+    // pre-cutover writer used.
+    std::string legacy = saved;
+    const size_t rotation_key = legacy.find("\"rotation\"");
+    const size_t line_end     = legacy.find('\n', rotation_key);
+    legacy.replace(rotation_key, line_end - rotation_key, "\"orientation\" \"0 90 0\"");
+
+    const map_t converted = parse_map_from_string(legacy);
+    const auto *converted_mesh = std::get_if<static_mesh_geometry_t>(&converted.geometry[0].value);
+    if (!converted_mesh)
+      return fail("rotation: the legacy orientation key did not read back a static mesh");
+
+    const linalg::vec3f converted_facing = linalg::forward(converted_mesh->orientation);
+    const linalg::vec3f expected_facing  = linalg::forward(linalg::from_euler_degrees({0, 90, 0}));
+    if (linalg::length(converted_facing - expected_facing) > 1e-5f)
+      return fail("rotation: the legacy euler orientation did not convert to the "
+                  "rotation it named");
+  }
+
   // --- 5. Trigger volume round-trip (the "is save losing it?" check) -----
   // Build a tiny map with one trigger volume programmatically, save, reload,
   // and assert every saveable field survives. This is independent of the
@@ -268,7 +323,7 @@ int main()
     auto *spot = entity_as<entities::Spot_Light_Entity>(spot_holder.get());
     if (!spot) return fail("light: factory returned wrong type for spot");
     spot->position      = {1.f, 2.f, 3.f};
-    spot->orientation   = {0.f, 90.f, 0.f};
+    spot->orientation   = linalg::from_view_angles(90.f, 0.f);
     spot->light.color   = {0.25f, 0.5f, 0.75f};
     spot->light.intensity = 3.5f;
     spot->range         = 640.f;
@@ -322,7 +377,12 @@ int main()
       return fail("light: spot range drift");
     if (reloaded_spot->inner_degrees != 12.f || reloaded_spot->outer_degrees != 48.f)
       return fail("light: spot cone angle drift");
-    if (reloaded_spot->orientation.y != 90.f)
+    // Asserted on the FACING rather than on a component: a rotation's identity is
+    // where it points, and reading .y off one is exactly the euler habit the
+    // quaternion migration exists to delete.
+    const linalg::vec3f reloaded_facing = linalg::forward(reloaded_spot->orientation);
+    const linalg::vec3f authored_facing = linalg::direction_from_angles(90.f, 0.f);
+    if (linalg::length(reloaded_facing - authored_facing) > 1e-4f)
       return fail("light: spot orientation drift -- it is what replaced the direction field");
     if (reloaded_point->range != 96.f)
       return fail("light: point range drift");
@@ -393,6 +453,35 @@ int main()
     poly1.island    = 0;
     packaged.navmesh.polygons = {poly0, poly1};
 
+    // The lightmap rides the package for the same reason the navmesh does: a
+    // downloaded map has no .lightmap sidecar beside it -- it never sees the
+    // .source -- so without this every brush on a networked client draws unlit
+    // while the listen server hosting the same map looks correct.
+    lightmap_chart_t chart;
+    chart.object_uid            = 7;
+    chart.plane.point           = {1.f, 2.f, 3.f};
+    chart.plane.normal          = {0.f, 1.f, 0.f};
+    chart.origin                = {-4.f, 2.f, 8.5f};
+    chart.tangent_u             = {1.f, 0.f, 0.f};
+    chart.tangent_v             = {0.f, 0.f, 1.f};
+    chart.world_units_per_texel = 4.f;
+    chart.page                  = 1;
+    chart.atlas_rect            = {3, 5, 16, 24};
+
+    packaged.lightmap.charts                              = {chart};
+    packaged.lightmap.settings.texels_per_world_unit      = 0.25f;
+    packaged.lightmap.settings.gutter_in_texels           = 2;
+    packaged.lightmap.settings.max_chart_extent_in_texels = 512;
+    packaged.lightmap.settings.atlas_size_in_texels       = 64;
+    packaged.lightmap.atlas.size_in_texels                = 64;
+    packaged.lightmap.atlas.page_count                    = 2;
+    packaged.lightmap.pages.allocate(packaged.lightmap.atlas,
+                                     lightmap_pixel_format_t::Rgb9e5);
+    // On the second page, so a page-major layout mistake shows up as a texel in
+    // the wrong place rather than as nothing at all.
+    packaged.lightmap.pages.store(1, 3, 5, {2.f, 0.5f, 0.125f});
+    set_lightmap_geometry_id(packaged.lightmap);
+
     map_package_t package = build_map_package(packaged);
     if (package.entity_text != serialize_map_to_string(packaged))
       return fail("package: entity_text is not the canonical serialization");
@@ -425,6 +514,43 @@ int main()
       if (a.vertices != b.vertices || a.neighbors != b.neighbors ||
           a.island != b.island)
         return fail("package: navmesh polygon drift");
+    }
+
+    if (restored.lightmap.charts.size() != package.lightmap.charts.size())
+      return fail("package: lightmap chart count drift");
+    if (restored.lightmap.pages.bytes != package.lightmap.pages.bytes)
+      return fail("package: lightmap page bytes drift");
+    // geometry_id is a content hash over the charts, the settings and the atlas
+    // dimensions, so one comparison covers every field the wire carries -- and
+    // it is RECOMPUTED on the receiving side rather than sent, which is what
+    // makes it an independent check rather than an echo.
+    if (restored.lightmap.geometry_id != package.lightmap.geometry_id)
+      return fail("package: lightmap geometry id drift");
+    {
+      const lightmap_chart_t &a = package.lightmap.charts[0];
+      const lightmap_chart_t &b = restored.lightmap.charts[0];
+      if (a.object_uid != b.object_uid || a.page != b.page ||
+          a.atlas_rect.min_x != b.atlas_rect.min_x ||
+          a.atlas_rect.min_y != b.atlas_rect.min_y ||
+          a.atlas_rect.width != b.atlas_rect.width ||
+          a.atlas_rect.height != b.atlas_rect.height ||
+          a.world_units_per_texel != b.world_units_per_texel ||
+          a.origin.x != b.origin.x || a.origin.y != b.origin.y ||
+          a.origin.z != b.origin.z || a.plane.normal.y != b.plane.normal.y)
+        return fail("package: lightmap chart field drift");
+    }
+
+    // A map with no bake must round-trip as no bake, not as a zero-chart atlas
+    // that every brush then samples.
+    {
+      map_t unbaked = packaged;
+      unbaked.lightmap = {};
+      map_package_t unbaked_restored;
+      if (!deserialize_map_package(serialize_map_package(build_map_package(unbaked)),
+                                   unbaked_restored))
+        return fail("package: an unbaked map failed to deserialize");
+      if (!unbaked_restored.lightmap.empty())
+        return fail("package: an unbaked map came back carrying a lightmap");
     }
 
     // Re-serializing the restored package must be byte-identical (stable hash).
@@ -488,7 +614,7 @@ int main()
                           "resources/textures/harsh_bricks"};
 
     brush_geometry_t brush;
-    brush.vertices = make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+    brush.hull_points = make_box_brush_points({0, 0, 0}, {64, 64, 64});
     sync_face_surfaces(brush);
     if (brush.face_surfaces.size() != 6)
       return fail("faces: a box brush did not hull into six faces");
@@ -532,7 +658,7 @@ int main()
     // The pre-faces form: no face blocks at all. Every face falls back to the
     // brush default, which is what makes this format change need no version.
     brush_geometry_t faceless_brush;
-    faceless_brush.vertices = make_box_brush_vertices({0, 0, 0}, {32, 32, 32});
+    faceless_brush.hull_points = make_box_brush_points({0, 0, 0}, {32, 32, 32});
     map_t faceless_map;
     faceless_map.add_geometry(faceless_brush);
     const map_t faceless_reparsed =

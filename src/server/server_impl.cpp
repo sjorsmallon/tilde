@@ -825,7 +825,7 @@ static shared::bracket_verdict_t get_interpolation_bracket_for_input(
 // or an aim problem, while a hundred means the server tested a player standing
 // somewhere else entirely -- a rewind that was refused, clamped, or never asked
 // for. Those two failures feel identical in game and need opposite fixes.
-static float distance_to_nearest_target(const vec3f &eye, const vec3f &direction,
+static float distance_to_nearest_target(const vec3f& eye, const vec3f& direction,
                                         Span<const shared::hitscan_target_t> targets,
                                         shared::entity_uid_t shooter_uid)
 {
@@ -847,7 +847,7 @@ static float distance_to_nearest_target(const vec3f &eye, const vec3f &direction
   return nearest;
 }
 
-static void fill_shot_debug_vector(game::Vec3 *out, const vec3f &value)
+static void fill_shot_debug_vector(game::Vec3 *out, const vec3f& value)
 {
   out->set_x(value.x);
   out->set_y(value.y);
@@ -861,7 +861,7 @@ static void fill_shot_debug_vector(game::Vec3 *out, const vec3f &value)
 // a broadcast.
 static void send_shot_debug(server_context_t &context, int32_t client_slot,
                             const game::C2S_ClientInput &input, uint32_t fire_slot,
-                            const vec3f &eye, const vec3f &direction,
+                            const vec3f& eye, const vec3f& direction,
                             const shared::bracket_verdict_t &verdict, bool used_rewind,
                             const shared::posed_players_t &tested,
                             Span<const shared::hitscan_target_t> targets,

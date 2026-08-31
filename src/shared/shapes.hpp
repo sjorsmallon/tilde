@@ -116,9 +116,9 @@ struct spectate_frustum_t
 };
 
 inline spectate_frustum_t make_spectate_frustum(const linalg::vec3 &position,
-                                                const linalg::vec3 &orientation)
+                                                const linalg::quatf &orientation)
 {
-  const linalg::basis_t basis = linalg::basis_from_model_euler(orientation);
+  const linalg::basis_t basis = linalg::basis_from(orientation);
 
   const float half_width =
       SPECTATE_FRUSTUM_DEPTH *
@@ -194,53 +194,6 @@ compute_face_polygons(const spectate_frustum_t &frustum)
 namespace shared
 {
 
-struct wedge_t
-{
-  linalg::vec3 center       = {};
-  linalg::vec3 half_extents = {};
-  int          orientation  = {};
-};
-
-inline aabb_bounds_t get_bounds(const wedge_t &wedge)
-{
-  return {
-      wedge.center - wedge.half_extents,
-      wedge.center + wedge.half_extents,
-  };
-}
-
-inline std::array<linalg::vec3, 6> get_wedge_points(const wedge_t &wedge)
-{
-  linalg::vec3 min = wedge.center - wedge.half_extents;
-  linalg::vec3 max = wedge.center + wedge.half_extents;
-
-  linalg::vec3 p0 = {min.x, min.y, min.z};
-  linalg::vec3 p1 = {max.x, min.y, min.z};
-  linalg::vec3 p2 = {max.x, min.y, max.z};
-  linalg::vec3 p3 = {min.x, min.y, max.z};
-
-  linalg::vec3 p4 = {min.x, max.y, min.z};
-  linalg::vec3 p5 = {max.x, max.y, min.z};
-  linalg::vec3 p6 = {max.x, max.y, max.z};
-  linalg::vec3 p7 = {min.x, max.y, max.z};
-
-  if (wedge.orientation == 0) // Up at -Z
-  {
-    return {p0, p1, p2, p3, p4, p5};
-  }
-  else if (wedge.orientation == 1) // Up at +Z
-  {
-    return {p0, p1, p2, p3, p7, p6};
-  }
-  else if (wedge.orientation == 2) // Up at -X
-  {
-    return {p0, p1, p2, p3, p4, p7};
-  }
-  else // 3, Up at +X
-  {
-    return {p0, p1, p2, p3, p5, p6};
-  }
-}
 
 // Subtract one AABB from another, yielding up to 6 non-overlapping pieces.
 // Returns the parts of 'source' that don't overlap with 'subtract'.
@@ -378,62 +331,6 @@ inline std::vector<Plane> compute_collision_planes(const aabb_t &aabb)
   };
 }
 
-// Compute outward-facing collision planes for a wedge (5 planes).
-// The slope face gets a non-axis-aligned normal.
-inline std::vector<Plane> compute_collision_planes(const wedge_t &wedge)
-{
-  auto pts = get_wedge_points(wedge);
-  auto h = wedge.half_extents;
-
-  // Bottom face is always the base quad (pts[0..3]), normal pointing down
-  Plane bottom = {pts[0], {0, -1, 0}};
-
-  // The back face, side faces, and slope depend on orientation.
-  // For each orientation:
-  //   - back face: the vertical rectangle behind the ridge
-  //   - two side faces: triangular tapered ends
-  //   - slope face: the angled quad connecting the ridge to the opposite base edge
-
-  Plane back_face, side_a, side_b, slope;
-
-  float inv_slope_len; // for normalizing the slope normal
-
-  if (wedge.orientation == 0) // ridge along X at -Z
-  {
-    back_face = {pts[0], {0, 0, -1}};
-    side_a = {pts[0], {-1, 0, 0}};
-    side_b = {pts[1], {+1, 0, 0}};
-    inv_slope_len = 1.f / sqrt(h.z * h.z + h.y * h.y);
-    slope = {pts[4], {0, h.z * inv_slope_len, h.y * inv_slope_len}};
-  }
-  else if (wedge.orientation == 1) // ridge along X at +Z
-  {
-    back_face = {pts[2], {0, 0, +1}};
-    side_a = {pts[0], {-1, 0, 0}};
-    side_b = {pts[1], {+1, 0, 0}};
-    inv_slope_len = 1.f / sqrt(h.z * h.z + h.y * h.y);
-    slope = {pts[4], {0, h.z * inv_slope_len, -h.y * inv_slope_len}};
-  }
-  else if (wedge.orientation == 2) // ridge along Z at -X
-  {
-    back_face = {pts[0], {-1, 0, 0}};
-    side_a = {pts[0], {0, 0, -1}};
-    side_b = {pts[2], {0, 0, +1}};
-    inv_slope_len = 1.f / sqrt(h.x * h.x + h.y * h.y);
-    slope = {pts[4], {h.y * inv_slope_len, h.x * inv_slope_len, 0}};
-  }
-  else // 3: ridge along Z at +X
-  {
-    back_face = {pts[1], {+1, 0, 0}};
-    side_a = {pts[0], {0, 0, -1}};
-    side_b = {pts[2], {0, 0, +1}};
-    inv_slope_len = 1.f / sqrt(h.x * h.x + h.y * h.y);
-    slope = {pts[4], {-h.y * inv_slope_len, h.x * inv_slope_len, 0}};
-  }
-
-  return {bottom, back_face, side_a, side_b, slope};
-}
-
 // Returns polygon vertices for each face, parallel to compute_collision_planes().
 // AABB: 6 quads (4 verts each), in the same order as compute_collision_planes(): +X,-X,+Y,-Y,+Z,-Z.
 inline std::vector<std::vector<linalg::vec3>> compute_face_polygons(const aabb_t &aabb)
@@ -449,52 +346,6 @@ inline std::vector<std::vector<linalg::vec3>> compute_face_polygons(const aabb_t
     {c+V{-h.x,-h.y,+h.z}, c+V{+h.x,-h.y,+h.z}, c+V{+h.x,+h.y,+h.z}, c+V{-h.x,+h.y,+h.z}}, // +Z
     {c+V{+h.x,-h.y,-h.z}, c+V{-h.x,-h.y,-h.z}, c+V{-h.x,+h.y,-h.z}, c+V{+h.x,+h.y,-h.z}}, // -Z
   };
-}
-
-// Returns polygon vertices for each wedge face, parallel to compute_collision_planes().
-// Wedge: 5 faces (bottom quad, back quad, 2 side triangles, slope quad).
-// Uses coplanar-vertex selection so it works for all orientations.
-inline std::vector<std::vector<linalg::vec3>> compute_face_polygons(const wedge_t &wedge)
-{
-  auto pts = get_wedge_points(wedge);
-  auto planes = compute_collision_planes(wedge);
-
-  std::vector<std::vector<linalg::vec3>> result;
-  result.reserve(planes.size());
-
-  constexpr float eps = 1e-3f;
-
-  for (const auto &plane : planes)
-  {
-    std::vector<linalg::vec3> poly;
-    for (const auto &p : pts)
-    {
-      if (std::abs(linalg::dot(p - plane.point, plane.normal)) < eps)
-        poly.push_back(p);
-    }
-
-    // Sort vertices CCW around the centroid (viewed from outward normal)
-    // so the triangle fan decomposition is non-self-intersecting.
-    if (poly.size() >= 3)
-    {
-      linalg::vec3 centroid = {};
-      for (const auto &v : poly) centroid = centroid + v;
-      centroid = centroid * (1.0f / (float)poly.size());
-
-      linalg::vec3 ref = linalg::normalize(poly[0] - centroid);
-      linalg::vec3 bitan = linalg::cross(plane.normal, ref);
-
-      std::sort(poly.begin(), poly.end(), [&](const linalg::vec3 &a, const linalg::vec3 &b) {
-        float ang_a = std::atan2(linalg::dot(a - centroid, bitan), linalg::dot(a - centroid, ref));
-        float ang_b = std::atan2(linalg::dot(b - centroid, bitan), linalg::dot(b - centroid, ref));
-        return ang_a < ang_b;
-      });
-    }
-
-    result.push_back(std::move(poly));
-  }
-
-  return result;
 }
 
 } // namespace shared

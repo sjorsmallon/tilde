@@ -34,10 +34,13 @@ struct asset_state_t
   Asset_Pool<font_asset_t> font_asset_pool;
   Enum_Array<font_asset, asset_handle_t<font_asset_t>> font_asset_handles;
 
+  Asset_Pool<pbr_material_asset_t> pbr_material_pool;
+  Enum_Array<pbr_material, asset_handle_t<pbr_material_asset_t>> pbr_material_handles;
+
   bool manifest_initialized = false;
 
   // The two members no class owns: the byte layer under everything, and the
-  // pools whose contents are named by PATH from inside another asset rather
+  // pool whose contents are named by PATH from inside another asset rather
   // than by id. Both are hand-written in asset_types.hpp.
   asset_source_t          source;
   path_referenced_pools_t path_referenced;
@@ -76,6 +79,7 @@ asset_state_t& state_for(const char* who);
 [[nodiscard]] animation_asset_t make_missing_animation();
 [[nodiscard]] hitbox_rig_t make_missing_hitbox_rig();
 [[nodiscard]] font_asset_t make_missing_font();
+[[nodiscard]] pbr_material_asset_t make_missing_pbr_material();
 
 // --- Per class: the cached loader and the id accessor -----------------
 
@@ -120,6 +124,14 @@ asset_state_t& state_for(const char* who);
 // An id outside the class resolves to Missing rather than to a bounds check
 // the caller has to write: ids come off the wire and out of map files.
 [[nodiscard]] asset_handle_t<font_asset_t> get_font(font_asset id);
+
+// This class's unit is a DIRECTORY, so there is no extension to dispatch
+// on and no generated body: the definition is hand-written, and a missing
+// one is a link error naming it.
+[[nodiscard]] asset_handle_t<pbr_material_asset_t> load_pbr_material(const char* path);
+// An id outside the class resolves to Missing rather than to a bounds check
+// the caller has to write: ids come off the wire and out of map files.
+[[nodiscard]] asset_handle_t<pbr_material_asset_t> get_pbr_material(pbr_material id);
 
 // Register every entry of every class. This is all assets::init() does.
 void register_all(asset_state_t& state);

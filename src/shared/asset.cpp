@@ -1041,7 +1041,7 @@ const skeleton_t *get(asset_handle_t<skeleton_t> handle)
 const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle)
 {
   asset_state_t &state = state_for("get(pbr_material)");
-  return state.path_referenced.pbr_materials.get(handle);
+  return state.pbr_material_pool.get(handle);
 }
 
 const sound_asset_t *get(asset_handle_t<sound_asset_t> handle)
@@ -1062,19 +1062,24 @@ const hitbox_rig_t *get(asset_handle_t<hitbox_rig_t> handle)
   return state.hitbox_rig_pool.get(handle);
 }
 
+// The hand-written half of a DIRECTORY class. def_gen emits pbr_material's enum,
+// table, pool and get_pbr_material, and stops at the loader: a folder has no
+// bytes and no extension, so there is nothing for the generated body to dispatch
+// on. Same seam as every decode_* -- the generator declares it, and a missing
+// definition is a link error naming the symbol.
 asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
 {
   asset_state_t &state = state_for("load_pbr_material");
   const std::string folder = asset_cache_key(folder_path);
 
-  asset_handle_t<pbr_material_asset_t> existing = state.path_referenced.pbr_materials.find(folder.c_str());
+  asset_handle_t<pbr_material_asset_t> existing = state.pbr_material_pool.find(folder.c_str());
   if (existing.valid())
     return existing;
 
   // The one place a probe is the right shape: a folder legitimately carries
-  // only some of the six maps, so ABSENCE is an answer here rather than a
-  // failure. A map that is present and will not decode still dies in
-  // load_texture, which is the difference the two spellings exist to draw.
+  // only some of the maps, so ABSENCE is an answer here rather than a failure.
+  // A map that is present and will not decode still dies in load_texture, which
+  // is the difference the two spellings exist to draw.
   auto load_optional_map = [&](const char *filename) -> asset_handle_t<texture_asset_t>
   {
     std::string full_path = folder + "/" + filename;
@@ -1087,15 +1092,23 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
   };
 
   pbr_material_asset_t mat;
-  mat.albedo            = load_optional_map("albedo.png");
-  mat.normal            = load_optional_map("normal.png");
-  mat.roughness         = load_optional_map("roughness.png");
-  mat.ambient_occlusion = load_optional_map("ao.png");
-  mat.metallic          = load_optional_map("metallic.png");
-  mat.height            = load_optional_map("height.png");
+  mat.albedo                       = load_optional_map("albedo.png");
+  mat.normal                       = load_optional_map("normal.png");
+  mat.occlusion_roughness_metallic = load_optional_map("orm.png");
+  mat.height                       = load_optional_map("height.png");
 
   printf("[assets] loaded pbr_material from folder: %s\n", folder.c_str());
-  return state.path_referenced.pbr_materials.add(folder.c_str(), std::move(mat));
+  return state.pbr_material_pool.add(folder.c_str(), std::move(mat));
+}
+
+// Four invalid handles. Unlike the mesh and texture placeholders there is
+// nothing to draw here: a material IS its maps, and resolve_material_texture
+// already turns an albedo that resolved to nothing into the magenta checker by
+// handing the renderer texture_asset::Missing. The placeholder only has to be
+// VALID.
+pbr_material_asset_t make_missing_pbr_material()
+{
+  return {};
 }
 
 shared::aabb_bounds_t compute_mesh_bounds(const mesh_asset_t *mesh)

@@ -27,6 +27,11 @@ struct pass_builder_t
   std::vector<renderer::particle_emitter_parameters_t> particles;
   std::vector<renderer::custom_draw_t>                 custom;
 
+  // The baked atlas every lightmapped draw in this pass samples. Set when the
+  // map is loaded and left alone by begin_frame -- it belongs to the world, not
+  // to the frame, which is why it is not one of the lists cleared above.
+  renderer::lightmap_handle_t lightmap;
+
   // Once per frame, before anything is appended. Note what is NOT cleared:
   // `debug` is RETIRED instead, because entries appended with a lifetime are
   // meant to outlive the frame that made them -- a hitscan trace fires in a
@@ -48,6 +53,7 @@ struct pass_builder_t
     pass.debug     = &debug;
     pass.particles = particles;
     pass.custom    = custom;
+    pass.lightmap  = lightmap;
     return pass;
   }
 };

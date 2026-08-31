@@ -427,7 +427,9 @@ std::optional<gizmo_drag_t> Editor_Gizmo::try_update_drag(const linalg::ray_t &r
 
     gizmo_drag_t result;
     result.pivot = start_box.center;
-    result.rotation[axis] = editor::snap(to_degrees(total_angle), editor::ROTATION_SNAP);
+    result.rotation =
+        rotation_delta_from_axis_angle(axis, editor::snap(to_degrees(total_angle),
+                                                          editor::ROTATION_SNAP));
     return result;
   }
 

@@ -39,8 +39,8 @@ struct navmesh_t
       bool inside = true;
       for (int e = 0; e < N; ++e)
       {
-        const linalg::vec3f &a = vertices[p.vertices[e          ]].position;
-        const linalg::vec3f &b = vertices[p.vertices[(e + 1) % N]].position;
+        const linalg::vec3f& a = vertices[p.vertices[e          ]].position;
+        const linalg::vec3f& b = vertices[p.vertices[(e + 1) % N]].position;
         // For CCW winding, point must be to the left of every edge.
         float cross = (b.x - a.x) * (pz - a.z) - (b.z - a.z) * (px - a.x);
         if (cross < 0.f) { inside = false; break; }

@@ -340,7 +340,7 @@ void test_lossy_transfer_converges()
   {
     if (index == 4 || index == 17)
       continue;
-    assert(!detail::reassemble_fragment(client_state, fragments[index], reassembled) &&
+    assert(!reassemble_fragment(client_state.partial_packets, fragments[index], reassembled) &&
            "the message cannot complete while two fragments are missing");
   }
 
@@ -375,8 +375,8 @@ void test_lossy_transfer_converges()
     assert(fragment.header.fragment_index == 4 || fragment.header.fragment_index == 17);
 
   // Feeding them in completes the message.
-  assert(!detail::reassemble_fragment(client_state, repaired[0], reassembled));
-  assert(detail::reassemble_fragment(client_state, repaired[1], reassembled) &&
+  assert(!reassemble_fragment(client_state.partial_packets, repaired[0], reassembled));
+  assert(reassemble_fragment(client_state.partial_packets, repaired[1], reassembled) &&
          "the last missing fragment completes the message");
   assert(reassembled == payload && "and the bytes survived the repair");
   std::cout << "  -> Repair was proportional to the loss and rebuilt the payload!"
@@ -384,7 +384,7 @@ void test_lossy_transfer_converges()
 
   // A duplicate arriving after completion must not reopen the bucket -- that is
   // what would report "1 of 20" and re-stream a map we already hold.
-  assert(!detail::reassemble_fragment(client_state, fragments[0], reassembled) &&
+  assert(!reassemble_fragment(client_state.partial_packets, fragments[0], reassembled) &&
          "a duplicate after completion is discarded, not re-delivered");
 
   // And the completing report frees the transfer, so the sender stops waiting.
@@ -404,12 +404,73 @@ void test_lossy_transfer_converges()
   server_socket.close();
 }
 
+
+// The failure the shared reassemble_fragment exists to make unrepresentable on
+// BOTH sides. message_id is a uint8 incremented once per message sent, so a
+// client sending one input batch per tick wraps the whole space every
+// 256/sv_tickrate seconds -- 4.3s at 60Hz, against a 5s bucket timeout. The wrap
+// outlives the expiry, so a new message routinely draws an id whose bucket is
+// still held by an older one that lost a fragment and will never complete.
+//
+// The server open-coded its own reassembly for a while and resized only when the
+// bucket was empty, so it wrote the new message's fragments into the stale
+// message's vector and judged completion against the stale count. It now calls
+// the same function the client does, and this is what that buys.
+void test_wrapped_message_id_takes_over_a_stale_bucket()
+{
+  std::cout << "[TEST] Testing a wrapped message_id over a stale bucket..."
+            << std::endl;
+
+  std::map<uint8, Partial_Message> partial_packets;
+  std::vector<uint8> reassembled;
+
+  // A four-fragment message that loses fragment 2 and can never complete.
+  uint8 stale_id = 7;
+  const std::vector<uint8> abandoned(4 * MAX_PAYLOAD_SIZE_IN_BYTES, 0xAB);
+  const std::vector<Packet> stale = convert_to_packets(
+      abandoned, static_cast<uint8>(Message_Type::C2S_ClientInputBatch), stale_id);
+  assert(stale.size() == 4);
+
+  for (size_t index = 0; index < stale.size(); ++index)
+    if (index != 2)
+      assert(!reassemble_fragment(partial_packets, stale[index], reassembled) &&
+             "a message missing a fragment never completes");
+
+  // 256 sends later the counter comes back around to the same id, carrying a
+  // message of a DIFFERENT length. The bucket is still there.
+  assert(partial_packets.count(stale[0].header.message_id) == 1 &&
+         "the stale bucket outlives the wrap -- that is the whole problem");
+
+  uint8 wrapped_id = stale[0].header.message_id;
+  std::vector<uint8> arriving(2 * MAX_PAYLOAD_SIZE_IN_BYTES);
+  for (size_t index = 0; index < arriving.size(); ++index)
+    arriving[index] = static_cast<uint8>(index * 7 + 3);
+
+  const std::vector<Packet> fresh = convert_to_packets(
+      arriving, static_cast<uint8>(Message_Type::C2S_ClientInputBatch), wrapped_id);
+  assert(fresh.size() == 2);
+  assert(fresh[0].header.message_id == stale[0].header.message_id &&
+         "the two messages collide on one id, which is what the wrap does");
+
+  assert(!reassemble_fragment(partial_packets, fresh[0], reassembled) &&
+         "one of two fragments is not a whole message");
+  assert(reassemble_fragment(partial_packets, fresh[1], reassembled) &&
+         "the differing fragment_count takes the bucket over rather than "
+         "completing against the stale one");
+  assert(reassembled == arriving &&
+         "and the bytes are the NEW message's, with none of the abandoned one's");
+
+  std::cout << "  -> The colliding message took the bucket over intact!"
+            << std::endl;
+}
+
 int main()
 {
   test_receive_and_reassembly();
   test_reliable_stream_round_trip();
   test_reliable_stream_round_trip_c2s();
   test_lossy_transfer_converges();
+  test_wrapped_message_id_takes_over_a_stale_bucket();
   std::cout << "[TEST] All tests passed." << std::endl;
   return 0;
 }

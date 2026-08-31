@@ -99,7 +99,7 @@ void assert_is_closed_convex_solid(const brush_polyhedron_t &polyhedron)
 void test_cube_hulls_into_six_quads()
 {
   const std::vector<linalg::vec3> corners =
-      shared::make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+      shared::make_box_brush_points({0, 0, 0}, {64, 64, 64});
 
   std::optional<brush_polyhedron_t> polyhedron = shared::try_build_brush_polyhedron(corners);
   assert(polyhedron.has_value());
@@ -155,7 +155,7 @@ void test_welding_a_cube_edge_down_makes_a_wedge()
   // the +z bottom corners. Six survivors, and the hull of six is a wedge -- this
   // is the whole "ramps are free" claim, so it is worth pinning.
   std::vector<linalg::vec3> points =
-      shared::make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+      shared::make_box_brush_points({0, 0, 0}, {64, 64, 64});
 
   for (linalg::vec3 &point : points)
   {
@@ -203,7 +203,7 @@ void test_near_coplanar_face_holds_together_then_splits()
   // Inside the epsilon: the top stays ONE quad, six faces total.
   {
     std::vector<linalg::vec3> points =
-        shared::make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+        shared::make_box_brush_points({0, 0, 0}, {64, 64, 64});
     points[3].y += 0.01f; // some top corner, lifted a hair
 
     std::optional<brush_polyhedron_t> polyhedron = shared::try_build_brush_polyhedron(points);
@@ -215,7 +215,7 @@ void test_near_coplanar_face_holds_together_then_splits()
   // Outside it: the top is genuinely non-planar and becomes two triangles.
   {
     std::vector<linalg::vec3> points =
-        shared::make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+        shared::make_box_brush_points({0, 0, 0}, {64, 64, 64});
     points[3].y += 8.0f;
 
     std::optional<brush_polyhedron_t> polyhedron = shared::try_build_brush_polyhedron(points);
@@ -233,7 +233,7 @@ void test_off_grid_vertices_hull_the_same_as_on_grid_ones()
   // irrational coordinates must produce the same topology. This is the guard on
   // rule 2 in brush.hpp -- free vertex movement depends on it.
   std::vector<linalg::vec3> points =
-      shared::make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+      shared::make_box_brush_points({0, 0, 0}, {64, 64, 64});
 
   for (linalg::vec3 &point : points)
   {
@@ -287,7 +287,7 @@ void test_extruding_a_concave_footprint_yields_its_hull()
 void test_collision_planes_match_the_hull()
 {
   const std::vector<linalg::vec3> corners =
-      shared::make_box_brush_vertices({32, 16, -48}, {64, 32, 16});
+      shared::make_box_brush_points({32, 16, -48}, {64, 32, 16});
 
   std::optional<brush_polyhedron_t> polyhedron = shared::try_build_brush_polyhedron(corners);
   assert(polyhedron.has_value());
@@ -320,7 +320,7 @@ void test_collision_planes_match_the_hull()
 void test_mesh_covers_every_face()
 {
   const std::vector<linalg::vec3> corners =
-      shared::make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+      shared::make_box_brush_points({0, 0, 0}, {64, 64, 64});
 
   std::optional<brush_polyhedron_t> polyhedron = shared::try_build_brush_polyhedron(corners);
   assert(polyhedron.has_value());
@@ -352,7 +352,7 @@ void test_text_round_trip_is_bit_exact_and_canonical()
   // geometry_values_equal is bit-exact, so a lossy round trip would make a
   // reloaded brush compare unequal to itself and produce phantom undo entries.
   std::vector<linalg::vec3> vertices =
-      shared::make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+      shared::make_box_brush_points({0, 0, 0}, {64, 64, 64});
   vertices[0].x = 1.0f / 3.0f;
   vertices[1].y = -0.1f;
   vertices[2].z = 12345.6789f;
@@ -429,8 +429,8 @@ void test_grid_snap_is_an_operation_not_an_invariant()
 void test_geometry_block_round_trip()
 {
   shared::brush_geometry_t brush;
-  brush.vertices        = shared::make_box_brush_vertices({32, 0, -16}, {64, 32, 96});
-  brush.vertices[2].y  += 24.0f; // a corner pulled off the box, so it is not a cube
+  brush.hull_points        = shared::make_box_brush_points({32, 0, -16}, {64, 32, 96});
+  brush.hull_points[2].y  += 24.0f; // a corner pulled off the box, so it is not a cube
   brush.surface.color   = {0.25f, 0.5f, 0.75f};
   brush.surface.mesh_path = "";
   shared::sync_face_surfaces(brush);
@@ -553,7 +553,7 @@ void test_the_grid_is_anchored_to_the_tangent_basis_not_the_winding()
   top.offsets[2 * 5 + 2] = {0, 32.f, 0};
 
   const std::optional<brush_polyhedron_t> hull =
-      shared::try_build_brush_polyhedron(brush.vertices);
+      shared::try_build_brush_polyhedron(brush.hull_points);
   assert(hull);
   const shared::brush_face_grids_t grids = shared::build_brush_face_grids(brush, *hull);
   assert(grids.any);
@@ -577,12 +577,12 @@ void test_the_grid_is_anchored_to_the_tangent_basis_not_the_winding()
   // edit, and it is the thing that regresses without anyone noticing.
   shared::brush_geometry_t shuffled = brush;
   std::vector<linalg::vec3> reordered;
-  for (size_t i = 0; i < shuffled.vertices.size(); ++i)
-    reordered.push_back(shuffled.vertices[shuffled.vertices.size() - 1 - i]);
-  shuffled.vertices = reordered;
+  for (size_t i = 0; i < shuffled.hull_points.size(); ++i)
+    reordered.push_back(shuffled.hull_points[shuffled.hull_points.size() - 1 - i]);
+  shuffled.hull_points = reordered;
 
   const std::optional<brush_polyhedron_t> shuffled_hull =
-      shared::try_build_brush_polyhedron(shuffled.vertices);
+      shared::try_build_brush_polyhedron(shuffled.hull_points);
   assert(shuffled_hull);
   const shared::brush_face_grids_t shuffled_grids =
       shared::build_brush_face_grids(shuffled, *shuffled_hull);
@@ -626,7 +626,7 @@ void test_adjacent_subdivided_faces_weld_at_their_shared_edge()
   }
 
   const std::optional<brush_polyhedron_t> hull =
-      shared::try_build_brush_polyhedron(brush.vertices);
+      shared::try_build_brush_polyhedron(brush.hull_points);
   assert(hull);
   const shared::brush_face_grids_t grids = shared::build_brush_face_grids(brush, *hull);
 
@@ -767,6 +767,164 @@ void test_a_real_sized_grid_decomposes_structurally()
   std::cout << "test_a_real_sized_grid_decomposes_structurally passed" << std::endl;
 }
 
+// Inside ANY of the pieces, which is what the union of them means -- they
+// overlap freely and only their union has to be the solid.
+bool point_is_inside_collision(const std::vector<shared::collision_piece_t> &pieces,
+                               const linalg::vec3 &point, float margin)
+{
+  for (const shared::collision_piece_t &piece : pieces)
+  {
+    bool inside = true;
+    for (const Plane &plane : piece.planes)
+    {
+      if (linalg::dot(plane.normal, point - plane.point) > -margin)
+      {
+        inside = false;
+        break;
+      }
+    }
+    if (inside)
+      return true;
+  }
+  return false;
+}
+
+void assert_pieces_are_convex(const std::vector<shared::collision_piece_t> &pieces)
+{
+  for (const shared::collision_piece_t &piece : pieces)
+  {
+    assert(piece.planes.size() == piece.face_polygons.size());
+    assert(piece.planes.size() >= 4);
+
+    for (const std::vector<linalg::vec3> &polygon : piece.face_polygons)
+      for (const linalg::vec3 &point : polygon)
+        for (const Plane &plane : piece.planes)
+          assert(linalg::dot(plane.normal, point - plane.point) <= 0.1f);
+  }
+}
+
+// A polyhedron's normals point OUT by contract, and the grid runs CCW in (u, v)
+// while brush_face_grid_tangents picks its basis from |normal| -- so cross(u, v)
+// is the outward normal on only THREE of a box's six faces. generate_brush_mesh
+// flips for the other three and try_build_displaced_polyhedron did not, which
+// made every grid triangle on half a box inside out: a solid the decomposition
+// reads as empty exactly where it is not. Sculpt each face in turn, because
+// three of six is the one ratio a single-face test cannot see.
+void test_a_displaced_polyhedron_always_points_outward()
+{
+  for (size_t sculpted = 0; sculpted < 6; ++sculpted)
+  {
+    shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 64, 64});
+    shared::sync_face_surfaces(brush);
+    assert(brush.face_surfaces.size() == 6);
+
+    shared::face_surface_t &face = brush.face_surfaces[sculpted];
+    shared::resize_face_grid(face, 4);
+    face.offsets[2 * 5 + 2] = face.key_normal * 20.f;
+
+    const std::optional<brush_polyhedron_t> displaced =
+        shared::try_build_displaced_polyhedron(brush);
+    assert(displaced);
+
+    for (const brush_face_t &polyhedron_face : displaced->faces)
+    {
+      // The winding the plane was derived from, and the plane itself, and the
+      // brush's own middle: all three have to agree about which side is out.
+      const linalg::vec3 &a = displaced->vertices[polyhedron_face.vertex_indices[0]];
+      const linalg::vec3 &b = displaced->vertices[polyhedron_face.vertex_indices[1]];
+      const linalg::vec3 &c = displaced->vertices[polyhedron_face.vertex_indices[2]];
+      assert(linalg::dot(linalg::cross(b - a, c - a), polyhedron_face.plane.normal) > 0.f);
+
+      assert(linalg::dot(polyhedron_face.plane.normal,
+                         linalg::vec3{0, 0, 0} - polyhedron_face.plane.point) < 0.f);
+    }
+  }
+
+  std::cout << "test_a_displaced_polyhedron_always_points_outward passed" << std::endl;
+}
+
+// A brush narrower at the sculpted end than at the other: the face's shadow is
+// NOT the whole solid, so the columns tile only part of it and the edge pieces
+// have to cover the flare. This used to demand the shadow cover everything, fall
+// through to the BSP, and there stop colliding ENTIRELY at level 8 -- 2*8*8 grid
+// faces is past MAX_CONVEX_INPUT_FACES, which is a hole a player walks into.
+void test_a_face_narrower_than_its_brush_still_collides()
+{
+  shared::brush_geometry_t brush;
+  brush.hull_points = {{-64, -32, -64}, {64, -32, -64}, {64, -32, 64}, {-64, -32, 64},
+                    {-32, 32, -32},  {32, 32, -32},  {32, 32, 32},  {-32, 32, 32}};
+  shared::sync_face_surfaces(brush);
+
+  Plane top;
+  top.normal = {0, 1, 0};
+  top.point  = {0, 32, 0};
+
+  shared::face_surface_t &face = shared::face_surface_for(brush, top);
+  shared::resize_face_grid(face, 8);
+  face.offsets[4 * 9 + 4] = {0, 24.f, 0};
+
+  const std::vector<shared::collision_piece_t> pieces =
+      shared::get_collision_pieces(shared::geometry_value_t{brush}, 1);
+
+  assert(!pieces.empty());
+  assert_pieces_are_convex(pieces);
+
+  // Under the bump and above where the flat face used to be. Sampled off the
+  // grid lines: a point on a column seam is on the boundary of every column
+  // that meets there and strictly inside none of them.
+  assert(point_is_inside_collision(pieces, {3.f, 44.f, 1.f}, 0.5f));
+  // Clear of the bump, so nothing may be there.
+  assert(!point_is_inside_collision(pieces, {3.f, 52.f, 1.f}, 0.5f));
+  // The flare the top face does not stand over -- the edge pieces' whole job.
+  assert(point_is_inside_collision(pieces, {56.f, -24.f, 0}, 0.5f));
+  // And still nothing outside the base.
+  assert(!point_is_inside_collision(pieces, {80.f, -24.f, 0}, 0.5f));
+
+  std::cout << "test_a_face_narrower_than_its_brush_still_collides passed" << std::endl;
+}
+
+// Two sculpted faces on one brush. A column is capped by the OTHER faces'
+// planes, so a second grid means one of those planes is no longer where the
+// solid ends -- the columns bow out, and the cones answer instead. This was the
+// other way to reach zero collision past level 8.
+void test_two_subdivided_faces_still_collide()
+{
+  shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 64, 64});
+  shared::sync_face_surfaces(brush);
+
+  Plane top;
+  top.normal = {0, 1, 0};
+  top.point  = {0, 64, 0};
+  Plane side;
+  side.normal = {1, 0, 0};
+  side.point  = {64, 0, 0};
+
+  shared::face_surface_t &top_face = shared::face_surface_for(brush, top);
+  shared::resize_face_grid(top_face, 8);
+  top_face.offsets[4 * 9 + 4] = {0, 20.f, 0};
+
+  shared::face_surface_t &side_face = shared::face_surface_for(brush, side);
+  shared::resize_face_grid(side_face, 8);
+  side_face.offsets[4 * 9 + 4] = {20.f, 0, 0};
+
+  const std::vector<shared::collision_piece_t> pieces =
+      shared::get_collision_pieces(shared::geometry_value_t{brush}, 1);
+
+  assert(!pieces.empty());
+  assert_pieces_are_convex(pieces);
+
+  // Off the grid lines and off the axes: the apex is a corner of every cone and
+  // a grid line is a seam between two, so a point on either is strictly inside
+  // neither.
+  assert(point_is_inside_collision(pieces, {5.f, 30.f, 11.f}, 0.5f));  // the middle
+  assert(point_is_inside_collision(pieces, {6.f, 72.f, 3.f}, 0.5f));   // under the top bump
+  assert(point_is_inside_collision(pieces, {72.f, 6.f, 3.f}, 0.5f));   // under the side bump
+  assert(!point_is_inside_collision(pieces, {6.f, 96.f, 3.f}, 0.5f));  // clear of both
+  assert(!point_is_inside_collision(pieces, {96.f, 6.f, 3.f}, 0.5f));
+
+  std::cout << "test_two_subdivided_faces_still_collide passed" << std::endl;
+}
+
 void test_the_grid_survives_text_and_a_level_change()
 {
   shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 16, 64});
@@ -828,10 +986,10 @@ void test_a_face_that_stops_being_a_quad_loses_its_grid()
   // Slice a corner off the top face: it becomes a pentagon, and a grid is a
   // bilinear patch over four corners. Loudly dropped rather than left to index
   // past the end of a polygon that no longer has the shape it was written for.
-  brush.vertices.push_back({64.f, 8.f, 64.f});
-  brush.vertices.erase(brush.vertices.begin());
-  brush.vertices.push_back({-64.f, -16.f, -64.f});
-  brush.vertices.push_back({0.f, 26.f, 0.f});
+  brush.hull_points.push_back({64.f, 8.f, 64.f});
+  brush.hull_points.erase(brush.hull_points.begin());
+  brush.hull_points.push_back({-64.f, -16.f, -64.f});
+  brush.hull_points.push_back({0.f, 26.f, 0.f});
   shared::sync_face_surfaces(brush);
 
   for (const shared::face_surface_t &face : brush.face_surfaces)
@@ -905,7 +1063,7 @@ void test_a_stroke_paints_a_shared_edge_whole()
   assert(shared::paint_brush_grid_blend(brush, {64.f, 64.f, 0.f}, 24.f, 1.f, 1) > 0);
 
   const std::optional<brush_polyhedron_t> hull =
-      shared::try_build_brush_polyhedron(brush.vertices);
+      shared::try_build_brush_polyhedron(brush.hull_points);
   assert(hull);
   const shared::brush_face_grids_t grids = shared::build_brush_face_grids(brush, *hull);
 
@@ -930,6 +1088,74 @@ void test_a_stroke_paints_a_shared_edge_whole()
   assert(on_the_edge == 2); // both faces carry that vertex
 
   std::cout << "test_a_stroke_paints_a_shared_edge_whole passed" << std::endl;
+}
+
+void test_a_sculpt_stroke_moves_a_shared_edge_whole()
+{
+  // Nudge moves a NAMED set exactly; a sculpt covers whatever it sweeps, with a
+  // falloff. Both have to survive the weld the same way: a stroke that wrote
+  // only one face's copy of a shared vertex would move it HALF as far, which is
+  // a crack exactly where the weld exists to remove one.
+  shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 64, 64});
+  shared::sync_face_surfaces(brush);
+
+  Plane top;
+  top.normal = {0, 1, 0};
+  top.point  = {0, 64, 0};
+  Plane side;
+  side.normal = {1, 0, 0};
+  side.point  = {64, 0, 0};
+
+  shared::resize_face_grid(shared::face_surface_for(brush, top), 2);
+  shared::resize_face_grid(shared::face_surface_for(brush, side), 2);
+
+  // Centred on the middle of the edge the two faces share, pushing up.
+  assert(shared::sculpt_brush_grid_vertices(brush, {64.f, 64.f, 0.f}, 24.f,
+                                            {0, 10.f, 0}) > 0);
+
+  const std::optional<brush_polyhedron_t> hull =
+      shared::try_build_brush_polyhedron(brush.hull_points);
+  assert(hull);
+  const shared::brush_face_grids_t grids = shared::build_brush_face_grids(brush, *hull);
+
+  size_t on_the_edge = 0;
+  size_t past_the_rim = 0;
+  for (size_t face_index = 0; face_index < hull->faces.size(); ++face_index)
+  {
+    const std::vector<linalg::vec3> &grid = grids.grid_vertices[face_index];
+    if (grid.empty())
+      continue;
+
+    const shared::face_surface_t *surface =
+        shared::find_face_surface(brush, hull->faces[face_index].plane);
+    assert(surface);
+
+    for (size_t vertex = 0; vertex < grid.size(); ++vertex)
+    {
+      const linalg::vec3 base = grid[vertex] - surface->offsets[vertex];
+
+      if (linalg::length(base - linalg::vec3{64.f, 64.f, 0.f}) < 1e-4f)
+      {
+        ++on_the_edge;
+        // Full strength at the centre of the stroke, on BOTH copies, so the
+        // welded read is the whole move rather than the average of a move and
+        // a zero.
+        assert(std::abs(surface->offsets[vertex].y - 10.f) < 1e-4f);
+        continue;
+      }
+
+      // A vertex outside the radius is untouched, whichever face holds it.
+      if (linalg::length(base - linalg::vec3{64.f, 64.f, 0.f}) > 24.f)
+      {
+        ++past_the_rim;
+        assert(linalg::length(surface->offsets[vertex]) < 1e-6f);
+      }
+    }
+  }
+  assert(on_the_edge == 2); // both faces carry that vertex
+  assert(past_the_rim > 0);
+
+  std::cout << "test_a_sculpt_stroke_moves_a_shared_edge_whole passed" << std::endl;
 }
 
 void test_every_subdivided_face_winds_outward()
@@ -1020,14 +1246,14 @@ void test_map_round_trip_and_session_collision()
   shared::map_t map;
 
   shared::brush_geometry_t box_brush;
-  box_brush.vertices = shared::make_box_brush_vertices({0, 0, 0}, {64, 64, 64});
+  box_brush.hull_points = shared::make_box_brush_points({0, 0, 0}, {64, 64, 64});
   const shared::entity_uid_t box_uid = map.add_geometry(box_brush);
 
   // A wedge, so the map carries a brush that is NOT box-shaped and the
   // difference between hull collision and bound collision is observable.
   shared::brush_geometry_t wedge;
-  wedge.vertices = shared::make_box_brush_vertices({512, 0, 0}, {64, 64, 64});
-  for (linalg::vec3 &vertex : wedge.vertices)
+  wedge.hull_points = shared::make_box_brush_points({512, 0, 0}, {64, 64, 64});
+  for (linalg::vec3 &vertex : wedge.hull_points)
   {
     if (vertex.y > 0.0f && vertex.z > 0.0f)
       vertex.y = -64.0f;
@@ -1289,11 +1515,15 @@ int main()
   test_adjacent_subdivided_faces_weld_at_their_shared_edge();
   test_a_displaced_brush_collides_as_convex_pieces();
   test_a_real_sized_grid_decomposes_structurally();
+  test_a_displaced_polyhedron_always_points_outward();
+  test_a_face_narrower_than_its_brush_still_collides();
+  test_two_subdivided_faces_still_collide();
   test_the_grid_survives_text_and_a_level_change();
   test_a_face_that_stops_being_a_quad_loses_its_grid();
   test_map_round_trip_and_session_collision();
   test_a_painted_weight_set_always_sums_to_one();
   test_a_stroke_paints_a_shared_edge_whole();
+  test_a_sculpt_stroke_moves_a_shared_edge_whole();
   test_every_subdivided_face_winds_outward();
   test_a_blended_face_is_one_submesh_over_two_materials();
 

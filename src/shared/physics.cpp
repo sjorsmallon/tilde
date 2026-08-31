@@ -86,7 +86,7 @@ void register_static_convex_hull(physics_state_t &state, shared::entity_uid_t ui
 
     JPH::Array<JPH::Vec3> hull_points;
     hull_points.reserve(points.count);
-    for (const vec3f &point : points)
+    for (const vec3f& point : points)
         hull_points.push_back(to_jolt(point));
 
     JPH::ConvexHullShapeSettings hull_settings(hull_points);

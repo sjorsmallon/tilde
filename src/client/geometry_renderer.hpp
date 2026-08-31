@@ -26,7 +26,8 @@ namespace client
 // before the first draw is one more thing to forget; the caller holding the
 // geometry already holds the table it belongs to.
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
-                   shared::entity_uid_t uid, Span<const std::string> materials);
+                   shared::entity_uid_t uid, Span<const std::string> materials,
+                   const shared::lightmap_t &lightmap);
 
 // Rebuild the cached mesh for an object whose GENERATED form just changed -- a
 // brush point set or one of its face grids -- and re-upload it. Registers the
@@ -40,6 +41,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
 // to remember instead of one.
 void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
                                      shared::entity_uid_t uid,
-                                     Span<const std::string> materials);
+                                     Span<const std::string> materials,
+                                     const shared::lightmap_t &lightmap);
 
 } // namespace client

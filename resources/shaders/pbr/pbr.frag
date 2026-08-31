@@ -11,12 +11,12 @@ layout(location = 2) in vec2 texture_coordinates;
 
 layout(location = 0) out vec4 fragment_color;
 
+// FOUR samplers, not six: occlusion, roughness and metallic are single-channel
+// and ride one RGB texture in glTF's order (lighting_def.md decision G).
 layout(set = 0, binding = 1) uniform sampler2D albedo_texture_map;
 layout(set = 0, binding = 2) uniform sampler2D normal_texture_map;
-layout(set = 0, binding = 3) uniform sampler2D roughness_texture_map;
-layout(set = 0, binding = 4) uniform sampler2D ambient_occlusion_texture_map;
-layout(set = 0, binding = 5) uniform sampler2D metallic_texture_map;
-layout(set = 0, binding = 6) uniform sampler2D height_texture_map;
+layout(set = 0, binding = 3) uniform sampler2D orm_texture_map;
+layout(set = 0, binding = 4) uniform sampler2D height_texture_map;
 
 const float PI = 3.14159265359;
 
@@ -179,10 +179,16 @@ void main()
 
     vec3 N = construct_surface_normal(normalize(world_space_normal), uv);
 
-    vec3 albedo   = pow(texture(albedo_texture_map, uv).rgb, vec3(2.2));
-    float metallic  = texture(metallic_texture_map, uv).r;
-    float roughness = texture(roughness_texture_map, uv).r;
-    float ambient_occlusion = texture(ambient_occlusion_texture_map, uv).r;
+    // Albedo is uploaded SRGB, so the hardware sampler decodes it -- the manual
+    // pow that used to be here was the input half of the same double-encode the
+    // trailing one was (lighting_def.md decision F). ORM is DATA and is uploaded
+    // UNORM, which is why it can be read raw beside it.
+    vec3 albedo = texture(albedo_texture_map, uv).rgb;
+
+    vec3 orm = texture(orm_texture_map, uv).rgb;
+    float ambient_occlusion = orm.r;
+    float roughness         = orm.g;
+    float metallic          = orm.b;
 
 
     vec3 Lo = vec3(0.0);
@@ -263,10 +269,12 @@ void main()
     vec3 ambient = ambient_color * albedo * ambient_occlusion;
     Lo += ambient;
 
-    // Reinhard tone mapping
+    // Reinhard tone mapping. The sRGB encode that used to follow it is GONE --
+    // the attachment owns that now (lighting_def.md decision F), so this shader
+    // writes linear. Deleting the encode must not take the tonemap with it: what
+    // operator runs here, and whether it belongs in a post-process pass at all,
+    // is a separate open question.
     Lo = Lo / (Lo + vec3(1.0));
-    // Gamma correction
-    Lo = pow(Lo, vec3(1.0 / 2.2));
 
     fragment_color = vec4(Lo, 1.0);
 }

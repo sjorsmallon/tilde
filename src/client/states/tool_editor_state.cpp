@@ -11,6 +11,7 @@
 #include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
 #include "../editor/tools/brush_tool.hpp"
+#include "../editor/tools/lightmap_tool.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
@@ -57,6 +58,7 @@ constexpr Enum_Array<editor_tool_t, toolbox_row_t> TOOLBOX_ROWS = {{
     {editor_tool_t::particles,   "Particles"},
     {editor_tool_t::animation,   "Animation"},
     {editor_tool_t::brush,       "Brush"},
+    {editor_tool_t::lightmap,    "Lightmap"},
 }};
 static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 
@@ -239,6 +241,7 @@ void Tool_Editor_State::on_enter()
     tools[editor_tool_t::particles]   = std::make_unique<Particle_Editor_Tool>();
     tools[editor_tool_t::animation]   = std::make_unique<Animation_Tool>();
     tools[editor_tool_t::brush]       = std::make_unique<Brush_Tool>();
+    tools[editor_tool_t::lightmap]    = std::make_unique<Lightmap_Tool>();
   }
 
   // Enable first tool
@@ -323,8 +326,11 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
 
   // Update context
   context.map = &map;
-  context.bvh = &bvh;
+  context.map_path = get_maps_dir() + map.name;
+  context.bvh = &editor_bvh.bvh;
+  context.objects_without_collision = editor_bvh.objects_without_collision;
   context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
+  context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
   // context.time is NOT reset here -- it is seconds since the editor opened,
   // advanced in update(), and a tool switch is not a new clock. Resetting it
@@ -619,11 +625,27 @@ void Tool_Editor_State::update(float dt)
     geometry_updated_flag = false;
   }
 
+  if (lightmap_updated_flag || map.lightmap.geometry_id != uploaded_lightmap_geometry_id)
+  {
+    lightmap_updated_flag         = false;
+    uploaded_lightmap_geometry_id = map.lightmap.geometry_id;
+
+    if (!map.lightmap.pages.empty())
+    {
+      if (scene.lightmap.valid())
+        renderer::update_lightmap(scene.lightmap, map.lightmap.pages);
+      else
+        scene.lightmap = renderer::register_lightmap(map.lightmap.pages);
+    }
+  }
+
   // Update Viewport
   context.map = &map;
-  context.bvh = &bvh;
+  context.map_path = get_maps_dir() + map.name;
+  context.bvh = &editor_bvh.bvh;
+  context.objects_without_collision = editor_bvh.objects_without_collision;
   context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
-  context.transaction_system = &transaction_system;
+  context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
   context.time += dt;
   viewport = transform_viewport_state();
@@ -743,13 +765,13 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
     // it; anything else passes through untouched rather than being flattened to
     // its bound.
     const auto *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
-    if (!brush || !shared::brush_is_axis_aligned_box(brush->vertices))
+    if (!brush || !shared::brush_is_axis_aligned_box(brush->hull_points))
     {
       result.add_geometry(entry.value);
       continue;
     }
 
-    const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush->vertices);
+    const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush->hull_points);
     shared::aabb_t shape;
     shape.center       = (bounds.min + bounds.max) * 0.5f;
     shape.half_extents = (bounds.max - bounds.min) * 0.5f;
@@ -1214,7 +1236,8 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   {
     for (const shared::map_geometry_t &entry : map.geometry)
       draw_geometry_in_editor(entry.value, scene, entry.uid, draw_entities_solid,
-                              map.materials);
+                              map.materials, map.lightmap,
+                              context.object_collides(entry.uid));
 
     const bool show_hitboxes =
         state_manager::get_client_context().cvars->debug_show_hitboxes;
@@ -1291,7 +1314,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
 
 void Tool_Editor_State::update_bvh()
 {
-  bvh = build_editor_bvh(map);
+  editor_bvh = build_editor_bvh(map);
 }
 
 } // namespace client

@@ -8,7 +8,7 @@ cvars
   "g_gravity" "220"
   "pm_air_acceleration" "7"
   "pm_friction" "5"
-  "pm_maxspeed" "340"
+  "pm_maxspeed" "500"
 }
 brush
 {

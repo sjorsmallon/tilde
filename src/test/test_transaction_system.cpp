@@ -407,10 +407,10 @@ void test_geometry_modify_thresholds()
   // real change.
   const geometry_value_t before = map.find_geometry_by_uid(uid)->value;
   const float            original_x =
-      std::get<brush_geometry_t>(before).vertices[0].x;
+      std::get<brush_geometry_t>(before).hull_points[0].x;
   const float nudged_x = std::nextafterf(original_x, original_x + 1.f);
   assert(nudged_x != original_x);
-  std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value).vertices[0].x =
+  std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value).hull_points[0].x =
       nudged_x;
 
   {
@@ -424,10 +424,10 @@ void test_geometry_modify_thresholds()
 
   ts.undo(map);
   assert(std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value)
-             .vertices[0].x == original_x);
+             .hull_points[0].x == original_x);
   ts.redo(map);
   assert(std::get<brush_geometry_t>(map.find_geometry_by_uid(uid)->value)
-             .vertices[0].x == nudged_x);
+             .hull_points[0].x == nudged_x);
 
   std::cout << "Geometry Modify thresholds Passed." << std::endl;
 }

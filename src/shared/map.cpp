@@ -1,6 +1,7 @@
 #include "map.hpp"
 #include "asset.hpp"
 #include "log.hpp"
+#include "lightmap_sidecar.hpp"
 #include "map_blocks.hpp"
 #include "player_constants.hpp"
 #include <cstdint>
@@ -265,7 +266,8 @@ bool convert_legacy_geometry_entity(const std::string &classname,
     static_mesh_geometry_t static_mesh;
     static_mesh.position = legacy_position();
     if (const std::string *orientation = property("orientation"))
-      static_mesh.orientation = parse_legacy_vec3(*orientation, {0, 0, 0});
+      static_mesh.orientation =
+          linalg::from_euler_degrees(parse_legacy_vec3(*orientation, {0, 0, 0}));
     legacy_surface(static_mesh.surface);
 
     // Scale lived on the render component, not on the entity.
@@ -579,6 +581,31 @@ void read_entity_fields(entities::Entity &entity, const std::string &classname,
     // enum whose text is "2" is exactly the sort of thing it should reject.
     // This is map.cpp's business because only map.cpp is reading a file that
     // might predate the change.
+    // Legacy value form: a rotation was three euler degrees until the quaternion
+    // cutover, and is four components now. The GEOMETRY reader tells the two
+    // apart by the KEY (`orientation` is read-only there, `rotation` is what the
+    // writer emits) -- which is not available here, because an entity's key IS
+    // its field name in entities.def. So this one discriminates on the value's
+    // shape instead, converts through the same from_euler_degrees, and the next
+    // save writes four components under the same key.
+    if (leaf.info->type == FIELD_TYPE_QUAT)
+    {
+      std::istringstream stream(it->second);
+      linalg::vec3       euler_degrees;
+      float              extra = 0.f;
+
+      if ((stream >> euler_degrees.x >> euler_degrees.y >> euler_degrees.z) &&
+          !(stream >> extra))
+      {
+        const linalg::quatf rotation = linalg::from_euler_degrees(euler_degrees);
+        std::memcpy(base + leaf.offset, &rotation, sizeof(rotation));
+        log_warning("map parse: {}.{} was the legacy euler \"{}\"; read as a rotation. "
+                    "The next save writes four components.",
+                    classname, leaf.name, it->second);
+        continue;
+      }
+    }
+
     if (leaf.info->type == FIELD_TYPE_ENUM)
     {
       const enum_type_info_t &enum_info = *leaf.info->enum_info;
@@ -834,7 +861,7 @@ std::optional<aabb_t> try_get_object_box(const map_t &map, entity_uid_t uid)
     case geometry_kind_t::Brush:
     {
       return to_aabb(
-          compute_brush_bounds(std::get<brush_geometry_t>(entry->value).vertices));
+          compute_brush_bounds(std::get<brush_geometry_t>(entry->value).hull_points));
     }
     }
 
@@ -869,7 +896,7 @@ bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box)
       // vertices -- and an axis the brush is flat on has no scale factor, so it
       // only translates.
       brush_geometry_t   &brush = std::get<brush_geometry_t>(entry->value);
-      const aabb_bounds_t bounds = compute_brush_bounds(brush.vertices);
+      const aabb_bounds_t bounds = compute_brush_bounds(brush.hull_points);
       const linalg::vec3  old_center      = (bounds.min + bounds.max) * 0.5f;
       const linalg::vec3  old_half_extents = (bounds.max - bounds.min) * 0.5f;
 
@@ -879,7 +906,7 @@ bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box)
           old_half_extents.z > 1e-4f ? half_extents.z / old_half_extents.z : 1.f,
       };
 
-      for (linalg::vec3 &vertex : brush.vertices)
+      for (linalg::vec3 &vertex : brush.hull_points)
       {
         vertex = {center.x + (vertex.x - old_center.x) * scale.x,
                   center.y + (vertex.y - old_center.y) * scale.y,
@@ -931,7 +958,7 @@ collect_object_bounds(const map_t &map)
   return result;
 }
 
-std::optional<linalg::vec3> try_get_object_orientation(const map_t &map, entity_uid_t uid)
+std::optional<linalg::quatf> try_get_object_orientation(const map_t &map, entity_uid_t uid)
 {
   if (const map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {
@@ -948,7 +975,7 @@ std::optional<linalg::vec3> try_get_object_orientation(const map_t &map, entity_
 }
 
 bool try_set_object_orientation(map_t &map, entity_uid_t uid,
-                                const linalg::vec3 &orientation)
+                                const linalg::quatf &orientation)
 {
   if (map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {
@@ -1258,6 +1285,7 @@ std::optional<map_t> try_load_map(const std::string &filename)
 
   map_t map = parse_map_from_string(content);
   load_navmesh(filename, map.navmesh);
+  map.lightmap = load_lightmap_sidecar(filename, compute_map_content_hash(map));
 
   return map;
 }
@@ -1372,6 +1400,12 @@ bool save_map(const std::string &filename, const map_t &map)
 
   if (map.navmesh.valid())
     save_navmesh(filename, map.navmesh);
+
+  // The .lightmap sidecar is deliberately NOT written here, unlike the navmesh.
+  // It carries the content hash of the map it was baked from, and re-writing it
+  // on every save would stamp the CURRENT hash onto stale pixels -- silencing
+  // the one warning that tells an author to rebake. The bake writes it, and
+  // only the bake.
 
   return true;
 }

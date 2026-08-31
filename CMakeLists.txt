@@ -371,6 +371,11 @@ add_library(game_shared STATIC
     src/shared/convex_decomposition.cpp
     src/shared/map_baker.cpp
     src/shared/pathfinding.cpp
+    src/shared/lighting.hpp
+    src/shared/lightmap_bake.cpp
+    src/shared/lightmap_debug_image.cpp
+    src/shared/lightmap_solve.cpp
+    src/shared/lightmap_sidecar.cpp
     src/shared/entity_system.cpp
     src/shared/game_session.cpp
     src/shared/asset.hpp
@@ -511,6 +516,18 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/ui.vert
     ${SHADER_SRC_DIR}/ui.frag
 )
+# The lightmapped variants are the SAME sources compiled with -DLIGHTMAP, not
+# new files. A lightmap composes with lit, grid and blend alike, so a file per
+# combination is the explosion this avoids: one more axis would double the list
+# rather than add to it.
+set(LIGHTMAP_SHADER_SOURCES
+    ${SHADER_SRC_DIR}/mesh.vert
+    ${SHADER_SRC_DIR}/mesh_blend.vert
+    ${SHADER_SRC_DIR}/mesh_lit.frag
+    ${SHADER_SRC_DIR}/mesh_grid.frag
+    ${SHADER_SRC_DIR}/mesh_blend.frag
+)
+
 set(SHADER_HEADERS "")
 
 foreach(SHADER ${SHADER_SOURCES})
@@ -521,6 +538,21 @@ foreach(SHADER ${SHADER_SOURCES})
     add_custom_command(
         OUTPUT ${HEADER_OUT}
         COMMAND ${GLSLC_EXECUTABLE} ${SHADER} -o ${HEADER_OUT} --target-env=vulkan1.0 -mfmt=c
+        DEPENDS ${SHADER}
+        COMMENT "Compiling shader ${SHADER_NAME} to C header..."
+    )
+endforeach()
+
+foreach(SHADER ${LIGHTMAP_SHADER_SOURCES})
+    get_filename_component(SHADER_STEM ${SHADER} NAME_WE)
+    get_filename_component(SHADER_EXT ${SHADER} EXT)
+    set(SHADER_NAME ${SHADER_STEM}_lightmapped${SHADER_EXT})
+    set(HEADER_OUT ${SHADER_OUT_DIR}/${SHADER_NAME}.spv.h)
+    list(APPEND SHADER_HEADERS ${HEADER_OUT})
+
+    add_custom_command(
+        OUTPUT ${HEADER_OUT}
+        COMMAND ${GLSLC_EXECUTABLE} ${SHADER} -DLIGHTMAP -o ${HEADER_OUT} --target-env=vulkan1.0 -mfmt=c
         DEPENDS ${SHADER}
         COMMENT "Compiling shader ${SHADER_NAME} to C header..."
     )
@@ -605,6 +637,7 @@ add_library(game_client SHARED
     src/client/editor/tools/particle_editor_tool.cpp
     src/client/editor/tools/animation_tool.cpp
     src/client/editor/tools/brush_tool.cpp
+    src/client/editor/tools/lightmap_tool.cpp
     src/client/editor/entity_inspector.cpp
     src/client/editor/entity_editor_traits.cpp
     src/client/editor/geometry_editor.cpp
@@ -822,6 +855,11 @@ target_link_libraries(test_rng PRIVATE game_shared)
 add_executable(asset_test src/test/test_asset_system.cpp)
 target_include_directories(asset_test PRIVATE src)
 target_link_libraries(asset_test PRIVATE game_shared)
+
+# 20a. Lightmap Bake Test (per-face charts: basis, projection, anchor, size)
+add_executable(lightmap_bake_test src/test/lightmap_bake_test.cpp)
+target_include_directories(lightmap_bake_test PRIVATE src)
+target_link_libraries(lightmap_bake_test PRIVATE game_shared)
 
 # 20b. Brush Test (convex hull, winding, tolerances, text round trip)
 add_executable(brush_test src/test/brush_test.cpp)
@@ -1073,6 +1111,7 @@ set(GAME_TESTS
     entity_layout_test
     map_migration_test
     navmesh_test
+    lightmap_bake_test
     brush_test
     convex_decomposition_test
     cvar_test

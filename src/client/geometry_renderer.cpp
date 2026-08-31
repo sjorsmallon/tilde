@@ -62,6 +62,10 @@ struct generated_brush_source_t
 {
   shared::geometry_value_t value;
   std::vector<std::string> materials;
+  // The bake the UVs came from. A rebake moves charts in the atlas without
+  // moving a vertex or changing a material, so neither of the two above can
+  // notice one.
+  uint32_t lightmap_geometry_id = 0;
   // Per submesh slot. Rebuilt with the mesh, so the two cannot describe
   // different brushes.
   std::vector<renderer::material_handle_t> overrides;
@@ -71,10 +75,14 @@ std::unordered_map<shared::entity_uid_t, generated_brush_source_t> g_brush_mesh_
 
 bool brush_mesh_is_current(shared::entity_uid_t uid,
                            const shared::geometry_value_t &geometry,
-                           Span<const std::string> materials)
+                           Span<const std::string> materials,
+                           const shared::lightmap_t &lightmap)
 {
   const auto it = g_brush_mesh_sources.find(uid);
   if (it == g_brush_mesh_sources.end())
+    return false;
+
+  if (it->second.lightmap_geometry_id != lightmap.geometry_id)
     return false;
 
   if (it->second.materials.size() != materials.count)
@@ -90,13 +98,15 @@ bool brush_mesh_is_current(shared::entity_uid_t uid,
 
 // Empty for the kinds with no generated form; those never reach the cache.
 assets::mesh_asset_t generate_geometry_mesh(const shared::geometry_value_t &geometry,
-                                            Span<const std::string> materials)
+                                            shared::entity_uid_t uid,
+                                            Span<const std::string> materials,
+                                            const shared::lightmap_t &lightmap)
 {
   switch (shared::get_kind(geometry))
   {
   case shared::geometry_kind_t::Brush:
     return shared::generate_brush_mesh(std::get<shared::brush_geometry_t>(geometry),
-                                       materials);
+                                       materials, {&lightmap, uid});
 
   case shared::geometry_kind_t::Static_Mesh:
     return {};
@@ -234,8 +244,8 @@ build_brush_material_overrides(renderer::mesh_handle_t mesh)
 // Draw a surface's mesh if it resolves. False means "no mesh — use the kind's
 // own primitive".
 bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &surface,
-                       const linalg::vec3f &position, const linalg::vec3f &scale,
-                       const linalg::vec3f &rotation)
+                       const linalg::vec3f& position, const linalg::vec3f& scale,
+                       const linalg::quatf& rotation)
 {
   if (!surface.visible)
     return true; // resolved to "draw nothing", which is not a fallback case
@@ -246,7 +256,7 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
 
   renderer::mesh_draw_t draw{};
   draw.mesh      = mesh;
-  draw.transform = linalg::compose_transform_euler(position, rotation, scale);
+  draw.transform = linalg::compose_transform(position, rotation, scale);
 
   if (surface.is_wireframe)
   {
@@ -265,7 +275,8 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
 } // namespace
 
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
-                   shared::entity_uid_t uid, Span<const std::string> materials)
+                   shared::entity_uid_t uid, Span<const std::string> materials,
+                   const shared::lightmap_t &lightmap)
 {
   const shared::geometry_surface_t &surface = shared::get_surface(geometry);
 
@@ -298,8 +309,8 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     if (!surface.visible)
       return;
 
-    if (!brush_mesh_is_current(uid, geometry, materials))
-      refresh_generated_geometry_mesh(geometry, uid, materials);
+    if (!brush_mesh_is_current(uid, geometry, materials, lightmap))
+      refresh_generated_geometry_mesh(geometry, uid, materials, lightmap);
 
     char                   cache_key_buffer[48];
     const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
@@ -318,7 +329,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     // put in one, which is the whole point: the vertices ARE the position.
     renderer::mesh_draw_t draw{};
     draw.mesh      = mesh;
-    draw.transform = linalg::compose_transform_euler({0, 0, 0}, {0, 0, 0}, {1, 1, 1});
+    draw.transform = linalg::mat4f::identity();
 
     const auto source = g_brush_mesh_sources.find(uid);
     if (source != g_brush_mesh_sources.end())
@@ -334,7 +345,8 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
 
 void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
                                      shared::entity_uid_t uid,
-                                     Span<const std::string> materials)
+                                     Span<const std::string> materials,
+                                     const shared::lightmap_t &lightmap)
 {
   const bool is_brush = shared::get_kind(geometry) == shared::geometry_kind_t::Brush;
 
@@ -346,6 +358,7 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
     generated_brush_source_t &source = g_brush_mesh_sources[uid];
     source.value                     = geometry;
     source.materials.assign(materials.begin(), materials.end());
+    source.lightmap_geometry_id = lightmap.geometry_id;
   }
 
   char                   cache_key_buffer[48];
@@ -356,7 +369,8 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
   if (!mesh_asset.valid())
   {
     mesh_asset =
-        assets::register_dynamic_mesh(cache_key, generate_geometry_mesh(geometry, materials));
+        assets::register_dynamic_mesh(cache_key,
+                                      generate_geometry_mesh(geometry, uid, materials, lightmap));
   }
   else
   {
@@ -367,7 +381,7 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
       return;
     }
 
-    *mesh = generate_geometry_mesh(geometry, materials);
+    *mesh = generate_geometry_mesh(geometry, uid, materials, lightmap);
 
     // Eager re-upload, right here where the edit happened, rather than a flag
     // the next draw would have to notice.

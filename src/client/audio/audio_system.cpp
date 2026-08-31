@@ -169,9 +169,9 @@ void audio_system_t::shutdown()
   impl = nullptr;
 }
 
-void audio_system_t::update(const linalg::vec3f &listener_position,
-                            const linalg::vec3f &listener_forward,
-                            const linalg::vec3f &listener_up,
+void audio_system_t::update(const linalg::vec3f& listener_position,
+                            const linalg::vec3f& listener_forward,
+                            const linalg::vec3f& listener_up,
                             const sound_attenuation_t &rhs_attenuation)
 {
   attenuation = rhs_attenuation;
@@ -244,7 +244,7 @@ void audio_system_t::update(const linalg::vec3f &listener_position,
   return slot;
 }
 
-void audio_system_t::play_3d(assets::sound_asset sound, const linalg::vec3f &position,
+void audio_system_t::play_3d(assets::sound_asset sound, const linalg::vec3f& position,
                              float volume)
 {
   if (!impl) return;

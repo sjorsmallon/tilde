@@ -55,7 +55,7 @@ struct gizmo_view_t
 struct gizmo_drag_t
 {
   linalg::vec3 translation = {0, 0, 0}; // world units
-  linalg::vec3 rotation    = {0, 0, 0}; // euler degrees, per axis
+  linalg::quatf rotation   = linalg::quatf::identity();
  
   // where the gizmo sat when it was pressed.
   linalg::vec3 pivot = {0, 0, 0};

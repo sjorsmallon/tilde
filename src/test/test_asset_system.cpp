@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 // --- Helpers ---
 
@@ -223,6 +224,8 @@ static int test_every_class_registers()
     assert(assets::get_hitbox_rig((assets::hitbox_rig)index).valid());
   for (uint32_t index = 0; index < assets::font_asset_COUNT; ++index)
     assert(assets::get_font((assets::font_asset)index).valid());
+  for (uint32_t index = 0; index < assets::pbr_material_COUNT; ++index)
+    assert(assets::get_pbr_material((assets::pbr_material)index).valid());
 
   // Id 0 is the compiled-in placeholder in every class -- no file behind it, so
   // it cannot be the thing that is missing. The mesh one has real geometry (a
@@ -240,6 +243,54 @@ static int test_every_class_registers()
          (size_t)missing_texture->width * missing_texture->height * 4);
 
   printf("  PASS: test_every_class_registers\n");
+  return 0;
+}
+
+// The classification rule, pinned from the outside: a material is a DIRECTORY
+// that became one id, and the maps inside it are CLAIMED -- packed, never
+// enumerated. This replaced a depth rule that could see neither half, and that
+// failed silently in both directions: a folder could not be an asset at all, and
+// a file one directory too deep dropped out of the id space with no diagnostic.
+//
+// It asserts against the manifest rather than the filesystem on purpose. The
+// manifest is what a packaged build still has, and it is the only half an editor
+// can browse once there is no directory to list.
+static int test_a_material_is_a_directory_and_claims_its_maps()
+{
+  // The folder is the entry, minted from the DIRECTORY name.
+  const assets::pbr_material_asset_t *material =
+      assets::get(assets::get_pbr_material(assets::pbr_material::harsh_bricks));
+  assert(material != nullptr);
+  assert(material->albedo.valid());
+
+  const Span<const assets::asset_info_t> materials = assets::pbr_material_manifest();
+  assert(materials.size() == assets::pbr_material_COUNT);
+  assert(materials[(uint32_t)assets::pbr_material::harsh_bricks].path != nullptr);
+  assert(std::string_view(materials[(uint32_t)assets::pbr_material::harsh_bricks].path) ==
+         "resources/textures/harsh_bricks");
+
+  // Claimed: no map inside a material folder is its own texture id. Six of them
+  // share the basename "albedo", so minting them would collide on the first two
+  // materials -- the collision IS the reason the folder has to be the unit.
+  for (const assets::asset_info_t &texture : assets::texture_asset_manifest())
+  {
+    if (texture.path == nullptr)
+      continue;
+    const std::string_view path = texture.path;
+    assert(path.find("/harsh_bricks/") == std::string_view::npos);
+    assert(path.find("/sloppy_mortar_stone/") == std::string_view::npos);
+  }
+
+  // Unclaimed and nested: an id anyway. Under the depth rule this file was
+  // packed and silently invisible to the id space.
+  bool found_nested = false;
+  for (const assets::asset_info_t &texture : assets::texture_asset_manifest())
+    if (texture.path != nullptr &&
+        std::string_view(texture.path) == "resources/models/textures/leet_skin.png")
+      found_nested = true;
+  assert(found_nested);
+
+  printf("  PASS: test_a_material_is_a_directory_and_claims_its_maps\n");
   return 0;
 }
 
@@ -403,6 +454,7 @@ int main()
 
   test_manifest_registers_every_id();
   test_every_class_registers();
+  test_a_material_is_a_directory_and_claims_its_maps();
   test_baked_primitives_are_unit_sized();
   test_manifest_ids_are_distinct();
   test_out_of_range_id_resolves_to_missing();

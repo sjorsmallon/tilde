@@ -11,34 +11,6 @@
 namespace server
 {
 
-// Convert a Jolt quaternion to euler angles in degrees (XYZ extrinsic order).
-// The rest of the codebase treats Entity::orientation as degrees (see renderer.cpp
-// DEG2RAD usage on parameters.rotation), so we convert here at the boundary.
-//
-// Known issue: euler is lossy near gimbal-lock. See todo.md — when this bites,
-// add a vec4f rotation_quat schema field and replicate the quaternion instead.
-static vec3f quat_to_euler_degrees(const JPH::Quat &quaternion)
-{
-  float qx = quaternion.GetX();
-  float qy = quaternion.GetY();
-  float qz = quaternion.GetZ();
-  float qw = quaternion.GetW();
-
-  float sin_pitch = 2.f * (qw * qy - qz * qx);
-  if (sin_pitch > 1.f)  sin_pitch = 1.f;
-  if (sin_pitch < -1.f) sin_pitch = -1.f;
-
-  float roll  = std::atan2(2.f * (qw * qx + qy * qz),
-                           1.f - 2.f * (qx * qx + qy * qy));
-  float pitch = std::asin(sin_pitch);
-  float yaw   = std::atan2(2.f * (qw * qz + qx * qy),
-                           1.f - 2.f * (qy * qy + qz * qz));
-
-  return {linalg::to_degrees(roll),
-          linalg::to_degrees(pitch),
-          linalg::to_degrees(yaw)};
-}
-
 shared::entity_uid_t
 spawn_physics_body(server_context_t &context,
                    entities::Shape_Kind shape,
@@ -125,7 +97,11 @@ void update_physics_bodies(shared::game_session_t &session,
 
     body.position    = {jolt_position.GetX(), jolt_position.GetY(), jolt_position.GetZ()};
     body.velocity    = {jolt_velocity.GetX(), jolt_velocity.GetY(), jolt_velocity.GetZ()};
-    body.orientation = quat_to_euler_degrees(jolt_rotation);
+    // The one site where this migration deletes code and adds none: Jolt hands
+    // over a quaternion and the entity stores one, so there is no conversion
+    // left to be lossy at.
+    body.orientation = {jolt_rotation.GetX(), jolt_rotation.GetY(), jolt_rotation.GetZ(),
+                        jolt_rotation.GetW()};
   }
 }
 

@@ -26,13 +26,15 @@ struct editor_light_t
   linalg::vec3f position = {2.0f, 2.0f, 2.0f};
   linalg::vec3f direction = {0.0f, -1.0f, 0.0f};
   linalg::vec3f color = {1.0f, 1.0f, 1.0f};
-  // Intensity is in lumens-ish units. The shader applies physically correct 1/d² falloff
-  // with d in world units (Quake convention: 1 unit ≈ 1 inch). Expect values in the
-  // hundreds to low thousands for lights at typical room/level scales — e.g. a single
-  // light covering ~10m of scene wants intensity in the 1000-5000 range, not ~1.
+  // NOT the same unit as entities::Light::intensity, and that is a known
+  // disagreement rather than a convention. shared/lighting.hpp defines an authored
+  // intensity as the irradiance at LIGHT_REFERENCE_DISTANCE and radiance_of applies
+  // the REF^2; pbr.frag multiplies colour by intensity raw, so this preview needs
+  // its own numbers on the order of d^2 in inches to light anything. It converges
+  // when the two sides share one lighting maths -- lighting_def.md ss11, decision I.
   float intensity = 1500.0f;
   // Range is the cutoff radius (world units) where the windowed falloff reaches zero.
-  float range = 20.0f;
+  float range = 512.0f;
   float spot_inner_degrees = 30.0f;
   float spot_outer_degrees = 45.0f;
   int light_type = 0; // 0=point, 1=spot, 2=directional

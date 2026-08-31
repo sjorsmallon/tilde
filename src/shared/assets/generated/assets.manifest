@@ -12,6 +12,12 @@ class mesh_asset mesh_asset_t asset_types.hpp .obj .mesh
 
 class texture_asset texture_asset_t asset_types.hpp .png .tga
   Missing -
+  glasses resources/models/textures/glasses.png
+  glasses_material resources/models/textures/glasses_material.png
+  leet_hands resources/models/textures/leet_hands.png
+  leet_hands_material resources/models/textures/leet_hands_material.png
+  leet_skin resources/models/textures/leet_skin.png
+  leet_skin_material resources/models/textures/leet_skin_material.png
   Smoke resources/sprites/Smoke.png
   dev_128x128 resources/textures/dev_128x128.png
 
@@ -63,3 +69,8 @@ class font_asset font_asset_t asset_types.hpp .ttf
   FiraMono_Regular resources/fonts/FiraMono_Regular.ttf
   Roboto_Medium resources/fonts/Roboto_Medium.ttf
   anwb_uu_regular resources/fonts/anwb_uu_regular.ttf
+
+class pbr_material pbr_material_asset_t asset_types.hpp
+  Missing -
+  harsh_bricks resources/textures/harsh_bricks
+  sloppy_mortar_stone resources/textures/sloppy_mortar_stone

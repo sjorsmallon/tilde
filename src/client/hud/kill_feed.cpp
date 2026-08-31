@@ -26,11 +26,13 @@ void on_player_spawned(client_context_t &context,
                        const shared::Player_Spawned &payload)
 {
   (void)context;
+  const linalg::view_angles_t facing =
+      linalg::view_angles_from_direction(linalg::forward(payload.spawn_orientation));
   log_terminal("[CLIENT KILLFEED] player_spawned player={} at ({:.1f},{:.1f},{:.1f}) "
                "yaw={:.1f} pitch={:.1f}",
                payload.player_id,
                payload.spawn_position.x, payload.spawn_position.y, payload.spawn_position.z,
-               payload.spawn_orientation.y, payload.spawn_orientation.x);
+               facing.yaw_degrees, facing.pitch_degrees);
 }
 
 } // namespace client::kill_feed

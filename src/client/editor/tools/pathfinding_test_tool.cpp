@@ -106,8 +106,6 @@ void Pathfinding_Test_Tool::on_key_down(editor_context_t& ctx,
   }
 }
 
-// ---------------------------------------------------------------------------
-// Visuals
 
 void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t& ctx,
                                            pass_builder_t& draw_passes)

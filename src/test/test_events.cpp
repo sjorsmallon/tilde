@@ -281,7 +281,10 @@ void test_game_event_stream_round_trip()
   Player_Spawned spawned;
   spawned.player_id         = 77;
   spawned.spawn_position    = {exact(1.0f, 1), exact(2.0f, 2), exact(3.0f, 3)};
-  spawned.spawn_orientation = {exact(0.0f, 0), exact(90.0f, 0), exact(0.0f, 0)};
+  // No `exact` here, and that is the assertion: a quat rides the wire as four
+  // RAW floats rather than through write_coord, because its components live in
+  // [-1, 1] where a 5-bit fraction is 3.6 degrees of angular error.
+  spawned.spawn_orientation = linalg::from_view_angles(90.0f, 30.0f);
   fire_player_spawned(stream, spawned);
 
   Round_Phase_Changed phase_changed;
@@ -322,7 +325,11 @@ void test_game_event_stream_round_trip()
   assert(read_spawned->spawn_position.x == exact(1.0f, 1));
   assert(read_spawned->spawn_position.y == exact(2.0f, 2));
   assert(read_spawned->spawn_position.z == exact(3.0f, 3));
-  assert(read_spawned->spawn_orientation.y == exact(90.0f, 0));
+  const linalg::quatf expected_orientation = linalg::from_view_angles(90.0f, 30.0f);
+  assert(read_spawned->spawn_orientation.x == expected_orientation.x);
+  assert(read_spawned->spawn_orientation.y == expected_orientation.y);
+  assert(read_spawned->spawn_orientation.z == expected_orientation.z);
+  assert(read_spawned->spawn_orientation.w == expected_orientation.w);
 
   assert(reader.read_bits(16) == (uint32_t)game_event_type::Round_Phase_Changed);
   const std::optional<Round_Phase_Changed> read_phase = try_read_round_phase_changed(reader);

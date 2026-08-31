@@ -34,7 +34,7 @@ Player_Spawned :: Game_Event  "a player entered the world at a spawn point"
 {
     player_id:         u32
     spawn_position:    v3
-    spawn_orientation: v3   // Euler degrees, Entity's convention
+    spawn_orientation: quat // the Entity rotation, x y z w
 }
 
 // Declared HERE rather than in server/game_rules.hpp, which owned it before:

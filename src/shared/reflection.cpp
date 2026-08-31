@@ -228,6 +228,7 @@ bool field_to_text(const void* field_bytes, const field_info_t& field, std::stri
     }
 
     case FIELD_TYPE_V4:
+    case FIELD_TYPE_QUAT:
     {
       float values[4] = {};
       std::memcpy(values, field_bytes, sizeof(values));
@@ -344,6 +345,7 @@ bool field_from_text(const std::string& text, const field_info_t& field, void* f
     }
 
     case FIELD_TYPE_V4:
+    case FIELD_TYPE_QUAT:
     {
       float values[4] = {};
       if (!parse_float_components(text, 4, values))

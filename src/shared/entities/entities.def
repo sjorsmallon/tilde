@@ -71,34 +71,31 @@
 // which said {64,64,64}.
 //
 // ---------------------------------------------------------------------------
-// ORIENTATION UNITS  (decided 2026-07-27; documented here, not yet enforced)
+// ORIENTATION  (euler until 2026-08-31; a quaternion since)
 // ---------------------------------------------------------------------------
-// CANONICAL: `orientation` is Euler XYZ in DEGREES. Not radians, not a
-// quaternion.
+// CANONICAL: `orientation` is a unit QUATERNION, stored x y z w -- the same
+// order `linalg::quatf` and the `.animation` channel lines already use.
 //
-// That is a description of what the code already does, arrived at by reading
-// it rather than by preference:
-//   * renderer.cpp:2864 multiplies draw_mesh's rotation by DEG2RAD, so every
-//     draw site is feeding it degrees.
-//   * physics_body_system.cpp:122 writes `quat_to_euler_degrees(jolt_rotation)`
-//     back into orientation, so the physics bridge agrees.
-// Radians appear nowhere in stored orientation data. So the ambiguity was in
-// the DOCUMENTATION, not in two halves of the code disagreeing.
+// It was Euler XYZ in degrees, and the reason it stopped being that is not
+// interpolation. Euler ADDITION IS NOT ROTATION COMPOSITION: with Rz*Ry*Rx, a
+// delta added into .z is a world-frame turn, one added into .x is a local-frame
+// turn, and one added into .y is neither -- three rings of one gizmo, three
+// different meanings, one of them undefined. Every authored rotation in the map
+// was composed that way. rotation_def.md has the four sites and the argument.
 //
-// Why not quaternions, given they are the correct storage for a rotation:
-// because switching is a real migration (every draw site, the editor gizmo,
-// the Jolt bridge, map I/O), and because the thing that makes quaternions
-// worth it -- slerping between snapshots -- is not built yet. When snapshot
-// interpolation lands (todo.md, physics bodies), revisit: that is the point at
-// which euler starts costing correctness rather than just elegance.
+// Construct one, never spell one: `from_axis_angle` for a ring drag,
+// `from_view_angles` for anything derived from an aim, `from_euler_degrees`
+// ONLY in the file reader's legacy arm. `to_euler_degrees` seeds the inspector
+// widget and has no other caller -- a decomposition is not unique, so a second
+// one would fight the first.
 //
-// NOT the same thing as heading. A Player's facing direction is
-// view_angle_yaw / view_angle_pitch, and its motion is `velocity`, a vector.
-// `orientation` on a Player is written once at spawn (server_impl.cpp:455) and
-// never updated -- it seeds the view angles and is then vestigial. That is why
-// there is no relation to enforce between orientation and velocity: they
-// answer different questions, and for the entity where both exist, only one is
-// live.
+// NOT the same thing as heading, and this is the line that did NOT move. A
+// Player's facing is view_angle_yaw / view_angle_pitch, and those stay two
+// floats: an aim is 2-DOF with a clamp and a wrap, both defined on the angles,
+// and roll is not merely unused but unrepresentable -- which is a property
+// worth keeping in the type. `orientation` on a Player is written once at spawn
+// and is then vestigial. rotation_def.md §2 and §5 argue it, including against
+// the forward-vector spelling.
 
 
 Fully_Serializable :: [@Networked, @Editable, @Saveable]
@@ -106,7 +103,7 @@ Fully_Serializable :: [@Networked, @Editable, @Saveable]
 Entity :: base {
     entity_id:   u32                    @Networked
     position:    v3                     @Fully_Serializable
-    orientation: v3                     @Fully_Serializable
+    orientation: quat = {0, 0, 0, 1}    @Fully_Serializable
 }
 
 Spawn_Type :: enum { Human, Bot }
@@ -138,12 +135,12 @@ Material :: component {
 }
 
 Render :: component {
-    mesh:         mesh_asset = .Error @Fully_Serializable
+    mesh:         mesh_asset = .Missing @Fully_Serializable
     visible:      bool = true           @Fully_Serializable
     is_wireframe: bool = false          @Fully_Serializable
     offset:       v3 = {0, 0, 0}        @Fully_Serializable
     scale:        v3 = {1, 1, 1}        @Fully_Serializable
-    rotation:     v3 = {0, 0, 0}        @Fully_Serializable
+    rotation:     quat = {0, 0, 0, 1}   @Fully_Serializable
     material:     Material
 }
 

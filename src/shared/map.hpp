@@ -4,6 +4,7 @@
 #include "entity_uid.hpp"
 #include "log.hpp"
 #include "linalg.hpp"
+#include "lightmap.hpp"
 #include "map_geometry.hpp"
 #include "navmesh.hpp"
 #include "shapes.hpp"
@@ -70,6 +71,16 @@ struct map_t
   // remaps in one deterministic pass.
   std::vector<std::string> materials{std::string{}};
 
+  // Whether this map's table already names a material. A fact the caller asked
+  // for, not a failure channel, so no try_ prefix.
+  [[nodiscard]] bool has_material(std::string_view path) const
+  {
+    for (const std::string &existing : materials)
+      if (existing == path)
+        return true;
+    return false;
+  }
+
   // The index this material path sits at, appending it if it is new.
   uint16_t material_index_for(const std::string &path)
   {
@@ -92,6 +103,10 @@ struct map_t
 
   // Populated by bake_map(). Loaded from a .navmesh sidecar alongside the map file.
   navmesh_t navmesh;
+
+  // Loaded from a .lightmap sidecar alongside the map file, the same way. Empty
+  // means this map has no bake and every face draws unlit.
+  lightmap_t lightmap;
 
   // Add entity with auto-assigned uid
   entity_uid_t add_entity(std::shared_ptr<entities::Entity> ent)
@@ -376,10 +391,10 @@ aabb_bounds_t compute_object_bounds(const map_t &map, entity_uid_t uid);
 // map_geometry.hpp records: a brush carries its rotation in its own points, so an
 // orientation on one would be written and never read. A static mesh and every
 // entity do have one.
-[[nodiscard]] std::optional<linalg::vec3> try_get_object_orientation(const map_t &map,
+[[nodiscard]] std::optional<linalg::quatf> try_get_object_orientation(const map_t &map,
                                                                      entity_uid_t uid);
 [[nodiscard]] bool try_set_object_orientation(map_t &map, entity_uid_t uid,
-                                              const linalg::vec3 &orientation);
+                                              const linalg::quatf &orientation);
 
 // Every editable object's uid and world bounds, geometry first then entities.
 // This is what "iterate the editable map objects" means for the tools: box

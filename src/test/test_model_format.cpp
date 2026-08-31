@@ -221,7 +221,7 @@ static void test_real_mesh()
   // proper rotation, so no renormalization happens anywhere downstream.
   for (size_t index = 0; index < mesh.vertices.size(); ++index)
   {
-    const vec3f &normal = mesh.vertices[index].normal;
+    const vec3f& normal = mesh.vertices[index].normal;
     float        length = std::sqrt(dot(normal, normal));
     CHECK(std::fabs(length - 1.0f) < 1e-3f, "vertex %zu normal has length %f", index, length);
   }
@@ -621,7 +621,7 @@ static void test_real_aim_poses()
 // against -- so `model_space * inverse_bind` only lands the vertices back on a
 // person if the reader's transpose is right.
 static void skinned_bounds(const assets::skeleton_t &skeleton, const assets::mesh_asset_t &mesh,
-                           const assets::pose_t &pose, vec3f &out_minimum, vec3f &out_maximum)
+                           const assets::pose_t &pose, vec3f& out_minimum, vec3f& out_maximum)
 {
   assets::posed_skeleton_t posed;
   assets::compute_posed_skeleton(skeleton, pose, posed);

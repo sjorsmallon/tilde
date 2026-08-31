@@ -15,6 +15,7 @@ game_session_t build_session(const map_t &map)
   session.entity_system.populate_from_map(map);
   session.geometry  = map.geometry;
   session.materials = map.materials;
+  session.lightmap  = map.lightmap;
 
   // Build the BVH over the geometry. Collision_Id.index is the index into
   // session.geometry, which is frozen for the session's lifetime. (The editor's
@@ -63,7 +64,7 @@ void populate_static_physics_bodies(physics_state_t &state, const map_t &map)
     case geometry_kind_t::Brush:
     {
       const brush_geometry_t &brush = std::get<brush_geometry_t>(entry.value);
-      register_static_convex_hull(state, entry.uid, brush.vertices);
+      register_static_convex_hull(state, entry.uid, brush.hull_points);
       break;
     }
     }

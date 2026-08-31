@@ -366,11 +366,12 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
   frame_timing::exclude_current_frame("map package applied");
 
   // Build the map from the streamed package: entities from the canonical text,
-  // navmesh from the baked sidecar the package carries. parse_map_from_string
-  // returns a fresh map (no navmesh), so the navmesh is attached afterward
-  // rather than surviving from the previous map.
+  // the baked sidecars from what the package carries beside it.
+  // parse_map_from_string returns a fresh map (no navmesh, no lightmap), so both
+  // are attached afterward rather than surviving from the previous map.
   shared::map_t map = shared::parse_map_from_string(package.entity_text);
-  map.navmesh = package.navmesh;
+  map.navmesh  = package.navmesh;
+  map.lightmap = package.lightmap;
 
   switch_to_map(map);
   return true;
@@ -402,7 +403,7 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
   camera.position = spot.position;
 
   const linalg::view_angles_t facing = linalg::view_angles_from_direction(
-      linalg::forward_from_model_euler(spot.orientation));
+      linalg::forward(spot.orientation));
   camera.yaw   = facing.yaw_degrees;
   camera.pitch = facing.pitch_degrees;
   return true;
@@ -462,6 +463,20 @@ void Play_State::switch_to_map(const shared::map_t &map)
 
   set_client_world_to(ctx, map);
   set_provisional_player_pose_for_new_map(ctx);
+
+  // The bake the session just adopted, made resident for the pass that draws
+  // it. Updated in place rather than re-registered: nothing in the renderer is
+  // ever unregistered, so a map switch would otherwise leak a whole atlas. A
+  // map with no bake leaves the old handle alone -- it generates no lightmap
+  // coordinates either, so nothing samples it.
+  const shared::lightmap_pages_t &pages = ctx.world.session.lightmap.pages;
+  if (!pages.empty())
+  {
+    if (scene.lightmap.valid())
+      renderer::update_lightmap(scene.lightmap, pages);
+    else
+      scene.lightmap = renderer::register_lightmap(pages);
+  }
 
   // set this to ready 
   ctx.world.ready = true;
@@ -2175,7 +2190,7 @@ emitter_parameters(const entities::Particle_Emitter_Entity &emitter, float delta
 }
 
 renderer::particle_emitter_parameters_t
-explosion_parameters(uint64_t explosion_index, const vec3f &position, float time_remaining,
+explosion_parameters(uint64_t explosion_index, const vec3f& position, float time_remaining,
                      float delta_seconds)
 {
   renderer::particle_emitter_parameters_t parameters{};
@@ -2241,7 +2256,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   if (!ctx.cvars->debug_hide_geometry)
   {
     for (const shared::map_geometry_t &entry : ctx.world.session.geometry)
-      draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials);
+      draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
+                    ctx.world.session.lightmap);
   }
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
@@ -2265,8 +2281,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
     renderer::mesh_draw_t draw{};
     draw.mesh      = mesh;
-    draw.transform = linalg::compose_transform_euler(
-        entity.position, entity.orientation + render.rotation, render.scale);
+    draw.transform = linalg::compose_transform(
+        entity.position, linalg::compose_model_rotation(entity.orientation, render.rotation),
+        render.scale);
 
     // Same split the geometry surface path makes, and the editor preview with
     // it: a wireframe takes neither the base colour nor the shader, because
@@ -2360,10 +2377,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
         renderer::mesh_draw_t draw{};
         draw.mesh      = mesh;
-        draw.transform = linalg::compose_transform_euler(
+        draw.transform = linalg::compose_transform(
             remote_player.render_position + render.offset,
-            vec3f{0.f, linalg::model_yaw_from_view_yaw(remote_player.body_yaw), 0.f} +
-                render.rotation,
+            linalg::compose_model_rotation(
+                linalg::from_view_angles(remote_player.body_yaw, 0.f), render.rotation),
             render.scale);
         // An empty pose means BIND POSE, which is what an unskinned mesh should
         // look like. A pose set that failed to load cannot reach here -- that
@@ -2458,7 +2475,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         scene.debug.filled_polygon(polygon, color, 0.f, {.draw_when_occluded = true});
       };
 
-      const auto line = [&](const vec3f &start, const vec3f &end, color_t color)
+      const auto line = [&](const vec3f& start, const vec3f& end, color_t color)
       { scene.debug.line(start, end, color, 0.f, 0.f, /*draw_when_occluded*/ true); };
 
       for (const assets::posed_hitbox_t &hitbox : volumes)
@@ -2488,8 +2505,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     {
       renderer::mesh_draw_t draw{};
       draw.mesh      = mesh;
-      draw.transform = linalg::compose_transform_euler(rocket.position, rocket.orientation,
-                                                       rc->scale);
+      draw.transform =
+          linalg::compose_transform(rocket.position, rocket.orientation, rc->scale);
       draw.tint      = colors::cyan;
       scene.meshes.push_back(draw);
     }
@@ -2518,8 +2535,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
       renderer::mesh_draw_t draw{};
       draw.mesh      = mesh;
-      draw.transform = linalg::compose_transform_euler(
-          body.position, body.orientation + render.rotation, render.scale);
+      draw.transform = linalg::compose_transform(
+          body.position, linalg::compose_model_rotation(body.orientation, render.rotation),
+          render.scale);
       scene.meshes.push_back(draw);
     };
 

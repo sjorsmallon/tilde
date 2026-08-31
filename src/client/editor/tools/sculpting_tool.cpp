@@ -10,14 +10,14 @@
 namespace client
 {
 
-void Sculpting_Tool::on_enable(editor_context_t &ctx)
+void Sculpting_Tool::on_enable(editor_context_t& ctx)
 {
   assert(ctx.map);
   dragging = false;
   hovered_uid =  shared::invalid_entity_uid;
 }
 
-void Sculpting_Tool::on_disable(editor_context_t &ctx)
+void Sculpting_Tool::on_disable(editor_context_t& ctx)
 {
   commit_sculpt(ctx);
   dragging = false;
@@ -26,7 +26,7 @@ void Sculpting_Tool::on_disable(editor_context_t &ctx)
 // Push the finished face-drag as one transaction. Both regimes are sculptable —
 // box brushes through their own extents, trigger volumes
 // through their box_volume_t — so this commits whichever flavor was captured.
-void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
+void Sculpting_Tool::commit_sculpt(editor_context_t& ctx)
 {
   const entity_snapshot_t entity_snapshot = std::move(sculpt_start_entity);
   const std::optional<shared::geometry_value_t> geometry_snapshot =
@@ -35,8 +35,7 @@ void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
   sculpt_start_entity.reset();
   sculpt_start_geometry.reset();
 
-  if (!dragging || dragging_uid == shared::invalid_entity_uid ||
-      !ctx.transaction_system)
+  if (!dragging || dragging_uid == shared::invalid_entity_uid)
     return;
 
   transaction_t transaction;
@@ -71,10 +70,10 @@ void Sculpting_Tool::commit_sculpt(editor_context_t &ctx)
     return;
   }
 
-  ctx.transaction_system->push(std::move(transaction));
+  ctx.transaction_system.push(std::move(transaction));
 }
 
-void Sculpting_Tool::on_update(editor_context_t &ctx,
+void Sculpting_Tool::on_update(editor_context_t& ctx,
                                const viewport_state_t &view, float /*dt*/)
 {
   last_view = view;
@@ -112,7 +111,7 @@ void Sculpting_Tool::on_update(editor_context_t &ctx,
   }
 }
 
-void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
+void Sculpting_Tool::on_mouse_down(editor_context_t& ctx,
                                    const input::mouse_event_t &e)
 {
   if (e.button == input::mouse_button_t::Left && hovered_uid != 0 && ctx.map)
@@ -138,7 +137,7 @@ void Sculpting_Tool::on_mouse_down(editor_context_t &ctx,
   }
 }
 
-void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
+void Sculpting_Tool::on_mouse_drag(editor_context_t& ctx,
                                    const input::mouse_event_t &e)
 {
   if (dragging && dragging_uid != 0 && ctx.map)
@@ -232,7 +231,7 @@ void Sculpting_Tool::on_mouse_drag(editor_context_t &ctx,
   }
 }
 
-void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e)
+void Sculpting_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event_t &e)
 {
   commit_sculpt(ctx);
 
@@ -243,9 +242,9 @@ void Sculpting_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
-void Sculpting_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}
+void Sculpting_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e) {}
 
-void Sculpting_Tool::on_draw_overlay(editor_context_t &ctx,
+void Sculpting_Tool::on_draw_overlay(editor_context_t& ctx,
                                      pass_builder_t &draws)
 {
   if (hovered_uid != 0 && !dragging)

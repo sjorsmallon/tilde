@@ -45,9 +45,14 @@ void draw_brush_hull_wireframe(pass_builder_t &draws,
 
 // Draw geometry in the editor viewport. `solid` follows the editor's
 // "Solid Entities" toggle.
+//
+// `collides` false draws the contour in the error colour instead. A brush whose
+// collision could not be built is otherwise indistinguishable from one that
+// works until somebody walks through it, and the author is standing right here.
 void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
-                             bool solid, Span<const std::string> materials);
+                             bool solid, Span<const std::string> materials,
+                             const shared::lightmap_t &lightmap, bool collides);
 
 // Pulsating selection highlight, in lockstep with the entity one.
 // `grid_step` drives the grid lines drawn on a box's faces.
@@ -57,6 +62,9 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
 
 // ImGui property panel for one geometry object. Returns true if the user changed
 // anything, so the caller can rebuild the BVH and push a value-swap transaction.
-bool draw_geometry_inspector(shared::geometry_value_t &geometry);
+//
+// `collides` false adds a line saying so, for the same reason the contour turns
+// red: the log is not where a level is authored.
+bool draw_geometry_inspector(shared::geometry_value_t &geometry, bool collides);
 
 } // namespace client

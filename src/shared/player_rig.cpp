@@ -44,7 +44,7 @@ player_rig_t load_player_rig()
 
 } // namespace
 
-model_to_world_t model_to_world(float model_yaw_degrees, const linalg::vec3f &translation)
+model_to_world_t model_to_world(float model_yaw_degrees, const linalg::vec3f& translation)
 {
   const float angle = linalg::to_radians(model_yaw_degrees);
   return {std::cos(angle), std::sin(angle), translation};

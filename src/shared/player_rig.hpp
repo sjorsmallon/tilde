@@ -54,14 +54,14 @@ struct model_to_world_t
   float         sine   = 0.0f;
   linalg::vec3f translation{};
 
-  linalg::vec3f direction(const linalg::vec3f &v) const
+  linalg::vec3f direction(const linalg::vec3f& v) const
   {
     return {cosine * v.x + sine * v.z, v.y, -sine * v.x + cosine * v.z};
   }
-  linalg::vec3f point(const linalg::vec3f &v) const { return direction(v) + translation; }
+  linalg::vec3f point(const linalg::vec3f& v) const { return direction(v) + translation; }
 };
 
-model_to_world_t model_to_world(float model_yaw_degrees, const linalg::vec3f &translation);
+model_to_world_t model_to_world(float model_yaw_degrees, const linalg::vec3f& translation);
 
 // Turns one volume out of model space: both endpoints, and -- for a Box -- the
 // frame its half-extents are read in, which turns too or the box stays pointing

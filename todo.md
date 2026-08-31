@@ -617,8 +617,10 @@ tool.
       checking the two match or that the order was respected.
 - [ ] Sprite transparency — smoke.png has opaque backgrounds needing alpha.
 - [ ] Irradiance map; environment lighting.
-- [ ] Pack PBR textures into one RGB (ORM: occlusion, roughness, metallic).
 - [ ] Pack normal maps: xy in RG (reconstruct Z), BA for roughness/height.
+      ORM packing is DONE — `lighting_def.md` decision G, `src/tools/orm_pack.py`.
+      This is the next halving and is a shader change plus a correctness question
+      at mirrored UVs, which is why it did not ride along with ORM.
 
 # UI
 
@@ -644,23 +646,19 @@ did not fix.
       obvious cleanup now that oversampling no longer forces the split, and it
       is wrong. `ui_test` names the offending codepoint before it asserts.
 
-- [ ] **The UI layer writes sRGB bytes to an sRGB attachment, so colours are
-      encoded twice and text edges bloom.** The swapchain is
-      `VK_FORMAT_B8G8R8A8_SRGB` (`renderer.cpp:494`) and `ui_vertex_t::color` is
-      an `R8G8B8A8_UNORM` attribute passed straight through `ui.vert` — so an
-      authored 0.5 grey leaves the shader as linear 0.5 and lands on screen at
-      ~0.73. Worse for text than for rects: coverage alpha then blends in LINEAR
-      space, so a half-covered edge texel of white-on-black displays at 188/255
-      where sRGB-space blending gives 128, and every glyph reads slightly glowy.
-      That is the residue of the blur complaint that snapping did not fix.
+- [x] **The UI layer writes sRGB bytes to an sRGB attachment, so colours are
+      encoded twice and text edges bloom.** DONE 2026-08-31, as
+      `lighting_def.md` decision F: the ENCODE lives in the attachment and
+      nothing else does one. `ui.vert` gained the `pow(inColor.rgb, vec3(2.2))`
+      on its input (rgb only — alpha is coverage, not colour), and `pbr.frag`
+      lost the `pow(Lo, 1.0/2.2)` that was the same bug in the other direction.
+      Its Reinhard tonemap on the line above was deliberately left alone.
 
-      Fix for the UI half is one line — `pow(inColor.rgb, vec3(2.2))` in
-      `ui.vert`. **The 3D half is a bigger conversation and should be settled
-      first**: `pbr.frag:269` already does its own `pow(Lo, 1.0/2.2)` and then
-      hands the result to the same sRGB attachment, so the lit path is
-      double-encoded too. Two shaders compensating for one attachment in
-      different directions is the actual bug; decide where the encode lives
-      (attachment or shader, not both) and both fixes fall out.
+      **Still open, and it is the same bug one layer up: ImGui double-encodes
+      too.** Its backend writes sRGB vertex colours straight to the same
+      attachment. It is the backend's own shader rather than ours, and ImGui
+      composites last over everything, so it is a self-consistent wrongness in a
+      tool layer rather than a discrepancy inside the game image.
 
 # Editor
 
@@ -779,15 +777,15 @@ did not fix.
       flag cannot say "smooth this, unless it's me." The policy belongs to the
       *(entity, viewer)* pair, so it lives in the client render path.
 
-      **Orientation stays euler and keeps snapping — quaternions deferred
-      again, deliberately.** Player facing is not involved: that is
-      `view_angle_yaw`/`view_angle_pitch`, and `orientation` on a Player is
-      written once at spawn and thereafter vestigial. The only moving consumer
-      of `Entity.orientation` is `Physics_Body_Entity`
-      (`physics_body_system.cpp:122`). So the whole cost of deferring is: a
-      tumbling crate's rotation snaps per snapshot — and lerping euler angles
-      would look wrong past 180° on an axis anyway. Positions smooth, rotations
-      snap. Revisit only if a rotating body becomes something players watch.
+      **Orientation is a QUATERNION as of 2026-08-31, and the deferral above
+      was argued from the wrong cost.** It priced waiting at "a tumbling crate
+      snaps per snapshot" — an interpolation cost, for a rotation that MOVES.
+      The live damage was in rotations merely COMPOSED, which is every authored
+      rotation in the map: euler addition is not rotation composition, so the
+      gizmo's three rings meant a world turn, a local turn and nothing at all.
+      See `rotation_def.md`. Rotation interpolation is now `nlerp` and a few
+      lines, but it is still not built — it remains a consequence rather than a
+      motivation, and positions smooth while rotations still snap.
 - [ ] **Self-echo suppression for cosmetic effects is client-side and fragile.**
       Jump/land sounds play twice — once locally off prediction
       (`play_state.cpp:875-880`), once when the server broadcasts the same
@@ -908,9 +906,13 @@ did not fix.
       to the wrong storey. Fix: take the query point's Y and pick the containing
       polygon nearest it in Y. That function is the only caller-visible surface,
       so the change is local.
-- [ ] Quaternion storage: move to quaternions for orientation, and address
-      where things are wrong. (See the Networking item above for why this keeps
-      getting deferred and what the actual cost of deferring is.)
+- [x] Quaternion storage: move to quaternions for orientation, and address
+      where things are wrong. **Done 2026-08-31** — `rotation_def.md` is the
+      design and every step in it landed: the `linalg` vocabulary and its
+      pinning test, the named seam, `quat` as a `.def` primitive, the map
+      format's read-only `orientation` key, the inspector's euler widget, and
+      the deletion of `forward_from_model_euler` / `basis_from_model_euler` /
+      `compose_transform_euler` / the Jolt euler bridge.
 - [ ] Logging policy: should `log_error` be `log_warning` where recovery is
       safe? Should `log_error` hit a stack trace / exception handler? Current
       split is **277 `log_error` to 12 `log_warning`** (counted 2026-07-30), and

@@ -361,6 +361,7 @@ enum type_kind_t : uint8_t
   TYPE_V3,
   TYPE_V4,
   TYPE_V4I,
+  TYPE_QUAT,
   TYPE_STRING,    // capacity lives in type_reference_t::capacity
   TYPE_ASSET,     // mesh_asset / texture_asset, closed sets from the asset manifest
   TYPE_ENUM,      // resolved: declaration_index points at a DECLARATION_ENUM
@@ -391,6 +392,7 @@ static const char* type_kind_name(type_kind_t kind)
     case TYPE_V3:         return "v3";
     case TYPE_V4:         return "v4";
     case TYPE_V4I:        return "v4i";
+    case TYPE_QUAT:       return "quat";
     case TYPE_STRING:     return "string";
     case TYPE_ASSET:      return "asset";
     case TYPE_ENUM:       return "enum";
@@ -1139,6 +1141,7 @@ static type_kind_t builtin_type_kind(string_view_t name)
   if (string_view_matches(name, "v3"))     return TYPE_V3;
   if (string_view_matches(name, "v4"))     return TYPE_V4;
   if (string_view_matches(name, "v4i"))    return TYPE_V4I;
+  if (string_view_matches(name, "quat"))   return TYPE_QUAT;
   if (string_view_matches(name, "string")) return TYPE_STRING;
 
   // Asset classes are NOT builtin: `mesh_asset` and `sprite_asset` used to be
@@ -2576,6 +2579,7 @@ static bool channel_type_is_allowed(type_kind_t kind)
     case TYPE_V3:
     case TYPE_V4:
     case TYPE_V4I:
+    case TYPE_QUAT:
     case TYPE_STRING:
     case TYPE_ENUM:
       return true;
@@ -2805,6 +2809,7 @@ static const char* default_form_for_type(const type_reference_t* type)
     case TYPE_I8:  case TYPE_I16: case TYPE_I32: case TYPE_I64: return "a number";
     case TYPE_BOOL:                                             return "true or false";
     case TYPE_V3: case TYPE_V4: case TYPE_V4I:                   return "a '{x, y, z}' vector";
+    case TYPE_QUAT:                                             return "an '{x, y, z, w}' quaternion";
     case TYPE_STRING:                                           return "a quoted string";
     case TYPE_ENUM: case TYPE_ASSET:                            return "a '.Name' literal";
     case TYPE_COMPONENT: return "a '{ field = value }' component literal";
@@ -2836,7 +2841,8 @@ static const char* default_kind_mismatch(default_kind_t kind, const type_referen
       break;
 
     case DEFAULT_VECTOR:
-      matches = type->kind == TYPE_V3 || type->kind == TYPE_V4 || type->kind == TYPE_V4I;
+      matches = type->kind == TYPE_V3 || type->kind == TYPE_V4 || type->kind == TYPE_V4I ||
+                type->kind == TYPE_QUAT;
       break;
 
     case DEFAULT_ENUM_LITERAL:
@@ -2859,7 +2865,8 @@ static int32_t vector_component_count(type_kind_t kind)
   {
     case TYPE_V3:  return 3;
     case TYPE_V4:
-    case TYPE_V4I: return 4;
+    case TYPE_V4I:
+    case TYPE_QUAT: return 4;
     default:       return 0;
   }
 }
@@ -3285,8 +3292,14 @@ static void allocate_program(program_t* program);
 //
 //   manifest     -> comment* class_block*
 //   comment      -> '#' <to end of line>
-//   class_block  -> 'class' IDENTIFIER IDENTIFIER PATH EXTENSION+ NEWLINE entry+
+//   class_block  -> 'class' IDENTIFIER IDENTIFIER PATH EXTENSION* NEWLINE entry+
 //   entry        -> IDENTIFIER (PATH | '-') NEWLINE
+//
+// EXTENSION* rather than EXTENSION+: a class whose unit is a DIRECTORY (a PBR
+// material is a folder of maps) has nothing for a decoder to dispatch on. Such a
+// class gets its enum, its table and its id accessor as usual, and NO generated
+// loader -- load_<class> is declared here and defined by hand, which is the same
+// link-error-names-the-symbol seam every decode_* already sits behind.
 //
 // '-' is entry 0 of every class (Missing): no file, its bytes a compiled-in
 // constant. def_gen keeps ZERO project knowledge about assets -- no directory
@@ -3407,13 +3420,6 @@ static bool parse_asset_manifest(program_t* manifest)
         current->extensions[current->extension_count++] = extension;
       }
 
-      if (current->extension_count == 0)
-      {
-        report_manifest_error(manifest, line,
-                              "class '%s' names no extensions, so nothing can be decoded into it",
-                              class_name);
-        return false;
-      }
       current->first_asset_entry = manifest->asset_entry_count;
       continue;
     }
@@ -3623,6 +3629,7 @@ static void write_cpp_element_type(FILE* out, const type_reference_t* type)
     case TYPE_V3:   fprintf(out, "linalg::vec3f"); return;
     case TYPE_V4:   fprintf(out, "linalg::vec4f"); return;
     case TYPE_V4I:  fprintf(out, "linalg::vec4i"); return;
+    case TYPE_QUAT: fprintf(out, "linalg::quatf"); return;
 
     case TYPE_STRING:
       fprintf(out, "network::pascal_string_t<%d>", type->capacity);
@@ -3667,6 +3674,7 @@ static const char* field_type_enum_name(type_kind_t kind)
     case TYPE_V3:        return "FIELD_TYPE_V3";
     case TYPE_V4:        return "FIELD_TYPE_V4";
     case TYPE_V4I:       return "FIELD_TYPE_V4I";
+    case TYPE_QUAT:      return "FIELD_TYPE_QUAT";
     case TYPE_STRING:    return "FIELD_TYPE_STRING";
     case TYPE_ASSET:     return "FIELD_TYPE_ASSET";
     case TYPE_ENUM:      return "FIELD_TYPE_ENUM";
@@ -5235,7 +5243,7 @@ static void emit_asset_state_header(FILE* out, const program_t* program, const c
   }
   fprintf(out, "  bool manifest_initialized = false;\n\n");
   fprintf(out, "  // The two members no class owns: the byte layer under everything, and the\n");
-  fprintf(out, "  // pools whose contents are named by PATH from inside another asset rather\n");
+  fprintf(out, "  // pool whose contents are named by PATH from inside another asset rather\n");
   fprintf(out, "  // than by id. Both are hand-written in asset_types.hpp.\n");
   fprintf(out, "  asset_source_t          source;\n");
   fprintf(out, "  path_referenced_pools_t path_referenced;\n");
@@ -5294,8 +5302,17 @@ static void emit_asset_state_header(FILE* out, const program_t* program, const c
     char short_name[128];
     write_short_class_name(declaration->name, short_name, sizeof(short_name));
 
-    fprintf(out, "// Cached by path, dispatching on extension. No try_ prefix and no failure\n");
-    fprintf(out, "// path: the path names a file the build put there.\n");
+    if (declaration->extension_count > 0)
+    {
+      fprintf(out, "// Cached by path, dispatching on extension. No try_ prefix and no failure\n");
+      fprintf(out, "// path: the path names a file the build put there.\n");
+    }
+    else
+    {
+      fprintf(out, "// This class's unit is a DIRECTORY, so there is no extension to dispatch\n");
+      fprintf(out, "// on and no generated body: the definition is hand-written, and a missing\n");
+      fprintf(out, "// one is a link error naming it.\n");
+    }
     fprintf(out, "[[nodiscard]] asset_handle_t<%s> load_%s(const char* path);\n",
             declaration->value_type, short_name);
     fprintf(out, "// An id outside the class resolves to Missing rather than to a bounds check\n");
@@ -5331,27 +5348,35 @@ static void emit_assets_bindings(FILE* out, const program_t* program, const char
     char short_name[128];
     write_short_class_name(declaration->name, short_name, sizeof(short_name));
 
-    fprintf(out, "asset_handle_t<%s> load_%s(const char* path)\n{\n", declaration->value_type,
-            short_name);
-    fprintf(out, "  asset_state_t&    state = state_for(\"load_%s\");\n", short_name);
-    fprintf(out, "  const std::string key   = asset_cache_key(path);\n\n");
-    fprintf(out, "  const asset_handle_t<%s> cached = state.%.*s_pool.find(key.c_str());\n",
-            declaration->value_type, declaration->name.length, declaration->name.data);
-    fprintf(out, "  if (cached.valid())\n    return cached;\n\n");
-    fprintf(out, "  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());\n");
-    for (int32_t which = 0; which < declaration->extension_count; ++which)
+    // A class with no extensions has no bytes to decode and nothing to dispatch
+    // on: its unit is a DIRECTORY. Emitting no body is what hands load_<class>
+    // to the hand-written definition, and a missing one is a link error naming
+    // the symbol -- the same seam every decode_* already sits behind. get_<class>
+    // below is emitted for it exactly as for any other class.
+    if (declaration->extension_count > 0)
     {
-      const char* bare = extension_without_dot(declaration->extensions[which]);
-      fprintf(out, "  %sif (path_has_extension(key.c_str(), \".%s\"))\n",
-              which == 0 ? "" : "else ", bare);
-      fprintf(out, "    return state.%.*s_pool.add(key.c_str(), decode_%s(bytes, key.c_str()));\n",
-              declaration->name.length, declaration->name.data, bare);
+      fprintf(out, "asset_handle_t<%s> load_%s(const char* path)\n{\n", declaration->value_type,
+              short_name);
+      fprintf(out, "  asset_state_t&    state = state_for(\"load_%s\");\n", short_name);
+      fprintf(out, "  const std::string key   = asset_cache_key(path);\n\n");
+      fprintf(out, "  const asset_handle_t<%s> cached = state.%.*s_pool.find(key.c_str());\n",
+              declaration->value_type, declaration->name.length, declaration->name.data);
+      fprintf(out, "  if (cached.valid())\n    return cached;\n\n");
+      fprintf(out, "  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());\n");
+      for (int32_t which = 0; which < declaration->extension_count; ++which)
+      {
+        const char* bare = extension_without_dot(declaration->extensions[which]);
+        fprintf(out, "  %sif (path_has_extension(key.c_str(), \".%s\"))\n",
+                which == 0 ? "" : "else ", bare);
+        fprintf(out, "    return state.%.*s_pool.add(key.c_str(), decode_%s(bytes, key.c_str()));\n",
+                declaration->name.length, declaration->name.data, bare);
+      }
+      fprintf(out, "\n");
+      fprintf(out, "  fatal_error(\"assets: '{}' has no extension the %.*s class decodes\", "
+                   "key.c_str());\n",
+              declaration->name.length, declaration->name.data);
+      fprintf(out, "}\n\n");
     }
-    fprintf(out, "\n");
-    fprintf(out, "  fatal_error(\"assets: '{}' has no extension the %.*s class decodes\", "
-                 "key.c_str());\n",
-            declaration->name.length, declaration->name.data);
-    fprintf(out, "}\n\n");
 
     fprintf(out, "asset_handle_t<%s> get_%s(%.*s id)\n{\n", declaration->value_type, short_name,
             declaration->name.length, declaration->name.data);

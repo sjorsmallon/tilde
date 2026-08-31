@@ -98,6 +98,20 @@ void write_field(Bit_Writer& writer, const uint8_t* base, const field_info_t& fi
       return;
     }
 
+    // A quaternion goes over RAW rather than through write_coord. Its components
+    // live in [-1, 1], where a 5-bit fraction is about 3.6 degrees of angular
+    // error and leaves the value so far off unit that to_mat4 shears. A
+    // compressed spelling is rejected until snapshot delta compression is the
+    // thing being worked on -- rotation_def.md §5.
+    case FIELD_TYPE_QUAT:
+    {
+      uint32_t words[4] = {};
+      std::memcpy(words, bytes, sizeof(words));
+      for (uint32_t word : words)
+        writer.write_bits(word, 32);
+      return;
+    }
+
     case FIELD_TYPE_V4I:
     {
       int32_t values[4] = {};
@@ -237,6 +251,15 @@ bool read_field(Bit_Reader& reader, uint8_t* base, const field_info_t& field, ui
       for (float& value : values)
         value = read_coord(reader);
       std::memcpy(bytes, values, sizeof(values));
+      return true;
+    }
+
+    case FIELD_TYPE_QUAT:
+    {
+      uint32_t words[4] = {};
+      for (uint32_t& word : words)
+        word = reader.read_bits(32);
+      std::memcpy(bytes, words, sizeof(words));
       return true;
     }
 

@@ -232,10 +232,9 @@ size_t count_selected_points_swallowed_by(const std::vector<linalg::vec3>& selec
 
 } // namespace
 
-void Brush_Tool::on_enable(editor_context_t &ctx)
+void Brush_Tool::on_enable(editor_context_t& ctx)
 {
   assert(ctx.map);
-  assert(ctx.transaction_system);
 
   mode = Mode::Face;
   select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
@@ -244,7 +243,7 @@ void Brush_Tool::on_enable(editor_context_t &ctx)
   end_drag();
 }
 
-void Brush_Tool::on_disable(editor_context_t &ctx)
+void Brush_Tool::on_disable(editor_context_t& ctx)
 {
   // A pending extrusion is an edit the user asked for and has not taken back,
   // so leaving the tool keeps it rather than dropping it on the floor.
@@ -252,7 +251,7 @@ void Brush_Tool::on_disable(editor_context_t &ctx)
 
   // Same reasoning for a stroke in progress: it is an edit already visible in
   // the map, so it is committed rather than left without an undo entry.
-  end_paint_stroke(ctx);
+  end_grid_stroke(ctx);
 
   end_drag();
 }
@@ -326,7 +325,7 @@ void Brush_Tool::toggle_point_selection(const linalg::vec3 &point,
 
 
 // A press that armed a band whose cursor never travelled was a click after all.
-void Brush_Tool::resolve_band_press_as_click(editor_context_t &ctx)
+void Brush_Tool::resolve_band_press_as_click(editor_context_t& ctx)
 {
   const band_t& band = drag.band;
 
@@ -353,7 +352,7 @@ void Brush_Tool::resolve_band_press_as_click(editor_context_t &ctx)
   select_brush_face(ctx, band.press_uid, band.press_face_normal);
 }
 
-void Brush_Tool::select_brush_face(editor_context_t &ctx,
+void Brush_Tool::select_brush_face(editor_context_t& ctx,
                                    shared::entity_uid_t uid,
                                    std::optional<linalg::vec3> face_normal)
 {
@@ -373,7 +372,7 @@ void Brush_Tool::select_brush_face(editor_context_t &ctx,
   rebuild_hull_and_handles(ctx);
 }
 
-void Brush_Tool::rebuild_hull_and_handles(editor_context_t &ctx)
+void Brush_Tool::rebuild_hull_and_handles(editor_context_t& ctx)
 {
   selection_geometry.hull.reset();
   selection_geometry.face_idx = INVALID_FACE;
@@ -384,7 +383,7 @@ void Brush_Tool::rebuild_hull_and_handles(editor_context_t &ctx)
  
   if (!brush) return;
 
-  selection_geometry.hull = shared::try_build_brush_polyhedron(brush->vertices);
+  selection_geometry.hull = shared::try_build_brush_polyhedron(brush->hull_points);
 
   if (!selection_geometry.hull) return;
 
@@ -528,13 +527,13 @@ bool Brush_Tool::try_rebuild_selected_brush(editor_context_t& ctx, std::vector<l
   }
 
   // hand the candidate data back over.
-  brush->vertices = candidate->vertices;
+  brush->hull_points = candidate->vertices;
 
   // Faces are DERIVED, so their surfaces have to be re-keyed against the hull
   // that just changed shape -- see geometry_def.md ss6.
   shared::sync_face_surfaces(*brush);
 
-  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials);
+  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap);
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -543,7 +542,7 @@ bool Brush_Tool::try_rebuild_selected_brush(editor_context_t& ctx, std::vector<l
 }
 
 // nudging means meaneuver in the x,z plane, I think.
-void Brush_Tool::nudge_selected_brush(editor_context_t &ctx,
+void Brush_Tool::nudge_selected_brush(editor_context_t& ctx,
                                       const linalg::vec3 &direction)
 {
   shared::brush_geometry_t* brush = try_get_selected_brush(ctx);
@@ -561,25 +560,22 @@ void Brush_Tool::nudge_selected_brush(editor_context_t &ctx,
   shared::translate_brush(*brush, direction * step);
 
   // because the vertices have moved, we need to update the mesh, since they are fully decoupled.
-  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials);
+  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap);
 
   for (linalg::vec3& point : selection.points)
   {
     point = point + direction * step;
   }
 
-  if (ctx.transaction_system)
-  {
-    transaction_t transaction;
-    transaction.add_geometry_modified(selection.uid, before, *brush);
-    ctx.transaction_system->push(std::move(transaction));
-  }
+  transaction_t transaction;
+  transaction.add_geometry_modified(selection.uid, before, *brush);
+  ctx.transaction_system.push(std::move(transaction));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
-void Brush_Tool::delete_selected_brush(editor_context_t &ctx)
+void Brush_Tool::delete_selected_brush(editor_context_t& ctx)
 {
   if (!try_get_selected_brush(ctx))
     return;
@@ -589,12 +585,9 @@ void Brush_Tool::delete_selected_brush(editor_context_t &ctx)
 
   ctx.map->remove_geometry(uid);
 
-  if (ctx.transaction_system)
-  {
-    transaction_t transaction;
-    transaction.add_geometry_removed(uid, removed);
-    ctx.transaction_system->push(std::move(transaction));
-  }
+  transaction_t transaction;
+  transaction.add_geometry_removed(uid, removed);
+  ctx.transaction_system.push(std::move(transaction));
 
   // Everything below is keyed to the brush that no longer exists.
   end_drag();
@@ -669,7 +662,7 @@ void Brush_Tool::commit_pending_extrusion(editor_context_t& ctx)
     }
 
     auto created_brush_geometry = shared::brush_geometry_t{};
-    created_brush_geometry.vertices = solid->vertices;
+    created_brush_geometry.hull_points = solid->vertices;
     created_brush_geometry.surface = surface;
     shared::sync_face_surfaces(created_brush_geometry);
 
@@ -693,7 +686,7 @@ void Brush_Tool::commit_pending_extrusion(editor_context_t& ctx)
 
   // One transaction however many pieces it took, so the L undoes as the one
   // edit it was.
-  ctx.transaction_system->push(std::move(transaction));
+  ctx.transaction_system.push(std::move(transaction));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -702,7 +695,7 @@ void Brush_Tool::commit_pending_extrusion(editor_context_t& ctx)
   select_brush_face(ctx, last_created, selection.face_normal);
 }
 
-void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view,
+void Brush_Tool::on_update(editor_context_t& ctx, const viewport_state_t &view,
                            float dt)
 {
   cached_view = view;
@@ -731,7 +724,7 @@ void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view,
             hover.uid = uid;
 
             std::optional<shared::brush_polyhedron_t> hovered_hull =
-                shared::try_build_brush_polyhedron(brush->vertices);
+                shared::try_build_brush_polyhedron(brush->hull_points);
 
             if (hovered_hull)
             {
@@ -758,14 +751,14 @@ void Brush_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view,
   }
 
   rebuild_hull_and_handles(ctx);
-  update_paint_cursor(ctx, dt);
+  update_grid_stroke(ctx, dt);
 }
 
 // ============================================================================
 // Mouse
 // ============================================================================
 
-void Brush_Tool::on_mouse_down(editor_context_t &ctx,
+void Brush_Tool::on_mouse_down(editor_context_t& ctx,
                                const input::mouse_event_t &e)
 {
   // only lmb does anything.
@@ -773,10 +766,10 @@ void Brush_Tool::on_mouse_down(editor_context_t &ctx,
 
   const linalg::vec2 screen_position{(float)e.position.x, (float)e.position.y};
 
-  if (mode == Mode::Paint)
+  if (mode_is_a_grid_stroke())
   {
-    // A press on a DIFFERENT brush picks it and does not paint: the cursor is
-    // resolved against the selected brush, so painting one you have not
+    // A press on a DIFFERENT brush picks it and does not stroke: the cursor is
+    // resolved against the selected brush, so working on one you have not
     // selected yet would write at a point measured on something else.
     if (hover.uid != shared::invalid_entity_uid && hover.uid != selection.uid)
     {
@@ -785,11 +778,12 @@ void Brush_Tool::on_mouse_down(editor_context_t &ctx,
     }
 
     shared::brush_geometry_t *brush = try_get_selected_brush(ctx);
-    if (!brush || !paint.cursor)
+    if (!brush || !grid_cursor.position)
       return;
 
-    paint.geometry_at_the_start_of_stroke = *brush;
-    paint.stroking = true;
+    stroke.geometry_at_the_start = *brush;
+    stroke.inverted = e.mods.shift;
+    stroke.active = true;
     return;
   }
 
@@ -938,7 +932,7 @@ void Brush_Tool::on_mouse_down(editor_context_t &ctx,
   }
 }
 
-void Brush_Tool::on_mouse_drag(editor_context_t &ctx,
+void Brush_Tool::on_mouse_drag(editor_context_t& ctx,
                                const input::mouse_event_t &e)
 {
   const linalg::vec2 screen_position{(float)e.position.x, (float)e.position.y};
@@ -1014,7 +1008,7 @@ void Brush_Tool::on_mouse_drag(editor_context_t &ctx,
 
     const float face_distance = linalg::dot(drag.axis.direction, drag.axis.anchor);
 
-    std::vector<linalg::vec3> moved = start.vertices;
+    std::vector<linalg::vec3> moved = start.hull_points;
     for (linalg::vec3 &vertex : moved)
     {
       if (std::abs(linalg::dot(drag.axis.direction, vertex) - face_distance) <=
@@ -1050,12 +1044,12 @@ void Brush_Tool::on_mouse_drag(editor_context_t &ctx,
           *live, drag.vertex_start_points,
           drag.axis.direction * travel_distance_along_axis);
 
-      refresh_generated_geometry_mesh(*live, selection.uid, ctx.map->materials);
+      refresh_generated_geometry_mesh(*live, selection.uid, ctx.map->materials, ctx.map->lightmap);
       rebuild_hull_and_handles(ctx);
       return;
     }
 
-    std::vector<linalg::vec3> moved = start.vertices;
+    std::vector<linalg::vec3> moved = start.hull_points;
     for (linalg::vec3 &vertex : moved)
     {
       for (const linalg::vec3 &start_point : drag.vertex_start_points)
@@ -1082,9 +1076,9 @@ void Brush_Tool::on_mouse_up(editor_context_t& ctx,
   // only lmb here.
   if (e.button != input::mouse_button_t::Left) return;
 
-  if (paint.stroking)
+  if (stroke.active)
   {
-    end_paint_stroke(ctx);
+    end_grid_stroke(ctx);
     return;
   }
 
@@ -1100,13 +1094,16 @@ void Brush_Tool::on_mouse_up(editor_context_t& ctx,
     // is the whole gesture, pushed once here.
     if (shared::brush_geometry_t* brush = try_get_selected_brush(ctx))
     {
-      if (ctx.transaction_system)
-      {
-        transaction_t transaction;
-        transaction.add_geometry_modified(selection.uid, *drag.geometry_at_the_start_of_drag,
-                                      *brush);
-        ctx.transaction_system->push(std::move(transaction));
-      }
+      transaction_t transaction;
+      transaction.add_geometry_modified(selection.uid, *drag.geometry_at_the_start_of_drag,
+                                    *brush);
+      ctx.transaction_system.push(std::move(transaction));
+
+      // A grid drag writes offsets rather than vertices, so it never went
+      // through try_rebuild_selected_brush and nothing else flags the BVH --
+      // and the surface it just moved is the one the player stands on.
+      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
   }
 
@@ -1116,7 +1113,7 @@ void Brush_Tool::on_mouse_up(editor_context_t& ctx,
 }
 
 //@FIXME(SMIA): the direction_from_angles here is not really intuitive and I don't understand.
-void Brush_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
+void Brush_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 {
 
   // what this boils down to is, dependent on the camera angle, the arrow keys mean somethng different.
@@ -1159,9 +1156,10 @@ void Brush_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     // tab is another failsafe "get me out of here" to switch between selection modes.
     commit_pending_extrusion(ctx);
     end_drag();
-    end_paint_stroke(ctx);
+    end_grid_stroke(ctx);
     mode = (mode == Mode::Face)     ? Mode::Vertex
            : (mode == Mode::Vertex) ? Mode::Paint
+           : (mode == Mode::Paint)  ? Mode::Sculpt
                                     : Mode::Face;
     clear_point_selection();
     return;
@@ -1254,7 +1252,7 @@ void Brush_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 
 // Hover first: texturing is a sweep, so requiring a select click before every
 // assignment doubles the input for no decision.
-Brush_Tool::face_target_t Brush_Tool::resolve_face_target_under_cursor(editor_context_t &ctx)
+Brush_Tool::face_target_t Brush_Tool::resolve_face_target_under_cursor(editor_context_t& ctx)
 {
   if (hover.uid != shared::invalid_entity_uid)
     return resolve_face_target(ctx, hover.uid, hover.face_normal);
@@ -1264,13 +1262,13 @@ Brush_Tool::face_target_t Brush_Tool::resolve_face_target_under_cursor(editor_co
 
 // What the PANEL reads and writes -- never the hover, or every value in it is
 // rewritten by whatever the cursor crossed on its way to the widget.
-Brush_Tool::face_target_t Brush_Tool::resolve_selected_face_target(editor_context_t &ctx)
+Brush_Tool::face_target_t Brush_Tool::resolve_selected_face_target(editor_context_t& ctx)
 {
   return resolve_face_target(ctx, selection.uid, selection.face_normal);
 }
 
 Brush_Tool::face_target_t
-Brush_Tool::resolve_face_target(editor_context_t &ctx, shared::entity_uid_t uid,
+Brush_Tool::resolve_face_target(editor_context_t& ctx, shared::entity_uid_t uid,
                                 const std::optional<linalg::vec3> &face_normal)
 {
   face_target_t target;
@@ -1289,7 +1287,7 @@ Brush_Tool::resolve_face_target(editor_context_t &ctx, shared::entity_uid_t uid,
   // alone: two parallel faces of one brush share a normal and are told apart by
   // distance, and a normal carries none.
   const std::optional<shared::brush_polyhedron_t> hull =
-      shared::try_build_brush_polyhedron(brush->vertices);
+      shared::try_build_brush_polyhedron(brush->hull_points);
   if (!hull)
     return target;
 
@@ -1314,7 +1312,7 @@ Brush_Tool::resolve_face_target(editor_context_t &ctx, shared::entity_uid_t uid,
 }
 
 void Brush_Tool::edit_face_surface(
-    editor_context_t &ctx, const face_target_t &target,
+    editor_context_t& ctx, const face_target_t &target,
     const std::function<void(shared::face_surface_t &)> &edit)
 {
   if (!target.brush)
@@ -1329,34 +1327,32 @@ void Brush_Tool::edit_face_surface(
   if (shared::geometry_values_equal(before, *target.brush))
     return;
 
-  refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials);
+  refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap);
 
   // Subdividing REPLACES the handle set with the new grid, so the tool's
   // copy has to follow the edit rather than the next click.
   if (target.uid == selection.uid)
     rebuild_hull_and_handles(ctx);
 
-  if (ctx.transaction_system)
-  {
-    transaction_t transaction;
-    transaction.add_geometry_modified(target.uid, before, *target.brush);
-    ctx.transaction_system->push(std::move(transaction));
-  }
+  transaction_t transaction;
+  transaction.add_geometry_modified(target.uid, before, *target.brush);
+  ctx.transaction_system.push(std::move(transaction));
 }
 
 // ============================================================================
-// Vertex paint
+// Grid strokes: Paint writes WEIGHTS, Sculpt writes OFFSETS
 //
-// A stroke writes WEIGHTS into the face grid and moves no vertex, so it costs
-// no hull rebuild -- the same property that makes a grid drag cheap. The
-// welding is shared::paint_brush_grid_blend's job, not the tool's.
+// Neither moves a brush vertex, so neither costs a hull rebuild -- the same
+// property that makes a grid drag cheap. Both are welded by the shared call
+// they end in rather than by the tool, so a boundary vertex takes the whole
+// stroke rather than its share of one.
 // ============================================================================
 
-void Brush_Tool::update_paint_cursor(editor_context_t &ctx, float dt)
+void Brush_Tool::update_grid_stroke(editor_context_t& ctx, float dt)
 {
-  paint.cursor.reset();
+  grid_cursor.position.reset();
 
-  if (mode != Mode::Paint || !ctx.map)
+  if (!mode_is_a_grid_stroke() || !ctx.map)
     return;
 
   shared::brush_geometry_t *brush = try_get_selected_brush(ctx);
@@ -1367,37 +1363,56 @@ void Brush_Tool::update_paint_cursor(editor_context_t &ctx, float dt)
       *brush, cached_view.mouse_ray.origin, cached_view.mouse_ray.direction);
   if (hit)
   {
-    paint.cursor = hit->position;
-    paint.cursor_normal = hit->normal;
+    grid_cursor.position = hit->position;
+    grid_cursor.surface_normal = hit->normal;
+
+    // The hull is this frame's, built from the same vertex set try_pick_brush_grid
+    // hulls, so the face index it reports indexes it.
+    grid_cursor.face_normal = hit->normal;
+    if (selection_geometry.hull && hit->face < selection_geometry.hull->faces.size())
+      grid_cursor.face_normal = selection_geometry.hull->faces[hit->face].plane.normal;
   }
 
-  if (!paint.stroking || !paint.cursor)
+  if (!stroke.active || !grid_cursor.position)
     return;
 
   // Off dt rather than per mouse event: a stroke is a rate, so holding still
-  // keeps building up and a fast sweep lays down the same weight per unit of
+  // keeps building up and a fast sweep lays down the same amount per unit of
   // travel whatever the frame rate is.
-  if (shared::paint_brush_grid_blend(*brush, *paint.cursor, paint.radius,
-                                     paint.strength * dt, paint.layer) == 0)
+  size_t touched = 0;
+  if (mode == Mode::Paint)
+  {
+    touched = shared::paint_brush_grid_blend(*brush, *grid_cursor.position, paint.radius,
+                                             paint.strength * dt, paint.layer);
+  }
+  else
+  {
+    const float amount = (stroke.inverted ? -1.0f : 1.0f) * sculpt.strength * dt;
+    touched = shared::sculpt_brush_grid_vertices(*brush, *grid_cursor.position,
+                                                 sculpt.radius,
+                                                 grid_cursor.face_normal * amount);
+  }
+
+  if (touched == 0)
     return;
 
-  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials);
+  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap);
 }
 
-void Brush_Tool::end_paint_stroke(editor_context_t &ctx)
+void Brush_Tool::end_grid_stroke(editor_context_t& ctx)
 {
   const std::optional<shared::geometry_value_t> before =
-      std::move(paint.geometry_at_the_start_of_stroke);
-  paint.geometry_at_the_start_of_stroke.reset();
-  paint.stroking = false;
+      std::move(stroke.geometry_at_the_start);
+  stroke.geometry_at_the_start.reset();
+  stroke.active = false;
 
-  if (!before || !ctx.transaction_system)
+  if (!before)
     return;
 
   shared::brush_geometry_t *brush = try_get_selected_brush(ctx);
   if (!brush)
   {
-    log_error("brush tool: brush {} vanished mid-stroke - the paint is not undoable",
+    log_error("brush tool: brush {} vanished mid-stroke - the edit is not undoable",
               selection.uid);
     return;
   }
@@ -1409,10 +1424,14 @@ void Brush_Tool::end_paint_stroke(editor_context_t &ctx)
 
   transaction_t transaction;
   transaction.add_geometry_modified(selection.uid, *before, *brush);
-  ctx.transaction_system->push(std::move(transaction));
+  ctx.transaction_system.push(std::move(transaction));
+
+  // A sculpt moved the surface the player walks on; a paint moved no vertex.
+  if (mode == Mode::Sculpt && ctx.geometry_updated_so_bvh_rebuild_is_needed)
+    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
-void Brush_Tool::draw_paint_ui(editor_context_t &ctx)
+void Brush_Tool::draw_paint_ui(editor_context_t& ctx)
 {
   if (mode != Mode::Paint)
     return;
@@ -1454,11 +1473,47 @@ void Brush_Tool::draw_paint_ui(editor_context_t &ctx)
     ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1),
                        "both layers name one material - nothing will look different");
 
-  if (!paint.cursor)
+  if (!grid_cursor.position)
     ImGui::TextDisabled("cursor is off the brush");
 }
 
-void Brush_Tool::draw_material_ui(editor_context_t &ctx)
+// The other half of the same stroke: this one writes the grid's OFFSETS, which
+// is the displacement sculpting the pre-Track-D displacement tool had. Vertex
+// mode drags named handles exactly; this covers whatever it sweeps, with a
+// falloff, which is what a terrain is actually made with.
+void Brush_Tool::draw_sculpt_ui(editor_context_t& ctx)
+{
+  if (mode != Mode::Sculpt)
+    return;
+
+  ImGui::SeparatorText("Vertex sculpt");
+
+  shared::brush_geometry_t *brush = try_get_selected_brush(ctx);
+  if (!brush)
+  {
+    ImGui::TextDisabled("click a brush to sculpt it");
+    return;
+  }
+
+  ImGui::DragFloat("radius", &sculpt.radius, 1.0f, 1.0f, 2048.0f, "%.0f");
+  ImGui::DragFloat("strength", &sculpt.strength, 1.0f, 1.0f, 4096.0f,
+                   "%.0f units / sec");
+
+  ImGui::TextDisabled("drag pushes out along the face normal, shift+drag pulls in");
+
+  const face_target_t target = resolve_selected_face_target(ctx);
+  const shared::face_surface_t *current =
+      target.brush ? shared::find_face_surface(*target.brush, target.plane) : nullptr;
+
+  if (!current || !shared::face_is_subdivided(*current))
+    ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1),
+                       "this face has no grid - subdivide it above to sculpt it");
+
+  if (!grid_cursor.position)
+    ImGui::TextDisabled("cursor is off the brush");
+}
+
+void Brush_Tool::draw_material_ui(editor_context_t& ctx)
 {
   if (!ctx.map)
     return;
@@ -1515,6 +1570,35 @@ void Brush_Tool::draw_material_ui(editor_context_t &ctx)
       if (selected_here)
         ImGui::SetItemDefaultFocus();
     }
+
+    // What the BUILD has, under what this map has already used. The map's table
+    // is a string pool holding the materials this map named, so it can never be
+    // the browser -- a material nothing has picked yet is not in it. The
+    // manifest is the other half, and it is deliberately the manifest rather
+    // than a scan of resources/textures: a directory listing is a second walk
+    // of the tree the pipeline exists to walk once, and in a pkg or embed build
+    // there is no directory to list at all.
+    bool separator_drawn = false;
+    for (const assets::asset_info_t &available : assets::pbr_material_manifest())
+    {
+      if (available.path == nullptr || ctx.map->has_material(available.path))
+        continue;
+
+      if (!separator_drawn)
+      {
+        ImGui::Separator();
+        separator_drawn = true;
+      }
+
+      // Picking one mints its table entry, exactly as typing the path does.
+      if (ImGui::Selectable(available.name))
+      {
+        const uint16_t added = ctx.map->material_index_for(available.path);
+        edit_face_surface(ctx, target, [added, layer](shared::face_surface_t &face) {
+          shared::set_face_layer_material(face, layer, added);
+        });
+      }
+    }
     ImGui::EndCombo();
   }
 
@@ -1567,6 +1651,47 @@ void Brush_Tool::draw_material_ui(editor_context_t &ctx)
       face.uv = shared::default_face_uv(target.plane.normal);
     });
 
+  // The MATERIAL half of this face, onto every face. Not the whole surface: a
+  // face's grid and what has been sculpted into it are its own shape, and
+  // copying those onto the other five faces of a box is nonsense nobody asked
+  // for. The subdivision section below has its own button for the one part of
+  // that which IS useful.
+  ImGui::SameLine();
+  if (ImGui::Button("copy material to every face"))
+  {
+    const shared::geometry_value_t before = *target.brush;
+
+    // face_surface_for rather than `current`, which is null on a brush nothing
+    // has ever textured -- and "every face takes the default" is a real answer
+    // there, not a click that quietly does nothing.
+    const shared::face_surface_t pattern =
+        shared::face_surface_for(*target.brush, target.plane);
+
+    shared::sync_face_surfaces(*target.brush);
+    for (shared::face_surface_t &face : target.brush->face_surfaces)
+    {
+      for (int layer = 0; layer < BLEND_LAYER_COUNT; ++layer)
+        shared::set_face_layer_material(face, layer,
+                                        shared::face_layer_material(pattern, layer));
+
+      face.emits_geometry = pattern.emits_geometry;
+
+      // The SCALE and the SHIFT travel; the AXES do not. They are world-space,
+      // so copying them wholesale projects the material along the source face's
+      // plane onto every other one -- which on a perpendicular face is an
+      // infinite stretch. Each face keeps its own projection.
+      face.uv.u_scale = pattern.uv.u_scale;
+      face.uv.v_scale = pattern.uv.v_scale;
+      face.uv.u_shift = pattern.uv.u_shift;
+      face.uv.v_shift = pattern.uv.v_shift;
+    }
+
+    refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap);
+    transaction_t transaction;
+    transaction.add_geometry_modified(target.uid, before, *target.brush);
+    ctx.transaction_system.push(std::move(transaction));
+  }
+
   ImGui::Separator();
 
   // TESSELLATION, and what a displacement became. 0 is flat, which is every face
@@ -1581,17 +1706,60 @@ void Brush_Tool::draw_material_ui(editor_context_t &ctx)
       shared::resize_face_grid(face, subdivision_level);
     });
 
+  ImGui::TextDisabled("0 removes the grid — the slider IS how a face stops being "
+                      "subdivided");
+
   if (current && shared::face_is_subdivided(*current))
   {
     const int size = shared::face_grid_size(current->subdivision_level);
-    ImGui::TextDisabled("%d x %d grid, %zu vertices — Vertex mode drags them", size,
-                        size, current->offsets.size());
+    ImGui::TextDisabled("%d x %d grid, %zu vertices — Vertex mode drags them, "
+                        "Sculpt mode brushes them",
+                        size, size, current->offsets.size());
 
-    if (ImGui::Button("flatten"))
+    // Says what it throws away, which is the whole question an author has in
+    // front of this button: the SCULPT goes, the grid stays.
+    if (ImGui::Button("reset this face's sculpt to flat"))
       edit_face_surface(ctx, target, [](shared::face_surface_t &face) {
         for (linalg::vec3 &offset : face.offsets)
           offset = {0, 0, 0};
       });
+
+    // The one part of the old "apply to whole brush" worth keeping: adjacent
+    // subdivided faces at DIFFERENT levels leave a T-junction the weld cannot
+    // close (geometry_def.md Track D), and matching them by hand is six trips
+    // through the slider. It carries the LEVEL and nothing else -- each face
+    // keeps whatever is sculpted into it, resampled to the new level.
+    ImGui::SameLine();
+    if (ImGui::Button("give every face this subdivision"))
+    {
+      const shared::geometry_value_t before = *target.brush;
+      const int level = current->subdivision_level;
+
+      const std::optional<shared::brush_polyhedron_t> hull =
+          shared::try_build_brush_polyhedron(target.brush->hull_points);
+
+      if (hull)
+      {
+        for (const shared::brush_face_t &face : hull->faces)
+        {
+          // Skipped rather than refused: a grid is a patch over four corners, so
+          // a brush with one triangular face is not a reason to do nothing to
+          // the other five.
+          if (face.vertex_indices.size() != 4)
+            continue;
+
+          shared::resize_face_grid(shared::face_surface_for(*target.brush, face.plane),
+                                   level);
+        }
+
+        refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap);
+        rebuild_hull_and_handles(ctx);
+
+        transaction_t transaction;
+        transaction.add_geometry_modified(target.uid, before, *target.brush);
+        ctx.transaction_system.push(std::move(transaction));
+      }
+    }
   }
   else if (subdivision_level > 0)
   {
@@ -1599,39 +1767,6 @@ void Brush_Tool::draw_material_ui(editor_context_t &ctx)
     // rather than only in the log.
     ImGui::TextDisabled("this face is not a quad — a grid is a patch over four "
                         "corners");
-  }
-
-  ImGui::SameLine();
-  if (ImGui::Button("apply to whole brush") && current)
-  {
-    const shared::geometry_value_t before  = *target.brush;
-    const shared::face_surface_t   pattern = *current;
-
-    shared::sync_face_surfaces(*target.brush);
-    for (shared::face_surface_t &face : target.brush->face_surfaces)
-    {
-      const linalg::vec3 key_normal   = face.key_normal;
-      const float        key_distance = face.key_distance;
-      face                            = pattern;
-      face.key_normal                 = key_normal;
-      face.key_distance               = key_distance;
-
-      // The axes are world-space, so copying them wholesale would project the
-      // material along the source face's plane onto every other one -- which on
-      // a perpendicular face is an infinite stretch. Each face keeps its own
-      // projection and takes only what the author chose.
-      const shared::face_uv_channel_t own = shared::default_face_uv(key_normal);
-      face.uv.u_axis                      = own.u_axis;
-      face.uv.v_axis                      = own.v_axis;
-    }
-
-    refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials);
-    if (ctx.transaction_system)
-    {
-      transaction_t transaction;
-      transaction.add_geometry_modified(target.uid, before, *target.brush);
-      ctx.transaction_system->push(std::move(transaction));
-    }
   }
 
   if (current && shared::face_is_blended(*current))
@@ -1645,27 +1780,42 @@ void Brush_Tool::draw_material_ui(editor_context_t &ctx)
     ImGui::TextDisabled("clipboard: empty");
 }
 
-void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
+void Brush_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draws)
 {
-  // The paint cursor: a ring lying on the DISPLACED surface, which is where the
+  // The stroke cursor: a ring lying on the DISPLACED surface, which is where the
   // stroke actually measures its radius from.
-  if (mode == Mode::Paint && paint.cursor)
+  if (mode_is_a_grid_stroke() && grid_cursor.position)
   {
+    const bool sculpting = (mode == Mode::Sculpt);
+    const float radius = sculpting ? sculpt.radius : paint.radius;
+
     linalg::vec3 tangent_u{0, 0, 0};
     linalg::vec3 tangent_v{0, 0, 0};
-    shared::brush_face_grid_tangents(paint.cursor_normal, tangent_u, tangent_v);
+    shared::brush_face_grid_tangents(grid_cursor.surface_normal, tangent_u, tangent_v);
 
     constexpr int SEGMENTS = 32;
     linalg::vec3 previous{0, 0, 0};
     for (int step = 0; step <= SEGMENTS; ++step)
     {
       const float angle = (float)step * (6.2831853f / (float)SEGMENTS);
-      const linalg::vec3 point = *paint.cursor +
-                                 tangent_u * (std::cos(angle) * paint.radius) +
-                                 tangent_v * (std::sin(angle) * paint.radius);
+      const linalg::vec3 point = *grid_cursor.position +
+                                 tangent_u * (std::cos(angle) * radius) +
+                                 tangent_v * (std::sin(angle) * radius);
       if (step > 0)
         draws.debug.line(previous, point, colors::cyan, -2.0f);
       previous = point;
+    }
+
+    // Which WAY the next stroke pushes, drawn rather than remembered: the ring
+    // alone is the same picture for a hill and for a crater.
+    if (sculpting)
+    {
+      const bool inverted =
+          stroke.active ? stroke.inverted : input::current_modifiers().shift;
+      const float sign = inverted ? -1.0f : 1.0f;
+      draws.debug.line(*grid_cursor.position,
+                       *grid_cursor.position + grid_cursor.face_normal * (radius * sign),
+                       inverted ? colors::red : colors::green, -2.0f);
     }
   }
 
@@ -1682,7 +1832,7 @@ void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
       {
         // build the polyhedron.
         std::optional<shared::brush_polyhedron_t> outline =
-            shared::try_build_brush_polyhedron(brush->vertices);
+            shared::try_build_brush_polyhedron(brush->hull_points);
 
         // if that succeeded, for all faces, draw the faces.
         if (outline)
@@ -1881,7 +2031,7 @@ void Brush_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
   }
 }
 
-void Brush_Tool::on_draw_ui(editor_context_t &ctx)
+void Brush_Tool::on_draw_ui(editor_context_t& ctx)
 {
   // a convoluted reason to draw the vertex selection discs here is that the debug mode draws in world space.
   // this thing draws in screen space. sounds like a crutch.
@@ -1932,23 +2082,27 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
 
   // Both drawn unconditionally: || would short-circuit and stop drawing the
   // second button on the frame the first is clicked.
-  int mode_index = (mode == Mode::Face) ? 0 : (mode == Mode::Vertex ? 1 : 2);
-  const bool chose_face_mode = ImGui::RadioButton("Face", &mode_index, 0);
-  const bool chose_vertex_mode = ImGui::RadioButton("Vertex", &mode_index, 1);
-  const bool chose_paint_mode = ImGui::RadioButton("Paint", &mode_index, 2);
+  constexpr Mode MODE_BUTTONS[] = {Mode::Face, Mode::Vertex, Mode::Paint, Mode::Sculpt};
+  constexpr const char *MODE_LABELS[] = {"Face", "Vertex", "Paint", "Sculpt"};
 
-  if (chose_face_mode || chose_vertex_mode || chose_paint_mode)
+  int mode_index = 0;
+  for (int index = 0; index < (int)std::size(MODE_BUTTONS); ++index)
+    if (MODE_BUTTONS[index] == mode)
+      mode_index = index;
+
+  // Every button drawn unconditionally: || would short-circuit and stop drawing
+  // the rest on the frame an earlier one is clicked.
+  bool chose_a_mode = false;
+  for (int index = 0; index < (int)std::size(MODE_BUTTONS); ++index)
+    chose_a_mode = ImGui::RadioButton(MODE_LABELS[index], &mode_index, index) || chose_a_mode;
+
+  if (chose_a_mode && MODE_BUTTONS[mode_index] != mode)
   {
-    const Mode wanted =
-        (mode_index == 0) ? Mode::Face : (mode_index == 1 ? Mode::Vertex : Mode::Paint);
-    if (wanted != mode)
-    {
-      commit_pending_extrusion(ctx);
-      end_drag();
-      end_paint_stroke(ctx);
-      mode = wanted;
-      clear_point_selection();
-    }
+    commit_pending_extrusion(ctx);
+    end_drag();
+    end_grid_stroke(ctx);
+    mode = MODE_BUTTONS[mode_index];
+    clear_point_selection();
   }
 
   ImGui::Separator();
@@ -2036,11 +2190,27 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
     }
   }
 
+  // One ID scope per panel. These three share a window and deliberately share
+  // LABELS -- "blend material 1" names the same layer in the material combo and
+  // in the paint target, and "radius" means the same thing to Paint and Sculpt.
+  // An ImGui id is derived from the label, so without a scope those are the same
+  // WIDGET: the combo and the radio button fought over one popup state, and
+  // picking a blend material never stuck. Scoping here rather than inside each
+  // function keeps the push/pop balanced across their early returns.
+  ImGui::PushID("face_material");
   draw_material_ui(ctx);
+  ImGui::PopID();
+
+  ImGui::PushID("paint");
   draw_paint_ui(ctx);
+  ImGui::PopID();
+
+  ImGui::PushID("sculpt");
+  draw_sculpt_ui(ctx);
+  ImGui::PopID();
 
   ImGui::Separator();
-  ImGui::TextDisabled("Tab         face / vertex / paint mode");
+  ImGui::TextDisabled("Tab         face / vertex / paint / sculpt mode");
   ImGui::TextDisabled("drag        move face (Face mode)");
   ImGui::TextDisabled("drag        box-select points (Vertex mode)");
   ImGui::TextDisabled("ctrl+drag   box-select, adding");
@@ -2052,6 +2222,8 @@ void Brush_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::TextDisabled("pgup/pgdn   nudge the brush up / down");
   ImGui::TextDisabled("C / V       sample / apply the face material under the cursor");
   ImGui::TextDisabled("drag        paint the target layer (Paint mode)");
+  ImGui::TextDisabled("drag        sculpt the face grid out (Sculpt mode)");
+  ImGui::TextDisabled("shift+drag  sculpt it in (Sculpt mode)");
   ImGui::TextDisabled("esc         cancel; Tab also clears a stuck drag");
 
   ImGui::End();

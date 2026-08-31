@@ -66,8 +66,9 @@ void Shader_Editor_State::on_enter()
   default_light.position = {96.0f, 128.0f, 64.0f};
   default_light.direction = linalg::normalize(linalg::vec3f{0.0f, 0.0f, 0.0f} - linalg::vec3f{96.0f, 128.0f, 64.0f});
   default_light.color = {1.0f, 0.95f, 0.9f};
-  // Sphere sits near origin, light at d ≈ 172 units. With 1/d² falloff intensity must
-  // be on the order of d² to give ~unit brightness at the surface — see editor_light_t.
+  // Sphere sits near origin, light at d ~ 172 units. pbr.frag applies 1/d^2 with no
+  // reference distance, so intensity has to be on the order of d^2 -- see
+  // editor_light_t for why this preview does not share the engine's unit yet.
   default_light.intensity = 30000.0f;
   default_light.range = 512.0f;
   default_light.light_type = 1; // spot

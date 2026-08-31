@@ -25,5 +25,10 @@ void main() {
     // top-left pixel origin needs no flip -- it lands on (-1,-1) as intended.
     gl_Position = vec4(inPosition * pc.inverse_screen * 2.0 - 1.0, 0.0, 1.0);
     fragUV      = inUV;
-    fragColor   = inColor;
+
+    // An authored UI colour is sRGB and the attachment encodes on write, so the
+    // decode has to happen here or the colour is encoded twice: an authored 0.5
+    // grey reached the screen at ~0.73, and a half-covered glyph edge blended in
+    // linear space and read glowy. Alpha is coverage, not colour, and stays.
+    fragColor   = vec4(pow(inColor.rgb, vec3(2.2)), inColor.a);
 }

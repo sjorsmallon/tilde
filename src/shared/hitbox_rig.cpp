@@ -24,7 +24,7 @@ linalg::vec3f matrix_translation(const linalg::mat4f &matrix)
 // evaluated in, and the axes a Box's extents are read in. One function so the
 // runtime path and derivation cannot disagree about where a volume is.
 void volume_placement(const rigged_hitbox_volume_t &rigged, Span<const linalg::mat4f> model_space,
-                      linalg::vec3f &out_start, linalg::vec3f &out_end, hitbox_frame_t &out_frame)
+                      linalg::vec3f& out_start, linalg::vec3f& out_end, hitbox_frame_t &out_frame)
 {
   const linalg::mat4f &start_matrix = model_space[rigged.start_bone];
 
@@ -41,8 +41,8 @@ void volume_placement(const rigged_hitbox_volume_t &rigged, Span<const linalg::m
 // Distance from a point to the SEGMENT, not to the infinite line: past an
 // endpoint a capsule is a hemisphere, and measuring against the line there would
 // size a volume from a vertex it already covers.
-float distance_to_segment(const linalg::vec3f &point, const linalg::vec3f &start,
-                          const linalg::vec3f &end)
+float distance_to_segment(const linalg::vec3f& point, const linalg::vec3f& start,
+                          const linalg::vec3f& end)
 {
   const linalg::vec3f axis          = end - start;
   const float         axis_length_2 = linalg::dot(axis, axis);
@@ -64,9 +64,9 @@ float distance_to_segment(const linalg::vec3f &point, const linalg::vec3f &start
 
 // The NEAR root, unlike linalg::intersect_ray_sphere, which hands back the far
 // one when the origin is inside. Here that is a miss, not an exit point.
-std::optional<hitbox_ray_hit_t> intersect_ray_sphere_entry(const linalg::vec3f &origin,
-                                                           const linalg::vec3f &direction,
-                                                           const linalg::vec3f &center,
+std::optional<hitbox_ray_hit_t> intersect_ray_sphere_entry(const linalg::vec3f& origin,
+                                                           const linalg::vec3f& direction,
+                                                           const linalg::vec3f& center,
                                                            float                radius)
 {
   const linalg::vec3f to_origin = origin - center;
@@ -88,10 +88,10 @@ std::optional<hitbox_ray_hit_t> intersect_ray_sphere_entry(const linalg::vec3f &
 // The SIDE only -- the tube between the two endpoints, open at both ends. A
 // capsule caps it with hemispheres and a cylinder with discs; neither wants the
 // other's ends, so neither is in here.
-std::optional<hitbox_ray_hit_t> intersect_ray_cylinder_side(const linalg::vec3f &origin,
-                                                            const linalg::vec3f &direction,
-                                                            const linalg::vec3f &start,
-                                                            const linalg::vec3f &end, float radius)
+std::optional<hitbox_ray_hit_t> intersect_ray_cylinder_side(const linalg::vec3f& origin,
+                                                            const linalg::vec3f& direction,
+                                                            const linalg::vec3f& start,
+                                                            const linalg::vec3f& end, float radius)
 {
   const linalg::vec3f axis          = end - start;
   const float         axis_length_2 = linalg::dot(axis, axis);
@@ -135,10 +135,10 @@ std::optional<hitbox_ray_hit_t> intersect_ray_cylinder_side(const linalg::vec3f 
 
 // One flat end of a cylinder: the plane at that endpoint, cropped to the
 // radius.
-std::optional<hitbox_ray_hit_t> intersect_ray_cylinder_cap(const linalg::vec3f &origin,
-                                                           const linalg::vec3f &direction,
-                                                           const linalg::vec3f &start,
-                                                           const linalg::vec3f &end, float radius,
+std::optional<hitbox_ray_hit_t> intersect_ray_cylinder_cap(const linalg::vec3f& origin,
+                                                           const linalg::vec3f& direction,
+                                                           const linalg::vec3f& start,
+                                                           const linalg::vec3f& end, float radius,
                                                            bool at_start)
 {
   const linalg::vec3f axis        = end - start;
@@ -296,8 +296,8 @@ float percentile_of(std::vector<float> &values, float percentile)
 // The model-space axis-aligned bounds of a posed volume, which is all the hull
 // excursion check needs and is the one place per-shape extents are turned into
 // a box.
-void hitbox_bounds(const posed_hitbox_t &hitbox, linalg::vec3f &out_minimum,
-                   linalg::vec3f &out_maximum)
+void hitbox_bounds(const posed_hitbox_t &hitbox, linalg::vec3f& out_minimum,
+                   linalg::vec3f& out_maximum)
 {
   if (hitbox.shape == hitbox_shape_t::Box)
   {
@@ -465,7 +465,7 @@ void compute_bind_model_matrices(const skeleton_t &skeleton, Span<linalg::mat4f>
     out[index] = linalg::inverse_affine(skeleton.bones[index].inverse_bind);
 }
 
-float distance_outside_hitbox(const posed_hitbox_t &hitbox, const linalg::vec3f &point)
+float distance_outside_hitbox(const posed_hitbox_t &hitbox, const linalg::vec3f& point)
 {
   switch (hitbox.shape)
   {

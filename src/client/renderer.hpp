@@ -33,6 +33,7 @@
 #include "../shared/array.hpp"
 #include "../shared/asset.hpp"
 #include "../shared/color.hpp"
+#include "../shared/lightmap.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/span.hpp"
 #include "camera.hpp"
@@ -80,6 +81,18 @@ struct material_handle_t
   bool     operator==(const material_handle_t &) const = default;
 };
 
+// A baked lightmap's atlas pages, resident as one 2D ARRAY image. Its own handle
+// type rather than a texture_handle_t because it is a different view type and a
+// different descriptor layout -- handing one to register_material would allocate
+// a sampler2D set over a sampler2DArray view, which no validation layer catches
+// until the draw.
+struct lightmap_handle_t
+{
+  uint32_t index = UINT32_MAX;
+  bool     valid() const { return index != UINT32_MAX; }
+  bool     operator==(const lightmap_handle_t &) const = default;
+};
+
 // --- Materials ---
 
 enum class shader_t : uint8_t
@@ -115,17 +128,40 @@ enum class fill_mode_t : uint8_t
   wireframe
 };
 
-// Which vertex buffers a pipeline reads. Fixed per MESH at register_mesh time
-// from mesh_asset_t::is_skinned(), and part of the pipeline cache key -- it is
-// not a per-draw choice, because a mesh either has a skin array or it does not.
+// Which vertex buffers a pipeline reads, as FLAGS. Fixed per MESH at
+// register_mesh time from mesh_asset_t::is_skinned() / is_blended() /
+// is_lightmapped(), and part of the pipeline cache key -- it is not a per-draw
+// choice, because a mesh either carries a parallel array or it does not.
+//
+// Flags rather than a fourth enumerator because the axes are INDEPENDENT: a
+// painted brush face in a baked level is blended AND lightmapped, and a flat
+// enum would need one value per combination. `skinned` and `blended` are the
+// exception and stay mutually exclusive -- there is no vertex shader that reads
+// both, and register_mesh resolves the clash in favour of the skin.
 enum class vertex_layout_t : uint8_t
 {
-  static_mesh,
-  skinned,
-  // Carries a second binding of per-vertex blend weights. Fixed per MESH from
-  // mesh_asset_t::is_blended(), like skinned is from is_skinned().
-  blended
+  static_mesh = 0,
+  // Binding 1: assets::vertex_skin_t.
+  skinned = 1 << 0,
+  // Binding 2: vertex_blend_t, the per-vertex layer weights.
+  blended = 1 << 1,
+  // Binding 3: linalg::vec3f, (u, v, page) into the lightmap atlas array.
+  lightmapped = 1 << 2
 };
+
+[[nodiscard]] constexpr vertex_layout_t operator|(vertex_layout_t left, vertex_layout_t right)
+{
+  return (vertex_layout_t)((uint8_t)left | (uint8_t)right);
+}
+constexpr vertex_layout_t &operator|=(vertex_layout_t &left, vertex_layout_t right)
+{
+  left = left | right;
+  return left;
+}
+[[nodiscard]] constexpr bool has_layout(vertex_layout_t layout, vertex_layout_t flag)
+{
+  return ((uint8_t)layout & (uint8_t)flag) != 0;
+}
 
 // Everything that decides WHICH pipeline a material renders through. Resolved
 // against the internal pipeline cache; the full key is (pipeline_state_t,
@@ -189,6 +225,21 @@ mesh_handle_t register_mesh(const assets::mesh_asset_t &mesh);
 // Re-upload changed geometry (sculpting a face grid). The upload happens NOW,
 // not lazily at the next draw.
 void update_mesh(mesh_handle_t handle, const assets::mesh_asset_t &mesh);
+
+// The atlas a lightmapped mesh samples, uploaded as VK_FORMAT_E5B9G9R9_UFLOAT_PACK32
+// over `pages.bytes` as it sits -- the format is picked so this stays a memcpy
+// and the sampler does the decoding (lightmap.hpp).
+//
+// Empty pages return an invalid handle rather than an empty image: a pass with
+// no atlas is the normal state of an unbaked map, and view_pass_t::lightmap
+// falls back to an internal white page for it.
+lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &pages);
+
+// Re-upload after a rebake. Separate from register_lightmap for the reason
+// update_mesh is separate from register_mesh: the editor bakes repeatedly, and
+// nothing in the renderer is ever unregistered, so re-registering would leak a
+// whole atlas per bake.
+void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &pages);
 
 // The mesh's own material table, in slot order. A caller that wants the same
 // textures under a DIFFERENT pipeline_state -- an unlit view of a model, a
@@ -307,16 +358,16 @@ struct debug_draw_list_t
   // and more negative pulls toward the camera. 0 = none.
   // `seconds` is how long the entry outlives this frame: 0 (the default) = this
   // frame only; > 0 = survives retire() until the time runs out.
-  void line(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
+  void line(const linalg::vec3f& start, const linalg::vec3f& end, color_t color,
             float depth_bias = 0.0f, float seconds = 0.0f, bool draw_when_occluded = false);
-  void aabb(const linalg::vec3f &min, const linalg::vec3f &max, color_t color,
+  void aabb(const linalg::vec3f& min, const linalg::vec3f& max, color_t color,
             fill_mode_t fill = fill_mode_t::wireframe, float depth_bias = 0.0f,
             float seconds = 0.0f, bool draw_when_occluded = false);
   // The same shape, spelled the way the EDITOR holds it: an object has a
   // position and half-extents, where a bounds computation produces min/max.
   // Both spellings exist because converting at every call site is how a sign
   // error gets in.
-  void box(const linalg::vec3f &center, const linalg::vec3f &half_extents, color_t color,
+  void box(const linalg::vec3f& center, const linalg::vec3f& half_extents, color_t color,
            fill_mode_t fill = fill_mode_t::wireframe, float depth_bias = 0.0f,
            float seconds = 0.0f, bool draw_when_occluded = false);
   // Triangle-fan decomposed, and alpha-blended when the colour says so. There is
@@ -329,18 +380,18 @@ struct debug_draw_list_t
   // A manipulator is the case that needs it: a gizmo drawn at an object centre
   // is INSIDE that object, so depth-tested it is invisible exactly when you want
   // to grab it.
-  void arrow(const linalg::vec3f &start, const linalg::vec3f &end, color_t color,
+  void arrow(const linalg::vec3f& start, const linalg::vec3f& end, color_t color,
              float seconds = 0.0f, bool draw_when_occluded = false);
-  void wire_circle(const linalg::vec3f &center, float radius, const linalg::vec3f &normal,
+  void wire_circle(const linalg::vec3f& center, float radius, const linalg::vec3f& normal,
                    color_t color, float seconds = 0.0f);
-  void wire_sphere(const linalg::vec3f &center, float radius, color_t color, float seconds = 0.0f);
-  void wire_capsule(const linalg::vec3f &center, float radius, float half_height, color_t color,
+  void wire_sphere(const linalg::vec3f& center, float radius, color_t color, float seconds = 0.0f);
+  void wire_capsule(const linalg::vec3f& center, float radius, float half_height, color_t color,
                     float seconds = 0.0f);
 
   // Projected through the pass's view and composited over the 3D scene, so it
   // is NOT depth-tested -- a label on a bone inside a mesh still reads.
   // Off-screen labels are dropped.
-  void text(const linalg::vec3f &world_position, const char *text, color_t color,
+  void text(const linalg::vec3f& world_position, const char *text, color_t color,
             float seconds = 0.0f);
 };
 
@@ -446,6 +497,12 @@ struct view_pass_t
   render_view_t                             view;
   Span<const mesh_draw_t>                   draws;              // sorted internally by pipeline, then material
   const debug_draw_list_t                  *debug     = nullptr;
+  // The baked atlas every lightmapped draw in this pass samples, bound once at
+  // set 3. It belongs to the PASS and not to a material because a bake is a
+  // property of the world being drawn, not of any one surface in it -- and a
+  // pass is a value, so this stays inside the no-sticky-state rule. Invalid
+  // falls back to an internal white page, which multiplies out.
+  lightmap_handle_t                         lightmap  = {};
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
   Span<const custom_draw_t>                 custom    = {};     // escape hatch, see above
 };

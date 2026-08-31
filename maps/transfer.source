@@ -367,14 +367,14 @@ entity
   "classname" "player_spectate_entity"
   "_uid" "7"
   "position" "-1152 2780 -640"
-  "orientation" "0 -1 -90"
+  "orientation" "-0.0061705923 -0.0061705923 -0.7070798 0.7070798"
 }
 entity
 {
   "classname" "player_spawn_entity"
   "_uid" "8"
   "position" "-2304 128 -384"
-  "orientation" "0 0 0"
+  "orientation" "0 0 0 1"
   "spawn_type" "Human"
   "team_allegiance" "Blu"
 }
@@ -383,7 +383,7 @@ entity
   "classname" "player_spawn_entity"
   "_uid" "9"
   "position" "-2304 128 384"
-  "orientation" "0 0 0"
+  "orientation" "0 0 0 1"
   "spawn_type" "Human"
   "team_allegiance" "Blu"
 }
@@ -392,7 +392,7 @@ entity
   "classname" "player_spawn_entity"
   "_uid" "10"
   "position" "2176 128 384"
-  "orientation" "-15 180 0"
+  "orientation" "5.7054814e-09 0.9914449 0.1305262 -4.3337433e-08"
   "spawn_type" "Human"
   "team_allegiance" "Red"
 }
@@ -401,7 +401,7 @@ entity
   "classname" "player_spawn_entity"
   "_uid" "11"
   "position" "2176 128 -384"
-  "orientation" "0 180 0"
+  "orientation" "-0 1 -0 -4.371139e-08"
   "spawn_type" "Human"
   "team_allegiance" "Red"
 }
@@ -410,7 +410,7 @@ entity
   "classname" "trigger_volume_entity"
   "_uid" "3"
   "position" "-1675.9169 -1271.789 -958.0111"
-  "orientation" "0 0 0"
+  "orientation" "0 0 0 1"
   "volume.position" "0 0 0"
   "volume.half_extents" "4637.054 298.0061 4846.442"
   "action" "Warp_To_Spawn"

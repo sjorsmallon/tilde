@@ -153,7 +153,7 @@ void test_clear_drops_everything()
 // The check is the definition: every volume is convex, so a polygon faces
 // outward exactly when its normal points away from any interior point.
 void assert_faces_wound_outward(const assets::posed_hitbox_t &hitbox,
-                                const linalg::vec3f &interior, const char *what)
+                                const linalg::vec3f& interior, const char *what)
 {
   uint32_t polygons = 0;
 
@@ -165,7 +165,7 @@ void assert_faces_wound_outward(const assets::posed_hitbox_t &hitbox,
         linalg::cross(corners[1] - corners[0], corners[2] - corners[1]);
 
     linalg::vec3f centroid{0, 0, 0};
-    for (const linalg::vec3f &corner : corners)
+    for (const linalg::vec3f& corner : corners)
       centroid = centroid + corner;
     centroid = centroid * (1.0f / (float)corners.size());
 
@@ -235,7 +235,7 @@ void test_hitbox_face_corners_lie_on_the_surface()
   capsule.radius = 0.25f;
 
   const auto face = [&](Span<const linalg::vec3f> corners, color_t) {
-    for (const linalg::vec3f &corner : corners)
+    for (const linalg::vec3f& corner : corners)
     {
       const float outside = assets::distance_outside_hitbox(capsule, corner);
       assert(outside < 1e-4f); // never OUTSIDE the volume it bounds

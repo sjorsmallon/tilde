@@ -39,11 +39,17 @@ template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_vi
 enum class texture_asset : uint16_t
 {
   Missing = 0,
-  Smoke = 1,
-  dev_128x128 = 2,
+  glasses = 1,
+  glasses_material = 2,
+  leet_hands = 3,
+  leet_hands_material = 4,
+  leet_skin = 5,
+  leet_skin_material = 6,
+  Smoke = 7,
+  dev_128x128 = 8,
 };
 
-constexpr uint32_t texture_asset_COUNT = 3;
+constexpr uint32_t texture_asset_COUNT = 9;
 
 const char* to_string(texture_asset value);
 template <> std::optional<texture_asset> try_from_string<texture_asset>(std::string_view text);
@@ -141,6 +147,22 @@ constexpr uint32_t font_asset_COUNT = 11;
 const char* to_string(font_asset value);
 template <> std::optional<font_asset> try_from_string<font_asset>(std::string_view text);
 
+// Missing is 0: an asset field that was never assigned resolves to the
+// placeholder, which is loudly wrong, rather than to whichever asset
+// happened to sort first, which would look plausible. It has no file --
+// its bytes are a compiled-in constant, so it cannot fail to load.
+enum class pbr_material : uint16_t
+{
+  Missing = 0,
+  harsh_bricks = 1,
+  sloppy_mortar_stone = 2,
+};
+
+constexpr uint32_t pbr_material_COUNT = 3;
+
+const char* to_string(pbr_material value);
+template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);
+
 // One manifest row. TWO columns: `path` is null for Missing and is the one
 // spelling read_asset_bytes takes for everything else.
 struct asset_info_t
@@ -178,6 +200,11 @@ Span<const asset_info_t> hitbox_rig_manifest();
 // entry: registration must NOT be lazy, or an id resolves to nothing
 // depending on what ran first.
 Span<const asset_info_t> font_asset_manifest();
+
+// The complete pbr_material manifest, indexed by id. register_all populates every
+// entry: registration must NOT be lazy, or an id resolves to nothing
+// depending on what ran first.
+Span<const asset_info_t> pbr_material_manifest();
 
 // The manifest an entities::field_info_t::asset_class_id refers to. Empty
 // span for an id no asset class owns, which is a caller bug -- check the
@@ -221,5 +248,10 @@ template <> struct enum_traits<assets::hitbox_rig>
 template <> struct enum_traits<assets::font_asset>
 {
   static constexpr uint32_t count = assets::font_asset_COUNT;
+};
+
+template <> struct enum_traits<assets::pbr_material>
+{
+  static constexpr uint32_t count = assets::pbr_material_COUNT;
 };
 

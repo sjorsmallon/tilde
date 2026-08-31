@@ -46,7 +46,7 @@ brush_geometry_t make_box_brush(const linalg::vec3 &center,
                                 const linalg::vec3 &half_extents)
 {
   brush_geometry_t brush;
-  brush.vertices = make_box_brush_vertices(center, half_extents);
+  brush.hull_points = make_box_brush_points(center, half_extents);
   return brush;
 }
 
@@ -103,7 +103,7 @@ linalg::vec3 get_position(const geometry_value_t &geometry)
   case geometry_kind_t::Brush:
   {
     const aabb_bounds_t bounds =
-        compute_brush_bounds(std::get<brush_geometry_t>(geometry).vertices);
+        compute_brush_bounds(std::get<brush_geometry_t>(geometry).hull_points);
     return (bounds.min + bounds.max) * 0.5f;
   }
   }
@@ -215,7 +215,7 @@ linalg::vec3 get_half_extents(const geometry_value_t &geometry)
   case geometry_kind_t::Brush:
   {
     const aabb_bounds_t bounds =
-        compute_brush_bounds(std::get<brush_geometry_t>(geometry).vertices);
+        compute_brush_bounds(std::get<brush_geometry_t>(geometry).hull_points);
     return (bounds.max - bounds.min) * 0.5f;
   }
   }
@@ -237,7 +237,7 @@ aabb_bounds_t get_bounds(const geometry_value_t &geometry)
     // is slightly too big costs a rejected ray while one that is too small is a
     // brush you cannot click and cannot collide with.
     const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
-    aabb_bounds_t bounds = compute_brush_bounds(brush.vertices);
+    aabb_bounds_t bounds = compute_brush_bounds(brush.hull_points);
 
     linalg::vec3 lowest{0, 0, 0};
     linalg::vec3 highest{0, 0, 0};
@@ -298,8 +298,6 @@ collision_piece_t piece_from_polyhedron(const brush_polyhedron_t &polyhedron)
   return piece;
 }
 
-} // namespace
-
 // ONE COLUMN PER GRID TRIANGLE, and it is exact rather than an approximation.
 //
 // A subdivided face's grid is a structure we generated, so handing it to a
@@ -316,14 +314,21 @@ collision_piece_t piece_from_polyhedron(const brush_polyhedron_t &polyhedron)
 //
 // intersected -- an intersection of half-spaces, so convex by construction, and
 // EXACT because within that column the displaced surface is that one planar
-// triangle. The base triangles tile the face, so the columns tile the solid.
+// triangle. The base triangles tile the face, so the columns tile its SHADOW.
 //
-// Empty (and the caller falls back to the general BSP) when the assumption that
-// buys all of it does not hold: exactly one face carries a grid, and every hull
-// vertex lies in that face's shadow, so the face's footprint really is the whole
-// solid. A box with a sculpted top -- every displacement that has ever existed --
-// passes both; a wedge subdivided on its slanted face does not, and is correct
-// but slow rather than fast and wrong.
+// What the face does not shadow is covered separately, by one piece per edge of
+// the face polygon: out there the brush is unmodified, so the solid is just the
+// base solid beyond that edge, which is one more intersection of half-spaces.
+// Those pieces overlap each other in the corners, which costs a BVH leaf and
+// nothing else -- every one of them lies inside the solid, so no union of them
+// can invent a wall. Demanding that the shadow cover the solid instead is what
+// used to send a frustum, or anything narrower at the sculpted end than at the
+// other, to the BSP -- where it stopped colliding entirely at subdivision level
+// 8, the point at which one grid outgrows MAX_CONVEX_INPUT_FACES.
+//
+// Empty (and the caller falls back to the cones) when TWO faces carry a grid: a
+// column is capped by the other faces' planes, and a second sculpted face means
+// one of those planes is no longer where the solid ends.
 std::optional<std::vector<collision_piece_t>>
 try_build_subdivided_face_columns(const brush_polyhedron_t &hull,
                                   const brush_face_grids_t &grids)
@@ -334,33 +339,15 @@ try_build_subdivided_face_columns(const brush_polyhedron_t &hull,
     if (grids.grid_vertices[face_index].empty())
       continue;
     if (subdivided_face != SIZE_MAX)
-      return std::nullopt; // two grids: the shadow cannot be both faces'.
+      return std::nullopt; // two grids: a column's cap is another face's plane.
     subdivided_face = face_index;
   }
 
   if (subdivided_face == SIZE_MAX)
     return std::nullopt;
 
-  const brush_face_t &face = hull.faces[subdivided_face];
+  const brush_face_t &face   = hull.faces[subdivided_face];
   const linalg::vec3 &normal = face.plane.normal;
-
-  // The shadow test. A point of the solid is under the face only if it projects
-  // inside the face polygon, and for a convex solid checking the vertices is
-  // enough -- the projection of a convex hull is the hull of the projections.
-  for (const linalg::vec3 &vertex : hull.vertices)
-  {
-    for (size_t corner = 0; corner < face.vertex_indices.size(); ++corner)
-    {
-      const linalg::vec3 &a = hull.vertices[face.vertex_indices[corner]];
-      const linalg::vec3 &b =
-          hull.vertices[face.vertex_indices[(corner + 1) % face.vertex_indices.size()]];
-
-      // Outward edge normal of the face polygon, in the face's own plane.
-      const linalg::vec3 outward = linalg::cross(b - a, normal);
-      if (linalg::dot(outward, vertex - a) > BRUSH_COPLANAR_EPSILON)
-        return std::nullopt;
-    }
-  }
 
   std::vector<linalg::vec3> polygon;
   for (uint32_t index : face.vertex_indices)
@@ -388,7 +375,7 @@ try_build_subdivided_face_columns(const brush_polyhedron_t &hull,
   std::vector<collision_piece_t> pieces;
   std::vector<Plane>             planes;
 
-  const int level = size - 1;
+  const int  level   = size - 1;
   const auto base_at = [&](int i, int j) {
     return face_grid_base_vertex(*base_grid, level, i, j);
   };
@@ -412,8 +399,8 @@ try_build_subdivided_face_columns(const brush_polyhedron_t &hull,
                                            grid_at(triangle[1][0], triangle[1][1]),
                                            grid_at(triangle[2][0], triangle[2][1])};
 
-        linalg::vec3 top = linalg::cross(displaced[1] - displaced[0],
-                                         displaced[2] - displaced[0]);
+        linalg::vec3 top =
+            linalg::cross(displaced[1] - displaced[0], displaced[2] - displaced[0]);
         if (linalg::length(top) <= 1e-6f)
           continue; // a degenerate cell bounds nothing.
         top = linalg::normalize(top);
@@ -456,8 +443,151 @@ try_build_subdivided_face_columns(const brush_polyhedron_t &hull,
   if (pieces.empty())
     return std::nullopt;
 
+  linalg::vec3 polygon_centroid{0, 0, 0};
+  for (const linalg::vec3 &point : polygon)
+    polygon_centroid = polygon_centroid + point;
+  polygon_centroid = polygon_centroid * (1.f / (float)polygon.size());
+
+  for (size_t corner = 0; corner < polygon.size(); ++corner)
+  {
+    const linalg::vec3 &a = polygon[corner];
+    const linalg::vec3 &b = polygon[(corner + 1) % polygon.size()];
+
+    linalg::vec3 outward = linalg::cross(b - a, normal);
+    if (linalg::length(outward) <= 1e-6f)
+      continue;
+    outward = linalg::normalize(outward);
+    if (linalg::dot(outward, polygon_centroid - a) > 0.f)
+      outward = outward * -1.f;
+
+    // Facing IN, so the half-space kept is the one BEYOND the edge. A box's face
+    // edges lie on its own side faces, so every one of these bounds nothing and
+    // is dropped -- which is why the common case pays no piece for this at all.
+    planes = other_planes;
+    planes.push_back(face.plane);
+    planes.push_back(Plane{a, outward * -1.f});
+
+    const std::optional<brush_polyhedron_t> beyond =
+        try_build_convex_from_planes(planes, center, radius);
+    if (beyond)
+      pieces.push_back(piece_from_polyhedron(*beyond));
+  }
+
   return pieces;
 }
+
+// ONE PYRAMID PER BOUNDARY FACE, from a point every one of them can see.
+//
+// A subdivided face's grid is a structure we generated, so handing it to a
+// general BSP over its own thousand face planes spends an O(n^2)-per-node search
+// on an answer we already know the shape of -- a level-24 grid measured at twenty
+// seconds for ONE brush, which is a map load and an editor BVH rebuild.
+//
+// The construction instead: pick an APEX inside the solid, and cone every face of
+// the displaced boundary back to it. conv(apex, face) is convex because a face of
+// this boundary is always a convex polygon -- a hull face, or one grid triangle --
+// and the cones tile the solid exactly, because every point of it lies on exactly
+// one segment from the apex to the boundary.
+//
+// That holds precisely when the solid is STAR-SHAPED about the apex, which is one
+// dot product per face: the apex must sit strictly behind every boundary plane. So
+// the precondition is local, checkable, and names the face that broke it -- unlike
+// the per-face columns this replaced, which additionally demanded that exactly ONE
+// face carry a grid and that the whole solid lie in that face's shadow. Two
+// sculpted faces, or a brush narrower at the top than the bottom, fell through to
+// the BSP and stopped colliding at subdivision level 8.
+//
+// The apex is the centroid of the brush's own points. A brush is the hull of those
+// points, so any average of them is inside it, and for a box it is the centre. What
+// that does not survive is a dent deeper than the brush's own middle -- a crater
+// through a thin slab -- which is the caller's fallback, not an approximation here.
+std::optional<std::vector<collision_piece_t>>
+try_build_boundary_pyramids(const brush_polyhedron_t &displaced,
+                            Span<const linalg::vec3> base_vertices)
+{
+  if (base_vertices.count == 0 || displaced.faces.size() < 4)
+    return std::nullopt;
+
+  linalg::vec3 apex{0, 0, 0};
+  for (uint32_t index = 0; index < base_vertices.count; ++index)
+    apex = apex + base_vertices[index];
+  apex = apex * (1.f / (float)base_vertices.count);
+
+  // The star test. A pyramid whose apex is ON its own base plane has no volume
+  // and no side planes to speak of, so the clearance has to be a margin rather
+  // than a sign.
+  for (const brush_face_t &face : displaced.faces)
+  {
+    if (linalg::dot(face.plane.normal, apex - face.plane.point) > -BRUSH_COPLANAR_EPSILON)
+      return std::nullopt;
+  }
+
+  std::vector<collision_piece_t> pieces;
+  pieces.reserve(displaced.faces.size());
+
+  for (const brush_face_t &face : displaced.faces)
+  {
+    if (face.vertex_indices.size() < 3)
+      return std::nullopt; // not a face, and a dropped one leaves a hole.
+
+    collision_piece_t piece;
+    piece.planes.reserve(face.vertex_indices.size() + 1);
+    piece.face_polygons.reserve(face.vertex_indices.size() + 1);
+
+    std::vector<linalg::vec3> base_polygon;
+    base_polygon.reserve(face.vertex_indices.size());
+    for (uint32_t index : face.vertex_indices)
+      base_polygon.push_back(displaced.vertices[index]);
+
+    piece.bounds.min = apex;
+    piece.bounds.max = apex;
+    for (const linalg::vec3 &point : base_polygon)
+    {
+      piece.bounds.min = {std::min(piece.bounds.min.x, point.x),
+                          std::min(piece.bounds.min.y, point.y),
+                          std::min(piece.bounds.min.z, point.z)};
+      piece.bounds.max = {std::max(piece.bounds.max.x, point.x),
+                          std::max(piece.bounds.max.y, point.y),
+                          std::max(piece.bounds.max.z, point.z)};
+    }
+
+    piece.planes.push_back(face.plane);
+    piece.face_polygons.push_back(base_polygon);
+
+    // One side per base edge, wound (edge start, apex, edge end) so it faces out
+    // of the pyramid the way the base it hangs off does.
+    bool degenerate = false;
+    for (size_t corner = 0; corner < base_polygon.size(); ++corner)
+    {
+      const linalg::vec3 &from = base_polygon[corner];
+      const linalg::vec3 &to   = base_polygon[(corner + 1) % base_polygon.size()];
+
+      const linalg::vec3 cross = linalg::cross(apex - from, to - from);
+      const float        area  = linalg::length(cross);
+      if (area <= 1e-6f)
+      {
+        degenerate = true;
+        break;
+      }
+
+      Plane side;
+      side.normal = cross * (1.f / area);
+      side.point  = from;
+
+      piece.planes.push_back(side);
+      piece.face_polygons.push_back({from, apex, to});
+    }
+
+    if (degenerate)
+      return std::nullopt;
+
+    pieces.push_back(std::move(piece));
+  }
+
+  return pieces;
+}
+
+} // namespace
 
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
                                                     entity_uid_t uid)
@@ -480,43 +610,60 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
     const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
 
     const std::optional<brush_polyhedron_t> hull =
-        try_build_brush_polyhedron(brush.vertices);
+        try_build_brush_polyhedron(brush.hull_points);
     if (!hull)
     {
       log_error("get_collision_pieces: brush {} with {} vertices does not hull — it "
                 "will not collide",
-                uid, brush.vertices.size());
+                uid, brush.hull_points.size());
       return {};
     }
 
     // A brush's stored form is a point set, so its BASE solid is always convex --
-    // subdivision is the only thing that can make one concave. So the structural
-    // path below is what actually runs for a displaced brush, and the general
-    // BSP is what runs for anything else.
+    // subdivision is the only thing that can make one concave. Every brush that
+    // predates Track D is therefore ONE piece and the shape it always had.
     const brush_face_grids_t grids = build_brush_face_grids(brush, *hull);
-    if (grids.any)
-    {
-      if (std::optional<std::vector<collision_piece_t>> columns =
-              try_build_subdivided_face_columns(*hull, grids))
-        return std::move(*columns);
-    }
+    if (!grids.any)
+      return {piece_from_polyhedron(*hull)};
 
-    std::optional<brush_polyhedron_t> polyhedron = try_build_displaced_polyhedron(brush);
-    if (!polyhedron)
+    // Columns first: they tile the solid by CONSTRUCTION, so they are exact
+    // whatever the sculpt does -- a sawtooth ridge included, which is the one
+    // shape a cone cannot see past. They answer for a single sculpted face.
+    if (std::optional<std::vector<collision_piece_t>> columns =
+            try_build_subdivided_face_columns(*hull, grids))
+      return std::move(*columns);
+
+    const std::optional<brush_polyhedron_t> displaced =
+        try_build_displaced_polyhedron(brush);
+    if (!displaced)
     {
-      log_error("get_collision_pieces: brush {} with {} vertices does not hull — it "
-                "will not collide",
-                uid, brush.vertices.size());
+      // Unreachable while the hull above succeeded -- this hulls the same point
+      // set. Said rather than assumed, because the outcome is the same either way.
+      log_error("get_collision_pieces: brush {} hulls but its displaced form does "
+                "not — it will not collide",
+                uid);
       return {};
     }
 
+    // A sculpt that happens to stay convex is still one piece.
+    if (polyhedron_is_convex(*displaced))
+      return {piece_from_polyhedron(*displaced)};
+
+    if (std::optional<std::vector<collision_piece_t>> pyramids =
+            try_build_boundary_pyramids(*displaced, brush.hull_points))
+      return std::move(*pyramids);
+
+    // Several sculpted faces AND no apex that sees all of them -- a dent past the
+    // brush's own middle, or slopes steep enough to hide one part from another.
+    // Correct, but O(faces^2) per node, which is why it refuses outright past
+    // MAX_CONVEX_INPUT_FACES.
     std::optional<std::vector<brush_polyhedron_t>> pieces =
-        try_decompose_into_convex_pieces(*polyhedron);
+        try_decompose_into_convex_pieces(*displaced);
     if (!pieces)
     {
       log_error("get_collision_pieces: brush {} with {} faces does not decompose into "
                 "convex pieces — it will not collide",
-                uid, polyhedron->faces.size());
+                uid, displaced->faces.size());
       return {};
     }
 
@@ -548,6 +695,11 @@ const geometry_surface_t &get_surface(const geometry_value_t &geometry)
 
 namespace
 {
+
+bool quat_equal(const linalg::quatf &lhs, const linalg::quatf &rhs)
+{
+  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z && lhs.w == rhs.w;
+}
 
 bool vec3_equal(const linalg::vec3 &lhs, const linalg::vec3 &rhs)
 {
@@ -637,8 +789,7 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
   {
     const static_mesh_geometry_t &a = std::get<static_mesh_geometry_t>(lhs);
     const static_mesh_geometry_t &b = std::get<static_mesh_geometry_t>(rhs);
-    return vec3_equal(a.position, b.position) &&
-           vec3_equal(a.orientation, b.orientation) &&
+    return vec3_equal(a.position, b.position) && quat_equal(a.orientation, b.orientation) &&
            vec3_equal(a.scale, b.scale) && surfaces_equal(a.surface, b.surface);
   }
 
@@ -646,7 +797,7 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
   {
     const brush_geometry_t &a = std::get<brush_geometry_t>(lhs);
     const brush_geometry_t &b = std::get<brush_geometry_t>(rhs);
-    if (a.vertices.size() != b.vertices.size() || !surfaces_equal(a.surface, b.surface) ||
+    if (a.hull_points.size() != b.hull_points.size() || !surfaces_equal(a.surface, b.surface) ||
         !face_surfaces_equal(a.face_surfaces, b.face_surfaces))
       return false;
 
@@ -658,13 +809,13 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
     // list for git's sake, so every saved-and-reloaded brush compared unequal to
     // itself and pushed a phantom undo entry. Coordinates are still compared
     // BIT-exactly; it is only the arrangement that is free.
-    std::vector<bool> matched(b.vertices.size(), false);
-    for (const linalg::vec3 &vertex : a.vertices)
+    std::vector<bool> matched(b.hull_points.size(), false);
+    for (const linalg::vec3 &vertex : a.hull_points)
     {
       bool found = false;
-      for (size_t i = 0; i < b.vertices.size(); ++i)
+      for (size_t i = 0; i < b.hull_points.size(); ++i)
       {
-        if (matched[i] || !vec3_equal(vertex, b.vertices[i]))
+        if (matched[i] || !vec3_equal(vertex, b.hull_points[i]))
           continue;
 
         matched[i] = true;
@@ -682,24 +833,6 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
   log_error("geometry_values_equal: unhandled geometry kind {}", (int)get_kind(lhs));
   return false;
 }
-
-namespace
-{
-
-// How close two planes have to be to be the same face. The normal test is the
-// strict one -- a face that has ROTATED past this is a different face, and
-// inheriting a material across that is worse than falling back to the default.
-// The distance test is loose, because a face slid along its own normal by a drag
-// is still that face.
-constexpr float FACE_KEY_NORMAL_DOT = 0.985f; // about 10 degrees
-constexpr float FACE_KEY_MAX_DISTANCE = 64.f;
-
-float plane_distance(const Plane &plane)
-{
-  return linalg::dot(plane.normal, plane.point);
-}
-
-} // namespace
 
 assets::asset_handle_t<assets::texture_asset_t>
 resolve_material_texture(const std::string &material_path)
@@ -776,36 +909,20 @@ namespace
 std::optional<size_t> try_find_face_surface_index(const brush_geometry_t &brush,
                                                   const Plane &plane)
 {
-  const float distance = plane_distance(plane);
-
   std::optional<size_t> best;
-  float best_normal_dot = FACE_KEY_NORMAL_DOT;
-  float best_distance_error = FACE_KEY_MAX_DISTANCE;
+  face_key_match_t best_match;
 
   for (size_t i = 0; i < brush.face_surfaces.size(); ++i)
   {
     const face_surface_t &candidate = brush.face_surfaces[i];
 
-    const float normal_dot = linalg::dot(plane.normal, candidate.key_normal);
-    if (normal_dot < FACE_KEY_NORMAL_DOT)
-      continue;
-
-    const float distance_error = std::abs(distance - candidate.key_distance);
-    if (distance_error > FACE_KEY_MAX_DISTANCE)
-      continue;
-
-    // Normal first, distance second: two parallel faces of a brush are told
-    // apart by distance, but a face that rotated is a worse match than one that
-    // slid however far it slid.
-    const bool better = !best || normal_dot > best_normal_dot + 1e-4f ||
-                        (std::abs(normal_dot - best_normal_dot) <= 1e-4f &&
-                         distance_error < best_distance_error);
-    if (!better)
+    const face_key_match_t match =
+        match_face_key(candidate.key_normal, candidate.key_distance, plane);
+    if (!match.matched || !match.is_better_than(best_match))
       continue;
 
     best = i;
-    best_normal_dot = normal_dot;
-    best_distance_error = distance_error;
+    best_match = match;
   }
 
   return best;
@@ -836,7 +953,7 @@ face_surface_t &face_surface_for(brush_geometry_t &brush, const Plane &plane)
 
 void translate_brush(brush_geometry_t &brush, const linalg::vec3 &delta)
 {
-  for (linalg::vec3 &vertex : brush.vertices)
+  for (linalg::vec3 &vertex : brush.hull_points)
     vertex = vertex + delta;
 
   // An edit that KNOWS what it did rewrites the face keys itself rather than
@@ -858,7 +975,7 @@ void translate_brush(brush_geometry_t &brush, const linalg::vec3 &delta)
 void sync_face_surfaces(brush_geometry_t &brush)
 {
   const std::optional<brush_polyhedron_t> polyhedron =
-      try_build_brush_polyhedron(brush.vertices);
+      try_build_brush_polyhedron(brush.hull_points);
   if (!polyhedron)
   {
     // The vertices do not hull, so there are no derived faces to key against.
@@ -866,7 +983,7 @@ void sync_face_surfaces(brush_geometry_t &brush)
     // be undone, and dropping the materials would make that undo lossy.
     log_error("sync_face_surfaces: {} vertices do not form a solid — face "
               "surfaces left as they are",
-              brush.vertices.size());
+              brush.hull_points.size());
     return;
   }
 
@@ -1367,7 +1484,7 @@ brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
 size_t nudge_brush_grid_vertices(brush_geometry_t &brush, Span<const linalg::vec3> points,
                                  const linalg::vec3 &delta)
 {
-  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.vertices);
+  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
   if (!hull)
     return 0;
 
@@ -1409,7 +1526,7 @@ size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &cente
   if (radius <= 0.f || amount <= 0.f)
     return 0;
 
-  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.vertices);
+  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
   if (!hull)
     return 0;
 
@@ -1447,11 +1564,55 @@ size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &cente
   return painted;
 }
 
+size_t sculpt_brush_grid_vertices(brush_geometry_t &brush, const linalg::vec3 &center,
+                                  float radius, const linalg::vec3 &delta)
+{
+  if (radius <= 0.f)
+    return 0;
+
+  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
+  if (!hull)
+    return 0;
+
+  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull);
+  if (!grids.any)
+    return 0;
+
+  size_t moved = 0;
+  for (size_t face_index = 0; face_index < hull->faces.size(); ++face_index)
+  {
+    const std::vector<linalg::vec3> &grid = grids.grid_vertices[face_index];
+    if (grid.empty())
+      continue;
+
+    face_surface_t &surface = face_surface_for(brush, hull->faces[face_index].plane);
+    if (surface.offsets.size() != grid.size())
+      continue;
+
+    for (size_t vertex = 0; vertex < grid.size(); ++vertex)
+    {
+      const float distance = linalg::length(grid[vertex] - center);
+      if (distance >= radius)
+        continue;
+
+      // Smoothstep from the centre to the rim, the same falloff the blend
+      // stroke lays down, so the two brushes cover the same footprint.
+      const float t = 1.f - distance / radius;
+      const float falloff = t * t * (3.f - 2.f * t);
+
+      surface.offsets[vertex] = surface.offsets[vertex] + delta * falloff;
+      ++moved;
+    }
+  }
+
+  return moved;
+}
+
 std::optional<brush_grid_hit_t> try_pick_brush_grid(const brush_geometry_t &brush,
                                                     const linalg::vec3 &ray_origin,
                                                     const linalg::vec3 &ray_direction)
 {
-  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.vertices);
+  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
   if (!hull)
     return std::nullopt;
 
@@ -1513,7 +1674,7 @@ std::optional<brush_grid_hit_t> try_pick_brush_grid(const brush_geometry_t &brus
 std::optional<brush_polyhedron_t>
 try_build_displaced_polyhedron(const brush_geometry_t &brush)
 {
-  std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.vertices);
+  std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
   if (!hull)
     return std::nullopt;
 
@@ -1559,6 +1720,18 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush)
       indices[i] = (uint32_t)(displaced.vertices.size() - 1);
     }
 
+    // The grid runs CCW in (u, v), but brush_face_grid_tangents picks its basis
+    // from |normal|, so cross(u, v) is the outward normal on only half the faces
+    // -- the same flip generate_brush_mesh makes, and for the same reason. A
+    // polyhedron's normals point OUT by contract, and a face emitted inside out
+    // is a solid every consumer reads as empty right where it is not.
+    linalg::vec3 tangent_u{0, 0, 0};
+    linalg::vec3 tangent_v{0, 0, 0};
+    brush_face_grid_tangents(hull->faces[face_index].plane.normal, tangent_u, tangent_v);
+    const bool grid_winds_outward =
+        linalg::dot(linalg::cross(tangent_u, tangent_v),
+                    hull->faces[face_index].plane.normal) > 0.f;
+
     // Two triangles per cell rather than one quad: an offset grid is a bilinear
     // patch, and a bilinear patch has no plane.
     for (int j = 0; j + 1 < size; ++j)
@@ -1569,8 +1742,16 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush)
         const uint32_t b = indices[(size_t)(j * size + i + 1)];
         const uint32_t c = indices[(size_t)((j + 1) * size + i + 1)];
         const uint32_t d = indices[(size_t)((j + 1) * size + i)];
-        append_triangle(a, b, c);
-        append_triangle(a, c, d);
+        if (grid_winds_outward)
+        {
+          append_triangle(a, b, c);
+          append_triangle(a, c, d);
+        }
+        else
+        {
+          append_triangle(a, c, b);
+          append_triangle(a, d, c);
+        }
       }
     }
   }
@@ -1579,14 +1760,15 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush)
 }
 
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
-                                         Span<const std::string> materials)
+                                         Span<const std::string> materials,
+                                         const brush_lightmap_ref_t &lighting)
 {
   const std::optional<brush_polyhedron_t> polyhedron =
-      try_build_brush_polyhedron(brush.vertices);
+      try_build_brush_polyhedron(brush.hull_points);
   if (!polyhedron)
   {
     log_error("generate_brush_mesh: {} vertices do not form a solid — drawing nothing",
-              brush.vertices.size());
+              brush.hull_points.size());
     return {};
   }
 
@@ -1621,6 +1803,11 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
   std::vector<std::vector<size_t>> faces_by_slot;
   bool mesh_blends = false;
 
+  // Whether ANY face of this brush names a chart. A brush the bake never reached
+  // leaves lightmap_uv empty rather than filling it with sentinels, so it uploads
+  // byte for byte what it did before the bake existed.
+  bool mesh_is_lightmapped = false;
+
   for (size_t face_index = 0; face_index < polyhedron->faces.size(); ++face_index)
   {
     const brush_face_t &face = polyhedron->faces[face_index];
@@ -1630,6 +1817,10 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
     const face_surface_t *surface = find_face_surface(brush, face.plane);
     if (surface && !surface->emits_geometry)
       continue;
+
+    if (lighting.has_bake() &&
+        find_chart(*lighting.lightmap, lighting.object_uid, face.plane))
+      mesh_is_lightmapped = true;
 
     slot_layers_t layers;
     layers.blends = surface && face_is_blended(*surface);
@@ -1685,6 +1876,27 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
           mesh.indices.push_back(base);
           mesh.indices.push_back(base + offset);
           mesh.indices.push_back(base + offset + 1);
+        }
+      }
+
+      // Lightmap coordinates for whatever the two paths above emitted, read back
+      // out of the vertices rather than computed inside each -- the projection
+      // takes a world position and both paths have already written one, so this
+      // is one arm instead of two that can disagree.
+      //
+      // Covers the WHOLE mesh once anything on it is lit, for the same reason
+      // `blend` does: a parallel array covering part of a buffer is not one.
+      if (mesh_is_lightmapped)
+      {
+        mesh.lightmap_uv.resize(mesh.vertices.size(), UNLIT_LIGHTMAP_UV);
+
+        if (const lightmap_chart_t *chart =
+                find_chart(*lighting.lightmap, lighting.object_uid, face.plane))
+        {
+          for (size_t vertex = base; vertex < mesh.vertices.size(); ++vertex)
+            mesh.lightmap_uv[vertex] =
+                lightmap_uv_for(*chart, lighting.lightmap->settings,
+                                lighting.lightmap->atlas, mesh.vertices[vertex].position);
         }
       }
 
@@ -1798,6 +2010,18 @@ std::string format_vec3_exact(const linalg::vec3 &value)
   return buffer;
 }
 
+// %.9g for the reason brush_vertices_to_text already is: geometry_values_equal
+// is bit-exact and is the undo primitive, so a lossy round trip makes a
+// saved-and-reloaded object compare unequal to itself and pushes a phantom undo
+// entry the moment anything touches it.
+std::string format_quat_exact(const linalg::quatf &value)
+{
+  char buffer[128];
+  std::snprintf(buffer, sizeof(buffer), "%.9g %.9g %.9g %.9g", value.x, value.y, value.z,
+                value.w);
+  return buffer;
+}
+
 // --- readers. Each leaves `out` untouched (i.e. at its default) on a miss, and
 // logs anything present-but-unparseable rather than silently defaulting.
 
@@ -1882,6 +2106,32 @@ void read_vec3(const std::map<std::string, std::string> &properties, const char 
     log_error("geometry property \"{}\": \"{}\" is not three floats — keeping "
               "{} {} {}",
               key, *raw, out.x, out.y, out.z);
+}
+
+// `orientation` is a READ-ONLY property key, exactly like the `box` and
+// `displacement` block keywords: a file written before 2026-08-31 spells the
+// rotation as three euler degrees, this converts it once, and `serialize_geometry`
+// can never emit one again. That is what makes the conversion one-time rather
+// than a pass that re-runs on every load forever.
+void read_rotation(const std::map<std::string, std::string> &properties,
+                   linalg::quatf &out)
+{
+  if (const std::string *raw = find_property(properties, "rotation"))
+  {
+    std::istringstream stream(*raw);
+    linalg::quatf parsed;
+    if (stream >> parsed.x >> parsed.y >> parsed.z >> parsed.w)
+      out = linalg::normalize(parsed);
+    else
+      log_error("geometry property \"rotation\": \"{}\" is not four floats — keeping "
+                "{} {} {} {}",
+                *raw, out.x, out.y, out.z, out.w);
+    return;
+  }
+
+  linalg::vec3 legacy_euler_degrees = {0.f, 0.f, 0.f};
+  read_vec3(properties, "orientation", legacy_euler_degrees);
+  out = linalg::from_euler_degrees(legacy_euler_degrees);
 }
 
 // --- surface (shared by every kind) ---
@@ -2175,7 +2425,7 @@ void serialize_geometry(const geometry_value_t &geometry,
   {
     const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
     out_properties.emplace_back("position", format_vec3(static_mesh.position));
-    out_properties.emplace_back("orientation", format_vec3(static_mesh.orientation));
+    out_properties.emplace_back("rotation", format_quat_exact(static_mesh.orientation));
     out_properties.emplace_back("scale", format_vec3(static_mesh.scale));
     write_surface(static_mesh.surface, out_properties);
     return;
@@ -2184,7 +2434,7 @@ void serialize_geometry(const geometry_value_t &geometry,
   case geometry_kind_t::Brush:
   {
     const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
-    out_properties.emplace_back("vertices", brush_vertices_to_text(brush.vertices));
+    out_properties.emplace_back("vertices", brush_vertices_to_text(brush.hull_points));
     write_surface(brush.surface, out_properties);
     for (const face_surface_t &face : brush.face_surfaces)
       write_face_surface(face, material_remap, out_children.emplace_back());
@@ -2232,7 +2482,7 @@ bool parse_geometry(const std::string &keyword,
   {
     static_mesh_geometry_t static_mesh;
     read_vec3(properties, "position", static_mesh.position);
-    read_vec3(properties, "orientation", static_mesh.orientation);
+    read_rotation(properties, static_mesh.orientation);
     read_vec3(properties, "scale", static_mesh.scale);
     read_surface(properties, static_mesh.surface);
     out_geometry = std::move(static_mesh);
@@ -2268,7 +2518,7 @@ bool parse_geometry(const std::string &keyword,
       return false;
     }
 
-    brush.vertices = std::move(*vertices);
+    brush.hull_points = std::move(*vertices);
     read_surface(properties, brush.surface);
 
     for (const map_block_t &child : children)

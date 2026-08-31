@@ -150,7 +150,7 @@ entity
   "classname" "player_spawn_entity"
   "_uid" "2"
   "position" "0 -384 0"
-  "orientation" "0 0 0"
+  "orientation" "0 0 0 1"
   "spawn_type" "Human"
   "team_allegiance" "Free_For_All"
 }
@@ -159,7 +159,7 @@ entity
   "classname" "trigger_volume_entity"
   "_uid" "3"
   "position" "-502.74054 -800 -291.12976"
-  "orientation" "0 0 0"
+  "orientation" "0 0 0 1"
   "volume.position" "0 0 0"
   "volume.half_extents" "1930.1438 64 2417.3303"
   "action" "Warp_To_Spawn"
@@ -173,7 +173,7 @@ entity
   "classname" "player_spawn_entity"
   "_uid" "7"
   "position" "-1024 0 -1024"
-  "orientation" "0 0 0"
+  "orientation" "0 0 0 1"
   "spawn_type" "Human"
   "team_allegiance" "Free_For_All"
 }
@@ -182,7 +182,7 @@ entity
   "classname" "player_spawn_entity"
   "_uid" "8"
   "position" "-1024 0 -640"
-  "orientation" "0 0 0"
+  "orientation" "0 0 0 1"
   "spawn_type" "Human"
   "team_allegiance" "Free_For_All"
 }

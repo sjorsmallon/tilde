@@ -68,7 +68,7 @@ void Particle_Editor_Tool::on_mouse_drag(editor_context_t&, const input::mouse_e
 void Particle_Editor_Tool::on_mouse_up(editor_context_t&, const input::mouse_event_t&) {}
 void Particle_Editor_Tool::on_key_down(editor_context_t&, const key_event_t&) {}
 
-void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
+void Particle_Editor_Tool::on_draw_overlay(editor_context_t& ctx,
                                           pass_builder_t& draw_passes)
 {
   // Highlight all particle emitters with a circle, selected one brighter
@@ -80,7 +80,7 @@ void Particle_Editor_Tool::on_draw_overlay(editor_context_t &ctx,
   }
 }
 
-void Particle_Editor_Tool::on_draw_ui(editor_context_t &ctx)
+void Particle_Editor_Tool::on_draw_ui(editor_context_t& ctx)
 {
   ImGui::Begin("Particle Editor");
 

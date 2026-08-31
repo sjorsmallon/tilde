@@ -176,12 +176,12 @@ std::vector<linalg::vec3> find_path(const navmesh_t &nav, const linalg::vec3 &st
     // Maintains a funnel defined by apex, left edge, and right edge.
     // Tightens the funnel at each portal; when one side crosses the other,
     // the crossed vertex becomes a turn point and a new apex.
-    auto v3eq = [](const linalg::vec3f &a, const linalg::vec3f &b) -> bool
+    auto v3eq = [](const linalg::vec3f& a, const linalg::vec3f& b) -> bool
     {
         return a.x == b.x && a.y == b.y && a.z == b.z;
     };
 
-    auto tri_area_2d = [](const linalg::vec3f &a, const linalg::vec3f &b, const linalg::vec3f &c) -> float
+    auto tri_area_2d = [](const linalg::vec3f& a, const linalg::vec3f& b, const linalg::vec3f& c) -> float
     {
         return (b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z);
     };
@@ -198,8 +198,8 @@ std::vector<linalg::vec3> find_path(const navmesh_t &nav, const linalg::vec3 &st
 
     for (int i = 1; i < (int)portals.size(); ++i)
     {
-        const linalg::vec3f &new_left  = portals[i].left;
-        const linalg::vec3f &new_right = portals[i].right;
+        const linalg::vec3f& new_left  = portals[i].left;
+        const linalg::vec3f& new_right = portals[i].right;
 
         // Try to tighten the right side of the funnel.
         if (tri_area_2d(funnel_apex, funnel_right, new_right) <= 0.0f)

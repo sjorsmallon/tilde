@@ -316,12 +316,12 @@ struct Render
 {
   static constexpr component_type static_component = component_type::Render;
 
-  assets::mesh_asset mesh = assets::mesh_asset::Error;
+  assets::mesh_asset mesh = assets::mesh_asset::Missing;
   bool visible = true;
   bool is_wireframe = false;
   linalg::vec3f offset = {0.0f, 0.0f, 0.0f};
   linalg::vec3f scale = {1.0f, 1.0f, 1.0f};
-  linalg::vec3f rotation = {0.0f, 0.0f, 0.0f};
+  linalg::quatf rotation = {0.0f, 0.0f, 0.0f, 1.0f};
   Material material = {};
 };
 
@@ -360,7 +360,7 @@ struct Entity
 
   uint32_t entity_id = {};
   linalg::vec3f position = {};
-  linalg::vec3f orientation = {};
+  linalg::quatf orientation = {0.0f, 0.0f, 0.0f, 1.0f};
 };
 
 struct Player_Spawn_Entity : Entity

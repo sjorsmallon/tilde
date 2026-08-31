@@ -54,7 +54,7 @@ inline constexpr uint8_t color_channel_from_float(float value)
 
 // Float interop (0..1 per channel). Lights, materials and particles store
 // colors as vec3f/vec4f; these bridge them to the canonical byte form.
-inline color_t color_from_vec3(const linalg::vec3f &rgb, uint8_t alpha = 255)
+inline color_t color_from_vec3(const linalg::vec3f& rgb, uint8_t alpha = 255)
 {
   return color_t{color_channel_from_float(rgb.r),
                  color_channel_from_float(rgb.g),

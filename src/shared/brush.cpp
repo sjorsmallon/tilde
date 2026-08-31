@@ -261,7 +261,7 @@ std::optional<brush_polyhedron_t> try_build_brush_polyhedron(Span<const linalg::
   return polyhedron;
 }
 
-std::vector<linalg::vec3> make_box_brush_vertices(const linalg::vec3 &center,
+std::vector<linalg::vec3> make_box_brush_points(const linalg::vec3 &center,
                                                   const linalg::vec3 &half_extents)
 {
   std::vector<linalg::vec3> vertices;

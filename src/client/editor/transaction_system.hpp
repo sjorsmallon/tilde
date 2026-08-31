@@ -14,16 +14,6 @@
 namespace client
 {
 
-// --- Data types ---
-//
-// Both flavors below are BINARY. Nothing here round-trips through text: an
-// entity snapshot is an exact clone and an entity modification is a list of
-// changed field bytes, exactly as geometry is a whole value. Text appears only
-// at the disk save/load boundary, which is map.cpp's business, not undo's.
-
-// One entity's captured state: an exact clone, produced by
-// entities::clone_entity. Held by shared_ptr because that's what map_t stores;
-// the transaction never mutates it, hence const.
 using entity_snapshot_t = std::shared_ptr<const entities::Entity>;
 
 struct diff_entity_created_t
@@ -48,17 +38,6 @@ struct diff_entity_modified_t
   std::vector<entities::field_change_t> changes;
 };
 
-// --- The second entry flavor: geometry value-swap ---------------------------
-//
-// Geometry doesn't get diffed field-by-field. It's a plain value, so undo IS a
-// whole-value copy — before and after, swap on undo/redo. It needs no schema and
-// no reflection at all, where the entity flavor needs both to know where the
-// fields are.
-//
-// The cost is memory: a sculpted face's snapshot is its whole offset
-// grid. That's the right trade for an editor — the tools already captured
-// whole-grid start states by hand for exactly this reason.
-
 struct diff_geometry_created_t
 {
   shared::entity_uid_t uid;
@@ -77,12 +56,6 @@ struct diff_geometry_modified_t
   shared::geometry_value_t before;
   shared::geometry_value_t after;
 };
-
-// --- The third entry flavor: the map's cvar list -----------------------------
-//
-// A whole-value swap like geometry, and for the same reason: attached_cvars is a
-// plain value with no schema, no uid and no fields to diff. The list is a
-// handful of short strings, so before/after copies cost nothing.
 
 struct diff_map_cvars_t
 {
@@ -108,7 +81,7 @@ template <class... Ts> struct overloaded : Ts...
 // destroy_entity as the deleter -- entities have no virtual destructor, and
 // destroy_entity is what recovers the concrete type from the tag before
 // deleting.
-inline entity_snapshot_t snapshot_entity(const entities::Entity *ent)
+inline entity_snapshot_t snapshot_entity(const entities::Entity* ent)
 {
   entities::Entity *copy = entities::clone_entity(ent);
   if (copy == nullptr)

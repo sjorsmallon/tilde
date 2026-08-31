@@ -18,38 +18,12 @@ namespace client
 namespace
 {
 
-// Rotate `offset` about whichever single world axis `euler_degrees` names. The
-// gizmo turns one ring at a time, so exactly one component is ever non-zero;
-// the axis pair matches the ring's own basis ((axis+1)%3, (axis+2)%3), which is
-// what makes a positive drag orbit the way the ring reads.
-linalg::vec3 rotate_about_world_axis(const linalg::vec3 &offset,
-                                     const linalg::vec3 &euler_degrees)
-{
-  linalg::vec3 result = offset;
-  for (int axis = 0; axis < 3; ++axis)
-  {
-    if (euler_degrees[axis] == 0.f)
-      continue;
-
-    const int   u       = (axis + 1) % 3;
-    const int   v       = (axis + 2) % 3;
-    const float radians = linalg::to_radians(euler_degrees[axis]);
-    const float cosine  = std::cos(radians);
-    const float sine    = std::sin(radians);
-
-    const linalg::vec3 source = result;
-    result[u] = source[u] * cosine - source[v] * sine;
-    result[v] = source[u] * sine + source[v] * cosine;
-  }
-  return result;
-}
-
 } // namespace
 
 
 // Capture the pre-drag state of everything selected. Both regimes go into the
 // same map keyed by uid, so the drag itself never asks which is which.
-void Selection_Tool::capture_drag_snapshots(editor_context_t &ctx)
+void Selection_Tool::capture_drag_snapshots(editor_context_t& ctx)
 {
   drag_start_snapshots.clear();
   drag_origins.clear();
@@ -64,7 +38,8 @@ void Selection_Tool::capture_drag_snapshots(editor_context_t &ctx)
 
     drag_origins.push_back(
         {uid, *position,
-         shared::try_get_object_orientation(*ctx.map, uid).value_or(linalg::vec3{0, 0, 0})});
+         shared::try_get_object_orientation(*ctx.map, uid)
+             .value_or(linalg::quatf::identity())});
 
     if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
     {
@@ -79,9 +54,9 @@ void Selection_Tool::capture_drag_snapshots(editor_context_t &ctx)
 
 // Push one transaction covering the whole drag, so Ctrl+Z undoes the move of all
 // selected objects at once rather than one at a time.
-void Selection_Tool::commit_drag_snapshots(editor_context_t &ctx)
+void Selection_Tool::commit_drag_snapshots(editor_context_t& ctx)
 {
-  if (drag_start_snapshots.empty() || !ctx.transaction_system || !ctx.map)
+  if (drag_start_snapshots.empty() || !ctx.map)
   {
     drag_start_snapshots.clear();
     return;
@@ -100,13 +75,13 @@ void Selection_Tool::commit_drag_snapshots(editor_context_t &ctx)
     if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       transaction.add_modified_from_diff(uid, snapshot.entity, entry->entity.get());
   }
-  ctx.transaction_system->push(std::move(transaction));
+  ctx.transaction_system.push(std::move(transaction));
   drag_start_snapshots.clear();
   drag_origins.clear();
 }
 
 std::optional<shared::aabb_bounds_t>
-Selection_Tool::try_compute_selection_bounds(editor_context_t &ctx) const
+Selection_Tool::try_compute_selection_bounds(editor_context_t& ctx) const
 {
   if (selected_uids.empty() || !ctx.map)
     return std::nullopt;
@@ -128,7 +103,7 @@ gizmo_view_t Selection_Tool::make_gizmo_view() const
 // itself writes nothing -- it does not know a map exists -- so this is the one
 // place a gizmo drag reaches the world, and it goes through the same per-uid
 // seam every other tool uses.
-void Selection_Tool::apply_gizmo_drag(editor_context_t &ctx, const gizmo_drag_t &drag)
+void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t &drag)
 {
   if (!ctx.map)
     return;
@@ -152,7 +127,7 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t &ctx, const gizmo_drag_t 
     }
   }
 
-  if (drag.rotation.x != 0.f || drag.rotation.y != 0.f || drag.rotation.z != 0.f)
+  if (!linalg::is_identity_rotation(drag.rotation))
   {
     // Rotating ONE object spins it where it stands; rotating a GROUP turns the
     // arrangement. That is not an implementation accident -- they are different
@@ -166,7 +141,7 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t &ctx, const gizmo_drag_t 
       if (orbit)
       {
         const linalg::vec3 orbited =
-            drag.pivot + rotate_about_world_axis(origin.position - drag.pivot, drag.rotation);
+            drag.pivot + linalg::rotate(drag.rotation, origin.position - drag.pivot);
         if (!shared::try_set_object_position(*ctx.map, origin.uid, orbited))
           log_error("selection tool: object {} vanished mid-drag", origin.uid);
       }
@@ -175,13 +150,13 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t &ctx, const gizmo_drag_t 
       // axis-aligned box orbits the pivot and stays axis-aligned, which is what
       // it IS. Writing a rotation onto one and drawing it unrotated is the lie
       // map_geometry.hpp deleted the field for, so this is not a failure.
-      const std::optional<linalg::vec3> current =
+      const std::optional<linalg::quatf> current =
           shared::try_get_object_orientation(*ctx.map, origin.uid);
       if (!current)
         continue;
 
       if (!shared::try_set_object_orientation(*ctx.map, origin.uid,
-                                              origin.orientation + drag.rotation))
+                                              linalg::rotate_model_in_world(origin.orientation, drag.rotation)))
         log_error("selection tool: object {} took a rotation it cannot store", origin.uid);
     }
   }
@@ -198,7 +173,7 @@ void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
   commit_drag_snapshots(ctx);
 }
 
-void Selection_Tool::draw_multi_selection_panel(editor_context_t &ctx)
+void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
 {
   const shared::aabb_bounds_t bounds = *try_compute_selection_bounds(ctx);
   const linalg::vec3          center = (bounds.min + bounds.max) * 0.5f;
@@ -238,7 +213,7 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t &ctx)
     if (ImGui::Button(AXIS_LABELS[axis]))
     {
       gizmo_drag_t turn;
-      turn.rotation[axis] = 90.f;
+      turn.rotation = linalg::rotation_delta_from_axis_angle(axis, 90.f);
       turn.pivot          = center;
       apply_transform_as_one_edit(ctx, turn);
     }
@@ -270,7 +245,7 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t &ctx)
 
 // --- Clipboard and paste -----------------------------------------------------
 
-void Selection_Tool::copy_selection_to_clipboard(editor_context_t &ctx)
+void Selection_Tool::copy_selection_to_clipboard(editor_context_t& ctx)
 {
   if (!ctx.map || selected_uids.empty())
     return;
@@ -297,7 +272,7 @@ void Selection_Tool::copy_selection_to_clipboard(editor_context_t &ctx)
 
       if (const shared::brush_geometry_t *brush =
               std::get_if<shared::brush_geometry_t>(&geometry->value))
-        entry.brush_hull = shared::try_build_brush_polyhedron(brush->vertices);
+        entry.brush_hull = shared::try_build_brush_polyhedron(brush->hull_points);
 
       clipboard.push_back(std::move(entry));
       continue;
@@ -342,7 +317,7 @@ void Selection_Tool::cancel_paste()
   paste_anchor_valid = false;
 }
 
-void Selection_Tool::commit_paste(editor_context_t &ctx)
+void Selection_Tool::commit_paste(editor_context_t& ctx)
 {
   if (!paste_is_pending || !paste_anchor_valid || clipboard.empty() || !ctx.map)
     return;
@@ -380,8 +355,7 @@ void Selection_Tool::commit_paste(editor_context_t &ctx)
 
   // One transaction for the whole paste, so Ctrl+Z takes all of it back at once
   // -- the same rule the multi-object delete follows.
-  if (ctx.transaction_system)
-    ctx.transaction_system->push(std::move(transaction));
+  ctx.transaction_system.push(std::move(transaction));
 
   // The copies become the selection: what you just placed is what the gizmo and
   // the arrow keys should be aimed at.
@@ -393,21 +367,21 @@ void Selection_Tool::commit_paste(editor_context_t &ctx)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
-void Selection_Tool::on_enable(editor_context_t &ctx)
+void Selection_Tool::on_enable(editor_context_t& ctx)
 {
   hovered_uid = 0;
   selected_uids.clear();
   editor_gizmo.clear_target();
 }
 
-void Selection_Tool::on_disable(editor_context_t &ctx)
+void Selection_Tool::on_disable(editor_context_t& ctx)
 {
   hovered_uid = 0;
   editor_gizmo.clear_target();
   cancel_paste();
 }
 
-void Selection_Tool::on_draw_ui(editor_context_t &ctx)
+void Selection_Tool::on_draw_ui(editor_context_t& ctx)
 {
   if (is_dragging_box)
   {
@@ -455,7 +429,8 @@ void Selection_Tool::on_draw_ui(editor_context_t &ctx)
         // gizmo and the panel buttons already do, so it commits as one
         // transaction. Pre-existing gap: the entity inspector never pushed
         // transactions either.
-        if (draw_geometry_inspector(geometry->value))
+        if (draw_geometry_inspector(geometry->value,
+                                    ctx.object_collides(geometry->uid)))
         {
           if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
             *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -470,7 +445,7 @@ void Selection_Tool::on_draw_ui(editor_context_t &ctx)
   }
 }
 
-void Selection_Tool::on_update(editor_context_t &ctx,
+void Selection_Tool::on_update(editor_context_t& ctx,
                                const viewport_state_t &view, float /*dt*/)
 {
   cached_viewport = view;
@@ -630,7 +605,7 @@ void Selection_Tool::on_update(editor_context_t &ctx,
   }
 }
 
-void Selection_Tool::on_mouse_down(editor_context_t &ctx,
+void Selection_Tool::on_mouse_down(editor_context_t& ctx,
                                    const input::mouse_event_t &e)
 {
   if (e.button == input::mouse_button_t::Left)
@@ -697,7 +672,7 @@ void Selection_Tool::on_mouse_down(editor_context_t &ctx,
   }
 }
 
-void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
+void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
                                    const input::mouse_event_t &e)
 {
   if (is_dragging_object && !drag_origins.empty() && ctx.map)
@@ -750,7 +725,7 @@ void Selection_Tool::on_mouse_drag(editor_context_t &ctx,
   }
 }
 
-void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e)
+void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event_t &e)
 {
   if (e.button == input::mouse_button_t::Left)
   {
@@ -872,7 +847,7 @@ void Selection_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event
   }
 }
 
-void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
+void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 {
   if (e.key == input::key_t::C && e.mods.ctrl)
   {
@@ -897,7 +872,7 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
 
   if (e.key == input::key_t::Delete || e.key == input::key_t::Backspace)
   {
-    if (!selected_uids.empty() && ctx.map && ctx.transaction_system)
+    if (!selected_uids.empty() && ctx.map)
     {
       // One transaction for the whole selection, so Ctrl+Z brings back every
       // deleted object at once.
@@ -917,7 +892,7 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
           ctx.map->remove_entity(uid);
         }
       }
-      ctx.transaction_system->push(std::move(transaction));
+      ctx.transaction_system.push(std::move(transaction));
 
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -927,7 +902,7 @@ void Selection_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
   }
 }
 
-void Selection_Tool::on_draw_overlay(editor_context_t &ctx,
+void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
                                      pass_builder_t &draws)
 {
   if (!ctx.map)

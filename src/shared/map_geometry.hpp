@@ -4,6 +4,7 @@
 #include "box_face.hpp"
 #include "brush.hpp"
 #include "entity_uid.hpp"
+#include "lightmap.hpp"
 #include "linalg.hpp"
 #include "map_blocks.hpp"
 #include "plane.hpp"
@@ -71,7 +72,7 @@ struct geometry_surface_t
 struct static_mesh_geometry_t
 {
   linalg::vec3 position{0.f, 0.f, 0.f};
-  linalg::vec3 orientation{0.f, 0.f, 0.f};
+  linalg::quatf orientation = linalg::quatf::identity();
   linalg::vec3 scale{1.f, 1.f, 1.f};
   geometry_surface_t surface;
 };
@@ -254,8 +255,14 @@ struct brush_geometry_t
   //
   // Defaults to a 128-unit cube so a default-constructed brush is a valid solid
   // rather than a degenerate one nothing downstream can hull.
-  std::vector<linalg::vec3> vertices =
-      make_box_brush_vertices({0.f, 0.f, 0.f}, {64.f, 64.f, 64.f});
+  //
+  // POINTS, not vertices, and the distinction is the one that keeps this
+  // separable from mesh_asset_t::vertices: a point is a position, a vertex is a
+  // position plus its attributes. A box corner is ONE point shared by three
+  // faces, and three mesh vertices -- the faces disagree about its normal, its
+  // material UV and its lightmap chart, so nothing here can carry those.
+  std::vector<linalg::vec3> hull_points =
+      make_box_brush_points({0.f, 0.f, 0.f}, {64.f, 64.f, 64.f});
 
   // Keyed by PLANE, not positional: this is not parallel to the derived face
   // list and does not have to be the same length as it. A face matching nothing
@@ -473,6 +480,21 @@ size_t nudge_brush_grid_vertices(brush_geometry_t &brush, Span<const linalg::vec
 size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &center,
                               float radius, float amount, int layer);
 
+// Push every grid vertex within `radius` of `center` by `delta`, full at the
+// centre falling to nothing at the rim, and answer how many moved. The RADIAL
+// half of nudge_brush_grid_vertices: that one moves a named set exactly (a
+// handle drag), this one moves whatever the stroke covers (a sculpt brush).
+//
+// The weld comes out a no-op rather than a half-move for paint's reason: every
+// face sharing a boundary vertex reads the same welded position, so every copy
+// takes the same falloff and the same delta.
+//
+// `delta` is a world vector rather than a scalar because the DIRECTION is the
+// caller's: a stroke pushes along the face it landed on, never along the hill
+// it is standing on, or a crater curls in over its own rim.
+size_t sculpt_brush_grid_vertices(brush_geometry_t &brush, const linalg::vec3 &center,
+                                  float radius, const linalg::vec3 &delta);
+
 // Where a ray meets the brush's DISPLACED surface, and which hull face it hit.
 // The paint cursor needs the sculpted surface rather than the face plane: on a
 // sculpted face the two are far apart, and a radius measured from the plane
@@ -515,8 +537,15 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush);
 // grouped into one submesh per distinct material, so a brush with one material
 // costs one draw exactly as it did before faces existed. A face with
 // emits_geometry false contributes no triangles.
+//
+// `lighting` is the map's bake and this brush's uid. Where a face names a chart,
+// every vertex of it gets a (u, v, page) into the atlas; where it names none, the
+// vertices carry UNLIT_LIGHTMAP_UV and the face draws unlit. A default-constructed
+// ref is a map with no bake, and then mesh_asset_t::lightmap_uv stays empty and
+// the mesh uploads byte for byte what it always did.
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
-                                         Span<const std::string> materials);
+                                         Span<const std::string> materials,
+                                         const brush_lightmap_ref_t &lighting = {});
 
 // --- Text serialization ------------------------------------------------------
 //

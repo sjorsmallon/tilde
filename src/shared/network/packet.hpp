@@ -50,6 +50,58 @@ enum class Message_Type : uint8
   Count,
 };
 
+// Which end is allowed to SEND a message of this type. `Both` is the small set
+// that genuinely travels each way: NetCommand carries the handshake in both
+// directions, and Reliable is a transport parcel whose direction is said by who
+// sent it.
+//
+// This exists so "a null slot in the client's handler table means C2S" stops
+// being a comment and becomes a checkable claim -- see the static_assert beside
+// CLIENT_MESSAGE_HANDLERS, and the switch in deliver_client_message.
+enum class message_direction_t
+{
+  C2S,
+  S2C,
+  Both,
+};
+
+// A switch with no `default:`, which is the whole point: -Werror=switch makes a
+// new Message_Type a compile error HERE first, before it can be added to the
+// enum and quietly compile everywhere else. Same trick fire_trigger_action
+// relies on.
+constexpr message_direction_t message_direction(Message_Type type)
+{
+  switch (type)
+  {
+  case Message_Type::C2S_ClientInputBatch:
+  case Message_Type::C2S_Command:
+  case Message_Type::C2S_RequestMapData:
+  case Message_Type::C2S_TransferReceipt:
+    return message_direction_t::C2S;
+
+  case Message_Type::S2C_EntityPackage:
+  case Message_Type::S2C_ServerMessage:
+  case Message_Type::S2C_BotDebug:
+  case Message_Type::S2C_GameEventBatch:
+  case Message_Type::S2C_EffectBatch:
+  case Message_Type::S2C_ShotDebug:
+  case Message_Type::CmdChangeMap:
+  case Message_Type::S2C_MapData:
+  case Message_Type::S2C_CvarValues:
+    return message_direction_t::S2C;
+
+  case Message_Type::NetCommand:
+  case Message_Type::Reliable:
+    return message_direction_t::Both;
+
+  case Message_Type::Count:
+    break;
+  }
+
+  fatal_error("message_direction called with {}, which is not a wire value",
+              static_cast<int>(type));
+}
+
 // --------------------------------------------------------------------------------
 // Packet_Traits: Compile-time mapping from Protobuf Types -> Message_Type Enum
 // --------------------------------------------------------------------------------
@@ -333,6 +385,113 @@ expire_stale_partial_messages(std::map<uint8, Partial_Message> &partial_packets,
 
     it = partial_packets.erase(it);
   }
+}
+
+// SHARED BY BOTH SIDES, and that is the point: the server open-coded its own
+// copy of this for a while and the two drifted, with the weaker one on the side
+// that takes traffic from every peer. A wrapped message_id landing on a stale
+// bucket, a duplicate arriving after completion -- those are properties of the
+// FORMAT, not of who is receiving it, so there is one description of them here
+// rather than one per transport layer. Same argument asset_package.cpp makes for
+// compiling into both the writer and the reader.
+//
+// Files one fragment into its message's bucket and, once every fragment has
+// arrived, concatenates them into out_payload and frees the bucket. Returns
+// false while the message is still incomplete.
+inline bool reassemble_fragment(std::map<uint8, Partial_Message> &partial_packets,
+                                const Packet &packet,
+                                std::vector<uint8> &out_payload)
+{
+  Partial_Message &message = partial_packets[packet.header.message_id];
+
+  // A fragment_count that disagrees with the one this bucket was opened for is a
+  // DIFFERENT message that drew the same wrapped id, and it takes the bucket
+  // over. message_id is a uint8 and wraps every 256 sends, which at this
+  // tickrate is a few seconds -- SHORTER than partial_message_timeout_in_seconds,
+  // so the id comes back around while the previous occupant is still held. Two
+  // ways that happens, and the rule is the same for both:
+  //
+  //   - the old message COMPLETED and is being retained to keep answering
+  //     receipts. Without the takeover one retained transfer eats whatever comes
+  //     256 sends later.
+  //   - the old message lost a fragment and was ABANDONED. This is the one that
+  //     bit us: the check used to live inside the `complete` branch below, so an
+  //     incomplete bucket kept its old size and the new message's fragments were
+  //     written into it and judged against the wrong count. Both transport
+  //     layers had it, which is exactly why this function is one function now.
+  //
+  // Tested by server_loop_test's wrapped-id case.
+  if (message.fragment_count != 0 &&
+      packet.header.fragment_count != message.fragment_count)
+    message = {};
+
+  // A retained bucket for a message we already delivered, and the count agrees --
+  // so this is a duplicate crossing our report in flight. DISCARDED rather than
+  // reopening it: a fresh bucket would report "5 of 40" and have the sender
+  // re-stream what we already have. Refreshed, so it stays alive while the
+  // sender asks.
+  if (message.complete)
+  {
+    message.last_fragment_time = std::chrono::steady_clock::now();
+    return false;
+  }
+
+  std::vector<Packet> &fragments = message.fragments;
+
+  if (fragments.empty())
+  {
+    fragments.resize(packet.header.fragment_count);
+    message.fragment_count = packet.header.fragment_count;
+  }
+
+  // Every arrival refreshes the bucket, so a transfer that is progressing at any
+  // rate at all is never expired out from under itself.
+  message.last_fragment_time = std::chrono::steady_clock::now();
+
+  // A fragment_index past the end means this packet disagrees with the
+  // fragment_count the bucket was sized from — corrupt or forged. Ignore the
+  // stray rather than writing out of bounds.
+  if (packet.header.fragment_index >= fragments.size())
+    return false;
+
+  fragments[packet.header.fragment_index] = packet;
+
+  // A slot still zeroed by resize() has fragment_count == 0, so it has not
+  // arrived yet. convert_to_packets() never emits an empty chunk, so a zero
+  // payload_size means the same thing.
+  size_t total_size = 0;
+  for (const Packet &fragment : fragments)
+  {
+    if (fragment.header.fragment_count == 0 ||
+        fragment.header.payload_size == 0)
+      return false;
+
+    total_size += fragment.header.payload_size;
+  }
+
+  out_payload.clear();
+  out_payload.reserve(total_size);
+  for (const Packet &fragment : fragments)
+    out_payload.insert(out_payload.end(), fragment.buffer,
+                       fragment.buffer + fragment.header.payload_size);
+
+  // A single-fragment message is not a transfer: nothing retransmits it and
+  // nobody is waiting to hear it landed, so its bucket goes immediately -- which
+  // is what keeps retention from competing for the wrapping id space in the
+  // common case. A transfer's bucket is kept, with the fragment storage
+  // released: it now exists only to keep saying "I have all of it" until the
+  // sender stops asking. See Partial_Message in packet.hpp.
+  if (message.fragment_count < 2)
+  {
+    partial_packets.erase(packet.header.message_id);
+    return true;
+  }
+
+  message.complete = true;
+  message.last_fragment_time = std::chrono::steady_clock::now();
+  fragments.clear();
+  fragments.shrink_to_fit();
+  return true;
 }
 
 // Helper: Chunk a large buffer into serialized packets (fragments of a message)

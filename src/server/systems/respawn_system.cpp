@@ -32,17 +32,16 @@ const entities::Player_Spawn_Entity& origin_fallback_spawn()
 }
 
 void place_player_at(shared::game_session_t &session, entities::Player_Entity &player,
-                     const vec3f &position, const vec3f &orientation)
+                     const vec3f& position, const linalg::quatf& orientation)
 {
   player.position    = position;
   player.orientation = orientation;
-  // The marker's orientation is the MODEL euler the editor's rotation gizmo
-  // writes, not a yaw/pitch pair. Copying .y and .x straight across mirrored the
-  // yaw and read the roll as the pitch -- the editor showed no facing at all
-  // then, so it went unnoticed. Going through the direction is what makes the
-  // spawned player look where the editor's arrow points.
+  // A marker stores a ROTATION and a player aims with two ANGLES, and the two are
+  // not the same thing -- so the crossing goes through the facing direction, in
+  // the one direction that is well defined. Reading components across is what
+  // this used to do, and it mirrored the yaw and read the roll as the pitch.
   const linalg::view_angles_t facing = linalg::view_angles_from_direction(
-      linalg::forward_from_model_euler(orientation));
+      linalg::forward(orientation));
   player.view_angle_yaw   = facing.yaw_degrees;
   player.view_angle_pitch = facing.pitch_degrees;
   // The feet are an accumulator, so they have to be PLACED, not left: a corpse

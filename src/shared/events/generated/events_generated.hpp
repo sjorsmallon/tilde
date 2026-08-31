@@ -94,7 +94,7 @@ struct Player_Spawned : Game_Event
 {
   uint32_t player_id = {};
   linalg::vec3f spawn_position = {};
-  linalg::vec3f spawn_orientation = {};
+  linalg::quatf spawn_orientation = {};
 };
 static_assert(std::is_trivially_copyable_v<Player_Spawned>,
               "Player_Spawned must stay trivially copyable: the codec addresses its fields "

@@ -33,7 +33,8 @@ change_map_message_t deserialize_change_map(network::Bit_Reader &reader)
 // Package container tag. Bump PACKAGE_VERSION on any layout change (e.g. a new
 // baked sidecar) so an old client rejects a newer blob instead of misreading it.
 static constexpr uint32_t PACKAGE_MAGIC   = 0x504B4720; // "PKG "
-static constexpr uint32_t PACKAGE_VERSION = 1;
+// 2: the package carries the baked lightmap beside the navmesh.
+static constexpr uint32_t PACKAGE_VERSION = 2;
 
 // Navmesh floats/indices are written as raw bytes (exact), matching the on-disk
 // .navmesh sidecar's exactness — write_coord's 5-bit fraction would corrupt
@@ -119,12 +120,114 @@ static void deserialize_navmesh(network::Bit_Reader &r, navmesh_t &nav)
   }
 }
 
+// The pages are written as RAW BYTES, exactly as the sidecar stores them and for
+// the same reason the navmesh's floats are: they are already quantized (RGB9E5,
+// lightmap.hpp), and write_coord over them would corrupt the shared exponent.
+//
+// A chart's `polygon` is deliberately absent, matching the sidecar: it is the
+// bake's own coverage test and nothing downstream reads it.
+static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightmap)
+{
+  const auto write_vec3 = [&](const linalg::vec3 &value) {
+    write_f32(w, value.x);
+    write_f32(w, value.y);
+    write_f32(w, value.z);
+  };
+
+  network::write_var_uint(w, static_cast<uint32_t>(lightmap.charts.size()));
+  if (lightmap.charts.empty())
+    return;
+
+  write_f32(w, lightmap.settings.texels_per_world_unit);
+  write_i32(w, lightmap.settings.gutter_in_texels);
+  write_i32(w, lightmap.settings.max_chart_extent_in_texels);
+  write_i32(w, lightmap.settings.atlas_size_in_texels);
+
+  write_i32(w, lightmap.atlas.size_in_texels);
+  write_i32(w, lightmap.atlas.page_count);
+  write_u32(w, static_cast<uint32_t>(lightmap.pages.format));
+
+  for (const lightmap_chart_t &chart : lightmap.charts)
+  {
+    write_u32(w, static_cast<uint32_t>(chart.object_uid));
+    write_vec3(chart.plane.point);
+    write_vec3(chart.plane.normal);
+    write_vec3(chart.origin);
+    write_vec3(chart.tangent_u);
+    write_vec3(chart.tangent_v);
+    write_f32(w, chart.world_units_per_texel);
+    write_i32(w, chart.page);
+    write_i32(w, chart.atlas_rect.min_x);
+    write_i32(w, chart.atlas_rect.min_y);
+    write_i32(w, chart.atlas_rect.width);
+    write_i32(w, chart.atlas_rect.height);
+  }
+
+  network::write_var_uint(w, static_cast<uint32_t>(lightmap.pages.bytes.size()));
+  if (!lightmap.pages.bytes.empty())
+    w.write_bytes(lightmap.pages.bytes.data(), lightmap.pages.bytes.size());
+}
+
+static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
+{
+  const auto read_vec3 = [&](linalg::vec3 &value) {
+    value.x = read_f32(r);
+    value.y = read_f32(r);
+    value.z = read_f32(r);
+  };
+
+  const uint32_t chart_count = network::read_var_uint(r);
+  if (chart_count == 0)
+  {
+    lightmap = {};
+    return;
+  }
+
+  lightmap.settings.texels_per_world_unit      = read_f32(r);
+  lightmap.settings.gutter_in_texels           = read_i32(r);
+  lightmap.settings.max_chart_extent_in_texels = read_i32(r);
+  lightmap.settings.atlas_size_in_texels       = read_i32(r);
+
+  lightmap.atlas.size_in_texels = read_i32(r);
+  lightmap.atlas.page_count     = read_i32(r);
+  lightmap.pages.format         = static_cast<lightmap_pixel_format_t>(read_u32(r));
+
+  lightmap.charts.resize(chart_count);
+  for (lightmap_chart_t &chart : lightmap.charts)
+  {
+    chart.object_uid = read_u32(r);
+    read_vec3(chart.plane.point);
+    read_vec3(chart.plane.normal);
+    read_vec3(chart.origin);
+    read_vec3(chart.tangent_u);
+    read_vec3(chart.tangent_v);
+    chart.world_units_per_texel = read_f32(r);
+    chart.page                  = read_i32(r);
+    chart.atlas_rect.min_x      = read_i32(r);
+    chart.atlas_rect.min_y      = read_i32(r);
+    chart.atlas_rect.width      = read_i32(r);
+    chart.atlas_rect.height     = read_i32(r);
+  }
+
+  lightmap.pages.size_in_texels = lightmap.atlas.size_in_texels;
+  lightmap.pages.page_count     = lightmap.atlas.page_count;
+  lightmap.pages.bytes.resize(network::read_var_uint(r));
+  if (!lightmap.pages.bytes.empty())
+    r.read_bytes(lightmap.pages.bytes.data(), lightmap.pages.bytes.size());
+
+  // The id the generated-mesh cache compares, recomputed rather than shipped:
+  // it is a content hash of what was just read, so sending it would be a second
+  // copy free to disagree with the charts it describes.
+  set_lightmap_geometry_id(lightmap);
+}
+
 map_package_t build_map_package(const map_t &map)
 {
   map_package_t package;
   package.map_name    = map.name;
   package.entity_text = serialize_map_to_string(map);
   package.navmesh     = map.navmesh;
+  package.lightmap    = map.lightmap;
   return package;
 }
 
@@ -136,6 +239,7 @@ std::vector<uint8_t> serialize_map_package(const map_package_t &package)
   network::write_string(writer, package.map_name);
   network::write_string(writer, package.entity_text);
   serialize_navmesh(writer, package.navmesh);
+  serialize_lightmap(writer, package.lightmap);
   return writer.buffer;
 }
 
@@ -151,6 +255,7 @@ bool deserialize_map_package(const std::vector<uint8_t> &bytes,
   network::read_string(reader, out_package.map_name);
   network::read_string(reader, out_package.entity_text);
   deserialize_navmesh(reader, out_package.navmesh);
+  deserialize_lightmap(reader, out_package.lightmap);
 
   // read past the end (truncated blob) => reject rather than yield garbage.
   return reader.bit_index <= static_cast<int>(bytes.size() * 8);

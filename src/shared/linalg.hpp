@@ -264,6 +264,22 @@ inline mat4f inverse_affine(const mat4f &m)
   return result;
 }
 
+// Math Helpers
+constexpr float PI = 3.14159265359f;
+
+inline float to_radians(float degrees) { return degrees * (PI / 180.0f); }
+
+inline float to_degrees(float radians) { return radians * (180.0f / PI); }
+
+// The frame a rotation puts a model in. Models are authored facing +X, so
+// forward is the rotation's +X axis, right its +Z and up its +Y.
+struct basis_t
+{
+  vec3f forward = {1.f, 0.f, 0.f};
+  vec3f right   = {0.f, 0.f, 1.f};
+  vec3f up      = {0.f, 1.f, 0.f};
+};
+
 // --- Quaternions ---
 //
 // The rotation half of a `transform_t` (src/shared/animation.hpp). A pose is
@@ -338,7 +354,7 @@ inline mat4f to_mat4(const quatf &q)
 // Compose translation, rotation and scale into the local matrix the hierarchy
 // walk consumes: T * R * S, so scale applies in the bone's own frame and the
 // translation is untouched by it.
-inline mat4f compose_transform(const vec3f &translation, const quatf &rotation, const vec3f &scale)
+inline mat4f compose_transform(const vec3f& translation, const quatf &rotation, const vec3f& scale)
 {
   mat4f result = to_mat4(rotation);
   result[0]    = result[0] * scale.x;
@@ -348,12 +364,118 @@ inline mat4f compose_transform(const vec3f &translation, const quatf &rotation, 
   return result;
 }
 
-// Math Helpers
-constexpr float PI = 3.14159265359f;
+inline quatf conjugate(const quatf& q) { return {-q.x, -q.y, -q.z, q.w}; }
 
-inline float to_radians(float degrees) { return degrees * (PI / 180.0f); }
+inline quatf inverse(const quatf& q)
+{
+  const float length_squared = dot(q, q);
+  if (length_squared < 1e-16f)
+    return quatf::identity();
 
-inline float to_degrees(float radians) { return radians * (180.0f / PI); }
+  const float inverse_length_squared = 1.0f / length_squared;
+  return {-q.x * inverse_length_squared, -q.y * inverse_length_squared,
+          -q.z * inverse_length_squared, q.w * inverse_length_squared};
+}
+
+// v rotated by a UNIT quaternion, without building the matrix.
+inline vec3f rotate(const quatf& q, const vec3f& v)
+{
+  const vec3f axis = {q.x, q.y, q.z};
+  return v + cross(axis, cross(axis, v) + v * q.w) * 2.0f;
+}
+
+// A rotation about an arbitrary axis. This is the only honest spelling of "turn
+// this ring": the gizmo composes one of these onto an orientation, where adding
+// a delta into one euler component is a world rotation on .z, a local one on .x
+// and nothing at all on .y.
+inline quatf from_axis_angle(const vec3f& axis, float degrees)
+{
+  const float axis_length = length(axis);
+  if (axis_length < 1e-8f)
+    return quatf::identity();
+
+  const float half_radians = to_radians(degrees) * 0.5f;
+  const float scale        = std::sin(half_radians) / axis_length;
+  return {axis.x * scale, axis.y * scale, axis.z * scale, std::cos(half_radians)};
+}
+
+// Rz * Ry * Rx, so `to_mat4(from_euler_degrees(e))` IS
+// `rotation_from_euler_degrees(e)` -- which is what makes reading a legacy euler
+// off disk a provable no-op for every rotation currently stored.
+//
+// The migration bridge and the file reader's legacy arm. Not a general-purpose
+// helper: composing through it reintroduces the decomposition this exists to
+// delete, so new code takes `from_axis_angle` or `from_view_angles`.
+inline quatf from_euler_degrees(const vec3f& euler_degrees)
+{
+  const float half_x = to_radians(euler_degrees.x) * 0.5f;
+  const float half_y = to_radians(euler_degrees.y) * 0.5f;
+  const float half_z = to_radians(euler_degrees.z) * 0.5f;
+
+  const float cos_x = std::cos(half_x), sin_x = std::sin(half_x);
+  const float cos_y = std::cos(half_y), sin_y = std::sin(half_y);
+  const float cos_z = std::cos(half_z), sin_z = std::sin(half_z);
+
+  return {sin_x * cos_y * cos_z - cos_x * sin_y * sin_z,
+          cos_x * sin_y * cos_z + sin_x * cos_y * sin_z,
+          cos_x * cos_y * sin_z - sin_x * sin_y * cos_z,
+          cos_x * cos_y * cos_z + sin_x * sin_y * sin_z};
+}
+
+// SEEDING AN EDIT WIDGET, AND NOTHING ELSE. Decomposition is not unique, so a
+// caller that re-derives angles every frame makes two of them jump the moment
+// the third passes 90 degrees. The panel seeds once and owns the triple for the
+// duration of the edit -- rotation_def.md §5.
+inline vec3f to_euler_degrees(const quatf& q)
+{
+  const mat4f m = to_mat4(normalize(q));
+
+  // cos(y) is MEASURED off the matrix rather than derived as sqrt(1 - sin^2):
+  // near the pole a float sine is 0.99999994, and that square root reports a
+  // cosine three orders of magnitude larger than the one actually in the matrix
+  // -- which takes the wrong branch below and recovers a rotation 180 degrees
+  // out. atan2 of the measured pair is well conditioned where asin is not.
+  const float sin_y     = -m[0].z;
+  const float cos_y     = std::sqrt(m[1].z * m[1].z + m[2].z * m[2].z);
+  const float y_degrees = to_degrees(std::atan2(sin_y, cos_y));
+
+  // At the pole the two remaining axes ARE the same axis, so only their sum is
+  // determined. Pinning x to zero is the standard choice and reproduces the
+  // matrix, which is all a seed has to do.
+  if (cos_y < 1e-4f)
+    return {0.0f, y_degrees, to_degrees(std::atan2(-m[1].x, m[1].y))};
+
+  return {to_degrees(std::atan2(m[1].z, m[2].z)), y_degrees,
+          to_degrees(std::atan2(m[0].y, m[0].x))};
+}
+
+// The seam between a 2-DOF aim and a 3-DOF rotation, and it crosses ONE WAY:
+// angles in, rotation out. `forward(from_view_angles(yaw, pitch))` is
+// `direction_from_angles(yaw, pitch)` exactly.
+//
+// Yaw is negated because a view yaw sweeps +X toward +Z while a model rotation
+// about Y sweeps +X toward -Z; pitch is a rotation about the model's own Z,
+// applied first, which is why this is not expressible as one euler triple in the
+// Rz*Ry*Rx convention above.
+inline quatf from_view_angles(float yaw_degrees, float pitch_degrees)
+{
+  return from_axis_angle({0.f, 1.f, 0.f}, -yaw_degrees) *
+         from_axis_angle({0.f, 0.f, 1.f}, pitch_degrees);
+}
+
+// Where a model authored facing +X points after `rotation`: the rotation's +X
+// axis. Replaces forward_from_model_euler, whose three paragraphs of comment
+// were entirely about which euler component is not a pitch.
+inline vec3f forward(const quatf& q)
+{
+  return rotate(q, vec3f{1.f, 0.f, 0.f});
+}
+
+inline basis_t basis_from(const quatf& q)
+{
+  const mat4f m = to_mat4(q);
+  return {{m[0].x, m[0].y, m[0].z}, {m[2].x, m[2].y, m[2].z}, {m[1].x, m[1].y, m[1].z}};
+}
 
 // --- Camera and model matrices ---
 //
@@ -391,7 +513,7 @@ inline mat4f orthographic(float left, float right, float bottom, float top, floa
   return result;
 }
 
-inline mat4f look_at(const vec3f &eye, const vec3f &target, const vec3f &up)
+inline mat4f look_at(const vec3f& eye, const vec3f& target, const vec3f& up)
 {
   const vec3f forward = normalize(target - eye);
   const vec3f right   = normalize(cross(forward, up));
@@ -405,10 +527,11 @@ inline mat4f look_at(const vec3f &eye, const vec3f &target, const vec3f &up)
   return result;
 }
 
-// Rz * Ry * Rx, degrees. Euler survives here because map geometry and the entity
-// schema store orientation as three floats; anything with a real rotation to
-// interpolate uses `quatf` and `to_mat4` instead.
-inline mat4f rotation_from_euler_degrees(const vec3f &euler_degrees)
+// Rz * Ry * Rx, degrees. Nothing in the engine composes with this any more --
+// its one remaining job is to be the REFERENCE `from_euler_degrees` is pinned
+// against in linalg_test, which is what makes reading a pre-quaternion map a
+// provable no-op. Deleting it would delete the proof, not the last caller.
+inline mat4f rotation_from_euler_degrees(const vec3f& euler_degrees)
 {
   const float cx = std::cos(to_radians(euler_degrees.x)), sx = std::sin(to_radians(euler_degrees.x));
   const float cy = std::cos(to_radians(euler_degrees.y)), sy = std::sin(to_radians(euler_degrees.y));
@@ -421,17 +544,46 @@ inline mat4f rotation_from_euler_degrees(const vec3f &euler_degrees)
   return result;
 }
 
-// T * R * S with R from euler degrees -- the euler twin of compose_transform,
-// and what a draw call composes its model matrix with.
-inline mat4f compose_transform_euler(const vec3f &translation, const vec3f &euler_degrees,
-                                     const vec3f &scale)
+// --- The model-rotation seam ---
+//
+// Every site that composes two orientations goes through one of these two, and
+// every gizmo ring produces its delta through the third. Naming the two frames
+// came first, and it was worth a step of its own: the bodies used to be euler
+// ADDITION, which is not rotation composition -- with Rz*Ry*Rx a delta added
+// into .z is a world-frame turn, one added into .x is a local-frame turn and one
+// added into .y is neither. Addition commutes, so the two below were the same
+// arithmetic, and a codebase that CANNOT tell a local compose from a world one
+// is a codebase where three rings of one gizmo mean three different things.
+
+// `local_offset` is expressed in the frame `base` establishes -- a per-mesh
+// authoring correction, which travels with the model.
+inline quatf compose_model_rotation(const quatf& base, const quatf& local_offset)
 {
-  mat4f result = rotation_from_euler_degrees(euler_degrees);
-  result[0]    = result[0] * scale.x;
-  result[1]    = result[1] * scale.y;
-  result[2]    = result[2] * scale.z;
-  result[3]    = {translation.x, translation.y, translation.z, 1.0f};
-  return result;
+  return base * local_offset;
+}
+
+// `world_delta` is about a WORLD axis and applies after `base` -- the gizmo's
+// rings, whose orbit half turns positions about world axes, so the two halves of
+// one drag now agree.
+inline quatf rotate_model_in_world(const quatf& base, const quatf& world_delta)
+{
+  return world_delta * base;
+}
+
+// One ring of the rotation gizmo, as the rotation it draws. `axis` is 0, 1 or 2
+// for world X, Y or Z.
+inline quatf rotation_delta_from_axis_angle(int axis, float degrees)
+{
+  vec3f axis_vector = {0.f, 0.f, 0.f};
+  axis_vector[axis] = 1.f;
+  return from_axis_angle(axis_vector, degrees);
+}
+
+// q and -q are the same rotation and an identity has zero imaginary part either
+// way, so this asks about the ROTATION rather than about the four floats.
+inline bool is_identity_rotation(const quatf& q)
+{
+  return q.x == 0.f && q.y == 0.f && q.z == 0.f;
 }
 
 // An angle difference folded into (-180, 180]. Yaws are stored unwrapped, so a
@@ -496,42 +648,6 @@ inline vec3f direction_from_angles(float yaw_degrees, float pitch_degrees)
 // is already a model rotation.
 inline float model_yaw_from_view_yaw(float yaw_degrees) { return -yaw_degrees; }
 
-// Where a model authored facing +X points after `euler_degrees`: the +X column
-// of rotation_from_euler_degrees, which is precisely what the editor's rotation
-// gizmo manipulates.
-//
-// Deriving a facing this way rather than reading .y as a yaw is what makes a
-// gizmo ring and the marker it turns agree at every angle. The two-angle reading
-// cannot: the euler's pitch lives in .z (a +X-facing model tilts about world Z),
-// while .x is its roll, so copying .x across as a pitch reads the wrong field
-// and copying .y across mirrors the yaw -- the failure the comment above
-// describes, one field further along.
-inline vec3f forward_from_model_euler(const vec3f &euler_degrees)
-{
-  const mat4f rotation = rotation_from_euler_degrees(euler_degrees);
-  return {rotation[0].x, rotation[0].y, rotation[0].z};
-}
-
-// An orthonormal basis around the direction a model euler faces. Straight up or
-// straight down leaves cross(forward, world_up) at zero length, which a spectate
-// spot looking at the floor reaches exactly -- the same guard camera.hpp carries.
-struct basis_t
-{
-  vec3f forward = {1.f, 0.f, 0.f};
-  vec3f right   = {0.f, 0.f, 1.f};
-  vec3f up      = {0.f, 1.f, 0.f};
-};
-
-inline basis_t basis_from_model_euler(const vec3f &euler_degrees)
-{
-  const vec3f forward = forward_from_model_euler(euler_degrees);
-
-  vec3f right = cross(forward, vec3f{0.f, 1.f, 0.f});
-  right = (length(right) < 0.001f) ? vec3f{0.f, 0.f, 1.f} : normalize(right);
-
-  return {forward, right, cross(right, forward)};
-}
-
 struct view_angles_t
 {
   float yaw_degrees   = 0.0f;
@@ -543,7 +659,7 @@ struct view_angles_t
 // conversion itself, which is what place_player_at_spawn and
 // try_pose_camera_at_spectate_spot each got wrong by copying .y and .x straight
 // across.
-inline view_angles_t view_angles_from_direction(const vec3f &direction)
+inline view_angles_t view_angles_from_direction(const vec3f& direction)
 {
   const vec3f unit = normalize(direction);
   const float clamped_y = unit.y < -1.0f ? -1.0f : (unit.y > 1.0f ? 1.0f : unit.y);

@@ -99,7 +99,7 @@ void Placement_Tool::on_mouse_down(editor_context_t& ctx,
 
     transaction_t transaction;
     transaction.add_geometry_created(uid, std::move(placed));
-    ctx.transaction_system->push(std::move(transaction));
+    ctx.transaction_system.push(std::move(transaction));
 
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     return;
@@ -122,7 +122,7 @@ void Placement_Tool::on_mouse_down(editor_context_t& ctx,
       auto uid = ctx.map->add_entity(new_entity);
       transaction_t transaction;
       transaction.add_created(uid, snapshot_entity(new_entity.get()));
-      ctx.transaction_system->push(std::move(transaction));
+      ctx.transaction_system.push(std::move(transaction));
     }
 
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -151,7 +151,7 @@ static shared::geometry_value_t make_placement_prototype(shared::geometry_kind_t
     case shared::geometry_kind_t::Brush:
     {
       shared::brush_geometry_t brush;
-      brush.vertices = shared::make_box_brush_vertices({0, 0, 0}, default_extents);
+      brush.hull_points = shared::make_box_brush_points({0, 0, 0}, default_extents);
       shared::sync_face_surfaces(brush);
       return brush;
     }

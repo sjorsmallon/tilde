@@ -20,19 +20,19 @@ struct object_snapshot_t
 class Selection_Tool : public Editor_Tool
 {
 public:
-  void on_enable(editor_context_t &ctx) override;
-  void on_disable(editor_context_t &ctx) override;
-  void on_update(editor_context_t &ctx, const viewport_state_t &view, float dt) override;
+  void on_enable(editor_context_t& ctx) override;
+  void on_disable(editor_context_t& ctx) override;
+  void on_update(editor_context_t& ctx, const viewport_state_t &view, float dt) override;
 
-  void on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e) override;
-  void on_mouse_drag(editor_context_t &ctx, const input::mouse_event_t &e) override;
-  void on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e) override;
-  void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
+  void on_mouse_down(editor_context_t& ctx, const input::mouse_event_t &e) override;
+  void on_mouse_drag(editor_context_t& ctx, const input::mouse_event_t &e) override;
+  void on_mouse_up(editor_context_t& ctx, const input::mouse_event_t &e) override;
+  void on_key_down(editor_context_t& ctx, const key_event_t &e) override;
 
-  void on_draw_overlay(editor_context_t &ctx,
+  void on_draw_overlay(editor_context_t& ctx,
                        pass_builder_t &draws) override;
 
-  void on_draw_ui(editor_context_t &ctx) override;
+  void on_draw_ui(editor_context_t& ctx) override;
 
 private:
   shared::entity_uid_t hovered_uid = 0;
@@ -67,22 +67,22 @@ private:
   {
     shared::entity_uid_t uid = 0;
     linalg::vec3         position{0, 0, 0};
-    linalg::vec3         orientation{0, 0, 0};
+    linalg::quatf        orientation = linalg::quatf::identity();
   };
   std::vector<drag_origin_t>                        drag_origins;
   std::map<shared::entity_uid_t, object_snapshot_t> drag_start_snapshots;
 
   // Snapshot / commit for a multi-object drag, regime-agnostic at the call site.
-  void capture_drag_snapshots(editor_context_t &ctx);
-  void commit_drag_snapshots(editor_context_t &ctx);
+  void capture_drag_snapshots(editor_context_t& ctx);
+  void commit_drag_snapshots(editor_context_t& ctx);
 
-  void apply_gizmo_drag(editor_context_t &ctx, const gizmo_drag_t &drag);
+  void apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t &drag);
 
   // The panel's buttons go through apply_gizmo_drag too, wrapped in their own
   // snapshot/commit. Sharing the application path is what stops a typed offset
   // and a dragged one meaning different things.
-  void apply_transform_as_one_edit(editor_context_t &ctx, const gizmo_drag_t &transform);
-  void draw_multi_selection_panel(editor_context_t &ctx);
+  void apply_transform_as_one_edit(editor_context_t& ctx, const gizmo_drag_t &transform);
+  void draw_multi_selection_panel(editor_context_t& ctx);
 
   // What the panel's offset fields hold. Not applied until Apply is pressed:
   // an edit-per-keystroke would push a transaction per digit typed.
@@ -126,10 +126,10 @@ private:
   // what you see and what gets stored cannot disagree.
   linalg::vec3 paste_anchor{0, 0, 0};
 
-  void copy_selection_to_clipboard(editor_context_t &ctx);
+  void copy_selection_to_clipboard(editor_context_t& ctx);
   void begin_paste();
   void cancel_paste();
-  void commit_paste(editor_context_t &ctx);
+  void commit_paste(editor_context_t& ctx);
 
   [[nodiscard]] gizmo_view_t make_gizmo_view() const;
 
@@ -137,7 +137,7 @@ private:
   // union of no boxes is not a box at the origin, and three call sites would
   // otherwise each have to remember that.
   [[nodiscard]] std::optional<shared::aabb_bounds_t>
-  try_compute_selection_bounds(editor_context_t &ctx) const;
+  try_compute_selection_bounds(editor_context_t& ctx) const;
 };
 
 } // namespace client

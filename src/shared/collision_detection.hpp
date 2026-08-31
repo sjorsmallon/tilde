@@ -112,20 +112,20 @@ struct ray_hit_result_t
 // Reports the ENTRY parameter, negative when the origin is already inside, and
 // the outward normal of the face entered. An empty plane set is not a solid and
 // returns false rather than a degenerate hit.
-bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f &origin,
-                               const vec3f &dir, float &out_t, float &out_t_exit,
-                               vec3f &out_normal);
+bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
+                               const vec3f& dir, float &out_t, float &out_t_exit,
+                               vec3f& out_normal);
 
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
-                       const vec3f &origin, const vec3f &dir, ray_hit_result_t &out_hit);
+                       const vec3f& origin, const vec3f& dir, ray_hit_result_t &out_hit);
 
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const shared::aabb_bounds_t &aabb,
                         std::vector<const BVH_Primitive *> &out_primitives);
 
 // Möller–Trumbore ray-triangle intersection. Returns true and sets out_t to the
 // hit distance when the ray crosses the triangle in front of the origin.
-inline bool ray_triangle(const vec3f &origin, const vec3f &dir, const vec3f &v0,
-                         const vec3f &v1, const vec3f &v2, float &out_t)
+inline bool ray_triangle(const vec3f& origin, const vec3f& dir, const vec3f& v0,
+                         const vec3f& v1, const vec3f& v2, float &out_t)
 {
   constexpr float epsilon = 1e-6f;
   vec3f edge1 = v1 - v0;

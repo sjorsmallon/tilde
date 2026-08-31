@@ -155,7 +155,7 @@ bool create_preview_resources(VkDevice device,
                               VkPhysicalDevice physical_device,
                               preview_pipeline_t &out)
 {
-  // --- Descriptor set layout: binding 0 = UBO, bindings 1���6 = PBR texture samplers ---
+  // --- Descriptor set layout: binding 0 = UBO, bindings 1-4 = PBR texture samplers ---
   VkDescriptorSetLayoutBinding bindings[1 + PBR_TEXTURE_SLOT_COUNT]{};
 
   bindings[0].binding         = 0;
@@ -585,9 +585,16 @@ void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
                        const assets::pbr_material_asset_t &material)
 {
   const assets::asset_handle_t<assets::texture_asset_t> slots[PBR_TEXTURE_SLOT_COUNT] = {
-      material.albedo, material.normal, material.roughness,
-      material.ambient_occlusion, material.metallic, material.height,
+      material.albedo,
+      material.normal,
+      material.occlusion_roughness_metallic,
+      material.height,
   };
+
+  // ALBEDO IS THE ONLY COLOUR HERE and the other three are data, so only it is
+  // uploaded SRGB. Getting this backwards decodes a roughness map twice, which
+  // reads as a material that is simply too shiny rather than as a format bug.
+  const bool slot_is_srgb[PBR_TEXTURE_SLOT_COUNT] = {true, false, false, false};
 
   // Upload each texture; destroy any previously-held GPU texture first.
   for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
@@ -596,10 +603,10 @@ void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
 
     const assets::texture_asset_t *tex = assets::get(slots[i]);
     if (tex)
-      pipeline.pbr_textures[i] = renderer::upload_texture(tex);
+      pipeline.pbr_textures[i] = renderer::upload_texture(tex, slot_is_srgb[i]);
   }
 
-  // Write descriptor set bindings 1–6 for every frame in flight.
+  // Write descriptor set bindings 1-4 for every frame in flight.
   VkDescriptorImageInfo image_infos[PBR_TEXTURE_SLOT_COUNT]{};
   for (int i = 0; i < PBR_TEXTURE_SLOT_COUNT; i++)
   {

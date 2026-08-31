@@ -35,8 +35,12 @@ inline constexpr uint32_t MAX_CONVEX_CELLS_VISITED    = 8192;
 // thousand-face input is minutes rather than milliseconds -- and the cell and
 // piece guards above never fire, because the run is slow rather than large. A
 // hand-authored brush is under 32 faces; anything past this is a SUBDIVIDED
-// face, which get_collision_pieces decomposes structurally instead of walking a
-// general arrangement it already knows the shape of.
+// face, which get_collision_pieces decomposes structurally -- columns under one
+// sculpted face, cones from an interior point under several -- instead of
+// walking a general arrangement it already knows the shape of. Reaching this
+// refusal by way of a grid means BOTH of those declined, and it is why they must
+// keep between them covering every sculpt anyone actually authors: past here a
+// brush stops colliding.
 inline constexpr uint32_t MAX_CONVEX_INPUT_FACES = 128;
 
 // Every vertex behind every face plane, within BRUSH_COPLANAR_EPSILON -- the

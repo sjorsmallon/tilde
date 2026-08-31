@@ -80,8 +80,8 @@ int main()
       log_error("Session geometry 0 should be a brush");
       return 1;
     }
-    const std::vector<linalg::vec3> original_vertices = session_brush->vertices;
-    session_brush->vertices = make_box_brush_vertices({0, 0, 0}, {99, 99, 99});
+    const std::vector<linalg::vec3> original_vertices = session_brush->hull_points;
+    session_brush->hull_points = make_box_brush_points({0, 0, 0}, {99, 99, 99});
 
     const map_geometry_t  *map_entry = test_map.find_geometry_by_uid(floor_uid);
     const brush_geometry_t *map_brush =
@@ -91,16 +91,16 @@ int main()
       log_error("Map geometry {} should still be a brush", floor_uid);
       return 1;
     }
-    if (compute_brush_bounds(map_brush->vertices).max.x != 10.f)
+    if (compute_brush_bounds(map_brush->hull_points).max.x != 10.f)
     {
       log_error("Session aliases the map's geometry: writing the session's copy "
                 "changed the map's bounds to {}",
-                compute_brush_bounds(map_brush->vertices).max.x);
+                compute_brush_bounds(map_brush->hull_points).max.x);
       return 1;
     }
 
     // Put it back so the BVH check below still describes the real geometry.
-    session_brush->vertices = original_vertices;
+    session_brush->hull_points = original_vertices;
   }
 
   // Verify the runtime spawn counter was seeded past the highest map uid.

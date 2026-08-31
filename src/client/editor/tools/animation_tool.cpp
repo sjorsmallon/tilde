@@ -336,10 +336,10 @@ void Animation_Tool::on_update(editor_context_t& ctx, const viewport_state_t& vi
   pose_hitboxes(workspace, model.posed_skeleton);
 }
 
-void Animation_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e) {}
-void Animation_Tool::on_mouse_drag(editor_context_t &ctx, const input::mouse_event_t &e) {}
-void Animation_Tool::on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e) {}
-void Animation_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e) {}
+void Animation_Tool::on_mouse_down(editor_context_t& ctx, const input::mouse_event_t &e) {}
+void Animation_Tool::on_mouse_drag(editor_context_t& ctx, const input::mouse_event_t &e) {}
+void Animation_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event_t &e) {}
+void Animation_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e) {}
 
 std::optional<view_focus_t> Animation_Tool::view_focus() const
 {
@@ -371,7 +371,7 @@ std::optional<view_focus_t> Animation_Tool::view_focus() const
   return view_focus_t{.center = center, .radius = radius};
 }
 
-void Animation_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
+void Animation_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draws)
 {
   // the model is placed at the origin, but the orientation needs to be correct.
   const shared::model_to_world_t to_world =
@@ -383,8 +383,9 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draw
 
     renderer::mesh_draw_t draw{};
     draw.mesh      = mesh;
-    draw.transform = linalg::compose_transform_euler({0, 0, 0},
-                                                     {0, display.model_yaw_degrees, 0}, {1, 1, 1});
+    draw.transform = linalg::compose_transform(
+        {0, 0, 0}, linalg::from_axis_angle({0.f, 1.f, 0.f}, display.model_yaw_degrees),
+        {1, 1, 1});
     // `posed_skeleton` is a member, so the Span outlives this call and stays
     // valid until render_frame reads it.
     draw.pose = model.posed_skeleton.skinning;
@@ -451,7 +452,7 @@ void Animation_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draw
       draws.debug.filled_polygon(polygon, color, 0.f, {.draw_when_occluded = true});
     };
 
-    const auto line = [&](const linalg::vec3f &start, const linalg::vec3f &end, color_t color)
+    const auto line = [&](const linalg::vec3f& start, const linalg::vec3f& end, color_t color)
     { draws.debug.line(start, end, color, 0.f, 0.f, /*draw_when_occluded*/ true); };
 
     for (uint32_t index = 0; index < (uint32_t)workspace.posed_hitboxes.size(); ++index)
@@ -778,7 +779,7 @@ void draw_animation_clip_panel(clip_playback_t &clip)
 
 } // namespace
 
-void Animation_Tool::on_draw_ui(editor_context_t &ctx)
+void Animation_Tool::on_draw_ui(editor_context_t& ctx)
 {
   ImGui::Begin("Animation");
   // no bone is placed , return, because the rest of this function assumes there is one.
