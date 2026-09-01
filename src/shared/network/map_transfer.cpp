@@ -34,7 +34,9 @@ change_map_message_t deserialize_change_map(network::Bit_Reader &reader)
 // baked sidecar) so an old client rejects a newer blob instead of misreading it.
 static constexpr uint32_t PACKAGE_MAGIC   = 0x504B4720; // "PKG "
 // 2: the package carries the baked lightmap beside the navmesh.
-static constexpr uint32_t PACKAGE_VERSION = 2;
+// 3: the lightmap carries its per-light visibility -- a second page set, the
+//    resolve table, and each chart's light slots.
+static constexpr uint32_t PACKAGE_VERSION = 3;
 
 // Navmesh floats/indices are written as raw bytes (exact), matching the on-disk
 // .navmesh sidecar's exactness — write_coord's 5-bit fraction would corrupt
@@ -145,7 +147,11 @@ static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightma
 
   write_i32(w, lightmap.atlas.size_in_texels);
   write_i32(w, lightmap.atlas.page_count);
-  write_u32(w, static_cast<uint32_t>(lightmap.pages.format));
+  write_u32(w, static_cast<uint32_t>(lightmap.irradiance_pages.format));
+
+  network::write_var_uint(w, static_cast<uint32_t>(lightmap.light_uids.size()));
+  for (entity_uid_t light_uid : lightmap.light_uids)
+    write_u32(w, static_cast<uint32_t>(light_uid));
 
   for (const lightmap_chart_t &chart : lightmap.charts)
   {
@@ -161,11 +167,22 @@ static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightma
     write_i32(w, chart.atlas_rect.min_y);
     write_i32(w, chart.atlas_rect.width);
     write_i32(w, chart.atlas_rect.height);
+    for (int16_t slot : chart.light_slots)
+      write_i32(w, slot);
   }
 
-  network::write_var_uint(w, static_cast<uint32_t>(lightmap.pages.bytes.size()));
-  if (!lightmap.pages.bytes.empty())
-    w.write_bytes(lightmap.pages.bytes.data(), lightmap.pages.bytes.size());
+  network::write_var_uint(w,
+                          static_cast<uint32_t>(lightmap.irradiance_pages.bytes.size()));
+  if (!lightmap.irradiance_pages.bytes.empty())
+    w.write_bytes(lightmap.irradiance_pages.bytes.data(),
+                  lightmap.irradiance_pages.bytes.size());
+
+  write_u32(w, static_cast<uint32_t>(lightmap.visibility_pages.format));
+  network::write_var_uint(w,
+                          static_cast<uint32_t>(lightmap.visibility_pages.bytes.size()));
+  if (!lightmap.visibility_pages.bytes.empty())
+    w.write_bytes(lightmap.visibility_pages.bytes.data(),
+                  lightmap.visibility_pages.bytes.size());
 }
 
 static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
@@ -190,7 +207,11 @@ static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
 
   lightmap.atlas.size_in_texels = read_i32(r);
   lightmap.atlas.page_count     = read_i32(r);
-  lightmap.pages.format         = static_cast<lightmap_pixel_format_t>(read_u32(r));
+  lightmap.irradiance_pages.format = static_cast<lightmap_pixel_format_t>(read_u32(r));
+
+  lightmap.light_uids.resize(network::read_var_uint(r));
+  for (entity_uid_t &light_uid : lightmap.light_uids)
+    light_uid = read_u32(r);
 
   lightmap.charts.resize(chart_count);
   for (lightmap_chart_t &chart : lightmap.charts)
@@ -207,13 +228,31 @@ static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
     chart.atlas_rect.min_y      = read_i32(r);
     chart.atlas_rect.width      = read_i32(r);
     chart.atlas_rect.height     = read_i32(r);
+
+    for (int16_t &slot : chart.light_slots)
+    {
+      slot = static_cast<int16_t>(read_i32(r));
+      // Same guard the sidecar reader carries, and for the same reason: a slot
+      // past the table must resolve to nothing rather than index it.
+      if (slot >= static_cast<int16_t>(lightmap.light_uids.size()))
+        slot = LIGHTMAP_NO_LIGHT_SLOT;
+    }
   }
 
-  lightmap.pages.size_in_texels = lightmap.atlas.size_in_texels;
-  lightmap.pages.page_count     = lightmap.atlas.page_count;
-  lightmap.pages.bytes.resize(network::read_var_uint(r));
-  if (!lightmap.pages.bytes.empty())
-    r.read_bytes(lightmap.pages.bytes.data(), lightmap.pages.bytes.size());
+  lightmap.irradiance_pages.size_in_texels = lightmap.atlas.size_in_texels;
+  lightmap.irradiance_pages.page_count     = lightmap.atlas.page_count;
+  lightmap.irradiance_pages.bytes.resize(network::read_var_uint(r));
+  if (!lightmap.irradiance_pages.bytes.empty())
+    r.read_bytes(lightmap.irradiance_pages.bytes.data(),
+                 lightmap.irradiance_pages.bytes.size());
+
+  lightmap.visibility_pages.format = static_cast<lightmap_pixel_format_t>(read_u32(r));
+  lightmap.visibility_pages.size_in_texels = lightmap.atlas.size_in_texels;
+  lightmap.visibility_pages.page_count     = lightmap.atlas.page_count;
+  lightmap.visibility_pages.bytes.resize(network::read_var_uint(r));
+  if (!lightmap.visibility_pages.bytes.empty())
+    r.read_bytes(lightmap.visibility_pages.bytes.data(),
+                 lightmap.visibility_pages.bytes.size());
 
   // The id the generated-mesh cache compares, recomputed rather than shipped:
   // it is a content hash of what was just read, so sending it would be a second

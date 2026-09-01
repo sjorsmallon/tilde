@@ -42,6 +42,11 @@ private:
   // save and load together.
   shared::lightmap_t baked;
 
+  // Per-light shadow-ray coverage from the same bake, held only to be looked at:
+  // it goes into no sidecar and no atlas yet (lighting_def.md ss14 step 6).
+  shared::lightmap_visibility_masks_t visibility_masks;
+  bool emit_per_light_visibility = true;
+
   size_t lit_texel_count = 0;
 
   [[nodiscard]] bool has_packed() const { return baked.atlas.page_count > 0; }

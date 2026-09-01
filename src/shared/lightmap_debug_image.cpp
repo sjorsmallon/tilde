@@ -193,4 +193,94 @@ bool try_write_lightmap_pages_png(const lightmap_pages_t &pages,
   return wrote_every_page;
 }
 
+// The STORED visibility, one RGBA image per page: a slot per channel, in the
+// owning chart's slot order. It is deliberately not the same picture as the
+// per-light masks below -- channel 0 is a different light on every chart, which
+// is exactly what a per-CHART slot table means, and seeing that mosaic is how a
+// wrong slot assignment stops being invisible.
+//
+// Raw bytes, no tone map and no sRGB encode: the stored value IS a fraction, and
+// this is the one view that must show it unchanged.
+bool try_write_lightmap_visibility_pages_png(const lightmap_pages_t &pages,
+                                             const std::string &path_prefix)
+{
+  if (pages.empty() || pages.format != lightmap_pixel_format_t::Unorm8x4)
+  {
+    log_error("[lightmap] there are no visibility pages to write.");
+    return false;
+  }
+
+  static_assert(LIGHTMAP_LIGHTS_PER_CHART == 4,
+                "Four slots is four channels of an RGBA image. More slots need a "
+                "second image, not a wider pixel.");
+
+  bool wrote_every_page = true;
+
+  for (int page = 0; page < pages.page_count; ++page)
+  {
+    const size_t texels = (size_t)pages.size_in_texels * (size_t)pages.size_in_texels;
+    const std::vector<uint8_t> &bytes = pages.bytes;
+    const size_t offset = (size_t)page * texels * 4;
+
+    const std::string path = path_prefix + "_page" + std::to_string(page) + ".png";
+    if (!stbi_write_png(path.c_str(), pages.size_in_texels, pages.size_in_texels, 4,
+                        bytes.data() + offset, pages.size_in_texels * 4))
+    {
+      log_error("[lightmap] could not write '{}'.", path);
+      wrote_every_page = false;
+      continue;
+    }
+    log_terminal("[lightmap] wrote {} ({}x{})", path, pages.size_in_texels,
+                 pages.size_in_texels);
+  }
+
+  return wrote_every_page;
+}
+
+// One image per LIGHT per page, so the question a mask answers -- did this light
+// reach this texel -- is asked one light at a time. Grayscale and raw: coverage is
+// a fraction of samples, and tone mapping or sRGB-encoding it would make a value
+// that is data read as a value that is colour.
+bool try_write_lightmap_visibility_png(const lightmap_visibility_masks_t &masks,
+                                       const std::string &path_prefix)
+{
+  if (masks.empty() || masks.size_in_texels <= 0 || masks.page_count <= 0)
+  {
+    log_error("[lightmap] there are no visibility masks to write.");
+    return false;
+  }
+
+  bool wrote_every_page = true;
+  std::vector<uint8_t> image;
+
+  for (size_t slot = 0; slot < masks.slot_count(); ++slot)
+    for (int page = 0; page < masks.page_count; ++page)
+    {
+      image.assign((size_t)masks.size_in_texels * (size_t)masks.size_in_texels, 0);
+
+      for (int y = 0; y < masks.size_in_texels; ++y)
+        for (int x = 0; x < masks.size_in_texels; ++x)
+        {
+          const float coverage = masks.coverage[masks.index_of(slot, page, x, y)];
+          image[(size_t)y * (size_t)masks.size_in_texels + (size_t)x] =
+              (uint8_t)std::clamp((int)std::lround(coverage * 255.f), 0, 255);
+        }
+
+      const std::string path = path_prefix + "_light" +
+                               std::to_string(masks.light_uids[slot]) + "_page" +
+                               std::to_string(page) + ".png";
+      if (!stbi_write_png(path.c_str(), masks.size_in_texels, masks.size_in_texels, 1,
+                          image.data(), masks.size_in_texels))
+      {
+        log_error("[lightmap] could not write '{}'.", path);
+        wrote_every_page = false;
+        continue;
+      }
+      log_terminal("[lightmap] wrote {} ({}x{})", path, masks.size_in_texels,
+                   masks.size_in_texels);
+    }
+
+  return wrote_every_page;
+}
+
 } // namespace shared

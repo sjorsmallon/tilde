@@ -312,8 +312,23 @@ shared::lightmap_t bake_one_box(shared::map_t &map)
   shared::lightmap_t lightmap;
   lightmap.charts = shared::build_lightmap_charts(map, lightmap.settings);
   lightmap.atlas = shared::pack_lightmap_charts(lightmap.charts, lightmap.settings);
-  lightmap.pages.allocate(lightmap.atlas, shared::lightmap_pixel_format_t::Rgb9e5);
-  lightmap.pages.store(0, 0, 0, {0.5f, 0.25f, 2.f});
+  lightmap.irradiance_pages.allocate(lightmap.atlas,
+                                     shared::lightmap_pixel_format_t::Rgb9e5);
+  lightmap.irradiance_pages.store(0, 0, 0, {0.5f, 0.25f, 2.f});
+
+  // The visibility half, written by hand for the same reason the irradiance one
+  // is: this fixture is about what SURVIVES a round trip, not about what a solve
+  // would have chosen.
+  lightmap.light_uids = {11, 22, 33};
+  lightmap.visibility_pages.allocate(lightmap.atlas,
+                                     shared::lightmap_pixel_format_t::Unorm8x4);
+  lightmap.visibility_pages.store_visibility(0, 0, 0, {{1.f, 0.5f, 0.f, 0.25f}});
+  for (shared::lightmap_chart_t &chart : lightmap.charts)
+  {
+    chart.light_slots[0] = 2;
+    chart.light_slots[1] = 0;
+  }
+
   shared::set_lightmap_geometry_id(lightmap);
   return lightmap;
 }
@@ -338,15 +353,29 @@ void a_sidecar_round_trips_every_chart()
   assert(loaded.charts.size() == baked.charts.size());
   assert(loaded.atlas.page_count == baked.atlas.page_count);
   assert(loaded.atlas.size_in_texels == baked.atlas.size_in_texels);
-  assert(loaded.pages.bytes.size() == baked.pages.bytes.size());
-  assert(loaded.pages.format == baked.pages.format);
+  assert(loaded.irradiance_pages.bytes.size() == baked.irradiance_pages.bytes.size());
+  assert(loaded.irradiance_pages.format == baked.irradiance_pages.format);
+
+  // The second page set and the table that gives its channels a meaning. A
+  // sidecar that carried the pixels and not the table would hand every chart
+  // four unnamed numbers.
+  assert(loaded.light_uids == baked.light_uids);
+  assert(loaded.visibility_pages.format == shared::lightmap_pixel_format_t::Unorm8x4);
+  assert(loaded.visibility_pages.bytes == baked.visibility_pages.bytes);
+
+  const Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART> coverage =
+      loaded.visibility_pages.load_visibility(0, 0, 0);
+  assert(coverage[0] == 1.f);
+  assert(std::abs(coverage[1] - 0.5f) < 0.01f);
+  assert(coverage[2] == 0.f);
+  assert(std::abs(coverage[3] - 0.25f) < 0.01f);
 
   // Four bytes a texel, and the texel that was written comes back as the same
   // three floats -- a sidecar that sized itself by texels rather than by bytes
   // reads three quarters of a page and calls it a whole one.
-  assert(loaded.pages.bytes.size() == loaded.pages.texel_count() * 4);
-  const linalg::vec3 stored = loaded.pages.load(0, 0, 0);
-  const linalg::vec3 expected = baked.pages.load(0, 0, 0);
+  assert(loaded.irradiance_pages.bytes.size() == loaded.irradiance_pages.texel_count() * 4);
+  const linalg::vec3 stored = loaded.irradiance_pages.load(0, 0, 0);
+  const linalg::vec3 expected = baked.irradiance_pages.load(0, 0, 0);
   assert(stored.x == expected.x && stored.y == expected.y && stored.z == expected.z);
 
   for (size_t i = 0; i < loaded.charts.size(); ++i)
@@ -366,6 +395,9 @@ void a_sidecar_round_trips_every_chart()
     assert(after.plane.normal.x == before.plane.normal.x);
     assert(after.tangent_u.x == before.tangent_u.x);
     assert(after.tangent_v.z == before.tangent_v.z);
+
+    for (uint32_t slot = 0; slot < shared::LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+      assert(after.light_slots[slot] == before.light_slots[slot]);
 
     // The POLYGON is deliberately not stored -- it is the bake's own coverage
     // test and nothing downstream reads it.
@@ -398,8 +430,20 @@ void the_geometry_id_follows_the_packing()
   shared::lightmap_t again;
   again.charts = shared::build_lightmap_charts(map, again.settings);
   again.atlas = shared::pack_lightmap_charts(again.charts, again.settings);
+  again.light_uids = coarse.light_uids;
+  for (size_t i = 0; i < again.charts.size(); ++i)
+    again.charts[i].light_slots = coarse.charts[i].light_slots;
   shared::set_lightmap_geometry_id(again);
   assert(again.geometry_id == coarse.geometry_id);
+
+  // A chart that kept a DIFFERENT light is a different mesh, because the slots
+  // ride the vertices -- so reassigning one has to rebuild it, exactly as a
+  // chart moving in the atlas does. Nothing else about the bake distinguishes
+  // the two.
+  shared::lightmap_t reassigned = again;
+  reassigned.charts[0].light_slots[0] = 1;
+  shared::set_lightmap_geometry_id(reassigned);
+  assert(reassigned.geometry_id != again.geometry_id);
 }
 
 // Two brushes can share a plane -- a floor and the slab beneath it -- and a plane
@@ -556,11 +600,24 @@ shared::lightmap_t pack_for(const shared::map_t &map)
   return lightmap;
 }
 
+// Pack and solve, which is what every assertion below is about -- a bake fills
+// both page sets, the resolve table and every chart's slots, so the whole
+// lightmap is the answer rather than one buffer out of it.
+shared::lightmap_t bake_for(const shared::map_t &map,
+                            const shared::lightmap_solve_settings_t &solve = {},
+                            shared::lightmap_visibility_masks_t *masks = nullptr)
+{
+  shared::lightmap_t lightmap = pack_for(map);
+  shared::bake_lightmap(map, lightmap, solve, masks);
+  return lightmap;
+}
+
 // The texel directly under the light, which is the one both modes have the most
 // to say about.
-linalg::vec3 texel_under_the_light(const shared::lightmap_t &lightmap,
-                                   const shared::lightmap_pages_t &pages)
+linalg::vec3 texel_under_the_light(const shared::lightmap_t &lightmap)
 {
+  const shared::lightmap_pages_t &pages = lightmap.irradiance_pages;
+
   for (const shared::lightmap_chart_t &chart : lightmap.charts)
   {
     if (chart.plane.normal.y < 0.9f) continue;
@@ -581,18 +638,17 @@ linalg::vec3 texel_under_the_light(const shared::lightmap_t &lightmap,
 void the_visibility_mode_writes_white_or_nothing()
 {
   const shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
-  const shared::lightmap_t lightmap = pack_for(map);
 
   shared::lightmap_solve_settings_t solve;
   solve.mode = shared::lightmap_solve_mode_t::Visibility;
 
-  const shared::lightmap_pages_t pages = shared::bake_lightmap_pages(
-      map, lightmap.charts, lightmap.atlas, lightmap.settings, solve);
+  const shared::lightmap_t lightmap = bake_for(map, solve);
+  const shared::lightmap_pages_t &pages = lightmap.irradiance_pages;
 
   assert(pages.format == shared::lightmap_pixel_format_t::Rgb9e5);
   assert(pages.bytes.size() == pages.texel_count() * 4);
 
-  const linalg::vec3 lit = texel_under_the_light(lightmap, pages);
+  const linalg::vec3 lit = texel_under_the_light(lightmap);
   assert(lit.x == 1.f && lit.y == 1.f && lit.z == 1.f);
 
   size_t lit_count = 0;
@@ -616,25 +672,13 @@ void the_direct_mode_falls_off_and_scales_with_intensity()
   const shared::lightmap_solve_settings_t solve;
 
   const shared::map_t near_map = map_with_a_floor_and_a_light(64.f, 1.f);
-  const shared::lightmap_t near_packed = pack_for(near_map);
-  const linalg::vec3 near_texel = texel_under_the_light(
-      near_packed,
-      shared::bake_lightmap_pages(near_map, near_packed.charts, near_packed.atlas,
-                                  near_packed.settings, solve));
+  const linalg::vec3 near_texel = texel_under_the_light(bake_for(near_map, solve));
 
   const shared::map_t far_map = map_with_a_floor_and_a_light(128.f, 1.f);
-  const shared::lightmap_t far_packed = pack_for(far_map);
-  const linalg::vec3 far_texel = texel_under_the_light(
-      far_packed, shared::bake_lightmap_pages(far_map, far_packed.charts,
-                                              far_packed.atlas, far_packed.settings,
-                                              solve));
+  const linalg::vec3 far_texel = texel_under_the_light(bake_for(far_map, solve));
 
   const shared::map_t bright_map = map_with_a_floor_and_a_light(64.f, 4.f);
-  const shared::lightmap_t bright_packed = pack_for(bright_map);
-  const linalg::vec3 bright_texel = texel_under_the_light(
-      bright_packed,
-      shared::bake_lightmap_pages(bright_map, bright_packed.charts, bright_packed.atlas,
-                                  bright_packed.settings, solve));
+  const linalg::vec3 bright_texel = texel_under_the_light(bake_for(bright_map, solve));
 
   assert(near_texel.x > 0.f);
   assert(far_texel.x > 0.f);
@@ -674,10 +718,7 @@ void the_light_mode_decides_what_reaches_the_atlas()
       map.entities.push_back({map.next_uid++, extra});
     }
 
-    const shared::lightmap_t lightmap = pack_for(map);
-    return texel_under_the_light(
-        lightmap, shared::bake_lightmap_pages(map, lightmap.charts, lightmap.atlas,
-                                              lightmap.settings, solve));
+    return texel_under_the_light(bake_for(map, solve));
   };
 
   const linalg::vec3 baked = texel_for(entities::Light_Mode::Baked, {});
@@ -708,7 +749,130 @@ void an_occluder_darkens_both_modes()
   shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
   map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
 
-  const shared::lightmap_t lightmap = pack_for(map);
+  const shared::lightmap_solve_mode_t modes[] = {
+      shared::lightmap_solve_mode_t::Direct_Light,
+      shared::lightmap_solve_mode_t::Visibility};
+
+  for (shared::lightmap_solve_mode_t mode : modes)
+  {
+    shared::lightmap_solve_settings_t solve;
+    solve.mode = mode;
+
+    const linalg::vec3 shadowed = texel_under_the_light(bake_for(map, solve));
+    assert(shadowed.x == 0.f && shadowed.y == 0.f && shadowed.z == 0.f);
+  }
+}
+
+
+// --- The per-light visibility masks ------------------------------------------
+
+const shared::lightmap_chart_t *upward_chart(const shared::lightmap_t &lightmap)
+{
+  for (const shared::lightmap_chart_t &chart : lightmap.charts)
+    if (chart.plane.normal.y > 0.9f) return &chart;
+  assert(false && "the floor has no upward face");
+  return nullptr;
+}
+
+shared::entity_uid_t only_light_uid(const shared::map_t &map)
+{
+  for (const shared::map_entity_t &entry : map.entities)
+    if (entry.entity && shared::try_light_of(*entry.entity)) return entry.uid;
+  assert(false && "the map holds no light");
+  return 0;
+}
+
+// The covered texel of the top face whose world position is nearest (x, *, 0),
+// as an atlas coordinate -- which is what a mask is indexed by.
+void top_face_texel_nearest(const shared::lightmap_t &lightmap, float world_x,
+                            int &out_atlas_x, int &out_atlas_y)
+{
+  const shared::lightmap_chart_t &chart = *upward_chart(lightmap);
+  const int gutter = lightmap.settings.gutter_in_texels;
+
+  float best = 1e30f;
+  for (int y = 0; y < shared::chart_covered_height(chart, lightmap.settings); ++y)
+    for (int x = 0; x < shared::chart_covered_width(chart, lightmap.settings); ++x)
+    {
+      if (!shared::texel_is_inside_face(chart, x, y)) continue;
+
+      const linalg::vec3 position = shared::texel_world_position(chart, x, y);
+      const float distance = std::abs(position.x - world_x) + std::abs(position.z);
+      if (distance >= best) continue;
+
+      best = distance;
+      out_atlas_x = chart.atlas_rect.min_x + gutter + x;
+      out_atlas_y = chart.atlas_rect.min_y + gutter + y;
+    }
+
+  assert(best < 1e29f);
+}
+
+// A slot is named by the light it is of, and what it holds is the shadow: the lid
+// blocks the texel under the light and blocks nothing out at the slab's edge.
+void a_mask_slot_is_named_by_its_light_and_carries_the_shadow()
+{
+  shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+
+  shared::lightmap_visibility_masks_t masks;
+  const shared::lightmap_t lightmap = bake_for(map, {}, &masks);
+
+  assert(masks.slot_count() == 1);
+  assert(masks.light_uids[0] == only_light_uid(map));
+  assert(masks.size_in_texels == lightmap.atlas.size_in_texels);
+  assert(masks.page_count == lightmap.atlas.page_count);
+
+  const shared::lightmap_chart_t &chart = *upward_chart(lightmap);
+
+  int shadowed_x = 0, shadowed_y = 0;
+  top_face_texel_nearest(lightmap, 0.f, shadowed_x, shadowed_y);
+  assert(masks.coverage[masks.index_of(0, chart.page, shadowed_x, shadowed_y)] == 0.f);
+
+  int clear_x = 0, clear_y = 0;
+  top_face_texel_nearest(lightmap, 100.f, clear_x, clear_y);
+  assert(masks.coverage[masks.index_of(0, chart.page, clear_x, clear_y)] == 1.f);
+}
+
+// The one that is invisible until it isn't (lighting_def.md ss14 step 6). The light
+// sits just BELOW the floor's plane and off past its edge, so N.L against the flat
+// face normal is negative and the irradiance is zero -- while the shadow ray, which
+// leaves the slab over its edge, is completely clear. A mask gated on `reaches`
+// would bake zero here, and the surface it kills is the normal-mapped one whose
+// shaded normal does face the light.
+void a_mask_is_not_gated_on_the_flat_face_normal()
+{
+  shared::map_t map;
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {128, 8, 128})});
+
+  std::shared_ptr<entities::Point_Light_Entity> light =
+      std::make_shared<entities::Point_Light_Entity>();
+  light->position = {400.f, -1.f, 0.f};
+  light->range = 1024.f;
+  light->light.intensity = 1.f;
+  map.entities.push_back({map.next_uid++, light});
+
+  shared::lightmap_visibility_masks_t masks;
+  const shared::lightmap_t lightmap = bake_for(map, {}, &masks);
+
+  const shared::lightmap_chart_t &chart = *upward_chart(lightmap);
+  int texel_x = 0, texel_y = 0;
+  top_face_texel_nearest(lightmap, 100.f, texel_x, texel_y);
+
+  const linalg::vec3 irradiance =
+      lightmap.irradiance_pages.load(chart.page, texel_x, texel_y);
+  assert(irradiance.x == 0.f && irradiance.y == 0.f && irradiance.z == 0.f);
+
+  assert(masks.coverage[masks.index_of(0, chart.page, texel_x, texel_y)] == 1.f);
+}
+
+// Asking for masks costs shadow rays the sum does not need, and it must cost
+// nothing else: the pixels are the same bytes either way, in both modes.
+void asking_for_masks_does_not_move_a_pixel()
+{
+  shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
 
   const shared::lightmap_solve_mode_t modes[] = {
       shared::lightmap_solve_mode_t::Direct_Light,
@@ -719,14 +883,19 @@ void an_occluder_darkens_both_modes()
     shared::lightmap_solve_settings_t solve;
     solve.mode = mode;
 
-    const shared::lightmap_pages_t pages = shared::bake_lightmap_pages(
-        map, lightmap.charts, lightmap.atlas, lightmap.settings, solve);
+    const shared::lightmap_t without = bake_for(map, solve);
 
-    const linalg::vec3 shadowed = texel_under_the_light(lightmap, pages);
-    assert(shadowed.x == 0.f && shadowed.y == 0.f && shadowed.z == 0.f);
+    shared::lightmap_visibility_masks_t masks;
+    const shared::lightmap_t with = bake_for(map, solve, &masks);
+
+    assert(!masks.empty());
+    assert(without.irradiance_pages.bytes == with.irradiance_pages.bytes);
+
+    // And the visibility half is the same both ways too: what a chart keeps is
+    // ranked from the same walk, so the debug output cannot steer the bake.
+    assert(without.visibility_pages.bytes == with.visibility_pages.bytes);
   }
 }
-
 
 // Every chart on the page whose plane faces some way other than up. A light
 // overhead reaches none of them, so they bake black -- which makes them the
@@ -740,6 +909,219 @@ charts_facing_away_from_up(const shared::lightmap_t &lightmap)
   return away;
 }
 
+// --- The stored visibility: slots, the resolve table, and the cap ------------
+
+// A point light of the given intensity, standing over the floor.
+shared::entity_uid_t add_light(shared::map_t &map, const linalg::vec3 &position,
+                               float intensity)
+{
+  std::shared_ptr<entities::Point_Light_Entity> light =
+      std::make_shared<entities::Point_Light_Entity>();
+  light->position = position;
+  light->range = 4096.f;
+  light->light.color = {1.f, 1.f, 1.f};
+  light->light.intensity = intensity;
+
+  const shared::entity_uid_t uid = map.next_uid++;
+  map.entities.push_back({uid, light});
+  return uid;
+}
+
+shared::map_t map_with_a_floor()
+{
+  shared::map_t map;
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {128, 8, 128})});
+  return map;
+}
+
+// The two halves of a stored visibility, and neither is any use without the
+// other: a channel holds a coverage, and the chart's slot is what says which
+// light that coverage is OF. The lid over the middle of the floor is what makes
+// the two distinguishable -- it darkens one light's channel and not the other's.
+void a_chart_names_its_lights_and_stores_their_coverage()
+{
+  shared::map_t map = map_with_a_floor();
+  const shared::entity_uid_t overhead = add_light(map, {0, 64, 0}, 1.f);
+  const shared::entity_uid_t off_to_the_side = add_light(map, {400, 64, 0}, 1.f);
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+
+  const shared::lightmap_t lightmap = bake_for(map);
+
+  assert(lightmap.light_uids.size() == 2);
+  assert(lightmap.light_uids[0] == overhead);
+  assert(lightmap.light_uids[1] == off_to_the_side);
+  assert(lightmap.visibility_pages.format == shared::lightmap_pixel_format_t::Unorm8x4);
+  assert(lightmap.visibility_pages.bytes.size() ==
+         lightmap.visibility_pages.texel_count() * 4);
+
+  const shared::lightmap_chart_t &chart = *upward_chart(lightmap);
+
+  // Both lights reach the top face, so both are kept -- and the slot ORDER is
+  // the ranking, strongest first, which puts the one standing over the middle of
+  // the floor ahead of the one 400 units off to the side.
+  assert(chart.light_slots[0] == 0);
+  assert(chart.light_slots[1] == 1);
+  assert(chart.light_slots[2] == shared::LIGHTMAP_NO_LIGHT_SLOT);
+  assert(chart.light_slots[3] == shared::LIGHTMAP_NO_LIGHT_SLOT);
+
+  int shadowed_x = 0, shadowed_y = 0;
+  top_face_texel_nearest(lightmap, 0.f, shadowed_x, shadowed_y);
+  const Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART> shadowed =
+      lightmap.visibility_pages.load_visibility(chart.page, shadowed_x, shadowed_y);
+
+  // Under the lid: the overhead light is blocked and the one off to the side
+  // reaches it, which is the whole reason a mask is per LIGHT.
+  assert(shadowed[0] == 0.f);
+  assert(shadowed[1] == 1.f);
+
+  int clear_x = 0, clear_y = 0;
+  top_face_texel_nearest(lightmap, 100.f, clear_x, clear_y);
+  const Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART> clear =
+      lightmap.visibility_pages.load_visibility(chart.page, clear_x, clear_y);
+  assert(clear[0] == 1.f);
+  assert(clear[1] == 1.f);
+
+  // An unclaimed slot stores ZERO, which reads as fully occluded. One left at 1
+  // is a light nobody baked shining through every wall.
+  assert(clear[2] == 0.f);
+  assert(clear[3] == 0.f);
+}
+
+// The cap is a CLIFF and the policy is to drop, loudly. What must not happen is
+// the drop being silent, or the four kept being the four the map happened to
+// declare first -- so the weakest light stands closest to the face and would win
+// any ranking by coverage rather than by delivery.
+void a_chart_keeps_its_strongest_lights_and_drops_the_rest()
+{
+  shared::map_t map = map_with_a_floor();
+
+  const shared::entity_uid_t brightest = add_light(map, {0, 400, 0}, 64.f);
+  add_light(map, {40, 400, 0}, 32.f);
+  add_light(map, {-40, 400, 0}, 16.f);
+  add_light(map, {0, 400, 40}, 8.f);
+  const shared::entity_uid_t dimmest = add_light(map, {0, 24, 0}, 0.0001f);
+
+  const shared::lightmap_t lightmap = bake_for(map);
+  assert(lightmap.light_uids.size() == 5);
+
+  const shared::lightmap_chart_t &chart = *upward_chart(lightmap);
+
+  // Four kept, the fifth gone, and the strongest first. The dimmest one is the
+  // one dropped even though it is nearest, because what a slot is ranked by is
+  // what the light DELIVERS.
+  assert(chart.light_slots[0] == 0);
+  for (uint32_t slot = 0; slot < shared::LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+  {
+    assert(chart.light_slots[slot] != shared::LIGHTMAP_NO_LIGHT_SLOT);
+    assert(lightmap.light_uids[(size_t)chart.light_slots[slot]] != dimmest);
+  }
+  assert(lightmap.light_uids[(size_t)chart.light_slots[0]] == brightest);
+}
+
+// A light the author switched to Dynamic is in neither the atlas nor the resolve
+// table, so a slot cannot name one -- the table is what the runtime gather pass
+// resolves against, and an entry it can never match is a slot that silently
+// darkens a face.
+void the_resolve_table_holds_only_baked_lights()
+{
+  shared::map_t map = map_with_a_floor();
+  const shared::entity_uid_t baked = add_light(map, {0, 64, 0}, 1.f);
+
+  std::shared_ptr<entities::Point_Light_Entity> dynamic_light =
+      std::make_shared<entities::Point_Light_Entity>();
+  dynamic_light->position = {0, 64, 0};
+  dynamic_light->range = 4096.f;
+  dynamic_light->light.intensity = 1.f;
+  dynamic_light->light.mode = entities::Light_Mode::Dynamic;
+  map.entities.push_back({map.next_uid++, dynamic_light});
+
+  const shared::lightmap_t lightmap = bake_for(map);
+
+  assert(lightmap.light_uids.size() == 1);
+  assert(lightmap.light_uids[0] == baked);
+
+  const shared::lightmap_chart_t &chart = *upward_chart(lightmap);
+  assert(chart.light_slots[0] == 0);
+  assert(chart.light_slots[1] == shared::LIGHTMAP_NO_LIGHT_SLOT);
+}
+
+// A face NO ray from the light can reach keeps NO slot: a coverage of zero
+// everywhere is a light that is not this face's, and spending one of four on it
+// is how the fifth real one gets dropped.
+//
+// The underside of the slab, not its sides: a side face is one the light does
+// not reach and DOES arrive at, since a ray leaving its top edge clears the slab
+// entirely -- which is the ungated mask working, and is the case
+// a_mask_is_not_gated_on_the_flat_face_normal pins.
+void a_face_no_light_reaches_keeps_no_slot()
+{
+  shared::map_t map = map_with_a_floor();
+  add_light(map, {0, 64, 0}, 1.f);
+
+  const shared::lightmap_t lightmap = bake_for(map);
+
+  const shared::lightmap_chart_t *underside = nullptr;
+  for (const shared::lightmap_chart_t &chart : lightmap.charts)
+    if (chart.plane.normal.y < -0.9f) underside = &chart;
+  assert(underside);
+
+  for (uint32_t slot = 0; slot < shared::LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+    assert(underside->light_slots[slot] == shared::LIGHTMAP_NO_LIGHT_SLOT);
+}
+
+// Coverage is not lighting: it is gated on the shadow ray and the light
+// ARRIVING, and on nothing the mode has an opinion about. So the two modes write
+// different irradiance and the same visibility, byte for byte.
+void the_two_modes_store_the_same_visibility()
+{
+  shared::map_t map = map_with_a_floor();
+  add_light(map, {0, 64, 0}, 1.f);
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+
+  shared::lightmap_solve_settings_t direct;
+  shared::lightmap_solve_settings_t visibility;
+  visibility.mode = shared::lightmap_solve_mode_t::Visibility;
+
+  const shared::lightmap_t direct_bake = bake_for(map, direct);
+  const shared::lightmap_t visibility_bake = bake_for(map, visibility);
+
+  assert(direct_bake.irradiance_pages.bytes != visibility_bake.irradiance_pages.bytes);
+  assert(direct_bake.visibility_pages.bytes == visibility_bake.visibility_pages.bytes);
+}
+
+// A failed bake must leave no half of an older one: a slot naming a light this
+// run never looked at is exactly the disagreement the resolve table exists to
+// prevent.
+void a_bake_with_no_light_clears_what_the_last_one_left()
+{
+  shared::map_t map = map_with_a_floor();
+  add_light(map, {0, 64, 0}, 1.f);
+
+  shared::lightmap_t lightmap = bake_for(map);
+  assert(!lightmap.light_uids.empty());
+  assert(upward_chart(lightmap)->light_slots[0] != shared::LIGHTMAP_NO_LIGHT_SLOT);
+
+  // Same charts, same atlas, and every light now Dynamic -- so there is nothing
+  // to bake and the whole of the last bake has to go.
+  for (shared::map_entity_t &entry : map.entities)
+    if (entities::Point_Light_Entity *light =
+            entities::entity_as<entities::Point_Light_Entity>(entry.entity.get()))
+      light->light.mode = entities::Light_Mode::Dynamic;
+
+  shared::bake_lightmap(map, lightmap, {});
+
+  assert(lightmap.light_uids.empty());
+  assert(lightmap.irradiance_pages.empty());
+  assert(lightmap.visibility_pages.empty());
+  for (const shared::lightmap_chart_t &chart : lightmap.charts)
+    for (uint32_t slot = 0; slot < shared::LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+      assert(chart.light_slots[slot] == shared::LIGHTMAP_NO_LIGHT_SLOT);
+}
+
+
 // What ss10 decided, and the only test that can tell the decision landed: an
 // authored intensity of 1 is the irradiance the light delivers at one metre. A
 // true inverse square in inches puts the same number at 1/1550 of that, which
@@ -752,12 +1134,7 @@ void intensity_is_the_irradiance_at_the_reference_distance()
 {
   const shared::map_t map =
       map_with_a_floor_and_a_light(shared::LIGHT_REFERENCE_DISTANCE, 1.f);
-  const shared::lightmap_t lightmap = pack_for(map);
-
-  const shared::lightmap_solve_settings_t solve;
-  const linalg::vec3 lit = texel_under_the_light(
-      lightmap, shared::bake_lightmap_pages(map, lightmap.charts, lightmap.atlas,
-                                            lightmap.settings, solve));
+  const linalg::vec3 lit = texel_under_the_light(bake_for(map));
 
   assert(std::abs(lit.x - 1.f) < 0.1f);
   assert(std::abs(lit.y - 1.f) < 0.1f);
@@ -773,7 +1150,6 @@ void intensity_is_the_irradiance_at_the_reference_distance()
 void the_gutter_is_filled_from_the_chart_that_owns_it()
 {
   const shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
-  const shared::lightmap_t lightmap = pack_for(map);
 
   const auto is_all_zero = [](const shared::lightmap_pages_t &pages,
                               const shared::lightmap_chart_t &chart) {
@@ -787,19 +1163,18 @@ void the_gutter_is_filled_from_the_chart_that_owns_it()
     return true;
   };
 
+  shared::lightmap_solve_settings_t undilated;
+  undilated.dilate_into_the_gutter = false;
+  const shared::lightmap_t undilated_bake = bake_for(map, undilated);
+  const shared::lightmap_pages_t &without = undilated_bake.irradiance_pages;
+
+  const shared::lightmap_t lightmap = bake_for(map);
+  const shared::lightmap_pages_t &with = lightmap.irradiance_pages;
+
   const shared::lightmap_chart_t *lit_chart = nullptr;
   for (const shared::lightmap_chart_t &chart : lightmap.charts)
     if (chart.plane.normal.y > 0.9f) lit_chart = &chart;
   assert(lit_chart);
-
-  shared::lightmap_solve_settings_t undilated;
-  undilated.dilate_into_the_gutter = false;
-  const shared::lightmap_pages_t without = shared::bake_lightmap_pages(
-      map, lightmap.charts, lightmap.atlas, lightmap.settings, undilated);
-
-  const shared::lightmap_solve_settings_t dilated;
-  const shared::lightmap_pages_t with = shared::bake_lightmap_pages(
-      map, lightmap.charts, lightmap.atlas, lightmap.settings, dilated);
 
   // A gutter corner: outside the covered region on both axes, so nothing but the
   // fill can ever have written it.
@@ -830,16 +1205,14 @@ void supersampling_resolves_a_shadow_edge_the_centre_sample_cannot()
   shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
   map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {30, 4, 30})});
 
-  const shared::lightmap_t lightmap = pack_for(map);
-
   const auto partial_texel_count = [&](int samples_per_edge) {
     shared::lightmap_solve_settings_t solve;
     solve.mode = shared::lightmap_solve_mode_t::Visibility;
     solve.samples_per_texel_edge = samples_per_edge;
     solve.dilate_into_the_gutter = false;
 
-    const shared::lightmap_pages_t pages = shared::bake_lightmap_pages(
-        map, lightmap.charts, lightmap.atlas, lightmap.settings, solve);
+    const shared::lightmap_t lightmap = bake_for(map, solve);
+    const shared::lightmap_pages_t &pages = lightmap.irradiance_pages;
 
     size_t partial = 0;
     for (int page = 0; page < pages.page_count; ++page)
@@ -863,18 +1236,24 @@ void supersampling_resolves_a_shadow_edge_the_centre_sample_cannot()
 void a_rebake_reproduces_itself_byte_for_byte()
 {
   const shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
-  const shared::lightmap_t lightmap = pack_for(map);
 
   shared::lightmap_solve_settings_t solve;
   solve.samples_per_texel_edge = 4;
 
-  const shared::lightmap_pages_t first = shared::bake_lightmap_pages(
-      map, lightmap.charts, lightmap.atlas, lightmap.settings, solve);
-  const shared::lightmap_pages_t second = shared::bake_lightmap_pages(
-      map, lightmap.charts, lightmap.atlas, lightmap.settings, solve);
+  const shared::lightmap_t first = bake_for(map, solve);
+  const shared::lightmap_t second = bake_for(map, solve);
 
-  assert(!first.bytes.empty());
-  assert(first.bytes == second.bytes);
+  assert(!first.irradiance_pages.bytes.empty());
+  assert(first.irradiance_pages.bytes == second.irradiance_pages.bytes);
+
+  // The visibility half is under the same obligation, and it has one more way to
+  // differ: which four lights a chart keeps is a ranking, so a tie broken by
+  // whichever thread got there first would be a bake that differs from itself.
+  assert(!second.visibility_pages.bytes.empty());
+  assert(first.visibility_pages.bytes == second.visibility_pages.bytes);
+  for (size_t i = 0; i < first.charts.size(); ++i)
+    for (uint32_t slot = 0; slot < shared::LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+      assert(first.charts[i].light_slots[slot] == second.charts[i].light_slots[slot]);
 }
 
 } // namespace
@@ -902,10 +1281,19 @@ int main()
   the_direct_mode_falls_off_and_scales_with_intensity();
   the_light_mode_decides_what_reaches_the_atlas();
   an_occluder_darkens_both_modes();
+  a_mask_slot_is_named_by_its_light_and_carries_the_shadow();
+  a_mask_is_not_gated_on_the_flat_face_normal();
+  asking_for_masks_does_not_move_a_pixel();
   intensity_is_the_irradiance_at_the_reference_distance();
   the_gutter_is_filled_from_the_chart_that_owns_it();
   supersampling_resolves_a_shadow_edge_the_centre_sample_cannot();
   a_rebake_reproduces_itself_byte_for_byte();
+  a_chart_names_its_lights_and_stores_their_coverage();
+  a_chart_keeps_its_strongest_lights_and_drops_the_rest();
+  the_resolve_table_holds_only_baked_lights();
+  a_face_no_light_reaches_keeps_no_slot();
+  the_two_modes_store_the_same_visibility();
+  a_bake_with_no_light_clears_what_the_last_one_left();
 
   std::printf("lightmap_bake_test passed\n");
   return 0;

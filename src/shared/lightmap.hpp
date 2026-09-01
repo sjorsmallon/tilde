@@ -1,5 +1,6 @@
 #pragma once
 
+#include "array.hpp"
 #include "entity_uid.hpp"
 #include "linalg.hpp"
 #include "plane.hpp"
@@ -11,6 +12,24 @@
 
 namespace shared
 {
+
+// How many direct lights one chart can carry a visibility for, and the ONE place
+// the number is written down. Four because that is what four UNORM8 scalars cost
+// -- the same four bytes a texel of RGB9E5 irradiance already costs -- and what
+// Source 2 caps a surface at. Growing it means growing the pixel format beside
+// it, which is what the static_assert at that arm is for.
+//
+// The layout is per-CHART ids and per-TEXEL strengths (lighting_def.md ss12 A):
+// the ids are a fixed, small growth of the chart record, and the strengths are
+// the second page set. Light N+1 on a chart is DROPPED with a line naming both,
+// never silently, and never quietly kept -- an unlisted light reads as fully
+// occluded, so the failure is a dark face rather than light through a wall.
+inline constexpr uint32_t LIGHTMAP_LIGHTS_PER_CHART = 4;
+
+// An unfilled slot. Zero would not do: it is the first entry of the resolve
+// table, which is a real light.
+inline constexpr int16_t LIGHTMAP_NO_LIGHT_SLOT = -1;
+
 // Building one is six steps, and build_lightmap_charts runs them in this order:
 //
 //   1. basis      brush_face_grid_tangents(normal) -> orthonormal u, v in the
@@ -75,6 +94,18 @@ struct lightmap_chart_t
   // Which atlas LAYER this chart landed on. Filled by pack_lightmap_charts; -1
   // is unpacked, which after a successful pack is a bug rather than a state.
   int page = -1;
+
+  // Which light each channel of this chart's visibility texels is OF, as an
+  // index into lightmap_t::light_uids. Filled by the solve, which ranks the
+  // baked lights by what they deliver to this chart and keeps the strongest
+  // few; LIGHTMAP_NO_LIGHT_SLOT is a channel no light claimed.
+  //
+  // Per CHART rather than per texel because a texel has room for a strength and
+  // not for an index space, and per chart rather than per map because four
+  // lights across a whole level is not a level.
+  Array<int16_t, LIGHTMAP_LIGHTS_PER_CHART> light_slots{
+      {LIGHTMAP_NO_LIGHT_SLOT, LIGHTMAP_NO_LIGHT_SLOT, LIGHTMAP_NO_LIGHT_SLOT,
+       LIGHTMAP_NO_LIGHT_SLOT}};
 };
 
 // What the pack produced. Pages are all the same square size, because the
@@ -168,10 +199,11 @@ struct lightmap_bake_settings_t
 // value is STORED in the sidecar rather than implied by its version, so adding a
 // format is a new enumerator and an arm rather than a rewrite of every reader.
 //
-// RGB9E5 is the only one, and there is deliberately no 8-bit visibility arm
-// beside it: the visibility solve is a MODE of the one bake path (colour forced
-// to white, falloff forced to 1), not a second implementation with a second
-// format to keep working. A format with no writer is exactly the arm that rots.
+// TWO of them, because a bake produces two things of different shapes: HDR
+// irradiance, and a per-light visibility that is four scalars in [0, 1]. They
+// are TWO PAGE SETS rather than one buffer with a per-texel choice -- `format`
+// describes a whole buffer, and lightmap_def.md decision D is where that caveat
+// was written down before there was a second role to need it.
 enum class lightmap_pixel_format_t : uint32_t
 {
   // E5B9G9R9: three 9-bit mantissas sharing one 5-bit exponent, one 32-bit word
@@ -188,6 +220,15 @@ enum class lightmap_pixel_format_t : uint32_t
   // SH L1 direction layer, if one ever lands, needs bias-encoding or a format of
   // its own.
   Rgb9e5 = 0,
+
+  // The VISIBILITY role: one UNORM8 per light slot, in the chart's slot order.
+  // Eight bits is enough because the value is a coverage FRACTION rather than a
+  // radiance -- it has a top of 1.0 and no window to place, which is the whole
+  // reason the irradiance beside it cannot use the same eight bits.
+  //
+  // Four bytes a texel, exactly what RGB9E5 costs, which is why the cap is four
+  // rather than a number picked for the atlas budget.
+  Unorm8x4 = 1,
 };
 
 [[nodiscard]] inline int bytes_per_texel(lightmap_pixel_format_t format)
@@ -195,6 +236,8 @@ enum class lightmap_pixel_format_t : uint32_t
   switch (format)
   {
   case lightmap_pixel_format_t::Rgb9e5:
+    return 4;
+  case lightmap_pixel_format_t::Unorm8x4:
     return 4;
   }
   return 0;
@@ -288,8 +331,19 @@ struct lightmap_pages_t
   }
 
   void allocate(const lightmap_atlas_t &atlas, lightmap_pixel_format_t pixel_format);
+
+  // The IRRADIANCE role's vocabulary, in linear RGB.
   void store(int page, int x, int y, const linalg::vec3 &linear_rgb);
   [[nodiscard]] linalg::vec3 load(int page, int x, int y) const;
+
+  // The VISIBILITY role's, in coverage fractions -- one per light slot, in the
+  // owning chart's slot order. A pair of its own rather than a widened `store`
+  // because these are four independent scalars and not a colour: nothing here
+  // may be tonemapped, exposed or sRGB-encoded, and a vec4 invites all three.
+  void store_visibility(int page, int x, int y,
+                        const Array<float, LIGHTMAP_LIGHTS_PER_CHART> &coverage);
+  [[nodiscard]] Array<float, LIGHTMAP_LIGHTS_PER_CHART>
+  load_visibility(int page, int x, int y) const;
 };
 
 // A baked lightmap, resident. The pixels are what the renderer samples and the
@@ -312,7 +366,25 @@ struct lightmap_t
 
   // The format lives on the PAGES, which are what it describes -- one owner, so
   // there is no second spelling to disagree with the bytes it is about.
-  lightmap_pages_t pages;
+  //
+  // TWO sets, one per role. The irradiance is what a surface with no per-light
+  // visibility falls back to; the visibility is what lets the shader run
+  // shade_direct with the real light direction, which is the whole of
+  // lighting_def.md decision A. Both are sized from the same atlas and a chart's
+  // rect names a place in either, so a texel in one is the same texel in the
+  // other.
+  lightmap_pages_t irradiance_pages;
+  lightmap_pages_t visibility_pages;
+
+  // The resolve table: baked slot -> the light ENTITY that slot is of, which is
+  // what a chart's `light_slots` index into. A uid rather than an index into
+  // anything runtime, because the runtime light array is rebuilt every frame by
+  // the gather pass and a bake outlives every ordering it could have recorded.
+  //
+  // The one new invariant a mask brings: a baked slot must resolve to a live
+  // light. A slot naming a light the author deleted resolves to nothing, and
+  // nothing is what a deleted light contributes.
+  std::vector<entity_uid_t> light_uids;
 
   // Identifies everything a MESH is built from -- the charts, the settings and
   // the atlas dimensions, and deliberately not the pixels, which no vertex reads.

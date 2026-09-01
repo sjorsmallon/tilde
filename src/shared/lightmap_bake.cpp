@@ -378,41 +378,76 @@ void lightmap_pages_t::allocate(const lightmap_atlas_t &atlas,
   bytes.assign(texel_count() * (size_t)bytes_per_texel(format), 0);
 }
 
+namespace
+{
+
+// A page set answers in the vocabulary of the role its FORMAT is for, and asking
+// in the other one is a caller bug rather than a value to coerce -- an
+// irradiance read of a coverage texel is four scalars reinterpreted as a shared
+// exponent, which is plausible garbage.
+size_t checked_offset(const lightmap_pages_t &pages, int page, int x, int y,
+                      lightmap_pixel_format_t expected, const char *role)
+{
+  if (pages.format != expected)
+    fatal_error("[lightmap] a {} access to pages in format {}.", role,
+                (uint32_t)pages.format);
+
+  const size_t offset = pages.byte_offset_of(page, x, y);
+  if (offset + (size_t)bytes_per_texel(pages.format) > pages.bytes.size())
+    fatal_error("[lightmap] texel ({}, {}) on page {} is outside {} byte(s) of pages.",
+                x, y, page, pages.bytes.size());
+  return offset;
+}
+
+} // namespace
+
 void lightmap_pages_t::store(int page, int x, int y, const linalg::vec3 &linear_rgb)
 {
-  const size_t offset = byte_offset_of(page, x, y);
-  if (offset + (size_t)bytes_per_texel(format) > bytes.size())
-    fatal_error("[lightmap] texel ({}, {}) on page {} is outside {} byte(s) of pages.",
-                x, y, page, bytes.size());
+  const size_t offset =
+      checked_offset(*this, page, x, y, lightmap_pixel_format_t::Rgb9e5, "irradiance");
 
-  switch (format)
-  {
-  case lightmap_pixel_format_t::Rgb9e5:
-  {
-    const uint32_t word = pack_rgb9e5(linear_rgb);
-    std::memcpy(&bytes[offset], &word, sizeof(word));
-    return;
-  }
-  }
+  const uint32_t word = pack_rgb9e5(linear_rgb);
+  std::memcpy(&bytes[offset], &word, sizeof(word));
 }
 
 linalg::vec3 lightmap_pages_t::load(int page, int x, int y) const
 {
-  const size_t offset = byte_offset_of(page, x, y);
-  if (offset + (size_t)bytes_per_texel(format) > bytes.size())
-    fatal_error("[lightmap] texel ({}, {}) on page {} is outside {} byte(s) of pages.",
-                x, y, page, bytes.size());
+  const size_t offset =
+      checked_offset(*this, page, x, y, lightmap_pixel_format_t::Rgb9e5, "irradiance");
 
-  switch (format)
-  {
-  case lightmap_pixel_format_t::Rgb9e5:
-  {
-    uint32_t word = 0;
-    std::memcpy(&word, &bytes[offset], sizeof(word));
-    return unpack_rgb9e5(word);
-  }
-  }
-  return {0.f, 0.f, 0.f};
+  uint32_t word = 0;
+  std::memcpy(&word, &bytes[offset], sizeof(word));
+  return unpack_rgb9e5(word);
+}
+
+// The quantization is the plain one: a fraction in [0, 1] scaled to a byte and
+// rounded. No sRGB encode and no tone map -- a coverage is data, and the sampler
+// that reads it must hand the shader back the fraction that was written.
+static_assert(LIGHTMAP_LIGHTS_PER_CHART == 4,
+              "Unorm8x4 is four scalars in four bytes. Growing the per-chart light "
+              "count needs a pixel format beside it, not a wider read of this one.");
+
+void lightmap_pages_t::store_visibility(
+    int page, int x, int y, const Array<float, LIGHTMAP_LIGHTS_PER_CHART> &coverage)
+{
+  const size_t offset =
+      checked_offset(*this, page, x, y, lightmap_pixel_format_t::Unorm8x4, "visibility");
+
+  for (uint32_t slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+    bytes[offset + (size_t)slot] =
+        (uint8_t)std::clamp((int)std::lround(coverage[slot] * 255.f), 0, 255);
+}
+
+Array<float, LIGHTMAP_LIGHTS_PER_CHART> lightmap_pages_t::load_visibility(int page, int x,
+                                                                         int y) const
+{
+  const size_t offset =
+      checked_offset(*this, page, x, y, lightmap_pixel_format_t::Unorm8x4, "visibility");
+
+  Array<float, LIGHTMAP_LIGHTS_PER_CHART> coverage;
+  for (uint32_t slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+    coverage[slot] = (float)bytes[offset + (size_t)slot] * (1.f / 255.f);
+  return coverage;
 }
 
 void set_lightmap_geometry_id(lightmap_t &lightmap)
@@ -429,8 +464,17 @@ void set_lightmap_geometry_id(lightmap_t &lightmap)
 
   mix(&lightmap.settings, sizeof(lightmap.settings));
   mix(&lightmap.atlas, sizeof(lightmap.atlas));
+
+  // The resolve table and the slots are in, and the PIXELS are still out. A
+  // vertex will carry its chart's slots the day the shader reads them, so a
+  // rebake that reassigns one has to rebuild the mesh; a rebake that only moves
+  // a texel's value still must not.
+  for (entity_uid_t light_uid : lightmap.light_uids)
+    mix(&light_uid, sizeof(light_uid));
+
   for (const lightmap_chart_t &chart : lightmap.charts)
   {
+    mix(chart.light_slots.data, sizeof(chart.light_slots.data));
     mix(&chart.object_uid, sizeof(chart.object_uid));
     mix(&chart.plane, sizeof(chart.plane));
     mix(&chart.tangent_u, sizeof(chart.tangent_u));

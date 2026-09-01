@@ -467,6 +467,8 @@ int main()
     chart.world_units_per_texel = 4.f;
     chart.page                  = 1;
     chart.atlas_rect            = {3, 5, 16, 24};
+    chart.light_slots[0]        = 1;
+    chart.light_slots[1]        = 0;
 
     packaged.lightmap.charts                              = {chart};
     packaged.lightmap.settings.texels_per_world_unit      = 0.25f;
@@ -475,11 +477,20 @@ int main()
     packaged.lightmap.settings.atlas_size_in_texels       = 64;
     packaged.lightmap.atlas.size_in_texels                = 64;
     packaged.lightmap.atlas.page_count                    = 2;
-    packaged.lightmap.pages.allocate(packaged.lightmap.atlas,
+    packaged.lightmap.irradiance_pages.allocate(packaged.lightmap.atlas,
                                      lightmap_pixel_format_t::Rgb9e5);
     // On the second page, so a page-major layout mistake shows up as a texel in
     // the wrong place rather than as nothing at all.
-    packaged.lightmap.pages.store(1, 3, 5, {2.f, 0.5f, 0.125f});
+    packaged.lightmap.irradiance_pages.store(1, 3, 5, {2.f, 0.5f, 0.125f});
+
+    // The per-light half, which is a second page set and a table naming what
+    // each of its channels is OF. A package carrying the pixels and not the
+    // table hands every chart four unnamed numbers.
+    packaged.lightmap.light_uids = {41, 42};
+    packaged.lightmap.visibility_pages.allocate(packaged.lightmap.atlas,
+                                                lightmap_pixel_format_t::Unorm8x4);
+    packaged.lightmap.visibility_pages.store_visibility(1, 3, 5,
+                                                        {{1.f, 0.5f, 0.f, 0.f}});
     set_lightmap_geometry_id(packaged.lightmap);
 
     map_package_t package = build_map_package(packaged);
@@ -518,8 +529,16 @@ int main()
 
     if (restored.lightmap.charts.size() != package.lightmap.charts.size())
       return fail("package: lightmap chart count drift");
-    if (restored.lightmap.pages.bytes != package.lightmap.pages.bytes)
+    if (restored.lightmap.irradiance_pages.bytes != package.lightmap.irradiance_pages.bytes)
       return fail("package: lightmap page bytes drift");
+    if (restored.lightmap.visibility_pages.bytes !=
+        package.lightmap.visibility_pages.bytes)
+      return fail("package: lightmap visibility page bytes drift");
+    if (restored.lightmap.visibility_pages.format !=
+        package.lightmap.visibility_pages.format)
+      return fail("package: lightmap visibility format drift");
+    if (restored.lightmap.light_uids != package.lightmap.light_uids)
+      return fail("package: lightmap resolve table drift");
     // geometry_id is a content hash over the charts, the settings and the atlas
     // dimensions, so one comparison covers every field the wire carries -- and
     // it is RECOMPUTED on the receiving side rather than sent, which is what

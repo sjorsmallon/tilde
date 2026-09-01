@@ -630,12 +630,12 @@ void Tool_Editor_State::update(float dt)
     lightmap_updated_flag         = false;
     uploaded_lightmap_geometry_id = map.lightmap.geometry_id;
 
-    if (!map.lightmap.pages.empty())
+    if (!map.lightmap.irradiance_pages.empty())
     {
       if (scene.lightmap.valid())
-        renderer::update_lightmap(scene.lightmap, map.lightmap.pages);
+        renderer::update_lightmap(scene.lightmap, map.lightmap.irradiance_pages);
       else
-        scene.lightmap = renderer::register_lightmap(map.lightmap.pages);
+        scene.lightmap = renderer::register_lightmap(map.lightmap.irradiance_pages);
     }
   }
 

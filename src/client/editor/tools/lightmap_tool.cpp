@@ -14,6 +14,8 @@ namespace
 
 constexpr const char *PACKING_IMAGE_PREFIX = "lightmap_packing";
 constexpr const char *PAGES_IMAGE_PREFIX = "lightmap_pages";
+constexpr const char *MASK_IMAGE_PREFIX = "lightmap_mask";
+constexpr const char *VISIBILITY_IMAGE_PREFIX = "lightmap_visibility";
 
 } // namespace
 
@@ -88,23 +90,41 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
   ImGui::RadioButton("Visibility", &mode, (int)shared::lightmap_solve_mode_t::Visibility);
   solve_settings.mode = (shared::lightmap_solve_mode_t)mode;
 
+  ImGui::Checkbox("Per-light visibility masks", &emit_per_light_visibility);
+
   if (ImGui::Button("Bake", {-1, 0}))
   {
-    baked.pages = shared::bake_lightmap_pages(*ctx.map, baked.charts, baked.atlas,
-                                              baked.settings, solve_settings);
+    visibility_masks = {};
+    shared::bake_lightmap(*ctx.map, baked, solve_settings,
+                          emit_per_light_visibility ? &visibility_masks : nullptr);
 
     lit_texel_count = 0;
-    for (int page = 0; page < baked.pages.page_count; ++page)
-      for (int y = 0; y < baked.pages.size_in_texels; ++y)
-        for (int x = 0; x < baked.pages.size_in_texels; ++x)
+    for (int page = 0; page < baked.irradiance_pages.page_count; ++page)
+      for (int y = 0; y < baked.irradiance_pages.size_in_texels; ++y)
+        for (int x = 0; x < baked.irradiance_pages.size_in_texels; ++x)
         {
-          const linalg::vec3 texel = baked.pages.load(page, x, y);
+          const linalg::vec3 texel = baked.irradiance_pages.load(page, x, y);
           if (texel.x > 0.f || texel.y > 0.f || texel.z > 0.f) ++lit_texel_count;
         }
 
-    (void)shared::try_write_lightmap_pages_png(baked.pages, PAGES_IMAGE_PREFIX,
+    (void)shared::try_write_lightmap_pages_png(baked.irradiance_pages, PAGES_IMAGE_PREFIX,
                                                preview_exposure);
   }
+
+  ImGui::BeginDisabled(baked.visibility_pages.empty());
+
+  if (ImGui::Button("Write stored visibility PNGs", {-1, 0}))
+    (void)shared::try_write_lightmap_visibility_pages_png(baked.visibility_pages,
+                                                          VISIBILITY_IMAGE_PREFIX);
+
+  ImGui::EndDisabled();
+
+  ImGui::BeginDisabled(visibility_masks.empty());
+
+  if (ImGui::Button("Write per-light mask PNGs", {-1, 0}))
+    (void)shared::try_write_lightmap_visibility_png(visibility_masks, MASK_IMAGE_PREFIX);
+
+  ImGui::EndDisabled();
 
   ImGui::SliderFloat("Preview exposure", &preview_exposure, 0.05f, 256.f, "%.2f",
                      ImGuiSliderFlags_Logarithmic);
@@ -154,9 +174,16 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
     ImGui::Text("%.1f%% of the atlas used",
                 100.0 * (double)covered_texels / (double)page_texels);
 
-    if (baked.pages.page_count > 0)
+    if (baked.irradiance_pages.page_count > 0)
       ImGui::Text("%zu texels see a light (%d bytes/texel)", lit_texel_count,
-                  shared::bytes_per_texel(baked.pages.format));
+                  shared::bytes_per_texel(baked.irradiance_pages.format));
+
+    ImGui::Text("%zu baked light(s); a chart keeps %u of them",
+                baked.light_uids.size(), shared::LIGHTMAP_LIGHTS_PER_CHART);
+
+    if (!visibility_masks.empty())
+      ImGui::Text("%zu visibility slot(s) in the debug masks",
+                  visibility_masks.slot_count());
   }
   else
   {
@@ -174,6 +201,16 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
                      "write RGB9E5; no bounces, and static meshes get no charts. Apply "
                      "writes map_t::lightmap and the .lightmap sidecar, and uploads the "
                      "atlas -- baked faces light from it immediately.");
+
+  ImGui::Separator();
+  ImGui::TextWrapped("Every bake also writes a per-light VISIBILITY page set: one "
+                     "coverage scalar per light slot per texel, pure shadow-ray "
+                     "occlusion, NOT gated on N.L against the flat face plane, because "
+                     "the runtime shades with a normal-mapped normal. A chart keeps its "
+                     "four strongest lights and names them in the resolve table; the "
+                     "rest are dropped with a line naming the face and the light. The "
+                     "debug masks are the same walk kept for EVERY light, written as "
+                     "PNGs, which is where a dropped one is visible.");
 
   ImGui::End();
 }

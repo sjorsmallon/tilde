@@ -469,7 +469,7 @@ void Play_State::switch_to_map(const shared::map_t &map)
   // ever unregistered, so a map switch would otherwise leak a whole atlas. A
   // map with no bake leaves the old handle alone -- it generates no lightmap
   // coordinates either, so nothing samples it.
-  const shared::lightmap_pages_t &pages = ctx.world.session.lightmap.pages;
+  const shared::lightmap_pages_t &pages = ctx.world.session.lightmap.irradiance_pages;
   if (!pages.empty())
   {
     if (scene.lightmap.valid())
