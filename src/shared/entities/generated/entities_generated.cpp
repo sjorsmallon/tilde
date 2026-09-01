@@ -84,6 +84,12 @@ constexpr const char* Aim_Pose_VALUE_NAMES[] = {
   "Right",
 };
 
+constexpr const char* Light_Mode_VALUE_NAMES[] = {
+  "Baked",
+  "Mixed",
+  "Dynamic",
+};
+
 constexpr const char* Damage_Type_VALUE_NAMES[] = {
   "Normal",
   "Orange",
@@ -101,6 +107,7 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 9}},
   {"Fire_Mode", {Fire_Mode_VALUE_NAMES, 2}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
+  {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
 };
 
@@ -240,6 +247,15 @@ constexpr field_info_t Light_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "mode",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Light, mode),
+   .size_in_bytes = (uint32_t)sizeof(Light::mode),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[10]},
 };
 
 constexpr field_info_t Movement_FIELDS[] = {
@@ -725,7 +741,7 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[10]},
+   .enum_info = &ENUM_INFOS[11]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Weapon_Entity, render),
@@ -1112,7 +1128,7 @@ constexpr field_info_t Damageable_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[10]},
+   .enum_info = &ENUM_INFOS[11]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Damageable_Entity, render),
@@ -1440,7 +1456,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Material", {Material_FIELDS, 3}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
-  {"Light", {Light_FIELDS, 2}, (uint32_t)sizeof(Light)},
+  {"Light", {Light_FIELDS, 3}, (uint32_t)sizeof(Light)},
   {"Movement", {Movement_FIELDS, 5}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
 };
@@ -1733,6 +1749,26 @@ template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view t
   return std::nullopt;
 }
 
+const char* to_string(Light_Mode value)
+{
+  switch (value)
+  {
+    case Light_Mode::Baked: return "Baked";
+    case Light_Mode::Mixed: return "Mixed";
+    case Light_Mode::Dynamic: return "Dynamic";
+  }
+  assert(false && "invalid Light_Mode");
+  return "";
+}
+
+template <> std::optional<Light_Mode> try_from_string<Light_Mode>(std::string_view text)
+{
+  if (text == "Baked") return Light_Mode::Baked;
+  if (text == "Mixed") return Light_Mode::Mixed;
+  if (text == "Dynamic") return Light_Mode::Dynamic;
+  return std::nullopt;
+}
+
 const char* to_string(Damage_Type value)
 {
   switch (value)
@@ -1852,6 +1888,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x9eed1deau;
+const uint32_t SCHEMA_HASH = 0x65a599ecu;
 
 } // namespace entities

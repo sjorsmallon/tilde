@@ -144,9 +144,24 @@ Render :: component {
     material:     Material
 }
 
+// WHERE a light is evaluated, and it is a correctness requirement rather than a
+// tuning knob: the bake walks every light in the map, so the day a runtime light
+// array exists with no mode, every static light is counted TWICE -- once out of
+// the atlas and once analytically. lighting_def.md ss2.
+//
+// Mixed is the middle value it is tempting to skip, and it is what makes a
+// character look like they are in the room. A lightmap lives on brush face
+// charts, so a player receives NOTHING from a baked light -- they are not in the
+// atlas. With only Baked and Dynamic an author chooses between a level light
+// that ignores characters and one that costs a runtime slot and casts no shadow.
+Light_Mode :: enum { Baked, Mixed, Dynamic }
+
 Light :: component {
     color:     v3 = {1, 1, 1}   @Editable @Saveable
     intensity: f32 = 1.0        @Editable @Saveable
+    // Baked is the default because level fill light is most of them, and because
+    // it is what every light already in a .source file was when it was placed.
+    mode:      Light_Mode = .Baked  @Editable @Saveable
 }
 
 Movement :: component {

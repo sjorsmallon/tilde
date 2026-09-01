@@ -834,8 +834,7 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
   return false;
 }
 
-assets::asset_handle_t<assets::texture_asset_t>
-resolve_material_texture(const std::string &material_path)
+assets::material_maps_t resolve_material_maps(const std::string &material_path)
 {
   if (material_path.empty())
     return {};
@@ -843,18 +842,20 @@ resolve_material_texture(const std::string &material_path)
   // A material is normally a FOLDER of PBR maps -- that is why it is a
   // path-referenced pool with no id space and no manifest class. A single
   // texture file is accepted too, because a blockout material genuinely is one
-  // file and making an author build a folder for it buys nothing.
+  // file and making an author build a folder for it buys nothing; that spelling
+  // carries an albedo and nothing else, which is exactly what it is.
   if (assets::asset_exists(material_path.c_str()))
-    return assets::load_texture(material_path.c_str());
+    return {assets::load_texture(material_path.c_str()), {}, {}, {}};
 
   const assets::pbr_material_asset_t *resolved =
       assets::get(assets::load_pbr_material(material_path.c_str()));
   if (resolved && resolved->albedo.valid())
-    return resolved->albedo;
+    return {resolved->albedo, resolved->normal, resolved->occlusion_roughness_metallic,
+            resolved->height};
 
   // Named but not there. The renderer draws the magenta checkerboard for a
-  // material whose texture_path is set and whose handle is not, so this is
-  // visible rather than silently flat.
+  // material whose texture_path is set and whose albedo handle is not, so this
+  // is visible rather than silently flat.
   log_error("geometry material \"{}\" resolves to neither a texture file nor a "
             "folder with an albedo.png",
             material_path);
@@ -1933,12 +1934,12 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
     material.texture_path = path_for(slot_layers[slot].layer.data[0]);
 
     // Resolved HERE rather than by the renderer, for the same reason the mesh
-    // decoders resolve theirs: the path is the on-disk identity and the handle
-    // is what a draw reads. A material is a FOLDER of PBR maps or a single
+    // decoders resolve theirs: the path is the on-disk identity and the handles
+    // are what a draw reads. A material is a FOLDER of PBR maps or a single
     // texture file; both spellings are what a level author browses to.
-    material.texture = resolve_material_texture(material.texture_path);
+    material.maps = resolve_material_maps(material.texture_path);
 
-    // One texture per layer above the base, resolved the same way. The blend
+    // One material per layer above the base, resolved the same way. The blend
     // shader reads them against the per-vertex weights; a slot that does not
     // blend leaves them empty and draws through the ordinary lit path.
     if (slot_layers[slot].blends)
@@ -1947,8 +1948,8 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
       {
         material.blend_texture_path.data[layer - 1] =
             path_for(slot_layers[slot].layer.data[layer]);
-        material.blend_texture.data[layer - 1] =
-            resolve_material_texture(material.blend_texture_path.data[layer - 1]);
+        material.blend_maps.data[layer - 1] =
+            resolve_material_maps(material.blend_texture_path.data[layer - 1]);
       }
     }
 

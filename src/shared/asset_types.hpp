@@ -51,18 +51,27 @@ struct texture_asset_t
 // a texture. An empty texture_path means the material has none -- the exporter
 // writes "-" for that and the reader turns it into the empty string.
 //
-// `texture` is the RESOLVED form of `texture_path`, filled by the mesh decoders:
+// `maps` is the RESOLVED form of `texture_path`, filled by the mesh decoders:
 // the parser is a pure function over bytes and has no pools to load into, so the
 // path stays as the on-disk identity and the handle is what the renderer reads.
 // An invalid handle means "no texture", whether because the material declared
 // none or because the file behind it failed to load -- the failure is logged
 // where it happens and the submesh then draws with `diffuse_color` alone.
+// The four maps one material binds; an invalid handle is a map it does not carry.
+struct material_maps_t
+{
+  asset_handle_t<texture_asset_t> albedo;
+  asset_handle_t<texture_asset_t> normal;
+  asset_handle_t<texture_asset_t> orm;
+  asset_handle_t<texture_asset_t> height;
+};
+
 struct material_t
 {
   vec3f diffuse_color = {1, 1, 1};
   std::string name;
   std::string texture_path;
-  asset_handle_t<texture_asset_t> texture;
+  material_maps_t maps;
 
   // The layers ABOVE the base, for a vertex-blended surface (geometry_def.md
   // Track E). Sized by BLEND_LAYER_COUNT - 1 rather than spelled as one more
@@ -70,7 +79,7 @@ struct material_t
   // paths are the whole "this material does not blend" test; only the generated
   // brush mesh fills them, since blending is authored per FACE.
   Array<std::string, BLEND_LAYER_COUNT - 1> blend_texture_path;
-  Array<asset_handle_t<texture_asset_t>, BLEND_LAYER_COUNT - 1> blend_texture;
+  Array<material_maps_t, BLEND_LAYER_COUNT - 1> blend_maps;
 
   bool blends() const { return !blend_texture_path.data[0].empty(); }
 };

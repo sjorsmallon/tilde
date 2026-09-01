@@ -25,12 +25,15 @@ struct pass_builder_t
   std::vector<renderer::mesh_draw_t>                   meshes;
   renderer::debug_draw_list_t                          debug;
   std::vector<renderer::particle_emitter_parameters_t> particles;
+  std::vector<shared::scene_light_t>                   lights;
   std::vector<renderer::custom_draw_t>                 custom;
 
   // The baked atlas every lightmapped draw in this pass samples. Set when the
   // map is loaded and left alone by begin_frame -- it belongs to the world, not
   // to the frame, which is why it is not one of the lists cleared above.
   renderer::lightmap_handle_t lightmap;
+
+  cvars::Debug_Channel debug_channel = cvars::Debug_Channel::off;
 
   // Once per frame, before anything is appended. Note what is NOT cleared:
   // `debug` is RETIRED instead, because entries appended with a lifetime are
@@ -41,6 +44,7 @@ struct pass_builder_t
   {
     meshes.clear();
     particles.clear();
+    lights.clear();
     custom.clear();
     debug.retire(delta_seconds);
   }
@@ -51,6 +55,8 @@ struct pass_builder_t
     pass.view      = view;
     pass.draws     = meshes;
     pass.debug     = &debug;
+    pass.lights    = lights;
+    pass.debug_channel = debug_channel;
     pass.particles = particles;
     pass.custom    = custom;
     pass.lightmap  = lightmap;

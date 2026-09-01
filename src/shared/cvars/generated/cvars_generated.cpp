@@ -22,6 +22,13 @@ constexpr const char* Game_Mode_VALUE_NAMES[] = {
   "speedrun",
 };
 
+constexpr const char* Debug_Channel_VALUE_NAMES[] = {
+  "off",
+  "normals",
+  "uv",
+  "parallax_uv",
+};
+
 constexpr const char* Bot_Mode_VALUE_NAMES[] = {
   "idle",
   "chase",
@@ -30,6 +37,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
+  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 4}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
@@ -586,6 +594,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::pin_main_thread),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "r_debug_channel",
+     .description = "Show a material channel instead of the shaded result",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_ENUM,
+     .offset = offsetof(cvar_state_t, r_debug_channel),
+     .size = sizeof(cvar_state_t::r_debug_channel),
+     .string_capacity = 0,
+     .enum_info = &ENUM_INFOS[1]},
     {.name = "debug_show_collisions",
      .description = "Show collision faces in green",
      .flags = CVAR_FLAG_NONE,
@@ -1039,6 +1055,28 @@ template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view
   if (text == "deathmatch") return Game_Mode::deathmatch;
   if (text == "rounds") return Game_Mode::rounds;
   if (text == "speedrun") return Game_Mode::speedrun;
+  return std::nullopt;
+}
+
+const char* to_string(Debug_Channel value)
+{
+  switch (value)
+  {
+    case Debug_Channel::off: return "off";
+    case Debug_Channel::normals: return "normals";
+    case Debug_Channel::uv: return "uv";
+    case Debug_Channel::parallax_uv: return "parallax_uv";
+  }
+  assert(false && "invalid Debug_Channel");
+  return "";
+}
+
+template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::string_view text)
+{
+  if (text == "off") return Debug_Channel::off;
+  if (text == "normals") return Debug_Channel::normals;
+  if (text == "uv") return Debug_Channel::uv;
+  if (text == "parallax_uv") return Debug_Channel::parallax_uv;
   return std::nullopt;
 }
 

@@ -5,6 +5,8 @@
 // fragment shader pair with either vertex shader -- the pipeline cache combines
 // them freely and neither half knows which other half it got.
 
+#include "scene.glsl"
+
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
@@ -21,20 +23,24 @@ layout(location = 3) out flat float fragAlpha;
 #ifdef LIGHTMAP
 layout(location = 5) out vec3       fragLightmapUV;
 #endif
+layout(location = 6) out vec3       fragWorldPosition;
 
 layout(push_constant) uniform PushConstants {
-    mat4 mvp;
+    mat4 model;
     vec4 color;         // material base colour * draw tint; a is the output alpha
     mat3 normalMatrix;  // 3 columns, each padded to vec4 = 48 bytes
 } pc;                   // 128 bytes exactly -- the guaranteed Vulkan minimum, no headroom left
 
 void main() {
-    gl_Position     = pc.mvp * vec4(inPosition, 1.0);
-    fragWorldNormal = normalize(pc.normalMatrix * inNormal);
-    fragColor       = pc.color.rgb;
-    fragUV          = inUV;
-    fragAlpha       = pc.color.a;
+    vec4 worldPosition = pc.model * vec4(inPosition, 1.0);
+
+    gl_Position       = scene.view_projection * worldPosition;
+    fragWorldPosition = worldPosition.xyz;
+    fragWorldNormal   = normalize(pc.normalMatrix * inNormal);
+    fragColor         = pc.color.rgb;
+    fragUV            = inUV;
+    fragAlpha         = pc.color.a;
 #ifdef LIGHTMAP
-    fragLightmapUV  = inLightmapUV;
+    fragLightmapUV    = inLightmapUV;
 #endif
 }

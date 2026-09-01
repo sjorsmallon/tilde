@@ -127,7 +127,7 @@ brush
 brush
 {
   "_uid" "19"
-  "vertices" "-1724.56787 -64 -1536, -1724.56787 -64 -1024, -1724.56787 64 -1536, -1724.56787 64 -1024, 700.567871 -64 -1536, 700.567871 -64 -1024, 700.567871 64 -1536, 700.567871 64 -1024"
+  "vertices" "-1724.56787 -64 -1536, -1724.56787 -64 -1024, -1724.56787 64 -1536, -1724.56787 64 -1024, 646.112793 -64 -1536, 646.112793 -64 -1024, 646.112793 64 -1536, 646.112793 64 -1024"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
@@ -217,14 +217,14 @@ brush
   face
   {
     "normal" "1 -0 -0"
-    "distance" "700.567871"
+    "distance" "646.112793"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
-    "u_shift" "1210.34546"
-    "v_shift" "-64"
+    "u_shift" "0"
+    "v_shift" "0"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -319,10 +319,10 @@ entity
 {
   "classname" "trigger_volume_entity"
   "_uid" "27"
-  "position" "-128 -640 -656.2248"
+  "position" "-147.60936 -640 410.4343"
   "orientation" "0 0 0 1"
   "volume.position" "0 0 0"
-  "volume.half_extents" "2061.3064 94.41112 1744.2251"
+  "volume.half_extents" "2041.6978 94.41113 2661.5635"
   "action" "Kill"
   "fire_mode" "On_Enter"
   "param_target_name" ""

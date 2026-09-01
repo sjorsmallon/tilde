@@ -718,7 +718,7 @@ void load_skinned_mesh(Span<const uint8_t> bytes, const char *path, mesh_asset_t
 }
 
 // material_t::texture_path is the on-disk identity written by the exporter;
-// material_t::texture is what the renderer binds. This is the one place the
+// material_t::maps is what the renderer binds. This is the one place the
 // first becomes the second, so a texture is loaded once per mesh load rather
 // than looked up per draw.
 //
@@ -737,7 +737,7 @@ void resolve_material_textures(const char *mesh_path, mesh_asset_t &mesh)
       fatal_error("mesh '{}' material '{}' names texture '{}', which is not there", mesh_path,
                   material.name, material.texture_path);
 
-    material.texture = load_texture(material.texture_path.c_str());
+    material.maps.albedo = load_texture(material.texture_path.c_str());
   }
 }
 
@@ -1102,7 +1102,7 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
 }
 
 // Four invalid handles. Unlike the mesh and texture placeholders there is
-// nothing to draw here: a material IS its maps, and resolve_material_texture
+// nothing to draw here: a material IS its maps, and resolve_material_maps
 // already turns an albedo that resolved to nothing into the magenta checker by
 // handing the renderer texture_asset::Missing. The placeholder only has to be
 // VALID.

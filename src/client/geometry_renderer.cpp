@@ -137,7 +137,7 @@ renderer::pipeline_state_t state_for(const shared::geometry_surface_t &surface)
 // shader reads the grid straight out of fragUV.
 //
 // No texture handle at all -- an invalid one resolves to the internal 1x1 white
-// through resolve_albedo_set, so this is base_color and nothing else.
+// inside the renderer's material set, so this is base_color and nothing else.
 renderer::material_handle_t blockout_material()
 {
   static const renderer::material_handle_t handle = [] {
@@ -149,23 +149,56 @@ renderer::material_handle_t blockout_material()
   return handle;
 }
 
-// One material per distinct TEXTURE, not per submesh and not per rebuild: a
+namespace
+{
+struct material_maps_key_t
+{
+  uint32_t handles[4] = {};
+
+  bool operator==(const material_maps_key_t &) const = default;
+};
+
+material_maps_key_t material_maps_key(const renderer::material_maps_t &maps)
+{
+  return {{maps.albedo.index, maps.normal.index, maps.orm.index, maps.height.index}};
+}
+
+struct material_maps_key_hash_t
+{
+  size_t operator()(const material_maps_key_t &key) const
+  {
+    size_t hash = 1469598103934665603ull;
+    for (uint32_t handle : key.handles)
+      hash = (hash ^ handle) * 1099511628211ull;
+    return hash;
+  }
+};
+} // namespace
+
+// One material per distinct SET OF MAPS, not per submesh and not per rebuild: a
 // brush mesh is re-registered on every edit, and registering a fresh material
 // each time would grow the renderer's table for the length of an editing
-// session. Keyed by the texture handle because that is the whole difference
-// between two textured faces here.
-renderer::material_handle_t textured_face_material(renderer::texture_handle_t texture)
+// session.
+renderer::material_handle_t textured_face_material(const renderer::material_maps_t &maps)
 {
-  static std::unordered_map<uint32_t, renderer::material_handle_t> by_texture;
+  static std::unordered_map<material_maps_key_t, renderer::material_handle_t,
+                            material_maps_key_hash_t>
+      by_maps;
 
-  const auto cached = by_texture.find(texture.index);
-  if (cached != by_texture.end())
+  const material_maps_key_t key = material_maps_key(maps);
+  const auto                cached = by_maps.find(key);
+  if (cached != by_maps.end())
     return cached->second;
 
   renderer::material_t built{};
-  built.parameters.base_color_texture = texture;
+  built.parameters.maps = maps;
+
+  // A material that resolved to a PBR FOLDER; a single texture file has no maps for it to read.
+  if (maps.normal.valid() || maps.orm.valid() || maps.height.valid())
+    built.pipeline_state.shader = renderer::shader_t::pbr;
+
   const renderer::material_handle_t handle = renderer::register_material(built);
-  by_texture.emplace(texture.index, handle);
+  by_maps.emplace(key, handle);
   return handle;
 }
 
@@ -177,8 +210,7 @@ renderer::material_handle_t blended_face_material(const renderer::material_param
 {
   struct key_t
   {
-    uint32_t base = 0;
-    uint32_t layers[BLEND_LAYER_COUNT - 1] = {};
+    uint32_t handles[4 * BLEND_LAYER_COUNT] = {};
 
     bool operator==(const key_t &) const = default;
   };
@@ -186,31 +218,35 @@ renderer::material_handle_t blended_face_material(const renderer::material_param
   {
     size_t operator()(const key_t &key) const
     {
-      size_t hash = key.base;
-      for (uint32_t layer : key.layers)
-        hash = hash * 1099511628211ull + layer;
+      size_t hash = 1469598103934665603ull;
+      for (uint32_t handle : key.handles)
+        hash = (hash ^ handle) * 1099511628211ull;
       return hash;
     }
   };
 
-  static std::unordered_map<key_t, renderer::material_handle_t, key_hash_t> by_textures;
+  static std::unordered_map<key_t, renderer::material_handle_t, key_hash_t> by_maps;
 
-  key_t key;
-  key.base = parameters.base_color_texture.index;
+  key_t key{};
+  const auto write_layer = [&key](int layer, const renderer::material_maps_t &maps) {
+    const material_maps_key_t handles = material_maps_key(maps);
+    memcpy(&key.handles[layer * 4], handles.handles, sizeof(handles.handles));
+  };
+  write_layer(0, parameters.maps);
   for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
-    key.layers[layer - 1] = parameters.blend_textures.data[layer - 1].index;
+    write_layer(layer, parameters.blend_maps.data[layer - 1]);
 
-  const auto cached = by_textures.find(key);
-  if (cached != by_textures.end())
+  const auto cached = by_maps.find(key);
+  if (cached != by_maps.end())
     return cached->second;
 
   renderer::material_t built{};
   built.pipeline_state.shader = renderer::shader_t::blend;
-  built.parameters.base_color_texture = parameters.base_color_texture;
-  built.parameters.blend_textures = parameters.blend_textures;
+  built.parameters.maps       = parameters.maps;
+  built.parameters.blend_maps = parameters.blend_maps;
 
   const renderer::material_handle_t handle = renderer::register_material(built);
-  by_textures.emplace(key, handle);
+  by_maps.emplace(key, handle);
   return handle;
 }
 
@@ -231,12 +267,11 @@ build_brush_material_overrides(renderer::mesh_handle_t mesh)
   {
     const renderer::material_parameters_t parameters = renderer::material_parameters(slot);
 
-    if (parameters.blend_textures.data[0].valid())
+    if (parameters.blend_maps.data[0].albedo.valid())
       table.push_back(blended_face_material(parameters));
     else
-      table.push_back(parameters.base_color_texture.valid()
-                          ? textured_face_material(parameters.base_color_texture)
-                          : blockout_material());
+      table.push_back(parameters.maps.albedo.valid() ? textured_face_material(parameters.maps)
+                                                     : blockout_material());
   }
   return table;
 }

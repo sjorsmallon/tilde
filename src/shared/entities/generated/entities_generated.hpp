@@ -150,6 +150,18 @@ constexpr uint32_t Aim_Pose_COUNT = 5;
 const char* to_string(Aim_Pose value);
 template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view text);
 
+enum class Light_Mode : uint8_t
+{
+  Baked = 0,
+  Mixed = 1,
+  Dynamic = 2,
+};
+
+constexpr uint32_t Light_Mode_COUNT = 3;
+
+const char* to_string(Light_Mode value);
+template <> std::optional<Light_Mode> try_from_string<Light_Mode>(std::string_view text);
+
 enum class Damage_Type : uint8_t
 {
   Normal = 0,
@@ -174,10 +186,11 @@ enum class enum_type : uint16_t
   Trigger_Action = 7,
   Fire_Mode = 8,
   Aim_Pose = 9,
-  Damage_Type = 10,
+  Light_Mode = 10,
+  Damage_Type = 11,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 11;
+constexpr uint32_t ENUM_TYPE_COUNT = 12;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -286,6 +299,12 @@ template <> struct enum_traits<entities::Aim_Pose>
   static constexpr entities::enum_type type = entities::enum_type::Aim_Pose;
 };
 
+template <> struct enum_traits<entities::Light_Mode>
+{
+  static constexpr uint32_t count = entities::Light_Mode_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Light_Mode;
+};
+
 template <> struct enum_traits<entities::Damage_Type>
 {
   static constexpr uint32_t count = entities::Damage_Type_COUNT;
@@ -331,6 +350,7 @@ struct Light
 
   linalg::vec3f color = {1.0f, 1.0f, 1.0f};
   float intensity = 1.0f;
+  Light_Mode mode = Light_Mode::Baked;
 };
 
 struct Movement

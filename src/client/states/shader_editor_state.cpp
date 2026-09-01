@@ -4,6 +4,7 @@
 #include "../renderer.hpp"
 #include "../state_manager.hpp"
 #include "../../shared/asset.hpp"
+#include "lighting.hpp"
 #include "log.hpp"
 #include "shader_tool_paths.h"
 #include "imgui.h"
@@ -23,7 +24,7 @@ struct gpu_light_t
 {
   float position[4];
   float direction[4];
-  float color_intensity[4];
+  float radiance[4]; // already through shared::radiance_of
   float spot_params[4];
 };
 
@@ -66,10 +67,11 @@ void Shader_Editor_State::on_enter()
   default_light.position = {96.0f, 128.0f, 64.0f};
   default_light.direction = linalg::normalize(linalg::vec3f{0.0f, 0.0f, 0.0f} - linalg::vec3f{96.0f, 128.0f, 64.0f});
   default_light.color = {1.0f, 0.95f, 0.9f};
-  // Sphere sits near origin, light at d ~ 172 units. pbr.frag applies 1/d^2 with no
-  // reference distance, so intensity has to be on the order of d^2 -- see
-  // editor_light_t for why this preview does not share the engine's unit yet.
-  default_light.intensity = 30000.0f;
+  // Sphere sits near origin, light at d ~ 172 units -- 4.4 metres, so a true
+  // inverse square delivers about a twentieth of what the authored intensity
+  // promises at one metre. 20 is what makes the preview sphere read as lit, and
+  // it is a number that means the same thing in the map editor.
+  default_light.intensity = 20.0f;
   default_light.range = 512.0f;
   default_light.light_type = 1; // spot
   lights.push_back(default_light);
@@ -462,10 +464,18 @@ void Shader_Editor_State::build_frame(float delta_seconds,
       ubo.lights[i].direction[0] = light.direction.x;
       ubo.lights[i].direction[1] = light.direction.y;
       ubo.lights[i].direction[2] = light.direction.z;
-      ubo.lights[i].color_intensity[0] = light.color.x;
-      ubo.lights[i].color_intensity[1] = light.color.y;
-      ubo.lights[i].color_intensity[2] = light.color.z;
-      ubo.lights[i].color_intensity[3] = light.intensity;
+      // ONE conversion from a colour and an intensity to a radiance, shared with
+      // the game and the bake -- nothing multiplies the two itself
+      // (lighting_def.md ss11).
+      entities::Light light_component{};
+      light_component.color     = light.color;
+      light_component.intensity = light.intensity;
+
+      const linalg::vec3f radiance = shared::radiance_of(light_component);
+      ubo.lights[i].radiance[0] = radiance.x;
+      ubo.lights[i].radiance[1] = radiance.y;
+      ubo.lights[i].radiance[2] = radiance.z;
+      ubo.lights[i].radiance[3] = 0.0f;
       ubo.lights[i].spot_params[0] =
           std::cos(linalg::to_radians(light.spot_inner_degrees));
       ubo.lights[i].spot_params[1] =

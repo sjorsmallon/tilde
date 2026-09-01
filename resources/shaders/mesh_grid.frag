@@ -16,6 +16,8 @@
 // continuity is worth more, and it is what makes this read as the world's grid
 // rather than as a texture on one brush.
 
+#include "scene.glsl"
+
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
 layout(location = 2) in vec2       fragUV;
@@ -26,20 +28,7 @@ layout(location = 0) out vec4 outColor;
 layout(set = 0, binding = 0) uniform sampler2D albedo;
 
 #ifdef LIGHTMAP
-layout(location = 5) in vec3 fragLightmapUV;
-layout(set = 3, binding = 0) uniform sampler2DArray lightmapAtlas;
-
-// The bake already did radiance * attenuation * N.L, so it REPLACES the sun term
-// rather than multiplying into it -- multiplying would light a baked map twice.
-// A negative page is UNLIT_LIGHTMAP_UV: this face matched no chart, and drawing
-// it at the ambient floor is what makes a hole in the bake visible rather than
-// plausible.
-vec3 lightmap_lighting(float ambient)
-{
-    if (fragLightmapUV.z < 0.0)
-        return vec3(ambient);
-    return texture(lightmapAtlas, fragLightmapUV).rgb + vec3(ambient);
-}
+#include "lightmap.glsl"
 #endif
 
 const float MINOR_SUBDIVISIONS = 8.0;  // 128 / 8 = one 16-unit minor cell
@@ -71,12 +60,12 @@ float grid_coverage(vec2 cell)
 
 void main() {
     vec3  sunDir  = normalize(vec3(0.4, -0.8, 0.3));
-    float ambient = 0.15;
+    vec3  ambient = scene.ambient.rgb;
     float diffuse = max(dot(normalize(fragWorldNormal), -sunDir), 0.0);
 #ifdef LIGHTMAP
-    vec3  lighting = lightmap_lighting(ambient);
+    vec3  lighting = lightmap_diffuse() + ambient;
 #else
-    vec3  lighting = vec3(ambient + diffuse * 0.85);
+    vec3  lighting = ambient + vec3(diffuse * 0.85);
 #endif
     vec3  color   = texture(albedo, fragUV).rgb * fragColor * lighting;
 

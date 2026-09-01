@@ -333,9 +333,10 @@ entity
 {
   "classname" "point_light_entity"
   "_uid" "28"
-  "position" "-128 768 -1408"
+  "position" "-256 128 -1408"
   "orientation" "0 0 0 1"
   "light.color" "1 1 1"
   "light.intensity" "1"
+  "light.mode" "Baked"
   "range" "1486.7"
 }

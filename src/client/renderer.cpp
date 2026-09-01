@@ -71,6 +71,14 @@ const uint32_t mesh_lit_frag_spv[] =
 #include "mesh_lit.frag.spv.h"
     ;
 
+const uint32_t mesh_lit_pbr_frag_spv[] =
+#include "mesh_lit_pbr.frag.spv.h"
+    ;
+
+const uint32_t mesh_lit_pbr_lightmapped_frag_spv[] =
+#include "mesh_lit_pbr_lightmapped.frag.spv.h"
+    ;
+
 const uint32_t mesh_blend_frag_spv[] =
 #include "mesh_blend.frag.spv.h"
     ;
@@ -161,40 +169,55 @@ struct pipeline_key_hash_t
   }
 };
 
-// ONE pipeline layout for every mesh pipeline: set 0 = albedo sampler, set 1 =
-// the bone matrices, one 128-byte push range covering both stages. A static
-// pipeline simply never binds set 1, which is what let four layouts become one.
+// ONE pipeline layout for every mesh pipeline: set 0 = the material's four maps,
+// set 1 = the bone matrices, one 128-byte push range covering both stages. A
+// static pipeline simply never binds set 1, which is what let four layouts
+// become one.
 static VkPipelineLayout      g_mesh_pipeline_layout = VK_NULL_HANDLE;
-static VkDescriptorSetLayout g_albedo_ds_layout     = VK_NULL_HANDLE;
-static VkDescriptorPool      g_albedo_pool          = VK_NULL_HANDLE;
+static VkDescriptorSetLayout g_material_ds_layout   = VK_NULL_HANDLE;
+static VkDescriptorPool      g_material_pool        = VK_NULL_HANDLE;
 
-// Set 3: the lightmap atlas. Its OWN layout rather than g_albedo_ds_layout's,
-// because the view type differs -- sampler2DArray against sampler2D -- and that
-// is a mismatch nothing reports until the draw reads garbage.
-static VkDescriptorSetLayout g_lightmap_ds_layout = VK_NULL_HANDLE;
-static VkDescriptorPool      g_lightmap_pool      = VK_NULL_HANDLE;
+// The UI's single-sampler layout, bound at set 0 of the UI's own pipeline layout.
+static VkDescriptorSetLayout g_ui_texture_ds_layout = VK_NULL_HANDLE;
+static VkDescriptorPool      g_ui_texture_pool      = VK_NULL_HANDLE;
+
+// Set 3, the PASS set: the lightmap atlas at binding 0 and the scene block at
+// binding 1. Its OWN layout rather than the material one's, because the view
+// type differs -- sampler2DArray against sampler2D -- and that is a mismatch
+// nothing reports until the draw reads garbage.
+static VkDescriptorSetLayout g_pass_ds_layout = VK_NULL_HANDLE;
+static VkDescriptorPool      g_pass_pool      = VK_NULL_HANDLE;
 
 // Pipelines are handed around as INDICES rather than VkPipelines so a draw list
 // can be sorted on an integer without chasing the map for every comparison.
 static std::vector<VkPipeline>                                          g_pipelines;
 static std::unordered_map<pipeline_key_t, uint32_t, pipeline_key_hash_t> g_pipeline_ids;
 
-// How many distinct textures can be bound as material albedo. A hard cap rather
-// than a growing pool because exhausting it is a content problem worth hearing
-// about, not something to paper over by allocating another pool.
+// How many distinct textures can be bound at all. A hard cap rather than a
+// growing pool because exhausting it is a content problem worth hearing about,
+// not something to paper over by allocating another pool.
 constexpr uint32_t MAX_MATERIAL_TEXTURES = 64;
+
+// Keyed by the four handles, so two materials naming one set of maps share one.
+constexpr uint32_t MAX_MATERIAL_SETS = 64;
+
+// The four maps, in the order the fragment shaders declare them at set 0.
+constexpr uint32_t MATERIAL_MAP_COUNT = 4;
 
 // One atlas per loaded map, plus the internal white page. A small cap on
 // purpose: a second live atlas means two maps resident at once, which is a
 // lifetime question and not a budget one.
 constexpr uint32_t MAX_LIGHTMAP_ATLASES = 8;
 
-// Sets are 0 albedo, 1 the bone matrices, 2..N the blend layers above the base,
-// and the lightmap after them. The fragment shaders spell it as a literal, so
-// the static_assert is what keeps the two from drifting.
-constexpr uint32_t LIGHTMAP_DESCRIPTOR_SET = 2 + BLEND_LAYER_COUNT - 1;
-static_assert(LIGHTMAP_DESCRIPTOR_SET == 3,
-              "resources/shaders/*.frag declare the atlas at set = 3");
+// Sets are 0 the material, 1 the bone matrices, 2..N the blend layers above the
+// base, and the PASS after them. resources/shaders/scene.glsl spells it as a
+// literal, so the static_assert is what keeps the two from drifting.
+constexpr uint32_t PASS_DESCRIPTOR_SET = 2 + BLEND_LAYER_COUNT - 1;
+static_assert(PASS_DESCRIPTOR_SET == 3,
+              "resources/shaders/scene.glsl declares the pass set at set = 3");
+
+constexpr uint32_t PASS_LIGHTMAP_BINDING = 0;
+constexpr uint32_t PASS_SCENE_BINDING    = 1;
 
 // --- Registered resources ---
 // Handles are indices into these three vectors. Nothing is ever removed (see
@@ -203,7 +226,7 @@ static_assert(LIGHTMAP_DESCRIPTOR_SET == 3,
 struct gpu_texture_entry_t
 {
   gpu_texture_t   texture;
-  VkDescriptorSet albedo_set = VK_NULL_HANDLE;
+  VkDescriptorSet ui_set = VK_NULL_HANDLE; // the UI's; a material binds four maps
 };
 
 struct gpu_submesh_t
@@ -249,10 +272,10 @@ struct gpu_material_t
 {
   pipeline_state_t      pipeline_state;
   material_parameters_t parameters;
-  VkDescriptorSet       albedo_set = VK_NULL_HANDLE; // resolved from parameters
+  VkDescriptorSet       material_set = VK_NULL_HANDLE; // the four maps, resolved from parameters
 
   // One per layer above the base, resolved the same way and through the same
-  // single-sampler layout. Bound at set 2 by a shader_t::blend draw and by
+  // four-sampler layout. Bound at set 2 by a shader_t::blend draw and by
   // nothing else.
   Array<VkDescriptorSet, BLEND_LAYER_COUNT - 1> blend_sets;
 };
@@ -278,13 +301,17 @@ static std::vector<gpu_lightmap_t>      g_lightmaps;
 // multiplies out instead of sampling an unbound descriptor.
 static lightmap_handle_t g_white_lightmap;
 
-// The two internal textures the fallback ladder ends at, and the material every
-// mesh without one of its own gets. An invalid texture handle resolves to WHITE
-// so the colour multiplies out of the shader; a texture that was NAMED but
-// failed to load resolves to the magenta/black checkerboard, because a broken
-// asset must never be mistakable for authored art.
+// The internal textures the fallback ladder ends at, and the material every mesh
+// without one of its own gets. An invalid ALBEDO resolves to WHITE so the colour
+// multiplies out of the shader; a texture that was NAMED but failed to load
+// resolves to the magenta/black checkerboard, because a broken asset must never
+// be mistakable for authored art. The other three defaults make a map ABSENT
+// rather than black.
 static texture_handle_t  g_white_texture;
 static texture_handle_t  g_missing_texture;
+static texture_handle_t  g_flat_normal_texture;
+static texture_handle_t  g_default_orm_texture;
+static texture_handle_t  g_zero_height_texture;
 static material_handle_t g_default_material;
 
 // --- Per-draw uniform data ---
@@ -383,7 +410,7 @@ struct debug_push_constants_t
 // bytes exactly -- the guaranteed Vulkan minimum, with no headroom left.
 struct mesh_push_constants_t
 {
-  float mvp[16];          // 64 bytes
+  float model[16];        // 64 bytes
   float color[4];         // 16 bytes -- material base colour * draw tint, a = alpha
   float normal_mat_c0[4]; // 16 bytes (column 0 of the 3x3 normal matrix, w = 0)
   float normal_mat_c1[4]; // 16 bytes
@@ -392,6 +419,57 @@ struct mesh_push_constants_t
 
 static_assert(sizeof(mesh_push_constants_t) == 128,
               "the mesh push block is at the guaranteed Vulkan minimum; it cannot grow");
+
+// --- The scene block (resources/shaders/scene.glsl) ---
+
+struct gpu_light_t
+{
+  float position[4];    // xyz world, w = also baked (scene.glsl's LIGHT_IS_ALSO_BAKED)
+  float direction[4];   // xyz normalized, w unused
+  float radiance[4];    // rgb, already through shared/lighting.hpp's radiance_of
+  float spot_params[4]; // cos(inner), cos(outer), range, type
+};
+
+// Matches MAX_LIGHTS in scene.glsl; the size assert below is what catches a drift.
+constexpr uint32_t MAX_SCENE_LIGHTS = 8;
+
+// std140, so the two pads land the light array on a 16-byte boundary.
+struct scene_uniform_t
+{
+  float       view_projection[16];
+  float       camera_position[4];
+  float       ambient[4]; // rgb the constant floor; lighting_def.md decision C
+  int32_t     light_count  = 0;
+  int32_t     debug_flags  = 0;
+  int32_t     pad0         = 0;
+  int32_t     pad1         = 0;
+  gpu_light_t lights[MAX_SCENE_LIGHTS] = {};
+};
+
+static_assert(sizeof(scene_uniform_t) == 112 + 64 * MAX_SCENE_LIGHTS,
+              "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
+
+// Spelled as literals in mesh_lit.frag's -DPBR arm and in pbr.frag.
+constexpr int32_t DEBUG_FLAG_RENDER_NORMALS     = 1 << 0;
+constexpr int32_t DEBUG_FLAG_RENDER_UV          = 1 << 1;
+constexpr int32_t DEBUG_FLAG_RENDER_PARALLAX_UV = 1 << 2;
+
+// One number in one place, so the lit, grid and blend paths cannot disagree.
+// It is composed as a diffuse term already (ambient * albedo), so it does NOT
+// take the 1/PI the lightmapped and analytic paths apply to their irradiance --
+// which is why it had to be divided by PI here when they gained it
+// (lighting_def.md §9): the floor keeps its old weight relative to lit surfaces
+// instead of becoming PI times stronger than everything around it.
+constexpr float AMBIENT_FLOOR = 0.0477f;
+
+constexpr uint32_t MAX_VIEW_PASSES_PER_FRAME = 8;
+
+// MAX_FRAMES_IN_FLIGHT regions of MAX_VIEW_PASSES_PER_FRAME blocks, by dynamic offset.
+static VkBuffer       g_scene_uniform_buffer = VK_NULL_HANDLE;
+static VkDeviceMemory g_scene_uniform_memory = VK_NULL_HANDLE;
+static uint8_t       *g_scene_uniform_mapped = nullptr;
+static uint32_t       g_scene_block_size     = 0; // padded to minUniformBufferOffsetAlignment
+static uint32_t       g_scene_next_block     = 0; // the bump pointer within this frame's region
 
 // ui.vert's push block. Its OWN block rather than a few spare bytes borrowed
 // from the mesh one, which the static_assert above says has no headroom left.
@@ -1347,6 +1425,11 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   switch (key.state.shader)
   {
   case shader_t::lit: break;
+  case shader_t::pbr:
+    frag_spv  = lightmapped ? mesh_lit_pbr_lightmapped_frag_spv : mesh_lit_pbr_frag_spv;
+    frag_size = lightmapped ? sizeof(mesh_lit_pbr_lightmapped_frag_spv)
+                            : sizeof(mesh_lit_pbr_frag_spv);
+    break;
   case shader_t::unlit:
     // Unlit means unlit: it reads no lighting term at all, so there is nothing
     // for a lightmap to replace and no variant to build.
@@ -1712,6 +1795,52 @@ static void destroy_frame_uniform_allocator(frame_uniform_allocator_t &allocator
 static VkCommandBuffer begin_single_command();
 static void            end_single_command(VkCommandBuffer cmd);
 
+// Double-buffered by frame_uniform_allocator_t's rule: reset after the fence wait.
+static void create_scene_uniform_buffer()
+{
+  VkPhysicalDeviceProperties device_properties{};
+  vkGetPhysicalDeviceProperties(g_physical_device, &device_properties);
+  const VkDeviceSize alignment = device_properties.limits.minUniformBufferOffsetAlignment;
+
+  g_scene_block_size =
+      alignment > 0
+          ? (uint32_t)(((sizeof(scene_uniform_t) + alignment - 1) / alignment) * alignment)
+          : (uint32_t)sizeof(scene_uniform_t);
+
+  if (g_scene_block_size > device_properties.limits.maxUniformBufferRange)
+  {
+    fatal_error("[renderer] the {}-byte scene block exceeds this device's maxUniformBufferRange "
+                "({})",
+                g_scene_block_size, device_properties.limits.maxUniformBufferRange);
+  }
+
+  const VkDeviceSize buffer_size =
+      (VkDeviceSize)g_scene_block_size * MAX_VIEW_PASSES_PER_FRAME * MAX_FRAMES_IN_FLIGHT;
+  create_buffer(buffer_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                g_scene_uniform_buffer, g_scene_uniform_memory);
+  vkMapMemory(g_device, g_scene_uniform_memory, 0, buffer_size, 0,
+              (void **)&g_scene_uniform_mapped);
+}
+
+// Running out reuses the last block; dropping the pass would draw nothing at all.
+static uint32_t write_scene_block(const scene_uniform_t &scene)
+{
+  if (g_scene_next_block >= MAX_VIEW_PASSES_PER_FRAME)
+  {
+    log_error("[renderer] more than {} view passes in one frame; the last block is being reused",
+              MAX_VIEW_PASSES_PER_FRAME);
+    g_scene_next_block = MAX_VIEW_PASSES_PER_FRAME - 1;
+  }
+
+  const uint32_t block =
+      g_current_frame_idx_in_swapchain * MAX_VIEW_PASSES_PER_FRAME + g_scene_next_block;
+  const uint32_t offset = block * g_scene_block_size;
+  memcpy(g_scene_uniform_mapped + offset, &scene, sizeof(scene));
+  ++g_scene_next_block;
+  return offset;
+}
+
 // --- Shared mesh pipeline resources ---
 //
 // EVERY mesh pipeline binds an albedo sampler, textured or not. The alternative
@@ -1726,30 +1855,62 @@ static void            end_single_command(VkCommandBuffer cmd);
 // vertex half of a skinned draw differs, and the set numbering says so.
 static void create_mesh_resources()
 {
-  VkDescriptorSetLayoutBinding albedo_binding{};
-  albedo_binding.binding         = 0;
-  albedo_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  albedo_binding.descriptorCount = 1;
-  albedo_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  // Set 0 is the MATERIAL: albedo, normal, ORM, height, in that order.
+  VkDescriptorSetLayoutBinding material_bindings[MATERIAL_MAP_COUNT]{};
+  for (uint32_t map = 0; map < MATERIAL_MAP_COUNT; ++map)
+  {
+    material_bindings[map].binding         = map;
+    material_bindings[map].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    material_bindings[map].descriptorCount = 1;
+    material_bindings[map].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  }
 
   VkDescriptorSetLayoutCreateInfo ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  ds_layout_info.bindingCount = 1;
-  ds_layout_info.pBindings    = &albedo_binding;
-  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_albedo_ds_layout) !=
+  ds_layout_info.bindingCount = MATERIAL_MAP_COUNT;
+  ds_layout_info.pBindings    = material_bindings;
+  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_material_ds_layout) !=
       VK_SUCCESS)
   {
-    fatal_error("[renderer] could not create the albedo descriptor set layout");
+    fatal_error("[renderer] could not create the material descriptor set layout");
   }
 
-  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_MATERIAL_TEXTURES};
+  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                 MAX_MATERIAL_SETS * MATERIAL_MAP_COUNT};
   VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-  pool_info.maxSets       = MAX_MATERIAL_TEXTURES;
+  pool_info.maxSets       = MAX_MATERIAL_SETS;
   pool_info.poolSizeCount = 1;
   pool_info.pPoolSizes    = &pool_size;
-  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_albedo_pool) != VK_SUCCESS)
+  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_material_pool) != VK_SUCCESS)
   {
-    fatal_error("[renderer] could not create the albedo descriptor pool");
+    fatal_error("[renderer] could not create the material descriptor pool");
+  }
+
+  VkDescriptorSetLayoutBinding ui_texture_binding{};
+  ui_texture_binding.binding         = 0;
+  ui_texture_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  ui_texture_binding.descriptorCount = 1;
+  ui_texture_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo ui_ds_layout_info{
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  ui_ds_layout_info.bindingCount = 1;
+  ui_ds_layout_info.pBindings    = &ui_texture_binding;
+  if (vkCreateDescriptorSetLayout(g_device, &ui_ds_layout_info, nullptr, &g_ui_texture_ds_layout) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the UI texture descriptor set layout");
+  }
+
+  VkDescriptorPoolSize ui_pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                    MAX_MATERIAL_TEXTURES};
+  VkDescriptorPoolCreateInfo ui_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  ui_pool_info.maxSets       = MAX_MATERIAL_TEXTURES;
+  ui_pool_info.poolSizeCount = 1;
+  ui_pool_info.pPoolSizes    = &ui_pool_size;
+  if (vkCreateDescriptorPool(g_device, &ui_pool_info, nullptr, &g_ui_texture_pool) != VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the UI texture descriptor pool");
   }
 
   if (!create_frame_uniform_allocator(g_skinning_uniforms, SKINNING_BLOCK_BYTES,
@@ -1758,47 +1919,52 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the skinning uniform allocator");
   }
 
-  // The atlas needs a layout of its own where a blend layer does not: it is a
-  // sampler2DArray, and a set allocated against the sampler2D layout above would
-  // pass every check and read garbage at the draw.
-  VkDescriptorSetLayoutBinding lightmap_binding{};
-  lightmap_binding.binding         = 0;
-  lightmap_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  lightmap_binding.descriptorCount = 1;
-  lightmap_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  create_scene_uniform_buffer();
 
-  VkDescriptorSetLayoutCreateInfo lightmap_ds_layout_info{
+  // A layout of its own: the atlas is a sampler2DArray, and a set allocated
+  // against the sampler2D layout above reads garbage at the draw.
+  VkDescriptorSetLayoutBinding pass_bindings[2]{};
+  pass_bindings[0].binding         = PASS_LIGHTMAP_BINDING;
+  pass_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[0].descriptorCount = 1;
+  pass_bindings[0].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[1].binding         = PASS_SCENE_BINDING;
+  pass_bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+  pass_bindings[1].descriptorCount = 1;
+  pass_bindings[1].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  lightmap_ds_layout_info.bindingCount = 1;
-  lightmap_ds_layout_info.pBindings    = &lightmap_binding;
-  if (vkCreateDescriptorSetLayout(g_device, &lightmap_ds_layout_info, nullptr,
-                                  &g_lightmap_ds_layout) != VK_SUCCESS)
-  {
-    fatal_error("[renderer] could not create the lightmap descriptor set layout");
-  }
-
-  VkDescriptorPoolSize lightmap_pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                          MAX_LIGHTMAP_ATLASES};
-  VkDescriptorPoolCreateInfo lightmap_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-  lightmap_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
-  lightmap_pool_info.poolSizeCount = 1;
-  lightmap_pool_info.pPoolSizes    = &lightmap_pool_size;
-  if (vkCreateDescriptorPool(g_device, &lightmap_pool_info, nullptr, &g_lightmap_pool) !=
+  pass_ds_layout_info.bindingCount = 2;
+  pass_ds_layout_info.pBindings    = pass_bindings;
+  if (vkCreateDescriptorSetLayout(g_device, &pass_ds_layout_info, nullptr, &g_pass_ds_layout) !=
       VK_SUCCESS)
   {
-    fatal_error("[renderer] could not create the lightmap descriptor pool");
+    fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Set 2 is layer 1's albedo, through the SAME single-sampler layout set 0
-  // uses -- a texture is a texture, and reusing it is what keeps a blended
-  // material free of descriptor machinery of its own. A pipeline that does not
-  // blend simply never binds it, exactly as a static one never binds set 1.
-  VkDescriptorSetLayout set_layouts[LIGHTMAP_DESCRIPTOR_SET + 1];
-  set_layouts[0] = g_albedo_ds_layout;
+  VkDescriptorPoolSize pass_pool_sizes[2] = {
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_LIGHTMAP_ATLASES},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_LIGHTMAP_ATLASES}};
+  VkDescriptorPoolCreateInfo pass_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pass_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
+  pass_pool_info.poolSizeCount = 2;
+  pass_pool_info.pPoolSizes    = pass_pool_sizes;
+  if (vkCreateDescriptorPool(g_device, &pass_pool_info, nullptr, &g_pass_pool) != VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the pass descriptor pool");
+  }
+
+  // Set 2 is layer 1's maps, through the SAME layout set 0 uses -- a material is
+  // a material, and reusing it is what keeps a blended material free of
+  // descriptor machinery of its own. A pipeline that does not blend simply never
+  // binds it, exactly as a static one never binds set 1.
+  VkDescriptorSetLayout set_layouts[PASS_DESCRIPTOR_SET + 1];
+  set_layouts[0] = g_material_ds_layout;
   set_layouts[1] = g_skinning_uniforms.ds_layout;
   for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
-    set_layouts[1 + layer] = g_albedo_ds_layout;
-  set_layouts[LIGHTMAP_DESCRIPTOR_SET] = g_lightmap_ds_layout;
+    set_layouts[1 + layer] = g_material_ds_layout;
+  set_layouts[PASS_DESCRIPTOR_SET] = g_pass_ds_layout;
 
   VkPushConstantRange push_range{};
   push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -1806,7 +1972,7 @@ static void create_mesh_resources()
   push_range.size       = sizeof(mesh_push_constants_t);
 
   VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-  layout_info.setLayoutCount         = LIGHTMAP_DESCRIPTOR_SET + 1;
+  layout_info.setLayoutCount         = PASS_DESCRIPTOR_SET + 1;
   layout_info.pSetLayouts            = set_layouts;
   layout_info.pushConstantRangeCount = 1;
   layout_info.pPushConstantRanges    = &push_range;
@@ -1818,10 +1984,9 @@ static void create_mesh_resources()
 }
 
 // Must run AFTER create_mesh_resources: the UI pipeline binds its atlas through
-// g_albedo_ds_layout, which that function owns. Reusing it rather than declaring
-// a second identical layout is the point -- a UI texture and a material texture
-// are the same thing to the GPU (one combined sampler at set 0, binding 0), so
-// register_texture's descriptor sets work here unchanged.
+// g_ui_texture_ds_layout, which that function owns. That layout is where the
+// per-texture sets register_texture allocates are bound, so a glyph atlas and a
+// UI image reach the shader as one combined sampler at set 0, binding 0.
 static void create_ui_resources()
 {
   VkPushConstantRange push_range{};
@@ -1831,7 +1996,7 @@ static void create_ui_resources()
 
   VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
   layout_info.setLayoutCount         = 1;
-  layout_info.pSetLayouts            = &g_albedo_ds_layout;
+  layout_info.pSetLayouts            = &g_ui_texture_ds_layout;
   layout_info.pushConstantRangeCount = 1;
   layout_info.pPushConstantRanges    = &push_range;
   if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_ui_pipeline_layout) != VK_SUCCESS)
@@ -2135,21 +2300,21 @@ void destroy_texture(gpu_texture_t &tex)
 // the 64-set cap a meaningful budget rather than a per-material one.
 static std::unordered_map<uint32_t, texture_handle_t> g_texture_by_asset;
 
-static VkDescriptorSet allocate_albedo_descriptor_set(const gpu_texture_t &texture)
+static VkDescriptorSet allocate_ui_texture_set(const gpu_texture_t &texture)
 {
-  if (g_albedo_pool == VK_NULL_HANDLE)
+  if (g_ui_texture_pool == VK_NULL_HANDLE)
     return VK_NULL_HANDLE;
 
   VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-  allocation.descriptorPool     = g_albedo_pool;
+  allocation.descriptorPool     = g_ui_texture_pool;
   allocation.descriptorSetCount = 1;
-  allocation.pSetLayouts        = &g_albedo_ds_layout;
+  allocation.pSetLayouts        = &g_ui_texture_ds_layout;
 
   VkDescriptorSet set = VK_NULL_HANDLE;
   if (vkAllocateDescriptorSets(g_device, &allocation, &set) != VK_SUCCESS)
   {
-    log_error("[renderer] out of albedo descriptor sets (cap is {}); this texture will draw as "
-              "flat colour",
+    log_error("[renderer] out of UI texture descriptor sets (cap is {}); this texture will draw "
+              "as flat colour",
               MAX_MATERIAL_TEXTURES);
     return VK_NULL_HANDLE;
   }
@@ -2181,8 +2346,8 @@ texture_handle_t register_texture(const assets::texture_asset_t &texture, bool s
     return {};
   }
 
-  entry.albedo_set = allocate_albedo_descriptor_set(entry.texture);
-  if (entry.albedo_set == VK_NULL_HANDLE)
+  entry.ui_set = allocate_ui_texture_set(entry.texture);
+  if (entry.ui_set == VK_NULL_HANDLE)
   {
     destroy_texture(entry.texture);
     return {};
@@ -2193,20 +2358,21 @@ texture_handle_t register_texture(const assets::texture_asset_t &texture, bool s
   return handle;
 }
 
-static VkDescriptorSet allocate_lightmap_descriptor_set(const gpu_texture_t &texture)
+// Allocated per ATLAS; every one points at the same scene buffer, offset varying.
+static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &texture)
 {
-  if (g_lightmap_pool == VK_NULL_HANDLE)
+  if (g_pass_pool == VK_NULL_HANDLE)
     return VK_NULL_HANDLE;
 
   VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-  allocation.descriptorPool     = g_lightmap_pool;
+  allocation.descriptorPool     = g_pass_pool;
   allocation.descriptorSetCount = 1;
-  allocation.pSetLayouts        = &g_lightmap_ds_layout;
+  allocation.pSetLayouts        = &g_pass_ds_layout;
 
   VkDescriptorSet set = VK_NULL_HANDLE;
   if (vkAllocateDescriptorSets(g_device, &allocation, &set) != VK_SUCCESS)
   {
-    log_error("[renderer] out of lightmap descriptor sets (cap is {})", MAX_LIGHTMAP_ATLASES);
+    log_error("[renderer] out of pass descriptor sets (cap is {})", MAX_LIGHTMAP_ATLASES);
     return VK_NULL_HANDLE;
   }
 
@@ -2215,13 +2381,28 @@ static VkDescriptorSet allocate_lightmap_descriptor_set(const gpu_texture_t &tex
   image.imageView   = texture.view;
   image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-  VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-  write.dstSet          = set;
-  write.dstBinding      = 0;
-  write.descriptorCount = 1;
-  write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  write.pImageInfo      = &image;
-  vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+  // One block, not the whole buffer: a dynamic descriptor's range is fixed here.
+  VkDescriptorBufferInfo scene{};
+  scene.buffer = g_scene_uniform_buffer;
+  scene.offset = 0;
+  scene.range  = g_scene_block_size;
+
+  VkWriteDescriptorSet writes[2]{};
+  writes[0]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[0].dstSet          = set;
+  writes[0].dstBinding      = PASS_LIGHTMAP_BINDING;
+  writes[0].descriptorCount = 1;
+  writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[0].pImageInfo      = &image;
+
+  writes[1]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[1].dstSet          = set;
+  writes[1].dstBinding      = PASS_SCENE_BINDING;
+  writes[1].descriptorCount = 1;
+  writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+  writes[1].pBufferInfo     = &scene;
+
+  vkUpdateDescriptorSets(g_device, 2, writes, 0, nullptr);
   return set;
 }
 
@@ -2234,7 +2415,7 @@ lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &pages)
   if (!try_upload_lightmap_image(pages, entry))
     return {};
 
-  entry.set = allocate_lightmap_descriptor_set(entry.texture);
+  entry.set = allocate_pass_descriptor_set(entry.texture);
   if (entry.set == VK_NULL_HANDLE)
   {
     destroy_texture(entry.texture);
@@ -2282,17 +2463,15 @@ void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &p
 
   VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
   write.dstSet          = entry.set;
-  write.dstBinding      = 0;
+  write.dstBinding      = PASS_LIGHTMAP_BINDING;
   write.descriptorCount = 1;
   write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   write.pImageInfo      = &image;
   vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
 }
 
-// What a pass with no atlas of its own binds. Falls back to the white page, and
-// then to nothing -- a lightmapped draw with no set bound at all is a validation
-// error, which is the loudest this can be without refusing to draw.
-static VkDescriptorSet resolve_lightmap_set(lightmap_handle_t handle)
+// The white page's set carries the scene block too, so the fallback is not optional.
+static VkDescriptorSet resolve_pass_set(lightmap_handle_t handle)
 {
   if (handle.valid() && handle.index < g_lightmaps.size())
     return g_lightmaps[handle.index].set;
@@ -2305,12 +2484,15 @@ static VkDescriptorSet resolve_lightmap_set(lightmap_handle_t handle)
 
 // The renderer-side twin of the above for a texture that arrived as an asset
 // handle -- cached, so a texture shared by two materials is uploaded once.
-static texture_handle_t register_texture_asset(assets::asset_handle_t<assets::texture_asset_t> asset)
+// `srgb` is part of the KEY: one image can be read as colour and as data.
+static texture_handle_t register_texture_asset(assets::asset_handle_t<assets::texture_asset_t> asset,
+                                               bool srgb)
 {
   if (!asset.valid())
     return {};
 
-  const auto cached = g_texture_by_asset.find(asset.index);
+  const uint32_t key = asset.index * 2 + (srgb ? 1u : 0u);
+  const auto     cached = g_texture_by_asset.find(key);
   if (cached != g_texture_by_asset.end())
     return cached->second;
 
@@ -2318,24 +2500,124 @@ static texture_handle_t register_texture_asset(assets::asset_handle_t<assets::te
   if (!texture)
     return {};
 
-  const texture_handle_t handle = register_texture(*texture, /*srgb*/ true);
-  g_texture_by_asset[asset.index] = handle;
+  const texture_handle_t handle = register_texture(*texture, srgb);
+  g_texture_by_asset[key] = handle;
   return handle;
 }
 
-// The fallback ladder, in one place. An invalid texture resolves to WHITE so the
-// colour multiplies out of the shader; a texture that was NAMED but failed to
-// load resolves to the magenta/black checkerboard, because a broken asset must
-// never be mistakable for authored art.
-static VkDescriptorSet resolve_albedo_set(texture_handle_t handle)
+// `srgb` per map: albedo is COLOUR and decodes on read, the other three are DATA.
+static material_maps_t register_material_maps(const assets::material_maps_t &source,
+                                              const std::string            &albedo_path)
+{
+  material_maps_t maps{};
+
+  if (source.albedo.valid())
+    maps.albedo = register_texture_asset(source.albedo, /*srgb*/ true);
+  else if (!albedo_path.empty())
+    maps.albedo = g_missing_texture; // named but never loaded
+
+  if (source.normal.valid())
+    maps.normal = register_texture_asset(source.normal, /*srgb*/ false);
+  if (source.orm.valid())
+    maps.orm = register_texture_asset(source.orm, /*srgb*/ false);
+  if (source.height.valid())
+    maps.height = register_texture_asset(source.height, /*srgb*/ false);
+
+  return maps;
+}
+
+// An invalid texture resolves to WHITE so the colour multiplies out.
+static VkDescriptorSet resolve_ui_texture_set(texture_handle_t handle)
 {
   if (handle.valid() && handle.index < g_textures.size())
-    return g_textures[handle.index].albedo_set;
+    return g_textures[handle.index].ui_set;
 
   if (g_white_texture.valid())
-    return g_textures[g_white_texture.index].albedo_set;
+    return g_textures[g_white_texture.index].ui_set;
 
   return VK_NULL_HANDLE;
+}
+
+// A map's texture, or the internal default that composes to no effect.
+static const gpu_texture_t *resolve_map_texture(texture_handle_t handle, texture_handle_t fallback)
+{
+  if (handle.valid() && handle.index < g_textures.size())
+    return &g_textures[handle.index].texture;
+  if (fallback.valid() && fallback.index < g_textures.size())
+    return &g_textures[fallback.index].texture;
+  return nullptr;
+}
+
+// Keyed by the four handles: register_mesh mints a material per submesh.
+static VkDescriptorSet resolve_material_set(const material_maps_t &maps)
+{
+  struct map_set_hash_t
+  {
+    size_t operator()(const material_maps_t &key) const
+    {
+      size_t hash = key.albedo.index;
+      for (uint32_t index : {key.normal.index, key.orm.index, key.height.index})
+        hash = hash * 1099511628211ull + index;
+      return hash;
+    }
+  };
+  static std::unordered_map<material_maps_t, VkDescriptorSet, map_set_hash_t> by_maps;
+
+  const auto cached = by_maps.find(maps);
+  if (cached != by_maps.end())
+    return cached->second;
+
+  const gpu_texture_t *textures[MATERIAL_MAP_COUNT] = {
+      resolve_map_texture(maps.albedo, g_white_texture),
+      resolve_map_texture(maps.normal, g_flat_normal_texture),
+      resolve_map_texture(maps.orm, g_default_orm_texture),
+      resolve_map_texture(maps.height, g_zero_height_texture)};
+
+  for (uint32_t map = 0; map < MATERIAL_MAP_COUNT; ++map)
+  {
+    if (textures[map] == nullptr)
+    {
+      log_error("[renderer] material map {} resolves to no texture at all; this material cannot "
+                "be bound",
+                map);
+      return VK_NULL_HANDLE;
+    }
+  }
+
+  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  allocation.descriptorPool     = g_material_pool;
+  allocation.descriptorSetCount = 1;
+  allocation.pSetLayouts        = &g_material_ds_layout;
+
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  if (g_material_pool == VK_NULL_HANDLE ||
+      vkAllocateDescriptorSets(g_device, &allocation, &set) != VK_SUCCESS)
+  {
+    log_error("[renderer] out of material descriptor sets (cap is {}); this material will draw as "
+              "flat colour",
+              MAX_MATERIAL_SETS);
+    return VK_NULL_HANDLE;
+  }
+
+  VkDescriptorImageInfo images[MATERIAL_MAP_COUNT]{};
+  VkWriteDescriptorSet  writes[MATERIAL_MAP_COUNT]{};
+  for (uint32_t map = 0; map < MATERIAL_MAP_COUNT; ++map)
+  {
+    images[map].sampler     = textures[map]->sampler;
+    images[map].imageView   = textures[map]->view;
+    images[map].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    writes[map]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    writes[map].dstSet          = set;
+    writes[map].dstBinding      = map;
+    writes[map].descriptorCount = 1;
+    writes[map].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[map].pImageInfo      = &images[map];
+  }
+  vkUpdateDescriptorSets(g_device, MATERIAL_MAP_COUNT, writes, 0, nullptr);
+
+  by_maps.emplace(maps, set);
+  return set;
 }
 
 material_handle_t register_material(const material_t &material)
@@ -2343,10 +2625,10 @@ material_handle_t register_material(const material_t &material)
   gpu_material_t entry{};
   entry.pipeline_state = material.pipeline_state;
   entry.parameters     = material.parameters;
-  entry.albedo_set     = resolve_albedo_set(material.parameters.base_color_texture);
+  entry.material_set   = resolve_material_set(material.parameters.maps);
   for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
     entry.blend_sets.data[layer - 1] =
-        resolve_albedo_set(material.parameters.blend_textures.data[layer - 1]);
+        resolve_material_set(material.parameters.blend_maps.data[layer - 1]);
 
   const material_handle_t handle{(uint32_t)g_materials.size()};
   g_materials.push_back(entry);
@@ -2376,10 +2658,10 @@ void update_material(material_handle_t handle, const material_parameters_t &para
 
   gpu_material_t &entry = g_materials[handle.index];
   entry.parameters      = parameters;
-  entry.albedo_set      = resolve_albedo_set(parameters.base_color_texture);
+  entry.material_set    = resolve_material_set(parameters.maps);
   for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
     entry.blend_sets.data[layer - 1] =
-        resolve_albedo_set(parameters.blend_textures.data[layer - 1]);
+        resolve_material_set(parameters.blend_maps.data[layer - 1]);
 }
 
 // --- Mesh upload ---
@@ -2547,24 +2829,14 @@ static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_
     material_t material{};
     material.parameters.base_color = {source.diffuse_color.x, source.diffuse_color.y,
                                       source.diffuse_color.z, 1.0f};
-
-    if (source.texture.valid())
-      material.parameters.base_color_texture = register_texture_asset(source.texture);
-    else if (!source.texture_path.empty())
-      material.parameters.base_color_texture = g_missing_texture; // named but never loaded
+    material.parameters.maps = register_material_maps(source.maps, source.texture_path);
 
     // The layers above the base, through the same ladder, and the shader that
     // reads them. A generated brush mesh is the only thing that fills these
     // today -- blending is authored per FACE.
     for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
-    {
-      const assets::asset_handle_t<assets::texture_asset_t> texture =
-          source.blend_texture.data[layer - 1];
-      if (texture.valid())
-        material.parameters.blend_textures.data[layer - 1] = register_texture_asset(texture);
-      else if (!source.blend_texture_path.data[layer - 1].empty())
-        material.parameters.blend_textures.data[layer - 1] = g_missing_texture;
-    }
+      material.parameters.blend_maps.data[layer - 1] = register_material_maps(
+          source.blend_maps.data[layer - 1], source.blend_texture_path.data[layer - 1]);
 
     if (source.blends())
       material.pipeline_state.shader = shader_t::blend;
@@ -2698,6 +2970,19 @@ static void create_default_resources()
   }
   g_missing_texture = register_texture(missing, /*srgb*/ true);
 
+  // A flat normal, occlusion 1 / roughness 1 / metallic 0, zero height. All UNORM.
+  const auto one_texel = [](uint8_t r, uint8_t g, uint8_t b) {
+    assets::texture_asset_t texel{};
+    texel.width    = 1;
+    texel.height   = 1;
+    texel.channels = 4;
+    texel.pixels   = {r, g, b, 255};
+    return texel;
+  };
+  g_flat_normal_texture = register_texture(one_texel(128, 128, 255), /*srgb*/ false);
+  g_default_orm_texture = register_texture(one_texel(255, 255, 0), /*srgb*/ false);
+  g_zero_height_texture = register_texture(one_texel(0, 0, 0), /*srgb*/ false);
+
   g_default_material = register_material({});
 
   // One white texel on one page, so a lightmapped mesh drawn in a pass that
@@ -2711,6 +2996,11 @@ static void create_default_resources()
   const uint32_t white_texel = shared::pack_rgb9e5({1.f, 1.f, 1.f});
   memcpy(white_pages.bytes.data(), &white_texel, sizeof(white_texel));
   g_white_lightmap = register_lightmap(white_pages);
+  if (!g_white_lightmap.valid())
+  {
+    // The pass set carries the scene block; a pass with no set bound draws nothing.
+    fatal_error("[renderer] could not register the internal white lightmap page");
+  }
 }
 
 static void cleanup_registered_resources()
@@ -2736,8 +3026,30 @@ static void cleanup_registered_resources()
   g_pipeline_ids.clear();
 
   if (g_mesh_pipeline_layout) vkDestroyPipelineLayout(g_device, g_mesh_pipeline_layout, nullptr);
-  if (g_albedo_pool)          vkDestroyDescriptorPool(g_device, g_albedo_pool, nullptr);
-  if (g_albedo_ds_layout)     vkDestroyDescriptorSetLayout(g_device, g_albedo_ds_layout, nullptr);
+  if (g_material_pool)        vkDestroyDescriptorPool(g_device, g_material_pool, nullptr);
+  if (g_material_ds_layout)   vkDestroyDescriptorSetLayout(g_device, g_material_ds_layout, nullptr);
+  if (g_ui_texture_pool)      vkDestroyDescriptorPool(g_device, g_ui_texture_pool, nullptr);
+  if (g_ui_texture_ds_layout) vkDestroyDescriptorSetLayout(g_device, g_ui_texture_ds_layout, nullptr);
+  if (g_pass_pool)            vkDestroyDescriptorPool(g_device, g_pass_pool, nullptr);
+  if (g_pass_ds_layout)       vkDestroyDescriptorSetLayout(g_device, g_pass_ds_layout, nullptr);
+
+  if (g_scene_uniform_memory)
+  {
+    vkUnmapMemory(g_device, g_scene_uniform_memory);
+    g_scene_uniform_mapped = nullptr;
+  }
+  if (g_scene_uniform_buffer) vkDestroyBuffer(g_device, g_scene_uniform_buffer, nullptr);
+  if (g_scene_uniform_memory) vkFreeMemory(g_device, g_scene_uniform_memory, nullptr);
+
+  g_material_pool        = VK_NULL_HANDLE;
+  g_material_ds_layout   = VK_NULL_HANDLE;
+  g_ui_texture_pool      = VK_NULL_HANDLE;
+  g_ui_texture_ds_layout = VK_NULL_HANDLE;
+  g_pass_pool            = VK_NULL_HANDLE;
+  g_pass_ds_layout       = VK_NULL_HANDLE;
+  g_scene_uniform_buffer = VK_NULL_HANDLE;
+  g_scene_uniform_memory = VK_NULL_HANDLE;
+  g_mesh_pipeline_layout = VK_NULL_HANDLE;
 }
 
 // --- Particle System Implementation ---
@@ -3277,19 +3589,93 @@ static void pack_normal_matrix(const linalg::mat4f &transform, mesh_push_constan
   }
 }
 
+// Per pass, so a second viewport with its own camera gets its own block for free.
+static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
+{
+  scene_uniform_t scene{};
+
+  const linalg::mat4f view_projection_matrix = view_projection(pass.view);
+  memcpy(scene.view_projection, &view_projection_matrix, sizeof(scene.view_projection));
+
+  const linalg::vec3f &eye = pass.view.camera.position;
+  scene.camera_position[0] = eye.x;
+  scene.camera_position[1] = eye.y;
+  scene.camera_position[2] = eye.z;
+  scene.camera_position[3] = 0.0f;
+
+  scene.ambient[0] = AMBIENT_FLOOR;
+  scene.ambient[1] = AMBIENT_FLOOR;
+  scene.ambient[2] = AMBIENT_FLOOR;
+  scene.ambient[3] = 0.0f;
+
+  if (pass.lights.size() > MAX_SCENE_LIGHTS)
+  {
+    log_error("[renderer] this view pass carries {} lights; only the first {} are evaluated",
+              pass.lights.size(), MAX_SCENE_LIGHTS);
+  }
+
+  scene.light_count = (int32_t)std::min<size_t>(pass.lights.size(), MAX_SCENE_LIGHTS);
+  for (int32_t index = 0; index < scene.light_count; ++index)
+  {
+    const shared::scene_light_t &source = pass.lights[(uint32_t)index];
+    gpu_light_t                 &light  = scene.lights[index];
+
+    light.position[0] = source.position.x;
+    light.position[1] = source.position.y;
+    light.position[2] = source.position.z;
+    // A Mixed light reaches this array AND the atlas, so a lightmapped surface
+    // has to skip it (lighting_def.md decision B). Nothing else is analytic and
+    // baked at once, so nothing else sets this.
+    light.position[3] =
+        source.mode == entities::Light_Mode::Mixed ? 1.0f : 0.0f;
+
+    light.direction[0] = source.forward.x;
+    light.direction[1] = source.forward.y;
+    light.direction[2] = source.forward.z;
+
+    light.radiance[0] = source.radiance.x;
+    light.radiance[1] = source.radiance.y;
+    light.radiance[2] = source.radiance.z;
+
+    light.spot_params[0] = source.cos_inner;
+    light.spot_params[1] = source.cos_outer;
+    light.spot_params[2] = source.range;
+    light.spot_params[3] = (float)(int)source.kind;
+  }
+
+  switch (pass.debug_channel)
+  {
+  case cvars::Debug_Channel::off: break;
+  case cvars::Debug_Channel::normals: scene.debug_flags = DEBUG_FLAG_RENDER_NORMALS; break;
+  case cvars::Debug_Channel::uv: scene.debug_flags = DEBUG_FLAG_RENDER_UV; break;
+  case cvars::Debug_Channel::parallax_uv:
+    scene.debug_flags = DEBUG_FLAG_RENDER_PARALLAX_UV;
+    break;
+  }
+
+  return scene;
+}
+
+// The tag is cast straight across into the scene block.
+static_assert((int)shared::light_kind_t::Point == 0 && (int)shared::light_kind_t::Spot == 1 &&
+                  (int)shared::light_kind_t::Directional == 2,
+              "scene.glsl spells the light type tag as 0 point / 1 spot / 2 directional");
+
 static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws,
-                              const linalg::mat4f &view_projection_matrix,
-                              lightmap_handle_t lightmap)
+                              lightmap_handle_t lightmap, uint32_t scene_block_offset)
 {
   g_draw_items.clear();
   g_draw_skinning.assign(draws.size(), {});
 
-  // Once per pass, ahead of every draw: the atlas belongs to the world being
-  // drawn, so nothing below it varies. A pipeline that reads no lightmap simply
-  // never looks at set 3, exactly as a static one never looks at set 1.
-  if (const VkDescriptorSet lightmap_set = resolve_lightmap_set(lightmap))
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout,
-                            LIGHTMAP_DESCRIPTOR_SET, 1, &lightmap_set, 0, nullptr);
+  // Not optional: every mesh vertex shader reads view_projection out of this set.
+  const VkDescriptorSet pass_set = resolve_pass_set(lightmap);
+  if (pass_set == VK_NULL_HANDLE)
+  {
+    log_error("[renderer] no pass descriptor set; this view pass cannot be drawn");
+    return;
+  }
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout,
+                          PASS_DESCRIPTOR_SET, 1, &pass_set, 1, &scene_block_offset);
 
   for (uint32_t draw_index = 0; draw_index < draws.size(); ++draw_index)
   {
@@ -3355,10 +3741,10 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
       // material or draw change alone is enough.
     }
 
-    if (item.material_index != bound_material && material.albedo_set != VK_NULL_HANDLE)
+    if (item.material_index != bound_material && material.material_set != VK_NULL_HANDLE)
     {
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout, 0, 1,
-                              &material.albedo_set, 0, nullptr);
+                              &material.material_set, 0, nullptr);
 
       // The layers above the base, at set 2 onward, bound only by the shader
       // that reads them.
@@ -3408,8 +3794,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
     // Pushed per item: the matrix belongs to the draw and the colour to the
     // material, and the sort interleaves them.
     mesh_push_constants_t push{};
-    const linalg::mat4f   mvp = view_projection_matrix * draw.transform;
-    memcpy(push.mvp, &mvp, sizeof(push.mvp));
+    memcpy(push.model, &draw.transform, sizeof(push.model));
 
     const linalg::vec4f base = material.parameters.base_color;
     push.color[0] = base.x * (draw.tint.r / 255.0f);
@@ -3858,17 +4243,17 @@ static void record_ui_draw_list(VkCommandBuffer cmd, const ui_draw_list_t &ui)
   push.inverse_screen[1] = 1.0f / (float)g_swapchain_extent.height;
   vkCmdPushConstants(cmd, g_ui_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
 
-  // One descriptor bind per batch. resolve_albedo_set is the same fallback ladder
+  // One descriptor bind per batch. resolve_ui_texture_set is the same ladder
   // the mesh path uses, which is what lets ui_draw_list_t::rect pass an invalid
   // handle and get the internal 1x1 white with no special case anywhere.
   for (const ui_batch_t &batch : ui.batches)
   {
-    const VkDescriptorSet albedo_set = resolve_albedo_set(batch.texture);
-    if (albedo_set == VK_NULL_HANDLE)
+    const VkDescriptorSet texture_set = resolve_ui_texture_set(batch.texture);
+    if (texture_set == VK_NULL_HANDLE)
       continue;
 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ui_pipeline_layout, 0, 1,
-                            &albedo_set, 0, nullptr);
+                            &texture_set, 0, nullptr);
     vkCmdDraw(cmd, batch.vertex_count, 1, first_vertex + batch.first_vertex, 0);
   }
 }
@@ -3926,7 +4311,9 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
   else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
     severity_str = "VERBOSE";
 
-  std::print("[vulkan {}] {}\n", severity_str, callback_data->pMessage);
+  // stderr and flushed: stdout is block-buffered the moment it is a pipe.
+  std::print(stderr, "[vulkan {}] {}\n", severity_str, callback_data->pMessage);
+  std::fflush(stderr);
   return VK_FALSE;
 }
 #endif
@@ -4218,7 +4605,7 @@ bool init(SDL_Window *window)
   // register_mesh warm the ones they imply.
   create_debug_resources();
   create_mesh_resources();
-  create_ui_resources(); // after create_mesh_resources -- it borrows g_albedo_ds_layout
+  create_ui_resources(); // after create_mesh_resources -- it borrows g_ui_texture_ds_layout
   create_default_resources();
   init_particle_system();
 
@@ -4426,6 +4813,7 @@ bool new_frame()
   // Safe here and only here: the fence wait above means everything that read
   // this frame index's per-frame memory has finished with it.
   reset_frame_uniforms(g_skinning_uniforms, g_current_frame_idx_in_swapchain);
+  g_scene_next_block = 0;
   g_debug_vertex_used = 0;
   g_ui_vertex_used    = 0;
 
@@ -4497,8 +4885,9 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
   {
     apply_viewport(cmd, pass.view.viewport);
     const linalg::mat4f view_projection_matrix = view_projection(pass.view);
+    const uint32_t      scene_block_offset     = write_scene_block(build_scene_uniform(pass));
 
-    record_mesh_draws(cmd, pass.draws, view_projection_matrix, pass.lightmap);
+    record_mesh_draws(cmd, pass.draws, pass.lightmap, scene_block_offset);
 
     if (!pass.particles.empty())
     {

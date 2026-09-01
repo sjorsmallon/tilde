@@ -3,10 +3,16 @@
 
 #define MAX_LIGHTS 8
 
+// RADIANCE, not colour and intensity, for the reason scene.glsl carries the same
+// field: shared/lighting.hpp's radiance_of is the ONE conversion from a Light
+// component, the reference distance lives inside it and is not separately
+// spellable, and a preview that multiplied colour by intensity itself is exactly
+// the second lighting model lighting_def.md ss11 is about. It is what made this
+// tool's 1500 and 30000 necessary.
 struct Light {
     vec4 position;          // xyz = world position, w = unused
     vec4 direction;         // xyz = normalized direction, w = unused
-    vec4 color_intensity;   // rgb = color, a = intensity
+    vec4 radiance;          // rgb, already through shared/lighting.hpp's radiance_of
     vec4 spot_params;       // x = cos(inner), y = cos(outer), z = range, w = type (0=point, 1=spot, 2=directional)
 };
 
@@ -24,45 +30,35 @@ layout(set = 0, binding = 0) uniform SceneUBO {
     float param_float[16];
 } scene;
 
-// Compute simple lighting contribution from all active lights
+// The falloff, the cone and the type tag are light_arrival.glsl's, which is the
+// game's and the bake's too -- this helper held a FOURTH copy of them, and its
+// falloff was a linear `1 - d/range` squared rather than the windowed inverse
+// square everything else uses. A preview whose lights fall off differently from
+// the game's is a tool that lies about the shader you are authoring in it.
+//
+// light_arrival rather than pbr_lighting: this header is included by the preview
+// VERTEX shader too, and pbr_lighting's TBN needs dFdx.
+#include "light_arrival.glsl"
+
+#ifndef PI
+#define PI 3.14159265359
+#endif
+
+// Lambert diffuse for a preview shader that does not want the full BRDF. The
+// 1/PI is the same one shade_direct and lightmap_diffuse apply, for the same
+// reason (lighting_def.md ss9).
 vec3 compute_lighting(vec3 world_position, vec3 world_normal) {
     vec3 result = vec3(0.0);
 
     for (int i = 0; i < scene.light_count && i < MAX_LIGHTS; i++) {
         Light light = scene.lights[i];
-        int light_type = int(light.spot_params.w);
-        vec3 light_color = light.color_intensity.rgb * light.color_intensity.a;
-        float attenuation = 1.0;
+        vec4  arrival = light_arrival(int(light.spot_params.w), light.position.xyz,
+                                      light.direction.xyz, light.spot_params.x,
+                                      light.spot_params.y, light.spot_params.z,
+                                      world_position);
 
-        vec3 light_direction;
-
-        if (light_type == 2) {
-            // Directional
-            light_direction = -normalize(light.direction.xyz);
-        } else {
-            // Point or spot
-            vec3 to_light = light.position.xyz - world_position;
-            float distance = length(to_light);
-            light_direction = to_light / max(distance, 0.001);
-
-            float light_range = light.spot_params.z;
-            if (light_range > 0.0) {
-                attenuation = max(1.0 - (distance / light_range), 0.0);
-                attenuation *= attenuation;
-            }
-
-            if (light_type == 1) {
-                // Spot cone
-                float cos_angle = dot(-light_direction, normalize(light.direction.xyz));
-                float cos_inner = light.spot_params.x;
-                float cos_outer = light.spot_params.y;
-                float spot_factor = clamp((cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.001), 0.0, 1.0);
-                attenuation *= spot_factor;
-            }
-        }
-
-        float n_dot_l = max(dot(world_normal, light_direction), 0.0);
-        result += light_color * n_dot_l * attenuation;
+        float n_dot_l = max(dot(world_normal, arrival.xyz), 0.0);
+        result += (light.radiance.rgb / PI) * n_dot_l * arrival.w;
     }
 
     return result;

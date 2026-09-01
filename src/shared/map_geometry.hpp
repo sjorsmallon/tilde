@@ -377,12 +377,12 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
 assets::asset_handle_t<assets::mesh_asset_t>
 resolve_surface_mesh(const geometry_surface_t &surface);
 
-// Resolve a map material -- an entry of map_t::materials -- to the one texture
-// the renderer reads today. A PBR folder resolves to its albedo; a single
-// texture file resolves to itself; an empty path is "untextured" and is not a
-// failure. See geometry_def.md ss4 for why a face holds an INDEX into that table.
-assets::asset_handle_t<assets::texture_asset_t>
-resolve_material_texture(const std::string &material_path);
+// Resolve a map material -- an entry of map_t::materials -- to the four maps the
+// renderer binds. A PBR folder resolves to all four; a single texture file
+// resolves to an albedo and nothing else; an empty path is "untextured" and is
+// not a failure. See geometry_def.md ss4 for why a face holds an INDEX into that
+// table.
+assets::material_maps_t resolve_material_maps(const std::string &material_path);
 
 // The material channel's texture coordinate at a world position on a face with
 // this normal. A degenerate channel (either axis zero) falls back to

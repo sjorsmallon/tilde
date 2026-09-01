@@ -3,6 +3,8 @@
 #include "../shared/lightmap_sidecar.hpp"
 #include "../shared/lightmap_solve.hpp"
 
+#include <optional>
+
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -526,7 +528,9 @@ void rgb9e5_takes_its_exponent_from_the_brightest_channel()
 
 // --- The solve, and its two modes --------------------------------------------
 
-shared::map_t map_with_a_floor_and_a_light(float light_height, float intensity)
+shared::map_t map_with_a_floor_and_a_light(
+    float light_height, float intensity,
+    entities::Light_Mode mode = entities::Light_Mode::Baked)
 {
   shared::map_t map;
   map.geometry.push_back(
@@ -538,6 +542,7 @@ shared::map_t map_with_a_floor_and_a_light(float light_height, float intensity)
   light->range = 1024.f;
   light->light.color = {1.f, 1.f, 1.f};
   light->light.intensity = intensity;
+  light->light.mode = mode;
   map.entities.push_back({map.next_uid++, light});
 
   return map;
@@ -641,6 +646,58 @@ void the_direct_mode_falls_off_and_scales_with_intensity()
   // Radiance is colour * intensity and enters the sum linearly, so four times the
   // intensity is four times the irradiance at the same texel.
   assert(std::abs(bright_texel.x - near_texel.x * 4.f) <= near_texel.x * 0.02f);
+}
+
+// lighting_def.md ss2's correctness requirement, and the only assertion that can
+// tell it landed: the mode decides WHERE a light is evaluated, so Dynamic must
+// leave the atlas alone and Mixed must not. Without the filter every light in the
+// map is in the atlas AND in the runtime array, and a level lit by both is lit
+// twice -- which reads as "the bake is too bright" long before anyone suspects
+// double counting.
+void the_light_mode_decides_what_reaches_the_atlas()
+{
+  const shared::lightmap_solve_settings_t solve;
+
+  // The same floor and light every time; only the mode of the light, and whether
+  // a SECOND light stands beside it, change.
+  const auto texel_for = [&](entities::Light_Mode mode,
+                             std::optional<entities::Light_Mode> second) {
+    shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f, mode);
+    if (second)
+    {
+      std::shared_ptr<entities::Point_Light_Entity> extra =
+          std::make_shared<entities::Point_Light_Entity>();
+      extra->position = {0, 64, 0};
+      extra->range = 1024.f;
+      extra->light.intensity = 1.f;
+      extra->light.mode = *second;
+      map.entities.push_back({map.next_uid++, extra});
+    }
+
+    const shared::lightmap_t lightmap = pack_for(map);
+    return texel_under_the_light(
+        lightmap, shared::bake_lightmap_pages(map, lightmap.charts, lightmap.atlas,
+                                              lightmap.settings, solve));
+  };
+
+  const linalg::vec3 baked = texel_for(entities::Light_Mode::Baked, {});
+  assert(baked.x > 0.f);
+
+  // Mixed is baked AND analytic, so the atlas half must be identical to Baked's.
+  const linalg::vec3 mixed = texel_for(entities::Light_Mode::Mixed, {});
+  assert(mixed.x == baked.x && mixed.y == baked.y && mixed.z == baked.z);
+
+  // A Dynamic light standing in the same spot contributes NOTHING here; it is the
+  // runtime array's, and adding it to both would be the double count.
+  const linalg::vec3 with_dynamic =
+      texel_for(entities::Light_Mode::Baked, entities::Light_Mode::Dynamic);
+  assert(with_dynamic.x == baked.x);
+
+  // Where a second BAKED light does land, which is what proves the assertion
+  // above is measuring the mode rather than a solve that ignores second lights.
+  const linalg::vec3 with_baked =
+      texel_for(entities::Light_Mode::Baked, entities::Light_Mode::Baked);
+  assert(with_baked.x > baked.x * 1.5f);
 }
 
 // A texel with a lid over it is dark in BOTH modes: the shadow ray is a gate
@@ -843,6 +900,7 @@ int main()
   rgb9e5_takes_its_exponent_from_the_brightest_channel();
   the_visibility_mode_writes_white_or_nothing();
   the_direct_mode_falls_off_and_scales_with_intensity();
+  the_light_mode_decides_what_reaches_the_atlas();
   an_occluder_darkens_both_modes();
   intensity_is_the_irradiance_at_the_reference_distance();
   the_gutter_is_filled_from_the_chart_that_owns_it();

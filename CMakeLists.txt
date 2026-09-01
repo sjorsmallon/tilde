@@ -374,6 +374,8 @@ add_library(game_shared STATIC
     src/shared/lighting.hpp
     src/shared/lightmap_bake.cpp
     src/shared/lightmap_debug_image.cpp
+    src/shared/lighting.hpp
+    src/shared/lighting.cpp
     src/shared/lightmap_solve.cpp
     src/shared/lightmap_sidecar.cpp
     src/shared/entity_system.cpp
@@ -448,6 +450,10 @@ target_sources(game_shared PRIVATE ${PROTO_SRCS} ${PROTO_HDRS})
 target_include_directories(game_shared PUBLIC 
     src/shared 
     ${PROTO_OUT_DIR}
+    # shader_math.hpp compiles resources/shaders/light_falloff.glsl as C++, so the
+    # bake and the shaders share one falloff (lighting_def.md decision I). The
+    # same directory glslc gets through -I below.
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders
 )
 target_link_libraries(game_shared PUBLIC libprotobuf Jolt)
 target_include_directories(game_shared PUBLIC ${joltphysics_SOURCE_DIR})
@@ -528,34 +534,40 @@ set(LIGHTMAP_SHADER_SOURCES
     ${SHADER_SRC_DIR}/mesh_blend.frag
 )
 
+set(PBR_SHADER_SOURCES ${SHADER_SRC_DIR}/mesh_lit.frag)
+
+set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.glsl
+                    ${SHADER_SRC_DIR}/lightmap.glsl ${SHADER_SRC_DIR}/light_falloff.glsl
+                    ${SHADER_SRC_DIR}/light_arrival.glsl)
+
 set(SHADER_HEADERS "")
 
-foreach(SHADER ${SHADER_SOURCES})
-    get_filename_component(SHADER_NAME ${SHADER} NAME)
-    set(HEADER_OUT ${SHADER_OUT_DIR}/${SHADER_NAME}.spv.h)
-    list(APPEND SHADER_HEADERS ${HEADER_OUT})
-    
+macro(compile_shader_variant SHADER SUFFIX)
+    get_filename_component(VARIANT_STEM ${SHADER} NAME_WE)
+    get_filename_component(VARIANT_EXT ${SHADER} EXT)
+    set(VARIANT_NAME ${VARIANT_STEM}${SUFFIX}${VARIANT_EXT})
+    set(VARIANT_OUT ${SHADER_OUT_DIR}/${VARIANT_NAME}.spv.h)
+    list(APPEND SHADER_HEADERS ${VARIANT_OUT})
+
     add_custom_command(
-        OUTPUT ${HEADER_OUT}
-        COMMAND ${GLSLC_EXECUTABLE} ${SHADER} -o ${HEADER_OUT} --target-env=vulkan1.0 -mfmt=c
-        DEPENDS ${SHADER}
-        COMMENT "Compiling shader ${SHADER_NAME} to C header..."
+        OUTPUT ${VARIANT_OUT}
+        COMMAND ${GLSLC_EXECUTABLE} ${SHADER} ${ARGN} -I ${SHADER_SRC_DIR} -o ${VARIANT_OUT} --target-env=vulkan1.0 -mfmt=c
+        DEPENDS ${SHADER} ${SHADER_INCLUDES}
+        COMMENT "Compiling shader ${VARIANT_NAME} to C header..."
     )
+endmacro()
+
+foreach(SHADER ${SHADER_SOURCES})
+    compile_shader_variant(${SHADER} "")
 endforeach()
 
 foreach(SHADER ${LIGHTMAP_SHADER_SOURCES})
-    get_filename_component(SHADER_STEM ${SHADER} NAME_WE)
-    get_filename_component(SHADER_EXT ${SHADER} EXT)
-    set(SHADER_NAME ${SHADER_STEM}_lightmapped${SHADER_EXT})
-    set(HEADER_OUT ${SHADER_OUT_DIR}/${SHADER_NAME}.spv.h)
-    list(APPEND SHADER_HEADERS ${HEADER_OUT})
+    compile_shader_variant(${SHADER} "_lightmapped" -DLIGHTMAP)
+endforeach()
 
-    add_custom_command(
-        OUTPUT ${HEADER_OUT}
-        COMMAND ${GLSLC_EXECUTABLE} ${SHADER} -DLIGHTMAP -o ${HEADER_OUT} --target-env=vulkan1.0 -mfmt=c
-        DEPENDS ${SHADER}
-        COMMENT "Compiling shader ${SHADER_NAME} to C header..."
-    )
+foreach(SHADER ${PBR_SHADER_SOURCES})
+    compile_shader_variant(${SHADER} "_pbr" -DPBR)
+    compile_shader_variant(${SHADER} "_pbr_lightmapped" -DPBR -DLIGHTMAP)
 endforeach()
 
 # Shader tool paths — generated header so runtime knows where glslc and preview shaders live

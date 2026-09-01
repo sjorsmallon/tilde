@@ -10,6 +10,8 @@
 // the vertex fetch here reads raw bytes at fixed offsets, so a change there is
 // garbage weights rather than a compile error anywhere.
 
+#include "scene.glsl"
+
 layout(location = 0) in vec3  inPosition;
 layout(location = 1) in vec3  inNormal;
 layout(location = 2) in vec2  inUV;
@@ -20,9 +22,10 @@ layout(location = 0) out vec3       fragWorldNormal;
 layout(location = 1) out vec3       fragColor;
 layout(location = 2) out vec2       fragUV;
 layout(location = 3) out flat float fragAlpha;
+layout(location = 6) out vec3       fragWorldPosition;
 
 layout(push_constant) uniform PushConstants {
-    mat4 mvp;
+    mat4 model;
     vec4 color;
     mat3 normalMatrix;  // 3 columns, each padded to vec4 = 48 bytes
 } pc;
@@ -49,9 +52,12 @@ void main() {
     // wrong trade.
     vec3 skinnedNormal = mat3(skin) * inNormal;
 
-    gl_Position     = pc.mvp * skinnedPosition;
-    fragWorldNormal = normalize(pc.normalMatrix * skinnedNormal);
-    fragColor       = pc.color.rgb;
-    fragUV          = inUV;
-    fragAlpha       = pc.color.a;
+    vec4 worldPosition = pc.model * skinnedPosition;
+
+    gl_Position       = scene.view_projection * worldPosition;
+    fragWorldPosition = worldPosition.xyz;
+    fragWorldNormal   = normalize(pc.normalMatrix * skinnedNormal);
+    fragColor         = pc.color.rgb;
+    fragUV            = inUV;
+    fragAlpha         = pc.color.a;
 }

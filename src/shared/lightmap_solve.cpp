@@ -5,6 +5,7 @@
 #include "lighting.hpp"
 #include "log.hpp"
 #include "map_geometry.hpp"
+#include "shader_math.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -17,90 +18,35 @@ namespace shared
 namespace
 {
 
-enum class light_kind_t
+std::vector<scene_light_t> collect_lights(const map_t &map)
 {
-  Point,
-  Spot,
-  Directional,
-};
-
-// One row per light, flattened out of the three entity types at collect time --
-// so the texel loop, which runs millions of times, switches on a small enum
-// rather than asking the entity system what it is holding.
-struct baked_light_t
-{
-  light_kind_t kind = light_kind_t::Point;
-  linalg::vec3 position{0.f, 0.f, 0.f};
-  // The way the light POINTS, which is basis_from(orientation).forward -- the
-  // same convention the editor cone and ray gizmos draw.
-  linalg::vec3 forward{0.f, -1.f, 0.f};
-  linalg::vec3 radiance{1.f, 1.f, 1.f};
-  float range = 0.f;
-  float cos_inner = 1.f;
-  float cos_outer = 0.f;
-};
-
-std::vector<baked_light_t> collect_lights(const map_t &map)
-{
-  std::vector<baked_light_t> lights;
+  std::vector<scene_light_t> lights;
 
   for (const map_entity_t &entry : map.entities)
   {
-    if (!entry.entity) continue;
-
-    if (const entities::Point_Light_Entity *point =
-            entities::entity_as<entities::Point_Light_Entity>(entry.entity.get()))
-    {
-      baked_light_t light;
-      light.kind = light_kind_t::Point;
-      light.position = point->position;
-      light.radiance = radiance_of(point->light);
-      light.range = point->range;
-      lights.push_back(light);
+    if (!entry.entity)
       continue;
-    }
 
-    if (const entities::Spot_Light_Entity *spot =
-            entities::entity_as<entities::Spot_Light_Entity>(entry.entity.get()))
-    {
-      baked_light_t light;
-      light.kind = light_kind_t::Spot;
-      light.position = spot->position;
-      light.forward = linalg::basis_from(spot->orientation).forward;
-      light.radiance = radiance_of(spot->light);
-      light.range = spot->range;
-      light.cos_inner = std::cos(linalg::to_radians(spot->inner_degrees));
-      light.cos_outer = std::cos(linalg::to_radians(spot->outer_degrees));
-      lights.push_back(light);
-      continue;
-    }
+    const std::optional<scene_light_t> light = try_light_of(*entry.entity);
+    if (!light) continue;
 
-    if (const entities::Directional_Light_Entity *directional =
-            entities::entity_as<entities::Directional_Light_Entity>(entry.entity.get()))
-    {
-      baked_light_t light;
-      light.kind = light_kind_t::Directional;
-      light.forward = linalg::basis_from(directional->orientation).forward;
-      light.radiance = radiance_of(directional->light);
-      lights.push_back(light);
-      continue;
-    }
+    // Baked and Mixed both solve into the atlas; Dynamic never does. Without
+    // this every light in the map is in the atlas AND in the runtime array, and
+    // a level lit by both is lit twice (lighting_def.md ss2).
+    if (!light_is_baked(light->mode)) continue;
+
+    lights.push_back(*light);
   }
 
   return lights;
 }
 
-// pbr.frag's distance_attenuation, unchanged: Frostbite's windowed inverse
-// square (Lagarde 2014). Copied rather than approximated, because a baked light
-// and the same light at runtime disagreeing is the one artifact nobody can debug
-// from a screenshot.
-float distance_attenuation(float squared_distance, float range)
-{
-  const float inverse_squared_radius = 1.f / std::max(range * range, 0.0001f);
-  const float factor = squared_distance * inverse_squared_radius;
-  const float smooth_factor = std::clamp(1.f - factor * factor, 0.f, 1.f);
-  return (smooth_factor * smooth_factor) / std::max(squared_distance, 0.0001f);
-}
+// The falloff and the cone are shader_math.hpp's, which is
+// resources/shaders/light_falloff.glsl compiled as C++ -- the same text the
+// shaders compile as GLSL. It used to be a copy of pbr.frag's, with a comment
+// saying so; lighting_def.md decision I is why a copy was not good enough.
+using shader_math::distance_attenuation;
+using shader_math::spot_cone_factor;
 
 Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map)
 {
@@ -142,7 +88,7 @@ struct light_arrival_t
   float normal_dot_light = 0.f;
 };
 
-light_arrival_t arrival_at(const baked_light_t &light,
+light_arrival_t arrival_at(const scene_light_t &light,
                            const linalg::vec3 &surface_position,
                            const linalg::vec3 &surface_normal,
                            float directional_shadow_distance)
@@ -171,9 +117,7 @@ light_arrival_t arrival_at(const baked_light_t &light,
       const float cos_angle =
           linalg::dot(arrival.direction * -1.f, linalg::normalize(light.forward));
       const float spot_factor =
-          std::clamp((cos_angle - light.cos_outer) /
-                         std::max(light.cos_inner - light.cos_outer, 0.001f),
-                     0.f, 1.f);
+          spot_cone_factor(cos_angle, light.cos_inner, light.cos_outer);
       if (spot_factor <= 0.f) return arrival;
       arrival.attenuation *= spot_factor;
     }
@@ -258,7 +202,7 @@ struct chart_scratch_t
 bool solve_texel(const lightmap_chart_t &chart,
                  const lightmap_bake_settings_t &settings,
                  const lightmap_solve_settings_t &solve_settings,
-                 const std::vector<baked_light_t> &lights,
+                 const std::vector<scene_light_t> &lights,
                  const Bounding_Volume_Hierarchy &bvh, int texel_x, int texel_y,
                  linalg::vec3 &out_value)
 {
@@ -289,7 +233,7 @@ bool solve_texel(const lightmap_chart_t &chart,
       const linalg::vec3 world_position = chart_space_to_world(chart, chart_space);
 
       linalg::vec3 irradiance{0.f, 0.f, 0.f};
-      for (const baked_light_t &light : lights)
+      for (const scene_light_t &light : lights)
       {
         const light_arrival_t arrival =
             arrival_at(light, world_position, chart.plane.normal,
@@ -378,7 +322,7 @@ void fill_the_gutter(chart_scratch_t &scratch, int width, int height)
 void solve_chart(const lightmap_chart_t &chart,
                  const lightmap_bake_settings_t &settings,
                  const lightmap_solve_settings_t &solve_settings,
-                 const std::vector<baked_light_t> &lights,
+                 const std::vector<scene_light_t> &lights,
                  const Bounding_Volume_Hierarchy &bvh, chart_scratch_t &scratch,
                  lightmap_pages_t &pages)
 {
@@ -438,10 +382,11 @@ lightmap_pages_t bake_lightmap_pages(const map_t &map,
     return pages;
   }
 
-  const std::vector<baked_light_t> lights = collect_lights(map);
+  const std::vector<scene_light_t> lights = collect_lights(map);
   if (lights.empty())
   {
-    log_error("[lightmap] the map holds no light; every texel would bake black.");
+    log_error("[lightmap] the map holds no BAKED light; every texel would bake "
+              "black. A map lit entirely by Dynamic lights is this case.");
     return pages;
   }
 

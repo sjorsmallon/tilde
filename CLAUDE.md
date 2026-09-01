@@ -155,9 +155,9 @@ Vertices stay canonical and planes stay derived (`brush.hpp` argues it). Blendin
 - **The atlas is a texture ARRAY and the page rides per VERTEX**, as `lightmap_uv`'s third component. A submesh groups faces by MATERIAL and two faces sharing a material routinely land on different pages; a chart never spans one, so per-vertex cannot disagree with itself. `UNLIT_LIGHTMAP_UV` is all -1, which is unreachable for a real coordinate — so the shader tests one component and needs no second array and no per-submesh flag.
 - **The pixels are RGB9E5** (`VK_FORMAT_E5B9G9R9_UFLOAT_PACK32`), so the upload is a memcpy of `pages.bytes` as they sit and the SAMPLER does the decoding. Baked light is HDR and eight bits a channel clips the moment a bright light sits beside a dim one.
 - **`vertex_layout_t` is FLAGS, not an enumeration of combinations.** A painted face in a baked level is `blended | lightmapped`, so the axes had to compose; `skinned` and `blended` stay mutually exclusive (no vertex shader reads both) and `register_mesh` resolves that clash in favour of the skin. The lightmap is not in that contest.
-- **The shader variants are `-DLIGHTMAP` over the SAME sources**, not new files (`CMakeLists.txt`). A lightmap composes with lit, grid and blend alike, so a file per combination doubles with every axis; `unlit` gets no variant because it reads no lighting term to replace. The atlas binds at **set 3** (`LIGHTMAP_DESCRIPTOR_SET`, with a `static_assert` against the literal the shaders spell) through a layout of its OWN — a `sampler2DArray` set allocated against set 0's `sampler2D` layout passes every check and reads garbage at the draw.
-- **The bake REPLACES the sun term rather than multiplying into it.** The solve already did `radiance * attenuation * N.L`, so multiplying would light a baked map twice. The ambient floor stays in the shader, which is where `lightmap_def.md` §9 wants it: a constant floor in the BAKE would be indistinguishable from a light leak in the one view built to find leaks.
-- **The atlas belongs to the PASS, not to a material.** `view_pass_t::lightmap` is bound once per pass, because a bake is a property of the world being drawn and not of any one surface in it — and a pass is a value, so it stays inside the renderer's no-sticky-state rule. An invalid handle falls back to an internal 1x1 white page, so a lightmapped mesh in a pass that names no bake reads 1.0 instead of sampling an unbound descriptor.
+- **The shader variants are DEFINES over the SAME sources**, not new files (`CMakeLists.txt`'s `compile_shader_variant`). A lightmap composes with lit, grid and blend alike and PBR composes with the lightmap, so a file per combination doubles with every axis; `unlit` gets no variant because it reads no lighting term to replace. The atlas binds at **set 3, binding 0** (`PASS_DESCRIPTOR_SET`, with a `static_assert` against the literal `scene.glsl` spells) through a layout of its OWN — a `sampler2DArray` set allocated against a `sampler2D` layout passes every check and reads garbage at the draw.
+- **The bake REPLACES the sun term rather than multiplying into it.** The solve already did `radiance * attenuation * N.L`, so multiplying would light a baked map twice. What it did NOT do is the Lambert 1/π, which is the shader's on every path — see the lighting section's `lightmap.glsl` bullet. The ambient floor stays in the shader, which is where `lightmap_def.md` §9 wants it: a constant floor in the BAKE would be indistinguishable from a light leak in the one view built to find leaks.
+- **The atlas belongs to the PASS, not to a material.** `view_pass_t::lightmap` is bound once per pass, because a bake is a property of the world being drawn and not of any one surface in it — and a pass is a value, so it stays inside the renderer's no-sticky-state rule. An invalid handle falls back to an internal 1x1 white page, so a lightmapped mesh in a pass that names no bake reads 1.0 instead of sampling an unbound descriptor. That fallback is **no longer optional**: set 3 carries the scene block beside the atlas and every mesh vertex shader reads `view_projection` out of it, so a pass with no set bound draws nothing at all.
 - **`register_lightmap` has an `update_lightmap` beside it** for the reason `register_mesh` has `update_mesh`: nothing in the renderer is ever unregistered, and the editor bakes repeatedly. The editor cannot drive that off `lightmap_t::geometry_id` — that id covers the charts and deliberately NOT the pixels, so a rebake at unchanged settings leaves it identical while every texel has moved. Hence `editor_context_t::lightmap_updated_so_atlas_upload_is_needed`, the `geometry_updated_so_bvh_rebuild_is_needed` pattern.
 - **The bake rides the map PACKAGE** (`map_package_t::lightmap`, version 2), beside the navmesh and for its reason: a downloaded map has no `.lightmap` sidecar because it never sees the `.source` one sits beside. Without it a networked client draws every brush unlit while the listen server hosting the same map looks correct, which reads as a shader bug rather than as missing data. `map_migration_test` guards the round trip, including that an unbaked map comes back unbaked.
 - **The VISIBILITY solve is a MODE of the one bake path** (`lightmap_solve_mode_t`), colour forced to white and falloff forced to 1, writing the same RGB9E5 pages. It renders through exactly the same shader — there is no second path and no 8-bit format beside it, because a format with no writer is the arm that rots. Real lighting contains visibility, so it computes nothing the direct solve does not; what it buys is separating "the shadow test is wrong" from "the falloff math is wrong", which is the `sv_shot_debug` argument.
@@ -377,6 +377,119 @@ Ordering is the wire id, and the declarations are mixed into `SCHEMA_HASH`, so a
 Tool pattern: `Tool_Editor_State` dispatches to the active tool (Selection, Placement, Sculpting, Particle, Pathfinding, Animation, Brush). Each tool handles mouse/key events and overlay drawing.
 
 The Animation tool is the odd one — it edits no map, it looks at the skinned player: a pose picker over bind and the five aim poses through the *real* `compute_aim_blend` / `sample_aim_pose` path, the skeleton, and the `rig.hitboxes` capsules posed under it with their derived-radius seed and the coverage / hull-excursion readouts. `shared/hitbox_rig.hpp` is the shared half (both sides evaluate the volumes; only the tool derives radii, since derivation needs the mesh). See `animation_def.md` §4.
+
+### Lighting, and the four descriptor sets
+
+`lighting_def.md` is the design of record; §5 is what the renderer holds today
+and §14 is the order the rest goes in. Read it before adding a light type, a
+material map or a shader variant.
+
+**FOUR SETS, AND FOUR IS THE CEILING.** `maxBoundDescriptorSets` has a spec floor
+of 4, so the mesh pipeline layout is exactly: **0 the material** (albedo, normal,
+ORM, height — `lighting_def.md` decision G), **1 the bone matrices**, **2..N the
+blend layers** above the base, **3 the PASS**. A fifth set for the scene block
+would have crossed a documented minimum to say what a second binding on set 3
+says for free — and the atlas and the scene block are genuinely one lifetime,
+both written once per view pass and neither varying across the draws inside it.
+
+- **The scene block is `resources/shaders/scene.glsl`**, included by every mesh
+  shader, with `scene_uniform_t` in `renderer.cpp` as its size-asserted std140
+  twin. It carries the view-projection, the camera, the ambient floor, the debug
+  channel and up to `MAX_LIGHTS` lights. Storage is ONE buffer of
+  `MAX_FRAMES_IN_FLIGHT` × `MAX_VIEW_PASSES_PER_FRAME` blocks addressed by a
+  **dynamic offset**, not the `frame_uniform_allocator_t` pattern: a pass set is
+  allocated per ATLAS at registration, so a per-frame buffer would need a
+  per-frame copy of every atlas's set.
+- **The push block is `model`, not `mvp`.** A fragment shader evaluating a light
+  needs the WORLD position and a vertex shader cannot recover one from a matrix
+  with the view and projection already folded in. Still 64 bytes, so the block is
+  still exactly the 128 the Vulkan minimum guarantees.
+- **A material binds FOUR maps and an absent one is a DEFAULT, never a branch** —
+  white albedo, a flat `(0, 0, 1)` normal, occlusion 1 / roughness 1 / metallic 0,
+  zero height. That is what lets one shader read a material carrying one texture
+  and a material carrying four; a permutation per present map is four shaders at
+  two maps. Material sets are keyed by their **four handles**, not allocated per
+  material — `register_mesh` mints one per submesh and the editor re-registers a
+  brush mesh on every edit.
+- **`srgb` is decided per MAP and is part of the texture cache KEY.** Albedo is
+  authored colour and decodes on read; normal, ORM and height are data and must
+  not. One image can legitimately be read both ways, and keying the cache on the
+  asset alone would let whichever material registered first decide for both.
+- **The per-texture single-sampler set is the UI's**, not the material's
+  (`gpu_texture_entry_t::ui_set`). A glyph atlas is one texture and the UI
+  pipeline has a layout of its own; widening it to match would bind three
+  defaults per quad to say nothing.
+- **`shared::try_light_of` is the ONE fold** from the three authoring light types
+  into `scene_light_t`, read by the bake (`collect_lights`) AND by the runtime
+  gather. It takes ONE entity because the two callers iterate different things —
+  a `map_t`'s list in the editor and the bake, a session's `Entity_System` in
+  play. `view_pass_t::lights` is rewritten **every frame**, never cached at map
+  load: a light entity can be dragged in the editor. Past `MAX_LIGHTS` the tail is
+  dropped with a log line.
+- **`Light_Mode {Baked, Mixed, Dynamic}` decides WHERE a light is evaluated, and
+  it is a correctness requirement rather than a knob.** The bake walked every
+  light in the map, so a runtime light array with no mode counts every static
+  light **twice** — once out of the atlas and once analytically. `try_light_of`
+  does not filter, it CARRIES the mode: the two callers want opposite halves of
+  the enum (`light_is_baked` for the bake, `light_is_analytic` for the gather),
+  and `Mixed` is in both. `Baked` is the default, so no map on disk converts.
+  A map lit entirely by `Dynamic` bakes nothing and says so.
+- **A `Mixed` light is in ONE array and the SURFACE branches.** It is in the
+  atlas AND in the runtime array, because a lightmap lives on brush face charts
+  and a player is not in it — so a *lightmapped* surface must skip it or be lit
+  twice. `scene.glsl`'s `Light.position.w` says "also baked"
+  (`LIGHT_IS_ALSO_BAKED`) and `mesh_lit.frag`'s analytic loop tests it **only
+  under `-DLIGHTMAP`**: the variant split already encodes "is this surface in the
+  atlas", so a non-lightmapped surface compiles no branch. Two arrays would be a
+  second upload and a second thing to keep in agreement.
+- **`shader_t::pbr` JOINS `shader_t::lit` rather than replacing it**
+  (`lighting_def.md` decision E), and it is `mesh_lit.frag -DPBR` rather than a
+  file. **What selects it is a material that resolved to a PBR FOLDER** — a
+  folder carrying a normal and an ORM is exactly a material with something for
+  Cook-Torrance to read, while a blockout texture has nothing but an albedo.
+- **The lighting maths is ONE TEXT in THREE FILES, and the split is who can
+  compile what.** `light_falloff.glsl` is the falloff and the cone, **scalar
+  only** — floats, `max`, `clamp`, the whole intersection of GLSL and C++ — and
+  `shared/shader_math.hpp` compiles it AS C++ by defining those two builtins and
+  `#include`ing it inside a namespace, so `lightmap_solve.cpp` is no longer a
+  third copy. `light_arrival.glsl` adds the vectors and the `LIGHT_TYPE_*`
+  dispatch but no derivatives, because `preview/shader_tool_common.glsl` is
+  included by the preview's VERTEX shader and `dFdx` is fragment-only.
+  `pbr_lighting.glsl` is everything above that — GGX, Smith, Schlick, the
+  composition, the derivative TBN, the parallax march — as PURE functions, with
+  samplers arriving as parameters so the file declares no resources and both
+  callers keep their own completely different sets. `INLINE` is the one
+  concession to two compilers: empty in GLSL, `inline` in C++.
+- **Nothing multiplies `color` by `intensity` itself**, including the tools.
+  `shader_editor_state`'s preview folds through `radiance_of` and its `Light`
+  carries a RADIANCE like `scene.glsl`'s, which is what deleted its hardcoded
+  1500 and 30000 — they existed because `pbr.frag` multiplied the two raw.
+  `shader_tool_common.glsl`'s `compute_lighting` was a FOURTH copy of the falloff
+  and a linear one; it calls `light_arrival` now.
+- **The ambient floor is ONE constant** (`AMBIENT_FLOOR`, reaching all three
+  shaders through the scene block), not a `0.15` spelled in each fragment shader.
+  It stays in the shader rather than in the bake so a light leak stays
+  distinguishable from a dim grey. It is composed as a diffuse term already
+  (`ambient * albedo`), so it deliberately does NOT take the 1/π below — which is
+  why it had to be DIVIDED by π when the lightmapped paths gained one: a floor
+  left at 0.15 beside a π-times-darker bake is fog, not a floor.
+- **The atlas stores IRRADIANCE and the 1/π is the SHADER's**
+  (`lighting_def.md` §9). The solve wrote `radiance * attenuation * N.L` and
+  stopped, so composing it as `albedo * E` was π times brighter than the same
+  light through `shade_direct` — invisible only while nothing was lit both ways.
+  `resources/shaders/lightmap.glsl` is the one home: the atlas binding,
+  `fragLightmapUV` at location 5, and `lightmap_diffuse()` returning `E / PI`,
+  which is what albedo (times `kD`, where there is one) multiplies. It is an
+  include rather than three copies because the lit, grid and blend shaders all
+  carry a `-DLIGHTMAP` arm and all three held the same expression — a π that
+  lands on one of three is worse than a π that lands on none. `PI` is a GUARDED
+  `#define` in both it and `pbr_lighting.glsl`, since the `-DPBR -DLIGHTMAP`
+  variant includes both and each must stay standalone.
+- **`r_debug_channel` shows a material channel instead of the shaded result**, and
+  it rides `view_pass_t` because the question is "what am I looking at", which is
+  a property of the view. The enum is `cvars::Debug_Channel` all the way into the
+  renderer: the console types the value, and two spellings of one closed set is
+  one more thing that can drift.
 
 ### UI
 

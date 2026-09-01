@@ -33,6 +33,8 @@
 #include "../shared/array.hpp"
 #include "../shared/asset.hpp"
 #include "../shared/color.hpp"
+#include "../shared/cvars/generated/cvars_generated.hpp"
+#include "../shared/lighting.hpp"
 #include "../shared/lightmap.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/span.hpp"
@@ -107,7 +109,9 @@ enum class shader_t : uint8_t
   // weights (vertex.hpp). Requires vertex_layout_t::blended -- the weights come
   // off a vertex binding, so a material asking for this on a mesh that carries
   // none is a mismatch the pipeline factory refuses loudly.
-  blend
+  blend,
+  // Cook-Torrance over the pass's real lights and all four of the material's maps.
+  pbr
 };
 
 enum class blend_mode_t : uint8_t
@@ -182,19 +186,30 @@ struct pipeline_state_t
   bool operator==(const pipeline_state_t &) const = default;
 };
 
-// Freely mutable; no pipeline consequences. Invalid texture = flat colour. A
+// An invalid handle resolves to an internal default that composes to no effect.
+struct material_maps_t
+{
+  texture_handle_t albedo;
+  texture_handle_t normal;
+  texture_handle_t orm;
+  texture_handle_t height;
+
+  bool operator==(const material_maps_t &) const = default;
+};
+
+// Freely mutable; no pipeline consequences. Invalid albedo = flat colour. A
 // texture that was NAMED but failed to load renders the magenta checkerboard
 // (renderer-internal), never silently flat.
 struct material_parameters_t
 {
-  texture_handle_t base_color_texture;
-  linalg::vec4f    base_color = {1, 1, 1, 1};
+  material_maps_t maps;
+  linalg::vec4f   base_color = {1, 1, 1, 1};
 
-  // Layer 0 is base_color_texture; these are the layers above it, read only by
+  // Layer 0 is `maps`; these are the layers above it, read only by
   // shader_t::blend. Sized by the layer count rather than spelled as one more
   // member, so a third layer is a constant change (vertex.hpp) and a term in
   // the shader.
-  Array<texture_handle_t, BLEND_LAYER_COUNT - 1> blend_textures;
+  Array<material_maps_t, BLEND_LAYER_COUNT - 1> blend_maps;
 };
 
 struct material_t
@@ -206,7 +221,7 @@ struct material_t
 // --- Registration (all GPU upload happens HERE, never at draw time) ---
 
 // `srgb` is about what the bytes MEAN: true for authored colour (albedo), false
-// for data (normals, roughness). The swapchain is B8G8R8A8_SRGB, so the
+// for data (normal, ORM, height). The swapchain is B8G8R8A8_SRGB, so the
 // hardware encodes on write and a colour texture must be decoded on read or it
 // is gamma-corrected twice.
 texture_handle_t register_texture(const assets::texture_asset_t &texture, bool srgb);
@@ -503,6 +518,9 @@ struct view_pass_t
   // pass is a value, so this stays inside the no-sticky-state rule. Invalid
   // falls back to an internal white page, which multiplies out.
   lightmap_handle_t                         lightmap  = {};
+  // Already folded by shared::try_light_of. Past MAX_LIGHTS the tail is dropped.
+  Span<const shared::scene_light_t>         lights    = {};
+  cvars::Debug_Channel                      debug_channel = cvars::Debug_Channel::off;
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
   Span<const custom_draw_t>                 custom    = {};     // escape hatch, see above
 };

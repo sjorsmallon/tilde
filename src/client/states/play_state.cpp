@@ -2248,6 +2248,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   scene.begin_frame(delta_seconds);
   scene.view.viewport = {{0, 0}, {1, 1}};
   scene.view.camera   = camera;
+  scene.debug_channel = ctx.cvars->r_debug_channel;
   pose_count = 0;
 
   // Render the session's geometry. One call per object — the mesh-path /
@@ -2258,6 +2259,18 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     for (const shared::map_geometry_t &entry : ctx.world.session.geometry)
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap);
+  }
+
+  for (auto [entity, light] : entity_system.entities_with<entities::Light>())
+  {
+    (void)light;
+    const std::optional<shared::scene_light_t> gathered = shared::try_light_of(entity);
+    if (!gathered) continue;
+
+    // Mixed and Dynamic are analytic; Baked is in the atlas and nowhere else.
+    if (!shared::light_is_analytic(gathered->mode)) continue;
+
+    scene.lights.push_back(*gathered);
   }
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())

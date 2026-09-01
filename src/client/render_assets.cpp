@@ -17,7 +17,6 @@ namespace
 // textures -- two spellings of one file, two GPU uploads. The asset system owns
 // the one key now, so this layer keys on what that lookup already produced.
 std::unordered_map<uint32_t, renderer::mesh_handle_t>    g_mesh_by_asset;
-std::unordered_map<uint32_t, renderer::texture_handle_t> g_texture_by_asset;
 
 // Keyed by (mesh handle, pipeline state) packed into one integer: every field of
 // pipeline_state_t is a small enumeration, so the state fits in a byte and the
@@ -54,20 +53,6 @@ renderer::mesh_handle_t get_render_mesh(assets::asset_handle_t<assets::mesh_asse
 
   const renderer::mesh_handle_t handle = renderer::register_mesh(*mesh);
   g_mesh_by_asset[asset.index]         = handle;
-  return handle;
-}
-
-renderer::texture_handle_t get_render_texture(const char *path)
-{
-  const assets::asset_handle_t<assets::texture_asset_t> asset = assets::load_texture(path);
-
-  const auto cached = g_texture_by_asset.find(asset.index);
-  if (cached != g_texture_by_asset.end())
-    return cached->second;
-
-  const renderer::texture_handle_t handle =
-      renderer::register_texture(*assets::get(asset), /*srgb*/ true);
-  g_texture_by_asset[asset.index] = handle;
   return handle;
 }
 

@@ -22,11 +22,6 @@ namespace client
 // out -- the caller's draw is skipped and logged by the renderer.
 renderer::mesh_handle_t get_render_mesh(assets::asset_handle_t<assets::mesh_asset_t> asset);
 
-// Loads through the ordinary asset cache, then registers. Used for textures the
-// renderer needs by PATH rather than through a mesh's materials -- the
-// geometry surface texture is the only one today.
-renderer::texture_handle_t get_render_texture(const char *path);
-
 // A Render component's material as a pipeline_state. Only the shader varies
 // today; blend, cull and depth are the material system's growth room. Shared
 // rather than local because the editor preview has to resolve a material the

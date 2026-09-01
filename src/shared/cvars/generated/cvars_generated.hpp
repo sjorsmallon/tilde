@@ -45,6 +45,19 @@ constexpr uint32_t Game_Mode_COUNT = 3;
 const char* to_string(Game_Mode value);
 template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view text);
 
+enum class Debug_Channel : uint8_t
+{
+  off = 0,
+  normals = 1,
+  uv = 2,
+  parallax_uv = 3,
+};
+
+constexpr uint32_t Debug_Channel_COUNT = 4;
+
+const char* to_string(Debug_Channel value);
+template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::string_view text);
+
 enum class Bot_Mode : uint8_t
 {
   idle = 0,
@@ -138,6 +151,7 @@ struct cvar_state_t
   int32_t map_kill_limit = 25;
   float map_round_time_limit_seconds = 6000.0f;
   bool pin_main_thread = true;
+  Debug_Channel r_debug_channel = Debug_Channel::off;
   bool debug_show_collisions = false;
   bool debug_show_hitboxes = true;
   bool debug_show_navmesh = false;
@@ -231,23 +245,24 @@ enum class cvar_id : uint16_t
   map_kill_limit = 66,
   map_round_time_limit_seconds = 67,
   pin_main_thread = 68,
-  debug_show_collisions = 69,
-  debug_show_hitboxes = 70,
-  debug_show_navmesh = 71,
-  debug_show_box_volumes = 72,
-  debug_hide_geometry = 73,
-  cl_shot_debug_seconds = 74,
-  debug_show_entity_counts = 75,
-  debug_show_physics_bodies = 76,
-  net_snapshot_debug = 77,
-  sv_event_debug = 78,
-  cl_event_debug = 79,
-  sv_reliable_debug = 80,
+  r_debug_channel = 69,
+  debug_show_collisions = 70,
+  debug_show_hitboxes = 71,
+  debug_show_navmesh = 72,
+  debug_show_box_volumes = 73,
+  debug_hide_geometry = 74,
+  cl_shot_debug_seconds = 75,
+  debug_show_entity_counts = 76,
+  debug_show_physics_bodies = 77,
+  net_snapshot_debug = 78,
+  sv_event_debug = 79,
+  cl_event_debug = 80,
+  sv_reliable_debug = 81,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 81;
+constexpr uint32_t CVAR_COUNT = 82;
 
 enum class command_id : uint16_t
 {
@@ -452,6 +467,11 @@ void bind_client_commands(command_table_t& table);
 template <> struct enum_traits<cvars::Game_Mode>
 {
   static constexpr uint32_t count = cvars::Game_Mode_COUNT;
+};
+
+template <> struct enum_traits<cvars::Debug_Channel>
+{
+  static constexpr uint32_t count = cvars::Debug_Channel_COUNT;
 };
 
 template <> struct enum_traits<cvars::Bot_Mode>

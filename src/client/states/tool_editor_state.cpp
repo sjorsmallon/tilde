@@ -1159,6 +1159,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   scene.begin_frame(delta_seconds);
   scene.view.viewport = {{0, 0}, {1, 1}};
   scene.view.camera   = camera;
+  scene.debug_channel = state_manager::get_client_context().cvars->r_debug_channel;
 
   // Draw Grid
   if (show_grid)
@@ -1246,6 +1247,14 @@ void Tool_Editor_State::build_frame(float delta_seconds,
     {
       if (!entry.entity)
         continue;
+
+      // The editor draws the same two halves the game does: what is in the atlas
+      // comes out of the atlas, and only an analytic light takes a runtime slot.
+      if (const std::optional<shared::scene_light_t> light =
+              shared::try_light_of(*entry.entity);
+          light && shared::light_is_analytic(light->mode))
+        scene.lights.push_back(*light);
+
       draw_entity_in_editor(entry.entity.get(), scene, entry.uid,
                             draw_entities_solid);
       // ALONGSIDE the model, never instead of it. draw_entity_in_editor used to

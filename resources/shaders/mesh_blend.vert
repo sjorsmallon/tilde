@@ -9,6 +9,8 @@
 // plus fragBlend -- so mesh_blend.vert still pairs with mesh_lit.frag, while
 // mesh_blend.frag needs this one.
 
+#include "scene.glsl"
+
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
@@ -29,20 +31,24 @@ layout(location = 4) out float      fragBlendWeight1;
 #ifdef LIGHTMAP
 layout(location = 5) out vec3       fragLightmapUV;
 #endif
+layout(location = 6) out vec3       fragWorldPosition;
 
 layout(push_constant) uniform PushConstants {
-    mat4 mvp;
+    mat4 model;
     vec4 color;
     mat3 normalMatrix;
 } pc;
 
 void main() {
-    gl_Position      = pc.mvp * vec4(inPosition, 1.0);
-    fragWorldNormal  = normalize(pc.normalMatrix * inNormal);
-    fragColor        = pc.color.rgb;
-    fragUV           = inUV;
-    fragAlpha        = pc.color.a;
-    fragBlendWeight1 = inBlendWeight1;
+    vec4 worldPosition = pc.model * vec4(inPosition, 1.0);
+
+    gl_Position        = scene.view_projection * worldPosition;
+    fragWorldPosition  = worldPosition.xyz;
+    fragWorldNormal    = normalize(pc.normalMatrix * inNormal);
+    fragColor          = pc.color.rgb;
+    fragUV             = inUV;
+    fragAlpha          = pc.color.a;
+    fragBlendWeight1   = inBlendWeight1;
 #ifdef LIGHTMAP
     fragLightmapUV   = inLightmapUV;
 #endif

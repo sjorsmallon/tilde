@@ -26,13 +26,13 @@ struct editor_light_t
   linalg::vec3f position = {2.0f, 2.0f, 2.0f};
   linalg::vec3f direction = {0.0f, -1.0f, 0.0f};
   linalg::vec3f color = {1.0f, 1.0f, 1.0f};
-  // NOT the same unit as entities::Light::intensity, and that is a known
-  // disagreement rather than a convention. shared/lighting.hpp defines an authored
-  // intensity as the irradiance at LIGHT_REFERENCE_DISTANCE and radiance_of applies
-  // the REF^2; pbr.frag multiplies colour by intensity raw, so this preview needs
-  // its own numbers on the order of d^2 in inches to light anything. It converges
-  // when the two sides share one lighting maths -- lighting_def.md ss11, decision I.
-  float intensity = 1500.0f;
+  // The SAME unit as entities::Light::intensity: the irradiance this light
+  // delivers at LIGHT_REFERENCE_DISTANCE. The preview folds it through
+  // shared::radiance_of like the game and the bake do, so a number that looks
+  // right here is the number to type into the map editor. It used to be 1500,
+  // because pbr.frag multiplied colour by intensity raw -- a second unit for one
+  // field, which is what lighting_def.md ss11 is about.
+  float intensity = 1.0f;
   // Range is the cutoff radius (world units) where the windowed falloff reaches zero.
   float range = 512.0f;
   float spot_inner_degrees = 30.0f;
