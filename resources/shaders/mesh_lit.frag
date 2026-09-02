@@ -68,28 +68,55 @@ void main() {
     }
 
     vec3 lit = vec3(0.0);
-    for (int index = 0; index < scene.light_count; ++index)
+
+#ifdef LIGHTMAP
+    // The four this face's chart kept, and nothing else in the level. The atlas
+    // did the culling at bake time (lightmap.glsl says how), so this loop is
+    // four iterations whether the map holds two lights or sixty -- which is what
+    // unblocked making every Baked light analytic (lighting_def.md ss14 step 6).
+    //
+    // Analytic means the material's other three maps finally do something on a
+    // brush face: the real light direction against the normal-mapped normal,
+    // with the bake contributing only the shadow.
+    vec4 coverage = lightmap_coverage();
+    for (int channel = 0; channel < LIGHTMAP_LIGHTS_PER_CHART; ++channel)
+    {
+        int slot = lightmap_chart_slot(channel);
+        if (slot < 0 || coverage[channel] <= 0.0)
+            continue;
+
+        Light         light   = scene.lights[slot];
+        Light_Arrival arrival = light_arrival(light, fragWorldPosition);
+
+        lit += shade_direct(N, V, arrival.direction, surface, roughness, metallic,
+                            light.radiance.rgb, arrival.attenuation * coverage[channel],
+                            light.direction.w, arrival.distance);
+    }
+#endif
+
+    // The tail: the lights no bake saw, plus a second copy of every Mixed one so
+    // a surface with no chart still gets it. A lightmapped surface SKIPS that
+    // second copy -- it shaded the light through its chart above, with the
+    // shadow, and shading it here as well is the ss2 double-count.
+    for (int index = scene.baked_light_count; index < scene.light_count; ++index)
     {
         Light light = scene.lights[index];
 
 #ifdef LIGHTMAP
-        // This surface already has the Mixed light out of the atlas. Evaluating
-        // it here too is the double-count lighting_def.md ss2 exists to prevent.
-        if (LIGHT_IS_ALSO_BAKED(light))
+        if (LIGHT_BAKED_SLOT(light) >= 0)
             continue;
 #endif
 
-        vec4  arrival = light_arrival(int(light.spot_params.w), light.position.xyz,
-                                      light.direction.xyz, light.spot_params.x,
-                                      light.spot_params.y, light.spot_params.z,
-                                      fragWorldPosition);
+        Light_Arrival arrival = light_arrival(light, fragWorldPosition);
 
-        lit += shade_direct(N, V, arrival.xyz, surface, roughness, metallic,
-                            light.radiance.rgb, arrival.w);
+        lit += shade_direct(N, V, arrival.direction, surface, roughness, metallic,
+                            light.radiance.rgb, arrival.attenuation,
+                            light.direction.w, arrival.distance);
     }
 
 #ifdef LIGHTMAP
-    lit += (1.0 - metallic) * surface * lightmap_diffuse();
+    // What the atlas still holds: the lights this chart ranked below its four.
+    lit += (1.0 - metallic) * surface * lightmap_residual_diffuse();
 #endif
 
     lit += ambient * surface * occlusion;
@@ -102,7 +129,8 @@ void main() {
     // fragColor is the material's base colour times the draw's tint, so it tints
     // rather than replaces.
 #ifdef LIGHTMAP
-    vec3 lighting = lightmap_diffuse() + ambient;
+    vec3 lighting = lightmap_direct_diffuse(normalize(fragWorldNormal), fragWorldPosition) +
+                    lightmap_residual_diffuse() + ambient;
 #else
     vec3 lighting = ambient + vec3(diffuse * 0.85);
 #endif

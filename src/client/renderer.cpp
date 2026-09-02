@@ -181,10 +181,11 @@ static VkDescriptorPool      g_material_pool        = VK_NULL_HANDLE;
 static VkDescriptorSetLayout g_ui_texture_ds_layout = VK_NULL_HANDLE;
 static VkDescriptorPool      g_ui_texture_pool      = VK_NULL_HANDLE;
 
-// Set 3, the PASS set: the lightmap atlas at binding 0 and the scene block at
-// binding 1. Its OWN layout rather than the material one's, because the view
-// type differs -- sampler2DArray against sampler2D -- and that is a mismatch
-// nothing reports until the draw reads garbage.
+// Set 3, the PASS set: the irradiance atlas at binding 0, the scene block at
+// binding 1, the per-light visibility atlas at binding 2. Its OWN layout rather
+// than the material one's, because the view type differs -- sampler2DArray
+// against sampler2D -- and that is a mismatch nothing reports until the draw
+// reads garbage.
 static VkDescriptorSetLayout g_pass_ds_layout = VK_NULL_HANDLE;
 static VkDescriptorPool      g_pass_pool      = VK_NULL_HANDLE;
 
@@ -216,8 +217,17 @@ constexpr uint32_t PASS_DESCRIPTOR_SET = 2 + BLEND_LAYER_COUNT - 1;
 static_assert(PASS_DESCRIPTOR_SET == 3,
               "resources/shaders/scene.glsl declares the pass set at set = 3");
 
-constexpr uint32_t PASS_LIGHTMAP_BINDING = 0;
-constexpr uint32_t PASS_SCENE_BINDING    = 1;
+constexpr uint32_t PASS_LIGHTMAP_BINDING   = 0;
+constexpr uint32_t PASS_SCENE_BINDING      = 1;
+// The two page sets ride ONE set because they are one bake: a texel in the
+// visibility is that texel in the irradiance, and a pass that names one names
+// the other. resources/shaders/lightmap.glsl spells both as literals.
+constexpr uint32_t PASS_VISIBILITY_BINDING = 2;
+
+// lightmap.glsl reads a vec4 of coverage against an ivec4 of slots, which is the
+// four in shared/lightmap.hpp seen from the other side.
+static_assert(shared::LIGHTMAP_LIGHTS_PER_CHART == 4,
+              "resources/shaders/lightmap.glsl samples four visibility channels");
 
 // --- Registered resources ---
 // Handles are indices into these three vectors. Nothing is ever removed (see
@@ -286,6 +296,11 @@ struct gpu_material_t
 struct gpu_lightmap_t
 {
   gpu_texture_t   texture;
+  // The second page set, same dimensions and same charts, as
+  // VK_FORMAT_R8G8B8A8_UNORM: one coverage per light slot. Held beside the
+  // irradiance rather than under a handle of its own because the two are one
+  // bake and are written into one descriptor set.
+  gpu_texture_t   visibility;
   VkDescriptorSet set         = VK_NULL_HANDLE;
   int             size        = 0;
   int             layer_count = 0;
@@ -424,14 +439,20 @@ static_assert(sizeof(mesh_push_constants_t) == 128,
 
 struct gpu_light_t
 {
-  float position[4];    // xyz world, w = also baked (scene.glsl's LIGHT_IS_ALSO_BAKED)
-  float direction[4];   // xyz normalized, w unused
+  float position[4];    // xyz world, w = baked slot or -1 (light_arrival.glsl's LIGHT_BAKED_SLOT)
+  float direction[4];   // xyz normalized, w = the emitter's source radius
   float radiance[4];    // rgb, already through shared/lighting.hpp's radiance_of
   float spot_params[4]; // cos(inner), cos(outer), range, type
 };
 
 // Matches MAX_LIGHTS in scene.glsl; the size assert below is what catches a drift.
-constexpr uint32_t MAX_SCENE_LIGHTS = 8;
+//
+// Sixty-four rather than the eight lighting_def.md decision D left open, and what
+// paid for it is that NOBODY LOOPS IT. The array's head is indexed by baked slot,
+// so a lightmapped fragment reads the four its chart kept and a surface with no
+// chart reads only the tail past `baked_light_count`. The cost is the UBO: 64
+// lights is 4KB, comfortably inside the 16KB maxUniformBufferRange floor.
+constexpr uint32_t MAX_SCENE_LIGHTS = 64;
 
 // std140, so the two pads land the light array on a 16-byte boundary.
 struct scene_uniform_t
@@ -439,10 +460,10 @@ struct scene_uniform_t
   float       view_projection[16];
   float       camera_position[4];
   float       ambient[4]; // rgb the constant floor; lighting_def.md decision C
-  int32_t     light_count  = 0;
-  int32_t     debug_flags  = 0;
-  int32_t     pad0         = 0;
-  int32_t     pad1         = 0;
+  int32_t     light_count       = 0;
+  int32_t     debug_flags       = 0;
+  int32_t     baked_light_count = 0;
+  int32_t     pad1              = 0;
   gpu_light_t lights[MAX_SCENE_LIGHTS] = {};
 };
 
@@ -1483,7 +1504,7 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   bindings[0]            = {0, sizeof(vertex_xnu), VK_VERTEX_INPUT_RATE_VERTEX};
   uint32_t binding_count = 1;
 
-  VkVertexInputAttributeDescription attributes[6]{};
+  VkVertexInputAttributeDescription attributes[7]{};
   attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, position)};
   attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, normal)};
   attributes[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex_xnu, uv)};
@@ -1514,8 +1535,15 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   // which is the whole reason vertex_layout_t is flags.
   if (lightmapped)
   {
-    bindings[binding_count++]     = {3, sizeof(linalg::vec3f), VK_VERTEX_INPUT_RATE_VERTEX};
-    attributes[attribute_count++] = {6, 3, VK_FORMAT_R32G32B32_SFLOAT, 0};
+    // ONE binding, two attributes -- vertex_lightmap_t is a place in the atlas
+    // and the four lights its visibility texel is of, and they come out of one
+    // chart together (lightmap.hpp).
+    bindings[binding_count++] = {3, sizeof(shared::vertex_lightmap_t),
+                                 VK_VERTEX_INPUT_RATE_VERTEX};
+    attributes[attribute_count++] = {6, 3, VK_FORMAT_R32G32B32_SFLOAT,
+                                     offsetof(shared::vertex_lightmap_t, uv)};
+    attributes[attribute_count++] = {7, 3, VK_FORMAT_R16G16B16A16_SINT,
+                                     offsetof(shared::vertex_lightmap_t, light_slots)};
   }
 
   VkPipelineVertexInputStateCreateInfo vertex_input{
@@ -1923,7 +1951,7 @@ static void create_mesh_resources()
 
   // A layout of its own: the atlas is a sampler2DArray, and a set allocated
   // against the sampler2D layout above reads garbage at the draw.
-  VkDescriptorSetLayoutBinding pass_bindings[2]{};
+  VkDescriptorSetLayoutBinding pass_bindings[3]{};
   pass_bindings[0].binding         = PASS_LIGHTMAP_BINDING;
   pass_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[0].descriptorCount = 1;
@@ -1932,10 +1960,14 @@ static void create_mesh_resources()
   pass_bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
   pass_bindings[1].descriptorCount = 1;
   pass_bindings[1].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[2].binding         = PASS_VISIBILITY_BINDING;
+  pass_bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[2].descriptorCount = 1;
+  pass_bindings[2].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  pass_ds_layout_info.bindingCount = 2;
+  pass_ds_layout_info.bindingCount = 3;
   pass_ds_layout_info.pBindings    = pass_bindings;
   if (vkCreateDescriptorSetLayout(g_device, &pass_ds_layout_info, nullptr, &g_pass_ds_layout) !=
       VK_SUCCESS)
@@ -1943,8 +1975,9 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
+  // Two samplers per set now -- the irradiance and the visibility.
   VkDescriptorPoolSize pass_pool_sizes[2] = {
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_LIGHTMAP_ATLASES},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_LIGHTMAP_ATLASES * 2},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_LIGHTMAP_ATLASES}};
   VkDescriptorPoolCreateInfo pass_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
   pass_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
@@ -2147,17 +2180,37 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
   return result;
 }
 
-// The atlas image: the same staging shape as upload_texture, with page_count
-// array layers and VK_FORMAT_E5B9G9R9_UFLOAT_PACK32 over the bytes as they sit.
-// The format is the one the bake writes (lightmap.hpp), chosen so this stays a
-// memcpy and the sampler does the decoding.
+// An atlas page set as one array image: the same staging shape as
+// upload_texture, with page_count array layers over the bytes AS THEY SIT. Both
+// formats the bake writes are picked so this stays a memcpy and the sampler does
+// the decoding (lightmap.hpp), which is why one function covers both roles --
+// they differ in a VkFormat and in nothing else.
 //
 // CLAMP_TO_EDGE, not REPEAT: the gutter keeps neighbouring charts from bleeding
 // into each other WITHIN a page, and wrapping at the page edge would defeat it
 // by reading the opposite side of the atlas entirely.
-static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu_lightmap_t &out)
+static VkFormat vulkan_format_of(shared::lightmap_pixel_format_t format)
 {
-  if (pages.format != shared::lightmap_pixel_format_t::Rgb9e5)
+  switch (format)
+  {
+  case shared::lightmap_pixel_format_t::Rgb9e5:
+    return VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;
+  // UNORM and not SRGB: a coverage is a fraction, not a colour, and nothing
+  // about it may be gamma-decoded on the way in (lighting_def.md decision F).
+  case shared::lightmap_pixel_format_t::Unorm8x4:
+    return VK_FORMAT_R8G8B8A8_UNORM;
+  }
+  return VK_FORMAT_UNDEFINED;
+}
+
+static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu_texture_t &out)
+{
+  const uint32_t     size   = (uint32_t)pages.size_in_texels;
+  const uint32_t     layers = (uint32_t)pages.page_count;
+  const VkFormat     format = vulkan_format_of(pages.format);
+  const VkDeviceSize bytes  = (VkDeviceSize)pages.bytes.size();
+
+  if (format == VK_FORMAT_UNDEFINED)
   {
     log_error("[renderer] lightmap pages are in pixel format {}, which this build cannot "
               "upload",
@@ -2165,17 +2218,13 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
     return false;
   }
 
-  const uint32_t     size   = (uint32_t)pages.size_in_texels;
-  const uint32_t     layers = (uint32_t)pages.page_count;
-  const VkFormat     format = VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;
-  const VkDeviceSize bytes  = (VkDeviceSize)pages.bytes.size();
-
   VkFormatProperties format_properties{};
   vkGetPhysicalDeviceFormatProperties(g_physical_device, format, &format_properties);
   if ((format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0)
   {
-    log_error("[renderer] this GPU cannot sample VK_FORMAT_E5B9G9R9_UFLOAT_PACK32; the "
-              "lightmap cannot be uploaded");
+    log_error("[renderer] this GPU cannot sample lightmap format {}; the atlas cannot be "
+              "uploaded",
+              (uint32_t)format);
     return false;
   }
   // Optional in Vulkan, universal in practice. Point sampling an atlas is
@@ -2183,8 +2232,9 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   const bool filter_linear =
       (format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
   if (!filter_linear)
-    log_warning("[renderer] E5B9G9R9 has no linear filtering here; the lightmap will be "
-                "point sampled");
+    log_warning("[renderer] lightmap format {} has no linear filtering here; the atlas will "
+                "be point sampled",
+                (uint32_t)format);
 
   VkBuffer       staging_buffer = VK_NULL_HANDLE;
   VkDeviceMemory staging_memory = VK_NULL_HANDLE;
@@ -2212,7 +2262,7 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   image_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
   image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  if (vkCreateImage(g_device, &image_info, nullptr, &out.texture.image) != VK_SUCCESS)
+  if (vkCreateImage(g_device, &image_info, nullptr, &out.image) != VK_SUCCESS)
   {
     log_error("[renderer] could not create the lightmap atlas image");
     drop_staging();
@@ -2220,20 +2270,20 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   }
 
   VkMemoryRequirements requirements{};
-  vkGetImageMemoryRequirements(g_device, out.texture.image, &requirements);
+  vkGetImageMemoryRequirements(g_device, out.image, &requirements);
   VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
   allocation.allocationSize = requirements.size;
   allocation.memoryTypeIndex =
       find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(g_device, &allocation, nullptr, &out.texture.memory);
-  vkBindImageMemory(g_device, out.texture.image, out.texture.memory, 0);
+  vkAllocateMemory(g_device, &allocation, nullptr, &out.memory);
+  vkBindImageMemory(g_device, out.image, out.memory, 0);
 
   VkCommandBuffer cmd = begin_single_command();
 
   VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
   barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image               = out.texture.image;
+  barrier.image               = out.image;
   barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
 
   barrier.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -2249,7 +2299,7 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   VkBufferImageCopy region{};
   region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, layers};
   region.imageExtent      = {size, size, 1};
-  vkCmdCopyBufferToImage(cmd, staging_buffer, out.texture.image,
+  vkCmdCopyBufferToImage(cmd, staging_buffer, out.image,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
   barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -2264,11 +2314,11 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   drop_staging();
 
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-  view_info.image            = out.texture.image;
+  view_info.image            = out.image;
   view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
   view_info.format           = format;
   view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
-  vkCreateImageView(g_device, &view_info, nullptr, &out.texture.view);
+  vkCreateImageView(g_device, &view_info, nullptr, &out.view);
 
   VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   sampler_info.magFilter    = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
@@ -2276,10 +2326,8 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  vkCreateSampler(g_device, &sampler_info, nullptr, &out.texture.sampler);
+  vkCreateSampler(g_device, &sampler_info, nullptr, &out.sampler);
 
-  out.size        = (int)size;
-  out.layer_count = (int)layers;
   return true;
 }
 
@@ -2359,7 +2407,8 @@ texture_handle_t register_texture(const assets::texture_asset_t &texture, bool s
 }
 
 // Allocated per ATLAS; every one points at the same scene buffer, offset varying.
-static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &texture)
+static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &irradiance,
+                                                    const gpu_texture_t &visibility)
 {
   if (g_pass_pool == VK_NULL_HANDLE)
     return VK_NULL_HANDLE;
@@ -2377,9 +2426,14 @@ static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &texture
   }
 
   VkDescriptorImageInfo image{};
-  image.sampler     = texture.sampler;
-  image.imageView   = texture.view;
+  image.sampler     = irradiance.sampler;
+  image.imageView   = irradiance.view;
   image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkDescriptorImageInfo coverage{};
+  coverage.sampler     = visibility.sampler;
+  coverage.imageView   = visibility.view;
+  coverage.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
   // One block, not the whole buffer: a dynamic descriptor's range is fixed here.
   VkDescriptorBufferInfo scene{};
@@ -2387,7 +2441,7 @@ static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &texture
   scene.offset = 0;
   scene.range  = g_scene_block_size;
 
-  VkWriteDescriptorSet writes[2]{};
+  VkWriteDescriptorSet writes[3]{};
   writes[0]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
   writes[0].dstSet          = set;
   writes[0].dstBinding      = PASS_LIGHTMAP_BINDING;
@@ -2402,23 +2456,68 @@ static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &texture
   writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
   writes[1].pBufferInfo     = &scene;
 
-  vkUpdateDescriptorSets(g_device, 2, writes, 0, nullptr);
+  writes[2]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[2].dstSet          = set;
+  writes[2].dstBinding      = PASS_VISIBILITY_BINDING;
+  writes[2].descriptorCount = 1;
+  writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[2].pImageInfo      = &coverage;
+
+  vkUpdateDescriptorSets(g_device, 3, writes, 0, nullptr);
   return set;
 }
 
-lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &pages)
+// The two page sets are uploaded and replaced TOGETHER, because they are one
+// bake: a chart's rect names a texel in both, so a visibility from one run
+// beside an irradiance from another is a surface shadowed by lights it is not
+// lit by. One handle, one descriptor set, one lifetime.
+static bool try_upload_lightmap_pair(const shared::lightmap_pages_t &irradiance,
+                                     const shared::lightmap_pages_t &visibility,
+                                     gpu_lightmap_t &out)
 {
-  if (pages.empty() || pages.size_in_texels <= 0 || pages.page_count <= 0)
+  if (!try_upload_lightmap_image(irradiance, out.texture))
+    return false;
+
+  // A bake always writes both, so an absent visibility is a lightmap_t that came
+  // from somewhere else. One fully-visible texel is the graceful half of that:
+  // the baked lights shade unshadowed rather than the level going black.
+  shared::lightmap_pages_t fallback;
+  if (visibility.empty())
+  {
+    log_warning("[renderer] this bake carries no visibility pages; every baked light will "
+                "be unshadowed on lightmapped surfaces");
+    fallback.format         = shared::lightmap_pixel_format_t::Unorm8x4;
+    fallback.size_in_texels = 1;
+    fallback.page_count     = 1;
+    fallback.bytes.assign(4, 255);
+  }
+
+  if (!try_upload_lightmap_image(visibility.empty() ? fallback : visibility, out.visibility))
+  {
+    destroy_texture(out.texture);
+    return false;
+  }
+
+  out.size        = irradiance.size_in_texels;
+  out.layer_count = irradiance.page_count;
+  return true;
+}
+
+lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &irradiance,
+                                    const shared::lightmap_pages_t &visibility)
+{
+  if (irradiance.empty() || irradiance.size_in_texels <= 0 || irradiance.page_count <= 0)
     return {};
 
   gpu_lightmap_t entry{};
-  if (!try_upload_lightmap_image(pages, entry))
+  if (!try_upload_lightmap_pair(irradiance, visibility, entry))
     return {};
 
-  entry.set = allocate_pass_descriptor_set(entry.texture);
+  entry.set = allocate_pass_descriptor_set(entry.texture, entry.visibility);
   if (entry.set == VK_NULL_HANDLE)
   {
     destroy_texture(entry.texture);
+    destroy_texture(entry.visibility);
     return {};
   }
 
@@ -2427,20 +2526,21 @@ lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &pages)
   return handle;
 }
 
-void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &pages)
+void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &irradiance,
+                     const shared::lightmap_pages_t &visibility)
 {
   if (!handle.valid() || handle.index >= g_lightmaps.size())
   {
     log_error("[renderer] update_lightmap: invalid lightmap handle {}", handle.index);
     return;
   }
-  if (pages.empty() || pages.size_in_texels <= 0 || pages.page_count <= 0)
+  if (irradiance.empty() || irradiance.size_in_texels <= 0 || irradiance.page_count <= 0)
   {
     log_error("[renderer] update_lightmap: empty pages; keeping the atlas already resident");
     return;
   }
 
-  // The image is replaced rather than refilled: a rebake at different settings
+  // The images are replaced rather than refilled: a rebake at different settings
   // changes the page size and the page count, so the old image is the wrong
   // shape more often than not. The DESCRIPTOR SET is kept and rewritten, which
   // is what stops repeated bakes from exhausting the pool.
@@ -2448,11 +2548,13 @@ void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &p
   vkDeviceWaitIdle(g_device);
 
   gpu_lightmap_t replacement{};
-  if (!try_upload_lightmap_image(pages, replacement))
+  if (!try_upload_lightmap_pair(irradiance, visibility, replacement))
     return;
 
   destroy_texture(entry.texture);
+  destroy_texture(entry.visibility);
   entry.texture     = replacement.texture;
+  entry.visibility  = replacement.visibility;
   entry.size        = replacement.size;
   entry.layer_count = replacement.layer_count;
 
@@ -2461,13 +2563,27 @@ void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &p
   image.imageView   = entry.texture.view;
   image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-  VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-  write.dstSet          = entry.set;
-  write.dstBinding      = PASS_LIGHTMAP_BINDING;
-  write.descriptorCount = 1;
-  write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  write.pImageInfo      = &image;
-  vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+  VkDescriptorImageInfo coverage{};
+  coverage.sampler     = entry.visibility.sampler;
+  coverage.imageView   = entry.visibility.view;
+  coverage.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet writes[2]{};
+  writes[0]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[0].dstSet          = entry.set;
+  writes[0].dstBinding      = PASS_LIGHTMAP_BINDING;
+  writes[0].descriptorCount = 1;
+  writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[0].pImageInfo      = &image;
+
+  writes[1]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[1].dstSet          = entry.set;
+  writes[1].dstBinding      = PASS_VISIBILITY_BINDING;
+  writes[1].descriptorCount = 1;
+  writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[1].pImageInfo      = &coverage;
+
+  vkUpdateDescriptorSets(g_device, 2, writes, 0, nullptr);
 }
 
 // The white page's set carries the scene block too, so the fallback is not optional.
@@ -2773,15 +2889,16 @@ static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t
 
   if (mesh.is_lightmapped())
   {
-    if (mesh.lightmap_uv.size() != mesh.vertices.size())
+    if (mesh.lightmap.size() != mesh.vertices.size())
     {
-      log_error("[renderer] mesh has {} lightmap coordinates for {} vertices; they must be "
+      log_error("[renderer] mesh has {} lightmap entries for {} vertices; they must be "
                 "parallel",
-                mesh.lightmap_uv.size(), mesh.vertices.size());
+                mesh.lightmap.size(), mesh.vertices.size());
     }
     else
     {
-      stage(mesh.lightmap_uv.data(), mesh.lightmap_uv.size() * sizeof(linalg::vec3f),
+      stage(mesh.lightmap.data(),
+            mesh.lightmap.size() * sizeof(shared::vertex_lightmap_t),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, gpu_mesh.lightmap_buffer,
             gpu_mesh.lightmap_memory);
     }
@@ -2995,7 +3112,16 @@ static void create_default_resources()
   white_pages.bytes.resize(4);
   const uint32_t white_texel = shared::pack_rgb9e5({1.f, 1.f, 1.f});
   memcpy(white_pages.bytes.data(), &white_texel, sizeof(white_texel));
-  g_white_lightmap = register_lightmap(white_pages);
+
+  // Its visibility half is fully visible for the same reason: a pass that names
+  // no bake should draw its baked lights unshadowed, not shadowed by everything.
+  shared::lightmap_pages_t visible_pages;
+  visible_pages.format         = shared::lightmap_pixel_format_t::Unorm8x4;
+  visible_pages.size_in_texels = 1;
+  visible_pages.page_count     = 1;
+  visible_pages.bytes.assign(4, 255);
+
+  g_white_lightmap = register_lightmap(white_pages, visible_pages);
   if (!g_white_lightmap.valid())
   {
     // The pass set carries the scene block; a pass with no set bound draws nothing.
@@ -3006,7 +3132,10 @@ static void create_default_resources()
 static void cleanup_registered_resources()
 {
   for (gpu_lightmap_t &lightmap : g_lightmaps)
+  {
     destroy_texture(lightmap.texture);
+    destroy_texture(lightmap.visibility);
+  }
   g_lightmaps.clear();
 
   for (gpu_mesh_t &mesh : g_meshes)
@@ -3615,6 +3744,12 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   }
 
   scene.light_count = (int32_t)std::min<size_t>(pass.lights.size(), MAX_SCENE_LIGHTS);
+
+  // Clamped to what actually fits, or a chart naming slot 70 would index past
+  // the array's end -- the shader's bound check reads this number and nothing
+  // else, so a truncated upload has to shrink the region rather than the total.
+  scene.baked_light_count =
+      (int32_t)std::min<size_t>(pass.baked_light_count, (size_t)scene.light_count);
   for (int32_t index = 0; index < scene.light_count; ++index)
   {
     const shared::scene_light_t &source = pass.lights[(uint32_t)index];
@@ -3623,15 +3758,20 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     light.position[0] = source.position.x;
     light.position[1] = source.position.y;
     light.position[2] = source.position.z;
-    // A Mixed light reaches this array AND the atlas, so a lightmapped surface
-    // has to skip it (lighting_def.md decision B). Nothing else is analytic and
-    // baked at once, so nothing else sets this.
-    light.position[3] =
-        source.mode == entities::Light_Mode::Mixed ? 1.0f : 0.0f;
+    // Which slot of the bake this light is, resolved by the gather pass, or -1.
+    // In the slot-indexed region it is the index itself; in the tail it is what
+    // tells a lightmapped surface this is a Mixed light's second copy and it
+    // already shaded the first through its chart (lighting_def.md decision B).
+    light.position[3] = (float)source.baked_slot;
 
     light.direction[0] = source.forward.x;
     light.direction[1] = source.forward.y;
     light.direction[2] = source.forward.z;
+    // The emitter's size, which the shader needs for three things that must move
+    // together or the surface carries two lighting models: the near-field falloff
+    // clamp, the broadened specular lobe, and the penumbra the bake already put
+    // in this light's visibility channel.
+    light.direction[3] = source.source_radius;
 
     light.radiance[0] = source.radiance.x;
     light.radiance[1] = source.radiance.y;

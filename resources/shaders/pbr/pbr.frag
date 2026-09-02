@@ -64,14 +64,12 @@ void main()
     vec3 Lo = vec3(0.0);
     for (int idx = 0; idx < scene.light_count; idx++)
     {
-        Light light = scene.lights[idx];
-        vec4  arrival = light_arrival(int(light.spot_params.w), light.position.xyz,
-                                      light.direction.xyz, light.spot_params.x,
-                                      light.spot_params.y, light.spot_params.z,
-                                      world_space_position);
+        Light         light   = scene.lights[idx];
+        Light_Arrival arrival = light_arrival(light, world_space_position);
 
-        Lo += shade_direct(N, V, arrival.xyz, albedo, roughness, metallic,
-                           light.radiance.rgb, arrival.w);
+        Lo += shade_direct(N, V, arrival.direction, albedo, roughness, metallic,
+                           light.radiance.rgb, arrival.attenuation,
+                           light.direction.w, arrival.distance);
     }
 
     // Ambient -- use param_color[1] as a tunable ambient scale (default vec4(0) -> falls back to 0.03)

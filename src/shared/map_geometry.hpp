@@ -541,7 +541,7 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush);
 // `lighting` is the map's bake and this brush's uid. Where a face names a chart,
 // every vertex of it gets a (u, v, page) into the atlas; where it names none, the
 // vertices carry UNLIT_LIGHTMAP_UV and the face draws unlit. A default-constructed
-// ref is a map with no bake, and then mesh_asset_t::lightmap_uv stays empty and
+// ref is a map with no bake, and then mesh_asset_t::lightmap stays empty and
 // the mesh uploads byte for byte what it always did.
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
                                          Span<const std::string> materials,

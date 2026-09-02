@@ -22,6 +22,7 @@ layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
 layout(location = 2) in vec2       fragUV;
 layout(location = 3) in flat float fragAlpha;
+layout(location = 6) in vec3       fragWorldPosition;
 
 layout(location = 0) out vec4 outColor;
 
@@ -63,7 +64,10 @@ void main() {
     vec3  ambient = scene.ambient.rgb;
     float diffuse = max(dot(normalize(fragWorldNormal), -sunDir), 0.0);
 #ifdef LIGHTMAP
-    vec3  lighting = lightmap_diffuse() + ambient;
+    // The four lights this face's chart kept, shaded analytically against the
+    // real light direction, plus the residual irradiance of the ones it dropped.
+    vec3  lighting = lightmap_direct_diffuse(normalize(fragWorldNormal), fragWorldPosition) +
+                     lightmap_residual_diffuse() + ambient;
 #else
     vec3  lighting = ambient + vec3(diffuse * 0.85);
 #endif

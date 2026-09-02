@@ -1,5 +1,6 @@
 #include "lightmap_solve.hpp"
 
+#include "brush.hpp"
 #include "collision_detection.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "lighting.hpp"
@@ -117,6 +118,13 @@ struct light_arrival_t
   float distance = 0.f;
   float attenuation = 0.f;
   float normal_dot_light = 0.f;
+
+  // The radius of the disc the emitter subtends AT THIS SURFACE POINT, which is
+  // what the shadow rays are spread over. A point or spot's is its own radius; a
+  // directional light's source_radius is a tangent, so its disc grows with the
+  // distance the ray is cast over. One number either way, so the sampler below
+  // needs no light-type branch. Zero is a punctual light and costs one ray.
+  float shadow_disc_radius = 0.f;
 };
 
 light_arrival_t arrival_at(const scene_light_t &light,
@@ -131,6 +139,7 @@ light_arrival_t arrival_at(const scene_light_t &light,
     arrival.direction = linalg::normalize(light.forward * -1.f);
     arrival.distance = directional_shadow_distance;
     arrival.attenuation = 1.f;
+    arrival.shadow_disc_radius = light.source_radius * arrival.distance;
   }
   else
   {
@@ -141,7 +150,9 @@ light_arrival_t arrival_at(const scene_light_t &light,
     if (arrival.distance > light.range || arrival.distance < 1e-4f) return arrival;
 
     arrival.direction = to_light * (1.f / arrival.distance);
-    arrival.attenuation = distance_attenuation(squared_distance, light.range);
+    arrival.attenuation =
+        distance_attenuation(squared_distance, light.range, light.source_radius);
+    arrival.shadow_disc_radius = light.source_radius;
 
     if (light.kind == light_kind_t::Spot)
     {
@@ -164,39 +175,117 @@ light_arrival_t arrival_at(const scene_light_t &light,
   return arrival;
 }
 
-bool is_unoccluded(const Bounding_Volume_Hierarchy &bvh,
-                   const linalg::vec3 &surface_position,
-                   const linalg::vec3 &surface_normal, const light_arrival_t &arrival,
-                   float shadow_ray_bias)
+// ONE ray, from the surface toward a named point on the emitter. The primitive
+// under both the punctual test and the area one, so a soft shadow cannot use a
+// different bias or a different miss rule from a hard one.
+bool shadow_ray_reaches(const Bounding_Volume_Hierarchy &bvh,
+                        const linalg::vec3 &surface_position,
+                        const linalg::vec3 &surface_normal,
+                        const linalg::vec3 &direction, float distance,
+                        float shadow_ray_bias)
 {
   const linalg::vec3 origin = surface_position + surface_normal * shadow_ray_bias;
 
   ray_hit_result_t hit = {};
-  if (!bvh_intersect_ray(bvh, origin, arrival.direction, hit)) return true;
+  if (!bvh_intersect_ray(bvh, origin, direction, hit)) return true;
 
-  return !(hit.hit && hit.t > 0.f && hit.t < arrival.distance - shadow_ray_bias);
+  return !(hit.hit && hit.t > 0.f && hit.t < distance - shadow_ray_bias);
 }
-
 
 // The jitter is DERIVED, never drawn from shared/rng.hpp's global state: a rebake
 // at unchanged settings has to reproduce the same pixels, and the chart loop runs
 // on several threads, so a sequence anyone can advance is a bake that differs
 // from itself. Keyed by atlas position, which is unique across the whole solve.
+uint32_t hash_mix(uint32_t hash, uint32_t value)
+{
+  for (int byte = 0; byte < 4; ++byte)
+  {
+    hash ^= (value >> (byte * 8)) & 0xffu;
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
 uint32_t sample_hash(int atlas_x, int atlas_y, int page, int sample_index)
 {
   uint32_t hash = 2166136261u;
-  const auto mix = [&](uint32_t value) {
-    for (int byte = 0; byte < 4; ++byte)
-    {
-      hash ^= (value >> (byte * 8)) & 0xffu;
-      hash *= 16777619u;
-    }
-  };
-  mix((uint32_t)atlas_x);
-  mix((uint32_t)atlas_y);
-  mix((uint32_t)page);
-  mix((uint32_t)sample_index);
+  hash = hash_mix(hash, (uint32_t)atlas_x);
+  hash = hash_mix(hash, (uint32_t)atlas_y);
+  hash = hash_mix(hash, (uint32_t)page);
+  hash = hash_mix(hash, (uint32_t)sample_index);
   return hash;
+}
+
+// What FRACTION of the emitter this surface point can see: 1 for an unshadowed
+// punctual light, 0 for a fully occluded one, and anything between for a point
+// inside a penumbra. It is one number rather than a bool because that is the only
+// difference an area light makes to everything downstream -- the coverage stored
+// in the visibility channel, the slot ranking and the residual sum all just
+// multiply by it.
+//
+// A light with no size takes exactly ONE ray whatever soft_shadow_samples says,
+// so every map authored before area lights existed bakes bit for bit what it did.
+float light_visibility(const Bounding_Volume_Hierarchy &bvh,
+                       const linalg::vec3 &surface_position,
+                       const linalg::vec3 &surface_normal,
+                       const light_arrival_t &arrival,
+                       const lightmap_solve_settings_t &solve_settings, uint32_t hash)
+{
+  const int sample_count = arrival.shadow_disc_radius > 0.f
+                               ? std::max(solve_settings.soft_shadow_samples, 1)
+                               : 1;
+
+  if (sample_count == 1)
+    return shadow_ray_reaches(bvh, surface_position, surface_normal, arrival.direction,
+                              arrival.distance, solve_settings.shadow_ray_bias)
+               ? 1.f
+               : 0.f;
+
+  // The emitter is a sphere and this samples the DISC facing the surface, which
+  // is the sphere's silhouette from here -- the half of it the surface cannot see
+  // is the half that emits nothing toward it.
+  linalg::vec3 tangent_u;
+  linalg::vec3 tangent_v;
+  brush_face_grid_tangents(arrival.direction, tangent_u, tangent_v);
+
+  const linalg::vec3 centre = surface_position + arrival.direction * arrival.distance;
+
+  // The golden angle: consecutive samples land as far from each other in rotation
+  // as an irrational turn allows, so a handful of them cover the disc evenly
+  // instead of clumping the way independent random angles do.
+  constexpr float GOLDEN_ANGLE = 2.39996323f;
+  constexpr float TWO_PI = 6.28318531f;
+
+  int reached = 0;
+  for (int sample = 0; sample < sample_count; ++sample)
+  {
+    const uint32_t sample_bits = hash_mix(hash, (uint32_t)sample);
+
+    // sqrt of the stratum, because a disc's area grows with the square of the
+    // radius -- sampling the radius uniformly crowds every sample into the middle
+    // and gives a penumbra a hard rim.
+    const float radius_jitter = (float)(sample_bits & 0xffffu) * (1.f / 65536.f);
+    const float angle_jitter = (float)((sample_bits >> 16) & 0xffffu) * (1.f / 65536.f);
+
+    const float radius =
+        arrival.shadow_disc_radius *
+        std::sqrt(((float)sample + radius_jitter) / (float)sample_count);
+    const float angle = (float)sample * GOLDEN_ANGLE + angle_jitter * TWO_PI;
+
+    const linalg::vec3 target = centre + tangent_u * (std::cos(angle) * radius) +
+                                tangent_v * (std::sin(angle) * radius);
+
+    const linalg::vec3 to_target = target - surface_position;
+    const float distance = std::sqrt(linalg::dot(to_target, to_target));
+    if (distance < 1e-4f) continue;
+
+    if (shadow_ray_reaches(bvh, surface_position, surface_normal,
+                           to_target * (1.f / distance), distance,
+                           solve_settings.shadow_ray_bias))
+      ++reached;
+  }
+
+  return (float)reached / (float)sample_count;
 }
 
 // Where one axis of a stratum lands inside a texel, in [0, 1). N == 1 is the
@@ -231,6 +320,15 @@ struct chart_scratch_t
   std::vector<float> light_weight;
   std::vector<uint32_t> ranked_lights;
 
+  // Which lights sum into the IRRADIANCE, which after lighting_def.md ss14 step
+  // 6 is exactly the ones this chart could not keep. The runtime shades every
+  // slot a chart kept analytically against its baked visibility, so summing one
+  // here as well is the ss2 double-count; what is left for the atlas to hold is
+  // the residual, and this is the set of it.
+  std::vector<uint8_t> sums_into_irradiance;
+  // Pass two re-derives a weight nothing reads -- the ranking is already fixed.
+  std::vector<float> discarded_weight;
+
   void reset(int width, int height, int channels)
   {
     channel_count = channels;
@@ -239,6 +337,8 @@ struct chart_scratch_t
     written.assign(count, 0);
     neighbour_total.assign((size_t)channels, 0.f);
     light_weight.assign((size_t)channels - 3, 0.f);
+    discarded_weight.assign((size_t)channels - 3, 0.f);
+    sums_into_irradiance.assign((size_t)channels - 3, 0);
     ranked_lights.clear();
   }
 
@@ -259,8 +359,8 @@ bool solve_texel(const lightmap_chart_t &chart,
                  const lightmap_solve_settings_t &solve_settings,
                  const std::vector<baked_light_t> &lights,
                  const Bounding_Volume_Hierarchy &bvh, int texel_x, int texel_y,
-                 linalg::vec3 &out_value, Span<float> out_coverage,
-                 Span<float> out_light_weight)
+                 Span<const uint8_t> sums_into_irradiance, linalg::vec3 &out_value,
+                 Span<float> out_coverage, Span<float> out_light_weight)
 {
   const int samples_per_edge = std::max(solve_settings.samples_per_texel_edge, 1);
   const bool binary = solve_settings.mode == lightmap_solve_mode_t::Visibility;
@@ -269,9 +369,12 @@ bool solve_texel(const lightmap_chart_t &chart,
   const int atlas_y = chart.atlas_rect.min_y + settings.gutter_in_texels + texel_y;
 
   if (out_coverage.size() != (uint32_t)lights.size() ||
-      out_light_weight.size() != (uint32_t)lights.size())
-    fatal_error("[lightmap] a coverage span of {} and a weight span of {} for {} lights.",
-                out_coverage.size(), out_light_weight.size(), lights.size());
+      out_light_weight.size() != (uint32_t)lights.size() ||
+      sums_into_irradiance.size() != (uint32_t)lights.size())
+    fatal_error("[lightmap] a coverage span of {}, a weight span of {} and an "
+                "irradiance set of {} for {} lights.",
+                out_coverage.size(), out_light_weight.size(),
+                sums_into_irradiance.size(), lights.size());
   for (float &coverage : out_coverage) coverage = 0.f;
 
   linalg::vec3 total{0.f, 0.f, 0.f};
@@ -303,35 +406,61 @@ bool solve_texel(const lightmap_chart_t &chart,
                        solve_settings.directional_shadow_distance);
         if (!arrival.arrives) continue;
 
-        // The ray is cast for every light that ARRIVES, including one the flat
+        // The rays are cast for every light that ARRIVES, including one the flat
         // face plane faces away from -- that is the one place a visibility costs
-        // a ray the irradiance sum does not, and it is not optional: the runtime
+        // rays the irradiance sum does not, and it is not optional: the runtime
         // shades with a normal-mapped normal, which at a grazing angle faces a
         // light the geometric normal does not.
-        if (!is_unoccluded(bvh, world_position, chart.plane.normal, arrival,
-                           solve_settings.shadow_ray_bias))
-          continue;
+        //
+        // A FRACTION, not a bool: an area light's penumbra is the share of the
+        // emitter this point can see, and every use below is a multiply, so the
+        // softness reaches the stored coverage, the slot ranking and the residual
+        // by arithmetic rather than by three separate arms.
+        const float visibility =
+            light_visibility(bvh, world_position, chart.plane.normal, arrival,
+                             solve_settings, hash_mix(hash, slot));
+        if (visibility <= 0.f) continue;
 
-        out_coverage[slot] += 1.f;
+        out_coverage[slot] += visibility;
 
         // What the chart's four slots are ranked by, and it is deliberately the
         // light's DELIVERY rather than its coverage: a dim lamp lighting the
         // whole face has coverage 1 everywhere and is not what the face is lit
         // by. N.L is left out for the same reason it is left out of the mask.
-        out_light_weight[slot] += arrival.attenuation * luminance_of(light.radiance);
+        out_light_weight[slot] +=
+            visibility * arrival.attenuation * luminance_of(light.radiance);
 
         if (!arrival.reaches) continue;
 
         // The two modes, and this is the whole of the difference between them:
-        // falloff forced to 1, colour forced to white, nothing left to sum.
+        // falloff forced to 1, colour forced to white, nothing left to sum. The
+        // mode is a picture of the shadow rays, so it shows every baked light --
+        // including the ones the arm below leaves out of what ships. It takes the
+        // BRIGHTEST light's visibility rather than a sum, so a penumbra reads as a
+        // penumbra instead of saturating the moment two lights overlap.
         if (binary)
         {
-          irradiance = {1.f, 1.f, 1.f};
+          const float strongest = std::max(irradiance.x, visibility);
+          irradiance = {strongest, strongest, strongest};
           continue;
         }
 
+        // The atlas holds what the RUNTIME does not evaluate, which is the whole
+        // of lighting_def.md ss12 A arriving. Every light a chart KEPT is shaded
+        // by mesh_lit.frag with the real light direction and the mask above as
+        // its occlusion, so summing one here as well is the double-count ss2
+        // exists to prevent -- and it is the flat half that would win, a frozen
+        // N.L off the face plane, which is what makes a normal map inert.
+        //
+        // What is left is the RESIDUAL: the lights this chart ranked below its
+        // four and had to drop. They have no visibility channel to be shadowed
+        // by, so flat irradiance is the best answer available for them, and it
+        // is strictly better than the darkness dropping them used to mean.
+        if (!sums_into_irradiance[slot]) continue;
+
         irradiance = irradiance + light.radiance * (arrival.attenuation *
-                                                    arrival.normal_dot_light);
+                                                    arrival.normal_dot_light *
+                                                    visibility);
       }
 
       total = total + irradiance;
@@ -476,36 +605,66 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
   const int covered_width = chart_covered_width(chart, settings);
   const int covered_height = chart_covered_height(chart, settings);
 
-  for (int texel_y = 0; texel_y < covered_height; ++texel_y)
-    for (int texel_x = 0; texel_x < covered_width; ++texel_x)
-    {
-      const size_t index =
-          (size_t)(texel_y + settings.gutter_in_texels) * (size_t)width +
-          (size_t)(texel_x + settings.gutter_in_texels);
-      const Span<float> channels = scratch.at(index);
+  // PASS ONE: the coverage of every light and what each of them delivers. No
+  // light sums into the irradiance yet, because which ones may is exactly what
+  // the ranking below has not decided.
+  const auto solve_covered_texels = [&]() {
+    for (int texel_y = 0; texel_y < covered_height; ++texel_y)
+      for (int texel_x = 0; texel_x < covered_width; ++texel_x)
+      {
+        const size_t index =
+            (size_t)(texel_y + settings.gutter_in_texels) * (size_t)width +
+            (size_t)(texel_x + settings.gutter_in_texels);
+        const Span<float> channels = scratch.at(index);
 
-      linalg::vec3 value{0.f, 0.f, 0.f};
-      if (!solve_texel(chart, settings, solve_settings, lights, in.bvh, texel_x, texel_y,
-                       value, channels.subspan(3),
-                       Span<float>(scratch.light_weight.data(),
-                                   (uint32_t)scratch.light_weight.size())))
-        continue;
+        linalg::vec3 value{0.f, 0.f, 0.f};
+        if (!solve_texel(chart, settings, solve_settings, lights, in.bvh, texel_x, texel_y,
+                         Span<const uint8_t>(scratch.sums_into_irradiance.data(),
+                                             (uint32_t)scratch.sums_into_irradiance.size()),
+                         value, channels.subspan(3),
+                         Span<float>(scratch.light_weight.data(),
+                                     (uint32_t)scratch.light_weight.size())))
+          continue;
 
-      // Marked written even when it is BLACK, which is what makes the fill
-      // correct: a texel in shadow is a surface that got no light, and dilating
-      // into it would smear the lit side of a shadow edge back over it.
-      channels[0] = value.x;
-      channels[1] = value.y;
-      channels[2] = value.z;
-      scratch.written[index] = 1;
-    }
+        // Marked written even when it is BLACK, which is what makes the fill
+        // correct: a texel in shadow is a surface that got no light, and dilating
+        // into it would smear the lit side of a shadow edge back over it.
+        channels[0] = value.x;
+        channels[1] = value.y;
+        channels[2] = value.z;
+        scratch.written[index] = 1;
+      }
+  };
+
+  solve_covered_texels();
+
+  // Before the dilation and before the store. The ranking was summed over the
+  // COVERED texels as they were solved, so the gutter gets no vote in it
+  // whichever side of the dilation this sits on -- and pass two needs the
+  // verdict, which is what pulled it above the fill.
+  choose_chart_lights(chart, scratch, lights, dropped);
+
+  // PASS TWO, and only for a chart that could not keep every light that reached
+  // it: the residual irradiance of the ones it dropped. Such a chart is solved
+  // TWICE, every light and every ray, which is the price of a ranking that
+  // cannot be known until the whole chart has been solved once -- and it is paid
+  // only where the warning below already says the level has a problem.
+  //
+  // Skipped in Visibility mode, where the irradiance channels are a picture of
+  // the shadow rays for EVERY light and not a term anything composes.
+  if (solve_settings.mode != lightmap_solve_mode_t::Visibility &&
+      scratch.ranked_lights.size() > LIGHTMAP_LIGHTS_PER_CHART)
+  {
+    for (size_t rank = LIGHTMAP_LIGHTS_PER_CHART; rank < scratch.ranked_lights.size();
+         ++rank)
+      scratch.sums_into_irradiance[scratch.ranked_lights[rank]] = 1;
+
+    std::swap(scratch.light_weight, scratch.discarded_weight);
+    solve_covered_texels();
+    std::swap(scratch.light_weight, scratch.discarded_weight);
+  }
 
   if (solve_settings.dilate_into_the_gutter) fill_the_gutter(scratch, width, height);
-
-  // Before the store, which is what needs the slots. The ranking itself was
-  // summed over the COVERED texels as they were solved, so the gutter gets no
-  // vote in it whichever side of the dilation this sits on.
-  choose_chart_lights(chart, scratch, lights, dropped);
 
   for (int y = 0; y < height; ++y)
     for (int x = 0; x < width; ++x)
@@ -659,13 +818,23 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   for (std::thread &worker : workers) worker.join();
 
   // Loud, and after the join for the reason dropped_light_t gives. One line per
-  // chart-light pair: an author needs to know WHICH face went dark and which
-  // light stopped reaching it, and a count would say neither.
+  // chart-light pair: an author needs to know WHICH face fell back and which
+  // light did it, and a count would say neither.
+  //
+  // A dropped light is no longer LOST -- it is folded into the residual
+  // irradiance instead, which is what the atlas holds now, and it KEEPS ITS
+  // SHADOW: the sum below is scaled by the same `light_visibility` the coverage is,
+  // so the occlusion is baked into the flat colour rather than into a channel of
+  // its own. What it loses is everything else a visibility channel buys -- a
+  // normal map, a specular highlight, and the ability to be retuned at runtime,
+  // because its N.L is frozen against the flat face plane. A quality cliff
+  // rather than a black face, and still worth saying out loud.
   for (const std::vector<dropped_light_t> &dropped : dropped_per_worker)
     for (const dropped_light_t &drop : dropped)
       log_warning("[lightmap] object {} has a face lit by more than {} baked lights; "
-                  "light {} is dropped from it and that face will not be lit by it. "
-                  "Merge lights, or set the weakest to Dynamic.",
+                  "light {} falls back to flat residual irradiance on it -- shadowed "
+                  "still, but with no response to the material's maps and no runtime "
+                  "tuning. Merge lights, or set the weakest to Dynamic.",
                   drop.object_uid, LIGHTMAP_LIGHTS_PER_CHART, drop.light_uid);
 
   set_lightmap_geometry_id(lightmap);

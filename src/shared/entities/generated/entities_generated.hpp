@@ -351,6 +351,7 @@ struct Light
   linalg::vec3f color = {1.0f, 1.0f, 1.0f};
   float intensity = 1.0f;
   Light_Mode mode = Light_Mode::Baked;
+  float source_radius = 0.0f;
 };
 
 struct Movement
@@ -544,6 +545,7 @@ struct Directional_Light_Entity : Entity
   Directional_Light_Entity() { type = entity_type::Directional_Light_Entity; }
 
   Light light = {};
+  float angular_diameter_degrees = 0.0f;
 };
 
 struct Physics_Body_Entity : Entity

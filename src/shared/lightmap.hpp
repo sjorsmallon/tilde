@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -411,6 +412,38 @@ struct lightmap_t
 // exactly the failure the chart key exists to prevent.
 inline constexpr linalg::vec3 UNLIT_LIGHTMAP_UV{-1.f, -1.f, -1.f};
 
+// What a lightmapped VERTEX carries: a place in the atlas, and which light each
+// channel of the visibility texel there is OF. PARALLEL to mesh_asset_t's
+// vertices and one vertex binding of its own, the shape vertex_skin_t and
+// vertex_blend_t already have.
+//
+// ONE struct rather than two parallel arrays because both halves are one answer
+// out of one chart -- the uv names a texel in BOTH page sets and the slots say
+// how to read the second of them, so two arrays would be two things free to
+// disagree about their length.
+//
+// The slots ride per VERTEX for the reason the page does: a submesh groups faces
+// by MATERIAL, and two faces sharing a material are two charts with two
+// different sets of lights. A chart never spans a vertex, so per-vertex cannot
+// disagree with itself.
+struct vertex_lightmap_t
+{
+  linalg::vec3 uv = UNLIT_LIGHTMAP_UV;
+
+  // The owning chart's light_slots, verbatim: indices into lightmap_t::light_uids,
+  // LIGHTMAP_NO_LIGHT_SLOT where no light claimed the channel.
+  Array<int16_t, LIGHTMAP_LIGHTS_PER_CHART> light_slots{
+      {LIGHTMAP_NO_LIGHT_SLOT, LIGHTMAP_NO_LIGHT_SLOT, LIGHTMAP_NO_LIGHT_SLOT,
+       LIGHTMAP_NO_LIGHT_SLOT}};
+};
+
+// The renderer describes this to Vulkan as ONE binding of two attributes, at
+// these offsets. A drift is a vertex buffer read at the wrong stride, which
+// draws plausible garbage rather than failing anywhere.
+static_assert(sizeof(vertex_lightmap_t) == 20);
+static_assert(offsetof(vertex_lightmap_t, uv) == 0);
+static_assert(offsetof(vertex_lightmap_t, light_slots) == 12);
+
 // What a brush needs to find its own lighting: the map's bake, plus WHICH object
 // this brush is. A null lightmap is "this map has no bake", which is the state
 // every map is in until one is run and is not an error.
@@ -440,5 +473,13 @@ void set_lightmap_geometry_id(lightmap_t &lightmap);
 [[nodiscard]] const lightmap_chart_t *find_chart(const lightmap_t &lightmap,
                                                  entity_uid_t object_uid,
                                                  const Plane &plane);
+
+// The resolve table run BACKWARDS, and the gather pass is its one caller: the
+// bake recorded which light ENTITY each slot is of, and a frame has the entity
+// and wants the slot. LIGHTMAP_NO_LIGHT_SLOT for a light the bake never saw --
+// a Dynamic one, or one authored since the last bake, and either way a light
+// with no visibility to sample.
+[[nodiscard]] int16_t find_baked_light_slot(const lightmap_t &lightmap,
+                                            entity_uid_t light_uid);
 
 } // namespace shared

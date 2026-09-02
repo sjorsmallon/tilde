@@ -79,6 +79,10 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
   ImGui::SliderFloat("Shadow bias", &solve_settings.shadow_ray_bias, 0.01f, 8.0f,
                      "%.2f");
   ImGui::SliderInt("Samples / texel edge", &solve_settings.samples_per_texel_edge, 1, 8);
+  // Spent only on a light with a source radius, so this costs nothing on a map
+  // whose lights are all punctual -- which is what it says rather than the plain
+  // "Shadow samples" a reader would price against every light in the level.
+  ImGui::SliderInt("Rays / area light", &solve_settings.soft_shadow_samples, 1, 64);
   ImGui::Checkbox("Dilate into the gutter", &solve_settings.dilate_into_the_gutter);
 
   // Two radios rather than two buttons: they run the same path and produce the

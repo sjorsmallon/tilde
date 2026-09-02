@@ -1,5 +1,30 @@
 # TODO
 
+**The geometry inspector rebuilds the editor BVH every frame of a slider drag.**
+Same bug the gizmo just had: `selection_tool.cpp`'s `draw_geometry_inspector`
+arm flags `geometry_updated_so_bvh_rebuild_is_needed` every frame ImGui reports
+"changed", so dragging a geometry field sits at ~4 fps on a map holding one
+sculpted face. Unlike the gizmo this one cannot simply drop the flag — there is
+no mouse-up behind it, so nothing would re-flag the rebuild and the BVH would
+stay stale. The fix is the one `TODO(inspector-undo)` already names at that
+site: bracket the drag with `ImGui::IsItemActivated` /
+`IsItemDeactivatedAfterEdit` and run it through `capture_drag_snapshots` /
+`commit_drag_snapshots`, the way the gizmo and the panel buttons do. That flags
+the rebuild once, at the end, AND fixes the undo flood in the same change.
+
+**`build_editor_bvh` decomposes the whole map to move one object, and it is
+~150 ms.** Measured on `maps/new_map.source`: the one brush carrying a
+`subdivision_level 32` face yields **2048 collision pieces** (Track D emits one
+convex piece per grid triangle, so 2*level^2) and costs 229 ms at -O0, 148 ms
+rebuilt at -O2 — only 1.6x, so this is NOT a debug-build artifact. That is paid
+in full on every map load and every edit commit, including edits that touch no
+geometry at all. The fix is to cache `get_collision_pieces` per uid and re-run
+only the uids a transaction actually touched; a transaction already names them,
+so the invalidation set is sitting there. Nothing about the decomposition itself
+needs to get faster first.
+
+Both raised 2026-09-01, out of the gizmo-drag slowdown.
+
 
 brushes that only allow weapons to pass through.
 weapons that only affect certain enemies.
@@ -581,6 +606,38 @@ tool.
 ---
 
 # Rendering
+
+**OPEN QUESTION, 2026-09-01: should a BLOCKOUT face respond to real lights?**
+Noticed while checking that the per-light visibility landed — a `Mixed` point
+light shone on nothing, and the reason is not the light. `scene.lights` is read
+by **one** shader, `mesh_lit.frag` under `-DPBR`. `mesh_grid.frag`,
+`mesh_blend.frag` and `mesh_lit.frag`'s non-PBR arm still light the surface with
+a hardcoded `sunDir = normalize(vec3(0.4, -0.8, 0.3))` from before the scene
+block existed, so a point, spot or directional light is EQUALLY invisible on
+them. Nothing is wrong with any light type, and nothing is wrong editor-side:
+the editor viewport is the same renderer through the same shaders, and its
+gather already pushes every analytic light into the array with its baked slot
+resolved. A face reaches `shader_t::pbr` only when its material resolved to a
+PBR FOLDER carrying a normal / ORM / height map
+(`geometry_renderer.cpp:194`), so every grey blockout brush is deaf.
+
+The mechanical fix is small — a diffuse loop over `scene.lights` through the
+existing `light_arrival()`, replacing the fake sun in three places, sharing the
+falloff text both languages already compile. **What is NOT decided is whether
+that is the right thing**, which is why this is a question and not a task:
+
+- It changes how EVERYTHING non-PBR looks — every player, prop, rocket and
+  blockout brush in the game — and the current look is at least consistent,
+  which `lighting_def.md` §1 says is the only thing going for it.
+- A level under construction is entirely blockout, so it is exactly the surface
+  an author is looking at while placing lights. A light you cannot see the
+  effect of is a light you cannot place.
+- But blockout is temporary by definition, and it is arguable that a grey
+  massing view SHOULD be lit flatly and readably rather than realistically —
+  which would make this an editor VIEW MODE rather than a shader fix, and a
+  different piece of work entirely.
+- `lighting_def.md` §1's table has three empty cells and this touches two of
+  them; whatever is decided belongs there rather than here.
 
 > **Renderer API audit, 2026-08-04.** Two items were fixed on the spot (see
 > `done.md`); the rest are recorded rather than done, because none is currently

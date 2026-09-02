@@ -7,30 +7,58 @@ the lit/grid/blend fragment shaders each have a `-DLIGHTMAP` variant. Section 9 
 
 ## 0. Where the code is
 
-Built and tested (`lightmap_bake_test`, 20 cases):
+Built and tested (`lightmap_bake_test`, 26 cases):
 
 - `shared/lightmap.hpp` — the TYPES, and it deliberately knows nothing about a
   map, which is what lets `map_t` hold a `lightmap_t` with no include cycle.
-  `lightmap_t` is the whole resident value: settings, atlas, charts, format,
-  pages. Plus `find_chart`, `UNLIT_LIGHTMAP_UV` and `brush_lightmap_ref_t`.
+  `lightmap_t` is the whole resident value: settings, atlas, charts, and TWO page
+  sets — `irradiance_pages` and `visibility_pages` — plus `light_uids`, the table
+  naming what each baked slot is. Plus `find_chart`, `UNLIT_LIGHTMAP_UV`,
+  `brush_lightmap_ref_t` and `LIGHTMAP_LIGHTS_PER_CHART`.
 - `shared/lightmap_bake.{hpp,cpp}` — one chart per brush face: basis, projection,
   bounds, snapped anchor, size, and the packing into atlas pages. Plus
   `texel_world_position` / `texel_is_inside_face` / `lightmap_uv_for`, which are
   the one mapping between a face, a texel and an atlas coordinate.
 - `shared/lightmap_solve.{hpp,cpp}` — the solve, in one path with two MODES.
-  `Direct_Light` sums `radiance * attenuation * N.L` over every point, spot and
-  directional light, shadowed; `Visibility` is that same walk with falloff forced
-  to 1 and colour forced to white. It was `lightmap_visibility.{hpp,cpp}`, which
-  was the binary half alone.
+  `Direct_Light` sums `radiance * attenuation * N.L`, shadowed, over the lights
+  a chart could NOT keep -- the residual, and after `lighting_def.md` §14 step 6
+  the only thing the irradiance pages hold; `Visibility` is that same walk with
+  falloff forced to 1 and colour forced to white, over every light. A chart that
+  dropped nothing is solved once and bakes an empty irradiance; one that dropped
+  a light is solved TWICE, because the ranking is not known until the chart has
+  been solved once. It was `lightmap_visibility.{hpp,cpp}`, which
+  was the binary half alone. `bake_lightmap` fills a whole `lightmap_t`, because
+  a slot index, the table it indexes and the channel it names are one answer.
+  The MODES differ only in the irradiance they sum: the visibility they store is
+  identical, byte for byte.
 - `shared/lightmap_sidecar.{hpp,cpp}` — the `.lightmap` file, save and load.
-- `shared/lightmap_debug_image.cpp` — the packing image and the page image, both
-  PNG, both for eyeballing.
+- `shared/lightmap_debug_image.cpp` — the packing image, the page image, the
+  STORED visibility (one RGBA page, a slot per channel) and the per-light debug
+  masks (one grayscale image per light per page). All PNG, all for eyeballing.
+  The last two are deliberately different pictures: channel 0 is a different
+  light on every chart, and the masks are the only view a DROPPED light is in.
 - `client/editor/tools/lightmap_tool.{hpp,cpp}` — the editor entry point, and
   **Apply** is what makes a bake outlive it.
 
 Not built: **any lighting past DIRECT light.** Bounces are §9. The shader
-landed; what it does NOT do is tonemap, so a bright direct bake clips where the
+landed; what it does NOT do is tonemap, so a bright residual bake clips where the
 visibility solve's 1.0 does not.
+
+**`lighting_def.md` §14 step 6 is COMPLETE (2026-09-02), and what finished it was
+reading the atlas as a LIGHT LIST.** A chart's four `light_slots` are a per-face
+light set chosen at bake time and carried on the vertex, so the fragment shader
+walks its own four and indexes the scene array by slot instead of walking the
+scene asking which channel each light is. That is per-face culling for free, and
+it is what let every `Baked` light become analytic without the per-draw culling
+the budget seemed to demand: `MAX_LIGHTS` is 64 now and nothing loops it.
+
+So the atlas holds OCCLUSION for every light a chart kept, plus flat irradiance
+for the ones it dropped -- shadowed too, since the residual sum is gated on the
+same `is_unoccluded` the coverage is. The drop is no longer a cliff, just a light
+whose `N.L` is frozen against the flat plane, so it stops responding to the
+material's maps and to runtime tuning. Sidecar and package are
+version 4; a version-3 file is refused rather than migrated, because the layout
+did not move and a stale one would render every baked light twice.
 
 ## 1. The sidecar exists because the atlas is only half the answer
 
@@ -78,6 +106,9 @@ header
   pixel format              uint32   <- lightmap_pixel_format_t, RGB9E5 today
   chart count               uint32
 
+  light count               uint32   <- the resolve table
+  light uids                uint32 x light count
+
 charts[chart_count]
   object_uid                uint32
   key plane                 point vec3 + normal vec3
@@ -86,8 +117,14 @@ charts[chart_count]
   world_units_per_texel     float
   page                      int32
   atlas_rect                int32 x4
+  light slots               int16 x LIGHTMAP_LIGHTS_PER_CHART
 
 pages[page_count]
+  irradiance texels, page-major
+
+visibility
+  pixel format              uint32
+  byte count                uint32   <- 0 is "this bake has none"
   texels, page-major
 ```
 
@@ -109,6 +146,18 @@ version-2 sizes is not a degraded picture, it is three quarters of a page and a
 short read. That refusal is the one place in this design where a mismatch is not
 survivable — unlike the content hash below, which is a warning precisely because
 the damage there is per-face and visible.
+
+**Version 3 is the per-light visibility** (`lighting_def.md` §14 step 6): a
+second page set at 4×`UNORM8`, the resolve table naming what each baked slot is,
+and the four slots each chart kept. Refused the same way and for the same reason
+— every record after the header grew, so a version-2 file read at version-3 sizes
+is a chart table sliding out of alignment rather than a bake missing a feature.
+
+**The visibility set names its own length, and nothing else in the file does.**
+Every other array is sized from something already read; this one is the single
+part of a bake that can legitimately be ABSENT, and a byte count of zero is how
+that is said. Deriving it from the atlas would make "no visibility" and "a
+visibility of all zeroes" the same file.
 
 **`save_map` deliberately does NOT write the sidecar**, unlike the navmesh, which
 it does. The sidecar carries the hash of the map it was baked from, so re-writing
@@ -258,6 +307,29 @@ moves to compute. `lightmap_pixel_format_t` is a stored `uint32` in the header
 with a `bytes_per_texel` switch, so a further format is a new enumerator and a
 version bump, not a rewrite of every reader.
 
+**That escape hatch assumed format REPLACEMENT, and the first real future needed
+two formats AT ONCE — which is now BUILT.** Per-light visibility masks
+(`lighting_def.md` §12 A) want four `UNORM8` scalars in [0, 1] BESIDE the HDR
+irradiance rather than instead of it, and every argument for RGB9E5 inverts on
+that data: it is not HDR, it is not three channels, and a shared exponent is
+actively harmful on uncorrelated scalars — one mask at 1.0 crushes the mantissa
+of one at 0.02 in the same texel. `lightmap_pages_t::format` is ONE field for the
+whole buffer, so two roles is two `lightmap_pages_t`, not one enumerator: a
+`lightmap_t` holds `irradiance_pages` (`Rgb9e5`) and `visibility_pages`
+(`Unorm8x4`), sized from the same atlas so a texel in one is the same texel in
+the other. (Note also that `Visibility_R8`, deleted below, was roughly the shape
+those masks wanted back — and is deliberately still not what landed, because the
+four scalars share a texel rather than each needing a page set of their own.)
+
+**What the second role cost the TYPE is a second vocabulary, not a wider one.**
+`store` / `load` speak linear RGB and `store_visibility` / `load_visibility`
+speak coverage fractions in the owning chart's slot order; each is fatal on pages
+of the other's format. A widened `store` taking a `vec4` would have been the
+cheaper diff and the worse type — nothing in a coverage may be tonemapped,
+exposed or sRGB-encoded, and a colour-shaped signature invites all three. The
+count is `LIGHTMAP_LIGHTS_PER_CHART`, written down once, with a `static_assert` at
+the `Unorm8x4` arm so growing it points at the arm that has to grow with it.
+
 What it cost to land, beyond the enumerator:
 
 - **A texel stopped being a byte, so the buffer is named for what it holds.**
@@ -311,12 +383,15 @@ maintain; deleting it loses the thing that made the first bug visible.
 ## 9. Deliberately not in this
 
 - **Static meshes.** They get no charts: this flattens planar brush faces, and a
-  referenced art asset has none. Their answer is authored UVs or probes, and §10
+  referenced art asset has none. Their answer is authored UVs or probes
+  (`lighting_def.md` §15 gate 5), and §10
   notes the extra wrinkle — mesh assets are pooled by path, so two maps sharing
   one mesh cannot bake per-map UVs into its vertices.
 - **Bounces.** The solve is direct light only. GI is a bake change, not a format
   change — decision D left the range for it, which was the point of deciding D
-  before the first non-visibility bake rather than after.
+  before the first non-visibility bake rather than after. The design is
+  `lighting_def.md` §15 gate 2, and the one thing that CAN move the format is the
+  encoding it picks: SH L1 is signed and RGB9E5 cannot hold it.
 - **Ambient, and any constant floor.** A texel no light reaches is zero, not a
   dim grey. A floor added here would be indistinguishable from a light leak in
   the one view built to find leaks, and it belongs in the shader beside the other
@@ -330,8 +405,10 @@ maintain; deleting it loses the thing that made the first bug visible.
   unaffected. The fix is for the bake to bound the chart over
   `build_brush_face_grids`' output rather than the base polygon, which also means
   the flattening stops being an isometry there and the density comment in
-  `lightmap.hpp` needs a caveat. Not urgent — nothing samples the atlas yet — but
-  it must land before a sculpted level is baked in anger.
+  `lightmap.hpp` needs a caveat. It was harmless while nothing sampled the atlas;
+  the atlas is sampled now, so a laterally sculpted face reads its neighbour's
+  texels rather than merely wasting them. Still not urgent — only lateral sculpts
+  are affected — but it must land before a sculpted level is baked in anger.
 - **Incremental rebake.** The chart key makes it possible — a chart names its
   face — but nothing needs it yet.
 - **Streaming pages.** Same.

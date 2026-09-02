@@ -115,6 +115,17 @@ void draw_light_marker(pass_builder_t& draws, const linalg::vec3& position,
                      position + linalg::vec3{0, 0, LIGHT_MARKER_SIZE}, color);
 }
 
+// The EMITTER, drawn at full alpha inside the dimmed falloff volume: it is the
+// thing casting the penumbra, and it is usually small enough beside `range` that a
+// dimmed one would not be visible at all. Nothing to draw at zero, which is a
+// punctual light and has no size to show.
+void draw_source_sphere(pass_builder_t& draws, const entities::Light& light,
+                        const linalg::vec3& position, color_t color)
+{
+  if (light.source_radius > 0.f)
+    draws.debug.wire_sphere(position, light.source_radius, color);
+}
+
 // All three take the concrete entity and a caller-chosen position, because the
 // ghost draws at the placement origin while the other two draw at the entity's
 // own -- the same split the player mesh gizmo already makes.
@@ -122,6 +133,7 @@ void draw_point_light_shape(pass_builder_t& draws, const entities::Point_Light_E
                             const linalg::vec3& position, color_t color)
 {
   draw_light_marker(draws, position, color);
+  draw_source_sphere(draws, light->light, position, color);
   if (light->range > 0.f)
     draws.debug.wire_sphere(position, light->range, with_alpha(color, LIGHT_VOLUME_ALPHA));
 }
@@ -130,6 +142,7 @@ void draw_spot_light_shape(pass_builder_t& draws, const entities::Spot_Light_Ent
                            const linalg::vec3& position, color_t color)
 {
   draw_light_marker(draws, position, color);
+  draw_source_sphere(draws, light->light, position, color);
   if (light->range <= 0.f)
     return;
 

@@ -23,7 +23,7 @@ static constexpr int MAX_LIGHTS = 8;
 struct gpu_light_t
 {
   float position[4];
-  float direction[4];
+  float direction[4];   // xyz normalized, w = the emitter's source radius
   float radiance[4]; // already through shared::radiance_of
   float spot_params[4];
 };
@@ -464,6 +464,7 @@ void Shader_Editor_State::build_frame(float delta_seconds,
       ubo.lights[i].direction[0] = light.direction.x;
       ubo.lights[i].direction[1] = light.direction.y;
       ubo.lights[i].direction[2] = light.direction.z;
+      ubo.lights[i].direction[3] = light.source_radius;
       // ONE conversion from a colour and an intensity to a radiance, shared with
       // the game and the bake -- nothing multiplies the two itself
       // (lighting_def.md ss11).
@@ -798,6 +799,7 @@ void Shader_Editor_State::draw_imgui_panels()
         if (light.light_type != 2)
         {
           ImGui::DragFloat("Range", &light.range, 0.5f, 0.1f, 200.0f);
+          ImGui::DragFloat("Source radius", &light.source_radius, 0.05f, 0.0f, 100.0f);
         }
         if (light.light_type == 1)
         {

@@ -17,22 +17,75 @@
 #define LIGHT_TYPE_SPOT        1
 #define LIGHT_TYPE_DIRECTIONAL 2
 
-// xyz = L, the unit vector FROM the surface toward the light; w = attenuation.
-vec4 light_arrival(int light_type, vec3 light_position, vec3 light_forward,
-                   float cos_inner, float cos_outer, float range, vec3 world_position)
-{
-    if (light_type == LIGHT_TYPE_DIRECTIONAL)
-        return vec4(-normalize(light_forward), 1.0);
+// THE light struct, and it lives here rather than in scene.glsl because the
+// shader tool's preview held a second copy of it -- identical by inspection and
+// free to stop being so, which is exactly what happened to the falloff before it
+// moved into this family. The game binds it out of scene.glsl's per-pass block
+// and the tool out of its own UBO; the LAYOUT is one text, and the renderer's
+// gpu_light_t is size-asserted against it.
+struct Light {
+    // xyz world position; w is which slot of the map's bake this light is, or -1
+    // for a light the bake never saw. For the first baked_light_count entries it
+    // is the index itself; in the tail it is what marks a Mixed light's second
+    // copy, which a lightmapped surface must SKIP because it already shaded it
+    // through its chart. The shader tool leaves it -1, having no bake.
+    vec4 position;
+    // xyz normalized direction; w = the emitter's RADIUS. A point or spot
+    // measures it in world units. A directional light has no position to measure
+    // from, so it carries tan(half its angular diameter) and is treated as a
+    // sphere ONE UNIT away -- the same geometry with the distance divided out,
+    // which is what lets everything below take one radius and no light-type
+    // branch.
+    vec4 direction;
+    vec4 radiance;          // rgb, already through shared/lighting.hpp's radiance_of
+    vec4 spot_params;       // x = cos(inner), y = cos(outer), z = range, w = type
+};
 
-    vec3  to_light         = light_position - world_position;
+// lighting_def.md decision B: ONE array, and the surface decides. The -DLIGHTMAP
+// variant split already encodes "is this surface in the atlas" at compile time,
+// so the branch costs nothing at runtime and a second array costs a second
+// upload plus a second thing to keep in agreement.
+#define LIGHT_BAKED_SLOT(light) (int((light).position.w))
+
+// What one light does at one surface point. A struct rather than the vec4 of L
+// and attenuation this returned before, because the DISTANCE is what an area
+// light's specular needs and recomputing it at the call site is a second answer
+// free to disagree with this one.
+struct Light_Arrival {
+    vec3  direction;        // L, unit, FROM the surface toward the light
+    float attenuation;
+    // To the emitter's centre. A directional light has none, so it reports 1.0 --
+    // the unit distance its source radius is already expressed against.
+    float distance;
+};
+
+Light_Arrival light_arrival(Light light, vec3 world_position)
+{
+    int   light_type = int(light.spot_params.w);
+    float range      = light.spot_params.z;
+
+    Light_Arrival arrival;
+
+    if (light_type == LIGHT_TYPE_DIRECTIONAL)
+    {
+        arrival.direction   = -normalize(light.direction.xyz);
+        arrival.attenuation = 1.0;
+        arrival.distance    = 1.0;
+        return arrival;
+    }
+
+    vec3  to_light         = light.position.xyz - world_position;
     float squared_distance = dot(to_light, to_light);
-    vec3  L                = to_light / max(sqrt(squared_distance), 0.001);
-    float attenuation      = distance_attenuation(squared_distance, range);
+
+    arrival.distance    = max(sqrt(squared_distance), 0.001);
+    arrival.direction   = to_light / arrival.distance;
+    arrival.attenuation = distance_attenuation(squared_distance, range, light.direction.w);
 
     if (light_type == LIGHT_TYPE_SPOT)
-        attenuation *= spot_cone_factor(dot(-L, normalize(light_forward)), cos_inner, cos_outer);
+        arrival.attenuation *= spot_cone_factor(dot(-arrival.direction, normalize(light.direction.xyz)),
+                                                light.spot_params.x, light.spot_params.y);
 
-    return vec4(L, attenuation);
+    return arrival;
 }
 
 #endif // LIGHT_ARRIVAL_GLSL

@@ -333,9 +333,23 @@ entity
 {
   "classname" "point_light_entity"
   "_uid" "28"
-  "position" "-128 768 -1408"
+  "position" "-256 384 -1408"
   "orientation" "0 0 0 1"
   "light.color" "1 1 1"
-  "light.intensity" "1"
-  "range" "1486.7"
+  "light.intensity" "54.8"
+  "light.mode" "Mixed"
+  "range" "1465.1"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "29"
+  "position" "-1152 384 -1280"
+  "orientation" "0 0 -0.50000006 0.86602545"
+  "light.color" "1 1 1"
+  "light.intensity" "217.2"
+  "light.mode" "Mixed"
+  "range" "509.4"
+  "inner_degrees" "20"
+  "outer_degrees" "35"
 }

@@ -18,7 +18,8 @@ layout(location = 2) in vec2 inUV;
 // skinned blended mesh is an addition rather than a renumbering.
 layout(location = 5) in float inBlendWeight1;
 #ifdef LIGHTMAP
-layout(location = 6) in vec3 inLightmapUV;
+layout(location = 6) in vec3  inLightmapUV;
+layout(location = 7) in ivec4 inLightmapSlots;
 #endif
 
 layout(location = 0) out vec3       fragWorldNormal;
@@ -30,6 +31,7 @@ layout(location = 3) out flat float fragAlpha;
 layout(location = 4) out float      fragBlendWeight1;
 #ifdef LIGHTMAP
 layout(location = 5) out vec3       fragLightmapUV;
+layout(location = 7) out flat ivec4 fragLightmapSlots;
 #endif
 layout(location = 6) out vec3       fragWorldPosition;
 
@@ -50,6 +52,7 @@ void main() {
     fragAlpha          = pc.color.a;
     fragBlendWeight1   = inBlendWeight1;
 #ifdef LIGHTMAP
-    fragLightmapUV   = inLightmapUV;
+    fragLightmapUV    = inLightmapUV;
+    fragLightmapSlots = inLightmapSlots;
 #endif
 }

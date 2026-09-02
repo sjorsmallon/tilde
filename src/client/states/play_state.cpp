@@ -469,13 +469,15 @@ void Play_State::switch_to_map(const shared::map_t &map)
   // ever unregistered, so a map switch would otherwise leak a whole atlas. A
   // map with no bake leaves the old handle alone -- it generates no lightmap
   // coordinates either, so nothing samples it.
-  const shared::lightmap_pages_t &pages = ctx.world.session.lightmap.irradiance_pages;
-  if (!pages.empty())
+  const shared::lightmap_t &lightmap = ctx.world.session.lightmap;
+  if (!lightmap.irradiance_pages.empty())
   {
     if (scene.lightmap.valid())
-      renderer::update_lightmap(scene.lightmap, pages);
+      renderer::update_lightmap(scene.lightmap, lightmap.irradiance_pages,
+                                lightmap.visibility_pages);
     else
-      scene.lightmap = renderer::register_lightmap(pages);
+      scene.lightmap = renderer::register_lightmap(lightmap.irradiance_pages,
+                                                   lightmap.visibility_pages);
   }
 
   // set this to ready 
@@ -2261,16 +2263,17 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                     ctx.world.session.lightmap);
   }
 
+  // Every light the map holds, laid out the way scene.glsl reads it: the bake's
+  // slots first, the analytic tail after. A Baked light is in that array now --
+  // it is shaded analytically against its baked visibility rather than summed
+  // flat into the atlas, which is what makes a normal map do something on a
+  // brush face (lighting_def.md ss14 step 6).
+  shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
   {
     (void)light;
-    const std::optional<shared::scene_light_t> gathered = shared::try_light_of(entity);
-    if (!gathered) continue;
-
-    // Mixed and Dynamic are analytic; Baked is in the atlas and nowhere else.
-    if (!shared::light_is_analytic(gathered->mode)) continue;
-
-    scene.lights.push_back(*gathered);
+    shared::add_frame_light(scene.lights, ctx.world.session.lightmap, entity.entity_id,
+                            entity);
   }
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())

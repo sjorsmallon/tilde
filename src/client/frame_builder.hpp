@@ -25,7 +25,9 @@ struct pass_builder_t
   std::vector<renderer::mesh_draw_t>                   meshes;
   renderer::debug_draw_list_t                          debug;
   std::vector<renderer::particle_emitter_parameters_t> particles;
-  std::vector<shared::scene_light_t>                   lights;
+  // Two regions, filled together by shared::begin_frame_lights /
+  // add_frame_light: the bake's slots first, the analytic tail after.
+  shared::frame_lights_t                               lights;
   std::vector<renderer::custom_draw_t>                 custom;
 
   // The baked atlas every lightmapped draw in this pass samples. Set when the
@@ -44,7 +46,8 @@ struct pass_builder_t
   {
     meshes.clear();
     particles.clear();
-    lights.clear();
+    lights.entries.clear();
+    lights.baked_count = 0;
     custom.clear();
     debug.retire(delta_seconds);
   }
@@ -55,7 +58,8 @@ struct pass_builder_t
     pass.view      = view;
     pass.draws     = meshes;
     pass.debug     = &debug;
-    pass.lights    = lights;
+    pass.lights            = lights.entries;
+    pass.baked_light_count = lights.baked_count;
     pass.debug_channel = debug_channel;
     pass.particles = particles;
     pass.custom    = custom;

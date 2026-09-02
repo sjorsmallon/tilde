@@ -34,7 +34,15 @@ constexpr uint32_t LIGHTMAP_MAGIC = 0x504D4C54; // "TLMP"
 //    the binary visibility format that made that one byte no longer exists.
 // 3: the per-light visibility -- a second page set, the resolve table naming
 //    what each baked slot is, and the four slots a chart kept.
-constexpr uint32_t LIGHTMAP_VERSION = 3;
+// 4: the irradiance pages became the RESIDUAL. Every light a chart keeps is
+//    shaded analytically at runtime against its stored visibility, so the atlas
+//    holds only the lights ranked below the four (lighting_def.md ss14 step 6).
+//    NOTHING about the layout moved, which is exactly why the bump is needed: a
+//    version-3 file reads perfectly and renders every baked light TWICE, once
+//    analytically and once out of an irradiance that is no longer residual.
+//    Nobody can see that and conclude "stale sidecar" -- it looks like a bake
+//    that is simply too bright.
+constexpr uint32_t LIGHTMAP_VERSION = 4;
 
 std::string lightmap_path_for(const std::string &map_path)
 {

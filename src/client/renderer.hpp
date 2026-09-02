@@ -241,20 +241,27 @@ mesh_handle_t register_mesh(const assets::mesh_asset_t &mesh);
 // not lazily at the next draw.
 void update_mesh(mesh_handle_t handle, const assets::mesh_asset_t &mesh);
 
-// The atlas a lightmapped mesh samples, uploaded as VK_FORMAT_E5B9G9R9_UFLOAT_PACK32
-// over `pages.bytes` as it sits -- the format is picked so this stays a memcpy
-// and the sampler does the decoding (lightmap.hpp).
+// A bake's two page sets, uploaded over their bytes AS THEY SIT -- the
+// irradiance as VK_FORMAT_E5B9G9R9_UFLOAT_PACK32 and the per-light visibility as
+// VK_FORMAT_R8G8B8A8_UNORM. Both formats are picked so this stays a memcpy and
+// the sampler does the decoding (lightmap.hpp).
 //
-// Empty pages return an invalid handle rather than an empty image: a pass with
-// no atlas is the normal state of an unbaked map, and view_pass_t::lightmap
-// falls back to an internal white page for it.
-lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &pages);
+// BOTH at once and under ONE handle, because they are one bake: a chart's rect
+// names the same texel in each, so a visibility from one run beside an
+// irradiance from another is a surface shadowed by lights it is not lit by.
+//
+// Empty irradiance pages return an invalid handle rather than an empty image: a
+// pass with no atlas is the normal state of an unbaked map, and
+// view_pass_t::lightmap falls back to an internal white page for it.
+lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &irradiance,
+                                    const shared::lightmap_pages_t &visibility);
 
 // Re-upload after a rebake. Separate from register_lightmap for the reason
 // update_mesh is separate from register_mesh: the editor bakes repeatedly, and
 // nothing in the renderer is ever unregistered, so re-registering would leak a
 // whole atlas per bake.
-void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &pages);
+void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &irradiance,
+                     const shared::lightmap_pages_t &visibility);
 
 // The mesh's own material table, in slot order. A caller that wants the same
 // textures under a DIFFERENT pipeline_state -- an unlit view of a model, a
@@ -518,8 +525,15 @@ struct view_pass_t
   // pass is a value, so this stays inside the no-sticky-state rule. Invalid
   // falls back to an internal white page, which multiplies out.
   lightmap_handle_t                         lightmap  = {};
-  // Already folded by shared::try_light_of. Past MAX_LIGHTS the tail is dropped.
+  // Already folded by shared::try_light_of, and LAID OUT: the first
+  // `baked_light_count` entries are INDEXED BY BAKED SLOT, so a lightmapped
+  // surface reads the four its chart named and never walks the array. Past
+  // MAX_LIGHTS the tail is dropped. shared::gather_frame_lights builds both.
   Span<const shared::scene_light_t>         lights    = {};
+  // Where the slot-indexed region ends. Everything from here on is a light the
+  // bake never saw, plus a second copy of every Mixed one -- the set a surface
+  // with no chart evaluates.
+  uint32_t                                  baked_light_count = 0;
   cvars::Debug_Channel                      debug_channel = cvars::Debug_Channel::off;
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
   Span<const custom_draw_t>                 custom    = {};     // escape hatch, see above

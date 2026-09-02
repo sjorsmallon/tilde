@@ -34,6 +34,18 @@ struct lightmap_solve_settings_t
   // stair-step along the texel grid.
   int samples_per_texel_edge = 2;
 
+  // How many shadow rays a texel sample spends on ONE light, spread over the disc
+  // the emitter subtends. It is what turns a hard edge into a penumbra, and it is
+  // spent ONLY on a light whose source_radius is above zero -- a punctual light
+  // takes exactly the one centre ray it always did, whatever this says, so the
+  // cost of area lights lands only where an author asked for softness.
+  //
+  // The placement is a jittered golden-angle spiral over the disc, derived from
+  // the same atlas-keyed hash the texel strata use rather than from
+  // shared/rng.hpp's global state -- 6.2 runs the chart loop on several threads,
+  // so a sequence anyone can advance is a bake that differs from itself.
+  int soft_shadow_samples = 8;
+
   // Whether the pass that fills a chart's gutter from its own covered texels
   // runs. It is not a quality knob -- without it the gutter stays at the zero it
   // was allocated with and bilinear filtering pulls black in at every chart edge,

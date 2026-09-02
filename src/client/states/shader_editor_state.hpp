@@ -37,6 +37,12 @@ struct editor_light_t
   float range = 512.0f;
   float spot_inner_degrees = 30.0f;
   float spot_outer_degrees = 45.0f;
+  // The emitter's radius, in the same world units as `range`, and it is here for
+  // the reason `intensity` is in the same unit as the game's: a preview whose
+  // highlights are a different SHAPE from the game's is a tool that lies about
+  // the shader you are authoring in it. Directional lights in this tool have no
+  // angular diameter control -- the map editor is where a sun is authored.
+  float source_radius = 0.0f;
   int light_type = 0; // 0=point, 1=spot, 2=directional
 };
 

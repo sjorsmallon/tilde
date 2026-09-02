@@ -36,7 +36,11 @@ static constexpr uint32_t PACKAGE_MAGIC   = 0x504B4720; // "PKG "
 // 2: the package carries the baked lightmap beside the navmesh.
 // 3: the lightmap carries its per-light visibility -- a second page set, the
 //    resolve table, and each chart's light slots.
-static constexpr uint32_t PACKAGE_VERSION = 3;
+// 4: the lightmap's irradiance pages became the RESIDUAL -- a MEANING change
+//    with no layout change behind it, which is what makes the bump load-bearing
+//    rather than bookkeeping. A version-3 package parses cleanly and renders
+//    every baked light twice (lightmap_sidecar.cpp says why).
+static constexpr uint32_t PACKAGE_VERSION = 4;
 
 // Navmesh floats/indices are written as raw bytes (exact), matching the on-disk
 // .navmesh sidecar's exactness — write_coord's 5-bit fraction would corrupt

@@ -162,6 +162,22 @@ Light :: component {
     // Baked is the default because level fill light is most of them, and because
     // it is what every light already in a .source file was when it was placed.
     mode:      Light_Mode = .Baked  @Editable @Saveable
+    // The emitter's RADIUS, in engine units, and the name is deliberately not
+    // `range`: range is how far the light REACHES, this is how big the thing
+    // emitting it is, and they are unrelated quantities that want the same word.
+    // Unreal ships SourceRadius beside AttenuationRadius for the same reason.
+    //
+    // Zero is a punctual light and is exactly the shading and the bake this had
+    // before area lights existed, which is why every .source file on disk needs
+    // no conversion. Above zero it buys three things that have to move together
+    // or the surface carries two lighting models: a penumbra in the bake, a
+    // broadened specular highlight at runtime, and a near-field falloff clamp
+    // (a true inverse square diverges at zero distance for anything with size).
+    //
+    // A DIRECTIONAL light ignores it -- the sun is infinitely far away, so its
+    // softness is an angle rather than a length, and it carries its own
+    // angular_diameter_degrees instead.
+    source_radius: f32 = 0.0    @Editable @Saveable
 }
 
 Movement :: component {
@@ -395,6 +411,15 @@ Spot_Light_Entity :: entity {
 // draws its gizmo there; nothing shading reads it.
 Directional_Light_Entity :: entity {
     light: Light
+    // The FULL angle the disc of the emitter subtends, in degrees -- the sun is
+    // 0.53 in reality, and an overcast sky is effectively the whole hemisphere.
+    // A directional light has no position for a radius to be measured from, so
+    // this is what Light::source_radius is for every other kind: the same
+    // geometry with the distance divided out.
+    //
+    // Zero is the hard parallel sun this had before, so no map converts and a
+    // bake pays for extra shadow rays only where an author asked for softness.
+    angular_diameter_degrees: f32 = 0.0     @Editable @Saveable
 }
 
 // Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console

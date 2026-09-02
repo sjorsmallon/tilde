@@ -633,9 +633,11 @@ void Tool_Editor_State::update(float dt)
     if (!map.lightmap.irradiance_pages.empty())
     {
       if (scene.lightmap.valid())
-        renderer::update_lightmap(scene.lightmap, map.lightmap.irradiance_pages);
+        renderer::update_lightmap(scene.lightmap, map.lightmap.irradiance_pages,
+                                  map.lightmap.visibility_pages);
       else
-        scene.lightmap = renderer::register_lightmap(map.lightmap.irradiance_pages);
+        scene.lightmap = renderer::register_lightmap(map.lightmap.irradiance_pages,
+                                                     map.lightmap.visibility_pages);
     }
   }
 
@@ -1161,6 +1163,11 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   scene.view.camera   = camera;
   scene.debug_channel = state_manager::get_client_context().cvars->r_debug_channel;
 
+  // Sized from the bake's resolve table before any light is placed: the array's
+  // head is indexed by baked slot, so it has to exist before the entity walk
+  // below can write into it.
+  shared::begin_frame_lights(scene.lights, map.lightmap);
+
   // Draw Grid
   if (show_grid)
   {
@@ -1248,12 +1255,9 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       if (!entry.entity)
         continue;
 
-      // The editor draws the same two halves the game does: what is in the atlas
-      // comes out of the atlas, and only an analytic light takes a runtime slot.
-      if (const std::optional<shared::scene_light_t> light =
-              shared::try_light_of(*entry.entity);
-          light && shared::light_is_analytic(light->mode))
-        scene.lights.push_back(*light);
+      // The editor lays the frame's lights out exactly as the game does, which
+      // is what makes a bake previewed here the bake that ships.
+      shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity);
 
       draw_entity_in_editor(entry.entity.get(), scene, entry.uid,
                             draw_entities_solid);

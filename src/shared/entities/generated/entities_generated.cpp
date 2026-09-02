@@ -256,6 +256,15 @@ constexpr field_info_t Light_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[10]},
+  {.name = "source_radius",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Light, source_radius),
+   .size_in_bytes = (uint32_t)sizeof(Light::source_radius),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Movement_FIELDS[] = {
@@ -1375,6 +1384,15 @@ constexpr field_info_t Directional_Light_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "angular_diameter_degrees",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Directional_Light_Entity, angular_diameter_degrees),
+   .size_in_bytes = (uint32_t)sizeof(Directional_Light_Entity::angular_diameter_degrees),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
@@ -1456,7 +1474,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Material", {Material_FIELDS, 3}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
-  {"Light", {Light_FIELDS, 3}, (uint32_t)sizeof(Light)},
+  {"Light", {Light_FIELDS, 4}, (uint32_t)sizeof(Light)},
   {"Movement", {Movement_FIELDS, 5}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
 };
@@ -1499,7 +1517,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 1u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
   {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 5}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 8u, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
   {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 8u, false, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
-  {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 4}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 8u, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
+  {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 5}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 8u, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 8}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 4u, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
 };
 
@@ -1888,6 +1906,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x65a599ecu;
+const uint32_t SCHEMA_HASH = 0x23eb6040u;
 
 } // namespace entities

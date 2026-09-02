@@ -25,12 +25,20 @@
 // Frostbite's windowed inverse square (Lagarde 2014): a true 1/d^2 with a smooth
 // window that reaches exactly zero at `range`, so a light has a bound the culler
 // can use without a visible cutoff at the edge of it.
-INLINE float distance_attenuation(float squared_distance, float range)
+//
+// `source_radius` is the emitter's size, and it clamps the NEAR FIELD only: pure
+// inverse square diverges at zero distance, which is a point source's fiction and
+// not a sphere's -- a surface touching a bulb of radius r is r away from the
+// emitting surface, not zero. The window keeps the TRUE distance, so a light with
+// a radius still reaches exactly zero at `range` and the culler's bound holds. A
+// radius of zero is the punctual falloff this had before, bit for bit.
+INLINE float distance_attenuation(float squared_distance, float range, float source_radius)
 {
     float inverse_squared_range = 1.0 / max(range * range, 0.0001);
     float factor                = squared_distance * inverse_squared_range;
     float smooth_factor         = clamp(1.0 - factor * factor, 0.0, 1.0);
-    return (smooth_factor * smooth_factor) / max(squared_distance, 0.0001);
+    float near_field            = max(squared_distance, source_radius * source_radius);
+    return (smooth_factor * smooth_factor) / max(near_field, 0.0001);
 }
 
 // `cos_angle` is dot(-L, cone axis). Inner is where the falloff starts, outer

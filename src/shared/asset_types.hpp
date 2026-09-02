@@ -13,6 +13,7 @@
 #include "aabb.hpp"
 #include "array.hpp"
 #include "asset_package.hpp"
+#include "lightmap.hpp"
 #include "skeleton.hpp"
 #include "span.hpp"
 #include "vertex.hpp"
@@ -110,17 +111,16 @@ struct mesh_asset_t
   // because a parallel array that covers only part of a buffer is not one.
   std::vector<vertex_blend_t> blend;
 
-  // Lightmap coordinates, PARALLEL to `vertices` for the same reason `skin` and
-  // `blend` are. THREE components: (u, v, page), because the atlas is a texture
-  // ARRAY -- pages are unavoidable, and a chart never spans one, so the layer
-  // rides per vertex where it cannot disagree with itself. Empty means this mesh
-  // has no bake and draws unlit -- that is the whole test.
-  std::vector<linalg::vec3> lightmap_uv;
+  // Where a vertex sits in the baked atlas and which lights the visibility texel
+  // there is of, PARALLEL to `vertices` for the same reason `skin` and `blend`
+  // are -- shared/lightmap.hpp's vertex_lightmap_t argues the record. Empty
+  // means this mesh has no bake and draws unlit; that is the whole test.
+  std::vector<shared::vertex_lightmap_t> lightmap;
 
   bool has_materials() const { return !submeshes.empty(); }
   bool is_skinned() const { return !skin.empty(); }
   bool is_blended() const { return !blend.empty(); }
-  bool is_lightmapped() const { return !lightmap_uv.empty(); }
+  bool is_lightmapped() const { return !lightmap.empty(); }
 };
 
 // A sound asset is its PATH, not its samples, and that is the whole design.

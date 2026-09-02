@@ -1805,7 +1805,7 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
   bool mesh_blends = false;
 
   // Whether ANY face of this brush names a chart. A brush the bake never reached
-  // leaves lightmap_uv empty rather than filling it with sentinels, so it uploads
+  // leaves `lightmap` empty rather than filling it with sentinels, so it uploads
   // byte for byte what it did before the bake existed.
   bool mesh_is_lightmapped = false;
 
@@ -1889,15 +1889,21 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
       // `blend` does: a parallel array covering part of a buffer is not one.
       if (mesh_is_lightmapped)
       {
-        mesh.lightmap_uv.resize(mesh.vertices.size(), UNLIT_LIGHTMAP_UV);
+        mesh.lightmap.resize(mesh.vertices.size());
 
         if (const lightmap_chart_t *chart =
                 find_chart(*lighting.lightmap, lighting.object_uid, face.plane))
         {
           for (size_t vertex = base; vertex < mesh.vertices.size(); ++vertex)
-            mesh.lightmap_uv[vertex] =
+          {
+            mesh.lightmap[vertex].uv =
                 lightmap_uv_for(*chart, lighting.lightmap->settings,
                                 lighting.lightmap->atlas, mesh.vertices[vertex].position);
+            // The chart's slots, verbatim: the visibility texel this vertex
+            // names has one channel per slot, and nothing but the chart knows
+            // which light each of them is.
+            mesh.lightmap[vertex].light_slots = chart->light_slots;
+          }
         }
       }
 

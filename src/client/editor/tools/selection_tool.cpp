@@ -103,6 +103,13 @@ gizmo_view_t Selection_Tool::make_gizmo_view() const
 // itself writes nothing -- it does not know a map exists -- so this is the one
 // place a gizmo drag reaches the world, and it goes through the same per-uid
 // seam every other tool uses.
+//
+// It flags NO bvh rebuild: a live drag calls this every frame, and a rebuild
+// decomposes every brush in the map -- 148 ms for one level-32 sculpted face,
+// which is the whole frame. Nothing picks against the bvh while a drag holds
+// the mouse, so both callers that end an edit flag it instead (on_mouse_up for
+// the drag, apply_transform_as_one_edit for the discrete ones) -- the rule
+// sculpting_tool already follows.
 void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t &drag)
 {
   if (!ctx.map)
@@ -160,9 +167,6 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t 
         log_error("selection tool: object {} took a rotation it cannot store", origin.uid);
     }
   }
-
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
@@ -171,6 +175,9 @@ void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
   capture_drag_snapshots(ctx);
   apply_gizmo_drag(ctx, transform);
   commit_drag_snapshots(ctx);
+
+  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
@@ -713,8 +720,6 @@ void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
         if (!shared::try_set_object_position(*ctx.map, origin.uid, origin.position + delta))
           log_error("selection tool: object {} vanished mid-drag", origin.uid);
       }
-      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
     return;
   }

@@ -361,6 +361,14 @@ const lightmap_chart_t *find_chart(const lightmap_t &lightmap, entity_uid_t obje
   return best;
 }
 
+int16_t find_baked_light_slot(const lightmap_t &lightmap, entity_uid_t light_uid)
+{
+  for (size_t slot = 0; slot < lightmap.light_uids.size(); ++slot)
+    if (lightmap.light_uids[slot] == light_uid) return (int16_t)slot;
+
+  return LIGHTMAP_NO_LIGHT_SLOT;
+}
+
 } // namespace shared
 
 namespace shared
@@ -466,9 +474,8 @@ void set_lightmap_geometry_id(lightmap_t &lightmap)
   mix(&lightmap.atlas, sizeof(lightmap.atlas));
 
   // The resolve table and the slots are in, and the PIXELS are still out. A
-  // vertex will carry its chart's slots the day the shader reads them, so a
-  // rebake that reassigns one has to rebuild the mesh; a rebake that only moves
-  // a texel's value still must not.
+  // vertex CARRIES its chart's slots, so a rebake that reassigns one has to
+  // rebuild the mesh; a rebake that only moves a texel's value still must not.
   for (entity_uid_t light_uid : lightmap.light_uids)
     mix(&light_uid, sizeof(light_uid));
 
