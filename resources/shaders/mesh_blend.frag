@@ -6,6 +6,7 @@
 // different one. Layer 0's weight is what the others leave.
 
 #include "scene.glsl"
+#include "direct_light.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -33,6 +34,14 @@ layout(set = 2, binding = 0) uniform sampler2D blendAlbedo1;
 #endif
 
 void main() {
+    vec3 N = normalize(fragWorldNormal);
+
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_SHADOW_VISIBILITY) != 0)
+    {
+        outColor = shadow_visibility_debug_color(fragWorldPosition, N);
+        return;
+    }
+
     float weight1 = clamp(fragBlendWeight1, 0.0, 1.0);
     float weight0 = clamp(1.0 - weight1, 0.0, 1.0);
 
@@ -41,18 +50,19 @@ void main() {
 
     vec3  sunDir  = normalize(vec3(0.4, -0.8, 0.3));
     vec3  ambient = scene.ambient.rgb;
-    float diffuse = max(dot(normalize(fragWorldNormal), -sunDir), 0.0);
+    float diffuse = max(dot(N, -sunDir), 0.0);
 
 #ifdef LIGHTMAP
     // The four lights this face's chart kept, shaded analytically against the
     // real light direction, the residual irradiance of the ones it dropped, and
     // the path-traced bounce.
-    vec3 lighting = lightmap_direct_diffuse(normalize(fragWorldNormal), fragWorldPosition) +
-                    lightmap_residual_diffuse() +
-                    lightmap_indirect_diffuse(normalize(fragWorldNormal)) + ambient;
+    vec3 lighting = lightmap_direct_diffuse(N, fragWorldPosition) +
+                    lightmap_residual_diffuse() + lightmap_indirect_diffuse(N) + ambient;
 #else
     vec3 lighting = ambient + vec3(diffuse * 0.85);
 #endif
+    // The tail through its shadow maps, as mesh_grid.frag.
+    lighting += analytic_tail_diffuse(N, fragWorldPosition);
 
     // LAYER 0's emissive only, weighted by its own coverage -- so where layer 1
     // covers the surface, layer 0 stops glowing. That is also the layer the bake

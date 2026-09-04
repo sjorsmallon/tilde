@@ -167,17 +167,18 @@ bool solve_texel(const lightmap_chart_t &chart, const solve_inputs_t &in, int te
           ((float)texel_y + stratum_offset(sample_y, samples_per_edge, hash >> 8)) *
               chart.world_units_per_texel};
 
-      if (!chart_space_is_inside_face(chart, chart_space)) continue;
+      const texel_sample_t sample = sample_chart(chart, chart_space);
+      if (!sample.on_surface) continue;
       ++inside_count;
 
-      const linalg::vec3 world_position = chart_space_to_world(chart, chart_space);
+      const linalg::vec3 world_position = sample.position;
 
       linalg::vec3 irradiance{0.f, 0.f, 0.f};
       for (uint32_t slot = 0; slot < (uint32_t)lights.size(); ++slot)
       {
         const scene_light_t &light = lights[slot].light;
         const light_arrival_t arrival =
-            arrival_at(light, world_position, chart.plane.normal,
+            arrival_at(light, world_position, sample.normal,
                        solve_settings.directional_shadow_distance);
         if (!arrival.arrives) continue;
 
@@ -192,7 +193,7 @@ bool solve_texel(const lightmap_chart_t &chart, const solve_inputs_t &in, int te
         // softness reaches the stored coverage, the slot ranking and the residual
         // by arithmetic rather than by three separate arms.
         const float visibility = light_visibility(
-            bvh, world_position, chart.plane.normal, arrival,
+            bvh, world_position, sample.normal, arrival,
             solve_settings.shadow_ray_bias, solve_settings.soft_shadow_samples,
             hash_mix(hash, slot));
         if (visibility <= 0.f) continue;
@@ -251,13 +252,13 @@ bool solve_texel(const lightmap_chart_t &chart, const solve_inputs_t &in, int te
       // normal, which is what makes a normal map move the bounce.
       if (out_indirect && in.traced_scene)
       {
-        const indirect_sh_l1_t sample = trace_indirect_light(
-            *in.traced_scene, lights, world_position, chart.plane.normal, in.indirect,
+        const indirect_sh_l1_t traced = trace_indirect_light(
+            *in.traced_scene, lights, world_position, sample.normal, in.indirect,
             hash_mix(hash, 0x1b873593u));
 
-        indirect_total.l0 = indirect_total.l0 + sample.l0;
+        indirect_total.l0 = indirect_total.l0 + traced.l0;
         for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
-          indirect_total.l1[axis] = indirect_total.l1[axis] + sample.l1[axis];
+          indirect_total.l1[axis] = indirect_total.l1[axis] + traced.l1[axis];
       }
     }
 

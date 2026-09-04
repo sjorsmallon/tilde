@@ -288,7 +288,7 @@ void a_vertex_uv_lands_on_its_own_chart()
     {
       for (int texel_x = 0; texel_x < covered_width; ++texel_x)
       {
-        const linalg::vec3 world = shared::texel_world_position(chart, texel_x, texel_y);
+        const linalg::vec3 world = shared::sample_texel(chart, texel_x, texel_y).position;
         const linalg::vec3 uv =
             shared::lightmap_uv_for(chart, settings, atlas, world);
 
@@ -936,9 +936,10 @@ void top_face_texel_nearest(const shared::lightmap_t &lightmap, float world_x,
   for (int y = 0; y < shared::chart_covered_height(chart, lightmap.settings); ++y)
     for (int x = 0; x < shared::chart_covered_width(chart, lightmap.settings); ++x)
     {
-      if (!shared::texel_is_inside_face(chart, x, y)) continue;
+      const shared::texel_sample_t sample = shared::sample_texel(chart, x, y);
+      if (!sample.on_surface) continue;
 
-      const linalg::vec3 position = shared::texel_world_position(chart, x, y);
+      const linalg::vec3 position = sample.position;
       const float distance = std::abs(position.x - world_x) + std::abs(position.z);
       if (distance >= best) continue;
 
@@ -1059,7 +1060,7 @@ std::vector<float> top_face_coverage(const shared::lightmap_t &lightmap,
   for (int y = 0; y < shared::chart_covered_height(chart, lightmap.settings); ++y)
     for (int x = 0; x < shared::chart_covered_width(chart, lightmap.settings); ++x)
     {
-      if (!shared::texel_is_inside_face(chart, x, y)) continue;
+      if (!shared::sample_texel(chart, x, y).on_surface) continue;
       coverage.push_back(masks.coverage[masks.index_of(0, chart.page, chart.atlas_rect.min_x + gutter + x,
                                                        chart.atlas_rect.min_y + gutter + y)]);
     }
@@ -2474,55 +2475,244 @@ void a_probe_volume_round_trips_its_own_codec()
 // same box a_box_gets_one_chart_per_face builds as a brush. Loaded for real, so
 // these run under ctest's pinned working directory or from the project root.
 
-shared::map_t map_with_a_box_mesh()
+constexpr float BOX_HALF_EXTENT = 64.f;
+
+shared::map_t map_with_a_mesh(const char* mesh_path, float scale)
 {
   shared::map_t map;
-  shared::static_mesh_geometry_t box;
-  box.surface.mesh_path = "resources/models/Box.mesh";
-  box.scale = {128.f, 128.f, 128.f};
-  map.geometry.push_back({map.next_uid++, box});
+  shared::static_mesh_geometry_t object;
+  object.surface.mesh_path = mesh_path;
+  object.scale = {scale, scale, scale};
+  map.geometry.push_back({map.next_uid++, object});
   return map;
 }
 
-void a_static_mesh_gets_one_chart_per_plane()
+shared::map_t map_with_a_box_mesh()
 {
-  const shared::map_t map = map_with_a_box_mesh();
+  return map_with_a_mesh("resources/models/Box.mesh", 2.f * BOX_HALF_EXTENT);
+}
 
-  const std::vector<shared::lightmap_chart_t> charts =
-      shared::build_lightmap_charts(map, {});
+// Which face of the box a world point is on -- the signed axis of its largest
+// coordinate -- asserting the point IS on the surface.
+linalg::vec3 box_face_normal_at(const linalg::vec3& position)
+{
+  const float absolute_x = std::abs(position.x);
+  const float absolute_y = std::abs(position.y);
+  const float absolute_z = std::abs(position.z);
+  const float largest = std::max(absolute_x, std::max(absolute_y, absolute_z));
+  assert(std::abs(largest - BOX_HALF_EXTENT) < 1e-2f);
+  if (largest == absolute_x) return {position.x > 0.f ? 1.f : -1.f, 0.f, 0.f};
+  if (largest == absolute_y) return {0.f, position.y > 0.f ? 1.f : -1.f, 0.f};
+  return {0.f, 0.f, position.z > 0.f ? 1.f : -1.f};
+}
 
-  // Six planes, not twelve triangles: the two triangles of a side share one
-  // chart, and it is their triangle list rather than a polygon that says where
-  // the surface is.
-  assert(charts.size() == 6);
-
-  for (const shared::lightmap_chart_t &chart : charts)
+// What every unwrapped object's charts must satisfy: each chart carries an
+// unwrap whose coverage and twin agree with it, every uv lies inside its
+// chart's covered rect, and every real face of the object is in exactly one
+// chart. A degenerate face has no area to unwrap and may be in none.
+void assert_charts_cover_every_face_once(const std::vector<shared::lightmap_chart_t>& charts,
+                                         const std::vector<shared::world_triangle_t>& faces,
+                                         const shared::lightmap_bake_settings_t& settings)
+{
+  std::vector<int> times_covered(faces.size(), 0);
+  for (const shared::lightmap_chart_t& chart : charts)
   {
     assert(chart.polygon.empty());
-    assert(chart.triangles.size() == 6);
+    assert(!chart.unwrap.empty());
+    assert(chart.unwrap.indices.size() == chart.unwrap.faces.size() * 3);
+    assert(chart.triangles.size() == chart.unwrap.indices.size());
+    assert(chart.twins.size() == chart.unwrap.faces.size());
 
-    // The same 36 the brush box gets: 128 units at four per texel, plus the
-    // two-texel gutter each side. A mesh face and a brush face of one size are
-    // one chart size.
-    assert(chart.atlas_rect.width == 36);
-    assert(chart.atlas_rect.height == 36);
-
-    // Every corner is on the plane the chart is keyed by, and inside its own
-    // coverage.
-    for (const linalg::vec2 &corner : chart.triangles)
+    const float covered_u =
+        (float)shared::chart_covered_width(chart, settings) * chart.world_units_per_texel;
+    const float covered_v =
+        (float)shared::chart_covered_height(chart, settings) * chart.world_units_per_texel;
+    for (const shared::unwrapped_vertex_t& vertex : chart.unwrap.vertices)
     {
-      const linalg::vec3 world = shared::chart_space_to_world(chart, corner);
-      assert(std::abs(linalg::dot(world - chart.plane.point, chart.plane.normal)) < 1e-3f);
+      assert(vertex.uv.x >= -1e-3f && vertex.uv.x <= covered_u + 1e-3f);
+      assert(vertex.uv.y >= -1e-3f && vertex.uv.y <= covered_v + 1e-3f);
     }
-    const linalg::vec2 centre_of_first = {
-        (chart.triangles[0].x + chart.triangles[1].x + chart.triangles[2].x) / 3.f,
-        (chart.triangles[0].y + chart.triangles[1].y + chart.triangles[2].y) / 3.f};
-    assert(shared::chart_space_is_inside_face(chart, centre_of_first));
-    assert(!shared::chart_space_is_inside_face(chart, {-1.f, -1.f}));
+
+    for (uint32_t face : chart.unwrap.faces)
+    {
+      assert(face < faces.size());
+      ++times_covered[face];
+    }
+  }
+
+  for (size_t face = 0; face < faces.size(); ++face)
+  {
+    if (faces[face].is_degenerate()) assert(times_covered[face] <= 1);
+    else assert(times_covered[face] == 1);
   }
 }
 
-void a_lightmapped_static_mesh_is_unwelded_and_every_vertex_finds_its_chart()
+// lightmap_unwrap_plan.md step 2: a static mesh's charts come from xatlas, and
+// its faces are the unwrap's rather than one chart per plane.
+void a_static_mesh_is_unwrapped_into_charts()
+{
+  const shared::map_t map = map_with_a_box_mesh();
+  const shared::lightmap_bake_settings_t settings;
+  const std::vector<shared::lightmap_chart_t> charts =
+      shared::build_lightmap_charts(map, settings);
+
+  // Six planar faces at right angles: xatlas cannot merge them into fewer than
+  // one chart and has no reason to cut one.
+  assert(!charts.empty() && charts.size() <= 6);
+
+  const shared::static_mesh_geometry_t& box =
+      std::get<shared::static_mesh_geometry_t>(map.geometry[0].value);
+  const std::vector<shared::world_triangle_t> faces = shared::static_mesh_world_triangles(box);
+  assert(faces.size() == 12);
+  assert_charts_cover_every_face_once(charts, faces, settings);
+
+  // The twin is the mesh in the world: every corner on the box surface, every
+  // normal a unit axis naming the face that corner lies on. (A corner is on
+  // three faces at once, so it is the normal that says which.)
+  for (const shared::lightmap_chart_t& chart : charts)
+    for (const shared::chart_triangle_twin_t& twin : chart.twins)
+      for (uint32_t corner = 0; corner < 3; ++corner)
+      {
+        const linalg::vec3& normal = twin.normals[corner];
+        assert(std::abs(linalg::length(normal) - 1.f) < 1e-3f);
+        assert(std::abs(linalg::dot(twin.corners[corner], normal) - BOX_HALF_EXTENT) < 1e-2f);
+        (void)box_face_normal_at(twin.corners[corner]);
+      }
+}
+
+// Step 1 through the unwrap: a texel of a mesh chart samples a point ON the
+// mesh with the mesh's normal there, and six 128-unit faces at four units a
+// texel are 6144 texels of surface however xatlas cut them up.
+void a_texel_of_a_mesh_chart_samples_the_mesh_surface()
+{
+  const shared::map_t map = map_with_a_box_mesh();
+  const shared::lightmap_bake_settings_t settings;
+  const std::vector<shared::lightmap_chart_t> charts =
+      shared::build_lightmap_charts(map, settings);
+
+  int on_surface = 0;
+  for (const shared::lightmap_chart_t& chart : charts)
+    for (int texel_y = 0; texel_y < shared::chart_covered_height(chart, settings); ++texel_y)
+      for (int texel_x = 0; texel_x < shared::chart_covered_width(chart, settings); ++texel_x)
+      {
+        const shared::texel_sample_t sample = shared::sample_texel(chart, texel_x, texel_y);
+        if (!sample.on_surface) continue;
+        ++on_surface;
+        assert(linalg::dot(sample.normal, box_face_normal_at(sample.position)) > 0.999f);
+      }
+
+  assert(on_surface > 5500 && on_surface < 6800);
+}
+
+void a_sphere_unwraps_into_few_charts()
+{
+  const shared::map_t map = map_with_a_mesh("resources/models/Sphere.mesh", 128.f);
+  const shared::lightmap_bake_settings_t settings;
+  const std::vector<shared::lightmap_chart_t> charts =
+      shared::build_lightmap_charts(map, settings);
+
+  const shared::static_mesh_geometry_t& sphere =
+      std::get<shared::static_mesh_geometry_t>(map.geometry[0].value);
+  const std::vector<shared::world_triangle_t> faces =
+      shared::static_mesh_world_triangles(sphere);
+  size_t real_faces = 0;
+  for (const shared::world_triangle_t& face : faces)
+    if (!face.is_degenerate()) ++real_faces;
+  assert(real_faces > 100);
+
+  // Far fewer charts than facets -- the whole point of unwrapping. A chart per
+  // plane would be one per facet here.
+  assert(!charts.empty());
+  assert(charts.size() * 4 <= real_faces);
+  assert_charts_cover_every_face_once(charts, faces, settings);
+
+  // Every twin corner is on the sphere.
+  for (const shared::lightmap_chart_t& chart : charts)
+    for (const shared::chart_triangle_twin_t& twin : chart.twins)
+      for (uint32_t corner = 0; corner < 3; ++corner)
+        assert(std::abs(linalg::length(twin.corners[corner]) - 64.f) < 0.5f);
+}
+
+// The pin for step 1: a box built as a brush and the same box built as a mesh
+// both bake, at every texel, what the residual light delivers to the point the
+// texel samples -- one through a polygon and a plane, the other through an
+// unwrap and its twin. The light is under the box's top face so that face
+// carries a gradient rather than a flat value; every other face bakes black.
+void a_box_mesh_bakes_what_the_light_delivers()
+{
+  const auto light_it = [](shared::map_t& map) {
+    std::shared_ptr<entities::Point_Light_Entity> light =
+        std::make_shared<entities::Point_Light_Entity>();
+    light->position = {0, 128, 0};
+    light->range = 1024.f;
+    light->light.color = {1.f, 1.f, 1.f};
+    light->light.intensity = 1.f;
+    map.entities.push_back({map.next_uid++, light});
+    add_the_four_lights_that_outrank_everything(map);
+  };
+
+  shared::map_t brush_map;
+  brush_map.geometry.push_back(
+      {brush_map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
+  light_it(brush_map);
+
+  shared::map_t mesh_map = map_with_a_box_mesh();
+  light_it(mesh_map);
+
+  // The centre sample alone, so a texel's value is the value at one known point.
+  shared::lightmap_solve_settings_t solve;
+  solve.samples_per_texel_edge = 1;
+
+  const auto check = [&](const shared::map_t& map, int expected_lit, int lit_tolerance) {
+    const shared::lightmap_t bake = bake_for(map, solve);
+    assert(!bake.charts.empty());
+
+    const std::vector<shared::baked_light_t> lights = shared::collect_lights(map);
+    const shared::baked_light_t* residual = nullptr;
+    for (const shared::baked_light_t& light : lights)
+      if (light.light.position.y == 128.f) residual = &light;
+    assert(residual);
+
+    const int gutter = bake.settings.gutter_in_texels;
+    int lit_texels = 0;
+    for (const shared::lightmap_chart_t& chart : bake.charts)
+      for (int texel_y = 0; texel_y < shared::chart_covered_height(chart, bake.settings); ++texel_y)
+        for (int texel_x = 0; texel_x < shared::chart_covered_width(chart, bake.settings); ++texel_x)
+        {
+          const shared::texel_sample_t sample = shared::sample_texel(chart, texel_x, texel_y);
+          if (!sample.on_surface) continue;
+
+          const shared::light_arrival_t arrival =
+              shared::arrival_at(residual->light, sample.position, sample.normal,
+                                 solve.directional_shadow_distance);
+          const linalg::vec3 expected =
+              arrival.reaches
+                  ? residual->light.radiance * (arrival.attenuation * arrival.normal_dot_light)
+                  : linalg::vec3{0.f, 0.f, 0.f};
+          const linalg::vec3 actual = bake.irradiance_pages.load(
+              chart.page, chart.atlas_rect.min_x + gutter + texel_x,
+              chart.atlas_rect.min_y + gutter + texel_y);
+
+          const float tolerance = 1e-4f + 0.01f * std::max(expected.x, actual.x);
+          assert(std::abs(expected.x - actual.x) < tolerance);
+          assert(std::abs(expected.y - actual.y) < tolerance);
+          assert(std::abs(expected.z - actual.z) < tolerance);
+          if (actual.x > 0.f) ++lit_texels;
+        }
+
+    assert(std::abs(lit_texels - expected_lit) <= lit_tolerance);
+  };
+
+  // The brush's top face is exactly 32x32 texels; the mesh's is the same area
+  // on whatever grid xatlas gave it.
+  check(brush_map, 32 * 32, 0);
+  check(mesh_map, 32 * 32, 100);
+}
+
+// Step 4: the draw copy is built from the stored unwrap -- the asset's vertices
+// by xref, the atlas position from the chart's placed rect -- and keeps the
+// source's faces in the source's order.
+void a_lightmapped_static_mesh_draws_through_its_unwrap()
 {
   const shared::map_t map = map_with_a_box_mesh();
 
@@ -2532,23 +2722,47 @@ void a_lightmapped_static_mesh_is_unwelded_and_every_vertex_finds_its_chart()
   shared::set_lightmap_geometry_id(lightmap);
   assert(lightmap.atlas.page_count == 1);
 
-  const shared::static_mesh_geometry_t &box =
+  const shared::static_mesh_geometry_t& box =
       std::get<shared::static_mesh_geometry_t>(map.geometry[0].value);
+  const assets::mesh_asset_t* source = assets::get(shared::resolve_surface_mesh(box.surface));
+  assert(source);
   const assets::mesh_asset_t mesh =
       shared::generate_lightmapped_static_mesh(box, {&lightmap, map.geometry[0].uid});
 
-  // One vertex per triangle corner, so a corner three faces share can carry
-  // three atlas positions.
-  assert(mesh.vertices.size() == 36);
+  // Same faces, in the same order, so every submesh range still holds; fewer
+  // vertices than corners, because a chart's vertices are shared inside it.
   assert(mesh.indices.size() == 36);
-  assert(mesh.lightmap.size() == 36);
+  assert(mesh.vertices.size() >= 8 && mesh.vertices.size() <= 36);
+  assert(mesh.lightmap.size() == mesh.vertices.size());
+  assert(mesh.submeshes.size() == source->submeshes.size());
 
-  for (size_t vertex = 0; vertex < mesh.lightmap.size(); ++vertex)
+  const std::vector<shared::world_triangle_t> faces = shared::static_mesh_world_triangles(box);
+  for (size_t face = 0; face < faces.size(); ++face)
+    for (uint32_t corner = 0; corner < 3; ++corner)
+    {
+      const linalg::vec3& position = mesh.vertices[mesh.indices[face * 3 + corner]].position;
+      assert(linalg::length(position - faces[face].corners[corner]) < 1e-3f);
+    }
+
+  // Every vertex's atlas position is inside the covered rect of one of this
+  // object's placed charts.
+  const float size = (float)lightmap.atlas.size_in_texels;
+  const int gutter = lightmap.settings.gutter_in_texels;
+  for (const shared::vertex_lightmap_t& vertex : mesh.lightmap)
   {
-    const linalg::vec3 &uv = mesh.lightmap[vertex].uv;
-    assert(uv.x >= 0.f && uv.x <= 1.f);
-    assert(uv.y >= 0.f && uv.y <= 1.f);
-    assert(uv.z == 0.f);
+    assert(vertex.uv.z == 0.f);
+    bool inside_a_chart = false;
+    for (const shared::lightmap_chart_t& chart : lightmap.charts)
+    {
+      const float min_u = (float)(chart.atlas_rect.min_x + gutter) / size;
+      const float min_v = (float)(chart.atlas_rect.min_y + gutter) / size;
+      const float max_u = min_u + (float)shared::chart_covered_width(chart, lightmap.settings) / size;
+      const float max_v = min_v + (float)shared::chart_covered_height(chart, lightmap.settings) / size;
+      if (vertex.uv.x >= min_u - 1e-4f && vertex.uv.x <= max_u + 1e-4f &&
+          vertex.uv.y >= min_v - 1e-4f && vertex.uv.y <= max_v + 1e-4f)
+        inside_a_chart = true;
+    }
+    assert(inside_a_chart);
   }
 
   // Without a bake the copy is still the world-space mesh, with no lightmap
@@ -2556,6 +2770,43 @@ void a_lightmapped_static_mesh_is_unwelded_and_every_vertex_finds_its_chart()
   const assets::mesh_asset_t unlit = shared::generate_lightmapped_static_mesh(box, {});
   assert(unlit.vertices.size() == 36);
   assert(unlit.lightmap.empty());
+}
+
+// Step 3: the unwrap is the one thing about a chart that cannot be re-derived,
+// so it is what the sidecar bump carries.
+void a_sidecar_round_trips_an_unwrap()
+{
+  const shared::map_t map = map_with_a_box_mesh();
+  shared::lightmap_t baked = pack_for(map);
+  shared::set_lightmap_geometry_id(baked);
+  assert(!baked.charts.empty());
+
+  const std::filesystem::path directory =
+      std::filesystem::temp_directory_path() / "tilde_lightmap_test";
+  std::filesystem::create_directories(directory);
+  const std::string map_path = (directory / "round_trip_unwrap.source").generic_string();
+
+  const uint32_t hash = shared::compute_map_content_hash(map);
+  shared::save_lightmap_sidecar(map_path, baked, hash);
+  const shared::lightmap_t loaded = shared::load_lightmap_sidecar(map_path, hash);
+
+  assert(loaded.charts.size() == baked.charts.size());
+  for (size_t i = 0; i < loaded.charts.size(); ++i)
+  {
+    const shared::chart_unwrap_t& before = baked.charts[i].unwrap;
+    const shared::chart_unwrap_t& after = loaded.charts[i].unwrap;
+    assert(!after.empty());
+    assert(after.vertices.size() == before.vertices.size());
+    for (size_t v = 0; v < after.vertices.size(); ++v)
+    {
+      assert(after.vertices[v].xref == before.vertices[v].xref);
+      assert(after.vertices[v].uv.x == before.vertices[v].uv.x);
+      assert(after.vertices[v].uv.y == before.vertices[v].uv.y);
+    }
+    assert(after.indices == before.indices);
+    assert(after.faces == before.faces);
+  }
+  assert(loaded.geometry_id == baked.geometry_id);
 }
 
 void a_static_mesh_casts_a_shadow_in_the_bake()
@@ -2582,8 +2833,12 @@ int main()
   assets::set_state(&g_asset_state);
   assets::mount_asset_source();
 
-  a_static_mesh_gets_one_chart_per_plane();
-  a_lightmapped_static_mesh_is_unwelded_and_every_vertex_finds_its_chart();
+  a_static_mesh_is_unwrapped_into_charts();
+  a_texel_of_a_mesh_chart_samples_the_mesh_surface();
+  a_sphere_unwraps_into_few_charts();
+  a_box_mesh_bakes_what_the_light_delivers();
+  a_lightmapped_static_mesh_draws_through_its_unwrap();
+  a_sidecar_round_trips_an_unwrap();
   a_static_mesh_casts_a_shadow_in_the_bake();
 
   a_box_gets_one_chart_per_face();

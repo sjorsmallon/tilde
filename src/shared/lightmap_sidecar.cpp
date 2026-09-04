@@ -21,6 +21,9 @@ namespace
 //             + tangent_u + tangent_v + world_units_per_texel
 //             + page + atlas_rect(min_x, min_y, width, height)
 //             + LIGHTMAP_LIGHTS_PER_CHART light slots
+//             + the unwrap: vertex count + (xref, u, v) each,
+//               triangle count + (source face, three indices) each --
+//               both counts zero on a brush chart
 //   pages     FOUR page sets in this order -- irradiance, visibility, indirect
 //             L0, indirect L1 -- each written the same way: format + layer count
 //             + byte count + that many bytes, page-major.
@@ -56,7 +59,12 @@ constexpr uint32_t LIGHTMAP_MAGIC = 0x504D4C54; // "TLMP"
 //    joins the settings, and the grid and its two byte arrays follow the four
 //    page sets. A version-5 file is REFUSED for gate 2's reason: the probes it
 //    lacks can only come from a bake.
-constexpr uint32_t LIGHTMAP_VERSION = 6;
+// 7: a static mesh chart carries its UNWRAP (lightmap_unwrap_plan.md step 3).
+//    A brush's uvs are re-derived by projecting through the stored plane; an
+//    xatlas chart has no plane, so its uvs are written down. A version-6 file
+//    has charts keyed by plane that no mesh face can find any more, and is
+//    REFUSED rather than read as a map whose props all draw unlit.
+constexpr uint32_t LIGHTMAP_VERSION = 7;
 
 std::string lightmap_path_for(const std::string &map_path)
 {
@@ -121,6 +129,21 @@ void save_lightmap_sidecar(const std::string &map_path, const lightmap_t &lightm
     write((int32_t)chart.atlas_rect.width);
     write((int32_t)chart.atlas_rect.height);
     for (int16_t slot : chart.light_slots) write(slot);
+
+    write((uint32_t)chart.unwrap.vertices.size());
+    for (const unwrapped_vertex_t &vertex : chart.unwrap.vertices)
+    {
+      write(vertex.xref);
+      write(vertex.uv.x);
+      write(vertex.uv.y);
+    }
+    write((uint32_t)chart.unwrap.faces.size());
+    for (size_t t = 0; t < chart.unwrap.faces.size(); ++t)
+    {
+      write(chart.unwrap.faces[t]);
+      for (size_t corner = 0; corner < 3; ++corner)
+        write(chart.unwrap.indices[t * 3 + corner]);
+    }
   }
 
   // One shape for all four, so a fifth page set is a call rather than a layout
@@ -263,6 +286,26 @@ lightmap_t load_lightmap_sidecar(const std::string &map_path, uint32_t map_conte
       // A slot past the table is a file that disagrees with itself, and the one
       // thing it must never do is index it anyway.
       if (slot >= (int16_t)light_count) slot = LIGHTMAP_NO_LIGHT_SLOT;
+    }
+
+    uint32_t vertex_count = 0;
+    read(vertex_count);
+    chart.unwrap.vertices.resize(vertex_count);
+    for (unwrapped_vertex_t &vertex : chart.unwrap.vertices)
+    {
+      read(vertex.xref);
+      read(vertex.uv.x);
+      read(vertex.uv.y);
+    }
+    uint32_t triangle_count = 0;
+    read(triangle_count);
+    chart.unwrap.faces.resize(triangle_count);
+    chart.unwrap.indices.resize((size_t)triangle_count * 3);
+    for (size_t t = 0; t < triangle_count; ++t)
+    {
+      read(chart.unwrap.faces[t]);
+      for (size_t corner = 0; corner < 3; ++corner)
+        read(chart.unwrap.indices[t * 3 + corner]);
     }
   }
 

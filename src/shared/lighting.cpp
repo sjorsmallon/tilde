@@ -21,6 +21,7 @@ std::optional<scene_light_t> try_light_of(const entities::Entity &entity)
     light.radiance = radiance_of(point->light);
     light.range = point->range;
     light.source_radius = std::max(point->light.source_radius, 0.f);
+    light.casts_shadows = point->light.casts_shadows;
     return light;
   }
 
@@ -37,6 +38,7 @@ std::optional<scene_light_t> try_light_of(const entities::Entity &entity)
     light.cos_inner = std::cos(linalg::to_radians(spot->inner_degrees));
     light.cos_outer = std::cos(linalg::to_radians(spot->outer_degrees));
     light.source_radius = std::max(spot->light.source_radius, 0.f);
+    light.casts_shadows = spot->light.casts_shadows;
     return light;
   }
 
@@ -57,10 +59,31 @@ std::optional<scene_light_t> try_light_of(const entities::Entity &entity)
     const float angular_radius_degrees =
         std::clamp(directional->angular_diameter_degrees * 0.5f, 0.f, 89.f);
     light.source_radius = std::tan(linalg::to_radians(angular_radius_degrees));
+    light.casts_shadows = directional->light.casts_shadows;
     return light;
   }
 
   return {};
+}
+
+shadow_projection_t spot_shadow_projection(const scene_light_t &light, uint32_t resolution)
+{
+  const float cos_outer  = std::clamp(light.cos_outer, std::cos(linalg::to_radians(85.f)),
+                                      std::cos(linalg::to_radians(1.f)));
+  const float half_angle = std::acos(cos_outer);
+
+  const linalg::vec3 forward = linalg::normalize(light.forward);
+  const linalg::vec3 up      = std::abs(forward.y) < 0.99f ? linalg::vec3{0.f, 1.f, 0.f}
+                                                           : linalg::vec3{1.f, 0.f, 0.f};
+  const float far_plane = std::max(light.range, SHADOW_NEAR_PLANE * 2.f);
+
+  shadow_projection_t projection;
+  projection.view_projection =
+      linalg::perspective(half_angle * 2.f, 1.f, SHADOW_NEAR_PLANE, far_plane) *
+      linalg::look_at(light.position, light.position + forward, up);
+  projection.texel_size_at_unit_distance =
+      2.f * std::tan(half_angle) / (float)std::max<uint32_t>(resolution, 1u);
+  return projection;
 }
 
 void begin_frame_lights(frame_lights_t &frame, const lightmap_t &lightmap)
@@ -81,6 +104,7 @@ void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
   if (!gathered) return;
 
   scene_light_t light = *gathered;
+  light.uid           = uid;
 
   // The resolve the bake's uid table exists for, and the one place it happens:
   // an entity is what the frame has and a slot is what the shader needs.

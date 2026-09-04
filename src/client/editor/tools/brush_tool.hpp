@@ -10,6 +10,13 @@
 #include <optional>
 #include <vector>
 
+
+// before it gets more confusing: there is a clear distinction between
+// points and vertices. points are points that occupy 3d space. nothing else.
+// vertices belong to a render mesh. they contain a normal, and whatever else.
+// it can be that a single point has multiple vertices because it is part of 
+// a set of faces, like the corner of a cube.
+
 namespace client
 {
 
@@ -37,12 +44,11 @@ public:
 private:
   static constexpr int INVALID_FACE = -1;
 
-
   enum class Mode
   {
-    Face,   // pick a face, drag it along its normal
+    Face,   // move the whole face.
     Vertex, // pick points on the face grid, drag or extrude them
-    Paint,  // brush a layer weight into the face grid
+    Paint,  // paint between two textures at vertex positions.
     Sculpt  // brush the face grid itself in or out along the face normal
   };
 
@@ -53,7 +59,6 @@ private:
     std::vector<linalg::vec3> points;
   };
 
-  // Derived from `selection`. Only select_brush_face and on_update write it.
   struct selection_geometry_t
   {
     std::optional<shared::brush_polyhedron_t> hull;
@@ -84,8 +89,7 @@ private:
     Extrusion_Depth, // the pending extrusion's height
   };
 
-  // Face, Vertices and Extrusion_Depth all drag along ONE axis: the cursor ray
-  // projects onto it and the travel since the press is the whole answer.
+  // drag in a world direction, with a start anchor.
   struct axis_drag_t
   {
     linalg::vec3 direction{0, 0, 0};
@@ -133,23 +137,16 @@ private:
     linalg::vec3 face_normal{0, 1, 0};
   };
 
-  // A stroke in progress, in either stroke mode. One struct because the
-  // lifetime is one: the press snapshots, on_update accumulates off dt, and the
-  // release pushes ONE transaction however many frames it ran for.
+
   struct stroke_t
   {
     bool active = false;
-
-    // Shift at PRESS time, like the band's ctrl: a sculpt pulls in instead of
-    // pushing out, and releasing the key mid-stroke does not flip it.
     bool inverted = false;
 
     std::optional<shared::geometry_value_t> geometry_at_the_start;
   };
 
-  // `layer` is the target, not a sign: painting toward layer 0 is the eraser
-  // (shared::paint_face_layer_weight argues it), and it is an int rather than a
-  // bool for the day BLEND_LAYER_COUNT is three.
+  //@FIXME(SJM): layer is the target layer where we are painting towards.
   struct paint_settings_t
   {
     float radius = 48.0f;
@@ -165,6 +162,7 @@ private:
 
   std::optional<shared::face_surface_t> face_clipboard;
 
+  //@FIXME(SJM): we need to tear this out, I think.
   // The panel's "add a material" field. A path an author browses to, which is
   // why the table holds free-form paths rather than manifest ids.
   char material_path_input[256] = {};
@@ -199,8 +197,6 @@ private:
 
   void delete_selected_brush(editor_context_t& ctx);
   
-  // The ONE way the selection changes: writes it and rebuilds selection_geometry,
-  // so the two cannot disagree.
   void select_brush_face(editor_context_t& ctx, shared::entity_uid_t uid,
                          std::optional<linalg::vec3> face_normal);
 
@@ -223,8 +219,6 @@ private:
   float grid_step_for(const editor_context_t& ctx,
                       const input::modifiers_t &mods) const;
 
-  // The brush and plane a face operation acts on. Null when it resolves to no
-  // brush face.
   struct face_target_t
   {
     shared::entity_uid_t uid = shared::invalid_entity_uid;
@@ -232,8 +226,6 @@ private:
     Plane plane = {};
   };
 
-  // An action AT the cursor takes the hovered face; the PANEL takes the
-  // selected one, or reaching for a widget rewrites every value on the way.
   face_target_t resolve_face_target_under_cursor(editor_context_t& ctx);
   face_target_t resolve_selected_face_target(editor_context_t& ctx);
   face_target_t resolve_face_target(editor_context_t& ctx, shared::entity_uid_t uid,

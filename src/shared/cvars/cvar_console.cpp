@@ -11,6 +11,24 @@ namespace cvars
 namespace
 {
 
+std::string accepted_values_hint(const cvar_info_t& info)
+{
+  if (info.type == CVAR_TYPE_ENUM && info.enum_info)
+  {
+    std::string hint = "; one of: ";
+    for (size_t index = 0; index < info.enum_info->value_names.size(); ++index)
+    {
+      if (index > 0)
+        hint += " | ";
+      hint += info.enum_info->value_names[index];
+    }
+    return hint;
+  }
+  if (info.type == CVAR_TYPE_BOOL)
+    return "; one of: 1 | 0 | true | false | yes | no | on | off";
+  return "";
+}
+
 bool is_console_whitespace(char c)
 {
   return c == ' ' || c == '\t' || c == '\r' || c == '\n';
@@ -151,8 +169,9 @@ console_result_t execute_console_line(cvar_state_t&            state,
       // previous value is still live -- say so, rather than letting the user
       // assume the set landed.
       set_reply(out_reply, std::format("[error] {}: '{}' is not a valid value; "
-                                       "unchanged",
-                                       name, value_text));
+                                       "unchanged{}",
+                                       name, value_text,
+                                       accepted_values_hint(info)));
       return console_result_t::bad_arguments;
     }
 

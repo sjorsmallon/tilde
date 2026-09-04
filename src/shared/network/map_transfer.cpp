@@ -45,7 +45,8 @@ static constexpr uint32_t PACKAGE_MAGIC   = 0x504B4720; // "PKG "
 //    count each (lighting_def.md gate 2 step 2).
 // 6: the lightmap carries the irradiance probe volume and its spacing
 //    (lighting_def.md gate 5).
-static constexpr uint32_t PACKAGE_VERSION = 6;
+// 7: a static mesh chart carries its unwrap (lightmap_sidecar.cpp version 7).
+static constexpr uint32_t PACKAGE_VERSION = 7;
 
 // Navmesh floats/indices are written as raw bytes (exact), matching the on-disk
 // .navmesh sidecar's exactness — write_coord's 5-bit fraction would corrupt
@@ -178,6 +179,21 @@ static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightma
     write_i32(w, chart.atlas_rect.height);
     for (int16_t slot : chart.light_slots)
       write_i32(w, slot);
+
+    network::write_var_uint(w, static_cast<uint32_t>(chart.unwrap.vertices.size()));
+    for (const unwrapped_vertex_t &vertex : chart.unwrap.vertices)
+    {
+      write_u32(w, vertex.xref);
+      write_f32(w, vertex.uv.x);
+      write_f32(w, vertex.uv.y);
+    }
+    network::write_var_uint(w, static_cast<uint32_t>(chart.unwrap.faces.size()));
+    for (size_t t = 0; t < chart.unwrap.faces.size(); ++t)
+    {
+      write_u32(w, chart.unwrap.faces[t]);
+      for (size_t corner = 0; corner < 3; ++corner)
+        write_u32(w, chart.unwrap.indices[t * 3 + corner]);
+    }
   }
 
   // The same four sets in the same order the sidecar writes them, and for the
@@ -261,6 +277,23 @@ static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
       // past the table must resolve to nothing rather than index it.
       if (slot >= static_cast<int16_t>(lightmap.light_uids.size()))
         slot = LIGHTMAP_NO_LIGHT_SLOT;
+    }
+
+    chart.unwrap.vertices.resize(network::read_var_uint(r));
+    for (unwrapped_vertex_t &vertex : chart.unwrap.vertices)
+    {
+      vertex.xref = read_u32(r);
+      vertex.uv.x = read_f32(r);
+      vertex.uv.y = read_f32(r);
+    }
+    const uint32_t triangle_count = network::read_var_uint(r);
+    chart.unwrap.faces.resize(triangle_count);
+    chart.unwrap.indices.resize(static_cast<size_t>(triangle_count) * 3);
+    for (size_t t = 0; t < triangle_count; ++t)
+    {
+      chart.unwrap.faces[t] = read_u32(r);
+      for (size_t corner = 0; corner < 3; ++corner)
+        chart.unwrap.indices[t * 3 + corner] = read_u32(r);
     }
   }
 

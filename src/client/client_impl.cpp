@@ -253,9 +253,17 @@ bool Tick()
 
   {
     FRAME_ZONE("renderer::render_frame (submit + present)");
-    const renderer::tonemap_settings_t tonemap{
-        state_manager::get_client_context().cvars->r_exposure};
-    renderer::render_frame(frame_passes, frame_ui, tonemap);
+    const cvars::cvar_state_t &cvars = *state_manager::get_client_context().cvars;
+    const renderer::tonemap_settings_t tonemap{cvars.r_exposure};
+
+    renderer::shadow_settings_t shadows;
+    shadows.map_size             = (uint32_t)std::max(cvars.r_shadow_map_size, 0);
+    shadows.layer_count          = (uint32_t)std::max(cvars.r_shadow_layer_count, 0);
+    shadows.bias_constant        = cvars.r_shadow_bias_constant;
+    shadows.bias_slope           = cvars.r_shadow_bias_slope;
+    shadows.normal_offset_texels = cvars.r_shadow_normal_offset;
+    shadows.pcf_radius           = cvars.r_shadow_pcf_radius;
+    renderer::render_frame(frame_passes, frame_ui, tonemap, shadows);
   }
 
   // WHAT WAS ON SCREEN, recorded at the moment it becomes true. A shot is

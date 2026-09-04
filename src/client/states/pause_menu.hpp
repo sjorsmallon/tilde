@@ -1,15 +1,5 @@
 #pragma once
 
-// The in-game pause overlay: the same vertical list the main menu is, over a
-// dimmed frame of the game that is still being drawn behind it.
-//
-// It owns no state of its own -- the screen is a ui::list_menu_t held by
-// Play_State and rebuilt each time the menu opens, exactly as the main menu is
-// rebuilt per visit. What lives here is the row table, the item enum the caller
-// switches over, and the one policy that is this menu's rather than the widget's:
-// CANCEL RESOLVES TO RESUME, because backing out of a pause menu and choosing
-// "Resume" are the same act.
-
 #include "../ui/list_menu.hpp"
 
 #include <cstdint>
@@ -18,9 +8,6 @@
 namespace client
 {
 
-// The rows, in display order. What activating one DOES stays at the call site --
-// the switch is in play_state, which is the only thing that knows what leaving
-// the world means.
 enum class pause_menu_item_t : uint8_t
 {
   resume,

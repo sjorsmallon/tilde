@@ -168,73 +168,83 @@ void build_brush_charts(entity_uid_t object_uid, const brush_geometry_t &brush,
   }
 }
 
-// A static mesh's chart is a PLANE of it: every triangle on that plane, adjacent
-// or not, shares one chart, so the (uid, plane) key stays unique without a
-// second identity. A sphere is a chart per facet, which is wasteful and correct;
-// the runtime shades with the vertex normal, so the facet only decides where the
-// texels are.
+// A static mesh's charts are xatlas's (lightmap_unwrap_plan.md step 2): the
+// unwrap is the chart's coverage and its twin, and the record keeps a plane
+// only as a descriptor -- the reach report names a face by its normal -- never
+// as a key. The size steps are try_build_chart's over the unwrap's extent; the
+// anchor snap is not needed, since chart space already starts at the min corner.
 void build_static_mesh_charts(entity_uid_t object_uid, const static_mesh_geometry_t &static_mesh,
                               const lightmap_bake_settings_t &settings,
                               int max_covered_in_texels, std::vector<lightmap_chart_t> &charts)
 {
-  const std::vector<world_triangle_t> triangles = static_mesh_world_triangles(static_mesh);
-  if (triangles.empty())
+  std::vector<chart_unwrap_t> unwraps =
+      unwrap_static_mesh(static_mesh, settings.texels_per_world_unit);
+  if (unwraps.empty())
   {
-    log_warning("[lightmap] static mesh {} names no mesh that resolves; it gets no charts.",
+    log_warning("[lightmap] static mesh {} unwrapped to nothing; it gets no charts.",
                 object_uid);
     return;
   }
+  const std::vector<vertex_xnu> world = static_mesh_world_vertices(static_mesh);
 
-  struct planar_group_t
+  for (chart_unwrap_t& unwrap : unwraps)
   {
-    Plane plane;
-    std::vector<size_t> triangles;
-  };
-  std::vector<planar_group_t> groups;
+    linalg::vec2 extent{0.f, 0.f};
+    for (const unwrapped_vertex_t& vertex : unwrap.vertices)
+      extent = {std::max(extent.x, vertex.uv.x), std::max(extent.y, vertex.uv.y)};
 
-  constexpr float SAME_NORMAL_COSINE = 0.9999f;
-  constexpr float SAME_PLANE_DISTANCE = 0.05f;
-
-  for (size_t t = 0; t < triangles.size(); ++t)
-  {
-    if (triangles[t].is_degenerate()) continue;
-
-    planar_group_t *group = nullptr;
-    for (planar_group_t &candidate : groups)
+    const float world_units_per_texel = density_that_fits(
+        extent.x, extent.y, 1.f / settings.texels_per_world_unit, max_covered_in_texels);
+    const int width_in_texels =
+        chart_extent_in_texels(extent.x, world_units_per_texel, settings.gutter_in_texels);
+    const int height_in_texels =
+        chart_extent_in_texels(extent.y, world_units_per_texel, settings.gutter_in_texels);
+    if (width_in_texels > settings.max_chart_extent_in_texels ||
+        height_in_texels > settings.max_chart_extent_in_texels)
     {
-      if (linalg::dot(candidate.plane.normal, triangles[t].normal) < SAME_NORMAL_COSINE)
-        continue;
-      if (std::abs(linalg::dot(triangles[t].corners[0] - candidate.plane.point,
-                               candidate.plane.normal)) > SAME_PLANE_DISTANCE)
-        continue;
-      group = &candidate;
-      break;
+      log_error("[lightmap] static mesh {} produced a {}x{} chart past the {} cap after "
+                "the density was already lowered to fit; it gets no chart.",
+                object_uid, width_in_texels, height_in_texels,
+                settings.max_chart_extent_in_texels);
+      continue;
     }
-    if (!group)
+
+    lightmap_chart_t chart;
+    chart.object_uid = object_uid;
+    chart.world_units_per_texel = world_units_per_texel;
+    chart.atlas_rect.width = width_in_texels;
+    chart.atlas_rect.height = height_in_texels;
+
+    chart.triangles.reserve(unwrap.indices.size());
+    chart.twins.reserve(unwrap.faces.size());
+    linalg::vec3 area_normal{0.f, 0.f, 0.f};
+    linalg::vec3 centroid{0.f, 0.f, 0.f};
+    for (size_t t = 0; t < unwrap.faces.size(); ++t)
     {
-      groups.push_back({triangles[t].plane(), {}});
-      group = &groups.back();
+      chart_triangle_twin_t twin;
+      for (uint32_t corner = 0; corner < 3; ++corner)
+      {
+        const unwrapped_vertex_t& vertex = unwrap.vertices[unwrap.indices[t * 3 + corner]];
+        if (vertex.xref >= world.size())
+          fatal_error("[lightmap] static mesh {}'s unwrap names vertex {} of {}.",
+                      object_uid, vertex.xref, world.size());
+        chart.triangles.push_back(vertex.uv);
+        twin.corners[corner] = world[vertex.xref].position;
+        twin.normals[corner] = world[vertex.xref].normal;
+        centroid = centroid + twin.corners[corner];
+      }
+      area_normal = area_normal + linalg::cross(twin.corners[1] - twin.corners[0],
+                                                twin.corners[2] - twin.corners[0]);
+      chart.twins.push_back(twin);
     }
-    group->triangles.push_back(t);
-  }
 
-  std::vector<linalg::vec3> points;
-  for (const planar_group_t &group : groups)
-  {
-    points.clear();
-    for (size_t t : group.triangles)
-      for (const linalg::vec3 &corner : triangles[t].corners)
-        points.push_back(corner);
+    const float area_length = linalg::length(area_normal);
+    chart.plane.normal = area_length > 1e-6f ? area_normal * (1.f / area_length)
+                                             : chart.twins[0].normals[0];
+    chart.plane.point = centroid * (1.f / (float)chart.triangles.size());
+    chart.unwrap = std::move(unwrap);
 
-    std::optional<lightmap_chart_t> chart = try_build_chart(
-        object_uid, group.plane, points, 1.f, settings, max_covered_in_texels);
-    if (!chart) continue;
-
-    chart->triangles.reserve(points.size());
-    for (const linalg::vec3 &point : points)
-      chart->triangles.push_back(to_chart_space(*chart, point));
-
-    charts.push_back(std::move(*chart));
+    charts.push_back(std::move(chart));
   }
 }
 
@@ -379,34 +389,13 @@ linalg::vec3 chart_space_to_world(const lightmap_chart_t &chart,
 // Even-odd crossing rather than a winding-sign test: the chart basis is picked
 // from the normal alone, so cross(u, v) is the normal on only some faces and the
 // polygon's handedness in chart space is not fixed.
-bool chart_space_is_inside_face(const lightmap_chart_t &chart,
-                                const linalg::vec2 &point)
+bool polygon_contains(Span<const linalg::vec2> polygon, const linalg::vec2& point)
 {
-  if (chart.polygon.size() < 3)
-  {
-    // A static mesh chart: inside any of its triangles. Signs rather than a
-    // winding order, for the reason above.
-    const auto side = [](const linalg::vec2 &a, const linalg::vec2 &b,
-                         const linalg::vec2 &p) {
-      return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-    };
-    for (size_t i = 0; i + 2 < chart.triangles.size(); i += 3)
-    {
-      const float ab = side(chart.triangles[i], chart.triangles[i + 1], point);
-      const float bc = side(chart.triangles[i + 1], chart.triangles[i + 2], point);
-      const float ca = side(chart.triangles[i + 2], chart.triangles[i], point);
-      const bool any_negative = ab < 0.f || bc < 0.f || ca < 0.f;
-      const bool any_positive = ab > 0.f || bc > 0.f || ca > 0.f;
-      if (!(any_negative && any_positive)) return true;
-    }
-    return false;
-  }
-
   bool inside = false;
-  for (size_t i = 0, j = chart.polygon.size() - 1; i < chart.polygon.size(); j = i++)
+  for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++)
   {
-    const linalg::vec2 &a = chart.polygon[i];
-    const linalg::vec2 &b = chart.polygon[j];
+    const linalg::vec2& a = polygon[i];
+    const linalg::vec2& b = polygon[j];
     if ((a.y > point.y) == (b.y > point.y)) continue;
     const float crossing_x = (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x;
     if (point.x < crossing_x) inside = !inside;
@@ -414,16 +403,68 @@ bool chart_space_is_inside_face(const lightmap_chart_t &chart,
   return inside;
 }
 
-linalg::vec3 texel_world_position(const lightmap_chart_t &chart, int texel_x, int texel_y)
+float twice_signed_area(const linalg::vec2& a, const linalg::vec2& b, const linalg::vec2& p)
 {
-  return chart_space_to_world(chart,
-                              texel_center_in_chart_space(chart, texel_x, texel_y));
+  return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
 }
 
-bool texel_is_inside_face(const lightmap_chart_t &chart, int texel_x, int texel_y)
+texel_sample_t sample_chart(const lightmap_chart_t& chart, const linalg::vec2& chart_space)
 {
-  return chart_space_is_inside_face(
-      chart, texel_center_in_chart_space(chart, texel_x, texel_y));
+  texel_sample_t sample;
+
+  if (chart.polygon.size() >= 3)
+  {
+    if (!polygon_contains(Span<const linalg::vec2>(chart.polygon.data(),
+                                                   (uint32_t)chart.polygon.size()),
+                          chart_space))
+      return sample;
+    sample.on_surface = true;
+    sample.position = chart_space_to_world(chart, chart_space);
+    sample.normal = chart.plane.normal;
+    return sample;
+  }
+
+  if (chart.twins.size() * 3 != chart.triangles.size())
+    fatal_error("[lightmap] object {}'s chart carries {} triangles and {} twins; a triangle "
+                "chart carries one twin per triangle.",
+                chart.object_uid, chart.triangles.size() / 3, chart.twins.size());
+
+  // Signs rather than a winding order, for the reason polygon_contains gives.
+  for (size_t twin_index = 0; twin_index < chart.twins.size(); ++twin_index)
+  {
+    const linalg::vec2& a = chart.triangles[twin_index * 3 + 0];
+    const linalg::vec2& b = chart.triangles[twin_index * 3 + 1];
+    const linalg::vec2& c = chart.triangles[twin_index * 3 + 2];
+    const float weight_c = twice_signed_area(a, b, chart_space);
+    const float weight_a = twice_signed_area(b, c, chart_space);
+    const float weight_b = twice_signed_area(c, a, chart_space);
+    const bool any_negative = weight_a < 0.f || weight_b < 0.f || weight_c < 0.f;
+    const bool any_positive = weight_a > 0.f || weight_b > 0.f || weight_c > 0.f;
+    if (any_negative && any_positive) continue;
+
+    const float total = weight_a + weight_b + weight_c;
+    if (total == 0.f) continue;
+
+    const chart_triangle_twin_t& twin = chart.twins[twin_index];
+    const float inverse_total = 1.f / total;
+    sample.on_surface = true;
+    sample.position = twin.corners[0] * (weight_a * inverse_total) +
+                      twin.corners[1] * (weight_b * inverse_total) +
+                      twin.corners[2] * (weight_c * inverse_total);
+    const linalg::vec3 blended_normal = twin.normals[0] * (weight_a * inverse_total) +
+                                        twin.normals[1] * (weight_b * inverse_total) +
+                                        twin.normals[2] * (weight_c * inverse_total);
+    const float length = linalg::length(blended_normal);
+    sample.normal = length > 1e-6f ? blended_normal * (1.f / length) : chart.plane.normal;
+    return sample;
+  }
+
+  return sample;
+}
+
+texel_sample_t sample_texel(const lightmap_chart_t& chart, int texel_x, int texel_y)
+{
+  return sample_chart(chart, texel_center_in_chart_space(chart, texel_x, texel_y));
 }
 
 linalg::vec2 chart_space_to_atlas_texel(const lightmap_chart_t &chart,
@@ -437,15 +478,23 @@ linalg::vec2 chart_space_to_atlas_texel(const lightmap_chart_t &chart,
               chart_space.y / chart.world_units_per_texel};
 }
 
+linalg::vec3 lightmap_uv_from_chart_space(const lightmap_chart_t &chart,
+                                          const lightmap_bake_settings_t &settings,
+                                          const lightmap_atlas_t &atlas,
+                                          const linalg::vec2 &chart_space)
+{
+  const linalg::vec2 texel = chart_space_to_atlas_texel(chart, settings, chart_space);
+  const float size = (float)atlas.size_in_texels;
+  return {texel.x / size, texel.y / size, (float)chart.page};
+}
+
 linalg::vec3 lightmap_uv_for(const lightmap_chart_t &chart,
                              const lightmap_bake_settings_t &settings,
                              const lightmap_atlas_t &atlas,
                              const linalg::vec3 &world_position)
 {
-  const linalg::vec2 texel =
-      chart_space_to_atlas_texel(chart, settings, to_chart_space(chart, world_position));
-  const float size = (float)atlas.size_in_texels;
-  return {texel.x / size, texel.y / size, (float)chart.page};
+  return lightmap_uv_from_chart_space(chart, settings, atlas,
+                                      to_chart_space(chart, world_position));
 }
 
 } // namespace shared
@@ -698,6 +747,15 @@ void set_lightmap_geometry_id(lightmap_t &lightmap)
     mix(&chart.world_units_per_texel, sizeof(chart.world_units_per_texel));
     mix(&chart.atlas_rect, sizeof(chart.atlas_rect));
     mix(&chart.page, sizeof(chart.page));
+
+    // The unwrap is what a mesh vertex is built from, so it is in too.
+    for (const unwrapped_vertex_t &vertex : chart.unwrap.vertices)
+    {
+      mix(&vertex.xref, sizeof(vertex.xref));
+      mix(&vertex.uv, sizeof(vertex.uv));
+    }
+    for (uint32_t index : chart.unwrap.indices) mix(&index, sizeof(index));
+    for (uint32_t face : chart.unwrap.faces) mix(&face, sizeof(face));
   }
 
   lightmap.geometry_id = hash;

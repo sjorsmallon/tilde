@@ -479,6 +479,28 @@ static int test_baked_primitives_are_wound_outward()
   return 0;
 }
 
+// An OBJ with no `vn` loads with unit normals that agree with its faces
+// (lightmap_unwrap_plan.md step 5), rather than the zeros that made every such
+// mesh read as bare texture under any bake.
+static int test_an_obj_without_normals_derives_them()
+{
+  const char* text = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n";
+  const assets::mesh_asset_t mesh = assets::decode_obj(
+      Span<const uint8_t>((const uint8_t*)text, (uint32_t)strlen(text)), "no_normals.obj");
+
+  assert(mesh.vertices.size() == 4);
+  assert(mesh.indices.size() == 6);
+  for (const vertex_xnu& vertex : mesh.vertices)
+  {
+    assert(std::abs(linalg::length(vertex.normal) - 1.f) < 1e-5f);
+    // (1,0,0) x (1,1,0) is +z: the winding's own normal.
+    assert(vertex.normal.z > 0.999f);
+  }
+
+  printf("  PASS: test_an_obj_without_normals_derives_them\n");
+  return 0;
+}
+
 int main()
 {
   printf("=== Asset System Tests ===\n");
@@ -507,6 +529,7 @@ int main()
   test_out_of_range_id_resolves_to_missing();
   test_one_cache_key_per_file();
   test_asset_package_round_trip();
+  test_an_obj_without_normals_derives_them();
   printf("All tests passed.\n");
   return 0;
 }

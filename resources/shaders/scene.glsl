@@ -11,6 +11,17 @@
 // premise ss4 rests the whole forward renderer on.
 #define MAX_LIGHTS 64
 
+// The shadow map pool's layer count -- renderer.hpp's MAX_SHADOW_LAYERS, and the
+// scene block's size assert is what keeps the two one number.
+#define MAX_SHADOW_LAYERS 8
+
+// scene.debug_flags, from r_debug_channel. One text for every fragment shader
+// that reads them, so a channel added here is a channel every shader can show.
+#define DEBUG_FLAG_RENDER_NORMALS           (1 << 0)
+#define DEBUG_FLAG_RENDER_UV                (1 << 1)
+#define DEBUG_FLAG_RENDER_PARALLAX_UV       (1 << 2)
+#define DEBUG_FLAG_RENDER_SHADOW_VISIBILITY (1 << 3)
+
 // `Light` and LIGHT_BAKED_SLOT are light_arrival.glsl's -- the struct sits with
 // the maths that reads it, so the shader tool's preview binds the same LAYOUT
 // out of its own UBO instead of a second declaration of it. Nothing here needs
@@ -33,8 +44,16 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // Where the slot-indexed region ends and the tail begins. Entries below it
     // are addressed by a chart's stored slots and by nothing else.
     int   baked_light_count;
-    int   _pad1;
+    // The light r_debug_channel = shadow_visibility shows, or -1 for none.
+    int   debug_shadow_light;
     Light lights[MAX_LIGHTS];
+    // Gate 9. Per layer of the shadow pool: the light's view-projection, and in
+    // shadow_layers.x the world size of one of its texels ONE UNIT from the
+    // light. A light names its layer in Light.radiance.w (direct_light.glsl).
+    mat4  shadow_view_projection[MAX_SHADOW_LAYERS];
+    vec4  shadow_layers[MAX_SHADOW_LAYERS];
+    // x = receiver normal offset in texels, y = PCF kernel radius in texels.
+    vec4  shadow_settings;
 } scene;
 
 #endif // SCENE_GLSL

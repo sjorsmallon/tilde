@@ -393,6 +393,37 @@ bool load_obj(Span<const uint8_t> bytes, const char *path, mesh_asset_t &out)
   if (out.materials.empty())
     out.submeshes.clear();
 
+  // A file with no `vn` leaves every normal zero, and N.L is then zero under
+  // every light. Derive them from the faces, area-weighted, as every importer
+  // does; a mesh that wants hard creases exports its own.
+  bool any_normal = false;
+  for (const vertex_xnu& vertex : out.vertices)
+    if (linalg::length(vertex.normal) > 0.f)
+    {
+      any_normal = true;
+      break;
+    }
+  if (!any_normal && !out.vertices.empty())
+  {
+    for (size_t at = 0; at + 2 < out.indices.size(); at += 3)
+    {
+      vertex_xnu& a = out.vertices[out.indices[at + 0]];
+      vertex_xnu& b = out.vertices[out.indices[at + 1]];
+      vertex_xnu& c = out.vertices[out.indices[at + 2]];
+      const vec3f face_normal =
+          linalg::cross(b.position - a.position, c.position - a.position);
+      a.normal = a.normal + face_normal;
+      b.normal = b.normal + face_normal;
+      c.normal = c.normal + face_normal;
+    }
+    for (vertex_xnu& vertex : out.vertices)
+    {
+      const float length = linalg::length(vertex.normal);
+      if (length > 0.f) vertex.normal = vertex.normal * (1.f / length);
+    }
+    log_warning("[obj] {} has no vertex normals; derived them from its faces.", path);
+  }
+
   // Normalize OBJ to 100-unit max extent so meshes are game-sized by default.
   // Scale uniformly around the origin so the pivot is preserved.
   //

@@ -691,6 +691,7 @@ entity
   "light.intensity" "54.8"
   "light.mode" "Mixed"
   "light.source_radius" "0"
+  "light.casts_shadows" "true"
   "range" "1465.1"
 }
 entity
@@ -703,6 +704,7 @@ entity
   "light.intensity" "217.2"
   "light.mode" "Mixed"
   "light.source_radius" "0"
+  "light.casts_shadows" "true"
   "range" "509.4"
   "inner_degrees" "20"
   "outer_degrees" "35"
@@ -717,7 +719,23 @@ entity
   "light.intensity" "76.6"
   "light.mode" "Baked"
   "light.source_radius" "0"
+  "light.casts_shadows" "true"
   "range" "1024"
   "inner_degrees" "26.5"
   "outer_degrees" "35"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "38"
+  "position" "-256 192 -1280"
+  "orientation" "0 0 0 1"
+  "light.color" "1 1 1"
+  "light.intensity" "512"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "512"
+  "inner_degrees" "33.8"
+  "outer_degrees" "44.9"
 }

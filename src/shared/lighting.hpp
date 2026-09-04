@@ -95,7 +95,31 @@ struct scene_light_t
   // comparison against this number. A light with no slot is one the atlas knows
   // nothing about, and is shaded with no baked shadow at all.
   int16_t      baked_slot = -1;
+
+  // Gate 9. Whether the light asked for a shadow map; the renderer decides which
+  // LAYER it gets per frame, ranked against the pool. Both copies of a Mixed
+  // light carry the same uid, which is how they end up naming the same layer.
+  bool         casts_shadows = true;
+  entity_uid_t uid           = null_entity_uid;
 };
+
+// What a light's shadow map is rendered and sampled through (gate 9). The texel
+// size is measured ONE UNIT from the light, so the receiver's normal offset is
+// `texel_size_at_unit_distance * distance` -- the same distance-divided-out
+// spelling source_radius uses for a directional light.
+struct shadow_projection_t
+{
+  linalg::mat4f view_projection;
+  float         texel_size_at_unit_distance = 0.f;
+};
+
+inline constexpr float SHADOW_NEAR_PLANE = 1.f;
+
+// A spot light's frustum IS its cone: outer angle as the fov, range as the far
+// plane. The cone is clamped to [1, 85] degrees of half angle, since a
+// perspective map cannot hold a hemisphere.
+[[nodiscard]] shadow_projection_t spot_shadow_projection(const scene_light_t &light,
+                                                         uint32_t             resolution);
 
 // The ONE fold from the three authoring light types; empty means "not a light".
 // It does NOT filter by mode -- see scene_light_t::mode.

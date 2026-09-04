@@ -242,6 +242,14 @@ constexpr uint32_t PASS_INDIRECT_L1_BINDING = 4;
 constexpr uint32_t PASS_PROBE_L0_BINDING    = 5;
 constexpr uint32_t PASS_PROBE_L1_BINDING    = 6; // three consecutive, one per axis
 constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 8;
+// Gate 9: the shadow map pool, ONE sampler2DArrayShadow every shadow map is a
+// layer of. Set 3 again -- a binding costs none of the ss5 ceiling -- and the
+// one image in the pass set that is the RENDERER's rather than the bake's, so
+// write_pass_image_descriptors reads it off the pool instead of the entry.
+// resources/shaders/direct_light.glsl spells it as a literal.
+constexpr uint32_t PASS_SHADOW_BINDING = 9;
+// The lightmap images, the scene block and the shadow array.
+constexpr uint32_t PASS_BINDING_COUNT = PASS_IMAGE_BINDING_COUNT + 2;
 
 // lightmap.glsl reads a vec4 of coverage against an ivec4 of slots, which is the
 // four in shared/lightmap.hpp seen from the other side.
@@ -490,7 +498,8 @@ struct gpu_light_t
 {
   float position[4];    // xyz world, w = baked slot or -1 (light_arrival.glsl's LIGHT_BAKED_SLOT)
   float direction[4];   // xyz normalized, w = the emitter's source radius
-  float radiance[4];    // rgb, already through shared/lighting.hpp's radiance_of
+  float radiance[4];    // rgb, already through shared/lighting.hpp's radiance_of;
+                        // w = shadow layer or -1 (direct_light.glsl's LIGHT_SHADOW_LAYER)
   float spot_params[4]; // cos(inner), cos(outer), range, type
 };
 
@@ -514,20 +523,29 @@ struct scene_uniform_t
   // the bound volume is the black stand-in and the fetch can be skipped.
   float       probe_origin[4];
   float       probe_inverse_extent[4];
-  int32_t     light_count       = 0;
-  int32_t     debug_flags       = 0;
-  int32_t     baked_light_count = 0;
-  int32_t     pad1              = 0;
+  int32_t     light_count        = 0;
+  int32_t     debug_flags        = 0;
+  int32_t     baked_light_count  = 0;
+  // The light r_debug_channel = shadow_visibility shows, or -1.
+  int32_t     debug_shadow_light = -1;
   gpu_light_t lights[MAX_SCENE_LIGHTS] = {};
+  // Gate 9: per layer of the shadow pool, the light's view-projection and (in
+  // .x) the world size of one of its texels at unit distance; then the receiver
+  // settings, x the normal offset in texels and y the PCF radius.
+  float       shadow_view_projection[MAX_SHADOW_LAYERS][16] = {};
+  float       shadow_layers[MAX_SHADOW_LAYERS][4]           = {};
+  float       shadow_settings[4]                            = {};
 };
 
-static_assert(sizeof(scene_uniform_t) == 144 + 64 * MAX_SCENE_LIGHTS,
+static_assert(sizeof(scene_uniform_t) ==
+                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 16,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 
-// Spelled as literals in mesh_lit.frag's -DPBR arm and in pbr.frag.
-constexpr int32_t DEBUG_FLAG_RENDER_NORMALS     = 1 << 0;
-constexpr int32_t DEBUG_FLAG_RENDER_UV          = 1 << 1;
-constexpr int32_t DEBUG_FLAG_RENDER_PARALLAX_UV = 1 << 2;
+// Spelled as literals in scene.glsl and in pbr.frag.
+constexpr int32_t DEBUG_FLAG_RENDER_NORMALS           = 1 << 0;
+constexpr int32_t DEBUG_FLAG_RENDER_UV                = 1 << 1;
+constexpr int32_t DEBUG_FLAG_RENDER_PARALLAX_UV       = 1 << 2;
+constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_VISIBILITY = 1 << 3;
 
 // One number in one place, so the lit, grid and blend paths cannot disagree.
 // It is composed as a diffuse term already (ambient * albedo), so it does NOT
@@ -539,7 +557,13 @@ constexpr float AMBIENT_FLOOR = 0.0477f;
 
 constexpr uint32_t MAX_VIEW_PASSES_PER_FRAME = 8;
 
-// MAX_FRAMES_IN_FLIGHT regions of MAX_VIEW_PASSES_PER_FRAME blocks, by dynamic offset.
+// A view pass writes one scene block, and each shadow layer it claims writes
+// one more: the shadow pass runs the SAME vertex shaders, which read the
+// light's view-projection out of the same slot the camera's sits in.
+constexpr uint32_t MAX_SCENE_BLOCKS_PER_FRAME =
+    MAX_VIEW_PASSES_PER_FRAME * (1 + MAX_SHADOW_LAYERS);
+
+// MAX_FRAMES_IN_FLIGHT regions of MAX_SCENE_BLOCKS_PER_FRAME blocks, by dynamic offset.
 static VkBuffer       g_scene_uniform_buffer = VK_NULL_HANDLE;
 static VkDeviceMemory g_scene_uniform_memory = VK_NULL_HANDLE;
 static uint8_t       *g_scene_uniform_mapped = nullptr;
@@ -594,6 +618,44 @@ static VkSampler      g_hdr_sampler                              = VK_NULL_HANDL
 
 static VkRenderPass g_scene_render_pass   = VK_NULL_HANDLE;
 static VkRenderPass g_present_render_pass = VK_NULL_HANDLE;
+
+// --- Shadow maps (lighting_def.md gate 9) ---
+//
+// One D32 array image, every shadow map a layer of it, rendered through a
+// depth-only render pass before the scene pass and sampled by the scene pass
+// through a compare sampler. ONE image and not one per frame in flight: the
+// queue is in order and the render pass's external dependencies order frame
+// N+1's writes after frame N's reads, which is exactly what the shared depth
+// buffer already relies on.
+//
+// The pipelines are the mesh family's own VERTEX shaders with no fragment
+// stage -- mesh.vert reads the light's view-projection out of a scene block
+// written with that matrix, so no shadow shader exists to keep in step.
+constexpr VkFormat SHADOW_MAP_FORMAT = VK_FORMAT_D32_SFLOAT;
+
+struct shadow_pool_t
+{
+  VkImage        image      = VK_NULL_HANDLE;
+  VkDeviceMemory memory     = VK_NULL_HANDLE;
+  VkImageView    array_view = VK_NULL_HANDLE; // what the scene pass samples
+  VkImageView    layer_views[MAX_SHADOW_LAYERS]  = {};
+  VkFramebuffer  framebuffers[MAX_SHADOW_LAYERS] = {};
+  VkSampler      sampler     = VK_NULL_HANDLE;
+  uint32_t       size        = 0;
+  uint32_t       layer_count = 0;
+};
+
+static shadow_pool_t         g_shadow_pool;
+static uint32_t              g_shadow_requested_size        = 0;
+static uint32_t              g_shadow_requested_layer_count = 0;
+static VkRenderPass          g_shadow_render_pass           = VK_NULL_HANDLE;
+// The shadow pass binds a set of its own at set 3 -- the scene block and
+// nothing else -- so the pool is never a descriptor of the pass that writes it.
+static VkDescriptorSetLayout g_shadow_pass_ds_layout  = VK_NULL_HANDLE;
+static VkDescriptorPool      g_shadow_pass_pool       = VK_NULL_HANDLE;
+static VkDescriptorSet       g_shadow_pass_set        = VK_NULL_HANDLE;
+static VkPipelineLayout      g_shadow_pipeline_layout = VK_NULL_HANDLE;
+static VkPipeline            g_shadow_pipelines[2][2] = {}; // [skinned][cull none]
 static VkDescriptorPool g_descriptor_pool = VK_NULL_HANDLE;
 static VkCommandPool g_command_pool = VK_NULL_HANDLE;
 static std::vector<VkFramebuffer> g_swapchain_framebuffers;
@@ -1997,7 +2059,7 @@ static void create_scene_uniform_buffer()
   }
 
   const VkDeviceSize buffer_size =
-      (VkDeviceSize)g_scene_block_size * MAX_VIEW_PASSES_PER_FRAME * MAX_FRAMES_IN_FLIGHT;
+      (VkDeviceSize)g_scene_block_size * MAX_SCENE_BLOCKS_PER_FRAME * MAX_FRAMES_IN_FLIGHT;
   create_buffer(buffer_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 g_scene_uniform_buffer, g_scene_uniform_memory);
@@ -2008,15 +2070,15 @@ static void create_scene_uniform_buffer()
 // Running out reuses the last block; dropping the pass would draw nothing at all.
 static uint32_t write_scene_block(const scene_uniform_t &scene)
 {
-  if (g_scene_next_block >= MAX_VIEW_PASSES_PER_FRAME)
+  if (g_scene_next_block >= MAX_SCENE_BLOCKS_PER_FRAME)
   {
-    log_error("[renderer] more than {} view passes in one frame; the last block is being reused",
-              MAX_VIEW_PASSES_PER_FRAME);
-    g_scene_next_block = MAX_VIEW_PASSES_PER_FRAME - 1;
+    log_error("[renderer] more than {} scene blocks in one frame; the last block is being reused",
+              MAX_SCENE_BLOCKS_PER_FRAME);
+    g_scene_next_block = MAX_SCENE_BLOCKS_PER_FRAME - 1;
   }
 
   const uint32_t block =
-      g_current_frame_idx_in_swapchain * MAX_VIEW_PASSES_PER_FRAME + g_scene_next_block;
+      g_current_frame_idx_in_swapchain * MAX_SCENE_BLOCKS_PER_FRAME + g_scene_next_block;
   const uint32_t offset = block * g_scene_block_size;
   memcpy(g_scene_uniform_mapped + offset, &scene, sizeof(scene));
   ++g_scene_next_block;
@@ -2105,7 +2167,7 @@ static void create_mesh_resources()
 
   // A layout of its own: the atlas is a sampler2DArray, and a set allocated
   // against the sampler2D layout above reads garbage at the draw.
-  VkDescriptorSetLayoutBinding pass_bindings[PASS_IMAGE_BINDING_COUNT + 1]{};
+  VkDescriptorSetLayoutBinding pass_bindings[PASS_BINDING_COUNT]{};
   pass_bindings[0].binding         = PASS_LIGHTMAP_BINDING;
   pass_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[0].descriptorCount = 1;
@@ -2133,10 +2195,14 @@ static void create_mesh_resources()
     pass_bindings[5 + axis].descriptorCount = 1;
     pass_bindings[5 + axis].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
   }
+  pass_bindings[9].binding         = PASS_SHADOW_BINDING;
+  pass_bindings[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[9].descriptorCount = 1;
+  pass_bindings[9].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  pass_ds_layout_info.bindingCount = PASS_IMAGE_BINDING_COUNT + 1;
+  pass_ds_layout_info.bindingCount = PASS_BINDING_COUNT;
   pass_ds_layout_info.pBindings    = pass_bindings;
   if (vkCreateDescriptorSetLayout(g_device, &pass_ds_layout_info, nullptr, &g_pass_ds_layout) !=
       VK_SUCCESS)
@@ -2144,10 +2210,11 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Eight samplers per set -- irradiance, visibility, the bounce's two, and the
-  // probe volume's four.
+  // Nine samplers per set -- irradiance, visibility, the bounce's two, the
+  // probe volume's four, and the shadow pool.
   VkDescriptorPoolSize pass_pool_sizes[2] = {
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_LIGHTMAP_ATLASES * PASS_IMAGE_BINDING_COUNT},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+       MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + 1)},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_LIGHTMAP_ATLASES}};
   VkDescriptorPoolCreateInfo pass_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
   pass_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
@@ -2841,8 +2908,9 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
       PASS_INDIRECT_L1_BINDING, PASS_PROBE_L0_BINDING,    PASS_PROBE_L1_BINDING,
       PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2};
 
-  VkDescriptorImageInfo images[PASS_IMAGE_BINDING_COUNT]{};
-  VkWriteDescriptorSet writes[PASS_IMAGE_BINDING_COUNT]{};
+  constexpr uint32_t WRITE_COUNT = PASS_IMAGE_BINDING_COUNT + 1;
+  VkDescriptorImageInfo images[WRITE_COUNT]{};
+  VkWriteDescriptorSet writes[WRITE_COUNT]{};
   for (uint32_t at = 0; at < PASS_IMAGE_BINDING_COUNT; ++at)
   {
     images[at].sampler     = textures[at]->sampler;
@@ -2857,7 +2925,22 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
     writes[at].pImageInfo      = &images[at];
   }
 
-  vkUpdateDescriptorSets(g_device, PASS_IMAGE_BINDING_COUNT, writes, 0, nullptr);
+  // The shadow pool is the renderer's, not the bake's, and it is one image for
+  // every pass set -- which is why a pool rebuild rewrites every set.
+  if (g_shadow_pool.array_view == VK_NULL_HANDLE)
+    fatal_error("[renderer] the shadow pool must exist before any pass set is written");
+  const uint32_t shadow = PASS_IMAGE_BINDING_COUNT;
+  images[shadow].sampler     = g_shadow_pool.sampler;
+  images[shadow].imageView   = g_shadow_pool.array_view;
+  images[shadow].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+  writes[shadow]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[shadow].dstSet          = set;
+  writes[shadow].dstBinding      = PASS_SHADOW_BINDING;
+  writes[shadow].descriptorCount = 1;
+  writes[shadow].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[shadow].pImageInfo      = &images[shadow];
+
+  vkUpdateDescriptorSets(g_device, WRITE_COUNT, writes, 0, nullptr);
 }
 
 // Allocated per ATLAS; every one points at the same scene buffer, offset varying.
@@ -3566,6 +3649,456 @@ material_parameters_t material_parameters(material_handle_t handle)
 // The renderer's own textures and the material every mesh without one of its
 // own falls back to. Registered through the ordinary path, so they consume real
 // slots and there is no second code path to keep in sync.
+// --- Shadow maps (lighting_def.md gate 9) ---
+
+static void destroy_shadow_pool()
+{
+  shadow_pool_t &pool = g_shadow_pool;
+  for (uint32_t layer = 0; layer < MAX_SHADOW_LAYERS; ++layer)
+  {
+    if (pool.framebuffers[layer] != VK_NULL_HANDLE)
+      vkDestroyFramebuffer(g_device, pool.framebuffers[layer], nullptr);
+    if (pool.layer_views[layer] != VK_NULL_HANDLE)
+      vkDestroyImageView(g_device, pool.layer_views[layer], nullptr);
+  }
+  if (pool.sampler != VK_NULL_HANDLE)
+    vkDestroySampler(g_device, pool.sampler, nullptr);
+  if (pool.array_view != VK_NULL_HANDLE)
+    vkDestroyImageView(g_device, pool.array_view, nullptr);
+  if (pool.image != VK_NULL_HANDLE)
+    vkDestroyImage(g_device, pool.image, nullptr);
+  if (pool.memory != VK_NULL_HANDLE)
+    vkFreeMemory(g_device, pool.memory, nullptr);
+  pool = {};
+}
+
+// The array image, its layer framebuffers and the compare sampler. Requires the
+// shadow render pass. False leaves a partial pool behind for destroy_shadow_pool.
+static bool try_create_shadow_pool(uint32_t size, uint32_t layer_count)
+{
+  shadow_pool_t &pool = g_shadow_pool;
+
+  VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  image_info.imageType     = VK_IMAGE_TYPE_2D;
+  image_info.format        = SHADOW_MAP_FORMAT;
+  image_info.extent        = {size, size, 1};
+  image_info.mipLevels     = 1;
+  image_info.arrayLayers   = layer_count;
+  image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+  image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+  image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(g_device, &image_info, nullptr, &pool.image) != VK_SUCCESS)
+  {
+    log_error("[renderer] could not create a {}x{} shadow map pool of {} layer(s)", size, size,
+              layer_count);
+    return false;
+  }
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(g_device, pool.image, &requirements);
+  VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  allocation.allocationSize = requirements.size;
+  allocation.memoryTypeIndex =
+      find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(g_device, &allocation, nullptr, &pool.memory) != VK_SUCCESS)
+  {
+    log_error("[renderer] could not allocate the shadow map pool ({} bytes)",
+              (uint64_t)requirements.size);
+    return false;
+  }
+  vkBindImageMemory(g_device, pool.image, pool.memory, 0);
+
+  // Every layer lives in READ_ONLY between passes -- the render pass starts and
+  // ends there -- so a layer nothing rendered this frame is still in the layout
+  // its descriptor claims.
+  {
+    VkCommandBuffer      cmd = begin_single_command();
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image               = pool.image;
+    barrier.subresourceRange    = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, layer_count};
+    barrier.srcAccessMask       = 0;
+    barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &barrier);
+    end_single_command(cmd);
+  }
+
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image            = pool.image;
+  view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+  view_info.format           = SHADOW_MAP_FORMAT;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, layer_count};
+  if (vkCreateImageView(g_device, &view_info, nullptr, &pool.array_view) != VK_SUCCESS)
+  {
+    log_error("[renderer] could not create the shadow pool's array view");
+    return false;
+  }
+
+  for (uint32_t layer = 0; layer < layer_count; ++layer)
+  {
+    view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, layer, 1};
+    if (vkCreateImageView(g_device, &view_info, nullptr, &pool.layer_views[layer]) != VK_SUCCESS)
+    {
+      log_error("[renderer] could not create shadow layer {}'s view", layer);
+      return false;
+    }
+
+    VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    framebuffer_info.renderPass      = g_shadow_render_pass;
+    framebuffer_info.attachmentCount = 1;
+    framebuffer_info.pAttachments    = &pool.layer_views[layer];
+    framebuffer_info.width           = size;
+    framebuffer_info.height          = size;
+    framebuffer_info.layers          = 1;
+    if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr, &pool.framebuffers[layer]) !=
+        VK_SUCCESS)
+    {
+      log_error("[renderer] could not create shadow layer {}'s framebuffer", layer);
+      return false;
+    }
+  }
+
+  // Linear filtering on a compare sampler is the hardware 2x2 PCF; a GPU
+  // without it on D32 gets the point compare and a harder edge, and says so.
+  VkFormatProperties format_properties{};
+  vkGetPhysicalDeviceFormatProperties(g_physical_device, SHADOW_MAP_FORMAT, &format_properties);
+  const bool filter_linear = (format_properties.optimalTilingFeatures &
+                              VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+  if (!filter_linear)
+    log_warning("[renderer] this GPU cannot filter D32 shadow maps; shadow edges will be hard");
+
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter     = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  sampler_info.minFilter     = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  sampler_info.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  sampler_info.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  sampler_info.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  sampler_info.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE; // outside the map is LIT
+  sampler_info.compareEnable = VK_TRUE;
+  sampler_info.compareOp     = VK_COMPARE_OP_LESS_OR_EQUAL;
+  if (vkCreateSampler(g_device, &sampler_info, nullptr, &pool.sampler) != VK_SUCCESS)
+  {
+    log_error("[renderer] could not create the shadow compare sampler");
+    return false;
+  }
+
+  pool.size        = size;
+  pool.layer_count = layer_count;
+  return true;
+}
+
+// The mesh family's vertex shader with NO fragment stage: depth is all a shadow
+// map is. Depth bias is dynamic so the cvars tune it without a rebuild.
+static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none)
+{
+  VkShaderModuleCreateInfo vert_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  vert_info.codeSize = skinned ? sizeof(mesh_skinned_vert_spv) : sizeof(mesh_vert_spv);
+  vert_info.pCode    = skinned ? mesh_skinned_vert_spv : mesh_vert_spv;
+
+  VkShaderModule vert_module = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(g_device, &vert_info, nullptr, &vert_module) != VK_SUCCESS)
+  {
+    log_error("[renderer] failed to create a shadow vertex shader module");
+    return VK_NULL_HANDLE;
+  }
+
+  VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+  stage.stage  = VK_SHADER_STAGE_VERTEX_BIT;
+  stage.module = vert_module;
+  stage.pName  = "main";
+
+  VkVertexInputBindingDescription bindings[2]{};
+  bindings[0]            = {0, sizeof(vertex_xnu), VK_VERTEX_INPUT_RATE_VERTEX};
+  uint32_t binding_count = 1;
+
+  VkVertexInputAttributeDescription attributes[5]{};
+  attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, position)};
+  attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, normal)};
+  attributes[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex_xnu, uv)};
+  uint32_t attribute_count = 3;
+  if (skinned)
+  {
+    bindings[binding_count++] = {1, sizeof(assets::vertex_skin_t), VK_VERTEX_INPUT_RATE_VERTEX};
+    attributes[attribute_count++] = {3, 1, VK_FORMAT_R8G8B8A8_UINT,
+                                     offsetof(assets::vertex_skin_t, bone_indices)};
+    attributes[attribute_count++] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
+                                     offsetof(assets::vertex_skin_t, bone_weights)};
+  }
+
+  VkPipelineVertexInputStateCreateInfo vertex_input{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+  vertex_input.vertexBindingDescriptionCount   = binding_count;
+  vertex_input.pVertexBindingDescriptions      = bindings;
+  vertex_input.vertexAttributeDescriptionCount = attribute_count;
+  vertex_input.pVertexAttributeDescriptions    = attributes;
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount  = 1;
+
+  // The material's own culling, never front-face culling: on a brush level a
+  // one-sided face is a wall (lighting_def.md gate 9).
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode     = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth       = 1.0f;
+  rasterizer.cullMode        = cull_none ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace       = HOUSE_FRONT_FACE;
+  rasterizer.depthBiasEnable = VK_TRUE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+  depth_stencil.depthTestEnable  = VK_TRUE;
+  depth_stencil.depthWriteEnable = VK_TRUE;
+  depth_stencil.depthCompareOp   = VK_COMPARE_OP_LESS;
+
+  VkPipelineColorBlendStateCreateInfo color_blending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blending.attachmentCount = 0;
+
+  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                                     VK_DYNAMIC_STATE_DEPTH_BIAS};
+  VkPipelineDynamicStateCreateInfo dynamic_state{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 3;
+  dynamic_state.pDynamicStates    = dynamic_states;
+
+  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipeline_info.stageCount          = 1;
+  pipeline_info.pStages             = &stage;
+  pipeline_info.pVertexInputState   = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState      = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState   = &multisampling;
+  pipeline_info.pDepthStencilState  = &depth_stencil;
+  pipeline_info.pColorBlendState    = &color_blending;
+  pipeline_info.pDynamicState       = &dynamic_state;
+  pipeline_info.layout              = g_shadow_pipeline_layout;
+  pipeline_info.renderPass          = g_shadow_render_pass;
+  pipeline_info.subpass             = 0;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
+      VK_SUCCESS)
+  {
+    log_error("[renderer] failed to create a shadow pipeline");
+  }
+  vkDestroyShaderModule(g_device, vert_module, nullptr);
+  return pipeline;
+}
+
+// After create_mesh_resources (it borrows the skinning and material layouts)
+// and BEFORE create_default_resources: the white lightmap's pass set binds the
+// pool, so the pool has to be there first.
+static void create_shadow_resources()
+{
+  VkAttachmentDescription depth{};
+  depth.format         = SHADOW_MAP_FORMAT;
+  depth.samples        = VK_SAMPLE_COUNT_1_BIT;
+  depth.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  depth.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+  depth.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  depth.initialLayout  = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+  depth.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+  VkAttachmentReference depth_ref{0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+  VkSubpassDescription subpass{};
+  subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpass.pDepthStencilAttachment = &depth_ref;
+
+  // In: whatever last sampled or wrote the layer is done. Out: the scene pass's
+  // fragment shaders see the depth this pass wrote.
+  VkSubpassDependency dependencies[2] = {};
+  dependencies[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+  dependencies[0].dstSubpass    = 0;
+  dependencies[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT |
+                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  dependencies[0].dstStageMask  = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+  dependencies[1].srcSubpass    = 0;
+  dependencies[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+  dependencies[1].srcStageMask  = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  dependencies[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  VkRenderPassCreateInfo render_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+  render_pass_info.attachmentCount = 1;
+  render_pass_info.pAttachments    = &depth;
+  render_pass_info.subpassCount    = 1;
+  render_pass_info.pSubpasses      = &subpass;
+  render_pass_info.dependencyCount = 2;
+  render_pass_info.pDependencies   = dependencies;
+  if (vkCreateRenderPass(g_device, &render_pass_info, nullptr, &g_shadow_render_pass) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the shadow render pass");
+  }
+
+  // The shadow pass's own set 3: the scene block alone. Set 1 stays the skinning
+  // layout so a skinned caster binds the very allocation the scene pass draws.
+  VkDescriptorSetLayoutBinding scene_binding{};
+  scene_binding.binding         = PASS_SCENE_BINDING;
+  scene_binding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+  scene_binding.descriptorCount = 1;
+  scene_binding.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT;
+
+  VkDescriptorSetLayoutCreateInfo ds_layout_info{
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  ds_layout_info.bindingCount = 1;
+  ds_layout_info.pBindings    = &scene_binding;
+  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_shadow_pass_ds_layout) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the shadow pass descriptor set layout");
+  }
+
+  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1};
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.maxSets       = 1;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes    = &pool_size;
+  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_shadow_pass_pool) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the shadow pass descriptor pool");
+
+  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  allocation.descriptorPool     = g_shadow_pass_pool;
+  allocation.descriptorSetCount = 1;
+  allocation.pSetLayouts        = &g_shadow_pass_ds_layout;
+  if (vkAllocateDescriptorSets(g_device, &allocation, &g_shadow_pass_set) != VK_SUCCESS)
+    fatal_error("[renderer] could not allocate the shadow pass descriptor set");
+
+  VkDescriptorBufferInfo scene{};
+  scene.buffer = g_scene_uniform_buffer;
+  scene.offset = 0;
+  scene.range  = g_scene_block_size;
+  VkWriteDescriptorSet scene_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  scene_write.dstSet          = g_shadow_pass_set;
+  scene_write.dstBinding      = PASS_SCENE_BINDING;
+  scene_write.descriptorCount = 1;
+  scene_write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+  scene_write.pBufferInfo     = &scene;
+  vkUpdateDescriptorSets(g_device, 1, &scene_write, 0, nullptr);
+
+  // Sets 0 and 2 are placeholders the vertex shaders never touch; they exist so
+  // set 1 and set 3 sit where the mesh layout puts them.
+  VkDescriptorSetLayout set_layouts[PASS_DESCRIPTOR_SET + 1];
+  set_layouts[0] = g_material_ds_layout;
+  set_layouts[1] = g_skinning_uniforms.ds_layout;
+  for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
+    set_layouts[1 + layer] = g_material_ds_layout;
+  set_layouts[PASS_DESCRIPTOR_SET] = g_shadow_pass_ds_layout;
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(mesh_push_constants_t);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = PASS_DESCRIPTOR_SET + 1;
+  layout_info.pSetLayouts            = set_layouts;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_shadow_pipeline_layout) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the shadow pipeline layout");
+  }
+
+  for (int skinned = 0; skinned < 2; ++skinned)
+    for (int cull_none = 0; cull_none < 2; ++cull_none)
+      g_shadow_pipelines[skinned][cull_none] = create_shadow_pipeline(skinned == 1, cull_none == 1);
+
+  const shadow_settings_t defaults{};
+  g_shadow_requested_size        = defaults.map_size;
+  g_shadow_requested_layer_count = defaults.layer_count;
+  if (!try_create_shadow_pool(defaults.map_size, defaults.layer_count))
+    fatal_error("[renderer] could not create the shadow map pool");
+}
+
+static void destroy_shadow_resources()
+{
+  destroy_shadow_pool();
+  for (int skinned = 0; skinned < 2; ++skinned)
+    for (int cull_none = 0; cull_none < 2; ++cull_none)
+      if (g_shadow_pipelines[skinned][cull_none] != VK_NULL_HANDLE)
+        vkDestroyPipeline(g_device, g_shadow_pipelines[skinned][cull_none], nullptr);
+  if (g_shadow_pipeline_layout != VK_NULL_HANDLE)
+    vkDestroyPipelineLayout(g_device, g_shadow_pipeline_layout, nullptr);
+  if (g_shadow_pass_pool != VK_NULL_HANDLE)
+    vkDestroyDescriptorPool(g_device, g_shadow_pass_pool, nullptr);
+  if (g_shadow_pass_ds_layout != VK_NULL_HANDLE)
+    vkDestroyDescriptorSetLayout(g_device, g_shadow_pass_ds_layout, nullptr);
+  if (g_shadow_render_pass != VK_NULL_HANDLE)
+    vkDestroyRenderPass(g_device, g_shadow_render_pass, nullptr);
+}
+
+// Rebuilds the pool when the cvars move, and rewrites every pass set to point
+// at the new image. Compared against the REQUEST rather than the pool, so a
+// request the pool could not honour is not retried every frame.
+static void ensure_shadow_pool(const shadow_settings_t &settings)
+{
+  if (settings.map_size == g_shadow_requested_size &&
+      settings.layer_count == g_shadow_requested_layer_count)
+    return;
+  g_shadow_requested_size        = settings.map_size;
+  g_shadow_requested_layer_count = settings.layer_count;
+
+  const uint32_t size        = std::clamp(settings.map_size, 256u, 8192u);
+  const uint32_t layer_count = std::clamp(settings.layer_count, 1u, MAX_SHADOW_LAYERS);
+  if (size != settings.map_size || layer_count != settings.layer_count)
+  {
+    log_warning("[renderer] shadow pool request {}x{} layers clamped to {}x{}",
+                settings.map_size, settings.layer_count, size, layer_count);
+  }
+  if (size == g_shadow_pool.size && layer_count == g_shadow_pool.layer_count)
+    return;
+
+  vkDeviceWaitIdle(g_device);
+  destroy_shadow_pool();
+  if (!try_create_shadow_pool(size, layer_count))
+  {
+    log_error("[renderer] could not build a {}-layer {}x{} shadow pool; keeping the defaults",
+              layer_count, size, size);
+    destroy_shadow_pool();
+    const shadow_settings_t defaults{};
+    if (!try_create_shadow_pool(defaults.map_size, defaults.layer_count))
+      fatal_error("[renderer] could not rebuild the default shadow map pool");
+  }
+
+  for (gpu_lightmap_t &entry : g_lightmaps)
+    if (entry.set != VK_NULL_HANDLE)
+      write_pass_image_descriptors(entry.set, entry);
+
+  log_terminal("[renderer] shadow pool: {} layers of {}x{}", g_shadow_pool.layer_count,
+               g_shadow_pool.size, g_shadow_pool.size);
+}
+
 static void create_default_resources()
 {
   assets::texture_asset_t white{};
@@ -4314,6 +4847,8 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     light.radiance[0] = source.radiance.x;
     light.radiance[1] = source.radiance.y;
     light.radiance[2] = source.radiance.z;
+    // No shadow layer until assign_shadow_layers hands one out.
+    light.radiance[3] = -1.0f;
 
     light.spot_params[0] = source.cos_inner;
     light.spot_params[1] = source.cos_outer;
@@ -4329,9 +4864,138 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   case cvars::Debug_Channel::parallax_uv:
     scene.debug_flags = DEBUG_FLAG_RENDER_PARALLAX_UV;
     break;
+  case cvars::Debug_Channel::shadow_visibility:
+    scene.debug_flags = DEBUG_FLAG_RENDER_SHADOW_VISIBILITY;
+    break;
   }
 
   return scene;
+}
+
+// A layer the frame's pool handed to one light, and what to draw into it.
+struct shadow_job_t
+{
+  uint32_t             layer = 0;
+  entities::Light_Mode mode  = entities::Light_Mode::Dynamic;
+  linalg::mat4f        view_projection;
+};
+
+// Everything render_frame settles about a pass before any render pass opens:
+// its scene block, where its draws' skinning allocations start in
+// g_draw_skinning, and the shadow layers its lights claimed.
+struct prepared_pass_t
+{
+  uint32_t scene_block_offset = 0;
+  uint32_t skinning_base      = 0;
+  Array<shadow_job_t, MAX_SHADOW_LAYERS> jobs;
+  uint32_t job_count = 0;
+};
+
+static std::vector<prepared_pass_t> g_prepared_passes;
+
+// Once per light per session, keyed by reason: the pool is fixed and the excess
+// is loud (gate 9), but loud once rather than sixty times a second.
+static std::vector<shared::entity_uid_t> g_shadow_warned_unsupported;
+static std::vector<shared::entity_uid_t> g_shadow_warned_overflow;
+
+static bool first_time_for(std::vector<shared::entity_uid_t> &warned, shared::entity_uid_t uid)
+{
+  if (std::find(warned.begin(), warned.end(), uid) != warned.end())
+    return false;
+  warned.push_back(uid);
+  return true;
+}
+
+// Ranks the pass's shadow-casting analytic lights by intensity over distance
+// squared to the camera and hands out the frame's remaining layers in that
+// order. Both copies of a Mixed light get the layer -- the tail one is what
+// ranked, the head one is what a lightmapped face reads -- and the CASTER SET
+// rides the job as the light's mode (decision K).
+static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_t &settings,
+                                 uint32_t &next_layer, scene_uniform_t &scene,
+                                 prepared_pass_t &prepared)
+{
+  struct candidate_t
+  {
+    uint32_t index;
+    float    score;
+    float    distance_squared;
+  };
+  candidate_t candidates[MAX_SCENE_LIGHTS];
+  uint32_t    candidate_count = 0;
+
+  const linalg::vec3f &eye = pass.view.camera.position;
+  for (int32_t index = scene.baked_light_count; index < scene.light_count; ++index)
+  {
+    const shared::scene_light_t &light = pass.lights[(uint32_t)index];
+    if (!light.casts_shadows || !shared::light_is_analytic(light.mode))
+      continue;
+    if (light.kind != shared::light_kind_t::Spot)
+    {
+      if (first_time_for(g_shadow_warned_unsupported, light.uid))
+      {
+        log_warning("[renderer] light {} is a {} light; only spot lights have shadow maps yet, "
+                    "so it draws unshadowed",
+                    light.uid,
+                    light.kind == shared::light_kind_t::Point ? "point" : "directional");
+      }
+      continue;
+    }
+
+    const linalg::vec3f to_light         = light.position - eye;
+    const float         distance_squared = std::max(linalg::dot(to_light, to_light), 1.0f);
+    const float strength = std::max({light.radiance.x, light.radiance.y, light.radiance.z});
+    candidates[candidate_count++] = {(uint32_t)index, strength / distance_squared,
+                                     distance_squared};
+  }
+
+  std::sort(candidates, candidates + candidate_count,
+            [](const candidate_t &a, const candidate_t &b) { return a.score > b.score; });
+
+  float nearest_distance_squared = 0.0f;
+  for (uint32_t at = 0; at < candidate_count; ++at)
+  {
+    const candidate_t           &candidate = candidates[at];
+    const shared::scene_light_t &light     = pass.lights[candidate.index];
+
+    if (next_layer >= g_shadow_pool.layer_count)
+    {
+      if (first_time_for(g_shadow_warned_overflow, light.uid))
+      {
+        log_warning("[renderer] light {} ranks past the {}-layer shadow pool and draws "
+                    "unshadowed; raise r_shadow_layer_count or turn casts_shadows off",
+                    light.uid, g_shadow_pool.layer_count);
+      }
+      continue;
+    }
+
+    const uint32_t                    layer = next_layer++;
+    const shared::shadow_projection_t projection =
+        shared::spot_shadow_projection(light, g_shadow_pool.size);
+
+    memcpy(scene.shadow_view_projection[layer], &projection.view_projection,
+           sizeof(scene.shadow_view_projection[layer]));
+    scene.shadow_layers[layer][0] = projection.texel_size_at_unit_distance;
+
+    scene.lights[candidate.index].radiance[3] = (float)layer;
+    if (light.uid != shared::null_entity_uid)
+    {
+      for (int32_t head = 0; head < scene.baked_light_count; ++head)
+        if (pass.lights[(uint32_t)head].uid == light.uid)
+          scene.lights[head].radiance[3] = (float)layer;
+    }
+
+    prepared.jobs[prepared.job_count++] = {layer, light.mode, projection.view_projection};
+
+    if (scene.debug_shadow_light < 0 || candidate.distance_squared < nearest_distance_squared)
+    {
+      scene.debug_shadow_light  = (int32_t)candidate.index;
+      nearest_distance_squared = candidate.distance_squared;
+    }
+  }
+
+  scene.shadow_settings[0] = settings.normal_offset_texels;
+  scene.shadow_settings[1] = (float)std::clamp(settings.pcf_radius, 0, 3);
 }
 
 // The tag is cast straight across into the scene block.
@@ -4339,11 +5003,111 @@ static_assert((int)shared::light_kind_t::Point == 0 && (int)shared::light_kind_t
                   (int)shared::light_kind_t::Directional == 2,
               "scene.glsl spells the light type tag as 0 point / 1 spot / 2 directional");
 
+// One depth-only render pass into one layer of the pool. The caster set is the
+// job's mode: a Mixed light's map skips static geometry, whose occlusion the
+// bake already holds (decision K); a Dynamic light's map takes everything.
+static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
+                                Span<const mesh_draw_t> draws,
+                                Span<const frame_uniform_allocation_t> skinning,
+                                const shadow_settings_t &settings)
+{
+  // The vertex shaders read view_projection out of the scene block, so the
+  // light's matrix goes in a block of its own and nothing else in it is read.
+  scene_uniform_t light_scene{};
+  memcpy(light_scene.view_projection, &job.view_projection, sizeof(light_scene.view_projection));
+  const uint32_t block_offset = write_scene_block(light_scene);
+
+  VkClearValue clear{};
+  clear.depthStencil = {1.0f, 0};
+
+  VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+  begin.renderPass        = g_shadow_render_pass;
+  begin.framebuffer       = g_shadow_pool.framebuffers[job.layer];
+  begin.renderArea.extent = {g_shadow_pool.size, g_shadow_pool.size};
+  begin.clearValueCount   = 1;
+  begin.pClearValues      = &clear;
+  vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+
+  VkViewport viewport{};
+  viewport.width    = (float)g_shadow_pool.size;
+  viewport.height   = (float)g_shadow_pool.size;
+  viewport.maxDepth = 1.0f;
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  VkRect2D scissor{};
+  scissor.extent = {g_shadow_pool.size, g_shadow_pool.size};
+  vkCmdSetScissor(cmd, 0, 1, &scissor);
+  vkCmdSetDepthBias(cmd, settings.bias_constant, 0.0f, settings.bias_slope);
+
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_shadow_pipeline_layout,
+                          PASS_DESCRIPTOR_SET, 1, &g_shadow_pass_set, 1, &block_offset);
+
+  VkPipeline bound_pipeline = VK_NULL_HANDLE;
+  for (uint32_t draw_index = 0; draw_index < draws.size(); ++draw_index)
+  {
+    const mesh_draw_t &draw = draws[draw_index];
+    if (draw.shadow_caster == shadow_caster_t::none || draw.fill == fill_mode_t::wireframe)
+      continue;
+    if (draw.shadow_caster == shadow_caster_t::static_geometry &&
+        job.mode == entities::Light_Mode::Mixed)
+      continue;
+    if (!draw.mesh.valid() || draw.mesh.index >= g_meshes.size())
+      continue; // the scene pass logs it
+
+    const gpu_mesh_t &mesh    = g_meshes[draw.mesh.index];
+    const bool        skinned = has_layout(mesh.layout, vertex_layout_t::skinned);
+    if (skinned && !skinning[draw_index].valid())
+      continue;
+
+    VkDeviceSize offsets[1] = {0};
+    vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertex_buffer, offsets);
+    if (skinned)
+    {
+      vkCmdBindVertexBuffers(cmd, 1, 1, &mesh.skin_buffer, offsets);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_shadow_pipeline_layout, 1,
+                              1, &skinning[draw_index].set, 1,
+                              &skinning[draw_index].dynamic_offset);
+    }
+    vkCmdBindIndexBuffer(cmd, mesh.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdPushConstants(cmd, g_shadow_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(draw.transform), &draw.transform);
+
+    for (const gpu_submesh_t &submesh : mesh.submeshes)
+    {
+      material_handle_t material = draw.material_overrides.size() > submesh.material_slot
+                                       ? draw.material_overrides[submesh.material_slot]
+                                       : mesh.default_materials[submesh.material_slot];
+      if (!material.valid() || material.index >= g_materials.size())
+        material = g_default_material;
+
+      // A translucent surface has no depth to give and a depth-less one asked
+      // not to be in the depth buffer at all.
+      const pipeline_state_t &state = g_materials[material.index].pipeline_state;
+      if (state.blend_mode == blend_mode_t::alpha || !state.depth_write)
+        continue;
+
+      const VkPipeline pipeline =
+          g_shadow_pipelines[skinned ? 1 : 0][state.cull_mode == cull_mode_t::none ? 1 : 0];
+      if (pipeline == VK_NULL_HANDLE)
+        continue; // already logged at creation
+      if (pipeline != bound_pipeline)
+      {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        bound_pipeline = pipeline;
+      }
+      vkCmdDrawIndexed(cmd, submesh.index_count, 1, submesh.index_offset, 0, 0);
+    }
+  }
+
+  vkCmdEndRenderPass(cmd);
+}
+
+// `skinning` is one allocation per draw, made by render_frame before any pass
+// opened so the shadow passes and this one bind the same bone matrices.
 static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws,
-                              lightmap_handle_t lightmap, uint32_t scene_block_offset)
+                              lightmap_handle_t lightmap, uint32_t scene_block_offset,
+                              Span<const frame_uniform_allocation_t> skinning)
 {
   g_draw_items.clear();
-  g_draw_skinning.assign(draws.size(), {});
 
   // Not optional: every mesh vertex shader reads view_projection out of this set.
   const VkDescriptorSet pass_set = resolve_pass_set(lightmap);
@@ -4366,12 +5130,8 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
 
     const gpu_mesh_t &mesh = g_meshes[draw.mesh.index];
 
-    if (has_layout(mesh.layout, vertex_layout_t::skinned))
-    {
-      g_draw_skinning[draw_index] = upload_skinning_matrices(mesh.skeleton, draw.pose);
-      if (!g_draw_skinning[draw_index].valid())
-        continue; // already logged; drawing it unposed would be a lie
-    }
+    if (has_layout(mesh.layout, vertex_layout_t::skinned) && !skinning[draw_index].valid())
+      continue; // already logged; drawing it unposed would be a lie
 
     for (uint32_t submesh_index = 0; submesh_index < mesh.submeshes.size(); ++submesh_index)
     {
@@ -4462,9 +5222,9 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
 
       if (has_layout(mesh.layout, vertex_layout_t::skinned))
       {
-        const frame_uniform_allocation_t &skinning = g_draw_skinning[item.draw_index];
+        const frame_uniform_allocation_t &draw_skinning = skinning[item.draw_index];
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout, 1, 1,
-                                &skinning.set, 1, &skinning.dynamic_offset);
+                                &draw_skinning.set, 1, &draw_skinning.dynamic_offset);
       }
       bound_draw = item.draw_index;
     }
@@ -5342,6 +6102,7 @@ bool init(SDL_Window *window)
   create_mesh_resources();
   create_ui_resources(); // after create_mesh_resources -- it borrows g_ui_texture_ds_layout
   create_tonemap_resources();
+  create_shadow_resources(); // before the defaults: the white lightmap's pass set binds the pool
   create_default_resources();
   init_particle_system();
 
@@ -5478,6 +6239,7 @@ void shutdown()
   destroy_debug_resources();
   destroy_ui_resources();
   destroy_tonemap_resources();
+  destroy_shadow_resources();
   cleanup_registered_resources();
 
   g_bind_pose_skinning.clear();
@@ -5586,9 +6348,12 @@ bool new_frame()
 }
 
 void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
-                  const tonemap_settings_t &tonemap)
+                  const tonemap_settings_t &tonemap, const shadow_settings_t &shadows)
 {
   VkCommandBuffer cmd = g_command_buffers[g_current_frame_idx_in_swapchain];
+
+  // Before anything is recorded: a pool rebuild waits for the device.
+  ensure_shadow_pool(shadows);
 
   // 1. Particle compute, OUTSIDE the render pass. The ordering is a Vulkan fact
   //    rather than a caller decision, which is why emitters ride the pass
@@ -5605,7 +6370,49 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       project_debug_texts(pass.view, *pass.debug);
   ImGui::Render();
 
-  // 3. The SCENE pass, into the HDR target, and every view pass inside it in the
+  // 3. Settle every pass before any render pass opens: its skinning uploads
+  //    (one allocation per draw, shared by its shadow passes and the scene
+  //    pass), the shadow layers its lights claim from the frame's pool, and
+  //    its scene block -- written LAST, since the layer assignment writes into
+  //    it.
+  g_draw_skinning.clear();
+  g_prepared_passes.clear();
+  uint32_t next_shadow_layer = 0;
+  for (const view_pass_t &pass : passes)
+  {
+    prepared_pass_t prepared{};
+    prepared.skinning_base = (uint32_t)g_draw_skinning.size();
+    for (const mesh_draw_t &draw : pass.draws)
+    {
+      frame_uniform_allocation_t allocation{};
+      if (draw.mesh.valid() && draw.mesh.index < g_meshes.size())
+      {
+        const gpu_mesh_t &mesh = g_meshes[draw.mesh.index];
+        if (has_layout(mesh.layout, vertex_layout_t::skinned))
+          allocation = upload_skinning_matrices(mesh.skeleton, draw.pose);
+      }
+      g_draw_skinning.push_back(allocation);
+    }
+
+    scene_uniform_t scene = build_scene_uniform(pass);
+    assign_shadow_layers(pass, shadows, next_shadow_layer, scene, prepared);
+    prepared.scene_block_offset = write_scene_block(scene);
+    g_prepared_passes.push_back(prepared);
+  }
+
+  // 4. The SHADOW passes, one depth-only render pass per claimed layer, ahead
+  //    of the scene pass that samples them.
+  for (uint32_t pass_index = 0; pass_index < passes.size(); ++pass_index)
+  {
+    const view_pass_t     &pass     = passes[pass_index];
+    const prepared_pass_t &prepared = g_prepared_passes[pass_index];
+    const Span<const frame_uniform_allocation_t> skinning(
+        g_draw_skinning.data() + prepared.skinning_base, pass.draws.size());
+    for (uint32_t job = 0; job < prepared.job_count; ++job)
+      record_shadow_layer(cmd, prepared.jobs[job], pass.draws, skinning, shadows);
+  }
+
+  // 5. The SCENE pass, into the HDR target, and every view pass inside it in the
   //    order given. Its framebuffer is indexed by frame in flight rather than by
   //    swapchain image: the target belongs to the frame that renders it.
   VkRenderPassBeginInfo render_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -5622,13 +6429,17 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 
   vkCmdBeginRenderPass(cmd, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-  for (const view_pass_t &pass : passes)
+  for (uint32_t pass_index = 0; pass_index < passes.size(); ++pass_index)
   {
+    const view_pass_t     &pass     = passes[pass_index];
+    const prepared_pass_t &prepared = g_prepared_passes[pass_index];
+
     apply_viewport(cmd, pass.view.viewport);
     const linalg::mat4f view_projection_matrix = view_projection(pass.view);
-    const uint32_t      scene_block_offset     = write_scene_block(build_scene_uniform(pass));
+    const Span<const frame_uniform_allocation_t> skinning(
+        g_draw_skinning.data() + prepared.skinning_base, pass.draws.size());
 
-    record_mesh_draws(cmd, pass.draws, pass.lightmap, scene_block_offset);
+    record_mesh_draws(cmd, pass.draws, pass.lightmap, prepared.scene_block_offset, skinning);
 
     if (!pass.particles.empty())
     {
@@ -5655,7 +6466,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 
   vkCmdEndRenderPass(cmd);
 
-  // 4. The PRESENT pass. The tonemap draw is first and covers every pixel, which
+  // 6. The PRESENT pass. The tonemap draw is first and covers every pixel, which
   //    is why the attachment needs no clear.
   VkRenderPassBeginInfo present_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
   present_pass_info.renderPass        = g_present_render_pass;
@@ -5686,7 +6497,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
                      sizeof(tonemap_push), &tonemap_push);
   vkCmdDraw(cmd, 3, 1, 0, 0);
 
-  // 5. The screen-space UI, over the tonemapped image and UNDER ImGui. On the
+  // 7. The screen-space UI, over the tonemapped image and UNDER ImGui. On the
   //    FAR side of the curve on purpose: UI colour is authored in display space,
   //    and a white 1.0 HUD element through the tonemap arrives grey.
   record_ui_draw_list(cmd, ui);

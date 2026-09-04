@@ -11,6 +11,7 @@
 // depending on the order its includer wrote its own #includes in.
 #include "scene.glsl"
 #include "light_arrival.glsl"
+#include "direct_light.glsl"
 
 // shared/lightmap.hpp's LIGHTMAP_LIGHTS_PER_CHART, and the renderer static_asserts
 // the two agree. Four is what fits a UNORM8x4 texel, which is why the sample
@@ -163,9 +164,11 @@ vec3 lightmap_direct_diffuse(vec3 N, vec3 world_position)
         Light         light   = scene.lights[slot];
         Light_Arrival arrival = light_arrival(light, world_position);
 
+        // Atlas visibility times the shadow map (decision K): independent
+        // blockers, so the product counts no occluder twice.
+        float visibility       = coverage[channel] * shadow_visibility(light, arrival, world_position, N);
         float normal_dot_light = max(dot(N, arrival.direction), 0.0);
-        diffuse += light.radiance.rgb *
-                   (arrival.attenuation * coverage[channel] * normal_dot_light) / PI;
+        diffuse += light.radiance.rgb * (arrival.attenuation * visibility * normal_dot_light) / PI;
     }
 
     return diffuse;

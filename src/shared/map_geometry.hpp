@@ -574,6 +574,18 @@ struct world_triangle_t
 [[nodiscard]] std::vector<world_triangle_t>
 static_mesh_world_triangles(const static_mesh_geometry_t &static_mesh);
 
+// The asset's vertices moved into world space, index for index -- what an
+// unwrapped vertex's xref names. Empty under the same condition as above.
+[[nodiscard]] std::vector<vertex_xnu>
+static_mesh_world_vertices(const static_mesh_geometry_t &static_mesh);
+
+// xatlas over the INSTANCE's world triangles (lightmap_unwrap_plan.md step 2), so
+// the density it sizes charts at is the instance's, scale included. One entry
+// per chart, uvs in world units from each chart's own min corner. Empty when
+// the mesh does not resolve or xatlas refuses it, and it says so.
+[[nodiscard]] std::vector<chart_unwrap_t>
+unwrap_static_mesh(const static_mesh_geometry_t &static_mesh, float texels_per_world_unit);
+
 // The mesh a LIGHTMAPPED static mesh draws as: the asset's triangles moved into
 // world space, one vertex per triangle CORNER, so every vertex belongs to exactly
 // one chart -- the pooled asset is welded, and a corner three faces share cannot

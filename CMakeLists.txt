@@ -310,6 +310,9 @@ add_custom_command(
 
 # 1. Game Shared (Static Library)
 # Contains logging, cvars, protos, common math
+# Vendored verbatim, so its warnings are not ours to fix.
+set_source_files_properties(src/shared/xatlas.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
+
 add_library(game_shared STATIC
     src/shared/file_watcher.hpp
     src/shared/file_watcher.cpp
@@ -373,6 +376,9 @@ add_library(game_shared STATIC
     src/shared/pathfinding.cpp
     src/shared/lighting.hpp
     src/shared/lightmap_bake.cpp
+    # xatlas, verbatim (MIT): the static mesh unwrap. lightmap_unwrap_plan.md.
+    src/shared/xatlas.h
+    src/shared/xatlas.cpp
     src/shared/lightmap_debug_image.cpp
     src/shared/lightmap_lights.cpp
     src/shared/lightmap_probes.cpp
@@ -543,7 +549,8 @@ set(PBR_SHADER_SOURCES ${SHADER_SRC_DIR}/mesh_lit.frag)
 
 set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.glsl
                     ${SHADER_SRC_DIR}/lightmap.glsl ${SHADER_SRC_DIR}/light_falloff.glsl
-                    ${SHADER_SRC_DIR}/light_arrival.glsl ${SHADER_SRC_DIR}/probes.glsl)
+                    ${SHADER_SRC_DIR}/light_arrival.glsl ${SHADER_SRC_DIR}/probes.glsl
+                    ${SHADER_SRC_DIR}/direct_light.glsl)
 
 set(SHADER_HEADERS "")
 
@@ -878,6 +885,12 @@ add_executable(lightmap_bake_test src/test/lightmap_bake_test.cpp)
 target_include_directories(lightmap_bake_test PRIVATE src)
 target_link_libraries(lightmap_bake_test PRIVATE game_shared)
 
+# 20a. Shadow Test (gate 9: a spot light's shadow map covers exactly its cone
+# and its range, and the receiver's texel size is the cone's)
+add_executable(shadow_test src/test/shadow_test.cpp)
+target_include_directories(shadow_test PRIVATE src)
+target_link_libraries(shadow_test PRIVATE game_shared)
+
 # 20b. Brush Test (convex hull, winding, tolerances, text round trip)
 add_executable(brush_test src/test/brush_test.cpp)
 target_include_directories(brush_test PRIVATE src)
@@ -1129,6 +1142,7 @@ set(GAME_TESTS
     map_migration_test
     navmesh_test
     lightmap_bake_test
+    shadow_test
     brush_test
     convex_decomposition_test
     cvar_test

@@ -352,6 +352,7 @@ struct Light
   float intensity = 1.0f;
   Light_Mode mode = Light_Mode::Baked;
   float source_radius = 0.0f;
+  bool casts_shadows = true;
 };
 
 struct Movement

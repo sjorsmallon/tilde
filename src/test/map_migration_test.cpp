@@ -469,6 +469,11 @@ int main()
     chart.atlas_rect            = {3, 5, 16, 24};
     chart.light_slots[0]        = 1;
     chart.light_slots[1]        = 0;
+    // A static mesh chart's unwrap: the one part of a chart the plane cannot
+    // re-derive, so a package that dropped it would draw every prop unlit.
+    chart.unwrap.vertices       = {{3, {1.5f, 2.5f}}, {4, {0.f, 4.f}}, {9, {7.f, 0.f}}};
+    chart.unwrap.indices        = {0, 1, 2};
+    chart.unwrap.faces          = {5};
 
     packaged.lightmap.charts                              = {chart};
     packaged.lightmap.settings.texels_per_world_unit      = 0.25f;
@@ -584,6 +589,14 @@ int main()
           a.origin.x != b.origin.x || a.origin.y != b.origin.y ||
           a.origin.z != b.origin.z || a.plane.normal.y != b.plane.normal.y)
         return fail("package: lightmap chart field drift");
+      if (a.unwrap.vertices.size() != b.unwrap.vertices.size() ||
+          a.unwrap.indices != b.unwrap.indices || a.unwrap.faces != b.unwrap.faces)
+        return fail("package: lightmap chart unwrap drift");
+      for (size_t v = 0; v < a.unwrap.vertices.size(); ++v)
+        if (a.unwrap.vertices[v].xref != b.unwrap.vertices[v].xref ||
+            a.unwrap.vertices[v].uv.x != b.unwrap.vertices[v].uv.x ||
+            a.unwrap.vertices[v].uv.y != b.unwrap.vertices[v].uv.y)
+          return fail("package: lightmap chart unwrap vertex drift");
     }
 
     // A map with no bake must round-trip as no bake, not as a zero-chart atlas

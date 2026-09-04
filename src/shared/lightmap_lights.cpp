@@ -243,10 +243,11 @@ std::vector<light_reach_on_face_t> probe_light_reach(
     for (int texel_y = 0; texel_y < height; texel_y += stride_y)
       for (int texel_x = 0; texel_x < width; texel_x += stride_x)
       {
-        if (!texel_is_inside_face(chart, texel_x, texel_y)) continue;
+        const texel_sample_t sample = sample_texel(chart, texel_x, texel_y);
+        if (!sample.on_surface) continue;
         ++face.sampled;
 
-        const linalg::vec3 position = texel_world_position(chart, texel_x, texel_y);
+        const linalg::vec3 position = sample.position;
 
         if (light.light.kind != light_kind_t::Directional)
         {
@@ -262,7 +263,7 @@ std::vector<light_reach_on_face_t> probe_light_reach(
           face.nearest_distance = 0.f;
         }
 
-        const light_arrival_t arrival = arrival_at(light.light, position, chart.plane.normal,
+        const light_arrival_t arrival = arrival_at(light.light, position, sample.normal,
                                                    directional_shadow_distance);
         if (!arrival.arrives) continue;
         ++face.arrives;
@@ -270,7 +271,7 @@ std::vector<light_reach_on_face_t> probe_light_reach(
 
         // One hard ray: the probe asks whether ANYTHING gets through, and a
         // penumbra sample count is not what separates lit from black.
-        if (light_visibility(bvh, position, chart.plane.normal, arrival, shadow_ray_bias, 1,
+        if (light_visibility(bvh, position, sample.normal, arrival, shadow_ray_bias, 1,
                              sample_hash(texel_x, texel_y, 0, 0)) > 0.f)
           ++face.visible;
       }

@@ -418,6 +418,15 @@ void test_console_cvars()
         "the rejection says the value is unchanged rather than letting the "
         "user assume the set landed");
 
+  check(run(state, table, "r_debug_channel nonsense", &reply) ==
+            cvars::console_result_t::bad_arguments,
+        "an undeclared enum value is bad_arguments");
+  check(reply.find("one of: off | normals | uv | parallax_uv | shadow_visibility") != std::string::npos,
+        "an enum cvar's rejection lists every value it accepts");
+  check(run(state, table, "r_debug_channel normals", &reply) ==
+            cvars::console_result_t::ok,
+        "a declared enum value is accepted");
+
   check(run(state, table, "cl_timescale 1 2", &reply) ==
             cvars::console_result_t::bad_arguments,
         "a non-string cvar takes exactly one value");

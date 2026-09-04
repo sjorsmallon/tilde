@@ -7,6 +7,7 @@
 
 #include "scene.glsl"
 #include "probes.glsl"
+#include "direct_light.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -30,10 +31,6 @@ layout(set = 0, binding = 4) uniform sampler2D emissiveMap;
 layout(set = 0, binding = 1) uniform sampler2D normalMap;
 layout(set = 0, binding = 2) uniform sampler2D ormMap;   // R occlusion, G roughness, B metallic
 layout(set = 0, binding = 3) uniform sampler2D heightMap;
-
-#define DEBUG_FLAG_RENDER_NORMALS     (1 << 0)
-#define DEBUG_FLAG_RENDER_UV          (1 << 1)
-#define DEBUG_FLAG_RENDER_PARALLAX_UV (1 << 2)
 #endif
 
 #ifdef LIGHTMAP
@@ -42,6 +39,14 @@ layout(set = 0, binding = 3) uniform sampler2D heightMap;
 
 void main() {
     vec3 ambient = scene.ambient.rgb;
+
+    // Ahead of every arm: a shadow that is wrong looks exactly like lighting
+    // that is wrong, and this is how the two are told apart.
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_SHADOW_VISIBILITY) != 0)
+    {
+        outColor = shadow_visibility_debug_color(fragWorldPosition, normalize(fragWorldNormal));
+        return;
+    }
 
 #ifdef PBR
     vec3 N = normalize(fragWorldNormal);
@@ -96,8 +101,13 @@ void main() {
         Light         light   = scene.lights[slot];
         Light_Arrival arrival = light_arrival(light, fragWorldPosition);
 
+        // Atlas visibility TIMES the shadow map (decision K): the bake holds the
+        // static occluders, a Mixed light's map only the dynamic ones, so the
+        // two are independent blockers and the product counts nothing twice.
+        float visibility = coverage[channel] * shadow_visibility(light, arrival, fragWorldPosition, N);
+
         lit += shade_direct(N, V, arrival.direction, surface, roughness, metallic,
-                            light.radiance.rgb, arrival.attenuation * coverage[channel],
+                            light.radiance.rgb, arrival.attenuation * visibility,
                             light.direction.w, arrival.distance);
     }
 #endif
@@ -115,10 +125,11 @@ void main() {
             continue;
 #endif
 
-        Light_Arrival arrival = light_arrival(light, fragWorldPosition);
+        Light_Arrival arrival    = light_arrival(light, fragWorldPosition);
+        float         visibility = shadow_visibility(light, arrival, fragWorldPosition, N);
 
         lit += shade_direct(N, V, arrival.direction, surface, roughness, metallic,
-                            light.radiance.rgb, arrival.attenuation,
+                            light.radiance.rgb, arrival.attenuation * visibility,
                             light.direction.w, arrival.distance);
     }
 
@@ -152,21 +163,10 @@ void main() {
     // them.
     vec3 N = normalize(fragWorldNormal);
 
-    // The tail: the lights no bake saw, plus a second copy of every Mixed one.
-    // A lightmapped face skips that copy -- it shades the light through its
-    // chart below -- exactly as the PBR arm does.
-    vec3 lighting = vec3(0.0);
-    for (int index = scene.baked_light_count; index < scene.light_count; ++index)
-    {
-        Light light = scene.lights[index];
-#ifdef LIGHTMAP
-        if (LIGHT_BAKED_SLOT(light) >= 0)
-            continue;
-#endif
-        Light_Arrival arrival = light_arrival(light, fragWorldPosition);
-        lighting += light.radiance.rgb *
-                    (arrival.attenuation * max(dot(N, arrival.direction), 0.0)) / PI;
-    }
+    // The tail: the lights no bake saw, plus a second copy of every Mixed one,
+    // each through its shadow map. A lightmapped face skips that copy -- it
+    // shades the light through its chart below -- exactly as the PBR arm does.
+    vec3 lighting = analytic_tail_diffuse(N, fragWorldPosition);
 
 #ifdef LIGHTMAP
     lighting += lightmap_direct_diffuse(N, fragWorldPosition) + lightmap_residual_diffuse() +

@@ -265,6 +265,15 @@ constexpr field_info_t Light_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "casts_shadows",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Light, casts_shadows),
+   .size_in_bytes = (uint32_t)sizeof(Light::casts_shadows),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Movement_FIELDS[] = {
@@ -1474,7 +1483,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Material", {Material_FIELDS, 3}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
-  {"Light", {Light_FIELDS, 4}, (uint32_t)sizeof(Light)},
+  {"Light", {Light_FIELDS, 5}, (uint32_t)sizeof(Light)},
   {"Movement", {Movement_FIELDS, 5}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
 };
@@ -1906,6 +1915,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x816da5c2u;
+const uint32_t SCHEMA_HASH = 0x1549dda3u;
 
 } // namespace entities

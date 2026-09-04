@@ -178,6 +178,10 @@ Light :: component {
     // softness is an angle rather than a length, and it carries its own
     // angular_diameter_degrees instead.
     source_radius: f32 = 0.0    @Editable @Saveable
+    // Gate 9. Whether this light renders a shadow map at runtime; a Baked light
+    // never does whatever this says (lighting_def.md decision K). The one
+    // authored shadow knob -- resolution is the pool's, never the light's.
+    casts_shadows: bool = true  @Editable @Saveable
 }
 
 Movement :: component {

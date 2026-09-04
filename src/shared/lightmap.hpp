@@ -67,6 +67,34 @@ struct atlas_rect_t
   int height = 0;
 };
 
+struct chart_triangle_twin_t
+{
+  Array<linalg::vec3, 3> corners;
+  Array<linalg::vec3, 3> normals;
+};
+
+// One vertex of a static mesh chart's UNWRAP: which asset vertex it came from,
+// and where it sits in chart space (world units, from the chart's min corner).
+struct unwrapped_vertex_t
+{
+  uint32_t xref = 0;
+  linalg::vec2 uv{0.f, 0.f};
+};
+
+// A static mesh chart's unwrap, and the one thing about a chart that is SAVED
+// beyond its placement: an xatlas uv is an algorithm's output, not a projection
+// through a plane, so it cannot be re-derived at load. `indices` are into
+// `vertices`, three per triangle; `faces[t]` is the SOURCE triangle of triangle
+// t, which is what keeps the draw copy's submesh ranges intact.
+struct chart_unwrap_t
+{
+  std::vector<unwrapped_vertex_t> vertices;
+  std::vector<uint32_t> indices;
+  std::vector<uint32_t> faces;
+
+  [[nodiscard]] bool empty() const { return faces.empty(); }
+};
+
 struct lightmap_chart_t
 {
   entity_uid_t object_uid = 0;
@@ -100,6 +128,15 @@ struct lightmap_chart_t
   // and `triangles` is filled, and like `polygon` it is the bake's own and is
   // never saved.
   std::vector<linalg::vec2> triangles;
+
+  // The 3D twin of each entry of `triangles`, one per three: the source
+  // triangle's world corners and vertex normals, blended per texel by the bake.
+  // Required whenever `triangles` is filled; bake-only like it.
+  std::vector<chart_triangle_twin_t> twins;
+
+  // A static mesh chart's unwrap; empty on a brush chart, whose uvs are the
+  // stored plane projected. Saved, unlike everything above it.
+  chart_unwrap_t unwrap;
 
   // Which atlas LAYER this chart landed on. Filled by pack_lightmap_charts; -1
   // is unpacked, which after a successful pack is a bug rather than a state.
@@ -161,23 +198,26 @@ struct lightmap_bake_settings_t
 [[nodiscard]] linalg::vec3 chart_space_to_world(const lightmap_chart_t &chart,
                                                 const linalg::vec2 &chart_space);
 
-// Whether a point has any surface under it. A chart's RECT is its allocation and
-// its POLYGON is its coverage, and on anything but a rectangular face the two
-// differ -- a point between them belongs to no surface and must not be lit, only
-// dilated into.
-[[nodiscard]] bool chart_space_is_inside_face(const lightmap_chart_t &chart,
-                                              const linalg::vec2 &chart_space);
+// The ONE question the solve asks of a chart at a chart-space point: is there
+// surface here, and if so where in the world and facing which way. A plane
+// chart answers through its plane and polygon; a triangle chart rasterizes the
+// 2D triangle under the point and blends its twin by barycentric weight.
+struct texel_sample_t
+{
+  bool on_surface = false;
+  linalg::vec3 position{0.f, 0.f, 0.f};
+  linalg::vec3 normal{0.f, 0.f, 0.f};
+};
 
-// The two above, asked about a whole texel through its CENTRE and not its
-// corner: a texel is an area, and sampling the corner biases every lookup half a
-// texel toward the chart origin. A supersampling solve asks about the sub-sample
-// positions instead and goes through the pair above.
+[[nodiscard]] texel_sample_t sample_chart(const lightmap_chart_t &chart,
+                                          const linalg::vec2 &chart_space);
+
+// The same, asked about a whole texel through its CENTRE and not its corner:
+// sampling the corner biases every lookup half a texel toward the chart origin.
 [[nodiscard]] linalg::vec2 texel_center_in_chart_space(const lightmap_chart_t &chart,
                                                        int texel_x, int texel_y);
-[[nodiscard]] linalg::vec3 texel_world_position(const lightmap_chart_t &chart,
-                                                int texel_x, int texel_y);
-[[nodiscard]] bool texel_is_inside_face(const lightmap_chart_t &chart, int texel_x,
-                                        int texel_y);
+[[nodiscard]] texel_sample_t sample_texel(const lightmap_chart_t &chart, int texel_x,
+                                          int texel_y);
 
 // --- Chart space to the atlas ------------------------------------------------
 //
@@ -206,6 +246,12 @@ struct lightmap_bake_settings_t
                                            const lightmap_bake_settings_t &settings,
                                            const lightmap_atlas_t &atlas,
                                            const linalg::vec3 &world_position);
+
+// The same value from a CHART-SPACE position -- what an unwrapped vertex stores.
+[[nodiscard]] linalg::vec3 lightmap_uv_from_chart_space(const lightmap_chart_t &chart,
+                                                        const lightmap_bake_settings_t &settings,
+                                                        const lightmap_atlas_t &atlas,
+                                                        const linalg::vec2 &chart_space);
 
 
 // --- What a baked map carries ------------------------------------------------

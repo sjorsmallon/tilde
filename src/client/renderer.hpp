@@ -292,6 +292,17 @@ void update_lightmap(lightmap_handle_t handle, const shared::lightmap_t &lightma
 
 // --- Draws ---
 
+// Which shadow maps a draw is rendered into (lighting_def.md decision K).
+// Static geometry's occlusion is already in the bake, so it is drawn only into
+// a Dynamic light's map; a dynamic object is drawn into every map. `none` is
+// for gizmos and ghosts. Wireframe and alpha-blended draws never cast.
+enum class shadow_caster_t : uint8_t
+{
+  none,
+  static_geometry,
+  dynamic_object
+};
+
 struct mesh_draw_t
 {
   mesh_handle_t                 mesh;
@@ -302,6 +313,9 @@ struct mesh_draw_t
                                                          // count; a mismatch logs and draws bind pose.
   color_t     tint = colors::white;
   fill_mode_t fill = fill_mode_t::solid;
+  // Dynamic by default: the one static site is draw_geometry, and a forgotten
+  // classification double-shadows rather than shining through a wall.
+  shadow_caster_t shadow_caster = shadow_caster_t::dynamic_object;
 };
 
 // --- Debug drawing ---
@@ -569,6 +583,22 @@ struct tonemap_settings_t
   float exposure = 1.0f;
 };
 
+// The shadow map pool (lighting_def.md gate 9): one sampler2DArrayShadow of
+// this many layers at most, shared by every view pass in the frame. Per FRAME
+// for the tonemap's reason -- the pool is one image, so a second pass cannot
+// have its own resolution. scene.glsl spells the count as a literal.
+constexpr uint32_t MAX_SHADOW_LAYERS = 8;
+
+struct shadow_settings_t
+{
+  uint32_t map_size             = 1024;
+  uint32_t layer_count          = 4; // clamped to MAX_SHADOW_LAYERS
+  float    bias_constant        = 1.5f;
+  float    bias_slope           = 2.5f;
+  float    normal_offset_texels = 1.5f;
+  int32_t  pcf_radius           = 1;
+};
+
 // Executes the whole frame: particle compute, the scene pass into an HDR target,
 // every view pass in order, then the present pass -- tonemap, the screen-space
 // UI, ImGui composite -- then submit and present. The pass structure is internal.
@@ -580,7 +610,7 @@ struct tonemap_settings_t
 // arrives grey; before ImGui so the dev console and the editor panels sit on top
 // of the HUD, which is the precedence you want the moment the console is open.
 void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
-                  const tonemap_settings_t &tonemap);
+                  const tonemap_settings_t &tonemap, const shadow_settings_t &shadows);
 
 // --- Utilities ---
 

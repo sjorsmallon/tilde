@@ -290,8 +290,9 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
     return false;
 
   renderer::mesh_draw_t draw{};
-  draw.mesh      = mesh;
-  draw.transform = transform;
+  draw.mesh          = mesh;
+  draw.transform     = transform;
+  draw.shadow_caster = renderer::shadow_caster_t::static_geometry;
 
   if (surface.is_wireframe)
   {
@@ -383,8 +384,9 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     // world space and the transform is identity. There is no position member to
     // put in one, which is the whole point: the vertices ARE the position.
     renderer::mesh_draw_t draw{};
-    draw.mesh      = mesh;
-    draw.transform = linalg::mat4f::identity();
+    draw.mesh          = mesh;
+    draw.transform     = linalg::mat4f::identity();
+    draw.shadow_caster = renderer::shadow_caster_t::static_geometry;
 
     const auto source = g_generated_mesh_sources.find(uid);
     if (source != g_generated_mesh_sources.end())

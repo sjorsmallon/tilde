@@ -27,6 +27,7 @@ constexpr const char* Debug_Channel_VALUE_NAMES[] = {
   "normals",
   "uv",
   "parallax_uv",
+  "shadow_visibility",
 };
 
 constexpr const char* Bot_Mode_VALUE_NAMES[] = {
@@ -37,7 +38,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
-  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 4}},
+  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 5}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
@@ -346,6 +347,54 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::r_zoom_easing_time_between_fovs),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_map_size",
+     .description = "Shadow map resolution per layer",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, r_shadow_map_size),
+     .size = sizeof(cvar_state_t::r_shadow_map_size),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_layer_count",
+     .description = "Shadow map layers in the pool (at most 8)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, r_shadow_layer_count),
+     .size = sizeof(cvar_state_t::r_shadow_layer_count),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_bias_constant",
+     .description = "Shadow depth bias, constant factor",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_bias_constant),
+     .size = sizeof(cvar_state_t::r_shadow_bias_constant),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_bias_slope",
+     .description = "Shadow depth bias, slope-scaled factor",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_bias_slope),
+     .size = sizeof(cvar_state_t::r_shadow_bias_slope),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_normal_offset",
+     .description = "Receiver offset along the normal, in shadow texels",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_normal_offset),
+     .size = sizeof(cvar_state_t::r_shadow_normal_offset),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_pcf_radius",
+     .description = "PCF kernel radius in texels (0 = the hardware 2x2 only)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, r_shadow_pcf_radius),
+     .size = sizeof(cvar_state_t::r_shadow_pcf_radius),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "m_sensitivity",
      .description = "Mouse look sensitivity",
      .flags = CVAR_FLAG_CLIENT,
@@ -595,7 +644,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_debug_channel",
-     .description = "Show a material channel instead of the shaded result(off, normals, uv, parallax_uv )",
+     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility)",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_ENUM,
      .offset = offsetof(cvar_state_t, r_debug_channel),
@@ -1074,6 +1123,7 @@ const char* to_string(Debug_Channel value)
     case Debug_Channel::normals: return "normals";
     case Debug_Channel::uv: return "uv";
     case Debug_Channel::parallax_uv: return "parallax_uv";
+    case Debug_Channel::shadow_visibility: return "shadow_visibility";
   }
   assert(false && "invalid Debug_Channel");
   return "";
@@ -1085,6 +1135,7 @@ template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::str
   if (text == "normals") return Debug_Channel::normals;
   if (text == "uv") return Debug_Channel::uv;
   if (text == "parallax_uv") return Debug_Channel::parallax_uv;
+  if (text == "shadow_visibility") return Debug_Channel::shadow_visibility;
   return std::nullopt;
 }
 

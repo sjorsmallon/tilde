@@ -1,5 +1,7 @@
 #include "map_geometry.hpp"
 
+#include "xatlas.h"
+
 #include "collision_detection.hpp"
 #include "convex_decomposition.hpp"
 #include "log.hpp"
@@ -1832,6 +1834,128 @@ static_mesh_world_triangles(const static_mesh_geometry_t &static_mesh)
   return triangles;
 }
 
+std::vector<vertex_xnu> static_mesh_world_vertices(const static_mesh_geometry_t &static_mesh)
+{
+  std::vector<vertex_xnu> vertices;
+
+  const assets::mesh_asset_t* mesh = assets::get(resolve_surface_mesh(static_mesh.surface));
+  if (!mesh)
+    return vertices;
+
+  const linalg::mat4f transform = static_mesh_transform(static_mesh);
+  vertices.reserve(mesh->vertices.size());
+  for (const vertex_xnu& vertex : mesh->vertices)
+    vertices.push_back({transform_point(transform, vertex.position),
+                        static_mesh_world_normal(static_mesh, vertex.normal), vertex.uv});
+  return vertices;
+}
+
+std::vector<chart_unwrap_t> unwrap_static_mesh(const static_mesh_geometry_t &static_mesh,
+                                               float texels_per_world_unit)
+{
+  std::vector<chart_unwrap_t> unwraps;
+
+  const assets::mesh_asset_t* mesh = assets::get(resolve_surface_mesh(static_mesh.surface));
+  const std::vector<vertex_xnu> vertices = static_mesh_world_vertices(static_mesh);
+  if (!mesh || vertices.empty() || mesh->indices.size() < 3)
+    return unwraps;
+  if (!(texels_per_world_unit > 0.f))
+  {
+    log_error("[lightmap] unwrap asked at {} texels per unit; nothing to size a chart by.",
+              texels_per_world_unit);
+    return unwraps;
+  }
+
+  xatlas::Atlas* atlas = xatlas::Create();
+
+  xatlas::MeshDecl declaration;
+  declaration.vertexCount = (uint32_t)vertices.size();
+  declaration.vertexPositionData = &vertices[0].position;
+  declaration.vertexPositionStride = sizeof(vertex_xnu);
+  declaration.vertexNormalData = &vertices[0].normal;
+  declaration.vertexNormalStride = sizeof(vertex_xnu);
+  declaration.indexData = mesh->indices.data();
+  declaration.indexCount = (uint32_t)mesh->indices.size();
+  declaration.indexFormat = xatlas::IndexFormat::UInt32;
+
+  const xatlas::AddMeshError error = xatlas::AddMesh(atlas, declaration, 1);
+  if (error != xatlas::AddMeshError::Success)
+  {
+    log_error("[lightmap] xatlas refused {}: {}.", static_mesh.surface.mesh_path,
+              xatlas::StringForEnum(error));
+    xatlas::Destroy(atlas);
+    return unwraps;
+  }
+
+  // xatlas unwraps, we pack: its own packing runs only to get every chart's uvs
+  // into one per-chart space at our density, and its atlas is thrown away.
+  xatlas::PackOptions pack_options;
+  pack_options.texelsPerUnit = texels_per_world_unit;
+  pack_options.resolution = 0;
+  pack_options.padding = 0;
+  pack_options.bilinear = false;
+  xatlas::Generate(atlas, xatlas::ChartOptions(), pack_options);
+
+  const xatlas::Mesh& output = atlas->meshes[0];
+  const float world_units_per_atlas_texel = 1.f / texels_per_world_unit;
+
+  // Keyed by the SOURCE vertex a face corner names, not by xatlas's output
+  // vertex: its xref goes through the colocal weld and can name another face's
+  // copy of a shared corner, which carries that face's normal.
+  std::vector<uint32_t> local_index_of(vertices.size(), UINT32_MAX);
+  std::vector<uint32_t> touched;
+  unwraps.reserve(output.chartCount);
+
+  for (uint32_t chart_index = 0; chart_index < output.chartCount; ++chart_index)
+  {
+    const xatlas::Chart& chart = output.chartArray[chart_index];
+    if (chart.type == xatlas::ChartType::Invalid)
+    {
+      log_warning("[lightmap] xatlas could not parameterize {} face(s) of {}; they draw unlit.",
+                  chart.faceCount, static_mesh.surface.mesh_path);
+      continue;
+    }
+
+    chart_unwrap_t unwrap;
+    unwrap.faces.reserve(chart.faceCount);
+    unwrap.indices.reserve((size_t)chart.faceCount * 3);
+    touched.clear();
+
+    for (uint32_t f = 0; f < chart.faceCount; ++f)
+    {
+      const uint32_t face = chart.faceArray[f];
+      unwrap.faces.push_back(face);
+      for (uint32_t corner = 0; corner < 3; ++corner)
+      {
+        const uint32_t source_vertex = mesh->indices[(size_t)face * 3 + corner];
+        if (local_index_of[source_vertex] == UINT32_MAX)
+        {
+          const xatlas::Vertex& vertex =
+              output.vertexArray[output.indexArray[(size_t)face * 3 + corner]];
+          local_index_of[source_vertex] = (uint32_t)unwrap.vertices.size();
+          touched.push_back(source_vertex);
+          unwrap.vertices.push_back({source_vertex,
+                                     {vertex.uv[0] * world_units_per_atlas_texel,
+                                      vertex.uv[1] * world_units_per_atlas_texel}});
+        }
+        unwrap.indices.push_back(local_index_of[source_vertex]);
+      }
+    }
+    for (uint32_t source_vertex : touched) local_index_of[source_vertex] = UINT32_MAX;
+
+    linalg::vec2 minimum = unwrap.vertices[0].uv;
+    for (const unwrapped_vertex_t& vertex : unwrap.vertices)
+      minimum = {std::min(minimum.x, vertex.uv.x), std::min(minimum.y, vertex.uv.y)};
+    for (unwrapped_vertex_t& vertex : unwrap.vertices)
+      vertex.uv = {vertex.uv.x - minimum.x, vertex.uv.y - minimum.y};
+
+    unwraps.push_back(std::move(unwrap));
+  }
+
+  xatlas::Destroy(atlas);
+  return unwraps;
+}
+
 assets::mesh_asset_t
 generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
                                  const object_lightmap_ref_t &lighting)
@@ -1842,45 +1966,102 @@ generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
   if (!source)
     return out;
 
-  const std::vector<world_triangle_t> triangles = static_mesh_world_triangles(static_mesh);
-  const linalg::mat4f transform = static_mesh_transform(static_mesh);
+  const std::vector<vertex_xnu> world = static_mesh_world_vertices(static_mesh);
 
   out.materials = source->materials;
   out.submeshes = source->submeshes;
-  out.vertices.reserve(source->indices.size());
-  out.indices.reserve(source->indices.size());
 
-  for (uint32_t index : source->indices)
+  // One vertex per triangle CORNER and no lightmap array: byte for byte what a
+  // mesh without a bake always uploaded.
+  const auto copy_unlit = [&]() {
+    out.vertices.clear();
+    out.indices.clear();
+    out.lightmap.clear();
+    out.vertices.reserve(source->indices.size());
+    out.indices.reserve(source->indices.size());
+    for (uint32_t index : source->indices)
+    {
+      out.indices.push_back((uint32_t)out.vertices.size());
+      out.vertices.push_back(world[index]);
+    }
+  };
+
+  std::vector<const lightmap_chart_t*> charts;
+  if (lighting.has_bake())
+    for (const lightmap_chart_t& chart : lighting.lightmap->charts)
+      if (chart.object_uid == lighting.object_uid && !chart.unwrap.empty())
+        charts.push_back(&chart);
+
+  if (charts.empty())
   {
-    const vertex_xnu &vertex = source->vertices[index];
-    out.indices.push_back((uint32_t)out.vertices.size());
-    out.vertices.push_back({transform_point(transform, vertex.position),
-                            static_mesh_world_normal(static_mesh, vertex.normal),
-                            vertex.uv});
+    copy_unlit();
+    return out;
   }
 
-  if (!lighting.has_bake())
-    return out;
+  // The unwrap's vertices, one per chart, with the index at each face's three
+  // corners pointing into them -- so the index list keeps the source's face
+  // order and every submesh range holds. A face no chart covers gets three
+  // fresh unlit corners.
+  const size_t face_count = source->indices.size() / 3;
+  std::vector<uint8_t> covered(face_count, 0);
+  out.indices.assign(face_count * 3, UINT32_MAX);
 
-  for (size_t t = 0; t < triangles.size(); ++t)
+  const auto refuse = [&](const char* what, size_t value, size_t limit) {
+    log_error("[lightmap] static mesh {}'s unwrap names {} {} of {}; the bake does not "
+              "match {} and it draws unlit. Rebake.",
+              lighting.object_uid, what, value, limit, static_mesh.surface.mesh_path);
+    copy_unlit();
+  };
+
+  for (const lightmap_chart_t* chart : charts)
   {
-    if (triangles[t].is_degenerate()) continue;
+    const chart_unwrap_t& unwrap = chart->unwrap;
+    const uint32_t base = (uint32_t)out.vertices.size();
 
-    const lightmap_chart_t *chart =
-        find_chart(*lighting.lightmap, lighting.object_uid, triangles[t].plane());
-    if (!chart) continue;
+    for (const unwrapped_vertex_t& vertex : unwrap.vertices)
+    {
+      if (vertex.xref >= world.size())
+      {
+        refuse("vertex", vertex.xref, world.size());
+        return out;
+      }
+      out.vertices.push_back(world[vertex.xref]);
+      out.lightmap.push_back(
+          {lightmap_uv_from_chart_space(*chart, lighting.lightmap->settings,
+                                        lighting.lightmap->atlas, vertex.uv),
+           chart->light_slots});
+    }
 
-    // Sized on the first match, like a brush: a mesh no chart reached uploads
-    // byte for byte what it always did.
-    if (out.lightmap.empty()) out.lightmap.resize(out.vertices.size());
+    for (size_t t = 0; t < unwrap.faces.size(); ++t)
+    {
+      const uint32_t face = unwrap.faces[t];
+      if (face >= face_count || covered[face])
+      {
+        refuse(covered[face] ? "face twice, face" : "face", face, face_count);
+        return out;
+      }
+      covered[face] = 1;
+      for (size_t corner = 0; corner < 3; ++corner)
+      {
+        const uint32_t local = unwrap.indices[t * 3 + corner];
+        if (local >= unwrap.vertices.size())
+        {
+          refuse("chart vertex", local, unwrap.vertices.size());
+          return out;
+        }
+        out.indices[(size_t)face * 3 + corner] = base + local;
+      }
+    }
+  }
 
+  for (size_t face = 0; face < face_count; ++face)
+  {
+    if (covered[face]) continue;
     for (size_t corner = 0; corner < 3; ++corner)
     {
-      const size_t vertex = t * 3 + corner;
-      out.lightmap[vertex].uv = lightmap_uv_for(*chart, lighting.lightmap->settings,
-                                                lighting.lightmap->atlas,
-                                                out.vertices[vertex].position);
-      out.lightmap[vertex].light_slots = chart->light_slots;
+      out.indices[face * 3 + corner] = (uint32_t)out.vertices.size();
+      out.vertices.push_back(world[source->indices[face * 3 + corner]]);
+      out.lightmap.push_back({});
     }
   }
 

@@ -17,6 +17,7 @@
 // rather than as a texture on one brush.
 
 #include "scene.glsl"
+#include "direct_light.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -60,19 +61,30 @@ float grid_coverage(vec2 cell)
 }
 
 void main() {
+    vec3  N = normalize(fragWorldNormal);
+
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_SHADOW_VISIBILITY) != 0)
+    {
+        outColor = shadow_visibility_debug_color(fragWorldPosition, N);
+        return;
+    }
+
     vec3  sunDir  = normalize(vec3(0.4, -0.8, 0.3));
     vec3  ambient = scene.ambient.rgb;
-    float diffuse = max(dot(normalize(fragWorldNormal), -sunDir), 0.0);
+    float diffuse = max(dot(N, -sunDir), 0.0);
 #ifdef LIGHTMAP
     // The four lights this face's chart kept, shaded analytically against the
     // real light direction, the residual irradiance of the ones it dropped, and
     // the path-traced bounce.
-    vec3  lighting = lightmap_direct_diffuse(normalize(fragWorldNormal), fragWorldPosition) +
-                     lightmap_residual_diffuse() +
-                     lightmap_indirect_diffuse(normalize(fragWorldNormal)) + ambient;
+    vec3  lighting = lightmap_direct_diffuse(N, fragWorldPosition) +
+                     lightmap_residual_diffuse() + lightmap_indirect_diffuse(N) + ambient;
 #else
     vec3  lighting = ambient + vec3(diffuse * 0.85);
 #endif
+    // The tail -- Dynamic lights, and on a face with no chart the Mixed copy --
+    // through their shadow maps. Without it a rocket flash never reached a
+    // blockout face at all.
+    lighting += analytic_tail_diffuse(N, fragWorldPosition);
     vec3  color   = texture(albedo, fragUV).rgb * fragColor * lighting;
 
     // Two levels, 8x apart. The minor one fades as it stops being resolvable and

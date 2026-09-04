@@ -287,6 +287,16 @@ Client :: cvars {
     r_zoom_fov:             f32 = 30.0      @Client    "Field of view in degrees while zoomed"
     r_zoom_easing_time_between_fovs:            f32 = 0.00      @Client    "Seconds to ease between normal and zoomed FOV (0 = instant)"
 
+    // Shadow maps, lighting_def.md gate 9. The pool is FIXED: a frame with more
+    // shadow-casting lights than layers ranks them by intensity over distance
+    // squared to the camera and draws the rest unshadowed, logged once per light.
+    r_shadow_map_size:      i32 = 1024      @Client    "Shadow map resolution per layer"
+    r_shadow_layer_count:   i32 = 4         @Client    "Shadow map layers in the pool (at most 8)"
+    r_shadow_bias_constant: f32 = 1.5       @Client    "Shadow depth bias, constant factor"
+    r_shadow_bias_slope:    f32 = 2.5       @Client    "Shadow depth bias, slope-scaled factor"
+    r_shadow_normal_offset: f32 = 1.5       @Client    "Receiver offset along the normal, in shadow texels"
+    r_shadow_pcf_radius:    i32 = 1         @Client    "PCF kernel radius in texels (0 = the hardware 2x2 only)"
+
     // Degrees of view rotation per mouse count. Was a bare 0.1 literal in
     // play_state.
     m_sensitivity:          f32 = 0.1       @Client    "Mouse look sensitivity"
@@ -445,7 +455,7 @@ Map :: cvars {
 // ---------------------------------------------------------------------------
 // Debugging -- was debug_collision.cpp and play_state.cpp
 // ---------------------------------------------------------------------------
-Debug_Channel :: enum { off, normals, uv, parallax_uv }
+Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility }
 
 
 Debugging :: cvars {
@@ -456,7 +466,7 @@ Debugging :: cvars {
     // "which cores am I on" is not a thing worth making settable mid-session.
     pin_main_thread:        bool = true                 "Pin the main thread to the CPU's performance cores on a hybrid CPU"
 
-    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result(off, normals, uv, parallax_uv )"
+    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility)"
 
     // The tonemap pass multiplies the HDR target by this before the curve
     // (lighting_def.md decision J). It is what decision H says
