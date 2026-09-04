@@ -58,7 +58,7 @@ std::string_view generated_mesh_cache_key(shared::entity_uid_t uid, Span<char> b
 // moves no vertex. And the material TABLE beside it, because an index resolves
 // against that table: retexturing entry 3 changes the mesh of every brush whose
 // faces name it, with nothing about the brushes themselves different.
-struct generated_brush_source_t
+struct generated_mesh_source_t
 {
   shared::geometry_value_t value;
   std::vector<std::string> materials;
@@ -71,15 +71,15 @@ struct generated_brush_source_t
   std::vector<renderer::material_handle_t> overrides;
 };
 
-std::unordered_map<shared::entity_uid_t, generated_brush_source_t> g_brush_mesh_sources;
+std::unordered_map<shared::entity_uid_t, generated_mesh_source_t> g_generated_mesh_sources;
 
-bool brush_mesh_is_current(shared::entity_uid_t uid,
+bool generated_mesh_is_current(shared::entity_uid_t uid,
                            const shared::geometry_value_t &geometry,
                            Span<const std::string> materials,
                            const shared::lightmap_t &lightmap)
 {
-  const auto it = g_brush_mesh_sources.find(uid);
-  if (it == g_brush_mesh_sources.end())
+  const auto it = g_generated_mesh_sources.find(uid);
+  if (it == g_generated_mesh_sources.end())
     return false;
 
   if (it->second.lightmap_geometry_id != lightmap.geometry_id)
@@ -109,7 +109,8 @@ assets::mesh_asset_t generate_geometry_mesh(const shared::geometry_value_t &geom
                                        materials, {&lightmap, uid});
 
   case shared::geometry_kind_t::Static_Mesh:
-    return {};
+    return shared::generate_lightmapped_static_mesh(
+        std::get<shared::static_mesh_geometry_t>(geometry), {&lightmap, uid});
   }
 
   log_error("generate_geometry_mesh: unhandled geometry kind {}",
@@ -153,14 +154,15 @@ namespace
 {
 struct material_maps_key_t
 {
-  uint32_t handles[4] = {};
+  uint32_t handles[renderer::MATERIAL_MAP_COUNT] = {};
 
   bool operator==(const material_maps_key_t &) const = default;
 };
 
 material_maps_key_t material_maps_key(const renderer::material_maps_t &maps)
 {
-  return {{maps.albedo.index, maps.normal.index, maps.orm.index, maps.height.index}};
+  return {{maps.albedo.index, maps.normal.index, maps.orm.index, maps.height.index,
+           maps.emissive.index}};
 }
 
 struct material_maps_key_hash_t
@@ -210,7 +212,7 @@ renderer::material_handle_t blended_face_material(const renderer::material_param
 {
   struct key_t
   {
-    uint32_t handles[4 * BLEND_LAYER_COUNT] = {};
+    uint32_t handles[renderer::MATERIAL_MAP_COUNT * BLEND_LAYER_COUNT] = {};
 
     bool operator==(const key_t &) const = default;
   };
@@ -230,7 +232,7 @@ renderer::material_handle_t blended_face_material(const renderer::material_param
   key_t key{};
   const auto write_layer = [&key](int layer, const renderer::material_maps_t &maps) {
     const material_maps_key_t handles = material_maps_key(maps);
-    memcpy(&key.handles[layer * 4], handles.handles, sizeof(handles.handles));
+    memcpy(&key.handles[layer * renderer::MATERIAL_MAP_COUNT], handles.handles, sizeof(handles.handles));
   };
   write_layer(0, parameters.maps);
   for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
@@ -279,19 +281,17 @@ build_brush_material_overrides(renderer::mesh_handle_t mesh)
 // Draw a surface's mesh if it resolves. False means "no mesh — use the kind's
 // own primitive".
 bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &surface,
-                       const linalg::vec3f& position, const linalg::vec3f& scale,
-                       const linalg::quatf& rotation)
+                       renderer::mesh_handle_t mesh, const linalg::mat4f &transform)
 {
   if (!surface.visible)
     return true; // resolved to "draw nothing", which is not a fallback case
 
-  const renderer::mesh_handle_t mesh = get_render_mesh(shared::resolve_surface_mesh(surface));
   if (!mesh.valid())
     return false;
 
   renderer::mesh_draw_t draw{};
   draw.mesh      = mesh;
-  draw.transform = linalg::compose_transform(position, rotation, scale);
+  draw.transform = transform;
 
   if (surface.is_wireframe)
   {
@@ -321,8 +321,26 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
   {
     const shared::static_mesh_geometry_t &static_mesh =
         std::get<shared::static_mesh_geometry_t>(geometry);
-    if (draw_surface_mesh(draws, surface, static_mesh.position, static_mesh.scale,
-                          static_mesh.orientation))
+
+    // With a bake, a static mesh draws as its own WORLD-space copy through the
+    // generated cache, exactly as a brush does -- the pooled asset is welded
+    // and shared between maps, so it cannot carry this instance's atlas
+    // positions. Without one it is the pooled asset under a transform, byte
+    // for byte what it always was.
+    if (!lightmap.empty())
+    {
+      if (!generated_mesh_is_current(uid, geometry, materials, lightmap))
+        refresh_generated_geometry_mesh(geometry, uid, materials, lightmap);
+
+      char                   cache_key_buffer[48];
+      const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
+      if (draw_surface_mesh(draws, surface, get_render_mesh(assets::find_mesh_in_cache(cache_key)),
+                            linalg::mat4f::identity()))
+        return;
+    }
+    else if (draw_surface_mesh(draws, surface,
+                               get_render_mesh(shared::resolve_surface_mesh(surface)),
+                               shared::static_mesh_transform(static_mesh)))
       return;
 
     // A static mesh with no resolvable mesh has nothing to draw but its bound —
@@ -337,14 +355,16 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
 
     if (!surface.mesh_path.empty() &&
-        draw_surface_mesh(draws, surface, shared::get_position(geometry), {1, 1, 1},
-                          {0, 0, 0}))
+        draw_surface_mesh(draws, surface,
+                          get_render_mesh(shared::resolve_surface_mesh(surface)),
+                          linalg::compose_transform(shared::get_position(geometry), {0, 0, 0, 1},
+                                                    {1, 1, 1})))
       return;
 
     if (!surface.visible)
       return;
 
-    if (!brush_mesh_is_current(uid, geometry, materials, lightmap))
+    if (!generated_mesh_is_current(uid, geometry, materials, lightmap))
       refresh_generated_geometry_mesh(geometry, uid, materials, lightmap);
 
     char                   cache_key_buffer[48];
@@ -366,8 +386,8 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     draw.mesh      = mesh;
     draw.transform = linalg::mat4f::identity();
 
-    const auto source = g_brush_mesh_sources.find(uid);
-    if (source != g_brush_mesh_sources.end())
+    const auto source = g_generated_mesh_sources.find(uid);
+    if (source != g_generated_mesh_sources.end())
       draw.material_overrides = source->second.overrides;
 
     draws.meshes.push_back(draw);
@@ -386,11 +406,10 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
   const bool is_brush = shared::get_kind(geometry) == shared::geometry_kind_t::Brush;
 
   // Record what the mesh is about to be built from, so the draw path can tell
-  // whether it still matches. Only brushes need it: every other generated kind
-  // keeps its position in the transform and so does not go stale on a move.
-  if (is_brush)
+  // whether it still matches. A lightmapped static mesh is baked into world
+  // space like a brush, so a move goes stale the same way.
   {
-    generated_brush_source_t &source = g_brush_mesh_sources[uid];
+    generated_mesh_source_t &source = g_generated_mesh_sources[uid];
     source.value                     = geometry;
     source.materials.assign(materials.begin(), materials.end());
     source.lightmap_geometry_id = lightmap.geometry_id;
@@ -427,7 +446,7 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
   // many submeshes there are, so a stale table would name the wrong material for
   // every slot after the one that moved.
   if (is_brush)
-    g_brush_mesh_sources[uid].overrides =
+    g_generated_mesh_sources[uid].overrides =
         build_brush_material_overrides(get_render_mesh(mesh_asset));
 }
 

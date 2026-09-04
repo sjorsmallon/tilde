@@ -16,7 +16,7 @@
 //   if (renderer::new_frame())          // acquires image, starts the ImGui frame
 //   {
 //     ... build ImGui UI, draw lists, view passes ...
-//     renderer::render_frame(passes);   // executes, composites UI, presents
+//     renderer::render_frame(passes, ui, tonemap);  // executes, tonemaps, presents
 //   }
 //
 // Everything else is order-free: registration may happen any time after init(),
@@ -194,8 +194,22 @@ struct material_maps_t
   texture_handle_t orm;
   texture_handle_t height;
 
+  // What the surface emits. An INVALID handle resolves to the internal 1x1
+  // BLACK, which is the one default here that must not be white: every other
+  // absent map composes to no effect, and an absent emissive has to compose to
+  // no LIGHT (lighting_def.md gate 4).
+  texture_handle_t emissive;
+
   bool operator==(const material_maps_t &) const = default;
 };
+
+// The count of maps one material binds, which is the descriptor set's binding
+// count and the width of every cache key over them. The assert is what makes
+// adding a map to the struct without bumping this a COMPILE error rather than a
+// key that silently ignores the new one.
+constexpr uint32_t MATERIAL_MAP_COUNT = 5;
+static_assert(sizeof(material_maps_t) == MATERIAL_MAP_COUNT * sizeof(texture_handle_t),
+              "MATERIAL_MAP_COUNT must match the members of material_maps_t");
 
 // Freely mutable; no pipeline consequences. Invalid albedo = flat colour. A
 // texture that was NAMED but failed to load renders the magenta checkerboard
@@ -246,22 +260,28 @@ void update_mesh(mesh_handle_t handle, const assets::mesh_asset_t &mesh);
 // VK_FORMAT_R8G8B8A8_UNORM. Both formats are picked so this stays a memcpy and
 // the sampler does the decoding (lightmap.hpp).
 //
-// BOTH at once and under ONE handle, because they are one bake: a chart's rect
-// names the same texel in each, so a visibility from one run beside an
+// ALL FOUR at once and under ONE handle, because they are one bake: a chart's
+// rect names the same texel in each, so a visibility from one run beside an
 // irradiance from another is a surface shadowed by lights it is not lit by.
+//
+// The two indirect sets may be empty -- that is every bake with "Trace indirect
+// light" off -- and stand in as a BLACK L0, which makes the bounce term
+// identically zero. A white one would light every surface of every unbaked map.
 //
 // Empty irradiance pages return an invalid handle rather than an empty image: a
 // pass with no atlas is the normal state of an unbaked map, and
 // view_pass_t::lightmap falls back to an internal white page for it.
-lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &irradiance,
-                                    const shared::lightmap_pages_t &visibility);
+//
+// The whole lightmap_t rather than its page sets one by one: gate 5 added the
+// probe volume as a fifth thing riding the same handle, and a parameter per
+// page set is a call site that forgets the new one.
+lightmap_handle_t register_lightmap(const shared::lightmap_t &lightmap);
 
 // Re-upload after a rebake. Separate from register_lightmap for the reason
 // update_mesh is separate from register_mesh: the editor bakes repeatedly, and
 // nothing in the renderer is ever unregistered, so re-registering would leak a
 // whole atlas per bake.
-void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &irradiance,
-                     const shared::lightmap_pages_t &visibility);
+void update_lightmap(lightmap_handle_t handle, const shared::lightmap_t &lightmap);
 
 // The mesh's own material table, in slot order. A caller that wants the same
 // textures under a DIFFERENT pipeline_state -- an unlit view of a model, a
@@ -539,16 +559,28 @@ struct view_pass_t
   Span<const custom_draw_t>                 custom    = {};     // escape hatch, see above
 };
 
-// Executes the whole frame: particle compute, render pass, every view pass in
-// order, the screen-space UI, ImGui composite, submit, present. The pass
-// structure is internal.
+// Whatever the tonemap pass needs, which today is one number. It is per FRAME
+// and not per view_pass_t -- unlike debug_channel, which rides the view because
+// "what am I looking at" is a property of one camera. The curve runs once over
+// the finished image, so a second view pass cannot have its own exposure.
+struct tonemap_settings_t
+{
+  // Multiplies the HDR value before the curve. r_exposure.
+  float exposure = 1.0f;
+};
+
+// Executes the whole frame: particle compute, the scene pass into an HDR target,
+// every view pass in order, then the present pass -- tonemap, the screen-space
+// UI, ImGui composite -- then submit and present. The pass structure is internal.
 //
 // `ui` is a reference and not a pointer, unlike view_pass_t::debug: screen-space
 // UI is per-FRAME and always present, where a debug list is optional per pass. It
-// is composited AFTER every view pass and BEFORE ImGui, so the dev console and
-// the editor panels sit on top of the HUD -- which is the precedence you want
-// the moment the console is open.
-void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui);
+// is composited AFTER the tonemap and BEFORE ImGui. After the tonemap because UI
+// colour is authored in display space and a white 1.0 element through the curve
+// arrives grey; before ImGui so the dev console and the editor panels sit on top
+// of the HUD, which is the precedence you want the moment the console is open.
+void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
+                  const tonemap_settings_t &tonemap);
 
 // --- Utilities ---
 

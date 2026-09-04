@@ -491,6 +491,24 @@ int main()
                                                 lightmap_pixel_format_t::Unorm8x4);
     packaged.lightmap.visibility_pages.store_visibility(1, 3, 5,
                                                         {{1.f, 0.5f, 0.f, 0.f}});
+
+    // The indirect bounce, SH L1: three layers an atlas page, so this is the one
+    // page set the atlas alone does not size. A container deriving its layer
+    // count would read a third of it and find the next field where the pixels
+    // still are.
+    packaged.lightmap.indirect_l0_pages.allocate(packaged.lightmap.atlas,
+                                                 lightmap_pixel_format_t::Rgb9e5);
+    packaged.lightmap.indirect_l1_pages.allocate(packaged.lightmap.atlas,
+                                                 lightmap_pixel_format_t::Unorm8x4,
+                                                 SH_L1_LAYERS_PER_PAGE);
+    const linalg::vec3 bounce_l0{0.75f, 0.5f, 0.25f};
+    Array<linalg::vec3, SH_L1_LAYERS_PER_PAGE> bounce_l1;
+    bounce_l1[0] = {0.1f, 0.2f, 0.3f};
+    bounce_l1[1] = {-0.4f, 0.5f, -0.6f};
+    bounce_l1[2] = {0.7f, -0.8f, 0.9f};
+    packaged.lightmap.indirect_l0_pages.store(1, 3, 5, bounce_l0);
+    packaged.lightmap.indirect_l1_pages.store_l1(1, 3, 5, bounce_l0, bounce_l1);
+
     set_lightmap_geometry_id(packaged.lightmap);
 
     map_package_t package = build_map_package(packaged);
@@ -537,6 +555,15 @@ int main()
     if (restored.lightmap.visibility_pages.format !=
         package.lightmap.visibility_pages.format)
       return fail("package: lightmap visibility format drift");
+    if (restored.lightmap.indirect_l0_pages.bytes !=
+        package.lightmap.indirect_l0_pages.bytes)
+      return fail("package: lightmap indirect L0 page bytes drift");
+    if (restored.lightmap.indirect_l1_pages.bytes !=
+        package.lightmap.indirect_l1_pages.bytes)
+      return fail("package: lightmap indirect L1 page bytes drift");
+    if (restored.lightmap.indirect_l1_pages.page_count !=
+        package.lightmap.atlas.page_count * SH_L1_LAYERS_PER_PAGE)
+      return fail("package: lightmap indirect L1 layer count drift");
     if (restored.lightmap.light_uids != package.lightmap.light_uids)
       return fail("package: lightmap resolve table drift");
     // geometry_id is a content hash over the charts, the settings and the atlas

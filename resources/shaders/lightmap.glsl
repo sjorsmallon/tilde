@@ -26,6 +26,23 @@ layout(location = 7) flat in ivec4 fragLightmapSlots;
 layout(set = 3, binding = 0) uniform sampler2DArray lightmapAtlas;
 layout(set = 3, binding = 2) uniform sampler2DArray lightmapVisibility;
 
+// The path-traced bounce, SH L1 (lighting_def.md gate 2). L0 is one HDR texel per
+// atlas texel; L1 is SH_L1_LAYERS_PER_PAGE layers PER ATLAS PAGE, one per world
+// axis, so the layer for axis a of page p is p * 3 + a.
+layout(set = 3, binding = 3) uniform sampler2DArray lightmapIndirectL0;
+layout(set = 3, binding = 4) uniform sampler2DArray lightmapIndirectL1;
+
+// shared/lightmap.hpp's SH_L1_* constants, and the renderer static_asserts that
+// these agree with them. They are pi * Y0 and (2pi/3) * Y1 -- the cosine lobe's
+// per-band convolution weights -- and sqrt(3) is Y1 / Y0, what |L1| / L0 maxes
+// at for light from a single direction, which is what the bake normalized by.
+#ifndef SH_L1_LAYERS_PER_PAGE
+#define SH_L1_LAYERS_PER_PAGE 3
+#define SH_L1_IRRADIANCE_L0   0.886227
+#define SH_L1_IRRADIANCE_L1   1.023328
+#define SH_L1_NORMALIZATION   1.7320508
+#endif
+
 // THE ATLAS IS THE CULLING (lighting_def.md ss14 step 6). A chart ranked the
 // map's lights at bake time and kept the four strongest; those four are on the
 // vertex. So a lightmapped fragment iterates ITS OWN FOUR and indexes the scene
@@ -83,6 +100,48 @@ vec3 lightmap_residual_diffuse()
     if (fragLightmapUV.z < 0.0)
         return vec3(0.0);
     return texture(lightmapAtlas, fragLightmapUV).rgb / PI;
+}
+
+// THE COSINE IS APPLIED HERE, and that is the whole of what SH L1 buys. The bake
+// stores what ARRIVES at a texel with no surface in it at all; this convolves it
+// with the cosine lobe about the SHADED normal, so a normal map moves the bounce
+// where the flat residual beside it cannot.
+//
+// E(N) = 0.886227 * L0 + 1.023328 * dot(L1, N), clamped at zero -- a truncated L1
+// fit rings negative behind a strong lobe exactly as a truncated Fourier series
+// overshoots, and a negative irradiance subtracts light from whatever it is
+// summed with.
+//
+// The 1/PI is the shader's for the same reason it is on the residual: what comes
+// back is an irradiance, and albedo (times kD, where there is one) is what
+// multiplies it.
+//
+// A zero L0 makes this identically zero whatever L1 holds, because the decode
+// scales by L0 -- which is what makes the renderer's black fallback page a
+// complete answer rather than half of one.
+//
+// The two fetches are filtered INDEPENDENTLY, so at a texel boundary this is the
+// product of two lerps rather than the lerp of a product. The error is
+// second-order in two smooth quantities, and the alternative -- storing L1
+// unnormalized -- is what the eight bits cannot hold.
+vec3 lightmap_indirect_diffuse(vec3 N)
+{
+    if (fragLightmapUV.z < 0.0)
+        return vec3(0.0);
+
+    vec3 l0 = texture(lightmapIndirectL0, fragLightmapUV).rgb;
+    vec3 irradiance = SH_L1_IRRADIANCE_L0 * l0;
+
+    float first_layer = fragLightmapUV.z * float(SH_L1_LAYERS_PER_PAGE);
+    for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
+    {
+        vec3 encoded = texture(lightmapIndirectL1,
+                               vec3(fragLightmapUV.xy, first_layer + float(axis))).rgb;
+        vec3 component = (encoded * 2.0 - 1.0) * (SH_L1_NORMALIZATION * l0);
+        irradiance += component * (SH_L1_IRRADIANCE_L1 * N[axis]);
+    }
+
+    return max(irradiance, vec3(0.0)) / PI;
 }
 
 // The diffuse half of the four, for the paths with no BRDF to hand them to:

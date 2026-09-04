@@ -65,6 +65,12 @@ struct material_maps_t
   asset_handle_t<texture_asset_t> normal;
   asset_handle_t<texture_asset_t> orm;
   asset_handle_t<texture_asset_t> height;
+
+  // What the surface EMITS, in the units radiance_of(Light) hands back. An
+  // INVALID handle is the whole "this material does not glow" test -- there is
+  // no strength, no flag and no file saying so, exactly as an absent normal map
+  // is how a material says it is flat.
+  asset_handle_t<texture_asset_t> emissive;
 };
 
 struct material_t
@@ -164,6 +170,11 @@ struct pbr_material_asset_t
   asset_handle_t<texture_asset_t> normal;
   asset_handle_t<texture_asset_t> occlusion_roughness_metallic;
   asset_handle_t<texture_asset_t> height;
+
+  // emissive.png, and its PRESENCE is the fact (lighting_def.md gate 4). A
+  // folder with no emissive map does not glow; there is nothing else to author
+  // and nothing else to read.
+  asset_handle_t<texture_asset_t> emissive;
 };
 
 // --- Ownership ---

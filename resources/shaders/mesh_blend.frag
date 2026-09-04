@@ -17,6 +17,12 @@ layout(location = 6) in vec3       fragWorldPosition;
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
+
+// Binding 4 of the material set. An absent emissive map resolves to the internal
+// 1x1 BLACK, which is why this is a fetch and never a branch: a material that
+// does not glow adds zero, exactly as the tracer's null emissive contributes
+// nothing (lighting_def.md gate 4).
+layout(set = 0, binding = 4) uniform sampler2D emissiveMap;
 // Set 2 is the layers above the base -- one set per layer, all through the same
 // single-sampler layout set 0 uses, so a blended material costs no new
 // descriptor machinery.
@@ -39,12 +45,19 @@ void main() {
 
 #ifdef LIGHTMAP
     // The four lights this face's chart kept, shaded analytically against the
-    // real light direction, plus the residual irradiance of the ones it dropped.
+    // real light direction, the residual irradiance of the ones it dropped, and
+    // the path-traced bounce.
     vec3 lighting = lightmap_direct_diffuse(normalize(fragWorldNormal), fragWorldPosition) +
-                    lightmap_residual_diffuse() + ambient;
+                    lightmap_residual_diffuse() +
+                    lightmap_indirect_diffuse(normalize(fragWorldNormal)) + ambient;
 #else
     vec3 lighting = ambient + vec3(diffuse * 0.85);
 #endif
 
-    outColor = vec4(layers * fragColor * lighting, fragAlpha);
+    // LAYER 0's emissive only, weighted by its own coverage -- so where layer 1
+    // covers the surface, layer 0 stops glowing. That is also the layer the bake
+    // reads (surface_at resolves layer 0), so the two agree.
+    outColor = vec4(layers * fragColor * lighting +
+                        texture(emissiveMap, fragUV).rgb * weight0,
+                    fragAlpha);
 }

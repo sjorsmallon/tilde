@@ -433,6 +433,52 @@ static int test_asset_package_round_trip()
 // the whole reason the state is explicit rather than a file-scope registry.
 static assets::asset_state_t g_asset_state{};
 
+// The house front face is COUNTER-CLOCKWISE (renderer.hpp's HOUSE_FRONT_FACE)
+// and the mesh pipeline culls back faces, so a primitive wound the other way
+// draws its far side and culls its near side: inside out. Both baked primitives
+// shipped that way once. Every triangle must be counter-clockwise seen from
+// outside, and must agree with the normal its own vertices carry -- a winding
+// that disagrees with the normal is lit from the wrong side even with culling
+// off.
+static int test_baked_primitives_are_wound_outward()
+{
+  auto check_winding = [](assets::mesh_asset id, const char *name)
+  {
+    const assets::mesh_asset_t *mesh = assets::get(assets::get_mesh(id));
+    assert(mesh != nullptr && mesh->indices.size() % 3 == 0);
+
+    linalg::vec3f centroid{0.f, 0.f, 0.f};
+    for (const vertex_xnu &vertex : mesh->vertices) centroid = centroid + vertex.position;
+    centroid = centroid * (1.0f / (float)mesh->vertices.size());
+
+    for (size_t at = 0; at + 2 < mesh->indices.size(); at += 3)
+    {
+      const vertex_xnu &a = mesh->vertices[mesh->indices[at + 0]];
+      const vertex_xnu &b = mesh->vertices[mesh->indices[at + 1]];
+      const vertex_xnu &c = mesh->vertices[mesh->indices[at + 2]];
+
+      const linalg::vec3f face_normal =
+          linalg::cross(b.position - a.position, c.position - a.position);
+      const linalg::vec3f outward =
+          (a.position + b.position + c.position) * (1.0f / 3.0f) - centroid;
+
+      // A UV sphere's pole triangles have two coincident corners and no area, so
+      // they have no winding to check.
+      if (linalg::length(face_normal) < 1e-9f) continue;
+
+      assert(linalg::dot(face_normal, outward) > 0.f);
+      assert(linalg::dot(face_normal, a.normal + b.normal + c.normal) > 0.f);
+    }
+    (void)name;
+  };
+
+  check_winding(assets::mesh_asset::Box, "Box");
+  check_winding(assets::mesh_asset::Sphere, "Sphere");
+
+  printf("  PASS: test_baked_primitives_are_wound_outward\n");
+  return 0;
+}
+
 int main()
 {
   printf("=== Asset System Tests ===\n");
@@ -456,6 +502,7 @@ int main()
   test_every_class_registers();
   test_a_material_is_a_directory_and_claims_its_maps();
   test_baked_primitives_are_unit_sized();
+  test_baked_primitives_are_wound_outward();
   test_manifest_ids_are_distinct();
   test_out_of_range_id_resolves_to_missing();
   test_one_cache_key_per_file();

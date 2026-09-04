@@ -65,9 +65,11 @@ void main() {
     float diffuse = max(dot(normalize(fragWorldNormal), -sunDir), 0.0);
 #ifdef LIGHTMAP
     // The four lights this face's chart kept, shaded analytically against the
-    // real light direction, plus the residual irradiance of the ones it dropped.
+    // real light direction, the residual irradiance of the ones it dropped, and
+    // the path-traced bounce.
     vec3  lighting = lightmap_direct_diffuse(normalize(fragWorldNormal), fragWorldPosition) +
-                     lightmap_residual_diffuse() + ambient;
+                     lightmap_residual_diffuse() +
+                     lightmap_indirect_diffuse(normalize(fragWorldNormal)) + ambient;
 #else
     vec3  lighting = ambient + vec3(diffuse * 0.85);
 #endif

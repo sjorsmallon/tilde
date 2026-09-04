@@ -6,6 +6,7 @@
 // multiplies out of the sample below.
 
 #include "scene.glsl"
+#include "probes.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -16,6 +17,12 @@ layout(location = 6) in vec3       fragWorldPosition;
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
+
+// Binding 4 of the material set. An absent emissive map resolves to the internal
+// 1x1 BLACK, which is why this is a fetch and never a branch: a material that
+// does not glow adds zero, exactly as the tracer's null emissive contributes
+// nothing (lighting_def.md gate 4).
+layout(set = 0, binding = 4) uniform sampler2D emissiveMap;
 
 #ifdef PBR
 #include "pbr_lighting.glsl"
@@ -40,10 +47,11 @@ void main() {
     vec3 N = normalize(fragWorldNormal);
     vec3 V = normalize(scene.camera_position.xyz - fragWorldPosition);
 
-    vec2 uv = parallax_occlusion(
-        heightMap, view_direction_in_tangent_space(N, V, fragWorldPosition, fragUV), fragUV);
+    mat3 tangent_frame = cotangent_frame(N, fragWorldPosition, fragUV);
+    vec2 uv            = parallax_occlusion(
+        heightMap, view_direction_in_tangent_space(tangent_frame, V), fragUV);
 
-    N = apply_normal_map(N, texture(normalMap, uv).xyz * 2.0 - 1.0, fragWorldPosition, uv);
+    N = apply_normal_map(tangent_frame, texture(normalMap, uv).xyz * 2.0 - 1.0);
 
     vec3  surface   = texture(albedo, uv).rgb * fragColor;
     vec3  orm       = texture(ormMap, uv).rgb;
@@ -115,26 +123,63 @@ void main() {
     }
 
 #ifdef LIGHTMAP
-    // What the atlas still holds: the lights this chart ranked below its four.
-    lit += (1.0 - metallic) * surface * lightmap_residual_diffuse();
+    // What the atlas still holds: the lights this chart ranked below its four,
+    // flat -- plus the bounce, which is convolved against N and therefore is the
+    // one baked term a normal map can move.
+    lit += (1.0 - metallic) * surface *
+           (lightmap_residual_diffuse() + lightmap_indirect_diffuse(N));
+#else
+    // No chart: the probe volume is where this surface's baked light lives, the
+    // direct Baked lights and the bounce both (lighting_def.md gate 5).
+    lit += (1.0 - metallic) * surface * probe_indirect_diffuse(fragWorldPosition, N);
 #endif
 
     lit += ambient * surface * occlusion;
 
+    // Straight through, tinted by nothing: the tracer collects this same texel
+    // and applies no base colour, so a factor here would light the room from one
+    // number and draw it from another -- ss11.
+    lit += texture(emissiveMap, uv).rgb;
+
     outColor = vec4(lit, fragAlpha);
 #else
-    // Hardcoded directional sun light
-    vec3  sunDir  = normalize(vec3(0.4, -0.8, 0.3));
-    float diffuse = max(dot(normalize(fragWorldNormal), -sunDir), 0.0);
+    // The non-PBR arm is Lambert against the SAME light list the PBR arm shades:
+    // the analytic tail here, the chart's four slots and the atlas on a
+    // lightmapped face, the probes on everything else. It used to be a
+    // hardcoded sun from a fixed direction plus the floor, which is a second
+    // lighting model (ss11) -- and the one every physics body and untextured
+    // prop drew through, so gate 5's probes landed under a sun that ignored
+    // them.
+    vec3 N = normalize(fragWorldNormal);
+
+    // The tail: the lights no bake saw, plus a second copy of every Mixed one.
+    // A lightmapped face skips that copy -- it shades the light through its
+    // chart below -- exactly as the PBR arm does.
+    vec3 lighting = vec3(0.0);
+    for (int index = scene.baked_light_count; index < scene.light_count; ++index)
+    {
+        Light light = scene.lights[index];
+#ifdef LIGHTMAP
+        if (LIGHT_BAKED_SLOT(light) >= 0)
+            continue;
+#endif
+        Light_Arrival arrival = light_arrival(light, fragWorldPosition);
+        lighting += light.radiance.rgb *
+                    (arrival.attenuation * max(dot(N, arrival.direction), 0.0)) / PI;
+    }
+
+#ifdef LIGHTMAP
+    lighting += lightmap_direct_diffuse(N, fragWorldPosition) + lightmap_residual_diffuse() +
+                lightmap_indirect_diffuse(N);
+#else
+    lighting += probe_indirect_diffuse(fragWorldPosition, N);
+#endif
+    lighting += ambient;
+
     // fragColor is the material's base colour times the draw's tint, so it tints
     // rather than replaces.
-#ifdef LIGHTMAP
-    vec3 lighting = lightmap_direct_diffuse(normalize(fragWorldNormal), fragWorldPosition) +
-                    lightmap_residual_diffuse() + ambient;
-#else
-    vec3 lighting = ambient + vec3(diffuse * 0.85);
-#endif
-    vec3 color = texture(albedo, fragUV).rgb * fragColor * lighting;
+    vec3 color = texture(albedo, fragUV).rgb * fragColor * lighting +
+                 texture(emissiveMap, fragUV).rgb;
     outColor   = vec4(color, fragAlpha);
 #endif
 }

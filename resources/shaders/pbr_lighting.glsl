@@ -111,32 +111,54 @@ vec3 shade_direct(vec3 N, vec3 V, vec3 L, vec3 albedo, float roughness, float me
            radiance * attenuation;
 }
 
+// The map is a HEIGHT map -- white is the top of the surface, which is what
+// every height.png on disk is (harsh_bricks: bricks white, mortar black) --
+// while the march below thinks in DEPTH below that top. So the sample is
+// inverted on read, and the renderer's absent-map fallback is WHITE: full
+// height, zero depth, nothing displaced. A black fallback would read as "the
+// whole surface is at the bottom" and slide every heightless material.
+float surface_depth_at(sampler2D height_map, vec2 uv, vec2 uv_dx, vec2 uv_dy)
+{
+    return 1.0 - textureGrad(height_map, uv, uv_dx, uv_dy).r;
+}
+
 vec2 parallax_occlusion(sampler2D height_map, vec3 view_direction_tangent, vec2 uv)
 {
-    const float height_scale = 0.01;
+    const float height_scale = 0.03;
 
     const float minimum_layer_count = 8.0;
     const float maximum_layer_count = 32.0;
 
+    // The step is xy / z, unbounded at a silhouette: below this the step spans
+    // whole tiles and the surface smears. Flooring z caps the offset instead.
+    const float minimum_view_z = 0.1;
+
     vec3  view_direction   = normalize(view_direction_tangent);
     float layer_count      = mix(maximum_layer_count, minimum_layer_count, abs(view_direction.z));
     float layer_depth_step = 1.0 / layer_count;
+    float view_z           = max(view_direction.z, minimum_view_z);
 
-    vec2 uv_step = (view_direction.xy / view_direction.z) * height_scale * layer_depth_step;
+    vec2 uv_step = (view_direction.xy / view_z) * height_scale * layer_depth_step;
+
+    // Derivatives are undefined inside non-uniform control flow, and a loop
+    // whose trip count is per pixel is exactly that. So the mip selection is
+    // made here, once, and handed to every sample the march takes.
+    vec2 uv_dx = dFdx(uv);
+    vec2 uv_dy = dFdy(uv);
 
     vec2  current_uv            = uv;
     float current_ray_depth     = 0.0;
-    float current_surface_depth = texture(height_map, current_uv).r;
+    float current_surface_depth = surface_depth_at(height_map, current_uv, uv_dx, uv_dy);
 
     while (current_ray_depth < current_surface_depth)
     {
         current_uv            -= uv_step;
         current_ray_depth     += layer_depth_step;
-        current_surface_depth  = texture(height_map, current_uv).r;
+        current_surface_depth  = surface_depth_at(height_map, current_uv, uv_dx, uv_dy);
     }
 
     vec2  previous_uv            = current_uv + uv_step;
-    float previous_surface_depth = texture(height_map, previous_uv).r;
+    float previous_surface_depth = surface_depth_at(height_map, previous_uv, uv_dx, uv_dy);
     float previous_ray_depth     = current_ray_depth - layer_depth_step;
 
     float overshoot  = current_ray_depth - current_surface_depth;
@@ -145,30 +167,50 @@ vec2 parallax_occlusion(sampler2D height_map, vec3 view_direction_tangent, vec2 
     return mix(current_uv, previous_uv, overshoot / (overshoot + undershoot));
 }
 
-vec3 apply_normal_map(vec3 N, vec3 tangent_normal, vec3 world_position, vec2 uv)
+// The tangent frame from screen derivatives: dP/dx = T*du/dx + B*dv/dx and
+// dP/dy = T*du/dy + B*dv/dy, solved for T and B by inverting the 2x2 uv
+// Jacobian. Two spellings were tried before this one and both are wrong here.
+// Normalizing Q1*st2.t - Q2*st1.t drops the Jacobian's sign, which is the
+// face's uv handedness -- default_face_uv is right-handed about the normal on
+// three of a box's six faces and left-handed on the other three, so T pointed
+// along -u on half of every box. Schuler's cotangent frame keeps that sign but
+// builds T and B out of cross products WITH N, which assumes the screen
+// derivatives wind the same way as N: true under OpenGL's y-up screen, false
+// under Vulkan's y-down one, where cross(dFdx(P), dFdy(P)) is -N on a front
+// face and the whole frame came out rotated 180 degrees (the parallax read as
+// hollow). Dividing by the determinant uses neither N nor a screen convention:
+// flip the screen's y and both dp2 and duv2 flip, and the ratio is unchanged.
+// Only the determinant's SIGN is applied, so a degenerate uv mapping cannot
+// divide by zero; the lengths are normalized away below anyway.
+mat3 cotangent_frame(vec3 N, vec3 world_position, vec2 uv)
 {
-    vec3 Q1  = dFdx(world_position);
-    vec3 Q2  = dFdy(world_position);
-    vec2 st1 = dFdx(uv);
-    vec2 st2 = dFdy(uv);
+    vec3 dp1  = dFdx(world_position);
+    vec3 dp2  = dFdy(world_position);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
 
-    vec3 T = normalize(Q1 * st2.t - Q2 * st1.t);
-    vec3 B = cross(N, T);
+    float determinant      = duv1.x * duv2.y - duv2.x * duv1.y;
+    float determinant_sign = determinant < 0.0 ? -1.0 : 1.0;
 
-    return normalize(mat3(T, B, N) * tangent_normal);
+    vec3 T = (dp1 * duv2.y - dp2 * duv1.y) * determinant_sign;
+    vec3 B = (dp2 * duv1.x - dp1 * duv2.x) * determinant_sign;
+
+    // Project off N so an interpolated normal on a curved mesh still gets a
+    // frame whose transpose is its inverse.
+    T = normalize(T - N * dot(N, T));
+    B = normalize(B - N * dot(N, B));
+
+    return mat3(T, B, N);
 }
 
-vec3 view_direction_in_tangent_space(vec3 N, vec3 V, vec3 world_position, vec2 uv)
+vec3 apply_normal_map(mat3 tangent_frame, vec3 tangent_normal)
 {
-    vec3 Q1  = dFdx(world_position);
-    vec3 Q2  = dFdy(world_position);
-    vec2 st1 = dFdx(uv);
-    vec2 st2 = dFdy(uv);
+    return normalize(tangent_frame * tangent_normal);
+}
 
-    vec3 T = normalize(Q1 * st2.t - Q2 * st1.t);
-    vec3 B = cross(N, T);
-
-    return normalize(transpose(mat3(T, B, N)) * V);
+vec3 view_direction_in_tangent_space(mat3 tangent_frame, vec3 V)
+{
+    return normalize(transpose(tangent_frame) * V);
 }
 
 #endif // PBR_LIGHTING_GLSL

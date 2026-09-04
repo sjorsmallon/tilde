@@ -352,3 +352,31 @@ void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
   // 3. Rebuild
   bvh = build_bvh(inputs);
 }
+
+bool bvh_point_is_inside_solid(const Bounding_Volume_Hierarchy &bvh, const vec3f& point)
+{
+  constexpr float ON_FACE_TOLERANCE = 1e-3f;
+
+  std::vector<const BVH_Primitive *> candidates;
+  bvh_intersect_aabb(bvh, {point, point}, candidates);
+
+  for (const BVH_Primitive *primitive : candidates)
+  {
+    if (primitive->collision_planes.empty())
+      return true;
+
+    bool inside_every_plane = true;
+    for (const Plane &plane : primitive->collision_planes)
+    {
+      if (dot(plane.normal, point - plane.point) > ON_FACE_TOLERANCE)
+      {
+        inside_every_plane = false;
+        break;
+      }
+    }
+    if (inside_every_plane) return true;
+  }
+
+  return false;
+}
+

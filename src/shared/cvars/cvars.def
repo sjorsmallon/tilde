@@ -456,7 +456,18 @@ Debugging :: cvars {
     // "which cores am I on" is not a thing worth making settable mid-session.
     pin_main_thread:        bool = true                 "Pin the main thread to the CPU's performance cores on a hybrid CPU"
 
-    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result"
+    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result(off, normals, uv, parallax_uv )"
+
+    // The tonemap pass multiplies the HDR target by this before the curve
+    // (lighting_def.md decision J). It is what decision H says
+    // LIGHT_REFERENCE_DISTANCE is a placeholder for, so a map lit too hot is
+    // retuned here rather than by rescaling every light.
+    //
+    // 1.4 is HALF A STOP above the identity, and the smallness is the finding:
+    // the light unit sits half a stop below where PBR Neutral puts middle grey,
+    // which is a calibration offset rather than the authoring inconsistency that
+    // would have earned a rescale of every light in every map.
+    r_exposure:             f32 = 1.4       @Client    "Exposure multiplier applied before the tonemap curve"
 
     debug_show_collisions:  bool = false                "Show collision faces in green"
     debug_show_hitboxes:    bool = true                "Show entity hitboxes in wireframe"

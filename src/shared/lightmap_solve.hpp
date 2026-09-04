@@ -52,6 +52,35 @@ struct lightmap_solve_settings_t
   // which is a dark seam on every face boundary in the level. It is a setting so
   // a debug image can be looked at with the coverage still visible.
   bool dilate_into_the_gutter = true;
+
+  // --- Indirect light, lighting_def.md gate 2 --------------------------------
+  //
+  // Whether the path tracer runs at all. OFF, because a chain is tens of rays
+  // per texel sample and every vertex of it fires the shadow rays afresh -- the
+  // one expensive switch in the bake.
+  //
+  // A SETTING rather than an out-param: the pages it fills live in lightmap_t
+  // and ride the sidecar now, so there is nothing left for a caller to hold.
+  bool trace_indirect_light = false;
+
+  // Chains fired per texel SAMPLE, so a 2x2 supersampled texel costs four times
+  // this. The quality knob, once the switch above is on.
+  int indirect_rays_per_sample = 32;
+
+  // How deep a chain runs before Russian roulette may end it, and the hard stop
+  // that is a guard rather than the termination rule -- a fixed cap alone biases
+  // every long path dark.
+  int indirect_bounces_before_roulette = 2;
+  int indirect_max_bounces = 16;
+
+  // --- Irradiance probes, lighting_def.md gate 5 -----------------------------
+  //
+  // Whether the probe volume is baked. Its grid comes from the bake settings'
+  // probe_spacing_in_world_units; a bake with this off CLEARS the volume, the
+  // rule the bounce pages follow. A probe's bounce is traced only when the
+  // atlas's is (trace_indirect_light), with the same chain count -- with it off
+  // a probe holds the direct term alone.
+  bool bake_probes = false;
 };
 
 // Per-light shadow-ray coverage: for every light the bake used, the fraction of a
@@ -95,6 +124,11 @@ struct lightmap_visibility_masks_t
 // `out_masks` is the optional DEBUG output, the deserialize_entity pattern: null
 // asks for none. It carries every light rather than the four a chart kept, which
 // is what makes it the view that shows a light being dropped.
+//
+// The INDIRECT pages are not an output parameter -- they are two more members of
+// `lightmap`, filled when solve_settings.trace_indirect_light is on and cleared
+// when it is not. A bake that does not ask fires no chain and costs exactly what
+// it did before gate 2.
 void bake_lightmap(const map_t &map, lightmap_t &lightmap,
                    const lightmap_solve_settings_t &solve_settings,
                    lightmap_visibility_masks_t *out_masks = nullptr);
@@ -115,5 +149,14 @@ try_write_lightmap_visibility_pages_png(const lightmap_pages_t &pages,
 [[nodiscard]] bool
 try_write_lightmap_visibility_png(const lightmap_visibility_masks_t &masks,
                                   const std::string &path_prefix);
+
+// The SH L1 direction as a picture, one RGB PNG per ATLAS page (not per layer):
+// the luminance-weighted L1 vector, re-normalized against its own L0 and biased
+// into [0, 1], which is the familiar normal-map look and reads as "which way is
+// the bounce coming from". It goes through load_l1, so what it shows is what a
+// reader gets rather than what the writer meant.
+[[nodiscard]] bool try_write_lightmap_l1_pages_png(const lightmap_pages_t &l1_pages,
+                                                   const lightmap_pages_t &l0_pages,
+                                                   const std::string &path_prefix);
 
 } // namespace shared

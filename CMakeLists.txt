@@ -374,6 +374,9 @@ add_library(game_shared STATIC
     src/shared/lighting.hpp
     src/shared/lightmap_bake.cpp
     src/shared/lightmap_debug_image.cpp
+    src/shared/lightmap_lights.cpp
+    src/shared/lightmap_probes.cpp
+    src/shared/lightmap_trace.cpp
     src/shared/lighting.hpp
     src/shared/lighting.cpp
     src/shared/lightmap_solve.cpp
@@ -521,6 +524,8 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/particle.frag
     ${SHADER_SRC_DIR}/ui.vert
     ${SHADER_SRC_DIR}/ui.frag
+    ${SHADER_SRC_DIR}/tonemap.vert
+    ${SHADER_SRC_DIR}/tonemap.frag
 )
 # The lightmapped variants are the SAME sources compiled with -DLIGHTMAP, not
 # new files. A lightmap composes with lit, grid and blend alike, so a file per
@@ -538,7 +543,7 @@ set(PBR_SHADER_SOURCES ${SHADER_SRC_DIR}/mesh_lit.frag)
 
 set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.glsl
                     ${SHADER_SRC_DIR}/lightmap.glsl ${SHADER_SRC_DIR}/light_falloff.glsl
-                    ${SHADER_SRC_DIR}/light_arrival.glsl)
+                    ${SHADER_SRC_DIR}/light_arrival.glsl ${SHADER_SRC_DIR}/probes.glsl)
 
 set(SHADER_HEADERS "")
 

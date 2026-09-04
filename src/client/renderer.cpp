@@ -111,6 +111,14 @@ const uint32_t ui_frag_spv[] =
 #include "ui.frag.spv.h"
     ;
 
+const uint32_t tonemap_vert_spv[] =
+#include "tonemap.vert.spv.h"
+    ;
+
+const uint32_t tonemap_frag_spv[] =
+#include "tonemap.frag.spv.h"
+    ;
+
 #include "stb_image.h"
 
 namespace client
@@ -203,7 +211,6 @@ constexpr uint32_t MAX_MATERIAL_TEXTURES = 64;
 constexpr uint32_t MAX_MATERIAL_SETS = 64;
 
 // The four maps, in the order the fragment shaders declare them at set 0.
-constexpr uint32_t MATERIAL_MAP_COUNT = 4;
 
 // One atlas per loaded map, plus the internal white page. A small cap on
 // purpose: a second live atlas means two maps resident at once, which is a
@@ -224,10 +231,39 @@ constexpr uint32_t PASS_SCENE_BINDING      = 1;
 // the other. resources/shaders/lightmap.glsl spells both as literals.
 constexpr uint32_t PASS_VISIBILITY_BINDING = 2;
 
+// The bounce, and it is TWO bindings rather than a set of its own: the ceiling is
+// four SETS (lighting_def.md ss5), and a binding costs none of that. Both ride
+// the pass set for the reason the visibility does -- a texel in one is that texel
+// in the others, and a pass naming one names all four.
+constexpr uint32_t PASS_INDIRECT_L0_BINDING = 3;
+constexpr uint32_t PASS_INDIRECT_L1_BINDING = 4;
+// The probe volume, gate 5: L0 and the three L1 axes, as sampler3Ds. Same set,
+// four more bindings -- the ss5 ceiling is on sets, and a binding spends none.
+constexpr uint32_t PASS_PROBE_L0_BINDING    = 5;
+constexpr uint32_t PASS_PROBE_L1_BINDING    = 6; // three consecutive, one per axis
+constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 8;
+
 // lightmap.glsl reads a vec4 of coverage against an ivec4 of slots, which is the
 // four in shared/lightmap.hpp seen from the other side.
 static_assert(shared::LIGHTMAP_LIGHTS_PER_CHART == 4,
               "resources/shaders/lightmap.glsl samples four visibility channels");
+
+// The SH L1 reconstruction is spelled as literals in resources/shaders/
+// lightmap.glsl, which no C++ compiler reads. These are what keep the two texts
+// one decision -- a shader convolving with the wrong weight is a bounce that is
+// merely the wrong brightness, which nobody can see is wrong.
+static_assert(shared::SH_L1_LAYERS_PER_PAGE == 3,
+              "resources/shaders/lightmap.glsl indexes L1 as page * 3 + axis");
+static_assert(shared::SH_L1_IRRADIANCE_L0 == 0.886227f,
+              "resources/shaders/lightmap.glsl spells SH_L1_IRRADIANCE_L0");
+static_assert(shared::SH_L1_IRRADIANCE_L1 == 1.023328f,
+              "resources/shaders/lightmap.glsl spells SH_L1_IRRADIANCE_L1");
+static_assert(shared::SH_L1_NORMALIZATION == 1.7320508f,
+              "resources/shaders/lightmap.glsl spells SH_L1_NORMALIZATION");
+
+// probes.glsl declares the four probe samplers at these bindings, as literals.
+static_assert(PASS_PROBE_L0_BINDING == 5 && PASS_PROBE_L1_BINDING == 6,
+              "resources/shaders/probes.glsl binds the probe volume at set 3, bindings 5..8");
 
 // --- Registered resources ---
 // Handles are indices into these three vectors. Nothing is ever removed (see
@@ -301,6 +337,18 @@ struct gpu_lightmap_t
   // irradiance rather than under a handle of its own because the two are one
   // bake and are written into one descriptor set.
   gpu_texture_t   visibility;
+  // The bounce. L1 carries SH_L1_LAYERS_PER_PAGE times as many layers as the
+  // other three, which is why nothing derives a layer count from `layer_count`.
+  gpu_texture_t   indirect_l0;
+  gpu_texture_t   indirect_l1;
+  // The probe volume (gate 5): four 3D images, and the world-to-texture mapping
+  // the scene block hands the shader. `has_probes` false means the four are
+  // the 1x1x1 black stand-ins and the mapping is meaningless.
+  gpu_texture_t   probe_l0;
+  gpu_texture_t   probe_l1[shared::SH_L1_LAYERS_PER_PAGE];
+  float           probe_origin[3]         = {0.f, 0.f, 0.f};
+  float           probe_inverse_extent[3] = {0.f, 0.f, 0.f};
+  bool            has_probes              = false;
   VkDescriptorSet set         = VK_NULL_HANDLE;
   int             size        = 0;
   int             layer_count = 0;
@@ -326,7 +374,8 @@ static texture_handle_t  g_white_texture;
 static texture_handle_t  g_missing_texture;
 static texture_handle_t  g_flat_normal_texture;
 static texture_handle_t  g_default_orm_texture;
-static texture_handle_t  g_zero_height_texture;
+static texture_handle_t  g_full_height_texture;
+static texture_handle_t  g_black_texture;
 static material_handle_t g_default_material;
 
 // --- Per-draw uniform data ---
@@ -460,6 +509,11 @@ struct scene_uniform_t
   float       view_projection[16];
   float       camera_position[4];
   float       ambient[4]; // rgb the constant floor; lighting_def.md decision C
+  // The probe volume's world-to-texture mapping (gate 5): uv = (P - origin) *
+  // inverse_extent. origin.w is 1 when the pass's bake carries probes, 0 when
+  // the bound volume is the black stand-in and the fetch can be skipped.
+  float       probe_origin[4];
+  float       probe_inverse_extent[4];
   int32_t     light_count       = 0;
   int32_t     debug_flags       = 0;
   int32_t     baked_light_count = 0;
@@ -467,7 +521,7 @@ struct scene_uniform_t
   gpu_light_t lights[MAX_SCENE_LIGHTS] = {};
 };
 
-static_assert(sizeof(scene_uniform_t) == 112 + 64 * MAX_SCENE_LIGHTS,
+static_assert(sizeof(scene_uniform_t) == 144 + 64 * MAX_SCENE_LIGHTS,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 
 // Spelled as literals in mesh_lit.frag's -DPBR arm and in pbr.frag.
@@ -523,7 +577,23 @@ static VkDeviceMemory g_depth_memory = VK_NULL_HANDLE;
 static VkImageView g_depth_view = VK_NULL_HANDLE;
 static VkFormat g_depth_format = VK_FORMAT_D32_SFLOAT;
 
-static VkRenderPass g_render_pass = VK_NULL_HANDLE;
+// lighting_def.md decision J: the scene renders into an HDR target, a fullscreen
+// pass tonemaps it into the sRGB swapchain, and the UI composites AFTER that --
+// UI colour is authored in display space, so a white HUD element through the
+// curve would arrive grey. Two render passes is what forces the split.
+constexpr VkFormat HDR_TARGET_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+// One HDR target per frame in flight, unlike the shared depth buffer: frame N's
+// tonemap READS what frame N's scene pass wrote, so a single target would let
+// frame N+1's scene pass overwrite it mid-read.
+static VkImage        g_hdr_image[MAX_FRAMES_IN_FLIGHT]          = {};
+static VkDeviceMemory g_hdr_memory[MAX_FRAMES_IN_FLIGHT]         = {};
+static VkImageView    g_hdr_view[MAX_FRAMES_IN_FLIGHT]           = {};
+static VkFramebuffer  g_scene_framebuffers[MAX_FRAMES_IN_FLIGHT] = {};
+static VkSampler      g_hdr_sampler                              = VK_NULL_HANDLE;
+
+static VkRenderPass g_scene_render_pass   = VK_NULL_HANDLE;
+static VkRenderPass g_present_render_pass = VK_NULL_HANDLE;
 static VkDescriptorPool g_descriptor_pool = VK_NULL_HANDLE;
 static VkCommandPool g_command_pool = VK_NULL_HANDLE;
 static std::vector<VkFramebuffer> g_swapchain_framebuffers;
@@ -638,9 +708,28 @@ static QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
 
 // Forward declarations
 static void create_depth_resources();
+static void create_hdr_targets();
+static void write_tonemap_descriptor_sets();
 
 static void cleanup_swapchain()
 {
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    if (g_scene_framebuffers[frame] != VK_NULL_HANDLE)
+      vkDestroyFramebuffer(g_device, g_scene_framebuffers[frame], nullptr);
+    if (g_hdr_view[frame] != VK_NULL_HANDLE)
+      vkDestroyImageView(g_device, g_hdr_view[frame], nullptr);
+    if (g_hdr_image[frame] != VK_NULL_HANDLE)
+      vkDestroyImage(g_device, g_hdr_image[frame], nullptr);
+    if (g_hdr_memory[frame] != VK_NULL_HANDLE)
+      vkFreeMemory(g_device, g_hdr_memory[frame], nullptr);
+
+    g_scene_framebuffers[frame] = VK_NULL_HANDLE;
+    g_hdr_view[frame]           = VK_NULL_HANDLE;
+    g_hdr_image[frame]          = VK_NULL_HANDLE;
+    g_hdr_memory[frame]         = VK_NULL_HANDLE;
+  }
+
   // Destroy depth resources
   if (g_depth_view != VK_NULL_HANDLE)
   {
@@ -814,26 +903,46 @@ static void create_swapchain()
   }
 }
 
+// The scene framebuffer is per FRAME IN FLIGHT and the present one is per
+// SWAPCHAIN IMAGE, which is why the two loops count differently: an HDR target
+// belongs to the frame that renders it, a swapchain image to whatever the
+// presentation engine handed back.
 static void create_framebuffers()
 {
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    VkImageView attachments[] = {g_hdr_view[frame], g_depth_view};
+
+    VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    framebuffer_info.renderPass      = g_scene_render_pass;
+    framebuffer_info.attachmentCount = 2;
+    framebuffer_info.pAttachments    = attachments;
+    framebuffer_info.width           = g_swapchain_extent.width;
+    framebuffer_info.height          = g_swapchain_extent.height;
+    framebuffer_info.layers          = 1;
+
+    if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr,
+                            &g_scene_framebuffers[frame]) != VK_SUCCESS)
+    {
+      fatal_error("[renderer] could not create the scene framebuffer");
+    }
+  }
+
   g_swapchain_framebuffers.resize(g_swapchain_image_views.size());
   for (size_t i = 0; i < g_swapchain_image_views.size(); i++)
   {
-    VkImageView attachments[] = {g_swapchain_image_views[i], g_depth_view};
-
-    VkFramebufferCreateInfo framebuffer_info{};
-    framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    framebuffer_info.renderPass = g_render_pass;
-    framebuffer_info.attachmentCount = 2;
-    framebuffer_info.pAttachments = attachments;
-    framebuffer_info.width = g_swapchain_extent.width;
-    framebuffer_info.height = g_swapchain_extent.height;
-    framebuffer_info.layers = 1;
+    VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    framebuffer_info.renderPass      = g_present_render_pass;
+    framebuffer_info.attachmentCount = 1;
+    framebuffer_info.pAttachments    = &g_swapchain_image_views[i];
+    framebuffer_info.width           = g_swapchain_extent.width;
+    framebuffer_info.height          = g_swapchain_extent.height;
+    framebuffer_info.layers          = 1;
 
     if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr,
                             &g_swapchain_framebuffers[i]) != VK_SUCCESS)
     {
-      log_error("Failed to create framebuffer!");
+      fatal_error("[renderer] could not create a swapchain framebuffer");
     }
   }
 }
@@ -850,7 +959,9 @@ static void rebuild_swapchain()
   cleanup_swapchain();
   create_swapchain();
   create_depth_resources();
+  create_hdr_targets();
   create_framebuffers();
+  write_tonemap_descriptor_sets();
 }
 
 // --- Internal AABB Functions ---
@@ -969,6 +1080,49 @@ static void create_depth_resources()
       VK_SUCCESS)
   {
     log_error("Failed to create depth image view!");
+  }
+}
+
+// Sized to the swapchain and rebuilt with it. SAMPLED as well as
+// COLOR_ATTACHMENT: the tonemap pass reads back what the scene pass wrote.
+static void create_hdr_targets()
+{
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType     = VK_IMAGE_TYPE_2D;
+    image_info.format        = HDR_TARGET_FORMAT;
+    image_info.extent        = {g_swapchain_extent.width, g_swapchain_extent.height, 1};
+    image_info.mipLevels     = 1;
+    image_info.arrayLayers   = 1;
+    image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    if (vkCreateImage(g_device, &image_info, nullptr, &g_hdr_image[frame]) != VK_SUCCESS)
+      fatal_error("[renderer] could not create the HDR scene target");
+
+    VkMemoryRequirements requirements;
+    vkGetImageMemoryRequirements(g_device, g_hdr_image[frame], &requirements);
+
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize  = requirements.size;
+    allocation.memoryTypeIndex =
+        find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(g_device, &allocation, nullptr, &g_hdr_memory[frame]) != VK_SUCCESS)
+      fatal_error("[renderer] could not allocate the HDR scene target");
+
+    vkBindImageMemory(g_device, g_hdr_image[frame], g_hdr_memory[frame], 0);
+
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image            = g_hdr_image[frame];
+    view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format           = HDR_TARGET_FORMAT;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vkCreateImageView(g_device, &view_info, nullptr, &g_hdr_view[frame]) != VK_SUCCESS)
+      fatal_error("[renderer] could not create the HDR scene target view");
   }
 }
 
@@ -1117,7 +1271,7 @@ static VkPipeline create_debug_pipeline(const debug_pipeline_options_t &options)
   pipeline_info.pColorBlendState    = &color_blending;
   pipeline_info.pDynamicState       = &dynamic_state;
   pipeline_info.layout              = g_debug_pipeline_layout;
-  pipeline_info.renderPass          = g_render_pass;
+  pipeline_info.renderPass          = g_scene_render_pass;
   pipeline_info.subpass             = 0;
 
   VkPipeline pipeline = VK_NULL_HANDLE;
@@ -1371,7 +1525,7 @@ static VkPipeline create_ui_pipeline()
   pipeline_info.pColorBlendState    = &color_blending;
   pipeline_info.pDynamicState       = &dynamic_state;
   pipeline_info.layout              = g_ui_pipeline_layout;
-  pipeline_info.renderPass          = g_render_pass;
+  pipeline_info.renderPass          = g_present_render_pass;
   pipeline_info.subpass             = 0;
 
   VkPipeline pipeline = VK_NULL_HANDLE;
@@ -1619,7 +1773,7 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   pipeline_info.pColorBlendState    = &color_blending;
   pipeline_info.pDynamicState       = &dynamic_state;
   pipeline_info.layout              = g_mesh_pipeline_layout;
-  pipeline_info.renderPass          = g_render_pass;
+  pipeline_info.renderPass          = g_scene_render_pass;
   pipeline_info.subpass             = 0;
 
   VkPipeline pipeline = VK_NULL_HANDLE;
@@ -1951,7 +2105,7 @@ static void create_mesh_resources()
 
   // A layout of its own: the atlas is a sampler2DArray, and a set allocated
   // against the sampler2D layout above reads garbage at the draw.
-  VkDescriptorSetLayoutBinding pass_bindings[3]{};
+  VkDescriptorSetLayoutBinding pass_bindings[PASS_IMAGE_BINDING_COUNT + 1]{};
   pass_bindings[0].binding         = PASS_LIGHTMAP_BINDING;
   pass_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[0].descriptorCount = 1;
@@ -1964,10 +2118,25 @@ static void create_mesh_resources()
   pass_bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[2].descriptorCount = 1;
   pass_bindings[2].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[3].binding         = PASS_INDIRECT_L0_BINDING;
+  pass_bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[3].descriptorCount = 1;
+  pass_bindings[3].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[4].binding         = PASS_INDIRECT_L1_BINDING;
+  pass_bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[4].descriptorCount = 1;
+  pass_bindings[4].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  for (uint32_t axis = 0; axis < 4; ++axis)
+  {
+    pass_bindings[5 + axis].binding         = PASS_PROBE_L0_BINDING + axis;
+    pass_bindings[5 + axis].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pass_bindings[5 + axis].descriptorCount = 1;
+    pass_bindings[5 + axis].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  }
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  pass_ds_layout_info.bindingCount = 3;
+  pass_ds_layout_info.bindingCount = PASS_IMAGE_BINDING_COUNT + 1;
   pass_ds_layout_info.pBindings    = pass_bindings;
   if (vkCreateDescriptorSetLayout(g_device, &pass_ds_layout_info, nullptr, &g_pass_ds_layout) !=
       VK_SUCCESS)
@@ -1975,9 +2144,10 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Two samplers per set now -- the irradiance and the visibility.
+  // Eight samplers per set -- irradiance, visibility, the bounce's two, and the
+  // probe volume's four.
   VkDescriptorPoolSize pass_pool_sizes[2] = {
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_LIGHTMAP_ATLASES * 2},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_LIGHTMAP_ATLASES * PASS_IMAGE_BINDING_COUNT},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_LIGHTMAP_ATLASES}};
   VkDescriptorPoolCreateInfo pass_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
   pass_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
@@ -2067,6 +2237,224 @@ static void destroy_ui_resources()
     vkDestroyPipeline(g_device, g_ui_pipeline, nullptr);
   if (g_ui_pipeline_layout)
     vkDestroyPipelineLayout(g_device, g_ui_pipeline_layout, nullptr);
+}
+
+// --- The tonemap pass ---
+//
+// lighting_def.md decision J. Inline tonemapping does not compose: a scene where
+// `pbr` maps and `grid` does not carries two response curves, and the operator
+// has to see a pixel's FINAL radiance where a forward shader sees only its own
+// draw. So the curve runs here, once, over everything the scene pass wrote.
+
+struct tonemap_push_constants_t
+{
+  float exposure = 1.0f;
+};
+
+static VkDescriptorSetLayout g_tonemap_ds_layout                  = VK_NULL_HANDLE;
+static VkDescriptorPool      g_tonemap_pool                       = VK_NULL_HANDLE;
+static VkDescriptorSet       g_tonemap_sets[MAX_FRAMES_IN_FLIGHT] = {};
+static VkPipelineLayout      g_tonemap_pipeline_layout            = VK_NULL_HANDLE;
+static VkPipeline            g_tonemap_pipeline                   = VK_NULL_HANDLE;
+
+// Called at init and again after every swapchain rebuild, which hands out new
+// HDR image views. A no-op before the sets exist, which is what lets
+// rebuild_swapchain call it unconditionally.
+static void write_tonemap_descriptor_sets()
+{
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    if (g_tonemap_sets[frame] == VK_NULL_HANDLE)
+      continue;
+
+    VkDescriptorImageInfo image{};
+    image.sampler     = g_hdr_sampler;
+    image.imageView   = g_hdr_view[frame];
+    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet          = g_tonemap_sets[frame];
+    write.dstBinding      = 0;
+    write.descriptorCount = 1;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo      = &image;
+    vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+  }
+}
+
+static VkPipeline create_tonemap_pipeline()
+{
+  VkShaderModuleCreateInfo vert_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  vert_info.codeSize = sizeof(tonemap_vert_spv);
+  vert_info.pCode    = tonemap_vert_spv;
+  VkShaderModule vert_module = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(g_device, &vert_info, nullptr, &vert_module) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the tonemap vertex shader module");
+
+  VkShaderModuleCreateInfo frag_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  frag_info.codeSize = sizeof(tonemap_frag_spv);
+  frag_info.pCode    = tonemap_frag_spv;
+  VkShaderModule frag_module = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(g_device, &frag_info, nullptr, &frag_module) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the tonemap fragment shader module");
+
+  VkPipelineShaderStageCreateInfo stages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
+       vert_module, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
+
+  // No vertex input at all: the vertex shader derives a covering triangle from
+  // gl_VertexIndex, so there is no buffer to bind and none to keep in sync.
+  VkPipelineVertexInputStateCreateInfo vertex_input{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount  = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth   = 1.0f;
+  rasterizer.cullMode    = VK_CULL_MODE_NONE;
+  rasterizer.frontFace   = HOUSE_FRONT_FACE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+
+  VkPipelineColorBlendAttachmentState blend_attachment{};
+  blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+  VkPipelineColorBlendStateCreateInfo color_blending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blending.attachmentCount = 1;
+  color_blending.pAttachments    = &blend_attachment;
+
+  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates    = dynamic_states;
+
+  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipeline_info.stageCount          = 2;
+  pipeline_info.pStages             = stages;
+  pipeline_info.pVertexInputState   = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState      = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState   = &multisampling;
+  pipeline_info.pDepthStencilState  = &depth_stencil;
+  pipeline_info.pColorBlendState    = &color_blending;
+  pipeline_info.pDynamicState       = &dynamic_state;
+  pipeline_info.layout              = g_tonemap_pipeline_layout;
+  pipeline_info.renderPass          = g_present_render_pass;
+  pipeline_info.subpass             = 0;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the tonemap pipeline");
+  }
+
+  vkDestroyShaderModule(g_device, frag_module, nullptr);
+  vkDestroyShaderModule(g_device, vert_module, nullptr);
+  return pipeline;
+}
+
+static void create_tonemap_resources()
+{
+  // NEAREST: the HDR target is the swapchain size and the pass is a 1:1 blit, so
+  // filtering could only soften a texel that already lines up with its pixel.
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter    = VK_FILTER_NEAREST;
+  sampler_info.minFilter    = VK_FILTER_NEAREST;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  if (vkCreateSampler(g_device, &sampler_info, nullptr, &g_hdr_sampler) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the HDR target sampler");
+
+  VkDescriptorSetLayoutBinding binding{};
+  binding.binding         = 0;
+  binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  binding.descriptorCount = 1;
+  binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo ds_layout_info{
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  ds_layout_info.bindingCount = 1;
+  ds_layout_info.pBindings    = &binding;
+  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_tonemap_ds_layout) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the tonemap descriptor set layout");
+  }
+
+  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT};
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.maxSets       = MAX_FRAMES_IN_FLIGHT;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes    = &pool_size;
+  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_tonemap_pool) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the tonemap descriptor pool");
+
+  VkDescriptorSetLayout layouts[MAX_FRAMES_IN_FLIGHT];
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+    layouts[frame] = g_tonemap_ds_layout;
+
+  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  allocation.descriptorPool     = g_tonemap_pool;
+  allocation.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+  allocation.pSetLayouts        = layouts;
+  if (vkAllocateDescriptorSets(g_device, &allocation, g_tonemap_sets) != VK_SUCCESS)
+    fatal_error("[renderer] could not allocate the tonemap descriptor sets");
+
+  write_tonemap_descriptor_sets();
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(tonemap_push_constants_t);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = 1;
+  layout_info.pSetLayouts            = &g_tonemap_ds_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_tonemap_pipeline_layout) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the tonemap pipeline layout");
+  }
+
+  g_tonemap_pipeline = create_tonemap_pipeline();
+}
+
+static void destroy_tonemap_resources()
+{
+  if (g_tonemap_pipeline)
+    vkDestroyPipeline(g_device, g_tonemap_pipeline, nullptr);
+  if (g_tonemap_pipeline_layout)
+    vkDestroyPipelineLayout(g_device, g_tonemap_pipeline_layout, nullptr);
+  if (g_tonemap_pool)
+    vkDestroyDescriptorPool(g_device, g_tonemap_pool, nullptr);
+  if (g_tonemap_ds_layout)
+    vkDestroyDescriptorSetLayout(g_device, g_tonemap_ds_layout, nullptr);
+  if (g_hdr_sampler)
+    vkDestroySampler(g_device, g_hdr_sampler, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -2203,18 +2591,14 @@ static VkFormat vulkan_format_of(shared::lightmap_pixel_format_t format)
   return VK_FORMAT_UNDEFINED;
 }
 
-static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu_texture_t &out)
+// Whether the device can sample `format` at all, and whether it can filter it.
+// Point sampling is blocky rather than broken, so the second degrades instead
+// of refusing.
+static bool try_check_sampled_format(VkFormat format, const char *what, bool &out_filter_linear)
 {
-  const uint32_t     size   = (uint32_t)pages.size_in_texels;
-  const uint32_t     layers = (uint32_t)pages.page_count;
-  const VkFormat     format = vulkan_format_of(pages.format);
-  const VkDeviceSize bytes  = (VkDeviceSize)pages.bytes.size();
-
   if (format == VK_FORMAT_UNDEFINED)
   {
-    log_error("[renderer] lightmap pages are in pixel format {}, which this build cannot "
-              "upload",
-              (uint32_t)pages.format);
+    log_error("[renderer] {} pages are in a pixel format this build cannot upload", what);
     return false;
   }
 
@@ -2222,28 +2606,35 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   vkGetPhysicalDeviceFormatProperties(g_physical_device, format, &format_properties);
   if ((format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0)
   {
-    log_error("[renderer] this GPU cannot sample lightmap format {}; the atlas cannot be "
-              "uploaded",
+    log_error("[renderer] this GPU cannot sample {} format {}; it cannot be uploaded", what,
               (uint32_t)format);
     return false;
   }
-  // Optional in Vulkan, universal in practice. Point sampling an atlas is
-  // blocky rather than broken, so it degrades instead of refusing.
-  const bool filter_linear =
+  out_filter_linear =
       (format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
-  if (!filter_linear)
-    log_warning("[renderer] lightmap format {} has no linear filtering here; the atlas will "
-                "be point sampled",
-                (uint32_t)format);
+  if (!out_filter_linear)
+    log_warning("[renderer] {} format {} has no linear filtering here; it will be point "
+                "sampled",
+                what, (uint32_t)format);
+  return true;
+}
 
+// One tightly packed byte range to one sampled image, whatever its shape: a 2D
+// array of `layers` square pages, or a single 3D volume. Clamp-to-edge on every
+// axis and no mips, which is what both the atlas and the probe volume want.
+static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_count,
+                                     VkFormat format, bool filter_linear,
+                                     VkImageType image_type, VkImageViewType view_type,
+                                     VkExtent3D extent, uint32_t layers, gpu_texture_t &out)
+{
   VkBuffer       staging_buffer = VK_NULL_HANDLE;
   VkDeviceMemory staging_memory = VK_NULL_HANDLE;
-  create_buffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+  create_buffer(byte_count, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 staging_buffer, staging_memory);
   void *mapped = nullptr;
-  vkMapMemory(g_device, staging_memory, 0, bytes, 0, &mapped);
-  memcpy(mapped, pages.bytes.data(), (size_t)bytes);
+  vkMapMemory(g_device, staging_memory, 0, byte_count, 0, &mapped);
+  memcpy(mapped, bytes, (size_t)byte_count);
   vkUnmapMemory(g_device, staging_memory);
 
   const auto drop_staging = [&]() {
@@ -2252,9 +2643,9 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   };
 
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-  image_info.imageType     = VK_IMAGE_TYPE_2D;
+  image_info.imageType     = image_type;
   image_info.format        = format;
-  image_info.extent        = {size, size, 1};
+  image_info.extent        = extent;
   image_info.mipLevels     = 1;
   image_info.arrayLayers   = layers;
   image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
@@ -2264,7 +2655,8 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   if (vkCreateImage(g_device, &image_info, nullptr, &out.image) != VK_SUCCESS)
   {
-    log_error("[renderer] could not create the lightmap atlas image");
+    log_error("[renderer] could not create a {}x{}x{} image of {} layer(s)", extent.width,
+              extent.height, extent.depth, layers);
     drop_staging();
     return false;
   }
@@ -2293,12 +2685,12 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                        0, nullptr, 0, nullptr, 1, &barrier);
 
-  // One copy for every layer at once -- the pages are page-major and tightly
-  // packed, which is the layout a single region with layerCount = pages already
-  // describes.
+  // One copy for every layer at once -- the bytes are layer-major and tightly
+  // packed, which is the layout a single region with layerCount = layers
+  // already describes.
   VkBufferImageCopy region{};
   region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, layers};
-  region.imageExtent      = {size, size, 1};
+  region.imageExtent      = extent;
   vkCmdCopyBufferToImage(cmd, staging_buffer, out.image,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
@@ -2315,7 +2707,7 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
 
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
   view_info.image            = out.image;
-  view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+  view_info.viewType         = view_type;
   view_info.format           = format;
   view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
   vkCreateImageView(g_device, &view_info, nullptr, &out.view);
@@ -2329,6 +2721,36 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
   vkCreateSampler(g_device, &sampler_info, nullptr, &out.sampler);
 
   return true;
+}
+
+static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu_texture_t &out)
+{
+  const VkFormat format = vulkan_format_of(pages.format);
+  bool           filter_linear = false;
+  if (!try_check_sampled_format(format, "lightmap", filter_linear))
+    return false;
+
+  return try_upload_sampled_image(pages.bytes.data(), (VkDeviceSize)pages.bytes.size(), format,
+                                  filter_linear, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                                  {(uint32_t)pages.size_in_texels, (uint32_t)pages.size_in_texels, 1},
+                                  (uint32_t)pages.page_count, out);
+}
+
+// One 3D image out of a probe volume's bytes -- L0 whole, or ONE axis of L1,
+// which is why the byte range is a parameter rather than the volume.
+static bool try_upload_probe_image(const uint8_t *bytes, size_t byte_count,
+                                   shared::lightmap_pixel_format_t pixel_format,
+                                   const linalg::vec3i &count, gpu_texture_t &out)
+{
+  const VkFormat format = vulkan_format_of(pixel_format);
+  bool           filter_linear = false;
+  if (!try_check_sampled_format(format, "probe volume", filter_linear))
+    return false;
+
+  return try_upload_sampled_image(bytes, (VkDeviceSize)byte_count, format, filter_linear,
+                                  VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D,
+                                  {(uint32_t)count.x, (uint32_t)count.y, (uint32_t)count.z}, 1,
+                                  out);
 }
 
 void destroy_texture(gpu_texture_t &tex)
@@ -2406,9 +2828,40 @@ texture_handle_t register_texture(const assets::texture_asset_t &texture, bool s
   return handle;
 }
 
+// The four images of one bake, written into one set. Shared by the allocate below
+// and by update_lightmap, because a rebake replaces every one of them and two
+// lists of bindings are two things free to disagree about which.
+static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap_t &entry)
+{
+  const gpu_texture_t *const textures[PASS_IMAGE_BINDING_COUNT] = {
+      &entry.texture,     &entry.visibility,  &entry.indirect_l0, &entry.indirect_l1,
+      &entry.probe_l0,    &entry.probe_l1[0], &entry.probe_l1[1], &entry.probe_l1[2]};
+  const uint32_t bindings[PASS_IMAGE_BINDING_COUNT] = {
+      PASS_LIGHTMAP_BINDING,    PASS_VISIBILITY_BINDING,  PASS_INDIRECT_L0_BINDING,
+      PASS_INDIRECT_L1_BINDING, PASS_PROBE_L0_BINDING,    PASS_PROBE_L1_BINDING,
+      PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2};
+
+  VkDescriptorImageInfo images[PASS_IMAGE_BINDING_COUNT]{};
+  VkWriteDescriptorSet writes[PASS_IMAGE_BINDING_COUNT]{};
+  for (uint32_t at = 0; at < PASS_IMAGE_BINDING_COUNT; ++at)
+  {
+    images[at].sampler     = textures[at]->sampler;
+    images[at].imageView   = textures[at]->view;
+    images[at].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    writes[at]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    writes[at].dstSet          = set;
+    writes[at].dstBinding      = bindings[at];
+    writes[at].descriptorCount = 1;
+    writes[at].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[at].pImageInfo      = &images[at];
+  }
+
+  vkUpdateDescriptorSets(g_device, PASS_IMAGE_BINDING_COUNT, writes, 0, nullptr);
+}
+
 // Allocated per ATLAS; every one points at the same scene buffer, offset varying.
-static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &irradiance,
-                                                    const gpu_texture_t &visibility)
+static VkDescriptorSet allocate_pass_descriptor_set(const gpu_lightmap_t &entry)
 {
   if (g_pass_pool == VK_NULL_HANDLE)
     return VK_NULL_HANDLE;
@@ -2425,15 +2878,7 @@ static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &irradia
     return VK_NULL_HANDLE;
   }
 
-  VkDescriptorImageInfo image{};
-  image.sampler     = irradiance.sampler;
-  image.imageView   = irradiance.view;
-  image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-  VkDescriptorImageInfo coverage{};
-  coverage.sampler     = visibility.sampler;
-  coverage.imageView   = visibility.view;
-  coverage.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  write_pass_image_descriptors(set, entry);
 
   // One block, not the whole buffer: a dynamic descriptor's range is fixed here.
   VkDescriptorBufferInfo scene{};
@@ -2441,60 +2886,149 @@ static VkDescriptorSet allocate_pass_descriptor_set(const gpu_texture_t &irradia
   scene.offset = 0;
   scene.range  = g_scene_block_size;
 
-  VkWriteDescriptorSet writes[3]{};
-  writes[0]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-  writes[0].dstSet          = set;
-  writes[0].dstBinding      = PASS_LIGHTMAP_BINDING;
-  writes[0].descriptorCount = 1;
-  writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  writes[0].pImageInfo      = &image;
+  VkWriteDescriptorSet scene_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  scene_write.dstSet          = set;
+  scene_write.dstBinding      = PASS_SCENE_BINDING;
+  scene_write.descriptorCount = 1;
+  scene_write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+  scene_write.pBufferInfo     = &scene;
 
-  writes[1]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-  writes[1].dstSet          = set;
-  writes[1].dstBinding      = PASS_SCENE_BINDING;
-  writes[1].descriptorCount = 1;
-  writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-  writes[1].pBufferInfo     = &scene;
-
-  writes[2]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-  writes[2].dstSet          = set;
-  writes[2].dstBinding      = PASS_VISIBILITY_BINDING;
-  writes[2].descriptorCount = 1;
-  writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  writes[2].pImageInfo      = &coverage;
-
-  vkUpdateDescriptorSets(g_device, 3, writes, 0, nullptr);
+  vkUpdateDescriptorSets(g_device, 1, &scene_write, 0, nullptr);
   return set;
 }
 
-// The two page sets are uploaded and replaced TOGETHER, because they are one
-// bake: a chart's rect names a texel in both, so a visibility from one run
+// A page set that is absent and the one texel that stands in for it. THE
+// POLARITY IS PER ROLE and getting one backwards is invisible, so each is named
+// with what "no data" has to mean for it:
+//
+//   visibility  -> FULLY VISIBLE. A bake that lost its coverage should draw its
+//                  baked lights unshadowed, not shadowed by everything.
+//   indirect L0 -> BLACK. A white one would add light to every surface of every
+//                  map with no bounce baked, which reads as a lighting bug
+//                  nobody would trace back to a fallback texture.
+//   indirect L1 -> the 128 bias, the zero direction -- though it does not
+//                  matter, because the decode scales by L0 and a black L0 makes
+//                  the term identically zero whatever this holds.
+static shared::lightmap_pages_t one_texel_pages(shared::lightmap_pixel_format_t format,
+                                                uint8_t fill, int layers)
+{
+  shared::lightmap_pages_t pages;
+  pages.format         = format;
+  pages.size_in_texels = 1;
+  pages.page_count     = layers;
+  pages.bytes.assign((size_t)layers * 4, fill);
+  return pages;
+}
+
+static void destroy_lightmap_textures(gpu_lightmap_t &entry)
+{
+  destroy_texture(entry.texture);
+  destroy_texture(entry.visibility);
+  destroy_texture(entry.indirect_l0);
+  destroy_texture(entry.indirect_l1);
+  destroy_texture(entry.probe_l0);
+  for (gpu_texture_t &axis : entry.probe_l1) destroy_texture(axis);
+}
+
+// The probe volume, gate 5: four 3D images, L0 and one per world axis of L1 --
+// the atlas's L1 layout lifted a dimension, so each axis is one contiguous
+// upload. An absent volume is the ordinary case (every bake with "Bake probes"
+// off) and stands in as a 1x1x1 BLACK L0, the polarity an absent bounce has: the
+// decode scales by L0, so black makes the term identically zero. The scene block
+// also carries a flag, so a fragment with no probes fetches nothing at all.
+static bool try_upload_probe_images(const shared::probe_volume_t &probes, gpu_lightmap_t &out)
+{
+  const uint8_t black_l0[4] = {0, 0, 0, 0};
+  const uint8_t zero_l1[4]  = {128, 128, 128, 255};
+
+  out.has_probes = !probes.empty();
+  const linalg::vec3i count = out.has_probes ? probes.grid.count : linalg::vec3i{1, 1, 1};
+  const size_t probe_count = (size_t)count.x * (size_t)count.y * (size_t)count.z;
+
+  if (!try_upload_probe_image(out.has_probes ? probes.l0_bytes.data() : black_l0,
+                              probe_count * 4, shared::lightmap_pixel_format_t::Rgb9e5, count,
+                              out.probe_l0))
+    return false;
+
+  for (int axis = 0; axis < shared::SH_L1_LAYERS_PER_PAGE; ++axis)
+  {
+    const uint8_t *bytes =
+        out.has_probes ? probes.l1_bytes.data() + (size_t)axis * probe_count * 4 : zero_l1;
+    if (try_upload_probe_image(bytes, probe_count * 4, shared::lightmap_pixel_format_t::Unorm8x4,
+                               count, out.probe_l1[axis]))
+      continue;
+
+    destroy_texture(out.probe_l0);
+    for (int done = 0; done < axis; ++done) destroy_texture(out.probe_l1[done]);
+    return false;
+  }
+
+  if (out.has_probes)
+  {
+    // A probe sits at the CENTRE of its texel, so the mapping from world to
+    // texture space is offset by half a spacing: probe i lands at (i + 0.5) / N.
+    const shared::probe_grid_t &grid = probes.grid;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      out.probe_origin[axis]         = grid.origin[axis] - grid.spacing * 0.5f;
+      out.probe_inverse_extent[axis] = 1.f / (grid.spacing * (float)grid.count[axis]);
+    }
+  }
+  return true;
+}
+
+// The four page sets are uploaded and replaced TOGETHER, because they are one
+// bake: a chart's rect names a texel in all of them, so a visibility from one run
 // beside an irradiance from another is a surface shadowed by lights it is not
 // lit by. One handle, one descriptor set, one lifetime.
-static bool try_upload_lightmap_pair(const shared::lightmap_pages_t &irradiance,
-                                     const shared::lightmap_pages_t &visibility,
-                                     gpu_lightmap_t &out)
+static bool try_upload_lightmap_pages(const shared::lightmap_t &lightmap, gpu_lightmap_t &out)
 {
+  const shared::lightmap_pages_t &irradiance  = lightmap.irradiance_pages;
+  const shared::lightmap_pages_t &visibility  = lightmap.visibility_pages;
+  const shared::lightmap_pages_t &indirect_l0 = lightmap.indirect_l0_pages;
+  const shared::lightmap_pages_t &indirect_l1 = lightmap.indirect_l1_pages;
+
   if (!try_upload_lightmap_image(irradiance, out.texture))
     return false;
 
-  // A bake always writes both, so an absent visibility is a lightmap_t that came
-  // from somewhere else. One fully-visible texel is the graceful half of that:
-  // the baked lights shade unshadowed rather than the level going black.
-  shared::lightmap_pages_t fallback;
+  // A bake always writes the visibility, so an absent one is a lightmap_t that
+  // came from somewhere else, and it says so.
+  shared::lightmap_pages_t visible =
+      one_texel_pages(shared::lightmap_pixel_format_t::Unorm8x4, 255, 1);
   if (visibility.empty())
-  {
     log_warning("[renderer] this bake carries no visibility pages; every baked light will "
                 "be unshadowed on lightmapped surfaces");
-    fallback.format         = shared::lightmap_pixel_format_t::Unorm8x4;
-    fallback.size_in_texels = 1;
-    fallback.page_count     = 1;
-    fallback.bytes.assign(4, 255);
+
+  // An absent BOUNCE is the ordinary case -- every bake with "Trace indirect
+  // light" off -- so it is silent where the visibility is loud.
+  shared::lightmap_pages_t black_l0;
+  black_l0.format         = shared::lightmap_pixel_format_t::Rgb9e5;
+  black_l0.size_in_texels = 1;
+  black_l0.page_count     = 1;
+  black_l0.bytes.assign(4, 0);
+  const shared::lightmap_pages_t zero_l1 = one_texel_pages(
+      shared::lightmap_pixel_format_t::Unorm8x4, 128, shared::SH_L1_LAYERS_PER_PAGE);
+
+  const bool has_bounce = !indirect_l0.empty() && !indirect_l1.empty();
+
+  gpu_texture_t *const targets[3] = {&out.visibility, &out.indirect_l0, &out.indirect_l1};
+  const shared::lightmap_pages_t *const sources[3] = {
+      visibility.empty() ? &visible : &visibility, has_bounce ? &indirect_l0 : &black_l0,
+      has_bounce ? &indirect_l1 : &zero_l1};
+
+  for (uint32_t at = 0; at < 3; ++at)
+  {
+    if (try_upload_lightmap_image(*sources[at], *targets[at])) continue;
+
+    destroy_texture(out.texture);
+    for (uint32_t done = 0; done < at; ++done) destroy_texture(*targets[done]);
+    return false;
   }
 
-  if (!try_upload_lightmap_image(visibility.empty() ? fallback : visibility, out.visibility))
+  if (!try_upload_probe_images(lightmap.probes, out))
   {
     destroy_texture(out.texture);
+    for (gpu_texture_t *target : targets) destroy_texture(*target);
     return false;
   }
 
@@ -2503,21 +3037,20 @@ static bool try_upload_lightmap_pair(const shared::lightmap_pages_t &irradiance,
   return true;
 }
 
-lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &irradiance,
-                                    const shared::lightmap_pages_t &visibility)
+lightmap_handle_t register_lightmap(const shared::lightmap_t &lightmap)
 {
+  const shared::lightmap_pages_t &irradiance = lightmap.irradiance_pages;
   if (irradiance.empty() || irradiance.size_in_texels <= 0 || irradiance.page_count <= 0)
     return {};
 
   gpu_lightmap_t entry{};
-  if (!try_upload_lightmap_pair(irradiance, visibility, entry))
+  if (!try_upload_lightmap_pages(lightmap, entry))
     return {};
 
-  entry.set = allocate_pass_descriptor_set(entry.texture, entry.visibility);
+  entry.set = allocate_pass_descriptor_set(entry);
   if (entry.set == VK_NULL_HANDLE)
   {
-    destroy_texture(entry.texture);
-    destroy_texture(entry.visibility);
+    destroy_lightmap_textures(entry);
     return {};
   }
 
@@ -2526,9 +3059,9 @@ lightmap_handle_t register_lightmap(const shared::lightmap_pages_t &irradiance,
   return handle;
 }
 
-void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &irradiance,
-                     const shared::lightmap_pages_t &visibility)
+void update_lightmap(lightmap_handle_t handle, const shared::lightmap_t &lightmap)
 {
+  const shared::lightmap_pages_t &irradiance = lightmap.irradiance_pages;
   if (!handle.valid() || handle.index >= g_lightmaps.size())
   {
     log_error("[renderer] update_lightmap: invalid lightmap handle {}", handle.index);
@@ -2548,42 +3081,14 @@ void update_lightmap(lightmap_handle_t handle, const shared::lightmap_pages_t &i
   vkDeviceWaitIdle(g_device);
 
   gpu_lightmap_t replacement{};
-  if (!try_upload_lightmap_pair(irradiance, visibility, replacement))
+  if (!try_upload_lightmap_pages(lightmap, replacement))
     return;
 
-  destroy_texture(entry.texture);
-  destroy_texture(entry.visibility);
-  entry.texture     = replacement.texture;
-  entry.visibility  = replacement.visibility;
-  entry.size        = replacement.size;
-  entry.layer_count = replacement.layer_count;
+  destroy_lightmap_textures(entry);
+  replacement.set = entry.set;
+  entry           = replacement;
 
-  VkDescriptorImageInfo image{};
-  image.sampler     = entry.texture.sampler;
-  image.imageView   = entry.texture.view;
-  image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-  VkDescriptorImageInfo coverage{};
-  coverage.sampler     = entry.visibility.sampler;
-  coverage.imageView   = entry.visibility.view;
-  coverage.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-  VkWriteDescriptorSet writes[2]{};
-  writes[0]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-  writes[0].dstSet          = entry.set;
-  writes[0].dstBinding      = PASS_LIGHTMAP_BINDING;
-  writes[0].descriptorCount = 1;
-  writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  writes[0].pImageInfo      = &image;
-
-  writes[1]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-  writes[1].dstSet          = entry.set;
-  writes[1].dstBinding      = PASS_VISIBILITY_BINDING;
-  writes[1].descriptorCount = 1;
-  writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  writes[1].pImageInfo      = &coverage;
-
-  vkUpdateDescriptorSets(g_device, 2, writes, 0, nullptr);
+  write_pass_image_descriptors(entry.set, entry);
 }
 
 // The white page's set carries the scene block too, so the fallback is not optional.
@@ -2636,6 +3141,8 @@ static material_maps_t register_material_maps(const assets::material_maps_t &sou
     maps.normal = register_texture_asset(source.normal, /*srgb*/ false);
   if (source.orm.valid())
     maps.orm = register_texture_asset(source.orm, /*srgb*/ false);
+  if (source.emissive.valid())
+    maps.emissive = register_texture_asset(source.emissive, /*srgb*/ true);
   if (source.height.valid())
     maps.height = register_texture_asset(source.height, /*srgb*/ false);
 
@@ -2672,7 +3179,8 @@ static VkDescriptorSet resolve_material_set(const material_maps_t &maps)
     size_t operator()(const material_maps_t &key) const
     {
       size_t hash = key.albedo.index;
-      for (uint32_t index : {key.normal.index, key.orm.index, key.height.index})
+      for (uint32_t index :
+           {key.normal.index, key.orm.index, key.height.index, key.emissive.index})
         hash = hash * 1099511628211ull + index;
       return hash;
     }
@@ -2687,7 +3195,8 @@ static VkDescriptorSet resolve_material_set(const material_maps_t &maps)
       resolve_map_texture(maps.albedo, g_white_texture),
       resolve_map_texture(maps.normal, g_flat_normal_texture),
       resolve_map_texture(maps.orm, g_default_orm_texture),
-      resolve_map_texture(maps.height, g_zero_height_texture)};
+      resolve_map_texture(maps.height, g_full_height_texture),
+      resolve_map_texture(maps.emissive, g_black_texture)};
 
   for (uint32_t map = 0; map < MATERIAL_MAP_COUNT; ++map)
   {
@@ -3087,7 +3596,11 @@ static void create_default_resources()
   }
   g_missing_texture = register_texture(missing, /*srgb*/ true);
 
-  // A flat normal, occlusion 1 / roughness 1 / metallic 0, zero height. All UNORM.
+  // A flat normal, occlusion 1 / roughness 1 / metallic 0, FULL height. All
+  // UNORM. Full rather than zero because height.png is a height map (white is
+  // the top) and parallax_occlusion marches in depth below the top: white is
+  // zero depth and nothing displaced, black would slide every heightless
+  // material by the whole height_scale.
   const auto one_texel = [](uint8_t r, uint8_t g, uint8_t b) {
     assets::texture_asset_t texel{};
     texel.width    = 1;
@@ -3098,7 +3611,12 @@ static void create_default_resources()
   };
   g_flat_normal_texture = register_texture(one_texel(128, 128, 255), /*srgb*/ false);
   g_default_orm_texture = register_texture(one_texel(255, 255, 0), /*srgb*/ false);
-  g_zero_height_texture = register_texture(one_texel(0, 0, 0), /*srgb*/ false);
+  g_full_height_texture = register_texture(one_texel(255, 255, 255), /*srgb*/ false);
+
+  // The one default that is BLACK rather than neutral: an absent emissive map
+  // must compose to no light, where every other absent map composes to no
+  // effect. SRGB because an emissive map is authored colour, like albedo.
+  g_black_texture = register_texture(one_texel(0, 0, 0), /*srgb*/ true);
 
   g_default_material = register_material({});
 
@@ -3121,7 +3639,14 @@ static void create_default_resources()
   visible_pages.page_count     = 1;
   visible_pages.bytes.assign(4, 255);
 
-  g_white_lightmap = register_lightmap(white_pages, visible_pages);
+  // No bounce pages: the fallback ladder inside the upload gives this set a black
+  // L0, so a mesh drawn in a pass that names no bake gets a white residual and
+  // NO indirect -- which is the right pair, since the white page is standing in
+  // for "unknown" and an invented bounce is not a graceful unknown.
+  shared::lightmap_t white_lightmap;
+  white_lightmap.irradiance_pages = white_pages;
+  white_lightmap.visibility_pages = visible_pages;
+  g_white_lightmap                = register_lightmap(white_lightmap);
   if (!g_white_lightmap.valid())
   {
     // The pass set carries the scene block; a pass with no set bound draws nothing.
@@ -3132,10 +3657,7 @@ static void create_default_resources()
 static void cleanup_registered_resources()
 {
   for (gpu_lightmap_t &lightmap : g_lightmaps)
-  {
-    destroy_texture(lightmap.texture);
-    destroy_texture(lightmap.visibility);
-  }
+    destroy_lightmap_textures(lightmap);
   g_lightmaps.clear();
 
   for (gpu_mesh_t &mesh : g_meshes)
@@ -3464,7 +3986,7 @@ static void create_particle_graphics_pipeline()
   pipeline_info.pColorBlendState = &blend_state;
   pipeline_info.pDynamicState = &dynamic_state;
   pipeline_info.layout = g_particle_graphics_layout;
-  pipeline_info.renderPass = g_render_pass;
+  pipeline_info.renderPass = g_scene_render_pass;
   pipeline_info.subpass = 0;
 
   vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &g_particle_graphics_pipeline);
@@ -3736,6 +4258,22 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   scene.ambient[1] = AMBIENT_FLOOR;
   scene.ambient[2] = AMBIENT_FLOOR;
   scene.ambient[3] = 0.0f;
+
+  // The probe mapping belongs to the BAKE the pass draws, resolved from the same
+  // handle the descriptor set is -- so a pass naming no bake, or one whose bake
+  // carried no probes, says so and the shader fetches nothing.
+  const gpu_lightmap_t *bake = nullptr;
+  if (pass.lightmap.valid() && pass.lightmap.index < g_lightmaps.size())
+    bake = &g_lightmaps[pass.lightmap.index];
+  if (bake && bake->has_probes)
+  {
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      scene.probe_origin[axis]         = bake->probe_origin[axis];
+      scene.probe_inverse_extent[axis] = bake->probe_inverse_extent[axis];
+    }
+    scene.probe_origin[3] = 1.0f;
+  }
 
   if (pass.lights.size() > MAX_SCENE_LIGHTS)
   {
@@ -4661,20 +5199,20 @@ bool init(SDL_Window *window)
 
   create_swapchain();
 
-  // Render Pass
+  // The SCENE pass. Its colour attachment is the HDR target, not the swapchain,
+  // which is the whole of lighting_def.md decision J: an 8-bit attachment clips
+  // every value above 1.0 before anything can map it.
   VkAttachmentDescription attachments[2] = {};
 
-  // Color attachment
-  attachments[0].format = g_swapchain_image_format;
+  attachments[0].format = HDR_TARGET_FORMAT;
   attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
   attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-  // Depth attachment
   attachments[1].format = g_depth_format;
   attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
   attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -4698,16 +5236,27 @@ bool init(SDL_Window *window)
   subpass.pColorAttachments = &color_attachment_ref;
   subpass.pDepthStencilAttachment = &depth_attachment_ref;
 
-  VkSubpassDependency dependency{};
-  dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-  dependency.dstSubpass = 0;
-  dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-  dependency.srcAccessMask = 0;
-  dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-  dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  // Two dependencies now. The first is what was always here; the second is the
+  // handover -- the tonemap pass SAMPLES this attachment, so the write has to be
+  // visible to a fragment shader before the present pass reads it.
+  VkSubpassDependency dependencies[2] = {};
+  dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+  dependencies[0].dstSubpass = 0;
+  dependencies[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[0].srcAccessMask = 0;
+  dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+  dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+  dependencies[1].srcSubpass = 0;
+  dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+  dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
   VkRenderPassCreateInfo render_pass_info{};
   render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -4715,17 +5264,63 @@ bool init(SDL_Window *window)
   render_pass_info.pAttachments = attachments;
   render_pass_info.subpassCount = 1;
   render_pass_info.pSubpasses = &subpass;
-  render_pass_info.dependencyCount = 1;
-  render_pass_info.pDependencies = &dependency;
+  render_pass_info.dependencyCount = 2;
+  render_pass_info.pDependencies = dependencies;
 
   if (vkCreateRenderPass(g_device, &render_pass_info, nullptr,
-                         &g_render_pass) != VK_SUCCESS)
+                         &g_scene_render_pass) != VK_SUCCESS)
   {
-    log_error("Failed to create render pass!");
+    log_error("Failed to create the scene render pass!");
+    return false;
+  }
+
+  // The PRESENT pass: tonemap, then the UI, then ImGui, into the sRGB swapchain.
+  // No depth attachment -- nothing in it is three-dimensional -- and no colour
+  // clear either, since the tonemap draw covers every pixel.
+  VkAttachmentDescription present_attachment{};
+  present_attachment.format = g_swapchain_image_format;
+  present_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+  present_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  present_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  present_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  present_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  present_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  present_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+  VkAttachmentReference present_attachment_ref{};
+  present_attachment_ref.attachment = 0;
+  present_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+  VkSubpassDescription present_subpass{};
+  present_subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  present_subpass.colorAttachmentCount = 1;
+  present_subpass.pColorAttachments = &present_attachment_ref;
+
+  VkSubpassDependency present_dependency{};
+  present_dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+  present_dependency.dstSubpass = 0;
+  present_dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  present_dependency.srcAccessMask = 0;
+  present_dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  present_dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+  VkRenderPassCreateInfo present_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+  present_pass_info.attachmentCount = 1;
+  present_pass_info.pAttachments = &present_attachment;
+  present_pass_info.subpassCount = 1;
+  present_pass_info.pSubpasses = &present_subpass;
+  present_pass_info.dependencyCount = 1;
+  present_pass_info.pDependencies = &present_dependency;
+
+  if (vkCreateRenderPass(g_device, &present_pass_info, nullptr,
+                         &g_present_render_pass) != VK_SUCCESS)
+  {
+    log_error("Failed to create the present render pass!");
     return false;
   }
 
   create_depth_resources();
+  create_hdr_targets();
   create_framebuffers();
 
   // Command Pool
@@ -4746,6 +5341,7 @@ bool init(SDL_Window *window)
   create_debug_resources();
   create_mesh_resources();
   create_ui_resources(); // after create_mesh_resources -- it borrows g_ui_texture_ds_layout
+  create_tonemap_resources();
   create_default_resources();
   init_particle_system();
 
@@ -4832,7 +5428,7 @@ bool init(SDL_Window *window)
   init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
   init_info.Allocator = nullptr;
   init_info.CheckVkResultFn = check_vk_result;
-  ImGui_ImplVulkan_Init(&init_info, g_render_pass);
+  ImGui_ImplVulkan_Init(&init_info, g_present_render_pass);
 
   // Fonts
   {
@@ -4881,12 +5477,14 @@ void shutdown()
 
   destroy_debug_resources();
   destroy_ui_resources();
+  destroy_tonemap_resources();
   cleanup_registered_resources();
 
   g_bind_pose_skinning.clear();
   destroy_frame_uniform_allocator(g_skinning_uniforms);
 
-  vkDestroyRenderPass(g_device, g_render_pass, nullptr);
+  vkDestroyRenderPass(g_device, g_scene_render_pass, nullptr);
+  vkDestroyRenderPass(g_device, g_present_render_pass, nullptr);
   vkDestroyDevice(g_device, nullptr);
 
   if (g_surface)
@@ -4987,7 +5585,8 @@ bool new_frame()
   return true;
 }
 
-void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
+void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
+                  const tonemap_settings_t &tonemap)
 {
   VkCommandBuffer cmd = g_command_buffers[g_current_frame_idx_in_swapchain];
 
@@ -5006,10 +5605,12 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
       project_debug_texts(pass.view, *pass.debug);
   ImGui::Render();
 
-  // 3. The render pass, and every view pass inside it in the order given.
+  // 3. The SCENE pass, into the HDR target, and every view pass inside it in the
+  //    order given. Its framebuffer is indexed by frame in flight rather than by
+  //    swapchain image: the target belongs to the frame that renders it.
   VkRenderPassBeginInfo render_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-  render_pass_info.renderPass        = g_render_pass;
-  render_pass_info.framebuffer       = g_swapchain_framebuffers[g_image_index];
+  render_pass_info.renderPass        = g_scene_render_pass;
+  render_pass_info.framebuffer       = g_scene_framebuffers[g_current_frame_idx_in_swapchain];
   render_pass_info.renderArea.offset = {0, 0};
   render_pass_info.renderArea.extent = g_swapchain_extent;
 
@@ -5052,10 +5653,42 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
         custom.record(cmd, custom.user);
   }
 
-  // 4. The screen-space UI, over every view pass and UNDER ImGui. That ordering
-  //    is the one visible behaviour change from moving the crosshair and the
-  //    announcement off ImGui's foreground list: the dev console now covers
-  //    them, which is what an open console should do.
+  vkCmdEndRenderPass(cmd);
+
+  // 4. The PRESENT pass. The tonemap draw is first and covers every pixel, which
+  //    is why the attachment needs no clear.
+  VkRenderPassBeginInfo present_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+  present_pass_info.renderPass        = g_present_render_pass;
+  present_pass_info.framebuffer       = g_swapchain_framebuffers[g_image_index];
+  present_pass_info.renderArea.offset = {0, 0};
+  present_pass_info.renderArea.extent = g_swapchain_extent;
+
+  vkCmdBeginRenderPass(cmd, &present_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+
+  // The full framebuffer, not a view_pass_t viewport: what the scene pass wrote
+  // is one image whatever the passes inside it were.
+  VkViewport tonemap_viewport{};
+  tonemap_viewport.width    = (float)g_swapchain_extent.width;
+  tonemap_viewport.height   = (float)g_swapchain_extent.height;
+  tonemap_viewport.maxDepth = 1.0f;
+  vkCmdSetViewport(cmd, 0, 1, &tonemap_viewport);
+
+  VkRect2D tonemap_scissor{};
+  tonemap_scissor.extent = g_swapchain_extent;
+  vkCmdSetScissor(cmd, 0, 1, &tonemap_scissor);
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_tonemap_pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_tonemap_pipeline_layout, 0, 1,
+                          &g_tonemap_sets[g_current_frame_idx_in_swapchain], 0, nullptr);
+
+  const tonemap_push_constants_t tonemap_push{tonemap.exposure};
+  vkCmdPushConstants(cmd, g_tonemap_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                     sizeof(tonemap_push), &tonemap_push);
+  vkCmdDraw(cmd, 3, 1, 0, 0);
+
+  // 5. The screen-space UI, over the tonemapped image and UNDER ImGui. On the
+  //    FAR side of the curve on purpose: UI colour is authored in display space,
+  //    and a white 1.0 HUD element through the tonemap arrives grey.
   record_ui_draw_list(cmd, ui);
 
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -5107,7 +5740,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui)
 }
 
 VkDevice get_VkDevice() { return g_device; }
-VkRenderPass get_VkRenderPass() { return g_render_pass; }
+VkRenderPass get_VkRenderPass() { return g_scene_render_pass; }
 VkPhysicalDevice get_VkPhysicalDevice() { return g_physical_device; }
 uint32_t get_current_frame_index() { return g_current_frame_idx_in_swapchain; }
 uint32_t get_max_frames_in_flight() { return MAX_FRAMES_IN_FLIGHT; }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aabb.hpp"
 #include "array.hpp"
 #include "entity_uid.hpp"
 #include "linalg.hpp"
@@ -92,6 +93,14 @@ struct lightmap_chart_t
   // face -- the rect is the allocation, the polygon is the coverage.
   std::vector<linalg::vec2> polygon;
 
+  // The OTHER coverage shape, for a chart that is not one polygon: a static
+  // mesh's coplanar triangles, three chart-space corners each. A mesh's
+  // coplanar triangles need not be adjacent, so their union is not a polygon
+  // and the point-in-face test walks these instead. Exactly one of `polygon`
+  // and `triangles` is filled, and like `polygon` it is the bake's own and is
+  // never saved.
+  std::vector<linalg::vec2> triangles;
+
   // Which atlas LAYER this chart landed on. Filled by pack_lightmap_charts; -1
   // is unpacked, which after a successful pack is a bug rather than a state.
   int page = -1;
@@ -124,6 +133,11 @@ struct lightmap_bake_settings_t
   int gutter_in_texels = 2;
   int max_chart_extent_in_texels = 512;
   int atlas_size_in_texels = 1024;
+
+  // Gate 5: the distance between irradiance probes on every axis. 64 is about a
+  // player height, the doc's "one probe per 1-2 m". Carried like the rest so a
+  // reload rebuilds the grid the bake traced.
+  float probe_spacing_in_world_units = 64.f;
 };
 
 
@@ -217,9 +231,9 @@ enum class lightmap_pixel_format_t : uint32_t
   // lacks: baked colour is HDR, and a bright light beside a dim one clips
   // immediately at eight bits a channel.
   //
-  // UNSIGNED, which is fine for irradiance and wrong for anything signed -- an
-  // SH L1 direction layer, if one ever lands, needs bias-encoding or a format of
-  // its own.
+  // UNSIGNED, which is fine for irradiance and is why the SH L1 pages beside it
+  // are Unorm8x4 and bias-encoded: L0 is non-negative and lands here, L1 is
+  // signed and cannot.
   Rgb9e5 = 0,
 
   // The VISIBILITY role: one UNORM8 per light slot, in the chart's slot order.
@@ -229,6 +243,10 @@ enum class lightmap_pixel_format_t : uint32_t
   //
   // Four bytes a texel, exactly what RGB9E5 costs, which is why the cap is four
   // rather than a number picked for the atlas budget.
+  //
+  // The SH L1 pages carry these same BITS with a different MEANING -- a signed
+  // direction component, bias-encoded -- which is why they have a third accessor
+  // pair below rather than reusing the visibility one.
   Unorm8x4 = 1,
 };
 
@@ -301,6 +319,143 @@ inline constexpr float RGB9E5_MAX_VALUE = 65408.f;
           (float)((word >> 18) & 0x1ffu) * scale};
 }
 
+// --- SH L1, the INDIRECT encoding (lighting_def.md gate 2) -------------------
+//
+// Four coefficients a colour channel: `l0`, the average radiance arriving from
+// every direction, and an L1 3-vector saying which way that light leans and how
+// hard. The shader reconstructs the irradiance at a SHADED normal with
+//
+//   E(N) = SH_L1_IRRADIANCE_L0 * L0 + SH_L1_IRRADIANCE_L1 * dot(L1, N)
+//
+// then clamps to zero, because a truncated L1 fit rings negative behind a strong
+// lobe exactly as a truncated Fourier series overshoots. Those two weights are
+// not tuning: they are pi * Y0 and (2pi/3) * Y1, the cosine lobe's per-band
+// convolution weights folded into the basis normalization -- which is what takes
+// the cosine OUT of the bake and lets a normal map move the indirect term.
+inline constexpr float SH_L1_Y0 = 0.282095f;
+inline constexpr float SH_L1_Y1 = 0.488603f;
+inline constexpr float SH_L1_IRRADIANCE_L0 = 0.886227f;
+inline constexpr float SH_L1_IRRADIANCE_L1 = 1.023328f;
+
+// What |L1| / L0 maxes at, and it is DERIVED rather than picked: for light from
+// a single direction the ratio is exactly Y1 / Y0 = sqrt(3). Normalizing by
+// SH_L1_NORMALIZATION * L0 therefore lands in [-1, 1] BY CONSTRUCTION, so the
+// bias encoding cannot clip on a legal bake.
+inline constexpr float SH_L1_NORMALIZATION = 1.7320508f;
+
+// A texel of L1 is nine numbers -- three axes by three colour channels -- and a
+// Unorm8x4 word holds four. So the L1 page set has THREE layers per atlas page,
+// one per world axis, each holding that axis's component for r, g and b.
+//
+// By AXIS and not by channel because that is the grouping the shader wants: it
+// reconstructs all three colour channels at once out of one fetch per axis and
+// one scalar multiply, where the other grouping needs a transpose.
+inline constexpr int SH_L1_LAYERS_PER_PAGE = 3;
+
+// What one texel of indirect light IS. `l1` is indexed by WORLD AXIS -- l1[0] is
+// the x component of the L1 vector for each of r, g and b -- matching the page
+// layout above.
+//
+// WORLD space and not tangent space: the fragment shader has a world normal, and
+// lighting_def.md ss13 deliberately has no tangent vertex attribute.
+struct indirect_sh_l1_t
+{
+  linalg::vec3 l0{0.f, 0.f, 0.f};
+  Array<linalg::vec3, SH_L1_LAYERS_PER_PAGE> l1{};
+};
+
+// --- Irradiance probes, lighting_def.md gate 5 -------------------------------
+
+// Vulkan's floor for maxImageDimension3D. A grid axis longer than this cannot be
+// uploaded as one 3D texture, and the bake refuses rather than shrinks -- the
+// spacing is the author's setting to change.
+inline constexpr int MAX_PROBE_GRID_EXTENT = 256;
+
+// WHERE the probes are. Derived from the map's geometry bound and one spacing
+// (lightmap_probes.hpp builds one), so nothing places a probe and nothing can
+// forget one.
+struct probe_grid_t
+{
+  // The world position of probe (0, 0, 0); every other probe is origin plus an
+  // integer multiple of the spacing along each axis.
+  linalg::vec3 origin{0.f, 0.f, 0.f};
+  float spacing = 0.f;
+  linalg::vec3i count{0, 0, 0};
+
+  [[nodiscard]] size_t probe_count() const
+  {
+    return (size_t)count.x * (size_t)count.y * (size_t)count.z;
+  }
+
+  // x fastest, then y, then z -- the order a 3D texture's texels are laid out.
+  [[nodiscard]] size_t index_of(int x, int y, int z) const
+  {
+    return ((size_t)z * (size_t)count.y + (size_t)y) * (size_t)count.x + (size_t)x;
+  }
+
+  [[nodiscard]] linalg::vec3i coordinates_of(size_t index) const
+  {
+    const int x = (int)(index % (size_t)count.x);
+    const int y = (int)((index / (size_t)count.x) % (size_t)count.y);
+    const int z = (int)(index / ((size_t)count.x * (size_t)count.y));
+    return {x, y, z};
+  }
+
+  [[nodiscard]] linalg::vec3 position_of(const linalg::vec3i &coordinates) const
+  {
+    return origin + linalg::vec3{(float)coordinates.x, (float)coordinates.y,
+                                 (float)coordinates.z} *
+                        spacing;
+  }
+
+  [[nodiscard]] aabb_bounds_t bounds() const
+  {
+    return {origin, position_of({count.x - 1, count.y - 1, count.z - 1})};
+  }
+};
+
+// The SH L1 byte codec, shared by the atlas pages and the probe volume so the
+// two cannot encode a direction differently. A component is normalized against
+// SH_L1_NORMALIZATION * L0 and bias-encoded into a byte; an L0 of zero has no
+// direction to encode and stores the zero vector rather than a division nobody
+// can bound.
+[[nodiscard]] inline uint8_t encode_sh_l1_component(float component, float l0_channel)
+{
+  if (!(l0_channel > 0.f)) return 128;
+  const float normalized =
+      std::clamp(component / (SH_L1_NORMALIZATION * l0_channel), -1.f, 1.f);
+  return (uint8_t)std::clamp((int)std::lround((normalized * 0.5f + 0.5f) * 255.f), 0,
+                             255);
+}
+
+[[nodiscard]] inline float decode_sh_l1_component(uint8_t encoded, float l0_channel)
+{
+  const float normalized = (float)encoded * (1.f / 255.f) * 2.f - 1.f;
+  return normalized * SH_L1_NORMALIZATION * l0_channel;
+}
+
+// WHAT the probes hold: the same four numbers a texel of indirect light holds,
+// in the same two encodings, over the grid above. `l0_bytes` is one RGB9E5 word
+// per probe in grid index order; `l1_bytes` is SH_L1_LAYERS_PER_PAGE Unorm8x4
+// words per probe, AXIS-MAJOR -- every probe's x component, then every y, then
+// every z -- so each axis is one contiguous 3D image upload, exactly as each
+// axis is one layer of the atlas's L1 page set.
+//
+// Empty is "this bake traced no probes", the test lightmap_t::empty makes for
+// the charts.
+struct probe_volume_t
+{
+  probe_grid_t grid;
+  std::vector<uint8_t> l0_bytes;
+  std::vector<uint8_t> l1_bytes;
+
+  [[nodiscard]] bool empty() const { return l0_bytes.empty(); }
+
+  void allocate(const probe_grid_t &probe_grid);
+  void store(size_t index, const indirect_sh_l1_t &value);
+  [[nodiscard]] indirect_sh_l1_t load(size_t index) const;
+};
+
 // The atlas itself: the pixels a face samples, page-major, in whatever `format`
 // says. A BYTE buffer rather than a texel one, because a texel stopped being a
 // byte -- and `bytes` is named for what it holds so nothing can index it as if
@@ -331,7 +486,12 @@ struct lightmap_pages_t
     return texel * (size_t)bytes_per_texel(format);
   }
 
-  void allocate(const lightmap_atlas_t &atlas, lightmap_pixel_format_t pixel_format);
+  // `layers_per_atlas_page` is 1 for every role but SH L1, whose nine numbers a
+  // texel do not fit one word -- see SH_L1_LAYERS_PER_PAGE. It is a parameter
+  // rather than a second allocate so that the atlas stays the ONE thing every
+  // page set is sized from.
+  void allocate(const lightmap_atlas_t &atlas, lightmap_pixel_format_t pixel_format,
+                int layers_per_atlas_page = 1);
 
   // The IRRADIANCE role's vocabulary, in linear RGB.
   void store(int page, int x, int y, const linalg::vec3 &linear_rgb);
@@ -345,6 +505,18 @@ struct lightmap_pages_t
                         const Array<float, LIGHTMAP_LIGHTS_PER_CHART> &coverage);
   [[nodiscard]] Array<float, LIGHTMAP_LIGHTS_PER_CHART>
   load_visibility(int page, int x, int y) const;
+
+  // The SH L1 role's, and it takes the texel's L0 because the encoding
+  // normalizes against SH_L1_NORMALIZATION * L0 -- a direction has no scale of
+  // its own to quantize against. Same Unorm8x4 BITS as the visibility pair and a
+  // different MEANING, which is exactly why it is a third pair and not a reuse.
+  //
+  // `page` is the ATLAS page; the three layers it occupies are this pair's own
+  // business, so no caller multiplies by SH_L1_LAYERS_PER_PAGE.
+  void store_l1(int page, int x, int y, const linalg::vec3 &l0,
+                const Array<linalg::vec3, SH_L1_LAYERS_PER_PAGE> &l1);
+  [[nodiscard]] Array<linalg::vec3, SH_L1_LAYERS_PER_PAGE>
+  load_l1(int page, int x, int y, const linalg::vec3 &l0) const;
 };
 
 // A baked lightmap, resident. The pixels are what the renderer samples and the
@@ -376,6 +548,22 @@ struct lightmap_t
   // other.
   lightmap_pages_t irradiance_pages;
   lightmap_pages_t visibility_pages;
+
+  // The path-traced bounce, SH L1 (lighting_def.md gate 2). Its OWN page set
+  // rather than a term merged into the irradiance above, and that is not
+  // tidiness: the residual is a fallback that disappears the day
+  // LIGHTMAP_LIGHTS_PER_CHART rises, indirect is permanent -- and merging two
+  // buffers later is trivial where splitting one is a migration.
+  //
+  // `indirect_l1_pages` carries SH_L1_LAYERS_PER_PAGE layers per atlas page.
+  // Empty when the bake was not asked to trace, which is every bake before gate
+  // 2 and every one with the setting off; the shader falls back to nothing.
+  lightmap_pages_t indirect_l0_pages;
+  lightmap_pages_t indirect_l1_pages;
+
+  // Gate 5: the light at points in SPACE, for everything that has no chart.
+  // Empty when the bake was not asked for probes.
+  probe_volume_t probes;
 
   // The resolve table: baked slot -> the light ENTITY that slot is of, which is
   // what a chart's `light_slots` index into. A uid rather than an index into
@@ -444,10 +632,10 @@ static_assert(sizeof(vertex_lightmap_t) == 20);
 static_assert(offsetof(vertex_lightmap_t, uv) == 0);
 static_assert(offsetof(vertex_lightmap_t, light_slots) == 12);
 
-// What a brush needs to find its own lighting: the map's bake, plus WHICH object
-// this brush is. A null lightmap is "this map has no bake", which is the state
-// every map is in until one is run and is not an error.
-struct brush_lightmap_ref_t
+// What a brush or a static mesh needs to find its own lighting: the map's bake,
+// plus WHICH object this is. A null lightmap is "this map has no bake", which is
+// the state every map is in until one is run and is not an error.
+struct object_lightmap_ref_t
 {
   const lightmap_t *lightmap = nullptr;
   entity_uid_t object_uid = 0;
@@ -481,5 +669,11 @@ void set_lightmap_geometry_id(lightmap_t &lightmap);
 // with no visibility to sample.
 [[nodiscard]] int16_t find_baked_light_slot(const lightmap_t &lightmap,
                                             entity_uid_t light_uid);
+
+// How many charts kept this slot among their LIGHTMAP_LIGHTS_PER_CHART. Zero for
+// a light the bake saw and that delivered nothing to any face -- out of range,
+// aimed at nothing, or occluded everywhere -- which draws exactly as if it were
+// not there, and is the one thing a Baked light can do that nothing else reports.
+[[nodiscard]] size_t count_charts_keeping_light(const lightmap_t &lightmap, int16_t slot);
 
 } // namespace shared

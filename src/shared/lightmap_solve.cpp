@@ -1,16 +1,18 @@
 #include "lightmap_solve.hpp"
 
-#include "brush.hpp"
 #include "collision_detection.hpp"
-#include "entities/generated/entities_generated.hpp"
 #include "lighting.hpp"
+#include "lightmap_lights.hpp"
+#include "lightmap_probes.hpp"
+#include "lightmap_trace.hpp"
 #include "log.hpp"
 #include "map_geometry.hpp"
-#include "shader_math.hpp"
 #include "span.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <format>
 #include <cmath>
 #include <thread>
 
@@ -20,52 +22,6 @@ namespace shared
 namespace
 {
 
-// A light the bake solves, and WHICH entity it is. The uid is how a mask slot is
-// named and what the runtime resolve table will match against.
-struct baked_light_t
-{
-  entity_uid_t uid = 0;
-  scene_light_t light;
-};
-
-std::vector<baked_light_t> collect_lights(const map_t &map)
-{
-  std::vector<baked_light_t> lights;
-
-  for (const map_entity_t &entry : map.entities)
-  {
-    if (!entry.entity)
-      continue;
-
-    const std::optional<scene_light_t> light = try_light_of(*entry.entity);
-    if (!light) continue;
-
-    // Baked and Mixed both solve into the atlas; Dynamic never does. Without
-    // this every light in the map is in the atlas AND in the runtime array, and
-    // a level lit by both is lit twice (lighting_def.md ss2).
-    if (!light_is_baked(light->mode)) continue;
-
-    lights.push_back({entry.uid, *light});
-  }
-
-  return lights;
-}
-
-// The falloff and the cone are shader_math.hpp's, which is
-// resources/shaders/light_falloff.glsl compiled as C++ -- the same text the
-// shaders compile as GLSL. It used to be a copy of pbr.frag's, with a comment
-// saying so; lighting_def.md decision I is why a copy was not good enough.
-using shader_math::distance_attenuation;
-using shader_math::spot_cone_factor;
-
-// Rec. 709, which is what "how much light is this" means when the answer has to
-// be one number. Only the RANKING reads it -- nothing stored is ever collapsed
-// to a luminance.
-float luminance_of(const linalg::vec3 &linear_rgb)
-{
-  return 0.2126f * linear_rgb.x + 0.7152f * linear_rgb.y + 0.0722f * linear_rgb.z;
-}
-
 // A light a chart could not keep. Collected per worker and logged after the join
 // rather than from inside it: the log has no lock, and a line interleaved with
 // three others is a line nobody reads.
@@ -74,219 +30,6 @@ struct dropped_light_t
   entity_uid_t object_uid = 0;
   entity_uid_t light_uid = 0;
 };
-
-Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map)
-{
-  std::vector<BVH_Input> inputs;
-  inputs.reserve(map.geometry.size());
-
-  for (const map_geometry_t &entry : map.geometry)
-  {
-    const std::vector<collision_piece_t> pieces =
-        get_collision_pieces(entry.value, entry.uid);
-    if (pieces.empty())
-      log_warning("[lightmap] object {} has no collision pieces and casts no shadow.",
-                  entry.uid);
-
-    for (const collision_piece_t &piece : pieces)
-    {
-      BVH_Input input;
-      input.aabb = piece.bounds;
-      input.id = {Collision_Id::Type::Static_Geometry, entry.uid};
-      input.collision_planes = piece.planes;
-      inputs.push_back(input);
-    }
-  }
-
-  return build_bvh(inputs);
-}
-
-// What one light does at one texel, before the mode has its say: the direction
-// to it, how far, and how much of it arrives.
-//
-// TWO gates, and the split is the whole of lighting_def.md ss14 step 6. `arrives`
-// is range, the cone and a positive attenuation -- what light_arrival.glsl
-// recomputes at runtime anyway, so nothing downstream can be wrong about it.
-// `reaches` adds N.L against the chart's FLAT plane normal, which the runtime
-// does NOT reproduce: it shades with the normal-mapped normal. The irradiance sum
-// needs `reaches`; a visibility mask must be gated on `arrives` alone.
-struct light_arrival_t
-{
-  bool arrives = false;
-  bool reaches = false;
-  linalg::vec3 direction{0.f, 0.f, 0.f};
-  float distance = 0.f;
-  float attenuation = 0.f;
-  float normal_dot_light = 0.f;
-
-  // The radius of the disc the emitter subtends AT THIS SURFACE POINT, which is
-  // what the shadow rays are spread over. A point or spot's is its own radius; a
-  // directional light's source_radius is a tangent, so its disc grows with the
-  // distance the ray is cast over. One number either way, so the sampler below
-  // needs no light-type branch. Zero is a punctual light and costs one ray.
-  float shadow_disc_radius = 0.f;
-};
-
-light_arrival_t arrival_at(const scene_light_t &light,
-                           const linalg::vec3 &surface_position,
-                           const linalg::vec3 &surface_normal,
-                           float directional_shadow_distance)
-{
-  light_arrival_t arrival;
-
-  if (light.kind == light_kind_t::Directional)
-  {
-    arrival.direction = linalg::normalize(light.forward * -1.f);
-    arrival.distance = directional_shadow_distance;
-    arrival.attenuation = 1.f;
-    arrival.shadow_disc_radius = light.source_radius * arrival.distance;
-  }
-  else
-  {
-    const linalg::vec3 to_light = light.position - surface_position;
-    const float squared_distance = linalg::dot(to_light, to_light);
-    arrival.distance = std::sqrt(squared_distance);
-
-    if (arrival.distance > light.range || arrival.distance < 1e-4f) return arrival;
-
-    arrival.direction = to_light * (1.f / arrival.distance);
-    arrival.attenuation =
-        distance_attenuation(squared_distance, light.range, light.source_radius);
-    arrival.shadow_disc_radius = light.source_radius;
-
-    if (light.kind == light_kind_t::Spot)
-    {
-      const float cos_angle =
-          linalg::dot(arrival.direction * -1.f, linalg::normalize(light.forward));
-      const float spot_factor =
-          spot_cone_factor(cos_angle, light.cos_inner, light.cos_outer);
-      if (spot_factor <= 0.f) return arrival;
-      arrival.attenuation *= spot_factor;
-    }
-  }
-
-  if (arrival.attenuation <= 0.f) return arrival;
-  arrival.arrives = true;
-
-  arrival.normal_dot_light = linalg::dot(surface_normal, arrival.direction);
-  if (arrival.normal_dot_light <= 0.f) return arrival;
-
-  arrival.reaches = true;
-  return arrival;
-}
-
-// ONE ray, from the surface toward a named point on the emitter. The primitive
-// under both the punctual test and the area one, so a soft shadow cannot use a
-// different bias or a different miss rule from a hard one.
-bool shadow_ray_reaches(const Bounding_Volume_Hierarchy &bvh,
-                        const linalg::vec3 &surface_position,
-                        const linalg::vec3 &surface_normal,
-                        const linalg::vec3 &direction, float distance,
-                        float shadow_ray_bias)
-{
-  const linalg::vec3 origin = surface_position + surface_normal * shadow_ray_bias;
-
-  ray_hit_result_t hit = {};
-  if (!bvh_intersect_ray(bvh, origin, direction, hit)) return true;
-
-  return !(hit.hit && hit.t > 0.f && hit.t < distance - shadow_ray_bias);
-}
-
-// The jitter is DERIVED, never drawn from shared/rng.hpp's global state: a rebake
-// at unchanged settings has to reproduce the same pixels, and the chart loop runs
-// on several threads, so a sequence anyone can advance is a bake that differs
-// from itself. Keyed by atlas position, which is unique across the whole solve.
-uint32_t hash_mix(uint32_t hash, uint32_t value)
-{
-  for (int byte = 0; byte < 4; ++byte)
-  {
-    hash ^= (value >> (byte * 8)) & 0xffu;
-    hash *= 16777619u;
-  }
-  return hash;
-}
-
-uint32_t sample_hash(int atlas_x, int atlas_y, int page, int sample_index)
-{
-  uint32_t hash = 2166136261u;
-  hash = hash_mix(hash, (uint32_t)atlas_x);
-  hash = hash_mix(hash, (uint32_t)atlas_y);
-  hash = hash_mix(hash, (uint32_t)page);
-  hash = hash_mix(hash, (uint32_t)sample_index);
-  return hash;
-}
-
-// What FRACTION of the emitter this surface point can see: 1 for an unshadowed
-// punctual light, 0 for a fully occluded one, and anything between for a point
-// inside a penumbra. It is one number rather than a bool because that is the only
-// difference an area light makes to everything downstream -- the coverage stored
-// in the visibility channel, the slot ranking and the residual sum all just
-// multiply by it.
-//
-// A light with no size takes exactly ONE ray whatever soft_shadow_samples says,
-// so every map authored before area lights existed bakes bit for bit what it did.
-float light_visibility(const Bounding_Volume_Hierarchy &bvh,
-                       const linalg::vec3 &surface_position,
-                       const linalg::vec3 &surface_normal,
-                       const light_arrival_t &arrival,
-                       const lightmap_solve_settings_t &solve_settings, uint32_t hash)
-{
-  const int sample_count = arrival.shadow_disc_radius > 0.f
-                               ? std::max(solve_settings.soft_shadow_samples, 1)
-                               : 1;
-
-  if (sample_count == 1)
-    return shadow_ray_reaches(bvh, surface_position, surface_normal, arrival.direction,
-                              arrival.distance, solve_settings.shadow_ray_bias)
-               ? 1.f
-               : 0.f;
-
-  // The emitter is a sphere and this samples the DISC facing the surface, which
-  // is the sphere's silhouette from here -- the half of it the surface cannot see
-  // is the half that emits nothing toward it.
-  linalg::vec3 tangent_u;
-  linalg::vec3 tangent_v;
-  brush_face_grid_tangents(arrival.direction, tangent_u, tangent_v);
-
-  const linalg::vec3 centre = surface_position + arrival.direction * arrival.distance;
-
-  // The golden angle: consecutive samples land as far from each other in rotation
-  // as an irrational turn allows, so a handful of them cover the disc evenly
-  // instead of clumping the way independent random angles do.
-  constexpr float GOLDEN_ANGLE = 2.39996323f;
-  constexpr float TWO_PI = 6.28318531f;
-
-  int reached = 0;
-  for (int sample = 0; sample < sample_count; ++sample)
-  {
-    const uint32_t sample_bits = hash_mix(hash, (uint32_t)sample);
-
-    // sqrt of the stratum, because a disc's area grows with the square of the
-    // radius -- sampling the radius uniformly crowds every sample into the middle
-    // and gives a penumbra a hard rim.
-    const float radius_jitter = (float)(sample_bits & 0xffffu) * (1.f / 65536.f);
-    const float angle_jitter = (float)((sample_bits >> 16) & 0xffffu) * (1.f / 65536.f);
-
-    const float radius =
-        arrival.shadow_disc_radius *
-        std::sqrt(((float)sample + radius_jitter) / (float)sample_count);
-    const float angle = (float)sample * GOLDEN_ANGLE + angle_jitter * TWO_PI;
-
-    const linalg::vec3 target = centre + tangent_u * (std::cos(angle) * radius) +
-                                tangent_v * (std::sin(angle) * radius);
-
-    const linalg::vec3 to_target = target - surface_position;
-    const float distance = std::sqrt(linalg::dot(to_target, to_target));
-    if (distance < 1e-4f) continue;
-
-    if (shadow_ray_reaches(bvh, surface_position, surface_normal,
-                           to_target * (1.f / distance), distance,
-                           solve_settings.shadow_ray_bias))
-      ++reached;
-  }
-
-  return (float)reached / (float)sample_count;
-}
 
 // Where one axis of a stratum lands inside a texel, in [0, 1). N == 1 is the
 // CENTRE with no jitter, so a one-sample solve is exactly the solve this had
@@ -305,11 +48,23 @@ float stratum_offset(int stratum, int count, uint32_t hash)
 //
 // CHANNELS rather than a vec3, because the per-light coverage rides the same
 // buffer: it has to be dilated into the gutter exactly as the irradiance is, and
-// two dilation passes are two things free to disagree about a chart edge. 0..2
-// are the irradiance, 3.. is one coverage per light.
+// two dilation passes are two things free to disagree about a chart edge. The
+// three constants below are the whole layout, and the indirect block is in it
+// for the same reason the coverage is -- one gutter fill, one seam rule.
+//
+// The indirect block is TWELVE channels: the four SH L1 coefficients of three
+// colour channels each, in indirect_sh_l1_t's own order (l0, then l1 by world
+// axis). Raw floats, and the bias encoding happens at STORE time -- dilating
+// encoded values would average two numbers whose scale is a third one, which is
+// wrong in a way no picture would show.
 struct chart_scratch_t
 {
-  int channel_count = 3;
+  static constexpr int IRRADIANCE_CHANNEL = 0;
+  static constexpr int INDIRECT_CHANNEL = 3;
+  static constexpr int INDIRECT_CHANNEL_COUNT = 12;
+  static constexpr int FIRST_LIGHT_CHANNEL = INDIRECT_CHANNEL + INDIRECT_CHANNEL_COUNT;
+
+  int channel_count = FIRST_LIGHT_CHANNEL;
   std::vector<float> values;
   std::vector<uint8_t> written;
   std::vector<uint8_t> written_at_round_start;
@@ -329,16 +84,16 @@ struct chart_scratch_t
   // Pass two re-derives a weight nothing reads -- the ranking is already fixed.
   std::vector<float> discarded_weight;
 
-  void reset(int width, int height, int channels)
+  void reset(int width, int height, int light_count)
   {
-    channel_count = channels;
+    channel_count = FIRST_LIGHT_CHANNEL + light_count;
     const size_t count = (size_t)width * (size_t)height;
-    values.assign(count * (size_t)channels, 0.f);
+    values.assign(count * (size_t)channel_count, 0.f);
     written.assign(count, 0);
-    neighbour_total.assign((size_t)channels, 0.f);
-    light_weight.assign((size_t)channels - 3, 0.f);
-    discarded_weight.assign((size_t)channels - 3, 0.f);
-    sums_into_irradiance.assign((size_t)channels - 3, 0);
+    neighbour_total.assign((size_t)channel_count, 0.f);
+    light_weight.assign((size_t)light_count, 0.f);
+    discarded_weight.assign((size_t)light_count, 0.f);
+    sums_into_irradiance.assign((size_t)light_count, 0);
     ranked_lights.clear();
   }
 
@@ -349,19 +104,38 @@ struct chart_scratch_t
   }
 };
 
+// Everything a chart solve READS. Bundled because they travel together to every
+// chart and none of them is the chart's own. `traced_scene` is null on a bake
+// nobody asked indirect light of, which is what gates the tracer.
+struct solve_inputs_t
+{
+  const lightmap_bake_settings_t &settings;
+  const lightmap_solve_settings_t &solve_settings;
+  const std::vector<baked_light_t> &lights;
+  const Bounding_Volume_Hierarchy &bvh;
+  const traced_scene_t *traced_scene = nullptr;
+  indirect_trace_settings_t indirect;
+};
+
 // What one texel is worth: the NxN stratified samples of its footprint that land
 // on the face, averaged. A sample outside the face is EXCLUDED rather than summed
 // as zero -- outside the face there is no surface to be dark, and counting it
 // would darken every chart edge by the fraction of the texel that hangs off it.
 // No sample inside means the texel is the gutter pass's problem, not the solve's.
-bool solve_texel(const lightmap_chart_t &chart,
-                 const lightmap_bake_settings_t &settings,
-                 const lightmap_solve_settings_t &solve_settings,
-                 const std::vector<baked_light_t> &lights,
-                 const Bounding_Volume_Hierarchy &bvh, int texel_x, int texel_y,
-                 Span<const uint8_t> sums_into_irradiance, linalg::vec3 &out_value,
+//
+// `out_indirect` is null on the pass that must not re-trace: a chain is the
+// expensive half of a texel and its answer does not depend on which lights the
+// ranking kept.
+bool solve_texel(const lightmap_chart_t &chart, const solve_inputs_t &in, int texel_x,
+                 int texel_y, Span<const uint8_t> sums_into_irradiance,
+                 linalg::vec3 &out_value, indirect_sh_l1_t *out_indirect,
                  Span<float> out_coverage, Span<float> out_light_weight)
 {
+  const lightmap_bake_settings_t &settings = in.settings;
+  const lightmap_solve_settings_t &solve_settings = in.solve_settings;
+  const std::vector<baked_light_t> &lights = in.lights;
+  const Bounding_Volume_Hierarchy &bvh = in.bvh;
+
   const int samples_per_edge = std::max(solve_settings.samples_per_texel_edge, 1);
   const bool binary = solve_settings.mode == lightmap_solve_mode_t::Visibility;
 
@@ -378,6 +152,7 @@ bool solve_texel(const lightmap_chart_t &chart,
   for (float &coverage : out_coverage) coverage = 0.f;
 
   linalg::vec3 total{0.f, 0.f, 0.f};
+  indirect_sh_l1_t indirect_total;
   int inside_count = 0;
 
   for (int sample_y = 0; sample_y < samples_per_edge; ++sample_y)
@@ -416,9 +191,10 @@ bool solve_texel(const lightmap_chart_t &chart,
         // emitter this point can see, and every use below is a multiply, so the
         // softness reaches the stored coverage, the slot ranking and the residual
         // by arithmetic rather than by three separate arms.
-        const float visibility =
-            light_visibility(bvh, world_position, chart.plane.normal, arrival,
-                             solve_settings, hash_mix(hash, slot));
+        const float visibility = light_visibility(
+            bvh, world_position, chart.plane.normal, arrival,
+            solve_settings.shadow_ray_bias, solve_settings.soft_shadow_samples,
+            hash_mix(hash, slot));
         if (visibility <= 0.f) continue;
 
         out_coverage[slot] += visibility;
@@ -464,11 +240,37 @@ bool solve_texel(const lightmap_chart_t &chart,
       }
 
       total = total + irradiance;
+
+      // The INDIRECT half, and it shares this sample's position, normal and hash
+      // rather than walking the chart a second time -- one set of sample points,
+      // so the two terms are answers about the same places on the face.
+      //
+      // The geometric normal survives here for ONE thing, choosing which
+      // hemisphere to fire into. Nothing multiplies by N.L: the texel stores
+      // what arrives and the shader applies the cosine against the shaded
+      // normal, which is what makes a normal map move the bounce.
+      if (out_indirect && in.traced_scene)
+      {
+        const indirect_sh_l1_t sample = trace_indirect_light(
+            *in.traced_scene, lights, world_position, chart.plane.normal, in.indirect,
+            hash_mix(hash, 0x1b873593u));
+
+        indirect_total.l0 = indirect_total.l0 + sample.l0;
+        for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
+          indirect_total.l1[axis] = indirect_total.l1[axis] + sample.l1[axis];
+      }
     }
 
   if (inside_count == 0) return false;
 
   out_value = total * (1.f / (float)inside_count);
+  if (out_indirect)
+  {
+    const float inverse = 1.f / (float)inside_count;
+    out_indirect->l0 = indirect_total.l0 * inverse;
+    for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
+      out_indirect->l1[axis] = indirect_total.l1[axis] * inverse;
+  }
   for (float &coverage : out_coverage) coverage *= 1.f / (float)inside_count;
   return true;
 }
@@ -531,22 +333,50 @@ void fill_the_gutter(chart_scratch_t &scratch, int width, int height)
   }
 }
 
-// Everything a chart solve READS. Bundled because the four of them travel
-// together to every chart and none of them is the chart's own.
-struct solve_inputs_t
+// The scratch's indirect block and indirect_sh_l1_t are one layout written twice,
+// so the conversion is a pair rather than two open-coded loops -- a store that
+// unpacked in a different order than the solve packed is a bake tinted along
+// whichever axis got the wrong channel.
+void write_indirect_channels(Span<float> channels, const indirect_sh_l1_t &value)
 {
-  const lightmap_bake_settings_t &settings;
-  const lightmap_solve_settings_t &solve_settings;
-  const std::vector<baked_light_t> &lights;
-  const Bounding_Volume_Hierarchy &bvh;
-};
+  const int at = chart_scratch_t::INDIRECT_CHANNEL;
+  channels[at + 0] = value.l0.x;
+  channels[at + 1] = value.l0.y;
+  channels[at + 2] = value.l0.z;
+  for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
+  {
+    channels[at + 3 + axis * 3 + 0] = value.l1[axis].x;
+    channels[at + 3 + axis * 3 + 1] = value.l1[axis].y;
+    channels[at + 3 + axis * 3 + 2] = value.l1[axis].z;
+  }
+}
 
-// Everything one WRITES. The two page sets are the bake; the masks are the debug
-// view and may be null.
+indirect_sh_l1_t read_indirect_channels(Span<const float> channels)
+{
+  const int at = chart_scratch_t::INDIRECT_CHANNEL;
+  indirect_sh_l1_t value;
+  value.l0 = {channels[at + 0], channels[at + 1], channels[at + 2]};
+  for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
+    value.l1[axis] = {channels[at + 3 + axis * 3 + 0], channels[at + 3 + axis * 3 + 1],
+                      channels[at + 3 + axis * 3 + 2]};
+  return value;
+}
+
+static_assert(chart_scratch_t::INDIRECT_CHANNEL_COUNT == 3 + SH_L1_LAYERS_PER_PAGE * 3,
+              "The indirect block is indirect_sh_l1_t flattened. A fifth coefficient "
+              "grows both, and the pair above is where.");
+
+// Everything one WRITES. The four page sets are the bake; the masks are the one
+// debug view and may be null. The indirect pair is null on a bake that was not
+// asked to trace, which is what gates the tracer -- and the two of them are one
+// decision, since an L1 direction has no meaning without the L0 it is normalized
+// against.
 struct solve_outputs_t
 {
   lightmap_pages_t &irradiance_pages;
   lightmap_pages_t &visibility_pages;
+  lightmap_pages_t *indirect_l0_pages = nullptr;
+  lightmap_pages_t *indirect_l1_pages = nullptr;
   lightmap_visibility_masks_t *masks = nullptr;
 };
 
@@ -600,15 +430,23 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
   // The coverage rides the same scratch as the irradiance, as extra CHANNELS,
   // so ONE gutter dilation covers both -- a second pass over the masks is two
   // things free to disagree about a chart edge.
-  scratch.reset(width, height, 3 + (int)lights.size());
+  scratch.reset(width, height, (int)lights.size());
 
   const int covered_width = chart_covered_width(chart, settings);
   const int covered_height = chart_covered_height(chart, settings);
 
+  // Indirect is a MODE of the direct solve in exactly the sense the visibility
+  // one is not: it rides the same sample points and the same walk, so it is a
+  // flag rather than a pass. Visibility mode is out because its irradiance
+  // channels are a picture of the shadow rays and not a term anything composes.
+  const bool trace_indirect =
+      out.indirect_l0_pages && out.indirect_l1_pages && in.traced_scene &&
+      solve_settings.mode != lightmap_solve_mode_t::Visibility;
+
   // PASS ONE: the coverage of every light and what each of them delivers. No
   // light sums into the irradiance yet, because which ones may is exactly what
   // the ranking below has not decided.
-  const auto solve_covered_texels = [&]() {
+  const auto solve_covered_texels = [&](bool with_indirect) {
     for (int texel_y = 0; texel_y < covered_height; ++texel_y)
       for (int texel_x = 0; texel_x < covered_width; ++texel_x)
       {
@@ -618,10 +456,12 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
         const Span<float> channels = scratch.at(index);
 
         linalg::vec3 value{0.f, 0.f, 0.f};
-        if (!solve_texel(chart, settings, solve_settings, lights, in.bvh, texel_x, texel_y,
+        indirect_sh_l1_t indirect;
+        if (!solve_texel(chart, in, texel_x, texel_y,
                          Span<const uint8_t>(scratch.sums_into_irradiance.data(),
                                              (uint32_t)scratch.sums_into_irradiance.size()),
-                         value, channels.subspan(3),
+                         value, with_indirect ? &indirect : nullptr,
+                         channels.subspan(chart_scratch_t::FIRST_LIGHT_CHANNEL),
                          Span<float>(scratch.light_weight.data(),
                                      (uint32_t)scratch.light_weight.size())))
           continue;
@@ -629,14 +469,15 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
         // Marked written even when it is BLACK, which is what makes the fill
         // correct: a texel in shadow is a surface that got no light, and dilating
         // into it would smear the lit side of a shadow edge back over it.
-        channels[0] = value.x;
-        channels[1] = value.y;
-        channels[2] = value.z;
+        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 0] = value.x;
+        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 1] = value.y;
+        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 2] = value.z;
+        if (with_indirect) write_indirect_channels(channels, indirect);
         scratch.written[index] = 1;
       }
   };
 
-  solve_covered_texels();
+  solve_covered_texels(trace_indirect);
 
   // Before the dilation and before the store. The ranking was summed over the
   // COVERED texels as they were solved, so the gutter gets no vote in it
@@ -659,8 +500,10 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
          ++rank)
       scratch.sums_into_irradiance[scratch.ranked_lights[rank]] = 1;
 
+    // With NO indirect: a chain's answer does not depend on which lights the
+    // ranking kept, and it is the expensive half of a texel.
     std::swap(scratch.light_weight, scratch.discarded_weight);
-    solve_covered_texels();
+    solve_covered_texels(false);
     std::swap(scratch.light_weight, scratch.discarded_weight);
   }
 
@@ -675,8 +518,19 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
       const int atlas_x = chart.atlas_rect.min_x + x;
       const int atlas_y = chart.atlas_rect.min_y + y;
       const Span<float> channels = scratch.at(index);
-      out.irradiance_pages.store(chart.page, atlas_x, atlas_y,
-                                 {channels[0], channels[1], channels[2]});
+      out.irradiance_pages.store(
+          chart.page, atlas_x, atlas_y,
+          {channels[chart_scratch_t::IRRADIANCE_CHANNEL + 0],
+           channels[chart_scratch_t::IRRADIANCE_CHANNEL + 1],
+           channels[chart_scratch_t::IRRADIANCE_CHANNEL + 2]});
+
+      if (out.indirect_l0_pages && out.indirect_l1_pages)
+      {
+        const indirect_sh_l1_t indirect = read_indirect_channels(channels);
+        out.indirect_l0_pages->store(chart.page, atlas_x, atlas_y, indirect.l0);
+        out.indirect_l1_pages->store_l1(chart.page, atlas_x, atlas_y, indirect.l0,
+                                        indirect.l1);
+      }
 
       // A slot no light claimed stores ZERO, which reads as fully occluded --
       // the same answer an unwritten texel gives, and the safe one: a channel
@@ -686,15 +540,92 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
       {
         const int16_t light = chart.light_slots[slot];
         if (light == LIGHTMAP_NO_LIGHT_SLOT) continue;
-        coverage[slot] = channels[(uint32_t)(3 + light)];
+        coverage[slot] =
+            channels[(uint32_t)(chart_scratch_t::FIRST_LIGHT_CHANNEL + light)];
       }
       out.visibility_pages.store_visibility(chart.page, atlas_x, atlas_y, coverage);
 
       if (!out.masks) continue;
       for (uint32_t slot = 0; slot < (uint32_t)lights.size(); ++slot)
         out.masks->coverage[out.masks->index_of(slot, chart.page, atlas_x, atlas_y)] =
-            channels[3 + slot];
+            channels[chart_scratch_t::FIRST_LIGHT_CHANNEL + slot];
     }
+}
+
+// --- Progress ----------------------------------------------------------------
+//
+// A bake was one blocking call that said nothing until it was done, which was
+// fine while it was seconds and is not now that a texel can cost hundreds of
+// path-traced rays. The main thread is INSIDE this call, so an editor progress
+// bar is not available to report to -- the terminal is what can be written to
+// while the window is frozen, and that is what this is.
+//
+// Weighted by TEXELS rather than by charts: a chart is one unit of the work
+// queue and anything from a handful of texels to a quarter of a million, so a
+// chart count reads 90% done while the largest face in the level has not been
+// started. Charts are still what the line COUNTS, because that is what an
+// author can relate to a level.
+struct bake_progress_t
+{
+  std::chrono::steady_clock::time_point started_at = std::chrono::steady_clock::now();
+
+  size_t total_texels = 0;
+  size_t total_charts = 0;
+
+  std::atomic<size_t> solved_texels{0};
+  std::atomic<size_t> solved_charts{0};
+
+  // The report SLOT, claimed by whichever worker finished a chart first after
+  // the interval elapsed. A compare-exchange rather than a lock, and rather than
+  // letting only the calling thread report: worker 0 can be halfway through the
+  // one chart that dominates the bake, and a progress line that stops for thirty
+  // seconds is worse than none. Claiming it is what keeps two lines from
+  // interleaving, which is the reason the dropped-light warnings wait for the
+  // join.
+  std::atomic<int64_t> next_report_at_milliseconds{0};
+
+  [[nodiscard]] int64_t elapsed_milliseconds() const
+  {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - started_at)
+        .count();
+  }
+};
+
+// Nothing at all until a bake has been running this long, so a fast direct bake
+// is exactly as quiet as it always was, and then one line at this interval.
+constexpr int64_t FIRST_PROGRESS_REPORT_IN_MILLISECONDS = 2000;
+constexpr int64_t PROGRESS_REPORT_INTERVAL_IN_MILLISECONDS = 2000;
+
+void report_progress_if_it_is_time(bake_progress_t &progress)
+{
+  const int64_t elapsed = progress.elapsed_milliseconds();
+
+  int64_t due = progress.next_report_at_milliseconds.load(std::memory_order_relaxed);
+  if (elapsed < due) return;
+
+  // One winner takes the slot and moves it forward; everyone else keeps solving.
+  if (!progress.next_report_at_milliseconds.compare_exchange_strong(
+          due, elapsed + PROGRESS_REPORT_INTERVAL_IN_MILLISECONDS,
+          std::memory_order_relaxed))
+    return;
+
+  const size_t solved = progress.solved_texels.load(std::memory_order_relaxed);
+  const double fraction =
+      progress.total_texels > 0 ? (double)solved / (double)progress.total_texels : 1.0;
+
+  const double elapsed_seconds = (double)elapsed / 1000.0;
+
+  // An estimate from the work done so far, which is what makes it an estimate:
+  // the charts left are not the charts done, and the residual pass solves some of
+  // them twice. Still the difference between "it is working" and "it is stuck".
+  const double remaining_seconds =
+      fraction > 0.0 ? elapsed_seconds / fraction - elapsed_seconds : 0.0;
+
+  log_terminal("[lightmap] {:.0f}% solved ({} of {} charts), {:.1f}s elapsed, "
+               "~{:.0f}s remaining.",
+               fraction * 100.0, progress.solved_charts.load(std::memory_order_relaxed),
+               progress.total_charts, elapsed_seconds, remaining_seconds);
 }
 
 } // namespace
@@ -731,6 +662,8 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   // at is exactly the disagreement the resolve table exists to prevent.
   lightmap.irradiance_pages = {};
   lightmap.visibility_pages = {};
+  lightmap.indirect_l0_pages = {};
+  lightmap.indirect_l1_pages = {};
   lightmap.light_uids.clear();
   for (lightmap_chart_t &chart : charts)
     for (int16_t &slot : chart.light_slots) slot = LIGHTMAP_NO_LIGHT_SLOT;
@@ -751,8 +684,18 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
     return;
   }
 
+  const bool trace_indirect =
+      solve_settings.trace_indirect_light &&
+      solve_settings.mode != lightmap_solve_mode_t::Visibility;
+
   lightmap.irradiance_pages.allocate(atlas, lightmap_pixel_format_t::Rgb9e5);
   lightmap.visibility_pages.allocate(atlas, lightmap_pixel_format_t::Unorm8x4);
+  if (trace_indirect)
+  {
+    lightmap.indirect_l0_pages.allocate(atlas, lightmap_pixel_format_t::Rgb9e5);
+    lightmap.indirect_l1_pages.allocate(atlas, lightmap_pixel_format_t::Unorm8x4,
+                                        SH_L1_LAYERS_PER_PAGE);
+  }
 
   // The resolve table is every BAKED light in the map, in the order the solve
   // walked them, and a chart's slots index into it. It is written before the
@@ -785,8 +728,41 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
     return;
   }
 
-  const solve_inputs_t inputs{settings, solve_settings, lights, bvh};
-  const solve_outputs_t outputs{lightmap.irradiance_pages, lightmap.visibility_pages,
+  // Translated at the CALL SITE rather than handed the whole solve settings: the
+  // tracer wants values, and three of these are the same shadow rules the direct
+  // term uses, which is what keeps the bounce on one lighting model.
+  indirect_trace_settings_t indirect;
+  indirect.rays_per_sample = solve_settings.indirect_rays_per_sample;
+  indirect.bounces_before_roulette = solve_settings.indirect_bounces_before_roulette;
+  indirect.max_bounces = solve_settings.indirect_max_bounces;
+  indirect.ray_bias = solve_settings.shadow_ray_bias;
+  indirect.shadow_ray_bias = solve_settings.shadow_ray_bias;
+  indirect.soft_shadow_samples = solve_settings.soft_shadow_samples;
+  indirect.directional_shadow_distance = solve_settings.directional_shadow_distance;
+
+  // Built once, on this thread: resolving a material LOADS a texture, and the
+  // workers below must find every one of them already in the pool.
+  const bool bake_probes = solve_settings.bake_probes &&
+                           solve_settings.mode != lightmap_solve_mode_t::Visibility;
+  const traced_scene_t traced_scene = (trace_indirect || bake_probes)
+                                          ? build_traced_scene(map, bvh)
+                                          : traced_scene_t{};
+
+  if (trace_indirect)
+    log_terminal("[lightmap] tracing indirect light: {} chain(s) per texel sample, "
+                 "roulette after {} bounce(s).",
+                 indirect.rays_per_sample, indirect.bounces_before_roulette);
+
+  const solve_inputs_t inputs{settings,
+                              solve_settings,
+                              lights,
+                              bvh,
+                              trace_indirect ? &traced_scene : nullptr,
+                              indirect};
+  const solve_outputs_t outputs{lightmap.irradiance_pages,
+                                lightmap.visibility_pages,
+                                trace_indirect ? &lightmap.indirect_l0_pages : nullptr,
+                                trace_indirect ? &lightmap.indirect_l1_pages : nullptr,
                                 out_masks};
 
   unsigned int worker_count = std::thread::hardware_concurrency();
@@ -796,14 +772,31 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   std::atomic<size_t> next_chart{0};
   std::vector<std::vector<dropped_light_t>> dropped_per_worker(worker_count);
 
+  bake_progress_t progress;
+  progress.total_charts = packed_charts.size();
+  progress.next_report_at_milliseconds = FIRST_PROGRESS_REPORT_IN_MILLISECONDS;
+  for (const size_t at : packed_charts)
+    progress.total_texels +=
+        (size_t)chart_covered_width(charts[at], settings) *
+        (size_t)chart_covered_height(charts[at], settings);
+
   const auto solve_until_done = [&](unsigned int worker_index) {
     chart_scratch_t scratch;
     for (;;)
     {
       const size_t at = next_chart.fetch_add(1, std::memory_order_relaxed);
       if (at >= packed_charts.size()) return;
+
+      const lightmap_chart_t &chart = charts[packed_charts[at]];
+      const size_t texels = (size_t)chart_covered_width(chart, settings) *
+                            (size_t)chart_covered_height(chart, settings);
+
       solve_chart(charts[packed_charts[at]], inputs, outputs, scratch,
                   dropped_per_worker[worker_index]);
+
+      progress.solved_texels.fetch_add(texels, std::memory_order_relaxed);
+      progress.solved_charts.fetch_add(1, std::memory_order_relaxed);
+      report_progress_if_it_is_time(progress);
     }
   };
 
@@ -816,6 +809,39 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   solve_until_done(0);
 
   for (std::thread &worker : workers) worker.join();
+
+  lightmap.probes = {};
+  if (bake_probes)
+  {
+    const std::optional<probe_grid_t> grid =
+        try_build_probe_grid(map, settings.probe_spacing_in_world_units);
+    if (!grid)
+      log_error("[lightmap] no probe grid could be built at spacing {}; the bake carries "
+                "no probes.",
+                settings.probe_spacing_in_world_units);
+    else
+    {
+      indirect_trace_settings_t probe_settings = indirect;
+      if (!trace_indirect) probe_settings.rays_per_sample = 0;
+      lightmap.probes = bake_probe_volume(*grid, bvh, traced_scene, lights, probe_settings);
+    }
+  }
+
+  // Always, however short: "how long does a bake take on this map" is the
+  // question every setting in the panel is really about, and the progress lines
+  // above deliberately say nothing on a fast one.
+  // The suffix is what tells a traced bake from an untraced one AFTERWARDS. They
+  // are otherwise indistinguishable from the outside -- the direct pages look the
+  // same and the indirect ones simply are not there -- and a bake is long enough
+  // that "did I have it on?" is a real question by the time it finishes.
+  log_terminal("[lightmap] baked {} chart(s) over {} texel(s) on {} thread(s) in "
+               "{:.2f}s{}.",
+               packed_charts.size(), progress.total_texels, worker_count,
+               (double)progress.elapsed_milliseconds() / 1000.0,
+               trace_indirect
+                   ? std::format(", {} indirect chain(s) per texel sample",
+                                 indirect.rays_per_sample)
+                   : std::string(" -- NO indirect light, \"Trace indirect light\" was off"));
 
   // Loud, and after the join for the reason dropped_light_t gives. One line per
   // chart-light pair: an author needs to know WHICH face fell back and which
@@ -836,6 +862,17 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
                   "still, but with no response to the material's maps and no runtime "
                   "tuning. Merge lights, or set the weakest to Dynamic.",
                   drop.object_uid, LIGHTMAP_LIGHTS_PER_CHART, drop.light_uid);
+
+  // The opposite failure, and the quieter one: a light the bake saw that no
+  // face kept has no slot on any vertex, so a Baked one draws NOTHING at
+  // runtime, and a Mixed one keeps only its analytic half. Its cone or its range
+  // reaches no face, or every face it reaches is occluded.
+  for (size_t slot = 0; slot < lightmap.light_uids.size(); ++slot)
+    if (count_charts_keeping_light(lightmap, (int16_t)slot) == 0)
+      log_warning("[lightmap] light {} delivered nothing to any face: no chart kept it, "
+                  "so a Baked light here lights nothing. Check its range, its cone and "
+                  "what stands between it and the geometry.",
+                  lightmap.light_uids[slot]);
 
   set_lightmap_geometry_id(lightmap);
 }

@@ -152,6 +152,7 @@ struct cvar_state_t
   float map_round_time_limit_seconds = 6000.0f;
   bool pin_main_thread = true;
   Debug_Channel r_debug_channel = Debug_Channel::off;
+  float r_exposure = 1.4f;
   bool debug_show_collisions = false;
   bool debug_show_hitboxes = true;
   bool debug_show_navmesh = false;
@@ -246,23 +247,24 @@ enum class cvar_id : uint16_t
   map_round_time_limit_seconds = 67,
   pin_main_thread = 68,
   r_debug_channel = 69,
-  debug_show_collisions = 70,
-  debug_show_hitboxes = 71,
-  debug_show_navmesh = 72,
-  debug_show_box_volumes = 73,
-  debug_hide_geometry = 74,
-  cl_shot_debug_seconds = 75,
-  debug_show_entity_counts = 76,
-  debug_show_physics_bodies = 77,
-  net_snapshot_debug = 78,
-  sv_event_debug = 79,
-  cl_event_debug = 80,
-  sv_reliable_debug = 81,
+  r_exposure = 70,
+  debug_show_collisions = 71,
+  debug_show_hitboxes = 72,
+  debug_show_navmesh = 73,
+  debug_show_box_volumes = 74,
+  debug_hide_geometry = 75,
+  cl_shot_debug_seconds = 76,
+  debug_show_entity_counts = 77,
+  debug_show_physics_bodies = 78,
+  net_snapshot_debug = 79,
+  sv_event_debug = 80,
+  cl_event_debug = 81,
+  sv_reliable_debug = 82,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 82;
+constexpr uint32_t CVAR_COUNT = 83;
 
 enum class command_id : uint16_t
 {

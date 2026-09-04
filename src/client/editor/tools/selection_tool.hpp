@@ -35,6 +35,13 @@ public:
   void on_draw_ui(editor_context_t& ctx) override;
 
 private:
+  void draw_light_bake_status(const editor_context_t& ctx, shared::entity_uid_t uid,
+                              const entities::Entity& entity);
+
+  // The last "explain reach" probe, kept so the lines stay up while the author
+  // reads them; keyed by the light it was run for.
+  shared::entity_uid_t light_reach_uid = 0;
+  std::vector<std::string> light_reach_lines;
   shared::entity_uid_t hovered_uid = 0;
   std::vector<shared::entity_uid_t> selected_uids;
 

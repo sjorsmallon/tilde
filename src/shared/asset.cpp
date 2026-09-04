@@ -1097,6 +1097,10 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
   mat.occlusion_roughness_metallic = load_optional_map("orm.png");
   mat.height                       = load_optional_map("height.png");
 
+  // Absent on almost every material, and that absence IS the answer: a folder
+  // with no emissive.png does not glow. Nothing else says so.
+  mat.emissive                     = load_optional_map("emissive.png");
+
   printf("[assets] loaded pbr_material from folder: %s\n", folder.c_str());
   return state.pbr_material_pool.add(folder.c_str(), std::move(mat));
 }

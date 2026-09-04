@@ -1,7 +1,10 @@
 #include "../shared/lighting.hpp"
 #include "../shared/lightmap_bake.hpp"
+#include "../shared/lightmap_lights.hpp"
+#include "../shared/lightmap_probes.hpp"
 #include "../shared/lightmap_sidecar.hpp"
 #include "../shared/lightmap_solve.hpp"
+#include "../shared/lightmap_trace.hpp"
 
 #include <optional>
 
@@ -369,6 +372,13 @@ void a_sidecar_round_trips_every_chart()
   assert(std::abs(coverage[1] - 0.5f) < 0.01f);
   assert(coverage[2] == 0.f);
   assert(std::abs(coverage[3] - 0.25f) < 0.01f);
+
+  // The indirect pair. `bake_one_box` traces nothing, so what is pinned here is
+  // the ABSENT case: four page sets are written whatever the bake produced, and a
+  // reader that stopped at the ones it found would take the next field's bytes
+  // for pixels.
+  assert(loaded.indirect_l0_pages.bytes.empty());
+  assert(loaded.indirect_l1_pages.bytes.empty());
 
   // Four bytes a texel, and the texel that was written comes back as the same
   // three floats -- a sidecar that sized itself by texels rather than by bytes
@@ -1634,10 +1644,948 @@ void a_rebake_reproduces_itself_byte_for_byte()
       assert(first.charts[i].light_slots[slot] == second.charts[i].light_slots[slot]);
 }
 
+// --- Indirect light: the path tracer (lighting_def.md gate 2) ----------------
+
+// Two parallel plates with the light between them: the floor's top face is
+// directly lit AND sees a lit ceiling, which is the smallest scene in which a
+// bounce has somewhere to come from.
+shared::map_t map_with_a_floor_a_ceiling_and_a_light_between_them()
+{
+  shared::map_t map;
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {64, 8, 64})});
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, 72, 0}, {64, 8, 64})});
+
+  std::shared_ptr<entities::Point_Light_Entity> light =
+      std::make_shared<entities::Point_Light_Entity>();
+  light->position = {0, 32, 0};
+  light->range = 1024.f;
+  light->light.color = {1.f, 1.f, 1.f};
+  light->light.intensity = 400.f;
+  map.entities.push_back({map.next_uid++, light});
+
+  return map;
+}
+
+shared::lightmap_solve_settings_t traced_solve_settings()
+{
+  shared::lightmap_solve_settings_t solve;
+  solve.samples_per_texel_edge = 1;
+  solve.trace_indirect_light = true;
+  solve.indirect_rays_per_sample = 16;
+  return solve;
+}
+
+// The LOWEST upward-facing chart, which is the floor -- a ceiling has an upward
+// face too, and it is the one nothing lights.
+atlas_position_t texel_at_the_middle_of_the_floor(const shared::lightmap_t &lightmap)
+{
+  const shared::lightmap_chart_t *floor = nullptr;
+  for (const shared::lightmap_chart_t &chart : lightmap.charts)
+  {
+    if (chart.plane.normal.y < 0.9f) continue;
+    if (!floor || chart.origin.y < floor->origin.y) floor = &chart;
+  }
+  assert(floor && "the scene has no upward face");
+
+  return {floor->page,
+          floor->atlas_rect.min_x + lightmap.settings.gutter_in_texels +
+              shared::chart_covered_width(*floor, lightmap.settings) / 2,
+          floor->atlas_rect.min_y + lightmap.settings.gutter_in_texels +
+              shared::chart_covered_height(*floor, lightmap.settings) / 2};
+}
+
+shared::lightmap_t bake_indirect_for(const shared::map_t &map,
+                                     const shared::lightmap_solve_settings_t &solve)
+{
+  shared::lightmap_t lightmap = pack_for(map);
+  shared::bake_lightmap(map, lightmap, solve);
+  return lightmap;
+}
+
+// The reconstruction the shader will run, and the ONE place this file spells it:
+// E(N) = 0.886227 * L0 + 1.023328 * dot(L1, N), clamped at zero. A test that
+// re-derived it per assertion would be a second lighting model in the test file.
+linalg::vec3 reconstructed_irradiance(const shared::lightmap_t &lightmap, int page, int x,
+                                      int y, const linalg::vec3 &normal)
+{
+  const linalg::vec3 l0 = lightmap.indirect_l0_pages.load(page, x, y);
+  const Array<linalg::vec3, shared::SH_L1_LAYERS_PER_PAGE> l1 =
+      lightmap.indirect_l1_pages.load_l1(page, x, y, l0);
+
+  linalg::vec3 irradiance = l0 * shared::SH_L1_IRRADIANCE_L0;
+  irradiance = irradiance + l1[0] * (shared::SH_L1_IRRADIANCE_L1 * normal.x);
+  irradiance = irradiance + l1[1] * (shared::SH_L1_IRRADIANCE_L1 * normal.y);
+  irradiance = irradiance + l1[2] * (shared::SH_L1_IRRADIANCE_L1 * normal.z);
+
+  return {std::max(irradiance.x, 0.f), std::max(irradiance.y, 0.f),
+          std::max(irradiance.z, 0.f)};
+}
+
+// Albedo textures upload SRGB, so their BYTES are encoded and reflectance
+// arithmetic is linear. Sampling them raw is the trap gate 2 names: a 0.5 grey
+// wall would reflect 0.73 and every bounce would be systematically too bright.
+void the_srgb_decode_is_the_one_albedo_reads_through()
+{
+  assert(shared::srgb_byte_to_linear(0) == 0.f);
+  assert(std::abs(shared::srgb_byte_to_linear(255) - 1.f) < 1e-5f);
+
+  // Mid-grey, and the whole point: 128/255 is 0.502 encoded and 0.216 linear.
+  const float mid = shared::srgb_byte_to_linear(128);
+  assert(mid > 0.20f && mid < 0.23f);
+}
+
+// A tracer that invents light is worse than one that finds none, so the first
+// thing to pin is the zero: a floor under an open sky has nothing above it for a
+// chain to land on, and every chain escapes on its first ray.
+void nothing_bounces_where_there_is_nothing_to_bounce_off()
+{
+  const shared::map_t map = map_with_a_floor_and_a_light(64.f, 400.f);
+
+  const shared::lightmap_t lightmap = bake_indirect_for(map, traced_solve_settings());
+
+  assert(!lightmap.indirect_l0_pages.empty());
+  assert(lightmap.indirect_l0_pages.size_in_texels == lightmap.atlas.size_in_texels);
+
+  // Three layers an atlas page, one per world axis, and asserting it here is what
+  // stops a page count that does not divide by three from making every load_l1
+  // read someone else's texel.
+  assert(lightmap.indirect_l1_pages.page_count ==
+         lightmap.atlas.page_count * shared::SH_L1_LAYERS_PER_PAGE);
+
+  // The scene IS lit -- the light is slot 0 of this chart, so what says so is the
+  // visibility channel and not the irradiance, which after ss14 step 6 holds only
+  // what a chart dropped. A zero below is the bounce being absent, not the bake.
+  const atlas_position_t at = texel_at_the_middle_of_the_floor(lightmap);
+  assert(lightmap.visibility_pages.load_visibility(at.page, at.x, at.y)[0] > 0.f);
+
+  for (int page = 0; page < lightmap.indirect_l0_pages.page_count; ++page)
+    for (int y = 0; y < lightmap.indirect_l0_pages.size_in_texels; ++y)
+      for (int x = 0; x < lightmap.indirect_l0_pages.size_in_texels; ++x)
+        assert(lightmap.indirect_l0_pages.load(page, x, y).x == 0.f);
+}
+
+// --- Emissive surfaces: gate 4 ----------------------------------------------
+
+// A 1x1 texture of one colour. The pool is not involved: traced_scene_t holds
+// POINTERS per material, and a scene whose map.materials is empty never asks the
+// asset state anything.
+assets::texture_asset_t one_texel(uint8_t r, uint8_t g, uint8_t b)
+{
+  assets::texture_asset_t texture;
+  texture.width = 1;
+  texture.height = 1;
+  texture.channels = 4;
+  texture.pixels = {r, g, b, 255};
+  return texture;
+}
+
+// The floor and the ceiling of the bounce scene, with the light taken OUT --
+// which is the whole of gate 4: the only thing in this room that can deliver
+// light is a surface, and a chain finds it by landing on it.
+shared::map_t map_with_a_floor_and_a_ceiling_and_no_light()
+{
+  shared::map_t map;
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {64, 8, 64})});
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, 72, 0}, {64, 8, 64})});
+  return map;
+}
+
+// A material EMITS exactly what its emissive.png holds, sRGB-decoded like the
+// authored colour it is -- no strength, no tint, no albedo in it. The absence of
+// that map is the only thing that says a material does not glow.
+void emission_is_the_emissive_map_and_nothing_else()
+{
+  const shared::map_t map = map_with_a_floor_and_a_ceiling_and_no_light();
+  const assets::texture_asset_t albedo = one_texel(255, 255, 255);
+  const assets::texture_asset_t emissive = one_texel(255, 128, 0);
+
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
+
+  ray_hit_result_t hit = {};
+  assert(bvh_intersect_ray(bvh, {0, 40, 0}, {0, -1, 0}, hit) && hit.hit);
+  const linalg::vec3 at = {0, 40 - hit.t, 0};
+
+  scene.materials = {{&albedo, &emissive}};
+  const shared::traced_surface_t glowing = shared::surface_at(scene, hit, at);
+
+  assert(std::abs(glowing.albedo.x - 1.f) < 1e-5f);
+  assert(glowing.emission.x == shared::srgb_byte_to_linear(255));
+  assert(glowing.emission.y == shared::srgb_byte_to_linear(128));
+  assert(glowing.emission.z == shared::srgb_byte_to_linear(0));
+
+  // No emissive.png, and that is the whole test for it.
+  scene.materials = {{&albedo, nullptr}};
+  const shared::traced_surface_t dark = shared::surface_at(scene, hit, at);
+  assert(dark.emission.x == 0.f && dark.emission.y == 0.f && dark.emission.z == 0.f);
+  assert(dark.albedo.x == glowing.albedo.x);
+}
+
+// Gate 4, and the assertion is that there is NO LIGHT IN THE SCENE. Every other
+// term in the tracer is gated on a baked_light_t; this one is gated on nothing
+// but a chain landing somewhere bright, which is why it costs one line.
+void an_emissive_surface_lights_a_room_with_no_lights_in_it()
+{
+  const shared::map_t map = map_with_a_floor_and_a_ceiling_and_no_light();
+  const assets::texture_asset_t albedo = one_texel(255, 255, 255);
+
+  // Red at full, green partway, blue off -- three channels that cannot be told
+  // apart by a scene of grey walls and a grey light, which is what every other
+  // bounce test here is made of.
+  const assets::texture_asset_t emissive = one_texel(255, 128, 0);
+
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
+
+  shared::indirect_trace_settings_t settings;
+  settings.rays_per_sample = 256;
+
+  const auto bounce_on_the_floor = [&](const assets::texture_asset_t *emissive_map) {
+    scene.materials = {{&albedo, emissive_map}};
+    return shared::trace_indirect_light(scene, {}, {0, 0, 0}, {0, 1, 0}, settings,
+                                        0x51ed270bu);
+  };
+
+  // The same scene, the same rays and the same hash -- the ONLY thing that
+  // differs is whether the ceiling has an emissive map. Nothing else in this
+  // file can move this pair.
+  assert(bounce_on_the_floor(nullptr).l0.x == 0.f);
+
+  const shared::indirect_sh_l1_t lit = bounce_on_the_floor(&emissive);
+  assert(lit.l0.x > 0.f);
+
+  // Up, because the ceiling is the only emitter and it is above.
+  assert(lit.l1[1].y > 0.f);
+
+  // Emission never joins the throughput -- a surface does not reflect its own
+  // glow -- and the albedo above is white, so the channels stay in exactly the
+  // ratio the emissive texel holds. A term that had picked up the albedo, the
+  // base colour or a roulette weight per channel could not.
+  const float ratio = shared::srgb_byte_to_linear(255) / shared::srgb_byte_to_linear(128);
+  assert(std::abs(lit.l0.x / lit.l0.y - ratio) < 1e-3f);
+  assert(lit.l0.z == 0.f);
+}
+
+// The whole of gate 2 in one assertion: a surface the light already reaches gets
+// MORE than the light delivers, because the room around it is lit too.
+void a_ceiling_bounces_light_back_onto_the_floor()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+
+  const shared::lightmap_t lightmap = bake_indirect_for(map, traced_solve_settings());
+
+  const atlas_position_t at = texel_at_the_middle_of_the_floor(lightmap);
+  const linalg::vec3 bounced = lightmap.indirect_l0_pages.load(at.page, at.x, at.y);
+
+  assert(bounced.x > 0.f);
+
+  // Grey walls and a grey light, so a colour cast would be a bug in the
+  // per-channel throughput rather than a property of the scene.
+  assert(std::abs(bounced.x - bounced.y) < 1e-4f);
+  assert(std::abs(bounced.y - bounced.z) < 1e-4f);
+
+  // The light is the chart's slot 0, so it is shaded analytically at runtime and
+  // the irradiance pages hold nothing here -- the bounce is the only thing in the
+  // scene that was not already accounted for.
+  assert(lightmap.irradiance_pages.load(at.page, at.x, at.y).x == 0.f);
+}
+
+// The whole of what SH L1 buys over the flat accumulator: the texel knows WHICH
+// WAY the bounce came from. Everything above this floor texel is the lit ceiling,
+// so the L1 vector leans +Y -- and the reconstruction has to be BRIGHTER facing
+// the ceiling than facing away from it, which a flat store cannot express.
+//
+// A flat encoding passes every assertion in the test above and fails this one,
+// which is why it is a test of its own rather than another line up there.
+// The layout that was reported as "a Baked spot light does nothing": a spot
+// standing on a floor slab, aimed at a wall well inside its range and its cone,
+// with the wall's face towards it. The wall's chart must KEEP the light -- a
+// spot is not a point light with a cone drawn on it, its cone gate and its
+// forward vector are gates a point light never runs -- and the reach probe must
+// report the same face as reached and visible, since it is what the editor
+// shows an author who asks why a face is dark.
+void a_spot_light_on_the_floor_lights_the_wall_it_is_aimed_at()
+{
+  shared::map_t map;
+  const shared::entity_uid_t floor_uid = map.next_uid++;
+  map.geometry.push_back({floor_uid, shared::make_box_brush({0, -8, 0}, {512, 8, 512})});
+  const shared::entity_uid_t wall_uid = map.next_uid++;
+  map.geometry.push_back({wall_uid, shared::make_box_brush({300, 256, 0}, {16, 256, 512})});
+
+  // Identity orientation is +X forward (linalg::basis_from), which is what the
+  // editor's cone gizmo draws along, so this aims straight at the wall's -X face
+  // 284 units away.
+  std::shared_ptr<entities::Spot_Light_Entity> spot =
+      std::make_shared<entities::Spot_Light_Entity>();
+  spot->position = {0, 24, 0};
+  spot->range = 512.f;
+  spot->inner_degrees = 20.f;
+  spot->outer_degrees = 35.f;
+  spot->light.color = {1.f, 1.f, 1.f};
+  spot->light.intensity = 64.f;
+  spot->light.mode = entities::Light_Mode::Baked;
+  const shared::entity_uid_t spot_uid = map.next_uid++;
+  map.entities.push_back({spot_uid, spot});
+
+  const shared::lightmap_t lightmap = bake_for(map);
+  const int16_t slot = shared::find_baked_light_slot(lightmap, spot_uid);
+  assert(slot != shared::LIGHTMAP_NO_LIGHT_SLOT);
+
+  bool wall_face_keeps_it = false;
+  for (const shared::lightmap_chart_t &chart : lightmap.charts)
+  {
+    if (chart.object_uid != wall_uid || chart.plane.normal.x > -0.9f) continue;
+    for (int16_t kept : chart.light_slots) wall_face_keeps_it |= kept == slot;
+  }
+  assert(wall_face_keeps_it);
+  assert(shared::count_charts_keeping_light(lightmap, slot) >= 1);
+
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(map);
+  assert(lights.size() == 1);
+  const std::vector<shared::light_reach_on_face_t> reach =
+      shared::probe_light_reach(map, lights[0], lightmap.settings, 0.25f, 100000.f, 16);
+
+  bool wall_face_reported = false;
+  for (const shared::light_reach_on_face_t &face : reach)
+  {
+    if (face.object_uid != wall_uid || face.normal.x > -0.9f) continue;
+    wall_face_reported = true;
+    assert(face.sampled > 0);
+    assert(face.arrives > 0);
+    assert(face.reaches > 0);
+    assert(face.visible > 0);
+    assert(face.nearest_distance < 512.f);
+    assert(face.best_cone_cos > std::cos(linalg::to_radians(35.f)));
+  }
+  assert(wall_face_reported);
+
+  // The wall's FAR face is aimed at too, and must not be lit: it faces away, so
+  // `reaches` is zero there whatever `arrives` says.
+  for (const shared::light_reach_on_face_t &face : reach)
+    if (face.object_uid == wall_uid && face.normal.x > 0.9f) assert(face.reaches == 0);
+}
+
+void the_bounce_knows_which_way_it_came_from()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+
+  const shared::lightmap_t lightmap = bake_indirect_for(map, traced_solve_settings());
+  const atlas_position_t at = texel_at_the_middle_of_the_floor(lightmap);
+
+  const linalg::vec3 l0 = lightmap.indirect_l0_pages.load(at.page, at.x, at.y);
+  const Array<linalg::vec3, shared::SH_L1_LAYERS_PER_PAGE> l1 =
+      lightmap.indirect_l1_pages.load_l1(at.page, at.x, at.y, l0);
+
+  // l1[1] is the Y component of the L1 vector, for each of r, g and b.
+  assert(l1[1].x > 0.f && l1[1].y > 0.f && l1[1].z > 0.f);
+
+  // And it dominates: the ceiling is straight up, so what is left sideways is a
+  // symmetric room's sampling noise.
+  assert(l1[1].x > std::abs(l1[0].x) * 2.f);
+  assert(l1[1].x > std::abs(l1[2].x) * 2.f);
+
+  const linalg::vec3 facing_up =
+      reconstructed_irradiance(lightmap, at.page, at.x, at.y, {0.f, 1.f, 0.f});
+  const linalg::vec3 facing_down =
+      reconstructed_irradiance(lightmap, at.page, at.x, at.y, {0.f, -1.f, 0.f});
+
+  assert(facing_up.x > 0.f);
+  assert(facing_up.x > facing_down.x * 2.f);
+}
+
+// The bias encoding normalizes by sqrt(3) * L0, and that constant is DERIVED: for
+// light from a single direction |L1| / L0 is exactly Y1 / Y0, so a legal bake
+// cannot clip. A value pinned at the top or bottom of the byte range is what
+// clipping looks like, and it would be invisible in the picture.
+void the_l1_encoding_does_not_clip_on_a_legal_bake()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::lightmap_t lightmap = bake_indirect_for(map, traced_solve_settings());
+
+  const atlas_position_t at = texel_at_the_middle_of_the_floor(lightmap);
+  const linalg::vec3 l0 = lightmap.indirect_l0_pages.load(at.page, at.x, at.y);
+  const Array<linalg::vec3, shared::SH_L1_LAYERS_PER_PAGE> l1 =
+      lightmap.indirect_l1_pages.load_l1(at.page, at.x, at.y, l0);
+
+  for (int axis = 0; axis < shared::SH_L1_LAYERS_PER_PAGE; ++axis)
+    assert(std::abs(l1[axis].x) <= shared::SH_L1_NORMALIZATION * l0.x);
+
+  // And the pair round trips through the PAGES rather than inside one call: an
+  // encode and a decode that disagree by a factor of two look exactly like a
+  // dimmer bounce.
+  shared::lightmap_atlas_t atlas;
+  atlas.size_in_texels = 4;
+  atlas.page_count = 1;
+
+  shared::lightmap_pages_t pages;
+  pages.allocate(atlas, shared::lightmap_pixel_format_t::Unorm8x4,
+                 shared::SH_L1_LAYERS_PER_PAGE);
+
+  const linalg::vec3 stored_l0{2.f, 4.f, 8.f};
+  Array<linalg::vec3, shared::SH_L1_LAYERS_PER_PAGE> stored_l1;
+  stored_l1[0] = {1.f, -2.f, 3.f};
+  stored_l1[1] = {-0.5f, 0.25f, -4.f};
+  stored_l1[2] = {0.f, 6.f, 1.f};
+
+  pages.store_l1(0, 1, 2, stored_l0, stored_l1);
+  const Array<linalg::vec3, shared::SH_L1_LAYERS_PER_PAGE> read =
+      pages.load_l1(0, 1, 2, stored_l0);
+
+  // Eight bits over a range of 2 * sqrt(3) * L0, so the tolerance is that step
+  // and it is per channel rather than absolute.
+  for (int axis = 0; axis < shared::SH_L1_LAYERS_PER_PAGE; ++axis)
+  {
+    assert(std::abs(read[axis].x - stored_l1[axis].x) <
+           shared::SH_L1_NORMALIZATION * stored_l0.x / 100.f);
+    assert(std::abs(read[axis].y - stored_l1[axis].y) <
+           shared::SH_L1_NORMALIZATION * stored_l0.y / 100.f);
+    assert(std::abs(read[axis].z - stored_l1[axis].z) <
+           shared::SH_L1_NORMALIZATION * stored_l0.z / 100.f);
+  }
+
+  // A channel with no light has no direction to have, and dividing by its L0 is
+  // what the encoder must not do.
+  pages.store_l1(0, 0, 0, {0.f, 0.f, 0.f}, stored_l1);
+  const Array<linalg::vec3, shared::SH_L1_LAYERS_PER_PAGE> dark =
+      pages.load_l1(0, 0, 0, {0.f, 0.f, 0.f});
+  for (int axis = 0; axis < shared::SH_L1_LAYERS_PER_PAGE; ++axis)
+    assert(dark[axis].x == 0.f && dark[axis].y == 0.f && dark[axis].z == 0.f);
+}
+
+// The sidecar carries FOUR page sets now, and the L1 one is the only one whose
+// layer count is not the atlas's. A file that wrote it and derived it back would
+// read a third of the bounce and find the next field inside the pixels.
+void a_sidecar_round_trips_the_bounce()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::lightmap_t baked = bake_indirect_for(map, traced_solve_settings());
+
+  const std::filesystem::path directory =
+      std::filesystem::temp_directory_path() / "tilde_lightmap_test";
+  std::filesystem::create_directories(directory);
+  const std::string map_path = (directory / "bounce_round_trip.source").generic_string();
+
+  const uint32_t hash = shared::compute_map_content_hash(map);
+  shared::save_lightmap_sidecar(map_path, baked, hash);
+  const shared::lightmap_t loaded = shared::load_lightmap_sidecar(map_path, hash);
+
+  assert(!loaded.charts.empty());
+  assert(loaded.indirect_l0_pages.bytes == baked.indirect_l0_pages.bytes);
+  assert(loaded.indirect_l1_pages.bytes == baked.indirect_l1_pages.bytes);
+  assert(loaded.indirect_l1_pages.page_count ==
+         loaded.atlas.page_count * shared::SH_L1_LAYERS_PER_PAGE);
+  assert(loaded.indirect_l0_pages.format == shared::lightmap_pixel_format_t::Rgb9e5);
+  assert(loaded.indirect_l1_pages.format == shared::lightmap_pixel_format_t::Unorm8x4);
+
+  // Through the accessor and not the bytes, because that is what proves the layer
+  // count survived: the same texel decodes to the same direction.
+  const atlas_position_t at = texel_at_the_middle_of_the_floor(loaded);
+  const linalg::vec3 l0 = loaded.indirect_l0_pages.load(at.page, at.x, at.y);
+  const Array<linalg::vec3, shared::SH_L1_LAYERS_PER_PAGE> l1 =
+      loaded.indirect_l1_pages.load_l1(at.page, at.x, at.y, l0);
+  assert(l1[1].x > 0.f);
+}
+
+// The mean over the whole floor rather than one texel: a chain is a random walk,
+// so one texel is a sample of a distribution and the average is what the estimator
+// promises to get right.
+float mean_indirect_on_the_floor(const shared::lightmap_t &lightmap)
+{
+  const shared::lightmap_chart_t *floor = nullptr;
+  for (const shared::lightmap_chart_t &chart : lightmap.charts)
+  {
+    if (chart.plane.normal.y < 0.9f) continue;
+    if (!floor || chart.origin.y < floor->origin.y) floor = &chart;
+  }
+  assert(floor);
+
+  // The RECONSTRUCTION rather than L0 alone, because that is the number a shader
+  // reads: an estimator that scaled with its sample count in the L1 term and not
+  // in the L0 one would pass a test that only looked at L0.
+  double total = 0.0;
+  size_t count = 0;
+  for (int y = 0; y < shared::chart_covered_height(*floor, lightmap.settings); ++y)
+    for (int x = 0; x < shared::chart_covered_width(*floor, lightmap.settings); ++x)
+    {
+      total += reconstructed_irradiance(
+                   lightmap, floor->page,
+                   floor->atlas_rect.min_x + lightmap.settings.gutter_in_texels + x,
+                   floor->atlas_rect.min_y + lightmap.settings.gutter_in_texels + y,
+                   floor->plane.normal)
+                   .x;
+      ++count;
+    }
+
+  assert(count > 0);
+  return (float)(total / (double)count);
+}
+
+// An estimator that forgot to divide by its sample count is BRIGHTER the more
+// samples it takes, and looks perfectly plausible at any single setting. This is
+// the assertion that catches it, and it is the reason the chain count is a
+// quality knob rather than an exposure one.
+void the_bounce_does_not_scale_with_the_chain_count()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+
+  shared::lightmap_solve_settings_t few = traced_solve_settings();
+  few.indirect_rays_per_sample = 8;
+  shared::lightmap_solve_settings_t many = traced_solve_settings();
+  many.indirect_rays_per_sample = 32;
+
+  const float sparse = mean_indirect_on_the_floor(bake_indirect_for(map, few));
+  const float dense = mean_indirect_on_the_floor(bake_indirect_for(map, many));
+
+  assert(sparse > 0.f && dense > 0.f);
+  assert(std::abs(sparse - dense) < 0.25f * std::max(sparse, dense));
+}
+
+// A chain draws its direction from a hash of the atlas position, never from
+// shared/rng.hpp -- and the chart loop runs on as many threads as the machine
+// has. Neither can be seen to be wrong except by baking twice.
+void an_indirect_rebake_reproduces_itself_byte_for_byte()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::lightmap_solve_settings_t solve = traced_solve_settings();
+
+  const shared::lightmap_t first = bake_indirect_for(map, solve);
+  const shared::lightmap_t second = bake_indirect_for(map, solve);
+
+  assert(!first.indirect_l0_pages.bytes.empty());
+  assert(first.indirect_l0_pages.bytes == second.indirect_l0_pages.bytes);
+  assert(!first.indirect_l1_pages.bytes.empty());
+  assert(first.indirect_l1_pages.bytes == second.indirect_l1_pages.bytes);
+}
+
+// Indirect is a MODE of the same solve, so the thing to pin is that turning it on
+// changes nothing about the direct half -- the same guarantee the per-light masks
+// make. And the off case must leave NO pages behind, or a sidecar would carry a
+// bounce the settings say was never traced.
+void tracing_indirect_light_moves_no_direct_pixel()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+
+  shared::lightmap_solve_settings_t untraced = traced_solve_settings();
+  untraced.trace_indirect_light = false;
+
+  const shared::lightmap_t without = bake_for(map, untraced);
+  const shared::lightmap_t with = bake_indirect_for(map, traced_solve_settings());
+
+  assert(without.indirect_l0_pages.empty());
+  assert(without.indirect_l1_pages.empty());
+  assert(!with.indirect_l0_pages.empty());
+
+  assert(!without.irradiance_pages.bytes.empty());
+  assert(without.irradiance_pages.bytes == with.irradiance_pages.bytes);
+  assert(without.visibility_pages.bytes == with.visibility_pages.bytes);
+}
+
+
+// --- Gate 5: probe placement -------------------------------------------------
+
+void a_probe_grid_pads_the_geometry_by_one_spacing()
+{
+  shared::map_t map;
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
+
+  const std::optional<shared::probe_grid_t> grid = shared::try_build_probe_grid(map, 64.f);
+  assert(grid.has_value());
+
+  // The brush spans [-64, 64]; one spacing of padding puts probes at -128 and
+  // 128, so five per axis.
+  assert(grid->count.x == 5 && grid->count.y == 5 && grid->count.z == 5);
+  assert(grid->probe_count() == 125);
+  assert(std::abs(grid->origin.x + 128.f) < 1e-4f);
+  assert(std::abs(grid->origin.y + 128.f) < 1e-4f);
+  assert(std::abs(grid->origin.z + 128.f) < 1e-4f);
+
+  const shared::aabb_bounds_t bounds = grid->bounds();
+  assert(std::abs(bounds.max.x - 128.f) < 1e-4f);
+  assert(std::abs(bounds.max.z - 128.f) < 1e-4f);
+}
+
+// A brush off the grid must not drag every probe off it with it: the origin
+// stays a multiple of the spacing, and the grid grows to cover the brush.
+void a_probe_grid_snaps_to_the_spacing_and_not_to_the_brush()
+{
+  shared::map_t map;
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({10, 0, 0}, {64, 64, 64})});
+
+  const std::optional<shared::probe_grid_t> grid = shared::try_build_probe_grid(map, 64.f);
+  assert(grid.has_value());
+
+  // x spans [-54, 74]: snapped down to -64 minus one spacing is -128, snapped
+  // up to 128 plus one spacing is 192 -- six probes.
+  assert(std::abs(grid->origin.x + 128.f) < 1e-4f);
+  assert(grid->count.x == 6);
+  assert(grid->count.y == 5);
+  assert(std::abs(grid->bounds().max.x - 192.f) < 1e-4f);
+}
+
+void a_probe_inside_a_brush_is_inside_and_one_on_its_face_is_too()
+{
+  shared::map_t map;
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
+
+  const std::optional<shared::probe_grid_t> grid = shared::try_build_probe_grid(map, 64.f);
+  assert(grid.has_value());
+
+  const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(map);
+  const std::vector<uint8_t> inside = shared::classify_probes_inside_solid(*grid, occluders);
+  assert(inside.size() == grid->probe_count());
+
+  assert(inside[grid->index_of(2, 2, 2)] == 1); // the centre
+  assert(inside[grid->index_of(1, 2, 2)] == 1); // on the -x face
+  assert(inside[grid->index_of(0, 2, 2)] == 0); // one spacing outside it
+  assert(inside[grid->index_of(0, 0, 0)] == 0); // the padded corner
+
+  // The solid spans three probes on each axis, faces included.
+  size_t inside_count = 0;
+  for (const uint8_t flag : inside) inside_count += flag;
+  assert(inside_count == 27);
+}
+
+void an_empty_map_has_no_probe_grid()
+{
+  shared::map_t map;
+  assert(!shared::try_build_probe_grid(map, 64.f).has_value());
+}
+
+void a_grid_too_long_for_a_3d_texture_is_refused()
+{
+  shared::map_t map;
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, 0, 0}, {64.f * 300.f, 64, 64})});
+
+  assert(!shared::try_build_probe_grid(map, 64.f).has_value());
+  assert(shared::try_build_probe_grid(map, 256.f).has_value());
+}
+
+
+// --- Gate 5: what a probe stores ---------------------------------------------
+
+shared::indirect_sh_l1_t trace_probe_in(const shared::map_t &map, const linalg::vec3 &position,
+                                        int rays_per_sample = 64)
+{
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  const shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(map);
+
+  shared::indirect_trace_settings_t settings;
+  settings.rays_per_sample = rays_per_sample;
+  return shared::trace_probe_light(scene, lights, position, settings, 0x51a7u);
+}
+
+// A probe below the light between the plates reads it DIRECTLY -- L0 above zero
+// and the L1 vector pointing up at it -- which is the half a texel leaves to its
+// slots and a probe cannot.
+void a_probe_reads_a_baked_light_directly_and_knows_where_it_is()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+
+  const shared::indirect_sh_l1_t probe = trace_probe_in(map, {0, 8, 0});
+  assert(probe.l0.x > 0.f);
+  assert(probe.l1[1].x > 0.f);
+  assert(probe.l1[1].x > std::abs(probe.l1[0].x) * 2.f);
+  assert(probe.l1[1].x > std::abs(probe.l1[2].x) * 2.f);
+
+  // The direct term alone is a known number: E * Y at the light's direction.
+  // With no chains it is exactly that, and with them it is more.
+  const shared::indirect_sh_l1_t direct_only = trace_probe_in(map, {0, 8, 0}, 0);
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(map);
+  const shared::light_arrival_t arrival =
+      shared::arrival_at(lights[0].light, {0, 8, 0}, {0, 1, 0}, 100000.f);
+  const float expected_l0 = lights[0].light.radiance.x * arrival.attenuation * shared::SH_L1_Y0;
+  assert(std::abs(direct_only.l0.x - expected_l0) < 1e-4f);
+  assert(probe.l0.x > direct_only.l0.x);
+}
+
+// A Mixed light reaches a dynamic object through the runtime tail, so the probe
+// must not carry it directly -- but the ceiling it lights still bounces.
+void a_probe_reads_a_mixed_light_through_its_bounce_only()
+{
+  shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::indirect_sh_l1_t with_baked = trace_probe_in(map, {0, 8, 0});
+
+  for (shared::map_entity_t &entry : map.entities)
+    if (entities::Point_Light_Entity *light =
+            entities::entity_as<entities::Point_Light_Entity>(entry.entity.get()))
+      light->light.mode = entities::Light_Mode::Mixed;
+
+  const shared::indirect_sh_l1_t with_mixed = trace_probe_in(map, {0, 8, 0});
+  const shared::indirect_sh_l1_t mixed_direct_only = trace_probe_in(map, {0, 8, 0}, 0);
+
+  assert(mixed_direct_only.l0.x == 0.f);
+  assert(with_mixed.l0.x > 0.f);
+  assert(with_mixed.l0.x < with_baked.l0.x);
+}
+
+// Behind the ceiling plate the light is occluded: the direct term is shadowed
+// out and nothing above the plate bounces, so the probe reads black.
+void a_probe_a_wall_hides_from_the_light_reads_nothing_direct()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::indirect_sh_l1_t above_the_ceiling = trace_probe_in(map, {0, 96, 0}, 0);
+  assert(above_the_ceiling.l0.x == 0.f);
+}
+
+// The sphere sampler covers BOTH halves: a probe under the light gets a positive
+// Y lean from the direct term, and the floor beneath it bounces back UP, so a
+// probe between the two sees light from below as well -- the L0 with chains is
+// well above the direct term alone, and the lean is less than pure single-direction.
+void a_probe_sees_the_floor_bounce_from_below()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::indirect_sh_l1_t probe = trace_probe_in(map, {0, 8, 0}, 256);
+  const shared::indirect_sh_l1_t direct_only = trace_probe_in(map, {0, 8, 0}, 0);
+
+  const float direct_ratio = direct_only.l1[1].x / direct_only.l0.x;
+  const float ratio = probe.l1[1].x / probe.l0.x;
+  assert(std::abs(direct_ratio - shared::SH_L1_NORMALIZATION) < 1e-3f);
+  assert(ratio < direct_ratio);
+  assert(ratio > 0.f);
+}
+
+
+// --- Gate 5: the baked volume --------------------------------------------------
+
+shared::lightmap_solve_settings_t probe_solve_settings()
+{
+  shared::lightmap_solve_settings_t solve = traced_solve_settings();
+  solve.bake_probes = true;
+  return solve;
+}
+
+shared::lightmap_t bake_probes_for(const shared::map_t &map, float spacing,
+                                   const shared::lightmap_solve_settings_t &solve)
+{
+  shared::lightmap_t lightmap = pack_for(map);
+  lightmap.settings.probe_spacing_in_world_units = spacing;
+  shared::bake_lightmap(map, lightmap, solve);
+  return lightmap;
+}
+
+// Between the plates a probe is traced; on the floor's face and inside its slab
+// it is not, and holds what the NEAREST open air holds instead of black. The
+// floor is thick here so that a probe one spacing into it is nearer the lit
+// room than the dark space underneath -- a thin slab's underside probe is
+// legitimately filled from below, which is black.
+void a_probe_bake_fills_the_volume_and_dilates_into_solids()
+{
+  shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  map.geometry.front().value = shared::make_box_brush({0, -40, 0}, {64, 40, 64});
+  const shared::lightmap_t lightmap = bake_probes_for(map, 16.f, probe_solve_settings());
+  assert(!lightmap.probes.empty());
+
+  const shared::probe_grid_t &grid = lightmap.probes.grid;
+  assert(std::abs(grid.spacing - 16.f) < 1e-4f);
+
+  const auto index_at = [&](const linalg::vec3 &position) {
+    const linalg::vec3 offset = (position - grid.origin) * (1.f / grid.spacing);
+    return grid.index_of((int)std::lround(offset.x), (int)std::lround(offset.y),
+                         (int)std::lround(offset.z));
+  };
+
+  const shared::indirect_sh_l1_t open_air = lightmap.probes.load(index_at({0, 16, 0}));
+  assert(open_air.l0.x > 0.f);
+  assert(open_air.l1[1].x > 0.f);
+
+  const shared::indirect_sh_l1_t on_the_floor = lightmap.probes.load(index_at({0, 0, 0}));
+  const shared::indirect_sh_l1_t in_the_slab = lightmap.probes.load(index_at({0, -16, 0}));
+  assert(on_the_floor.l0.x > 0.f);
+  assert(in_the_slab.l0.x > 0.f);
+}
+
+void a_bake_without_probes_clears_the_volume()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  shared::lightmap_t lightmap = bake_probes_for(map, 16.f, probe_solve_settings());
+  assert(!lightmap.probes.empty());
+
+  shared::bake_lightmap(map, lightmap, traced_solve_settings());
+  assert(lightmap.probes.empty());
+}
+
+void a_sidecar_round_trips_the_probes()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::lightmap_t baked = bake_probes_for(map, 16.f, probe_solve_settings());
+
+  const std::filesystem::path directory =
+      std::filesystem::temp_directory_path() / "tilde_lightmap_test";
+  std::filesystem::create_directories(directory);
+  const std::string map_path = (directory / "probes_round_trip.source").generic_string();
+
+  const uint32_t hash = shared::compute_map_content_hash(map);
+  shared::save_lightmap_sidecar(map_path, baked, hash);
+  const shared::lightmap_t loaded = shared::load_lightmap_sidecar(map_path, hash);
+
+  assert(!loaded.charts.empty());
+  assert(std::abs(loaded.settings.probe_spacing_in_world_units - 16.f) < 1e-4f);
+  assert(loaded.probes.grid.count.x == baked.probes.grid.count.x);
+  assert(loaded.probes.grid.count.y == baked.probes.grid.count.y);
+  assert(loaded.probes.grid.count.z == baked.probes.grid.count.z);
+  assert(std::abs(loaded.probes.grid.origin.x - baked.probes.grid.origin.x) < 1e-6f);
+  assert(loaded.probes.l0_bytes == baked.probes.l0_bytes);
+  assert(loaded.probes.l1_bytes == baked.probes.l1_bytes);
+}
+
+// The volume's codec is the atlas's: what goes in comes back within a byte of
+// quantization, direction included.
+void a_probe_volume_round_trips_its_own_codec()
+{
+  shared::probe_grid_t grid;
+  grid.spacing = 8.f;
+  grid.count = {2, 2, 2};
+
+  shared::probe_volume_t volume;
+  volume.allocate(grid);
+
+  shared::indirect_sh_l1_t value;
+  value.l0 = {2.f, 4.f, 8.f};
+  value.l1[0] = {1.f, -2.f, 3.f};
+  value.l1[1] = {-0.5f, 0.25f, -4.f};
+  value.l1[2] = {0.f, 6.f, 1.f};
+  volume.store(5, value);
+
+  const shared::indirect_sh_l1_t back = volume.load(5);
+  assert(std::abs(back.l0.x - 2.f) < 0.01f && std::abs(back.l0.z - 8.f) < 0.04f);
+  for (int axis = 0; axis < shared::SH_L1_LAYERS_PER_PAGE; ++axis)
+  {
+    assert(std::abs(back.l1[axis].x - value.l1[axis].x) < 0.05f);
+    assert(std::abs(back.l1[axis].y - value.l1[axis].y) < 0.1f);
+    assert(std::abs(back.l1[axis].z - value.l1[axis].z) < 0.2f);
+  }
+
+  const shared::indirect_sh_l1_t untouched = volume.load(0);
+  assert(untouched.l0.x == 0.f && untouched.l1[0].x == 0.f);
+}
+
 } // namespace
+
+// --- Static meshes -----------------------------------------------------------
+//
+// resources/models/Box.mesh is the fixture: 24 vertices, 12 triangles, UNIT
+// sized, so the object's scale is what gives it a size -- 128 units here, the
+// same box a_box_gets_one_chart_per_face builds as a brush. Loaded for real, so
+// these run under ctest's pinned working directory or from the project root.
+
+shared::map_t map_with_a_box_mesh()
+{
+  shared::map_t map;
+  shared::static_mesh_geometry_t box;
+  box.surface.mesh_path = "resources/models/Box.mesh";
+  box.scale = {128.f, 128.f, 128.f};
+  map.geometry.push_back({map.next_uid++, box});
+  return map;
+}
+
+void a_static_mesh_gets_one_chart_per_plane()
+{
+  const shared::map_t map = map_with_a_box_mesh();
+
+  const std::vector<shared::lightmap_chart_t> charts =
+      shared::build_lightmap_charts(map, {});
+
+  // Six planes, not twelve triangles: the two triangles of a side share one
+  // chart, and it is their triangle list rather than a polygon that says where
+  // the surface is.
+  assert(charts.size() == 6);
+
+  for (const shared::lightmap_chart_t &chart : charts)
+  {
+    assert(chart.polygon.empty());
+    assert(chart.triangles.size() == 6);
+
+    // The same 36 the brush box gets: 128 units at four per texel, plus the
+    // two-texel gutter each side. A mesh face and a brush face of one size are
+    // one chart size.
+    assert(chart.atlas_rect.width == 36);
+    assert(chart.atlas_rect.height == 36);
+
+    // Every corner is on the plane the chart is keyed by, and inside its own
+    // coverage.
+    for (const linalg::vec2 &corner : chart.triangles)
+    {
+      const linalg::vec3 world = shared::chart_space_to_world(chart, corner);
+      assert(std::abs(linalg::dot(world - chart.plane.point, chart.plane.normal)) < 1e-3f);
+    }
+    const linalg::vec2 centre_of_first = {
+        (chart.triangles[0].x + chart.triangles[1].x + chart.triangles[2].x) / 3.f,
+        (chart.triangles[0].y + chart.triangles[1].y + chart.triangles[2].y) / 3.f};
+    assert(shared::chart_space_is_inside_face(chart, centre_of_first));
+    assert(!shared::chart_space_is_inside_face(chart, {-1.f, -1.f}));
+  }
+}
+
+void a_lightmapped_static_mesh_is_unwelded_and_every_vertex_finds_its_chart()
+{
+  const shared::map_t map = map_with_a_box_mesh();
+
+  shared::lightmap_t lightmap;
+  lightmap.charts = shared::build_lightmap_charts(map, lightmap.settings);
+  lightmap.atlas = shared::pack_lightmap_charts(lightmap.charts, lightmap.settings);
+  shared::set_lightmap_geometry_id(lightmap);
+  assert(lightmap.atlas.page_count == 1);
+
+  const shared::static_mesh_geometry_t &box =
+      std::get<shared::static_mesh_geometry_t>(map.geometry[0].value);
+  const assets::mesh_asset_t mesh =
+      shared::generate_lightmapped_static_mesh(box, {&lightmap, map.geometry[0].uid});
+
+  // One vertex per triangle corner, so a corner three faces share can carry
+  // three atlas positions.
+  assert(mesh.vertices.size() == 36);
+  assert(mesh.indices.size() == 36);
+  assert(mesh.lightmap.size() == 36);
+
+  for (size_t vertex = 0; vertex < mesh.lightmap.size(); ++vertex)
+  {
+    const linalg::vec3 &uv = mesh.lightmap[vertex].uv;
+    assert(uv.x >= 0.f && uv.x <= 1.f);
+    assert(uv.y >= 0.f && uv.y <= 1.f);
+    assert(uv.z == 0.f);
+  }
+
+  // Without a bake the copy is still the world-space mesh, with no lightmap
+  // array: it uploads byte for byte what it always did.
+  const assets::mesh_asset_t unlit = shared::generate_lightmapped_static_mesh(box, {});
+  assert(unlit.vertices.size() == 36);
+  assert(unlit.lightmap.empty());
+}
+
+void a_static_mesh_casts_a_shadow_in_the_bake()
+{
+  const shared::map_t map = map_with_a_box_mesh();
+  const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(map);
+
+  // Straight up through the box from underneath: blocked. Beside it: not.
+  assert(!shared::shadow_ray_reaches(occluders, {0.f, -100.f, 0.f}, {0.f, 1.f, 0.f},
+                                     {0.f, 1.f, 0.f}, 200.f, 0.5f));
+  assert(shared::shadow_ray_reaches(occluders, {100.f, -100.f, 0.f}, {0.f, 1.f, 0.f},
+                                    {0.f, 1.f, 0.f}, 200.f, 0.5f));
+
+  // A texel on the box's own top face, looking up, sees the sky: the mesh is
+  // its triangles and not its bound, or this ray would start inside a solid.
+  assert(shared::shadow_ray_reaches(occluders, {0.f, 64.f, 0.f}, {0.f, 1.f, 0.f},
+                                    {0.f, 1.f, 0.f}, 200.f, 0.5f));
+}
+
+static assets::asset_state_t g_asset_state{};
 
 int main()
 {
+  assets::set_state(&g_asset_state);
+  assets::mount_asset_source();
+
+  a_static_mesh_gets_one_chart_per_plane();
+  a_lightmapped_static_mesh_is_unwelded_and_every_vertex_finds_its_chart();
+  a_static_mesh_casts_a_shadow_in_the_bake();
+
   a_box_gets_one_chart_per_face();
   chart_size_follows_the_face_extent();
   a_chart_origin_lies_on_its_face_plane();
@@ -1679,6 +2627,35 @@ int main()
   a_mixed_light_is_in_the_array_twice_and_a_baked_one_once();
   a_slot_no_live_light_claims_carries_no_radiance();
   a_bake_with_no_light_clears_what_the_last_one_left();
+
+  the_srgb_decode_is_the_one_albedo_reads_through();
+  nothing_bounces_where_there_is_nothing_to_bounce_off();
+  a_ceiling_bounces_light_back_onto_the_floor();
+  emission_is_the_emissive_map_and_nothing_else();
+  an_emissive_surface_lights_a_room_with_no_lights_in_it();
+  the_bounce_does_not_scale_with_the_chain_count();
+  the_bounce_knows_which_way_it_came_from();
+  the_l1_encoding_does_not_clip_on_a_legal_bake();
+  a_sidecar_round_trips_the_bounce();
+  an_indirect_rebake_reproduces_itself_byte_for_byte();
+  tracing_indirect_light_moves_no_direct_pixel();
+  a_spot_light_on_the_floor_lights_the_wall_it_is_aimed_at();
+
+  a_probe_grid_pads_the_geometry_by_one_spacing();
+  a_probe_grid_snaps_to_the_spacing_and_not_to_the_brush();
+  a_probe_inside_a_brush_is_inside_and_one_on_its_face_is_too();
+  an_empty_map_has_no_probe_grid();
+  a_grid_too_long_for_a_3d_texture_is_refused();
+
+  a_probe_reads_a_baked_light_directly_and_knows_where_it_is();
+  a_probe_reads_a_mixed_light_through_its_bounce_only();
+  a_probe_a_wall_hides_from_the_light_reads_nothing_direct();
+  a_probe_sees_the_floor_bounce_from_below();
+
+  a_probe_bake_fills_the_volume_and_dilates_into_solids();
+  a_bake_without_probes_clears_the_volume();
+  a_sidecar_round_trips_the_probes();
+  a_probe_volume_round_trips_its_own_codec();
 
   std::printf("lightmap_bake_test passed\n");
   return 0;

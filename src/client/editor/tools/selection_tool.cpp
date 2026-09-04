@@ -6,11 +6,16 @@
 #include "../entity_inspector.hpp"
 #include "../geometry_editor.hpp"
 #include "../transaction_system.hpp"
+#include "../../../shared/lighting.hpp"
+#include "../../../shared/lightmap.hpp"
+#include "../../../shared/lightmap_lights.hpp"
 #include "../../../shared/log.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <limits>
+#include <string>
 
 namespace client
 {
@@ -419,6 +424,14 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
     {
       const shared::entity_uid_t uid = selected_uids[0];
 
+      // The uid is what every log line, every bake table and every .source
+      // block names an object by, so it is the first thing the panel says.
+      if (selected_uids.size() > 1)
+        ImGui::Text("%zu objects selected, first uid %u", selected_uids.size(), uid);
+      else
+        ImGui::Text("uid %u", uid);
+      ImGui::Separator();
+
       if (selected_uids.size() > 1)
       {
         draw_multi_selection_panel(ctx);
@@ -445,11 +458,124 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
       }
       else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       {
+        draw_light_bake_status(ctx, uid, *entry->entity);
         render_entity_fields_in_an_imgui_window(entry->entity.get());
       }
     }
     ImGui::End();
   }
+}
+
+// Whether the map's bake has anything for this light, said where the author is
+// looking. A Baked light draws only through the chart slots that kept it, so
+// "no slot" and "kept by no chart" are both a light that lights nothing, and
+// neither is visible from the viewport or the field list.
+void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
+                                            shared::entity_uid_t uid,
+                                            const entities::Entity& entity)
+{
+  const std::optional<shared::scene_light_t> light = shared::try_light_of(entity);
+  if (!light)
+    return;
+
+  const shared::lightmap_t& lightmap = ctx.map->lightmap;
+  const ImVec4 warning_color{1.f, 0.55f, 0.2f, 1.f};
+
+  // The four gates a face has to clear, counted per face, as the map is NOW.
+  // Kept beside the bake status because "kept by no chart" says what happened
+  // and this says why.
+  if (ImGui::Button("Explain what this light reaches"))
+  {
+    light_reach_uid = uid;
+    light_reach_lines.clear();
+
+    std::vector<shared::light_reach_on_face_t> reach = shared::probe_light_reach(
+        *ctx.map, {uid, *light}, lightmap.settings, 0.25f, 100000.f, 24);
+
+    // Faces it gets to first, then by how close it came.
+    std::sort(reach.begin(), reach.end(),
+              [](const shared::light_reach_on_face_t& a, const shared::light_reach_on_face_t& b) {
+                if ((a.visible > 0) != (b.visible > 0)) return a.visible > 0;
+                if ((a.arrives > 0) != (b.arrives > 0)) return a.arrives > 0;
+                return a.nearest_distance < b.nearest_distance;
+              });
+
+    int total_visible = 0;
+    for (const shared::light_reach_on_face_t& face : reach) total_visible += face.visible;
+    light_reach_lines.push_back(
+        std::format("{} faces sampled; {} samples lit in total. range {:.0f}{}",
+                    reach.size(), total_visible, light->range,
+                    light->kind == shared::light_kind_t::Spot
+                        ? std::format(", cone outer cos {:.3f}", light->cos_outer)
+                        : std::string()));
+
+    constexpr size_t MAX_LINES = 16;
+    for (size_t index = 0; index < reach.size() && index < MAX_LINES; ++index)
+    {
+      const shared::light_reach_on_face_t& face = reach[index];
+      std::string why;
+      if (face.visible > 0)
+        why = "LIT";
+      else if (face.reaches > 0)
+        why = "occluded on every sample that arrives";
+      else if (face.arrives > 0)
+        why = "faces away from the light";
+      else if (face.nearest_distance > light->range)
+        why = "out of range";
+      else if (light->kind == shared::light_kind_t::Spot && face.best_cone_cos < light->cos_outer)
+        why = "outside the cone";
+      else
+        why = "attenuation reached zero";
+
+      light_reach_lines.push_back(std::format(
+          "obj {} n({:+.0f},{:+.0f},{:+.0f}): {}/{} arrive, {} face it, {} lit; nearest {:.0f}{} -- {}",
+          face.object_uid, face.normal.x, face.normal.y, face.normal.z, face.arrives,
+          face.sampled, face.reaches, face.visible, face.nearest_distance,
+          light->kind == shared::light_kind_t::Spot
+              ? std::format(", best cone cos {:.3f}", face.best_cone_cos)
+              : std::string(),
+          why));
+    }
+    if (reach.size() > MAX_LINES)
+      light_reach_lines.push_back(std::format("...and {} more faces", reach.size() - MAX_LINES));
+  }
+
+  if (light_reach_uid == uid)
+    for (const std::string& line : light_reach_lines) ImGui::TextWrapped("%s", line.c_str());
+
+  if (!shared::light_is_baked(light->mode))
+  {
+    ImGui::TextDisabled("Dynamic: not in the bake, shaded analytically everywhere.");
+    ImGui::Separator();
+    return;
+  }
+
+  if (lightmap.charts.empty())
+  {
+    ImGui::TextColored(warning_color, "This map has no bake; a Baked light lights nothing.");
+    ImGui::Separator();
+    return;
+  }
+
+  const int16_t slot = shared::find_baked_light_slot(lightmap, uid);
+  if (slot == shared::LIGHTMAP_NO_LIGHT_SLOT)
+  {
+    ImGui::TextColored(warning_color,
+                       "Not in the bake (placed or switched since it ran); rebake.");
+    ImGui::Separator();
+    return;
+  }
+
+  const size_t kept_by = shared::count_charts_keeping_light(lightmap, slot);
+  if (kept_by == 0)
+    ImGui::TextColored(warning_color,
+                       "Bake slot %d, kept by NO chart: it reached no face when baked. "
+                       "Check range, cone and occluders, then rebake.",
+                       (int)slot);
+  else
+    ImGui::Text("Bake slot %d, kept by %zu of %zu charts.", (int)slot, kept_by,
+                lightmap.charts.size());
+  ImGui::Separator();
 }
 
 void Selection_Tool::on_update(editor_context_t& ctx,

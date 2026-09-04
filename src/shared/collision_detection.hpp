@@ -122,6 +122,14 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const shared::aabb_bounds_t &aabb,
                         std::vector<const BVH_Primitive *> &out_primitives);
 
+// Whether a point lies inside ANY solid the BVH holds. A primitive with planes
+// is tested against every one of them (a convex piece is the intersection of
+// its half-spaces); one without is tested against its box. A point ON a face
+// counts as inside -- a grid snapped to a brush's own coordinates lands there
+// routinely, and a sample sitting on a wall is one the wall's half-sphere
+// swallows.
+bool bvh_point_is_inside_solid(const Bounding_Volume_Hierarchy &bvh, const vec3f& point);
+
 // Möller–Trumbore ray-triangle intersection. Returns true and sets out_t to the
 // hit distance when the ray crosses the triangle in front of the origin.
 inline bool ray_triangle(const vec3f& origin, const vec3f& dir, const vec3f& v0,

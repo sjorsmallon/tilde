@@ -253,7 +253,9 @@ bool Tick()
 
   {
     FRAME_ZONE("renderer::render_frame (submit + present)");
-    renderer::render_frame(frame_passes, frame_ui);
+    const renderer::tonemap_settings_t tonemap{
+        state_manager::get_client_context().cvars->r_exposure};
+    renderer::render_frame(frame_passes, frame_ui, tonemap);
   }
 
   // WHAT WAS ON SCREEN, recorded at the moment it becomes true. A shot is

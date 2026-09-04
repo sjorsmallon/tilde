@@ -15,15 +15,20 @@ namespace
 //             + settings (texels_per_world_unit, gutter, max_chart_extent,
 //                         atlas_size)
 //             + atlas size_in_texels + page_count
-//             + pixel format
 //             + chart count
 //             + light count (the resolve table) + one uid each
 //   charts    object_uid + plane(point, normal) + origin
 //             + tangent_u + tangent_v + world_units_per_texel
 //             + page + atlas_rect(min_x, min_y, width, height)
 //             + LIGHTMAP_LIGHTS_PER_CHART light slots
-//   pages     irradiance texels, page-major, bytes_per_texel(format) each
-//   vis       visibility format + byte count + that many bytes
+//   pages     FOUR page sets in this order -- irradiance, visibility, indirect
+//             L0, indirect L1 -- each written the same way: format + layer count
+//             + byte count + that many bytes, page-major.
+//
+// A page set carries its own format and its own LAYER count rather than
+// deriving either from the atlas: L1 has SH_L1_LAYERS_PER_PAGE layers per atlas
+// page, and any of the four can be absent (a bake that traced nothing, an atlas
+// with no light), which a byte count of zero is how to say.
 //
 // The chart POLYGON is deliberately absent: it is the bake's own coverage test
 // and nothing downstream reads it. Mesh generation projects through the stored
@@ -42,7 +47,16 @@ constexpr uint32_t LIGHTMAP_MAGIC = 0x504D4C54; // "TLMP"
 //    analytically and once out of an irradiance that is no longer residual.
 //    Nobody can see that and conclude "stale sidecar" -- it looks like a bake
 //    that is simply too bright.
-constexpr uint32_t LIGHTMAP_VERSION = 4;
+// 5: the indirect bounce -- two more page sets (SH L1's L0 and its three
+//    bias-encoded direction layers), and the four are now written uniformly with
+//    a format and a layer count each. A version-4 file has no room for them and
+//    is REFUSED rather than migrated: there is nothing to migrate to, since the
+//    bounce it lacks can only come from a bake (lighting_def.md gate 2 step 2).
+// 6: the irradiance probe volume (lighting_def.md gate 5) -- the probe spacing
+//    joins the settings, and the grid and its two byte arrays follow the four
+//    page sets. A version-5 file is REFUSED for gate 2's reason: the probes it
+//    lacks can only come from a bake.
+constexpr uint32_t LIGHTMAP_VERSION = 6;
 
 std::string lightmap_path_for(const std::string &map_path)
 {
@@ -83,10 +97,10 @@ void save_lightmap_sidecar(const std::string &map_path, const lightmap_t &lightm
   write((int32_t)lightmap.settings.gutter_in_texels);
   write((int32_t)lightmap.settings.max_chart_extent_in_texels);
   write((int32_t)lightmap.settings.atlas_size_in_texels);
+  write(lightmap.settings.probe_spacing_in_world_units);
 
   write((int32_t)lightmap.atlas.size_in_texels);
   write((int32_t)lightmap.atlas.page_count);
-  write((uint32_t)lightmap.irradiance_pages.format);
   write((uint32_t)lightmap.charts.size());
   write((uint32_t)lightmap.light_uids.size());
 
@@ -109,19 +123,37 @@ void save_lightmap_sidecar(const std::string &map_path, const lightmap_t &lightm
     for (int16_t slot : chart.light_slots) write(slot);
   }
 
-  if (!lightmap.irradiance_pages.bytes.empty())
-    out.write(reinterpret_cast<const char *>(lightmap.irradiance_pages.bytes.data()),
-              (std::streamsize)lightmap.irradiance_pages.bytes.size());
+  // One shape for all four, so a fifth page set is a call rather than a layout
+  // decision -- and so the reader cannot get one of them subtly different from
+  // the others.
+  const auto write_pages = [&](const lightmap_pages_t &pages) {
+    write((uint32_t)pages.format);
+    write((int32_t)pages.page_count);
+    write((uint32_t)pages.bytes.size());
+    if (!pages.bytes.empty())
+      out.write(reinterpret_cast<const char *>(pages.bytes.data()),
+                (std::streamsize)pages.bytes.size());
+  };
 
-  // The visibility set carries its own format and its own byte count rather than
-  // deriving them from the atlas: it is the one part of a bake that can be
-  // absent (an unbaked map's, a bake from before it existed), and a length of
-  // zero is how that is said.
-  write((uint32_t)lightmap.visibility_pages.format);
-  write((uint32_t)lightmap.visibility_pages.bytes.size());
-  if (!lightmap.visibility_pages.bytes.empty())
-    out.write(reinterpret_cast<const char *>(lightmap.visibility_pages.bytes.data()),
-              (std::streamsize)lightmap.visibility_pages.bytes.size());
+  write_pages(lightmap.irradiance_pages);
+  write_pages(lightmap.visibility_pages);
+  write_pages(lightmap.indirect_l0_pages);
+  write_pages(lightmap.indirect_l1_pages);
+
+  // The probe volume: its grid, then the two byte arrays each behind a count.
+  // An empty volume writes a zero count for both and a zero grid.
+  write_vec3(lightmap.probes.grid.origin);
+  write(lightmap.probes.grid.spacing);
+  write((int32_t)lightmap.probes.grid.count.x);
+  write((int32_t)lightmap.probes.grid.count.y);
+  write((int32_t)lightmap.probes.grid.count.z);
+  const auto write_bytes = [&](const std::vector<uint8_t> &bytes) {
+    write((uint32_t)bytes.size());
+    if (!bytes.empty())
+      out.write(reinterpret_cast<const char *>(bytes.data()), (std::streamsize)bytes.size());
+  };
+  write_bytes(lightmap.probes.l0_bytes);
+  write_bytes(lightmap.probes.l1_bytes);
 
   if (!out.good())
   {
@@ -182,12 +214,12 @@ lightmap_t load_lightmap_sidecar(const std::string &map_path, uint32_t map_conte
   lightmap.settings.gutter_in_texels = gutter;
   lightmap.settings.max_chart_extent_in_texels = max_extent;
   lightmap.settings.atlas_size_in_texels = settings_atlas_size;
+  read(lightmap.settings.probe_spacing_in_world_units);
 
   int32_t atlas_size = 0, page_count = 0;
-  uint32_t format = 0, chart_count = 0, light_count = 0;
+  uint32_t chart_count = 0, light_count = 0;
   read(atlas_size);
   read(page_count);
-  read(format);
   read(chart_count);
   read(light_count);
 
@@ -201,15 +233,6 @@ lightmap_t load_lightmap_sidecar(const std::string &map_path, uint32_t map_conte
 
   lightmap.atlas.size_in_texels = atlas_size;
   lightmap.atlas.page_count = page_count;
-  lightmap.irradiance_pages.format = (lightmap_pixel_format_t)format;
-
-  const int texel_size = bytes_per_texel(lightmap.irradiance_pages.format);
-  if (texel_size <= 0)
-  {
-    log_error("[lightmap] {} declares pixel format {}, which this build cannot read; "
-              "rebake.", path, format);
-    return {};
-  }
 
   lightmap.charts.resize(chart_count);
   for (lightmap_chart_t &chart : lightmap.charts)
@@ -243,25 +266,70 @@ lightmap_t load_lightmap_sidecar(const std::string &map_path, uint32_t map_conte
     }
   }
 
-  lightmap.irradiance_pages.size_in_texels = atlas_size;
-  lightmap.irradiance_pages.page_count = page_count;
-  lightmap.irradiance_pages.bytes.resize(lightmap.irradiance_pages.texel_count() *
-                                         (size_t)texel_size);
-  if (!lightmap.irradiance_pages.bytes.empty())
-    in.read(reinterpret_cast<char *>(lightmap.irradiance_pages.bytes.data()),
-            (std::streamsize)lightmap.irradiance_pages.bytes.size());
+  // The mirror of the writer's, and a format this build cannot size is fatal to
+  // the whole file rather than to one set: every page set after it is behind a
+  // byte count read from a stream that is now at the wrong offset.
+  bool every_page_set_is_readable = true;
+  const auto read_pages = [&](lightmap_pages_t &pages) {
+    uint32_t pages_format = 0, byte_count = 0;
+    int32_t layer_count = 0;
+    read(pages_format);
+    read(layer_count);
+    read(byte_count);
 
-  uint32_t visibility_format = 0, visibility_byte_count = 0;
-  read(visibility_format);
-  read(visibility_byte_count);
+    pages.format = (lightmap_pixel_format_t)pages_format;
+    pages.size_in_texels = atlas_size;
+    pages.page_count = layer_count;
 
-  lightmap.visibility_pages.format = (lightmap_pixel_format_t)visibility_format;
-  lightmap.visibility_pages.size_in_texels = atlas_size;
-  lightmap.visibility_pages.page_count = page_count;
-  lightmap.visibility_pages.bytes.resize(visibility_byte_count);
-  if (visibility_byte_count > 0)
-    in.read(reinterpret_cast<char *>(lightmap.visibility_pages.bytes.data()),
-            (std::streamsize)visibility_byte_count);
+    if (byte_count > 0 && bytes_per_texel(pages.format) <= 0)
+    {
+      log_error("[lightmap] {} declares pixel format {}, which this build cannot "
+                "read; rebake.", path, pages_format);
+      every_page_set_is_readable = false;
+      return;
+    }
+
+    pages.bytes.resize(byte_count);
+    if (byte_count > 0)
+      in.read(reinterpret_cast<char *>(pages.bytes.data()), (std::streamsize)byte_count);
+  };
+
+  read_pages(lightmap.irradiance_pages);
+  read_pages(lightmap.visibility_pages);
+  read_pages(lightmap.indirect_l0_pages);
+  read_pages(lightmap.indirect_l1_pages);
+
+  if (!every_page_set_is_readable) return {};
+
+  read_vec3(lightmap.probes.grid.origin);
+  read(lightmap.probes.grid.spacing);
+  int32_t probe_count_x = 0, probe_count_y = 0, probe_count_z = 0;
+  read(probe_count_x);
+  read(probe_count_y);
+  read(probe_count_z);
+  lightmap.probes.grid.count = {probe_count_x, probe_count_y, probe_count_z};
+  const auto read_bytes = [&](std::vector<uint8_t> &bytes) {
+    uint32_t byte_count = 0;
+    read(byte_count);
+    bytes.resize(byte_count);
+    if (byte_count > 0)
+      in.read(reinterpret_cast<char *>(bytes.data()), (std::streamsize)byte_count);
+  };
+  read_bytes(lightmap.probes.l0_bytes);
+  read_bytes(lightmap.probes.l1_bytes);
+
+  // A volume whose bytes do not fit its grid is a file that disagrees with
+  // itself, and indexing it anyway reads past the end.
+  const size_t probe_count = lightmap.probes.grid.probe_count();
+  if (lightmap.probes.l0_bytes.size() != probe_count * 4 ||
+      lightmap.probes.l1_bytes.size() != probe_count * 4 * (size_t)SH_L1_LAYERS_PER_PAGE)
+  {
+    log_error("[lightmap] {} holds a probe volume of {} probe(s) with {} + {} byte(s); "
+              "ignoring it. Rebake.",
+              path, probe_count, lightmap.probes.l0_bytes.size(),
+              lightmap.probes.l1_bytes.size());
+    return {};
+  }
 
   if (!in.good())
   {

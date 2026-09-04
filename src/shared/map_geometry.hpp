@@ -545,7 +545,44 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush);
 // the mesh uploads byte for byte what it always did.
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
                                          Span<const std::string> materials,
-                                         const brush_lightmap_ref_t &lighting = {});
+                                         const object_lightmap_ref_t &lighting = {});
+
+// --- A static mesh, in the world ---------------------------------------------
+//
+// Everything the bake asks of a static mesh -- its charts, its shadow casters,
+// its lightmapped draw copy -- starts from its triangles in WORLD space, so
+// there is one place that transform is applied. A triangle is its three corners
+// and its OUTWARD unit normal; a degenerate triangle keeps its place in the list
+// (index t is still source triangle t) with a zero normal, and every consumer
+// skips those.
+struct world_triangle_t
+{
+  Array<linalg::vec3, 3> corners;
+  linalg::vec3 normal{0.f, 0.f, 0.f};
+
+  [[nodiscard]] bool is_degenerate() const
+  {
+    return normal.x == 0.f && normal.y == 0.f && normal.z == 0.f;
+  }
+  [[nodiscard]] Plane plane() const { return Plane{corners[0], normal}; }
+};
+
+[[nodiscard]] linalg::mat4f static_mesh_transform(const static_mesh_geometry_t &static_mesh);
+
+// Empty when the surface names no mesh or names one that is not there; the
+// caller has the uid and logs.
+[[nodiscard]] std::vector<world_triangle_t>
+static_mesh_world_triangles(const static_mesh_geometry_t &static_mesh);
+
+// The mesh a LIGHTMAPPED static mesh draws as: the asset's triangles moved into
+// world space, one vertex per triangle CORNER, so every vertex belongs to exactly
+// one chart -- the pooled asset is welded, and a corner three faces share cannot
+// carry three atlas positions. Same submeshes and materials as the asset, and
+// `lightmap` filled through the same find_chart the brush path uses. Drawn with
+// the identity, like a brush.
+[[nodiscard]] assets::mesh_asset_t
+generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
+                                 const object_lightmap_ref_t &lighting);
 
 // --- Text serialization ------------------------------------------------------
 //

@@ -22,6 +22,12 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     mat4  view_projection;
     vec4  camera_position;  // xyz, w unused
     vec4  ambient;          // rgb = the constant floor, a unused
+    // The probe volume's world-to-texture mapping (lighting_def.md gate 5):
+    // uv = (P - probe_origin.xyz) * probe_inverse_extent.xyz. probe_origin.w is
+    // 1 when this pass's bake carries probes and 0 when the bound volume is the
+    // black stand-in, so a fragment can skip the four fetches.
+    vec4  probe_origin;
+    vec4  probe_inverse_extent;
     int   light_count;
     int   debug_flags;
     // Where the slot-indexed region ends and the tail begins. Entries below it

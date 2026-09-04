@@ -633,11 +633,9 @@ void Tool_Editor_State::update(float dt)
     if (!map.lightmap.irradiance_pages.empty())
     {
       if (scene.lightmap.valid())
-        renderer::update_lightmap(scene.lightmap, map.lightmap.irradiance_pages,
-                                  map.lightmap.visibility_pages);
+        renderer::update_lightmap(scene.lightmap, map.lightmap);
       else
-        scene.lightmap = renderer::register_lightmap(map.lightmap.irradiance_pages,
-                                                     map.lightmap.visibility_pages);
+        scene.lightmap = renderer::register_lightmap(map.lightmap);
     }
   }
 

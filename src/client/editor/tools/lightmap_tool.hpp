@@ -2,8 +2,12 @@
 
 #include "../editor_tool.hpp"
 #include "../../../shared/lightmap_bake.hpp"
+#include "../../../shared/lightmap_probes.hpp"
 #include "../../../shared/lightmap_sidecar.hpp"
 #include "../../../shared/lightmap_solve.hpp"
+
+#include <optional>
+#include <vector>
 
 namespace client
 {
@@ -48,6 +52,23 @@ private:
   bool emit_per_light_visibility = true;
 
   size_t lit_texel_count = 0;
+  size_t indirect_texel_count = 0;
+
+  // Gate 5's preview: the probe grid the bake WOULD trace, drawn before any
+  // bake exists so the spacing can be tuned by eye. Built through the same two
+  // functions the bake calls, so it cannot show a different grid.
+  bool show_probe_preview = false;
+  std::optional<shared::probe_grid_t> probe_preview_grid;
+  std::vector<uint8_t> probe_preview_inside;
+  size_t probe_preview_inside_count = 0;
+
+  // Only the probes within this many spacings of the camera are drawn: a level's
+  // whole grid is a hundred thousand crosses, which is more than the debug
+  // vertex buffer holds, and the spacing is judged where you stand anyway.
+  static constexpr int PROBE_PREVIEW_RADIUS_IN_SPACINGS = 10;
+  size_t probe_preview_drawn_count = 0;
+
+  void rebuild_probe_preview(editor_context_t& ctx);
 
   [[nodiscard]] bool has_packed() const { return baked.atlas.page_count > 0; }
 };

@@ -13,10 +13,12 @@
 namespace shared
 {
 
-// One chart per brush face, in the six steps lightmap.hpp lists above
-// lightmap_chart_t. Static meshes get none -- this flattens PLANAR faces, and a
-// referenced art asset has none to flatten. Nor does a face with
-// `emits_geometry` false: nothing draws it, so nothing samples it.
+// One chart per brush face and one per PLANE of a static mesh, in the six steps
+// lightmap.hpp lists above lightmap_chart_t. A mesh's coplanar triangles share a
+// chart whether or not they touch, which is what keeps the (uid, plane) key
+// unique with no second identity; the chart's coverage is then a triangle list
+// rather than a polygon. A face with `emits_geometry` false gets none: nothing
+// draws it, so nothing samples it.
 //
 // `face_surface_t::lightmap_scale` multiplies the density per face, and
 // `max_chart_extent_in_texels` caps the result by LOWERING that density rather

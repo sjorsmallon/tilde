@@ -845,13 +845,13 @@ assets::material_maps_t resolve_material_maps(const std::string &material_path)
   // file and making an author build a folder for it buys nothing; that spelling
   // carries an albedo and nothing else, which is exactly what it is.
   if (assets::asset_exists(material_path.c_str()))
-    return {assets::load_texture(material_path.c_str()), {}, {}, {}};
+    return {assets::load_texture(material_path.c_str()), {}, {}, {}, {}};
 
   const assets::pbr_material_asset_t *resolved =
       assets::get(assets::load_pbr_material(material_path.c_str()));
   if (resolved && resolved->albedo.valid())
     return {resolved->albedo, resolved->normal, resolved->occlusion_roughness_metallic,
-            resolved->height};
+            resolved->height, resolved->emissive};
 
   // Named but not there. The renderer draws the magenta checkerboard for a
   // material whose texture_path is set and whose albedo handle is not, so this
@@ -1760,9 +1760,136 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush)
   return displaced;
 }
 
+linalg::mat4f static_mesh_transform(const static_mesh_geometry_t &static_mesh)
+{
+  return linalg::compose_transform(static_mesh.position, static_mesh.orientation,
+                                   static_mesh.scale);
+}
+
+namespace
+{
+
+linalg::vec3 transform_point(const linalg::mat4f &transform, const linalg::vec3 &point)
+{
+  const linalg::vec4 moved = transform * linalg::vec4{point.x, point.y, point.z, 1.f};
+  return {moved.x, moved.y, moved.z};
+}
+
+// A normal transforms by the inverse transpose: R * S^-1 for a rotation and a
+// diagonal scale, which is what keeps it perpendicular under a non-uniform one.
+linalg::vec3 static_mesh_world_normal(const static_mesh_geometry_t &static_mesh,
+                                      const linalg::vec3 &mesh_normal)
+{
+  const linalg::vec3 &scale = static_mesh.scale;
+  const linalg::vec3 unscaled{scale.x != 0.f ? mesh_normal.x / scale.x : 0.f,
+                              scale.y != 0.f ? mesh_normal.y / scale.y : 0.f,
+                              scale.z != 0.f ? mesh_normal.z / scale.z : 0.f};
+  const linalg::vec3 rotated = linalg::rotate(static_mesh.orientation, unscaled);
+  const float length = linalg::length(rotated);
+  return length > 0.f ? rotated * (1.f / length) : linalg::vec3{0.f, 0.f, 0.f};
+}
+
+} // namespace
+
+std::vector<world_triangle_t>
+static_mesh_world_triangles(const static_mesh_geometry_t &static_mesh)
+{
+  std::vector<world_triangle_t> triangles;
+
+  const assets::mesh_asset_t *mesh = assets::get(resolve_surface_mesh(static_mesh.surface));
+  if (!mesh || mesh->indices.size() < 3)
+    return triangles;
+
+  const linalg::mat4f transform = static_mesh_transform(static_mesh);
+  triangles.reserve(mesh->indices.size() / 3);
+
+  for (size_t first = 0; first + 2 < mesh->indices.size(); first += 3)
+  {
+    world_triangle_t triangle;
+    linalg::vec3 authored_normal{0.f, 0.f, 0.f};
+    for (int corner = 0; corner < 3; ++corner)
+    {
+      const vertex_xnu &vertex = mesh->vertices[mesh->indices[first + (size_t)corner]];
+      triangle.corners[corner] = transform_point(transform, vertex.position);
+      authored_normal = authored_normal + static_mesh_world_normal(static_mesh, vertex.normal);
+    }
+
+    // The geometric normal is the plane; the authored normals say which side is
+    // OUT, which the winding alone cannot once a negative scale has mirrored it.
+    linalg::vec3 normal = linalg::cross(triangle.corners[1] - triangle.corners[0],
+                                        triangle.corners[2] - triangle.corners[0]);
+    const float length = linalg::length(normal);
+    if (length > 1e-6f)
+    {
+      normal = normal * (1.f / length);
+      if (linalg::dot(normal, authored_normal) < 0.f) normal = normal * -1.f;
+      triangle.normal = normal;
+    }
+
+    triangles.push_back(triangle);
+  }
+
+  return triangles;
+}
+
+assets::mesh_asset_t
+generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
+                                 const object_lightmap_ref_t &lighting)
+{
+  assets::mesh_asset_t out;
+
+  const assets::mesh_asset_t *source = assets::get(resolve_surface_mesh(static_mesh.surface));
+  if (!source)
+    return out;
+
+  const std::vector<world_triangle_t> triangles = static_mesh_world_triangles(static_mesh);
+  const linalg::mat4f transform = static_mesh_transform(static_mesh);
+
+  out.materials = source->materials;
+  out.submeshes = source->submeshes;
+  out.vertices.reserve(source->indices.size());
+  out.indices.reserve(source->indices.size());
+
+  for (uint32_t index : source->indices)
+  {
+    const vertex_xnu &vertex = source->vertices[index];
+    out.indices.push_back((uint32_t)out.vertices.size());
+    out.vertices.push_back({transform_point(transform, vertex.position),
+                            static_mesh_world_normal(static_mesh, vertex.normal),
+                            vertex.uv});
+  }
+
+  if (!lighting.has_bake())
+    return out;
+
+  for (size_t t = 0; t < triangles.size(); ++t)
+  {
+    if (triangles[t].is_degenerate()) continue;
+
+    const lightmap_chart_t *chart =
+        find_chart(*lighting.lightmap, lighting.object_uid, triangles[t].plane());
+    if (!chart) continue;
+
+    // Sized on the first match, like a brush: a mesh no chart reached uploads
+    // byte for byte what it always did.
+    if (out.lightmap.empty()) out.lightmap.resize(out.vertices.size());
+
+    for (size_t corner = 0; corner < 3; ++corner)
+    {
+      const size_t vertex = t * 3 + corner;
+      out.lightmap[vertex].uv = lightmap_uv_for(*chart, lighting.lightmap->settings,
+                                                lighting.lightmap->atlas,
+                                                out.vertices[vertex].position);
+      out.lightmap[vertex].light_slots = chart->light_slots;
+    }
+  }
+
+  return out;
+}
+
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
                                          Span<const std::string> materials,
-                                         const brush_lightmap_ref_t &lighting)
+                                         const object_lightmap_ref_t &lighting)
 {
   const std::optional<brush_polyhedron_t> polyhedron =
       try_build_brush_polyhedron(brush.hull_points);

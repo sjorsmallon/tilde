@@ -40,7 +40,12 @@ static constexpr uint32_t PACKAGE_MAGIC   = 0x504B4720; // "PKG "
 //    with no layout change behind it, which is what makes the bump load-bearing
 //    rather than bookkeeping. A version-3 package parses cleanly and renders
 //    every baked light twice (lightmap_sidecar.cpp says why).
-static constexpr uint32_t PACKAGE_VERSION = 4;
+// 5: the lightmap carries the path-traced indirect bounce as SH L1 -- two more
+//    page sets, and all four now written uniformly with a format and a layer
+//    count each (lighting_def.md gate 2 step 2).
+// 6: the lightmap carries the irradiance probe volume and its spacing
+//    (lighting_def.md gate 5).
+static constexpr uint32_t PACKAGE_VERSION = 6;
 
 // Navmesh floats/indices are written as raw bytes (exact), matching the on-disk
 // .navmesh sidecar's exactness — write_coord's 5-bit fraction would corrupt
@@ -148,10 +153,10 @@ static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightma
   write_i32(w, lightmap.settings.gutter_in_texels);
   write_i32(w, lightmap.settings.max_chart_extent_in_texels);
   write_i32(w, lightmap.settings.atlas_size_in_texels);
+  write_f32(w, lightmap.settings.probe_spacing_in_world_units);
 
   write_i32(w, lightmap.atlas.size_in_texels);
   write_i32(w, lightmap.atlas.page_count);
-  write_u32(w, static_cast<uint32_t>(lightmap.irradiance_pages.format));
 
   network::write_var_uint(w, static_cast<uint32_t>(lightmap.light_uids.size()));
   for (entity_uid_t light_uid : lightmap.light_uids)
@@ -175,18 +180,34 @@ static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightma
       write_i32(w, slot);
   }
 
-  network::write_var_uint(w,
-                          static_cast<uint32_t>(lightmap.irradiance_pages.bytes.size()));
-  if (!lightmap.irradiance_pages.bytes.empty())
-    w.write_bytes(lightmap.irradiance_pages.bytes.data(),
-                  lightmap.irradiance_pages.bytes.size());
+  // The same four sets in the same order the sidecar writes them, and for the
+  // same reason each carries its own layer count: SH L1 has three layers per
+  // atlas page, so the atlas alone no longer sizes every set.
+  const auto write_pages = [&](const lightmap_pages_t &pages) {
+    write_u32(w, static_cast<uint32_t>(pages.format));
+    write_i32(w, pages.page_count);
+    network::write_var_uint(w, static_cast<uint32_t>(pages.bytes.size()));
+    if (!pages.bytes.empty())
+      w.write_bytes(pages.bytes.data(), pages.bytes.size());
+  };
 
-  write_u32(w, static_cast<uint32_t>(lightmap.visibility_pages.format));
-  network::write_var_uint(w,
-                          static_cast<uint32_t>(lightmap.visibility_pages.bytes.size()));
-  if (!lightmap.visibility_pages.bytes.empty())
-    w.write_bytes(lightmap.visibility_pages.bytes.data(),
-                  lightmap.visibility_pages.bytes.size());
+  write_pages(lightmap.irradiance_pages);
+  write_pages(lightmap.visibility_pages);
+  write_pages(lightmap.indirect_l0_pages);
+  write_pages(lightmap.indirect_l1_pages);
+
+  write_vec3(lightmap.probes.grid.origin);
+  write_f32(w, lightmap.probes.grid.spacing);
+  write_i32(w, lightmap.probes.grid.count.x);
+  write_i32(w, lightmap.probes.grid.count.y);
+  write_i32(w, lightmap.probes.grid.count.z);
+  const auto write_bytes = [&](const std::vector<uint8_t> &bytes) {
+    network::write_var_uint(w, static_cast<uint32_t>(bytes.size()));
+    if (!bytes.empty())
+      w.write_bytes(bytes.data(), bytes.size());
+  };
+  write_bytes(lightmap.probes.l0_bytes);
+  write_bytes(lightmap.probes.l1_bytes);
 }
 
 static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
@@ -208,10 +229,10 @@ static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
   lightmap.settings.gutter_in_texels           = read_i32(r);
   lightmap.settings.max_chart_extent_in_texels = read_i32(r);
   lightmap.settings.atlas_size_in_texels       = read_i32(r);
+  lightmap.settings.probe_spacing_in_world_units = read_f32(r);
 
   lightmap.atlas.size_in_texels = read_i32(r);
   lightmap.atlas.page_count     = read_i32(r);
-  lightmap.irradiance_pages.format = static_cast<lightmap_pixel_format_t>(read_u32(r));
 
   lightmap.light_uids.resize(network::read_var_uint(r));
   for (entity_uid_t &light_uid : lightmap.light_uids)
@@ -243,20 +264,45 @@ static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
     }
   }
 
-  lightmap.irradiance_pages.size_in_texels = lightmap.atlas.size_in_texels;
-  lightmap.irradiance_pages.page_count     = lightmap.atlas.page_count;
-  lightmap.irradiance_pages.bytes.resize(network::read_var_uint(r));
-  if (!lightmap.irradiance_pages.bytes.empty())
-    r.read_bytes(lightmap.irradiance_pages.bytes.data(),
-                 lightmap.irradiance_pages.bytes.size());
+  const auto read_pages = [&](lightmap_pages_t &pages) {
+    pages.format         = static_cast<lightmap_pixel_format_t>(read_u32(r));
+    pages.page_count     = read_i32(r);
+    pages.size_in_texels = lightmap.atlas.size_in_texels;
+    pages.bytes.resize(network::read_var_uint(r));
+    if (!pages.bytes.empty())
+      r.read_bytes(pages.bytes.data(), pages.bytes.size());
+  };
 
-  lightmap.visibility_pages.format = static_cast<lightmap_pixel_format_t>(read_u32(r));
-  lightmap.visibility_pages.size_in_texels = lightmap.atlas.size_in_texels;
-  lightmap.visibility_pages.page_count     = lightmap.atlas.page_count;
-  lightmap.visibility_pages.bytes.resize(network::read_var_uint(r));
-  if (!lightmap.visibility_pages.bytes.empty())
-    r.read_bytes(lightmap.visibility_pages.bytes.data(),
-                 lightmap.visibility_pages.bytes.size());
+  read_pages(lightmap.irradiance_pages);
+  read_pages(lightmap.visibility_pages);
+  read_pages(lightmap.indirect_l0_pages);
+  read_pages(lightmap.indirect_l1_pages);
+
+  read_vec3(lightmap.probes.grid.origin);
+  lightmap.probes.grid.spacing = read_f32(r);
+  lightmap.probes.grid.count.x = read_i32(r);
+  lightmap.probes.grid.count.y = read_i32(r);
+  lightmap.probes.grid.count.z = read_i32(r);
+  const auto read_bytes = [&](std::vector<uint8_t> &bytes) {
+    bytes.resize(network::read_var_uint(r));
+    if (!bytes.empty())
+      r.read_bytes(bytes.data(), bytes.size());
+  };
+  read_bytes(lightmap.probes.l0_bytes);
+  read_bytes(lightmap.probes.l1_bytes);
+
+  // Same guard the sidecar reader carries: a volume whose bytes do not fit its
+  // grid is dropped whole rather than indexed.
+  const size_t probe_count = lightmap.probes.grid.probe_count();
+  if (lightmap.probes.l0_bytes.size() != probe_count * 4 ||
+      lightmap.probes.l1_bytes.size() != probe_count * 4 * (size_t)SH_L1_LAYERS_PER_PAGE)
+  {
+    log_error("[map_transfer] the package's probe volume of {} probe(s) carries {} + {} "
+              "byte(s); dropping it.",
+              probe_count, lightmap.probes.l0_bytes.size(),
+              lightmap.probes.l1_bytes.size());
+    lightmap.probes = {};
+  }
 
   // The id the generated-mesh cache compares, recomputed rather than shipped:
   // it is a content hash of what was just read, so sending it would be a second

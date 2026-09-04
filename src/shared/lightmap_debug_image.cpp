@@ -1,4 +1,5 @@
 #include "lightmap_debug_image.hpp"
+#include "lightmap_lights.hpp"
 #include "lightmap_solve.hpp"
 
 #include "log.hpp"
@@ -108,17 +109,24 @@ bool try_write_lightmap_debug_png(const std::vector<lightmap_chart_t> &charts,
                       chart.atlas_rect.width - 2 * gutter,
                       chart.atlas_rect.height - 2 * gutter, color);
 
-      if (chart.polygon.size() < 2 || chart.world_units_per_texel <= 0.f) continue;
+      if (chart.world_units_per_texel <= 0.f) continue;
 
-      for (size_t i = 0; i < chart.polygon.size(); ++i)
-      {
-        const linalg::vec2 from =
-            chart_space_to_atlas_texel(chart, settings, chart.polygon[i]);
-        const linalg::vec2 to = chart_space_to_atlas_texel(
-            chart, settings, chart.polygon[(i + 1) % chart.polygon.size()]);
+      const auto outline = [&](const linalg::vec2 &a, const linalg::vec2 &b) {
+        const linalg::vec2 from = chart_space_to_atlas_texel(chart, settings, a);
+        const linalg::vec2 to = chart_space_to_atlas_texel(chart, settings, b);
         image.line((int)std::lround(from.x), (int)std::lround(from.y),
                    (int)std::lround(to.x), (int)std::lround(to.y), {255, 255, 255});
-      }
+      };
+
+      for (size_t i = 0; i < chart.polygon.size(); ++i)
+        outline(chart.polygon[i], chart.polygon[(i + 1) % chart.polygon.size()]);
+
+      // A static mesh's chart: every triangle outlined, so an unshared edge is
+      // visible for what it is and a coplanar-but-apart pair reads as two.
+      for (size_t i = 0; i + 2 < chart.triangles.size(); i += 3)
+        for (int edge = 0; edge < 3; ++edge)
+          outline(chart.triangles[i + (size_t)edge],
+                  chart.triangles[i + (size_t)((edge + 1) % 3)]);
     }
 
     const std::string path = path_prefix + "_page" + std::to_string(page) + ".png";
@@ -232,6 +240,75 @@ bool try_write_lightmap_visibility_pages_png(const lightmap_pages_t &pages,
     }
     log_terminal("[lightmap] wrote {} ({}x{})", path, pages.size_in_texels,
                  pages.size_in_texels);
+  }
+
+  return wrote_every_page;
+}
+
+// The SH L1 direction, one RGB image per ATLAS page. Three layers back a page and
+// nine numbers back a texel, so this COMPOSES rather than dumps: the L1 vector is
+// collapsed to luminance, re-normalized against its own L0 and biased into
+// [0, 1], which is the normal-map look and answers the one question an author has
+// -- which way is the bounce coming from.
+//
+// Luminance and not one channel: a picture of the green channel's direction looks
+// identical to a picture of the wrong thing.
+//
+// It reads through load_l1 on purpose. A view that decoded the bytes itself would
+// agree with the writer and prove nothing about the accessor pair everything else
+// goes through.
+bool try_write_lightmap_l1_pages_png(const lightmap_pages_t &l1_pages,
+                                     const lightmap_pages_t &l0_pages,
+                                     const std::string &path_prefix)
+{
+  if (l1_pages.empty() || l0_pages.empty() ||
+      l1_pages.page_count != l0_pages.page_count * SH_L1_LAYERS_PER_PAGE)
+  {
+    log_error("[lightmap] there are no SH L1 pages to write ({} L1 layer(s) over {} "
+              "L0 page(s)).", l1_pages.page_count, l0_pages.page_count);
+    return false;
+  }
+
+  const auto to_direction_byte = [](float normalized) {
+    return (uint8_t)std::clamp((int)std::lround((normalized * 0.5f + 0.5f) * 255.f), 0,
+                               255);
+  };
+
+  bool wrote_every_page = true;
+  std::vector<uint8_t> image;
+
+  for (int page = 0; page < l0_pages.page_count; ++page)
+  {
+    image.assign((size_t)l0_pages.size_in_texels * (size_t)l0_pages.size_in_texels * 3,
+                 128);
+
+    for (int y = 0; y < l0_pages.size_in_texels; ++y)
+      for (int x = 0; x < l0_pages.size_in_texels; ++x)
+      {
+        const linalg::vec3 l0 = l0_pages.load(page, x, y);
+        const Array<linalg::vec3, SH_L1_LAYERS_PER_PAGE> l1 =
+            l1_pages.load_l1(page, x, y, l0);
+
+        const float scale = SH_L1_NORMALIZATION * luminance_of(l0);
+        const size_t offset =
+            ((size_t)y * (size_t)l0_pages.size_in_texels + (size_t)x) * 3;
+        if (!(scale > 0.f)) continue;
+
+        for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
+          image[offset + (size_t)axis] =
+              to_direction_byte(luminance_of(l1[axis]) / scale);
+      }
+
+    const std::string path = path_prefix + "_page" + std::to_string(page) + ".png";
+    if (!stbi_write_png(path.c_str(), l0_pages.size_in_texels, l0_pages.size_in_texels, 3,
+                        image.data(), l0_pages.size_in_texels * 3))
+    {
+      log_error("[lightmap] could not write '{}'.", path);
+      wrote_every_page = false;
+      continue;
+    }
+    log_terminal("[lightmap] wrote {} ({}x{})", path, l0_pages.size_in_texels,
+                 l0_pages.size_in_texels);
   }
 
   return wrote_every_page;

@@ -26,12 +26,12 @@ void main()
     vec3 V = normalize(scene.camera_position.xyz - world_space_position);
     vec3 N = normalize(world_space_normal);
 
-    vec2 parallax_uv = parallax_occlusion(
-        height_texture_map, view_direction_in_tangent_space(N, V, world_space_position, uv), uv);
+    mat3 tangent_frame = cotangent_frame(N, world_space_position, uv);
+    vec2 parallax_uv   = parallax_occlusion(
+        height_texture_map, view_direction_in_tangent_space(tangent_frame, V), uv);
     uv = parallax_uv;
 
-    N = apply_normal_map(N, texture(normal_texture_map, uv).xyz * 2.0 - 1.0,
-                         world_space_position, uv);
+    N = apply_normal_map(tangent_frame, texture(normal_texture_map, uv).xyz * 2.0 - 1.0);
 
     // Albedo is uploaded SRGB, so the hardware sampler decodes it -- the manual
     // pow that used to be here was the input half of the same double-encode the
@@ -80,12 +80,8 @@ void main()
     }
     Lo += ambient_color * albedo * ambient_occlusion;
 
-    // Reinhard tone mapping. The sRGB encode that used to follow it is GONE --
-    // the attachment owns that now (lighting_def.md decision F), so this shader
-    // writes linear. Deleting the encode must not take the tonemap with it: what
-    // operator runs here, and whether it belongs in a post-process pass at all,
-    // is a separate open question.
-    Lo = Lo / (Lo + vec3(1.0));
-
+    // Linear and unmapped: the tonemap pass owns the curve (decision J) and the
+    // sRGB attachment owns the encode (decision F), so the preview and the game
+    // get the same response out of the same place.
     fragment_color = vec4(Lo, 1.0);
 }

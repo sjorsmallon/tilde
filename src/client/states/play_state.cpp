@@ -473,11 +473,9 @@ void Play_State::switch_to_map(const shared::map_t &map)
   if (!lightmap.irradiance_pages.empty())
   {
     if (scene.lightmap.valid())
-      renderer::update_lightmap(scene.lightmap, lightmap.irradiance_pages,
-                                lightmap.visibility_pages);
+      renderer::update_lightmap(scene.lightmap, lightmap);
     else
-      scene.lightmap = renderer::register_lightmap(lightmap.irradiance_pages,
-                                                   lightmap.visibility_pages);
+      scene.lightmap = renderer::register_lightmap(lightmap);
   }
 
   // set this to ready 
