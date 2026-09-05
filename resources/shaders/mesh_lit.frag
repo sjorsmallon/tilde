@@ -42,9 +42,32 @@ void main() {
 
     // Ahead of every arm: a shadow that is wrong looks exactly like lighting
     // that is wrong, and this is how the two are told apart.
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_SHADOW_VISIBILITY) != 0)
+    if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_VISIBILITY) != 0)
     {
         outColor = shadow_visibility_debug_color(fragWorldPosition, normalize(fragWorldNormal));
+        return;
+    }
+    // The two halves of the lighting, each alone and before albedo, so "too
+    // bright" can be blamed on the analytic lights or on the bake.
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_DIRECT_LIGHT) != 0)
+    {
+        vec3 geometric_normal = normalize(fragWorldNormal);
+        vec3 direct           = analytic_tail_diffuse(geometric_normal, fragWorldPosition);
+#ifdef LIGHTMAP
+        direct += lightmap_direct_diffuse(geometric_normal, fragWorldPosition);
+#endif
+        outColor = vec4(direct, 1.0);
+        return;
+    }
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_BAKED_LIGHT) != 0)
+    {
+        vec3 geometric_normal = normalize(fragWorldNormal);
+#ifdef LIGHTMAP
+        vec3 baked = lightmap_residual_diffuse() + lightmap_indirect_diffuse(geometric_normal);
+#else
+        vec3 baked = probe_indirect_diffuse(fragWorldPosition, geometric_normal);
+#endif
+        outColor = vec4(baked, 1.0);
         return;
     }
 
@@ -127,6 +150,11 @@ void main() {
 
         Light_Arrival arrival    = light_arrival(light, fragWorldPosition);
         float         visibility = shadow_visibility(light, arrival, fragWorldPosition, N);
+#ifndef LIGHTMAP
+        // The probes' static occlusion of a Mixed light, the atlas texel's job
+        // at a point in space, times the map's dynamic casters (decision K).
+        visibility *= probe_light_visibility(light, fragWorldPosition);
+#endif
 
         lit += shade_direct(N, V, arrival.direction, surface, roughness, metallic,
                             light.radiance.rgb, arrival.attenuation * visibility,
@@ -152,7 +180,7 @@ void main() {
     // number and draw it from another -- ss11.
     lit += texture(emissiveMap, uv).rgb;
 
-    outColor = vec4(lit, fragAlpha);
+    outColor = shadow_cascade_debug(vec4(lit, fragAlpha), fragWorldPosition);
 #else
     // The non-PBR arm is Lambert against the SAME light list the PBR arm shades:
     // the analytic tail here, the chart's four slots and the atlas on a
@@ -180,6 +208,6 @@ void main() {
     // rather than replaces.
     vec3 color = texture(albedo, fragUV).rgb * fragColor * lighting +
                  texture(emissiveMap, fragUV).rgb;
-    outColor   = vec4(color, fragAlpha);
+    outColor   = shadow_cascade_debug(vec4(color, fragAlpha), fragWorldPosition);
 #endif
 }

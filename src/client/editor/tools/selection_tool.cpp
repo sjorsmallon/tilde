@@ -10,6 +10,7 @@
 #include "../../../shared/lightmap.hpp"
 #include "../../../shared/lightmap_lights.hpp"
 #include "../../../shared/log.hpp"
+#include "../../../shared/shader_math.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <cmath>
@@ -481,6 +482,36 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
   const shared::lightmap_t& lightmap = ctx.map->lightmap;
   const ImVec4 warning_color{1.f, 0.55f, 0.2f, 1.f};
 
+  // What the light DELIVERS, in the numbers every shader sums (radiance times
+  // the arrival's attenuation), so an intensity is judged against what it does
+  // and not against another light's knob: a point light's intensity is its
+  // irradiance at one metre and falls off with the square of the distance, a
+  // directional light's is its irradiance everywhere. A white Lambert face adds
+  // that over pi to its colour before exposure -- a blockout face's fixed fake
+  // sun (mesh_grid.frag) adds 0.85, which is the scale to read it against.
+  {
+    const float peak = std::max({light->radiance.x, light->radiance.y, light->radiance.z});
+    if (light->kind == shared::light_kind_t::Directional)
+    {
+      ImGui::Text("Delivers irradiance %.3f to every face facing it (a white Lambert face adds %.3f).",
+                  peak, peak / linalg::PI);
+      ImGui::TextDisabled("No falloff: a point light of this intensity delivers the same at exactly "
+                          "1 m. To match a spot's centre at d metres, use its intensity / d^2. At "
+                          "the default exposure a white face saturates near 3.");
+    }
+    else
+    {
+      const auto irradiance_at = [&](float distance) {
+        return peak * shared::shader_math::distance_attenuation(distance * distance, light->range,
+                                                                light->source_radius);
+      };
+      ImGui::Text("Delivers irradiance %.3f at 1 m (%.0f units), %.3f at 100 units, %.3f at 200, "
+                  "%.4f at 400 (a white Lambert face adds that over pi).",
+                  irradiance_at(shared::LIGHT_REFERENCE_DISTANCE), shared::LIGHT_REFERENCE_DISTANCE,
+                  irradiance_at(100.f), irradiance_at(200.f), irradiance_at(400.f));
+    }
+  }
+
   // The four gates a face has to clear, counted per face, as the map is NOW.
   // Kept beside the bake status because "kept by no chart" says what happened
   // and this says why.
@@ -552,7 +583,8 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
 
   if (lightmap.charts.empty())
   {
-    ImGui::TextColored(warning_color, "This map has no bake; a Baked light lights nothing.");
+    ImGui::TextColored(warning_color,
+                       "This map has no bake; a Baked light lights NOTHING, whatever its intensity.");
     ImGui::Separator();
     return;
   }
@@ -561,7 +593,8 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
   if (slot == shared::LIGHTMAP_NO_LIGHT_SLOT)
   {
     ImGui::TextColored(warning_color,
-                       "Not in the bake (placed or switched since it ran); rebake.");
+                       "Not in the bake (placed or switched since it ran): it lights NOTHING until "
+                       "you rebake, whatever its intensity.");
     ImGui::Separator();
     return;
   }

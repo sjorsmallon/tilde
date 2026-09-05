@@ -472,7 +472,8 @@ void Shader_Editor_State::build_frame(float delta_seconds,
       light_component.color     = light.color;
       light_component.intensity = light.intensity;
 
-      const linalg::vec3f radiance = shared::radiance_of(light_component);
+      const linalg::vec3f radiance =
+          shared::radiance_of(light_component, (shared::light_kind_t)light.light_type);
       ubo.lights[i].radiance[0] = radiance.x;
       ubo.lights[i].radiance[1] = radiance.y;
       ubo.lights[i].radiance[2] = radiance.z;

@@ -33,6 +33,11 @@ layout(set = 3, binding = 5) uniform sampler3D probeL0;
 layout(set = 3, binding = 6) uniform sampler3D probeL1X;
 layout(set = 3, binding = 7) uniform sampler3D probeL1Y;
 layout(set = 3, binding = 8) uniform sampler3D probeL1Z;
+// Gate 9 step 4: per Mixed light, the fraction of it a point in space sees
+// past the STATIC geometry -- the bake's half of decision K's product, which
+// the shadow map (dynamic casters only, for a Mixed light) is the other half
+// of. Binding 10; 9 is the shadow pool. White where a pass carries no probes.
+layout(set = 3, binding = 10) uniform sampler3D probeVisibility;
 
 // The same reconstruction lightmap_indirect_diffuse runs on a texel, at a point:
 // E(N) = 0.886227 * L0 + 1.023328 * dot(L1, N), clamped, over PI. A probe also
@@ -55,6 +60,28 @@ vec3 probe_indirect_diffuse(vec3 world_position, vec3 N)
     irradiance += (texture(probeL1Z, uv).rgb * 2.0 - 1.0) * scale * (SH_L1_IRRADIANCE_L1 * N.z);
 
     return max(irradiance, vec3(0.0)) / PI;
+}
+
+// V from the probes for one light at one point: 1.0 for a light with no baked
+// slot, no probe channel, or when the pass carries no probes. Matched by SLOT
+// against scene.probe_visibility_slots -- a Mixed light's tail copy carries
+// its head slot in position.w for exactly this, the same number the chart
+// loop indexes the atlas's channels by.
+float probe_light_visibility(Light light, vec3 world_position)
+{
+    int slot = LIGHT_BAKED_SLOT(light);
+    if (slot < 0 || scene.probe_origin.w <= 0.0)
+        return 1.0;
+
+    int channel = -1;
+    for (int at = 0; at < 4; ++at)
+        if (scene.probe_visibility_slots[at] == slot)
+            channel = at;
+    if (channel < 0)
+        return 1.0;
+
+    vec3 uv = (world_position - scene.probe_origin.xyz) * scene.probe_inverse_extent.xyz;
+    return texture(probeVisibility, uv)[channel];
 }
 
 #endif // PROBES_GLSL

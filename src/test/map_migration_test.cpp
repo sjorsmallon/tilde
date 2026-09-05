@@ -53,6 +53,15 @@ static std::vector<const brush_geometry_t *> get_brushes(const map_t &m)
   return out;
 }
 
+static indirect_sh_l1_t bounce_l1_probe_value(const linalg::vec3 &l0,
+                                              const Array<linalg::vec3, SH_L1_LAYERS_PER_PAGE> &l1)
+{
+  indirect_sh_l1_t value;
+  value.l0 = l0;
+  value.l1 = l1;
+  return value;
+}
+
 int main()
 {
   const std::string fixture = "maps/test";
@@ -514,6 +523,20 @@ int main()
     packaged.lightmap.indirect_l0_pages.store(1, 3, 5, bounce_l0);
     packaged.lightmap.indirect_l1_pages.store_l1(1, 3, 5, bounce_l0, bounce_l1);
 
+    // The probe volume, with its per-Mixed-light visibility (gate 9 step 4):
+    // a slot table naming what each channel is of, and one word a probe. A
+    // package dropping the table hands a dynamic object four unnamed numbers.
+    probe_grid_t probe_grid;
+    probe_grid.origin  = {-8.f, 0.f, 16.f};
+    probe_grid.spacing = 8.f;
+    probe_grid.count   = {2, 3, 2};
+    packaged.lightmap.probes.allocate(probe_grid);
+    packaged.lightmap.probes.visibility_slots = {{1, LIGHTMAP_NO_LIGHT_SLOT,
+                                                  LIGHTMAP_NO_LIGHT_SLOT,
+                                                  LIGHTMAP_NO_LIGHT_SLOT}};
+    packaged.lightmap.probes.store(7, bounce_l1_probe_value(bounce_l0, bounce_l1));
+    packaged.lightmap.probes.store_visibility(7, {{0.25f, 1.f, 1.f, 1.f}});
+
     set_lightmap_geometry_id(packaged.lightmap);
 
     map_package_t package = build_map_package(packaged);
@@ -571,6 +594,19 @@ int main()
       return fail("package: lightmap indirect L1 layer count drift");
     if (restored.lightmap.light_uids != package.lightmap.light_uids)
       return fail("package: lightmap resolve table drift");
+    if (restored.lightmap.probes.grid.count.x != package.lightmap.probes.grid.count.x ||
+        restored.lightmap.probes.grid.count.y != package.lightmap.probes.grid.count.y ||
+        restored.lightmap.probes.grid.count.z != package.lightmap.probes.grid.count.z)
+      return fail("package: lightmap probe grid drift");
+    if (restored.lightmap.probes.l0_bytes != package.lightmap.probes.l0_bytes ||
+        restored.lightmap.probes.l1_bytes != package.lightmap.probes.l1_bytes)
+      return fail("package: lightmap probe bytes drift");
+    for (uint32_t channel = 0; channel < PROBE_VISIBILITY_CHANNELS; ++channel)
+      if (restored.lightmap.probes.visibility_slots[channel] !=
+          package.lightmap.probes.visibility_slots[channel])
+        return fail("package: lightmap probe visibility slot drift");
+    if (restored.lightmap.probes.visibility_bytes != package.lightmap.probes.visibility_bytes)
+      return fail("package: lightmap probe visibility bytes drift");
     // geometry_id is a content hash over the charts, the settings and the atlas
     // dimensions, so one comparison covers every field the wire carries -- and
     // it is RECOMPUTED on the receiving side rather than sent, which is what

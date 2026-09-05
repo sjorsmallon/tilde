@@ -12,10 +12,8 @@ namespace client
 namespace
 {
 
-// Renders one leaf field. Components are already flattened by the caller, so
-// there is no recursion here and no tree node -- the dotted name carries the
-// nesting ("render.material.color"), which reads the same way the map file
-// spells it.
+// renders a leaf field. components are flattened inside an entity so you can just take offsets and walk the size.
+// there's some special casing for quaternions because editing those is easier in euler angles.
 void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id)
 {
   const field_info_t& field = *leaf.info;
@@ -29,7 +27,7 @@ void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id
     case FIELD_TYPE_I8:
     case FIELD_TYPE_I16:
     case FIELD_TYPE_I32:
-      ImGui::InputInt(label, static_cast<int *>(field_ptr));
+      ImGui::InputInt(label, static_cast<int*>(field_ptr));
       break;
 
     case FIELD_TYPE_U8:
@@ -139,29 +137,22 @@ void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id
 
 bool edit_rotation_as_euler(const char *label, linalg::quatf &rotation)
 {
-  // One panel edits one rotation at a time, so one slot is the whole store. It
-  // is ImGui-shaped state, which is why it lives beside the widget rather than
-  // being threaded through every caller.
   struct rotation_edit_t
   {
     const void   *field         = nullptr;
     linalg::quatf last_written  = linalg::quatf::identity();
     linalg::vec3f euler_degrees = {0.f, 0.f, 0.f};
   };
+  
   static rotation_edit_t edit;
 
-  // Re-seed when the widget is looking at a different rotation, or when the one
-  // it is looking at was written by somebody else. That equality is what makes
-  // "never re-derive while the edit is live" fall out rather than needing a
-  // separate is-dragging flag: during a drag the stored value is exactly what
-  // this widget last wrote.
-  const bool same_field = edit.field == &rotation;
-  const bool untouched  = rotation.x == edit.last_written.x && rotation.y == edit.last_written.y &&
+  const bool same_field_as_previous_edit = edit.field == &rotation;
+  const bool stayed_the_same_during_this_edit  = rotation.x == edit.last_written.x && rotation.y == edit.last_written.y &&
                          rotation.z == edit.last_written.z && rotation.w == edit.last_written.w;
 
-  if (!same_field || !untouched)
+  if (!same_field_as_previous_edit || !stayed_the_same_during_this_edit)
   {
-    edit.field         = &rotation;
+    edit.field = &rotation;
     edit.last_written  = rotation;
     edit.euler_degrees = linalg::to_euler_degrees(rotation);
   }
@@ -169,15 +160,14 @@ bool edit_rotation_as_euler(const char *label, linalg::quatf &rotation)
   if (!ImGui::DragFloat3(label, &edit.euler_degrees.x, 1.0f))
     return false;
 
-  rotation          = linalg::from_euler_degrees(edit.euler_degrees);
+  rotation = linalg::from_euler_degrees(edit.euler_degrees);
   edit.last_written = rotation;
   return true;
 }
 
-void render_entity_fields_in_an_imgui_window(entities::Entity *entity)
+void render_entity_fields_in_an_imgui_window(entities::Entity* entity)
 {
-  if (!entity)
-    return;
+  if (!entity) return;
 
   if (entity->type == entities::entity_type::Invalid)
   {
@@ -185,11 +175,11 @@ void render_entity_fields_in_an_imgui_window(entities::Entity *entity)
     return;
   }
 
-  const entities::entity_type_info_t &info = entities::entity_info(entity->type);
+  const entities::entity_type_info_t& info = entities::entity_info(entity->type);
   ImGui::Text("Class: %s", info.classname);
   ImGui::Separator();
 
-  uint8_t* base = reinterpret_cast<uint8_t *>(entity);
+  uint8_t* base = reinterpret_cast<uint8_t*>(entity);
 
   // @Editable leaves, in declaration order — the same order the map file writes
   // and the .def declares, so the inspector reads like the source of truth does.

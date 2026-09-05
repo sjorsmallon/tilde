@@ -46,7 +46,9 @@ static constexpr uint32_t PACKAGE_MAGIC   = 0x504B4720; // "PKG "
 // 6: the lightmap carries the irradiance probe volume and its spacing
 //    (lighting_def.md gate 5).
 // 7: a static mesh chart carries its unwrap (lightmap_sidecar.cpp version 7).
-static constexpr uint32_t PACKAGE_VERSION = 7;
+// 8: the probe volume carries a per-Mixed-light visibility (lightmap_sidecar.cpp
+//    version 8, lighting_def.md gate 9 step 4).
+static constexpr uint32_t PACKAGE_VERSION = 8;
 
 // Navmesh floats/indices are written as raw bytes (exact), matching the on-disk
 // .navmesh sidecar's exactness — write_coord's 5-bit fraction would corrupt
@@ -224,6 +226,9 @@ static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightma
   };
   write_bytes(lightmap.probes.l0_bytes);
   write_bytes(lightmap.probes.l1_bytes);
+  for (const int16_t slot : lightmap.probes.visibility_slots)
+    write_i32(w, slot);
+  write_bytes(lightmap.probes.visibility_bytes);
 }
 
 static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
@@ -323,17 +328,25 @@ static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
   };
   read_bytes(lightmap.probes.l0_bytes);
   read_bytes(lightmap.probes.l1_bytes);
+  for (int16_t &slot : lightmap.probes.visibility_slots)
+  {
+    slot = static_cast<int16_t>(read_i32(r));
+    if (slot >= static_cast<int16_t>(lightmap.light_uids.size()))
+      slot = LIGHTMAP_NO_LIGHT_SLOT;
+  }
+  read_bytes(lightmap.probes.visibility_bytes);
 
   // Same guard the sidecar reader carries: a volume whose bytes do not fit its
   // grid is dropped whole rather than indexed.
   const size_t probe_count = lightmap.probes.grid.probe_count();
   if (lightmap.probes.l0_bytes.size() != probe_count * 4 ||
-      lightmap.probes.l1_bytes.size() != probe_count * 4 * (size_t)SH_L1_LAYERS_PER_PAGE)
+      lightmap.probes.l1_bytes.size() != probe_count * 4 * (size_t)SH_L1_LAYERS_PER_PAGE ||
+      lightmap.probes.visibility_bytes.size() != probe_count * 4)
   {
-    log_error("[map_transfer] the package's probe volume of {} probe(s) carries {} + {} "
+    log_error("[map_transfer] the package's probe volume of {} probe(s) carries {} + {} + {} "
               "byte(s); dropping it.",
               probe_count, lightmap.probes.l0_bytes.size(),
-              lightmap.probes.l1_bytes.size());
+              lightmap.probes.l1_bytes.size(), lightmap.probes.visibility_bytes.size());
     lightmap.probes = {};
   }
 

@@ -330,14 +330,14 @@ indirect_sh_l1_t trace_indirect_light(const traced_scene_t &scene,
   return projected;
 }
 
-indirect_sh_l1_t trace_probe_light(const traced_scene_t &scene,
-                                   Span<const baked_light_t> lights,
-                                   const linalg::vec3 &position,
-                                   const indirect_trace_settings_t &settings,
-                                   uint32_t hash)
+probe_trace_t trace_probe_light(const traced_scene_t &scene, Span<const baked_light_t> lights,
+                                const probe_visibility_slots_t &visibility_slots,
+                                const linalg::vec3 &position,
+                                const indirect_trace_settings_t &settings, uint32_t hash)
 {
-  indirect_sh_l1_t projected;
-  if (!scene.bvh) return projected;
+  probe_trace_t traced;
+  indirect_sh_l1_t &projected = traced.light;
+  if (!scene.bvh) return traced;
 
   const auto add_from_direction = [&](const linalg::vec3 &irradiance,
                                       const linalg::vec3 &direction) {
@@ -347,14 +347,22 @@ indirect_sh_l1_t trace_probe_light(const traced_scene_t &scene,
     projected.l1[2] = projected.l1[2] + irradiance * (SH_L1_Y1 * direction.z);
   };
 
-  // Direct, Baked lights only. There is no surface here, so the "normal" handed
-  // to the arrival and the shadow ray is the direction to the light itself: N.L
-  // is then 1, `reaches` collapses to `arrives`, and the bias steps toward the
-  // light rather than off a face that does not exist.
+  // Direct for a Baked light, the visibility alone for a Mixed one. There is no
+  // surface here, so the "normal" handed to the arrival and the shadow ray is
+  // the direction to the light itself: N.L is then 1, `reaches` collapses to
+  // `arrives`, and the bias steps toward the light rather than off a face that
+  // does not exist.
   for (uint32_t slot = 0; slot < lights.size(); ++slot)
   {
     const scene_light_t &light = lights[slot].light;
-    if (light_is_analytic(light.mode)) continue;
+
+    int channel = -1;
+    if (light_is_analytic(light.mode))
+    {
+      for (uint32_t at = 0; at < PROBE_VISIBILITY_CHANNELS; ++at)
+        if (visibility_slots[at] == (int16_t)slot) channel = (int)at;
+      if (channel < 0) continue;
+    }
 
     const light_arrival_t probe =
         arrival_at(light, position, {0.f, 1.f, 0.f}, settings.directional_shadow_distance);
@@ -366,12 +374,18 @@ indirect_sh_l1_t trace_probe_light(const traced_scene_t &scene,
         light_visibility(*scene.bvh, position, arrival.direction, arrival,
                          settings.shadow_ray_bias, settings.soft_shadow_samples,
                          hash_mix(hash, 0x7f4a7c15u + slot));
+
+    if (channel >= 0)
+    {
+      traced.visibility[(uint32_t)channel] = visibility;
+      continue;
+    }
     if (visibility <= 0.f) continue;
 
     add_from_direction(light.radiance * (arrival.attenuation * visibility), arrival.direction);
   }
 
-  if (settings.rays_per_sample <= 0) return projected;
+  if (settings.rays_per_sample <= 0) return traced;
 
   // The sphere's uniform pdf is 1/(4pi) where the hemisphere's was 1/(2pi), and
   // the chain still hands back pi * L(d): the flat 2 becomes a flat 4. The chain
@@ -389,7 +403,7 @@ indirect_sh_l1_t trace_probe_light(const traced_scene_t &scene,
     add_from_direction(collected * weight, first_leg);
   }
 
-  return projected;
+  return traced;
 }
 
 } // namespace shared

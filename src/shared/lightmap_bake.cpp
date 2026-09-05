@@ -672,6 +672,30 @@ void probe_volume_t::allocate(const probe_grid_t &probe_grid)
   grid = probe_grid;
   l0_bytes.assign(grid.probe_count() * 4, 0);
   l1_bytes.assign(grid.probe_count() * 4 * (size_t)SH_L1_LAYERS_PER_PAGE, 0);
+  visibility_slots = NO_PROBE_VISIBILITY_SLOTS;
+  visibility_bytes.assign(grid.probe_count() * 4, 255);
+}
+
+void probe_volume_t::store_visibility(size_t index,
+                                      const Array<float, PROBE_VISIBILITY_CHANNELS> &coverage)
+{
+  if (index >= grid.probe_count())
+    fatal_error("[lightmap] probe {} is outside a volume of {}", index, grid.probe_count());
+
+  for (uint32_t channel = 0; channel < PROBE_VISIBILITY_CHANNELS; ++channel)
+    visibility_bytes[index * 4 + channel] =
+        (uint8_t)std::clamp((int)std::lround(coverage[channel] * 255.f), 0, 255);
+}
+
+Array<float, PROBE_VISIBILITY_CHANNELS> probe_volume_t::load_visibility(size_t index) const
+{
+  if (index >= grid.probe_count())
+    fatal_error("[lightmap] probe {} is outside a volume of {}", index, grid.probe_count());
+
+  Array<float, PROBE_VISIBILITY_CHANNELS> coverage;
+  for (uint32_t channel = 0; channel < PROBE_VISIBILITY_CHANNELS; ++channel)
+    coverage[channel] = (float)visibility_bytes[index * 4 + channel] * (1.f / 255.f);
+  return coverage;
 }
 
 void probe_volume_t::store(size_t index, const indirect_sh_l1_t &value)

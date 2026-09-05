@@ -63,9 +63,28 @@ float grid_coverage(vec2 cell)
 void main() {
     vec3  N = normalize(fragWorldNormal);
 
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_SHADOW_VISIBILITY) != 0)
+    if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_VISIBILITY) != 0)
     {
         outColor = shadow_visibility_debug_color(fragWorldPosition, N);
+        return;
+    }
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_DIRECT_LIGHT) != 0)
+    {
+        vec3 direct = analytic_tail_diffuse(N, fragWorldPosition);
+#ifdef LIGHTMAP
+        direct += lightmap_direct_diffuse(N, fragWorldPosition);
+#endif
+        outColor = vec4(direct, 1.0);
+        return;
+    }
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_BAKED_LIGHT) != 0)
+    {
+#ifdef LIGHTMAP
+        vec3 baked = lightmap_residual_diffuse() + lightmap_indirect_diffuse(N);
+#else
+        vec3 baked = vec3(0.0); // this path reads no probes; its fill is the fixed fake sun
+#endif
+        outColor = vec4(baked, 1.0);
         return;
     }
 
@@ -93,5 +112,5 @@ void main() {
     float ink = max(grid_coverage(fragUV) * MAJOR_STRENGTH,
                     grid_coverage(fragUV * MINOR_SUBDIVISIONS) * MINOR_STRENGTH);
 
-    outColor = vec4(mix(color, GRID_COLOR, ink), fragAlpha);
+    outColor = shadow_cascade_debug(vec4(mix(color, GRID_COLOR, ink), fragAlpha), fragWorldPosition);
 }

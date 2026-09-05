@@ -131,6 +131,16 @@ struct traced_surface_t
     const linalg::vec3 &position, const linalg::vec3 &normal,
     const indirect_trace_settings_t &settings, uint32_t hash);
 
+// What one probe stores: the light, and per visibility channel the fraction of
+// that channel's Mixed light the probe can see. A channel no light claimed
+// holds 1 -- an absent visibility is fully VISIBLE, the polarity the role has
+// everywhere else.
+struct probe_trace_t
+{
+  indirect_sh_l1_t light;
+  Array<float, PROBE_VISIBILITY_CHANNELS> visibility{{1.f, 1.f, 1.f, 1.f}};
+};
+
 // The light arriving at a point in SPACE, projected onto SH L1 -- gate 5's probe.
 // The same chains as trace_indirect_light fired over the FULL sphere (a crate
 // lit from above is dark underneath), plus what a texel deliberately leaves out:
@@ -141,13 +151,20 @@ struct traced_surface_t
 // runtime tail delivers it analytically to everything -- but its bounce is,
 // since a bounce is a bounce whatever mode the light that made it has.
 //
+// What a Mixed light gets instead (gate 9 step 4) is its VISIBILITY: the same
+// light_visibility the atlas stores for a texel, at the probe, into the channel
+// `visibility_slots` names for its slot. Penumbra from source_radius comes free.
+// A Mixed light out of range or outside its cone at the probe stores 1: the
+// runtime attenuation is zero there and the channel is never multiplied.
+//
 // The projection of a single direction's irradiance is E * Y(d): what the SH
 // fit of a clamped cosine reads back as 0.25 E + 0.5 E cos, the standard L1
 // smear, and the same approximation the atlas bounce already makes.
-[[nodiscard]] indirect_sh_l1_t trace_probe_light(const traced_scene_t &scene,
-                                                Span<const baked_light_t> lights,
-                                                const linalg::vec3 &position,
-                                                const indirect_trace_settings_t &settings,
-                                                uint32_t hash);
+[[nodiscard]] probe_trace_t trace_probe_light(const traced_scene_t &scene,
+                                             Span<const baked_light_t> lights,
+                                             const probe_visibility_slots_t &visibility_slots,
+                                             const linalg::vec3 &position,
+                                             const indirect_trace_settings_t &settings,
+                                             uint32_t hash);
 
 } // namespace shared

@@ -39,6 +39,7 @@
 #include "../../shared/network/map_transfer.hpp"
 #include "../entity_hitbox_overlay.hpp"
 #include "../hitbox_debug_draw.hpp"
+#include "../shadow_debug_draw.hpp"
 #include "../input.hpp"
 #include "../../shared/player_animator.hpp"
 #include "../../shared/player_rig.hpp"
@@ -2249,6 +2250,11 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   scene.view.viewport = {{0, 0}, {1, 1}};
   scene.view.camera   = camera;
   scene.debug_channel = ctx.cvars->r_debug_channel;
+  if (ctx.cvars->r_shadow_freeze)
+  {
+    draw_shadow_cascades(scene.debug, renderer::sun_shadow_cascades());
+    draw_point_shadow_faces(scene.debug, renderer::point_shadow_faces());
+  }
   pose_count = 0;
 
   // Render the session's geometry. One call per object — the mesh-path /

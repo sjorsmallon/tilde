@@ -4,6 +4,7 @@
 // distance that gives `intensity` a meaning. lighting_def.md ss10 and ss11 are the
 // design; ss11 is why this is a shared header rather than a static in the solve.
 
+#include "array.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "lightmap.hpp"
 #include "linalg.hpp"
@@ -35,9 +36,22 @@ inline constexpr float LIGHT_REFERENCE_DISTANCE = 39.3701f;
 // distance living at a call site is how the three quietly become three lighting
 // models -- which is exactly what shader_editor_state's hardcoded 1500 and 30000
 // already are.
-[[nodiscard]]
-inline linalg::vec3 radiance_of(const entities::Light &light)
+enum class light_kind_t : uint8_t
 {
+  Point,
+  Spot,
+  Directional
+};
+
+// A DIRECTIONAL light has no distance for the reference to be measured at: its
+// arrival attenuates by 1 everywhere, so multiplying by REF^2 there made an
+// intensity of 1 deliver 1550 -- every surface under the sun burned white and
+// no exposure could hold both it and a lamp. For the sun `intensity` IS the
+// irradiance it delivers, the same number a point light delivers at one metre.
+[[nodiscard]]
+inline linalg::vec3 radiance_of(const entities::Light &light, light_kind_t kind)
+{
+  if (kind == light_kind_t::Directional) return light.color * light.intensity;
   return light.color * (light.intensity * LIGHT_REFERENCE_DISTANCE *
                         LIGHT_REFERENCE_DISTANCE);
 }
@@ -54,13 +68,6 @@ inline bool light_is_analytic(entities::Light_Mode mode)
 {
   return mode != entities::Light_Mode::Baked;
 }
-
-enum class light_kind_t : uint8_t
-{
-  Point,
-  Spot,
-  Directional
-};
 
 struct scene_light_t
 {
@@ -120,6 +127,128 @@ inline constexpr float SHADOW_NEAR_PLANE = 1.f;
 // perspective map cannot hold a hemisphere.
 [[nodiscard]] shadow_projection_t spot_shadow_projection(const scene_light_t &light,
                                                          uint32_t             resolution);
+
+// --- Cascades, the directional light's shadow map (gate 9 step 2) ---
+//
+// A directional light has no extent, so one orthographic map over the view
+// frustum spreads its texels over the whole level. The frustum is cut into
+// slices by view depth, and each slice gets its own map: a CASCADE. Every
+// cascade is one layer of the pool, consecutive from the layer the light names,
+// and the receiver picks by view depth (direct_light.glsl). scene.glsl spells
+// this count as a literal.
+inline constexpr uint32_t MAX_SHADOW_CASCADES = 4;
+
+// The camera a cascade fit is made against, reduced to what the fit reads. The
+// renderer translates its view into this; a test builds one by hand.
+struct shadow_view_t
+{
+  linalg::vec3 position{0.f, 0.f, 0.f};
+  linalg::vec3 forward{1.f, 0.f, 0.f};
+  linalg::vec3 right{0.f, 0.f, 1.f};
+  linalg::vec3 up{0.f, 1.f, 0.f};
+  float        tan_half_fov_y     = 1.f; // 0 means orthographic: read ortho_half_height
+  float        aspect             = 1.f;
+  float        ortho_half_height  = 0.f;
+  float        near_plane         = 1.f;
+  // Read only by the point-light face cull (below): a face is drawn only if
+  // its frustum meets the camera's, and that needs the whole camera frustum.
+  float        far_plane          = 50000.f;
+};
+
+struct cascade_settings_t
+{
+  uint32_t count  = 3;    // clamped to [1, MAX_SHADOW_CASCADES]
+  // The practical split: 0 is uniform in depth, 1 is logarithmic (each cascade
+  // the same texel density at its far edge), and a blend of the two between.
+  float    lambda = 0.7f;
+  // How far from the camera the last cascade reaches. Past it the sun casts no
+  // runtime shadow and the receiver reads fully lit.
+  float    far_distance = 4096.f;
+  // How far TOWARD the light a cascade's box extends past its slice, so a
+  // caster between the sun and the slice -- a roof, a tower -- is in the map.
+  float    caster_extent = 8192.f;
+};
+
+// One cascade: its map, the slice it covers and the geometry a debug view draws.
+struct shadow_cascade_t
+{
+  shadow_projection_t projection;
+  float               near_depth = 0.f; // view depths bounding the slice
+  float               far_depth  = 0.f;
+  // The slice's bounding SPHERE, which is what the ortho box is fit to: a
+  // sphere is the one bound a camera turn cannot change, so the map's texel
+  // grid stays put and the shadow does not shimmer.
+  linalg::vec3        sphere_center{0.f, 0.f, 0.f};
+  float               sphere_radius = 0.f;
+  // The frustum slice, near quad then far quad, then the ortho box, light-near
+  // quad then light-far quad. r_shadow_freeze draws both.
+  Array<linalg::vec3, 8> slice_corners;
+  Array<linalg::vec3, 8> box_corners;
+};
+
+struct shadow_cascades_t
+{
+  Array<shadow_cascade_t, MAX_SHADOW_CASCADES> cascades;
+  uint32_t                                     count = 0;
+  linalg::vec3                                 light_direction{0.f, -1.f, 0.f};
+  linalg::vec3                                 camera_position{0.f, 0.f, 0.f};
+};
+
+// View depth of split `index` in [0, count]: 0 is the near plane, count is
+// far_distance, and the ones between are Zhang's practical split.
+[[nodiscard]] float cascade_split_depth(const shadow_view_t &view, const cascade_settings_t &settings,
+                                        uint32_t index);
+
+// Fits `settings.count` cascades of a directional light to the view. Each ortho
+// box is a square of the slice sphere's diameter, its origin snapped to a whole
+// texel of that map, reaching caster_extent toward the light.
+[[nodiscard]] shadow_cascades_t directional_shadow_cascades(const scene_light_t     &light,
+                                                            const shadow_view_t     &view,
+                                                            const cascade_settings_t &settings,
+                                                            uint32_t                  resolution);
+
+// --- The point-light cube, six faces as six layers (gate 9 step 3) ---
+//
+// A point light has no forward, so its map is six 90-degree perspective faces
+// in the order +X, -X, +Y, -Y, +Z, -Z -- consecutive layers of the pool from
+// the one the light names, the receiver picking by the MAJOR AXIS of the
+// light-to-point vector (direct_light.glsl's point_shadow_face). No cube
+// sampler and no cube image: the seam between two faces is where the pick
+// changes layer, and the PCF kernel near it would read outside the map, so
+// every face is widened by POINT_SHADOW_FACE_GUARD_TEXELS past the 45-degree
+// edge -- the pick is exact, the map is a little bigger than the pick needs.
+// The guard must exceed the receiver's kernel radius plus its normal offset;
+// the shader clamps the radius to 3.
+inline constexpr uint32_t POINT_SHADOW_FACE_COUNT       = 6;
+inline constexpr float    POINT_SHADOW_FACE_GUARD_TEXELS = 4.f;
+
+// The face a direction from the light falls in, in the order above: the
+// C++ twin of the shader's pick, pinned by shadow_test.
+[[nodiscard]] uint32_t point_shadow_face_of(const linalg::vec3 &light_to_point);
+
+// One face: its map, whether the camera can see anything it covers, and the
+// pyramid a debug view draws -- the apex then the four far corners.
+struct point_shadow_face_t
+{
+  shadow_projection_t    projection;
+  bool                   visible = true;
+  Array<linalg::vec3, 5> corners;
+};
+
+struct point_shadow_faces_t
+{
+  Array<point_shadow_face_t, POINT_SHADOW_FACE_COUNT> faces;
+  linalg::vec3                                        position{0.f, 0.f, 0.f};
+  float                                               range = 0.f;
+};
+
+// The six faces of one point light, and which of them the view can see. A face
+// whose frustum and the camera's are separated by one of either's planes is
+// culled: nothing the camera draws can read it, so it is not rendered. The
+// test is conservative -- it keeps a face it cannot prove hidden.
+[[nodiscard]] point_shadow_faces_t point_shadow_faces(const scene_light_t &light,
+                                                      const shadow_view_t &view,
+                                                      uint32_t             resolution);
 
 // The ONE fold from the three authoring light types; empty means "not a light".
 // It does NOT filter by mode -- see scene_light_t::mode.

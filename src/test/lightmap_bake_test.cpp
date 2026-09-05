@@ -2269,16 +2269,31 @@ void a_grid_too_long_for_a_3d_texture_is_refused()
 
 // --- Gate 5: what a probe stores ---------------------------------------------
 
-shared::indirect_sh_l1_t trace_probe_in(const shared::map_t &map, const linalg::vec3 &position,
-                                        int rays_per_sample = 64)
+shared::probe_trace_t trace_probe_at(const shared::map_t &map, const linalg::vec3 &position,
+                                     int rays_per_sample = 64)
 {
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
   const shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
   const std::vector<shared::baked_light_t> lights = shared::collect_lights(map);
+  const shared::probe_visibility_slots_t slots = shared::assign_probe_visibility_channels(lights);
 
   shared::indirect_trace_settings_t settings;
   settings.rays_per_sample = rays_per_sample;
-  return shared::trace_probe_light(scene, lights, position, settings, 0x51a7u);
+  return shared::trace_probe_light(scene, lights, slots, position, settings, 0x51a7u);
+}
+
+shared::indirect_sh_l1_t trace_probe_in(const shared::map_t &map, const linalg::vec3 &position,
+                                        int rays_per_sample = 64)
+{
+  return trace_probe_at(map, position, rays_per_sample).light;
+}
+
+void make_every_light_mixed(shared::map_t &map)
+{
+  for (shared::map_entity_t &entry : map.entities)
+    if (entities::Point_Light_Entity *light =
+            entities::entity_as<entities::Point_Light_Entity>(entry.entity.get()))
+      light->light.mode = entities::Light_Mode::Mixed;
 }
 
 // A probe below the light between the plates reads it DIRECTLY -- L0 above zero
@@ -2312,10 +2327,7 @@ void a_probe_reads_a_mixed_light_through_its_bounce_only()
   shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
   const shared::indirect_sh_l1_t with_baked = trace_probe_in(map, {0, 8, 0});
 
-  for (shared::map_entity_t &entry : map.entities)
-    if (entities::Point_Light_Entity *light =
-            entities::entity_as<entities::Point_Light_Entity>(entry.entity.get()))
-      light->light.mode = entities::Light_Mode::Mixed;
+  make_every_light_mixed(map);
 
   const shared::indirect_sh_l1_t with_mixed = trace_probe_in(map, {0, 8, 0});
   const shared::indirect_sh_l1_t mixed_direct_only = trace_probe_in(map, {0, 8, 0}, 0);
@@ -2323,6 +2335,48 @@ void a_probe_reads_a_mixed_light_through_its_bounce_only()
   assert(mixed_direct_only.l0.x == 0.f);
   assert(with_mixed.l0.x > 0.f);
   assert(with_mixed.l0.x < with_baked.l0.x);
+}
+
+// --- Gate 9 step 4: what a probe stores for a Mixed light ----------------------
+
+// A Baked light's occlusion is folded into the probe's radiance and claims no
+// channel; a Mixed light claims one, in slot order, and a fifth is left out.
+void probe_visibility_channels_go_to_the_first_four_mixed_lights()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const std::vector<shared::baked_light_t> baked_only = shared::collect_lights(map);
+  const shared::probe_visibility_slots_t none =
+      shared::assign_probe_visibility_channels(baked_only);
+  for (const int16_t slot : none) assert(slot == shared::LIGHTMAP_NO_LIGHT_SLOT);
+
+  std::vector<shared::baked_light_t> six(6);
+  for (size_t slot = 0; slot < six.size(); ++slot)
+  {
+    six[slot].uid = 100 + (shared::entity_uid_t)slot;
+    six[slot].light.mode = slot == 0 ? entities::Light_Mode::Baked : entities::Light_Mode::Mixed;
+  }
+  const std::vector<shared::baked_light_t> &lights = six;
+  const shared::probe_visibility_slots_t slots = shared::assign_probe_visibility_channels(lights);
+  assert(slots[0] == 1 && slots[1] == 2 && slots[2] == 3 && slots[3] == 4);
+}
+
+// Under the light a probe sees all of a Mixed light and stores no radiance for
+// it; above the ceiling plate it sees none of it. The visibility is the same
+// light_visibility a texel of the atlas stores, at a point in space.
+void a_probe_stores_a_mixed_lights_visibility_and_not_its_light()
+{
+  shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  make_every_light_mixed(map);
+
+  const shared::probe_trace_t below = trace_probe_at(map, {0, 8, 0}, 0);
+  assert(below.light.l0.x == 0.f);
+  assert(below.visibility[0] == 1.f);
+  for (uint32_t channel = 1; channel < shared::PROBE_VISIBILITY_CHANNELS; ++channel)
+    assert(below.visibility[channel] == 1.f);
+
+  const shared::probe_trace_t above_the_ceiling = trace_probe_at(map, {0, 96, 0}, 0);
+  assert(above_the_ceiling.visibility[0] == 0.f);
+  assert(above_the_ceiling.visibility[1] == 1.f);
 }
 
 // Behind the ceiling plate the light is occluded: the direct term is shadowed
@@ -2401,6 +2455,37 @@ void a_probe_bake_fills_the_volume_and_dilates_into_solids()
   assert(in_the_slab.l0.x > 0.f);
 }
 
+// The whole volume: the slot table names the light, the open-air probe under
+// it reads visible, the one over the ceiling reads occluded, and the dilated
+// probe inside the plate takes its neighbours' answer rather than white.
+void a_probe_bake_carries_a_mixed_lights_visibility_through_the_volume()
+{
+  shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  make_every_light_mixed(map);
+  const shared::lightmap_t lightmap = bake_probes_for(map, 16.f, probe_solve_settings());
+  assert(!lightmap.probes.empty());
+  assert(lightmap.probes.visibility_slots[0] == 0);
+  assert(lightmap.probes.visibility_slots[1] == shared::LIGHTMAP_NO_LIGHT_SLOT);
+  assert(lightmap.probes.visibility_bytes.size() == lightmap.probes.grid.probe_count() * 4);
+
+  const shared::probe_grid_t &grid = lightmap.probes.grid;
+  const auto index_at = [&](const linalg::vec3 &position) {
+    const linalg::vec3 offset = (position - grid.origin) * (1.f / grid.spacing);
+    return grid.index_of((int)std::lround(offset.x), (int)std::lround(offset.y),
+                         (int)std::lround(offset.z));
+  };
+
+  assert(lightmap.probes.load_visibility(index_at({0, 16, 0}))[0] == 1.f);
+  assert(lightmap.probes.load_visibility(index_at({0, 96, 0}))[0] == 0.f);
+  assert(lightmap.probes.load_visibility(index_at({0, 96, 0}))[1] == 1.f);
+
+  // The plate's two faces are inside it and are filled from their open
+  // neighbours: the underside from the lit room below it, the top from the
+  // occluded space above. Each takes its own side's answer, not a mix.
+  assert(lightmap.probes.load_visibility(index_at({0, 64, 0}))[0] == 1.f);
+  assert(lightmap.probes.load_visibility(index_at({0, 80, 0}))[0] == 0.f);
+}
+
 void a_bake_without_probes_clears_the_volume()
 {
   const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
@@ -2413,8 +2498,10 @@ void a_bake_without_probes_clears_the_volume()
 
 void a_sidecar_round_trips_the_probes()
 {
-  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  make_every_light_mixed(map);
   const shared::lightmap_t baked = bake_probes_for(map, 16.f, probe_solve_settings());
+  assert(baked.probes.visibility_slots[0] == 0);
 
   const std::filesystem::path directory =
       std::filesystem::temp_directory_path() / "tilde_lightmap_test";
@@ -2433,6 +2520,9 @@ void a_sidecar_round_trips_the_probes()
   assert(std::abs(loaded.probes.grid.origin.x - baked.probes.grid.origin.x) < 1e-6f);
   assert(loaded.probes.l0_bytes == baked.probes.l0_bytes);
   assert(loaded.probes.l1_bytes == baked.probes.l1_bytes);
+  for (uint32_t channel = 0; channel < shared::PROBE_VISIBILITY_CHANNELS; ++channel)
+    assert(loaded.probes.visibility_slots[channel] == baked.probes.visibility_slots[channel]);
+  assert(loaded.probes.visibility_bytes == baked.probes.visibility_bytes);
 }
 
 // The volume's codec is the atlas's: what goes in comes back within a byte of
@@ -2464,6 +2554,14 @@ void a_probe_volume_round_trips_its_own_codec()
 
   const shared::indirect_sh_l1_t untouched = volume.load(0);
   assert(untouched.l0.x == 0.f && untouched.l1[0].x == 0.f);
+
+  // The visibility channels: a fresh volume reads fully visible, a stored
+  // coverage comes back within a byte.
+  for (const float channel : volume.load_visibility(3)) assert(channel == 1.f);
+  volume.store_visibility(3, {{0.f, 0.25f, 0.5f, 1.f}});
+  const Array<float, shared::PROBE_VISIBILITY_CHANNELS> coverage = volume.load_visibility(3);
+  assert(coverage[0] == 0.f && coverage[3] == 1.f);
+  assert(std::abs(coverage[1] - 0.25f) < 0.005f && std::abs(coverage[2] - 0.5f) < 0.005f);
 }
 
 } // namespace
@@ -2905,6 +3003,9 @@ int main()
   a_probe_reads_a_baked_light_directly_and_knows_where_it_is();
   a_probe_reads_a_mixed_light_through_its_bounce_only();
   a_probe_a_wall_hides_from_the_light_reads_nothing_direct();
+  probe_visibility_channels_go_to_the_first_four_mixed_lights();
+  a_probe_stores_a_mixed_lights_visibility_and_not_its_light();
+  a_probe_bake_carries_a_mixed_lights_visibility_through_the_volume();
   a_probe_sees_the_floor_bounce_from_below();
 
   a_probe_bake_fills_the_volume_and_dilates_into_solids();

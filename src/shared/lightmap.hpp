@@ -480,12 +480,37 @@ struct probe_grid_t
   return normalized * SH_L1_NORMALIZATION * l0_channel;
 }
 
+// Gate 9 step 4: how many Mixed lights a probe stores a VISIBILITY for -- one
+// channel each of one Unorm8x4 texel, exactly the atlas's per-texel cap and for
+// its reason. A fifth Mixed light in a map gets no channel: it is unoccluded on
+// dynamic objects, said once at bake time (assign_probe_visibility_channels).
+// A second 3D image would need a per-fragment sampler pick, which is the one
+// binding pattern the pass set deliberately has none of.
+inline constexpr uint32_t PROBE_VISIBILITY_CHANNELS = 4;
+
+// Which baked SLOT each visibility channel is OF -- the probes' twin of a
+// chart's light_slots. LIGHTMAP_NO_LIGHT_SLOT is a channel no Mixed light
+// claimed; the runtime matches a tail light's slot against these four.
+using probe_visibility_slots_t = Array<int16_t, PROBE_VISIBILITY_CHANNELS>;
+inline constexpr probe_visibility_slots_t NO_PROBE_VISIBILITY_SLOTS{
+    {LIGHTMAP_NO_LIGHT_SLOT, LIGHTMAP_NO_LIGHT_SLOT, LIGHTMAP_NO_LIGHT_SLOT,
+     LIGHTMAP_NO_LIGHT_SLOT}};
+
 // WHAT the probes hold: the same four numbers a texel of indirect light holds,
 // in the same two encodings, over the grid above. `l0_bytes` is one RGB9E5 word
 // per probe in grid index order; `l1_bytes` is SH_L1_LAYERS_PER_PAGE Unorm8x4
 // words per probe, AXIS-MAJOR -- every probe's x component, then every y, then
 // every z -- so each axis is one contiguous 3D image upload, exactly as each
 // axis is one layer of the atlas's L1 page set.
+//
+// `visibility_bytes` is gate 9's one new bake output: one Unorm8x4 word per
+// probe, each channel the FRACTION of a Mixed light this point in space sees
+// (light_visibility, the same function the atlas's channels come from), the
+// channel named by `visibility_slots`. A dynamic object multiplies it into the
+// Mixed light's analytic term the way a brush face multiplies in its atlas
+// texel -- decision K's product, with the static occluders on this side of it.
+// Sized with the volume whether or not any light claimed a channel, so a
+// volume is one shape; an unclaimed channel reads 1.
 //
 // Empty is "this bake traced no probes", the test lightmap_t::empty makes for
 // the charts.
@@ -494,12 +519,20 @@ struct probe_volume_t
   probe_grid_t grid;
   std::vector<uint8_t> l0_bytes;
   std::vector<uint8_t> l1_bytes;
+  probe_visibility_slots_t visibility_slots = NO_PROBE_VISIBILITY_SLOTS;
+  std::vector<uint8_t> visibility_bytes;
 
   [[nodiscard]] bool empty() const { return l0_bytes.empty(); }
 
   void allocate(const probe_grid_t &probe_grid);
   void store(size_t index, const indirect_sh_l1_t &value);
   [[nodiscard]] indirect_sh_l1_t load(size_t index) const;
+
+  // The visibility role's pair, in coverage fractions per channel -- kept apart
+  // from `store` for the reason lightmap_pages_t keeps store_visibility apart:
+  // four independent scalars, not a colour.
+  void store_visibility(size_t index, const Array<float, PROBE_VISIBILITY_CHANNELS> &coverage);
+  [[nodiscard]] Array<float, PROBE_VISIBILITY_CHANNELS> load_visibility(size_t index) const;
 };
 
 // The atlas itself: the pixels a face samples, page-major, in whatever `format`

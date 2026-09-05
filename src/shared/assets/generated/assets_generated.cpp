@@ -87,6 +87,7 @@ constexpr asset_info_t font_asset_MANIFEST[] = {
 constexpr asset_info_t pbr_material_MANIFEST[] = {
   {"Missing", nullptr},
   {"harsh_bricks", "resources/textures/harsh_bricks"},
+  {"scuffed_plastic", "resources/textures/scuffed_plastic"},
   {"sloppy_mortar_stone", "resources/textures/sloppy_mortar_stone"},
 };
 

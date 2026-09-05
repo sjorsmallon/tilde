@@ -20,6 +20,7 @@
 #include "skinning.hpp"
 #include "vertex.hpp"
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <math.h> // For tan, sqrt, etc.
 
@@ -241,13 +242,18 @@ constexpr uint32_t PASS_INDIRECT_L1_BINDING = 4;
 // four more bindings -- the ss5 ceiling is on sets, and a binding spends none.
 constexpr uint32_t PASS_PROBE_L0_BINDING    = 5;
 constexpr uint32_t PASS_PROBE_L1_BINDING    = 6; // three consecutive, one per axis
-constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 8;
 // Gate 9: the shadow map pool, ONE sampler2DArrayShadow every shadow map is a
 // layer of. Set 3 again -- a binding costs none of the ss5 ceiling -- and the
 // one image in the pass set that is the RENDERER's rather than the bake's, so
 // write_pass_image_descriptors reads it off the pool instead of the entry.
 // resources/shaders/direct_light.glsl spells it as a literal.
 constexpr uint32_t PASS_SHADOW_BINDING = 9;
+// Gate 9 step 4: the probes' per-Mixed-light visibility, a fifth 3D image of
+// the bake. After the shadow pool because it arrived after it, and a binding
+// number is not a layout.
+constexpr uint32_t PASS_PROBE_VISIBILITY_BINDING = 10;
+// How many images of the BAKE a pass set binds (the shadow pool is not one).
+constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 9;
 // The lightmap images, the scene block and the shadow array.
 constexpr uint32_t PASS_BINDING_COUNT = PASS_IMAGE_BINDING_COUNT + 2;
 
@@ -269,9 +275,14 @@ static_assert(shared::SH_L1_IRRADIANCE_L1 == 1.023328f,
 static_assert(shared::SH_L1_NORMALIZATION == 1.7320508f,
               "resources/shaders/lightmap.glsl spells SH_L1_NORMALIZATION");
 
-// probes.glsl declares the four probe samplers at these bindings, as literals.
-static_assert(PASS_PROBE_L0_BINDING == 5 && PASS_PROBE_L1_BINDING == 6,
-              "resources/shaders/probes.glsl binds the probe volume at set 3, bindings 5..8");
+// probes.glsl declares the five probe samplers at these bindings, as literals.
+static_assert(PASS_PROBE_L0_BINDING == 5 && PASS_PROBE_L1_BINDING == 6 &&
+                  PASS_PROBE_VISIBILITY_BINDING == 10,
+              "resources/shaders/probes.glsl binds the probe volume at set 3, bindings 5..8 "
+              "and 10");
+static_assert(shared::PROBE_VISIBILITY_CHANNELS == 4,
+              "resources/shaders/probes.glsl matches a slot against an ivec4 and reads one "
+              "channel of a Unorm8x4 3D texture");
 
 // --- Registered resources ---
 // Handles are indices into these three vectors. Nothing is ever removed (see
@@ -354,6 +365,11 @@ struct gpu_lightmap_t
   // the 1x1x1 black stand-ins and the mapping is meaningless.
   gpu_texture_t   probe_l0;
   gpu_texture_t   probe_l1[shared::SH_L1_LAYERS_PER_PAGE];
+  // Gate 9 step 4: the per-Mixed-light visibility, and which baked slot each of
+  // its channels is of. A 1x1x1 WHITE stand-in when absent, the polarity an
+  // absent visibility has everywhere.
+  gpu_texture_t   probe_visibility;
+  int32_t         probe_visibility_slots[shared::PROBE_VISIBILITY_CHANNELS] = {-1, -1, -1, -1};
   float           probe_origin[3]         = {0.f, 0.f, 0.f};
   float           probe_inverse_extent[3] = {0.f, 0.f, 0.f};
   bool            has_probes              = false;
@@ -530,22 +546,40 @@ struct scene_uniform_t
   int32_t     debug_shadow_light = -1;
   gpu_light_t lights[MAX_SCENE_LIGHTS] = {};
   // Gate 9: per layer of the shadow pool, the light's view-projection and (in
-  // .x) the world size of one of its texels at unit distance; then the receiver
-  // settings, x the normal offset in texels and y the PCF radius.
+  // .x) the world size of one of its texels at unit distance, (in .y) how far
+  // a receiver moves toward the light before the compare, per unit distance;
+  // then the receiver settings, x the normal offset in texels and y the PCF
+  // radius.
   float       shadow_view_projection[MAX_SHADOW_LAYERS][16] = {};
   float       shadow_layers[MAX_SHADOW_LAYERS][4]           = {};
+  // z the cascade blend band as a fraction of each split depth, w how many
+  // cascades the sun claimed this frame.
   float       shadow_settings[4]                            = {};
+  // Gate 9 step 2: the view depth a cascade is picked by is measured along
+  // camera_forward, and shadow_cascade_splits holds each cascade's far depth.
+  float       camera_forward[4]                             = {};
+  float       shadow_cascade_splits[4]                      = {};
+  // Gate 9 step 4: which baked slot each probe visibility channel is of, -1 for
+  // none -- the probes' twin of a vertex's light_slots.
+  int32_t     probe_visibility_slots[4]                     = {-1, -1, -1, -1};
 };
 
 static_assert(sizeof(scene_uniform_t) ==
-                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 16,
+                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 64,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
+static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
+                  shared::MAX_SHADOW_CASCADES <= 4,
+              "the sun's cascades are layers of the pool and its splits ride ONE vec4");
 
 // Spelled as literals in scene.glsl and in pbr.frag.
 constexpr int32_t DEBUG_FLAG_RENDER_NORMALS           = 1 << 0;
 constexpr int32_t DEBUG_FLAG_RENDER_UV                = 1 << 1;
 constexpr int32_t DEBUG_FLAG_RENDER_PARALLAX_UV       = 1 << 2;
 constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_VISIBILITY = 1 << 3;
+constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_CASCADES   = 1 << 4;
+constexpr int32_t DEBUG_FLAG_RENDER_DIRECT_LIGHT      = 1 << 5;
+constexpr int32_t DEBUG_FLAG_RENDER_BAKED_LIGHT       = 1 << 6;
+constexpr int32_t DEBUG_FLAG_RENDER_PROBE_VISIBILITY  = 1 << 7;
 
 // One number in one place, so the lit, grid and blend paths cannot disagree.
 // It is composed as a diffuse term already (ambient * albedo), so it does NOT
@@ -2199,6 +2233,10 @@ static void create_mesh_resources()
   pass_bindings[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[9].descriptorCount = 1;
   pass_bindings[9].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[10].binding         = PASS_PROBE_VISIBILITY_BINDING;
+  pass_bindings[10].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[10].descriptorCount = 1;
+  pass_bindings[10].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -2210,8 +2248,8 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Nine samplers per set -- irradiance, visibility, the bounce's two, the
-  // probe volume's four, and the shadow pool.
+  // Ten samplers per set -- irradiance, visibility, the bounce's two, the
+  // probe volume's five, and the shadow pool.
   VkDescriptorPoolSize pass_pool_sizes[2] = {
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
        MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + 1)},
@@ -2902,11 +2940,12 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
 {
   const gpu_texture_t *const textures[PASS_IMAGE_BINDING_COUNT] = {
       &entry.texture,     &entry.visibility,  &entry.indirect_l0, &entry.indirect_l1,
-      &entry.probe_l0,    &entry.probe_l1[0], &entry.probe_l1[1], &entry.probe_l1[2]};
+      &entry.probe_l0,    &entry.probe_l1[0], &entry.probe_l1[1], &entry.probe_l1[2],
+      &entry.probe_visibility};
   const uint32_t bindings[PASS_IMAGE_BINDING_COUNT] = {
       PASS_LIGHTMAP_BINDING,    PASS_VISIBILITY_BINDING,  PASS_INDIRECT_L0_BINDING,
       PASS_INDIRECT_L1_BINDING, PASS_PROBE_L0_BINDING,    PASS_PROBE_L1_BINDING,
-      PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2};
+      PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2, PASS_PROBE_VISIBILITY_BINDING};
 
   constexpr uint32_t WRITE_COUNT = PASS_IMAGE_BINDING_COUNT + 1;
   VkDescriptorImageInfo images[WRITE_COUNT]{};
@@ -3011,6 +3050,7 @@ static void destroy_lightmap_textures(gpu_lightmap_t &entry)
   destroy_texture(entry.indirect_l1);
   destroy_texture(entry.probe_l0);
   for (gpu_texture_t &axis : entry.probe_l1) destroy_texture(axis);
+  destroy_texture(entry.probe_visibility);
 }
 
 // The probe volume, gate 5: four 3D images, L0 and one per world axis of L1 --
@@ -3045,6 +3085,21 @@ static bool try_upload_probe_images(const shared::probe_volume_t &probes, gpu_li
     for (int done = 0; done < axis; ++done) destroy_texture(out.probe_l1[done]);
     return false;
   }
+
+  // The per-Mixed-light visibility (gate 9 step 4), WHITE when absent: an
+  // absent visibility is fully visible, the polarity the role has everywhere.
+  const uint8_t white_visibility[4] = {255, 255, 255, 255};
+  if (!try_upload_probe_image(out.has_probes ? probes.visibility_bytes.data() : white_visibility,
+                              probe_count * 4, shared::lightmap_pixel_format_t::Unorm8x4, count,
+                              out.probe_visibility))
+  {
+    destroy_texture(out.probe_l0);
+    for (gpu_texture_t &axis : out.probe_l1) destroy_texture(axis);
+    return false;
+  }
+  for (uint32_t channel = 0; channel < shared::PROBE_VISIBILITY_CHANNELS; ++channel)
+    out.probe_visibility_slots[channel] =
+        out.has_probes ? (int32_t)probes.visibility_slots[channel] : -1;
 
   if (out.has_probes)
   {
@@ -4787,6 +4842,13 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   scene.camera_position[2] = eye.z;
   scene.camera_position[3] = 0.0f;
 
+  const linalg::vec3f forward =
+      linalg::direction_from_angles(pass.view.camera.yaw, pass.view.camera.pitch);
+  scene.camera_forward[0] = forward.x;
+  scene.camera_forward[1] = forward.y;
+  scene.camera_forward[2] = forward.z;
+  scene.camera_forward[3] = 0.0f;
+
   scene.ambient[0] = AMBIENT_FLOOR;
   scene.ambient[1] = AMBIENT_FLOOR;
   scene.ambient[2] = AMBIENT_FLOOR;
@@ -4806,6 +4868,8 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
       scene.probe_inverse_extent[axis] = bake->probe_inverse_extent[axis];
     }
     scene.probe_origin[3] = 1.0f;
+    for (uint32_t channel = 0; channel < shared::PROBE_VISIBILITY_CHANNELS; ++channel)
+      scene.probe_visibility_slots[channel] = bake->probe_visibility_slots[channel];
   }
 
   if (pass.lights.size() > MAX_SCENE_LIGHTS)
@@ -4867,6 +4931,14 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   case cvars::Debug_Channel::shadow_visibility:
     scene.debug_flags = DEBUG_FLAG_RENDER_SHADOW_VISIBILITY;
     break;
+  case cvars::Debug_Channel::shadow_cascades:
+    scene.debug_flags = DEBUG_FLAG_RENDER_SHADOW_CASCADES;
+    break;
+  case cvars::Debug_Channel::direct_light: scene.debug_flags = DEBUG_FLAG_RENDER_DIRECT_LIGHT; break;
+  case cvars::Debug_Channel::baked_light: scene.debug_flags = DEBUG_FLAG_RENDER_BAKED_LIGHT; break;
+  case cvars::Debug_Channel::probe_visibility:
+    scene.debug_flags = DEBUG_FLAG_RENDER_PROBE_VISIBILITY;
+    break;
   }
 
   return scene;
@@ -4906,11 +4978,60 @@ static bool first_time_for(std::vector<shared::entity_uid_t> &warned, shared::en
   return true;
 }
 
+// The camera the sun's cascades are fit to: the pass's own, or the one latched
+// the frame r_shadow_freeze went on. The fit itself is kept for the debug draw.
+static bool                      g_shadow_freeze_active = false;
+static shared::shadow_view_t     g_frozen_shadow_view;
+static shared::shadow_cascades_t g_sun_cascades;
+// Every point light that claimed six layers this frame, for the debug draw;
+// cleared where the freeze latches, once per frame.
+static std::vector<shared::point_shadow_faces_t> g_point_shadow_faces;
+// The light the visibility channel showed last frame, so a change is said once.
+static shared::entity_uid_t g_shadow_debug_light_shown = shared::null_entity_uid;
+
+// The same aspect and near plane view_matrices projects through, so the slices
+// are of the frustum actually drawn.
+static shared::shadow_view_t shadow_view_of(const render_view_t &view)
+{
+  float aspect = 1.0f;
+  if (view.viewport.dimensions.y != 0.0f && g_swapchain_extent.height != 0)
+    aspect = view.viewport.dimensions.x * (float)g_swapchain_extent.width /
+             (view.viewport.dimensions.y * (float)g_swapchain_extent.height);
+
+  shared::shadow_view_t shadow_view;
+  shadow_view.position = view.camera.position;
+  shadow_view.forward  = linalg::direction_from_angles(view.camera.yaw, view.camera.pitch);
+  const linalg::vec3f right = linalg::cross(shadow_view.forward, linalg::vec3f{0.0f, 1.0f, 0.0f});
+  shadow_view.right =
+      linalg::length(right) > 1e-4f ? linalg::normalize(right) : linalg::vec3f{1.0f, 0.0f, 0.0f};
+  shadow_view.up         = linalg::cross(shadow_view.right, shadow_view.forward);
+  shadow_view.aspect     = aspect;
+  shadow_view.near_plane = 1.0f;
+  shadow_view.far_plane  = 50000.0f; // view_matrices' far plane
+  if (view.camera.orthographic)
+  {
+    shadow_view.tan_half_fov_y    = 0.0f;
+    shadow_view.ortho_half_height = view.camera.ortho_height * 0.5f;
+  }
+  else
+  {
+    shadow_view.tan_half_fov_y = std::tan(linalg::to_radians(view.camera.fov_degrees) * 0.5f);
+  }
+  return shadow_view;
+}
+
+const shared::shadow_cascades_t &sun_shadow_cascades() { return g_sun_cascades; }
+
+Span<const shared::point_shadow_faces_t> point_shadow_faces() { return g_point_shadow_faces; }
+
 // Ranks the pass's shadow-casting analytic lights by intensity over distance
 // squared to the camera and hands out the frame's remaining layers in that
-// order. Both copies of a Mixed light get the layer -- the tail one is what
-// ranked, the head one is what a lightmapped face reads -- and the CASTER SET
-// rides the job as the light's mode (decision K).
+// order. The sun outranks everything and takes one layer per cascade; a spot
+// light takes one; a point light takes six, and only the faces the camera can
+// see become jobs -- a culled face's layer keeps stale depth that no drawn
+// fragment picks. Both copies of a Mixed light get the layer -- the tail one
+// is what ranked, the head one is what a lightmapped face reads -- and the
+// CASTER SET rides the job as the light's mode (decision K).
 static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_t &settings,
                                  uint32_t &next_layer, scene_uniform_t &scene,
                                  prepared_pass_t &prepared)
@@ -4924,21 +5045,30 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
   candidate_t candidates[MAX_SCENE_LIGHTS];
   uint32_t    candidate_count = 0;
 
-  const linalg::vec3f &eye = pass.view.camera.position;
+  const linalg::vec3f &eye      = pass.view.camera.position;
+  bool                 sun_seen = false;
   for (int32_t index = scene.baked_light_count; index < scene.light_count; ++index)
   {
     const shared::scene_light_t &light = pass.lights[(uint32_t)index];
     if (!light.casts_shadows || !shared::light_is_analytic(light.mode))
       continue;
-    if (light.kind != shared::light_kind_t::Spot)
+
+    // There is one sun. A second shadow-casting directional light draws
+    // unshadowed, said once, rather than fighting the first for the pool.
+    if (light.kind == shared::light_kind_t::Directional)
     {
-      if (first_time_for(g_shadow_warned_unsupported, light.uid))
+      if (sun_seen)
       {
-        log_warning("[renderer] light {} is a {} light; only spot lights have shadow maps yet, "
-                    "so it draws unshadowed",
-                    light.uid,
-                    light.kind == shared::light_kind_t::Point ? "point" : "directional");
+        if (first_time_for(g_shadow_warned_unsupported, light.uid))
+        {
+          log_warning("[renderer] directional light {} is a second sun; only one directional "
+                      "light gets cascades, so it draws unshadowed",
+                      light.uid);
+        }
+        continue;
       }
+      sun_seen                      = true;
+      candidates[candidate_count++] = {(uint32_t)index, std::numeric_limits<float>::max(), 0.0f};
       continue;
     }
 
@@ -4952,50 +5082,184 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
   std::sort(candidates, candidates + candidate_count,
             [](const candidate_t &a, const candidate_t &b) { return a.score > b.score; });
 
+  const shared::cascade_settings_t cascade_settings{
+      .count  = std::clamp<uint32_t>(settings.cascade_count, 1u, shared::MAX_SHADOW_CASCADES),
+      .lambda = settings.cascade_lambda,
+      .far_distance  = settings.cascade_distance,
+      .caster_extent = settings.cascade_caster_extent,
+  };
+  const shared::shadow_view_t shadow_view =
+      g_shadow_freeze_active ? g_frozen_shadow_view : shadow_view_of(pass.view);
+
   float nearest_distance_squared = 0.0f;
   for (uint32_t at = 0; at < candidate_count; ++at)
   {
     const candidate_t           &candidate = candidates[at];
     const shared::scene_light_t &light     = pass.lights[candidate.index];
+    const bool     is_sun        = light.kind == shared::light_kind_t::Directional;
+    const bool     is_point      = light.kind == shared::light_kind_t::Point;
+    const uint32_t layers_needed =
+        is_sun ? cascade_settings.count : is_point ? shared::POINT_SHADOW_FACE_COUNT : 1u;
 
-    if (next_layer >= g_shadow_pool.layer_count)
+    if (next_layer + layers_needed > g_shadow_pool.layer_count)
     {
       if (first_time_for(g_shadow_warned_overflow, light.uid))
       {
-        log_warning("[renderer] light {} ranks past the {}-layer shadow pool and draws "
-                    "unshadowed; raise r_shadow_layer_count or turn casts_shadows off",
-                    light.uid, g_shadow_pool.layer_count);
+        log_warning("[renderer] light {} needs {} shadow layer(s) past the {}-layer pool and "
+                    "draws unshadowed; raise r_shadow_layer_count or turn casts_shadows off",
+                    light.uid, layers_needed, g_shadow_pool.layer_count);
       }
       continue;
     }
 
-    const uint32_t                    layer = next_layer++;
-    const shared::shadow_projection_t projection =
-        shared::spot_shadow_projection(light, g_shadow_pool.size);
+    const uint32_t first_layer = next_layer;
+    if (is_sun)
+    {
+      g_sun_cascades = shared::directional_shadow_cascades(light, shadow_view, cascade_settings,
+                                                           g_shadow_pool.size);
+      for (uint32_t cascade = 0; cascade < g_sun_cascades.count; ++cascade)
+      {
+        const shared::shadow_cascade_t &fit   = g_sun_cascades.cascades[cascade];
+        const uint32_t                  layer = next_layer++;
+        memcpy(scene.shadow_view_projection[layer], &fit.projection.view_projection,
+               sizeof(scene.shadow_view_projection[layer]));
+        scene.shadow_layers[layer][0]        = fit.projection.texel_size_at_unit_distance;
+        scene.shadow_layers[layer][1] =
+            settings.light_offset_texels * fit.projection.texel_size_at_unit_distance;
+        scene.shadow_cascade_splits[cascade] = fit.far_depth;
+        prepared.jobs[prepared.job_count++]  = {layer, light.mode, fit.projection.view_projection};
+      }
+      scene.shadow_settings[3] = (float)g_sun_cascades.count;
+    }
+    else if (is_point)
+    {
+      const shared::point_shadow_faces_t faces =
+          shared::point_shadow_faces(light, shadow_view, g_shadow_pool.size);
+      for (uint32_t face = 0; face < shared::POINT_SHADOW_FACE_COUNT; ++face)
+      {
+        const shared::point_shadow_face_t &fit   = faces.faces[face];
+        const uint32_t                     layer = next_layer++;
+        memcpy(scene.shadow_view_projection[layer], &fit.projection.view_projection,
+               sizeof(scene.shadow_view_projection[layer]));
+        scene.shadow_layers[layer][0] = fit.projection.texel_size_at_unit_distance;
+        scene.shadow_layers[layer][1] =
+            settings.light_offset_texels * fit.projection.texel_size_at_unit_distance;
+        if (fit.visible)
+          prepared.jobs[prepared.job_count++] = {layer, light.mode, fit.projection.view_projection};
+      }
+      g_point_shadow_faces.push_back(faces);
+    }
+    else
+    {
+      const uint32_t                    layer = next_layer++;
+      const shared::shadow_projection_t projection =
+          shared::spot_shadow_projection(light, g_shadow_pool.size);
+      memcpy(scene.shadow_view_projection[layer], &projection.view_projection,
+             sizeof(scene.shadow_view_projection[layer]));
+      scene.shadow_layers[layer][0]       = projection.texel_size_at_unit_distance;
+      scene.shadow_layers[layer][1] =
+          settings.light_offset_texels * projection.texel_size_at_unit_distance;
+      prepared.jobs[prepared.job_count++] = {layer, light.mode, projection.view_projection};
+    }
 
-    memcpy(scene.shadow_view_projection[layer], &projection.view_projection,
-           sizeof(scene.shadow_view_projection[layer]));
-    scene.shadow_layers[layer][0] = projection.texel_size_at_unit_distance;
-
-    scene.lights[candidate.index].radiance[3] = (float)layer;
+    scene.lights[candidate.index].radiance[3] = (float)first_layer;
     if (light.uid != shared::null_entity_uid)
     {
       for (int32_t head = 0; head < scene.baked_light_count; ++head)
         if (pass.lights[(uint32_t)head].uid == light.uid)
-          scene.lights[head].radiance[3] = (float)layer;
+          scene.lights[head].radiance[3] = (float)first_layer;
     }
 
-    prepared.jobs[prepared.job_count++] = {layer, light.mode, projection.view_projection};
-
-    if (scene.debug_shadow_light < 0 || candidate.distance_squared < nearest_distance_squared)
+    const bool pinned = settings.debug_light_uid != shared::null_entity_uid;
+    const bool show   = pinned ? light.uid == settings.debug_light_uid
+                               : scene.debug_shadow_light < 0 ||
+                                     candidate.distance_squared < nearest_distance_squared;
+    if (show)
     {
       scene.debug_shadow_light  = (int32_t)candidate.index;
       nearest_distance_squared = candidate.distance_squared;
     }
   }
 
+  if (scene.debug_flags & DEBUG_FLAG_RENDER_SHADOW_VISIBILITY)
+  {
+    const shared::entity_uid_t shown =
+        scene.debug_shadow_light >= 0 ? pass.lights[(uint32_t)scene.debug_shadow_light].uid
+                                      : shared::null_entity_uid;
+    if (shown != g_shadow_debug_light_shown)
+    {
+      g_shadow_debug_light_shown = shown;
+      if (shown == shared::null_entity_uid)
+        log_terminal("[renderer] shadow_visibility shows NO light (magenta): {}",
+                     settings.debug_light_uid != shared::null_entity_uid
+                         ? "the pinned r_shadow_debug_light has no layer this frame"
+                         : "no shadowed light in the pass");
+      else
+      {
+        const shared::scene_light_t &light = pass.lights[(uint32_t)scene.debug_shadow_light];
+        const char *kind = light.kind == shared::light_kind_t::Point         ? "point"
+                           : light.kind == shared::light_kind_t::Spot        ? "spot"
+                                                                             : "directional";
+        log_terminal("[renderer] shadow_visibility shows {} light {} ({}), layer {}", kind,
+                     shown, settings.debug_light_uid != shared::null_entity_uid ? "pinned" : "nearest",
+                     (int)scene.lights[scene.debug_shadow_light].radiance[3]);
+      }
+    }
+  }
+
+  // r_debug_channel = probe_visibility shows a TAIL light holding a probe
+  // channel -- a Mixed light the bake saw -- pinned by r_shadow_debug_light or
+  // else the nearest to the camera; whether it has a shadow layer is beside
+  // the point, since the probes are the other half of its occlusion.
+  if (scene.debug_flags & DEBUG_FLAG_RENDER_PROBE_VISIBILITY)
+  {
+    scene.debug_shadow_light = -1;
+    nearest_distance_squared  = 0.0f;
+    for (int32_t index = scene.baked_light_count; index < scene.light_count; ++index)
+    {
+      const shared::scene_light_t &light = pass.lights[(uint32_t)index];
+      if (light.baked_slot < 0)
+        continue;
+      bool holds_a_channel = false;
+      for (const int32_t slot : scene.probe_visibility_slots)
+        holds_a_channel |= slot == (int32_t)light.baked_slot;
+      if (!holds_a_channel)
+        continue;
+      if (settings.debug_light_uid != shared::null_entity_uid &&
+          light.uid != settings.debug_light_uid)
+        continue;
+
+      const linalg::vec3f to_light         = light.position - eye;
+      const float         distance_squared = linalg::dot(to_light, to_light);
+      if (scene.debug_shadow_light < 0 || distance_squared < nearest_distance_squared)
+      {
+        scene.debug_shadow_light = index;
+        nearest_distance_squared = distance_squared;
+      }
+    }
+
+    const shared::entity_uid_t shown =
+        scene.debug_shadow_light >= 0 ? pass.lights[(uint32_t)scene.debug_shadow_light].uid
+                                      : shared::null_entity_uid;
+    if (shown != g_shadow_debug_light_shown)
+    {
+      g_shadow_debug_light_shown = shown;
+      if (shown == shared::null_entity_uid)
+        log_terminal("[renderer] probe_visibility shows NO light (magenta): no Mixed light "
+                     "with a probe channel in the pass{}",
+                     settings.debug_light_uid != shared::null_entity_uid
+                         ? " matches the pinned r_shadow_debug_light"
+                         : " -- bake with probes on and a Mixed light in the map");
+      else
+        log_terminal("[renderer] probe_visibility shows light {} ({}), baked slot {}", shown,
+                     settings.debug_light_uid != shared::null_entity_uid ? "pinned" : "nearest",
+                     (int)pass.lights[(uint32_t)scene.debug_shadow_light].baked_slot);
+    }
+  }
+
   scene.shadow_settings[0] = settings.normal_offset_texels;
   scene.shadow_settings[1] = (float)std::clamp(settings.pcf_radius, 0, 3);
+  scene.shadow_settings[2] = std::clamp(settings.cascade_blend, 0.0f, 0.5f);
 }
 
 // The tag is cast straight across into the scene block.
@@ -5036,7 +5300,7 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
   VkRect2D scissor{};
   scissor.extent = {g_shadow_pool.size, g_shadow_pool.size};
   vkCmdSetScissor(cmd, 0, 1, &scissor);
-  vkCmdSetDepthBias(cmd, settings.bias_constant, 0.0f, settings.bias_slope);
+  vkCmdSetDepthBias(cmd, 0.0f, 0.0f, settings.bias_slope);
 
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_shadow_pipeline_layout,
                           PASS_DESCRIPTOR_SET, 1, &g_shadow_pass_set, 1, &block_offset);
@@ -6378,6 +6642,12 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   g_draw_skinning.clear();
   g_prepared_passes.clear();
   uint32_t next_shadow_layer = 0;
+  // The freeze latches the camera on its rising edge and the fit keeps using it.
+  if (shadows.freeze_cascades && !g_shadow_freeze_active && !passes.empty())
+    g_frozen_shadow_view = shadow_view_of(passes[0].view);
+  g_shadow_freeze_active = shadows.freeze_cascades;
+  g_point_shadow_faces.clear();
+  g_sun_cascades.count   = 0;
   for (const view_pass_t &pass : passes)
   {
     prepared_pass_t prepared{};

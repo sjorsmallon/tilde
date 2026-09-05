@@ -52,9 +52,13 @@ enum class Debug_Channel : uint8_t
   uv = 2,
   parallax_uv = 3,
   shadow_visibility = 4,
+  shadow_cascades = 5,
+  direct_light = 6,
+  baked_light = 7,
+  probe_visibility = 8,
 };
 
-constexpr uint32_t Debug_Channel_COUNT = 5;
+constexpr uint32_t Debug_Channel_COUNT = 9;
 
 const char* to_string(Debug_Channel value);
 template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::string_view text);
@@ -122,11 +126,18 @@ struct cvar_state_t
   float r_zoom_fov = 30.0f;
   float r_zoom_easing_time_between_fovs = 0.0f;
   int32_t r_shadow_map_size = 1024;
-  int32_t r_shadow_layer_count = 4;
-  float r_shadow_bias_constant = 1.5f;
+  int32_t r_shadow_layer_count = 12;
+  float r_shadow_light_offset = 1.0f;
   float r_shadow_bias_slope = 2.5f;
   float r_shadow_normal_offset = 1.5f;
   int32_t r_shadow_pcf_radius = 1;
+  int32_t r_shadow_debug_light = 0;
+  int32_t r_shadow_cascade_count = 3;
+  float r_shadow_cascade_lambda = 0.7f;
+  float r_shadow_cascade_distance = 4096.0f;
+  float r_shadow_cascade_blend = 0.1f;
+  float r_shadow_cascade_caster_extent = 8192.0f;
+  bool r_shadow_freeze = false;
   float m_sensitivity = 0.1f;
   float m_zoom_sensitivity_ratio = 1.0f;
   float cl_maxfps = 1000.0f;
@@ -224,60 +235,67 @@ enum class cvar_id : uint16_t
   r_zoom_easing_time_between_fovs = 37,
   r_shadow_map_size = 38,
   r_shadow_layer_count = 39,
-  r_shadow_bias_constant = 40,
+  r_shadow_light_offset = 40,
   r_shadow_bias_slope = 41,
   r_shadow_normal_offset = 42,
   r_shadow_pcf_radius = 43,
-  m_sensitivity = 44,
-  m_zoom_sensitivity_ratio = 45,
-  cl_maxfps = 46,
-  cl_interpolation_delay_ticks = 47,
-  cl_interpolation_debug = 48,
-  cl_display_latency_ms = 49,
-  cl_draw_player_hull = 50,
-  cl_spectate_slot = 51,
-  cl_player_unlit = 52,
-  cl_aim_debug = 53,
-  cl_aim_debug_pitch = 54,
-  cl_aim_debug_yaw = 55,
-  cl_show_deploy_timer = 56,
-  cl_crosshair = 57,
-  cl_crosshair_dot = 58,
-  cl_crosshair_size = 59,
-  cl_crosshair_gap = 60,
-  cl_crosshair_thickness = 61,
-  cl_crosshair_r = 62,
-  cl_crosshair_g = 63,
-  cl_crosshair_b = 64,
-  cl_crosshair_a = 65,
-  editor_speed = 66,
-  cl_timescale = 67,
-  sound_reference_distance = 68,
-  sound_max_distance_cutoff = 69,
-  sound_rolloff_factor = 70,
-  map_respawn_delay_seconds = 71,
-  map_kill_limit = 72,
-  map_round_time_limit_seconds = 73,
-  pin_main_thread = 74,
-  r_debug_channel = 75,
-  r_exposure = 76,
-  debug_show_collisions = 77,
-  debug_show_hitboxes = 78,
-  debug_show_navmesh = 79,
-  debug_show_box_volumes = 80,
-  debug_hide_geometry = 81,
-  cl_shot_debug_seconds = 82,
-  debug_show_entity_counts = 83,
-  debug_show_physics_bodies = 84,
-  net_snapshot_debug = 85,
-  sv_event_debug = 86,
-  cl_event_debug = 87,
-  sv_reliable_debug = 88,
+  r_shadow_debug_light = 44,
+  r_shadow_cascade_count = 45,
+  r_shadow_cascade_lambda = 46,
+  r_shadow_cascade_distance = 47,
+  r_shadow_cascade_blend = 48,
+  r_shadow_cascade_caster_extent = 49,
+  r_shadow_freeze = 50,
+  m_sensitivity = 51,
+  m_zoom_sensitivity_ratio = 52,
+  cl_maxfps = 53,
+  cl_interpolation_delay_ticks = 54,
+  cl_interpolation_debug = 55,
+  cl_display_latency_ms = 56,
+  cl_draw_player_hull = 57,
+  cl_spectate_slot = 58,
+  cl_player_unlit = 59,
+  cl_aim_debug = 60,
+  cl_aim_debug_pitch = 61,
+  cl_aim_debug_yaw = 62,
+  cl_show_deploy_timer = 63,
+  cl_crosshair = 64,
+  cl_crosshair_dot = 65,
+  cl_crosshair_size = 66,
+  cl_crosshair_gap = 67,
+  cl_crosshair_thickness = 68,
+  cl_crosshair_r = 69,
+  cl_crosshair_g = 70,
+  cl_crosshair_b = 71,
+  cl_crosshair_a = 72,
+  editor_speed = 73,
+  cl_timescale = 74,
+  sound_reference_distance = 75,
+  sound_max_distance_cutoff = 76,
+  sound_rolloff_factor = 77,
+  map_respawn_delay_seconds = 78,
+  map_kill_limit = 79,
+  map_round_time_limit_seconds = 80,
+  pin_main_thread = 81,
+  r_debug_channel = 82,
+  r_exposure = 83,
+  debug_show_collisions = 84,
+  debug_show_hitboxes = 85,
+  debug_show_navmesh = 86,
+  debug_show_box_volumes = 87,
+  debug_hide_geometry = 88,
+  cl_shot_debug_seconds = 89,
+  debug_show_entity_counts = 90,
+  debug_show_physics_bodies = 91,
+  net_snapshot_debug = 92,
+  sv_event_debug = 93,
+  cl_event_debug = 94,
+  sv_reliable_debug = 95,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 89;
+constexpr uint32_t CVAR_COUNT = 96;
 
 enum class command_id : uint16_t
 {

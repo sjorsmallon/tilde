@@ -72,8 +72,28 @@ std::vector<uint8_t> classify_probes_inside_solid(const probe_grid_t &grid,
   return inside;
 }
 
+probe_visibility_slots_t assign_probe_visibility_channels(Span<const baked_light_t> lights)
+{
+  probe_visibility_slots_t slots = NO_PROBE_VISIBILITY_SLOTS;
+  uint32_t claimed = 0;
+  for (size_t slot = 0; slot < lights.size(); ++slot)
+  {
+    if (!light_is_analytic(lights[slot].light.mode)) continue;
+    if (claimed < PROBE_VISIBILITY_CHANNELS)
+    {
+      slots[claimed++] = (int16_t)slot;
+      continue;
+    }
+    log_warning("[lightmap] Mixed light {} is past the {} the probes hold a visibility for; "
+                "it casts no static shadow onto dynamic objects. Make it Baked or Dynamic, or "
+                "make an earlier Mixed light one.",
+                lights[slot].uid, PROBE_VISIBILITY_CHANNELS);
+  }
+  return slots;
+}
+
 void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> inside,
-                                std::vector<indirect_sh_l1_t> &values)
+                                std::vector<probe_trace_t> &values)
 {
   if (values.size() != grid.probe_count() || inside.size() != grid.probe_count())
     fatal_error("[lightmap] dilating {} probe(s) over a grid of {} with {} flag(s)",
@@ -83,7 +103,7 @@ void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> in
   for (uint8_t &flag : filled) flag = flag ? 0 : 1;
 
   std::vector<uint8_t> filled_after;
-  std::vector<indirect_sh_l1_t> values_after;
+  std::vector<probe_trace_t> values_after;
   for (;;)
   {
     filled_after = filled;
@@ -96,6 +116,7 @@ void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> in
 
       const linalg::vec3i at = grid.coordinates_of(index);
       indirect_sh_l1_t sum;
+      Array<float, PROBE_VISIBILITY_CHANNELS> visibility_sum{};
       int neighbours = 0;
       for (int dz = -1; dz <= 1; ++dz)
       for (int dy = -1; dy <= 1; ++dy)
@@ -108,17 +129,21 @@ void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> in
         const size_t neighbour = grid.index_of(near.x, near.y, near.z);
         if (!filled[neighbour]) continue;
 
-        sum.l0 = sum.l0 + values[neighbour].l0;
+        sum.l0 = sum.l0 + values[neighbour].light.l0;
         for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
-          sum.l1[axis] = sum.l1[axis] + values[neighbour].l1[axis];
+          sum.l1[axis] = sum.l1[axis] + values[neighbour].light.l1[axis];
+        for (uint32_t channel = 0; channel < PROBE_VISIBILITY_CHANNELS; ++channel)
+          visibility_sum[channel] += values[neighbour].visibility[channel];
         ++neighbours;
       }
       if (neighbours == 0) continue;
 
       const float scale = 1.f / (float)neighbours;
-      values_after[index].l0 = sum.l0 * scale;
+      values_after[index].light.l0 = sum.l0 * scale;
       for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
-        values_after[index].l1[axis] = sum.l1[axis] * scale;
+        values_after[index].light.l1[axis] = sum.l1[axis] * scale;
+      for (uint32_t channel = 0; channel < PROBE_VISIBILITY_CHANNELS; ++channel)
+        values_after[index].visibility[channel] = visibility_sum[channel] * scale;
       filled_after[index] = 1;
       changed = true;
     }
@@ -138,7 +163,8 @@ probe_volume_t bake_probe_volume(const probe_grid_t &grid,
   const auto started = std::chrono::steady_clock::now();
 
   const std::vector<uint8_t> inside = classify_probes_inside_solid(grid, occluders);
-  std::vector<indirect_sh_l1_t> values(grid.probe_count());
+  const probe_visibility_slots_t visibility_slots = assign_probe_visibility_channels(lights);
+  std::vector<probe_trace_t> values(grid.probe_count());
 
   unsigned int worker_count = std::thread::hardware_concurrency();
   if (worker_count == 0) worker_count = 1;
@@ -154,7 +180,8 @@ probe_volume_t bake_probe_volume(const probe_grid_t &grid,
 
       const linalg::vec3i at = grid.coordinates_of(index);
       const uint32_t hash = sample_hash(at.x, at.y, at.z, 0x50524f42);
-      values[index] = trace_probe_light(scene, lights, grid.position_of(at), settings, hash);
+      values[index] = trace_probe_light(scene, lights, visibility_slots, grid.position_of(at),
+                                        settings, hash);
     }
   };
 
@@ -168,16 +195,25 @@ probe_volume_t bake_probe_volume(const probe_grid_t &grid,
 
   probe_volume_t volume;
   volume.allocate(grid);
-  for (size_t index = 0; index < values.size(); ++index) volume.store(index, values[index]);
+  volume.visibility_slots = visibility_slots;
+  for (size_t index = 0; index < values.size(); ++index)
+  {
+    volume.store(index, values[index].light);
+    volume.store_visibility(index, values[index].visibility);
+  }
 
   size_t inside_count = 0;
   for (const uint8_t flag : inside) inside_count += flag;
+  uint32_t visibility_channels = 0;
+  for (const int16_t slot : visibility_slots) visibility_channels += slot != LIGHTMAP_NO_LIGHT_SLOT;
   const double seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
   log_terminal("[lightmap] baked {}x{}x{} probes at spacing {} in {:.2f}s -- {} traced, {} "
-               "inside solids and filled from their neighbours, {} chain(s) per probe.",
+               "inside solids and filled from their neighbours, {} chain(s) per probe, {} "
+               "Mixed light visibility channel(s).",
                grid.count.x, grid.count.y, grid.count.z, grid.spacing, seconds,
-               values.size() - inside_count, inside_count, settings.rays_per_sample);
+               values.size() - inside_count, inside_count, settings.rays_per_sample,
+               visibility_channels);
 
   return volume;
 }

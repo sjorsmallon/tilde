@@ -259,10 +259,17 @@ bool Tick()
     renderer::shadow_settings_t shadows;
     shadows.map_size             = (uint32_t)std::max(cvars.r_shadow_map_size, 0);
     shadows.layer_count          = (uint32_t)std::max(cvars.r_shadow_layer_count, 0);
-    shadows.bias_constant        = cvars.r_shadow_bias_constant;
+    shadows.light_offset_texels  = cvars.r_shadow_light_offset;
     shadows.bias_slope           = cvars.r_shadow_bias_slope;
     shadows.normal_offset_texels = cvars.r_shadow_normal_offset;
     shadows.pcf_radius           = cvars.r_shadow_pcf_radius;
+    shadows.debug_light_uid      = (shared::entity_uid_t)std::max(cvars.r_shadow_debug_light, 0);
+    shadows.cascade_count         = (uint32_t)std::max(cvars.r_shadow_cascade_count, 1);
+    shadows.cascade_lambda        = cvars.r_shadow_cascade_lambda;
+    shadows.cascade_distance      = cvars.r_shadow_cascade_distance;
+    shadows.cascade_blend         = cvars.r_shadow_cascade_blend;
+    shadows.cascade_caster_extent = cvars.r_shadow_cascade_caster_extent;
+    shadows.freeze_cascades       = cvars.r_shadow_freeze;
     renderer::render_frame(frame_passes, frame_ui, tonemap, shadows);
   }
 

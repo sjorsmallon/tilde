@@ -158,6 +158,13 @@ Light_Mode :: enum { Baked, Mixed, Dynamic }
 
 Light :: component {
     color:     v3 = {1, 1, 1}   @Editable @Saveable
+    // For a point or spot light: the irradiance it delivers at ONE METRE, falling
+    // off with the square of the distance (shared/lighting.hpp, radiance_of). For
+    // a directional light there is no distance and no falloff, so this IS the
+    // irradiance on every face facing it -- a sun of 1 lights a whole wall as
+    // much as a lamp of 1 held one metre from it, and at the default r_exposure a
+    // white face saturates near 3. A spot at intensity I is that bright only at
+    // I / d^2 metres, so a sun matching a spot's centre at d metres wants I / d^2.
     intensity: f32 = 1.0        @Editable @Saveable
     // Baked is the default because level fill light is most of them, and because
     // it is what every light already in a .source file was when it was placed.

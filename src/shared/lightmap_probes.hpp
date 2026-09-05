@@ -39,14 +39,25 @@ namespace shared
 classify_probes_inside_solid(const probe_grid_t &grid,
                              const Bounding_Volume_Hierarchy &occluders);
 
+// Which Mixed light each of the PROBE_VISIBILITY_CHANNELS is OF, by baked slot,
+// in slot order -- the first four Mixed lights of the bake. A fifth and later
+// gets LIGHTMAP_NO_LIGHT_SLOT nowhere and a line naming it: on dynamic objects
+// it is unoccluded by static geometry, its shadow map still holds the dynamic
+// casters. A Baked light needs no channel (its occlusion is folded into the
+// probe's radiance) and a Dynamic light has no bake.
+[[nodiscard]] probe_visibility_slots_t
+assign_probe_visibility_channels(Span<const baked_light_t> lights);
+
 // Fill every probe flagged inside a solid from the ones around it that are not:
 // the gutter dilation in three dimensions. Repeated until every probe holds a
 // value, one shell per pass, so a probe deep in a thick wall takes the value of
 // the nearest open air rather than staying black. Over RAW floats, before any
 // encoding -- averaging bias-encoded bytes would be wrong for the reason the
 // gutter's is. A probe with no open neighbour in the whole volume stays zero.
+// The visibility channels dilate beside the light, for the same reason the
+// atlas's one gutter pass covers both of its roles.
 void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> inside,
-                                std::vector<indirect_sh_l1_t> &values);
+                                std::vector<probe_trace_t> &values);
 
 // The whole probe half of a bake: classify the grid against `occluders`, trace
 // every open probe on every core, dilate into the rest, encode. `lights` and

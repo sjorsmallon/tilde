@@ -617,6 +617,7 @@ add_library(game_client SHARED
     src/client/weapon_fire_audio.cpp
     src/client/hit_confirm_audio.cpp
     src/client/shot_debug.cpp
+    src/client/shadow_debug_draw.cpp
     # Decode one entity snapshot, then advance the newest held snapshot to it. Its own
     # TU so that second half cannot reach `dt` or the camera -- it runs once per
     # PACKET, not per frame.

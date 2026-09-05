@@ -587,16 +587,37 @@ struct tonemap_settings_t
 // this many layers at most, shared by every view pass in the frame. Per FRAME
 // for the tonemap's reason -- the pool is one image, so a second pass cannot
 // have its own resolution. scene.glsl spells the count as a literal.
-constexpr uint32_t MAX_SHADOW_LAYERS = 8;
+constexpr uint32_t MAX_SHADOW_LAYERS = 16;
 
 struct shadow_settings_t
 {
   uint32_t map_size             = 1024;
   uint32_t layer_count          = 4; // clamped to MAX_SHADOW_LAYERS
-  float    bias_constant        = 1.5f;
+  // The receiver is moved TOWARD the light by this many of the map's texels
+  // before the compare, on top of the slope-scaled rasterizer bias. A face-on
+  // surface gets no slope bias and no normal offset, and a constant rasterizer
+  // bias on a float depth buffer is a few ulps: without this a flat floor under
+  // the sun compares against its own depth and dithers 50/50 (shadow acne).
+  float    light_offset_texels  = 1.0f;
   float    bias_slope           = 2.5f;
   float    normal_offset_texels = 1.5f;
   int32_t  pcf_radius           = 1;
+  // Which light r_debug_channel = shadow_visibility shows: this uid, or the
+  // shadowed light nearest the camera when null. The channel shows ONE light
+  // and the lit view sums them all, so without a pin "the shadow is missing"
+  // and "the channel is on another light" look the same.
+  shared::entity_uid_t debug_light_uid = shared::null_entity_uid;
+  // The sun's cascades (shared::cascade_settings_t, gate 9 step 2): how many
+  // layers it takes, the split scheme, how far it reaches, the seam blend as
+  // a fraction of each split depth, and how far its boxes reach for casters.
+  uint32_t cascade_count         = 3;
+  float    cascade_lambda        = 0.7f;
+  float    cascade_distance      = 4096.0f;
+  float    cascade_blend         = 0.1f;
+  float    cascade_caster_extent = 8192.0f;
+  // r_shadow_freeze: fit the cascades to the camera of the frame this went on
+  // and keep fitting to it, so the fit can be flown out of and looked at.
+  bool     freeze_cascades = false;
 };
 
 // Executes the whole frame: particle compute, the scene pass into an HDR target,
@@ -613,6 +634,14 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
                   const tonemap_settings_t &tonemap, const shadow_settings_t &shadows);
 
 // --- Utilities ---
+
+// What the sun's cascades were fit to on the most recent frame -- the frozen
+// camera's while r_shadow_freeze is on -- for draw_shadow_cascades to draw.
+// count is 0 when no directional light claimed a layer.
+[[nodiscard]] const shared::shadow_cascades_t &sun_shadow_cascades();
+// Every point light that claimed six layers last frame, its faces fit and
+// culled against the same camera -- for draw_point_shadow_faces to draw.
+[[nodiscard]] Span<const shared::point_shadow_faces_t> point_shadow_faces();
 
 // The swapchain extent in pixels, which is the coordinate space ui_draw_list_t
 // works in. Exposed so layout code has it without reaching into ImGui's io.

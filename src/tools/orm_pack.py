@@ -1,5 +1,5 @@
-# Packs a material folder's ao.png, roughness.png and metallic.png into one
-# orm.png, and deletes the three it consumed.
+# Packs a material folder's ao.png, roughness.png and metallic.png (or
+# metal.png) into one orm.png, and deletes the three it consumed.
 #
 #   python src/tools/orm_pack.py resources/textures/harsh_bricks [...]
 #
@@ -22,7 +22,20 @@ import sys
 
 from PIL import Image, ImageChops
 
-CHANNEL_SOURCES = [("ao.png", "occlusion"), ("roughness.png", "roughness"), ("metallic.png", "metallic")]
+# Each role names the spellings a DCC export is seen to use, first match wins.
+CHANNEL_SOURCES = [
+    (("ao.png",), "occlusion"),
+    (("roughness.png",), "roughness"),
+    (("metallic.png", "metal.png"), "metallic"),
+]
+
+
+def find_source(folder, filenames):
+    for filename in filenames:
+        path = os.path.join(folder, filename)
+        if os.path.exists(path):
+            return path
+    return None
 
 
 def load_single_channel(path):
@@ -50,16 +63,18 @@ def pack_folder(folder):
         return True
 
     channels = []
-    for filename, role in CHANNEL_SOURCES:
-        path = os.path.join(folder, filename)
-        if not os.path.exists(path):
-            print("%s: no %s to take %s from" % (folder, filename, role))
+    consumed = []
+    for filenames, role in CHANNEL_SOURCES:
+        path = find_source(folder, filenames)
+        if path is None:
+            print("%s: no %s to take %s from" % (folder, " or ".join(filenames), role))
             return False
         try:
             channels.append(load_single_channel(path))
         except ValueError as error:
             print("%s: %s" % (folder, error))
             return False
+        consumed.append(path)
 
     sizes = {channel.size for channel in channels}
     if len(sizes) != 1:
@@ -67,8 +82,8 @@ def pack_folder(folder):
         return False
 
     Image.merge("RGB", channels).save(output_path, optimize=True)
-    for filename, _ in CHANNEL_SOURCES:
-        os.remove(os.path.join(folder, filename))
+    for path in consumed:
+        os.remove(path)
 
     print("%s: wrote orm.png %s, removed the three it packed" % (folder, channels[0].size))
     return True

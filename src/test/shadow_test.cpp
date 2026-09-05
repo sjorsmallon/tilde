@@ -1,9 +1,15 @@
-// Gate 9, the one piece of shadow-map maths that lives outside the renderer:
-// spot_shadow_projection (shared/lighting.hpp). A spot light's frustum IS its
+// Gate 9, the shadow-map maths that lives outside the renderer
+// (shared/lighting.hpp). spot_shadow_projection: a spot light's frustum IS its
 // cone, so the pin is geometric -- the cone's edge lands on the map's edge, the
 // range lands on depth 1, and the texel size is the cone's width over the
-// resolution. The receiver-side sampling reads the same matrix back out of the
-// scene block, so a matrix that passes this is one the shader agrees with.
+// resolution. directional_shadow_cascades: every slice corner lands inside its
+// cascade's map, a caster toward the sun is inside its depth range, a camera
+// turn changes no box's size and a camera move shifts it by whole texels. The
+// point_shadow_faces: a point light's six faces cover the six major-axis
+// regions with a guard past each seam, the face pick agrees with the shader's,
+// and a face the camera cannot see is culled. The receiver-side sampling reads
+// the same matrices back out of the scene block, so a matrix that passes this
+// is one the shader agrees with.
 
 #include "../shared/lighting.hpp"
 
@@ -97,6 +103,198 @@ int main()
   const vec3f                       at_down = project(down.view_projection, light.position + light.forward * 100.f);
   check(near(at_down.x, 0.f) && near(at_down.y, 0.f) && std::isfinite(at_down.z),
         "a straight-down spot light projects its axis to the map centre");
+
+  // --- The sun's cascades (gate 9 step 2) ---
+
+  shared::scene_light_t sun;
+  sun.kind    = shared::light_kind_t::Directional;
+  sun.forward = linalg::normalize(vec3f{0.3f, -1.f, 0.2f});
+
+  shared::shadow_view_t view;
+  view.position       = {100.f, 64.f, -40.f};
+  view.forward        = linalg::normalize(vec3f{1.f, -0.2f, 0.5f});
+  view.right          = linalg::normalize(linalg::cross(view.forward, vec3f{0.f, 1.f, 0.f}));
+  view.up             = linalg::cross(view.right, view.forward);
+  view.tan_half_fov_y = std::tan(linalg::to_radians(45.f));
+  view.aspect         = 16.f / 9.f;
+  view.near_plane     = 1.f;
+
+  shared::cascade_settings_t settings;
+  settings.count         = 3;
+  settings.lambda        = 0.7f;
+  settings.far_distance  = 4096.f;
+  settings.caster_extent = 8192.f;
+
+  check(near(shared::cascade_split_depth(view, settings, 0), 1.f), "split 0 is the near plane");
+  check(near(shared::cascade_split_depth(view, settings, 3), 4096.f), "the last split is the far distance");
+  check(shared::cascade_split_depth(view, settings, 1) < shared::cascade_split_depth(view, settings, 2) &&
+            shared::cascade_split_depth(view, settings, 2) < shared::cascade_split_depth(view, settings, 3),
+        "splits ascend");
+  {
+    shared::cascade_settings_t uniform = settings;
+    uniform.lambda                     = 0.f;
+    check(near(shared::cascade_split_depth(view, uniform, 1), 1.f + 4095.f / 3.f, 1e-2f),
+          "lambda 0 splits uniformly in depth");
+    shared::cascade_settings_t logarithmic = settings;
+    logarithmic.lambda                     = 1.f;
+    check(near(shared::cascade_split_depth(view, logarithmic, 1), 16.f, 1e-2f),
+          "lambda 1 splits logarithmically (4096^(1/3) = 16)");
+  }
+
+  const shared::shadow_cascades_t cascades =
+      shared::directional_shadow_cascades(sun, view, settings, RESOLUTION);
+  check(cascades.count == 3, "three cascades were fit");
+
+  for (uint32_t index = 0; index < cascades.count; ++index)
+  {
+    const shared::shadow_cascade_t &cascade = cascades.cascades[index];
+    const linalg::mat4f            &matrix  = cascade.projection.view_projection;
+
+    bool corners_inside = true;
+    for (const vec3f &corner : cascade.slice_corners)
+    {
+      const vec3f ndc = project(matrix, corner);
+      corners_inside  = corners_inside && std::abs(ndc.x) <= 1.f + 1e-3f &&
+                       std::abs(ndc.y) <= 1.f + 1e-3f && ndc.z >= -1e-3f && ndc.z <= 1.f + 1e-3f;
+    }
+    check(corners_inside, "every corner of a frustum slice projects inside its cascade's map");
+
+    const vec3f toward_sun = cascade.sphere_center - sun.forward * (cascade.sphere_radius + settings.caster_extent * 0.5f);
+    const vec3f at_caster  = project(matrix, toward_sun);
+    check(at_caster.z > 0.f && at_caster.z < 1.f, "a caster between the sun and the slice is inside the depth range");
+
+    check(near(cascade.projection.texel_size_at_unit_distance,
+               2.f * cascade.sphere_radius / (float)RESOLUTION, 1e-6f),
+          "a cascade's texel is its sphere's diameter over the resolution");
+
+    if (index + 1 < cascades.count)
+      check(near(cascade.far_depth, cascades.cascades[index + 1].near_depth), "cascades tile the depth range");
+  }
+  check(near(cascades.cascades[0].near_depth, 1.f) && near(cascades.cascades[2].far_depth, 4096.f),
+        "the cascades span near to far");
+
+  // A camera TURN leaves every box's size alone: the fit is to the slice's
+  // bounding sphere, which does not know which way the frustum points.
+  {
+    shared::shadow_view_t turned = view;
+    turned.forward               = linalg::normalize(vec3f{-0.4f, 0.1f, 1.f});
+    turned.right                 = linalg::normalize(linalg::cross(turned.forward, vec3f{0.f, 1.f, 0.f}));
+    turned.up                    = linalg::cross(turned.right, turned.forward);
+    const shared::shadow_cascades_t after_turn =
+        shared::directional_shadow_cascades(sun, turned, settings, RESOLUTION);
+    bool same_size = true;
+    for (uint32_t index = 0; index < cascades.count; ++index)
+      same_size = same_size && near(after_turn.cascades[index].sphere_radius,
+                                    cascades.cascades[index].sphere_radius, 1e-2f);
+    check(same_size, "turning the camera changes no cascade's size");
+  }
+
+  // A camera MOVE shifts the map by whole texels: a fixed world point lands a
+  // whole number of texels from where it was, so the texel grid stays put.
+  {
+    shared::shadow_view_t moved = view;
+    moved.position              = view.position + view.forward * 0.37f + view.right * 0.61f;
+    const shared::shadow_cascades_t after_move =
+        shared::directional_shadow_cascades(sun, moved, settings, RESOLUTION);
+    bool whole_texels = true;
+    for (uint32_t index = 0; index < cascades.count; ++index)
+    {
+      const vec3f fixed_point = {12.f, 3.f, -7.f};
+      const vec3f before      = project(cascades.cascades[index].projection.view_projection, fixed_point);
+      const vec3f after       = project(after_move.cascades[index].projection.view_projection, fixed_point);
+      const float shift_x     = (after.x - before.x) * 0.5f * (float)RESOLUTION;
+      const float shift_y     = (after.y - before.y) * 0.5f * (float)RESOLUTION;
+      whole_texels = whole_texels && near(shift_x, std::round(shift_x), 2e-2f) &&
+                     near(shift_y, std::round(shift_y), 2e-2f);
+    }
+    check(whole_texels, "moving the camera shifts a cascade's map by whole texels");
+  }
+
+  // --- The point-light cube (gate 9 step 3) ---
+  {
+    shared::scene_light_t point;
+    point.kind     = shared::light_kind_t::Point;
+    point.position = {0.f, 0.f, 0.f};
+    point.range    = 100.f;
+
+    shared::shadow_view_t view;
+    view.position       = {300.f, 0.f, 0.f};
+    view.forward        = {-1.f, 0.f, 0.f};
+    view.right          = {0.f, 0.f, -1.f};
+    view.up             = {0.f, 1.f, 0.f};
+    view.tan_half_fov_y = std::tan(linalg::to_radians(30.f));
+    view.aspect         = 16.f / 9.f;
+
+    const shared::point_shadow_faces_t faces = shared::point_shadow_faces(point, view, RESOLUTION);
+
+    // The face order is the shader's: +X, -X, +Y, -Y, +Z, -Z by major axis.
+    check(shared::point_shadow_face_of({5.f, 1.f, -2.f}) == 0, "+X is face 0");
+    check(shared::point_shadow_face_of({-5.f, 4.f, 4.f}) == 1, "-X is face 1");
+    check(shared::point_shadow_face_of({1.f, 9.f, -2.f}) == 2, "+Y is face 2");
+    check(shared::point_shadow_face_of({0.f, -3.f, 2.f}) == 3, "-Y is face 3");
+    check(shared::point_shadow_face_of({1.f, 1.f, 7.f}) == 4, "+Z is face 4");
+    check(shared::point_shadow_face_of({2.f, -2.f, -3.f}) == 5, "-Z is face 5");
+
+    // Each face's axis projects to its map centre and the range to depth 1.
+    const vec3f axes[6] = {{1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},
+                           {0.f, -1.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 0.f, -1.f}};
+    bool axis_centred = true;
+    for (uint32_t face = 0; face < 6; ++face)
+    {
+      const vec3f at_range =
+          project(faces.faces[face].projection.view_projection, axes[face] * point.range);
+      axis_centred = axis_centred && near(at_range.x, 0.f) && near(at_range.y, 0.f) &&
+                     near(at_range.z, 1.f, 1e-4f);
+      check(shared::point_shadow_face_of(axes[face]) == face, "a face's axis picks that face");
+    }
+    check(axis_centred, "every face's axis projects to its map centre at depth 1");
+
+    // A point on the seam between +X and +Y is inside BOTH maps, by the guard:
+    // the kernel at a seam never reads outside the face it was picked into.
+    {
+      const vec3f seam = {50.f, 50.f, 10.f};
+      const vec3f in_x = project(faces.faces[0].projection.view_projection, seam);
+      const vec3f in_y = project(faces.faces[2].projection.view_projection, seam);
+      const float guard_ndc = 2.f * shared::POINT_SHADOW_FACE_GUARD_TEXELS / (float)RESOLUTION;
+      check(std::abs(in_x.x) < 1.f && std::abs(in_x.y) < 1.f, "a seam point is inside the +X map");
+      check(std::abs(in_y.x) < 1.f && std::abs(in_y.y) < 1.f, "a seam point is inside the +Y map");
+      check(near(std::max(std::abs(in_x.x), std::abs(in_x.y)), 1.f - guard_ndc, 2e-2f),
+            "the seam sits the guard's width inside the map edge");
+      check(near(faces.faces[0].projection.texel_size_at_unit_distance,
+                 2.f * (1.f + guard_ndc) / (float)RESOLUTION, 1e-6f),
+            "a face texel one unit out is the guarded width over the resolution");
+    }
+
+    // Looking at the light from +X: the +X face is in view.
+    check(faces.faces[0].visible, "the face turned toward the camera is visible");
+
+    // Looking AWAY from the light: every face is behind the camera and culled.
+    {
+      shared::shadow_view_t away = view;
+      away.forward              = {1.f, 0.f, 0.f};
+      away.right                = {0.f, 0.f, 1.f};
+      const shared::point_shadow_faces_t culled = shared::point_shadow_faces(point, away, RESOLUTION);
+      bool all_culled = true;
+      for (uint32_t face = 0; face < 6; ++face)
+        all_culled = all_culled && !culled.faces[face].visible;
+      check(all_culled, "looking away from a point light culls all six faces");
+    }
+
+    // A narrow camera looking PAST the light, none of whose frustum reaches the
+    // light's range, culls every face too -- the near plane is not the only test.
+    {
+      shared::shadow_view_t past = view;
+      past.forward              = {0.f, 1.f, 0.f};
+      past.right                = {0.f, 0.f, -1.f};
+      past.up                   = {-1.f, 0.f, 0.f};
+      past.tan_half_fov_y       = std::tan(linalg::to_radians(10.f));
+      const shared::point_shadow_faces_t culled = shared::point_shadow_faces(point, past, RESOLUTION);
+      bool all_culled = true;
+      for (uint32_t face = 0; face < 6; ++face)
+        all_culled = all_culled && !culled.faces[face].visible;
+      check(all_culled, "a narrow camera looking past a point light culls all six faces");
+    }
+  }
 
   if (failures == 0)
     std::printf("shadow_test: all checks passed\n");

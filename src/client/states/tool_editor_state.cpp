@@ -19,6 +19,7 @@
 #include "../editor/tools/selection_tool.hpp"
 #include "../console.hpp"
 #include "../entity_hitbox_overlay.hpp"
+#include "../shadow_debug_draw.hpp"
 #include "../hud/announcement.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -1160,6 +1161,11 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   scene.view.viewport = {{0, 0}, {1, 1}};
   scene.view.camera   = camera;
   scene.debug_channel = state_manager::get_client_context().cvars->r_debug_channel;
+  if (state_manager::get_client_context().cvars->r_shadow_freeze)
+  {
+    draw_shadow_cascades(scene.debug, renderer::sun_shadow_cascades());
+    draw_point_shadow_faces(scene.debug, renderer::point_shadow_faces());
+  }
 
   // Sized from the bake's resolve table before any light is placed: the array's
   // head is indexed by baked slot, so it has to exist before the entity walk

@@ -28,6 +28,10 @@ constexpr const char* Debug_Channel_VALUE_NAMES[] = {
   "uv",
   "parallax_uv",
   "shadow_visibility",
+  "shadow_cascades",
+  "direct_light",
+  "baked_light",
+  "probe_visibility",
 };
 
 constexpr const char* Bot_Mode_VALUE_NAMES[] = {
@@ -38,7 +42,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
-  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 5}},
+  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 9}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
@@ -356,19 +360,19 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_shadow_layer_count",
-     .description = "Shadow map layers in the pool (at most 8)",
+     .description = "Shadow map layers in the pool (at most 16); the sun's cascades take one each, a point light takes six",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_I32,
      .offset = offsetof(cvar_state_t, r_shadow_layer_count),
      .size = sizeof(cvar_state_t::r_shadow_layer_count),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
-    {.name = "r_shadow_bias_constant",
-     .description = "Shadow depth bias, constant factor",
+    {.name = "r_shadow_light_offset",
+     .description = "Receiver offset toward the light before the compare, in shadow texels",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_F32,
-     .offset = offsetof(cvar_state_t, r_shadow_bias_constant),
-     .size = sizeof(cvar_state_t::r_shadow_bias_constant),
+     .offset = offsetof(cvar_state_t, r_shadow_light_offset),
+     .size = sizeof(cvar_state_t::r_shadow_light_offset),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_shadow_bias_slope",
@@ -393,6 +397,62 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_I32,
      .offset = offsetof(cvar_state_t, r_shadow_pcf_radius),
      .size = sizeof(cvar_state_t::r_shadow_pcf_radius),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_debug_light",
+     .description = "Entity uid of the light r_debug_channel shadow_visibility shows; 0 picks the shadowed light nearest the camera",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, r_shadow_debug_light),
+     .size = sizeof(cvar_state_t::r_shadow_debug_light),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_cascade_count",
+     .description = "Cascades the sun's shadow is split into (1 to 4)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_I32,
+     .offset = offsetof(cvar_state_t, r_shadow_cascade_count),
+     .size = sizeof(cvar_state_t::r_shadow_cascade_count),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_cascade_lambda",
+     .description = "Cascade split scheme: 0 uniform in depth, 1 logarithmic",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_cascade_lambda),
+     .size = sizeof(cvar_state_t::r_shadow_cascade_lambda),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_cascade_distance",
+     .description = "View distance the sun's runtime shadow reaches",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_cascade_distance),
+     .size = sizeof(cvar_state_t::r_shadow_cascade_distance),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_cascade_blend",
+     .description = "Blend band at each cascade seam, as a fraction of the split depth",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_cascade_blend),
+     .size = sizeof(cvar_state_t::r_shadow_cascade_blend),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_cascade_caster_extent",
+     .description = "How far toward the sun a cascade's box reaches for casters",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_cascade_caster_extent),
+     .size = sizeof(cvar_state_t::r_shadow_cascade_caster_extent),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_freeze",
+     .description = "Freeze the sun's cascade fit at the current camera and draw its slices and boxes",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, r_shadow_freeze),
+     .size = sizeof(cvar_state_t::r_shadow_freeze),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "m_sensitivity",
@@ -644,7 +704,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_debug_channel",
-     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility)",
+     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility)",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_ENUM,
      .offset = offsetof(cvar_state_t, r_debug_channel),
@@ -1124,6 +1184,10 @@ const char* to_string(Debug_Channel value)
     case Debug_Channel::uv: return "uv";
     case Debug_Channel::parallax_uv: return "parallax_uv";
     case Debug_Channel::shadow_visibility: return "shadow_visibility";
+    case Debug_Channel::shadow_cascades: return "shadow_cascades";
+    case Debug_Channel::direct_light: return "direct_light";
+    case Debug_Channel::baked_light: return "baked_light";
+    case Debug_Channel::probe_visibility: return "probe_visibility";
   }
   assert(false && "invalid Debug_Channel");
   return "";
@@ -1136,6 +1200,10 @@ template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::str
   if (text == "uv") return Debug_Channel::uv;
   if (text == "parallax_uv") return Debug_Channel::parallax_uv;
   if (text == "shadow_visibility") return Debug_Channel::shadow_visibility;
+  if (text == "shadow_cascades") return Debug_Channel::shadow_cascades;
+  if (text == "direct_light") return Debug_Channel::direct_light;
+  if (text == "baked_light") return Debug_Channel::baked_light;
+  if (text == "probe_visibility") return Debug_Channel::probe_visibility;
   return std::nullopt;
 }
 

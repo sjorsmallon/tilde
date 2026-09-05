@@ -64,7 +64,11 @@ constexpr uint32_t LIGHTMAP_MAGIC = 0x504D4C54; // "TLMP"
 //    xatlas chart has no plane, so its uvs are written down. A version-6 file
 //    has charts keyed by plane that no mesh face can find any more, and is
 //    REFUSED rather than read as a map whose props all draw unlit.
-constexpr uint32_t LIGHTMAP_VERSION = 7;
+// 8: the probe volume carries a per-Mixed-light VISIBILITY (lighting_def.md
+//    gate 9 step 4) -- four channel slots and one Unorm8x4 word per probe after
+//    the two SH arrays. A version-7 file has no room for them and is REFUSED
+//    for gate 5's reason: a visibility can only come from a bake.
+constexpr uint32_t LIGHTMAP_VERSION = 8;
 
 std::string lightmap_path_for(const std::string &map_path)
 {
@@ -177,6 +181,8 @@ void save_lightmap_sidecar(const std::string &map_path, const lightmap_t &lightm
   };
   write_bytes(lightmap.probes.l0_bytes);
   write_bytes(lightmap.probes.l1_bytes);
+  for (const int16_t slot : lightmap.probes.visibility_slots) write((int32_t)slot);
+  write_bytes(lightmap.probes.visibility_bytes);
 
   if (!out.good())
   {
@@ -360,17 +366,27 @@ lightmap_t load_lightmap_sidecar(const std::string &map_path, uint32_t map_conte
   };
   read_bytes(lightmap.probes.l0_bytes);
   read_bytes(lightmap.probes.l1_bytes);
+  for (int16_t &slot : lightmap.probes.visibility_slots)
+  {
+    int32_t stored = 0;
+    read(stored);
+    slot = (int16_t)stored;
+    // A slot past the table resolves to nothing rather than indexing it.
+    if (slot >= (int16_t)lightmap.light_uids.size()) slot = LIGHTMAP_NO_LIGHT_SLOT;
+  }
+  read_bytes(lightmap.probes.visibility_bytes);
 
   // A volume whose bytes do not fit its grid is a file that disagrees with
   // itself, and indexing it anyway reads past the end.
   const size_t probe_count = lightmap.probes.grid.probe_count();
   if (lightmap.probes.l0_bytes.size() != probe_count * 4 ||
-      lightmap.probes.l1_bytes.size() != probe_count * 4 * (size_t)SH_L1_LAYERS_PER_PAGE)
+      lightmap.probes.l1_bytes.size() != probe_count * 4 * (size_t)SH_L1_LAYERS_PER_PAGE ||
+      lightmap.probes.visibility_bytes.size() != probe_count * 4)
   {
-    log_error("[lightmap] {} holds a probe volume of {} probe(s) with {} + {} byte(s); "
+    log_error("[lightmap] {} holds a probe volume of {} probe(s) with {} + {} + {} byte(s); "
               "ignoring it. Rebake.",
               path, probe_count, lightmap.probes.l0_bytes.size(),
-              lightmap.probes.l1_bytes.size());
+              lightmap.probes.l1_bytes.size(), lightmap.probes.visibility_bytes.size());
     return {};
   }
 

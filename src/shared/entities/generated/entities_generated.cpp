@@ -1915,6 +1915,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x1549dda3u;
+const uint32_t SCHEMA_HASH = 0xab924887u;
 
 } // namespace entities
