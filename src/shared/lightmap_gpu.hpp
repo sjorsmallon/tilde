@@ -12,9 +12,11 @@
 
 #include "entity_uid.hpp"
 #include "lightmap.hpp"
+#include "lightmap_solve.hpp"
 #include "lightmap_trace.hpp"
 #include "linalg.hpp"
 #include "map.hpp"
+#include "span.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -187,5 +189,167 @@ struct gpu_bake_scene_t
 [[nodiscard]] linalg::vec2 gpu_triangle_uv_at(const gpu_bake_scene_t &scene,
                                               uint32_t triangle_index,
                                               const linalg::vec3 &position);
+
+// --- The seam (lightmap_gpu_plan.md step 3) ---------------------------------
+//
+// Above this line the bake has identities -- a chart, a plane, a face, a mesh.
+// Below it there are RECORDS, and a solver is whatever turns a batch of them
+// into a batch of answers. bake_lightmap owns the loop: it collects WHOLE charts
+// into a batch, dispatches the direct term under an all-zero light mask, ranks
+// each chart's slots on the CPU, dispatches the RESIDUAL for the charts that
+// dropped a light with the dropped bits set, dispatches the indirect term, and
+// reduces every answer into the chart scratch exactly where the reference path's
+// chunk loop does. Buffers in, buffers out: shared never learns what a VkBuffer
+// is, and the batching, the masks and the residual dance are testable with no
+// device.
+
+// The one block of SETTINGS every kernel reads, the twin of the uniform the GPU
+// solver uploads. Translated ONCE out of the solve settings, and the tracer's
+// settings are derived from THIS rather than from the solve settings a second
+// time, so the direct term and the bounce cannot read two different biases.
+struct gpu_bake_settings_t
+{
+  lightmap_solve_mode_t mode = lightmap_solve_mode_t::Direct_Light;
+  int32_t rays_per_sample = 0;
+  int32_t bounces_before_roulette = 2;
+  int32_t max_bounces = 16;
+  float ray_bias = 0.25f;
+  float shadow_ray_bias = 0.25f;
+  int32_t soft_shadow_samples = 8;
+  float directional_shadow_distance = 100000.f;
+};
+static_assert(sizeof(gpu_bake_settings_t) == 32,
+              "gpu_bake_settings_t is the std430 uniform block the kernels read");
+
+[[nodiscard]] gpu_bake_settings_t
+gpu_bake_settings_from(const lightmap_solve_settings_t &solve_settings);
+[[nodiscard]] indirect_trace_settings_t
+indirect_trace_settings_from(const gpu_bake_settings_t &settings);
+
+// What shading COST: rays counted where the rule that spends them is applied,
+// chains where they are fired. What the bake's report line carries.
+struct shade_statistics_t
+{
+  size_t direct_rays = 0;
+  size_t chains = 0;
+
+  void add(const shade_statistics_t &other)
+  {
+    direct_rays += other.direct_rays;
+    chains += other.chains;
+  }
+};
+
+// The CPU shade of ONE record, per term: the reference every kernel is compared
+// against, and what cpu_batch_solver_t runs over a batch. Neither knows what a
+// texel is; the averaging is the caller's.
+//
+// The direct term answers three things per light -- its visibility (the
+// coverage), what it delivers (the ranking weight) and, for the lights
+// `irradiance_light_mask` admits, its irradiance. The mask is all zero on a first
+// pass, because which lights may sum is exactly what the ranking has not decided
+// yet, and the dropped lights' bits on the residual one.
+void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> lights,
+                         const Bounding_Volume_Hierarchy &bvh,
+                         const gpu_bake_settings_t &settings, uint64_t irradiance_light_mask,
+                         linalg::vec3 &out_irradiance, Span<float> out_coverage,
+                         Span<float> out_weight, shade_statistics_t &statistics);
+
+// The indirect term shares the record's position, normal and seed with the
+// direct one rather than walking the chart a second time, so the two terms are
+// answers about the same places on the face. The geometric normal survives here
+// for ONE thing, choosing which hemisphere to fire into: nothing multiplies by
+// N.L, since the texel stores what arrives and the shader applies the cosine.
+[[nodiscard]] indirect_sh_l1_t shade_sample_indirect(const gpu_sample_t &sample,
+                                                     const traced_scene_t &scene,
+                                                     Span<const baked_light_t> lights,
+                                                     const indirect_trace_settings_t &settings,
+                                                     shade_statistics_t &statistics);
+
+// A chart's residual mask is one bit per light of the resolve table, so a bake
+// serves at most this many baked lights. Not a new limit: the runtime's light
+// array is slot-indexed over the same table and holds MAX_LIGHTS (64), so a
+// 65th baked light already had no slot to be read from.
+inline constexpr size_t LIGHT_MASK_BITS = 64;
+
+// Everything a solver shades against, handed over ONCE per bake. The world has
+// two spellings here on purpose: the triangle scene is what a kernel traces, the
+// BVH plus the traced scene is what the CPU shade traces, and a solver reads the
+// one it is written against. Both are derived from the same map in the same
+// call -- the_gpu_scene_is_made_of_what_the_tracer_sees is the pin that they
+// agree, and it runs with no device.
+struct batch_solver_scene_t
+{
+  const gpu_bake_scene_t *gpu_scene = nullptr;
+  const Bounding_Volume_Hierarchy *bvh = nullptr;
+  const traced_scene_t *traced = nullptr;
+  Span<const baked_light_t> lights;
+  gpu_bake_settings_t settings;
+};
+
+struct batch_solve_statistics_t
+{
+  shade_statistics_t shade;
+  size_t direct_dispatches = 0;
+  size_t indirect_dispatches = 0;
+};
+
+struct lightmap_batch_solver_t
+{
+  virtual ~lightmap_batch_solver_t() = default;
+
+  // For the report line, which says which path a bake took.
+  [[nodiscard]] virtual const char *name() const = 0;
+
+  // How many result FLOATS a batch may produce -- a record's direct answer is
+  // 3 + 2 * light_count of them and its indirect answer 12. A batch is as many
+  // WHOLE charts as fit, whole because a chart's ranking must see every sample
+  // of it before the residual dispatch; a chart bigger than the whole budget is
+  // still one batch, on its own. The solver names the number because it is the
+  // solver's memory.
+  [[nodiscard]] virtual size_t result_budget_in_floats() const = 0;
+
+  virtual void upload_scene(const batch_solver_scene_t &scene) = 0;
+
+  // `chart_light_masks` is indexed by gpu_sample_t::chart_index. The solver
+  // sizes `out` itself: one answer per record, sample-major, light_count per
+  // sample.
+  virtual void solve_direct(Span<const gpu_sample_t> samples,
+                            Span<const uint64_t> chart_light_masks,
+                            gpu_direct_results_t &out) = 0;
+  virtual void solve_indirect(Span<const gpu_sample_t> samples,
+                              gpu_indirect_results_t &out) = 0;
+
+  [[nodiscard]] virtual batch_solve_statistics_t statistics() const = 0;
+};
+
+// The CPU shade behind the seam: the two shade functions above over a batch,
+// the records cut into slices across the hardware threads -- a record's answer
+// depends on nothing but the record, so where a slice boundary falls moves no
+// result. In shared rather than in the test because it is what a GPU solver is
+// COMPARED against: the same batch loop under two solvers isolates the shading
+// from everything around it.
+struct cpu_batch_solver_t final : lightmap_batch_solver_t
+{
+  // Public so a test can force a batch boundary between two charts by lowering
+  // it. 64 MB of result floats; the GPU solver's budget is its device's.
+  size_t result_budget = (size_t)1 << 24;
+
+  // Zero is every hardware thread.
+  unsigned int worker_count = 0;
+
+  [[nodiscard]] const char *name() const override { return "the CPU batch solver"; }
+  [[nodiscard]] size_t result_budget_in_floats() const override { return result_budget; }
+  void upload_scene(const batch_solver_scene_t &scene) override;
+  void solve_direct(Span<const gpu_sample_t> samples, Span<const uint64_t> chart_light_masks,
+                    gpu_direct_results_t &out) override;
+  void solve_indirect(Span<const gpu_sample_t> samples, gpu_indirect_results_t &out) override;
+  [[nodiscard]] batch_solve_statistics_t statistics() const override { return accumulated; }
+
+private:
+  batch_solver_scene_t scene;
+  indirect_trace_settings_t indirect;
+  batch_solve_statistics_t accumulated;
+};
 
 } // namespace shared

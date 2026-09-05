@@ -205,7 +205,7 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
   if (ImGui::Button("Bake", {-1, 0}))
   {
     visibility_masks = {};
-    shared::bake_lightmap(*ctx.map, baked, solve_settings,
+    shared::bake_lightmap(*ctx.map, baked, solve_settings, nullptr,
                           emit_per_light_visibility ? &visibility_masks : nullptr);
 
     lit_texel_count = 0;

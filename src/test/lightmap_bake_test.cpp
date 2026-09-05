@@ -669,7 +669,7 @@ shared::lightmap_t bake_for(const shared::map_t &map,
                             shared::lightmap_visibility_masks_t *masks = nullptr)
 {
   shared::lightmap_t lightmap = pack_for(map);
-  shared::bake_lightmap(map, lightmap, solve, masks);
+  shared::bake_lightmap(map, lightmap, solve, nullptr, masks);
   return lightmap;
 }
 
@@ -3137,6 +3137,105 @@ void a_layer_is_filtered_in_linear_space()
   assert(scene.albedo.pixels[0] != 128);
 }
 
+// --- The seam: a batched bake is the reference bake (lightmap_gpu_plan.md 3) --
+
+// Everything a bake decides, compared whole: the four page sets, the resolve
+// table, every chart's slots, and the debug masks.
+void assert_bakes_are_identical(const shared::lightmap_t &reference,
+                                const shared::lightmap_t &batched,
+                                const shared::lightmap_visibility_masks_t &reference_masks,
+                                const shared::lightmap_visibility_masks_t &batched_masks)
+{
+  assert(!reference.irradiance_pages.bytes.empty());
+  assert(reference.irradiance_pages.bytes == batched.irradiance_pages.bytes);
+  assert(reference.visibility_pages.bytes == batched.visibility_pages.bytes);
+  assert(reference.indirect_l0_pages.bytes == batched.indirect_l0_pages.bytes);
+  assert(reference.indirect_l1_pages.bytes == batched.indirect_l1_pages.bytes);
+  assert(reference.light_uids == batched.light_uids);
+
+  assert(reference.charts.size() == batched.charts.size());
+  for (size_t i = 0; i < reference.charts.size(); ++i)
+    for (uint32_t slot = 0; slot < shared::LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+      assert(reference.charts[i].light_slots[slot] == batched.charts[i].light_slots[slot]);
+
+  assert(!reference_masks.coverage.empty());
+  assert(reference_masks.light_uids == batched_masks.light_uids);
+  assert(reference_masks.coverage == batched_masks.coverage);
+}
+
+// The batch loop is what a GPU solver will run under, so it is pinned with no
+// device: a bake through the CPU shade behind the seam must equal the reference
+// bit for bit. Once with every chart in ONE batch, and once with a budget too
+// small for two charts, so a batch boundary falls between every pair. Returns
+// how many direct dispatches the one-batch bake took, which is where the
+// residual dispatch shows.
+size_t check_a_batched_bake_against_the_reference(const shared::map_t &map,
+                                                  const shared::lightmap_solve_settings_t &solve)
+{
+  shared::lightmap_visibility_masks_t reference_masks;
+  const shared::lightmap_t reference = bake_for(map, solve, &reference_masks);
+
+  size_t packed_charts = 0;
+  for (const shared::lightmap_chart_t &chart : reference.charts)
+    if (chart.page >= 0) ++packed_charts;
+  assert(packed_charts > 1);
+
+  shared::cpu_batch_solver_t whole;
+  shared::lightmap_visibility_masks_t whole_masks;
+  shared::lightmap_t in_one_batch = pack_for(map);
+  shared::bake_lightmap(map, in_one_batch, solve, &whole, &whole_masks);
+  assert_bakes_are_identical(reference, in_one_batch, reference_masks, whole_masks);
+  assert(whole.statistics().direct_dispatches >= 1 && whole.statistics().direct_dispatches <= 2);
+
+  shared::cpu_batch_solver_t split;
+  split.result_budget = 1;
+  shared::lightmap_visibility_masks_t split_masks;
+  shared::lightmap_t one_chart_per_batch = pack_for(map);
+  shared::bake_lightmap(map, one_chart_per_batch, solve, &split, &split_masks);
+  assert_bakes_are_identical(reference, one_chart_per_batch, reference_masks, split_masks);
+  assert(split.statistics().direct_dispatches >= packed_charts);
+
+  // Splitting moved no work either: the same rays and the same chains.
+  assert(split.statistics().shade.direct_rays == whole.statistics().shade.direct_rays);
+  assert(split.statistics().shade.chains == whole.statistics().shade.chains);
+
+  return whole.statistics().direct_dispatches;
+}
+
+void a_batched_bake_is_the_reference_bake_bit_for_bit()
+{
+  // A chart that DROPS a light: the residual dispatch, which is the second one.
+  shared::lightmap_solve_settings_t supersampled;
+  supersampled.samples_per_texel_edge = 2;
+  assert(check_a_batched_bake_against_the_reference(
+             map_with_a_floor_and_a_residual_light(64.f, 1.f), supersampled) == 2);
+
+  // Visibility mode has no residual: one dispatch, whatever a chart dropped.
+  shared::lightmap_solve_settings_t visibility;
+  visibility.mode = shared::lightmap_solve_mode_t::Visibility;
+  assert(check_a_batched_bake_against_the_reference(
+             map_with_a_floor_and_a_residual_light(64.f, 1.f), visibility) == 1);
+
+  // The tracer on: the indirect dispatch beside the direct one.
+  check_a_batched_bake_against_the_reference(
+      map_with_a_floor_a_ceiling_and_a_light_between_them(), traced_solve_settings());
+
+  // A mesh, whose charts answer sample_chart through triangles rather than a
+  // plane, lit as a_box_mesh_bakes_what_the_light_delivers lights it.
+  shared::map_t mesh_map = map_with_a_box_mesh();
+  {
+    std::shared_ptr<entities::Point_Light_Entity> light =
+        std::make_shared<entities::Point_Light_Entity>();
+    light->position = {0, 128, 0};
+    light->range = 1024.f;
+    light->light.color = {1.f, 1.f, 1.f};
+    light->light.intensity = 1.f;
+    mesh_map.entities.push_back({mesh_map.next_uid++, light});
+    add_the_four_lights_that_outrank_everything(mesh_map);
+  }
+  assert(check_a_batched_bake_against_the_reference(mesh_map, {}) == 2);
+}
+
 static assets::asset_state_t g_asset_state{};
 
 int main()
@@ -3211,6 +3310,7 @@ int main()
   an_indirect_rebake_reproduces_itself_byte_for_byte();
   tracing_indirect_light_moves_no_direct_pixel();
   a_spot_light_on_the_floor_lights_the_wall_it_is_aimed_at();
+  a_batched_bake_is_the_reference_bake_bit_for_bit();
 
   a_probe_grid_pads_the_geometry_by_one_spacing();
   a_probe_grid_snaps_to_the_spacing_and_not_to_the_brush();

@@ -11,6 +11,9 @@ build*/
 *.swp
 *.swo
 
+#image files
+*.png
+
 # Temporary/Generated files
 imgui.ini
 *.DS_Store

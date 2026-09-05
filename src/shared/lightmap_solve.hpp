@@ -114,12 +114,23 @@ struct lightmap_visibility_masks_t
   void allocate(const lightmap_atlas_t &atlas, std::vector<entity_uid_t> uids);
 };
 
+// lightmap_gpu.hpp: what shades a batch of sample records.
+struct lightmap_batch_solver_t;
+
 // The solve, over a lightmap whose charts are already built and PACKED --
 // `charts`, `atlas` and `settings` are the input, and everything a pixel decides
 // is the output: the irradiance pages, the visibility pages, the resolve table,
 // and each chart's light slots. One call rather than four because no two of
 // those mean anything apart -- a slot index is nonsense without the table it
 // indexes, and a visibility channel is nonsense without the slot that names it.
+//
+// `solver` is WHO shades the sample records (lightmap_gpu_plan.md step 3). Null
+// is the reference: every chart shaded on its own worker thread through the CPU
+// shade, the path every other bake test pins. A solver gets the charts in
+// BATCHES -- whole charts, as many as its result budget holds -- through the
+// seam lightmap_gpu.hpp declares, and a bake through cpu_batch_solver_t equals
+// the reference bit for bit, which is what leaves a GPU implementation nothing
+// to get wrong except the shading itself.
 //
 // `out_masks` is the optional DEBUG output, the deserialize_entity pattern: null
 // asks for none. It carries every light rather than the four a chart kept, which
@@ -131,6 +142,7 @@ struct lightmap_visibility_masks_t
 // it did before gate 2.
 void bake_lightmap(const map_t &map, lightmap_t &lightmap,
                    const lightmap_solve_settings_t &solve_settings,
+                   lightmap_batch_solver_t *solver = nullptr,
                    lightmap_visibility_masks_t *out_masks = nullptr);
 
 [[nodiscard]] bool try_write_lightmap_pages_png(const lightmap_pages_t &pages,

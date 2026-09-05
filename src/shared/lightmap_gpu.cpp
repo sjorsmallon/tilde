@@ -5,7 +5,9 @@
 #include "map_geometry.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <thread>
 
 namespace shared
 {
@@ -280,6 +282,146 @@ linalg::vec2 gpu_triangle_uv_at(const gpu_bake_scene_t &scene, uint32_t triangle
 
   return {triangle.uv0.x * weight_a + triangle.uv1.x * weight_b + triangle.uv2.x * weight_c,
           triangle.uv0.y * weight_a + triangle.uv1.y * weight_b + triangle.uv2.y * weight_c};
+}
+
+// --- The seam --------------------------------------------------------------
+
+gpu_bake_settings_t gpu_bake_settings_from(const lightmap_solve_settings_t &solve_settings)
+{
+  gpu_bake_settings_t settings;
+  settings.mode = solve_settings.mode;
+  settings.rays_per_sample = solve_settings.indirect_rays_per_sample;
+  settings.bounces_before_roulette = solve_settings.indirect_bounces_before_roulette;
+  settings.max_bounces = solve_settings.indirect_max_bounces;
+  // The same number for both biases because it is the same problem: a ray
+  // starting exactly on a face re-enters the solid it left.
+  settings.ray_bias = solve_settings.shadow_ray_bias;
+  settings.shadow_ray_bias = solve_settings.shadow_ray_bias;
+  settings.soft_shadow_samples = solve_settings.soft_shadow_samples;
+  settings.directional_shadow_distance = solve_settings.directional_shadow_distance;
+  return settings;
+}
+
+indirect_trace_settings_t indirect_trace_settings_from(const gpu_bake_settings_t &settings)
+{
+  indirect_trace_settings_t indirect;
+  indirect.rays_per_sample = settings.rays_per_sample;
+  indirect.bounces_before_roulette = settings.bounces_before_roulette;
+  indirect.max_bounces = settings.max_bounces;
+  indirect.ray_bias = settings.ray_bias;
+  indirect.shadow_ray_bias = settings.shadow_ray_bias;
+  indirect.soft_shadow_samples = settings.soft_shadow_samples;
+  indirect.directional_shadow_distance = settings.directional_shadow_distance;
+  return indirect;
+}
+
+namespace
+{
+
+// Records are independent, so a batch is handed out in fixed slices to however
+// many workers it is worth having; a slice boundary moves no result. Statistics
+// are per worker and summed after the join, like the reference path's.
+template <typename Shade_One>
+shade_statistics_t shade_in_slices(size_t record_count, unsigned int requested_workers,
+                                   Shade_One &&shade_one)
+{
+  constexpr size_t SLICE_IN_RECORDS = 256;
+
+  unsigned int worker_count =
+      requested_workers ? requested_workers : std::thread::hardware_concurrency();
+  if (worker_count == 0) worker_count = 1;
+  const size_t slice_count = (record_count + SLICE_IN_RECORDS - 1) / SLICE_IN_RECORDS;
+  worker_count = (unsigned int)std::min<size_t>(worker_count, std::max<size_t>(slice_count, 1));
+
+  std::vector<shade_statistics_t> per_worker(worker_count);
+  std::atomic<size_t> next_slice{0};
+
+  const auto run = [&](unsigned int worker) {
+    for (;;)
+    {
+      const size_t begin = next_slice.fetch_add(SLICE_IN_RECORDS, std::memory_order_relaxed);
+      if (begin >= record_count) return;
+      const size_t end = std::min(begin + SLICE_IN_RECORDS, record_count);
+      for (size_t i = begin; i < end; ++i) shade_one(i, per_worker[worker]);
+    }
+  };
+
+  std::vector<std::thread> workers;
+  workers.reserve(worker_count - 1);
+  for (unsigned int i = 1; i < worker_count; ++i) workers.emplace_back(run, i);
+  run(0);
+  for (std::thread &worker : workers) worker.join();
+
+  shade_statistics_t total;
+  for (const shade_statistics_t &worker : per_worker) total.add(worker);
+  return total;
+}
+
+} // namespace
+
+void cpu_batch_solver_t::upload_scene(const batch_solver_scene_t &uploaded)
+{
+  if (!uploaded.gpu_scene || !uploaded.bvh || !uploaded.traced)
+    fatal_error("[lightmap] the CPU batch solver was handed a scene with a null half "
+                "(triangles {}, bvh {}, traced {}).",
+                (const void *)uploaded.gpu_scene, (const void *)uploaded.bvh,
+                (const void *)uploaded.traced);
+  if (uploaded.lights.size() > LIGHT_MASK_BITS)
+    fatal_error("[lightmap] {} baked lights, and a chart's light mask holds {} bits.",
+                uploaded.lights.size(), LIGHT_MASK_BITS);
+
+  scene = uploaded;
+  indirect = indirect_trace_settings_from(uploaded.settings);
+  accumulated = {};
+}
+
+void cpu_batch_solver_t::solve_direct(Span<const gpu_sample_t> samples,
+                                      Span<const uint64_t> chart_light_masks,
+                                      gpu_direct_results_t &out)
+{
+  if (!scene.bvh)
+    fatal_error("[lightmap] the CPU batch solver was asked to shade before upload_scene.");
+
+  const size_t light_count = scene.lights.size();
+  out.resize(samples.size(), light_count);
+
+  const shade_statistics_t added = shade_in_slices(
+      samples.size(), worker_count, [&](size_t i, shade_statistics_t &statistics) {
+        const gpu_sample_t &sample = samples[(uint32_t)i];
+        if (sample.chart_index >= chart_light_masks.size())
+          fatal_error("[lightmap] record {} names chart {} of a batch carrying {} chart "
+                      "masks.",
+                      i, sample.chart_index, chart_light_masks.size());
+
+        shade_sample_direct(sample, scene.lights, *scene.bvh, scene.settings,
+                            chart_light_masks[sample.chart_index], out.irradiance[i],
+                            Span<float>(out.coverage.data() + i * light_count,
+                                        (uint32_t)light_count),
+                            Span<float>(out.weight.data() + i * light_count,
+                                        (uint32_t)light_count),
+                            statistics);
+      });
+
+  accumulated.shade.add(added);
+  ++accumulated.direct_dispatches;
+}
+
+void cpu_batch_solver_t::solve_indirect(Span<const gpu_sample_t> samples,
+                                        gpu_indirect_results_t &out)
+{
+  if (!scene.traced)
+    fatal_error("[lightmap] the CPU batch solver was asked to trace before upload_scene.");
+
+  out.values.assign(samples.size(), indirect_sh_l1_t{});
+
+  const shade_statistics_t added = shade_in_slices(
+      samples.size(), worker_count, [&](size_t i, shade_statistics_t &statistics) {
+        out.values[i] = shade_sample_indirect(samples[(uint32_t)i], *scene.traced,
+                                              scene.lights, indirect, statistics);
+      });
+
+  accumulated.shade.add(added);
+  ++accumulated.indirect_dispatches;
 }
 
 } // namespace shared
