@@ -1,5 +1,110 @@
 # TODO
 
+**Pack ORM inside `asset_pack`, and delete `src/tools/orm_pack.py`.** A
+material folder exported with `ao.png` / `roughness.png` / `metallic.png` and
+no `orm.png` today loads SILENTLY as occlusion 1, roughness 1, metallic 0, and
+the fix is a Python + Pillow script run by hand that deletes three source files
+-- the wrong shape for anything the build touches (mutates inputs, guesses at
+spellings, a toolchain dependency exercised once a month). The right shape is a
+COOK STAGE in `asset_pack`, which already links stb_image: compose the three
+channels itself in glTF order (R occlusion, G roughness, B metallic) and write
+the derived `orm.png` as a build PRODUCT, into the package rather than into
+`resources/`. What it changes is the `loose` premise that the tree IS the
+assets: a derived map needs a second root the byte layer can read from
+(`cmake_build/cooked/` or similar, mounted beside `resources/`), and that root
+is where BC7 compression and mip chains would land too when they arrive. Until
+that lands, the cheap loud half is worth doing on its own: `asset_pack` REFUSES
+a material folder holding any of the three sources without an `orm.png`, so
+"forgot to pack" stops at the build instead of shipping a matte material.
+Raised 2026-09-05, off `stringy_marble`.
+
+**Lighting: what gate 9 left open, and what is waiting on a LOOK.** The record
+is `lighting_def.md` §15; this is the index so nothing here is only in a design
+doc. All five shadow-map steps are BUILT (2026-09-05); only the point light has
+been seen in a map.
+
+- [ ] LOOK, one session, five judgements: the sun's cascades
+      (`r_debug_channel shadow_cascades`, `r_shadow_freeze 1`, tune the 3 /
+      0.7 / 4096 / 10% / 8192 defaults); probe visibility (walk behind a
+      pillar under a `Mixed` light, fade over one probe spacing); PCSS (a
+      `Mixed` spot with `source_radius` 8-16 beside a player,
+      `r_debug_channel shadow_penumbra`, tune `r_shadow_pcss_max_radius` and
+      the 16 taps); whether the bounce is bright enough to drop
+      `AMBIENT_FLOOR` from the lightmapped path (gate 5); whether small bright
+      emitters are noisy enough to need emitter next-event estimation (gate 4).
+- [ ] Gate 9 leftovers: the editor SHADOW LAYER PANEL (each pool layer through
+      a non-compare view, beside the Lightmap tool's probe preview) and the
+      `shadow_layerN.png` dump in the shape of the lightmap debug images.
+- [ ] Parked in gate 9: a stationary `Dynamic` light re-renders its static
+      casters every frame; cache the static depth and composite dynamic casters
+      over it when a level pays for it. Noted, not decided: most engines render
+      static geometry into the SUN's cascades within the shadow distance;
+      decision K treats a Mixed sun like any Mixed light. Revisit only if the
+      sun looks too soft up close.
+- [ ] Mesh emission: `surface_at` resolves brushes only, so an emissive prop
+      draws bright and lights nothing (`lightmap_def.md` §9).
+- [ ] Gate 6 environment cubemaps (after gate 5 is judged), gate 7 the bake on
+      the GPU, gate 8 denoising when bake time hurts.
+- [ ] `maps/new_map.lightmap` is stale (sidecar v8): rebake before judging any
+      of the above.
+
+**Parked elsewhere until now (carried in Claude's session memory; written down
+2026-09-05 so the todo is the one list).** Order here is the order they were
+agreed in, not priority; the roadmap of 2026-05-29 was sound, then Steam Audio,
+then snapshot delta compression, and the 4-player prototype push of 2026-08-25
+explicitly deferred the last two along with viewmodels.
+
+- [ ] **Steam Audio (Phonon) HRTF.** True binaural was wanted from the start,
+      slotted in AFTER miniaudio as a DSP node in miniaudio's `ma_node_graph`;
+      miniaudio's own spatializer is pan-based only. Sounds are `sound_asset`
+      ids and the byte layer keeps every blob for the process lifetime
+      (miniaudio does not copy), so nothing in the asset side blocks it.
+- [ ] **Snapshot delta compression.** Every changed field ships at full width
+      today; per-leaf change masks and the acked-baseline rule are in, so what
+      is missing is the ENCODING of a changed leaf (a quantized delta against
+      the baseline value, a smallest-three quaternion -- `field_codec.hpp` and
+      `rotation_def.md` both name this as the thing they wait for). The user
+      asked for a WALKTHROUGH of `entity_serialization` / `entity_snapshot` /
+      `bitstream` as part of this milestone, not just the change.
+- [ ] **Viewmodel: weapon presentation layer 2 of 3.** Layer 1 (two clocks,
+      ammo on the weapon, deploy gate) is DONE. The renderer does not block it:
+      `view_pass_t` carries its own view and `camera_t::fov_degrees` is
+      per-camera, so a viewmodel is a second pass. Missing is CONTENT (arm
+      mesh, skeleton binding, clips), an attachment/socket concept, and the
+      depth trick that stops it clipping into walls. The state machine belongs
+      to the ANIMATION (Source 2's AnimGraph shape): code sets parameters, the
+      graph picks and blends clips. Do NOT add a weapon state enum, and the
+      sniper bolt stays a cue on the fire animation, not a gameplay state.
+      Layer 3 (audio) is named sound events triggered by tags on animations.
+- [ ] **The renderer rewrite**, design SETTLED in `renderer_def.md`
+      (2026-08-12), not scheduled. Registration-time uploads returning handles,
+      materials carrying a `pipeline_state_t` resolved against a pipeline
+      cache, `view_pass_t` + `render_frame` as the whole public API (partly
+      landed), caller-owned `debug_draw_list_t` replacing `overlay_renderer_t`.
+      Until then: do not tidy `renderer.cpp`, and do not merge duplication
+      that lives inside it. The one blocking item still live from the 2026-08
+      assessment: **asset upload stalls the queue from inside the draw path**
+      (`end_single_time_commands` is a full `vkQueueWaitIdle`, hit on every
+      texture and buffer upload; first sight of a player is four full stalls
+      mid-frame, and `FRAME_ZONE` already names it in `hitch_report`).
+- [ ] **A fourth house range type**: owning, size fixed at construction,
+      immutable after -- the missing corner beside `Span`, `Array` /
+      `Enum_Array` and `std::vector`, for load-once asset payloads
+      (`skeleton_t::bones`, `mesh_asset_t::*`, `texture_asset_t::pixels`,
+      `animation_clip_t::frames`). NOT for per-frame scratch like
+      `pose_t::local`, settled. Blocked on a NAME; rejected with reasons:
+      `Owned_Span`, `Buffer`, `Box`, `Runtime_Array`, `Fixed_Array`,
+      `Bounded_Array`, `Static_Array`, `Immutable_Array`. Still live: `Block`,
+      `Frozen_Array`, `Heap_Array`, `Exact_Array`, `Storage`, or the user's
+      idea of renaming the COMPILE-TIME one instead and freeing the plain name.
+      Also unresolved: adopting a vector's capacity slack versus an exact copy.
+      Adding it means editing CLAUDE.md's "three house types, and only three".
+- [ ] **Map transfer, remaining**: the client disk cache under `maps/` keyed by
+      `(name, package_hash)`, so a downloaded map is not downloaded again next
+      session (gzip is listed below under its own heading).
+- [ ] **Demo blocker**: four remote players need port 9999 forwarded or a
+      Tailscale / ZeroTier overlay.
+
 **The geometry inspector rebuilds the editor BVH every frame of a slider drag.**
 Same bug the gizmo just had: `selection_tool.cpp`'s `draw_geometry_inspector`
 arm flags `geometry_updated_so_bvh_rebuild_is_needed` every frame ImGui reports
@@ -675,7 +780,7 @@ that is the right thing**, which is why this is a question and not a task:
 - [ ] Sprite transparency — smoke.png has opaque backgrounds needing alpha.
 - [ ] Irradiance map; environment lighting.
 - [ ] Pack normal maps: xy in RG (reconstruct Z), BA for roughness/height.
-      ORM packing is DONE — `lighting_def.md` decision G, `src/tools/orm_pack.py`.
+      ORM packing is DONE — `lighting_def.md` decision G — but the Python tool that did it is slated for deletion; see the `asset_pack` cook-stage entry at the top.
       This is the next halving and is a shader change plus a correctness question
       at mirrored UVs, which is why it did not ride along with ORM.
 

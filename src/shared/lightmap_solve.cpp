@@ -2,6 +2,7 @@
 
 #include "collision_detection.hpp"
 #include "lighting.hpp"
+#include "lightmap_gpu.hpp"
 #include "lightmap_lights.hpp"
 #include "lightmap_probes.hpp"
 #include "lightmap_trace.hpp"
@@ -81,8 +82,15 @@ struct chart_scratch_t
   // here as well is the ss2 double-count; what is left for the atlas to hold is
   // the residual, and this is the set of it.
   std::vector<uint8_t> sums_into_irradiance;
-  // Pass two re-derives a weight nothing reads -- the ranking is already fixed.
-  std::vector<float> discarded_weight;
+
+  // The chart's samples as RECORDS (lightmap_gpu.hpp), the origin of each, and
+  // how many landed in each texel -- the divisor that turns the sums in `values`
+  // into averages. The result buffers are one CHUNK of records at a time.
+  std::vector<gpu_sample_t> samples;
+  std::vector<sample_origin_t> origins;
+  std::vector<int> inside_count;
+  gpu_direct_results_t direct_results;
+  gpu_indirect_results_t indirect_results;
 
   void reset(int width, int height, int light_count)
   {
@@ -90,9 +98,9 @@ struct chart_scratch_t
     const size_t count = (size_t)width * (size_t)height;
     values.assign(count * (size_t)channel_count, 0.f);
     written.assign(count, 0);
+    inside_count.assign(count, 0);
     neighbour_total.assign((size_t)channel_count, 0.f);
     light_weight.assign((size_t)light_count, 0.f);
-    discarded_weight.assign((size_t)light_count, 0.f);
     sums_into_irradiance.assign((size_t)light_count, 0);
     ranked_lights.clear();
   }
@@ -117,163 +125,193 @@ struct solve_inputs_t
   indirect_trace_settings_t indirect;
 };
 
-// What one texel is worth: the NxN stratified samples of its footprint that land
-// on the face, averaged. A sample outside the face is EXCLUDED rather than summed
-// as zero -- outside the face there is no surface to be dark, and counting it
-// would darken every chart edge by the fraction of the texel that hangs off it.
-// No sample inside means the texel is the gutter pass's problem, not the solve's.
-//
-// `out_indirect` is null on the pass that must not re-trace: a chain is the
-// expensive half of a texel and its answer does not depend on which lights the
-// ranking kept.
-bool solve_texel(const lightmap_chart_t &chart, const solve_inputs_t &in, int texel_x,
-                 int texel_y, Span<const uint8_t> sums_into_irradiance,
-                 linalg::vec3 &out_value, indirect_sh_l1_t *out_indirect,
-                 Span<float> out_coverage, Span<float> out_light_weight)
+// What a bake COST, per worker and summed after the join: the numbers
+// lightmap_gpu_plan.md step 0 asks for, and what says which of its kernels
+// mattered. Rays are counted where the rule that spends them is applied
+// (shadow_ray_count), chains where they are fired. The two clocks are
+// thread-seconds -- summed across workers, not wall time.
+struct solve_statistics_t
 {
-  const lightmap_bake_settings_t &settings = in.settings;
+  size_t samples = 0;
+  size_t direct_rays = 0;
+  size_t chains = 0;
+  int64_t direct_nanoseconds = 0;
+  int64_t indirect_nanoseconds = 0;
+
+  void add(const solve_statistics_t &other)
+  {
+    samples += other.samples;
+    direct_rays += other.direct_rays;
+    chains += other.chains;
+    direct_nanoseconds += other.direct_nanoseconds;
+    indirect_nanoseconds += other.indirect_nanoseconds;
+  }
+};
+
+// How many records are shaded before their answers are reduced into texels. A
+// budget of result FLOATS rather than a count of records, because every record's
+// answer carries two floats per light; at 64 lights this is ~8000 records and 4
+// MB per worker. Where the GPU batch loop grows from.
+constexpr size_t RESULT_BUDGET_IN_FLOATS = 1u << 20;
+
+// Every sample of the chart that sample_chart puts ON the surface, as records:
+// the NxN stratified points of each covered texel's footprint. A sample outside
+// the face is EXCLUDED rather than recorded as dark -- outside the face there is
+// no surface to be dark, and counting it would darken every chart edge by the
+// fraction of the texel that hangs off it. A texel with no sample inside is the
+// gutter pass's problem, not the solve's.
+//
+// This is the whole of what the CPU keeps of a texel once the shading has moved
+// off it: the records go to whichever solver shades them, the origin list stays
+// here and is what puts an answer back.
+void collect_chart_samples(const lightmap_chart_t &chart,
+                           const lightmap_bake_settings_t &settings,
+                           const lightmap_solve_settings_t &solve_settings,
+                           uint32_t chart_index, std::vector<gpu_sample_t> &out_samples,
+                           std::vector<sample_origin_t> &out_origins)
+{
+  out_samples.clear();
+  out_origins.clear();
+
+  const int samples_per_edge = std::max(solve_settings.samples_per_texel_edge, 1);
+  const int covered_width = chart_covered_width(chart, settings);
+  const int covered_height = chart_covered_height(chart, settings);
+
+  for (int texel_y = 0; texel_y < covered_height; ++texel_y)
+    for (int texel_x = 0; texel_x < covered_width; ++texel_x)
+    {
+      const int atlas_x = chart.atlas_rect.min_x + settings.gutter_in_texels + texel_x;
+      const int atlas_y = chart.atlas_rect.min_y + settings.gutter_in_texels + texel_y;
+
+      for (int sample_y = 0; sample_y < samples_per_edge; ++sample_y)
+        for (int sample_x = 0; sample_x < samples_per_edge; ++sample_x)
+        {
+          const int sample_index = sample_y * samples_per_edge + sample_x;
+          const uint32_t hash = sample_hash(atlas_x, atlas_y, chart.page, sample_index);
+
+          const linalg::vec2 chart_space = {
+              ((float)texel_x + stratum_offset(sample_x, samples_per_edge, hash)) *
+                  chart.world_units_per_texel,
+              ((float)texel_y + stratum_offset(sample_y, samples_per_edge, hash >> 8)) *
+                  chart.world_units_per_texel};
+
+          const texel_sample_t sample = sample_chart(chart, chart_space);
+          if (!sample.on_surface) continue;
+
+          out_samples.push_back({sample.position, chart_index, sample.normal, hash});
+          out_origins.push_back({texel_x, texel_y});
+        }
+    }
+}
+
+// The DIRECT term at ONE record: for every light, its visibility (the coverage),
+// what it delivers (the ranking weight), and -- for the lights the mask admits --
+// its irradiance. Nothing in here knows what a texel is; the averaging is the
+// caller's.
+void shade_sample_direct(const gpu_sample_t &sample, const solve_inputs_t &in,
+                         Span<const uint8_t> sums_into_irradiance,
+                         linalg::vec3 &out_irradiance, Span<float> out_coverage,
+                         Span<float> out_weight, solve_statistics_t &statistics)
+{
   const lightmap_solve_settings_t &solve_settings = in.solve_settings;
   const std::vector<baked_light_t> &lights = in.lights;
   const Bounding_Volume_Hierarchy &bvh = in.bvh;
 
-  const int samples_per_edge = std::max(solve_settings.samples_per_texel_edge, 1);
   const bool binary = solve_settings.mode == lightmap_solve_mode_t::Visibility;
 
-  const int atlas_x = chart.atlas_rect.min_x + settings.gutter_in_texels + texel_x;
-  const int atlas_y = chart.atlas_rect.min_y + settings.gutter_in_texels + texel_y;
-
   if (out_coverage.size() != (uint32_t)lights.size() ||
-      out_light_weight.size() != (uint32_t)lights.size() ||
+      out_weight.size() != (uint32_t)lights.size() ||
       sums_into_irradiance.size() != (uint32_t)lights.size())
     fatal_error("[lightmap] a coverage span of {}, a weight span of {} and an "
                 "irradiance set of {} for {} lights.",
-                out_coverage.size(), out_light_weight.size(),
-                sums_into_irradiance.size(), lights.size());
+                out_coverage.size(), out_weight.size(), sums_into_irradiance.size(),
+                lights.size());
   for (float &coverage : out_coverage) coverage = 0.f;
+  for (float &weight : out_weight) weight = 0.f;
 
-  linalg::vec3 total{0.f, 0.f, 0.f};
-  indirect_sh_l1_t indirect_total;
-  int inside_count = 0;
+  linalg::vec3 irradiance{0.f, 0.f, 0.f};
+  for (uint32_t slot = 0; slot < (uint32_t)lights.size(); ++slot)
+  {
+    const scene_light_t &light = lights[slot].light;
+    const light_arrival_t arrival = arrival_at(light, sample.position, sample.normal,
+                                               solve_settings.directional_shadow_distance);
+    if (!arrival.arrives) continue;
 
-  for (int sample_y = 0; sample_y < samples_per_edge; ++sample_y)
-    for (int sample_x = 0; sample_x < samples_per_edge; ++sample_x)
+    // The rays are cast for every light that ARRIVES, including one the flat
+    // face plane faces away from -- that is the one place a visibility costs
+    // rays the irradiance sum does not, and it is not optional: the runtime
+    // shades with a normal-mapped normal, which at a grazing angle faces a
+    // light the geometric normal does not.
+    //
+    // A FRACTION, not a bool: an area light's penumbra is the share of the
+    // emitter this point can see, and every use below is a multiply, so the
+    // softness reaches the stored coverage, the slot ranking and the residual
+    // by arithmetic rather than by three separate arms.
+    statistics.direct_rays +=
+        (size_t)shadow_ray_count(arrival, solve_settings.soft_shadow_samples);
+    const float visibility = light_visibility(
+        bvh, sample.position, sample.normal, arrival, solve_settings.shadow_ray_bias,
+        solve_settings.soft_shadow_samples, hash_mix(sample.seed, slot));
+    if (visibility <= 0.f) continue;
+
+    out_coverage[slot] = visibility;
+
+    // What the chart's four slots are ranked by, and it is deliberately the
+    // light's DELIVERY rather than its coverage: a dim lamp lighting the
+    // whole face has coverage 1 everywhere and is not what the face is lit
+    // by. N.L is left out for the same reason it is left out of the mask.
+    out_weight[slot] = visibility * arrival.attenuation * luminance_of(light.radiance);
+
+    if (!arrival.reaches) continue;
+
+    // The two modes, and this is the whole of the difference between them:
+    // falloff forced to 1, colour forced to white, nothing left to sum. The
+    // mode is a picture of the shadow rays, so it shows every baked light --
+    // including the ones the arm below leaves out of what ships. It takes the
+    // BRIGHTEST light's visibility rather than a sum, so a penumbra reads as a
+    // penumbra instead of saturating the moment two lights overlap.
+    if (binary)
     {
-      const int sample_index = sample_y * samples_per_edge + sample_x;
-      const uint32_t hash = sample_hash(atlas_x, atlas_y, chart.page, sample_index);
-
-      const linalg::vec2 chart_space = {
-          ((float)texel_x + stratum_offset(sample_x, samples_per_edge, hash)) *
-              chart.world_units_per_texel,
-          ((float)texel_y + stratum_offset(sample_y, samples_per_edge, hash >> 8)) *
-              chart.world_units_per_texel};
-
-      const texel_sample_t sample = sample_chart(chart, chart_space);
-      if (!sample.on_surface) continue;
-      ++inside_count;
-
-      const linalg::vec3 world_position = sample.position;
-
-      linalg::vec3 irradiance{0.f, 0.f, 0.f};
-      for (uint32_t slot = 0; slot < (uint32_t)lights.size(); ++slot)
-      {
-        const scene_light_t &light = lights[slot].light;
-        const light_arrival_t arrival =
-            arrival_at(light, world_position, sample.normal,
-                       solve_settings.directional_shadow_distance);
-        if (!arrival.arrives) continue;
-
-        // The rays are cast for every light that ARRIVES, including one the flat
-        // face plane faces away from -- that is the one place a visibility costs
-        // rays the irradiance sum does not, and it is not optional: the runtime
-        // shades with a normal-mapped normal, which at a grazing angle faces a
-        // light the geometric normal does not.
-        //
-        // A FRACTION, not a bool: an area light's penumbra is the share of the
-        // emitter this point can see, and every use below is a multiply, so the
-        // softness reaches the stored coverage, the slot ranking and the residual
-        // by arithmetic rather than by three separate arms.
-        const float visibility = light_visibility(
-            bvh, world_position, sample.normal, arrival,
-            solve_settings.shadow_ray_bias, solve_settings.soft_shadow_samples,
-            hash_mix(hash, slot));
-        if (visibility <= 0.f) continue;
-
-        out_coverage[slot] += visibility;
-
-        // What the chart's four slots are ranked by, and it is deliberately the
-        // light's DELIVERY rather than its coverage: a dim lamp lighting the
-        // whole face has coverage 1 everywhere and is not what the face is lit
-        // by. N.L is left out for the same reason it is left out of the mask.
-        out_light_weight[slot] +=
-            visibility * arrival.attenuation * luminance_of(light.radiance);
-
-        if (!arrival.reaches) continue;
-
-        // The two modes, and this is the whole of the difference between them:
-        // falloff forced to 1, colour forced to white, nothing left to sum. The
-        // mode is a picture of the shadow rays, so it shows every baked light --
-        // including the ones the arm below leaves out of what ships. It takes the
-        // BRIGHTEST light's visibility rather than a sum, so a penumbra reads as a
-        // penumbra instead of saturating the moment two lights overlap.
-        if (binary)
-        {
-          const float strongest = std::max(irradiance.x, visibility);
-          irradiance = {strongest, strongest, strongest};
-          continue;
-        }
-
-        // The atlas holds what the RUNTIME does not evaluate, which is the whole
-        // of lighting_def.md ss12 A arriving. Every light a chart KEPT is shaded
-        // by mesh_lit.frag with the real light direction and the mask above as
-        // its occlusion, so summing one here as well is the double-count ss2
-        // exists to prevent -- and it is the flat half that would win, a frozen
-        // N.L off the face plane, which is what makes a normal map inert.
-        //
-        // What is left is the RESIDUAL: the lights this chart ranked below its
-        // four and had to drop. They have no visibility channel to be shadowed
-        // by, so flat irradiance is the best answer available for them, and it
-        // is strictly better than the darkness dropping them used to mean.
-        if (!sums_into_irradiance[slot]) continue;
-
-        irradiance = irradiance + light.radiance * (arrival.attenuation *
-                                                    arrival.normal_dot_light *
-                                                    visibility);
-      }
-
-      total = total + irradiance;
-
-      // The INDIRECT half, and it shares this sample's position, normal and hash
-      // rather than walking the chart a second time -- one set of sample points,
-      // so the two terms are answers about the same places on the face.
-      //
-      // The geometric normal survives here for ONE thing, choosing which
-      // hemisphere to fire into. Nothing multiplies by N.L: the texel stores
-      // what arrives and the shader applies the cosine against the shaded
-      // normal, which is what makes a normal map move the bounce.
-      if (out_indirect && in.traced_scene)
-      {
-        const indirect_sh_l1_t traced = trace_indirect_light(
-            *in.traced_scene, lights, world_position, sample.normal, in.indirect,
-            hash_mix(hash, 0x1b873593u));
-
-        indirect_total.l0 = indirect_total.l0 + traced.l0;
-        for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
-          indirect_total.l1[axis] = indirect_total.l1[axis] + traced.l1[axis];
-      }
+      const float strongest = std::max(irradiance.x, visibility);
+      irradiance = {strongest, strongest, strongest};
+      continue;
     }
 
-  if (inside_count == 0) return false;
+    // The atlas holds what the RUNTIME does not evaluate, which is the whole
+    // of lighting_def.md ss12 A arriving. Every light a chart KEPT is shaded
+    // by mesh_lit.frag with the real light direction and the mask above as
+    // its occlusion, so summing one here as well is the double-count ss2
+    // exists to prevent -- and it is the flat half that would win, a frozen
+    // N.L off the face plane, which is what makes a normal map inert.
+    //
+    // What is left is the RESIDUAL: the lights this chart ranked below its
+    // four and had to drop. They have no visibility channel to be shadowed
+    // by, so flat irradiance is the best answer available for them, and it
+    // is strictly better than the darkness dropping them used to mean.
+    if (!sums_into_irradiance[slot]) continue;
 
-  out_value = total * (1.f / (float)inside_count);
-  if (out_indirect)
-  {
-    const float inverse = 1.f / (float)inside_count;
-    out_indirect->l0 = indirect_total.l0 * inverse;
-    for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
-      out_indirect->l1[axis] = indirect_total.l1[axis] * inverse;
+    irradiance = irradiance + light.radiance * (arrival.attenuation *
+                                                arrival.normal_dot_light * visibility);
   }
-  for (float &coverage : out_coverage) coverage *= 1.f / (float)inside_count;
-  return true;
+
+  out_irradiance = irradiance;
+}
+
+// The INDIRECT term at ONE record. It shares the record's position, normal and
+// seed with the direct term rather than walking the chart a second time -- one
+// set of sample points, so the two terms are answers about the same places on
+// the face.
+//
+// The geometric normal survives here for ONE thing, choosing which hemisphere to
+// fire into. Nothing multiplies by N.L: the texel stores what arrives and the
+// shader applies the cosine against the shaded normal, which is what makes a
+// normal map move the bounce.
+indirect_sh_l1_t shade_sample_indirect(const gpu_sample_t &sample, const solve_inputs_t &in,
+                                       solve_statistics_t &statistics)
+{
+  statistics.chains += (size_t)std::max(in.indirect.rays_per_sample, 0);
+  return trace_indirect_light(*in.traced_scene, in.lights, sample.position, sample.normal,
+                              in.indirect, hash_mix(sample.seed, 0x1b873593u));
 }
 
 // The gutter, filled from the chart's OWN covered texels and nothing else.
@@ -335,23 +373,9 @@ void fill_the_gutter(chart_scratch_t &scratch, int width, int height)
 }
 
 // The scratch's indirect block and indirect_sh_l1_t are one layout written twice,
-// so the conversion is a pair rather than two open-coded loops -- a store that
+// so the reduction in solve_chart and this read are a pair -- a store that
 // unpacked in a different order than the solve packed is a bake tinted along
 // whichever axis got the wrong channel.
-void write_indirect_channels(Span<float> channels, const indirect_sh_l1_t &value)
-{
-  const int at = chart_scratch_t::INDIRECT_CHANNEL;
-  channels[at + 0] = value.l0.x;
-  channels[at + 1] = value.l0.y;
-  channels[at + 2] = value.l0.z;
-  for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
-  {
-    channels[at + 3 + axis * 3 + 0] = value.l1[axis].x;
-    channels[at + 3 + axis * 3 + 1] = value.l1[axis].y;
-    channels[at + 3 + axis * 3 + 2] = value.l1[axis].z;
-  }
-}
-
 indirect_sh_l1_t read_indirect_channels(Span<const float> channels)
 {
   const int at = chart_scratch_t::INDIRECT_CHANNEL;
@@ -418,11 +442,12 @@ void choose_chart_lights(lightmap_chart_t &chart, chart_scratch_t &scratch,
 
 void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
                  const solve_outputs_t &out, chart_scratch_t &scratch,
-                 std::vector<dropped_light_t> &dropped)
+                 std::vector<dropped_light_t> &dropped, solve_statistics_t &statistics)
 {
   const lightmap_bake_settings_t &settings = in.settings;
   const lightmap_solve_settings_t &solve_settings = in.solve_settings;
   const std::vector<baked_light_t> &lights = in.lights;
+  const size_t light_count = lights.size();
 
   const int width = chart.atlas_rect.width;
   const int height = chart.atlas_rect.height;
@@ -431,10 +456,12 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
   // The coverage rides the same scratch as the irradiance, as extra CHANNELS,
   // so ONE gutter dilation covers both -- a second pass over the masks is two
   // things free to disagree about a chart edge.
-  scratch.reset(width, height, (int)lights.size());
+  scratch.reset(width, height, (int)light_count);
 
-  const int covered_width = chart_covered_width(chart, settings);
-  const int covered_height = chart_covered_height(chart, settings);
+  // Every record of the chart, once; both direct passes and the indirect one
+  // shade the same list, so the three terms are answers about the same points.
+  collect_chart_samples(chart, settings, solve_settings, 0, scratch.samples, scratch.origins);
+  statistics.samples += scratch.samples.size();
 
   // Indirect is a MODE of the direct solve in exactly the sense the visibility
   // one is not: it rides the same sample points and the same walk, so it is a
@@ -444,41 +471,137 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
       out.indirect_l0_pages && out.indirect_l1_pages && in.traced_scene &&
       solve_settings.mode != lightmap_solve_mode_t::Visibility;
 
+  const auto texel_index_of = [&](const sample_origin_t &origin) {
+    return (size_t)(origin.texel_y + settings.gutter_in_texels) * (size_t)width +
+           (size_t)(origin.texel_x + settings.gutter_in_texels);
+  };
+
+  const Span<const uint8_t> sums_into_irradiance(scratch.sums_into_irradiance.data(),
+                                                 (uint32_t)scratch.sums_into_irradiance.size());
+
+  // Records are shaded a CHUNK at a time and each chunk's answers reduced into the
+  // texels they came from before the next. The reduction is a plain sum in record
+  // order, so where a chunk boundary falls changes nothing -- which is what lets a
+  // GPU batch replace a chunk later without moving a pixel.
+  const size_t chunk_capacity =
+      std::max<size_t>(1, RESULT_BUDGET_IN_FLOATS / (3 + 2 * std::max<size_t>(light_count, 1)));
+
+  // ONE direct pass over every record. On the first pass the coverage, the
+  // ranking weight and the per-texel sample count are gathered as well; the
+  // RESIDUAL pass re-derives only the irradiance -- the coverage it would
+  // recompute is the same number, and the ranking is already fixed.
+  const auto shade_direct = [&](bool residual_pass) {
+    for (size_t begin = 0; begin < scratch.samples.size(); begin += chunk_capacity)
+    {
+      const size_t end = std::min(begin + chunk_capacity, scratch.samples.size());
+      gpu_direct_results_t &results = scratch.direct_results;
+      results.resize(end - begin, light_count);
+
+      const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+      for (size_t i = begin; i < end; ++i)
+      {
+        const size_t at = i - begin;
+        shade_sample_direct(scratch.samples[i], in, sums_into_irradiance, results.irradiance[at],
+                            Span<float>(results.coverage.data() + at * light_count,
+                                        (uint32_t)light_count),
+                            Span<float>(results.weight.data() + at * light_count,
+                                        (uint32_t)light_count),
+                            statistics);
+      }
+      statistics.direct_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                           std::chrono::steady_clock::now() - started)
+                                           .count();
+
+      for (size_t i = begin; i < end; ++i)
+      {
+        const size_t at = i - begin;
+        const Span<float> channels = scratch.at(texel_index_of(scratch.origins[i]));
+
+        const linalg::vec3 &irradiance = results.irradiance[at];
+        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 0] += irradiance.x;
+        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 1] += irradiance.y;
+        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 2] += irradiance.z;
+        if (residual_pass) continue;
+
+        ++scratch.inside_count[texel_index_of(scratch.origins[i])];
+        for (size_t slot = 0; slot < light_count; ++slot)
+        {
+          channels[(uint32_t)(chart_scratch_t::FIRST_LIGHT_CHANNEL + slot)] +=
+              results.coverage[at * light_count + slot];
+          scratch.light_weight[slot] += results.weight[at * light_count + slot];
+        }
+      }
+    }
+  };
+
+  // A chunk's indirect answers, into the twelve indirect channels of their texels.
+  const auto shade_indirect = [&]() {
+    for (size_t begin = 0; begin < scratch.samples.size(); begin += chunk_capacity)
+    {
+      const size_t end = std::min(begin + chunk_capacity, scratch.samples.size());
+      std::vector<indirect_sh_l1_t> &results = scratch.indirect_results.values;
+      results.assign(end - begin, indirect_sh_l1_t{});
+
+      const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+      for (size_t i = begin; i < end; ++i)
+        results[i - begin] = shade_sample_indirect(scratch.samples[i], in, statistics);
+      statistics.indirect_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                             std::chrono::steady_clock::now() - started)
+                                             .count();
+
+      for (size_t i = begin; i < end; ++i)
+      {
+        const Span<float> channels = scratch.at(texel_index_of(scratch.origins[i]));
+        const indirect_sh_l1_t &value = results[i - begin];
+        const int at = chart_scratch_t::INDIRECT_CHANNEL;
+        channels[at + 0] += value.l0.x;
+        channels[at + 1] += value.l0.y;
+        channels[at + 2] += value.l0.z;
+        for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
+        {
+          channels[at + 3 + axis * 3 + 0] += value.l1[axis].x;
+          channels[at + 3 + axis * 3 + 1] += value.l1[axis].y;
+          channels[at + 3 + axis * 3 + 2] += value.l1[axis].z;
+        }
+      }
+    }
+  };
+
+  // The sums above become the texel's AVERAGE over the samples that landed in
+  // it. The irradiance is normalized after each direct pass; everything else
+  // once, since the residual pass touches nothing else.
+  const auto normalize_texels = [&](bool irradiance_only) {
+    const size_t texel_count = (size_t)width * (size_t)height;
+    for (size_t index = 0; index < texel_count; ++index)
+    {
+      const int count = scratch.inside_count[index];
+      if (count == 0) continue;
+      const float inverse = 1.f / (float)count;
+      const Span<float> channels = scratch.at(index);
+
+      for (int channel = 0; channel < 3; ++channel)
+        channels[chart_scratch_t::IRRADIANCE_CHANNEL + channel] *= inverse;
+      if (irradiance_only) continue;
+
+      if (trace_indirect)
+        for (int channel = 0; channel < chart_scratch_t::INDIRECT_CHANNEL_COUNT; ++channel)
+          channels[chart_scratch_t::INDIRECT_CHANNEL + channel] *= inverse;
+      for (size_t slot = 0; slot < light_count; ++slot)
+        channels[(uint32_t)(chart_scratch_t::FIRST_LIGHT_CHANNEL + slot)] *= inverse;
+
+      // Marked written even when it is BLACK, which is what makes the fill
+      // correct: a texel in shadow is a surface that got no light, and dilating
+      // into it would smear the lit side of a shadow edge back over it.
+      scratch.written[index] = 1;
+    }
+  };
+
   // PASS ONE: the coverage of every light and what each of them delivers. No
   // light sums into the irradiance yet, because which ones may is exactly what
   // the ranking below has not decided.
-  const auto solve_covered_texels = [&](bool with_indirect) {
-    for (int texel_y = 0; texel_y < covered_height; ++texel_y)
-      for (int texel_x = 0; texel_x < covered_width; ++texel_x)
-      {
-        const size_t index =
-            (size_t)(texel_y + settings.gutter_in_texels) * (size_t)width +
-            (size_t)(texel_x + settings.gutter_in_texels);
-        const Span<float> channels = scratch.at(index);
-
-        linalg::vec3 value{0.f, 0.f, 0.f};
-        indirect_sh_l1_t indirect;
-        if (!solve_texel(chart, in, texel_x, texel_y,
-                         Span<const uint8_t>(scratch.sums_into_irradiance.data(),
-                                             (uint32_t)scratch.sums_into_irradiance.size()),
-                         value, with_indirect ? &indirect : nullptr,
-                         channels.subspan(chart_scratch_t::FIRST_LIGHT_CHANNEL),
-                         Span<float>(scratch.light_weight.data(),
-                                     (uint32_t)scratch.light_weight.size())))
-          continue;
-
-        // Marked written even when it is BLACK, which is what makes the fill
-        // correct: a texel in shadow is a surface that got no light, and dilating
-        // into it would smear the lit side of a shadow edge back over it.
-        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 0] = value.x;
-        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 1] = value.y;
-        channels[chart_scratch_t::IRRADIANCE_CHANNEL + 2] = value.z;
-        if (with_indirect) write_indirect_channels(channels, indirect);
-        scratch.written[index] = 1;
-      }
-  };
-
-  solve_covered_texels(trace_indirect);
+  shade_direct(false);
+  if (trace_indirect) shade_indirect();
+  normalize_texels(false);
 
   // Before the dilation and before the store. The ranking was summed over the
   // COVERED texels as they were solved, so the gutter gets no vote in it
@@ -493,7 +616,9 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
   // only where the warning below already says the level has a problem.
   //
   // Skipped in Visibility mode, where the irradiance channels are a picture of
-  // the shadow rays for EVERY light and not a term anything composes.
+  // the shadow rays for EVERY light and not a term anything composes. With NO
+  // indirect: a chain's answer does not depend on which lights the ranking kept,
+  // and it is the expensive half of a texel.
   if (solve_settings.mode != lightmap_solve_mode_t::Visibility &&
       scratch.ranked_lights.size() > LIGHTMAP_LIGHTS_PER_CHART)
   {
@@ -501,11 +626,16 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
          ++rank)
       scratch.sums_into_irradiance[scratch.ranked_lights[rank]] = 1;
 
-    // With NO indirect: a chain's answer does not depend on which lights the
-    // ranking kept, and it is the expensive half of a texel.
-    std::swap(scratch.light_weight, scratch.discarded_weight);
-    solve_covered_texels(false);
-    std::swap(scratch.light_weight, scratch.discarded_weight);
+    const size_t texel_count = (size_t)width * (size_t)height;
+    for (size_t index = 0; index < texel_count; ++index)
+    {
+      const Span<float> channels = scratch.at(index);
+      for (int channel = 0; channel < 3; ++channel)
+        channels[chart_scratch_t::IRRADIANCE_CHANNEL + channel] = 0.f;
+    }
+
+    shade_direct(true);
+    normalize_texels(true);
   }
 
   if (solve_settings.dilate_into_the_gutter) fill_the_gutter(scratch, width, height);
@@ -772,6 +902,7 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
 
   std::atomic<size_t> next_chart{0};
   std::vector<std::vector<dropped_light_t>> dropped_per_worker(worker_count);
+  std::vector<solve_statistics_t> statistics_per_worker(worker_count);
 
   bake_progress_t progress;
   progress.total_charts = packed_charts.size();
@@ -793,7 +924,7 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
                             (size_t)chart_covered_height(chart, settings);
 
       solve_chart(charts[packed_charts[at]], inputs, outputs, scratch,
-                  dropped_per_worker[worker_index]);
+                  dropped_per_worker[worker_index], statistics_per_worker[worker_index]);
 
       progress.solved_texels.fetch_add(texels, std::memory_order_relaxed);
       progress.solved_charts.fetch_add(1, std::memory_order_relaxed);
@@ -810,6 +941,9 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   solve_until_done(0);
 
   for (std::thread &worker : workers) worker.join();
+
+  solve_statistics_t statistics;
+  for (const solve_statistics_t &worker : statistics_per_worker) statistics.add(worker);
 
   lightmap.probes = {};
   if (bake_probes)
@@ -831,18 +965,28 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   // Always, however short: "how long does a bake take on this map" is the
   // question every setting in the panel is really about, and the progress lines
   // above deliberately say nothing on a fast one.
-  // The suffix is what tells a traced bake from an untraced one AFTERWARDS. They
-  // are otherwise indistinguishable from the outside -- the direct pages look the
-  // same and the indirect ones simply are not there -- and a bake is long enough
-  // that "did I have it on?" is a real question by the time it finishes.
-  log_terminal("[lightmap] baked {} chart(s) over {} texel(s) on {} thread(s) in "
-               "{:.2f}s{}.",
-               packed_charts.size(), progress.total_texels, worker_count,
-               (double)progress.elapsed_milliseconds() / 1000.0,
+  //
+  // The breakdown is lightmap_gpu_plan.md step 0: what was shaded, what it cost
+  // in rays and chains, and where the thread-time went -- the number that says
+  // which term is worth moving and, afterwards, whether moving it helped. The
+  // two times are summed across workers, so on a busy bake they add up to about
+  // the wall time times the thread count.
+  //
+  // The indirect clause is what tells a traced bake from an untraced one
+  // AFTERWARDS. They are otherwise indistinguishable from the outside -- the
+  // direct pages look the same and the indirect ones simply are not there --
+  // and a bake is long enough that "did I have it on?" is a real question by
+  // the time it finishes.
+  log_terminal("[lightmap] baked {} chart(s), {} texel(s), {} sample(s) on {} thread(s) in "
+               "{:.2f}s wall: direct {} shadow ray(s) in {:.1f} thread-s; indirect {}.",
+               packed_charts.size(), progress.total_texels, statistics.samples, worker_count,
+               (double)progress.elapsed_milliseconds() / 1000.0, statistics.direct_rays,
+               (double)statistics.direct_nanoseconds * 1e-9,
                trace_indirect
-                   ? std::format(", {} indirect chain(s) per texel sample",
-                                 indirect.rays_per_sample)
-                   : std::string(" -- NO indirect light, \"Trace indirect light\" was off"));
+                   ? std::format("{} chain(s) ({} per sample) in {:.1f} thread-s",
+                                 statistics.chains, indirect.rays_per_sample,
+                                 (double)statistics.indirect_nanoseconds * 1e-9)
+                   : std::string("NOT traced, \"Trace indirect light\" was off"));
 
   // Loud, and after the join for the reason dropped_light_t gives. One line per
   // chart-light pair: an author needs to know WHICH face fell back and which

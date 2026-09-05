@@ -12,6 +12,7 @@
 // is one the shader agrees with.
 
 #include "../shared/lighting.hpp"
+#include "../shared/shader_math.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -87,6 +88,43 @@ int main()
   // The texel size: the map spans 2 * tan(half) at unit distance.
   check(near(projection.texel_size_at_unit_distance, 2.f * std::tan(half) / (float)RESOLUTION, 1e-6f),
         "texel size is the cone's width at unit distance over the resolution");
+
+  // PCSS (gate 9 step 5): a stored depth undoes to the distance it was
+  // written from, through the same matrix, for a perspective map.
+  check(near(projection.near_plane, shared::SHADOW_NEAR_PLANE) && near(projection.far_plane, light.range),
+        "a spot map's near and far planes are the ones its matrix was built from");
+  {
+    bool round_trips = true;
+    for (float distance : {1.5f, 10.f, 77.f, 300.f, 511.f})
+    {
+      const vec3f ndc    = project(matrix, light.position + light.forward * distance);
+      const float linear = shared::shader_math::shadow_linear_depth(ndc.z, projection.near_plane,
+                                                                    projection.far_plane, false);
+      round_trips = round_trips && near(linear, distance, distance * 1e-3f);
+    }
+    check(round_trips, "shadow_linear_depth undoes a perspective map's depth warp");
+  }
+
+  // The penumbra: zero for a punctual light, zero for a blocker at the
+  // receiver, and the similar-triangles width in texels otherwise.
+  {
+    const float t = projection.texel_size_at_unit_distance;
+    check(near(shared::shader_math::shadow_penumbra_texels(0.f, 100.f, 50.f, t, false), 0.f),
+          "a punctual light has no penumbra");
+    check(near(shared::shader_math::shadow_penumbra_texels(4.f, 100.f, 100.f, t, false), 0.f),
+          "a blocker touching the receiver casts no penumbra");
+    // R = 4, receiver 100, blocker 50: 4 * 50 / 50 = 4 world units at the
+    // receiver, over the texel there (t * 100).
+    check(near(shared::shader_math::shadow_penumbra_texels(4.f, 100.f, 50.f, t, false),
+               4.f / (t * 100.f), 1e-2f),
+          "a perspective penumbra is R(z-b)/b over the receiver's texel size");
+    // Orthographic: the radius is per unit distance and the texel is constant.
+    check(near(shared::shader_math::shadow_penumbra_texels(0.01f, 300.f, 100.f, 2.f, true), 1.f),
+          "an orthographic penumbra is R(z-b) over the texel");
+    check(shared::shader_math::shadow_penumbra_texels(4.f, 100.f, shared::SHADOW_NEAR_PLANE, t, false) >
+              shared::shader_math::shadow_penumbra_texels(4.f, 100.f, 50.f, t, false),
+          "the search radius (blocker at the near plane) bounds every penumbra");
+  }
 
   // A cone wider than a perspective map can hold is clamped, not exploded.
   light.cos_outer = std::cos(linalg::to_radians(120.f));
@@ -166,6 +204,18 @@ int main()
     check(near(cascade.projection.texel_size_at_unit_distance,
                2.f * cascade.sphere_radius / (float)RESOLUTION, 1e-6f),
           "a cascade's texel is its sphere's diameter over the resolution");
+
+    check(cascade.projection.near_plane == 0.f && cascade.projection.far_plane > 0.f,
+          "a cascade's map is orthographic: near plane 0, a positive depth range");
+    {
+      const vec3f box_eye  = cascade.box_corners[0] * 0.5f + cascade.box_corners[2] * 0.5f;
+      const float along    = cascade.projection.far_plane * 0.37f;
+      const vec3f sample   = box_eye + sun.forward * along;
+      const vec3f ndc      = project(matrix, sample);
+      const float linear   = shared::shader_math::shadow_linear_depth(ndc.z, cascade.projection.near_plane,
+                                                                      cascade.projection.far_plane, true);
+      check(near(linear, along, along * 1e-3f), "shadow_linear_depth reads an orthographic depth back linearly");
+    }
 
     if (index + 1 < cascades.count)
       check(near(cascade.far_depth, cascades.cascades[index + 1].near_depth), "cascades tile the depth range");
@@ -248,6 +298,9 @@ int main()
       check(shared::point_shadow_face_of(axes[face]) == face, "a face's axis picks that face");
     }
     check(axis_centred, "every face's axis projects to its map centre at depth 1");
+    check(near(faces.faces[0].projection.near_plane, shared::SHADOW_NEAR_PLANE) &&
+              near(faces.faces[0].projection.far_plane, point.range),
+          "a point face's near and far planes are the ones its matrix was built from");
 
     // A point on the seam between +X and +Y is inside BOTH maps, by the guard:
     // the kernel at a seam never reads outside the face it was picked into.

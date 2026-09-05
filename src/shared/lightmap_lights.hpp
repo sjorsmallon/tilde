@@ -14,6 +14,7 @@
 #include "lightmap.hpp"
 #include "map.hpp"
 
+#include <algorithm>
 #include <vector>
 
 namespace shared
@@ -93,6 +94,27 @@ struct light_arrival_t
                                      const light_arrival_t &arrival,
                                      float shadow_ray_bias, int soft_shadow_samples,
                                      uint32_t hash);
+
+// How many rays light_visibility spends on one arrival -- the rule it applies,
+// exposed so the bake's report can add up what it cast without a second copy.
+[[nodiscard]] inline int shadow_ray_count(const light_arrival_t &arrival,
+                                          int soft_shadow_samples)
+{
+  return arrival.shadow_disc_radius > 0.f ? std::max(soft_shadow_samples, 1) : 1;
+}
+
+// The same fraction estimated with ONE ray, toward a RANDOM point on the disc:
+// 0 or 1. For the path tracer's next-event estimation and nothing else. A texel
+// averages over rays_per_sample chains and every vertex of each, so one jittered
+// ray converges to the same penumbra the spiral gives; the spiral is right at the
+// texel itself, where there is one evaluation and nothing to average over, and
+// is `soft_shadow_samples` times too expensive inside a chain. A punctual light
+// takes the same centre ray either way. lightmap_gpu_plan.md step 0.
+[[nodiscard]] float light_visibility_single_ray(const Bounding_Volume_Hierarchy &bvh,
+                                                const linalg::vec3 &surface_position,
+                                                const linalg::vec3 &surface_normal,
+                                                const light_arrival_t &arrival,
+                                                float shadow_ray_bias, uint32_t hash);
 
 // The jitter is DERIVED, never drawn from shared/rng.hpp's global state: a rebake
 // at unchanged settings has to reproduce the same pixels, and the chart loop runs

@@ -19,6 +19,32 @@
 #include "probes.glsl"
 
 layout(set = 3, binding = 9) uniform sampler2DArrayShadow shadowMaps;
+// The same pool through a non-compare nearest sampler: the PCSS blocker search reads depths.
+layout(set = 3, binding = 11) uniform sampler2DArray shadowDepths;
+
+#define PCSS_TAP_COUNT 16
+const vec2 PCSS_POISSON_DISC[PCSS_TAP_COUNT] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
+    vec2(-0.09418410, -0.92938870), vec2( 0.34495938,  0.29387760),
+    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543,  0.27676845), vec2( 0.97484398,  0.75648379),
+    vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2( 0.79197514,  0.19090188),
+    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
+    vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790));
+
+// Interleaved gradient noise (Jimenez 2014) as a per-pixel rotation of the disc.
+mat2 pcss_disc_rotation()
+{
+    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float angle = noise * 2.0 * PI;
+    float s = sin(angle);
+    float c = cos(angle);
+    return mat2(c, s, -s, c);
+}
+
+// The radius the last sample_shadow_layer filtered at, for r_debug_channel = shadow_penumbra.
+float g_shadow_penumbra_texels = 0.0;
 
 // Which layer of the pool this light's map is, or -1. It rides radiance.w
 // because that was the one component the Light struct had left; both copies of
@@ -35,9 +61,14 @@ layout(set = 3, binding = 9) uniform sampler2DArrayShadow shadowMaps;
 // against its own depth and dither. The slope-scaled half of the bias is the
 // shadow pipeline's rasterizer state.
 // The kernel is a square of hardware-compared taps, radius
-// scene.shadow_settings.y in texels -- the fixed minimum kernel the PCSS search
-// will widen (gate 9), which anti-aliases the map and is not softness.
-float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position, vec3 N)
+// scene.shadow_settings.y in texels -- the fixed minimum kernel, which
+// anti-aliases the map and is not softness. A light with a source_radius
+// widens it by PCSS: a Poisson blocker search over the region the emitter could
+// shadow the receiver from, then a Poisson PCF filter over the penumbra the
+// average blocker distance implies, both capped by scene.shadow_pcss.y and
+// never under the minimum. A radius of zero is the square kernel, bit for bit.
+float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position, vec3 N,
+                          float source_radius)
 {
     float texel_size = scene.shadow_layers[layer].x * arrival.distance;
     float cos_theta  = clamp(dot(N, arrival.direction), 0.0, 1.0);
@@ -55,6 +86,52 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
     vec2 uv       = ndc.xy * 0.5 + 0.5;
     vec2 texel_uv = 1.0 / vec2(textureSize(shadowMaps, 0).xy);
     int  radius   = int(scene.shadow_settings.y);
+
+    g_shadow_penumbra_texels = float(radius);
+    if (scene.shadow_pcss.x > 0.0 && source_radius > 0.0)
+    {
+        float near_plane   = scene.shadow_layers[layer].z;
+        float far_plane    = scene.shadow_layers[layer].w;
+        bool  orthographic = near_plane <= 0.0;
+        float texel_size_at_unit_distance = scene.shadow_layers[layer].x;
+        float receiver_depth = shadow_linear_depth(ndc.z, near_plane, far_plane, orthographic);
+        float max_radius     = max(scene.shadow_pcss.y, float(radius));
+
+        float search_radius = clamp(shadow_penumbra_texels(source_radius, receiver_depth, near_plane,
+                                                           texel_size_at_unit_distance, orthographic),
+                                    float(radius), max_radius);
+        mat2 rotation = pcss_disc_rotation();
+
+        float blocker_depth_sum = 0.0;
+        int   blocker_count     = 0;
+        for (int tap = 0; tap < PCSS_TAP_COUNT; ++tap)
+        {
+            vec2  offset = rotation * PCSS_POISSON_DISC[tap] * search_radius * texel_uv;
+            float depth  = texture(shadowDepths, vec3(uv + offset, float(layer))).r;
+            if (depth < ndc.z)
+            {
+                blocker_depth_sum += depth;
+                ++blocker_count;
+            }
+        }
+        if (blocker_count == 0)
+            return 1.0;
+
+        float blocker_depth = shadow_linear_depth(blocker_depth_sum / float(blocker_count),
+                                                  near_plane, far_plane, orthographic);
+        float penumbra = clamp(shadow_penumbra_texels(source_radius, receiver_depth, blocker_depth,
+                                                      texel_size_at_unit_distance, orthographic),
+                               float(radius), max_radius);
+        g_shadow_penumbra_texels = penumbra;
+
+        float lit = 0.0;
+        for (int tap = 0; tap < PCSS_TAP_COUNT; ++tap)
+        {
+            vec2 offset = rotation * PCSS_POISSON_DISC[tap] * penumbra * texel_uv;
+            lit += texture(shadowMaps, vec4(uv + offset, float(layer), ndc.z));
+        }
+        return lit / float(PCSS_TAP_COUNT);
+    }
 
     float lit = 0.0;
     for (int y = -radius; y <= radius; ++y)
@@ -127,19 +204,21 @@ float shadow_visibility(Light light, Light_Arrival arrival, vec3 world_position,
     if (layer < 0)
         return 1.0;
     int type = int(light.spot_params.w);
+    float source_radius = light.direction.w;
     if (type == LIGHT_TYPE_POINT)
         return sample_shadow_layer(layer + point_shadow_face(light, world_position), arrival,
-                                   world_position, N);
+                                   world_position, N, source_radius);
     if (type != LIGHT_TYPE_DIRECTIONAL)
-        return sample_shadow_layer(layer, arrival, world_position, N);
+        return sample_shadow_layer(layer, arrival, world_position, N, source_radius);
 
     Cascade_Pick pick = pick_shadow_cascade(world_position);
     if (pick.index < 0)
         return 1.0;
-    float visibility = sample_shadow_layer(layer + pick.index, arrival, world_position, N);
+    float visibility = sample_shadow_layer(layer + pick.index, arrival, world_position, N, source_radius);
     if (pick.blend > 0.0)
         visibility = mix(visibility,
-                         sample_shadow_layer(layer + pick.index + 1, arrival, world_position, N),
+                         sample_shadow_layer(layer + pick.index + 1, arrival, world_position, N,
+                                             source_radius),
                          pick.blend);
     return visibility;
 }
@@ -198,8 +277,12 @@ vec3 analytic_tail_diffuse(vec3 N, vec3 world_position)
 // r_debug_channel = probe_visibility: the PROBES' V for the Mixed light the
 // renderer picked, on every surface -- walls included, so the volume can be
 // read against the geometry that shadowed it.
-#define DEBUG_FLAGS_SHOWING_VISIBILITY \
-    (DEBUG_FLAG_RENDER_SHADOW_VISIBILITY | DEBUG_FLAG_RENDER_PROBE_VISIBILITY)
+// r_debug_channel = shadow_penumbra: the radius the same light was filtered at
+// over its cap, grey -- black is the minimum kernel, white is the cap -- so a
+// wrong blocker search is told from a wrong filter.
+#define DEBUG_FLAGS_SHOWING_VISIBILITY                                            \
+    (DEBUG_FLAG_RENDER_SHADOW_VISIBILITY | DEBUG_FLAG_RENDER_PROBE_VISIBILITY | \
+     DEBUG_FLAG_RENDER_SHADOW_PENUMBRA)
 
 vec4 shadow_visibility_debug_color(vec3 world_position, vec3 N)
 {
@@ -213,6 +296,11 @@ vec4 shadow_visibility_debug_color(vec3 world_position, vec3 N)
 
     Light_Arrival arrival    = light_arrival(light, world_position);
     float         visibility = shadow_visibility(light, arrival, world_position, N);
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_SHADOW_PENUMBRA) != 0)
+    {
+        float cap = max(scene.shadow_pcss.y, scene.shadow_settings.y);
+        return vec4(vec3(g_shadow_penumbra_texels / max(cap, 1.0)), 1.0);
+    }
     return vec4(vec3(visibility), 1.0);
 }
 

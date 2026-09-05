@@ -72,6 +72,8 @@ class font_asset font_asset_t asset_types.hpp .ttf
 
 class pbr_material pbr_material_asset_t asset_types.hpp
   Missing -
+  bricks_mortar resources/textures/bricks_mortar
   harsh_bricks resources/textures/harsh_bricks
   scuffed_plastic resources/textures/scuffed_plastic
   sloppy_mortar_stone resources/textures/sloppy_mortar_stone
+  stringy_marble resources/textures/stringy_marble

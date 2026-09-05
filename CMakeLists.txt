@@ -260,11 +260,22 @@ file(GLOB_RECURSE ASSET_PACK_INPUTS CONFIGURE_DEPENDS
 )
 list(FILTER ASSET_PACK_INPUTS EXCLUDE REGEX "/resources/(blender|shaders)/")
 
+# Ninja decides a custom command by mtime, so a file ADDED to the tree with an
+# old timestamp (copied in, extracted from an archive) never re-runs it: every
+# input is older than the manifest. The glob's own result written to a file --
+# rewritten only when the list changes -- makes "a file appeared or vanished" a
+# dependency in its own right.
+set(ASSET_PACK_INPUT_LIST ${CMAKE_CURRENT_BINARY_DIR}/asset_pack_inputs.txt)
+list(JOIN ASSET_PACK_INPUTS "
+" ASSET_PACK_INPUT_LIST_CONTENT)
+file(CONFIGURE OUTPUT ${ASSET_PACK_INPUT_LIST} CONTENT "${ASSET_PACK_INPUT_LIST_CONTENT}
+" @ONLY)
+
 add_custom_command(
     OUTPUT ${ASSET_MANIFEST_FILE}
     COMMAND asset_pack ${CMAKE_CURRENT_SOURCE_DIR}/resources
             --manifest ${ASSET_MANIFEST_FILE}
-    DEPENDS asset_pack ${ASSET_PACK_INPUTS}
+    DEPENDS asset_pack ${ASSET_PACK_INPUTS} ${ASSET_PACK_INPUT_LIST}
     COMMENT "Walking resources/ for the asset manifest..."
 )
 
@@ -278,7 +289,7 @@ add_custom_command(
     COMMAND asset_pack ${CMAKE_CURRENT_SOURCE_DIR}/resources
             --manifest ${ASSET_MANIFEST_FILE}
             --package ${ASSET_PACKAGE_FILE}
-    DEPENDS asset_pack ${ASSET_PACK_INPUTS}
+    DEPENDS asset_pack ${ASSET_PACK_INPUTS} ${ASSET_PACK_INPUT_LIST}
     COMMENT "Packing resources/ into assets.pkg..."
 )
 add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
@@ -383,6 +394,8 @@ add_library(game_shared STATIC
     src/shared/lightmap_lights.cpp
     src/shared/lightmap_probes.cpp
     src/shared/lightmap_trace.cpp
+    src/shared/lightmap_gpu.hpp
+    src/shared/lightmap_gpu.cpp
     src/shared/lighting.hpp
     src/shared/lighting.cpp
     src/shared/lightmap_solve.cpp

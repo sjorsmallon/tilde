@@ -296,6 +296,8 @@ Client :: cvars {
     r_shadow_bias_slope:    f32 = 2.5       @Client    "Shadow depth bias, slope-scaled factor"
     r_shadow_normal_offset: f32 = 1.5       @Client    "Receiver offset along the normal, in shadow texels"
     r_shadow_pcf_radius:    i32 = 1         @Client    "PCF kernel radius in texels (0 = the hardware 2x2 only)"
+    r_shadow_pcss:          bool = true     @Client    "Widen the PCF kernel from the light's source_radius and the blocker distance (PCSS)"
+    r_shadow_pcss_max_radius: f32 = 16.0    @Client    "Cap on the PCSS search and filter radius, in shadow texels"
     r_shadow_debug_light:   i32 = 0         @Client    "Entity uid of the light r_debug_channel shadow_visibility shows; 0 picks the shadowed light nearest the camera"
 
     // The sun's map is CASCADED (gate 9 step 2): the view frustum is cut into
@@ -466,7 +468,7 @@ Map :: cvars {
 // ---------------------------------------------------------------------------
 // Debugging -- was debug_collision.cpp and play_state.cpp
 // ---------------------------------------------------------------------------
-Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility }
+Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra }
 
 
 Debugging :: cvars {
@@ -477,7 +479,7 @@ Debugging :: cvars {
     // "which cores am I on" is not a thing worth making settable mid-session.
     pin_main_thread:        bool = true                 "Pin the main thread to the CPU's performance cores on a hybrid CPU"
 
-    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility)"
+    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra)"
 
     // The tonemap pass multiplies the HDR target by this before the curve
     // (lighting_def.md decision J). It is what decision H says

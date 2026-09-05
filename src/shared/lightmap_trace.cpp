@@ -134,9 +134,12 @@ linalg::vec3 direct_irradiance_at(const traced_scene_t &scene,
         arrival_at(light, position, normal, settings.directional_shadow_distance);
     if (!arrival.reaches) continue;
 
-    const float visibility =
-        light_visibility(*scene.bvh, position, normal, arrival, settings.shadow_ray_bias,
-                         settings.soft_shadow_samples, hash_mix(bits, slot));
+    // ONE ray toward a random point on the emitter, never the texel's spiral:
+    // the chain count and every vertex of every chain average it out, and the
+    // spiral here cost soft_shadow_samples rays per light per vertex for a
+    // penumbra the estimate already converges to. lightmap_gpu_plan.md step 0.
+    const float visibility = light_visibility_single_ray(
+        *scene.bvh, position, normal, arrival, settings.shadow_ray_bias, hash_mix(bits, slot));
     if (visibility <= 0.f) continue;
 
     irradiance = irradiance + light.radiance * (arrival.attenuation *

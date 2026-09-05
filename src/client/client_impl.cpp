@@ -263,6 +263,8 @@ bool Tick()
     shadows.bias_slope           = cvars.r_shadow_bias_slope;
     shadows.normal_offset_texels = cvars.r_shadow_normal_offset;
     shadows.pcf_radius           = cvars.r_shadow_pcf_radius;
+    shadows.pcss                 = cvars.r_shadow_pcss;
+    shadows.pcss_max_radius_texels = cvars.r_shadow_pcss_max_radius;
     shadows.debug_light_uid      = (shared::entity_uid_t)std::max(cvars.r_shadow_debug_light, 0);
     shadows.cascade_count         = (uint32_t)std::max(cvars.r_shadow_cascade_count, 1);
     shadows.cascade_lambda        = cvars.r_shadow_cascade_lambda;

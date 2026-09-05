@@ -36,6 +36,7 @@
 // black -- the static half of what a dynamic object multiplies into that
 // light, shown apart from the shadow map's half.
 #define DEBUG_FLAG_RENDER_PROBE_VISIBILITY  (1 << 7)
+#define DEBUG_FLAG_RENDER_SHADOW_PENUMBRA   (1 << 8)
 
 // `Light` and LIGHT_BAKED_SLOT are light_arrival.glsl's -- the struct sits with
 // the maths that reads it, so the shader tool's preview binds the same LAYOUT
@@ -65,8 +66,9 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // Gate 9. Per layer of the shadow pool: the light's view-projection, and in
     // shadow_layers.x the world size of one of its texels ONE UNIT from the
     // light, in .y how far a receiver moves toward the light before the compare
-    // at that same unit distance. A light names its layer in Light.radiance.w
-    // (direct_light.glsl).
+    // at that same unit distance, .z the map's near plane (0 for an
+    // orthographic map) and .w its far plane. A light names its layer in
+    // Light.radiance.w (direct_light.glsl).
     mat4  shadow_view_projection[MAX_SHADOW_LAYERS];
     vec4  shadow_layers[MAX_SHADOW_LAYERS];
     // x = receiver normal offset in texels, y = PCF kernel radius in texels,
@@ -82,6 +84,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // volume is OF, -1 for a channel no Mixed light claimed. A tail light whose
     // slot matches one reads that channel (probes.glsl).
     ivec4 probe_visibility_slots;
+    // x = PCSS on (1) or off (0), y = the cap on the search and filter radius in texels
+    vec4  shadow_pcss;
 } scene;
 
 #endif // SCENE_GLSL

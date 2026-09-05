@@ -49,4 +49,23 @@ INLINE float spot_cone_factor(float cos_angle, float cos_inner, float cos_outer)
     return clamp((cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.001), 0.0, 1.0);
 }
 
+INLINE float shadow_linear_depth(float ndc_z, float near_plane, float far_plane, bool orthographic)
+{
+    if (orthographic)
+        return near_plane + ndc_z * (far_plane - near_plane);
+    return far_plane * near_plane / max(far_plane - ndc_z * (far_plane - near_plane), 0.0001);
+}
+
+// Penumbra half-width in texels; with blocker_depth = near_plane it is the blocker SEARCH radius.
+INLINE float shadow_penumbra_texels(float source_radius, float receiver_depth, float blocker_depth,
+                                    float texel_size_at_unit_distance, bool orthographic)
+{
+    float separation = max(receiver_depth - blocker_depth, 0.0);
+    float texel      = max(texel_size_at_unit_distance, 0.000001);
+    if (orthographic)
+        return source_radius * separation / texel;
+    return source_radius * separation /
+           (max(blocker_depth, 0.0001) * texel * max(receiver_depth, 0.0001));
+}
+
 #endif // LIGHT_FALLOFF_GLSL

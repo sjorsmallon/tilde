@@ -154,12 +154,14 @@ template <> std::optional<font_asset> try_from_string<font_asset>(std::string_vi
 enum class pbr_material : uint16_t
 {
   Missing = 0,
-  harsh_bricks = 1,
-  scuffed_plastic = 2,
-  sloppy_mortar_stone = 3,
+  bricks_mortar = 1,
+  harsh_bricks = 2,
+  scuffed_plastic = 3,
+  sloppy_mortar_stone = 4,
+  stringy_marble = 5,
 };
 
-constexpr uint32_t pbr_material_COUNT = 4;
+constexpr uint32_t pbr_material_COUNT = 6;
 
 const char* to_string(pbr_material value);
 template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);

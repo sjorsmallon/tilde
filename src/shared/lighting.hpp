@@ -118,6 +118,9 @@ struct shadow_projection_t
 {
   linalg::mat4f view_projection;
   float         texel_size_at_unit_distance = 0.f;
+  // near_plane 0 means orthographic (shadow_linear_depth); a perspective map's is SHADOW_NEAR_PLANE
+  float         near_plane = 0.f;
+  float         far_plane  = 0.f;
 };
 
 inline constexpr float SHADOW_NEAR_PLANE = 1.f;

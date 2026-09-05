@@ -83,6 +83,8 @@ shadow_projection_t spot_shadow_projection(const scene_light_t &light, uint32_t 
       linalg::look_at(light.position, light.position + forward, up);
   projection.texel_size_at_unit_distance =
       2.f * std::tan(half_angle) / (float)std::max<uint32_t>(resolution, 1u);
+  projection.near_plane = SHADOW_NEAR_PLANE;
+  projection.far_plane  = far_plane;
   return projection;
 }
 
@@ -179,6 +181,8 @@ shadow_cascades_t directional_shadow_cascades(const scene_light_t &light, const 
         linalg::orthographic(-radius, radius, -radius, radius, 0.f, depth_range) *
         linalg::look_at(eye, snapped_center, up_hint);
     cascade.projection.texel_size_at_unit_distance = texel;
+    cascade.projection.near_plane                  = 0.f;
+    cascade.projection.far_plane                   = depth_range;
 
     const linalg::vec3 box_right = light_right * radius;
     const linalg::vec3 box_up    = light_up * radius;
@@ -291,6 +295,8 @@ point_shadow_faces_t point_shadow_faces(const scene_light_t &light, const shadow
         linalg::perspective(fov, 1.f, SHADOW_NEAR_PLANE, result.range) *
         linalg::look_at(light.position, light.position + forward, up);
     face.projection.texel_size_at_unit_distance = 2.f * tan_half / texel_count;
+    face.projection.near_plane                  = SHADOW_NEAR_PLANE;
+    face.projection.far_plane                   = result.range;
 
     const linalg::vec3 far_center = light.position + forward * result.range;
     const linalg::vec3 far_right  = right * (result.range * tan_half);

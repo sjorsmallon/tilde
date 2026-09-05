@@ -283,29 +283,46 @@ std::vector<light_reach_on_face_t> probe_light_reach(
 }
 
 
+// ONE ray toward the point of the emitter's disc at (`radius`, `angle`) -- the
+// primitive under both estimators below, so neither can pick its target
+// differently from the other. The emitter is a sphere and the disc is its
+// silhouette from the surface: the half of it the surface cannot see is the half
+// that emits nothing toward it.
+static bool shadow_ray_reaches_disc_point(const Bounding_Volume_Hierarchy &bvh,
+                                          const linalg::vec3 &surface_position,
+                                          const linalg::vec3 &surface_normal,
+                                          const light_arrival_t &arrival, float radius,
+                                          float angle, float shadow_ray_bias)
+{
+  linalg::vec3 tangent_u;
+  linalg::vec3 tangent_v;
+  brush_face_grid_tangents(arrival.direction, tangent_u, tangent_v);
+
+  const linalg::vec3 centre = surface_position + arrival.direction * arrival.distance;
+  const linalg::vec3 target = centre + tangent_u * (std::cos(angle) * radius) +
+                              tangent_v * (std::sin(angle) * radius);
+
+  const linalg::vec3 to_target = target - surface_position;
+  const float distance = std::sqrt(linalg::dot(to_target, to_target));
+  if (distance < 1e-4f) return false;
+
+  return shadow_ray_reaches(bvh, surface_position, surface_normal,
+                            to_target * (1.f / distance), distance, shadow_ray_bias);
+}
+
 float light_visibility(const Bounding_Volume_Hierarchy &bvh,
                        const linalg::vec3 &surface_position,
                        const linalg::vec3 &surface_normal,
                        const light_arrival_t &arrival, float shadow_ray_bias,
                        int soft_shadow_samples, uint32_t hash)
 {
-  const int sample_count =
-      arrival.shadow_disc_radius > 0.f ? std::max(soft_shadow_samples, 1) : 1;
+  const int sample_count = shadow_ray_count(arrival, soft_shadow_samples);
 
   if (sample_count == 1)
     return shadow_ray_reaches(bvh, surface_position, surface_normal, arrival.direction,
                               arrival.distance, shadow_ray_bias)
                ? 1.f
                : 0.f;
-
-  // The emitter is a sphere and this samples the DISC facing the surface, which
-  // is the sphere's silhouette from here -- the half of it the surface cannot see
-  // is the half that emits nothing toward it.
-  linalg::vec3 tangent_u;
-  linalg::vec3 tangent_v;
-  brush_face_grid_tangents(arrival.direction, tangent_u, tangent_v);
-
-  const linalg::vec3 centre = surface_position + arrival.direction * arrival.distance;
 
   // The golden angle: consecutive samples land as far from each other in rotation
   // as an irrational turn allows, so a handful of them cover the disc evenly
@@ -329,19 +346,37 @@ float light_visibility(const Bounding_Volume_Hierarchy &bvh,
         std::sqrt(((float)sample + radius_jitter) / (float)sample_count);
     const float angle = (float)sample * GOLDEN_ANGLE + angle_jitter * TWO_PI;
 
-    const linalg::vec3 target = centre + tangent_u * (std::cos(angle) * radius) +
-                                tangent_v * (std::sin(angle) * radius);
-
-    const linalg::vec3 to_target = target - surface_position;
-    const float distance = std::sqrt(linalg::dot(to_target, to_target));
-    if (distance < 1e-4f) continue;
-
-    if (shadow_ray_reaches(bvh, surface_position, surface_normal,
-                           to_target * (1.f / distance), distance, shadow_ray_bias))
+    if (shadow_ray_reaches_disc_point(bvh, surface_position, surface_normal, arrival, radius,
+                                      angle, shadow_ray_bias))
       ++reached;
   }
 
   return (float)reached / (float)sample_count;
+}
+
+float light_visibility_single_ray(const Bounding_Volume_Hierarchy &bvh,
+                                  const linalg::vec3 &surface_position,
+                                  const linalg::vec3 &surface_normal,
+                                  const light_arrival_t &arrival, float shadow_ray_bias,
+                                  uint32_t hash)
+{
+  if (arrival.shadow_disc_radius <= 0.f)
+    return shadow_ray_reaches(bvh, surface_position, surface_normal, arrival.direction,
+                              arrival.distance, shadow_ray_bias)
+               ? 1.f
+               : 0.f;
+
+  // Uniform over the disc's AREA: sqrt on the radius for the reason the spiral
+  // takes it, and a full random turn where the spiral had a golden-angle step,
+  // since there is no sequence here to spread.
+  constexpr float TWO_PI = 6.28318531f;
+  const float radius = arrival.shadow_disc_radius * std::sqrt(unit_float_from(hash));
+  const float angle = TWO_PI * unit_float_from(hash_mix(hash, 0x68bc21ebu));
+
+  return shadow_ray_reaches_disc_point(bvh, surface_position, surface_normal, arrival, radius,
+                                       angle, shadow_ray_bias)
+             ? 1.f
+             : 0.f;
 }
 
 } // namespace shared

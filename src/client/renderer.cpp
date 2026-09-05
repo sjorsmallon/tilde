@@ -252,10 +252,12 @@ constexpr uint32_t PASS_SHADOW_BINDING = 9;
 // the bake. After the shadow pool because it arrived after it, and a binding
 // number is not a layout.
 constexpr uint32_t PASS_PROBE_VISIBILITY_BINDING = 10;
+// The same shadow array through a non-compare nearest sampler: the PCSS blocker search
+constexpr uint32_t PASS_SHADOW_DEPTH_BINDING = 11;
 // How many images of the BAKE a pass set binds (the shadow pool is not one).
 constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 9;
-// The lightmap images, the scene block and the shadow array.
-constexpr uint32_t PASS_BINDING_COUNT = PASS_IMAGE_BINDING_COUNT + 2;
+// The lightmap images, the scene block and the shadow array's two samplers.
+constexpr uint32_t PASS_BINDING_COUNT = PASS_IMAGE_BINDING_COUNT + 3;
 
 // lightmap.glsl reads a vec4 of coverage against an ivec4 of slots, which is the
 // four in shared/lightmap.hpp seen from the other side.
@@ -562,10 +564,11 @@ struct scene_uniform_t
   // Gate 9 step 4: which baked slot each probe visibility channel is of, -1 for
   // none -- the probes' twin of a vertex's light_slots.
   int32_t     probe_visibility_slots[4]                     = {-1, -1, -1, -1};
+  float       shadow_pcss[4]                                = {}; // x on/off, y radius cap in texels
 };
 
 static_assert(sizeof(scene_uniform_t) ==
-                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 64,
+                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -580,6 +583,7 @@ constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_CASCADES   = 1 << 4;
 constexpr int32_t DEBUG_FLAG_RENDER_DIRECT_LIGHT      = 1 << 5;
 constexpr int32_t DEBUG_FLAG_RENDER_BAKED_LIGHT       = 1 << 6;
 constexpr int32_t DEBUG_FLAG_RENDER_PROBE_VISIBILITY  = 1 << 7;
+constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_PENUMBRA   = 1 << 8;
 
 // One number in one place, so the lit, grid and blend paths cannot disagree.
 // It is composed as a diffuse term already (ambient * albedo), so it does NOT
@@ -674,9 +678,10 @@ struct shadow_pool_t
   VkImageView    array_view = VK_NULL_HANDLE; // what the scene pass samples
   VkImageView    layer_views[MAX_SHADOW_LAYERS]  = {};
   VkFramebuffer  framebuffers[MAX_SHADOW_LAYERS] = {};
-  VkSampler      sampler     = VK_NULL_HANDLE;
-  uint32_t       size        = 0;
-  uint32_t       layer_count = 0;
+  VkSampler      sampler       = VK_NULL_HANDLE;
+  VkSampler      depth_sampler = VK_NULL_HANDLE; // non-compare, nearest: the PCSS blocker search
+  uint32_t       size          = 0;
+  uint32_t       layer_count   = 0;
 };
 
 static shadow_pool_t         g_shadow_pool;
@@ -2237,6 +2242,10 @@ static void create_mesh_resources()
   pass_bindings[10].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[10].descriptorCount = 1;
   pass_bindings[10].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[11].binding         = PASS_SHADOW_DEPTH_BINDING;
+  pass_bindings[11].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[11].descriptorCount = 1;
+  pass_bindings[11].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -2248,11 +2257,11 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Ten samplers per set -- irradiance, visibility, the bounce's two, the
-  // probe volume's five, and the shadow pool.
+  // Eleven samplers per set -- irradiance, visibility, the bounce's two, the
+  // probe volume's five, and the shadow pool twice.
   VkDescriptorPoolSize pass_pool_sizes[2] = {
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-       MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + 1)},
+       MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + 2)},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_LIGHTMAP_ATLASES}};
   VkDescriptorPoolCreateInfo pass_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
   pass_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
@@ -2947,7 +2956,7 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
       PASS_INDIRECT_L1_BINDING, PASS_PROBE_L0_BINDING,    PASS_PROBE_L1_BINDING,
       PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2, PASS_PROBE_VISIBILITY_BINDING};
 
-  constexpr uint32_t WRITE_COUNT = PASS_IMAGE_BINDING_COUNT + 1;
+  constexpr uint32_t WRITE_COUNT = PASS_IMAGE_BINDING_COUNT + 2;
   VkDescriptorImageInfo images[WRITE_COUNT]{};
   VkWriteDescriptorSet writes[WRITE_COUNT]{};
   for (uint32_t at = 0; at < PASS_IMAGE_BINDING_COUNT; ++at)
@@ -2978,6 +2987,17 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
   writes[shadow].descriptorCount = 1;
   writes[shadow].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   writes[shadow].pImageInfo      = &images[shadow];
+
+  const uint32_t depth = PASS_IMAGE_BINDING_COUNT + 1;
+  images[depth].sampler     = g_shadow_pool.depth_sampler;
+  images[depth].imageView   = g_shadow_pool.array_view;
+  images[depth].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+  writes[depth]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[depth].dstSet          = set;
+  writes[depth].dstBinding      = PASS_SHADOW_DEPTH_BINDING;
+  writes[depth].descriptorCount = 1;
+  writes[depth].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[depth].pImageInfo      = &images[depth];
 
   vkUpdateDescriptorSets(g_device, WRITE_COUNT, writes, 0, nullptr);
 }
@@ -3718,6 +3738,8 @@ static void destroy_shadow_pool()
   }
   if (pool.sampler != VK_NULL_HANDLE)
     vkDestroySampler(g_device, pool.sampler, nullptr);
+  if (pool.depth_sampler != VK_NULL_HANDLE)
+    vkDestroySampler(g_device, pool.depth_sampler, nullptr);
   if (pool.array_view != VK_NULL_HANDLE)
     vkDestroyImageView(g_device, pool.array_view, nullptr);
   if (pool.image != VK_NULL_HANDLE)
@@ -3842,6 +3864,16 @@ static bool try_create_shadow_pool(uint32_t size, uint32_t layer_count)
   if (vkCreateSampler(g_device, &sampler_info, nullptr, &pool.sampler) != VK_SUCCESS)
   {
     log_error("[renderer] could not create the shadow compare sampler");
+    return false;
+  }
+
+  sampler_info.magFilter     = VK_FILTER_NEAREST;
+  sampler_info.minFilter     = VK_FILTER_NEAREST;
+  sampler_info.compareEnable = VK_FALSE;
+  sampler_info.compareOp     = VK_COMPARE_OP_ALWAYS;
+  if (vkCreateSampler(g_device, &sampler_info, nullptr, &pool.depth_sampler) != VK_SUCCESS)
+  {
+    log_error("[renderer] could not create the shadow depth sampler");
     return false;
   }
 
@@ -4939,6 +4971,9 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   case cvars::Debug_Channel::probe_visibility:
     scene.debug_flags = DEBUG_FLAG_RENDER_PROBE_VISIBILITY;
     break;
+  case cvars::Debug_Channel::shadow_penumbra:
+    scene.debug_flags = DEBUG_FLAG_RENDER_SHADOW_PENUMBRA;
+    break;
   }
 
   return scene;
@@ -5126,6 +5161,8 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
         scene.shadow_layers[layer][0]        = fit.projection.texel_size_at_unit_distance;
         scene.shadow_layers[layer][1] =
             settings.light_offset_texels * fit.projection.texel_size_at_unit_distance;
+        scene.shadow_layers[layer][2]        = fit.projection.near_plane;
+        scene.shadow_layers[layer][3]        = fit.projection.far_plane;
         scene.shadow_cascade_splits[cascade] = fit.far_depth;
         prepared.jobs[prepared.job_count++]  = {layer, light.mode, fit.projection.view_projection};
       }
@@ -5144,6 +5181,8 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
         scene.shadow_layers[layer][0] = fit.projection.texel_size_at_unit_distance;
         scene.shadow_layers[layer][1] =
             settings.light_offset_texels * fit.projection.texel_size_at_unit_distance;
+        scene.shadow_layers[layer][2] = fit.projection.near_plane;
+        scene.shadow_layers[layer][3] = fit.projection.far_plane;
         if (fit.visible)
           prepared.jobs[prepared.job_count++] = {layer, light.mode, fit.projection.view_projection};
       }
@@ -5159,6 +5198,8 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
       scene.shadow_layers[layer][0]       = projection.texel_size_at_unit_distance;
       scene.shadow_layers[layer][1] =
           settings.light_offset_texels * projection.texel_size_at_unit_distance;
+      scene.shadow_layers[layer][2]       = projection.near_plane;
+      scene.shadow_layers[layer][3]       = projection.far_plane;
       prepared.jobs[prepared.job_count++] = {layer, light.mode, projection.view_projection};
     }
 
@@ -5260,6 +5301,8 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
   scene.shadow_settings[0] = settings.normal_offset_texels;
   scene.shadow_settings[1] = (float)std::clamp(settings.pcf_radius, 0, 3);
   scene.shadow_settings[2] = std::clamp(settings.cascade_blend, 0.0f, 0.5f);
+  scene.shadow_pcss[0]     = settings.pcss ? 1.0f : 0.0f;
+  scene.shadow_pcss[1]     = std::clamp(settings.pcss_max_radius_texels, 0.0f, 64.0f);
 }
 
 // The tag is cast straight across into the scene block.

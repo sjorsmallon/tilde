@@ -1,5 +1,6 @@
 #include "../shared/lighting.hpp"
 #include "../shared/lightmap_bake.hpp"
+#include "../shared/lightmap_gpu.hpp"
 #include "../shared/lightmap_lights.hpp"
 #include "../shared/lightmap_probes.hpp"
 #include "../shared/lightmap_sidecar.hpp"
@@ -1139,6 +1140,54 @@ void a_punctual_light_spends_no_extra_rays()
   assert(!cheap.irradiance_pages.bytes.empty());
   assert(cheap.irradiance_pages.bytes == expensive.irradiance_pages.bytes);
   assert(cheap.visibility_pages.bytes == expensive.visibility_pages.bytes);
+}
+
+// Inside a chain, next-event estimation spends ONE ray toward a random point on
+// the emitter's disc, not the texel's spiral (lightmap_gpu_plan.md step 0). The
+// two are estimators of the same fraction, so at a point in the penumbra the
+// single ray must AVERAGE to what the spiral answers -- and a punctual light must
+// take the same centre ray under both, since that is what keeps every map lit by
+// point sources bit for bit what it was.
+void one_shadow_ray_toward_the_disc_averages_to_the_spiral()
+{
+  shared::map_t map =
+      map_with_a_floor_and_a_light(64.f, 1.f, entities::Light_Mode::Baked, 24.f);
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(map);
+  assert(lights.size() == 1);
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+
+  // A lid edge at (32, 36) seen from a disc spanning x in [-24, 24] at y = 64
+  // throws its penumbra over x in about [42, 104] on the floor; 70 is inside it.
+  const linalg::vec3 position{70.f, 0.f, 0.f};
+  const linalg::vec3 normal{0.f, 1.f, 0.f};
+  const shared::light_arrival_t arrival =
+      shared::arrival_at(lights[0].light, position, normal, 100000.f);
+  assert(arrival.arrives && arrival.shadow_disc_radius == 24.f);
+
+  const float spiral =
+      shared::light_visibility(bvh, position, normal, arrival, 0.25f, 256, 0x2545f491u);
+  assert(spiral > 0.05f && spiral < 0.95f);
+
+  constexpr int SINGLE_RAY_TRIALS = 4096;
+  double reached = 0.0;
+  for (int trial = 0; trial < SINGLE_RAY_TRIALS; ++trial)
+  {
+    const float one = shared::light_visibility_single_ray(
+        bvh, position, normal, arrival, 0.25f, shared::hash_mix(0x9e3779b9u, (uint32_t)trial));
+    assert(one == 0.f || one == 1.f);
+    reached += one;
+  }
+  const float averaged = (float)(reached / SINGLE_RAY_TRIALS);
+  assert(std::abs(averaged - spiral) < 0.05f);
+
+  // The punctual case: the same one ray, the same answer, whichever estimator.
+  shared::light_arrival_t punctual = arrival;
+  punctual.shadow_disc_radius = 0.f;
+  for (uint32_t hash = 0; hash < 16; ++hash)
+    assert(shared::light_visibility_single_ray(bvh, position, normal, punctual, 0.25f, hash) ==
+           shared::light_visibility(bvh, position, normal, punctual, 0.25f, 32, hash));
 }
 
 // The other half of a radius, and the one with no shadow in it: an emitter with
@@ -2924,6 +2973,170 @@ void a_static_mesh_casts_a_shadow_in_the_bake()
                                     {0.f, 1.f, 0.f}, 200.f, 0.5f));
 }
 
+// --- The GPU scene: lightmap_gpu_plan.md step 2 ------------------------------
+
+// A byte that goes through the CPU decode and back must come out itself: the
+// texture arrays are re-encoded after the linear box filter, and a texture no
+// filter touches (a 1x1) has to reach the kernel byte for byte.
+void the_srgb_encode_is_the_decodes_inverse()
+{
+  for (int byte = 0; byte < 256; ++byte)
+    assert(shared::linear_to_srgb_byte(shared::srgb_byte_to_linear((uint8_t)byte)) == byte);
+}
+
+// The pin between the two scenes: for every triangle the GPU scene holds, a ray
+// dropped onto its centroid through the occluder BVH must land on it, and what
+// surface_at resolves there through the brush-and-face walk must be what the
+// triangle's record says it is made of. Textured and untextured brush faces, a
+// face naming an index the table does not have, and a static mesh -- every
+// answer surface_at can give.
+void the_gpu_scene_is_made_of_what_the_tracer_sees()
+{
+  shared::map_t map;
+  map.materials = {"", ""};
+
+  const shared::entity_uid_t floor_uid = map.next_uid++;
+  map.geometry.push_back({floor_uid, shared::make_box_brush({0, -8, 0}, {64, 8, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 72, 0}, {64, 8, 64})});
+
+  shared::static_mesh_geometry_t prop;
+  prop.surface.mesh_path = "resources/models/Box.mesh";
+  prop.position = {200, 40, 0};
+  prop.scale = {32, 32, 32};
+  const shared::entity_uid_t prop_uid = map.next_uid++;
+  map.geometry.push_back({prop_uid, prop});
+
+  // The floor's top face names material 1, its bottom an index the table does
+  // not have; everything else stays at the map default.
+  shared::brush_geometry_t& floor =
+      std::get<shared::brush_geometry_t>(map.geometry[0].value);
+  shared::face_surface_for(floor, Plane{{0, 0, 0}, {0, 1, 0}}).material = 1;
+  shared::face_surface_for(floor, Plane{{0, -16, 0}, {0, -1, 0}}).material = 7;
+
+  const assets::texture_asset_t albedo = one_texel(255, 255, 255);
+  const assets::texture_asset_t emissive = one_texel(255, 128, 0);
+
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  shared::traced_scene_t traced = shared::build_traced_scene(map, bvh);
+  traced.materials = {{nullptr, nullptr}, {&albedo, &emissive}};
+
+  const shared::gpu_bake_scene_t scene = shared::build_gpu_bake_scene(map, traced);
+
+  // Two boxes of twelve triangles and a box mesh of twelve, one vertex a corner.
+  assert(scene.triangles.size() == 36);
+  assert(scene.vertices.size() == 108);
+  assert(scene.indices.size() == 108);
+  assert(scene.triangle_object_uids.size() == 36);
+
+  // Two map materials and the trailing untextured one; one layer per array,
+  // because only material 1 carries textures.
+  assert(scene.materials.size() == 3);
+  assert(scene.untextured_material == 2);
+  assert(scene.materials[0].albedo_layer == shared::GPU_NO_LAYER);
+  assert(scene.materials[0].emissive_layer == shared::GPU_NO_LAYER);
+  assert(scene.materials[1].albedo_layer == 0);
+  assert(scene.materials[1].emissive_layer == 0);
+  assert(scene.albedo.layer_count() == 1);
+  assert(scene.emissive.layer_count() == 1);
+
+  int by_material[3] = {0, 0, 0};
+  int prop_triangles = 0;
+
+  for (uint32_t index = 0; index < (uint32_t)scene.triangles.size(); ++index)
+  {
+    const shared::gpu_triangle_t& triangle = scene.triangles[index];
+    assert(triangle.material < scene.materials.size());
+    ++by_material[triangle.material];
+    if (scene.triangle_object_uids[index] == prop_uid)
+    {
+      ++prop_triangles;
+      assert(triangle.material == scene.untextured_material);
+    }
+
+    const auto corner = [&](uint32_t offset) {
+      const linalg::vec4& vertex = scene.vertices[scene.indices[index * 3 + offset]];
+      return linalg::vec3{vertex.x, vertex.y, vertex.z};
+    };
+    const linalg::vec3 a = corner(0);
+    const linalg::vec3 b = corner(1);
+    const linalg::vec3 c = corner(2);
+    const linalg::vec3 centroid = (a + b + c) * (1.f / 3.f);
+    const linalg::vec3 normal = linalg::normalize(linalg::cross(b - a, c - a));
+
+    // Dropped onto the triangle from just outside it.
+    constexpr float HEIGHT = 2.f;
+    const linalg::vec3 origin = centroid + normal * HEIGHT;
+    ray_hit_result_t hit = {};
+    assert(bvh_intersect_ray(bvh, origin, normal * -1.f, hit) && hit.hit);
+    assert(std::abs(hit.t - HEIGHT) < 1e-2f);
+    assert(hit.id.index == scene.triangle_object_uids[index]);
+    assert(linalg::dot(hit.normal, normal) > 0.999f);
+
+    const linalg::vec3 hit_position = origin + normal * (-hit.t);
+    const shared::traced_surface_t cpu = shared::surface_at(traced, hit, hit_position);
+    const shared::traced_surface_t gpu =
+        shared::gpu_surface_at(scene, index, shared::gpu_triangle_uv_at(scene, index, centroid));
+
+    for (int channel = 0; channel < 3; ++channel)
+    {
+      assert(std::abs(cpu.albedo[channel] - gpu.albedo[channel]) < 1e-6f);
+      assert(std::abs(cpu.emission[channel] - gpu.emission[channel]) < 1e-6f);
+    }
+  }
+
+  // The floor's top face is the only textured one; its bottom face fell through
+  // to the untextured entry beside the prop's twelve.
+  assert(by_material[1] == 2);
+  assert(by_material[2] == 2 + 12);
+  assert(by_material[0] == 36 - 2 - 14);
+  assert(prop_triangles == 12);
+
+  // A textured triangle's uv reaches the record: the top face is a 128-unit
+  // square at the 128-unit default repeat, so its corners span one repeat.
+  bool saw_textured = false;
+  for (uint32_t index = 0; index < (uint32_t)scene.triangles.size(); ++index)
+  {
+    const shared::gpu_triangle_t& triangle = scene.triangles[index];
+    if (triangle.material != 1) continue;
+    saw_textured = true;
+    const float span_u = std::max({triangle.uv0.x, triangle.uv1.x, triangle.uv2.x}) -
+                         std::min({triangle.uv0.x, triangle.uv1.x, triangle.uv2.x});
+    const float span_v = std::max({triangle.uv0.y, triangle.uv1.y, triangle.uv2.y}) -
+                         std::min({triangle.uv0.y, triangle.uv1.y, triangle.uv2.y});
+    assert(std::abs(span_u - 1.f) < 1e-4f && std::abs(span_v - 1.f) < 1e-4f);
+  }
+  assert(saw_textured);
+}
+
+// A texture larger than a layer is box-filtered in LINEAR space: two texels of
+// 0 and 255 average to the byte that encodes linear 0.5, never to the 128 that
+// averaging the encoded bytes would give.
+void a_layer_is_filtered_in_linear_space()
+{
+  assets::texture_asset_t texture;
+  texture.width = 2 * shared::GPU_BAKE_TEXTURE_LAYER_SIZE;
+  texture.height = 1;
+  texture.channels = 4;
+  texture.pixels.assign((size_t)texture.width * 4, 255);
+  for (int x = 0; x < texture.width; x += 2)
+    texture.pixels[(size_t)x * 4] = texture.pixels[(size_t)x * 4 + 1] =
+        texture.pixels[(size_t)x * 4 + 2] = 0;
+
+  shared::map_t map;
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  shared::traced_scene_t traced = shared::build_traced_scene(map, bvh);
+  traced.materials = {{&texture, nullptr}};
+
+  const shared::gpu_bake_scene_t scene = shared::build_gpu_bake_scene(map, traced);
+  assert(scene.albedo.layer_count() == 1);
+
+  const linalg::vec3 filtered =
+      shared::sample_gpu_texture(scene.albedo, 0, {0.5f, 0.5f}, {0, 0, 0});
+  assert(std::abs(filtered.x - 0.5f) < 0.01f);
+  assert(scene.albedo.pixels[0] == shared::linear_to_srgb_byte(0.5f));
+  assert(scene.albedo.pixels[0] != 128);
+}
+
 static assets::asset_state_t g_asset_state{};
 
 int main()
@@ -2938,6 +3151,10 @@ int main()
   a_lightmapped_static_mesh_draws_through_its_unwrap();
   a_sidecar_round_trips_an_unwrap();
   a_static_mesh_casts_a_shadow_in_the_bake();
+
+  the_srgb_encode_is_the_decodes_inverse();
+  the_gpu_scene_is_made_of_what_the_tracer_sees();
+  a_layer_is_filtered_in_linear_space();
 
   a_box_gets_one_chart_per_face();
   chart_size_follows_the_face_extent();
@@ -2965,6 +3182,7 @@ int main()
   asking_for_masks_does_not_move_a_pixel();
   a_source_radius_softens_a_shadow_edge();
   a_punctual_light_spends_no_extra_rays();
+  one_shadow_ray_toward_the_disc_averages_to_the_spiral();
   a_source_radius_clamps_the_near_field();
   intensity_is_the_irradiance_at_the_reference_distance();
   the_gutter_is_filled_from_the_chart_that_owns_it();

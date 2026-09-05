@@ -32,6 +32,7 @@ constexpr const char* Debug_Channel_VALUE_NAMES[] = {
   "direct_light",
   "baked_light",
   "probe_visibility",
+  "shadow_penumbra",
 };
 
 constexpr const char* Bot_Mode_VALUE_NAMES[] = {
@@ -42,7 +43,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
-  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 9}},
+  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 10}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
@@ -399,6 +400,22 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::r_shadow_pcf_radius),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_pcss",
+     .description = "Widen the PCF kernel from the light's source_radius and the blocker distance (PCSS)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, r_shadow_pcss),
+     .size = sizeof(cvar_state_t::r_shadow_pcss),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_pcss_max_radius",
+     .description = "Cap on the PCSS search and filter radius, in shadow texels",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_pcss_max_radius),
+     .size = sizeof(cvar_state_t::r_shadow_pcss_max_radius),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "r_shadow_debug_light",
      .description = "Entity uid of the light r_debug_channel shadow_visibility shows; 0 picks the shadowed light nearest the camera",
      .flags = CVAR_FLAG_CLIENT,
@@ -704,7 +721,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_debug_channel",
-     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility)",
+     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra)",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_ENUM,
      .offset = offsetof(cvar_state_t, r_debug_channel),
@@ -1188,6 +1205,7 @@ const char* to_string(Debug_Channel value)
     case Debug_Channel::direct_light: return "direct_light";
     case Debug_Channel::baked_light: return "baked_light";
     case Debug_Channel::probe_visibility: return "probe_visibility";
+    case Debug_Channel::shadow_penumbra: return "shadow_penumbra";
   }
   assert(false && "invalid Debug_Channel");
   return "";
@@ -1204,6 +1222,7 @@ template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::str
   if (text == "direct_light") return Debug_Channel::direct_light;
   if (text == "baked_light") return Debug_Channel::baked_light;
   if (text == "probe_visibility") return Debug_Channel::probe_visibility;
+  if (text == "shadow_penumbra") return Debug_Channel::shadow_penumbra;
   return std::nullopt;
 }
 
