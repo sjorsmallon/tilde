@@ -9,14 +9,17 @@
 //
 // Bindings 12..14 of the pass set; renderer.cpp static_asserts the table's
 // layout against this block. The pick is find_captures_for's arithmetic
-// (lightmap_reflections.cpp) over the eight corners of the lattice cell the
-// point is in: the nearest four present, weighted 1 / max(distance, 1) and
-// normalised, so a point ON a capture reads that capture almost alone.
+// (lightmap_reflections.cpp): TRILINEAR over the eight corners of the lattice
+// cell the point is in, normalised over the corners holding a capture. A
+// corner's weight is zero on the far face of its cell, so a capture leaves the
+// blend contributing nothing and the reflection is continuous across cells --
+// a nearest-N pick cannot be, whatever its weights, since the member it drops
+// still carried weight where it was dropped.
 
 #include "scene.glsl"
 
 #define MAX_REFLECTION_CAPTURES    256
-#define REFLECTION_BLEND_COUNT     4
+#define REFLECTION_BLEND_COUNT     8
 #define REFLECTION_CUBE_FACE_COUNT 6
 
 struct Reflection_Capture
@@ -43,10 +46,11 @@ struct Reflection_Pick
     float weights[REFLECTION_BLEND_COUNT];
 };
 
-// The nearest four captures among the eight corners of the cell around P,
-// sorted nearest first. A clamped corner names the same cell twice and a
-// dropped candidate names none; both are skipped, which is what makes the
-// weights below sum to one over exactly the captures present.
+// The eight corners of the cell around P with their trilinear weights, the
+// heaviest first. A clamped corner names the same cell as its neighbour and its
+// weight MERGES into it, which is what makes a point beyond the lattice read
+// its nearest face; a corner holding no capture is skipped and the weights
+// normalise over the ones present.
 Reflection_Pick pick_reflection_captures(vec3 P)
 {
     Reflection_Pick pick;
@@ -63,56 +67,72 @@ Reflection_Pick pick_reflection_captures(vec3 P)
 
     vec3  origin  = reflection_table.lattice_origin_and_spacing.xyz;
     float spacing = reflection_table.lattice_origin_and_spacing.w;
-    ivec3 base    = ivec3(floor((P - origin) / spacing));
+    vec3  local   = (P - origin) / spacing;
+    ivec3 base    = ivec3(floor(local));
+    vec3  t       = local - vec3(base);
 
-    float distances[REFLECTION_BLEND_COUNT];
     for (int corner = 0; corner < 8; ++corner)
     {
-        ivec3 cell = clamp(base + ivec3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1),
-                           ivec3(0), lattice_count - ivec3(1));
-        int index = reflection_table.cells[(cell.z * lattice_count.y + cell.y) * lattice_count.x + cell.x];
+        ivec3 high   = ivec3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+        vec3  factor = mix(vec3(1.0) - t, t, vec3(high));
+        float weight = factor.x * factor.y * factor.z;
+        if (weight <= 0.0)
+            continue;
+
+        ivec3 cell  = clamp(base + high, ivec3(0), lattice_count - ivec3(1));
+        int   index = reflection_table.cells[(cell.z * lattice_count.y + cell.y) * lattice_count.x + cell.x];
         if (index < 0)
             continue;
 
-        bool already_picked = false;
-        for (int slot = 0; slot < pick.count; ++slot)
-            already_picked = already_picked || pick.indices[slot] == index;
-        if (already_picked)
-            continue;
-
-        float distance_to_capture =
-            length(reflection_table.captures[index].position_and_layer.xyz - P);
-        if (pick.count == REFLECTION_BLEND_COUNT && distance_to_capture >= distances[pick.count - 1])
-            continue;
-
-        int slot = min(pick.count, REFLECTION_BLEND_COUNT - 1);
-        while (slot > 0 && distances[slot - 1] > distance_to_capture)
+        int slot = 0;
+        while (slot < pick.count && pick.indices[slot] != index)
+            ++slot;
+        if (slot == pick.count)
         {
-            distances[slot]    = distances[slot - 1];
-            pick.indices[slot] = pick.indices[slot - 1];
-            --slot;
-        }
-        distances[slot]    = distance_to_capture;
-        pick.indices[slot] = index;
-        if (pick.count < REFLECTION_BLEND_COUNT)
+            pick.indices[slot] = index;
+            pick.weights[slot] = 0.0;
             ++pick.count;
+        }
+        pick.weights[slot] += weight;
     }
 
     float total = 0.0;
     for (int slot = 0; slot < pick.count; ++slot)
-    {
-        pick.weights[slot] = 1.0 / max(distances[slot], 1.0);
         total += pick.weights[slot];
+    if (!(total > 0.0))
+    {
+        pick.count = 0;
+        return pick;
     }
     for (int slot = 0; slot < pick.count; ++slot)
         pick.weights[slot] /= total;
+
+    for (int slot = 1; slot < pick.count; ++slot)
+    {
+        int at = slot;
+        while (at > 0 && pick.weights[at - 1] < pick.weights[at])
+        {
+            float weight        = pick.weights[at - 1];
+            int   index         = pick.indices[at - 1];
+            pick.weights[at - 1] = pick.weights[at];
+            pick.indices[at - 1] = pick.indices[at];
+            pick.weights[at]     = weight;
+            pick.indices[at]     = index;
+            --at;
+        }
+    }
     return pick;
 }
 
 // The parallax correction: where the ray (P, R) leaves the capture's box, seen
-// from the capture point. A point outside the box (a fragment around a corner
-// its capture never measured) has no exit ahead of it and reads along R
-// uncorrected, which is the answer a capture at infinity would give.
+// from the capture point. A point outside the box whose ray does not pass
+// through it (no exit ahead) reads along R uncorrected, the answer a capture at
+// infinity would give -- and that is a TRIED decision: clamping the point onto
+// the box first was built to soften the seam at the face, and it collapsed a
+// whole strip of floor onto one line of the box, smearing the reflected block
+// across the floor in texel-row bands. Outside its box, box parallax has no
+// right answer; the uncorrected read is the least wrong one for an object
+// near the capture, and what places objects at their depth is step 7.
 vec3 reflection_fetch_direction(Reflection_Capture capture, vec3 P, vec3 R)
 {
     vec3 safe_R  = mix(R, vec3(1e-6), lessThan(abs(R), vec3(1e-6)));
@@ -171,7 +191,7 @@ vec4 reflection_debug_color(vec3 P, vec3 N, vec3 V, float roughness)
 }
 
 // r_debug_channel = reflection_capture: the shaded result washed with a colour
-// per WINNING capture (the nearest of the four, a hue off the golden ratio so
+// per WINNING capture (the heaviest of the blend, a hue off the golden ratio so
 // lattice neighbours differ), the cascade debug's shape. Magenta where no
 // capture covers the point, so "nothing picked" cannot pass for "one capture".
 vec4 reflection_capture_debug(vec4 shaded, vec3 P)

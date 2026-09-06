@@ -17,6 +17,17 @@ namespace client
 class Lightmap_Tool : public Editor_Tool
 {
 public:
+  // What the PANEL opens with, as distinct from the structs' own defaults: a
+  // full bake at a texel a unit is what a look wants, while the struct defaults
+  // stay the cheap untraced bake 81 sites of lightmap_bake_test pin.
+  Lightmap_Tool()
+  {
+    settings.texels_per_world_unit = 1.f;
+    solve_settings.trace_indirect_light = true;
+    solve_settings.bake_probes = true;
+    solve_settings.bake_reflection_captures = true;
+  }
+
   void on_enable(editor_context_t& ctx) override;
   void on_disable(editor_context_t& ctx) override;
   void on_update(editor_context_t& ctx, const viewport_state_t& view, float dt) override;
@@ -59,6 +70,18 @@ private:
   static constexpr int PROBE_PREVIEW_RADIUS_IN_SPACINGS = 10;
   size_t probe_preview_drawn_count = 0;
   void rebuild_probe_preview(editor_context_t& ctx);
+
+  // Gate 6 step 6: the capture lattice, derived from the same preview grid.
+  // Rebuilt by rebuild_probe_preview when shown.
+  bool show_capture_preview = false;
+  bool show_all_capture_boxes = false;
+  shared::reflection_capture_set_t capture_preview;
+  shared::reflection_lattice_t capture_preview_lattice;
+  shared::reflection_lattice_t baked_capture_lattice;
+  size_t capture_preview_open_count = 0;
+  size_t capture_preview_overridden_count = 0;
+  uint32_t capture_preview_boxes_drawn = 0;
+  void draw_capture_preview(pass_builder_t& draws);
 
 
   std::optional<shared::probe_ray_report_t> probe_ray_report;

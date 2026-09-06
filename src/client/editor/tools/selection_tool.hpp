@@ -37,6 +37,8 @@ public:
 private:
   void draw_light_bake_status(const editor_context_t& ctx, shared::entity_uid_t uid,
                               const entities::Entity& entity);
+  void draw_reflection_volume_status(const editor_context_t& ctx,
+                                     const entities::Entity& entity);
 
   // The last "explain reach" probe, kept so the lines stay up while the author
   // reads them; keyed by the light it was run for.

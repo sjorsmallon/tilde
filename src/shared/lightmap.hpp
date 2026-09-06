@@ -603,7 +603,10 @@ struct lightmap_pages_t
 };
 
 // Gate 6, lighting_def.md decision L: reflection captures and their parallax boxes.
-inline constexpr uint32_t REFLECTION_BLEND_COUNT = 4;
+// The eight corners of a lattice cell: a blend is continuous only if every
+// weight reaches zero exactly where its member leaves the set, which
+// trilinear weights do and a nearest-N pick never can.
+inline constexpr uint32_t REFLECTION_BLEND_COUNT = 8;
 inline constexpr uint32_t REFLECTION_BOX_FACE_COUNT = 6;
 
 // The cube map's face order, and the box's.
@@ -755,10 +758,32 @@ struct reflection_capture_set_t
 
 struct reflection_capture_pick_t
 {
-  Array<uint32_t, REFLECTION_BLEND_COUNT> indices = {};
+  Array<uint32_t, REFLECTION_BLEND_COUNT> indices = {}; // heaviest first
   Array<float, REFLECTION_BLEND_COUNT> weights = {};
   uint32_t count = 0;
 };
+
+// The captures as a lattice: one cell per lattice point, holding the capture
+// index there or -1. DERIVED from the positions (the origin is the lowest
+// capture per axis, a cell is the rounded offset over the spacing) rather than
+// carried, so the sidecar has nothing to keep in step and the renderer's table,
+// the CPU pick and the editor overlay all read one derivation.
+struct reflection_lattice_t
+{
+  linalg::vec3 origin{0.f, 0.f, 0.f};
+  float spacing = 0.f;
+  linalg::vec3i count{0, 0, 0};
+  std::vector<int32_t> cells;
+
+  [[nodiscard]] size_t index_of(const linalg::vec3i &cell) const
+  {
+    return ((size_t)cell.z * (size_t)count.y + (size_t)cell.y) * (size_t)count.x +
+           (size_t)cell.x;
+  }
+  [[nodiscard]] bool empty() const { return cells.empty(); }
+};
+// Empty, loudly, when a capture is off the lattice or two share a cell.
+[[nodiscard]] reflection_lattice_t derive_reflection_lattice(const reflection_capture_set_t &set);
 
 // A baked lightmap, resident. The pixels are what the renderer samples and the
 // charts are what turns a face into a place in them -- neither is any use

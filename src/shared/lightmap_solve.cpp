@@ -1309,8 +1309,32 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
       solver ? std::format("by {} in {} batch(es)", solver->name(), batch_count)
              : std::format("on {} thread(s)", worker_count);
   const char *seconds_unit = solver ? "s" : "thread-s";
+
+  // Gate 6 step 6: the captures clause, on the same rule as the indirect one --
+  // a bake with captures and one without look the same from outside, so the
+  // line says which this was, and why when it was not.
+  std::string captures_clause;
+  if (!solve_settings.bake_reflection_captures)
+    captures_clause = "off";
+  else if (!trace_indirect)
+    captures_clause = "NOT baked, they are traced and \"Trace indirect light\" was off";
+  else if (solve_settings.mode == lightmap_solve_mode_t::Visibility)
+    captures_clause = "NOT baked in Visibility mode";
+  else if (lightmap.reflections.captures.empty())
+    captures_clause = "NONE placed (no probe grid, or every lattice point buried)";
+  else
+  {
+    const size_t capture_texels = lightmap.reflections.captures.size() *
+                                  lightmap.reflections.captures.front().cube.texels_in_mip(0);
+    captures_clause = std::format("{} at {}x{} a face, {} texel(s), {} chain(s)",
+                                  lightmap.reflections.captures.size(),
+                                  settings.reflection_size_in_texels,
+                                  settings.reflection_size_in_texels, capture_texels,
+                                  capture_texels * (size_t)indirect.rays_per_sample);
+  }
+
   log_terminal("[lightmap] baked {} chart(s), {} texel(s), {} sample(s) {} in {:.2f}s wall: "
-               "direct {} shadow ray(s) in {:.1f} {}; indirect {}.",
+               "direct {} shadow ray(s) in {:.1f} {}; indirect {}; captures {}.",
                packed_charts.size(), progress.total_texels, statistics.samples, shaded_by,
                (double)progress.elapsed_milliseconds() / 1000.0, statistics.shade.direct_rays,
                (double)statistics.direct_nanoseconds * 1e-9, seconds_unit,
@@ -1318,7 +1342,8 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
                    ? std::format("{} chain(s) ({} per sample) in {:.1f} {}",
                                  statistics.shade.chains, indirect.rays_per_sample,
                                  (double)statistics.indirect_nanoseconds * 1e-9, seconds_unit)
-                   : std::string("NOT traced, \"Trace indirect light\" was off"));
+                   : std::string("NOT traced, \"Trace indirect light\" was off"),
+               captures_clause);
 
   // Loud, and after the join for the reason dropped_light_t gives. One line per
   // chart-light pair: an author needs to know WHICH face fell back and which

@@ -9,6 +9,8 @@
 #include "../../../shared/lighting.hpp"
 #include "../../../shared/lightmap.hpp"
 #include "../../../shared/lightmap_lights.hpp"
+#include "../../../shared/lightmap_reflections.hpp"
+#include "../../../shared/shapes.hpp"
 #include "../../../shared/log.hpp"
 #include "../../../shared/shader_math.hpp"
 #include "imgui.h"
@@ -460,6 +462,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
       else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       {
         draw_light_bake_status(ctx, uid, *entry->entity);
+        draw_reflection_volume_status(ctx, *entry->entity);
         render_entity_fields_in_an_imgui_window(entry->entity.get());
       }
     }
@@ -608,6 +611,49 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
   else
     ImGui::Text("Bake slot %d, kept by %zu of %zu charts.", (int)slot, kept_by,
                 lightmap.charts.size());
+  ImGui::Separator();
+}
+
+// Gate 6 step 6. A volume replaces the measured parallax box of every capture
+// whose lattice point lies inside it, and nothing in the viewport says whether
+// that is one capture, four, or none -- a volume between two lattice points
+// overrides nothing and is a placement mistake nothing else reports.
+void Selection_Tool::draw_reflection_volume_status(const editor_context_t& ctx,
+                                                   const entities::Entity& entity)
+{
+  const entities::Reflection_Volume_Entity* volume =
+      entities::entity_as<entities::Reflection_Volume_Entity>(&entity);
+  if (!volume)
+    return;
+
+  const shared::reflection_capture_set_t& set = ctx.map->lightmap.reflections;
+  const ImVec4 warning_color{1.f, 0.55f, 0.2f, 1.f};
+
+  if (set.empty())
+  {
+    ImGui::TextColored(warning_color,
+                       "This map's bake carries no reflection captures: the volume overrides "
+                       "nothing until one is baked with \"Bake reflection captures\" on.");
+    ImGui::Separator();
+    return;
+  }
+
+  const shared::reflection_volume_coverage_t coverage = shared::reflection_volume_coverage_of(
+      set, shared::get_bounds(volume->volume, volume->position));
+  if (coverage.covered == 0)
+    ImGui::TextColored(warning_color,
+                       "Covers NO capture of %zu at %.0f unit spacing: no lattice point lies "
+                       "inside it, so it overrides nothing. Enlarge it past a lattice point or "
+                       "lower the capture spacing, then rebake.",
+                       set.captures.size(), set.spacing);
+  else if (coverage.overridden_as_placed == coverage.covered)
+    ImGui::Text("Overrides the parallax box of %zu of %zu captures.", coverage.covered,
+                set.captures.size());
+  else
+    ImGui::TextColored(warning_color,
+                       "Covers %zu of %zu captures, but the bake holds this box for only %zu: "
+                       "moved or resized since it ran. Rebake.",
+                       coverage.covered, set.captures.size(), coverage.overridden_as_placed);
   ImGui::Separator();
 }
 

@@ -3480,15 +3480,13 @@ static bool try_upload_reflection_cubes(const shared::reflection_capture_set_t &
   return true;
 }
 
-// The capture table (reflection_table_header_t): the lattice derived from the
-// probe grid at the capture stride, every capture's record, and one index per
-// lattice cell. A capture sits ON a probe (build_reflection_captures walks the
-// grid at a whole-probe stride), so its lattice cell is its probe coordinates
-// divided by the stride and needs no search to recover.
+// The capture table (reflection_table_header_t): the lattice
+// derive_reflection_lattice cuts from the capture positions -- the same one the
+// CPU pick and the editor overlay read -- every capture's record, and one index
+// per lattice cell.
 static bool try_upload_reflection_table(const shared::lightmap_t &lightmap, gpu_lightmap_t &out)
 {
   const shared::reflection_capture_set_t &set = lightmap.reflections;
-  const shared::probe_grid_t &grid = lightmap.probes.grid;
 
   reflection_table_header_t header{};
   std::vector<int32_t>      cells;
@@ -3503,38 +3501,19 @@ static bool try_upload_reflection_table(const shared::lightmap_t &lightmap, gpu_
                 set.captures.size(), MAX_REFLECTION_CAPTURES);
       return false;
     }
-    if (lightmap.probes.empty() || !(grid.spacing > 0.f) || !(set.spacing > 0.f))
+    const shared::reflection_lattice_t lattice = shared::derive_reflection_lattice(set);
+    if (lattice.empty())
     {
-      log_error("[renderer] this bake carries reflection captures but no probe grid to place "
-                "them on; the captures are not uploaded");
+      log_error("[renderer] this bake's {} reflection capture(s) form no lattice (see the "
+                "log); the captures are not uploaded",
+                set.captures.size());
       return false;
     }
-
-    const int stride = std::max(1, (int)std::lround(set.spacing / grid.spacing));
-    linalg::vec3i lattice_count{};
-    for (int axis = 0; axis < 3; ++axis)
-      lattice_count[axis] = (grid.count[axis] + stride - 1) / stride;
-    cells.assign((size_t)lattice_count.x * (size_t)lattice_count.y * (size_t)lattice_count.z,
-                 -1);
+    cells = lattice.cells;
 
     for (size_t index = 0; index < set.captures.size(); ++index)
     {
       const shared::reflection_capture_t &capture = set.captures[index];
-      const size_t probe = capture.probe_index;
-      if (probe >= grid.probe_count())
-      {
-        log_error("[renderer] reflection capture {} names probe {} of {}; the captures are "
-                  "not uploaded",
-                  index, probe, grid.probe_count());
-        return false;
-      }
-      const int x = (int)(probe % (size_t)grid.count.x) / stride;
-      const int y = (int)((probe / (size_t)grid.count.x) % (size_t)grid.count.y) / stride;
-      const int z = (int)(probe / ((size_t)grid.count.x * (size_t)grid.count.y)) / stride;
-      const size_t cell =
-          ((size_t)z * (size_t)lattice_count.y + (size_t)y) * (size_t)lattice_count.x + (size_t)x;
-      cells[cell] = (int32_t)index;
-
       reflection_capture_record_t &record = header.captures[index];
       for (int axis = 0; axis < 3; ++axis)
       {
@@ -3549,10 +3528,10 @@ static bool try_upload_reflection_table(const shared::lightmap_t &lightmap, gpu_
 
     for (int axis = 0; axis < 3; ++axis)
     {
-      header.lattice_origin_and_spacing[axis]     = grid.origin[axis];
-      header.lattice_count_and_capture_count[axis] = lattice_count[axis];
+      header.lattice_origin_and_spacing[axis]     = lattice.origin[axis];
+      header.lattice_count_and_capture_count[axis] = lattice.count[axis];
     }
-    header.lattice_origin_and_spacing[3]     = set.spacing;
+    header.lattice_origin_and_spacing[3]     = lattice.spacing;
     header.lattice_count_and_capture_count[3] = (int32_t)set.captures.size();
     out.has_reflections = true;
   }

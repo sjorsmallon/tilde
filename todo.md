@@ -1,5 +1,18 @@
 # TODO
 
+**Keyboard-driven navigation into the editor and its panels.** Reaching the
+Lightmap tool's buttons takes a mouse click on a main-menu row and clicks on
+ImGui buttons whose positions are only known from a screenshot, so nothing can
+drive "press the compare button" from outside the game: a synthetic pointer
+move does not register with the menu (tried 2026-09-06, the row's focus never
+followed the cursor), and an agent pressing the pin buttons had to be replaced
+by the author pressing them and pasting a screenshot. Wanted: the main menu
+answering arrow keys + Enter (it already has `ui_input_t` actions), a console
+command that switches game state (`editor`), and a console command per Lightmap
+tool action (`lightmap_pack`, `lightmap_compare direct|indirect|rays`), so a
+launch-and-drive script is keystrokes into the console. Raised 2026-09-06 off
+step 6 of the GPU bake.
+
 **Pack ORM inside `asset_pack`, and delete `src/tools/orm_pack.py`.** A
 material folder exported with `ao.png` / `roughness.png` / `metallic.png` and
 no `orm.png` today loads SILENTLY as occlusion 1, roughness 1, metallic 0, and
@@ -23,15 +36,10 @@ is `lighting_def.md` §15; this is the index so nothing here is only in a design
 doc. All five shadow-map steps are BUILT (2026-09-05); only the point light has
 been seen in a map.
 
-- [ ] LOOK, one session, five judgements: the sun's cascades
-      (`r_debug_channel shadow_cascades`, `r_shadow_freeze 1`, tune the 3 /
-      0.7 / 4096 / 10% / 8192 defaults); probe visibility (walk behind a
-      pillar under a `Mixed` light, fade over one probe spacing); PCSS (a
-      `Mixed` spot with `source_radius` 8-16 beside a player,
-      `r_debug_channel shadow_penumbra`, tune `r_shadow_pcss_max_radius` and
-      the 16 taps); whether the bounce is bright enough to drop
-      `AMBIENT_FLOOR` from the lightmapped path (gate 5); whether small bright
-      emitters are noisy enough to need emitter next-event estimation (gate 4).
+- [ ] LOOK, one session, five judgements. The checklist below ("Visual
+      inspection checklist") is the working version: setup, what good looks
+      like, what bad looks like and which knob answers it, and the one line to
+      write down per item.
 - [ ] Gate 9 leftovers: the editor SHADOW LAYER PANEL (each pool layer through
       a non-compare view, beside the Lightmap tool's probe preview) and the
       `shadow_layerN.png` dump in the shape of the lightmap debug images.
@@ -43,10 +51,168 @@ been seen in a map.
       sun looks too soft up close.
 - [ ] Mesh emission: `surface_at` resolves brushes only, so an emissive prop
       draws bright and lights nothing (`lightmap_def.md` §9).
-- [ ] Gate 6 environment cubemaps (after gate 5 is judged), gate 7 the bake on
-      the GPU, gate 8 denoising when bake time hurts.
+- [ ] Gate 6 environment cubemaps (after gate 5 is judged), gate 8 denoising
+      when bake time hurts. Gate 7, the bake on the GPU, LANDED 2026-09-06
+      (`r_lightmap_gpu`, `lightmap_gpu_plan.md` step 7b); the first whole bake
+      through it is still to be looked at.
 - [ ] `maps/new_map.lightmap` is stale (sidecar v8): rebake before judging any
       of the above.
+
+### Visual inspection checklist (written 2026-09-06, after the first GPU bake)
+
+None of these has a number that says "good". Each is a judgement, so each
+item says what to set up, what a correct result LOOKS like, what the known
+failure looks like and which knob it points at, and the one sentence to write
+down. Work through them in order; 1 to 3 need no rebake, 4 and 5 need the
+32-chain bake saved as the sidecar. Take a screenshot per item so the verdict
+is not from memory.
+
+**Before starting.** Bake at 32 chains, "Trace indirect light" on, and save
+the sidecar so the game loads it. Leave `r_exposure` at 1.4 for every item:
+changing exposure mid-session makes item 4 unanswerable.
+
+**1. The sun's cascades** (gate 9 step 2).
+- Setup: a map with a `Directional_Light_Entity` in `Mixed` or `Dynamic`
+  mode. `r_debug_channel shadow_cascades` tints every surface by which
+  cascade shades it.
+- Good: the tint boundaries sit at distances that FEEL like near / middle /
+  far -- the first band covers roughly the ground you would fight on, the
+  last reaches the horizon of the map. Looking at a long wall, the shadow
+  edge stays the same sharpness across a boundary, and walking through one
+  produces no visible step in the shadow. Turning the camera moves NOTHING
+  in the shadows themselves (the boxes are snapped to whole texels).
+- Bad, and the knob: shadows near the player noticeably blockier than you
+  want -> lower `r_shadow_cascade_distance` (4096) or raise `r_shadow_cascade_lambda`
+  (0.7, toward 1 spends more texels up close). A visible seam or a hard
+  change in blur at a boundary -> raise `r_shadow_cascade_blend` (0.1). A
+  shadow that disappears past some distance -> raise `r_shadow_cascade_distance`.
+  A tall caster whose shadow is CUT OFF at the top -> raise
+  `r_shadow_cascade_caster_extent` (8192). Shimmer on a camera turn -> a bug,
+  not a knob; report it.
+- Also: `r_shadow_freeze 1`, then fly out and up. You should see the three
+  frustum slices and their square boxes, each box enclosing its slice.
+  Boxes much bigger than their slices are wasted texels.
+- Write down: the four values you settled on, and whether the sun looks too
+  soft on nearby geometry (that is the "static geometry into the sun's
+  cascades" question, parked under decision K).
+
+**2. Probe visibility on a dynamic object** (gate 9 step 4).
+- Setup: a `Mixed` point or spot light with a pillar or wall between it and
+  open floor, and the player (or a physics body) able to walk from the lit
+  side to behind the pillar. `r_debug_channel probe_visibility` shows the
+  fraction the probes hold, for the nearest Mixed light or
+  `r_shadow_debug_light <uid>`.
+- Good: the player darkens as they go behind the pillar, over about one probe
+  spacing (64 units), and the debug channel shows a soft gradient on every
+  surface around the pillar's shadow, white in the open and dark behind it.
+  The player's own shadow-map shadow and this fade compose -- behind the
+  pillar the player is dark from BOTH, and neither doubles the other into
+  black.
+- Bad, and the knob: a hard pop rather than a fade -> expected at 64-unit
+  spacing near a thin pillar; lower `probe_spacing_in_world_units` in the
+  bake settings and rebake, and note the cost. The debug channel white
+  everywhere -> that light is not one of the first four Mixed lights (the
+  bake warns naming the fifth) or the sidecar is older than v8. Light
+  leaking onto the player INSIDE a closed room -> a probe dilated from the
+  wrong side; note the position.
+- Write down: whether the fade reads as a shadow or as a dimming, and the
+  spacing you would ship.
+
+**3. PCSS, the contact-hardening penumbra** (gate 9 step 5).
+- Setup: a `Mixed` or `Dynamic` spot light with `source_radius` 8 to 16,
+  aimed across the floor, and the player standing in it. Compare against
+  `source_radius 0`, which is bit for bit the old square PCF.
+- Good: the player's shadow is sharp at the feet and widens toward the head's
+  shadow, the way a real shadow under a large lamp does. `r_debug_channel
+  shadow_penumbra` reads BLACK at the contact and brightens with distance
+  from the caster; a big light close to a wall should reach the cap and read
+  white there. `r_shadow_pcss 0` should snap it back to a uniformly sharp
+  edge.
+- Bad, and the knob: visible banding or a swirly noise pattern in the
+  penumbra -> the 16-tap discs; report it, the fix is more taps or a
+  different noise. A penumbra that stops widening at some distance and looks
+  clipped -> raise `r_shadow_pcss_max_radius` (16 texels). A shadow that
+  DETACHES from the feet (light under the sole) -> bias; lower
+  `r_shadow_normal_offset` or `r_shadow_bias_slope` and check nothing acnes.
+  A punctual light (radius 0) that changed at all -> a bug.
+- Write down: the radius that looks right for a room light, and the cap.
+
+**4. Is the bounce bright enough to drop the ambient floor?** (gate 5 / gate 2)
+- Setup: a room lit by ONE `Baked` light, ideally a corridor round a corner
+  from it, at 32 chains. `r_debug_channel baked_light` shows the atlas
+  contribution alone: residual direct plus the bounce, before albedo.
+  `r_debug_channel direct_light` shows every light shaded analytically -- the
+  tail plus a chart's four slots -- and neither channel adds the floor. `AMBIENT_FLOOR`
+  is 0.0477 (0.15/pi) in `renderer.cpp`, added outside the lightmapped branch
+  and reaching every surface.
+- Good, meaning the floor can go: in `baked_light`, the surfaces round the
+  corner and the ceiling above the light are visibly lit, with a gradient that
+  falls off away from the light, and it is NOT speckled at 32 chains. Then in
+  the normal view, mentally subtract a flat grey of 0.0477 from every surface
+  and ask whether the dark corners would still read as a room rather than as
+  black.
+- Bad, meaning the floor stays for now: `baked_light` is near black away from
+  direct light, or the bounce is much dimmer than the floor so removing it
+  would only darken. Speckle at 32 chains -> chains, not the floor; try 128
+  and see if it smooths (a 128-chain bake is under a minute now). Dropping
+  the floor also moves `r_exposure`, so if you say "drop it", say what
+  exposure looked right after.
+- Write down: drop it / keep it, and at what chain count the bounce stopped
+  speckling.
+
+**5. Do small bright emitters need next-event estimation?** (gate 4)
+- Setup: a material folder with an `emissive.png`, on a SMALL face (a sign,
+  a strip light, under ~32 units) in a room with no other light, and a second
+  one on a LARGE face for contrast. Bake at 32 chains.
+- Good, meaning no work needed: the small emitter lights its surroundings with
+  a smooth falloff and no speckle in `baked_light`, at a chain count you would
+  actually bake at.
+- Bad, meaning emitter NEE is the next bake feature: the small emitter's
+  light on the walls is fireflies -- isolated bright texels in a dark field --
+  where the large emitter's is smooth, and going to 128 chains reduces the
+  count without curing it. That is the sampling failure NEE fixes; more chains
+  do not.
+- Also note whether an 8-bit emissive is bright enough at all: if the sign
+  glows but lights nothing you can see, that is the `KHR_materials_emissive_strength`
+  scalar, a separate and small item.
+- Write down: speckle or smooth, at which chain count, and whether the glow
+  is too dim.
+
+**6. The room's reflection** (gate 6 step 5, added 2026-09-06 -- this is
+step 5's pin, the shader has never been looked at).
+- Setup: the `titanium_scuffed` material on a FLOOR face (metallic 1, low
+  roughness), a bright wall or an emissive sign beside it, "Bake reflection
+  captures" on with the tracer on, bake, save the sidecar. Then, before the
+  floor, `r_debug_channel reflection` in a map with NO captures: it must be
+  black on every surface.
+- Good: the floor shows the wall where a mirror would, and walking along the
+  floor slides the reflection the way a real one slides -- the reflected
+  wall stays fixed to the wall, not to the camera. `r_debug_channel
+  reflection` on a grey grid face shows the room as a mirror with straight
+  wall edges meeting at the corners; `reflection_capture` tints the map in
+  patches one capture spacing wide, magenta nowhere inside a room. A matte
+  floor at a grazing angle shows the far wall faintly and nothing head-on.
+- Bad, and the knob: the reflection SWIMS with the camera or the corners bend
+  -> the parallax box is wrong for that capture (an open face, or a box
+  measured through a doorway); place a `Reflection_Volume_Entity` around the
+  room. Visible seams between patches in the shaded result -> the four-way
+  blend is too narrow; lower the capture spacing (512). A hard-edged
+  rectangle on the floor lined up with a capture's box in the lattice overlay
+  -> that box is wrong (the axis ray measured a prop as a wall, or a
+  doorway); the seam is the flip from corrected to uncorrected at the box
+  face and stays until step 7. Objects missing from the reflection on an
+  open map -> box parallax places walls only; gate 6 step 7 (a distance per
+  capture texel) is the fix, not a spacing. The whole floor too bright or too dark against a
+  chrome ball you can picture in the room -> the split-sum LUT or the
+  RGB9E5 decode, a bug, report it. Magenta inside a room -> a capture was
+  dropped as inside a solid or outside the bound; report which.
+- Write down: slides correctly or swims; seams or none; and whether the
+  matte floor's grazing reflection is visible at all.
+
+**After the six.** Two of them can end in code (4: the floor leaves the
+lightmapped path; 5: emitter NEE in both chains) and three end in cvar defaults
+(1, 3) or a bake setting (2). Paste the verdicts and the screenshots into the
+next session and the code items get built in that order.
 
 **Parked elsewhere until now (carried in Claude's session memory; written down
 2026-09-05 so the todo is the one list).** Order here is the order they were

@@ -2402,6 +2402,9 @@ void a_capture_lattice_snaps_to_the_probe_spacing()
   assert(find_capture_at(fine, {-256, 64, 192}) == nullptr);
 }
 
+// One axis ray per face: a pillar beside a capture ends its box, which places
+// the pillar correctly and nothing past it (lightmap_reflections.hpp says why
+// that is the chosen trade until captures carry a distance).
 void a_capture_inside_a_solid_is_absent_and_a_pillar_bounds_its_neighbour()
 {
   shared::map_t map = map_with_a_closed_room();
@@ -2492,50 +2495,101 @@ void a_reflection_volume_overrides_the_measured_box()
   assert(outside != nullptr);
   assert(!outside->box_overridden);
   assert(near(outside->box.min.x, -256.f));
+
+  const shared::aabb_bounds_t as_placed = shared::get_bounds(volume->volume, volume->position);
+  const shared::reflection_volume_coverage_t placed =
+      shared::reflection_volume_coverage_of(set, as_placed);
+  assert(placed.covered == 1);
+  assert(placed.overridden_as_placed == 1);
+
+  volume->volume.half_extents = {140, 100, 100};
+  const shared::reflection_volume_coverage_t widened =
+      shared::reflection_volume_coverage_of(set, shared::get_bounds(volume->volume, volume->position));
+  assert(widened.covered == 3);
+  assert(widened.overridden_as_placed == 0);
+
+  volume->position = {0, 1000, 0};
+  const shared::reflection_volume_coverage_t moved_away =
+      shared::reflection_volume_coverage_of(set, shared::get_bounds(volume->volume, volume->position));
+  assert(moved_away.covered == 0);
+  assert(moved_away.overridden_as_placed == 0);
 }
 
-void the_capture_pick_is_the_nearest_four_weighted_by_distance()
+void the_capture_pick_is_trilinear_over_the_lattice_cell()
 {
   const shared::map_t map = map_with_a_closed_room();
   const shared::reflection_capture_set_t set = build_captures_for(map, 128.f);
+  const shared::reflection_lattice_t lattice = shared::derive_reflection_lattice(set);
+  assert(lattice.count.x == 3 && lattice.count.y == 1 && lattice.count.z == 3);
+  assert(lattice.cells.size() == 9);
+  for (const int32_t cell : lattice.cells) assert(cell >= 0);
+  assert(near(lattice.origin.x, -128.f) && near(lattice.origin.y, 128.f) &&
+         near(lattice.origin.z, -128.f));
 
-  const shared::reflection_capture_pick_t on_top = shared::find_captures_for(set, {0, 128, 0});
-  assert(on_top.count == shared::REFLECTION_BLEND_COUNT);
-  assert(near(set.captures[on_top.indices[0]].position.x, 0.f));
-  assert(near(set.captures[on_top.indices[0]].position.y, 128.f));
-  assert(near(set.captures[on_top.indices[0]].position.z, 0.f));
-  float total = 0.f;
-  for (uint32_t slot = 0; slot < on_top.count; ++slot) total += on_top.weights[slot];
-  assert(near(total, 1.f));
-  assert(on_top.weights[0] > 0.9f);
-  for (uint32_t slot = 1; slot < on_top.count; ++slot)
-  {
-    assert(near(linalg::length(set.captures[on_top.indices[slot]].position -
-                               linalg::vec3{0, 128, 0}),
-                128.f));
-    assert(on_top.weights[slot] < 0.05f);
-  }
+  const auto weight_of = [](const shared::reflection_capture_pick_t &pick, uint32_t index) {
+    for (uint32_t slot = 0; slot < pick.count; ++slot)
+      if (pick.indices[slot] == index) return pick.weights[slot];
+    return 0.f;
+  };
+  const auto index_at = [&](const linalg::vec3 &position) {
+    const shared::reflection_capture_t *capture = find_capture_at(set, position);
+    assert(capture != nullptr);
+    return (uint32_t)(capture - set.captures.data());
+  };
 
-  const shared::reflection_capture_pick_t between = shared::find_captures_for(set, {64, 128, 0});
-  assert(between.count == shared::REFLECTION_BLEND_COUNT);
-  assert(near(between.weights[0], between.weights[1]));
-  {
-    const float x0 = set.captures[between.indices[0]].position.x;
-    const float x1 = set.captures[between.indices[1]].position.x;
-    assert((near(x0, 0.f) && near(x1, 128.f)) || (near(x0, 128.f) && near(x1, 0.f)));
-  }
+  const shared::reflection_capture_pick_t on_top =
+      shared::find_captures_for(set, lattice, {0, 128, 0});
+  assert(on_top.count == 1);
+  assert(on_top.indices[0] == index_at({0, 128, 0}));
+  assert(near(on_top.weights[0], 1.f));
+
+  const shared::reflection_capture_pick_t between =
+      shared::find_captures_for(set, lattice, {64, 128, 0});
+  assert(between.count == 2);
+  assert(near(weight_of(between, index_at({0, 128, 0})), 0.5f));
+  assert(near(weight_of(between, index_at({128, 128, 0})), 0.5f));
+
+  const shared::reflection_capture_pick_t inside =
+      shared::find_captures_for(set, lattice, {32, 128, 96});
+  assert(inside.count == 4);
+  assert(near(weight_of(inside, index_at({0, 128, 0})), 0.75f * 0.25f));
+  assert(near(weight_of(inside, index_at({128, 128, 0})), 0.25f * 0.25f));
+  assert(near(weight_of(inside, index_at({0, 128, 128})), 0.75f * 0.75f));
+  assert(near(weight_of(inside, index_at({128, 128, 128})), 0.25f * 0.75f));
+  assert(inside.indices[0] == index_at({0, 128, 128}));
+
+  const shared::reflection_capture_pick_t just_before =
+      shared::find_captures_for(set, lattice, {127.99f, 128, 10});
+  const shared::reflection_capture_pick_t just_after =
+      shared::find_captures_for(set, lattice, {128.01f, 128, 10});
+  for (uint32_t index = 0; index < set.captures.size(); ++index)
+    assert(std::abs(weight_of(just_before, index) - weight_of(just_after, index)) < 1e-3f);
+
+  const shared::reflection_capture_pick_t beyond =
+      shared::find_captures_for(set, lattice, {300, 128, 0});
+  assert(beyond.count == 1);
+  assert(beyond.indices[0] == index_at({128, 128, 0}));
+  assert(near(beyond.weights[0], 1.f));
 
   shared::reflection_capture_set_t two;
+  two.spacing = 300.f;
   two.captures.push_back({.position = {0, 0, 0}});
   two.captures.push_back({.position = {300, 0, 0}});
-  const shared::reflection_capture_pick_t pair = shared::find_captures_for(two, {100, 0, 0});
+  const shared::reflection_lattice_t two_lattice = shared::derive_reflection_lattice(two);
+  assert(two_lattice.count.x == 2 && two_lattice.count.y == 1 && two_lattice.count.z == 1);
+  const shared::reflection_capture_pick_t pair =
+      shared::find_captures_for(two, two_lattice, {100, 0, 0});
   assert(pair.count == 2);
   assert(pair.indices[0] == 0 && pair.indices[1] == 1);
-  assert(pair.weights[0] > pair.weights[1]);
-  assert(near(pair.weights[0] + pair.weights[1], 1.f));
+  assert(near(pair.weights[0], 2.f / 3.f) && near(pair.weights[1], 1.f / 3.f));
+
+  shared::reflection_capture_set_t off_lattice = two;
+  off_lattice.captures.push_back({.position = {150, 0, 0}});
+  assert(shared::derive_reflection_lattice(off_lattice).empty());
 
   const shared::reflection_capture_set_t none;
-  assert(shared::find_captures_for(none, {0, 0, 0}).count == 0);
+  assert(shared::derive_reflection_lattice(none).empty());
+  assert(shared::find_captures_for(none, shared::reflection_lattice_t{}, {0, 0, 0}).count == 0);
 }
 
 
@@ -3265,7 +3319,8 @@ void a_static_mesh_is_unwrapped_into_charts()
 void a_texel_of_a_mesh_chart_samples_the_mesh_surface()
 {
   const shared::map_t map = map_with_a_box_mesh();
-  const shared::lightmap_bake_settings_t settings;
+  shared::lightmap_bake_settings_t settings;
+  settings.texels_per_world_unit = 0.25f;
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, settings);
 
@@ -4405,7 +4460,7 @@ int main()
   a_capture_inside_a_solid_is_absent_and_a_pillar_bounds_its_neighbour();
   a_capture_facing_nothing_is_open_on_that_face();
   a_reflection_volume_overrides_the_measured_box();
-  the_capture_pick_is_the_nearest_four_weighted_by_distance();
+  the_capture_pick_is_trilinear_over_the_lattice_cell();
   a_cube_texel_direction_points_into_its_face();
   a_capture_sees_an_emissive_ceiling_directly_and_the_floor_reflects_it();
   a_batched_capture_bake_is_the_reference_bake_bit_for_bit();

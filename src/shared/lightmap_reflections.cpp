@@ -310,40 +310,140 @@ reflection_capture_set_t build_reflection_captures(const map_t &map, const probe
   return set;
 }
 
-reflection_capture_pick_t find_captures_for(const reflection_capture_set_t &set,
-                                            const linalg::vec3 &point)
+reflection_lattice_t derive_reflection_lattice(const reflection_capture_set_t &set)
 {
-  reflection_capture_pick_t pick;
-  Array<float, REFLECTION_BLEND_COUNT> distances = {};
+  reflection_lattice_t lattice;
+  if (set.captures.empty()) return lattice;
+  if (!(set.spacing > 0.f))
+  {
+    log_error("[lightmap] {} reflection capture(s) at a spacing of {}: no lattice.",
+              set.captures.size(), set.spacing);
+    return lattice;
+  }
+
+  linalg::vec3 low = set.captures.front().position;
+  linalg::vec3 high = low;
+  for (const reflection_capture_t &capture : set.captures)
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      low[axis] = std::min(low[axis], capture.position[axis]);
+      high[axis] = std::max(high[axis], capture.position[axis]);
+    }
+  lattice.origin = low;
+  lattice.spacing = set.spacing;
+  for (int axis = 0; axis < 3; ++axis)
+    lattice.count[axis] = (int)std::lround((high[axis] - low[axis]) / set.spacing) + 1;
+  lattice.cells.assign((size_t)lattice.count.x * (size_t)lattice.count.y * (size_t)lattice.count.z,
+                       -1);
 
   for (uint32_t index = 0; index < set.captures.size(); ++index)
   {
-    const float distance = linalg::length(set.captures[index].position - point);
-    if (pick.count == REFLECTION_BLEND_COUNT && distance >= distances[pick.count - 1])
-      continue;
-
-    uint32_t slot = std::min(pick.count, REFLECTION_BLEND_COUNT - 1);
-    while (slot > 0 && distances[slot - 1] > distance)
+    const linalg::vec3 &position = set.captures[index].position;
+    linalg::vec3i cell;
+    for (int axis = 0; axis < 3; ++axis)
     {
-      distances[slot] = distances[slot - 1];
-      pick.indices[slot] = pick.indices[slot - 1];
-      --slot;
+      const float offset = (position[axis] - low[axis]) / set.spacing;
+      cell[axis] = (int)std::lround(offset);
+      if (std::abs(offset - (float)cell[axis]) > 1e-3f)
+      {
+        log_error("[lightmap] reflection capture {} at ({}, {}, {}) is off the {}-unit lattice "
+                  "from ({}, {}, {}); no lattice.",
+                  index, position.x, position.y, position.z, set.spacing, low.x, low.y, low.z);
+        return {};
+      }
     }
-    distances[slot] = distance;
-    pick.indices[slot] = index;
-    if (pick.count < REFLECTION_BLEND_COUNT) ++pick.count;
+    int32_t &slot = lattice.cells[lattice.index_of(cell)];
+    if (slot >= 0)
+    {
+      log_error("[lightmap] reflection captures {} and {} share lattice cell ({}, {}, {}); "
+                "no lattice.",
+                slot, index, cell.x, cell.y, cell.z);
+      return {};
+    }
+    slot = (int32_t)index;
+  }
+  return lattice;
+}
+
+reflection_capture_pick_t find_captures_for(const reflection_capture_set_t &set,
+                                            const reflection_lattice_t &lattice,
+                                            const linalg::vec3 &point)
+{
+  reflection_capture_pick_t pick;
+  if (set.captures.empty() || lattice.empty()) return pick;
+
+  const linalg::vec3 local = (point - lattice.origin) * (1.f / lattice.spacing);
+  linalg::vec3i base;
+  linalg::vec3 t;
+  for (int axis = 0; axis < 3; ++axis)
+  {
+    base[axis] = (int)std::floor(local[axis]);
+    t[axis] = local[axis] - (float)base[axis];
   }
 
-  if (pick.count == 0) return pick;
+  for (int corner = 0; corner < 8; ++corner)
+  {
+    float weight = 1.f;
+    linalg::vec3i cell;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      const int high = (corner >> axis) & 1;
+      weight *= high ? t[axis] : 1.f - t[axis];
+      cell[axis] = std::clamp(base[axis] + high, 0, lattice.count[axis] - 1);
+    }
+    if (weight <= 0.f) continue;
+    const int32_t index = lattice.cells[lattice.index_of(cell)];
+    if (index < 0) continue;
+
+    uint32_t slot = 0;
+    while (slot < pick.count && pick.indices[slot] != (uint32_t)index) ++slot;
+    if (slot == pick.count)
+    {
+      pick.indices[slot] = (uint32_t)index;
+      pick.weights[slot] = 0.f;
+      ++pick.count;
+    }
+    pick.weights[slot] += weight;
+  }
 
   float total = 0.f;
-  for (uint32_t slot = 0; slot < pick.count; ++slot)
+  for (uint32_t slot = 0; slot < pick.count; ++slot) total += pick.weights[slot];
+  if (!(total > 0.f))
   {
-    pick.weights[slot] = 1.f / std::max(distances[slot], 1.f);
-    total += pick.weights[slot];
+    pick.count = 0;
+    return pick;
   }
   for (uint32_t slot = 0; slot < pick.count; ++slot) pick.weights[slot] /= total;
+
+  for (uint32_t slot = 1; slot < pick.count; ++slot)
+  {
+    uint32_t at = slot;
+    while (at > 0 && pick.weights[at - 1] < pick.weights[at])
+    {
+      std::swap(pick.weights[at - 1], pick.weights[at]);
+      std::swap(pick.indices[at - 1], pick.indices[at]);
+      --at;
+    }
+  }
   return pick;
+}
+
+reflection_volume_coverage_t reflection_volume_coverage_of(const reflection_capture_set_t &set,
+                                                           const aabb_bounds_t &bounds)
+{
+  reflection_volume_coverage_t coverage;
+  for (const reflection_capture_t &capture : set.captures)
+  {
+    if (!point_is_inside_bounds(bounds, capture.position)) continue;
+    ++coverage.covered;
+    const auto same = [](const linalg::vec3 &a, const linalg::vec3 &b) {
+      return a.x == b.x && a.y == b.y && a.z == b.z;
+    };
+    if (capture.box_overridden && same(capture.box.min, bounds.min) &&
+        same(capture.box.max, bounds.max))
+      ++coverage.overridden_as_placed;
+  }
+  return coverage;
 }
 
 std::vector<gpu_sample_t> collect_capture_samples(const reflection_capture_set_t &set,

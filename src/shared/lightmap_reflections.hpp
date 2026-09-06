@@ -29,13 +29,39 @@ build_reflection_captures(const map_t &map, const probe_grid_t &grid,
                           const Bounding_Volume_Hierarchy &occluders,
                           const reflection_capture_settings_t &settings);
 
+// One axis ray per face, on purpose and after trying the alternative: a fan
+// over a cone with a percentile reach measures a ROOM correctly and sees past
+// a prop to the wall, but on a map with no walls it opens every face to
+// infinity, and an open box places nothing -- the reflections of the block and
+// the cube vanished. One ray ends the box at whatever it hits, which places
+// that one thing correctly by accident; past it the shader reads uncorrected,
+// which for an object near the capture is nearly right. What places objects
+// rather than walls is a distance per capture texel, the next step; the box
+// only has to bound its march.
 [[nodiscard]] aabb_bounds_t measure_reflection_box(const Bounding_Volume_Hierarchy &occluders,
                                                    const linalg::vec3 &position,
                                                    float open_face_extent,
                                                    uint8_t &out_open_faces);
 
+// Trilinear over the eight corners of the lattice cell `point` is in, the
+// weights normalised over the corners that hold a capture; a point outside the
+// lattice clamps to its nearest face. The shader's pick_reflection_captures is
+// this arithmetic exactly.
 [[nodiscard]] reflection_capture_pick_t
-find_captures_for(const reflection_capture_set_t &set, const linalg::vec3 &point);
+find_captures_for(const reflection_capture_set_t &set, const reflection_lattice_t &lattice,
+                  const linalg::vec3 &point);
+
+// Step 6, the inspector's question about a Reflection_Volume_Entity: how many
+// captures its CURRENT bounds cover, and how many of those the set already
+// carries with exactly that box -- the two differ when the volume moved or
+// resized since the bake ran.
+struct reflection_volume_coverage_t
+{
+  size_t covered = 0;
+  size_t overridden_as_placed = 0;
+};
+[[nodiscard]] reflection_volume_coverage_t
+reflection_volume_coverage_of(const reflection_capture_set_t &set, const aabb_bounds_t &bounds);
 
 // One record per (capture, face, texel): `normal` the texel's direction,
 // `chart_index` capture-major, `seed` sample_hash(capture, face, texel, tag).

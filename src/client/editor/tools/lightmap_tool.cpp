@@ -109,11 +109,88 @@ void Lightmap_Tool::rebuild_probe_preview(editor_context_t& ctx)
       shared::try_build_probe_grid(*ctx.map, settings.probe_spacing_in_world_units);
   probe_preview_inside.clear();
   probe_preview_inside_count = 0;
+  capture_preview = {};
+  capture_preview_lattice = {};
+  capture_preview_open_count = 0;
+  capture_preview_overridden_count = 0;
   if (!probe_preview_grid) return;
 
   const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(*ctx.map);
   probe_preview_inside = shared::classify_probes_inside_solid(*probe_preview_grid, occluders);
   for (const uint8_t flag : probe_preview_inside) probe_preview_inside_count += flag;
+
+  if (!show_capture_preview) return;
+  const shared::reflection_capture_settings_t capture_settings{
+      settings.reflection_spacing_in_world_units, solve_settings.directional_shadow_distance};
+  capture_preview = shared::build_reflection_captures(*ctx.map, *probe_preview_grid,
+                                                      probe_preview_inside, occluders,
+                                                      capture_settings);
+  capture_preview_lattice = shared::derive_reflection_lattice(capture_preview);
+  for (const shared::reflection_capture_t& capture : capture_preview.captures)
+  {
+    capture_preview_open_count += capture.open_faces != 0;
+    capture_preview_overridden_count += capture.box_overridden;
+  }
+}
+
+// A cube glyph per capture and its parallax box in wire: the box is what the
+// shader's slab exit reads through, so a wrong one is visible here as a box
+// that does not sit on the room's walls. An edge is red where either face it
+// bounds hit nothing, since that face is the open_face_extent away and the
+// reflection there reads black. The boxes drawn are those of the captures the
+// CAMERA's position blends -- exactly the four a surface under the eye reads --
+// so what is on screen and what is drawn agree; every box at once is a mess of
+// overlapping rooms and is opt-in.
+void Lightmap_Tool::draw_capture_preview(pass_builder_t& draws)
+{
+  capture_preview_boxes_drawn = 0;
+  const bool draw_baked = !baked.reflections.empty();
+  const shared::reflection_capture_set_t& set = draw_baked ? baked.reflections : capture_preview;
+  const shared::reflection_lattice_t& lattice =
+      draw_baked ? baked_capture_lattice : capture_preview_lattice;
+  if (set.empty()) return;
+
+  const linalg::vec3 eye = draws.view.camera.position;
+  const shared::reflection_capture_pick_t pick = shared::find_captures_for(set, lattice, eye);
+  const float glyph = set.spacing * 0.05f;
+
+  for (uint32_t index = 0; index < set.captures.size(); ++index)
+  {
+    const shared::reflection_capture_t& capture = set.captures[index];
+    bool blends_at_the_eye = false;
+    for (uint32_t slot = 0; slot < pick.count; ++slot)
+      blends_at_the_eye |= pick.indices[slot] == index;
+
+    const color_t base = capture.box_overridden ? colors::cyan : colors::green;
+    const color_t glyph_color = blends_at_the_eye ? base : with_alpha(base, 0x60);
+    draws.debug.aabb(capture.position - linalg::vec3{glyph, glyph, glyph},
+                     capture.position + linalg::vec3{glyph, glyph, glyph}, glyph_color);
+
+    if (!blends_at_the_eye && !show_all_capture_boxes) continue;
+    ++capture_preview_boxes_drawn;
+    const color_t box_color = blends_at_the_eye ? base : with_alpha(base, 0x40);
+    const shared::aabb_bounds_t& box = capture.box;
+    const linalg::vec3 corner[2] = {box.min, box.max};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      const int b = (axis + 1) % 3;
+      const int c = (axis + 2) % 3;
+      for (int side_b = 0; side_b < 2; ++side_b)
+      for (int side_c = 0; side_c < 2; ++side_c)
+      {
+        linalg::vec3 start = box.min;
+        linalg::vec3 end = box.max;
+        start[b] = end[b] = corner[side_b][b];
+        start[c] = end[c] = corner[side_c][c];
+        // reflection_box_face_t is Positive then Negative per axis, so the
+        // bit of axis k's side s is 2k + (s == min).
+        const bool open =
+            ((capture.open_faces >> (2 * b + (side_b == 0 ? 1 : 0))) & 1u) ||
+            ((capture.open_faces >> (2 * c + (side_c == 0 ? 1 : 0))) & 1u);
+        draws.debug.line(start, end, open ? colors::red : box_color);
+      }
+    }
+  }
 }
 
 // The CPU's slab test against a convex piece and the GPU's triangle test reach
@@ -556,6 +633,7 @@ void Lightmap_Tool::compare_gpu_captures(editor_context_t& ctx)
 
 void Lightmap_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws)
 {
+  if (show_capture_preview) draw_capture_preview(draws);
   if (!show_probe_preview) return;
   const bool draw_baked = !baked.probes.empty();
   if (!draw_baked && !probe_preview_grid) return;
@@ -722,6 +800,7 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
                           emit_per_light_visibility ? &visibility_masks : nullptr);
     const double bake_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    baked_capture_lattice = shared::derive_reflection_lattice(baked.reflections);
     last_bake_line = std::format("last bake: {} in {:.2f} s", path.description, bake_seconds);
     log_terminal("[lightmap] {}", last_bake_line);
 
@@ -1024,8 +1103,9 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
 
   ImGui::Separator();
   ImGui::Text("Reflection captures");
-  ImGui::SliderFloat("Capture spacing", &settings.reflection_spacing_in_world_units, 64.f,
-                     2048.f, "%.0f", ImGuiSliderFlags_Logarithmic);
+  const bool capture_spacing_changed =
+      ImGui::SliderFloat("Capture spacing", &settings.reflection_spacing_in_world_units, 64.f,
+                         2048.f, "%.0f", ImGuiSliderFlags_Logarithmic);
   ImGui::SliderInt("Capture face size", &settings.reflection_size_in_texels, 8, 128);
   ImGui::Checkbox("Bake reflection captures", &solve_settings.bake_reflection_captures);
   if (solve_settings.bake_reflection_captures && !solve_settings.trace_indirect_light)
@@ -1039,9 +1119,55 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
       ImGui::Checkbox("Show probe preview", &show_probe_preview) && show_probe_preview;
   ImGui::SameLine();
   const bool rebuild_requested = ImGui::Button("Rebuild preview");
+  const bool capture_preview_toggled_on =
+      ImGui::Checkbox("Show capture lattice", &show_capture_preview) && show_capture_preview;
+  if (show_capture_preview)
+  {
+    ImGui::SameLine();
+    ImGui::Checkbox("Every box", &show_all_capture_boxes);
+  }
 
-  if (show_probe_preview && (spacing_changed || preview_toggled_on || rebuild_requested))
+  if ((show_probe_preview || show_capture_preview) &&
+      (spacing_changed || preview_toggled_on || rebuild_requested || capture_spacing_changed ||
+       capture_preview_toggled_on))
     rebuild_probe_preview(ctx);
+
+  if (show_capture_preview)
+  {
+    const shared::reflection_capture_set_t& set =
+        !baked.reflections.empty() ? baked.reflections : capture_preview;
+    if (!probe_preview_grid && baked.reflections.empty())
+      ImGui::TextColored({1.f, 0.55f, 0.2f, 1.f},
+                         "No capture lattice: it is cut from the probe grid, which could not be "
+                         "built (see the log).");
+    else if (set.empty())
+      ImGui::TextColored({1.f, 0.55f, 0.2f, 1.f},
+                         "No captures: every lattice point at %.0f unit spacing is buried or "
+                         "outside the geometry.",
+                         settings.reflection_spacing_in_world_units);
+    else
+    {
+      size_t open_count = capture_preview_open_count;
+      size_t overridden_count = capture_preview_overridden_count;
+      if (!baked.reflections.empty())
+      {
+        open_count = overridden_count = 0;
+        for (const shared::reflection_capture_t& capture : set.captures)
+        {
+          open_count += capture.open_faces != 0;
+          overridden_count += capture.box_overridden;
+        }
+      }
+      ImGui::Text("%s%zu captures at %.0f unit spacing: %zu with an open face, %zu overridden "
+                  "by a volume. Drawing %u box(es).",
+                  baked.reflections.empty() ? "" : "Baked: ", set.captures.size(), set.spacing,
+                  open_count, overridden_count, capture_preview_boxes_drawn);
+      ImGui::TextDisabled("Cube: a capture, cyan where a Reflection Volume overrides its box. "
+                          "Wire box: its parallax box, an edge red where the face hit nothing. "
+                          "Bright: the captures the camera's position blends, whose boxes are "
+                          "drawn. Rebuild after editing geometry.");
+    }
+  }
 
   if (show_probe_preview)
   {
