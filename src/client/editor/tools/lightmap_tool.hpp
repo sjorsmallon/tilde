@@ -2,21 +2,18 @@
 
 #include "../editor_tool.hpp"
 #include "../../../shared/lightmap_bake.hpp"
+#include "../../../shared/lightmap_gpu.hpp"
 #include "../../../shared/lightmap_probes.hpp"
 #include "../../../shared/lightmap_sidecar.hpp"
 #include "../../../shared/lightmap_solve.hpp"
 
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace client
 {
 
-// The bake. Flattens every brush face into a chart, packs the charts into atlas
-// pages, solves lighting into them, and -- on Apply -- writes the whole thing
-// into map_t::lightmap and out to the .lightmap sidecar beside the .source.
-// lightmap_def.md is the design; geometry_def.md ss10 is what the settings answer
-// to.
 class Lightmap_Tool : public Editor_Tool
 {
 public:
@@ -41,9 +38,7 @@ private:
   // same one. Nothing baked depends on it.
   float preview_exposure = 4.f;
 
-  // The bake in progress. One value rather than loose members, because the charts
-  // and the pixels are no use without each other -- that is the same reason they
-  // save and load together.
+  // the bake in progress
   shared::lightmap_t baked;
 
   // Per-light shadow-ray coverage from the same bake, held only to be looked at:
@@ -54,21 +49,34 @@ private:
   size_t lit_texel_count = 0;
   size_t indirect_texel_count = 0;
 
-  // Gate 5's preview: the probe grid the bake WOULD trace, drawn before any
-  // bake exists so the spacing can be tuned by eye. Built through the same two
-  // functions the bake calls, so it cannot show a different grid.
   bool show_probe_preview = false;
   std::optional<shared::probe_grid_t> probe_preview_grid;
   std::vector<uint8_t> probe_preview_inside;
   size_t probe_preview_inside_count = 0;
-
-  // Only the probes within this many spacings of the camera are drawn: a level's
-  // whole grid is a hundred thousand crosses, which is more than the debug
-  // vertex buffer holds, and the spacing is judged where you stand anyway.
   static constexpr int PROBE_PREVIEW_RADIUS_IN_SPACINGS = 10;
   size_t probe_preview_drawn_count = 0;
-
   void rebuild_probe_preview(editor_context_t& ctx);
+
+
+  std::optional<shared::probe_ray_report_t> probe_ray_report;
+  std::string probe_ray_worst_line;
+  double probe_ray_cpu_milliseconds = 0.0;
+  double probe_ray_gpu_milliseconds = 0.0;
+  uint32_t probe_ray_triangle_count = 0;
+  void probe_gpu_rays(editor_context_t& ctx);
+
+  std::optional<shared::record_comparison_report_t> indirect_comparison;
+  double indirect_compare_cpu_milliseconds = 0.0;
+  double indirect_compare_gpu_milliseconds = 0.0;
+  void compare_gpu_indirect(editor_context_t& ctx);
+
+  std::optional<shared::record_comparison_report_t> direct_comparison;
+  size_t direct_compare_light_count = 0;
+  size_t direct_compare_cpu_rays = 0;
+  size_t direct_compare_gpu_rays = 0;
+  double direct_compare_cpu_milliseconds = 0.0;
+  double direct_compare_gpu_milliseconds = 0.0;
+  void compare_gpu_direct(editor_context_t& ctx);
 
   [[nodiscard]] bool has_packed() const { return baked.atlas.page_count > 0; }
 };

@@ -1,0 +1,458 @@
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_samplerless_texture_functions : require
+
+// lightmap_gpu_plan.md step 5: the indirect kernel. trace_one_chain and the SH
+// L1 projection of lightmap_trace.cpp in GLSL, one sample record per thread --
+// a uniform first leg, cosine-weighted continuations, throughput times albedo,
+// emission before the hit's albedo joins the throughput, next-event estimation
+// at every vertex with ONE ray toward a random point of the emitter's disc,
+// Russian roulette after bounces_before_roulette. The random numbers come from
+// the same FNV mix the CPU derives its own from, keyed the same way off the
+// record's seed, so the two solves draw the SAME directions and differ only
+// where a ray lands differently by float rounding. The GPU sees points,
+// triangles, materials and lights; never a chart, a plane or a brush.
+
+#include "light_arrival.glsl"
+
+layout(local_size_x = 64) in;
+
+// gpu_sample_t, gpu_triangle_t, gpu_material_t: lightmap_gpu.hpp, std430.
+struct gpu_sample_t
+{
+  vec3 position;
+  uint chart_index;
+  vec3 normal;
+  uint seed;
+};
+
+struct gpu_triangle_t
+{
+  uint material;
+  uint pad;
+  vec2 uv0;
+  vec2 uv1;
+  vec2 uv2;
+};
+
+struct gpu_material_t
+{
+  uint albedo_texture;
+  uint emissive_texture;
+  uint pad0;
+  uint pad1;
+};
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+layout(std430, set = 0, binding = 1) readonly buffer Samples { gpu_sample_t samples[]; };
+// Twelve floats per record in indirect_sh_l1_t's order: l0.rgb, then the L1
+// vector's x, y and z components, rgb each.
+layout(std430, set = 0, binding = 2) writeonly buffer Results { float results[]; };
+layout(std430, set = 0, binding = 3) readonly buffer Vertices { vec4 vertices[]; };
+layout(std430, set = 0, binding = 4) readonly buffer Indices { uint indices[]; };
+layout(std430, set = 0, binding = 5) readonly buffer Triangles { gpu_triangle_t triangles[]; };
+layout(std430, set = 0, binding = 6) readonly buffer Materials { gpu_material_t materials[]; };
+layout(std430, set = 0, binding = 7) readonly buffer Lights { Light lights[]; };
+// Every texture of the scene at its OWN size, RGBA8 as raw BYTES, indexed per
+// thread by the material's texture number (lightmap_gpu_plan.md step 5b).
+// fetch_texture below is sample_texture's wrap and sRGB decode verbatim, so a
+// hit reads the texel the CPU reads and decodes it with the same arithmetic.
+layout(set = 0, binding = 8) uniform utexture2D textures[];
+
+// gpu_bake_settings_t follows the two counts; lightmap_gpu_vulkan.cpp asserts
+// the layout.
+layout(push_constant) uniform Push
+{
+  uint sample_count;
+  uint light_count;
+  uint mode;
+  int rays_per_sample;
+  int bounces_before_roulette;
+  int max_bounces;
+  float ray_bias;
+  float shadow_ray_bias;
+  int soft_shadow_samples;
+  float directional_shadow_distance;
+} push;
+
+const float PI = 3.14159265;
+const float TWO_PI = 6.28318531;
+const float UNTEXTURED_BOUNCE_ALBEDO = 0.5;
+const uint NO_TEXTURE = 0xffffffffu;
+const float SH_L1_Y0 = 0.282095;
+const float SH_L1_Y1 = 0.488603;
+const float NO_MAX_DISTANCE = 1e30;
+
+// lightmap_lights.cpp's hash_mix / unit_float_from / luminance_of, verbatim.
+uint hash_mix(uint hash, uint value)
+{
+  for (int byte = 0; byte < 4; ++byte)
+  {
+    hash ^= (value >> (byte * 8)) & 0xffu;
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+float unit_float_from(uint bits)
+{
+  return float(bits >> 8) * (1.0 / 16777216.0);
+}
+
+float luminance_of(vec3 linear_rgb)
+{
+  return 0.2126 * linear_rgb.x + 0.7152 * linear_rgb.y + 0.0722 * linear_rgb.z;
+}
+
+// brush.cpp's brush_face_grid_tangents, which every sampler below builds its
+// basis from -- the same basis as the CPU, or the same random numbers would
+// name different directions.
+void face_tangents(vec3 normal, out vec3 tangent_u, out vec3 tangent_v)
+{
+  const float absolute_x = abs(normal.x);
+  const float absolute_y = abs(normal.y);
+  const float absolute_z = abs(normal.z);
+
+  if (absolute_x > 0.999)
+  {
+    tangent_u = vec3(0, 0, 1);
+    tangent_v = vec3(0, 1, 0);
+    return;
+  }
+  if (absolute_y > 0.999)
+  {
+    tangent_u = vec3(1, 0, 0);
+    tangent_v = vec3(0, 0, 1);
+    return;
+  }
+  if (absolute_z > 0.999)
+  {
+    tangent_u = vec3(1, 0, 0);
+    tangent_v = vec3(0, 1, 0);
+    return;
+  }
+
+  const vec3 reference = absolute_x < 0.9 ? vec3(1, 0, 0) : vec3(0, 1, 0);
+  tangent_u = normalize(cross(normal, reference));
+  tangent_v = cross(normal, tangent_u);
+}
+
+vec3 cosine_hemisphere_direction(vec3 normal, uint bits)
+{
+  vec3 tangent_u;
+  vec3 tangent_v;
+  face_tangents(normal, tangent_u, tangent_v);
+
+  const float radius_stratum = unit_float_from(bits);
+  const float angle = TWO_PI * unit_float_from(hash_mix(bits, 0x68bc21ebu));
+  const float radius = sqrt(radius_stratum);
+  const float height = sqrt(max(0.0, 1.0 - radius_stratum));
+
+  return normalize(tangent_u * (radius * cos(angle)) + tangent_v * (radius * sin(angle)) +
+                   normal * height);
+}
+
+vec3 uniform_hemisphere_direction(vec3 normal, uint bits)
+{
+  vec3 tangent_u;
+  vec3 tangent_v;
+  face_tangents(normal, tangent_u, tangent_v);
+
+  const float height = unit_float_from(bits);
+  const float radius = sqrt(max(0.0, 1.0 - height * height));
+  const float angle = TWO_PI * unit_float_from(hash_mix(bits, 0x68bc21ebu));
+
+  return normalize(tangent_u * (radius * cos(angle)) + tangent_v * (radius * sin(angle)) +
+                   normal * height);
+}
+
+// --- Rays --------------------------------------------------------------------
+
+bool ray_is_clear(vec3 origin, vec3 direction, float max_distance)
+{
+  // A ray asked to travel nowhere hits nothing: the CPU's `t < distance - bias`
+  // admits no hit there, and a query with tMax below tMin is undefined.
+  if (max_distance <= 0.0) return true;
+
+  rayQueryEXT query;
+  rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                        0xff, origin, 0.0, direction, max_distance);
+  while (rayQueryProceedEXT(query)) {}
+  return rayQueryGetIntersectionTypeEXT(query, true) == gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+bool shadow_ray_reaches(vec3 surface_position, vec3 surface_normal, vec3 direction,
+                        float distance)
+{
+  return ray_is_clear(surface_position + surface_normal * push.shadow_ray_bias, direction,
+                      distance - push.shadow_ray_bias);
+}
+
+// --- Arrival, on top of the shared text ----------------------------------------
+
+// lightmap_lights.cpp's light_arrival_t: light_arrival() from light_arrival.glsl
+// for the direction and the attenuation, plus the two gates and the shadow disc
+// the CPU adds around it. A directional light's distance is the settings' shadow
+// distance here, not the unit distance the runtime measures its radius at.
+struct bake_arrival_t
+{
+  bool arrives;
+  bool reaches;
+  vec3 direction;
+  float distance;
+  float attenuation;
+  float normal_dot_light;
+  float shadow_disc_radius;
+};
+
+bake_arrival_t arrival_at(Light light, vec3 surface_position, vec3 surface_normal)
+{
+  bake_arrival_t arrival;
+  arrival.arrives = false;
+  arrival.reaches = false;
+  arrival.direction = vec3(0.0);
+  arrival.distance = 0.0;
+  arrival.attenuation = 0.0;
+  arrival.normal_dot_light = 0.0;
+  arrival.shadow_disc_radius = 0.0;
+
+  const int light_type = int(light.spot_params.w);
+  if (light_type != LIGHT_TYPE_DIRECTIONAL)
+  {
+    const vec3 to_light = light.position.xyz - surface_position;
+    const float distance = sqrt(dot(to_light, to_light));
+    if (distance > light.spot_params.z || distance < 1e-4) return arrival;
+  }
+
+  const Light_Arrival shared_arrival = light_arrival(light, surface_position);
+  arrival.direction = shared_arrival.direction;
+  arrival.attenuation = shared_arrival.attenuation;
+  if (light_type == LIGHT_TYPE_DIRECTIONAL)
+  {
+    arrival.distance = push.directional_shadow_distance;
+    arrival.shadow_disc_radius = light.direction.w * arrival.distance;
+  }
+  else
+  {
+    arrival.distance = shared_arrival.distance;
+    arrival.shadow_disc_radius = light.direction.w;
+  }
+
+  if (arrival.attenuation <= 0.0) return arrival;
+  arrival.arrives = true;
+
+  arrival.normal_dot_light = dot(surface_normal, arrival.direction);
+  if (arrival.normal_dot_light <= 0.0) return arrival;
+
+  arrival.reaches = true;
+  return arrival;
+}
+
+bool shadow_ray_reaches_disc_point(vec3 surface_position, vec3 surface_normal,
+                                   bake_arrival_t arrival, float radius, float angle)
+{
+  vec3 tangent_u;
+  vec3 tangent_v;
+  face_tangents(arrival.direction, tangent_u, tangent_v);
+
+  const vec3 centre = surface_position + arrival.direction * arrival.distance;
+  const vec3 target =
+      centre + tangent_u * (cos(angle) * radius) + tangent_v * (sin(angle) * radius);
+
+  const vec3 to_target = target - surface_position;
+  const float distance = sqrt(dot(to_target, to_target));
+  if (distance < 1e-4) return false;
+
+  return shadow_ray_reaches(surface_position, surface_normal, to_target * (1.0 / distance),
+                            distance);
+}
+
+// light_visibility_single_ray: the chain's next-event estimation spends ONE ray
+// per light per vertex, toward a random point of the disc.
+float light_visibility_single_ray(vec3 surface_position, vec3 surface_normal,
+                                  bake_arrival_t arrival, uint hash)
+{
+  if (arrival.shadow_disc_radius <= 0.0)
+    return shadow_ray_reaches(surface_position, surface_normal, arrival.direction,
+                              arrival.distance)
+               ? 1.0
+               : 0.0;
+
+  const float radius = arrival.shadow_disc_radius * sqrt(unit_float_from(hash));
+  const float angle = TWO_PI * unit_float_from(hash_mix(hash, 0x68bc21ebu));
+
+  return shadow_ray_reaches_disc_point(surface_position, surface_normal, arrival, radius, angle)
+             ? 1.0
+             : 0.0;
+}
+
+vec3 direct_irradiance_at(vec3 position, vec3 normal, uint bits)
+{
+  vec3 irradiance = vec3(0.0);
+
+  for (uint slot = 0u; slot < push.light_count; ++slot)
+  {
+    const Light light = lights[slot];
+    const bake_arrival_t arrival = arrival_at(light, position, normal);
+    if (!arrival.reaches) continue;
+
+    const float visibility =
+        light_visibility_single_ray(position, normal, arrival, hash_mix(bits, slot));
+    if (visibility <= 0.0) continue;
+
+    irradiance += light.radiance.rgb *
+                  (arrival.attenuation * arrival.normal_dot_light * visibility);
+  }
+
+  return irradiance;
+}
+
+// --- The surface under a hit ---------------------------------------------------
+
+// lightmap_trace.cpp's srgb_byte_to_linear.
+float srgb_byte_to_linear(uint encoded)
+{
+  const float value = float(encoded) * (1.0 / 255.0);
+  if (value <= 0.04045) return value * (1.0 / 12.92);
+  return pow((value + 0.055) * (1.0 / 1.055), 2.4);
+}
+
+// sample_texture's wrap: floor of the coordinate times the size, modulo the
+// size, folded positive. GLSL leaves % of a negative operand undefined where
+// C++ truncates, so the negative side is folded by hand to the same texel.
+int wrap_texel(float coordinate, int size)
+{
+  const int texel = int(floor(coordinate * float(size)));
+  if (texel >= 0) return texel % size;
+  const int remainder = (-texel) % size;
+  return remainder == 0 ? 0 : size - remainder;
+}
+
+vec3 fetch_texture(uint index, vec2 uv, vec3 fallback)
+{
+  if (index == NO_TEXTURE) return fallback;
+  const ivec2 size = textureSize(textures[nonuniformEXT(index)], 0);
+  const ivec2 texel = ivec2(wrap_texel(uv.x, size.x), wrap_texel(uv.y, size.y));
+  const uvec4 bytes = texelFetch(textures[nonuniformEXT(index)], texel, 0);
+  return vec3(srgb_byte_to_linear(bytes.r), srgb_byte_to_linear(bytes.g),
+              srgb_byte_to_linear(bytes.b));
+}
+
+// --- The chain -----------------------------------------------------------------
+
+// PI times the radiance along `first_leg`; lightmap_trace.cpp's trace_one_chain.
+vec3 trace_one_chain(vec3 position, vec3 normal, vec3 first_leg, uint bits)
+{
+  vec3 collected = vec3(0.0);
+  vec3 throughput = vec3(1.0);
+  vec3 from = position;
+  vec3 from_normal = normal;
+
+  const int bounce_count = max(push.max_bounces, 1);
+  for (int bounce = 0; bounce < bounce_count; ++bounce)
+  {
+    bits = hash_mix(bits, uint(bounce));
+
+    const vec3 direction =
+        bounce == 0 ? first_leg : cosine_hemisphere_direction(from_normal, bits);
+    const vec3 origin = from + from_normal * push.ray_bias;
+
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT, 0xff, origin, 0.0, direction,
+                          NO_MAX_DISTANCE);
+    while (rayQueryProceedEXT(query)) {}
+    if (rayQueryGetIntersectionTypeEXT(query, true) !=
+        gl_RayQueryCommittedIntersectionTriangleEXT)
+      break;
+
+    const float t = rayQueryGetIntersectionTEXT(query, true);
+    if (t <= 0.0) break;
+
+    const uint triangle_index = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
+    const vec2 barycentrics = rayQueryGetIntersectionBarycentricsEXT(query, true);
+
+    const vec3 hit_position = origin + direction * t;
+
+    const vec3 corner_0 = vertices[indices[triangle_index * 3u + 0u]].xyz;
+    const vec3 corner_1 = vertices[indices[triangle_index * 3u + 1u]].xyz;
+    const vec3 corner_2 = vertices[indices[triangle_index * 3u + 2u]].xyz;
+    const vec3 geometric_normal = normalize(cross(corner_1 - corner_0, corner_2 - corner_0));
+    const vec3 hit_normal =
+        dot(geometric_normal, direction) < 0.0 ? geometric_normal : -geometric_normal;
+
+    const gpu_triangle_t triangle = triangles[triangle_index];
+    const float weight_0 = 1.0 - barycentrics.x - barycentrics.y;
+    const vec2 uv = triangle.uv0 * weight_0 + triangle.uv1 * barycentrics.x +
+                    triangle.uv2 * barycentrics.y;
+    const gpu_material_t material = materials[triangle.material];
+    const vec3 albedo =
+        fetch_texture(material.albedo_texture, uv, vec3(UNTEXTURED_BOUNCE_ALBEDO));
+    const vec3 emission = fetch_texture(material.emissive_texture, uv, vec3(0.0));
+
+    collected += throughput * (emission * PI);
+
+    throughput *= albedo;
+
+    collected += throughput * direct_irradiance_at(hit_position, hit_normal, bits);
+
+    if (bounce + 1 >= push.bounces_before_roulette)
+    {
+      const float survival = clamp(luminance_of(throughput), 0.0, 1.0);
+      if (unit_float_from(hash_mix(bits, 0x9e3779b9u)) >= survival) break;
+      throughput *= 1.0 / survival;
+    }
+
+    from = hit_position;
+    from_normal = hit_normal;
+  }
+
+  return collected;
+}
+
+void main()
+{
+  const uint i = gl_GlobalInvocationID.x;
+  if (i >= push.sample_count) return;
+
+  const gpu_sample_t sample_record = samples[i];
+
+  vec3 l0 = vec3(0.0);
+  vec3 l1_x = vec3(0.0);
+  vec3 l1_y = vec3(0.0);
+  vec3 l1_z = vec3(0.0);
+
+  if (push.rays_per_sample > 0)
+  {
+    // shade_sample_indirect's re-key of the seed, then trace_indirect_light.
+    const uint hash = hash_mix(sample_record.seed, 0x1b873593u);
+    const float weight = 2.0 / float(push.rays_per_sample);
+
+    for (int ray = 0; ray < push.rays_per_sample; ++ray)
+    {
+      const uint bits = hash_mix(hash, uint(ray));
+      const vec3 first_leg = uniform_hemisphere_direction(sample_record.normal, bits);
+      const vec3 collected =
+          trace_one_chain(sample_record.position, sample_record.normal, first_leg, bits);
+
+      l0 += collected * (weight * SH_L1_Y0);
+      l1_x += collected * (weight * SH_L1_Y1 * first_leg.x);
+      l1_y += collected * (weight * SH_L1_Y1 * first_leg.y);
+      l1_z += collected * (weight * SH_L1_Y1 * first_leg.z);
+    }
+  }
+
+  const uint at = i * 12u;
+  results[at + 0u] = l0.x;
+  results[at + 1u] = l0.y;
+  results[at + 2u] = l0.z;
+  results[at + 3u] = l1_x.x;
+  results[at + 4u] = l1_x.y;
+  results[at + 5u] = l1_x.z;
+  results[at + 6u] = l1_y.x;
+  results[at + 7u] = l1_y.y;
+  results[at + 8u] = l1_y.z;
+  results[at + 9u] = l1_z.x;
+  results[at + 10u] = l1_z.y;
+  results[at + 11u] = l1_z.z;
+}

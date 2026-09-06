@@ -93,6 +93,12 @@ struct traced_scene_t
 // it for you.
 [[nodiscard]] float srgb_byte_to_linear(uint8_t encoded);
 
+// One texel of a texture, nearest and wrapped, decoded to linear; `fallback` for
+// a texture that cannot be read. The ONE fetch both solves make at a hit --
+// lightmap_indirect.comp does this arithmetic verbatim over the same bytes.
+[[nodiscard]] linalg::vec3 sample_texture(const assets::texture_asset_t &texture,
+                                          const linalg::vec2 &uv, const linalg::vec3 &fallback);
+
 // What the surface under a hit REFLECTS and what it EMITS, both in linear RGB:
 // resolve the object, find the face by plane, read its material index, sample
 // albedo at the hit's UV.

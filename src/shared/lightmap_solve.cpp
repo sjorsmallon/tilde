@@ -176,6 +176,19 @@ constexpr size_t RESULT_BUDGET_IN_FLOATS = 1u << 20;
 // fraction of the texel that hangs off it. A texel with no sample inside is the
 // gutter pass's problem, not the solve's.
 //
+// A sample BURIED inside a neighbouring solid is excluded for the same reason: a
+// wall's face runs on below the floor it stands in, and a point inside the floor
+// is not a surface either. Shading it made it BLACK -- the BVH answers an origin
+// inside a solid as a hit at zero distance, which every shadow ray reads as
+// occluded -- and a texel straddling the seam averaged that black in and
+// bilinear filtering dragged it up the wall: the dark fringe where a wall meets
+// a floor. Dropped, the texel is filled from its exposed neighbour by the gutter
+// pass, which is what every lightmapper does with a luxel in solid. The test is
+// on the RAY ORIGIN, the position nudged off its own face, because a point on a
+// face counts as inside to bvh_point_is_inside_solid and every sample is on one.
+// It is also what makes the ray query pin exact: a GPU tracing SURFACES cannot
+// see a solid it starts inside, and after this it never has to.
+//
 // This is the whole of what the CPU keeps of a texel once the shading has moved
 // off it: the records go to whichever solver shades them, the origin list stays
 // here and is what puts an answer back. APPENDS, so a batch collects several
@@ -183,10 +196,12 @@ constexpr size_t RESULT_BUDGET_IN_FLOATS = 1u << 20;
 void collect_chart_samples(const lightmap_chart_t &chart,
                            const lightmap_bake_settings_t &settings,
                            const lightmap_solve_settings_t &solve_settings,
-                           uint32_t chart_index, std::vector<gpu_sample_t> &out_samples,
+                           const Bounding_Volume_Hierarchy &bvh, uint32_t chart_index,
+                           std::vector<gpu_sample_t> &out_samples,
                            std::vector<sample_origin_t> &out_origins)
 {
   const int samples_per_edge = std::max(solve_settings.samples_per_texel_edge, 1);
+  const float ray_bias = solve_settings.shadow_ray_bias;
   const int covered_width = chart_covered_width(chart, settings);
   const int covered_height = chart_covered_height(chart, settings);
 
@@ -210,6 +225,8 @@ void collect_chart_samples(const lightmap_chart_t &chart,
 
           const texel_sample_t sample = sample_chart(chart, chart_space);
           if (!sample.on_surface) continue;
+          if (bvh_point_is_inside_solid(bvh, sample.position + sample.normal * ray_bias))
+            continue;
 
           out_samples.push_back({sample.position, chart_index, sample.normal, hash});
           out_origins.push_back({texel_x, texel_y});
@@ -639,7 +656,8 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
 
   // Every record of the chart, once; both direct passes and the indirect one
   // shade the same list, so the three terms are answers about the same points.
-  collect_chart_samples(chart, settings, solve_settings, 0, scratch.samples, scratch.origins);
+  collect_chart_samples(chart, settings, solve_settings, in.bvh, 0, scratch.samples,
+                        scratch.origins);
   statistics.samples += scratch.samples.size();
 
   const bool trace_indirect = traces_indirect(in, out);
@@ -898,8 +916,8 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
       scratch.reset(chart.atlas_rect.width, chart.atlas_rect.height, (int)light_count);
 
       const size_t first_sample = samples.size();
-      collect_chart_samples(chart, settings, solve_settings, (uint32_t)entries.size(), samples,
-                            scratch.origins);
+      collect_chart_samples(chart, settings, solve_settings, in.bvh, (uint32_t)entries.size(),
+                            samples, scratch.origins);
       entries.push_back(
           {chart_index, entries.size(), first_sample, samples.size() - first_sample});
       batch_texels += texels;
@@ -1017,6 +1035,30 @@ void lightmap_visibility_masks_t::allocate(const lightmap_atlas_t &atlas,
   coverage.assign(light_uids.size() * (size_t)page_count * (size_t)size_in_texels *
                       (size_t)size_in_texels,
                   0.f);
+}
+
+lightmap_sample_set_t collect_lightmap_sample_set(const lightmap_t &lightmap,
+                                                 const lightmap_solve_settings_t &solve_settings,
+                                                 const Bounding_Volume_Hierarchy &bvh)
+{
+  lightmap_sample_set_t set;
+  for (size_t chart_index = 0; chart_index < lightmap.charts.size(); ++chart_index)
+  {
+    const lightmap_chart_t &chart = lightmap.charts[chart_index];
+    if (chart.page < 0) continue;
+    if (chart.atlas_rect.width > 0 && chart.atlas_rect.height > 0)
+      collect_chart_samples(chart, lightmap.settings, solve_settings, bvh,
+                            (uint32_t)set.charts.size(), set.samples, set.origins);
+    set.charts.push_back(chart_index);
+  }
+  return set;
+}
+
+std::vector<gpu_sample_t> collect_lightmap_samples(const lightmap_t &lightmap,
+                                                   const lightmap_solve_settings_t &solve_settings,
+                                                   const Bounding_Volume_Hierarchy &bvh)
+{
+  return std::move(collect_lightmap_sample_set(lightmap, solve_settings, bvh).samples);
 }
 
 void bake_lightmap(const map_t &map, lightmap_t &lightmap,

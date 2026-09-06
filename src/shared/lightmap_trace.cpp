@@ -90,32 +90,6 @@ const brush_geometry_t *find_brush(const traced_scene_t &scene, entity_uid_t uid
 // mean opposite things when they are unusable: an albedo falls back to the
 // untextured grey, an emissive to black. A shared default would light a room
 // off a broken texture.
-linalg::vec3 sample_texture(const assets::texture_asset_t &texture, const linalg::vec2 &uv,
-                            const linalg::vec3 &fallback)
-{
-  if (texture.width <= 0 || texture.height <= 0 || texture.channels < 3)
-    return fallback;
-
-  // Nearest and wrapped. A bounce integrates hundreds of samples over a surface,
-  // so the filtering a single fetch would buy is averaged away anyway.
-  const auto wrap = [](float coordinate, int size) {
-    int texel = (int)std::floor(coordinate * (float)size);
-    texel %= size;
-    if (texel < 0) texel += size;
-    return texel;
-  };
-
-  const int x = wrap(uv.x, texture.width);
-  const int y = wrap(uv.y, texture.height);
-  const size_t at =
-      ((size_t)y * (size_t)texture.width + (size_t)x) * (size_t)texture.channels;
-  if (at + 2 >= texture.pixels.size()) return fallback;
-
-  return {srgb_byte_to_linear(texture.pixels[at]),
-          srgb_byte_to_linear(texture.pixels[at + 1]),
-          srgb_byte_to_linear(texture.pixels[at + 2])};
-}
-
 // The direct light at a bounce vertex, shadowed: next-event estimation, and it is
 // the same expression the direct solve sums into a texel. One lighting model.
 linalg::vec3 direct_irradiance_at(const traced_scene_t &scene,
@@ -228,6 +202,32 @@ float srgb_byte_to_linear(uint8_t encoded)
   const float value = (float)encoded * (1.f / 255.f);
   if (value <= 0.04045f) return value * (1.f / 12.92f);
   return std::pow((value + 0.055f) * (1.f / 1.055f), 2.4f);
+}
+
+linalg::vec3 sample_texture(const assets::texture_asset_t &texture, const linalg::vec2 &uv,
+                            const linalg::vec3 &fallback)
+{
+  if (texture.width <= 0 || texture.height <= 0 || texture.channels < 3)
+    return fallback;
+
+  // Nearest and wrapped. A bounce integrates hundreds of samples over a surface,
+  // so the filtering a single fetch would buy is averaged away anyway.
+  const auto wrap = [](float coordinate, int size) {
+    int texel = (int)std::floor(coordinate * (float)size);
+    texel %= size;
+    if (texel < 0) texel += size;
+    return texel;
+  };
+
+  const int x = wrap(uv.x, texture.width);
+  const int y = wrap(uv.y, texture.height);
+  const size_t at =
+      ((size_t)y * (size_t)texture.width + (size_t)x) * (size_t)texture.channels;
+  if (at + 2 >= texture.pixels.size()) return fallback;
+
+  return {srgb_byte_to_linear(texture.pixels[at]),
+          srgb_byte_to_linear(texture.pixels[at + 1]),
+          srgb_byte_to_linear(texture.pixels[at + 2])};
 }
 
 traced_scene_t build_traced_scene(const map_t &map, const Bounding_Volume_Hierarchy &bvh)

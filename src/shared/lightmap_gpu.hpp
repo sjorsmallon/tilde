@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace shared
@@ -86,15 +87,10 @@ struct gpu_indirect_results_t
 // surface_at answers with the untextured grey: a static mesh's triangle, and a
 // face naming an index the table does not have.
 
-// A layer index into one of the two texture arrays, or this: reads as
+// An index into gpu_bake_scene_t::textures, or this: reads as
 // UNTEXTURED_BOUNCE_ALBEDO for an albedo and as BLACK for an emissive -- the two
 // polarities lightmap_trace.cpp's sample_texture already gives its fallbacks.
-inline constexpr uint32_t GPU_NO_LAYER = 0xffffffffu;
-
-// Every texture is resampled to one fixed layer size so the two arrays need no
-// descriptor indexing. A bounce integrates hundreds of samples over a surface,
-// so what the resample loses is averaged away exactly as the nearest fetch is.
-inline constexpr int GPU_BAKE_TEXTURE_LAYER_SIZE = 256;
+inline constexpr uint32_t GPU_NO_TEXTURE = 0xffffffffu;
 
 // Indexed by the primitive index a ray query reports. Corner uvs are the
 // LAYER-0 material uvs the generated brush mesh draws with, so a bounce reads
@@ -112,26 +108,12 @@ static_assert(sizeof(gpu_triangle_t) == 32 && offsetof(gpu_triangle_t, uv0) == 8
 
 struct gpu_material_t
 {
-  uint32_t albedo_layer = GPU_NO_LAYER;
-  uint32_t emissive_layer = GPU_NO_LAYER;
+  uint32_t albedo_texture = GPU_NO_TEXTURE;
+  uint32_t emissive_texture = GPU_NO_TEXTURE;
   uint32_t pad0 = 0;
   uint32_t pad1 = 0;
 };
 static_assert(sizeof(gpu_material_t) == 16, "gpu_material_t is the std430 struct the kernels read");
-
-// RGBA8, sRGB-ENCODED, layer-major, every layer GPU_BAKE_TEXTURE_LAYER_SIZE
-// square: the bytes of an sRGB-format sampler2DArray, so the sampler decodes
-// exactly as srgb_byte_to_linear does on the CPU.
-struct gpu_texture_array_t
-{
-  std::vector<uint8_t> pixels;
-
-  [[nodiscard]] size_t layer_count() const
-  {
-    return pixels.size() /
-           ((size_t)GPU_BAKE_TEXTURE_LAYER_SIZE * (size_t)GPU_BAKE_TEXTURE_LAYER_SIZE * 4);
-  }
-};
 
 struct gpu_bake_scene_t
 {
@@ -145,8 +127,11 @@ struct gpu_bake_scene_t
   std::vector<gpu_material_t> materials;
   uint32_t untextured_material = 0;
 
-  gpu_texture_array_t albedo;
-  gpu_texture_array_t emissive;
+  // Every texture a material names, once, at its NATIVE size -- the asset the
+  // renderer draws with and sample_texture reads, so the kernel's texelFetch and
+  // the CPU read the same byte (lightmap_gpu_plan.md step 5b). Index i is the
+  // descriptor the kernel indexes; the solver uploads each as its own image.
+  std::vector<const assets::texture_asset_t *> textures;
 
   // Which map object each triangle came from. Parallel to `triangles`, never
   // uploaded: the GPU sees triangles, not brushes, and this is for a report.
@@ -167,19 +152,9 @@ struct gpu_bake_scene_t
 [[nodiscard]] gpu_bake_scene_t build_gpu_bake_scene(const map_t &map,
                                                     const traced_scene_t &traced);
 
-// LINEAR reflectance back to the sRGB-encoded byte the texture arrays hold;
-// srgb_byte_to_linear's inverse, and a byte survives the round trip exactly.
-[[nodiscard]] uint8_t linear_to_srgb_byte(float linear);
-
-// The CPU twin of the kernel's fetch: nearest and wrapped over the resampled
-// layer, decoded, with the caller's fallback for GPU_NO_LAYER. What the pin
-// compares against surface_at.
-[[nodiscard]] linalg::vec3 sample_gpu_texture(const gpu_texture_array_t &array, uint32_t layer,
-                                              const linalg::vec2 &uv,
-                                              const linalg::vec3 &fallback);
-
 // What a triangle of the scene reflects and emits at a uv -- surface_at over
-// the scene's own tables, so a texel that asks both answers the same question.
+// the scene's own tables through the SAME sample_texture, so a texel that asks
+// both answers the same question byte for byte.
 [[nodiscard]] traced_surface_t gpu_surface_at(const gpu_bake_scene_t &scene,
                                               uint32_t triangle_index,
                                               const linalg::vec2 &uv);
@@ -351,5 +326,196 @@ private:
   indirect_trace_settings_t indirect;
   batch_solve_statistics_t accumulated;
 };
+
+// Every record the bake would shade, over every packed chart in order, with
+// chart_index the chart's position in the packed list -- `charts[chart_index]`
+// is its index into lightmap.charts -- and `origins` parallel to `samples`, so
+// an answer can be put back on its texel. What the ray query pin and the
+// indirect comparison fire from, so both probe exactly the points a bake
+// shades. The BVH is the occluder set a sample is tested against for being
+// buried inside a solid, which is what excludes it -- the same BVH the bake's
+// own collection uses.
+struct lightmap_sample_set_t
+{
+  std::vector<gpu_sample_t> samples;
+  std::vector<sample_origin_t> origins;
+  std::vector<size_t> charts;
+};
+
+[[nodiscard]] lightmap_sample_set_t
+collect_lightmap_sample_set(const lightmap_t &lightmap,
+                            const lightmap_solve_settings_t &solve_settings,
+                            const Bounding_Volume_Hierarchy &bvh);
+
+[[nodiscard]] std::vector<gpu_sample_t>
+collect_lightmap_samples(const lightmap_t &lightmap,
+                         const lightmap_solve_settings_t &solve_settings,
+                         const Bounding_Volume_Hierarchy &bvh);
+
+// --- Step 4's pin: a ray that hits something ---------------------------------
+//
+// One ray per record, from position + normal * ray_bias along the normal, no
+// further than max_distance: the hit distance, or -1 for a miss. This is the
+// CPU half, through the same occluder BVH the bake's shadow rays walk; the
+// Vulkan solver's probe_rays answers the same rays through its TLAS, and
+// compare_probe_rays says where the two differ. It is where a wrong stride, a
+// wrong winding or an unbuilt acceleration structure shows up as a NUMBER
+// rather than as a dark bake three steps later.
+[[nodiscard]] std::vector<float> probe_ray_distances(const Bounding_Volume_Hierarchy &bvh,
+                                                     Span<const gpu_sample_t> samples,
+                                                     float ray_bias, float max_distance);
+
+// The two structures answer ONE ray differently by construction: the BVH holds
+// SOLIDS and reports an origin inside one as a hit at distance zero, where the
+// TLAS holds SURFACES and lets that ray fly through the interior to the far
+// wall. A blockout buries faces inside neighbouring brushes routinely, so those
+// rays are counted as their own category rather than as disagreements, and the
+// distance statistics are over the rest.
+struct probe_ray_report_t
+{
+  size_t sample_count = 0;
+  size_t both_hit = 0;
+  size_t both_missed = 0;
+  size_t reference_only_hit = 0;
+  size_t candidate_only_hit = 0;
+  size_t reference_started_inside_a_solid = 0;
+  size_t hits_outside_tolerance = 0;
+  size_t candidate_farther = 0;
+  size_t candidate_nearer = 0;
+  float largest_distance_error = 0.f;
+  float mean_distance_error = 0.f;
+  // The record with the largest error, or -1 when every compared hit agreed.
+  int64_t worst_sample = -1;
+
+  [[nodiscard]] bool agrees() const
+  {
+    return reference_only_hit == 0 && candidate_only_hit == 0 && hits_outside_tolerance == 0;
+  }
+};
+
+// `distance_tolerance` is absolute, in world units; a hit's error is the
+// difference of the two distances. Fatal on lists of different length -- they
+// came from one sample list, so that is a caller bug and not a disagreement.
+[[nodiscard]] probe_ray_report_t compare_probe_rays(Span<const float> reference,
+                                                    Span<const float> candidate,
+                                                    float distance_tolerance);
+
+// --- The pins of steps 5 and 6: a kernel against the CPU shade -----------------
+//
+// The two solves draw the same random numbers from the same seeds, so they agree
+// far tighter than "in expectation" -- but a ray landing on the other side of an
+// edge by float rounding changes one chain's whole answer, or one spiral ray's,
+// so never bit for bit. The comparison is therefore a PAIRED test per chart: the
+// mean of (candidate - reference) over the chart's records, per coefficient,
+// against the standard error of that mean. A difference beyond
+// RECORD_COMPARISON_SIGMA standard errors is a bug; inside it is the estimator.
+// A systematic error -- a wrong albedo, a missing PI, a wrong falloff -- moves
+// every record the same way and fails by miles; a handful of edge rays moves a
+// few records and passes.
+//
+// FIVE sigma, not three, because a map is thousands of tests: 300 charts by 12
+// coefficients at three sigma flags ten charts a bake by chance alone (the first
+// press flagged three, largest 3.3, signs both ways). At five the expected false
+// positive count per bake is a few thousandths, and a real error is tens of
+// sigma on most charts anyway.
+//
+// A record's answer is a list of COEFFICIENTS, and which they are is the term's:
+// the indirect term's twelve are indirect_sh_l1_t in order, the direct term's are
+// the irradiance rgb then a coverage and a weight per light. Each coefficient
+// belongs to a SCALE GROUP, and a mean difference below
+// RECORD_COMPARISON_RELATIVE_FLOOR of the group's mean magnitude is float noise
+// whatever its standard error says -- a chart of one record, or a chart whose
+// every record differs by one ulp, has a standard error of zero and would
+// otherwise fail on nothing. Groups exist because a coverage is a fraction and
+// an irradiance is in radiance units, and one floor cannot serve both.
+
+inline constexpr size_t SH_L1_COEFFICIENT_COUNT = 12;
+inline constexpr float RECORD_COMPARISON_SIGMA = 5.f;
+inline constexpr float RECORD_COMPARISON_RELATIVE_FLOOR = 1e-3f;
+
+struct record_chart_comparison_t
+{
+  size_t chart = 0;
+  size_t record_count = 0;
+  std::vector<float> reference_mean;
+  std::vector<float> candidate_mean;
+  std::vector<float> difference_standard_error;
+  // max over coefficients of |mean difference| / standard error, and which one.
+  float largest_sigma = 0.f;
+  int largest_sigma_coefficient = -1;
+};
+
+struct record_comparison_report_t
+{
+  size_t record_count = 0;
+  size_t chart_count = 0;
+  size_t coefficient_count = 0;
+  size_t charts_beyond_tolerance = 0;
+  // Records whose reference answer is not all zero, and records where the two
+  // answers differ in ANY coefficient by any amount: "0 charts flagged" over a
+  // map where nothing is lit, or where the two agree bit for bit, reads the
+  // same as a real agreement, and these two counts tell the three apart.
+  size_t reference_nonzero_records = 0;
+  size_t differing_records = 0;
+  // Per coefficient, over every record: the mean of the reference, the mean of
+  // |candidate - reference| and the largest |candidate - reference|.
+  std::vector<float> reference_mean;
+  std::vector<float> mean_absolute_difference;
+  std::vector<float> largest_absolute_difference;
+  // Per scale group, the mean |reference| its floor is relative to.
+  std::vector<float> group_scale;
+  // Every chart with at least one record, worst first; among charts at the
+  // same sigma the BRIGHTEST first, so a report that agrees everywhere shows
+  // the charts whose numbers mean something rather than its unlit faces.
+  std::vector<record_chart_comparison_t> charts;
+
+  [[nodiscard]] bool agrees() const { return charts_beyond_tolerance == 0; }
+
+  // The two per-coefficient means averaged over a run of coefficients -- the
+  // indirect report's "L0 mean" is the first three.
+  [[nodiscard]] float reference_mean_over(size_t first, size_t count) const;
+  [[nodiscard]] float mean_absolute_difference_over(size_t first, size_t count) const;
+  [[nodiscard]] float largest_absolute_difference_over(size_t first, size_t count) const;
+};
+
+// `charts` is lightmap_sample_set_t::charts: what each chart_index names. Fatal
+// on lists of different length -- they came from one sample list.
+//
+// Coefficients in indirect_sh_l1_t's order: l0 rgb, then l1[0], l1[1], l1[2]
+// rgb each. Two scale groups: L0 and L1, because L1 is signed and smaller.
+[[nodiscard]] record_comparison_report_t
+compare_indirect_results(Span<const gpu_sample_t> samples, Span<const size_t> charts,
+                         Span<const indirect_sh_l1_t> reference,
+                         Span<const indirect_sh_l1_t> candidate);
+
+// Coefficients: irradiance rgb, then coverage per light, then weight per light
+// -- 3 + 2 * light_count, and direct_coefficient_name says which is which.
+// Three scale groups, one per kind. Fatal on two results over different light
+// counts.
+[[nodiscard]] record_comparison_report_t
+compare_direct_results(Span<const gpu_sample_t> samples, Span<const size_t> charts,
+                       const gpu_direct_results_t &reference,
+                       const gpu_direct_results_t &candidate);
+
+inline constexpr size_t DIRECT_COEFFICIENT_NAME_CAPACITY = 32;
+
+// "irradiance.r", "coverage[3]", "weight[3]" into caller storage; fatal on a
+// coefficient the light count does not have. Returns what it wrote.
+[[nodiscard]] std::string_view direct_coefficient_name(size_t coefficient, size_t light_count,
+                                                       Span<char> storage);
+
+// The per-texel mean of one value per record over the records that fell on it,
+// at the record's atlas texel, into Rgb9e5 pages. No gutter and no ranking: the
+// picture of what ONE solver answered, so two of them can be looked at side by
+// side and their difference written the way the debug pages already are. The
+// indirect comparison hands it the L0s, the direct one the irradiances.
+[[nodiscard]] lightmap_pages_t reduce_record_values_to_pages(const lightmap_t &lightmap,
+                                                             const lightmap_sample_set_t &set,
+                                                             Span<const linalg::vec3> values);
+
+// |a - b| per texel, into pages shaped like `a`. Fatal on pages of a different
+// shape.
+[[nodiscard]] lightmap_pages_t absolute_difference_pages(const lightmap_pages_t &a,
+                                                         const lightmap_pages_t &b);
 
 } // namespace shared

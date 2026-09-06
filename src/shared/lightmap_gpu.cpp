@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <limits>
 #include <thread>
 
 namespace shared
@@ -15,64 +17,8 @@ namespace shared
 namespace
 {
 
-constexpr size_t LAYER_SIZE = (size_t)GPU_BAKE_TEXTURE_LAYER_SIZE;
-constexpr size_t LAYER_BYTES = LAYER_SIZE * LAYER_SIZE * 4;
-
-// Box-filtered in LINEAR space and re-encoded: averaging encoded bytes darkens
-// every edge between a bright and a dark texel. A source smaller than a layer
-// replicates, so a 1x1 texture resamples to exactly its one byte per channel.
-void append_resampled_layer(gpu_texture_array_t &array, const assets::texture_asset_t &texture)
-{
-  const size_t first = array.pixels.size();
-  array.pixels.resize(first + LAYER_BYTES, 255);
-
-  const auto source_range = [](size_t destination, size_t source_size, size_t &begin,
-                               size_t &end) {
-    begin = destination * source_size / LAYER_SIZE;
-    end = std::max(begin + 1, ((destination + 1) * source_size + LAYER_SIZE - 1) / LAYER_SIZE);
-    end = std::min(end, source_size);
-  };
-
-  const size_t width = (size_t)texture.width;
-  const size_t height = (size_t)texture.height;
-  const size_t channels = (size_t)texture.channels;
-
-  for (size_t y = 0; y < LAYER_SIZE; ++y)
-  {
-    size_t source_y_begin = 0;
-    size_t source_y_end = 0;
-    source_range(y, height, source_y_begin, source_y_end);
-
-    for (size_t x = 0; x < LAYER_SIZE; ++x)
-    {
-      size_t source_x_begin = 0;
-      size_t source_x_end = 0;
-      source_range(x, width, source_x_begin, source_x_end);
-
-      linalg::vec3 sum{0.f, 0.f, 0.f};
-      float count = 0.f;
-      for (size_t source_y = source_y_begin; source_y < source_y_end; ++source_y)
-        for (size_t source_x = source_x_begin; source_x < source_x_end; ++source_x)
-        {
-          const size_t at = (source_y * width + source_x) * channels;
-          sum = sum + linalg::vec3{srgb_byte_to_linear(texture.pixels[at]),
-                                   srgb_byte_to_linear(texture.pixels[at + 1]),
-                                   srgb_byte_to_linear(texture.pixels[at + 2])};
-          count += 1.f;
-        }
-      if (count > 0.f) sum = sum * (1.f / count);
-
-      uint8_t *out = &array.pixels[first + (y * LAYER_SIZE + x) * 4];
-      out[0] = linear_to_srgb_byte(sum.x);
-      out[1] = linear_to_srgb_byte(sum.y);
-      out[2] = linear_to_srgb_byte(sum.z);
-      out[3] = 255;
-    }
-  }
-}
-
 // The same usability test sample_texture applies before it reads a pixel: a
-// texture failing it is the fallback colour there and GPU_NO_LAYER here.
+// texture failing it is the fallback colour there and GPU_NO_TEXTURE here.
 bool texture_is_usable(const assets::texture_asset_t *texture)
 {
   return texture && texture->width > 0 && texture->height > 0 && texture->channels >= 3 &&
@@ -80,21 +26,16 @@ bool texture_is_usable(const assets::texture_asset_t *texture)
              (size_t)texture->width * (size_t)texture->height * (size_t)texture->channels;
 }
 
-struct layer_table_t
+// One entry per distinct texture, in first-use order.
+uint32_t texture_index_for(std::vector<const assets::texture_asset_t *> &textures,
+                           const assets::texture_asset_t *texture)
 {
-  std::vector<const assets::texture_asset_t *> sources;
-  gpu_texture_array_t *array = nullptr;
-
-  uint32_t layer_for(const assets::texture_asset_t *texture)
-  {
-    if (!texture_is_usable(texture)) return GPU_NO_LAYER;
-    for (size_t layer = 0; layer < sources.size(); ++layer)
-      if (sources[layer] == texture) return (uint32_t)layer;
-    sources.push_back(texture);
-    append_resampled_layer(*array, *texture);
-    return (uint32_t)(sources.size() - 1);
-  }
-};
+  if (!texture_is_usable(texture)) return GPU_NO_TEXTURE;
+  for (size_t index = 0; index < textures.size(); ++index)
+    if (textures[index] == texture) return (uint32_t)index;
+  textures.push_back(texture);
+  return (uint32_t)(textures.size() - 1);
+}
 
 void append_triangle(gpu_bake_scene_t &scene, entity_uid_t uid, const linalg::vec3 &a,
                      const linalg::vec3 &b, const linalg::vec3 &c, const linalg::vec2 &uv_a,
@@ -182,29 +123,17 @@ void append_static_mesh(gpu_bake_scene_t &scene, entity_uid_t uid,
 
 } // namespace
 
-uint8_t linear_to_srgb_byte(float linear)
-{
-  const float clamped = std::clamp(linear, 0.f, 1.f);
-  const float encoded = clamped <= 0.0031308f
-                            ? clamped * 12.92f
-                            : 1.055f * std::pow(clamped, 1.f / 2.4f) - 0.055f;
-  return (uint8_t)std::lround(encoded * 255.f);
-}
-
 gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &traced)
 {
   gpu_bake_scene_t scene;
 
-  layer_table_t albedo_layers{{}, &scene.albedo};
-  layer_table_t emissive_layers{{}, &scene.emissive};
-
   scene.materials.reserve(traced.materials.size() + 1);
   for (const traced_scene_t::material_t &material : traced.materials)
-    scene.materials.push_back({albedo_layers.layer_for(material.albedo),
-                               emissive_layers.layer_for(material.emissive), 0, 0});
+    scene.materials.push_back({texture_index_for(scene.textures, material.albedo),
+                               texture_index_for(scene.textures, material.emissive), 0, 0});
 
   scene.untextured_material = (uint32_t)scene.materials.size();
-  scene.materials.push_back({GPU_NO_LAYER, GPU_NO_LAYER, 0, 0});
+  scene.materials.push_back({GPU_NO_TEXTURE, GPU_NO_TEXTURE, 0, 0});
 
   for (const map_geometry_t &entry : map.geometry)
   {
@@ -218,23 +147,6 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
   return scene;
 }
 
-linalg::vec3 sample_gpu_texture(const gpu_texture_array_t &array, uint32_t layer,
-                                const linalg::vec2 &uv, const linalg::vec3 &fallback)
-{
-  if (layer == GPU_NO_LAYER || layer >= array.layer_count()) return fallback;
-
-  const auto wrap = [](float coordinate) {
-    int texel = (int)std::floor(coordinate * (float)LAYER_SIZE);
-    texel %= (int)LAYER_SIZE;
-    if (texel < 0) texel += (int)LAYER_SIZE;
-    return (size_t)texel;
-  };
-
-  const size_t at = (size_t)layer * LAYER_BYTES + (wrap(uv.y) * LAYER_SIZE + wrap(uv.x)) * 4;
-  return {srgb_byte_to_linear(array.pixels[at]), srgb_byte_to_linear(array.pixels[at + 1]),
-          srgb_byte_to_linear(array.pixels[at + 2])};
-}
-
 traced_surface_t gpu_surface_at(const gpu_bake_scene_t &scene, uint32_t triangle_index,
                                 const linalg::vec2 &uv)
 {
@@ -246,8 +158,12 @@ traced_surface_t gpu_surface_at(const gpu_bake_scene_t &scene, uint32_t triangle
   if (material_index >= scene.materials.size()) return {untextured, {}};
   const gpu_material_t &material = scene.materials[material_index];
 
-  return {sample_gpu_texture(scene.albedo, material.albedo_layer, uv, untextured),
-          sample_gpu_texture(scene.emissive, material.emissive_layer, uv, {0.f, 0.f, 0.f})};
+  const auto texture_at = [&](uint32_t index, const linalg::vec3 &fallback) {
+    if (index == GPU_NO_TEXTURE || index >= scene.textures.size()) return fallback;
+    return sample_texture(*scene.textures[index], uv, fallback);
+  };
+  return {texture_at(material.albedo_texture, untextured),
+          texture_at(material.emissive_texture, {0.f, 0.f, 0.f})};
 }
 
 linalg::vec2 gpu_triangle_uv_at(const gpu_bake_scene_t &scene, uint32_t triangle_index,
@@ -422,6 +338,435 @@ void cpu_batch_solver_t::solve_indirect(Span<const gpu_sample_t> samples,
 
   accumulated.shade.add(added);
   ++accumulated.indirect_dispatches;
+}
+
+// --- Step 4's pin ------------------------------------------------------------
+
+std::vector<float> probe_ray_distances(const Bounding_Volume_Hierarchy &bvh,
+                                       Span<const gpu_sample_t> samples, float ray_bias,
+                                       float max_distance)
+{
+  std::vector<float> distances(samples.size(), -1.f);
+  for (uint32_t i = 0; i < samples.size(); ++i)
+  {
+    const gpu_sample_t &sample = samples[i];
+    ray_hit_result_t hit{};
+    if (!bvh_intersect_ray(bvh, sample.position + sample.normal * ray_bias, sample.normal, hit))
+      continue;
+    if (hit.t < 0.f || hit.t > max_distance) continue;
+    distances[i] = hit.t;
+  }
+  return distances;
+}
+
+probe_ray_report_t compare_probe_rays(Span<const float> reference, Span<const float> candidate,
+                                      float distance_tolerance)
+{
+  if (reference.size() != candidate.size())
+    fatal_error("[lightmap-gpu] comparing {} reference distances against {} candidates.",
+                reference.size(), candidate.size());
+
+  probe_ray_report_t report;
+  report.sample_count = reference.size();
+  double error_sum = 0.0;
+  size_t compared = 0;
+  for (uint32_t i = 0; i < reference.size(); ++i)
+  {
+    const bool reference_hit = reference[i] >= 0.f;
+    const bool candidate_hit = candidate[i] >= 0.f;
+    if (reference_hit && candidate_hit)
+    {
+      ++report.both_hit;
+      if (reference[i] == 0.f)
+      {
+        ++report.reference_started_inside_a_solid;
+        continue;
+      }
+      ++compared;
+      const float error = std::abs(candidate[i] - reference[i]);
+      error_sum += error;
+      if (error > report.largest_distance_error)
+      {
+        report.largest_distance_error = error;
+        report.worst_sample = (int64_t)i;
+      }
+      if (error > distance_tolerance)
+      {
+        ++report.hits_outside_tolerance;
+        if (candidate[i] > reference[i]) ++report.candidate_farther;
+        else ++report.candidate_nearer;
+      }
+    }
+    else if (!reference_hit && !candidate_hit) ++report.both_missed;
+    else if (reference_hit) ++report.reference_only_hit;
+    else ++report.candidate_only_hit;
+  }
+  report.mean_distance_error = compared ? (float)(error_sum / (double)compared) : 0.f;
+  return report;
+}
+
+// --- The pins of steps 5 and 6 ----------------------------------------------
+
+namespace
+{
+
+float coefficient_of(const indirect_sh_l1_t &value, size_t coefficient)
+{
+  const linalg::vec3 &channel =
+      coefficient < 3 ? value.l0 : value.l1[(uint32_t)(coefficient / 3 - 1)];
+  switch (coefficient % 3)
+  {
+  case 0: return channel.x;
+  case 1: return channel.y;
+  default: return channel.z;
+  }
+}
+
+float coefficient_of(const gpu_direct_results_t &results, size_t record, size_t coefficient)
+{
+  if (coefficient < 3)
+  {
+    const linalg::vec3 &irradiance = results.irradiance[record];
+    return coefficient == 0 ? irradiance.x : coefficient == 1 ? irradiance.y : irradiance.z;
+  }
+  const size_t per_light = coefficient - 3;
+  const size_t light_count = results.light_count;
+  if (per_light < light_count) return results.coverage[record * light_count + per_light];
+  return results.weight[record * light_count + (per_light - light_count)];
+}
+
+// The paired test itself, over any record type: `reference_at(i, k)` and
+// `candidate_at(i, k)` read coefficient k of record i.
+template <typename Reference_At, typename Candidate_At>
+record_comparison_report_t compare_records(Span<const gpu_sample_t> samples,
+                                           Span<const size_t> charts, size_t coefficient_count,
+                                           Span<const uint32_t> scale_group,
+                                           Reference_At &&reference_at,
+                                           Candidate_At &&candidate_at)
+{
+  if (scale_group.size() != coefficient_count)
+    fatal_error("[lightmap-gpu] {} scale groups for {} coefficients.", scale_group.size(),
+                coefficient_count);
+  size_t group_count = 0;
+  for (const uint32_t group : scale_group) group_count = std::max<size_t>(group_count, group + 1);
+
+  // Sums in double: a chart is thousands of records and a variance is a
+  // difference of two sums that nearly cancel.
+  struct chart_sums_t
+  {
+    size_t count = 0;
+    std::vector<double> reference;
+    std::vector<double> candidate;
+    std::vector<double> difference;
+    std::vector<double> squared_difference;
+  };
+  std::vector<chart_sums_t> sums(charts.size());
+  for (chart_sums_t &chart : sums)
+  {
+    chart.reference.assign(coefficient_count, 0.0);
+    chart.candidate.assign(coefficient_count, 0.0);
+    chart.difference.assign(coefficient_count, 0.0);
+    chart.squared_difference.assign(coefficient_count, 0.0);
+  }
+
+  record_comparison_report_t report;
+  report.record_count = samples.size();
+  report.chart_count = charts.size();
+  report.coefficient_count = coefficient_count;
+
+  std::vector<double> reference_sum(coefficient_count, 0.0);
+  std::vector<double> absolute_reference_sum(coefficient_count, 0.0);
+  std::vector<double> absolute_difference_sum(coefficient_count, 0.0);
+  report.largest_absolute_difference.assign(coefficient_count, 0.f);
+  for (uint32_t i = 0; i < samples.size(); ++i)
+  {
+    const uint32_t chart_index = samples[i].chart_index;
+    if (chart_index >= charts.size())
+      fatal_error("[lightmap-gpu] record {} names chart {} of a set holding {}.", i,
+                  chart_index, charts.size());
+    chart_sums_t &chart = sums[chart_index];
+    ++chart.count;
+    bool reference_nonzero = false;
+    bool differs = false;
+    for (size_t k = 0; k < coefficient_count; ++k)
+    {
+      const double from_reference = reference_at(i, k);
+      const double from_candidate = candidate_at(i, k);
+      const double difference = from_candidate - from_reference;
+      chart.reference[k] += from_reference;
+      chart.candidate[k] += from_candidate;
+      chart.difference[k] += difference;
+      chart.squared_difference[k] += difference * difference;
+      reference_sum[k] += from_reference;
+      absolute_reference_sum[k] += std::abs(from_reference);
+      absolute_difference_sum[k] += std::abs(difference);
+      report.largest_absolute_difference[k] =
+          std::max(report.largest_absolute_difference[k], (float)std::abs(difference));
+      reference_nonzero |= from_reference != 0.0;
+      differs |= difference != 0.0;
+    }
+    report.reference_nonzero_records += reference_nonzero ? 1 : 0;
+    report.differing_records += differs ? 1 : 0;
+  }
+
+  const double record_count = (double)samples.size();
+  report.reference_mean.assign(coefficient_count, 0.f);
+  report.mean_absolute_difference.assign(coefficient_count, 0.f);
+  std::vector<double> group_sum(group_count, 0.0);
+  std::vector<double> group_values(group_count, 0.0);
+  for (size_t k = 0; k < coefficient_count; ++k)
+  {
+    if (record_count > 0.0)
+    {
+      report.reference_mean[k] = (float)(reference_sum[k] / record_count);
+      report.mean_absolute_difference[k] = (float)(absolute_difference_sum[k] / record_count);
+    }
+    group_sum[scale_group[(uint32_t)k]] += absolute_reference_sum[k];
+    group_values[scale_group[(uint32_t)k]] += record_count;
+  }
+  report.group_scale.assign(group_count, 0.f);
+  for (size_t group = 0; group < group_count; ++group)
+    if (group_values[group] > 0.0)
+      report.group_scale[group] = (float)(group_sum[group] / group_values[group]);
+
+  for (uint32_t chart_index = 0; chart_index < charts.size(); ++chart_index)
+  {
+    const chart_sums_t &chart = sums[chart_index];
+    if (chart.count == 0) continue;
+
+    record_chart_comparison_t compared;
+    compared.chart = charts[chart_index];
+    compared.record_count = chart.count;
+    compared.reference_mean.resize(coefficient_count);
+    compared.candidate_mean.resize(coefficient_count);
+    compared.difference_standard_error.resize(coefficient_count);
+    const double n = (double)chart.count;
+
+    for (size_t k = 0; k < coefficient_count; ++k)
+    {
+      const double mean_difference = chart.difference[k] / n;
+      // The sample variance of the differences over n - 1, so one record has no
+      // spread to speak of and reports a standard error of zero.
+      const double variance =
+          chart.count > 1 ? std::max(0.0, (chart.squared_difference[k] -
+                                           n * mean_difference * mean_difference) /
+                                              (n - 1.0))
+                          : 0.0;
+      const double standard_error = std::sqrt(variance / n);
+
+      compared.reference_mean[k] = (float)(chart.reference[k] / n);
+      compared.candidate_mean[k] = (float)(chart.candidate[k] / n);
+      compared.difference_standard_error[k] = (float)standard_error;
+
+      const double floor = (double)RECORD_COMPARISON_RELATIVE_FLOOR *
+                           (double)report.group_scale[scale_group[(uint32_t)k]];
+      double sigma = 0.0;
+      if (std::abs(mean_difference) > floor)
+        sigma = standard_error > 0.0 ? std::abs(mean_difference) / standard_error
+                                     : std::numeric_limits<double>::infinity();
+      if (sigma > compared.largest_sigma)
+      {
+        compared.largest_sigma = (float)sigma;
+        compared.largest_sigma_coefficient = (int)k;
+      }
+    }
+
+    if (compared.largest_sigma > RECORD_COMPARISON_SIGMA) ++report.charts_beyond_tolerance;
+    report.charts.push_back(std::move(compared));
+  }
+
+  const auto brightness_of = [](const record_chart_comparison_t &chart) {
+    double sum = 0.0;
+    for (const float mean : chart.reference_mean) sum += std::abs(mean);
+    return sum;
+  };
+  std::sort(report.charts.begin(), report.charts.end(),
+            [&](const record_chart_comparison_t &left, const record_chart_comparison_t &right) {
+              if (left.largest_sigma != right.largest_sigma)
+                return left.largest_sigma > right.largest_sigma;
+              return brightness_of(left) > brightness_of(right);
+            });
+  return report;
+}
+
+float mean_over(const std::vector<float> &values, size_t first, size_t count)
+{
+  if (count == 0 || first + count > values.size())
+    fatal_error("[lightmap-gpu] a mean over coefficients [{}, {}) of {}.", first, first + count,
+                values.size());
+  double sum = 0.0;
+  for (size_t k = first; k < first + count; ++k) sum += values[k];
+  return (float)(sum / (double)count);
+}
+
+} // namespace
+
+float record_comparison_report_t::reference_mean_over(size_t first, size_t count) const
+{
+  return mean_over(reference_mean, first, count);
+}
+
+float record_comparison_report_t::mean_absolute_difference_over(size_t first, size_t count) const
+{
+  return mean_over(mean_absolute_difference, first, count);
+}
+
+float record_comparison_report_t::largest_absolute_difference_over(size_t first,
+                                                                   size_t count) const
+{
+  if (count == 0 || first + count > largest_absolute_difference.size())
+    fatal_error("[lightmap-gpu] a largest difference over coefficients [{}, {}) of {}.", first,
+                first + count, largest_absolute_difference.size());
+  float largest = 0.f;
+  for (size_t k = first; k < first + count; ++k)
+    largest = std::max(largest, largest_absolute_difference[k]);
+  return largest;
+}
+
+record_comparison_report_t compare_indirect_results(Span<const gpu_sample_t> samples,
+                                                    Span<const size_t> charts,
+                                                    Span<const indirect_sh_l1_t> reference,
+                                                    Span<const indirect_sh_l1_t> candidate)
+{
+  if (reference.size() != samples.size() || candidate.size() != samples.size())
+    fatal_error("[lightmap-gpu] comparing {} reference and {} candidate answers over {} "
+                "records.",
+                reference.size(), candidate.size(), samples.size());
+
+  const uint32_t scale_group[SH_L1_COEFFICIENT_COUNT] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+  return compare_records(
+      samples, charts, SH_L1_COEFFICIENT_COUNT, Span<const uint32_t>(scale_group),
+      [&](uint32_t i, size_t k) { return coefficient_of(reference[i], k); },
+      [&](uint32_t i, size_t k) { return coefficient_of(candidate[i], k); });
+}
+
+record_comparison_report_t compare_direct_results(Span<const gpu_sample_t> samples,
+                                                  Span<const size_t> charts,
+                                                  const gpu_direct_results_t &reference,
+                                                  const gpu_direct_results_t &candidate)
+{
+  if (reference.light_count != candidate.light_count)
+    fatal_error("[lightmap-gpu] comparing a direct answer over {} lights against one over {}.",
+                reference.light_count, candidate.light_count);
+  const size_t light_count = reference.light_count;
+  const auto check_shape = [&](const gpu_direct_results_t &results, const char *which) {
+    if (results.irradiance.size() != samples.size() ||
+        results.coverage.size() != samples.size() * light_count ||
+        results.weight.size() != samples.size() * light_count)
+      fatal_error("[lightmap-gpu] the {} direct answer holds {} irradiances, {} coverages and "
+                  "{} weights over {} records and {} lights.",
+                  which, results.irradiance.size(), results.coverage.size(),
+                  results.weight.size(), samples.size(), light_count);
+  };
+  check_shape(reference, "reference");
+  check_shape(candidate, "candidate");
+
+  const size_t coefficient_count = 3 + 2 * light_count;
+  std::vector<uint32_t> scale_group(coefficient_count, 0);
+  for (size_t k = 3; k < coefficient_count; ++k) scale_group[k] = k - 3 < light_count ? 1 : 2;
+
+  return compare_records(
+      samples, charts, coefficient_count, Span<const uint32_t>(scale_group),
+      [&](uint32_t i, size_t k) { return coefficient_of(reference, i, k); },
+      [&](uint32_t i, size_t k) { return coefficient_of(candidate, i, k); });
+}
+
+std::string_view direct_coefficient_name(size_t coefficient, size_t light_count,
+                                         Span<char> storage)
+{
+  if (coefficient >= 3 + 2 * light_count)
+    fatal_error("[lightmap-gpu] naming direct coefficient {} of {} lights.", coefficient,
+                light_count);
+  if (storage.size() < DIRECT_COEFFICIENT_NAME_CAPACITY)
+    fatal_error("[lightmap-gpu] {} bytes for a coefficient name; {} are needed.", storage.size(),
+                DIRECT_COEFFICIENT_NAME_CAPACITY);
+
+  int written = 0;
+  if (coefficient < 3)
+    written = std::snprintf(storage.data, storage.size(), "irradiance.%c", "rgb"[coefficient]);
+  else if (coefficient - 3 < light_count)
+    written = std::snprintf(storage.data, storage.size(), "coverage[%zu]", coefficient - 3);
+  else
+    written = std::snprintf(storage.data, storage.size(), "weight[%zu]",
+                            coefficient - 3 - light_count);
+  return std::string_view(storage.data, (size_t)std::max(written, 0));
+}
+
+lightmap_pages_t reduce_record_values_to_pages(const lightmap_t &lightmap,
+                                               const lightmap_sample_set_t &set,
+                                               Span<const linalg::vec3> values)
+{
+  if (values.size() != set.samples.size() || set.origins.size() != set.samples.size())
+    fatal_error("[lightmap-gpu] reducing {} answers over {} records with {} origins.",
+                values.size(), set.samples.size(), set.origins.size());
+
+  lightmap_pages_t pages;
+  pages.allocate(lightmap.atlas, lightmap_pixel_format_t::Rgb9e5);
+  const int gutter = lightmap.settings.gutter_in_texels;
+  const int size = pages.size_in_texels;
+
+  struct texel_sum_t
+  {
+    linalg::vec3 sum{0.f, 0.f, 0.f};
+    uint32_t count = 0;
+  };
+  std::vector<texel_sum_t> texels(pages.texel_count());
+
+  const auto texel_index_of = [&](int page, int x, int y) {
+    return ((size_t)page * (size_t)size + (size_t)y) * (size_t)size + (size_t)x;
+  };
+
+  for (uint32_t i = 0; i < set.samples.size(); ++i)
+  {
+    const gpu_sample_t &sample = set.samples[i];
+    const sample_origin_t &origin = set.origins[i];
+    if (sample.chart_index >= set.charts.size())
+      fatal_error("[lightmap-gpu] record {} names chart {} of a set holding {}.", i,
+                  sample.chart_index, set.charts.size());
+    const lightmap_chart_t &chart = lightmap.charts[set.charts[sample.chart_index]];
+    const int x = chart.atlas_rect.min_x + gutter + origin.texel_x;
+    const int y = chart.atlas_rect.min_y + gutter + origin.texel_y;
+    if (chart.page < 0 || chart.page >= pages.page_count || x < 0 || y < 0 || x >= size ||
+        y >= size)
+      fatal_error("[lightmap-gpu] record {} lands on page {} texel ({}, {}) of {} pages of {}.",
+                  i, chart.page, x, y, pages.page_count, size);
+
+    texel_sum_t &texel = texels[texel_index_of(chart.page, x, y)];
+    texel.sum = texel.sum + values[i];
+    ++texel.count;
+  }
+
+  for (int page = 0; page < pages.page_count; ++page)
+    for (int y = 0; y < size; ++y)
+      for (int x = 0; x < size; ++x)
+      {
+        const texel_sum_t &texel = texels[texel_index_of(page, x, y)];
+        if (texel.count == 0) continue;
+        pages.store(page, x, y, texel.sum * (1.f / (float)texel.count));
+      }
+
+  return pages;
+}
+
+lightmap_pages_t absolute_difference_pages(const lightmap_pages_t &a, const lightmap_pages_t &b)
+{
+  if (a.size_in_texels != b.size_in_texels || a.page_count != b.page_count ||
+      a.format != b.format)
+    fatal_error("[lightmap-gpu] differencing {} page(s) of {} texels against {} of {}.",
+                a.page_count, a.size_in_texels, b.page_count, b.size_in_texels);
+
+  lightmap_pages_t difference = a;
+  for (int page = 0; page < a.page_count; ++page)
+    for (int y = 0; y < a.size_in_texels; ++y)
+      for (int x = 0; x < a.size_in_texels; ++x)
+      {
+        const linalg::vec3 from_a = a.load(page, x, y);
+        const linalg::vec3 from_b = b.load(page, x, y);
+        difference.store(page, x, y,
+                         {std::abs(from_a.x - from_b.x), std::abs(from_a.y - from_b.y),
+                          std::abs(from_a.z - from_b.z)});
+      }
+  return difference;
 }
 
 } // namespace shared

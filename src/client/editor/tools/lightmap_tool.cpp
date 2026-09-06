@@ -1,13 +1,18 @@
 #include "lightmap_tool.hpp"
 
 #include "../../../shared/lightmap_debug_image.hpp"
+#include "../../../shared/lightmap_gpu.hpp"
 #include "../../../shared/lightmap_lights.hpp"
 #include "../../../shared/lightmap_solve.hpp"
+#include "../../../shared/lightmap_trace.hpp"
 #include "../../../shared/log.hpp"
 #include "../../hud/announcement.hpp"
+#include "../../lightmap_gpu_vulkan.hpp"
+#include "../../renderer.hpp"
 #include "imgui.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 namespace client
@@ -16,12 +21,49 @@ namespace client
 namespace
 {
 
-constexpr const char *PACKING_IMAGE_PREFIX = "lightmap_packing";
-constexpr const char *PAGES_IMAGE_PREFIX = "lightmap_pages";
-constexpr const char *MASK_IMAGE_PREFIX = "lightmap_mask";
-constexpr const char *VISIBILITY_IMAGE_PREFIX = "lightmap_visibility";
-constexpr const char *INDIRECT_IMAGE_PREFIX = "lightmap_indirect";
-constexpr const char *INDIRECT_DIRECTION_IMAGE_PREFIX = "lightmap_indirect_direction";
+constexpr const char* PACKING_IMAGE_PREFIX = "lightmap_packing";
+constexpr const char* PAGES_IMAGE_PREFIX = "lightmap_pages";
+constexpr const char* MASK_IMAGE_PREFIX = "lightmap_mask";
+constexpr const char* VISIBILITY_IMAGE_PREFIX = "lightmap_visibility";
+constexpr const char* INDIRECT_IMAGE_PREFIX = "lightmap_indirect";
+constexpr const char* INDIRECT_DIRECTION_IMAGE_PREFIX = "lightmap_indirect_direction";
+constexpr const char* COMPARE_CPU_IMAGE_PREFIX = "lightmap_compare_cpu";
+constexpr const char* COMPARE_GPU_IMAGE_PREFIX = "lightmap_compare_gpu";
+constexpr const char* COMPARE_DIFFERENCE_IMAGE_PREFIX = "lightmap_compare_difference";
+constexpr const char* COMPARE_DIRECT_CPU_IMAGE_PREFIX = "lightmap_compare_direct_cpu";
+constexpr const char* COMPARE_DIRECT_GPU_IMAGE_PREFIX = "lightmap_compare_direct_gpu";
+constexpr const char* COMPARE_DIRECT_DIFFERENCE_IMAGE_PREFIX =
+    "lightmap_compare_direct_difference";
+
+// The two solvers' pictures side by side and their difference, the way the
+// debug pages already are written.
+void write_comparison_pages(const shared::lightmap_t& lightmap,
+                            const shared::lightmap_sample_set_t& set,
+                            Span<const linalg::vec3> from_cpu, Span<const linalg::vec3> from_gpu,
+                            const char* cpu_prefix, const char* gpu_prefix,
+                            const char* difference_prefix, float exposure)
+{
+  const shared::lightmap_pages_t cpu_pages =
+      shared::reduce_record_values_to_pages(lightmap, set, from_cpu);
+  const shared::lightmap_pages_t gpu_pages =
+      shared::reduce_record_values_to_pages(lightmap, set, from_gpu);
+  (void)shared::try_write_lightmap_pages_png(cpu_pages, cpu_prefix, exposure);
+  (void)shared::try_write_lightmap_pages_png(gpu_pages, gpu_prefix, exposure);
+  (void)shared::try_write_lightmap_pages_png(
+      shared::absolute_difference_pages(cpu_pages, gpu_pages), difference_prefix, exposure);
+}
+
+float mean_of(const std::vector<float>& values, size_t first, size_t count)
+{
+  double sum = 0.0;
+  for (size_t k = first; k < first + count; ++k) sum += values[k];
+  return count ? (float)(sum / (double)count) : 0.f;
+}
+
+// indirect_sh_l1_t's twelve coefficients, in the order the comparison reports.
+constexpr const char* SH_COEFFICIENT_NAMES[shared::SH_L1_COEFFICIENT_COUNT] = {
+    "L0.r",  "L0.g",  "L0.b",  "L1x.r", "L1x.g", "L1x.b",
+    "L1y.r", "L1y.g", "L1y.b", "L1z.r", "L1z.g", "L1z.b"};
 
 } // namespace
 
@@ -49,6 +91,248 @@ void Lightmap_Tool::rebuild_probe_preview(editor_context_t& ctx)
   const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(*ctx.map);
   probe_preview_inside = shared::classify_probes_inside_solid(*probe_preview_grid, occluders);
   for (const uint8_t flag : probe_preview_inside) probe_preview_inside_count += flag;
+}
+
+// The CPU's slab test against a convex piece and the GPU's triangle test reach
+// the same plane by different arithmetic; this is how far apart two floats may
+// land on it before the difference is called a disagreement.
+constexpr float PROBE_RAY_DISTANCE_TOLERANCE = 0.1f;
+
+void Lightmap_Tool::probe_gpu_rays(editor_context_t& ctx)
+{
+  probe_ray_report.reset();
+  probe_ray_triangle_count = 0;
+  if (!renderer::ray_query_is_available() || !has_packed()) return;
+
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
+  const std::vector<shared::gpu_sample_t> samples =
+      shared::collect_lightmap_samples(baked, solve_settings, bvh);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
+
+  const float bias = solve_settings.shadow_ray_bias;
+  const float max_distance = solve_settings.directional_shadow_distance;
+
+  using clock = std::chrono::steady_clock;
+  const auto milliseconds_since = [](clock::time_point started) {
+    return std::chrono::duration<double, std::milli>(clock::now() - started).count();
+  };
+
+  vulkan_batch_solver_t solver;
+  solver.upload_scene({&gpu_scene, &bvh, &traced, Span<const shared::baked_light_t>(lights),
+                       shared::gpu_bake_settings_from(solve_settings)});
+  probe_ray_triangle_count = solver.triangle_count();
+  if (!solver.has_scene()) return;
+
+  const clock::time_point gpu_started = clock::now();
+  std::vector<float> gpu_distances;
+  solver.probe_rays(samples, bias, max_distance, gpu_distances);
+  probe_ray_gpu_milliseconds = milliseconds_since(gpu_started);
+
+  const clock::time_point cpu_started = clock::now();
+  const std::vector<float> cpu_distances =
+      shared::probe_ray_distances(bvh, samples, bias, max_distance);
+  probe_ray_cpu_milliseconds = milliseconds_since(cpu_started);
+
+  probe_ray_report =
+      shared::compare_probe_rays(cpu_distances, gpu_distances, PROBE_RAY_DISTANCE_TOLERANCE);
+  const shared::probe_ray_report_t& report = *probe_ray_report;
+  log_terminal("[lightmap-gpu] probed {} ray(s) over {} triangle(s): {} hit on both, of which {} "
+               "started inside a solid (CPU answers 0 there); of the rest {} apart by more than "
+               "{} units ({} GPU farther, {} GPU nearer), largest {:.4f}, mean {:.6f}; {} missed "
+               "on both, {} CPU-only hit(s), {} GPU-only hit(s); GPU {:.1f} ms, CPU {:.1f} ms.",
+               report.sample_count, probe_ray_triangle_count, report.both_hit,
+               report.reference_started_inside_a_solid, report.hits_outside_tolerance,
+               PROBE_RAY_DISTANCE_TOLERANCE, report.candidate_farther, report.candidate_nearer,
+               report.largest_distance_error, report.mean_distance_error, report.both_missed,
+               report.reference_only_hit, report.candidate_only_hit, probe_ray_gpu_milliseconds,
+               probe_ray_cpu_milliseconds);
+
+  // The one ray to go and look at: where it started, which way it went, and
+  // what each side said.
+  probe_ray_worst_line.clear();
+  if (report.worst_sample >= 0)
+  {
+    const shared::gpu_sample_t& worst = samples[(size_t)report.worst_sample];
+    probe_ray_worst_line = std::format(
+        "worst ray: from ({:.1f}, {:.1f}, {:.1f}) along ({:.2f}, {:.2f}, {:.2f}): CPU {:.3f}, "
+        "GPU {:.3f}",
+        worst.position.x, worst.position.y, worst.position.z, worst.normal.x, worst.normal.y,
+        worst.normal.z, cpu_distances[(size_t)report.worst_sample],
+        gpu_distances[(size_t)report.worst_sample]);
+    log_terminal("[lightmap-gpu] {}", probe_ray_worst_line);
+  }
+}
+
+void Lightmap_Tool::compare_gpu_indirect(editor_context_t& ctx)
+{
+  indirect_comparison.reset();
+  if (!renderer::ray_query_is_available() || !has_packed()) return;
+
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
+  const shared::lightmap_sample_set_t set =
+      shared::collect_lightmap_sample_set(baked, solve_settings, bvh);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
+  const shared::batch_solver_scene_t scene{&gpu_scene, &bvh, &traced,
+                                           Span<const shared::baked_light_t>(lights),
+                                           shared::gpu_bake_settings_from(solve_settings)};
+
+  using clock = std::chrono::steady_clock;
+  const auto milliseconds_since = [](clock::time_point started) {
+    return std::chrono::duration<double, std::milli>(clock::now() - started).count();
+  };
+
+  // The GPU first: it is the cheap one, and a scene it refuses is found before
+  // the CPU spends its minutes.
+  vulkan_batch_solver_t gpu;
+  gpu.upload_scene(scene);
+  if (!gpu.has_scene()) return;
+
+  shared::gpu_indirect_results_t from_gpu;
+  const clock::time_point gpu_started = clock::now();
+  gpu.solve_indirect(set.samples, from_gpu);
+  indirect_compare_gpu_milliseconds = milliseconds_since(gpu_started);
+
+  shared::cpu_batch_solver_t cpu;
+  cpu.upload_scene(scene);
+  shared::gpu_indirect_results_t from_cpu;
+  const clock::time_point cpu_started = clock::now();
+  cpu.solve_indirect(set.samples, from_cpu);
+  indirect_compare_cpu_milliseconds = milliseconds_since(cpu_started);
+
+  indirect_comparison =
+      shared::compare_indirect_results(set.samples, set.charts, from_cpu.values, from_gpu.values);
+  const shared::record_comparison_report_t& report = *indirect_comparison;
+
+  log_terminal("[lightmap-gpu] indirect: {} record(s) over {} chart(s), {} chain(s) each, {} "
+               "with a non-zero answer; CPU {:.1f} ms, GPU {:.1f} ms. Reference L0 mean {:.5f}, "
+               "mean |dL0| {:.6f} ({:.3f}%); {} record(s) differ in any coefficient; {} chart(s) "
+               "beyond {} sigma.",
+               report.record_count, report.chart_count, solve_settings.indirect_rays_per_sample,
+               report.reference_nonzero_records, indirect_compare_cpu_milliseconds,
+               indirect_compare_gpu_milliseconds, report.reference_mean_over(0, 3),
+               report.mean_absolute_difference_over(0, 3),
+               report.reference_mean_over(0, 3) > 0.f
+                   ? 100.0 * (double)report.mean_absolute_difference_over(0, 3) /
+                         (double)report.reference_mean_over(0, 3)
+                   : 0.0,
+               report.differing_records, report.charts_beyond_tolerance,
+               shared::RECORD_COMPARISON_SIGMA);
+  for (size_t i = 0; i < std::min<size_t>(report.charts.size(), 8); ++i)
+  {
+    const shared::record_chart_comparison_t& chart = report.charts[i];
+    const int k = std::max(chart.largest_sigma_coefficient, 0);
+    log_terminal("[lightmap-gpu]   chart {} (uid {}, {} records): {} CPU {:.6f} GPU {:.6f} "
+                 "+- {:.6f}, {:.1f} sigma",
+                 chart.chart, baked.charts[chart.chart].object_uid, chart.record_count,
+                 SH_COEFFICIENT_NAMES[k], chart.reference_mean[(uint32_t)k],
+                 chart.candidate_mean[(uint32_t)k],
+                 chart.difference_standard_error[(uint32_t)k], chart.largest_sigma);
+  }
+
+  std::vector<linalg::vec3> cpu_l0(set.samples.size());
+  std::vector<linalg::vec3> gpu_l0(set.samples.size());
+  for (size_t i = 0; i < set.samples.size(); ++i)
+  {
+    cpu_l0[i] = from_cpu.values[i].l0;
+    gpu_l0[i] = from_gpu.values[i].l0;
+  }
+  write_comparison_pages(baked, set, cpu_l0, gpu_l0, COMPARE_CPU_IMAGE_PREFIX,
+                         COMPARE_GPU_IMAGE_PREFIX, COMPARE_DIFFERENCE_IMAGE_PREFIX,
+                         preview_exposure);
+}
+
+// lightmap_gpu_plan.md step 6's pin. Every chart's mask admits EVERY light, so
+// the irradiance sum is exercised over all of them: a bake's first dispatch runs
+// under all-zero masks, which would leave the sum identically zero on both sides
+// and compare nothing. Coverage and weight read no mask.
+void Lightmap_Tool::compare_gpu_direct(editor_context_t& ctx)
+{
+  direct_comparison.reset();
+  if (!renderer::ray_query_is_available() || !has_packed()) return;
+
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
+  const shared::lightmap_sample_set_t set =
+      shared::collect_lightmap_sample_set(baked, solve_settings, bvh);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
+  const shared::batch_solver_scene_t scene{&gpu_scene, &bvh, &traced,
+                                           Span<const shared::baked_light_t>(lights),
+                                           shared::gpu_bake_settings_from(solve_settings)};
+  direct_compare_light_count = lights.size();
+  const std::vector<uint64_t> every_light(set.charts.size(), ~(uint64_t)0);
+
+  using clock = std::chrono::steady_clock;
+  const auto milliseconds_since = [](clock::time_point started) {
+    return std::chrono::duration<double, std::milli>(clock::now() - started).count();
+  };
+
+  vulkan_batch_solver_t gpu;
+  gpu.upload_scene(scene);
+  if (!gpu.has_scene()) return;
+
+  shared::gpu_direct_results_t from_gpu;
+  const clock::time_point gpu_started = clock::now();
+  gpu.solve_direct(set.samples, every_light, from_gpu);
+  direct_compare_gpu_milliseconds = milliseconds_since(gpu_started);
+  direct_compare_gpu_rays = gpu.statistics().shade.direct_rays;
+
+  shared::cpu_batch_solver_t cpu;
+  cpu.upload_scene(scene);
+  shared::gpu_direct_results_t from_cpu;
+  const clock::time_point cpu_started = clock::now();
+  cpu.solve_direct(set.samples, every_light, from_cpu);
+  direct_compare_cpu_milliseconds = milliseconds_since(cpu_started);
+  direct_compare_cpu_rays = cpu.statistics().shade.direct_rays;
+
+  direct_comparison = shared::compare_direct_results(set.samples, set.charts, from_cpu, from_gpu);
+  const shared::record_comparison_report_t& report = *direct_comparison;
+
+  const size_t light_count = lights.size();
+  log_terminal("[lightmap-gpu] direct: {} record(s) over {} chart(s) and {} light(s), {} lit "
+               "by something; CPU {:.1f} ms casting {} ray(s), GPU {:.1f} ms casting {}. "
+               "Reference irradiance mean {:.5f}, mean |dE| {:.6f} ({:.3f}%); {} record(s) "
+               "differ in any coefficient; largest |d| irradiance {:.3g}, coverage {:.3g}, "
+               "weight {:.3g}; {} chart(s) beyond {} sigma.",
+               report.record_count, report.chart_count, light_count,
+               report.reference_nonzero_records, direct_compare_cpu_milliseconds,
+               direct_compare_cpu_rays, direct_compare_gpu_milliseconds, direct_compare_gpu_rays,
+               report.reference_mean_over(0, 3), report.mean_absolute_difference_over(0, 3),
+               report.reference_mean_over(0, 3) > 0.f
+                   ? 100.0 * (double)report.mean_absolute_difference_over(0, 3) /
+                         (double)report.reference_mean_over(0, 3)
+                   : 0.0,
+               report.differing_records, report.largest_absolute_difference_over(0, 3),
+               light_count ? report.largest_absolute_difference_over(3, light_count) : 0.f,
+               light_count ? report.largest_absolute_difference_over(3 + light_count, light_count)
+                           : 0.f,
+               report.charts_beyond_tolerance, shared::RECORD_COMPARISON_SIGMA);
+  for (size_t i = 0; i < std::min<size_t>(report.charts.size(), 8); ++i)
+  {
+    const shared::record_chart_comparison_t& chart = report.charts[i];
+    // The flagged coefficient, or the irradiance when nothing is flagged: a
+    // chart at zero sigma is shown by what it is lit with.
+    const size_t k = chart.largest_sigma_coefficient >= 0
+                         ? (size_t)chart.largest_sigma_coefficient
+                         : 0;
+    char name[shared::DIRECT_COEFFICIENT_NAME_CAPACITY];
+    log_terminal("[lightmap-gpu]   chart {} (uid {}, {} records): {} CPU {:.6f} GPU {:.6f} "
+                 "+- {:.6f}, {:.1f} sigma; mean coverage CPU {:.4f} GPU {:.4f}",
+                 chart.chart, baked.charts[chart.chart].object_uid, chart.record_count,
+                 shared::direct_coefficient_name(k, light_count, Span<char>(name)),
+                 chart.reference_mean[k], chart.candidate_mean[k],
+                 chart.difference_standard_error[k], chart.largest_sigma,
+                 light_count ? mean_of(chart.reference_mean, 3, light_count) : 0.f,
+                 light_count ? mean_of(chart.candidate_mean, 3, light_count) : 0.f);
+  }
+
+  write_comparison_pages(baked, set, from_cpu.irradiance, from_gpu.irradiance,
+                         COMPARE_DIRECT_CPU_IMAGE_PREFIX, COMPARE_DIRECT_GPU_IMAGE_PREFIX,
+                         COMPARE_DIRECT_DIFFERENCE_IMAGE_PREFIX, preview_exposure);
 }
 
 void Lightmap_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws)
@@ -273,6 +557,137 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
 
   ImGui::SliderFloat("Preview exposure", &preview_exposure, 0.05f, 256.f, "%.2f",
                      ImGuiSliderFlags_Logarithmic);
+
+  // lightmap_gpu_plan.md step 4. The status line is what says which path a bake
+  // CAN take on this machine, and the button is the ray query pin.
+  ImGui::Separator();
+  ImGui::Text("GPU bake");
+  if (renderer::ray_query_is_available())
+    ImGui::TextDisabled("ray query: available");
+  else
+    ImGui::TextWrapped("ray query: unavailable (%s); bakes run on the CPU",
+                       renderer::ray_query_unavailable_reason());
+
+  ImGui::BeginDisabled(!renderer::ray_query_is_available() || !has_packed());
+  if (ImGui::Button("Probe GPU rays against the CPU BVH", {-1, 0})) probe_gpu_rays(ctx);
+  ImGui::EndDisabled();
+
+  if (probe_ray_report)
+  {
+    const shared::probe_ray_report_t& report = *probe_ray_report;
+    if (report.agrees())
+      ImGui::TextColored({0.4f, 1.f, 0.4f, 1.f}, "GPU and CPU agree on all %zu rays",
+                         report.sample_count);
+    else
+      ImGui::TextColored({1.f, 0.4f, 0.4f, 1.f}, "%zu disagreement(s) over %zu rays",
+                         report.reference_only_hit + report.candidate_only_hit +
+                             report.hits_outside_tolerance,
+                         report.sample_count);
+    ImGui::Text("%zu hit on both, %zu missed on both", report.both_hit, report.both_missed);
+    ImGui::Text("%zu started inside a solid (CPU answers 0, GPU flies through)",
+                report.reference_started_inside_a_solid);
+    ImGui::Text("%zu CPU-only hits, %zu GPU-only hits", report.reference_only_hit,
+                report.candidate_only_hit);
+    ImGui::Text("%zu apart by more than %.2f (%zu GPU farther, %zu GPU nearer)",
+                report.hits_outside_tolerance, PROBE_RAY_DISTANCE_TOLERANCE,
+                report.candidate_farther, report.candidate_nearer);
+    ImGui::Text("distance error: largest %.4f, mean %.6f", report.largest_distance_error,
+                report.mean_distance_error);
+    if (!probe_ray_worst_line.empty()) ImGui::TextWrapped("%s", probe_ray_worst_line.c_str());
+    ImGui::Text("%u triangles; GPU %.1f ms, CPU %.1f ms", probe_ray_triangle_count,
+                probe_ray_gpu_milliseconds, probe_ray_cpu_milliseconds);
+  }
+
+  // lightmap_gpu_plan.md step 5. Both solvers over the bake's own records at the
+  // current chain count, whatever the trace switch says: the switch decides what
+  // a BAKE stores, this asks what the two kernels ANSWER.
+  ImGui::BeginDisabled(!renderer::ray_query_is_available() || !has_packed());
+  if (ImGui::Button("Compare GPU indirect against the CPU chain", {-1, 0}))
+    compare_gpu_indirect(ctx);
+  ImGui::EndDisabled();
+
+  if (indirect_comparison)
+  {
+    const shared::record_comparison_report_t& report = *indirect_comparison;
+    if (report.agrees())
+      ImGui::TextColored({0.4f, 1.f, 0.4f, 1.f},
+                         "GPU and CPU agree within %.0f sigma on all %zu charts",
+                         shared::RECORD_COMPARISON_SIGMA, report.charts.size());
+    else
+      ImGui::TextColored({1.f, 0.4f, 0.4f, 1.f}, "%zu of %zu chart(s) beyond %.0f sigma",
+                         report.charts_beyond_tolerance, report.charts.size(),
+                         shared::RECORD_COMPARISON_SIGMA);
+    ImGui::Text("%zu records, %d chains each; CPU %.1f ms, GPU %.1f ms", report.record_count,
+                solve_settings.indirect_rays_per_sample, indirect_compare_cpu_milliseconds,
+                indirect_compare_gpu_milliseconds);
+    ImGui::Text("reference L0 mean %.5f; mean |dL0| %.6f (%.3f%%)", report.reference_mean_over(0, 3),
+                report.mean_absolute_difference_over(0, 3),
+                report.reference_mean_over(0, 3) > 0.f
+                    ? 100.0 * (double)report.mean_absolute_difference_over(0, 3) /
+                          (double)report.reference_mean_over(0, 3)
+                    : 0.0);
+    ImGui::Text("%zu records with a non-zero answer; %zu differ in any coefficient",
+                report.reference_nonzero_records, report.differing_records);
+    for (size_t i = 0; i < std::min<size_t>(report.charts.size(), 5); ++i)
+    {
+      const shared::record_chart_comparison_t& chart = report.charts[i];
+      const int k = std::max(chart.largest_sigma_coefficient, 0);
+      ImGui::Text("  chart %zu (uid %u, %zu rec): %s CPU %.5f GPU %.5f +- %.5f, %.1f sigma",
+                  chart.chart, baked.charts[chart.chart].object_uid, chart.record_count,
+                  SH_COEFFICIENT_NAMES[k], chart.reference_mean[(uint32_t)k],
+                  chart.candidate_mean[(uint32_t)k],
+                  chart.difference_standard_error[(uint32_t)k], chart.largest_sigma);
+    }
+    ImGui::TextDisabled("PNGs: %s, %s, %s", COMPARE_CPU_IMAGE_PREFIX, COMPARE_GPU_IMAGE_PREFIX,
+                        COMPARE_DIFFERENCE_IMAGE_PREFIX);
+  }
+
+  // lightmap_gpu_plan.md step 6. Both solvers' direct term over the same
+  // records, every light admitted into the sum.
+  ImGui::BeginDisabled(!renderer::ray_query_is_available() || !has_packed());
+  if (ImGui::Button("Compare GPU direct against the CPU shade", {-1, 0}))
+    compare_gpu_direct(ctx);
+  ImGui::EndDisabled();
+
+  if (direct_comparison)
+  {
+    const shared::record_comparison_report_t& report = *direct_comparison;
+    if (report.agrees())
+      ImGui::TextColored({0.4f, 1.f, 0.4f, 1.f},
+                         "GPU and CPU agree within %.0f sigma on all %zu charts",
+                         shared::RECORD_COMPARISON_SIGMA, report.charts.size());
+    else
+      ImGui::TextColored({1.f, 0.4f, 0.4f, 1.f}, "%zu of %zu chart(s) beyond %.0f sigma",
+                         report.charts_beyond_tolerance, report.charts.size(),
+                         shared::RECORD_COMPARISON_SIGMA);
+    ImGui::Text("%zu records, %zu lights; CPU %.1f ms (%zu rays), GPU %.1f ms (%zu rays)",
+                report.record_count, direct_compare_light_count, direct_compare_cpu_milliseconds,
+                direct_compare_cpu_rays, direct_compare_gpu_milliseconds,
+                direct_compare_gpu_rays);
+    ImGui::Text("reference irradiance mean %.5f; mean |dE| %.6f (%.3f%%)",
+                report.reference_mean_over(0, 3), report.mean_absolute_difference_over(0, 3),
+                report.reference_mean_over(0, 3) > 0.f
+                    ? 100.0 * (double)report.mean_absolute_difference_over(0, 3) /
+                          (double)report.reference_mean_over(0, 3)
+                    : 0.0);
+    ImGui::Text("%zu records lit by something; %zu differ in any coefficient",
+                report.reference_nonzero_records, report.differing_records);
+    for (size_t i = 0; i < std::min<size_t>(report.charts.size(), 5); ++i)
+    {
+      const shared::record_chart_comparison_t& chart = report.charts[i];
+      const size_t k = (size_t)std::max(chart.largest_sigma_coefficient, 0);
+      char name[shared::DIRECT_COEFFICIENT_NAME_CAPACITY];
+      const std::string_view coefficient =
+          shared::direct_coefficient_name(k, direct_compare_light_count, Span<char>(name));
+      ImGui::Text("  chart %zu (uid %u, %zu rec): %.*s CPU %.5f GPU %.5f +- %.5f, %.1f sigma",
+                  chart.chart, baked.charts[chart.chart].object_uid, chart.record_count,
+                  (int)coefficient.size(), coefficient.data(), chart.reference_mean[k],
+                  chart.candidate_mean[k], chart.difference_standard_error[k],
+                  chart.largest_sigma);
+    }
+    ImGui::TextDisabled("PNGs: %s, %s, %s", COMPARE_DIRECT_CPU_IMAGE_PREFIX,
+                        COMPARE_DIRECT_GPU_IMAGE_PREFIX, COMPARE_DIRECT_DIFFERENCE_IMAGE_PREFIX);
+  }
 
   ImGui::Separator();
   ImGui::Text("Irradiance probes");

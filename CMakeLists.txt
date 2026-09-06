@@ -567,6 +567,10 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
 
 set(SHADER_HEADERS "")
 
+# The SPIR-V target is a variable the macro reads at expansion, so one list can
+# be compiled at a different level than the rest.
+set(SHADER_TARGET_ENV vulkan1.0)
+
 macro(compile_shader_variant SHADER SUFFIX)
     get_filename_component(VARIANT_STEM ${SHADER} NAME_WE)
     get_filename_component(VARIANT_EXT ${SHADER} EXT)
@@ -576,7 +580,7 @@ macro(compile_shader_variant SHADER SUFFIX)
 
     add_custom_command(
         OUTPUT ${VARIANT_OUT}
-        COMMAND ${GLSLC_EXECUTABLE} ${SHADER} ${ARGN} -I ${SHADER_SRC_DIR} -o ${VARIANT_OUT} --target-env=vulkan1.0 -mfmt=c
+        COMMAND ${GLSLC_EXECUTABLE} ${SHADER} ${ARGN} -I ${SHADER_SRC_DIR} -o ${VARIANT_OUT} --target-env=${SHADER_TARGET_ENV} -mfmt=c
         DEPENDS ${SHADER} ${SHADER_INCLUDES}
         COMMENT "Compiling shader ${VARIANT_NAME} to C header..."
     )
@@ -594,6 +598,20 @@ foreach(SHADER ${PBR_SHADER_SOURCES})
     compile_shader_variant(${SHADER} "_pbr" -DPBR)
     compile_shader_variant(${SHADER} "_pbr_lightmapped" -DPBR -DLIGHTMAP)
 endforeach()
+
+# The lightmap bake's kernels alone target Vulkan 1.2: GL_EXT_ray_query needs
+# SPIR-V 1.4, and the 1.2 instance the renderer creates accepts the 1.0 modules
+# everything above still compiles to. lightmap_gpu_plan.md step 4.
+set(RAY_QUERY_SHADER_SOURCES
+    ${SHADER_SRC_DIR}/lightmap_probe_ray.comp
+    ${SHADER_SRC_DIR}/lightmap_indirect.comp
+    ${SHADER_SRC_DIR}/lightmap_direct.comp
+)
+set(SHADER_TARGET_ENV vulkan1.2)
+foreach(SHADER ${RAY_QUERY_SHADER_SOURCES})
+    compile_shader_variant(${SHADER} "")
+endforeach()
+set(SHADER_TARGET_ENV vulkan1.0)
 
 # Shader tool paths — generated header so runtime knows where glslc and preview shaders live
 set(PREVIEW_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders/preview")
@@ -631,6 +649,7 @@ add_library(game_client SHARED
     src/client/hit_confirm_audio.cpp
     src/client/shot_debug.cpp
     src/client/shadow_debug_draw.cpp
+    src/client/lightmap_gpu_vulkan.cpp
     # Decode one entity snapshot, then advance the newest held snapshot to it. Its own
     # TU so that second half cannot reach `dt` or the camera -- it runs once per
     # PACKET, not per frame.

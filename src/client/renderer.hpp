@@ -720,6 +720,30 @@ VkRenderPass     get_VkRenderPass();
 uint32_t         get_current_frame_index();
 uint32_t         get_max_frames_in_flight();
 
+// Ray query for the lightmap bake (lightmap_gpu_plan.md step 4). Requested at
+// device creation and OPTIONAL: a device without it says why, and the bake keeps
+// the CPU reference path. The handles and the extension entry points the Vulkan
+// solver (lightmap_gpu_vulkan.hpp) dispatches with; it runs its own command
+// buffer and fence on this queue, so the frame in flight never sees it.
+struct ray_query_device_t
+{
+  VkDevice device = VK_NULL_HANDLE;
+  VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+  VkQueue queue = VK_NULL_HANDLE;
+  VkCommandPool command_pool = VK_NULL_HANDLE;
+  PFN_vkCreateAccelerationStructureKHR create_acceleration_structure = nullptr;
+  PFN_vkDestroyAccelerationStructureKHR destroy_acceleration_structure = nullptr;
+  PFN_vkGetAccelerationStructureBuildSizesKHR get_acceleration_structure_build_sizes = nullptr;
+  PFN_vkCmdBuildAccelerationStructuresKHR cmd_build_acceleration_structures = nullptr;
+  PFN_vkGetAccelerationStructureDeviceAddressKHR get_acceleration_structure_device_address =
+      nullptr;
+};
+
+[[nodiscard]] bool ray_query_is_available();
+[[nodiscard]] const char *ray_query_unavailable_reason();
+// Fatal when ray_query_is_available() is false: ask first.
+[[nodiscard]] ray_query_device_t ray_query_device();
+
 // Owning GPU texture for custom pipelines (the PBR preview). The draw-list path
 // never sees this type -- it uses texture_handle_t.
 struct gpu_texture_t

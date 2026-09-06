@@ -2975,15 +2975,6 @@ void a_static_mesh_casts_a_shadow_in_the_bake()
 
 // --- The GPU scene: lightmap_gpu_plan.md step 2 ------------------------------
 
-// A byte that goes through the CPU decode and back must come out itself: the
-// texture arrays are re-encoded after the linear box filter, and a texture no
-// filter touches (a 1x1) has to reach the kernel byte for byte.
-void the_srgb_encode_is_the_decodes_inverse()
-{
-  for (int byte = 0; byte < 256; ++byte)
-    assert(shared::linear_to_srgb_byte(shared::srgb_byte_to_linear((uint8_t)byte)) == byte);
-}
-
 // The pin between the two scenes: for every triangle the GPU scene holds, a ray
 // dropped onto its centroid through the occluder BVH must land on it, and what
 // surface_at resolves there through the brush-and-face walk must be what the
@@ -3028,16 +3019,16 @@ void the_gpu_scene_is_made_of_what_the_tracer_sees()
   assert(scene.indices.size() == 108);
   assert(scene.triangle_object_uids.size() == 36);
 
-  // Two map materials and the trailing untextured one; one layer per array,
-  // because only material 1 carries textures.
+  // Two map materials and the trailing untextured one; two textures, because
+  // only material 1 names any.
   assert(scene.materials.size() == 3);
   assert(scene.untextured_material == 2);
-  assert(scene.materials[0].albedo_layer == shared::GPU_NO_LAYER);
-  assert(scene.materials[0].emissive_layer == shared::GPU_NO_LAYER);
-  assert(scene.materials[1].albedo_layer == 0);
-  assert(scene.materials[1].emissive_layer == 0);
-  assert(scene.albedo.layer_count() == 1);
-  assert(scene.emissive.layer_count() == 1);
+  assert(scene.materials[0].albedo_texture == shared::GPU_NO_TEXTURE);
+  assert(scene.materials[0].emissive_texture == shared::GPU_NO_TEXTURE);
+  assert(scene.materials[1].albedo_texture == 0);
+  assert(scene.materials[1].emissive_texture == 1);
+  assert(scene.textures.size() == 2);
+  assert(scene.textures[0] == &albedo && scene.textures[1] == &emissive);
 
   int by_material[3] = {0, 0, 0};
   int prop_triangles = 0;
@@ -3077,10 +3068,11 @@ void the_gpu_scene_is_made_of_what_the_tracer_sees()
     const shared::traced_surface_t gpu =
         shared::gpu_surface_at(scene, index, shared::gpu_triangle_uv_at(scene, index, centroid));
 
+    // Exact, not close: both answers come out of the one sample_texture.
     for (int channel = 0; channel < 3; ++channel)
     {
-      assert(std::abs(cpu.albedo[channel] - gpu.albedo[channel]) < 1e-6f);
-      assert(std::abs(cpu.emission[channel] - gpu.emission[channel]) < 1e-6f);
+      assert(cpu.albedo[channel] == gpu.albedo[channel]);
+      assert(cpu.emission[channel] == gpu.emission[channel]);
     }
   }
 
@@ -3108,33 +3100,450 @@ void the_gpu_scene_is_made_of_what_the_tracer_sees()
   assert(saw_textured);
 }
 
-// A texture larger than a layer is box-filtered in LINEAR space: two texels of
-// 0 and 255 average to the byte that encodes linear 0.5, never to the 128 that
-// averaging the encoded bytes would give.
-void a_layer_is_filtered_in_linear_space()
+// A texture reaches the GPU scene at its OWN size, and is read through the
+// tracer's own fetch: a 512-wide stripe of alternating black and white texels
+// answers black at one texel and white at the next, where the one-size resample
+// this replaced averaged the pair to a grey. Wrapping folds both ways as
+// sample_texture does, and one asset named twice is one entry.
+void a_texture_reaches_the_gpu_scene_at_its_own_size()
 {
+  constexpr int WIDTH = 512;
   assets::texture_asset_t texture;
-  texture.width = 2 * shared::GPU_BAKE_TEXTURE_LAYER_SIZE;
+  texture.width = WIDTH;
   texture.height = 1;
   texture.channels = 4;
-  texture.pixels.assign((size_t)texture.width * 4, 255);
-  for (int x = 0; x < texture.width; x += 2)
+  texture.pixels.assign((size_t)WIDTH * 4, 255);
+  for (int x = 0; x < WIDTH; x += 2)
     texture.pixels[(size_t)x * 4] = texture.pixels[(size_t)x * 4 + 1] =
         texture.pixels[(size_t)x * 4 + 2] = 0;
 
   shared::map_t map;
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
   shared::traced_scene_t traced = shared::build_traced_scene(map, bvh);
-  traced.materials = {{&texture, nullptr}};
+  traced.materials = {{&texture, &texture}};
 
-  const shared::gpu_bake_scene_t scene = shared::build_gpu_bake_scene(map, traced);
-  assert(scene.albedo.layer_count() == 1);
+  shared::gpu_bake_scene_t scene = shared::build_gpu_bake_scene(map, traced);
+  assert(scene.textures.size() == 1 && scene.textures[0] == &texture);
+  assert(scene.materials[0].albedo_texture == 0 && scene.materials[0].emissive_texture == 0);
 
-  const linalg::vec3 filtered =
-      shared::sample_gpu_texture(scene.albedo, 0, {0.5f, 0.5f}, {0, 0, 0});
-  assert(std::abs(filtered.x - 0.5f) < 0.01f);
-  assert(scene.albedo.pixels[0] == shared::linear_to_srgb_byte(0.5f));
-  assert(scene.albedo.pixels[0] != 128);
+  // An empty map has no triangle to ask through, so give the scene one naming
+  // material 0.
+  scene.triangles.push_back({0, 0, {0.f, 0.f}, {1.f, 0.f}, {0.f, 1.f}});
+  const auto albedo_at = [&](float u) {
+    return shared::gpu_surface_at(scene, 0, {u, 0.5f}).albedo;
+  };
+  const float texel = 1.f / (float)WIDTH;
+
+  assert(albedo_at(0.5f * texel).x == 0.f);
+  assert(albedo_at(1.5f * texel).x > 0.999f);
+  assert(albedo_at(-0.5f * texel).x > 0.999f);
+  assert(albedo_at(1.f + 0.5f * texel).x == 0.f);
+
+  const linalg::vec3 through_the_tracer =
+      shared::sample_texture(texture, {1.5f * texel, 0.5f}, {0.f, 0.f, 0.f});
+  const linalg::vec3 through_the_scene = albedo_at(1.5f * texel);
+  for (int channel = 0; channel < 3; ++channel)
+    assert(through_the_scene[channel] == through_the_tracer[channel]);
+}
+
+// --- Step 4's pin, the CPU half -----------------------------------------------
+
+// A floor under a ceiling: every record on the floor's top face looks up and
+// hits the ceiling's underside at the gap less the bias, and every record on
+// its bottom face looks down into nothing. The report is then shown a candidate
+// that is deliberately wrong in both ways, because a report that cannot see a
+// difference would pass the GPU whatever it answered.
+void probe_rays_hit_what_the_bvh_says_they_hit()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::lightmap_t lightmap = pack_for(map);
+
+  shared::lightmap_solve_settings_t solve;
+  solve.samples_per_texel_edge = 1;
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  const std::vector<shared::gpu_sample_t> samples =
+      shared::collect_lightmap_samples(lightmap, solve, bvh);
+  assert(!samples.empty());
+
+  const float bias = 0.25f;
+  const std::vector<float> distances =
+      shared::probe_ray_distances(bvh, samples, bias, 100000.f);
+  assert(distances.size() == samples.size());
+
+  // The floor's top is y = 0 and the ceiling's underside y = 64.
+  size_t upward = 0;
+  size_t downward = 0;
+  for (size_t i = 0; i < samples.size(); ++i)
+  {
+    const shared::gpu_sample_t &sample = samples[i];
+    if (sample.normal.y > 0.9f && sample.position.y < 1.f)
+    {
+      ++upward;
+      assert(std::abs(distances[i] - (64.f - bias)) < 1e-2f);
+    }
+    if (sample.normal.y < -0.9f && sample.position.y < -1.f)
+    {
+      ++downward;
+      assert(distances[i] < 0.f);
+    }
+  }
+  assert(upward > 0 && downward > 0);
+
+  const shared::probe_ray_report_t same = shared::compare_probe_rays(distances, distances, 0.1f);
+  assert(same.agrees());
+  assert(same.sample_count == samples.size());
+  assert(same.both_hit + same.both_missed == samples.size());
+  assert(same.largest_distance_error == 0.f);
+
+  std::vector<float> wrong = distances;
+  size_t flipped = 0;
+  size_t moved = 0;
+  for (size_t i = 0; i < wrong.size() && (flipped == 0 || moved == 0); ++i)
+  {
+    if (wrong[i] < 0.f && flipped == 0)
+    {
+      wrong[i] = 10.f;
+      flipped = i + 1;
+    }
+    else if (wrong[i] >= 0.f && moved == 0)
+    {
+      wrong[i] += 1.f;
+      moved = i + 1;
+    }
+  }
+  assert(flipped != 0 && moved != 0);
+
+  const shared::probe_ray_report_t differs = shared::compare_probe_rays(distances, wrong, 0.1f);
+  assert(!differs.agrees());
+  assert(differs.candidate_only_hit == 1 && differs.reference_only_hit == 0);
+  assert(differs.hits_outside_tolerance == 1);
+  assert(differs.candidate_farther == 1 && differs.candidate_nearer == 0);
+  assert(differs.worst_sample == (int64_t)(moved - 1));
+  assert(std::abs(differs.largest_distance_error - 1.f) < 1e-4f);
+
+  // A reference of exactly zero is a ray that started inside a solid: its own
+  // category, not a disagreement, whatever the candidate answered there.
+  std::vector<float> buried = distances;
+  buried[moved - 1] = 0.f;
+  const shared::probe_ray_report_t inside = shared::compare_probe_rays(buried, wrong, 0.1f);
+  assert(inside.reference_started_inside_a_solid == 1);
+  assert(inside.hits_outside_tolerance == 0);
+  assert(inside.worst_sample == -1 || inside.largest_distance_error == 0.f);
+}
+
+// A wall standing IN a floor: the wall's side face runs on below the floor's
+// top, and the texels down there are buried inside the floor's solid. They used
+// to bake black -- the BVH answers an origin inside a solid as a hit at zero,
+// which every shadow ray reads as occluded -- and bilinear filtering dragged that
+// black up the visible wall. A buried sample is no surface and is dropped at
+// collection, so the buried strip is filled from the exposed strip above it and
+// reads exactly what it reads.
+// Step 5's pin, the half of it that needs no device: the paired test that reads
+// two solvers' answers over one record list. Identical answers agree; a bias on
+// one chart is that chart, first, beyond tolerance; a difference below the
+// relative floor is float noise and passes however small its spread.
+void the_indirect_comparison_flags_a_bias_and_passes_itself()
+{
+  constexpr size_t RECORDS_PER_CHART = 200;
+  std::vector<shared::gpu_sample_t> samples;
+  std::vector<shared::indirect_sh_l1_t> reference;
+  const size_t charts[] = {4, 9, 17};
+  for (uint32_t chart = 0; chart < 3; ++chart)
+    for (uint32_t i = 0; i < RECORDS_PER_CHART; ++i)
+    {
+      shared::gpu_sample_t sample;
+      sample.chart_index = chart;
+      sample.seed = shared::sample_hash((int)i, (int)chart, 0, 0);
+      samples.push_back(sample);
+
+      // Noisy around a per-chart mean, the way chains are.
+      shared::indirect_sh_l1_t value;
+      const float noise = shared::unit_float_from(sample.seed) - 0.5f;
+      value.l0 = {1.f + 0.2f * (float)chart + noise, 0.5f + noise * 0.5f, 0.25f};
+      value.l1[0] = {noise, 0.f, 0.f};
+      value.l1[1] = {0.f, 0.1f + noise * 0.1f, 0.f};
+      value.l1[2] = {0.f, 0.f, -0.2f};
+      reference.push_back(value);
+    }
+
+  const shared::record_comparison_report_t same = shared::compare_indirect_results(
+      samples, Span<const size_t>(charts), reference, reference);
+  assert(same.agrees());
+  assert(same.record_count == samples.size());
+  assert(same.chart_count == 3);
+  assert(same.charts.size() == 3);
+  assert(same.mean_absolute_difference_over(0, 3) == 0.f);
+  assert(same.reference_mean_over(0, 3) > 0.5f);
+  for (const shared::record_chart_comparison_t &chart : same.charts)
+  {
+    assert(chart.record_count == RECORDS_PER_CHART);
+    assert(chart.largest_sigma == 0.f);
+    assert(chart.largest_sigma_coefficient == -1);
+  }
+
+  // A constant bias on chart 9's L0.g: every record moves the same way, the
+  // spread of the differences is zero, and the sigma is unbounded.
+  std::vector<shared::indirect_sh_l1_t> biased = reference;
+  for (size_t i = 0; i < samples.size(); ++i)
+    if (samples[i].chart_index == 1) biased[i].l0.y += 0.1f;
+
+  const shared::record_comparison_report_t bias = shared::compare_indirect_results(
+      samples, Span<const size_t>(charts), reference, biased);
+  assert(!bias.agrees());
+  assert(bias.charts_beyond_tolerance == 1);
+  assert(bias.charts.front().chart == 9);
+  assert(bias.charts.front().largest_sigma_coefficient == 1);
+  assert(bias.charts.front().largest_sigma > shared::RECORD_COMPARISON_SIGMA);
+  assert(std::abs(bias.charts.front().candidate_mean[1] - bias.charts.front().reference_mean[1] -
+                  0.1f) < 1e-4f);
+  assert(bias.charts[1].largest_sigma == 0.f && bias.charts[2].largest_sigma == 0.f);
+
+  // One ulp on every record of one chart: a standard error of zero and a mean
+  // difference of nothing, which the relative floor reads as agreement.
+  std::vector<shared::indirect_sh_l1_t> nudged = reference;
+  for (size_t i = 0; i < samples.size(); ++i)
+    if (samples[i].chart_index == 2) nudged[i].l0.x += 1e-6f;
+  const shared::record_comparison_report_t noise = shared::compare_indirect_results(
+      samples, Span<const size_t>(charts), reference, nudged);
+  assert(noise.agrees());
+  assert(noise.mean_absolute_difference_over(0, 3) > 0.f);
+
+  // One record with a real difference is beyond tolerance too: nothing to
+  // average against, so it is taken at its word.
+  std::vector<shared::gpu_sample_t> one_sample(1);
+  one_sample[0].chart_index = 0;
+  const size_t one_chart[] = {2};
+  std::vector<shared::indirect_sh_l1_t> one_reference(1);
+  one_reference[0].l0 = {1.f, 1.f, 1.f};
+  std::vector<shared::indirect_sh_l1_t> one_candidate = one_reference;
+  one_candidate[0].l0.z = 1.5f;
+  const shared::record_comparison_report_t lone = shared::compare_indirect_results(
+      one_sample, Span<const size_t>(one_chart), one_reference, one_candidate);
+  assert(!lone.agrees());
+  assert(lone.charts.size() == 1 && lone.charts[0].chart == 2 &&
+         lone.charts[0].largest_sigma_coefficient == 2);
+}
+
+// Step 6's pin, the half that needs no device: the direct term's answers -- an
+// irradiance, then a coverage and a weight per light -- through the same paired
+// test. A bias on one light's coverage names that coefficient; a coverage that
+// is zero everywhere on both sides is agreement, not a floor of zero failing on
+// nothing.
+void the_direct_comparison_flags_a_bias_per_light_and_names_it()
+{
+  constexpr size_t RECORDS_PER_CHART = 150;
+  constexpr size_t LIGHT_COUNT = 3;
+  std::vector<shared::gpu_sample_t> samples;
+  shared::gpu_direct_results_t reference;
+  const size_t charts[] = {2, 5};
+  for (uint32_t chart = 0; chart < 2; ++chart)
+    for (uint32_t i = 0; i < RECORDS_PER_CHART; ++i)
+    {
+      shared::gpu_sample_t sample;
+      sample.chart_index = chart;
+      sample.seed = shared::sample_hash((int)i, (int)chart, 1, 0);
+      samples.push_back(sample);
+    }
+  reference.resize(samples.size(), LIGHT_COUNT);
+  for (size_t i = 0; i < samples.size(); ++i)
+  {
+    const float noise = shared::unit_float_from(samples[i].seed) - 0.5f;
+    reference.irradiance[i] = {2.f + noise, 1.f + noise * 0.5f, 0.5f};
+    reference.coverage[i * LIGHT_COUNT + 0] = 1.f;
+    reference.coverage[i * LIGHT_COUNT + 1] = noise > 0.f ? 1.f : 0.5f;
+    reference.coverage[i * LIGHT_COUNT + 2] = 0.f;
+    reference.weight[i * LIGHT_COUNT + 0] = 3.f + noise;
+    reference.weight[i * LIGHT_COUNT + 1] = 0.25f;
+    reference.weight[i * LIGHT_COUNT + 2] = 0.f;
+  }
+
+  const shared::record_comparison_report_t same =
+      shared::compare_direct_results(samples, Span<const size_t>(charts), reference, reference);
+  assert(same.agrees());
+  assert(same.coefficient_count == 3 + 2 * LIGHT_COUNT);
+  assert(same.charts.size() == 2);
+  assert(same.group_scale.size() == 3);
+  assert(same.group_scale[0] > 0.f && same.group_scale[1] > 0.f && same.group_scale[2] > 0.f);
+  assert(same.mean_absolute_difference_over(0, same.coefficient_count) == 0.f);
+  assert(same.largest_absolute_difference_over(0, same.coefficient_count) == 0.f);
+  assert(same.reference_nonzero_records == samples.size());
+  assert(same.differing_records == 0);
+  for (const shared::record_chart_comparison_t &chart : same.charts)
+  {
+    assert(chart.record_count == RECORDS_PER_CHART);
+    assert(chart.reference_mean.size() == same.coefficient_count);
+    assert(chart.largest_sigma == 0.f && chart.largest_sigma_coefficient == -1);
+  }
+
+  // Light 1's coverage on chart 5 moved on every record: the flagged
+  // coefficient is coverage[1], and it is named as such.
+  shared::gpu_direct_results_t biased = reference;
+  for (size_t i = 0; i < samples.size(); ++i)
+    if (samples[i].chart_index == 1) biased.coverage[i * LIGHT_COUNT + 1] -= 0.1f;
+  const shared::record_comparison_report_t bias =
+      shared::compare_direct_results(samples, Span<const size_t>(charts), reference, biased);
+  assert(!bias.agrees());
+  assert(bias.charts_beyond_tolerance == 1);
+  assert(bias.differing_records == RECORDS_PER_CHART);
+  assert(std::abs(bias.largest_absolute_difference_over(3, LIGHT_COUNT) - 0.1f) < 1e-6f);
+  assert(bias.largest_absolute_difference_over(0, 3) == 0.f);
+  assert(bias.charts.front().chart == 5);
+  assert(bias.charts.front().largest_sigma_coefficient == 3 + 1);
+  assert(bias.charts.front().largest_sigma > shared::RECORD_COMPARISON_SIGMA);
+  assert(bias.charts[1].largest_sigma == 0.f);
+
+  char storage[shared::DIRECT_COEFFICIENT_NAME_CAPACITY];
+  assert(shared::direct_coefficient_name(0, LIGHT_COUNT, Span<char>(storage)) == "irradiance.r");
+  assert(shared::direct_coefficient_name(2, LIGHT_COUNT, Span<char>(storage)) == "irradiance.b");
+  assert(shared::direct_coefficient_name(4, LIGHT_COUNT, Span<char>(storage)) == "coverage[1]");
+  assert(shared::direct_coefficient_name(8, LIGHT_COUNT, Span<char>(storage)) == "weight[2]");
+
+  // A weight of one ulp more on every record of chart 2: below the weight
+  // group's floor, so noise, whatever the zero standard error says.
+  shared::gpu_direct_results_t nudged = reference;
+  for (size_t i = 0; i < samples.size(); ++i)
+    if (samples[i].chart_index == 0) nudged.weight[i * LIGHT_COUNT + 1] += 1e-6f;
+  const shared::record_comparison_report_t noise =
+      shared::compare_direct_results(samples, Span<const size_t>(charts), reference, nudged);
+  assert(noise.agrees());
+  assert(noise.mean_absolute_difference_over(3 + LIGHT_COUNT, LIGHT_COUNT) > 0.f);
+}
+
+// The picture the comparison writes: every record's L0 averaged onto the texel it
+// came from, and nothing else touched -- no gutter, no ranking. The sample set is
+// the bake's own records with their origins kept, so a record lands on the texel
+// the bake would have reduced it into.
+void the_indirect_l0_pages_are_the_records_reduced_by_texel()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const shared::lightmap_t lightmap = pack_for(map);
+
+  shared::lightmap_solve_settings_t solve;
+  solve.samples_per_texel_edge = 2;
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  const shared::lightmap_sample_set_t set =
+      shared::collect_lightmap_sample_set(lightmap, solve, bvh);
+  assert(!set.samples.empty());
+  assert(set.origins.size() == set.samples.size());
+  assert(set.charts.size() == lightmap.charts.size());
+  for (size_t i = 0; i < set.charts.size(); ++i) assert(set.charts[i] == i);
+
+  // The same list the plain collector hands out, record for record.
+  const std::vector<shared::gpu_sample_t> plain =
+      shared::collect_lightmap_samples(lightmap, solve, bvh);
+  assert(plain.size() == set.samples.size());
+  for (size_t i = 0; i < plain.size(); ++i)
+    assert(plain[i].seed == set.samples[i].seed &&
+           plain[i].chart_index == set.samples[i].chart_index);
+
+  // Every record answers the same constant, so a texel with any record holds it
+  // exactly (1, 2 and 3 are exact in RGB9E5) and a texel with none stays black.
+  const std::vector<linalg::vec3> results(set.samples.size(), linalg::vec3{1.f, 2.f, 3.f});
+
+  const shared::lightmap_pages_t pages =
+      shared::reduce_record_values_to_pages(lightmap, set, results);
+  assert(pages.page_count == lightmap.atlas.page_count);
+  assert(pages.size_in_texels == lightmap.atlas.size_in_texels);
+
+  std::vector<uint8_t> touched(pages.texel_count(), 0);
+  const int gutter = lightmap.settings.gutter_in_texels;
+  for (size_t i = 0; i < set.samples.size(); ++i)
+  {
+    const shared::lightmap_chart_t &chart = lightmap.charts[set.charts[set.samples[i].chart_index]];
+    const int x = chart.atlas_rect.min_x + gutter + set.origins[i].texel_x;
+    const int y = chart.atlas_rect.min_y + gutter + set.origins[i].texel_y;
+    touched[((size_t)chart.page * (size_t)pages.size_in_texels + (size_t)y) *
+                (size_t)pages.size_in_texels +
+            (size_t)x] = 1;
+  }
+
+  size_t lit = 0;
+  for (int page = 0; page < pages.page_count; ++page)
+    for (int y = 0; y < pages.size_in_texels; ++y)
+      for (int x = 0; x < pages.size_in_texels; ++x)
+      {
+        const linalg::vec3 texel = pages.load(page, x, y);
+        const bool was_touched =
+            touched[((size_t)page * (size_t)pages.size_in_texels + (size_t)y) *
+                        (size_t)pages.size_in_texels +
+                    (size_t)x] != 0;
+        if (was_touched)
+        {
+          ++lit;
+          assert(texel.x == 1.f && texel.y == 2.f && texel.z == 3.f);
+        }
+        else
+        {
+          assert(texel.x == 0.f && texel.y == 0.f && texel.z == 0.f);
+        }
+      }
+  assert(lit > 0);
+
+  // |a - a| is black everywhere; |a - 0| is a again.
+  const shared::lightmap_pages_t nothing = shared::absolute_difference_pages(pages, pages);
+  shared::lightmap_pages_t black;
+  black.allocate(lightmap.atlas, shared::lightmap_pixel_format_t::Rgb9e5);
+  const shared::lightmap_pages_t itself = shared::absolute_difference_pages(pages, black);
+  for (int page = 0; page < pages.page_count; ++page)
+    for (int y = 0; y < pages.size_in_texels; ++y)
+      for (int x = 0; x < pages.size_in_texels; ++x)
+      {
+        const linalg::vec3 zero = nothing.load(page, x, y);
+        assert(zero.x == 0.f && zero.y == 0.f && zero.z == 0.f);
+        const linalg::vec3 same = itself.load(page, x, y);
+        const linalg::vec3 original = pages.load(page, x, y);
+        assert(same.x == original.x && same.y == original.y && same.z == original.z);
+      }
+}
+
+void a_texel_buried_in_a_neighbouring_brush_reads_as_its_exposed_neighbour()
+{
+  shared::map_t map;
+  map.geometry.push_back(
+      {map.next_uid++, shared::make_box_brush({0, -32, 0}, {128, 32, 128})});
+  const shared::entity_uid_t wall = map.next_uid;
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {8, 64, 8})});
+
+  std::shared_ptr<entities::Point_Light_Entity> light =
+      std::make_shared<entities::Point_Light_Entity>();
+  light->position = {400, 200, 0};
+  light->range = 4096.f;
+  light->light.color = {1.f, 1.f, 1.f};
+  light->light.intensity = 100.f;
+  map.entities.push_back({map.next_uid++, light});
+
+  const shared::lightmap_t lightmap = bake_for(map);
+  assert(lightmap.light_uids.size() == 1);
+
+  const shared::lightmap_chart_t *face = nullptr;
+  for (const shared::lightmap_chart_t &chart : lightmap.charts)
+    if (chart.object_uid == wall && chart.plane.normal.x > 0.9f) face = &chart;
+  assert(face && face->page >= 0);
+  assert(face->light_slots[0] == 0);
+
+  const int gutter = lightmap.settings.gutter_in_texels;
+  const int width = shared::chart_covered_width(*face, lightmap.settings);
+  const int height = shared::chart_covered_height(*face, lightmap.settings);
+  size_t buried = 0;
+  size_t exposed = 0;
+  for (int y = 0; y < height; ++y)
+    for (int x = 0; x < width; ++x)
+    {
+      const linalg::vec2 chart_space = {((float)x + 0.5f) * face->world_units_per_texel,
+                                        ((float)y + 0.5f) * face->world_units_per_texel};
+      const shared::texel_sample_t sample = shared::sample_chart(*face, chart_space);
+      if (!sample.on_surface) continue;
+      // The row straddling the floor's top is a mix by construction; skip it.
+      if (sample.position.y > -4.f && sample.position.y < 4.f) continue;
+
+      const Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART> visibility =
+          lightmap.visibility_pages.load_visibility(face->page, face->atlas_rect.min_x + gutter + x,
+                                                    face->atlas_rect.min_y + gutter + y);
+      assert(visibility[0] == 1.f);
+      if (sample.position.y < 0.f) ++buried;
+      else ++exposed;
+    }
+  assert(buried > 0 && exposed > 0);
 }
 
 // --- The seam: a batched bake is the reference bake (lightmap_gpu_plan.md 3) --
@@ -3251,9 +3660,8 @@ int main()
   a_sidecar_round_trips_an_unwrap();
   a_static_mesh_casts_a_shadow_in_the_bake();
 
-  the_srgb_encode_is_the_decodes_inverse();
   the_gpu_scene_is_made_of_what_the_tracer_sees();
-  a_layer_is_filtered_in_linear_space();
+  a_texture_reaches_the_gpu_scene_at_its_own_size();
 
   a_box_gets_one_chart_per_face();
   chart_size_follows_the_face_extent();
@@ -3311,6 +3719,11 @@ int main()
   tracing_indirect_light_moves_no_direct_pixel();
   a_spot_light_on_the_floor_lights_the_wall_it_is_aimed_at();
   a_batched_bake_is_the_reference_bake_bit_for_bit();
+  probe_rays_hit_what_the_bvh_says_they_hit();
+  a_texel_buried_in_a_neighbouring_brush_reads_as_its_exposed_neighbour();
+  the_indirect_comparison_flags_a_bias_and_passes_itself();
+  the_direct_comparison_flags_a_bias_per_light_and_names_it();
+  the_indirect_l0_pages_are_the_records_reduced_by_texel();
 
   a_probe_grid_pads_the_geometry_by_one_spacing();
   a_probe_grid_snaps_to_the_spacing_and_not_to_the_brush();

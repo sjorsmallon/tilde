@@ -1,0 +1,52 @@
+#version 460
+#extension GL_EXT_ray_query : require
+
+// lightmap_gpu_plan.md step 4: a ray that hits something. One ray per sample
+// record, from the record's position nudged along its normal, along that
+// normal, no further than max_distance -- the hit distance back, or -1 for a
+// miss. The CPU asks bvh_intersect_ray the same question for the same rays
+// (probe_ray_distances), and where the two disagree is where a wrong stride, a
+// wrong winding or an unbuilt TLAS shows up as a number.
+
+layout(local_size_x = 64) in;
+
+// gpu_sample_t, lightmap_gpu.hpp: 32 bytes, std430.
+struct gpu_sample_t
+{
+  vec3 position;
+  uint chart_index;
+  vec3 normal;
+  uint seed;
+};
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+layout(std430, set = 0, binding = 1) readonly buffer Samples { gpu_sample_t samples[]; };
+layout(std430, set = 0, binding = 2) writeonly buffer Results { float distances[]; };
+
+layout(push_constant) uniform Push
+{
+  uint sample_count;
+  float ray_bias;
+  float max_distance;
+} push;
+
+void main()
+{
+  const uint i = gl_GlobalInvocationID.x;
+  if (i >= push.sample_count) return;
+
+  const vec3 normal = samples[i].normal;
+  const vec3 origin = samples[i].position + normal * push.ray_bias;
+
+  // Both faces count, as they do for the CPU's slab test: the geometry is
+  // opaque and nothing here is culled by winding.
+  rayQueryEXT query;
+  rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT, 0xff, origin, 0.0, normal,
+                        push.max_distance);
+  while (rayQueryProceedEXT(query)) {}
+
+  distances[i] = rayQueryGetIntersectionTypeEXT(query, true) ==
+                         gl_RayQueryCommittedIntersectionTriangleEXT
+                     ? rayQueryGetIntersectionTEXT(query, true)
+                     : -1.0;
+}

@@ -1,6 +1,8 @@
 #include "../shared/frame_timing.hpp"
 #include "renderer.hpp"
 
+#include <cstring>
+
 #include <iostream>
 #include <numeric>
 #include <optional>
@@ -149,6 +151,73 @@ static VkPipeline g_debug_line_occluded_pipeline = VK_NULL_HANDLE;
 static VkPipeline g_debug_face_occluded_pipeline = VK_NULL_HANDLE;
 
 static bool g_supports_wireframe = false;
+
+// Ray query for the lightmap bake (lightmap_gpu_plan.md step 4). Optional: a
+// device without it records WHY, and the bake keeps the CPU reference path --
+// loudly, through the Lightmap tool's status line, never as a silent downgrade.
+static bool g_ray_query_available = false;
+static std::string g_ray_query_unavailable_reason = "the device has not been created yet";
+static PFN_vkCreateAccelerationStructureKHR g_vkCreateAccelerationStructureKHR = nullptr;
+static PFN_vkDestroyAccelerationStructureKHR g_vkDestroyAccelerationStructureKHR = nullptr;
+static PFN_vkGetAccelerationStructureBuildSizesKHR g_vkGetAccelerationStructureBuildSizesKHR =
+    nullptr;
+static PFN_vkCmdBuildAccelerationStructuresKHR g_vkCmdBuildAccelerationStructuresKHR = nullptr;
+static PFN_vkGetAccelerationStructureDeviceAddressKHR
+    g_vkGetAccelerationStructureDeviceAddressKHR = nullptr;
+
+// Why ray query is NOT available on a device, or empty when it is: a 1.2
+// device, the three extensions, and the features the bake's kernels need -- the
+// three of ray query, and the three of descriptor indexing the indirect kernel's
+// texture array reads through (lightmap_gpu_plan.md step 5b).
+static std::string ray_query_support_gap(VkPhysicalDevice physical_device)
+{
+  VkPhysicalDeviceProperties properties{};
+  vkGetPhysicalDeviceProperties(physical_device, &properties);
+  if (properties.apiVersion < VK_API_VERSION_1_2)
+    return std::format("the device speaks Vulkan {}.{}, and ray query needs 1.2",
+                       VK_API_VERSION_MAJOR(properties.apiVersion),
+                       VK_API_VERSION_MINOR(properties.apiVersion));
+
+  uint32_t extension_count = 0;
+  vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &extension_count, nullptr);
+  std::vector<VkExtensionProperties> extensions(extension_count);
+  vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &extension_count,
+                                       extensions.data());
+  for (const char *required : {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+                               VK_KHR_RAY_QUERY_EXTENSION_NAME,
+                               VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME})
+  {
+    bool found = false;
+    for (const VkExtensionProperties &extension : extensions)
+      if (std::strcmp(extension.extensionName, required) == 0) found = true;
+    if (!found) return std::string("the device does not offer ") + required;
+  }
+
+  VkPhysicalDeviceRayQueryFeaturesKHR ray_query{};
+  ray_query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure{};
+  acceleration_structure.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+  acceleration_structure.pNext = &ray_query;
+  VkPhysicalDeviceVulkan12Features vulkan12{};
+  vulkan12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+  vulkan12.pNext = &acceleration_structure;
+  VkPhysicalDeviceFeatures2 features{};
+  features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  features.pNext = &vulkan12;
+  vkGetPhysicalDeviceFeatures2(physical_device, &features);
+
+  if (!vulkan12.bufferDeviceAddress) return "the device has no bufferDeviceAddress feature";
+  if (!vulkan12.runtimeDescriptorArray) return "the device has no runtimeDescriptorArray feature";
+  if (!vulkan12.shaderSampledImageArrayNonUniformIndexing)
+    return "the device has no shaderSampledImageArrayNonUniformIndexing feature";
+  if (!vulkan12.descriptorBindingPartiallyBound)
+    return "the device has no descriptorBindingPartiallyBound feature";
+  if (!acceleration_structure.accelerationStructure)
+    return "the device has no accelerationStructure feature";
+  if (!ray_query.rayQuery) return "the device has no rayQuery feature";
+  return {};
+}
 
 // --- The mesh pipeline cache ---
 //
@@ -6079,7 +6148,10 @@ bool init(SDL_Window *window)
   app_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
   app_info.pEngineName = "No Engine";
   app_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-  app_info.apiVersion = VK_API_VERSION_1_0;
+  // 1.2 for the lightmap bake's ray query (lightmap_gpu_plan.md step 4): buffer
+  // device address and SPIR-V 1.4 are core there. Every other shader still
+  // compiles to SPIR-V 1.0, which a 1.2 instance accepts unchanged.
+  app_info.apiVersion = VK_API_VERSION_1_2;
 
   VkInstanceCreateInfo instance_info = {};
   instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -6220,25 +6292,53 @@ bool init(SDL_Window *window)
     std::print("[renderer] wideLines NOT supported — lines stay 1px\n");
   }
 
+  std::vector<const char *> device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+#ifdef __APPLE__
+  device_extensions.push_back("VK_KHR_portability_subset");
+#endif
+
+  // Ray query for the lightmap bake. Exactly the features the kernels need are
+  // enabled -- ray query's three and descriptor indexing's three -- chained
+  // behind pEnabledFeatures, and only when the device has all of it; otherwise
+  // the reason is kept for the Lightmap tool to show.
+  VkPhysicalDeviceRayQueryFeaturesKHR enabled_ray_query{};
+  enabled_ray_query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+  enabled_ray_query.rayQuery = VK_TRUE;
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR enabled_acceleration_structure{};
+  enabled_acceleration_structure.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+  enabled_acceleration_structure.pNext = &enabled_ray_query;
+  enabled_acceleration_structure.accelerationStructure = VK_TRUE;
+  VkPhysicalDeviceVulkan12Features enabled_vulkan12{};
+  enabled_vulkan12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+  enabled_vulkan12.pNext = &enabled_acceleration_structure;
+  enabled_vulkan12.bufferDeviceAddress = VK_TRUE;
+  enabled_vulkan12.runtimeDescriptorArray = VK_TRUE;
+  enabled_vulkan12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+  enabled_vulkan12.descriptorBindingPartiallyBound = VK_TRUE;
+
+  g_ray_query_unavailable_reason = ray_query_support_gap(g_physical_device);
+  g_ray_query_available = g_ray_query_unavailable_reason.empty();
+  if (g_ray_query_available)
+  {
+    device_extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+    device_extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+    device_extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    log_terminal("[renderer] ray query supported -- the lightmap bake can run on the GPU");
+  }
+  else
+    log_terminal("[renderer] ray query NOT available ({}) -- the lightmap bake stays on the CPU",
+                 g_ray_query_unavailable_reason);
+
   VkDeviceCreateInfo device_info{};
   device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  device_info.pNext = g_ray_query_available ? &enabled_vulkan12 : nullptr;
   device_info.queueCreateInfoCount =
       static_cast<uint32_t>(queue_create_infos.size());
   device_info.pQueueCreateInfos = queue_create_infos.data();
   device_info.pEnabledFeatures = &enabled_features;
-
-  const std::vector<const char *> device_extensions = {
-      VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-  device_info.enabledExtensionCount =
-      static_cast<uint32_t>(device_extensions.size());
+  device_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
   device_info.ppEnabledExtensionNames = device_extensions.data();
-
-#ifdef __APPLE__
-  std::vector<const char *> apple_device_extensions = device_extensions;
-  apple_device_extensions.push_back("VK_KHR_portability_subset");
-  device_info.enabledExtensionCount = (uint32_t)apple_device_extensions.size();
-  device_info.ppEnabledExtensionNames = apple_device_extensions.data();
-#endif
 
   if (vkCreateDevice(g_physical_device, &device_info, nullptr, &g_device) !=
       VK_SUCCESS)
@@ -6251,6 +6351,33 @@ bool init(SDL_Window *window)
                    &g_graphics_queue);
   vkGetDeviceQueue(g_device, indices.present_family.value(), 0,
                    &g_present_queue);
+
+  // The acceleration structure entry points are extension functions the loader
+  // does not export; a driver that enabled the extension and exports none of
+  // them is treated as having no ray query at all.
+  if (g_ray_query_available)
+  {
+    g_vkCreateAccelerationStructureKHR = (PFN_vkCreateAccelerationStructureKHR)
+        vkGetDeviceProcAddr(g_device, "vkCreateAccelerationStructureKHR");
+    g_vkDestroyAccelerationStructureKHR = (PFN_vkDestroyAccelerationStructureKHR)
+        vkGetDeviceProcAddr(g_device, "vkDestroyAccelerationStructureKHR");
+    g_vkGetAccelerationStructureBuildSizesKHR = (PFN_vkGetAccelerationStructureBuildSizesKHR)
+        vkGetDeviceProcAddr(g_device, "vkGetAccelerationStructureBuildSizesKHR");
+    g_vkCmdBuildAccelerationStructuresKHR = (PFN_vkCmdBuildAccelerationStructuresKHR)
+        vkGetDeviceProcAddr(g_device, "vkCmdBuildAccelerationStructuresKHR");
+    g_vkGetAccelerationStructureDeviceAddressKHR =
+        (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetDeviceProcAddr(
+            g_device, "vkGetAccelerationStructureDeviceAddressKHR");
+    if (!g_vkCreateAccelerationStructureKHR || !g_vkDestroyAccelerationStructureKHR ||
+        !g_vkGetAccelerationStructureBuildSizesKHR || !g_vkCmdBuildAccelerationStructuresKHR ||
+        !g_vkGetAccelerationStructureDeviceAddressKHR)
+    {
+      g_ray_query_available = false;
+      g_ray_query_unavailable_reason =
+          "the driver enabled VK_KHR_acceleration_structure but exports no entry points for it";
+      log_error("[renderer] {}", g_ray_query_unavailable_reason);
+    }
+  }
 
   // Descriptor Pool
   VkDescriptorPoolSize pool_sizes[] = {
@@ -6866,6 +6993,27 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 VkDevice get_VkDevice() { return g_device; }
 VkRenderPass get_VkRenderPass() { return g_scene_render_pass; }
 VkPhysicalDevice get_VkPhysicalDevice() { return g_physical_device; }
+
+bool ray_query_is_available() { return g_ray_query_available; }
+const char *ray_query_unavailable_reason() { return g_ray_query_unavailable_reason.c_str(); }
+
+ray_query_device_t ray_query_device()
+{
+  if (!g_ray_query_available)
+    fatal_error("[renderer] ray_query_device() on a device without ray query: {}.",
+                g_ray_query_unavailable_reason);
+  ray_query_device_t out;
+  out.device = g_device;
+  out.physical_device = g_physical_device;
+  out.queue = g_graphics_queue;
+  out.command_pool = g_command_pool;
+  out.create_acceleration_structure = g_vkCreateAccelerationStructureKHR;
+  out.destroy_acceleration_structure = g_vkDestroyAccelerationStructureKHR;
+  out.get_acceleration_structure_build_sizes = g_vkGetAccelerationStructureBuildSizesKHR;
+  out.cmd_build_acceleration_structures = g_vkCmdBuildAccelerationStructuresKHR;
+  out.get_acceleration_structure_device_address = g_vkGetAccelerationStructureDeviceAddressKHR;
+  return out;
+}
 uint32_t get_current_frame_index() { return g_current_frame_idx_in_swapchain; }
 uint32_t get_max_frames_in_flight() { return MAX_FRAMES_IN_FLIGHT; }
 
