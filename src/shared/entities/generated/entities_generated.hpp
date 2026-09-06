@@ -198,23 +198,24 @@ const enum_type_info_t& enum_info(enum_type type);
 enum class entity_type : uint16_t
 {
   Invalid = 0,
-  Player_Spawn_Entity = 1,
-  Player_Spectate_Entity = 2,
-  Player_Entity = 3,
-  Weapon_Entity = 4,
-  Rocket_Entity = 5,
-  Particle_Emitter_Entity = 6,
-  Damageable_Entity = 7,
-  Trigger_Volume_Entity = 8,
-  Point_Light_Entity = 9,
-  Spot_Light_Entity = 10,
-  Directional_Light_Entity = 11,
-  Physics_Body_Entity = 12,
+  Reflection_Volume_Entity = 1,
+  Player_Spawn_Entity = 2,
+  Player_Spectate_Entity = 3,
+  Player_Entity = 4,
+  Weapon_Entity = 5,
+  Rocket_Entity = 6,
+  Particle_Emitter_Entity = 7,
+  Damageable_Entity = 8,
+  Trigger_Volume_Entity = 9,
+  Point_Light_Entity = 10,
+  Spot_Light_Entity = 11,
+  Directional_Light_Entity = 12,
+  Physics_Body_Entity = 13,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 13;
+constexpr uint32_t ENTITY_TYPE_COUNT = 14;
 
 enum class component_type : uint16_t
 {
@@ -383,6 +384,15 @@ struct Entity
   uint32_t entity_id = {};
   linalg::vec3f position = {};
   linalg::quatf orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+};
+
+struct Reflection_Volume_Entity : Entity
+{
+  static constexpr entity_type static_type = entity_type::Reflection_Volume_Entity;
+
+  Reflection_Volume_Entity() { type = entity_type::Reflection_Volume_Entity; }
+
+  Box_Volume volume = {.half_extents = {256.0f, 256.0f, 256.0f}};
 };
 
 struct Player_Spawn_Entity : Entity
@@ -566,6 +576,16 @@ struct Physics_Body_Entity : Entity
 // destructor. A field that breaks either of these corrupts or leaks
 // silently, so the check lives here rather than in a test nobody runs
 // before the pool does.
+static_assert(std::is_trivially_copyable_v<Reflection_Volume_Entity>,
+              "Reflection_Volume_Entity must stay trivially copyable: pooled storage, snapshot "
+              "baselines and undo all copy entities with memcpy");
+static_assert(std::is_trivially_destructible_v<Reflection_Volume_Entity>,
+              "Reflection_Volume_Entity must stay trivially destructible: the entity pool frees a "
+              "slot by overwriting it and runs no destructor");
+static_assert(std::is_base_of_v<Entity, Reflection_Volume_Entity>,
+              "Reflection_Volume_Entity must derive from Entity: the generated tables hand out "
+              "Entity* for every entity type");
+
 static_assert(std::is_trivially_copyable_v<Player_Spawn_Entity>,
               "Player_Spawn_Entity must stay trivially copyable: pooled storage, snapshot "
               "baselines and undo all copy entities with memcpy");

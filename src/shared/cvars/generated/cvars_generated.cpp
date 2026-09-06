@@ -33,6 +33,8 @@ constexpr const char* Debug_Channel_VALUE_NAMES[] = {
   "baked_light",
   "probe_visibility",
   "shadow_penumbra",
+  "reflection",
+  "reflection_capture",
 };
 
 constexpr const char* Bot_Mode_VALUE_NAMES[] = {
@@ -43,7 +45,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
-  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 10}},
+  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 12}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
@@ -729,7 +731,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_debug_channel",
-     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra)",
+     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture)",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_ENUM,
      .offset = offsetof(cvar_state_t, r_debug_channel),
@@ -1214,6 +1216,8 @@ const char* to_string(Debug_Channel value)
     case Debug_Channel::baked_light: return "baked_light";
     case Debug_Channel::probe_visibility: return "probe_visibility";
     case Debug_Channel::shadow_penumbra: return "shadow_penumbra";
+    case Debug_Channel::reflection: return "reflection";
+    case Debug_Channel::reflection_capture: return "reflection_capture";
   }
   assert(false && "invalid Debug_Channel");
   return "";
@@ -1231,6 +1235,8 @@ template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::str
   if (text == "baked_light") return Debug_Channel::baked_light;
   if (text == "probe_visibility") return Debug_Channel::probe_visibility;
   if (text == "shadow_penumbra") return Debug_Channel::shadow_penumbra;
+  if (text == "reflection") return Debug_Channel::reflection;
+  if (text == "reflection_capture") return Debug_Channel::reflection_capture;
   return std::nullopt;
 }
 

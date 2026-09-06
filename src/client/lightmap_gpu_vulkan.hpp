@@ -101,6 +101,8 @@ struct vulkan_batch_solver_t final : shared::lightmap_batch_solver_t
   void solve_probes(Span<const shared::gpu_sample_t> samples,
                     const shared::probe_visibility_slots_t &visibility_slots,
                     shared::gpu_probe_results_t &out) override;
+  void solve_captures(Span<const shared::gpu_sample_t> samples,
+                      shared::gpu_capture_results_t &out) override;
   [[nodiscard]] shared::batch_solve_statistics_t statistics() const override
   {
     return accumulated;

@@ -1,3 +1,4 @@
+#include "../shared/environment_brdf.hpp"
 #include "../shared/frame_timing.hpp"
 #include "renderer.hpp"
 
@@ -323,10 +324,51 @@ constexpr uint32_t PASS_SHADOW_BINDING = 9;
 constexpr uint32_t PASS_PROBE_VISIBILITY_BINDING = 10;
 // The same shadow array through a non-compare nearest sampler: the PCSS blocker search
 constexpr uint32_t PASS_SHADOW_DEPTH_BINDING = 11;
+// Gate 6 step 4: the reflection captures as ONE samplerCubeArray, a capture per
+// six layers with its GGX-prefiltered mips; the capture table beside it as a
+// storage buffer (reflection_table_header_t below); and the split-sum
+// environment BRDF table, which is the RENDERER's like the shadow pool, built
+// once at startup and written into every pass set.
+constexpr uint32_t PASS_REFLECTION_CUBES_BINDING = 12;
+constexpr uint32_t PASS_REFLECTION_TABLE_BINDING = 13;
+constexpr uint32_t PASS_ENVIRONMENT_BRDF_BINDING = 14;
 // How many images of the BAKE a pass set binds (the shadow pool is not one).
-constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 9;
-// The lightmap images, the scene block and the shadow array's two samplers.
-constexpr uint32_t PASS_BINDING_COUNT = PASS_IMAGE_BINDING_COUNT + 3;
+constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 10;
+// The images the renderer owns and binds beside them: the shadow pool twice,
+// the BRDF table once.
+constexpr uint32_t PASS_RENDERER_IMAGE_BINDING_COUNT = 3;
+// The lightmap images, the scene block, the renderer's three images and the
+// capture table.
+constexpr uint32_t PASS_BINDING_COUNT =
+    PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT + 2;
+
+// A capture is six layers of the cube array, so the cap is what keeps the
+// array under Vulkan's 2048-layer floor with room to spare, and it is loud:
+// a set past it is refused whole rather than truncated to a lattice with holes.
+constexpr uint32_t MAX_REFLECTION_CAPTURES = 256;
+
+// The capture table, std430, the shape resources/shaders/reflection.glsl reads
+// (step 5). The header carries the capture LATTICE -- the probe grid at the
+// capture stride, origin and spacing and count -- so a fragment maps its
+// position to a lattice cell and reads the capture index at each of the cell's
+// eight corners out of `cells`, -1 where the candidate was dropped. A record's
+// layer is its own index times six.
+struct reflection_capture_record_t
+{
+  float position_and_layer[4]; // xyz the capture point, w the first cube layer
+  float box_min_and_open_faces[4]; // w the open-face bits
+  float box_max_and_overridden[4]; // w 1 when an author's volume set the box
+};
+struct reflection_table_header_t
+{
+  float   lattice_origin_and_spacing[4]; // xyz the lattice origin, w the spacing
+  int32_t lattice_count_and_capture_count[4]; // xyz the lattice extent, w how many captures
+  reflection_capture_record_t captures[MAX_REFLECTION_CAPTURES];
+  // int32_t cells[lattice x * y * z] follows, the block's one unsized array.
+};
+static_assert(sizeof(reflection_capture_record_t) == 48 &&
+                  sizeof(reflection_table_header_t) == 32 + 48 * MAX_REFLECTION_CAPTURES,
+              "reflection_table_header_t must match reflection.glsl's std430 block exactly");
 
 // lightmap.glsl reads a vec4 of coverage against an ivec4 of slots, which is the
 // four in shared/lightmap.hpp seen from the other side.
@@ -444,6 +486,14 @@ struct gpu_lightmap_t
   float           probe_origin[3]         = {0.f, 0.f, 0.f};
   float           probe_inverse_extent[3] = {0.f, 0.f, 0.f};
   bool            has_probes              = false;
+  // Gate 6 step 4: the captures as a cube array with mips, and the capture
+  // table. A 1x1 BLACK six-layer stand-in and a header of zero captures when
+  // absent -- an absent reflection is black, the L0 polarity, never white.
+  gpu_texture_t   reflection_cubes;
+  VkBuffer        reflection_table        = VK_NULL_HANDLE;
+  VkDeviceMemory  reflection_table_memory = VK_NULL_HANDLE;
+  VkDeviceSize    reflection_table_bytes  = 0;
+  bool            has_reflections         = false;
   VkDescriptorSet set         = VK_NULL_HANDLE;
   int             size        = 0;
   int             layer_count = 0;
@@ -458,6 +508,9 @@ static std::vector<gpu_lightmap_t>      g_lightmaps;
 // lightmapped mesh drawn in a pass that names no bake reads 1.0 and the term
 // multiplies out instead of sampling an unbound descriptor.
 static lightmap_handle_t g_white_lightmap;
+
+// Gate 6 step 4: the environment BRDF table, one image for every pass set.
+static gpu_texture_t g_environment_brdf;
 
 // The internal textures the fallback ladder ends at, and the material every mesh
 // without one of its own gets. An invalid ALBEDO resolves to WHITE so the colour
@@ -653,6 +706,8 @@ constexpr int32_t DEBUG_FLAG_RENDER_DIRECT_LIGHT      = 1 << 5;
 constexpr int32_t DEBUG_FLAG_RENDER_BAKED_LIGHT       = 1 << 6;
 constexpr int32_t DEBUG_FLAG_RENDER_PROBE_VISIBILITY  = 1 << 7;
 constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_PENUMBRA   = 1 << 8;
+constexpr int32_t DEBUG_FLAG_RENDER_REFLECTION         = 1 << 9;
+constexpr int32_t DEBUG_FLAG_RENDER_REFLECTION_CAPTURE = 1 << 10;
 
 // One number in one place, so the lit, grid and blend paths cannot disagree.
 // It is composed as a diffuse term already (ambient * albedo), so it does NOT
@@ -2315,6 +2370,19 @@ static void create_mesh_resources()
   pass_bindings[11].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[11].descriptorCount = 1;
   pass_bindings[11].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[12].binding         = PASS_REFLECTION_CUBES_BINDING;
+  pass_bindings[12].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[12].descriptorCount = 1;
+  pass_bindings[12].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[13].binding         = PASS_REFLECTION_TABLE_BINDING;
+  pass_bindings[13].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  pass_bindings[13].descriptorCount = 1;
+  pass_bindings[13].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[14].binding         = PASS_ENVIRONMENT_BRDF_BINDING;
+  pass_bindings[14].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[14].descriptorCount = 1;
+  pass_bindings[14].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  static_assert(PASS_BINDING_COUNT == 15, "the pass bindings above are written out by index");
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -2326,15 +2394,17 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Eleven samplers per set -- irradiance, visibility, the bounce's two, the
-  // probe volume's five, and the shadow pool twice.
-  VkDescriptorPoolSize pass_pool_sizes[2] = {
+  // Thirteen samplers per set -- irradiance, visibility, the bounce's two, the
+  // probe volume's five, the reflection cubes, the shadow pool twice and the
+  // BRDF table -- plus the capture table.
+  VkDescriptorPoolSize pass_pool_sizes[3] = {
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-       MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + 2)},
-      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_LIGHTMAP_ATLASES}};
+       MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT)},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_LIGHTMAP_ATLASES},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_LIGHTMAP_ATLASES}};
   VkDescriptorPoolCreateInfo pass_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
   pass_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
-  pass_pool_info.poolSizeCount = 2;
+  pass_pool_info.poolSizeCount = 3;
   pass_pool_info.pPoolSizes    = pass_pool_sizes;
   if (vkCreateDescriptorPool(g_device, &pass_pool_info, nullptr, &g_pass_pool) != VK_SUCCESS)
   {
@@ -3019,13 +3089,15 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
   const gpu_texture_t *const textures[PASS_IMAGE_BINDING_COUNT] = {
       &entry.texture,     &entry.visibility,  &entry.indirect_l0, &entry.indirect_l1,
       &entry.probe_l0,    &entry.probe_l1[0], &entry.probe_l1[1], &entry.probe_l1[2],
-      &entry.probe_visibility};
+      &entry.probe_visibility, &entry.reflection_cubes};
   const uint32_t bindings[PASS_IMAGE_BINDING_COUNT] = {
       PASS_LIGHTMAP_BINDING,    PASS_VISIBILITY_BINDING,  PASS_INDIRECT_L0_BINDING,
       PASS_INDIRECT_L1_BINDING, PASS_PROBE_L0_BINDING,    PASS_PROBE_L1_BINDING,
-      PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2, PASS_PROBE_VISIBILITY_BINDING};
+      PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2, PASS_PROBE_VISIBILITY_BINDING,
+      PASS_REFLECTION_CUBES_BINDING};
 
-  constexpr uint32_t WRITE_COUNT = PASS_IMAGE_BINDING_COUNT + 2;
+  // The bake's images, the renderer's three, and the capture table.
+  constexpr uint32_t WRITE_COUNT = PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT + 1;
   VkDescriptorImageInfo images[WRITE_COUNT]{};
   VkWriteDescriptorSet writes[WRITE_COUNT]{};
   for (uint32_t at = 0; at < PASS_IMAGE_BINDING_COUNT; ++at)
@@ -3067,6 +3139,35 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
   writes[depth].descriptorCount = 1;
   writes[depth].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   writes[depth].pImageInfo      = &images[depth];
+
+  // The environment BRDF table, the renderer's like the pool: one image, every set.
+  if (!g_environment_brdf.valid())
+    fatal_error("[renderer] the environment BRDF table must exist before any pass set is written");
+  const uint32_t brdf = PASS_IMAGE_BINDING_COUNT + 2;
+  images[brdf].sampler     = g_environment_brdf.sampler;
+  images[brdf].imageView   = g_environment_brdf.view;
+  images[brdf].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  writes[brdf]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[brdf].dstSet          = set;
+  writes[brdf].dstBinding      = PASS_ENVIRONMENT_BRDF_BINDING;
+  writes[brdf].descriptorCount = 1;
+  writes[brdf].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[brdf].pImageInfo      = &images[brdf];
+
+  // The capture table, the bake's, beside its cubes.
+  if (entry.reflection_table == VK_NULL_HANDLE)
+    fatal_error("[renderer] a pass set is being written for a bake with no capture table");
+  VkDescriptorBufferInfo table{};
+  table.buffer = entry.reflection_table;
+  table.offset = 0;
+  table.range  = entry.reflection_table_bytes;
+  const uint32_t table_at = PASS_IMAGE_BINDING_COUNT + 3;
+  writes[table_at]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[table_at].dstSet          = set;
+  writes[table_at].dstBinding      = PASS_REFLECTION_TABLE_BINDING;
+  writes[table_at].descriptorCount = 1;
+  writes[table_at].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  writes[table_at].pBufferInfo     = &table;
 
   vkUpdateDescriptorSets(g_device, WRITE_COUNT, writes, 0, nullptr);
 }
@@ -3131,6 +3232,8 @@ static shared::lightmap_pages_t one_texel_pages(shared::lightmap_pixel_format_t 
   return pages;
 }
 
+static void destroy_reflection_table(gpu_lightmap_t &entry);
+
 static void destroy_lightmap_textures(gpu_lightmap_t &entry)
 {
   destroy_texture(entry.texture);
@@ -3140,6 +3243,8 @@ static void destroy_lightmap_textures(gpu_lightmap_t &entry)
   destroy_texture(entry.probe_l0);
   for (gpu_texture_t &axis : entry.probe_l1) destroy_texture(axis);
   destroy_texture(entry.probe_visibility);
+  destroy_texture(entry.reflection_cubes);
+  destroy_reflection_table(entry);
 }
 
 // The probe volume, gate 5: four 3D images, L0 and one per world axis of L1 --
@@ -3204,6 +3309,294 @@ static bool try_upload_probe_images(const shared::probe_volume_t &probes, gpu_li
   return true;
 }
 
+// The split-sum environment BRDF table (gate 6 step 3), the renderer's own like
+// the shadow pool: it depends on no map, so it is built and uploaded once at
+// startup and written into every pass set.
+static void create_environment_brdf_texture()
+{
+  const shared::environment_brdf_lut_t lut = shared::build_environment_brdf_lut();
+  bool filter_linear = false;
+  if (!try_check_sampled_format(VK_FORMAT_R16G16_UNORM, "environment BRDF table", filter_linear))
+    fatal_error("[renderer] this GPU cannot sample the R16G16_UNORM environment BRDF table");
+  if (!try_upload_sampled_image(reinterpret_cast<const uint8_t *>(lut.scale_bias.data()),
+                                (VkDeviceSize)(lut.scale_bias.size() * sizeof(uint16_t)),
+                                VK_FORMAT_R16G16_UNORM, filter_linear, VK_IMAGE_TYPE_2D,
+                                VK_IMAGE_VIEW_TYPE_2D, {(uint32_t)lut.size, (uint32_t)lut.size, 1},
+                                1, g_environment_brdf))
+    fatal_error("[renderer] could not upload the {}x{} environment BRDF table", lut.size,
+                lut.size);
+}
+
+// Every capture's mip chain into ONE cube array image: capture c is layers
+// 6c..6c+5, and each (capture, mip) is one copy region out of a staging buffer
+// holding the captures' bytes back to back -- a cube's bytes are mip-major then
+// face, which is exactly the six-layer region a mip of the array wants. A
+// `set` with no captures uploads the 1x1 black stand-in.
+static bool try_upload_reflection_cubes(const shared::reflection_capture_set_t &set,
+                                        gpu_texture_t &out)
+{
+  const VkFormat format = vulkan_format_of(shared::lightmap_pixel_format_t::Rgb9e5);
+  bool           filter_linear = false;
+  if (!try_check_sampled_format(format, "reflection captures", filter_linear))
+    return false;
+
+  const bool     has_captures = set.baked();
+  const uint32_t capture_count = has_captures ? (uint32_t)set.captures.size() : 1;
+  const int      size = has_captures ? set.captures.front().cube.size_in_texels : 1;
+  const int      mip_count = has_captures ? set.captures.front().cube.mip_count : 1;
+  const uint32_t layers = capture_count * (uint32_t)shared::REFLECTION_CUBE_FACE_COUNT;
+
+  std::vector<uint8_t> bytes;
+  if (has_captures)
+  {
+    for (const shared::reflection_capture_t &capture : set.captures)
+    {
+      if (capture.cube.size_in_texels != size || capture.cube.mip_count != mip_count ||
+          !capture.cube.bytes_fit_declared_chain() || capture.cube.empty())
+      {
+        log_error("[renderer] reflection captures are not one shape ({} texels, {} mips "
+                  "against {} texels, {} mips); the set is not uploaded",
+                  capture.cube.size_in_texels, capture.cube.mip_count, size, mip_count);
+        return false;
+      }
+      bytes.insert(bytes.end(), capture.cube.bytes.begin(), capture.cube.bytes.end());
+    }
+  }
+  else
+    bytes.assign((size_t)layers * 4, 0);
+
+  VkBuffer       staging_buffer = VK_NULL_HANDLE;
+  VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+  create_buffer((VkDeviceSize)bytes.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                staging_buffer, staging_memory);
+  void *mapped = nullptr;
+  vkMapMemory(g_device, staging_memory, 0, (VkDeviceSize)bytes.size(), 0, &mapped);
+  memcpy(mapped, bytes.data(), bytes.size());
+  vkUnmapMemory(g_device, staging_memory);
+  const auto drop_staging = [&]() {
+    vkDestroyBuffer(g_device, staging_buffer, nullptr);
+    vkFreeMemory(g_device, staging_memory, nullptr);
+  };
+
+  VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  image_info.flags         = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+  image_info.imageType     = VK_IMAGE_TYPE_2D;
+  image_info.format        = format;
+  image_info.extent        = {(uint32_t)size, (uint32_t)size, 1};
+  image_info.mipLevels     = (uint32_t)mip_count;
+  image_info.arrayLayers   = layers;
+  image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+  image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+  image_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(g_device, &image_info, nullptr, &out.image) != VK_SUCCESS)
+  {
+    log_error("[renderer] could not create a {}x{} cube array of {} capture(s), {} mip(s)",
+              size, size, capture_count, mip_count);
+    drop_staging();
+    return false;
+  }
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(g_device, out.image, &requirements);
+  VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  allocation.allocationSize = requirements.size;
+  allocation.memoryTypeIndex =
+      find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(g_device, &allocation, nullptr, &out.memory);
+  vkBindImageMemory(g_device, out.image, out.memory, 0);
+
+  std::vector<VkBufferImageCopy> regions;
+  regions.reserve((size_t)capture_count * (size_t)mip_count);
+  VkDeviceSize offset = 0;
+  for (uint32_t capture = 0; capture < capture_count; ++capture)
+  {
+    for (int mip = 0; mip < mip_count; ++mip)
+    {
+      const uint32_t mip_size = (uint32_t)std::max(size >> mip, 1);
+      VkBufferImageCopy region{};
+      region.bufferOffset     = offset;
+      region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, (uint32_t)mip,
+                                 capture * (uint32_t)shared::REFLECTION_CUBE_FACE_COUNT,
+                                 (uint32_t)shared::REFLECTION_CUBE_FACE_COUNT};
+      region.imageExtent      = {mip_size, mip_size, 1};
+      regions.push_back(region);
+      offset += (VkDeviceSize)shared::REFLECTION_CUBE_FACE_COUNT * mip_size * mip_size * 4;
+    }
+  }
+  if (offset != (VkDeviceSize)bytes.size())
+    fatal_error("[renderer] the reflection cube regions cover {} byte(s) of {}", offset,
+                bytes.size());
+
+  VkCommandBuffer cmd = begin_single_command();
+
+  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image               = out.image;
+  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, (uint32_t)mip_count, 0, layers};
+  barrier.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                       0, nullptr, 0, nullptr, 1, &barrier);
+
+  vkCmdCopyBufferToImage(cmd, staging_buffer, out.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         (uint32_t)regions.size(), regions.data());
+
+  barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                       &barrier);
+
+  end_single_command(cmd);
+  drop_staging();
+
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image            = out.image;
+  view_info.viewType         = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+  view_info.format           = format;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, (uint32_t)mip_count, 0, layers};
+  vkCreateImageView(g_device, &view_info, nullptr, &out.view);
+
+  // Trilinear across the prefiltered chain: the roughness picks a fractional
+  // mip and the two neighbours blend, which is what makes the mip-to-roughness
+  // mapping continuous rather than banded.
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter    = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  sampler_info.minFilter    = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  sampler_info.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.maxLod       = (float)mip_count;
+  vkCreateSampler(g_device, &sampler_info, nullptr, &out.sampler);
+  return true;
+}
+
+// The capture table (reflection_table_header_t): the lattice derived from the
+// probe grid at the capture stride, every capture's record, and one index per
+// lattice cell. A capture sits ON a probe (build_reflection_captures walks the
+// grid at a whole-probe stride), so its lattice cell is its probe coordinates
+// divided by the stride and needs no search to recover.
+static bool try_upload_reflection_table(const shared::lightmap_t &lightmap, gpu_lightmap_t &out)
+{
+  const shared::reflection_capture_set_t &set = lightmap.reflections;
+  const shared::probe_grid_t &grid = lightmap.probes.grid;
+
+  reflection_table_header_t header{};
+  std::vector<int32_t>      cells;
+  out.has_reflections = false;
+
+  if (set.baked())
+  {
+    if (set.captures.size() > MAX_REFLECTION_CAPTURES)
+    {
+      log_error("[renderer] this bake carries {} reflection captures and the cube array holds "
+                "{}; the captures are not uploaded. Raise the capture spacing.",
+                set.captures.size(), MAX_REFLECTION_CAPTURES);
+      return false;
+    }
+    if (lightmap.probes.empty() || !(grid.spacing > 0.f) || !(set.spacing > 0.f))
+    {
+      log_error("[renderer] this bake carries reflection captures but no probe grid to place "
+                "them on; the captures are not uploaded");
+      return false;
+    }
+
+    const int stride = std::max(1, (int)std::lround(set.spacing / grid.spacing));
+    linalg::vec3i lattice_count{};
+    for (int axis = 0; axis < 3; ++axis)
+      lattice_count[axis] = (grid.count[axis] + stride - 1) / stride;
+    cells.assign((size_t)lattice_count.x * (size_t)lattice_count.y * (size_t)lattice_count.z,
+                 -1);
+
+    for (size_t index = 0; index < set.captures.size(); ++index)
+    {
+      const shared::reflection_capture_t &capture = set.captures[index];
+      const size_t probe = capture.probe_index;
+      if (probe >= grid.probe_count())
+      {
+        log_error("[renderer] reflection capture {} names probe {} of {}; the captures are "
+                  "not uploaded",
+                  index, probe, grid.probe_count());
+        return false;
+      }
+      const int x = (int)(probe % (size_t)grid.count.x) / stride;
+      const int y = (int)((probe / (size_t)grid.count.x) % (size_t)grid.count.y) / stride;
+      const int z = (int)(probe / ((size_t)grid.count.x * (size_t)grid.count.y)) / stride;
+      const size_t cell =
+          ((size_t)z * (size_t)lattice_count.y + (size_t)y) * (size_t)lattice_count.x + (size_t)x;
+      cells[cell] = (int32_t)index;
+
+      reflection_capture_record_t &record = header.captures[index];
+      for (int axis = 0; axis < 3; ++axis)
+      {
+        record.position_and_layer[axis]     = capture.position[axis];
+        record.box_min_and_open_faces[axis] = capture.box.min[axis];
+        record.box_max_and_overridden[axis] = capture.box.max[axis];
+      }
+      record.position_and_layer[3] = (float)(index * shared::REFLECTION_CUBE_FACE_COUNT);
+      record.box_min_and_open_faces[3] = (float)capture.open_faces;
+      record.box_max_and_overridden[3] = capture.box_overridden ? 1.f : 0.f;
+    }
+
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      header.lattice_origin_and_spacing[axis]     = grid.origin[axis];
+      header.lattice_count_and_capture_count[axis] = lattice_count[axis];
+    }
+    header.lattice_origin_and_spacing[3]     = set.spacing;
+    header.lattice_count_and_capture_count[3] = (int32_t)set.captures.size();
+    out.has_reflections = true;
+  }
+
+  // The block always has at least one cell so an empty table is still a
+  // well-formed buffer behind the descriptor.
+  if (cells.empty()) cells.push_back(-1);
+
+  const VkDeviceSize bytes =
+      sizeof(reflection_table_header_t) + (VkDeviceSize)cells.size() * sizeof(int32_t);
+  create_buffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                out.reflection_table, out.reflection_table_memory);
+  if (out.reflection_table == VK_NULL_HANDLE || out.reflection_table_memory == VK_NULL_HANDLE)
+  {
+    log_error("[renderer] could not create the {}-byte reflection capture table", bytes);
+    return false;
+  }
+  out.reflection_table_bytes = bytes;
+
+  void *mapped = nullptr;
+  vkMapMemory(g_device, out.reflection_table_memory, 0, bytes, 0, &mapped);
+  memcpy(mapped, &header, sizeof(header));
+  memcpy(static_cast<uint8_t *>(mapped) + sizeof(header), cells.data(),
+         cells.size() * sizeof(int32_t));
+  vkUnmapMemory(g_device, out.reflection_table_memory);
+  return true;
+}
+
+static void destroy_reflection_table(gpu_lightmap_t &entry)
+{
+  if (entry.reflection_table)
+  {
+    vkDestroyBuffer(g_device, entry.reflection_table, nullptr);
+    entry.reflection_table = VK_NULL_HANDLE;
+  }
+  if (entry.reflection_table_memory)
+  {
+    vkFreeMemory(g_device, entry.reflection_table_memory, nullptr);
+    entry.reflection_table_memory = VK_NULL_HANDLE;
+  }
+  entry.reflection_table_bytes = 0;
+}
+
 // The four page sets are uploaded and replaced TOGETHER, because they are one
 // bake: a chart's rect names a texel in all of them, so a visibility from one run
 // beside an irradiance from another is a surface shadowed by lights it is not
@@ -3256,6 +3649,26 @@ static bool try_upload_lightmap_pages(const shared::lightmap_t &lightmap, gpu_li
   {
     destroy_texture(out.texture);
     for (gpu_texture_t *target : targets) destroy_texture(*target);
+    return false;
+  }
+
+  // The reflection captures (gate 6 step 4): the cubes and their table are one
+  // thing, so a set the table refuses uploads the stand-in cubes rather than
+  // cubes no record names.
+  shared::reflection_capture_set_t no_captures;
+  if (!try_upload_reflection_table(lightmap, out))
+  {
+    destroy_reflection_table(out);
+    if (!try_upload_reflection_table(shared::lightmap_t{}, out))
+    {
+      destroy_lightmap_textures(out);
+      return false;
+    }
+  }
+  if (!try_upload_reflection_cubes(out.has_reflections ? lightmap.reflections : no_captures,
+                                   out.reflection_cubes))
+  {
+    destroy_lightmap_textures(out);
     return false;
   }
 
@@ -4332,6 +4745,9 @@ static void create_default_resources()
   // L0, so a mesh drawn in a pass that names no bake gets a white residual and
   // NO indirect -- which is the right pair, since the white page is standing in
   // for "unknown" and an invented bounce is not a graceful unknown.
+  // Before the first pass set is written: every set binds the table.
+  create_environment_brdf_texture();
+
   shared::lightmap_t white_lightmap;
   white_lightmap.irradiance_pages = white_pages;
   white_lightmap.visibility_pages = visible_pages;
@@ -4348,6 +4764,7 @@ static void cleanup_registered_resources()
   for (gpu_lightmap_t &lightmap : g_lightmaps)
     destroy_lightmap_textures(lightmap);
   g_lightmaps.clear();
+  destroy_texture(g_environment_brdf);
 
   for (gpu_mesh_t &mesh : g_meshes)
     destroy_mesh_buffers(mesh);
@@ -5042,6 +5459,10 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     break;
   case cvars::Debug_Channel::shadow_penumbra:
     scene.debug_flags = DEBUG_FLAG_RENDER_SHADOW_PENUMBRA;
+    break;
+  case cvars::Debug_Channel::reflection: scene.debug_flags = DEBUG_FLAG_RENDER_REFLECTION; break;
+  case cvars::Debug_Channel::reflection_capture:
+    scene.debug_flags = DEBUG_FLAG_RENDER_REFLECTION_CAPTURE;
     break;
   }
 
@@ -6291,6 +6712,15 @@ bool init(SDL_Window *window)
   {
     std::print("[renderer] wideLines NOT supported — lines stay 1px\n");
   }
+
+  // The reflection captures are a samplerCubeArray (gate 6 step 4), and every
+  // pass set binds one -- a device without the feature cannot build the pass
+  // layout's images at all, so it is refused here with its name rather than at
+  // the first bake.
+  if (!supported_features.imageCubeArray)
+    fatal_error("[renderer] this GPU has no imageCubeArray feature, which the reflection "
+                "captures need");
+  enabled_features.imageCubeArray = VK_TRUE;
 
   std::vector<const char *> device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 #ifdef __APPLE__

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace shared
@@ -175,6 +176,9 @@ struct lightmap_bake_settings_t
   // player height, the doc's "one probe per 1-2 m". Carried like the rest so a
   // reload rebuilds the grid the bake traced.
   float probe_spacing_in_world_units = 64.f;
+
+  float reflection_spacing_in_world_units = 512.f;
+  int reflection_size_in_texels = 64;
 };
 
 
@@ -598,6 +602,164 @@ struct lightmap_pages_t
   load_l1(int page, int x, int y, const linalg::vec3 &l0) const;
 };
 
+// Gate 6, lighting_def.md decision L: reflection captures and their parallax boxes.
+inline constexpr uint32_t REFLECTION_BLEND_COUNT = 4;
+inline constexpr uint32_t REFLECTION_BOX_FACE_COUNT = 6;
+
+// The cube map's face order, and the box's.
+enum class reflection_box_face_t : uint8_t
+{
+  Positive_X,
+  Negative_X,
+  Positive_Y,
+  Negative_Y,
+  Positive_Z,
+  Negative_Z,
+};
+inline constexpr int REFLECTION_CUBE_FACE_COUNT = 6;
+
+// The direction through the centre of cube texel (x, y) of `face`, the GL cube
+// map convention a samplerCube fetches by.
+[[nodiscard]] inline linalg::vec3 reflection_cube_direction(int face, int x, int y,
+                                                            int size_in_texels)
+{
+  const float u = 2.f * ((float)x + 0.5f) / (float)size_in_texels - 1.f;
+  const float v = 2.f * ((float)y + 0.5f) / (float)size_in_texels - 1.f;
+  linalg::vec3 direction{0.f, 0.f, 0.f};
+  switch (face)
+  {
+    case 0: direction = {1.f, -v, -u}; break;
+    case 1: direction = {-1.f, -v, u}; break;
+    case 2: direction = {u, 1.f, v}; break;
+    case 3: direction = {u, -1.f, -v}; break;
+    case 4: direction = {u, -v, 1.f}; break;
+    default: direction = {-u, -v, -1.f}; break;
+  }
+  return linalg::normalize(direction);
+}
+
+// The RGB9E5 mip chain of one capture: mip-major, then face, then rows. Mip 0
+// is the traced picture; mip m is it GGX-prefiltered at roughness
+// m / (mip_count - 1) (prefilter_reflection_cube).
+struct reflection_cube_t
+{
+  int size_in_texels = 0;
+  int mip_count = 0;
+  std::vector<uint8_t> bytes;
+
+  [[nodiscard]] bool empty() const { return bytes.empty(); }
+
+  // Whether the bytes fit the declared chain -- what a reader asks of a file
+  // before indexing it. An empty cube fits by definition.
+  [[nodiscard]] bool bytes_fit_declared_chain() const
+  {
+    if (bytes.empty()) return true;
+    return size_in_texels > 0 && mip_count == mip_count_for(size_in_texels) &&
+           bytes.size() == texel_count() * sizeof(uint32_t);
+  }
+
+  [[nodiscard]] static int mip_count_for(int size)
+  {
+    int count = 1;
+    while (size > 1)
+    {
+      size >>= 1;
+      ++count;
+    }
+    return count;
+  }
+  [[nodiscard]] int size_of_mip(int mip) const { return std::max(size_in_texels >> mip, 1); }
+  [[nodiscard]] size_t texels_in_mip(int mip) const
+  {
+    const size_t size = (size_t)size_of_mip(mip);
+    return (size_t)REFLECTION_CUBE_FACE_COUNT * size * size;
+  }
+  [[nodiscard]] size_t texel_offset_of_mip(int mip) const
+  {
+    size_t offset = 0;
+    for (int below = 0; below < mip; ++below) offset += texels_in_mip(below);
+    return offset;
+  }
+  [[nodiscard]] size_t texel_count() const { return texel_offset_of_mip(mip_count); }
+  [[nodiscard]] size_t texel_index_of(int mip, int face, int x, int y) const
+  {
+    const size_t size = (size_t)size_of_mip(mip);
+    return texel_offset_of_mip(mip) + ((size_t)face * size + (size_t)y) * size + (size_t)x;
+  }
+
+  void allocate(int size)
+  {
+    size_in_texels = size;
+    mip_count = mip_count_for(size);
+    bytes.assign(texel_count() * sizeof(uint32_t), 0);
+  }
+  void store(size_t texel, const linalg::vec3 &linear_rgb)
+  {
+    const uint32_t word = pack_rgb9e5(linear_rgb);
+    std::memcpy(bytes.data() + texel * sizeof(uint32_t), &word, sizeof(word));
+  }
+  void store(int mip, int face, int x, int y, const linalg::vec3 &linear_rgb)
+  {
+    store(texel_index_of(mip, face, x, y), linear_rgb);
+  }
+  [[nodiscard]] linalg::vec3 load(size_t texel) const
+  {
+    uint32_t word = 0;
+    std::memcpy(&word, bytes.data() + texel * sizeof(uint32_t), sizeof(word));
+    return unpack_rgb9e5(word);
+  }
+  [[nodiscard]] linalg::vec3 load(int mip, int face, int x, int y) const
+  {
+    return load(texel_index_of(mip, face, x, y));
+  }
+  [[nodiscard]] linalg::vec3 load(int face, int x, int y) const { return load(0, face, x, y); }
+};
+
+// reflection_cube_direction run backwards: the face and texel of `size` a
+// direction falls in.
+struct reflection_cube_texel_t
+{
+  int face = 0;
+  int x = 0;
+  int y = 0;
+};
+[[nodiscard]] reflection_cube_texel_t reflection_cube_texel_of(const linalg::vec3 &direction,
+                                                                int size_in_texels);
+
+struct reflection_capture_t
+{
+  linalg::vec3 position{0.f, 0.f, 0.f};
+  aabb_bounds_t box{};
+  uint32_t probe_index = 0;
+  uint8_t open_faces = 0; // bit (reflection_box_face_t) set where the axis ray hit nothing
+  bool box_overridden = false;
+  reflection_cube_t cube;
+
+  [[nodiscard]] bool face_is_open(reflection_box_face_t face) const
+  {
+    return (open_faces >> (uint8_t)face) & 1u;
+  }
+};
+
+struct reflection_capture_set_t
+{
+  float spacing = 0.f;
+  std::vector<reflection_capture_t> captures;
+
+  [[nodiscard]] bool empty() const { return captures.empty(); }
+  [[nodiscard]] bool baked() const
+  {
+    return !captures.empty() && !captures.front().cube.empty();
+  }
+};
+
+struct reflection_capture_pick_t
+{
+  Array<uint32_t, REFLECTION_BLEND_COUNT> indices = {};
+  Array<float, REFLECTION_BLEND_COUNT> weights = {};
+  uint32_t count = 0;
+};
+
 // A baked lightmap, resident. The pixels are what the renderer samples and the
 // charts are what turns a face into a place in them -- neither is any use
 // without the other, so they are one value and they load and save together.
@@ -643,6 +805,10 @@ struct lightmap_t
   // Gate 5: the light at points in SPACE, for everything that has no chart.
   // Empty when the bake was not asked for probes.
   probe_volume_t probes;
+
+  // Gate 6: the reflection captures and their traced cubes. Empty when the bake
+  // was not asked for them.
+  reflection_capture_set_t reflections;
 
   // The resolve table: baked slot -> the light ENTITY that slot is of, which is
   // what a chart's `light_slots` index into. A uid rather than an index into

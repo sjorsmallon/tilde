@@ -537,6 +537,26 @@ int main()
     packaged.lightmap.probes.store(7, bounce_l1_probe_value(bounce_l0, bounce_l1));
     packaged.lightmap.probes.store_visibility(7, {{0.25f, 1.f, 1.f, 1.f}});
 
+    // The reflection captures (gate 6 step 4): two captures on the probe grid,
+    // each with a whole mip chain, one box overridden and one with an open
+    // face. A package dropping the chain hands the shader mip 0 alone.
+    packaged.lightmap.settings.reflection_spacing_in_world_units = 16.f;
+    packaged.lightmap.settings.reflection_size_in_texels = 4;
+    packaged.lightmap.reflections.spacing = 16.f;
+    for (uint32_t index = 0; index < 2; ++index)
+    {
+      reflection_capture_t capture;
+      capture.position       = {-8.f + 16.f * (float)index, 0.f, 16.f};
+      capture.box            = {{-20.f, -4.f, 10.f}, {30.f, 40.f, 50.f}};
+      capture.probe_index    = index == 0 ? 0 : 6;
+      capture.open_faces     = index == 0 ? 0 : (1u << 2);
+      capture.box_overridden = index == 0;
+      capture.cube.allocate(4);
+      for (size_t texel = 0; texel < capture.cube.texel_count(); ++texel)
+        capture.cube.store(texel, {0.25f * (float)index + 0.01f * (float)texel, 0.5f, 1.f});
+      packaged.lightmap.reflections.captures.push_back(capture);
+    }
+
     set_lightmap_geometry_id(packaged.lightmap);
 
     map_package_t package = build_map_package(packaged);
@@ -607,6 +627,26 @@ int main()
         return fail("package: lightmap probe visibility slot drift");
     if (restored.lightmap.probes.visibility_bytes != package.lightmap.probes.visibility_bytes)
       return fail("package: lightmap probe visibility bytes drift");
+    if (restored.lightmap.settings.reflection_spacing_in_world_units != 16.f ||
+        restored.lightmap.settings.reflection_size_in_texels != 4)
+      return fail("package: lightmap reflection settings drift");
+    if (restored.lightmap.reflections.spacing != package.lightmap.reflections.spacing ||
+        restored.lightmap.reflections.captures.size() !=
+            package.lightmap.reflections.captures.size())
+      return fail("package: lightmap reflection capture count drift");
+    for (size_t i = 0; i < package.lightmap.reflections.captures.size(); ++i)
+    {
+      const reflection_capture_t &a = package.lightmap.reflections.captures[i];
+      const reflection_capture_t &b = restored.lightmap.reflections.captures[i];
+      if (a.position.x != b.position.x || a.position.y != b.position.y ||
+          a.position.z != b.position.z || a.box.min.x != b.box.min.x ||
+          a.box.max.z != b.box.max.z || a.probe_index != b.probe_index ||
+          a.open_faces != b.open_faces || a.box_overridden != b.box_overridden)
+        return fail("package: lightmap reflection capture field drift");
+      if (a.cube.size_in_texels != b.cube.size_in_texels ||
+          a.cube.mip_count != b.cube.mip_count || a.cube.bytes != b.cube.bytes)
+        return fail("package: lightmap reflection cube drift");
+    }
     // geometry_id is a content hash over the charts, the settings and the atlas
     // dimensions, so one comparison covers every field the wire carries -- and
     // it is RECOMPUTED on the receiving side rather than sent, which is what

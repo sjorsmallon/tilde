@@ -48,7 +48,9 @@ static constexpr uint32_t PACKAGE_MAGIC   = 0x504B4720; // "PKG "
 // 7: a static mesh chart carries its unwrap (lightmap_sidecar.cpp version 7).
 // 8: the probe volume carries a per-Mixed-light visibility (lightmap_sidecar.cpp
 //    version 8, lighting_def.md gate 9 step 4).
-static constexpr uint32_t PACKAGE_VERSION = 8;
+// 9: the lightmap carries the reflection captures and their cube mip chains
+//    (lightmap_sidecar.cpp version 9, lighting_def.md gate 6 step 4).
+static constexpr uint32_t PACKAGE_VERSION = 9;
 
 // Navmesh floats/indices are written as raw bytes (exact), matching the on-disk
 // .navmesh sidecar's exactness — write_coord's 5-bit fraction would corrupt
@@ -157,6 +159,8 @@ static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightma
   write_i32(w, lightmap.settings.max_chart_extent_in_texels);
   write_i32(w, lightmap.settings.atlas_size_in_texels);
   write_f32(w, lightmap.settings.probe_spacing_in_world_units);
+  write_f32(w, lightmap.settings.reflection_spacing_in_world_units);
+  write_i32(w, lightmap.settings.reflection_size_in_texels);
 
   write_i32(w, lightmap.atlas.size_in_texels);
   write_i32(w, lightmap.atlas.page_count);
@@ -229,6 +233,23 @@ static void serialize_lightmap(network::Bit_Writer &w, const lightmap_t &lightma
   for (const int16_t slot : lightmap.probes.visibility_slots)
     write_i32(w, slot);
   write_bytes(lightmap.probes.visibility_bytes);
+
+  // The reflection captures, the sidecar's shape: the cube's whole mip chain
+  // behind its own byte count.
+  write_f32(w, lightmap.reflections.spacing);
+  network::write_var_uint(w, static_cast<uint32_t>(lightmap.reflections.captures.size()));
+  for (const reflection_capture_t &capture : lightmap.reflections.captures)
+  {
+    write_vec3(capture.position);
+    write_vec3(capture.box.min);
+    write_vec3(capture.box.max);
+    write_u32(w, capture.probe_index);
+    write_u32(w, capture.open_faces);
+    write_u32(w, capture.box_overridden ? 1u : 0u);
+    write_i32(w, capture.cube.size_in_texels);
+    write_i32(w, capture.cube.mip_count);
+    write_bytes(capture.cube.bytes);
+  }
 }
 
 static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
@@ -251,6 +272,8 @@ static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
   lightmap.settings.max_chart_extent_in_texels = read_i32(r);
   lightmap.settings.atlas_size_in_texels       = read_i32(r);
   lightmap.settings.probe_spacing_in_world_units = read_f32(r);
+  lightmap.settings.reflection_spacing_in_world_units = read_f32(r);
+  lightmap.settings.reflection_size_in_texels = read_i32(r);
 
   lightmap.atlas.size_in_texels = read_i32(r);
   lightmap.atlas.page_count     = read_i32(r);
@@ -348,6 +371,31 @@ static void deserialize_lightmap(network::Bit_Reader &r, lightmap_t &lightmap)
               probe_count, lightmap.probes.l0_bytes.size(),
               lightmap.probes.l1_bytes.size(), lightmap.probes.visibility_bytes.size());
     lightmap.probes = {};
+  }
+
+  lightmap.reflections.spacing = read_f32(r);
+  lightmap.reflections.captures.resize(network::read_var_uint(r));
+  for (reflection_capture_t &capture : lightmap.reflections.captures)
+  {
+    read_vec3(capture.position);
+    read_vec3(capture.box.min);
+    read_vec3(capture.box.max);
+    capture.probe_index = read_u32(r);
+    capture.open_faces = static_cast<uint8_t>(read_u32(r));
+    capture.box_overridden = read_u32(r) != 0;
+    capture.cube.size_in_texels = read_i32(r);
+    capture.cube.mip_count = read_i32(r);
+    read_bytes(capture.cube.bytes);
+  }
+  for (const reflection_capture_t &capture : lightmap.reflections.captures)
+  {
+    if (capture.cube.bytes_fit_declared_chain())
+      continue;
+    log_error("[map_transfer] the package's reflection capture of {} texel(s) a face, {} "
+              "mip(s) and {} byte(s) does not fit; dropping every capture.",
+              capture.cube.size_in_texels, capture.cube.mip_count, capture.cube.bytes.size());
+    lightmap.reflections = {};
+    break;
   }
 
   // The id the generated-mesh cache compares, recomputed rather than shipped:

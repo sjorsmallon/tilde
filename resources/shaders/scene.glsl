@@ -37,6 +37,10 @@
 // light, shown apart from the shadow map's half.
 #define DEBUG_FLAG_RENDER_PROBE_VISIBILITY  (1 << 7)
 #define DEBUG_FLAG_RENDER_SHADOW_PENUMBRA   (1 << 8)
+// Gate 6 step 5: the parallax-corrected capture fetch alone at the surface's
+// roughness, and the shaded result tinted by which capture won the pick.
+#define DEBUG_FLAG_RENDER_REFLECTION         (1 << 9)
+#define DEBUG_FLAG_RENDER_REFLECTION_CAPTURE (1 << 10)
 
 // `Light` and LIGHT_BAKED_SLOT are light_arrival.glsl's -- the struct sits with
 // the maths that reads it, so the shader tool's preview binds the same LAYOUT

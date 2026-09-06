@@ -212,6 +212,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
       case entities::entity_type::Player_Spectate_Entity:
       case entities::entity_type::Particle_Emitter_Entity:
       case entities::entity_type::Trigger_Volume_Entity:
+      case entities::entity_type::Reflection_Volume_Entity:
       case entities::entity_type::Point_Light_Entity:
       case entities::entity_type::Spot_Light_Entity:
       case entities::entity_type::Directional_Light_Entity:

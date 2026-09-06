@@ -45,7 +45,7 @@ layout(push_constant) uniform Push
   uvec2 analytic_lights;
   ivec4 visibility_slots;
   uint probes;
-  uint pad;
+  uint capture;
 } push;
 
 #include "lightmap_bake.glsl"
@@ -389,13 +389,37 @@ void shade_probe(uint i, gpu_sample_t sample_record)
   results[at + 15u] = visibility.w;
 }
 
+// trace_capture_direction: the record's normal is a cube texel's direction and
+// every chain fires down it; the mean radiance, three floats per record.
+void shade_capture(uint i, gpu_sample_t sample_record)
+{
+  vec3 sum = vec3(0.0);
+  if (push.rays_per_sample > 0)
+  {
+    for (int ray = 0; ray < push.rays_per_sample; ++ray)
+    {
+      const uint bits = hash_mix(sample_record.seed, uint(ray));
+      sum += trace_one_chain(sample_record.position, sample_record.normal,
+                             sample_record.normal, bits);
+    }
+    sum *= 1.0 / (PI * float(push.rays_per_sample));
+  }
+
+  const uint at = i * 3u;
+  results[at + 0u] = sum.x;
+  results[at + 1u] = sum.y;
+  results[at + 2u] = sum.z;
+}
+
 void main()
 {
   const uint i = gl_GlobalInvocationID.x;
   if (i >= push.sample_count) return;
 
   const gpu_sample_t sample_record = samples[i];
-  if (push.probes != 0u)
+  if (push.capture != 0u)
+    shade_capture(i, sample_record);
+  else if (push.probes != 0u)
     shade_probe(i, sample_record);
   else
     shade_texel(i, sample_record);

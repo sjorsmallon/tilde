@@ -7,6 +7,7 @@
 
 #include "scene.glsl"
 #include "direct_light.glsl"
+#include "reflection.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -60,6 +61,13 @@ void main() {
         outColor = vec4(baked, 1.0);
         return;
     }
+    // As mesh_grid.frag: no roughness here, so the captures as a mirror.
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_REFLECTION) != 0)
+    {
+        outColor = reflection_debug_color(fragWorldPosition, N,
+                                          normalize(scene.camera_position.xyz - fragWorldPosition), 0.0);
+        return;
+    }
 
     float weight1 = clamp(fragBlendWeight1, 0.0, 1.0);
     float weight0 = clamp(1.0 - weight1, 0.0, 1.0);
@@ -86,8 +94,10 @@ void main() {
     // LAYER 0's emissive only, weighted by its own coverage -- so where layer 1
     // covers the surface, layer 0 stops glowing. That is also the layer the bake
     // reads (surface_at resolves layer 0), so the two agree.
-    outColor = shadow_cascade_debug(vec4(layers * fragColor * lighting +
-                                             texture(emissiveMap, fragUV).rgb * weight0,
-                                         fragAlpha),
-                                    fragWorldPosition);
+    outColor = reflection_capture_debug(
+        shadow_cascade_debug(vec4(layers * fragColor * lighting +
+                                      texture(emissiveMap, fragUV).rgb * weight0,
+                                  fragAlpha),
+                             fragWorldPosition),
+        fragWorldPosition);
 }

@@ -291,6 +291,16 @@ bool trigger_volume_gizmo(const entities::Entity* e, pass_builder_t& draws,
   return true;
 }
 
+bool reflection_volume_gizmo(const entities::Entity* e, pass_builder_t& draws,
+                             const linalg::vec3& position, color_t color)
+{
+  draw_trigger_volume_shape(
+      draws, position,
+      static_cast<const entities::Reflection_Volume_Entity*>(e)->volume.half_extents,
+      color);
+  return true;
+}
+
 bool point_light_gizmo(const entities::Entity* e, pass_builder_t& draws,
                        const linalg::vec3& position, color_t color)
 {
@@ -387,6 +397,12 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
                                   ->volume.half_extents,
               .color        = colors::red,
               .draw_shape   = &trigger_volume_gizmo};
+
+    case entities::entity_type::Reflection_Volume_Entity:
+      return {.half_extents = static_cast<const entities::Reflection_Volume_Entity*>(e)
+                                  ->volume.half_extents,
+              .color        = colors::cyan,
+              .draw_shape   = &reflection_volume_gizmo};
 
     case entities::entity_type::Physics_Body_Entity:
       return {.half_extents =

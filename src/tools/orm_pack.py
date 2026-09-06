@@ -1,4 +1,4 @@
-# Packs a material folder's ao.png, roughness.png and metallic.png (or
+# Packs a material folder's ao.png (optional), roughness.png and metallic.png (or
 # metal.png) into one orm.png, and deletes the three it consumed.
 #
 #   python src/tools/orm_pack.py resources/textures/harsh_bricks [...]
@@ -23,10 +23,14 @@ import sys
 from PIL import Image, ImageChops
 
 # Each role names the spellings a DCC export is seen to use, first match wins.
+# Occlusion is the one channel with an identity value: a set that ships no
+# ao.png occludes nothing, and that packs as white, the same 1.0 the shader
+# reads when the whole orm.png is absent. Roughness and metallic have no such
+# value -- an absent one is a set that is missing something -- and are refused.
 CHANNEL_SOURCES = [
-    (("ao.png",), "occlusion"),
-    (("roughness.png",), "roughness"),
-    (("metallic.png", "metal.png"), "metallic"),
+    (("ao.png",), "occlusion", 255),
+    (("roughness.png",), "roughness", None),
+    (("metallic.png", "metal.png"), "metallic", None),
 ]
 
 
@@ -64,11 +68,16 @@ def pack_folder(folder):
 
     channels = []
     consumed = []
-    for filenames, role in CHANNEL_SOURCES:
+    defaulted = []
+    for filenames, role, absent_value in CHANNEL_SOURCES:
         path = find_source(folder, filenames)
         if path is None:
-            print("%s: no %s to take %s from" % (folder, " or ".join(filenames), role))
-            return False
+            if absent_value is None:
+                print("%s: no %s to take %s from" % (folder, " or ".join(filenames), role))
+                return False
+            channels.append(absent_value)
+            defaulted.append(role)
+            continue
         try:
             channels.append(load_single_channel(path))
         except ValueError as error:
@@ -76,16 +85,24 @@ def pack_folder(folder):
             return False
         consumed.append(path)
 
-    sizes = {channel.size for channel in channels}
+    loaded = [channel for channel in channels if not isinstance(channel, int)]
+    sizes = {channel.size for channel in loaded}
     if len(sizes) != 1:
-        print("%s: the three maps differ in size (%s)" % (folder, sorted(sizes)))
+        print("%s: the maps differ in size (%s)" % (folder, sorted(sizes)))
         return False
+    size = loaded[0].size
+    channels = [
+        Image.new("L", size, channel) if isinstance(channel, int) else channel
+        for channel in channels
+    ]
 
     Image.merge("RGB", channels).save(output_path, optimize=True)
     for path in consumed:
         os.remove(path)
 
-    print("%s: wrote orm.png %s, removed the three it packed" % (folder, channels[0].size))
+    note = ", %s defaulted to white" % ", ".join(defaulted) if defaulted else ""
+    print("%s: wrote orm.png %s, removed the %d it packed%s"
+          % (folder, size, len(consumed), note))
     return True
 
 

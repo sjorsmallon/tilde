@@ -89,6 +89,13 @@ struct gpu_probe_results_t
 {
   std::vector<probe_trace_t> values;
 };
+
+// Gate 6: the CAPTURE term's answer per record, the radiance along the
+// record's normal from its position -- trace_capture_direction.
+struct gpu_capture_results_t
+{
+  std::vector<linalg::vec3> values;
+};
 static_assert(sizeof(probe_trace_t) == 16 * sizeof(float) &&
                   offsetof(probe_trace_t, visibility) == 12 * sizeof(float),
               "probe_trace_t is the sixteen floats the indirect kernel writes per probe "
@@ -285,6 +292,7 @@ struct batch_solve_statistics_t
   size_t direct_dispatches = 0;
   size_t indirect_dispatches = 0;
   size_t probe_dispatches = 0;
+  size_t capture_dispatches = 0;
 };
 
 struct lightmap_batch_solver_t
@@ -321,6 +329,11 @@ struct lightmap_batch_solver_t
                             const probe_visibility_slots_t &visibility_slots,
                             gpu_probe_results_t &out) = 0;
 
+  // Gate 6: capture records, `normal` the cube texel's direction. One radiance
+  // per record, in record order.
+  virtual void solve_captures(Span<const gpu_sample_t> samples,
+                              gpu_capture_results_t &out) = 0;
+
   [[nodiscard]] virtual batch_solve_statistics_t statistics() const = 0;
 };
 
@@ -348,6 +361,7 @@ struct cpu_batch_solver_t final : lightmap_batch_solver_t
   void solve_probes(Span<const gpu_sample_t> samples,
                     const probe_visibility_slots_t &visibility_slots,
                     gpu_probe_results_t &out) override;
+  void solve_captures(Span<const gpu_sample_t> samples, gpu_capture_results_t &out) override;
   [[nodiscard]] batch_solve_statistics_t statistics() const override { return accumulated; }
 
 private:
@@ -541,6 +555,12 @@ compare_probe_results(Span<const gpu_sample_t> samples, Span<const size_t> group
 // "L0.r" .. "L1z.b", then "visibility[0]" .. "visibility[3]"; fatal past the
 // count.
 [[nodiscard]] const char *probe_coefficient_name(size_t coefficient);
+
+// Gate 6: three coefficients, the radiance rgb, one scale group. `groups` is
+// what each record's chart_index names -- the tool re-keys records by capture.
+[[nodiscard]] record_comparison_report_t
+compare_capture_results(Span<const gpu_sample_t> samples, Span<const size_t> groups,
+                        Span<const linalg::vec3> reference, Span<const linalg::vec3> candidate);
 
 inline constexpr size_t DIRECT_COEFFICIENT_NAME_CAPACITY = 32;
 

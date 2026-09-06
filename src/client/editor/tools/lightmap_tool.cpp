@@ -3,6 +3,7 @@
 #include "../../../shared/lightmap_debug_image.hpp"
 #include "../../../shared/lightmap_gpu.hpp"
 #include "../../../shared/lightmap_lights.hpp"
+#include "../../../shared/lightmap_reflections.hpp"
 #include "../../../shared/lightmap_solve.hpp"
 #include "../../../shared/lightmap_trace.hpp"
 #include "../../../shared/log.hpp"
@@ -455,6 +456,104 @@ void Lightmap_Tool::compare_gpu_probes(editor_context_t& ctx)
   }
 }
 
+void Lightmap_Tool::compare_gpu_captures(editor_context_t& ctx)
+{
+  capture_comparison.reset();
+  if (!renderer::ray_query_is_available()) return;
+
+  const std::optional<shared::probe_grid_t> grid =
+      shared::try_build_probe_grid(*ctx.map, settings.probe_spacing_in_world_units);
+  if (!grid)
+  {
+    log_error("[lightmap-gpu] no probe grid at spacing {}; nothing to compare.",
+              settings.probe_spacing_in_world_units);
+    return;
+  }
+
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
+  const shared::batch_solver_scene_t scene{&gpu_scene, &bvh, &traced,
+                                           Span<const shared::baked_light_t>(lights),
+                                           shared::gpu_bake_settings_from(solve_settings)};
+  const std::vector<uint8_t> inside = shared::classify_probes_inside_solid(*grid, bvh);
+  const shared::reflection_capture_settings_t capture_settings{
+      settings.reflection_spacing_in_world_units, solve_settings.directional_shadow_distance};
+  const shared::reflection_capture_set_t set =
+      shared::build_reflection_captures(*ctx.map, *grid, inside, bvh, capture_settings);
+  if (set.empty())
+  {
+    log_error("[lightmap-gpu] no reflection captures at spacing {}; nothing to compare.",
+              settings.reflection_spacing_in_world_units);
+    return;
+  }
+  const std::vector<shared::gpu_sample_t> samples =
+      shared::collect_capture_samples(set, settings.reflection_size_in_texels);
+  capture_compare_capture_count = set.captures.size();
+  capture_compare_record_count = samples.size();
+  capture_compare_light_count = lights.size();
+
+  using clock = std::chrono::steady_clock;
+  const auto milliseconds_since = [](clock::time_point started) {
+    return std::chrono::duration<double, std::milli>(clock::now() - started).count();
+  };
+
+  vulkan_batch_solver_t gpu;
+  gpu.upload_scene(scene);
+  if (!gpu.has_scene()) return;
+
+  shared::gpu_capture_results_t from_gpu;
+  const clock::time_point gpu_started = clock::now();
+  gpu.solve_captures(samples, from_gpu);
+  capture_compare_gpu_milliseconds = milliseconds_since(gpu_started);
+
+  shared::cpu_batch_solver_t cpu;
+  cpu.upload_scene(scene);
+  shared::gpu_capture_results_t from_cpu;
+  const clock::time_point cpu_started = clock::now();
+  cpu.solve_captures(samples, from_cpu);
+  capture_compare_cpu_milliseconds = milliseconds_since(cpu_started);
+
+  std::vector<shared::gpu_sample_t> by_capture = samples;
+  for (shared::gpu_sample_t& sample : by_capture)
+    sample.chart_index = (uint32_t)shared::capture_index_of_record(
+        sample.chart_index, settings.reflection_size_in_texels);
+  std::vector<size_t> groups(set.captures.size());
+  for (size_t i = 0; i < groups.size(); ++i) groups[i] = i;
+
+  capture_comparison = shared::compare_capture_results(by_capture, groups, from_cpu.values,
+                                                       from_gpu.values);
+  const shared::record_comparison_report_t& report = *capture_comparison;
+
+  log_terminal("[lightmap-gpu] captures: {} capture(s) at {}x{} a face, {} record(s), {} "
+               "light(s), {} chain(s) each; CPU {:.1f} ms, GPU {:.1f} ms. Reference mean "
+               "{:.5f}, mean |d| {:.6f} ({:.3f}%); {} record(s) differ in any coefficient; {} "
+               "capture(s) beyond {} sigma.",
+               set.captures.size(), settings.reflection_size_in_texels,
+               settings.reflection_size_in_texels, samples.size(), lights.size(),
+               solve_settings.indirect_rays_per_sample, capture_compare_cpu_milliseconds,
+               capture_compare_gpu_milliseconds, report.reference_mean_over(0, 3),
+               report.mean_absolute_difference_over(0, 3),
+               report.reference_mean_over(0, 3) > 0.f
+                   ? 100.0 * (double)report.mean_absolute_difference_over(0, 3) /
+                         (double)report.reference_mean_over(0, 3)
+                   : 0.0,
+               report.differing_records, report.charts_beyond_tolerance,
+               shared::RECORD_COMPARISON_SIGMA);
+  for (size_t i = 0; i < std::min<size_t>(report.charts.size(), 8); ++i)
+  {
+    const shared::record_chart_comparison_t& capture = report.charts[i];
+    const size_t k = (size_t)std::max(capture.largest_sigma_coefficient, 0);
+    log_terminal("[lightmap-gpu]   capture {} at ({:.0f}, {:.0f}, {:.0f}) ({} rec): channel {} "
+                 "CPU {:.6f} GPU {:.6f} +- {:.6f}, {:.1f} sigma",
+                 capture.chart, set.captures[capture.chart].position.x,
+                 set.captures[capture.chart].position.y, set.captures[capture.chart].position.z,
+                 capture.record_count, k, capture.reference_mean[k], capture.candidate_mean[k],
+                 capture.difference_standard_error[k], capture.largest_sigma);
+  }
+}
+
 void Lightmap_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws)
 {
   if (!show_probe_preview) return;
@@ -873,6 +972,48 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
     }
   }
 
+  // Gate 6 step 2: both solvers' capture term over the lattice the panel's
+  // spacings imply.
+  ImGui::BeginDisabled(!renderer::ray_query_is_available() || ctx.map->geometry.empty());
+  if (ImGui::Button("Compare GPU captures against the CPU trace", {-1, 0}))
+    compare_gpu_captures(ctx);
+  ImGui::EndDisabled();
+
+  if (capture_comparison)
+  {
+    const shared::record_comparison_report_t& report = *capture_comparison;
+    if (report.agrees())
+      ImGui::TextColored({0.4f, 1.f, 0.4f, 1.f},
+                         "GPU and CPU agree within %.0f sigma on all %zu captures",
+                         shared::RECORD_COMPARISON_SIGMA, report.charts.size());
+    else
+      ImGui::TextColored({1.f, 0.4f, 0.4f, 1.f}, "%zu of %zu capture(s) beyond %.0f sigma",
+                         report.charts_beyond_tolerance, report.charts.size(),
+                         shared::RECORD_COMPARISON_SIGMA);
+    ImGui::Text("%zu captures, %zu texel records, %zu lights, %d chains each; CPU %.1f ms, "
+                "GPU %.1f ms",
+                capture_compare_capture_count, capture_compare_record_count,
+                capture_compare_light_count, solve_settings.indirect_rays_per_sample,
+                capture_compare_cpu_milliseconds, capture_compare_gpu_milliseconds);
+    ImGui::Text("reference mean %.5f; mean |d| %.6f (%.3f%%)", report.reference_mean_over(0, 3),
+                report.mean_absolute_difference_over(0, 3),
+                report.reference_mean_over(0, 3) > 0.f
+                    ? 100.0 * (double)report.mean_absolute_difference_over(0, 3) /
+                          (double)report.reference_mean_over(0, 3)
+                    : 0.0);
+    ImGui::Text("%zu records with a non-zero answer; %zu differ in any coefficient",
+                report.reference_nonzero_records, report.differing_records);
+    for (size_t i = 0; i < std::min<size_t>(report.charts.size(), 5); ++i)
+    {
+      const shared::record_chart_comparison_t& capture = report.charts[i];
+      const size_t k = (size_t)std::max(capture.largest_sigma_coefficient, 0);
+      ImGui::Text("  capture %zu (%zu rec): channel %zu CPU %.5f GPU %.5f +- %.5f, %.1f sigma",
+                  capture.chart, capture.record_count, k, capture.reference_mean[k],
+                  capture.candidate_mean[k], capture.difference_standard_error[k],
+                  capture.largest_sigma);
+    }
+  }
+
   ImGui::Separator();
   ImGui::Text("Irradiance probes");
 
@@ -880,6 +1021,20 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
       ImGui::SliderFloat("Probe spacing", &settings.probe_spacing_in_world_units, 16.f,
                          512.f, "%.0f", ImGuiSliderFlags_Logarithmic);
   ImGui::Checkbox("Bake probes", &solve_settings.bake_probes);
+
+  ImGui::Separator();
+  ImGui::Text("Reflection captures");
+  ImGui::SliderFloat("Capture spacing", &settings.reflection_spacing_in_world_units, 64.f,
+                     2048.f, "%.0f", ImGuiSliderFlags_Logarithmic);
+  ImGui::SliderInt("Capture face size", &settings.reflection_size_in_texels, 8, 128);
+  ImGui::Checkbox("Bake reflection captures", &solve_settings.bake_reflection_captures);
+  if (solve_settings.bake_reflection_captures && !solve_settings.trace_indirect_light)
+    ImGui::TextColored({1.f, 0.55f, 0.2f, 1.f},
+                       "Captures are traced: turn on \"Trace indirect light\" or none are baked.");
+  if (baked.reflections.baked())
+    ImGui::Text("Last bake: %zu capture(s) at %dx%d a face", baked.reflections.captures.size(),
+                baked.reflections.captures.front().cube.size_in_texels,
+                baked.reflections.captures.front().cube.size_in_texels);
   const bool preview_toggled_on =
       ImGui::Checkbox("Show probe preview", &show_probe_preview) && show_probe_preview;
   ImGui::SameLine();

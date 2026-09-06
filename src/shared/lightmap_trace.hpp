@@ -173,4 +173,14 @@ struct probe_trace_t
                                              const indirect_trace_settings_t &settings,
                                              uint32_t hash);
 
+// Gate 6: the RADIANCE arriving at `position` along `direction` -- the mean
+// over rays_per_sample chains fired down that one fixed first leg, the chain's
+// PI divided back out. Zero chains is black.
+[[nodiscard]] linalg::vec3 trace_capture_direction(const traced_scene_t &scene,
+                                                   Span<const baked_light_t> lights,
+                                                   const linalg::vec3 &position,
+                                                   const linalg::vec3 &direction,
+                                                   const indirect_trace_settings_t &settings,
+                                                   uint32_t hash);
+
 } // namespace shared

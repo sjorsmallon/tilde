@@ -57,9 +57,11 @@ enum class Debug_Channel : uint8_t
   baked_light = 7,
   probe_visibility = 8,
   shadow_penumbra = 9,
+  reflection = 10,
+  reflection_capture = 11,
 };
 
-constexpr uint32_t Debug_Channel_COUNT = 10;
+constexpr uint32_t Debug_Channel_COUNT = 12;
 
 const char* to_string(Debug_Channel value);
 template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::string_view text);

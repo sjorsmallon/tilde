@@ -393,6 +393,8 @@ add_library(game_shared STATIC
     src/shared/lightmap_debug_image.cpp
     src/shared/lightmap_lights.cpp
     src/shared/lightmap_probes.cpp
+    src/shared/lightmap_reflections.cpp
+    src/shared/environment_brdf.cpp
     src/shared/lightmap_trace.cpp
     src/shared/lightmap_gpu.hpp
     src/shared/lightmap_gpu.cpp
@@ -564,6 +566,7 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/lightmap.glsl ${SHADER_SRC_DIR}/light_falloff.glsl
                     ${SHADER_SRC_DIR}/light_arrival.glsl ${SHADER_SRC_DIR}/probes.glsl
                     ${SHADER_SRC_DIR}/direct_light.glsl
+                    ${SHADER_SRC_DIR}/reflection.glsl
                     ${SHADER_SRC_DIR}/lightmap_bake.glsl)
 
 set(SHADER_HEADERS "")

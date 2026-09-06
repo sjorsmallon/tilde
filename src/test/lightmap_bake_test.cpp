@@ -3,6 +3,8 @@
 #include "../shared/lightmap_gpu.hpp"
 #include "../shared/lightmap_lights.hpp"
 #include "../shared/lightmap_probes.hpp"
+#include "../shared/lightmap_reflections.hpp"
+#include "../shared/environment_brdf.hpp"
 #include "../shared/lightmap_sidecar.hpp"
 #include "../shared/lightmap_solve.hpp"
 #include "../shared/lightmap_trace.hpp"
@@ -2316,6 +2318,536 @@ void a_grid_too_long_for_a_3d_texture_is_refused()
 }
 
 
+// --- Gate 6: reflection capture placement ------------------------------------
+
+// A closed room, interior [-256, 256] x [0, 256] x [-256, 256], walls 32 thick.
+// The 64-unit probe grid snaps its origin to -384 / -128 / -384, so a 128-unit
+// capture lattice lands at x, z in {-128, 0, 128} and y = 128: nine captures.
+shared::map_t map_with_a_closed_room()
+{
+  shared::map_t map;
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, -16, 0}, {288, 16, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 272, 0}, {288, 16, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({-272, 128, 0}, {16, 128, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({272, 128, 0}, {16, 128, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 128, -272}, {288, 128, 16})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 128, 272}, {288, 128, 16})});
+  return map;
+}
+
+shared::reflection_capture_set_t build_captures_for(const shared::map_t &map,
+                                                    float reflection_spacing,
+                                                    float open_face_extent = 4096.f)
+{
+  const std::optional<shared::probe_grid_t> grid = shared::try_build_probe_grid(map, 64.f);
+  assert(grid.has_value());
+  const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(map);
+  const std::vector<uint8_t> inside = shared::classify_probes_inside_solid(*grid, occluders);
+
+  shared::reflection_capture_settings_t settings;
+  settings.spacing_in_world_units = reflection_spacing;
+  settings.open_face_extent = open_face_extent;
+  return shared::build_reflection_captures(map, *grid, inside, occluders, settings);
+}
+
+const shared::reflection_capture_t *find_capture_at(const shared::reflection_capture_set_t &set,
+                                                    const linalg::vec3 &position)
+{
+  for (const shared::reflection_capture_t &capture : set.captures)
+    if (linalg::length(capture.position - position) < 1e-3f) return &capture;
+  return nullptr;
+}
+
+bool near(float a, float b) { return std::abs(a - b) < 1e-3f; }
+
+void a_capture_in_a_rectangular_room_measures_the_room()
+{
+  const shared::map_t map = map_with_a_closed_room();
+  const shared::reflection_capture_set_t set = build_captures_for(map, 128.f);
+
+  assert(near(set.spacing, 128.f));
+  assert(set.captures.size() == 9);
+
+  const shared::reflection_capture_t *capture = find_capture_at(set, {0, 128, 0});
+  assert(capture != nullptr);
+  assert(capture->open_faces == 0);
+  assert(!capture->box_overridden);
+  assert(near(capture->box.min.x, -256.f) && near(capture->box.max.x, 256.f));
+  assert(near(capture->box.min.y, 0.f) && near(capture->box.max.y, 256.f));
+  assert(near(capture->box.min.z, -256.f) && near(capture->box.max.z, 256.f));
+
+  for (const shared::reflection_capture_t &other : set.captures)
+  {
+    assert(other.open_faces == 0);
+    assert(!other.box_overridden);
+    assert(near(other.box.min.x, -256.f) && near(other.box.max.x, 256.f));
+    assert(near(other.box.min.y, 0.f) && near(other.box.max.y, 256.f));
+    assert(near(other.box.min.z, -256.f) && near(other.box.max.z, 256.f));
+    assert(near(other.position.y, 128.f));
+    assert(std::abs(other.position.x) <= 128.f && std::abs(other.position.z) <= 128.f);
+  }
+}
+
+void a_capture_lattice_snaps_to_the_probe_spacing()
+{
+  const shared::map_t map = map_with_a_closed_room();
+  const shared::reflection_capture_set_t set = build_captures_for(map, 100.f);
+  assert(near(set.spacing, 128.f));
+  assert(set.captures.size() == 9);
+
+  const shared::reflection_capture_set_t fine = build_captures_for(map, 10.f);
+  assert(near(fine.spacing, 64.f));
+  assert(fine.captures.size() == 7 * 3 * 7);
+  assert(find_capture_at(fine, {-192, 64, 192}) != nullptr);
+  assert(find_capture_at(fine, {-256, 64, 192}) == nullptr);
+}
+
+void a_capture_inside_a_solid_is_absent_and_a_pillar_bounds_its_neighbour()
+{
+  shared::map_t map = map_with_a_closed_room();
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 128, 0}, {16, 16, 16})});
+
+  const shared::reflection_capture_set_t set = build_captures_for(map, 128.f);
+  assert(set.captures.size() == 8);
+  assert(find_capture_at(set, {0, 128, 0}) == nullptr);
+
+  const shared::reflection_capture_t *beside = find_capture_at(set, {128, 128, 0});
+  assert(beside != nullptr);
+  assert(near(beside->box.min.x, 16.f));
+  assert(near(beside->box.max.x, 256.f));
+  assert(near(beside->box.min.y, 0.f));
+  assert(near(beside->box.min.z, -256.f));
+
+  const shared::reflection_capture_t *behind = find_capture_at(set, {0, 128, 128});
+  assert(behind != nullptr);
+  assert(near(behind->box.min.z, 16.f));
+  assert(near(behind->box.min.x, -256.f));
+
+  const shared::reflection_capture_t *diagonal = find_capture_at(set, {128, 128, 128});
+  assert(diagonal != nullptr);
+  assert(near(diagonal->box.min.x, -256.f) && near(diagonal->box.min.z, -256.f));
+}
+
+void a_capture_facing_nothing_is_open_on_that_face()
+{
+  shared::map_t map;
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, -16, 0}, {288, 16, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 128, 64}, {8, 136, 8})});
+
+  const shared::reflection_capture_set_t set = build_captures_for(map, 128.f, 4096.f);
+  const shared::reflection_capture_t *capture = find_capture_at(set, {0, 128, 0});
+  assert(capture != nullptr);
+
+  assert(!capture->face_is_open(shared::reflection_box_face_t::Negative_Y));
+  assert(!capture->face_is_open(shared::reflection_box_face_t::Positive_Z));
+  assert(capture->face_is_open(shared::reflection_box_face_t::Positive_Y));
+  assert(capture->face_is_open(shared::reflection_box_face_t::Negative_X));
+  assert(capture->face_is_open(shared::reflection_box_face_t::Positive_X));
+  assert(capture->face_is_open(shared::reflection_box_face_t::Negative_Z));
+
+  assert(near(capture->box.min.y, 0.f));
+  assert(near(capture->box.max.z, 56.f));
+  assert(near(capture->box.max.y, 128.f + 4096.f));
+  assert(near(capture->box.min.x, -4096.f));
+  assert(near(capture->box.max.x, 4096.f));
+  assert(near(capture->box.min.z, -4096.f));
+
+  const shared::reflection_capture_t *other_side = find_capture_at(set, {0, 128, 128});
+  assert(other_side != nullptr);
+  assert(!other_side->face_is_open(shared::reflection_box_face_t::Negative_Z));
+  assert(other_side->face_is_open(shared::reflection_box_face_t::Positive_Z));
+  assert(near(other_side->box.min.z, 72.f));
+
+  const shared::reflection_capture_t *clear = find_capture_at(set, {128, 128, 0});
+  assert(clear != nullptr);
+  assert(clear->face_is_open(shared::reflection_box_face_t::Positive_Z));
+  assert(!clear->face_is_open(shared::reflection_box_face_t::Negative_Y));
+}
+
+void a_reflection_volume_overrides_the_measured_box()
+{
+  shared::map_t map = map_with_a_closed_room();
+  std::shared_ptr<entities::Reflection_Volume_Entity> volume =
+      std::make_shared<entities::Reflection_Volume_Entity>();
+  volume->position = {0, 128, 0};
+  volume->volume.half_extents = {100, 100, 100};
+  map.entities.push_back({map.next_uid++, volume});
+
+  const shared::reflection_capture_set_t set = build_captures_for(map, 128.f);
+  assert(set.captures.size() == 9);
+
+  const shared::reflection_capture_t *covered = find_capture_at(set, {0, 128, 0});
+  assert(covered != nullptr);
+  assert(covered->box_overridden);
+  assert(covered->open_faces == 0);
+  assert(near(covered->box.min.x, -100.f) && near(covered->box.max.x, 100.f));
+  assert(near(covered->box.min.y, 28.f) && near(covered->box.max.y, 228.f));
+  assert(near(covered->box.min.z, -100.f) && near(covered->box.max.z, 100.f));
+
+  size_t overridden = 0;
+  for (const shared::reflection_capture_t &capture : set.captures) overridden += capture.box_overridden;
+  assert(overridden == 1);
+
+  const shared::reflection_capture_t *outside = find_capture_at(set, {128, 128, 0});
+  assert(outside != nullptr);
+  assert(!outside->box_overridden);
+  assert(near(outside->box.min.x, -256.f));
+}
+
+void the_capture_pick_is_the_nearest_four_weighted_by_distance()
+{
+  const shared::map_t map = map_with_a_closed_room();
+  const shared::reflection_capture_set_t set = build_captures_for(map, 128.f);
+
+  const shared::reflection_capture_pick_t on_top = shared::find_captures_for(set, {0, 128, 0});
+  assert(on_top.count == shared::REFLECTION_BLEND_COUNT);
+  assert(near(set.captures[on_top.indices[0]].position.x, 0.f));
+  assert(near(set.captures[on_top.indices[0]].position.y, 128.f));
+  assert(near(set.captures[on_top.indices[0]].position.z, 0.f));
+  float total = 0.f;
+  for (uint32_t slot = 0; slot < on_top.count; ++slot) total += on_top.weights[slot];
+  assert(near(total, 1.f));
+  assert(on_top.weights[0] > 0.9f);
+  for (uint32_t slot = 1; slot < on_top.count; ++slot)
+  {
+    assert(near(linalg::length(set.captures[on_top.indices[slot]].position -
+                               linalg::vec3{0, 128, 0}),
+                128.f));
+    assert(on_top.weights[slot] < 0.05f);
+  }
+
+  const shared::reflection_capture_pick_t between = shared::find_captures_for(set, {64, 128, 0});
+  assert(between.count == shared::REFLECTION_BLEND_COUNT);
+  assert(near(between.weights[0], between.weights[1]));
+  {
+    const float x0 = set.captures[between.indices[0]].position.x;
+    const float x1 = set.captures[between.indices[1]].position.x;
+    assert((near(x0, 0.f) && near(x1, 128.f)) || (near(x0, 128.f) && near(x1, 0.f)));
+  }
+
+  shared::reflection_capture_set_t two;
+  two.captures.push_back({.position = {0, 0, 0}});
+  two.captures.push_back({.position = {300, 0, 0}});
+  const shared::reflection_capture_pick_t pair = shared::find_captures_for(two, {100, 0, 0});
+  assert(pair.count == 2);
+  assert(pair.indices[0] == 0 && pair.indices[1] == 1);
+  assert(pair.weights[0] > pair.weights[1]);
+  assert(near(pair.weights[0] + pair.weights[1], 1.f));
+
+  const shared::reflection_capture_set_t none;
+  assert(shared::find_captures_for(none, {0, 0, 0}).count == 0);
+}
+
+
+// --- Gate 6: what a capture stores -------------------------------------------
+
+void a_cube_texel_direction_points_into_its_face()
+{
+  const int size = 8;
+  const linalg::vec3 axes[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
+                                {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  for (int face = 0; face < shared::REFLECTION_CUBE_FACE_COUNT; ++face)
+  {
+    for (int y = 0; y < size; ++y)
+    for (int x = 0; x < size; ++x)
+    {
+      const linalg::vec3 direction = shared::reflection_cube_direction(face, x, y, size);
+      assert(near(linalg::length(direction), 1.f));
+      const float along = linalg::dot(direction, axes[face]);
+      assert(along > 0.57f);
+      assert(along >= std::abs(direction.x) - 1e-5f && along >= std::abs(direction.y) - 1e-5f &&
+             along >= std::abs(direction.z) - 1e-5f);
+    }
+  }
+
+  const linalg::vec3 corner = shared::reflection_cube_direction(0, 0, 0, 1);
+  assert(near(corner.x, 1.f) && near(corner.y, 0.f) && near(corner.z, 0.f));
+}
+
+// The ceiling's underside glows; nothing else in the room emits or is lit. The
+// texel looking up reads the glow itself, since the first hit's emission enters
+// a chain with a PI the projection divides back out; the texel looking down
+// reads only what the grey floor bounces back of it.
+void a_capture_sees_an_emissive_ceiling_directly_and_the_floor_reflects_it()
+{
+  shared::map_t map = map_with_a_floor_and_a_ceiling_and_no_light();
+  shared::brush_geometry_t& ceiling =
+      std::get<shared::brush_geometry_t>(map.geometry[1].value);
+  shared::face_surface_for(ceiling, Plane{{0, 64, 0}, {0, -1, 0}}).material = 1;
+
+  const assets::texture_asset_t albedo = one_texel(255, 255, 255);
+  const assets::texture_asset_t emissive = one_texel(255, 128, 0);
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
+  scene.materials = {{nullptr, nullptr}, {&albedo, &emissive}};
+
+  shared::reflection_capture_set_t set;
+  set.captures.push_back({.position = {0, 32, 0}});
+
+  shared::indirect_trace_settings_t settings;
+  settings.rays_per_sample = 64;
+  const int size = 8;
+  shared::bake_reflection_captures(set, scene, {}, settings, size);
+
+  const shared::reflection_cube_t& cube = set.captures.front().cube;
+  assert(!cube.empty());
+  assert(cube.size_in_texels == size);
+
+  const linalg::vec3 glow{shared::srgb_byte_to_linear(255), shared::srgb_byte_to_linear(128),
+                          0.f};
+  const linalg::vec3 up = cube.load(2, size / 2, size / 2);
+  const linalg::vec3 down = cube.load(3, size / 2, size / 2);
+
+  assert(up.x >= glow.x * 0.99f);
+  assert(up.x < glow.x * 2.f);
+  assert(std::abs(up.x / up.y - glow.x / glow.y) < 2e-2f);
+  assert(up.z == 0.f);
+
+  assert(down.x > 0.f);
+  assert(down.x < up.x);
+  assert(std::abs(down.x / down.y - glow.x / glow.y) < 2e-2f);
+  assert(down.z == 0.f);
+
+  const linalg::vec3 sideways = cube.load(0, size / 2, size / 2);
+  assert(sideways.x == 0.f && sideways.y == 0.f && sideways.z == 0.f);
+}
+
+void a_batched_capture_bake_is_the_reference_bake_bit_for_bit()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+
+  const auto bake = [&](const shared::lightmap_solve_settings_t& solve,
+                        shared::lightmap_batch_solver_t* solver) {
+    shared::lightmap_t lightmap = pack_for(map);
+    lightmap.settings.probe_spacing_in_world_units = 16.f;
+    lightmap.settings.reflection_spacing_in_world_units = 32.f;
+    lightmap.settings.reflection_size_in_texels = 4;
+    shared::bake_lightmap(map, lightmap, solve, solver);
+    return lightmap;
+  };
+
+  shared::lightmap_solve_settings_t traced = traced_solve_settings();
+  traced.bake_reflection_captures = true;
+
+  const shared::lightmap_t reference = bake(traced, nullptr);
+  assert(reference.reflections.captures.size() == 16);
+  assert(reference.reflections.baked());
+  assert(near(reference.reflections.spacing, 32.f));
+
+  shared::cpu_batch_solver_t solver;
+  const shared::lightmap_t batched = bake(traced, &solver);
+  assert(batched.reflections.captures.size() == reference.reflections.captures.size());
+  for (size_t i = 0; i < reference.reflections.captures.size(); ++i)
+  {
+    const shared::reflection_capture_t& a = reference.reflections.captures[i];
+    const shared::reflection_capture_t& b = batched.reflections.captures[i];
+    assert(near(a.position.x, b.position.x) && near(a.position.y, b.position.y) &&
+           near(a.position.z, b.position.z));
+    assert(a.cube.size_in_texels == 4 && b.cube.size_in_texels == 4);
+    assert(a.cube.bytes == b.cube.bytes);
+  }
+  assert(solver.statistics().capture_dispatches == 1);
+  assert(solver.statistics().shade.chains > 0);
+
+  bool any_lit = false;
+  for (const shared::reflection_capture_t& capture : reference.reflections.captures)
+    for (size_t texel = 0; texel < capture.cube.texel_count(); ++texel)
+      any_lit |= capture.cube.load(texel).x > 0.f;
+  assert(any_lit);
+
+  shared::lightmap_solve_settings_t untraced = traced;
+  untraced.trace_indirect_light = false;
+  assert(bake(untraced, nullptr).reflections.empty());
+
+  shared::lightmap_solve_settings_t off = traced;
+  off.bake_reflection_captures = false;
+  assert(bake(off, nullptr).reflections.empty());
+}
+
+// Step 4: the capture set and every cube's mip chain ride the sidecar, with the
+// two settings that produced them; a capture whose bytes do not fit its
+// declared chain drops the whole set rather than being indexed.
+void a_sidecar_round_trips_the_reflection_captures()
+{
+  const shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  shared::lightmap_t baked = pack_for(map);
+  baked.settings.probe_spacing_in_world_units = 16.f;
+  baked.settings.reflection_spacing_in_world_units = 32.f;
+  baked.settings.reflection_size_in_texels = 4;
+  shared::lightmap_solve_settings_t traced = traced_solve_settings();
+  traced.bake_reflection_captures = true;
+  shared::bake_lightmap(map, baked, traced, nullptr);
+  assert(baked.reflections.baked());
+  assert(baked.reflections.captures.size() == 16);
+
+  const std::filesystem::path directory =
+      std::filesystem::temp_directory_path() / "tilde_lightmap_test";
+  std::filesystem::create_directories(directory);
+  const std::string map_path = (directory / "round_trip_reflections.source").generic_string();
+
+  const uint32_t hash = shared::compute_map_content_hash(map);
+  shared::save_lightmap_sidecar(map_path, baked, hash);
+  const shared::lightmap_t loaded = shared::load_lightmap_sidecar(map_path, hash);
+
+  assert(loaded.settings.reflection_spacing_in_world_units == 32.f);
+  assert(loaded.settings.reflection_size_in_texels == 4);
+  assert(loaded.reflections.spacing == baked.reflections.spacing);
+  assert(loaded.reflections.captures.size() == baked.reflections.captures.size());
+  for (size_t i = 0; i < baked.reflections.captures.size(); ++i)
+  {
+    const shared::reflection_capture_t& before = baked.reflections.captures[i];
+    const shared::reflection_capture_t& after = loaded.reflections.captures[i];
+    assert(before.position.x == after.position.x && before.position.y == after.position.y &&
+           before.position.z == after.position.z);
+    assert(before.box.min.x == after.box.min.x && before.box.min.y == after.box.min.y &&
+           before.box.min.z == after.box.min.z);
+    assert(before.box.max.x == after.box.max.x && before.box.max.y == after.box.max.y &&
+           before.box.max.z == after.box.max.z);
+    assert(before.probe_index == after.probe_index);
+    assert(before.open_faces == after.open_faces);
+    assert(before.box_overridden == after.box_overridden);
+    assert(after.cube.size_in_texels == 4);
+    assert(after.cube.mip_count == shared::reflection_cube_t::mip_count_for(4));
+    assert(after.cube.bytes == before.cube.bytes);
+  }
+
+  // A chain that lies about its size is the file disagreeing with itself.
+  shared::lightmap_t corrupt = baked;
+  corrupt.reflections.captures[3].cube.size_in_texels = 8;
+  shared::save_lightmap_sidecar(map_path, corrupt, hash);
+  const shared::lightmap_t refused = shared::load_lightmap_sidecar(map_path, hash);
+  assert(!refused.charts.empty());
+  assert(refused.reflections.empty());
+
+  // A bake with no captures round-trips as none, not as a set of zero cubes.
+  shared::lightmap_t bare = baked;
+  bare.reflections = {};
+  shared::save_lightmap_sidecar(map_path, bare, hash);
+  assert(shared::load_lightmap_sidecar(map_path, hash).reflections.empty());
+}
+
+void identical_capture_answers_agree()
+{
+  std::vector<shared::gpu_sample_t> samples(12);
+  std::vector<linalg::vec3> answers(12);
+  for (size_t i = 0; i < samples.size(); ++i)
+  {
+    samples[i].chart_index = (uint32_t)(i / 6);
+    answers[i] = {(float)i * 0.1f, 0.5f, (float)(i % 3)};
+  }
+  const size_t groups[2] = {0, 1};
+  const shared::record_comparison_report_t same =
+      shared::compare_capture_results(samples, Span<const size_t>(groups), answers, answers);
+  assert(same.agrees());
+  assert(same.differing_records == 0);
+  assert(same.charts.size() == 2);
+
+  std::vector<linalg::vec3> biased = answers;
+  for (linalg::vec3& value : biased) value.x += 10.f;
+  const shared::record_comparison_report_t off =
+      shared::compare_capture_results(samples, Span<const size_t>(groups), answers, biased);
+  assert(off.differing_records == 12);
+}
+
+
+// --- Gate 6 step 3: the prefilter and the BRDF table -------------------------
+
+void a_cube_texel_direction_round_trips_to_its_texel()
+{
+  for (const int size : {1, 2, 8, 64})
+    for (int face = 0; face < shared::REFLECTION_CUBE_FACE_COUNT; ++face)
+      for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x)
+        {
+          const linalg::vec3 direction = shared::reflection_cube_direction(face, x, y, size);
+          const shared::reflection_cube_texel_t texel =
+              shared::reflection_cube_texel_of(direction, size);
+          assert(texel.face == face && texel.x == x && texel.y == y);
+        }
+
+  const shared::reflection_cube_texel_t coarse =
+      shared::reflection_cube_texel_of(shared::reflection_cube_direction(2, 5, 6, 8), 4);
+  assert(coarse.face == 2 && coarse.x == 2 && coarse.y == 3);
+}
+
+void a_prefiltered_cube_keeps_mip_zero_and_averages_a_uniform_cube()
+{
+  shared::reflection_cube_t cube;
+  cube.allocate(8);
+  assert(cube.mip_count == 4);
+  assert(cube.texels_in_mip(0) == 6 * 64 && cube.texels_in_mip(3) == 6);
+  assert(cube.texel_count() == 6 * (64 + 16 + 4 + 1));
+  assert(cube.texel_index_of(1, 0, 0, 0) == 6 * 64);
+
+  const linalg::vec3 constant{0.5f, 0.25f, 0.125f};
+  for (size_t texel = 0; texel < cube.texels_in_mip(0); ++texel) cube.store(texel, constant);
+  const std::vector<uint8_t> before(cube.bytes.begin(),
+                                    cube.bytes.begin() + (ptrdiff_t)(cube.texels_in_mip(0) * 4));
+
+  shared::prefilter_reflection_cube(cube);
+
+  const std::vector<uint8_t> after(cube.bytes.begin(),
+                                   cube.bytes.begin() + (ptrdiff_t)(cube.texels_in_mip(0) * 4));
+  assert(before == after);
+
+  for (int mip = 1; mip < cube.mip_count; ++mip)
+    for (size_t texel = cube.texel_offset_of_mip(mip); texel < cube.texel_offset_of_mip(mip + 1);
+         ++texel)
+    {
+      const linalg::vec3 value = cube.load(texel);
+      assert(std::abs(value.x - constant.x) < 0.01f);
+      assert(std::abs(value.y - constant.y) < 0.005f);
+      assert(std::abs(value.z - constant.z) < 0.0025f);
+    }
+}
+
+void a_prefiltered_cube_spreads_a_bright_texel_over_its_own_hemisphere_only()
+{
+  shared::reflection_cube_t cube;
+  cube.allocate(8);
+  for (int y = 0; y < 8; ++y)
+    for (int x = 0; x < 8; ++x) cube.store(0, 2, x, y, {8.f, 8.f, 8.f});
+
+  shared::prefilter_reflection_cube(cube);
+
+  const linalg::vec3 under = cube.load(1, 2, 2, 2);
+  assert(under.x > 4.f && under.x <= 8.01f);
+
+  for (int x = 1; x <= 2; ++x)
+    for (int y = 1; y <= 2; ++y) assert(cube.load(1, 3, x, y).x == 0.f);
+
+  const int last = cube.mip_count - 1;
+  assert(cube.load(last, 2, 0, 0).x > 0.f);
+  assert(cube.load(last, 2, 0, 0).x < 8.f);
+  assert(cube.load(last, 3, 0, 0).x == 0.f);
+  assert(cube.load(last, 0, 0, 0).x > 0.f);
+}
+
+void the_environment_brdf_reads_one_and_zero_head_on_and_rises_at_grazing()
+{
+  const shared::environment_brdf_lut_t lut = shared::build_environment_brdf_lut(32, 256);
+  assert(lut.size == 32);
+  assert(lut.scale_bias.size() == 32 * 32 * 2);
+
+  const linalg::vec2 head_on_smooth = lut.load(31, 0);
+  assert(head_on_smooth.x > 0.95f && head_on_smooth.x <= 1.f);
+  assert(head_on_smooth.y < 0.02f);
+
+  for (int roughness = 0; roughness < 32; ++roughness)
+    for (int view = 0; view < 32; ++view)
+    {
+      const linalg::vec2 value = lut.load(view, roughness);
+      assert(value.x >= 0.f && value.y >= 0.f);
+      assert(value.x + value.y <= 1.02f);
+    }
+
+  const linalg::vec2 grazing = lut.load(1, 8);
+  const linalg::vec2 facing = lut.load(30, 8);
+  assert(grazing.y > facing.y);
+  assert(grazing.x < facing.x);
+}
+
+
 // --- Gate 5: what a probe stores ---------------------------------------------
 
 shared::probe_trace_t trace_probe_at(const shared::map_t &map, const linalg::vec3 &position,
@@ -3867,6 +4399,22 @@ int main()
   a_probe_inside_a_brush_is_inside_and_one_on_its_face_is_too();
   an_empty_map_has_no_probe_grid();
   a_grid_too_long_for_a_3d_texture_is_refused();
+
+  a_capture_in_a_rectangular_room_measures_the_room();
+  a_capture_lattice_snaps_to_the_probe_spacing();
+  a_capture_inside_a_solid_is_absent_and_a_pillar_bounds_its_neighbour();
+  a_capture_facing_nothing_is_open_on_that_face();
+  a_reflection_volume_overrides_the_measured_box();
+  the_capture_pick_is_the_nearest_four_weighted_by_distance();
+  a_cube_texel_direction_points_into_its_face();
+  a_capture_sees_an_emissive_ceiling_directly_and_the_floor_reflects_it();
+  a_batched_capture_bake_is_the_reference_bake_bit_for_bit();
+  a_sidecar_round_trips_the_reflection_captures();
+  identical_capture_answers_agree();
+  a_cube_texel_direction_round_trips_to_its_texel();
+  a_prefiltered_cube_keeps_mip_zero_and_averages_a_uniform_cube();
+  a_prefiltered_cube_spreads_a_bright_texel_over_its_own_hemisphere_only();
+  the_environment_brdf_reads_one_and_zero_head_on_and_rises_at_grazing();
 
   a_probe_reads_a_baked_light_directly_and_knows_where_it_is();
   a_probe_reads_a_mixed_light_through_its_bounce_only();

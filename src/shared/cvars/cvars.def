@@ -473,7 +473,7 @@ Map :: cvars {
 // ---------------------------------------------------------------------------
 // Debugging -- was debug_collision.cpp and play_state.cpp
 // ---------------------------------------------------------------------------
-Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra }
+Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture }
 
 
 Debugging :: cvars {
@@ -484,7 +484,7 @@ Debugging :: cvars {
     // "which cores am I on" is not a thing worth making settable mid-session.
     pin_main_thread:        bool = true                 "Pin the main thread to the CPU's performance cores on a hybrid CPU"
 
-    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra)"
+    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture)"
 
     // The tonemap pass multiplies the HDR target by this before the curve
     // (lighting_def.md decision J). It is what decision H says

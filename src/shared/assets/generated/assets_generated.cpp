@@ -91,6 +91,7 @@ constexpr asset_info_t pbr_material_MANIFEST[] = {
   {"scuffed_plastic", "resources/textures/scuffed_plastic"},
   {"sloppy_mortar_stone", "resources/textures/sloppy_mortar_stone"},
   {"stringy_marble", "resources/textures/stringy_marble"},
+  {"titanium_scuffed", "resources/textures/titanium_scuffed"},
 };
 
 } // namespace

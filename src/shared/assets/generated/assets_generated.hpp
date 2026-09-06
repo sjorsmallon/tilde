@@ -159,9 +159,10 @@ enum class pbr_material : uint16_t
   scuffed_plastic = 3,
   sloppy_mortar_stone = 4,
   stringy_marble = 5,
+  titanium_scuffed = 6,
 };
 
-constexpr uint32_t pbr_material_COUNT = 6;
+constexpr uint32_t pbr_material_COUNT = 7;
 
 const char* to_string(pbr_material value);
 template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);

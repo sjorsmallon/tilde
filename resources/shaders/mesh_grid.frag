@@ -18,6 +18,7 @@
 
 #include "scene.glsl"
 #include "direct_light.glsl"
+#include "reflection.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -87,6 +88,15 @@ void main() {
         outColor = vec4(baked, 1.0);
         return;
     }
+    // A blockout face has no roughness: the captures as a MIRROR off its
+    // normal, so the parallax and the lattice are judged where most of a map
+    // is (gate 6 step 5). The shading below adds no reflection.
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_REFLECTION) != 0)
+    {
+        outColor = reflection_debug_color(fragWorldPosition, N,
+                                          normalize(scene.camera_position.xyz - fragWorldPosition), 0.0);
+        return;
+    }
 
     vec3  sunDir  = normalize(vec3(0.4, -0.8, 0.3));
     vec3  ambient = scene.ambient.rgb;
@@ -112,5 +122,7 @@ void main() {
     float ink = max(grid_coverage(fragUV) * MAJOR_STRENGTH,
                     grid_coverage(fragUV * MINOR_SUBDIVISIONS) * MINOR_STRENGTH);
 
-    outColor = shadow_cascade_debug(vec4(mix(color, GRID_COLOR, ink), fragAlpha), fragWorldPosition);
+    outColor = reflection_capture_debug(
+        shadow_cascade_debug(vec4(mix(color, GRID_COLOR, ink), fragAlpha), fragWorldPosition),
+        fragWorldPosition);
 }

@@ -333,6 +333,22 @@ indirect_sh_l1_t trace_indirect_light(const traced_scene_t &scene,
   return projected;
 }
 
+linalg::vec3 trace_capture_direction(const traced_scene_t &scene,
+                                     Span<const baked_light_t> lights,
+                                     const linalg::vec3 &position, const linalg::vec3 &direction,
+                                     const indirect_trace_settings_t &settings, uint32_t hash)
+{
+  if (!scene.bvh || settings.rays_per_sample <= 0) return {0.f, 0.f, 0.f};
+
+  linalg::vec3 sum{0.f, 0.f, 0.f};
+  for (int ray = 0; ray < settings.rays_per_sample; ++ray)
+  {
+    const uint32_t bits = hash_mix(hash, (uint32_t)ray);
+    sum = sum + trace_one_chain(scene, lights, position, direction, direction, settings, bits);
+  }
+  return sum * (1.f / (PI * (float)settings.rays_per_sample));
+}
+
 probe_trace_t trace_probe_light(const traced_scene_t &scene, Span<const baked_light_t> lights,
                                 const probe_visibility_slots_t &visibility_slots,
                                 const linalg::vec3 &position,

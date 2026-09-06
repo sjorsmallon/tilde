@@ -340,6 +340,27 @@ void cpu_batch_solver_t::solve_indirect(Span<const gpu_sample_t> samples,
   ++accumulated.indirect_dispatches;
 }
 
+void cpu_batch_solver_t::solve_captures(Span<const gpu_sample_t> samples,
+                                        gpu_capture_results_t &out)
+{
+  if (!scene.traced)
+    fatal_error("[lightmap] the CPU batch solver was asked to trace captures before "
+                "upload_scene.");
+
+  out.values.assign(samples.size(), linalg::vec3{0.f, 0.f, 0.f});
+
+  const shade_statistics_t added = shade_in_slices(
+      samples.size(), worker_count, [&](size_t i, shade_statistics_t &statistics) {
+        const gpu_sample_t &sample = samples[(uint32_t)i];
+        out.values[i] = trace_capture_direction(*scene.traced, scene.lights, sample.position,
+                                                sample.normal, indirect, sample.seed);
+        statistics.chains += (size_t)std::max(indirect.rays_per_sample, 0);
+      });
+
+  accumulated.shade.add(added);
+  ++accumulated.capture_dispatches;
+}
+
 void cpu_batch_solver_t::solve_probes(Span<const gpu_sample_t> samples,
                                       const probe_visibility_slots_t &visibility_slots,
                                       gpu_probe_results_t &out)
@@ -697,6 +718,23 @@ record_comparison_report_t compare_direct_results(Span<const gpu_sample_t> sampl
       samples, charts, coefficient_count, Span<const uint32_t>(scale_group),
       [&](uint32_t i, size_t k) { return coefficient_of(reference, i, k); },
       [&](uint32_t i, size_t k) { return coefficient_of(candidate, i, k); });
+}
+
+record_comparison_report_t compare_capture_results(Span<const gpu_sample_t> samples,
+                                                   Span<const size_t> groups,
+                                                   Span<const linalg::vec3> reference,
+                                                   Span<const linalg::vec3> candidate)
+{
+  if (reference.size() != samples.size() || candidate.size() != samples.size())
+    fatal_error("[lightmap-gpu] comparing {} reference and {} candidate capture answers over "
+                "{} records.",
+                reference.size(), candidate.size(), samples.size());
+
+  const uint32_t scale_group[3] = {0, 0, 0};
+  return compare_records(
+      samples, groups, 3, Span<const uint32_t>(scale_group),
+      [&](uint32_t i, size_t k) { return reference[i][(int)k]; },
+      [&](uint32_t i, size_t k) { return candidate[i][(int)k]; });
 }
 
 record_comparison_report_t compare_probe_results(Span<const gpu_sample_t> samples,

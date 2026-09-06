@@ -5,6 +5,7 @@
 #include "lightmap_gpu.hpp"
 #include "lightmap_lights.hpp"
 #include "lightmap_probes.hpp"
+#include "lightmap_reflections.hpp"
 #include "lightmap_trace.hpp"
 #include "log.hpp"
 #include "map_geometry.hpp"
@@ -1257,16 +1258,32 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   if (solver) statistics.shade = solver->statistics().shade;
 
   lightmap.probes = {};
-  if (bake_probes)
+  lightmap.reflections = {};
+  const bool bake_captures = solve_settings.bake_reflection_captures && trace_indirect &&
+                             solve_settings.mode != lightmap_solve_mode_t::Visibility;
+  if (bake_probes || bake_captures)
   {
     const std::optional<probe_grid_t> grid =
         try_build_probe_grid(map, settings.probe_spacing_in_world_units);
     if (!grid)
       log_error("[lightmap] no probe grid could be built at spacing {}; the bake carries "
-                "no probes.",
+                "no probes and no reflection captures.",
                 settings.probe_spacing_in_world_units);
     else
-      lightmap.probes = bake_probe_volume(*grid, bvh, traced_scene, lights, indirect, solver);
+    {
+      if (bake_probes)
+        lightmap.probes = bake_probe_volume(*grid, bvh, traced_scene, lights, indirect, solver);
+      if (bake_captures)
+      {
+        const std::vector<uint8_t> inside = classify_probes_inside_solid(*grid, bvh);
+        const reflection_capture_settings_t capture_settings{
+            settings.reflection_spacing_in_world_units, indirect.directional_shadow_distance};
+        lightmap.reflections =
+            build_reflection_captures(map, *grid, inside, bvh, capture_settings);
+        bake_reflection_captures(lightmap.reflections, traced_scene, lights, indirect,
+                                 settings.reflection_size_in_texels, solver);
+      }
+    }
   }
 
   // Always, however short: "how long does a bake take on this map" is the

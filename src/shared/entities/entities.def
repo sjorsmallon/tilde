@@ -123,6 +123,9 @@ Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn, Complet
 Fire_Mode :: enum { On_Enter, Every_Tick }
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
 
+Reflection_Volume_Entity :: entity {
+    volume: Box_Volume = { half_extents = {256, 256, 256} }
+}
 Box_Volume :: component {
     position: v3 = {0, 0, 0}            @Editable @Saveable
     half_extents: v3 = {1, 1, 1}        @Editable @Saveable

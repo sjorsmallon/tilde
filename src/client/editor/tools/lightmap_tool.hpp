@@ -91,6 +91,16 @@ private:
   double probe_compare_gpu_milliseconds = 0.0;
   void compare_gpu_probes(editor_context_t& ctx);
 
+  // Gate 6 step 2: the capture term against trace_capture_direction, grouped
+  // by capture.
+  std::optional<shared::record_comparison_report_t> capture_comparison;
+  size_t capture_compare_capture_count = 0;
+  size_t capture_compare_record_count = 0;
+  size_t capture_compare_light_count = 0;
+  double capture_compare_cpu_milliseconds = 0.0;
+  double capture_compare_gpu_milliseconds = 0.0;
+  void compare_gpu_captures(editor_context_t& ctx);
+
   [[nodiscard]] bool has_packed() const { return baked.atlas.page_count > 0; }
 };
 

@@ -8,6 +8,7 @@
 #include "scene.glsl"
 #include "probes.glsl"
 #include "direct_light.glsl"
+#include "reflection.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -102,6 +103,11 @@ void main() {
         outColor = vec4(texture(albedo, uv).rgb, 1.0);
         return;
     }
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_REFLECTION) != 0)
+    {
+        outColor = reflection_debug_color(fragWorldPosition, N, V, roughness);
+        return;
+    }
 
     vec3 lit = vec3(0.0);
 
@@ -173,6 +179,14 @@ void main() {
     lit += (1.0 - metallic) * surface * probe_indirect_diffuse(fragWorldPosition, N);
 #endif
 
+    // The room's reflection (gate 6): the captures' picture of the lit scene,
+    // parallax-corrected, at this roughness, through the split-sum BRDF. On
+    // both the atlas and the probe path, and added to nothing above: the four
+    // slots and the tail keep their analytic highlights, which a capture cannot
+    // double because a light has no geometry to be photographed.
+    lit += environment_specular(fragWorldPosition, N, V, roughness,
+                                mix(vec3(0.04), surface, metallic));
+
     lit += ambient * surface * occlusion;
 
     // Straight through, tinted by nothing: the tracer collects this same texel
@@ -180,7 +194,8 @@ void main() {
     // number and draw it from another -- ss11.
     lit += texture(emissiveMap, uv).rgb;
 
-    outColor = shadow_cascade_debug(vec4(lit, fragAlpha), fragWorldPosition);
+    outColor = reflection_capture_debug(shadow_cascade_debug(vec4(lit, fragAlpha), fragWorldPosition),
+                                        fragWorldPosition);
 #else
     // The non-PBR arm is Lambert against the SAME light list the PBR arm shades:
     // the analytic tail here, the chart's four slots and the atlas on a
@@ -190,6 +205,15 @@ void main() {
     // prop drew through, so gate 5's probes landed under a sun that ignored
     // them.
     vec3 N = normalize(fragWorldNormal);
+
+    // No roughness on this arm, so the channel shows the captures as a MIRROR
+    // off the geometric normal: the parallax is judged on a blockout face too.
+    if ((scene.debug_flags & DEBUG_FLAG_RENDER_REFLECTION) != 0)
+    {
+        outColor = reflection_debug_color(fragWorldPosition, N,
+                                          normalize(scene.camera_position.xyz - fragWorldPosition), 0.0);
+        return;
+    }
 
     // The tail: the lights no bake saw, plus a second copy of every Mixed one,
     // each through its shadow map. A lightmapped face skips that copy -- it
@@ -208,6 +232,7 @@ void main() {
     // rather than replaces.
     vec3 color = texture(albedo, fragUV).rgb * fragColor * lighting +
                  texture(emissiveMap, fragUV).rgb;
-    outColor   = shadow_cascade_debug(vec4(color, fragAlpha), fragWorldPosition);
+    outColor   = reflection_capture_debug(shadow_cascade_debug(vec4(color, fragAlpha), fragWorldPosition),
+                                          fragWorldPosition);
 #endif
 }

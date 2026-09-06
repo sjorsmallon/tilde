@@ -52,7 +52,7 @@ struct indirect_push_t
   uint32_t analytic_lights[2] = {0, 0};
   int32_t visibility_slots[4] = {-1, -1, -1, -1};
   uint32_t probes = 0;
-  uint32_t pad = 0;
+  uint32_t capture = 0;
 };
 static_assert(sizeof(indirect_push_t) == 72 && offsetof(indirect_push_t, analytic_lights) == 40 &&
                   offsetof(indirect_push_t, visibility_slots) == 48 &&
@@ -961,6 +961,47 @@ void vulkan_batch_solver_t::solve_indirect(Span<const shared::gpu_sample_t> samp
     void *mapped = nullptr;
     check(vkMapMemory(device.device, dispatch_results.memory, 0, results_bytes, 0, &mapped),
           "vkMapMemory (indirect results)");
+    std::memcpy(out.values.data() + first, mapped, (size_t)results_bytes);
+    vkUnmapMemory(device.device, dispatch_results.memory);
+  }
+}
+
+void vulkan_batch_solver_t::solve_captures(Span<const shared::gpu_sample_t> samples,
+                                           shared::gpu_capture_results_t &out)
+{
+  if (!has_scene()) fatal_error("[lightmap-gpu] solve_captures before a scene was uploaded.");
+
+  out.values.assign(samples.size(), linalg::vec3{0.f, 0.f, 0.f});
+  ++accumulated.capture_dispatches;
+  accumulated.shade.chains +=
+      (size_t)samples.size() * (size_t)std::max(settings.rays_per_sample, 0);
+  if (samples.size() == 0) return;
+
+  const size_t records_per_dispatch = indirect_records_per_dispatch(settings.rays_per_sample);
+  const size_t largest = std::min<size_t>(records_per_dispatch, samples.size());
+  ensure_host_visible(dispatch_samples, (VkDeviceSize)largest * sizeof(shared::gpu_sample_t));
+  ensure_host_visible(dispatch_results, (VkDeviceSize)largest * sizeof(linalg::vec3));
+  write_indirect_kernel_descriptors();
+
+  for (size_t first = 0; first < samples.size(); first += records_per_dispatch)
+  {
+    const size_t count = std::min<size_t>(records_per_dispatch, samples.size() - first);
+    const VkDeviceSize samples_bytes = (VkDeviceSize)count * sizeof(shared::gpu_sample_t);
+    const VkDeviceSize results_bytes = (VkDeviceSize)count * sizeof(linalg::vec3);
+    write_host_visible(dispatch_samples, samples.data + first, samples_bytes);
+
+    indirect_push_t push;
+    push.bake.sample_count = (uint32_t)count;
+    push.bake.light_count = uploaded_light_count;
+    push.bake.settings = settings;
+    push.analytic_lights[0] = (uint32_t)(uploaded_analytic_lights & 0xffffffffu);
+    push.analytic_lights[1] = (uint32_t)(uploaded_analytic_lights >> 32);
+    push.capture = 1;
+    dispatch_and_wait(indirect_kernel, &push, sizeof(push), (uint32_t)count);
+
+    void *mapped = nullptr;
+    check(vkMapMemory(device.device, dispatch_results.memory, 0, results_bytes, 0, &mapped),
+          "vkMapMemory (capture results)");
     std::memcpy(out.values.data() + first, mapped, (size_t)results_bytes);
     vkUnmapMemory(device.device, dispatch_results.memory);
   }

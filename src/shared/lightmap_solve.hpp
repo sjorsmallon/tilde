@@ -81,6 +81,11 @@ struct lightmap_solve_settings_t
   // atlas's is (trace_indirect_light), with the same chain count -- with it off
   // a probe holds the direct term alone.
   bool bake_probes = false;
+
+  // Gate 6: whether the reflection captures are baked. Their lattice rides the
+  // probe grid and their picture is traced, so this needs trace_indirect_light
+  // on; with either off a bake CLEARS the set.
+  bool bake_reflection_captures = false;
 };
 
 // Per-light shadow-ray coverage: for every light the bake used, the fraction of a
