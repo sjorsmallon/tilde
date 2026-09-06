@@ -563,7 +563,8 @@ set(PBR_SHADER_SOURCES ${SHADER_SRC_DIR}/mesh_lit.frag)
 set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.glsl
                     ${SHADER_SRC_DIR}/lightmap.glsl ${SHADER_SRC_DIR}/light_falloff.glsl
                     ${SHADER_SRC_DIR}/light_arrival.glsl ${SHADER_SRC_DIR}/probes.glsl
-                    ${SHADER_SRC_DIR}/direct_light.glsl)
+                    ${SHADER_SRC_DIR}/direct_light.glsl
+                    ${SHADER_SRC_DIR}/lightmap_bake.glsl)
 
 set(SHADER_HEADERS "")
 

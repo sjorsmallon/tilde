@@ -20,6 +20,8 @@
 // millions of records and a record is hundreds of rays, and Windows kills a
 // kernel that runs past two seconds. Step 6 is the DIRECT kernel
 // (lightmap_direct.comp), cut into dispatches by the same rule over shadow rays.
+// Step 7's probe half is a MODE of the indirect kernel (push.probes), so
+// solve_probes binds the same set and reads sixteen floats back per record.
 // Each one's pin is the Lightmap tool's comparison against cpu_batch_solver_t
 // over the same records.
 
@@ -96,6 +98,9 @@ struct vulkan_batch_solver_t final : shared::lightmap_batch_solver_t
                     shared::gpu_direct_results_t &out) override;
   void solve_indirect(Span<const shared::gpu_sample_t> samples,
                       shared::gpu_indirect_results_t &out) override;
+  void solve_probes(Span<const shared::gpu_sample_t> samples,
+                    const shared::probe_visibility_slots_t &visibility_slots,
+                    shared::gpu_probe_results_t &out) override;
   [[nodiscard]] shared::batch_solve_statistics_t statistics() const override
   {
     return accumulated;
@@ -129,6 +134,9 @@ private:
   gpu_buffer_t lights;
   uint32_t uploaded_triangle_count = 0;
   uint32_t uploaded_light_count = 0;
+  // One bit per slot whose light is Mixed: what a probe needs to know about a
+  // light that the kernel's Light struct does not carry.
+  uint64_t uploaded_analytic_lights = 0;
   shared::gpu_bake_settings_t settings;
 
   VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
@@ -166,6 +174,9 @@ private:
                                                VkDescriptorSet set) const;
   void dispatch_and_wait(const compute_kernel_t &kernel, const void *push, uint32_t push_bytes,
                          uint32_t record_count);
+  // The indirect kernel's whole set, the scene half and the two dispatch
+  // buffers: written before a solve_indirect and before a solve_probes.
+  void write_indirect_kernel_descriptors();
   [[nodiscard]] compute_kernel_t create_kernel(const uint32_t *spirv, size_t spirv_bytes,
                                                Span<const kernel_binding_t> bindings,
                                                uint32_t push_bytes, const char *name);

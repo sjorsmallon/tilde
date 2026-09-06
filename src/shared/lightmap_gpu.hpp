@@ -77,6 +77,23 @@ struct gpu_indirect_results_t
   std::vector<indirect_sh_l1_t> values;
 };
 
+// The PROBE term's answer per record (lightmap_gpu_plan.md step 7): what
+// trace_probe_light returns, the light and the four visibility fractions. A
+// probe record is a point in SPACE -- `position` the probe, `seed` the probe
+// hash itself (sample_hash over its grid coordinates, never re-keyed),
+// `chart_index` its grid index so the answer can be put back, `normal` unused,
+// since a probe has no face: its chains cover the whole sphere, the Baked
+// lights' direct term is added by next-event estimation from the probe, and a
+// Mixed light stores its visibility in the channel the slots name for it.
+struct gpu_probe_results_t
+{
+  std::vector<probe_trace_t> values;
+};
+static_assert(sizeof(probe_trace_t) == 16 * sizeof(float) &&
+                  offsetof(probe_trace_t, visibility) == 12 * sizeof(float),
+              "probe_trace_t is the sixteen floats the indirect kernel writes per probe "
+              "record: indirect_sh_l1_t, then the four visibility channels");
+
 // --- The scene, built once per bake (lightmap_gpu_plan.md step 2) -----------
 //
 // What the kernels trace against: the map as TRIANGLES, with a material per
@@ -267,6 +284,7 @@ struct batch_solve_statistics_t
   shade_statistics_t shade;
   size_t direct_dispatches = 0;
   size_t indirect_dispatches = 0;
+  size_t probe_dispatches = 0;
 };
 
 struct lightmap_batch_solver_t
@@ -295,6 +313,14 @@ struct lightmap_batch_solver_t
   virtual void solve_indirect(Span<const gpu_sample_t> samples,
                               gpu_indirect_results_t &out) = 0;
 
+  // The probe half, over probe records: trace_probe_light per record under the
+  // uploaded settings' chain count, `visibility_slots` naming which light slot
+  // each of the four channels is of (assign_probe_visibility_channels). One
+  // answer per record, in record order.
+  virtual void solve_probes(Span<const gpu_sample_t> samples,
+                            const probe_visibility_slots_t &visibility_slots,
+                            gpu_probe_results_t &out) = 0;
+
   [[nodiscard]] virtual batch_solve_statistics_t statistics() const = 0;
 };
 
@@ -319,6 +345,9 @@ struct cpu_batch_solver_t final : lightmap_batch_solver_t
   void solve_direct(Span<const gpu_sample_t> samples, Span<const uint64_t> chart_light_masks,
                     gpu_direct_results_t &out) override;
   void solve_indirect(Span<const gpu_sample_t> samples, gpu_indirect_results_t &out) override;
+  void solve_probes(Span<const gpu_sample_t> samples,
+                    const probe_visibility_slots_t &visibility_slots,
+                    gpu_probe_results_t &out) override;
   [[nodiscard]] batch_solve_statistics_t statistics() const override { return accumulated; }
 
 private:
@@ -496,6 +525,22 @@ compare_indirect_results(Span<const gpu_sample_t> samples, Span<const size_t> ch
 compare_direct_results(Span<const gpu_sample_t> samples, Span<const size_t> charts,
                        const gpu_direct_results_t &reference,
                        const gpu_direct_results_t &candidate);
+
+// Coefficients: indirect_sh_l1_t's twelve, then the four visibility channels
+// -- probe_trace_t in order. Three scale groups: L0, L1 and the visibilities,
+// which are fractions. `groups` is what each record's chart_index names; a
+// probe grid has no charts, so the caller cuts it into whatever groups make a
+// paired test meaningful (the tool uses the grid's z slices).
+inline constexpr size_t PROBE_COEFFICIENT_COUNT =
+    SH_L1_COEFFICIENT_COUNT + PROBE_VISIBILITY_CHANNELS;
+
+[[nodiscard]] record_comparison_report_t
+compare_probe_results(Span<const gpu_sample_t> samples, Span<const size_t> groups,
+                      Span<const probe_trace_t> reference, Span<const probe_trace_t> candidate);
+
+// "L0.r" .. "L1z.b", then "visibility[0]" .. "visibility[3]"; fatal past the
+// count.
+[[nodiscard]] const char *probe_coefficient_name(size_t coefficient);
 
 inline constexpr size_t DIRECT_COEFFICIENT_NAME_CAPACITY = 32;
 

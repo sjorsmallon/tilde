@@ -340,6 +340,28 @@ void cpu_batch_solver_t::solve_indirect(Span<const gpu_sample_t> samples,
   ++accumulated.indirect_dispatches;
 }
 
+void cpu_batch_solver_t::solve_probes(Span<const gpu_sample_t> samples,
+                                      const probe_visibility_slots_t &visibility_slots,
+                                      gpu_probe_results_t &out)
+{
+  if (!scene.traced)
+    fatal_error("[lightmap] the CPU batch solver was asked to trace probes before "
+                "upload_scene.");
+
+  out.values.assign(samples.size(), probe_trace_t{});
+
+  const shade_statistics_t added = shade_in_slices(
+      samples.size(), worker_count, [&](size_t i, shade_statistics_t &statistics) {
+        const gpu_sample_t &sample = samples[(uint32_t)i];
+        out.values[i] = trace_probe_light(*scene.traced, scene.lights, visibility_slots,
+                                          sample.position, indirect, sample.seed);
+        statistics.chains += (size_t)std::max(indirect.rays_per_sample, 0);
+      });
+
+  accumulated.shade.add(added);
+  ++accumulated.probe_dispatches;
+}
+
 // --- Step 4's pin ------------------------------------------------------------
 
 std::vector<float> probe_ray_distances(const Bounding_Volume_Hierarchy &bvh,
@@ -420,6 +442,12 @@ float coefficient_of(const indirect_sh_l1_t &value, size_t coefficient)
   case 1: return channel.y;
   default: return channel.z;
   }
+}
+
+float coefficient_of(const probe_trace_t &value, size_t coefficient)
+{
+  if (coefficient < SH_L1_COEFFICIENT_COUNT) return coefficient_of(value.light, coefficient);
+  return value.visibility[(uint32_t)(coefficient - SH_L1_COEFFICIENT_COUNT)];
 }
 
 float coefficient_of(const gpu_direct_results_t &results, size_t record, size_t coefficient)
@@ -669,6 +697,37 @@ record_comparison_report_t compare_direct_results(Span<const gpu_sample_t> sampl
       samples, charts, coefficient_count, Span<const uint32_t>(scale_group),
       [&](uint32_t i, size_t k) { return coefficient_of(reference, i, k); },
       [&](uint32_t i, size_t k) { return coefficient_of(candidate, i, k); });
+}
+
+record_comparison_report_t compare_probe_results(Span<const gpu_sample_t> samples,
+                                                 Span<const size_t> groups,
+                                                 Span<const probe_trace_t> reference,
+                                                 Span<const probe_trace_t> candidate)
+{
+  if (reference.size() != samples.size() || candidate.size() != samples.size())
+    fatal_error("[lightmap-gpu] comparing {} reference and {} candidate probe answers over {} "
+                "records.",
+                reference.size(), candidate.size(), samples.size());
+
+  uint32_t scale_group[PROBE_COEFFICIENT_COUNT];
+  for (size_t k = 0; k < PROBE_COEFFICIENT_COUNT; ++k)
+    scale_group[k] = k < 3 ? 0 : k < SH_L1_COEFFICIENT_COUNT ? 1 : 2;
+  return compare_records(
+      samples, groups, PROBE_COEFFICIENT_COUNT, Span<const uint32_t>(scale_group),
+      [&](uint32_t i, size_t k) { return coefficient_of(reference[i], k); },
+      [&](uint32_t i, size_t k) { return coefficient_of(candidate[i], k); });
+}
+
+const char *probe_coefficient_name(size_t coefficient)
+{
+  static constexpr const char *NAMES[PROBE_COEFFICIENT_COUNT] = {
+      "L0.r",  "L0.g",  "L0.b",  "L1x.r", "L1x.g", "L1x.b", "L1y.r", "L1y.g",
+      "L1y.b", "L1z.r", "L1z.g", "L1z.b", "visibility[0]", "visibility[1]",
+      "visibility[2]", "visibility[3]"};
+  if (coefficient >= PROBE_COEFFICIENT_COUNT)
+    fatal_error("[lightmap-gpu] naming probe coefficient {} of {}.", coefficient,
+                PROBE_COEFFICIENT_COUNT);
+  return NAMES[coefficient];
 }
 
 std::string_view direct_coefficient_name(size_t coefficient, size_t light_count,

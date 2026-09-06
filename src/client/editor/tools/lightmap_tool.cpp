@@ -6,14 +6,18 @@
 #include "../../../shared/lightmap_solve.hpp"
 #include "../../../shared/lightmap_trace.hpp"
 #include "../../../shared/log.hpp"
+#include "../../../shared/cvars/generated/cvars_generated.hpp"
 #include "../../hud/announcement.hpp"
 #include "../../lightmap_gpu_vulkan.hpp"
 #include "../../renderer.hpp"
+#include "../../state_manager.hpp"
 #include "imgui.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <format>
+#include <optional>
 
 namespace client
 {
@@ -64,6 +68,24 @@ float mean_of(const std::vector<float>& values, size_t first, size_t count)
 constexpr const char* SH_COEFFICIENT_NAMES[shared::SH_L1_COEFFICIENT_COUNT] = {
     "L0.r",  "L0.g",  "L0.b",  "L1x.r", "L1x.g", "L1x.b",
     "L1y.r", "L1y.g", "L1y.b", "L1z.r", "L1z.g", "L1z.b"};
+
+// lightmap_gpu_plan.md step 7b: which solver a bake runs through, and in words
+// why, so a bake that ran on the CPU is never a silent downgrade.
+struct bake_path_t
+{
+  bool through_the_gpu = false;
+  std::string description;
+};
+
+[[nodiscard]] bake_path_t bake_path_for(const cvars::cvar_state_t& cvars)
+{
+  if (!cvars.r_lightmap_gpu)
+    return {false, "the CPU reference solve (r_lightmap_gpu is off)"};
+  if (!renderer::ray_query_is_available())
+    return {false, std::format("the CPU reference solve (ray query unavailable: {})",
+                               renderer::ray_query_unavailable_reason())};
+  return {true, "the Vulkan ray query solver"};
+}
 
 } // namespace
 
@@ -335,6 +357,104 @@ void Lightmap_Tool::compare_gpu_direct(editor_context_t& ctx)
                          COMPARE_DIRECT_DIFFERENCE_IMAGE_PREFIX, preview_exposure);
 }
 
+// lightmap_gpu_plan.md step 7's pin: every open probe of the grid the panel's
+// spacing would bake, through both solvers, at the current chain count. Needs
+// no packed atlas -- a probe is a point in space, not a texel -- but a scene
+// with lights, since a probe with nothing to see answers zero on both sides
+// and compares nothing. The paired test groups probes by z SLICE: a probe on
+// its own has no standard error, and a slice is the natural row of the grid.
+void Lightmap_Tool::compare_gpu_probes(editor_context_t& ctx)
+{
+  probe_comparison.reset();
+  if (!renderer::ray_query_is_available()) return;
+
+  const std::optional<shared::probe_grid_t> grid =
+      shared::try_build_probe_grid(*ctx.map, settings.probe_spacing_in_world_units);
+  if (!grid)
+  {
+    log_error("[lightmap-gpu] no probe grid at spacing {}; nothing to compare.",
+              settings.probe_spacing_in_world_units);
+    return;
+  }
+
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
+  const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
+  const shared::batch_solver_scene_t scene{&gpu_scene, &bvh, &traced,
+                                           Span<const shared::baked_light_t>(lights),
+                                           shared::gpu_bake_settings_from(solve_settings)};
+  const std::vector<uint8_t> inside = shared::classify_probes_inside_solid(*grid, bvh);
+  const shared::probe_visibility_slots_t slots =
+      shared::assign_probe_visibility_channels(lights);
+  const std::vector<shared::gpu_sample_t> samples = shared::collect_probe_samples(*grid, inside);
+  probe_compare_grid_count = grid->count;
+  probe_compare_open_count = samples.size();
+  probe_compare_light_count = lights.size();
+
+  using clock = std::chrono::steady_clock;
+  const auto milliseconds_since = [](clock::time_point started) {
+    return std::chrono::duration<double, std::milli>(clock::now() - started).count();
+  };
+
+  vulkan_batch_solver_t gpu;
+  gpu.upload_scene(scene);
+  if (!gpu.has_scene()) return;
+
+  shared::gpu_probe_results_t from_gpu;
+  const clock::time_point gpu_started = clock::now();
+  gpu.solve_probes(samples, slots, from_gpu);
+  probe_compare_gpu_milliseconds = milliseconds_since(gpu_started);
+
+  shared::cpu_batch_solver_t cpu;
+  cpu.upload_scene(scene);
+  shared::gpu_probe_results_t from_cpu;
+  const clock::time_point cpu_started = clock::now();
+  cpu.solve_probes(samples, slots, from_cpu);
+  probe_compare_cpu_milliseconds = milliseconds_since(cpu_started);
+
+  std::vector<shared::gpu_sample_t> by_slice = samples;
+  for (shared::gpu_sample_t& sample : by_slice)
+    sample.chart_index = (uint32_t)grid->coordinates_of(sample.chart_index).z;
+  std::vector<size_t> slices((size_t)grid->count.z);
+  for (size_t z = 0; z < slices.size(); ++z) slices[z] = z;
+
+  probe_comparison = shared::compare_probe_results(by_slice, slices, from_cpu.values,
+                                                   from_gpu.values);
+  const shared::record_comparison_report_t& report = *probe_comparison;
+
+  uint32_t channels = 0;
+  for (const int16_t slot : slots) channels += slot != shared::LIGHTMAP_NO_LIGHT_SLOT;
+  log_terminal("[lightmap-gpu] probes: {} open of {}x{}x{}, {} light(s) ({} Mixed visibility "
+               "channel(s)), {} chain(s) each; CPU {:.1f} ms, GPU {:.1f} ms. Reference L0 mean "
+               "{:.5f}, mean |dL0| {:.6f} ({:.3f}%); visibility mean {:.4f}, mean |dV| {:.6f}; "
+               "{} record(s) differ in any coefficient; {} slice(s) beyond {} sigma.",
+               report.record_count, grid->count.x, grid->count.y, grid->count.z, lights.size(),
+               channels, solve_settings.indirect_rays_per_sample, probe_compare_cpu_milliseconds,
+               probe_compare_gpu_milliseconds, report.reference_mean_over(0, 3),
+               report.mean_absolute_difference_over(0, 3),
+               report.reference_mean_over(0, 3) > 0.f
+                   ? 100.0 * (double)report.mean_absolute_difference_over(0, 3) /
+                         (double)report.reference_mean_over(0, 3)
+                   : 0.0,
+               report.reference_mean_over(shared::SH_L1_COEFFICIENT_COUNT,
+                                          shared::PROBE_VISIBILITY_CHANNELS),
+               report.mean_absolute_difference_over(shared::SH_L1_COEFFICIENT_COUNT,
+                                                    shared::PROBE_VISIBILITY_CHANNELS),
+               report.differing_records, report.charts_beyond_tolerance,
+               shared::RECORD_COMPARISON_SIGMA);
+  for (size_t i = 0; i < std::min<size_t>(report.charts.size(), 8); ++i)
+  {
+    const shared::record_chart_comparison_t& slice = report.charts[i];
+    const size_t k = (size_t)std::max(slice.largest_sigma_coefficient, 0);
+    log_terminal("[lightmap-gpu]   slice z={} ({} probes): {} CPU {:.6f} GPU {:.6f} +- {:.6f}, "
+                 "{:.1f} sigma",
+                 slice.chart, slice.record_count, shared::probe_coefficient_name(k),
+                 slice.reference_mean[k], slice.candidate_mean[k],
+                 slice.difference_standard_error[k], slice.largest_sigma);
+  }
+}
+
 void Lightmap_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws)
 {
   if (!show_probe_preview) return;
@@ -486,11 +606,25 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
 
   ImGui::EndDisabled();
 
+  cvars::cvar_state_t& cvars = *state_manager::get_client_context().cvars;
+  ImGui::Checkbox("Bake on the GPU (r_lightmap_gpu)", &cvars.r_lightmap_gpu);
+  ImGui::TextWrapped("next bake runs through %s", bake_path_for(cvars).description.c_str());
+
   if (ImGui::Button("Bake", {-1, 0}))
   {
     visibility_masks = {};
-    shared::bake_lightmap(*ctx.map, baked, solve_settings, nullptr,
+    const bake_path_t path = bake_path_for(cvars);
+    std::optional<vulkan_batch_solver_t> gpu_solver;
+    if (path.through_the_gpu) gpu_solver.emplace();
+
+    const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+    shared::bake_lightmap(*ctx.map, baked, solve_settings,
+                          gpu_solver ? &*gpu_solver : nullptr,
                           emit_per_light_visibility ? &visibility_masks : nullptr);
+    const double bake_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    last_bake_line = std::format("last bake: {} in {:.2f} s", path.description, bake_seconds);
+    log_terminal("[lightmap] {}", last_bake_line);
 
     lit_texel_count = 0;
     for (int page = 0; page < baked.irradiance_pages.page_count; ++page)
@@ -526,6 +660,8 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
                                                     INDIRECT_DIRECTION_IMAGE_PREFIX);
     }
   }
+
+  if (!last_bake_line.empty()) ImGui::TextWrapped("%s", last_bake_line.c_str());
 
   ImGui::BeginDisabled(baked.visibility_pages.empty());
 
@@ -687,6 +823,54 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
     }
     ImGui::TextDisabled("PNGs: %s, %s, %s", COMPARE_DIRECT_CPU_IMAGE_PREFIX,
                         COMPARE_DIRECT_GPU_IMAGE_PREFIX, COMPARE_DIRECT_DIFFERENCE_IMAGE_PREFIX);
+  }
+
+  // lightmap_gpu_plan.md step 7. Both solvers' probe term over the grid the
+  // panel's spacing implies; no atlas needed.
+  ImGui::BeginDisabled(!renderer::ray_query_is_available() || ctx.map->geometry.empty());
+  if (ImGui::Button("Compare GPU probes against the CPU trace", {-1, 0}))
+    compare_gpu_probes(ctx);
+  ImGui::EndDisabled();
+
+  if (probe_comparison)
+  {
+    const shared::record_comparison_report_t& report = *probe_comparison;
+    if (report.agrees())
+      ImGui::TextColored({0.4f, 1.f, 0.4f, 1.f},
+                         "GPU and CPU agree within %.0f sigma on all %zu slices",
+                         shared::RECORD_COMPARISON_SIGMA, report.charts.size());
+    else
+      ImGui::TextColored({1.f, 0.4f, 0.4f, 1.f}, "%zu of %zu slice(s) beyond %.0f sigma",
+                         report.charts_beyond_tolerance, report.charts.size(),
+                         shared::RECORD_COMPARISON_SIGMA);
+    ImGui::Text("%zu open probes of %dx%dx%d, %zu lights, %d chains each; CPU %.1f ms, GPU "
+                "%.1f ms",
+                probe_compare_open_count, probe_compare_grid_count.x,
+                probe_compare_grid_count.y, probe_compare_grid_count.z,
+                probe_compare_light_count, solve_settings.indirect_rays_per_sample,
+                probe_compare_cpu_milliseconds, probe_compare_gpu_milliseconds);
+    ImGui::Text("reference L0 mean %.5f; mean |dL0| %.6f (%.3f%%)", report.reference_mean_over(0, 3),
+                report.mean_absolute_difference_over(0, 3),
+                report.reference_mean_over(0, 3) > 0.f
+                    ? 100.0 * (double)report.mean_absolute_difference_over(0, 3) /
+                          (double)report.reference_mean_over(0, 3)
+                    : 0.0);
+    ImGui::Text("visibility mean %.4f; mean |dV| %.6f",
+                report.reference_mean_over(shared::SH_L1_COEFFICIENT_COUNT,
+                                           shared::PROBE_VISIBILITY_CHANNELS),
+                report.mean_absolute_difference_over(shared::SH_L1_COEFFICIENT_COUNT,
+                                                     shared::PROBE_VISIBILITY_CHANNELS));
+    ImGui::Text("%zu records with a non-zero answer; %zu differ in any coefficient",
+                report.reference_nonzero_records, report.differing_records);
+    for (size_t i = 0; i < std::min<size_t>(report.charts.size(), 5); ++i)
+    {
+      const shared::record_chart_comparison_t& slice = report.charts[i];
+      const size_t k = (size_t)std::max(slice.largest_sigma_coefficient, 0);
+      ImGui::Text("  slice z=%zu (%zu probes): %s CPU %.5f GPU %.5f +- %.5f, %.1f sigma",
+                  slice.chart, slice.record_count, shared::probe_coefficient_name(k),
+                  slice.reference_mean[k], slice.candidate_mean[k],
+                  slice.difference_standard_error[k], slice.largest_sigma);
+    }
   }
 
   ImGui::Separator();

@@ -49,6 +49,9 @@ private:
   size_t lit_texel_count = 0;
   size_t indirect_texel_count = 0;
 
+  // Which path the last bake took and why (lightmap_gpu_plan.md step 7b).
+  std::string last_bake_line;
+
   bool show_probe_preview = false;
   std::optional<shared::probe_grid_t> probe_preview_grid;
   std::vector<uint8_t> probe_preview_inside;
@@ -77,6 +80,16 @@ private:
   double direct_compare_cpu_milliseconds = 0.0;
   double direct_compare_gpu_milliseconds = 0.0;
   void compare_gpu_direct(editor_context_t& ctx);
+
+  // lightmap_gpu_plan.md step 7: the probe half against trace_probe_light. A
+  // "chart" of this report is one z slice of the grid.
+  std::optional<shared::record_comparison_report_t> probe_comparison;
+  linalg::vec3i probe_compare_grid_count{0, 0, 0};
+  size_t probe_compare_open_count = 0;
+  size_t probe_compare_light_count = 0;
+  double probe_compare_cpu_milliseconds = 0.0;
+  double probe_compare_gpu_milliseconds = 0.0;
+  void compare_gpu_probes(editor_context_t& ctx);
 
   [[nodiscard]] bool has_packed() const { return baked.atlas.page_count > 0; }
 };

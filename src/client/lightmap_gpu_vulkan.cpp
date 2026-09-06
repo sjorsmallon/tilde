@@ -43,6 +43,22 @@ struct bake_push_t
 static_assert(sizeof(bake_push_t) == 40 && offsetof(bake_push_t, settings) == 8,
               "bake_push_t is the push block lightmap_indirect.comp and lightmap_direct.comp read");
 
+// lightmap_indirect.comp's push block: the shared one, then the probe half --
+// the Mixed-light mask as the uvec2 the kernel reads, the four channel slots,
+// and the flag that makes a dispatch shade probes rather than texels.
+struct indirect_push_t
+{
+  bake_push_t bake;
+  uint32_t analytic_lights[2] = {0, 0};
+  int32_t visibility_slots[4] = {-1, -1, -1, -1};
+  uint32_t probes = 0;
+  uint32_t pad = 0;
+};
+static_assert(sizeof(indirect_push_t) == 72 && offsetof(indirect_push_t, analytic_lights) == 40 &&
+                  offsetof(indirect_push_t, visibility_slots) == 48 &&
+                  offsetof(indirect_push_t, probes) == 64,
+              "indirect_push_t is the push block lightmap_indirect.comp reads");
+
 // lightmap_direct.comp's results: a vec4 per record (irradiance rgb, shadow rays
 // cast in w) at the front, then coverage and weight, sample-major.
 struct direct_record_result_t
@@ -93,9 +109,11 @@ gpu_bake_light_t bake_light_from(const shared::baked_light_t &source, uint32_t s
 }
 
 // The results buffer is twelve floats per record in indirect_sh_l1_t's order, so
-// the readback is one memcpy.
+// the readback is one memcpy -- and sixteen for a probe, probe_trace_t's.
 static_assert(sizeof(shared::indirect_sh_l1_t) == 12 * sizeof(float),
               "lightmap_indirect.comp writes indirect_sh_l1_t as twelve contiguous floats");
+static_assert(sizeof(shared::probe_trace_t) == 16 * sizeof(float),
+              "lightmap_indirect.comp writes probe_trace_t as sixteen contiguous floats");
 
 constexpr uint32_t WORKGROUP_SIZE = 64;
 
@@ -657,6 +675,10 @@ void vulkan_batch_solver_t::upload_scene(const shared::batch_solver_scene_t &sce
                                light_records.size() * sizeof(gpu_bake_light_t),
                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   uploaded_light_count = (uint32_t)light_records.size();
+  uploaded_analytic_lights = 0;
+  for (uint32_t slot = 0; slot < scene.lights.size(); ++slot)
+    if (shared::light_is_analytic(scene.lights[slot].light.mode))
+      uploaded_analytic_lights |= (uint64_t)1 << slot;
 
   // An absent albedo reads as the untextured grey and an absent emissive as
   // black, decided in the kernel off GPU_NO_TEXTURE; nothing is bound for it.
@@ -812,7 +834,7 @@ void vulkan_batch_solver_t::create_kernels()
       {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, texture_descriptor_capacity}};
   indirect_kernel = create_kernel(lightmap_indirect_comp_spv, sizeof(lightmap_indirect_comp_spv),
                                   Span<const kernel_binding_t>(indirect_bindings),
-                                  sizeof(bake_push_t), "lightmap_indirect.comp");
+                                  sizeof(indirect_push_t), "lightmap_indirect.comp");
 
   // lightmap_direct.comp's bindings, in order: the TLAS, samples, results, the
   // chart light masks, lights. Shadow rays ask only whether something is in the
@@ -921,7 +943,79 @@ void vulkan_batch_solver_t::solve_indirect(Span<const shared::gpu_sample_t> samp
   const size_t largest = std::min<size_t>(records_per_dispatch, samples.size());
   ensure_host_visible(dispatch_samples, (VkDeviceSize)largest * sizeof(shared::gpu_sample_t));
   ensure_host_visible(dispatch_results, (VkDeviceSize)largest * sizeof(shared::indirect_sh_l1_t));
+  write_indirect_kernel_descriptors();
 
+  for (size_t first = 0; first < samples.size(); first += records_per_dispatch)
+  {
+    const size_t count = std::min<size_t>(records_per_dispatch, samples.size() - first);
+    const VkDeviceSize samples_bytes = (VkDeviceSize)count * sizeof(shared::gpu_sample_t);
+    const VkDeviceSize results_bytes = (VkDeviceSize)count * sizeof(shared::indirect_sh_l1_t);
+    write_host_visible(dispatch_samples, samples.data + first, samples_bytes);
+
+    indirect_push_t push;
+    push.bake.sample_count = (uint32_t)count;
+    push.bake.light_count = uploaded_light_count;
+    push.bake.settings = settings;
+    dispatch_and_wait(indirect_kernel, &push, sizeof(push), (uint32_t)count);
+
+    void *mapped = nullptr;
+    check(vkMapMemory(device.device, dispatch_results.memory, 0, results_bytes, 0, &mapped),
+          "vkMapMemory (indirect results)");
+    std::memcpy(out.values.data() + first, mapped, (size_t)results_bytes);
+    vkUnmapMemory(device.device, dispatch_results.memory);
+  }
+}
+
+void vulkan_batch_solver_t::solve_probes(Span<const shared::gpu_sample_t> samples,
+                                         const shared::probe_visibility_slots_t &visibility_slots,
+                                         shared::gpu_probe_results_t &out)
+{
+  if (!has_scene()) fatal_error("[lightmap-gpu] solve_probes before a scene was uploaded.");
+
+  out.values.assign(samples.size(), shared::probe_trace_t{});
+  ++accumulated.probe_dispatches;
+  accumulated.shade.chains +=
+      (size_t)samples.size() * (size_t)std::max(settings.rays_per_sample, 0);
+  if (samples.size() == 0) return;
+
+  // A probe spends its chains AND a spiral per light, so it is cut by the
+  // tighter of the two rules.
+  const size_t records_per_dispatch =
+      std::min(indirect_records_per_dispatch(settings.rays_per_sample),
+               direct_records_per_dispatch(uploaded_light_count, settings.soft_shadow_samples));
+  const size_t largest = std::min<size_t>(records_per_dispatch, samples.size());
+  ensure_host_visible(dispatch_samples, (VkDeviceSize)largest * sizeof(shared::gpu_sample_t));
+  ensure_host_visible(dispatch_results, (VkDeviceSize)largest * sizeof(shared::probe_trace_t));
+  write_indirect_kernel_descriptors();
+
+  for (size_t first = 0; first < samples.size(); first += records_per_dispatch)
+  {
+    const size_t count = std::min<size_t>(records_per_dispatch, samples.size() - first);
+    const VkDeviceSize samples_bytes = (VkDeviceSize)count * sizeof(shared::gpu_sample_t);
+    const VkDeviceSize results_bytes = (VkDeviceSize)count * sizeof(shared::probe_trace_t);
+    write_host_visible(dispatch_samples, samples.data + first, samples_bytes);
+
+    indirect_push_t push;
+    push.bake.sample_count = (uint32_t)count;
+    push.bake.light_count = uploaded_light_count;
+    push.bake.settings = settings;
+    push.analytic_lights[0] = (uint32_t)(uploaded_analytic_lights & 0xffffffffu);
+    push.analytic_lights[1] = (uint32_t)(uploaded_analytic_lights >> 32);
+    for (uint32_t channel = 0; channel < shared::PROBE_VISIBILITY_CHANNELS; ++channel)
+      push.visibility_slots[channel] = visibility_slots[channel];
+    push.probes = 1;
+    dispatch_and_wait(indirect_kernel, &push, sizeof(push), (uint32_t)count);
+
+    void *mapped = nullptr;
+    check(vkMapMemory(device.device, dispatch_results.memory, 0, results_bytes, 0, &mapped),
+          "vkMapMemory (probe results)");
+    std::memcpy(out.values.data() + first, mapped, (size_t)results_bytes);
+    vkUnmapMemory(device.device, dispatch_results.memory);
+  }
+}
+
+void vulkan_batch_solver_t::write_indirect_kernel_descriptors()
+{
   // The scene half of the set is written once; the two dispatch buffers are
   // the same buffers every time, so their bindings hold too. Ranges are whole
   // buffers -- a dispatch reads only its first sample_count records. The
@@ -955,26 +1049,6 @@ void vulkan_batch_solver_t::solve_indirect(Span<const shared::gpu_sample_t> samp
     write_count = 9;
   }
   vkUpdateDescriptorSets(device.device, write_count, writes, 0, nullptr);
-
-  for (size_t first = 0; first < samples.size(); first += records_per_dispatch)
-  {
-    const size_t count = std::min<size_t>(records_per_dispatch, samples.size() - first);
-    const VkDeviceSize samples_bytes = (VkDeviceSize)count * sizeof(shared::gpu_sample_t);
-    const VkDeviceSize results_bytes = (VkDeviceSize)count * sizeof(shared::indirect_sh_l1_t);
-    write_host_visible(dispatch_samples, samples.data + first, samples_bytes);
-
-    bake_push_t push;
-    push.sample_count = (uint32_t)count;
-    push.light_count = uploaded_light_count;
-    push.settings = settings;
-    dispatch_and_wait(indirect_kernel, &push, sizeof(push), (uint32_t)count);
-
-    void *mapped = nullptr;
-    check(vkMapMemory(device.device, dispatch_results.memory, 0, results_bytes, 0, &mapped),
-          "vkMapMemory (indirect results)");
-    std::memcpy(out.values.data() + first, mapped, (size_t)results_bytes);
-    vkUnmapMemory(device.device, dispatch_results.memory);
-  }
 }
 
 void vulkan_batch_solver_t::probe_rays(Span<const shared::gpu_sample_t> samples,

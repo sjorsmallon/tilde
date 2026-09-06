@@ -9,6 +9,7 @@
 
 #include "collision_detection.hpp"
 #include "lightmap.hpp"
+#include "lightmap_gpu.hpp"
 #include "lightmap_lights.hpp"
 #include "lightmap_trace.hpp"
 #include "map.hpp"
@@ -59,15 +60,29 @@ assign_probe_visibility_channels(Span<const baked_light_t> lights);
 void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> inside,
                                 std::vector<probe_trace_t> &values);
 
+// Every probe NOT flagged inside a solid, as the records a solver shades
+// (lightmap_gpu_plan.md step 7): `chart_index` is the probe's grid index, `seed`
+// the hash the reference trace keys off, in grid index order. `inside` is
+// classify_probes_inside_solid's answer over the same grid.
+[[nodiscard]] std::vector<gpu_sample_t> collect_probe_samples(const probe_grid_t &grid,
+                                                              Span<const uint8_t> inside);
+
 // The whole probe half of a bake: classify the grid against `occluders`, trace
-// every open probe on every core, dilate into the rest, encode. `lights` and
-// `scene` are the ones the chart solve used, so a probe and the wall beside it
-// are one lighting model. `settings.rays_per_sample` at zero traces no chain and
-// stores the direct term alone.
+// every open probe, dilate into the rest, encode. `lights` and `scene` are the
+// ones the chart solve used, so a probe and the wall beside it are one lighting
+// model. `settings.rays_per_sample` at zero traces no chain and stores the
+// direct term alone.
+//
+// `solver` is who shades the probe records, the way bake_lightmap takes one:
+// null is the reference, trace_probe_light per open probe across every core;
+// a solver gets the open probes as ONE batch through solve_probes, under the
+// settings it was handed at upload_scene -- which is why bake_lightmap zeroes
+// the chain count there when the tracer is off, rather than here.
 [[nodiscard]] probe_volume_t bake_probe_volume(const probe_grid_t &grid,
                                                const Bounding_Volume_Hierarchy &occluders,
                                                const traced_scene_t &scene,
                                                Span<const baked_light_t> lights,
-                                               const indirect_trace_settings_t &settings);
+                                               const indirect_trace_settings_t &settings,
+                                               lightmap_batch_solver_t *solver = nullptr);
 
 } // namespace shared

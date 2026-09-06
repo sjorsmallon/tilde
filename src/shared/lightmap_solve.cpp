@@ -1152,7 +1152,11 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   // the shade wants values, and the tracer's are derived from the same block so
   // three of them are the same shadow rules the direct term uses -- which is what
   // keeps the bounce on one lighting model.
-  const gpu_bake_settings_t shade_settings = gpu_bake_settings_from(solve_settings);
+  gpu_bake_settings_t shade_settings = gpu_bake_settings_from(solve_settings);
+  // A bake that does not trace fires no chain ANYWHERE -- not for a texel, not
+  // for a probe -- and that is decided here, once, before a solver takes its
+  // copy of the settings: the probe half shades under the solver's copy.
+  if (!trace_indirect) shade_settings.rays_per_sample = 0;
   const indirect_trace_settings_t indirect = indirect_trace_settings_from(shade_settings);
 
   // Built once, on this thread: resolving a material LOADS a texture, and the
@@ -1262,11 +1266,7 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
                 "no probes.",
                 settings.probe_spacing_in_world_units);
     else
-    {
-      indirect_trace_settings_t probe_settings = indirect;
-      if (!trace_indirect) probe_settings.rays_per_sample = 0;
-      lightmap.probes = bake_probe_volume(*grid, bvh, traced_scene, lights, probe_settings);
-    }
+      lightmap.probes = bake_probe_volume(*grid, bvh, traced_scene, lights, indirect, solver);
   }
 
   // Always, however short: "how long does a bake take on this map" is the

@@ -300,6 +300,11 @@ Client :: cvars {
     r_shadow_pcss_max_radius: f32 = 16.0    @Client    "Cap on the PCSS search and filter radius, in shadow texels"
     r_shadow_debug_light:   i32 = 0         @Client    "Entity uid of the light r_debug_channel shadow_visibility shows; 0 picks the shadowed light nearest the camera"
 
+    // The lightmap bake, lightmap_gpu_plan.md step 7b. Honoured only where the
+    // device offers ray query; elsewhere the CPU reference solve runs and the
+    // Lightmap tool's status line says why.
+    r_lightmap_gpu:         bool = true     @Client    "Bake lightmaps through the Vulkan ray query solver when the device offers it; off runs the CPU reference solve"
+
     // The sun's map is CASCADED (gate 9 step 2): the view frustum is cut into
     // slices by depth and each slice gets a map of its own, fit to the slice's
     // bounding sphere and snapped to a texel so it does not shimmer.

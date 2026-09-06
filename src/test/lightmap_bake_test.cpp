@@ -3645,6 +3645,143 @@ void a_batched_bake_is_the_reference_bake_bit_for_bit()
   assert(check_a_batched_bake_against_the_reference(mesh_map, {}) == 2);
 }
 
+// --- lightmap_gpu_plan.md step 7: the probe half through the seam --------------
+
+// The probe volume a solver bakes is the reference volume BYTE FOR BYTE, with a
+// Mixed light beside the Baked one so both a channel and a direct term are
+// exercised -- and with the tracer off, no chain is fired on either path, which
+// is what pins the chain count being zeroed ONCE in bake_lightmap rather than
+// on the probe path alone.
+void a_batched_probe_bake_is_the_reference_bake_bit_for_bit()
+{
+  shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  {
+    std::shared_ptr<entities::Point_Light_Entity> mixed =
+        std::make_shared<entities::Point_Light_Entity>();
+    mixed->position = {32, 40, 16};
+    mixed->range = 512.f;
+    mixed->light.color = {1.f, 0.5f, 0.25f};
+    mixed->light.intensity = 200.f;
+    mixed->light.mode = entities::Light_Mode::Mixed;
+    mixed->light.source_radius = 4.f;
+    map.entities.push_back({map.next_uid++, mixed});
+  }
+
+  const auto check = [&](const shared::lightmap_solve_settings_t &solve) {
+    const shared::lightmap_t reference = bake_probes_for(map, 16.f, solve);
+    assert(!reference.probes.empty());
+
+    shared::cpu_batch_solver_t solver;
+    shared::lightmap_t batched = pack_for(map);
+    batched.settings.probe_spacing_in_world_units = 16.f;
+    shared::bake_lightmap(map, batched, solve, &solver);
+
+    assert(!batched.probes.empty());
+    assert(reference.probes.l0_bytes == batched.probes.l0_bytes);
+    assert(reference.probes.l1_bytes == batched.probes.l1_bytes);
+    assert(reference.probes.visibility_bytes == batched.probes.visibility_bytes);
+    for (uint32_t channel = 0; channel < shared::PROBE_VISIBILITY_CHANNELS; ++channel)
+      assert(reference.probes.visibility_slots[channel] ==
+             batched.probes.visibility_slots[channel]);
+    assert(solver.statistics().probe_dispatches == 1);
+    return solver.statistics().shade.chains;
+  };
+
+  const shared::lightmap_solve_settings_t traced = probe_solve_settings();
+  assert(check(traced) > 0);
+
+  shared::lightmap_solve_settings_t untraced = probe_solve_settings();
+  untraced.trace_indirect_light = false;
+  assert(check(untraced) == 0);
+}
+
+// The records a probe bake hands a solver: one per OPEN probe, its grid index
+// as chart_index, its hash as the seed, in grid order.
+void probe_records_name_their_probe_and_skip_the_buried_ones()
+{
+  shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
+  const std::optional<shared::probe_grid_t> grid = shared::try_build_probe_grid(map, 16.f);
+  assert(grid);
+  const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
+  const std::vector<uint8_t> inside = shared::classify_probes_inside_solid(*grid, bvh);
+
+  size_t open = 0;
+  for (const uint8_t flag : inside) open += flag == 0;
+  const std::vector<shared::gpu_sample_t> samples = shared::collect_probe_samples(*grid, inside);
+  assert(samples.size() == open);
+  assert(open > 0 && open < grid->probe_count());
+
+  size_t previous = 0;
+  for (size_t i = 0; i < samples.size(); ++i)
+  {
+    const shared::gpu_sample_t &sample = samples[i];
+    assert(i == 0 || sample.chart_index > previous);
+    previous = sample.chart_index;
+    assert(!inside[sample.chart_index]);
+    const linalg::vec3i at = grid->coordinates_of(sample.chart_index);
+    const linalg::vec3 position = grid->position_of(at);
+    assert(sample.position.x == position.x && sample.position.y == position.y &&
+           sample.position.z == position.z);
+    assert(sample.seed == shared::sample_hash(at.x, at.y, at.z, 0x50524f42));
+  }
+}
+
+// The comparison over probe answers: sixteen coefficients in three groups, a
+// visibility channel biased on one slice flagged and named.
+void the_probe_comparison_flags_a_bias_in_a_channel_and_names_it()
+{
+  constexpr size_t RECORDS_PER_SLICE = 150;
+  std::vector<shared::gpu_sample_t> samples;
+  std::vector<shared::probe_trace_t> reference;
+  const size_t slices[] = {0, 1};
+  for (uint32_t slice = 0; slice < 2; ++slice)
+    for (uint32_t i = 0; i < RECORDS_PER_SLICE; ++i)
+    {
+      shared::gpu_sample_t sample;
+      sample.chart_index = slice;
+      sample.seed = shared::sample_hash((int)i, (int)slice, 0, 0x50524f42);
+      samples.push_back(sample);
+
+      const float noise = shared::unit_float_from(sample.seed) - 0.5f;
+      shared::probe_trace_t value;
+      value.light.l0 = {2.f + noise, 1.f + noise * 0.5f, 0.5f};
+      value.light.l1[1] = {0.5f + noise * 0.1f, 0.25f, 0.f};
+      value.visibility[0] = noise > 0.f ? 1.f : 0.5f;
+      value.visibility[1] = 0.75f;
+      reference.push_back(value);
+    }
+
+  const shared::record_comparison_report_t same = shared::compare_probe_results(
+      samples, Span<const size_t>(slices), reference, reference);
+  assert(same.agrees());
+  assert(same.coefficient_count == shared::PROBE_COEFFICIENT_COUNT);
+  assert(same.charts.size() == 2);
+  assert(same.group_scale.size() == 3);
+  assert(same.group_scale[2] > 0.f);
+  assert(same.reference_nonzero_records == samples.size());
+  assert(same.differing_records == 0);
+
+  std::vector<shared::probe_trace_t> biased = reference;
+  for (size_t i = 0; i < samples.size(); ++i)
+    if (samples[i].chart_index == 1) biased[i].visibility[1] -= 0.1f;
+  const shared::record_comparison_report_t bias = shared::compare_probe_results(
+      samples, Span<const size_t>(slices), reference, biased);
+  assert(!bias.agrees());
+  assert(bias.charts_beyond_tolerance == 1);
+  assert(bias.differing_records == RECORDS_PER_SLICE);
+  assert(bias.charts.front().chart == 1);
+  assert(bias.charts.front().largest_sigma_coefficient ==
+         (int)shared::SH_L1_COEFFICIENT_COUNT + 1);
+  assert(bias.largest_absolute_difference_over(0, shared::SH_L1_COEFFICIENT_COUNT) == 0.f);
+  assert(std::abs(bias.largest_absolute_difference_over(shared::SH_L1_COEFFICIENT_COUNT,
+                                                        shared::PROBE_VISIBILITY_CHANNELS) -
+                  0.1f) < 1e-6f);
+
+  assert(std::string_view(shared::probe_coefficient_name(0)) == "L0.r");
+  assert(std::string_view(shared::probe_coefficient_name(6)) == "L1y.r");
+  assert(std::string_view(shared::probe_coefficient_name(13)) == "visibility[1]");
+}
+
 static assets::asset_state_t g_asset_state{};
 
 int main()
@@ -3743,6 +3880,10 @@ int main()
   a_bake_without_probes_clears_the_volume();
   a_sidecar_round_trips_the_probes();
   a_probe_volume_round_trips_its_own_codec();
+
+  a_batched_probe_bake_is_the_reference_bake_bit_for_bit();
+  probe_records_name_their_probe_and_skip_the_buried_ones();
+  the_probe_comparison_flags_a_bias_in_a_channel_and_names_it();
 
   std::printf("lightmap_bake_test passed\n");
   return 0;

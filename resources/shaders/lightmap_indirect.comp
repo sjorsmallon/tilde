@@ -13,19 +13,42 @@
 // record's seed, so the two solves draw the SAME directions and differ only
 // where a ray lands differently by float rounding. The GPU sees points,
 // triangles, materials and lights; never a chart, a plane or a brush.
-
-#include "light_arrival.glsl"
+//
+// Step 7: the same kernel shades a PROBE when push.probes is set --
+// trace_probe_light in GLSL: chains over the full sphere, the Baked lights'
+// direct term by next-event estimation from the probe itself, the Mixed lights'
+// visibility fractions into the four channels. Sixteen floats per record then,
+// where a texel's answer is twelve.
 
 layout(local_size_x = 64) in;
 
-// gpu_sample_t, gpu_triangle_t, gpu_material_t: lightmap_gpu.hpp, std430.
-struct gpu_sample_t
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+
+// gpu_bake_settings_t follows the two counts, then the probe half;
+// lightmap_gpu_vulkan.cpp asserts the layout (indirect_push_t).
+layout(push_constant) uniform Push
 {
-  vec3 position;
-  uint chart_index;
-  vec3 normal;
-  uint seed;
-};
+  uint sample_count;
+  uint light_count;
+  uint mode;
+  int rays_per_sample;
+  int bounces_before_roulette;
+  int max_bounces;
+  float ray_bias;
+  float shadow_ray_bias;
+  int soft_shadow_samples;
+  float directional_shadow_distance;
+  // One bit per light slot that is MIXED (analytic at runtime): a probe adds no
+  // direct term for one, and stores its visibility only in the channel
+  // visibility_slots names for it -- LIGHTMAP_NO_LIGHT_SLOT (-1) is an
+  // unclaimed channel.
+  uvec2 analytic_lights;
+  ivec4 visibility_slots;
+  uint probes;
+  uint pad;
+} push;
+
+#include "lightmap_bake.glsl"
 
 struct gpu_triangle_t
 {
@@ -44,10 +67,10 @@ struct gpu_material_t
   uint pad1;
 };
 
-layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
 layout(std430, set = 0, binding = 1) readonly buffer Samples { gpu_sample_t samples[]; };
 // Twelve floats per record in indirect_sh_l1_t's order: l0.rgb, then the L1
-// vector's x, y and z components, rgb each.
+// vector's x, y and z components, rgb each -- and for a probe, its four
+// visibility fractions after them (probe_trace_t).
 layout(std430, set = 0, binding = 2) writeonly buffer Results { float results[]; };
 layout(std430, set = 0, binding = 3) readonly buffer Vertices { vec4 vertices[]; };
 layout(std430, set = 0, binding = 4) readonly buffer Indices { uint indices[]; };
@@ -60,83 +83,13 @@ layout(std430, set = 0, binding = 7) readonly buffer Lights { Light lights[]; };
 // hit reads the texel the CPU reads and decodes it with the same arithmetic.
 layout(set = 0, binding = 8) uniform utexture2D textures[];
 
-// gpu_bake_settings_t follows the two counts; lightmap_gpu_vulkan.cpp asserts
-// the layout.
-layout(push_constant) uniform Push
-{
-  uint sample_count;
-  uint light_count;
-  uint mode;
-  int rays_per_sample;
-  int bounces_before_roulette;
-  int max_bounces;
-  float ray_bias;
-  float shadow_ray_bias;
-  int soft_shadow_samples;
-  float directional_shadow_distance;
-} push;
-
-const float PI = 3.14159265;
-const float TWO_PI = 6.28318531;
 const float UNTEXTURED_BOUNCE_ALBEDO = 0.5;
 const uint NO_TEXTURE = 0xffffffffu;
 const float SH_L1_Y0 = 0.282095;
 const float SH_L1_Y1 = 0.488603;
 const float NO_MAX_DISTANCE = 1e30;
 
-// lightmap_lights.cpp's hash_mix / unit_float_from / luminance_of, verbatim.
-uint hash_mix(uint hash, uint value)
-{
-  for (int byte = 0; byte < 4; ++byte)
-  {
-    hash ^= (value >> (byte * 8)) & 0xffu;
-    hash *= 16777619u;
-  }
-  return hash;
-}
-
-float unit_float_from(uint bits)
-{
-  return float(bits >> 8) * (1.0 / 16777216.0);
-}
-
-float luminance_of(vec3 linear_rgb)
-{
-  return 0.2126 * linear_rgb.x + 0.7152 * linear_rgb.y + 0.0722 * linear_rgb.z;
-}
-
-// brush.cpp's brush_face_grid_tangents, which every sampler below builds its
-// basis from -- the same basis as the CPU, or the same random numbers would
-// name different directions.
-void face_tangents(vec3 normal, out vec3 tangent_u, out vec3 tangent_v)
-{
-  const float absolute_x = abs(normal.x);
-  const float absolute_y = abs(normal.y);
-  const float absolute_z = abs(normal.z);
-
-  if (absolute_x > 0.999)
-  {
-    tangent_u = vec3(0, 0, 1);
-    tangent_v = vec3(0, 1, 0);
-    return;
-  }
-  if (absolute_y > 0.999)
-  {
-    tangent_u = vec3(1, 0, 0);
-    tangent_v = vec3(0, 0, 1);
-    return;
-  }
-  if (absolute_z > 0.999)
-  {
-    tangent_u = vec3(1, 0, 0);
-    tangent_v = vec3(0, 1, 0);
-    return;
-  }
-
-  const vec3 reference = absolute_x < 0.9 ? vec3(1, 0, 0) : vec3(0, 1, 0);
-  tangent_u = normalize(cross(normal, reference));
-  tangent_v = cross(normal, tangent_u);
-}
+// --- Samplers, lightmap_trace.cpp's ---------------------------------------------
 
 vec3 cosine_hemisphere_direction(vec3 normal, uint bits)
 {
@@ -167,125 +120,18 @@ vec3 uniform_hemisphere_direction(vec3 normal, uint bits)
                    normal * height);
 }
 
-// --- Rays --------------------------------------------------------------------
-
-bool ray_is_clear(vec3 origin, vec3 direction, float max_distance)
+// The probe's sampler: over the whole sphere, in WORLD axes rather than a
+// tangent basis, since a point in space has no face.
+vec3 uniform_sphere_direction(uint bits)
 {
-  // A ray asked to travel nowhere hits nothing: the CPU's `t < distance - bias`
-  // admits no hit there, and a query with tMax below tMin is undefined.
-  if (max_distance <= 0.0) return true;
+  const float height = 2.0 * unit_float_from(bits) - 1.0;
+  const float radius = sqrt(max(0.0, 1.0 - height * height));
+  const float angle = TWO_PI * unit_float_from(hash_mix(bits, 0x68bc21ebu));
 
-  rayQueryEXT query;
-  rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                        0xff, origin, 0.0, direction, max_distance);
-  while (rayQueryProceedEXT(query)) {}
-  return rayQueryGetIntersectionTypeEXT(query, true) == gl_RayQueryCommittedIntersectionNoneEXT;
+  return normalize(vec3(radius * cos(angle), height, radius * sin(angle)));
 }
 
-bool shadow_ray_reaches(vec3 surface_position, vec3 surface_normal, vec3 direction,
-                        float distance)
-{
-  return ray_is_clear(surface_position + surface_normal * push.shadow_ray_bias, direction,
-                      distance - push.shadow_ray_bias);
-}
-
-// --- Arrival, on top of the shared text ----------------------------------------
-
-// lightmap_lights.cpp's light_arrival_t: light_arrival() from light_arrival.glsl
-// for the direction and the attenuation, plus the two gates and the shadow disc
-// the CPU adds around it. A directional light's distance is the settings' shadow
-// distance here, not the unit distance the runtime measures its radius at.
-struct bake_arrival_t
-{
-  bool arrives;
-  bool reaches;
-  vec3 direction;
-  float distance;
-  float attenuation;
-  float normal_dot_light;
-  float shadow_disc_radius;
-};
-
-bake_arrival_t arrival_at(Light light, vec3 surface_position, vec3 surface_normal)
-{
-  bake_arrival_t arrival;
-  arrival.arrives = false;
-  arrival.reaches = false;
-  arrival.direction = vec3(0.0);
-  arrival.distance = 0.0;
-  arrival.attenuation = 0.0;
-  arrival.normal_dot_light = 0.0;
-  arrival.shadow_disc_radius = 0.0;
-
-  const int light_type = int(light.spot_params.w);
-  if (light_type != LIGHT_TYPE_DIRECTIONAL)
-  {
-    const vec3 to_light = light.position.xyz - surface_position;
-    const float distance = sqrt(dot(to_light, to_light));
-    if (distance > light.spot_params.z || distance < 1e-4) return arrival;
-  }
-
-  const Light_Arrival shared_arrival = light_arrival(light, surface_position);
-  arrival.direction = shared_arrival.direction;
-  arrival.attenuation = shared_arrival.attenuation;
-  if (light_type == LIGHT_TYPE_DIRECTIONAL)
-  {
-    arrival.distance = push.directional_shadow_distance;
-    arrival.shadow_disc_radius = light.direction.w * arrival.distance;
-  }
-  else
-  {
-    arrival.distance = shared_arrival.distance;
-    arrival.shadow_disc_radius = light.direction.w;
-  }
-
-  if (arrival.attenuation <= 0.0) return arrival;
-  arrival.arrives = true;
-
-  arrival.normal_dot_light = dot(surface_normal, arrival.direction);
-  if (arrival.normal_dot_light <= 0.0) return arrival;
-
-  arrival.reaches = true;
-  return arrival;
-}
-
-bool shadow_ray_reaches_disc_point(vec3 surface_position, vec3 surface_normal,
-                                   bake_arrival_t arrival, float radius, float angle)
-{
-  vec3 tangent_u;
-  vec3 tangent_v;
-  face_tangents(arrival.direction, tangent_u, tangent_v);
-
-  const vec3 centre = surface_position + arrival.direction * arrival.distance;
-  const vec3 target =
-      centre + tangent_u * (cos(angle) * radius) + tangent_v * (sin(angle) * radius);
-
-  const vec3 to_target = target - surface_position;
-  const float distance = sqrt(dot(to_target, to_target));
-  if (distance < 1e-4) return false;
-
-  return shadow_ray_reaches(surface_position, surface_normal, to_target * (1.0 / distance),
-                            distance);
-}
-
-// light_visibility_single_ray: the chain's next-event estimation spends ONE ray
-// per light per vertex, toward a random point of the disc.
-float light_visibility_single_ray(vec3 surface_position, vec3 surface_normal,
-                                  bake_arrival_t arrival, uint hash)
-{
-  if (arrival.shadow_disc_radius <= 0.0)
-    return shadow_ray_reaches(surface_position, surface_normal, arrival.direction,
-                              arrival.distance)
-               ? 1.0
-               : 0.0;
-
-  const float radius = arrival.shadow_disc_radius * sqrt(unit_float_from(hash));
-  const float angle = TWO_PI * unit_float_from(hash_mix(hash, 0x68bc21ebu));
-
-  return shadow_ray_reaches_disc_point(surface_position, surface_normal, arrival, radius, angle)
-             ? 1.0
-             : 0.0;
-}
+// --- Next-event estimation at a bounce ----------------------------------------
 
 vec3 direct_irradiance_at(vec3 position, vec3 normal, uint bits)
 {
@@ -410,21 +256,54 @@ vec3 trace_one_chain(vec3 position, vec3 normal, vec3 first_leg, uint bits)
   return collected;
 }
 
-void main()
+// --- The two records -------------------------------------------------------------
+
+// The SH L1 projection of one direction's irradiance, trace_probe_light's
+// add_from_direction, in its arithmetic order.
+struct sh_l1_t
 {
-  const uint i = gl_GlobalInvocationID.x;
-  if (i >= push.sample_count) return;
+  vec3 l0;
+  vec3 l1_x;
+  vec3 l1_y;
+  vec3 l1_z;
+};
 
-  const gpu_sample_t sample_record = samples[i];
+void add_from_direction(inout sh_l1_t projected, vec3 irradiance, vec3 direction)
+{
+  projected.l0 += irradiance * SH_L1_Y0;
+  projected.l1_x += irradiance * (SH_L1_Y1 * direction.x);
+  projected.l1_y += irradiance * (SH_L1_Y1 * direction.y);
+  projected.l1_z += irradiance * (SH_L1_Y1 * direction.z);
+}
 
-  vec3 l0 = vec3(0.0);
-  vec3 l1_x = vec3(0.0);
-  vec3 l1_y = vec3(0.0);
-  vec3 l1_z = vec3(0.0);
+void write_sh(uint at, sh_l1_t projected)
+{
+  results[at + 0u] = projected.l0.x;
+  results[at + 1u] = projected.l0.y;
+  results[at + 2u] = projected.l0.z;
+  results[at + 3u] = projected.l1_x.x;
+  results[at + 4u] = projected.l1_x.y;
+  results[at + 5u] = projected.l1_x.z;
+  results[at + 6u] = projected.l1_y.x;
+  results[at + 7u] = projected.l1_y.y;
+  results[at + 8u] = projected.l1_y.z;
+  results[at + 9u] = projected.l1_z.x;
+  results[at + 10u] = projected.l1_z.y;
+  results[at + 11u] = projected.l1_z.z;
+}
+
+// shade_sample_indirect: the re-key of the seed, then trace_indirect_light over
+// the hemisphere.
+void shade_texel(uint i, gpu_sample_t sample_record)
+{
+  sh_l1_t projected;
+  projected.l0 = vec3(0.0);
+  projected.l1_x = vec3(0.0);
+  projected.l1_y = vec3(0.0);
+  projected.l1_z = vec3(0.0);
 
   if (push.rays_per_sample > 0)
   {
-    // shade_sample_indirect's re-key of the seed, then trace_indirect_light.
     const uint hash = hash_mix(sample_record.seed, 0x1b873593u);
     const float weight = 2.0 / float(push.rays_per_sample);
 
@@ -435,24 +314,89 @@ void main()
       const vec3 collected =
           trace_one_chain(sample_record.position, sample_record.normal, first_leg, bits);
 
-      l0 += collected * (weight * SH_L1_Y0);
-      l1_x += collected * (weight * SH_L1_Y1 * first_leg.x);
-      l1_y += collected * (weight * SH_L1_Y1 * first_leg.y);
-      l1_z += collected * (weight * SH_L1_Y1 * first_leg.z);
+      projected.l0 += collected * (weight * SH_L1_Y0);
+      projected.l1_x += collected * (weight * SH_L1_Y1 * first_leg.x);
+      projected.l1_y += collected * (weight * SH_L1_Y1 * first_leg.y);
+      projected.l1_z += collected * (weight * SH_L1_Y1 * first_leg.z);
     }
   }
 
-  const uint at = i * 12u;
-  results[at + 0u] = l0.x;
-  results[at + 1u] = l0.y;
-  results[at + 2u] = l0.z;
-  results[at + 3u] = l1_x.x;
-  results[at + 4u] = l1_x.y;
-  results[at + 5u] = l1_x.z;
-  results[at + 6u] = l1_y.x;
-  results[at + 7u] = l1_y.y;
-  results[at + 8u] = l1_y.z;
-  results[at + 9u] = l1_z.x;
-  results[at + 10u] = l1_z.y;
-  results[at + 11u] = l1_z.z;
+  write_sh(i * 12u, projected);
+}
+
+// trace_probe_light. The record's seed is the probe hash ITSELF, not re-keyed;
+// there is no surface, so the "normal" handed to the arrival and the shadow ray
+// is the direction to the light (N.L is then 1 and the bias steps toward the
+// light), and the chain is given its first leg as its normal so its origin bias
+// steps along the ray. A channel no Mixed light claims, or whose light does not
+// arrive here, reads 1: fully visible.
+void shade_probe(uint i, gpu_sample_t sample_record)
+{
+  const vec3 position = sample_record.position;
+  const uint hash = sample_record.seed;
+
+  sh_l1_t projected;
+  projected.l0 = vec3(0.0);
+  projected.l1_x = vec3(0.0);
+  projected.l1_y = vec3(0.0);
+  projected.l1_z = vec3(0.0);
+  vec4 visibility = vec4(1.0);
+
+  for (uint slot = 0u; slot < push.light_count; ++slot)
+  {
+    int channel = -1;
+    for (int at = 0; at < 4; ++at)
+      if (push.visibility_slots[at] == int(slot)) channel = at;
+    if (mask_admits(push.analytic_lights, slot) && channel < 0) continue;
+
+    const Light light = lights[slot];
+    const bake_arrival_t arrival = arrival_at(light, position, vec3(0.0, 1.0, 0.0));
+    if (!arrival.arrives) continue;
+
+    const float seen = light_visibility(position, arrival.direction, arrival,
+                                        hash_mix(hash, 0x7f4a7c15u + slot));
+    if (channel >= 0)
+    {
+      visibility[channel] = seen;
+      continue;
+    }
+    if (seen <= 0.0) continue;
+
+    add_from_direction(projected, light.radiance.rgb * (arrival.attenuation * seen),
+                       arrival.direction);
+  }
+
+  if (push.rays_per_sample > 0)
+  {
+    // The sphere's uniform pdf is 1/(4pi) where the hemisphere's was 1/(2pi).
+    const float weight = 4.0 / float(push.rays_per_sample);
+
+    for (int ray = 0; ray < push.rays_per_sample; ++ray)
+    {
+      const uint bits = hash_mix(hash, uint(ray));
+      const vec3 first_leg = uniform_sphere_direction(bits);
+      const vec3 collected = trace_one_chain(position, first_leg, first_leg, bits);
+
+      add_from_direction(projected, collected * weight, first_leg);
+    }
+  }
+
+  const uint at = i * 16u;
+  write_sh(at, projected);
+  results[at + 12u] = visibility.x;
+  results[at + 13u] = visibility.y;
+  results[at + 14u] = visibility.z;
+  results[at + 15u] = visibility.w;
+}
+
+void main()
+{
+  const uint i = gl_GlobalInvocationID.x;
+  if (i >= push.sample_count) return;
+
+  const gpu_sample_t sample_record = samples[i];
+  if (push.probes != 0u)
+    shade_probe(i, sample_record);
+  else
+    shade_texel(i, sample_record);
 }

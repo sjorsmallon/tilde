@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <format>
 #include <thread>
 
 namespace shared
@@ -154,11 +155,40 @@ void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> in
   }
 }
 
+// The one hash a probe's random numbers derive from, on both paths.
+uint32_t probe_hash(const linalg::vec3i &at)
+{
+  return sample_hash(at.x, at.y, at.z, 0x50524f42);
+}
+
+std::vector<gpu_sample_t> collect_probe_samples(const probe_grid_t &grid,
+                                                Span<const uint8_t> inside)
+{
+  if (inside.size() != grid.probe_count())
+    fatal_error("[lightmap] collecting probe records over a grid of {} with {} flag(s)",
+                grid.probe_count(), inside.size());
+
+  std::vector<gpu_sample_t> samples;
+  samples.reserve(grid.probe_count());
+  for (size_t index = 0; index < grid.probe_count(); ++index)
+  {
+    if (inside[(uint32_t)index]) continue;
+    const linalg::vec3i at = grid.coordinates_of(index);
+    gpu_sample_t sample;
+    sample.position = grid.position_of(at);
+    sample.chart_index = (uint32_t)index;
+    sample.seed = probe_hash(at);
+    samples.push_back(sample);
+  }
+  return samples;
+}
+
 probe_volume_t bake_probe_volume(const probe_grid_t &grid,
                                  const Bounding_Volume_Hierarchy &occluders,
                                  const traced_scene_t &scene,
                                  Span<const baked_light_t> lights,
-                                 const indirect_trace_settings_t &settings)
+                                 const indirect_trace_settings_t &settings,
+                                 lightmap_batch_solver_t *solver)
 {
   const auto started = std::chrono::steady_clock::now();
 
@@ -170,26 +200,40 @@ probe_volume_t bake_probe_volume(const probe_grid_t &grid,
   if (worker_count == 0) worker_count = 1;
   worker_count = (unsigned int)std::min<size_t>(worker_count, std::max<size_t>(values.size(), 1));
 
-  std::atomic<size_t> next_probe{0};
-  const auto trace_until_done = [&]() {
-    for (;;)
-    {
-      const size_t index = next_probe.fetch_add(1, std::memory_order_relaxed);
-      if (index >= values.size()) return;
-      if (inside[index]) continue;
+  if (solver)
+  {
+    worker_count = 1;
+    const std::vector<gpu_sample_t> samples = collect_probe_samples(grid, inside);
+    gpu_probe_results_t results;
+    solver->solve_probes(samples, visibility_slots, results);
+    if (results.values.size() != samples.size())
+      fatal_error("[lightmap] {} answered {} probe record(s) of {}.", solver->name(),
+                  results.values.size(), samples.size());
+    for (size_t i = 0; i < samples.size(); ++i)
+      values[samples[i].chart_index] = results.values[i];
+  }
+  else
+  {
+    std::atomic<size_t> next_probe{0};
+    const auto trace_until_done = [&]() {
+      for (;;)
+      {
+        const size_t index = next_probe.fetch_add(1, std::memory_order_relaxed);
+        if (index >= values.size()) return;
+        if (inside[index]) continue;
 
-      const linalg::vec3i at = grid.coordinates_of(index);
-      const uint32_t hash = sample_hash(at.x, at.y, at.z, 0x50524f42);
-      values[index] = trace_probe_light(scene, lights, visibility_slots, grid.position_of(at),
-                                        settings, hash);
-    }
-  };
+        const linalg::vec3i at = grid.coordinates_of(index);
+        values[index] = trace_probe_light(scene, lights, visibility_slots,
+                                          grid.position_of(at), settings, probe_hash(at));
+      }
+    };
 
-  std::vector<std::thread> workers;
-  workers.reserve(worker_count - 1);
-  for (unsigned int i = 1; i < worker_count; ++i) workers.emplace_back(trace_until_done);
-  trace_until_done();
-  for (std::thread &worker : workers) worker.join();
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count - 1);
+    for (unsigned int i = 1; i < worker_count; ++i) workers.emplace_back(trace_until_done);
+    trace_until_done();
+    for (std::thread &worker : workers) worker.join();
+  }
 
   dilate_probes_inside_solid(grid, inside, values);
 
@@ -208,10 +252,12 @@ probe_volume_t bake_probe_volume(const probe_grid_t &grid,
   for (const int16_t slot : visibility_slots) visibility_channels += slot != LIGHTMAP_NO_LIGHT_SLOT;
   const double seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-  log_terminal("[lightmap] baked {}x{}x{} probes at spacing {} in {:.2f}s -- {} traced, {} "
+  const std::string shaded_by =
+      solver ? std::format("by {}", solver->name()) : std::format("on {} thread(s)", worker_count);
+  log_terminal("[lightmap] baked {}x{}x{} probes at spacing {} in {:.2f}s {} -- {} traced, {} "
                "inside solids and filled from their neighbours, {} chain(s) per probe, {} "
                "Mixed light visibility channel(s).",
-               grid.count.x, grid.count.y, grid.count.z, grid.spacing, seconds,
+               grid.count.x, grid.count.y, grid.count.z, grid.spacing, seconds, shaded_by,
                values.size() - inside_count, inside_count, settings.rays_per_sample,
                visibility_channels);
 
