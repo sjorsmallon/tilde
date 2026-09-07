@@ -194,6 +194,8 @@ constexpr uint32_t ENUM_TYPE_COUNT = 12;
 
 const enum_type_info_t& enum_info(enum_type type);
 
+extern const enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT];
+
 // Invalid is 0 so that zeroed memory never looks like a valid entity.
 enum class entity_type : uint16_t
 {
@@ -220,14 +222,15 @@ constexpr uint32_t ENTITY_TYPE_COUNT = 14;
 enum class component_type : uint16_t
 {
   Box_Volume = 0,
-  Material = 1,
-  Render = 2,
-  Light = 3,
-  Movement = 4,
-  Inventory = 5,
+  Enabled = 1,
+  Material = 2,
+  Render = 3,
+  Light = 4,
+  Movement = 5,
+  Inventory = 6,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 6;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 7;
 
 } // namespace entities
 
@@ -323,6 +326,13 @@ struct Box_Volume
   linalg::vec3f half_extents = {1.0f, 1.0f, 1.0f};
 };
 
+struct Enabled
+{
+  static constexpr component_type static_component = component_type::Enabled;
+
+  bool value = true;
+};
+
 struct Material
 {
   static constexpr component_type static_component = component_type::Material;
@@ -384,6 +394,7 @@ struct Entity
   uint32_t entity_id = {};
   linalg::vec3f position = {};
   linalg::quatf orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+  network::pascal_string_t<32> name = {};
 };
 
 struct Reflection_Volume_Entity : Entity
@@ -432,7 +443,7 @@ struct Player_Entity : Entity
   uint32_t last_hit_tick = {};
   bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};
-  network::pascal_string_t<32> name = {};
+  network::pascal_string_t<32> display_name = {};
   int32_t kills = {};
   int32_t deaths = {};
   linalg::vec3f velocity = {};
@@ -519,6 +530,7 @@ struct Trigger_Volume_Entity : Entity
 
   Trigger_Volume_Entity() { type = entity_type::Trigger_Volume_Entity; }
 
+  Enabled switch_state = {};
   Box_Volume volume = {.half_extents = {64.0f, 64.0f, 64.0f}};
   Trigger_Action action = Trigger_Action::Kill;
   Fire_Mode fire_mode = Fire_Mode::On_Enter;
@@ -533,6 +545,7 @@ struct Point_Light_Entity : Entity
 
   Point_Light_Entity() { type = entity_type::Point_Light_Entity; }
 
+  Enabled switch_state = {};
   Light light = {};
   float range = 256.0f;
 };
@@ -543,6 +556,7 @@ struct Spot_Light_Entity : Entity
 
   Spot_Light_Entity() { type = entity_type::Spot_Light_Entity; }
 
+  Enabled switch_state = {};
   Light light = {};
   float range = 512.0f;
   float inner_degrees = 20.0f;

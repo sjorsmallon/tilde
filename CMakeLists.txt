@@ -204,6 +204,19 @@ set(ENTITY_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/entities.def
 set(ENTITY_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/generated)
 set(ENTITY_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entities_generated.hpp)
 set(ENTITY_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entities_generated.cpp)
+# The wiring system's TYPE layer -- what an entity can be TOLD, as against what
+# it IS. A second pair rather than more of the two above because they answer
+# different questions and are read by different people; they share one namespace
+# and one enum info table, and nothing else.
+set(ENTITY_IO_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entity_io_generated.hpp)
+set(ENTITY_IO_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entity_io_generated.cpp)
+# The server's binder TU. Everything that REFERENCES an action handler is here,
+# so entity_io_generated.cpp compiles into game_shared with no handler present
+# and the client DLL never names one -- the cvar family's split, for the cvar
+# family's reason. It is also why the ACCEPTANCE mask (shared, read by the map
+# loader and the editor) and the DISPATCH table (here) are two artifacts: this
+# file static_asserts that they agree cell for cell.
+set(ENTITY_IO_GEN_BINDINGS ${ENTITY_GEN_OUT_DIR}/server_action_bindings.cpp)
 file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
 
 # The asset manifest. NOT a .def and not hand-authored: asset_pack walks
@@ -300,6 +313,7 @@ add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
 # here rather than an output: asset_pack owns it.
 add_custom_command(
     OUTPUT ${ENTITY_GEN_HEADER} ${ENTITY_GEN_SOURCE}
+           ${ENTITY_IO_GEN_HEADER} ${ENTITY_IO_GEN_SOURCE} ${ENTITY_IO_GEN_BINDINGS}
            ${ASSET_GEN_HEADER} ${ASSET_GEN_SOURCE}
            ${ASSET_GEN_STATE_HEADER} ${ASSET_GEN_BINDINGS}
            ${CVAR_GEN_HEADER} ${CVAR_GEN_SOURCE}
@@ -351,6 +365,7 @@ add_library(game_shared STATIC
     # link error rather than a silent gap.
     ${ASSET_GEN_BINDINGS}
     ${ENTITY_GEN_SOURCE}
+    ${ENTITY_IO_GEN_SOURCE}
     # The cvar tables and text conversion. Holds no reference to any command
     # handler, so it compiles here without either side being present -- the two
     # binder TUs are what reference handlers, and they go into the DLLs that
@@ -760,6 +775,13 @@ add_library(game_server SHARED
     src/server/entity_lifecycle.cpp
     src/server/trigger_actions.hpp
     src/server/trigger_actions.cpp
+    # Entity I/O. The generated binder is what references the handlers beside
+    # it, so a declared-but-undefined one is a link error naming the symbol.
+    src/server/entity_io_context.hpp
+    ${ENTITY_IO_GEN_BINDINGS}
+    src/server/entities/switchable.cpp
+    src/server/entities/colorable.cpp
+    src/server/entities/mortal.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
@@ -949,6 +971,7 @@ target_link_libraries(navmesh_test PRIVATE game_shared)
 # memcmp diffing) and derived-to-base conversion, which the inheritance layout
 # was chosen to preserve.
 add_executable(entity_layout_test src/test/entity_layout_test.cpp ${ENTITY_GEN_SOURCE}
+                                 ${ENTITY_IO_GEN_SOURCE}
                                   ${ASSET_GEN_SOURCE}
                                   src/shared/entities/entity_reflection.cpp
                                   src/shared/reflection.cpp)

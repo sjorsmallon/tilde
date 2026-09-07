@@ -9,11 +9,6 @@
 namespace server
 {
 
-// A player's body used to be assembled here: a capsule hitbox nothing read, and
-// four render fields of which three restated Render's own defaults. Both now
-// come out of entities.def -- `render: Render = { mesh = .Leet_Full }` -- so
-// there is nothing left to initialize and no function to forget to call.
-
 shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &context, int32_t slot)
 {
   if (!is_valid_client_slot(slot))
@@ -42,7 +37,7 @@ shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &conte
   grant_default_inventory(context.world.session, player_uid);
 
   player->client_slot_index = slot;
-  player->name              = context.clients[slot].player_name;
+  player->display_name      = context.clients[slot].player_name;
 
   // BEFORE the marker is picked, because Team_Markers picks by it. Free_For_All
   // in a mode that does not assign teams, which is every marker's default too,

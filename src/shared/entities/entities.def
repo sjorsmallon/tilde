@@ -104,6 +104,16 @@ Entity :: base {
     entity_id:   u32                    @Networked
     position:    v3                     @Fully_Serializable
     orientation: quat = {0, 0, 0, 1}    @Fully_Serializable
+
+    // A display LABEL, and nothing resolves it. entity_io_def.md ss6: a
+    // connection targets a UID, so the label needs no uniqueness rule and no
+    // lookup -- two entities may share one and nothing breaks. It buys the
+    // editor a readable name for uid 42 and a load error that can say
+    // "connection from front_door to lamp_3 refused" instead of "from 42 to
+    // 57". Not @Networked: an author types it, the client loaded the same map,
+    // and wiring is server-only. Player_Entity's own replicated name is
+    // `display_name` -- a different fact, negotiated at connect.
+    name:        string<32>             @Editable @Saveable
 }
 
 Spawn_Type :: enum { Human, Bot }
@@ -129,6 +139,45 @@ Reflection_Volume_Entity :: entity {
 Box_Volume :: component {
     position: v3 = {0, 0, 0}            @Editable @Saveable
     half_extents: v3 = {1, 1, 1}        @Editable @Saveable
+}
+
+// ---------------------------------------------------------------------------
+// TRAITS -- entity_io_def.md ss5
+// ---------------------------------------------------------------------------
+// A trait is a named set of ACTIONS a type can be told and SIGNALS it
+// announces. A TYPE-level fact, opted into by an entity's `is` list; the
+// per-INSTANCE half is a connection, which is map data and lives nowhere in
+// here. `requires C` means the trait's handlers are written ONCE against that
+// component and every opting-in type must carry one; `by` names the types that
+// can activate a signal, which is what a connection targeting the activator is
+// checked against at load.
+//
+// A verb belongs to exactly one trait, and the two kinds share one namespace:
+// each emits a `<Name>_Data` payload struct.
+
+Enabled :: component {
+    value: bool = true                  @Fully_Serializable
+}
+
+Usable :: trait { accepts Use() }
+
+Switchable :: trait requires Enabled {
+    accepts Enable(), Disable(), Toggle_Enabled()
+}
+
+Colorable :: trait {
+    accepts Set_Color(color: v3)
+    emits   Color_Changed(color: v3)
+}
+
+Touchable :: trait {
+    emits Touched(), Left()
+    by    Player_Entity, Physics_Body_Entity
+}
+
+Mortal :: trait {
+    accepts Kill(), Set_Health(amount: i32), Damage(amount: i32)
+    emits   Died(killer: entity), Health_Changed(health: i32)
 }
 
 Material :: component {
@@ -271,7 +320,12 @@ Player_Entity :: entity @runtime_only {
     // ENTITY rather than in a message of its own so a late joiner gets every
     // name in its first full snapshot, with no backlog to replay -- and so a
     // bot, which has no client, still has a name.
-    name:   string<32>                  @Networked
+    //
+    // NOT base Entity's `name`, which is the author's map label: this one is
+    // negotiated at connect and replicates, that one is authored and does not.
+    // A Player is @runtime_only and never sits in a map, so its label is
+    // always empty -- which is why these are two fields and not one.
+    display_name: string<32>            @Networked
 
     // The scoreboard, and the only score the wire carries: team score changes
     // once per phase and rides Round_Phase_Changed instead. Awarded at the
@@ -339,7 +393,7 @@ Particle_Emitter_Entity :: entity {
     parent_entity_id:   u32 = 0
 }
 
-Damageable_Entity :: entity {
+Damageable_Entity :: entity is Mortal {
     max_health:        i32 = 100                @Editable @Saveable
     health:            i32 = 100                @Networked
     hitbox_half_extents: v3 = {16, 32, 16}      @Editable @Saveable
@@ -347,17 +401,11 @@ Damageable_Entity :: entity {
     render:            Render
 }
 
-Trigger_Volume_Entity :: entity {
-    // 64 is the editor's grid-sized starting box -- big enough to see and to
-    // drag. Box_Volume's own {1,1,1} stays neutral for whatever embeds it next.
+Trigger_Volume_Entity :: entity is Switchable, Touchable {
+    switch_state:      Enabled
     volume:            Box_Volume = { half_extents = {64, 64, 64} }
     action:            Trigger_Action = .Kill   @Editable @Saveable
     fire_mode:         Fire_Mode = .On_Enter    @Editable @Saveable
-    // 64 is enough for a spawn name to match against. param_string is
-    // player-facing message text (Print_Message), so it gets room for a real
-    // sentence -- 250 was never a chosen number, just the pascal_string_t
-    // default every field inherited. Neither is networked, so the size costs
-    // struct memory and map file bytes, not bandwidth. 255 is the hard ceiling.
     param_target_name: string<64>               @Editable @Saveable
     param_string:      string<128>              @Editable @Saveable
     param_float:       f32 = 0.0                @Editable @Saveable
@@ -394,7 +442,8 @@ Trigger_Volume_Entity :: entity {
 // knows. When dynamic lights (muzzle flash, explosion) arrive they are
 // runtime-spawned, and THAT is the change that earns @Networked back.
 
-Point_Light_Entity :: entity {
+Point_Light_Entity :: entity is Colorable, Switchable {
+    switch_state:      Enabled
     light: Light
     // Where the falloff reaches zero, in engine units -- 1 unit = 1 inch, the
     // scale player_constants.hpp's 32x32x72 hull fixes. So 256 is a 21-foot
@@ -407,7 +456,8 @@ Point_Light_Entity :: entity {
     range: f32 = 256.0                  @Editable @Saveable
 }
 
-Spot_Light_Entity :: entity {
+Spot_Light_Entity :: entity is Colorable, Switchable {
+    switch_state:      Enabled
     light:         Light
     // 512 units = 42 feet (13m): a beam down a corridor rather than a room.
     range:         f32 = 512.0          @Editable @Saveable

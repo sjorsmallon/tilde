@@ -2,6 +2,7 @@
 // factory / placeable-type surface the generator emits on top of it.
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entity_io_generated.hpp"
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
@@ -337,7 +338,8 @@ int main()
         // by name rather than pretending the rule is universal.
         const bool inherited_from_base = strcmp(field.name, "entity_id") == 0 ||
                                          strcmp(field.name, "position") == 0 ||
-                                         strcmp(field.name, "orientation") == 0;
+                                         strcmp(field.name, "orientation") == 0 ||
+                                         strcmp(field.name, "name") == 0;
 
         if (type_info.runtime_only && !inherited_from_base &&
             (field.flags & (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)) != 0)
@@ -440,6 +442,89 @@ int main()
         memcpy(&value, (const uint8_t*)&player + leaf.offset, sizeof(value));
         check(value == 77u, "the flattened leaf offset addresses the element through the entity");
       }
+  }
+
+  // --- entity I/O: the type layer (entity_io_def.md ss5) ---
+  {
+    Trigger_Volume_Entity trigger;
+    Damageable_Entity     crate;
+    Rocket_Entity         rocket;
+
+    // A trait is asked of an Entity&, never of the concrete type: that is what
+    // a use key or a ray cast has in hand.
+    const Entity& trigger_base = trigger;
+    const Entity& crate_base   = crate;
+    const Entity& rocket_base  = rocket;
+
+    check(is<Switchable>(trigger_base) && is<Touchable>(trigger_base),
+          "a type's `is` list becomes its trait bits");
+    check(!is<Mortal>(trigger_base), "a trait nothing opted into is not set");
+    check(is<Mortal>(crate_base), "Damageable_Entity is Mortal");
+    check(!is<Usable>(rocket_base) && !is<Switchable>(rocket_base),
+          "a type with no `is` list has an empty trait row");
+
+    Entity invalid{};
+    check(!is<Usable>(invalid), "an unwritten tag accepts nothing");
+
+    bool names_round_trip = true;
+    for (uint32_t index = 0; index < ENTITY_ACTION_COUNT; ++index)
+    {
+      const entity_action action = (entity_action)index;
+      const std::optional<entity_action> parsed = try_from_string<entity_action>(to_string(action));
+      if (!parsed || *parsed != action)
+        names_round_trip = false;
+    }
+    for (uint32_t index = 0; index < ENTITY_SIGNAL_COUNT; ++index)
+    {
+      const entity_signal signal = (entity_signal)index;
+      const std::optional<entity_signal> parsed = try_from_string<entity_signal>(to_string(signal));
+      if (!parsed || *parsed != signal)
+        names_round_trip = false;
+    }
+    check(names_round_trip, "every verb name round-trips -- a map row stores the name");
+
+    // A payload's rows have to address the payload, not something next to it:
+    // the map loader writes an override through them.
+    bool payload_rows_address_their_struct = true;
+    for (uint32_t index = 0; index < ENTITY_ACTION_COUNT; ++index)
+      for (const field_info_t& field : action_payload_fields((entity_action)index))
+        if (field.type == FIELD_TYPE_INVALID || field.size_in_bytes == 0)
+          payload_rows_address_their_struct = false;
+    check(payload_rows_address_their_struct, "every payload row carries a real type and size");
+
+    Set_Health_Data payload;
+    payload.amount = 42;
+
+    const Span<const field_info_t> health_fields = action_payload_fields(entity_action::Set_Health);
+    int32_t read_back = 0;
+    if (health_fields.count == 1)
+      memcpy(&read_back, (const uint8_t*)&payload + health_fields.data[0].offset,
+             health_fields.data[0].size_in_bytes);
+    check(health_fields.count == 1 && read_back == 42,
+          "a payload row's offset addresses its own member");
+
+    check(action_payload_fields(entity_action::Kill).count == 0,
+          "a verb with no parameters has an empty table, not a one-row one");
+
+    const action_data_t erased = erase(payload);
+    check(erased.tag == entity_action::Set_Health && erased.as_set_health().amount == 42,
+          "erase() sets the tag and the member the tag names");
+
+    // The acceptance mask is what the map loader refuses an ill-typed
+    // connection on and what the editor builds its action dropdown from. The
+    // server binder TU static_asserts its dispatch table against it, so these
+    // two are checked to agree rather than intended to.
+    check(type_accepts_action(entity_type::Trigger_Volume_Entity, entity_action::Enable),
+          "a Switchable type accepts Enable");
+    check(!type_accepts_action(entity_type::Trigger_Volume_Entity, entity_action::Set_Color),
+          "a trait not opted into contributes no actions");
+    check(type_accepts_action(entity_type::Point_Light_Entity, entity_action::Set_Color) &&
+              type_accepts_action(entity_type::Point_Light_Entity, entity_action::Enable),
+          "two traits on one type union their actions");
+    check(!type_accepts_action(entity_type::Rocket_Entity, entity_action::Enable),
+          "a type with no traits accepts nothing");
+    check(!type_accepts_action(entity_type::Invalid, entity_action::Enable),
+          "Invalid accepts nothing");
   }
 
   printf("schema hash: 0x%08x\n", SCHEMA_HASH);

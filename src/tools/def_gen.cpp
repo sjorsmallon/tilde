@@ -53,7 +53,8 @@
 //
 //   declaration_body  -> 'base'      annotation* '{' field* '}'
 //                      | 'component' '{' field* '}'
-//                      | 'entity'    annotation* '{' field* '}'
+//                      | 'entity'    annotation* is_list? '{' field* '}'
+//                      | 'trait'     requires_list? '{' trait_clause* '}'
 //                      | 'enum'      '{' enum_value_list '}'
 //                      | 'assets'    '{' asset_entry* '}'
 //                      | 'cvars'     '{' cvar_line* '}'
@@ -62,6 +63,28 @@
 //                      | flagset
 //
 //   event_member      -> IDENTIFIER STRING_LITERAL
+//
+//   is_list           -> 'is' IDENTIFIER (',' IDENTIFIER)*     -- declared traits
+//
+//   requires_list     -> 'requires' IDENTIFIER (',' IDENTIFIER)*  -- components
+//
+//   trait_clause      -> 'accepts' verb (',' verb)*
+//                      | 'emits'   verb (',' verb)*
+//                      | 'by'      IDENTIFIER (',' IDENTIFIER)*  -- declared entities
+//
+//   verb              -> IDENTIFIER signature?
+//
+// A trait is a named set of ACTIONS a type can be told and SIGNALS it announces
+// (entity_io_def.md ss4). Both sides carry the command family's signature, so a
+// verb's payload is declared exactly as a console command's arguments are, and
+// `by` says which types can ACTIVATE the trait's signals -- what a connection
+// targeting the activator is checked against at map load.
+//
+// The three lists above are the only places in the DSL where one declaration
+// names another outside a field type, so they share one array
+// (program_t::name_references) and one resolve pass. `is` sits after the
+// entity's flags because '@' means FLAG everywhere else and a trait opt-in is
+// not one.
 //
 //   flagset           -> '[' annotation (',' annotation)* ']'
 //
@@ -364,6 +387,11 @@ enum type_kind_t : uint8_t
   TYPE_QUAT,
   TYPE_STRING,    // capacity lives in type_reference_t::capacity
   TYPE_ASSET,     // mesh_asset / texture_asset, closed sets from the asset manifest
+  // A uid naming another entity, `shared::entity_uid_t`. Trait verb payloads
+  // only, where `Died(killer: entity)` is the first thing that needed one. Not
+  // a field type: an entity field pointing at another entity is a lifetime
+  // question this DSL has not answered.
+  TYPE_ENTITY,
   TYPE_ENUM,      // resolved: declaration_index points at a DECLARATION_ENUM
   TYPE_COMPONENT, // resolved: declaration_index points at a DECLARATION_COMPONENT
   // A command: a name and a handler, no value. It is written into the same
@@ -395,6 +423,7 @@ static const char* type_kind_name(type_kind_t kind)
     case TYPE_QUAT:       return "quat";
     case TYPE_STRING:     return "string";
     case TYPE_ASSET:      return "asset";
+    case TYPE_ENTITY:     return "entity";
     case TYPE_ENUM:       return "enum";
     case TYPE_COMPONENT:  return "component";
     case TYPE_VOID:       return "void";
@@ -496,6 +525,18 @@ struct annotation_t
 // minus flags and description -- a parameter carries neither. It is a separate
 // array (program_t::parameters) rather than more field_t entries so that a
 // declaration's field range still counts one entry per command.
+// A name written in one declaration that refers to another: a trait's
+// `requires` component, a trait's `by` activator type, or an entity's `is`
+// trait. Resolved after parsing, because any of the three may name a
+// declaration written below it -- the same reason a channel member's kind is.
+struct name_reference_t
+{
+  string_view_t name;
+  int32_t       declaration; // -1 until resolved
+  int32_t       offset;
+  int32_t       line;
+};
+
 struct parameter_t
 {
   string_view_t    name;
@@ -521,11 +562,17 @@ struct field_t
   // runtime ever shows it to a human.
   string_view_t description;
 
-  // Command lines only: the declared signature, into program_t::parameters.
-  // Zero count for everything else, including a command declared bare or with
-  // an empty '()'.
+  // Command lines AND trait verbs: the declared signature, into
+  // program_t::parameters. Zero count for everything else, including a command
+  // or a verb declared bare or with an empty '()'.
   int32_t first_parameter;
   int32_t parameter_count;
+
+  // Trait members only: an `emits` verb rather than an `accepts` one. One bit
+  // rather than two field arrays, because the two sides are symmetric -- a
+  // signal has a payload exactly as an action has a parameter -- and every pass
+  // over them wants both in declaration order.
+  bool is_signal;
 
   int32_t offset;
   int32_t line;
@@ -537,6 +584,9 @@ enum declaration_kind_t : uint8_t
   DECLARATION_COMPONENT,
   DECLARATION_ENTITY,
   DECLARATION_ENUM,
+  // A named set of actions a type can be told and signals it announces. A
+  // TYPE-level fact, opted into by an entity's `is` list. entity_io_def.md ss5.
+  DECLARATION_TRAIT,
   DECLARATION_FLAGSET,
   DECLARATION_ASSETS,
   DECLARATION_CVARS,
@@ -559,6 +609,7 @@ static const char* declaration_kind_name(declaration_kind_t kind)
     case DECLARATION_COMPONENT:      return "component";
     case DECLARATION_ENTITY:         return "entity";
     case DECLARATION_ENUM:           return "enum";
+    case DECLARATION_TRAIT:          return "trait";
     case DECLARATION_FLAGSET:        return "flagset";
     case DECLARATION_ASSETS:         return "assets";
     case DECLARATION_CVARS:          return "cvars";
@@ -610,6 +661,17 @@ struct declaration_t
   string_view_t base_name;
   int32_t       base_declaration; // -1 until resolved
   string_view_t description;
+
+  // The three name lists, all into program_t::name_references.
+  // DECLARATION_TRAIT: `requires` (components its handlers are written against)
+  // and `by` (types that can activate its signals).
+  // DECLARATION_ENTITY: `is` (the traits it opts into).
+  int32_t first_requirement;
+  int32_t requirement_count;
+  int32_t first_activator;
+  int32_t activator_count;
+  int32_t first_trait_opt_in;
+  int32_t trait_opt_in_count;
 
   // Copied in from the asset manifest so an entity field can be typed
   // `mesh_asset`. Resolvable as a type and counted when class ids are assigned,
@@ -673,6 +735,10 @@ struct program_t
   int32_t        enum_value_count;
   int32_t        enum_value_capacity;
 
+  name_reference_t* name_references;
+  int32_t           name_reference_count;
+  int32_t           name_reference_capacity;
+
   asset_entry_t* asset_entries;
   int32_t        asset_entry_count;
   int32_t        asset_entry_capacity;
@@ -697,6 +763,7 @@ struct program_mark_t
   int32_t component_override_count;
   int32_t annotation_count;
   int32_t enum_value_count;
+  int32_t name_reference_count;
   int32_t asset_entry_count;
 };
 
@@ -709,6 +776,7 @@ static program_mark_t mark_program(const program_t* program)
   mark.component_override_count = program->component_override_count;
   mark.annotation_count         = program->annotation_count;
   mark.enum_value_count         = program->enum_value_count;
+  mark.name_reference_count     = program->name_reference_count;
   mark.asset_entry_count        = program->asset_entry_count;
   return mark;
 }
@@ -721,6 +789,7 @@ static void rewind_program(program_t* program, program_mark_t mark)
   program->component_override_count = mark.component_override_count;
   program->annotation_count         = mark.annotation_count;
   program->enum_value_count         = mark.enum_value_count;
+  program->name_reference_count     = mark.name_reference_count;
   program->asset_entry_count        = mark.asset_entry_count;
   // The string arena is deliberately NOT rewound: it is a bump allocator shared
   // by every declaration, and a failed parse leaks a few bytes of it at most.
@@ -805,6 +874,15 @@ static char* arena_copy(program_t* program, const char* text, int32_t length)
   copy[length] = '\0';
   program->string_arena_used += length + 1;
   return copy;
+}
+
+static name_reference_t* push_name_reference(program_t* program)
+{
+  assert(program->name_reference_count < program->name_reference_capacity);
+  name_reference_t* reference = &program->name_references[program->name_reference_count++];
+  *reference             = {};
+  reference->declaration = -1;
+  return reference;
 }
 
 static asset_entry_t* push_asset_entry(program_t* program)
@@ -1143,6 +1221,7 @@ static type_kind_t builtin_type_kind(string_view_t name)
   if (string_view_matches(name, "v4i"))    return TYPE_V4I;
   if (string_view_matches(name, "quat"))   return TYPE_QUAT;
   if (string_view_matches(name, "string")) return TYPE_STRING;
+  if (string_view_matches(name, "entity")) return TYPE_ENTITY;
 
   // Asset classes are NOT builtin: `mesh_asset` and `sprite_asset` used to be
   // two magic identifiers baked in here, which meant the generator knew the
@@ -1606,6 +1685,122 @@ static field_t* parse_command_line(parser_t* parser)
   return field;
 }
 
+// `IDENTIFIER (',' IDENTIFIER)*` -- the shared shape of `requires`, `by` and
+// `is`. Nothing is resolved here: all three may name a declaration written
+// further down the file.
+static bool parse_name_reference_list(parser_t* parser, int32_t* out_first, int32_t* out_count,
+                                      const char* what)
+{
+  *out_first = parser->program->name_reference_count;
+
+  do
+  {
+    token_t token = peek(parser);
+    if (!expect(parser, TOKEN_IDENTIFIER, what))
+      return false;
+
+    name_reference_t* reference = push_name_reference(parser->program);
+    reference->name             = token_text(parser->program, token);
+    reference->offset           = token.offset;
+    reference->line             = token.line;
+  } while (accept(parser, TOKEN_COMMA));
+
+  *out_count = parser->program->name_reference_count - *out_first;
+  return true;
+}
+
+// `IDENTIFIER signature?` -- one action or one signal. The signature is the
+// command family's, parsed by the same function, because an action's parameter
+// and a signal's payload are the same declaration shape.
+static bool parse_trait_verb(parser_t* parser, bool is_signal)
+{
+  token_t name_token = peek(parser);
+  if (!expect(parser, TOKEN_IDENTIFIER, is_signal ? "a signal name" : "an action name"))
+    return false;
+
+  field_t* field   = push_field(parser->program);
+  field->name      = token_text(parser->program, name_token);
+  field->offset    = name_token.offset;
+  field->line      = name_token.line;
+  field->type.kind = TYPE_VOID;
+  field->type.name = field->name;
+  field->is_signal = is_signal;
+
+  field->first_parameter = parser->program->parameter_count;
+
+  if (accept(parser, TOKEN_OPEN_PAREN))
+  {
+    if (!check(parser, TOKEN_CLOSE_PAREN))
+    {
+      do
+      {
+        if (!parse_parameter(parser))
+          return false;
+      } while (accept(parser, TOKEN_COMMA));
+    }
+
+    if (!expect(parser, TOKEN_CLOSE_PAREN, "')' to close the verb signature"))
+      return false;
+  }
+
+  field->parameter_count = parser->program->parameter_count - field->first_parameter;
+  return true;
+}
+
+// `'{' ('accepts' verbs | 'emits' verbs | 'by' types)* '}'`
+//
+// Clauses are keyword-led rather than newline-terminated, which is what lets
+// `emits Touched(), Left() by Player_Entity` sit on one line: the comma loop
+// stops at `by` because there is no comma before it.
+static bool parse_trait_body(parser_t* parser, declaration_t* declaration)
+{
+  if (!expect(parser, TOKEN_OPEN_BRACE, "'{' to open the trait body"))
+    return false;
+
+  declaration->first_field = parser->program->field_count;
+
+  while (!check(parser, TOKEN_CLOSE_BRACE) && !check(parser, TOKEN_END_OF_FILE))
+  {
+    token_t       clause_token = peek(parser);
+    string_view_t clause       = token_text(parser->program, clause_token);
+
+    const bool is_accepts = string_view_matches(clause, "accepts");
+    const bool is_emits   = string_view_matches(clause, "emits");
+    const bool is_by      = string_view_matches(clause, "by");
+
+    if (clause_token.kind != TOKEN_IDENTIFIER || (!is_accepts && !is_emits && !is_by))
+    {
+      parse_error(parser, "expected 'accepts', 'emits' or 'by' in a trait body");
+      return false;
+    }
+    advance(parser);
+
+    if (is_by)
+    {
+      if (declaration->activator_count > 0)
+      {
+        parse_error_at(parser, clause_token, "'%.*s' already has a 'by' list",
+                       declaration->name.length, declaration->name.data);
+        return false;
+      }
+      if (!parse_name_reference_list(parser, &declaration->first_activator,
+                                     &declaration->activator_count, "an activator type name"))
+        return false;
+      continue;
+    }
+
+    do
+    {
+      if (!parse_trait_verb(parser, is_emits))
+        return false;
+    } while (accept(parser, TOKEN_COMMA));
+  }
+
+  declaration->field_count = parser->program->field_count - declaration->first_field;
+
+  return expect(parser, TOKEN_CLOSE_BRACE, "'}' to close the trait body");
+}
+
 // Both cvar-family bodies. Same shape as parse_struct_body -- one entry per
 // line, a failed entry rewinds and resynchronizes so the rest of the block
 // still reports its own errors.
@@ -1799,6 +1994,22 @@ static declaration_t* parse_declaration(parser_t* parser)
     declaration->kind      = is_commands ? DECLARATION_COMMANDS : DECLARATION_CVARS;
     parsed                 = parse_cvar_family_body(parser, declaration, is_commands);
   }
+  else if (string_view_matches(kind_text, "trait"))
+  {
+    declaration->kind = DECLARATION_TRAIT;
+
+    parsed = true;
+    if (check(parser, TOKEN_IDENTIFIER) &&
+        string_view_matches(token_text(parser->program, peek(parser)), "requires"))
+    {
+      advance(parser);
+      parsed = parse_name_reference_list(parser, &declaration->first_requirement,
+                                         &declaration->requirement_count, "a component name");
+    }
+
+    if (parsed)
+      parsed = parse_trait_body(parser, declaration);
+  }
   else if (string_view_matches(kind_text, "base") || string_view_matches(kind_text, "component") ||
            string_view_matches(kind_text, "entity") || string_view_matches(kind_text, "channel"))
   {
@@ -1814,7 +2025,19 @@ static declaration_t* parse_declaration(parser_t* parser)
     declaration->first_annotation = parser->program->annotation_count;
     declaration->annotation_count = parse_annotations(parser, kind_token.line);
 
-    parsed = parse_struct_body(parser, declaration);
+    // The trait opt-in, after the flags: '@' means FLAG everywhere else in the
+    // DSL and a trait opt-in is not one (entity_io_def.md ss10).
+    parsed = true;
+    if (declaration->kind == DECLARATION_ENTITY && check(parser, TOKEN_IDENTIFIER) &&
+        string_view_matches(token_text(parser->program, peek(parser)), "is"))
+    {
+      advance(parser);
+      parsed = parse_name_reference_list(parser, &declaration->first_trait_opt_in,
+                                         &declaration->trait_opt_in_count, "a trait name");
+    }
+
+    if (parsed)
+      parsed = parse_struct_body(parser, declaration);
   }
   else
   {
@@ -2220,8 +2443,8 @@ static void resolve_types(program_t* program, const name_table_t* table)
     if (target_declaration->kind != DECLARATION_ENUM)
     {
       report_error(program, parameter->offset, parameter->line,
-                   "parameter '%.*s' may not have type '%.*s'; a %s cannot be a command "
-                   "parameter -- only f32, i32, u32, bool, string and enums are",
+                   "parameter '%.*s' may not have type '%.*s'; a %s cannot be a parameter -- "
+                   "only the builtins and enums are",
                    parameter->name.length, parameter->name.data, parameter->type.name.length,
                    parameter->type.name.data, declaration_kind_name(target_declaration->kind));
       continue;
@@ -2289,6 +2512,11 @@ static void check_duplicate_fields(program_t* program)
     if (declaration_is_cvar_family(declaration->kind))
       continue;
 
+    // A trait's members are verbs rather than fields, and their namespace is
+    // wider than one declaration -- check_verb_names_are_unique owns them.
+    if (declaration->kind == DECLARATION_TRAIT)
+      continue;
+
     for (int32_t offset = 0; offset < declaration->field_count; ++offset)
     {
       const field_t* field = &program->fields[declaration->first_field + offset];
@@ -2327,6 +2555,46 @@ static void check_base_declaration(program_t* program)
   if (base_count == 0)
     fprintf(stderr, "%s: warning: no 'base' declaration; entities will have no shared prefix\n",
             program->filename);
+}
+
+static int32_t find_base_declaration(const program_t* program);
+
+// An entity's fields sit in a struct DERIVED from the base, so a field sharing
+// a base field's name is a C++ shadow: `player.name` silently picks the derived
+// one and collect_leaf_fields emits two leaves with one name. Neither is caught
+// by check_duplicate_fields, which scans one declaration at a time.
+static void check_base_field_shadowing(program_t* program)
+{
+  const int32_t base_index = find_base_declaration(program);
+  if (base_index < 0)
+    return;
+
+  const declaration_t* base = &program->declarations[base_index];
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENTITY)
+      continue;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* field = &program->fields[declaration->first_field + offset];
+
+      for (int32_t base_offset = 0; base_offset < base->field_count; ++base_offset)
+      {
+        const field_t* base_field = &program->fields[base->first_field + base_offset];
+        if (!string_views_match(field->name, base_field->name))
+          continue;
+
+        report_error(program, field->offset, field->line,
+                     "'%.*s' redeclares '%.*s', a field of base '%.*s' on line %d",
+                     declaration->name.length, declaration->name.data, field->name.length,
+                     field->name.data, base->name.length, base->name.data, base_field->line);
+        break;
+      }
+    }
+  }
 }
 
 enum visit_state_t : uint8_t
@@ -2449,6 +2717,340 @@ static void check_flag_contradictions(program_t* program)
 // ---------------------------------------------------------------------------
 // Cvar family checks
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Traits
+// ---------------------------------------------------------------------------
+
+// A verb's payload becomes a trivially copyable struct with a field_info_t
+// table, read through field_from_text by the map loader and by ent_fire. So the
+// allowed set is the channel family's -- everything the reflection walker
+// handles -- plus `entity`, a uid naming another entity, which is what
+// `Died(killer: entity)` needs. Component and asset stay out for the channel
+// family's reasons: a verb table is flat, and an asset id would need the cross
+// family reference the design forbids.
+static bool channel_type_is_allowed(type_kind_t kind);
+
+static bool trait_parameter_type_is_allowed(type_kind_t kind)
+{
+  return kind == TYPE_ENTITY || channel_type_is_allowed(kind);
+}
+
+// The three name lists are resolved together because they fail the same two
+// ways: a name that resolves to nothing, and a name that resolves to a
+// declaration of the wrong kind. Each says which list it came from, because
+// "unknown name" alone leaves the author guessing which of the three is wrong.
+static void resolve_trait_references(program_t* program, const name_table_t* table)
+{
+  struct name_list_t
+  {
+    int32_t            first;
+    int32_t            count;
+    declaration_kind_t expected;
+    const char*        role;
+    const char*        expected_name;
+  };
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    declaration_t* declaration = &program->declarations[index];
+
+    const name_list_t lists[3] = {
+        {declaration->first_requirement, declaration->requirement_count, DECLARATION_COMPONENT,
+         "requires", "a component"},
+        {declaration->first_activator, declaration->activator_count, DECLARATION_ENTITY, "by",
+         "an entity"},
+        {declaration->first_trait_opt_in, declaration->trait_opt_in_count, DECLARATION_TRAIT, "is",
+         "a trait"},
+    };
+
+    for (const name_list_t& list : lists)
+    {
+      for (int32_t offset = 0; offset < list.count; ++offset)
+      {
+        name_reference_t* reference = &program->name_references[list.first + offset];
+
+        const int32_t target = find_declaration(table, program, reference->name);
+        if (target < 0)
+        {
+          report_error(program, reference->offset, reference->line,
+                       "'%.*s' names '%.*s' in its '%s' list, and nothing declares that name",
+                       declaration->name.length, declaration->name.data, reference->name.length,
+                       reference->name.data, list.role);
+          continue;
+        }
+
+        if (program->declarations[target].kind != list.expected)
+        {
+          report_error(program, reference->offset, reference->line,
+                       "'%.*s' names '%.*s' in its '%s' list, but '%.*s' is %s, not %s",
+                       declaration->name.length, declaration->name.data, reference->name.length,
+                       reference->name.data, list.role, reference->name.length,
+                       reference->name.data,
+                       declaration_kind_name(program->declarations[target].kind),
+                       list.expected_name);
+          continue;
+        }
+
+        reference->declaration = target;
+      }
+    }
+  }
+}
+
+// A verb belongs to exactly ONE trait (entity_io_def.md ss10), and the check
+// spans BOTH kinds rather than running per kind: an action and a signal each
+// emit a `<Name>_Data` struct, so `Open` as an action and `Open` as a signal
+// would be one struct declared twice.
+static void check_verb_names_are_unique(program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_TRAIT)
+      continue;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* verb  = &program->fields[declaration->first_field + offset];
+      bool           found = false;
+
+      for (int32_t other_index = 0; other_index <= index && !found; ++other_index)
+      {
+        const declaration_t* other = &program->declarations[other_index];
+        if (other->kind != DECLARATION_TRAIT)
+          continue;
+
+        const int32_t limit = (other_index == index) ? offset : other->field_count;
+        for (int32_t other_offset = 0; other_offset < limit; ++other_offset)
+        {
+          const field_t* earlier = &program->fields[other->first_field + other_offset];
+          if (!string_views_match(verb->name, earlier->name))
+            continue;
+
+          report_error(program, verb->offset, verb->line,
+                       "'%.*s' is already declared by trait '%.*s' on line %d. A verb belongs to "
+                       "exactly one trait, and an action and a signal share one payload struct "
+                       "name, so the two kinds share one namespace",
+                       verb->name.length, verb->name.data, other->name.length, other->name.data,
+                       earlier->line);
+          found = true;
+          break;
+        }
+      }
+    }
+  }
+}
+
+static void check_trait_verbs(program_t* program)
+{
+  int32_t trait_index = 0;
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_TRAIT)
+      continue;
+
+    int32_t signal_count = 0;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* verb = &program->fields[declaration->first_field + offset];
+      signal_count += verb->is_signal ? 1 : 0;
+
+      for (int32_t earlier = 0; earlier < offset; ++earlier)
+      {
+        const field_t* other = &program->fields[declaration->first_field + earlier];
+        if (!string_views_match(verb->name, other->name))
+          continue;
+
+        report_error(program, verb->offset, verb->line,
+                     "trait '%.*s' already declares '%.*s' on line %d", declaration->name.length,
+                     declaration->name.data, verb->name.length, verb->name.data, other->line);
+        break;
+      }
+
+      for (int32_t slot = 0; slot < verb->parameter_count; ++slot)
+      {
+        const parameter_t* parameter = &program->parameters[verb->first_parameter + slot];
+
+        for (int32_t earlier = 0; earlier < slot; ++earlier)
+        {
+          const parameter_t* other = &program->parameters[verb->first_parameter + earlier];
+          if (!string_views_match(parameter->name, other->name))
+            continue;
+
+          report_error(program, parameter->offset, parameter->line,
+                       "'%.*s' already has a parameter named '%.*s'", verb->name.length,
+                       verb->name.data, parameter->name.length, parameter->name.data);
+          break;
+        }
+
+        // A verb payload is STORED -- in a connection row, in a queued record --
+        // so a view into a console line has nowhere to point. The command family
+        // allows both spellings because its values live only for one dispatch.
+        if (parameter->is_rest)
+        {
+          report_error(program, parameter->offset, parameter->line,
+                       "'%.*s' takes a rest parameter, which is the untokenized rest of a console "
+                       "line; a verb payload is stored in a map row and outlives any line",
+                       verb->name.length, verb->name.data);
+          continue;
+        }
+
+        if (parameter->type.kind == TYPE_STRING && parameter->type.capacity <= 0)
+        {
+          report_error(program, parameter->offset, parameter->line,
+                       "parameter '%.*s' of '%.*s' is a bare 'string'; a verb payload is stored, "
+                       "so it needs a capacity: string<N>",
+                       parameter->name.length, parameter->name.data, verb->name.length,
+                       verb->name.data);
+          continue;
+        }
+
+        if (type_is_array(&parameter->type))
+        {
+          report_error(program, parameter->offset, parameter->line,
+                       "parameter '%.*s' of '%.*s' is an array; a verb payload is a flat table, "
+                       "with no row per key to expand into",
+                       parameter->name.length, parameter->name.data, verb->name.length,
+                       verb->name.data);
+          continue;
+        }
+
+        // An unresolved type has already been reported by resolve_types, with
+        // the name the author actually wrote in it.
+        if (parameter->type.kind != TYPE_UNRESOLVED &&
+            !trait_parameter_type_is_allowed(parameter->type.kind))
+          report_error(program, parameter->offset, parameter->line,
+                       "parameter '%.*s' of '%.*s' is %s, which a verb payload cannot hold: it is "
+                       "written and read through the reflection walker, which handles neither",
+                       parameter->name.length, parameter->name.data, verb->name.length,
+                       verb->name.data, type_kind_name(parameter->type.kind));
+      }
+    }
+
+    // A trait is one BIT of a per-entity-type mask, so 64 is the ceiling. Not a
+    // number worth designing around (there are five), but a silent 65th would
+    // drop a trait rather than fail.
+    if (trait_index == 64)
+      report_error(program, declaration->offset, declaration->line,
+                   "'%.*s' is the 65th trait, and a type's trait set is a uint64_t mask",
+                   declaration->name.length, declaration->name.data);
+    ++trait_index;
+
+    // `by` says what can ACTIVATE this trait's signals, so it means nothing
+    // without one.
+    if (declaration->activator_count > 0 && signal_count == 0)
+      report_error(program, declaration->offset, declaration->line,
+                   "trait '%.*s' has a 'by' list but emits nothing; 'by' declares what can "
+                   "activate a signal",
+                   declaration->name.length, declaration->name.data);
+
+    for (int32_t offset = 0; offset < declaration->requirement_count; ++offset)
+    {
+      const name_reference_t* requirement =
+          &program->name_references[declaration->first_requirement + offset];
+
+      for (int32_t earlier = 0; earlier < offset; ++earlier)
+      {
+        const name_reference_t* other =
+            &program->name_references[declaration->first_requirement + earlier];
+        if (!string_views_match(requirement->name, other->name))
+          continue;
+
+        report_error(program, requirement->offset, requirement->line,
+                     "trait '%.*s' requires '%.*s' twice", declaration->name.length,
+                     declaration->name.data, requirement->name.length, requirement->name.data);
+        break;
+      }
+    }
+  }
+}
+
+// `requires Component` is a CONSTRAINT, and this is where it bites: a type
+// opting into the trait must carry a field of that component, because the
+// trait's handlers are written once against it and the generated shim has to
+// have that field to pass.
+static void check_trait_opt_ins(program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* entity = &program->declarations[index];
+    if (entity->kind != DECLARATION_ENTITY)
+      continue;
+
+    for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
+    {
+      const name_reference_t* opt_in =
+          &program->name_references[entity->first_trait_opt_in + offset];
+
+      for (int32_t earlier = 0; earlier < offset; ++earlier)
+      {
+        const name_reference_t* other =
+            &program->name_references[entity->first_trait_opt_in + earlier];
+        if (!string_views_match(opt_in->name, other->name))
+          continue;
+
+        report_error(program, opt_in->offset, opt_in->line, "'%.*s' opts into '%.*s' twice",
+                     entity->name.length, entity->name.data, opt_in->name.length,
+                     opt_in->name.data);
+        break;
+      }
+
+      if (opt_in->declaration < 0)
+        continue;
+
+      const declaration_t* trait = &program->declarations[opt_in->declaration];
+
+      for (int32_t slot = 0; slot < trait->requirement_count; ++slot)
+      {
+        const name_reference_t* requirement =
+            &program->name_references[trait->first_requirement + slot];
+        if (requirement->declaration < 0)
+          continue;
+
+        // EXACTLY one, not at least one. The trait's handler takes the
+        // component and the generated shim has to name one field to pass it;
+        // with two, the shim would pick silently and the author would find out
+        // by watching the wrong door open.
+        const field_t* satisfying = nullptr;
+        const field_t* second     = nullptr;
+        for (int32_t field_offset = 0; field_offset < entity->field_count; ++field_offset)
+        {
+          const field_t* field = &program->fields[entity->first_field + field_offset];
+          if (field->type.kind != TYPE_COMPONENT ||
+              field->type.declaration_index != requirement->declaration)
+            continue;
+
+          if (satisfying == nullptr)
+            satisfying = field;
+          else if (second == nullptr)
+            second = field;
+        }
+
+        if (satisfying == nullptr)
+          report_error(program, opt_in->offset, opt_in->line,
+                       "'%.*s' opts into '%.*s', which requires a component of type '%.*s', and "
+                       "'%.*s' has no field of that type. The trait's handlers are written once "
+                       "against '%.*s', so there is nothing for the generated shim to pass",
+                       entity->name.length, entity->name.data, trait->name.length, trait->name.data,
+                       requirement->name.length, requirement->name.data, entity->name.length,
+                       entity->name.data, requirement->name.length, requirement->name.data);
+        else if (second != nullptr)
+          report_error(program, opt_in->offset, opt_in->line,
+                       "'%.*s' opts into '%.*s', which requires a component of type '%.*s', and "
+                       "'%.*s' has two: '%.*s' on line %d and '%.*s' on line %d. The generated "
+                       "shim passes one field and nothing here says which",
+                       entity->name.length, entity->name.data, trait->name.length, trait->name.data,
+                       requirement->name.length, requirement->name.data, entity->name.length,
+                       entity->name.data, satisfying->name.length, satisfying->name.data,
+                       satisfying->line, second->name.length, second->name.data, second->line);
+      }
+    }
+  }
+}
 
 // One .def file, one family. The fence is structural rather than stylistic: the
 // two halves emit different artifact sets into different directories, and the
@@ -3246,6 +3848,7 @@ static void resolve_program(program_t* program)
   resolve_field_flags(program, &table);
   resolve_class_annotations(program);
   resolve_types(program, &table);
+  resolve_trait_references(program, &table);
 
   // Needs resolve_types: an override is looked up in the component's field
   // list, which is only reachable once the field's type names one.
@@ -3263,8 +3866,12 @@ static void resolve_program(program_t* program)
   else if (program->family == DEF_FAMILY_ENTITY)
   {
     check_base_declaration(program);
+    check_base_field_shadowing(program);
     check_component_cycles(program);
     check_flag_contradictions(program);
+    check_verb_names_are_unique(program);
+    check_trait_verbs(program);
+    check_trait_opt_ins(program);
   }
   else if (program->family == DEF_FAMILY_EVENT)
   {
@@ -3620,6 +4227,9 @@ static void write_cpp_element_type(FILE* out, const type_reference_t* type)
     case TYPE_U8:   fprintf(out, "uint8_t");  return;
     case TYPE_U16:  fprintf(out, "uint16_t"); return;
     case TYPE_U32:  fprintf(out, "uint32_t"); return;
+    // A uid, and it spells as one rather than as uint32_t so a payload field
+    // reads as what it names. shared/entity_uid.hpp.
+    case TYPE_ENTITY: fprintf(out, "shared::entity_uid_t"); return;
     case TYPE_U64:  fprintf(out, "uint64_t"); return;
     case TYPE_I8:   fprintf(out, "int8_t");   return;
     case TYPE_I16:  fprintf(out, "int16_t");  return;
@@ -3677,6 +4287,10 @@ static const char* field_type_enum_name(type_kind_t kind)
     case TYPE_QUAT:      return "FIELD_TYPE_QUAT";
     case TYPE_STRING:    return "FIELD_TYPE_STRING";
     case TYPE_ASSET:     return "FIELD_TYPE_ASSET";
+    // A uid IS a u32, and reflection gains nothing from knowing which u32s name
+    // entities: the text conversion, the wire codec and the change masks would
+    // all take the same arm. The distinction is a C++ TYPE, not a field type.
+    case TYPE_ENTITY:    return "FIELD_TYPE_U32";
     case TYPE_ENUM:      return "FIELD_TYPE_ENUM";
     case TYPE_COMPONENT: return "FIELD_TYPE_COMPONENT";
     case TYPE_VOID:      break; // cvar family only; never reaches an entity table
@@ -4031,6 +4645,14 @@ static void emit_generated_header(FILE* out, const program_t* program)
     fprintf(out, "constexpr uint32_t ENUM_TYPE_COUNT = %d;\n\n", enum_count);
 
     fprintf(out, "const enum_type_info_t& enum_info(enum_type type);\n\n");
+
+    // The TABLE, not only the accessor. A second generated family in another TU
+    // -- entity_io's verb payloads -- builds constexpr field tables whose rows
+    // point at &ENUM_INFOS[n], and an address constant is the one thing the
+    // runtime accessor cannot give them.
+    if (enum_count > 0)
+      fprintf(out,
+              "extern const enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT];\n\n");
 
     free(enum_ids);
   }
@@ -4601,7 +5223,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
   fprintf(out, "#pragma warning(disable : 4841)\n");
   fprintf(out, "#endif\n\n");
 
-  fprintf(out, "namespace entities\n{\n\nnamespace\n{\n\n");
+  fprintf(out, "namespace entities\n{\n\n");
 
   // --- enum value-name tables ---
   //
@@ -4630,7 +5252,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 
   if (enum_count > 0)
   {
-    fprintf(out, "constexpr enum_type_info_t ENUM_INFOS[] = {\n");
+    fprintf(out, "constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {\n");
     for (int32_t index = 0; index < program->declaration_count; ++index)
     {
       if (enum_ids[index] < 0)
@@ -4642,6 +5264,11 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     }
     fprintf(out, "};\n\n");
   }
+
+  // Everything from here down is this TU's own: the tables the accessors below
+  // read, and nothing another TU can name. ENUM_INFOS above is deliberately
+  // outside it -- entity_io_generated.cpp's verb payload tables point into it.
+  fprintf(out, "namespace\n{\n\n");
 
   // --- per component field tables ---
   for (int32_t index = 0; index < program->declaration_count; ++index)
@@ -7235,6 +7862,20 @@ static void print_cvar_flags(uint32_t flags)
   if (flags & CVAR_FLAG_MIRRORED) printf(" @Mirrored");
 }
 
+static void print_name_reference_list(const program_t* program, int32_t first, int32_t count,
+                                      const char* prefix)
+{
+  if (count <= 0)
+    return;
+
+  printf("%s", prefix);
+  for (int32_t offset = 0; offset < count; ++offset)
+  {
+    const name_reference_t* reference = &program->name_references[first + offset];
+    printf("%s%.*s", offset > 0 ? ", " : "", reference->name.length, reference->name.data);
+  }
+}
+
 static void dump_program(const program_t* program)
 {
   printf("// %s: %d declarations, %d fields, %d tokens\n", program->filename,
@@ -7263,6 +7904,11 @@ static void dump_program(const program_t* program)
     if (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY)
       printf(" @runtime_only");
 
+    print_name_reference_list(program, declaration->first_requirement,
+                              declaration->requirement_count, " requires ");
+    print_name_reference_list(program, declaration->first_trait_opt_in,
+                              declaration->trait_opt_in_count, " is ");
+
     printf("\n{\n");
 
     if (declaration->kind == DECLARATION_ENUM)
@@ -7280,6 +7926,37 @@ static void dump_program(const program_t* program)
         const asset_entry_t* entry = &program->asset_entries[declaration->first_asset_entry + offset];
         printf("  %d: %-20s %s\n", offset, entry->name,
                entry->path == nullptr ? "(compiled-in placeholder)" : entry->path);
+      }
+    }
+    else if (declaration->kind == DECLARATION_TRAIT)
+    {
+      for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+      {
+        const field_t* verb = &program->fields[declaration->first_field + offset];
+
+        printf("  %-8s %.*s(", verb->is_signal ? "emits" : "accepts", verb->name.length,
+               verb->name.data);
+        for (int32_t which = 0; which < verb->parameter_count; ++which)
+        {
+          const parameter_t* parameter = &program->parameters[verb->first_parameter + which];
+          if (which > 0)
+            printf(", ");
+          printf("%.*s: ", parameter->name.length, parameter->name.data);
+          print_type(&parameter->type);
+        }
+        printf(")\n");
+      }
+
+      if (declaration->activator_count > 0)
+      {
+        printf("  by      ");
+        for (int32_t offset = 0; offset < declaration->activator_count; ++offset)
+        {
+          const name_reference_t* reference =
+              &program->name_references[declaration->first_activator + offset];
+          printf("%s%.*s", offset > 0 ? ", " : "", reference->name.length, reference->name.data);
+        }
+        printf("\n");
       }
     }
     else if (declaration->kind == DECLARATION_CVARS)
@@ -7335,6 +8012,853 @@ static void dump_program(const program_t* program)
 
     printf("}\n");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Entity I/O emitter -- entity_io_def.md ss5
+// ---------------------------------------------------------------------------
+//
+// The TYPE layer of the wiring system: the derived verb enums, one payload
+// struct per verb with its own field table, the erased tagged union those
+// travel in, and the trait table that answers "can a Door be told to Open".
+//
+// It is a second family artifact rather than more of entities_generated.*
+// because the two answer different questions and are read by different people:
+// that file is what an entity IS, this is what one can be TOLD. They share one
+// namespace and one enum info table, which is the whole coupling.
+//
+// This emitter comes last in the file because it uses helpers from every
+// section above it -- write_cpp_type from the entity emitter, write_lower from
+// the event one.
+
+static int32_t collect_traits(const program_t* program, const declaration_t** out_traits,
+                              int32_t capacity)
+{
+  int32_t count = 0;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    if (program->declarations[index].kind != DECLARATION_TRAIT)
+      continue;
+    if (count < capacity)
+      out_traits[count] = &program->declarations[index];
+    ++count;
+  }
+  return count;
+}
+
+// Every verb of every trait, in declaration order, filtered by kind. The order
+// IS the derived enum's numbering; nothing reaches the wire, and the map stores
+// names, so a reorder costs nothing (entity_io_def.md ss5).
+static int32_t collect_verbs(const program_t* program, bool signals, const field_t** out_verbs,
+                             const declaration_t** out_owners, int32_t capacity)
+{
+  int32_t count = 0;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_TRAIT)
+      continue;
+
+    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+    {
+      const field_t* verb = &program->fields[declaration->first_field + offset];
+      if (verb->is_signal != signals)
+        continue;
+      if (count < capacity)
+      {
+        out_verbs[count]  = verb;
+        out_owners[count] = declaration;
+      }
+      ++count;
+    }
+  }
+  return count;
+}
+
+static void write_verb_struct_name(FILE* out, string_view_t name)
+{
+  fprintf(out, "%.*s_Data", name.length, name.data);
+}
+
+// One payload struct per verb, built from the verb's SIGNATURE rather than from
+// fields -- an action's parameter and a signal's payload are the same
+// declaration shape, which is why both sides parse through parse_parameter.
+static void emit_verb_struct(FILE* out, const program_t* program, const field_t* verb)
+{
+  fprintf(out, "struct ");
+  write_verb_struct_name(out, verb->name);
+  fprintf(out, "\n{\n");
+
+  for (int32_t which = 0; which < verb->parameter_count; ++which)
+  {
+    const parameter_t* parameter = &program->parameters[verb->first_parameter + which];
+    fprintf(out, "  ");
+    write_cpp_type(out, &parameter->type);
+    fprintf(out, " %.*s = {};\n", parameter->name.length, parameter->name.data);
+  }
+
+  fprintf(out, "};\n");
+  fprintf(out, "static_assert(std::is_trivially_copyable_v<");
+  write_verb_struct_name(out, verb->name);
+  fprintf(out, ">,\n              \"a verb payload rides a union in a map row and a queue "
+               "record\");\n\n");
+}
+
+static void emit_verb_field_table(FILE* out, const program_t* program, const field_t* verb,
+                                  const int32_t* enum_ids)
+{
+  // Most verbs carry no payload, and a zero-length array is ill-formed in C++.
+  // Such a verb gets no table at all and an empty span below.
+  if (verb->parameter_count == 0)
+    return;
+
+  fprintf(out, "constexpr field_info_t ");
+  write_upper(out, verb->name);
+  fprintf(out, "_FIELDS[] = {\n");
+
+  for (int32_t which = 0; which < verb->parameter_count; ++which)
+  {
+    const parameter_t* parameter = &program->parameters[verb->first_parameter + which];
+
+    char enum_info[64] = "NOT_AN_ENUM";
+    if (parameter->type.kind == TYPE_ENUM && parameter->type.declaration_index >= 0)
+      snprintf(enum_info, sizeof(enum_info), "&ENUM_INFOS[%d]",
+               enum_ids[parameter->type.declaration_index]);
+
+    char string_capacity[64] = "NOT_A_STRING";
+    if (parameter->type.kind == TYPE_STRING)
+      snprintf(string_capacity, sizeof(string_capacity), "%u", (uint32_t)parameter->type.capacity);
+
+    // A payload carries no flags: everything declared is written into the map
+    // row and read back out, and nothing else reads the table.
+    fprintf(out, "  {.name = \"%.*s\",\n", parameter->name.length, parameter->name.data);
+    fprintf(out, "   .type = %s,\n", field_type_enum_name(parameter->type.kind));
+    fprintf(out, "   .offset = (uint32_t)offsetof(");
+    write_verb_struct_name(out, verb->name);
+    fprintf(out, ", %.*s),\n", parameter->name.length, parameter->name.data);
+    fprintf(out, "   .size_in_bytes = (uint32_t)sizeof(");
+    write_verb_struct_name(out, verb->name);
+    fprintf(out, "::%.*s),\n", parameter->name.length, parameter->name.data);
+    fprintf(out, "   .flags = 0u,\n");
+    fprintf(out, "   .component_id = NOT_A_COMPONENT,\n");
+    fprintf(out, "   .string_capacity = %s,\n", string_capacity);
+    fprintf(out, "   .asset_class_id = NOT_AN_ASSET_CLASS,\n");
+    fprintf(out, "   .enum_info = %s},\n", enum_info);
+  }
+
+  fprintf(out, "};\n\n");
+}
+
+static void emit_verb_enum(FILE* out, const char* enum_name, const char* count_name,
+                           const field_t* const* verbs, const declaration_t* const* owners,
+                           int32_t verb_count)
+{
+  fprintf(out, "enum class %s : uint16_t\n{\n", enum_name);
+  for (int32_t index = 0; index < verb_count; ++index)
+    fprintf(out, "  %.*s = %d,   // %.*s\n", verbs[index]->name.length, verbs[index]->name.data,
+            index, owners[index]->name.length, owners[index]->name.data);
+  fprintf(out, "};\n\n");
+  fprintf(out, "constexpr uint32_t %s = %d;\n\n", count_name, verb_count);
+}
+
+// Which trait of `entity`'s `is` list declares `verb`, or null if none does.
+// A verb belongs to exactly one trait (check_verb_names_are_unique), so this
+// answer is unique when it exists.
+static const declaration_t* owning_trait_of(const program_t* program,
+                                            const declaration_t* entity, const field_t* verb)
+{
+  for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
+  {
+    const name_reference_t* opt_in =
+        &program->name_references[entity->first_trait_opt_in + offset];
+    if (opt_in->declaration < 0)
+      continue;
+
+    const declaration_t* trait = &program->declarations[opt_in->declaration];
+    for (int32_t which = 0; which < trait->field_count; ++which)
+      if (&program->fields[trait->first_field + which] == verb)
+        return trait;
+  }
+  return nullptr;
+}
+
+// The one field of `entity` whose type is `component`. check_trait_opt_ins has
+// already refused zero and two, so a satisfied opt-in has exactly one.
+static const field_t* field_satisfying(const program_t* program, const declaration_t* entity,
+                                       int32_t component_declaration)
+{
+  for (int32_t offset = 0; offset < entity->field_count; ++offset)
+  {
+    const field_t* field = &program->fields[entity->first_field + offset];
+    if (field->type.kind == TYPE_COMPONENT &&
+        field->type.declaration_index == component_declaration)
+      return field;
+  }
+  return nullptr;
+}
+
+// `void enable(Enabled&, const Enable_Data&, input_context_t&)` for a trait with
+// requirements, `void set_color(Point_Light_Entity&, ...)` for one without. The
+// difference IS what `requires` buys: one handler for every opting-in type
+// rather than one per type.
+static void write_handler_signature(FILE* out, const program_t* program,
+                                    const declaration_t* trait, const declaration_t* entity,
+                                    const field_t* verb)
+{
+  fprintf(out, "void ");
+  write_lower(out, verb->name);
+  fprintf(out, "(");
+
+  if (trait->requirement_count > 0)
+  {
+    for (int32_t offset = 0; offset < trait->requirement_count; ++offset)
+    {
+      const name_reference_t* requirement =
+          &program->name_references[trait->first_requirement + offset];
+      fprintf(out, "%s%.*s&", offset > 0 ? ", " : "", requirement->name.length,
+              requirement->name.data);
+    }
+  }
+  else
+  {
+    fprintf(out, "%.*s&", entity->name.length, entity->name.data);
+  }
+
+  fprintf(out, ", const ");
+  write_verb_struct_name(out, verb->name);
+  fprintf(out, "&, input_context_t&)");
+}
+
+static void emit_entity_io_header(FILE* out, const program_t* program, const char* entity_header)
+{
+  const declaration_t** traits =
+      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) * sizeof(void*));
+  const int32_t trait_count = collect_traits(program, traits, program->declaration_count + 1);
+
+  const field_t**       actions       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const declaration_t** action_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const int32_t action_count =
+      collect_verbs(program, /*signals=*/false, actions, action_owners, program->field_count + 1);
+
+  const field_t**       signals       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const declaration_t** signal_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const int32_t signal_count =
+      collect_verbs(program, /*signals=*/true, signals, signal_owners, program->field_count + 1);
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// The TYPE layer of entity I/O: what an entity can be TOLD and what it\n");
+  fprintf(out, "// ANNOUNCES. entity_io_def.md is the design; the per-INSTANCE half is a\n");
+  fprintf(out, "// connection, which is map data and appears nowhere in here.\n");
+  fprintf(out, "#pragma once\n\n");
+  fprintf(out, "#include \"%s\"\n", entity_header);
+  fprintf(out, "#include \"entity_uid.hpp\"\n");
+  fprintf(out, "#include \"reflection.hpp\"\n");
+  fprintf(out, "#include \"span.hpp\"\n");
+  fprintf(out, "#include <cassert>\n");
+  fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <optional>\n");
+  fprintf(out, "#include <string_view>\n");
+  fprintf(out, "#include <type_traits>\n\n");
+
+  fprintf(out, "// The context every handler takes, hand-written in src/server/ because it\n");
+  fprintf(out, "// holds a server_context_t&. Only ever named through a reference here, so\n");
+  fprintf(out, "// the declarations, the shim type and the dispatch entry points all live\n");
+  fprintf(out, "// in this shared header while the definitions stay on the server side --\n");
+  fprintf(out, "// the cvar family's split, for the cvar family's reason.\n");
+  fprintf(out, "namespace server { struct input_context_t; }\n\n");
+
+  fprintf(out, "namespace entities\n{\n\n");
+
+  fprintf(out, "using server::input_context_t;\n\n");
+
+  fprintf(out, "// --- the derived enums -----------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// DERIVED from the traits rather than listed: a verb belongs to exactly\n");
+  fprintf(out, "// one trait, so a list would spell every name twice. Order is declaration\n");
+  fprintf(out, "// order and carries no meaning -- neither enum reaches the wire, and a map\n");
+  fprintf(out, "// stores the NAME.\n\n");
+
+  emit_verb_enum(out, "entity_action", "ENTITY_ACTION_COUNT", actions, action_owners, action_count);
+  emit_verb_enum(out, "entity_signal", "ENTITY_SIGNAL_COUNT", signals, signal_owners, signal_count);
+
+  fprintf(out, "enum class entity_trait : uint16_t\n{\n");
+  for (int32_t index = 0; index < trait_count; ++index)
+    fprintf(out, "  %.*s = %d,\n", traits[index]->name.length, traits[index]->name.data, index);
+  fprintf(out, "};\n\n");
+  fprintf(out, "constexpr uint32_t ENTITY_TRAIT_COUNT = %d;\n\n", trait_count);
+
+  fprintf(out, "const char* to_string(entity_action value);\n");
+  fprintf(out, "const char* to_string(entity_signal value);\n");
+  fprintf(out, "const char* to_string(entity_trait value);\n");
+  fprintf(out, "template <> std::optional<entity_action> try_from_string<entity_action>(std::string_view text);\n");
+  fprintf(out, "template <> std::optional<entity_signal> try_from_string<entity_signal>(std::string_view text);\n");
+  fprintf(out, "template <> std::optional<entity_trait> try_from_string<entity_trait>(std::string_view text);\n\n");
+
+  fprintf(out, "// --- one payload struct per verb --------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// Trivially copyable, with a field table beside it, so a map row's\n");
+  fprintf(out, "// override converts through the same field_from_text every entity field\n");
+  fprintf(out, "// does. A verb with no parameters gets an empty struct anyway, so a\n");
+  fprintf(out, "// handler's second argument is always its own type.\n\n");
+
+  for (int32_t index = 0; index < action_count; ++index)
+    emit_verb_struct(out, program, actions[index]);
+  for (int32_t index = 0; index < signal_count; ++index)
+    emit_verb_struct(out, program, signals[index]);
+
+  fprintf(out, "Span<const field_info_t> action_payload_fields(entity_action action);\n");
+  fprintf(out, "Span<const field_info_t> signal_payload_fields(entity_signal signal);\n\n");
+
+  fprintf(out, "// --- the erased form --------------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// A generated tagged union, not std::variant and not a hand-rolled one:\n");
+  fprintf(out, "// it is as typed as either, has no library type in a generated header, and\n");
+  fprintf(out, "// stays trivially copyable, which is what lets a connection row and a\n");
+  fprintf(out, "// queued record hold one by value. Only generated code names a member;\n");
+  fprintf(out, "// everything hand-written goes through an as_* accessor, which asserts\n");
+  fprintf(out, "// the tag.\n");
+  fprintf(out, "struct action_data_t\n{\n");
+  if (action_count > 0)
+  {
+    fprintf(out, "  entity_action tag = entity_action::%.*s;\n\n", actions[0]->name.length,
+            actions[0]->name.data);
+    fprintf(out, "  union\n  {\n");
+    for (int32_t index = 0; index < action_count; ++index)
+    {
+      fprintf(out, "    ");
+      write_verb_struct_name(out, actions[index]->name);
+      fprintf(out, " ");
+      write_lower(out, actions[index]->name);
+      fprintf(out, index == 0 ? " = {};\n" : ";\n");
+    }
+    fprintf(out, "  };\n\n");
+
+    for (int32_t index = 0; index < action_count; ++index)
+    {
+      fprintf(out, "  const ");
+      write_verb_struct_name(out, actions[index]->name);
+      fprintf(out, "& as_");
+      write_lower(out, actions[index]->name);
+      fprintf(out, "() const { assert(tag == entity_action::%.*s); return ",
+              actions[index]->name.length, actions[index]->name.data);
+      write_lower(out, actions[index]->name);
+      fprintf(out, "; }\n");
+    }
+  }
+  fprintf(out, "};\n");
+  fprintf(out, "static_assert(std::is_trivially_copyable_v<action_data_t>,\n");
+  fprintf(out, "              \"a connection row and a queued record hold one by value\");\n\n");
+
+  for (int32_t index = 0; index < action_count; ++index)
+  {
+    fprintf(out, "action_data_t erase(const ");
+    write_verb_struct_name(out, actions[index]->name);
+    fprintf(out, "& payload);\n");
+  }
+  fprintf(out, "\n");
+
+  fprintf(out, "// --- the trait table --------------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// One bit per trait per entity type. The rule for a call site is: ask for\n");
+  fprintf(out, "// the TYPE when you need its fields (entity_as), ask for the TRAIT when\n");
+  fprintf(out, "// you need a verb -- `if (is<Usable>(*hit)) use(*hit, {}, ctx);`.\n");
+  fprintf(out, "static_assert(ENTITY_TRAIT_COUNT <= 64, \"the trait mask is a uint64_t\");\n\n");
+  fprintf(out, "constexpr uint64_t trait_bit(entity_trait trait) { return 1ull << (uint32_t)trait; }\n\n");
+
+  // In the HEADER and constexpr, not defined in the .cpp: the binder TU
+  // static_asserts its dispatch table against the acceptance masks below, and
+  // a table that crosses a TU boundary as `extern const` cannot be read in a
+  // constant expression. Both tables are small and pure.
+  fprintf(out, "// Row per entity type, bit per trait. Invalid's row is zero: an entity\n");
+  fprintf(out, "// whose tag never got written accepts nothing.\n");
+  fprintf(out, "inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {\n");
+  fprintf(out, "  0u,   // Invalid\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_ENTITY)
+      continue;
+
+    fprintf(out, "  ");
+    if (declaration->trait_opt_in_count == 0)
+      fprintf(out, "0u");
+    for (int32_t offset = 0; offset < declaration->trait_opt_in_count; ++offset)
+    {
+      const name_reference_t* opt_in =
+          &program->name_references[declaration->first_trait_opt_in + offset];
+      if (offset > 0)
+        fprintf(out, " | ");
+      fprintf(out, "trait_bit(entity_trait::%.*s)", opt_in->name.length, opt_in->name.data);
+    }
+    fprintf(out, ",   // %.*s\n", declaration->name.length, declaration->name.data);
+  }
+  fprintf(out, "};\n\n");
+  fprintf(out, "inline bool type_has_trait(entity_type type, entity_trait trait)\n{\n");
+  fprintf(out, "  if (type <= entity_type::Invalid || (uint32_t)type >= ENTITY_TYPE_COUNT)\n");
+  fprintf(out, "    return false;\n");
+  fprintf(out, "  return (ENTITY_TRAIT_MASKS[(uint16_t)type] & trait_bit(trait)) != 0;\n}\n\n");
+
+  fprintf(out, "// A tag type per trait, so `is<Openable>(e)` is one name rather than a\n");
+  fprintf(out, "// value and a template argument that could disagree.\n");
+  for (int32_t index = 0; index < trait_count; ++index)
+  {
+    fprintf(out, "struct %.*s { static constexpr entity_trait tag = entity_trait::%.*s; };\n",
+            traits[index]->name.length, traits[index]->name.data, traits[index]->name.length,
+            traits[index]->name.data);
+  }
+  fprintf(out, "\n");
+  fprintf(out, "template <class Trait> bool is(const Entity& entity)\n{\n");
+  fprintf(out, "  return type_has_trait(entity.type, Trait::tag);\n}\n\n");
+
+  // --- what a type ACCEPTS ---
+  //
+  // Shared, and deliberately not the dispatch table the design's ss5 sketched
+  // as the single source: the shims call handlers that live in game_server, so
+  // a table of them cannot sit in a library the client links. The two are
+  // generated from one declaration and the binder TU carries a constexpr
+  // static_assert that they agree cell for cell, which is a stronger guarantee
+  // than one table read by everyone -- it is checked rather than intended.
+  fprintf(out, "// --- what a type ACCEPTS ----------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// One bit per action per entity type. This is the fact the map loader\n");
+  fprintf(out, "// refuses an ill-typed connection on and the editor's action dropdown is\n");
+  fprintf(out, "// built from, and it is SHARED -- the shims that actually call a handler\n");
+  fprintf(out, "// cannot be, because handlers live in game_server. server_action_bindings\n");
+  fprintf(out, "// static_asserts that the two agree cell for cell.\n");
+  fprintf(out, "static_assert(ENTITY_ACTION_COUNT <= 64, \"the accepted-action mask is a uint64_t\");\n\n");
+  fprintf(out, "constexpr uint64_t action_bit(entity_action action) { return 1ull << (uint32_t)action; }\n\n");
+
+  fprintf(out, "inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {\n");
+  fprintf(out, "  0u,   // Invalid\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* entity = &program->declarations[index];
+    if (entity->kind != DECLARATION_ENTITY)
+      continue;
+
+    fprintf(out, "  ");
+    int32_t written = 0;
+    for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
+    {
+      if (owning_trait_of(program, entity, actions[verb_index]) == nullptr)
+        continue;
+      fprintf(out, "%saction_bit(entity_action::%.*s)", written > 0 ? " | " : "",
+              actions[verb_index]->name.length, actions[verb_index]->name.data);
+      ++written;
+    }
+    if (written == 0)
+      fprintf(out, "0u");
+    fprintf(out, ",   // %.*s\n", entity->name.length, entity->name.data);
+  }
+  fprintf(out, "};\n\n");
+  fprintf(out, "inline bool type_accepts_action(entity_type type, entity_action action)\n{\n");
+  fprintf(out, "  if (type <= entity_type::Invalid || (uint32_t)type >= ENTITY_TYPE_COUNT)\n");
+  fprintf(out, "    return false;\n");
+  fprintf(out, "  return (ACTION_ACCEPTED_MASKS[(uint16_t)type] & action_bit(action)) != 0;\n}\n\n");
+
+  // --- handler declarations ---
+  fprintf(out, "// --- handler declarations ---------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// An overload set, one per (type, action) the `is` lists imply -- or one\n");
+  fprintf(out, "// per action for a trait with `requires`, written against the required\n");
+  fprintf(out, "// components instead. No open(Rocket_Entity&) exists, so open(rocket) is\n");
+  fprintf(out, "// \"no matching function\"; a declared handler nobody defined is a LINK\n");
+  fprintf(out, "// error naming the symbol. That link step is the assert.\n");
+  {
+    // A `requires` trait's handler is declared ONCE however many types opt in.
+    bool* declared = (bool*)calloc((size_t)(action_count + 1), sizeof(bool));
+
+    for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
+    {
+      const field_t* verb = actions[verb_index];
+
+      for (int32_t index = 0; index < program->declaration_count; ++index)
+      {
+        const declaration_t* entity = &program->declarations[index];
+        if (entity->kind != DECLARATION_ENTITY)
+          continue;
+
+        const declaration_t* trait = owning_trait_of(program, entity, verb);
+        if (trait == nullptr)
+          continue;
+
+        if (trait->requirement_count > 0)
+        {
+          if (declared[verb_index])
+            continue;
+          declared[verb_index] = true;
+        }
+
+        write_handler_signature(out, program, trait, entity, verb);
+        fprintf(out, ";   // %.*s\n", trait->name.length, trait->name.data);
+      }
+    }
+    free(declared);
+  }
+  fprintf(out, "\n");
+
+  // --- the dynamic half ---
+  fprintf(out, "// --- the dynamic half -------------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// Same spelling, resolved by overload: with a Door_Entity& in hand the\n");
+  fprintf(out, "// typed handler wins and nothing looks anything up; with an Entity& from\n");
+  fprintf(out, "// a ray cast these go through the table. Ask for the TYPE when you need\n");
+  fprintf(out, "// its fields, ask for the TRAIT when you need a verb.\n");
+  for (int32_t index = 0; index < action_count; ++index)
+  {
+    fprintf(out, "void ");
+    write_lower(out, actions[index]->name);
+    fprintf(out, "(Entity&, const ");
+    write_verb_struct_name(out, actions[index]->name);
+    fprintf(out, "&, input_context_t&);\n");
+    fprintf(out, "[[nodiscard]] bool try_");
+    write_lower(out, actions[index]->name);
+    fprintf(out, "(Entity&, const ");
+    write_verb_struct_name(out, actions[index]->name);
+    fprintf(out, "&, input_context_t&);\n");
+  }
+  fprintf(out, "\n");
+
+  fprintf(out, "// The ERASED entry point, for the queue's drain and for ent_fire: a tag\n");
+  fprintf(out, "// and a payload whose type is only known at runtime. Everything typed\n");
+  fprintf(out, "// goes through the overloads above instead.\n");
+  fprintf(out, "void send_action(Entity& target, const action_data_t& data, input_context_t& context);\n");
+  fprintf(out, "[[nodiscard]] bool try_send_action(Entity& target, const action_data_t& data,\n");
+  fprintf(out, "                                  input_context_t& context);\n\n");
+
+  fprintf(out, "} // namespace entities\n");
+
+  free(traits);
+  free(actions);
+  free(action_owners);
+  free(signals);
+  free(signal_owners);
+}
+
+static void emit_entity_io_source(FILE* out, const program_t* program, const char* header_name)
+{
+  int32_t  enum_count = 0;
+  int32_t* enum_ids   = build_enum_ids(program, &enum_count);
+
+  const declaration_t** traits =
+      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) * sizeof(void*));
+  const int32_t trait_count = collect_traits(program, traits, program->declaration_count + 1);
+
+  const field_t**       actions       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const declaration_t** action_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const int32_t action_count =
+      collect_verbs(program, /*signals=*/false, actions, action_owners, program->field_count + 1);
+
+  const field_t**       signals       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const declaration_t** signal_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const int32_t signal_count =
+      collect_verbs(program, /*signals=*/true, signals, signal_owners, program->field_count + 1);
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "#include \"%s\"\n\n", header_name);
+  fprintf(out, "#if defined(__clang__) || defined(__GNUC__)\n");
+  fprintf(out, "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n");
+  fprintf(out, "#elif defined(_MSC_VER)\n");
+  fprintf(out, "#pragma warning(disable : 4841)\n");
+  fprintf(out, "#endif\n\n");
+
+  fprintf(out, "namespace entities\n{\n\n");
+  fprintf(out, "namespace\n{\n\n");
+
+  for (int32_t index = 0; index < action_count; ++index)
+    emit_verb_field_table(out, program, actions[index], enum_ids);
+  for (int32_t index = 0; index < signal_count; ++index)
+    emit_verb_field_table(out, program, signals[index], enum_ids);
+
+  const field_t* const* payload_sets[2]  = {actions, signals};
+  const int32_t         payload_counts[2] = {action_count, signal_count};
+  const char*           payload_names[2]  = {"ACTION_PAYLOAD_FIELDS", "SIGNAL_PAYLOAD_FIELDS"};
+
+  for (int32_t which = 0; which < 2; ++which)
+  {
+    if (payload_counts[which] == 0)
+      continue;
+
+    fprintf(out, "constexpr Span<const field_info_t> %s[] = {\n", payload_names[which]);
+    for (int32_t index = 0; index < payload_counts[which]; ++index)
+    {
+      const field_t* verb = payload_sets[which][index];
+      if (verb->parameter_count == 0)
+      {
+        fprintf(out, "  {},   // %.*s\n", verb->name.length, verb->name.data);
+        continue;
+      }
+      fprintf(out, "  {");
+      write_upper(out, verb->name);
+      fprintf(out, "_FIELDS, %d},\n", verb->parameter_count);
+    }
+    fprintf(out, "};\n\n");
+  }
+
+  fprintf(out, "} // namespace\n\n");
+
+  // --- name conversion ---
+  struct verb_set_t
+  {
+    const char*           enum_name;
+    const char*           count_name;
+    const field_t* const* verbs;
+    int32_t               count;
+  };
+  const verb_set_t sets[2] = {
+      {"entity_action", "ENTITY_ACTION_COUNT", actions, action_count},
+      {"entity_signal", "ENTITY_SIGNAL_COUNT", signals, signal_count},
+  };
+
+  for (const verb_set_t& set : sets)
+  {
+    fprintf(out, "const char* to_string(%s value)\n{\n  switch (value)\n  {\n", set.enum_name);
+    for (int32_t index = 0; index < set.count; ++index)
+      fprintf(out, "    case %s::%.*s: return \"%.*s\";\n", set.enum_name,
+              set.verbs[index]->name.length, set.verbs[index]->name.data,
+              set.verbs[index]->name.length, set.verbs[index]->name.data);
+    fprintf(out, "  }\n  return \"<unknown>\";\n}\n\n");
+
+    fprintf(out, "template <> std::optional<%s> try_from_string<%s>(std::string_view text)\n{\n",
+            set.enum_name, set.enum_name);
+    for (int32_t index = 0; index < set.count; ++index)
+      fprintf(out, "  if (text == \"%.*s\") return %s::%.*s;\n", set.verbs[index]->name.length,
+              set.verbs[index]->name.data, set.enum_name, set.verbs[index]->name.length,
+              set.verbs[index]->name.data);
+    fprintf(out, "  return std::nullopt;\n}\n\n");
+  }
+
+  fprintf(out, "const char* to_string(entity_trait value)\n{\n  switch (value)\n  {\n");
+  for (int32_t index = 0; index < trait_count; ++index)
+    fprintf(out, "    case entity_trait::%.*s: return \"%.*s\";\n", traits[index]->name.length,
+            traits[index]->name.data, traits[index]->name.length, traits[index]->name.data);
+  fprintf(out, "  }\n  return \"<unknown>\";\n}\n\n");
+
+  fprintf(out, "template <> std::optional<entity_trait> try_from_string<entity_trait>(std::string_view text)\n{\n");
+  for (int32_t index = 0; index < trait_count; ++index)
+    fprintf(out, "  if (text == \"%.*s\") return entity_trait::%.*s;\n", traits[index]->name.length,
+            traits[index]->name.data, traits[index]->name.length, traits[index]->name.data);
+  fprintf(out, "  return std::nullopt;\n}\n\n");
+
+  // --- accessors ---
+  fprintf(out, "Span<const field_info_t> action_payload_fields(entity_action action)\n{\n");
+  fprintf(out, "  assert((uint32_t)action < ENTITY_ACTION_COUNT);\n");
+  fprintf(out, "  return ACTION_PAYLOAD_FIELDS[(uint16_t)action];\n}\n\n");
+  fprintf(out, "Span<const field_info_t> signal_payload_fields(entity_signal signal)\n{\n");
+  fprintf(out, "  assert((uint32_t)signal < ENTITY_SIGNAL_COUNT);\n");
+  fprintf(out, "  return SIGNAL_PAYLOAD_FIELDS[(uint16_t)signal];\n}\n\n");
+
+  for (int32_t index = 0; index < action_count; ++index)
+  {
+    fprintf(out, "action_data_t erase(const ");
+    write_verb_struct_name(out, actions[index]->name);
+    fprintf(out, "& payload)\n{\n  action_data_t data;\n  data.tag = entity_action::%.*s;\n  data.",
+            actions[index]->name.length, actions[index]->name.data);
+    write_lower(out, actions[index]->name);
+    fprintf(out, " = payload;\n  return data;\n}\n\n");
+  }
+
+  fprintf(out, "} // namespace entities\n");
+
+  free(enum_ids);
+  free(traits);
+  free(actions);
+  free(action_owners);
+  free(signals);
+  free(signal_owners);
+}
+
+// The server's binder TU, twin of server_command_bindings.cpp. Everything that
+// REFERENCES a handler lives here, so entity_io_generated.cpp compiles into
+// game_shared with no handler present and the client DLL never names one.
+static void emit_action_bindings(FILE* out, const program_t* program, const char* io_header,
+                                 const char* context_header)
+{
+  const field_t**       actions       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const declaration_t** action_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const int32_t action_count =
+      collect_verbs(program, /*signals=*/false, actions, action_owners, program->field_count + 1);
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// The dispatch table and its shims. A shim is the ONLY code that names a\n");
+  fprintf(out, "// union member or downcasts an entity: it adapts the table's uniform call\n");
+  fprintf(out, "// into one handler's typed one. A declared handler nobody defined is a\n");
+  fprintf(out, "// LINK error naming the symbol -- there is no registration and no bind\n");
+  fprintf(out, "// step, so \"forgot to register\" is not representable.\n");
+  fprintf(out, "#include \"%s\"\n", io_header);
+  fprintf(out, "#include \"%s\"\n", context_header);
+  fprintf(out, "#include \"entities/entity_reflection.hpp\"\n");
+  fprintf(out, "#include \"log.hpp\"\n\n");
+
+  fprintf(out, "namespace entities\n{\n\n");
+  fprintf(out, "namespace\n{\n\n");
+
+  // --- the shims ---
+  for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
+  {
+    const field_t* verb = actions[verb_index];
+
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      const declaration_t* entity = &program->declarations[index];
+      if (entity->kind != DECLARATION_ENTITY)
+        continue;
+
+      const declaration_t* trait = owning_trait_of(program, entity, verb);
+      if (trait == nullptr)
+        continue;
+
+      fprintf(out, "void shim_");
+      write_lower(out, entity->name);
+      fprintf(out, "_");
+      write_lower(out, verb->name);
+      fprintf(out, "(Entity& entity, const action_data_t& data, input_context_t& context)\n{\n  ");
+      write_lower(out, verb->name);
+      fprintf(out, "(");
+
+      if (trait->requirement_count > 0)
+      {
+        for (int32_t offset = 0; offset < trait->requirement_count; ++offset)
+        {
+          const name_reference_t* requirement =
+              &program->name_references[trait->first_requirement + offset];
+          const field_t* satisfying = field_satisfying(program, entity, requirement->declaration);
+          if (satisfying == nullptr)
+            continue; // already reported by check_trait_opt_ins
+          fprintf(out, "%sentity_as<%.*s>(&entity)->%.*s", offset > 0 ? ", " : "",
+                  entity->name.length, entity->name.data, satisfying->name.length,
+                  satisfying->name.data);
+        }
+      }
+      else
+      {
+        fprintf(out, "*entity_as<%.*s>(&entity)", entity->name.length, entity->name.data);
+      }
+
+      fprintf(out, ", data.as_");
+      write_lower(out, verb->name);
+      fprintf(out, "(), context);\n}\n\n");
+    }
+  }
+
+  // --- the table ---
+  fprintf(out, "using action_shim_fn = void (*)(Entity&, const action_data_t&, input_context_t&);\n\n");
+  fprintf(out, "// A non-null cell means the type accepts the action. Rows are entity\n");
+  fprintf(out, "// types in tag order, columns the derived action enum.\n");
+  fprintf(out, "constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT] = {\n");
+  fprintf(out, "  {},   // Invalid\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* entity = &program->declarations[index];
+    if (entity->kind != DECLARATION_ENTITY)
+      continue;
+
+    // Dense rows in enum order, not designators: `[i] = x` inside a braced
+    // initializer is a C99 extension in C++, and a row written out in full is
+    // also the one a reader can check against the enum above.
+    int32_t accepted = 0;
+    for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
+      accepted += owning_trait_of(program, entity, actions[verb_index]) != nullptr ? 1 : 0;
+
+    if (accepted == 0)
+    {
+      fprintf(out, "  {},   // %.*s\n", entity->name.length, entity->name.data);
+      continue;
+    }
+
+    fprintf(out, "  {   // %.*s\n", entity->name.length, entity->name.data);
+    for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
+    {
+      if (owning_trait_of(program, entity, actions[verb_index]) == nullptr)
+      {
+        fprintf(out, "    nullptr,   // %.*s\n", actions[verb_index]->name.length,
+                actions[verb_index]->name.data);
+        continue;
+      }
+
+      fprintf(out, "    shim_");
+      write_lower(out, entity->name);
+      fprintf(out, "_");
+      write_lower(out, actions[verb_index]->name);
+      fprintf(out, ",\n");
+    }
+    fprintf(out, "  },\n");
+  }
+  fprintf(out, "};\n\n");
+
+  // --- the agreement ---
+  fprintf(out, "// The shared ACCEPTANCE mask and this table are two artifacts of one\n");
+  fprintf(out, "// declaration, and this is what makes that a proof rather than an\n");
+  fprintf(out, "// intention: a loader that refuses a connection whose cell is null must\n");
+  fprintf(out, "// agree with the drain that calls through it, or the drain's fatal_error\n");
+  fprintf(out, "// on a null cell would be reachable from a map the loader accepted.\n");
+  fprintf(out, "constexpr bool dispatch_matches_acceptance()\n{\n");
+  fprintf(out, "  for (uint32_t type = 0; type < ENTITY_TYPE_COUNT; ++type)\n");
+  fprintf(out, "    for (uint32_t action = 0; action < ENTITY_ACTION_COUNT; ++action)\n");
+  fprintf(out, "    {\n");
+  fprintf(out, "      const bool accepted = (ACTION_ACCEPTED_MASKS[type] & (1ull << action)) != 0;\n");
+  fprintf(out, "      if (accepted != (ACTION_DISPATCH[type][action] != nullptr))\n");
+  fprintf(out, "        return false;\n");
+  fprintf(out, "    }\n");
+  fprintf(out, "  return true;\n}\n\n");
+  fprintf(out, "static_assert(dispatch_matches_acceptance(),\n");
+  fprintf(out, "              \"the shared acceptance mask and this dispatch table disagree\");\n\n");
+  fprintf(out, "} // namespace\n\n");
+
+  // --- the dynamic overloads ---
+  for (int32_t index = 0; index < action_count; ++index)
+  {
+    const field_t* verb = actions[index];
+
+    fprintf(out, "bool try_");
+    write_lower(out, verb->name);
+    fprintf(out, "(Entity& entity, const ");
+    write_verb_struct_name(out, verb->name);
+    fprintf(out, "& payload, input_context_t& context)\n{\n");
+    fprintf(out, "  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)\n");
+    fprintf(out, "    return false;\n");
+    fprintf(out, "  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::%.*s];\n",
+            verb->name.length, verb->name.data);
+    fprintf(out, "  if (shim == nullptr)\n    return false;\n");
+    fprintf(out, "  shim(entity, erase(payload), context);\n  return true;\n}\n\n");
+
+    fprintf(out, "void ");
+    write_lower(out, verb->name);
+    fprintf(out, "(Entity& entity, const ");
+    write_verb_struct_name(out, verb->name);
+    fprintf(out, "& payload, input_context_t& context)\n{\n");
+    fprintf(out, "  if (!try_");
+    write_lower(out, verb->name);
+    fprintf(out, "(entity, payload, context))\n");
+    fprintf(out, "    fatal_error(\"{} does not accept %.*s\", entity_info(entity.type).classname);\n",
+            verb->name.length, verb->name.data);
+    fprintf(out, "}\n\n");
+  }
+
+  // --- the erased entry point ---
+  fprintf(out, "bool try_send_action(Entity& target, const action_data_t& data, input_context_t& context)\n{\n");
+  fprintf(out, "  if (target.type <= entity_type::Invalid || (uint32_t)target.type >= ENTITY_TYPE_COUNT)\n");
+  fprintf(out, "    return false;\n");
+  fprintf(out, "  if ((uint32_t)data.tag >= ENTITY_ACTION_COUNT)\n    return false;\n");
+  fprintf(out, "  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)target.type][(uint16_t)data.tag];\n");
+  fprintf(out, "  if (shim == nullptr)\n    return false;\n");
+  fprintf(out, "  shim(target, data, context);\n  return true;\n}\n\n");
+
+  fprintf(out, "// The drain's entry point. Reaching a null cell here is a generator or\n");
+  fprintf(out, "// loader bug and never the map's: the loader refused every connection\n");
+  fprintf(out, "// whose cell was null, against the very mask this table is checked\n");
+  fprintf(out, "// against above.\n");
+  fprintf(out, "void send_action(Entity& target, const action_data_t& data, input_context_t& context)\n{\n");
+  fprintf(out, "  if (!try_send_action(target, data, context))\n");
+  fprintf(out, "    fatal_error(\"{} does not accept {}\", entity_info(target.type).classname,\n");
+  fprintf(out, "                to_string(data.tag));\n}\n\n");
+
+  fprintf(out, "} // namespace entities\n");
+
+  free(actions);
+  free(action_owners);
 }
 
 // ---------------------------------------------------------------------------
@@ -7426,6 +8950,10 @@ static void allocate_program(program_t* program)
   program->enum_values =
       (string_view_t*)malloc((size_t)program->enum_value_capacity * sizeof(string_view_t));
 
+  program->name_reference_capacity = token_bound;
+  program->name_references         = (name_reference_t*)malloc(
+      (size_t)program->name_reference_capacity * sizeof(name_reference_t));
+
   // These two are the exception to "capacity is a proven bound": their contents
   // come from the filesystem, so no bound can be proven from the source. They
   // are generous fixed sizes, and overrunning either is a diagnostic.
@@ -7477,7 +9005,32 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
   emit_generated_source(source_file, program, header_name, schema_hash);
   fclose(source_file);
 
-  fprintf(stderr, "def_gen: wrote %s/entities_generated.{hpp,cpp}\n", output_dir);
+  const char* io_header_name = "entity_io_generated.hpp";
+
+  FILE* io_header_file = open_generated_file(output_dir, io_header_name, path, sizeof(path));
+  if (io_header_file == nullptr)
+    return false;
+  emit_entity_io_header(io_header_file, program, header_name);
+  fclose(io_header_file);
+
+  FILE* io_source_file =
+      open_generated_file(output_dir, "entity_io_generated.cpp", path, sizeof(path));
+  if (io_source_file == nullptr)
+    return false;
+  emit_entity_io_source(io_source_file, program, io_header_name);
+  fclose(io_source_file);
+
+  FILE* bindings_file =
+      open_generated_file(output_dir, "server_action_bindings.cpp", path, sizeof(path));
+  if (bindings_file == nullptr)
+    return false;
+  emit_action_bindings(bindings_file, program, io_header_name, "entity_io_context.hpp");
+  fclose(bindings_file);
+
+  fprintf(stderr,
+          "def_gen: wrote %s/entities_generated.{hpp,cpp}, entity_io_generated.{hpp,cpp} and "
+          "server_action_bindings.cpp\n",
+          output_dir);
   return true;
 }
 

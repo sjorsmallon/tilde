@@ -72,7 +72,7 @@ Span<scoreboard_row_t> collect_scoreboard_rows(
     // Assigned member-wise rather than replaced wholesale: the row's name keeps
     // whatever heap buffer it already had.
     scoreboard_row_t &row = rows[index++];
-    row.name     = player.name.c_str();
+    row.name     = player.display_name.c_str();
     row.kills    = player.kills;
     row.deaths   = player.deaths;
     row.slot     = slot;

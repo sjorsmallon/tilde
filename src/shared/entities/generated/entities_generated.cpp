@@ -14,9 +14,6 @@
 namespace entities
 {
 
-namespace
-{
-
 constexpr const char* Spawn_Type_VALUE_NAMES[] = {
   "Human",
   "Bot",
@@ -96,7 +93,7 @@ constexpr const char* Damage_Type_VALUE_NAMES[] = {
   "Teal",
 };
 
-constexpr enum_type_info_t ENUM_INFOS[] = {
+constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
   {"Weapon", {Weapon_VALUE_NAMES, 4}},
@@ -110,6 +107,9 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
 };
+
+namespace
+{
 
 constexpr field_info_t Box_Volume_FIELDS[] = {
   {.name = "position",
@@ -126,6 +126,18 @@ constexpr field_info_t Box_Volume_FIELDS[] = {
    .offset = (uint32_t)offsetof(Box_Volume, half_extents),
    .size_in_bytes = (uint32_t)sizeof(Box_Volume::half_extents),
    .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
+constexpr field_info_t Enabled_FIELDS[] = {
+  {.name = "value",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Enabled, value),
+   .size_in_bytes = (uint32_t)sizeof(Enabled::value),
+   .flags = 7u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -222,7 +234,7 @@ constexpr field_info_t Render_FIELDS[] = {
    .offset = (uint32_t)offsetof(Render, material),
    .size_in_bytes = (uint32_t)sizeof(Render::material),
    .flags = 0u,
-   .component_id = 1,
+   .component_id = 2,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -418,6 +430,15 @@ constexpr field_info_t Reflection_Volume_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Reflection_Volume_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Reflection_Volume_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "volume",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Reflection_Volume_Entity, volume),
@@ -455,6 +476,15 @@ constexpr field_info_t Player_Spawn_Entity_FIELDS[] = {
    .flags = 7u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Player_Spawn_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Player_Spawn_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "spawn_type",
@@ -505,6 +535,15 @@ constexpr field_info_t Player_Spectate_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Player_Spectate_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Player_Spectate_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Player_Entity_FIELDS[] = {
@@ -533,6 +572,15 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .flags = 7u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Player_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "view_angle_yaw",
@@ -652,10 +700,10 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "name",
+  {.name = "display_name",
    .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Player_Entity, name),
-   .size_in_bytes = (uint32_t)sizeof(Player_Entity::name),
+   .offset = (uint32_t)offsetof(Player_Entity, display_name),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::display_name),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 32,
@@ -693,7 +741,7 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Player_Entity, inventory),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::inventory),
    .flags = 0u,
-   .component_id = 5,
+   .component_id = 6,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -702,7 +750,7 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Player_Entity, movement),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::movement),
    .flags = 0u,
-   .component_id = 4,
+   .component_id = 5,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -711,7 +759,7 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Player_Entity, render),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::render),
    .flags = 0u,
-   .component_id = 2,
+   .component_id = 3,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -752,6 +800,15 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .flags = 7u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Weapon_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "ammo",
@@ -804,7 +861,7 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Weapon_Entity, render),
    .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::render),
    .flags = 0u,
-   .component_id = 2,
+   .component_id = 3,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -836,6 +893,15 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .flags = 7u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Rocket_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "velocity",
@@ -906,7 +972,7 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Rocket_Entity, render),
    .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::render),
    .flags = 0u,
-   .component_id = 2,
+   .component_id = 3,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -938,6 +1004,15 @@ constexpr field_info_t Particle_Emitter_Entity_FIELDS[] = {
    .flags = 7u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Particle_Emitter_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Particle_Emitter_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "sprite",
@@ -1150,6 +1225,15 @@ constexpr field_info_t Damageable_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Damageable_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "max_health",
    .type = FIELD_TYPE_I32,
    .offset = (uint32_t)offsetof(Damageable_Entity, max_health),
@@ -1191,7 +1275,7 @@ constexpr field_info_t Damageable_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Damageable_Entity, render),
    .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::render),
    .flags = 0u,
-   .component_id = 2,
+   .component_id = 3,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -1222,6 +1306,24 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::orientation),
    .flags = 7u,
    .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Trigger_Volume_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Trigger_Volume_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -1309,12 +1411,30 @@ constexpr field_info_t Point_Light_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Point_Light_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Point_Light_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Point_Light_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Point_Light_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "light",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Point_Light_Entity, light),
    .size_in_bytes = (uint32_t)sizeof(Point_Light_Entity::light),
    .flags = 0u,
-   .component_id = 3,
+   .component_id = 4,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -1357,12 +1477,30 @@ constexpr field_info_t Spot_Light_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Spot_Light_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Spot_Light_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Spot_Light_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Spot_Light_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "light",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Spot_Light_Entity, light),
    .size_in_bytes = (uint32_t)sizeof(Spot_Light_Entity::light),
    .flags = 0u,
-   .component_id = 3,
+   .component_id = 4,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -1423,12 +1561,21 @@ constexpr field_info_t Directional_Light_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Directional_Light_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Directional_Light_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "light",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Directional_Light_Entity, light),
    .size_in_bytes = (uint32_t)sizeof(Directional_Light_Entity::light),
    .flags = 0u,
-   .component_id = 3,
+   .component_id = 4,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -1469,6 +1616,15 @@ constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
    .flags = 7u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Physics_Body_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::name),
+   .flags = 6u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "shape",
@@ -1512,7 +1668,7 @@ constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Physics_Body_Entity, render),
    .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::render),
    .flags = 0u,
-   .component_id = 2,
+   .component_id = 3,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -1520,6 +1676,7 @@ constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
 
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
+  {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
   {"Material", {Material_FIELDS, 3}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
   {"Light", {Light_FIELDS, 5}, (uint32_t)sizeof(Light)},
@@ -1557,36 +1714,36 @@ Entity* as_base_Physics_Body_Entity(void* memory) { return static_cast<Entity*>(
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
-  {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 4}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
-  {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 5}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
-  {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 3}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 24}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 52u, true, construct_Player_Entity, as_base_Player_Entity},
-  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 9}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 4u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
-  {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 4u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
-  {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 23}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
-  {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 4u, false, construct_Damageable_Entity, as_base_Damageable_Entity},
-  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 1u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
-  {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 5}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 8u, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
-  {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 8u, false, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
-  {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 5}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 8u, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
-  {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 8}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 4u, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
+  {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
+  {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 6}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
+  {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 25}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 104u, true, construct_Player_Entity, as_base_Player_Entity},
+  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 10}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 8u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
+  {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 12}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 8u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
+  {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 24}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
+  {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 9}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 8u, false, construct_Damageable_Entity, as_base_Damageable_Entity},
+  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 11}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
+  {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 18u, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
+  {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 9}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 18u, false, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
+  {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 16u, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
+  {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 8u, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
 };
 
-constexpr int32_t COMPONENT_OFFSETS[][6] = {
-  {-1, -1, -1, -1, -1, -1}, // Invalid
-  {(int32_t)offsetof(Reflection_Volume_Entity, volume), -1, -1, -1, -1, -1}, // Reflection_Volume_Entity
-  {-1, -1, -1, -1, -1, -1}, // Player_Spawn_Entity
-  {-1, -1, -1, -1, -1, -1}, // Player_Spectate_Entity
-  {-1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory)}, // Player_Entity
-  {-1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1}, // Weapon_Entity
-  {-1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1}, // Rocket_Entity
-  {-1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
-  {-1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1}, // Damageable_Entity
-  {(int32_t)offsetof(Trigger_Volume_Entity, volume), -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
-  {-1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1}, // Point_Light_Entity
-  {-1, -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1, -1}, // Spot_Light_Entity
-  {-1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1}, // Directional_Light_Entity
-  {-1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1}, // Physics_Body_Entity
+constexpr int32_t COMPONENT_OFFSETS[][7] = {
+  {-1, -1, -1, -1, -1, -1, -1}, // Invalid
+  {(int32_t)offsetof(Reflection_Volume_Entity, volume), -1, -1, -1, -1, -1, -1}, // Reflection_Volume_Entity
+  {-1, -1, -1, -1, -1, -1, -1}, // Player_Spawn_Entity
+  {-1, -1, -1, -1, -1, -1, -1}, // Player_Spectate_Entity
+  {-1, -1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory)}, // Player_Entity
+  {-1, -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1}, // Weapon_Entity
+  {-1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1}, // Rocket_Entity
+  {-1, -1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
+  {-1, -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1}, // Damageable_Entity
+  {(int32_t)offsetof(Trigger_Volume_Entity, volume), (int32_t)offsetof(Trigger_Volume_Entity, switch_state), -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
+  {-1, (int32_t)offsetof(Point_Light_Entity, switch_state), -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1}, // Point_Light_Entity
+  {-1, (int32_t)offsetof(Spot_Light_Entity, switch_state), -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1, -1}, // Spot_Light_Entity
+  {-1, -1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1}, // Directional_Light_Entity
+  {-1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1}, // Physics_Body_Entity
 };
 
 constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 11;
@@ -1961,6 +2118,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x5e3f7fb7u;
+const uint32_t SCHEMA_HASH = 0x381df413u;
 
 } // namespace entities

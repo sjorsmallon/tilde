@@ -408,7 +408,7 @@ void check_win_condition(server_context_t &context,
           continue;
 
         log_terminal("{} reached the frag limit ({}); ending the round",
-                     player.name.c_str(), limit);
+                     player.display_name.c_str(), limit);
         end_round(context, current_tick, tickrate_hz);
         return;
       }

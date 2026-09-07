@@ -34,7 +34,7 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
   {
     bot->client_slot_index = slot;
     bot->team_allegiance = marker.team_allegiance;
-    bot->name.set(std::format("Bot {}", slot).c_str());
+    bot->display_name.set(std::format("Bot {}", slot).c_str());
     grant_default_inventory(session, bot_uid);
     place_player_at_spawn(session, *bot, marker);
 
