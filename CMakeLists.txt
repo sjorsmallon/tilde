@@ -423,6 +423,11 @@ add_library(game_shared STATIC
     src/shared/map_blocks.hpp
     src/shared/map_blocks.cpp
     src/shared/map_geometry.cpp
+    # The map's WIRING, and the load check that decides whether it can run.
+    # Shared because the check has two callers with two policies: build_session
+    # drops a bad row, the server's map load refuses the whole map.
+    src/shared/map_connection.hpp
+    src/shared/map_connection.cpp
     src/shared/brush.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
     # primitives sharing an id. See geometry_def.md section 5.
@@ -813,6 +818,11 @@ add_library(game_server SHARED
     # goes to entities/ under the name of the type it answers for. An entity
     # with no per-type handler gets no file.
     src/server/entity_io_context.hpp
+    # The queue every connection's action goes through. The generated emit_*
+    # functions reach it through this one seam, so the walk is written once
+    # rather than once per signal.
+    src/server/entity_io_queue.hpp
+    src/server/entity_io_queue.cpp
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}
     src/server/systems/rocket_system.cpp
@@ -1124,6 +1134,28 @@ add_executable(game_rules_test src/test/game_rules_test.cpp
 target_include_directories(game_rules_test PRIVATE src src/shared src/server)
 target_link_libraries(game_rules_test PRIVATE game_shared)
 
+# 26c. Entity I/O — connections as map data, the load check, and the queue.
+# entity_io_def.md ss11 step 3's pin. Compiles the server sources directly like
+# the two above it; the handler files come with it because the generated binder
+# references every one of them, which is the seam being tested.
+add_executable(entity_io_test src/test/entity_io_test.cpp
+    src/server/entity_io_queue.cpp
+    ${ENTITY_IO_GEN_BINDINGS}
+    ${ENTITY_IO_HANDLERS}
+    src/server/damage.cpp
+    src/server/server_context.cpp
+    src/server/systems/game_rules_system.cpp
+    src/server/systems/respawn_system.cpp
+    src/server/systems/inventory_system.cpp
+    src/server/entity_lifecycle.cpp)
+target_include_directories(entity_io_test PRIVATE src src/shared src/server)
+target_link_libraries(entity_io_test PRIVATE game_shared)
+# damage.cpp reaches one symbol off the module's exported surface
+# (server::get_tick_number), which server_impl.cpp defines. The test stands in
+# for it rather than linking the whole module; EXPORTS is what turns the
+# declaration from dllimport into something a local definition can satisfy.
+target_compile_definitions(entity_io_test PRIVATE GAME_SERVER_EXPORTS)
+
 add_executable(inventory_test src/test/inventory_test.cpp
     src/server/systems/inventory_system.cpp
     src/server/entity_lifecycle.cpp
@@ -1248,6 +1280,7 @@ set(GAME_TESTS
     frame_timing_test
     server_context_test
     game_rules_test
+    entity_io_test
     inventory_test
     events_test
     reliable_stream_test

@@ -12,7 +12,8 @@
 //   block     := keyword '{' member* '}'
 //   member    := property | block
 //   property  := string string                 -- key, then value
-//   keyword   := 'entity' | 'cvars' | 'materials' | <a geometry kind>
+//   keyword   := 'entity' | 'cvars' | 'materials' | 'connections'
+//              | <a geometry kind>
 //   string    := '"' char* '"'                 -- no escapes; may contain spaces
 //
 // Tokens are whitespace-separated, so '{' and '}' must stand alone. This reader
@@ -25,9 +26,12 @@
 // followed by its value, a nested keyword by '{'. A property value of "{" is
 // written quoted and so cannot be mistaken for one.
 //
-// Nesting exists for `face` blocks under `brush` (see map_geometry.hpp). A brush
-// with no face blocks loads exactly as it did before they existed, which is what
-// makes the format change backward-compatible on read with no version number.
+// Nesting exists for `face` blocks under `brush` (see map_geometry.hpp), and
+// for `connection` blocks under `connections`, each of which may itself hold an
+// `override` block -- so nesting is arbitrary-depth on both sides rather than
+// one level. A brush with no face blocks loads exactly as it did before they
+// existed, which is what makes the format change backward-compatible on read
+// with no version number.
 //
 // This lives in its own translation unit because both halves of the file need
 // it: map.cpp owns which keywords mean what, and map_geometry.cpp owns the

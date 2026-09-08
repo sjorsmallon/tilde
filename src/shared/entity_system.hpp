@@ -283,6 +283,35 @@ struct Entity_System
     return reinterpret_cast<T *>(pool.storage.data() + (size_t)location.slot * pool.stride);
   }
 
+  // Resolve a uid WITHOUT knowing its type. The untyped twin of get<T>, for the
+  // callers that have a uid off the wire, out of a map row or out of a ray cast
+  // and genuinely do not know what it names — the entity I/O drain above all,
+  // whose whole job is to hand a uid to a table keyed by its type.
+  //
+  // nullptr for a uid nothing holds, which is the ordinary "already gone" case
+  // and not an error. Same lifetime rule as get<T>: valid until the next spawn
+  // or destroy in that pool.
+  entities::Entity *try_find(entity_uid_t uid)
+  {
+    auto location_it = locations.find(uid);
+    if (location_it == locations.end())
+      return nullptr;
+
+    const entity_location_t &location = location_it->second;
+    Entity_Pool             &pool     = pools[(uint32_t)location.type];
+    if (location.slot >= pool.count)
+    {
+      log_error("Entity_System::try_find: uid {} indexes slot {} of a pool holding {} — index is "
+                "stale",
+                uid, location.slot, pool.count);
+      return nullptr;
+    }
+
+    // Through the generated as_base thunk, not a cast: an entity and its base
+    // are not pointer-interconvertible, so the offset has to come from the type.
+    return pool.at(location.slot);
+  }
+
   // Destroy whichever entity holds `uid`. False if none does — the caller can
   // treat that as "already gone" rather than an error.
   //

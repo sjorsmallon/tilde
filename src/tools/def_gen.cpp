@@ -8435,6 +8435,37 @@ static void emit_trait_header(FILE* out, const program_t* program, const declara
   if (wrote_dynamic)
     fprintf(out, "\n");
 
+  bool wrote_emits = false;
+  for (int32_t offset = 0; offset < trait->field_count; ++offset)
+  {
+    const field_t* verb = &program->fields[trait->first_field + offset];
+    if (!verb->is_signal)
+      continue;
+
+    if (!wrote_emits)
+    {
+      fprintf(out, "// --- what it ANNOUNCES ----------------------------------------------\n");
+      fprintf(out, "//\n");
+      fprintf(out, "// One emit per signal, called from the SYSTEM at the tick the state\n");
+      fprintf(out, "// change becomes true -- never from an action handler (it only\n");
+      fprintf(out, "// requests) and never from the drain (a queue that emits feeds\n");
+      fprintf(out, "// itself). It walks the session's connections for this sender and\n");
+      fprintf(out, "// queues one action per row; nothing is dispatched here.\n");
+      fprintf(out, "//\n");
+      fprintf(out, "// Defined in server_action_bindings_generated.cpp, because the queue\n");
+      fprintf(out, "// is world_t's -- the same reason the shims live there.\n");
+      wrote_emits = true;
+    }
+
+    fprintf(out, "void emit_");
+    write_lower(out, verb->name);
+    fprintf(out, "(const Entity& sender, const ");
+    write_verb_struct_name(out, verb->name);
+    fprintf(out, "& payload, input_context_t& context);\n");
+  }
+  if (wrote_emits)
+    fprintf(out, "\n");
+
   fprintf(out, "} // namespace entities\n");
 }
 
@@ -8577,6 +8608,46 @@ static void emit_entity_struct_header(FILE* out, const program_t* program,
       }
     }
     fprintf(out, "\n");
+
+    // The other direction, in the same file and for the same reason: what a
+    // level author can WIRE this type's behaviour to. The declarations are the
+    // trait header's; these are here so one file answers both halves.
+    int32_t emitted = 0;
+    for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
+    {
+      const name_reference_t* opt_in =
+          &program->name_references[entity->first_trait_opt_in + offset];
+      if (opt_in->declaration < 0)
+        continue;
+
+      const declaration_t* trait = &program->declarations[opt_in->declaration];
+      for (int32_t which = 0; which < trait->field_count; ++which)
+      {
+        const field_t* verb = &program->fields[trait->first_field + which];
+        if (!verb->is_signal)
+          continue;
+
+        if (emitted == 0)
+        {
+          fprintf(out, "// --- what a %.*s announces ---\n", entity->name.length,
+                  entity->name.data);
+          fprintf(out, "//\n");
+          fprintf(out, "// Declared in the trait headers above and defined once in the\n");
+          fprintf(out, "// binder; repeated here so this file answers both halves. The\n");
+          fprintf(out, "// SYSTEM that writes the state change is what calls one.\n");
+        }
+
+        fprintf(out, "void emit_");
+        write_lower(out, verb->name);
+        fprintf(out, "(const Entity& sender, const ");
+        write_verb_struct_name(out, verb->name);
+        fprintf(out, "& payload, input_context_t& context);   // %.*s\n", trait->name.length,
+                trait->name.data);
+        ++emitted;
+      }
+    }
+    if (emitted > 0)
+      fprintf(out, "\n");
   }
 
   fprintf(out, "} // namespace entities\n");
@@ -8596,6 +8667,11 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   const declaration_t** action_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
   const int32_t action_count =
       collect_verbs(program, /*signals=*/false, actions, action_owners, program->field_count + 1);
+
+  const field_t**       signals       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const declaration_t** signal_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const int32_t signal_count =
+      collect_verbs(program, /*signals=*/true, signals, signal_owners, program->field_count + 1);
 
   fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "//\n");
@@ -8769,6 +8845,109 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   fprintf(out, "    return false;\n");
   fprintf(out, "  return (ACTION_ACCEPTED_MASKS[(uint16_t)type] & action_bit(action)) != 0;\n}\n\n");
 
+  // --- what a type ANNOUNCES, and who can activate it ---
+  //
+  // The signal half of the acceptance mask, and the load check's other half.
+  // A connection's sender must emit the signal it names, and a connection
+  // targeting the ACTIVATOR is checked against every type the signal's `by`
+  // list admits -- which is what makes `by` load-bearing rather than
+  // documentation.
+  fprintf(out, "// --- what a type ANNOUNCES --------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// One bit per signal per entity type, the emit half of the mask above. A\n");
+  fprintf(out, "// connection whose sender does not emit the signal it names is refused at\n");
+  fprintf(out, "// load, and emit_<signal> on a type that does not is a fatal_error -- that\n");
+  fprintf(out, "// one is code rather than map data.\n");
+  fprintf(out, "static_assert(ENTITY_SIGNAL_COUNT <= 64, \"the emitted-signal mask is a uint64_t\");\n\n");
+  fprintf(out, "constexpr uint64_t signal_bit(entity_signal signal) { return 1ull << (uint32_t)signal; }\n\n");
+
+  fprintf(out, "inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {\n");
+  fprintf(out, "  0u,   // Invalid\n");
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* entity = &program->declarations[index];
+    if (entity->kind != DECLARATION_ENTITY)
+      continue;
+
+    fprintf(out, "  ");
+    int32_t written = 0;
+    for (int32_t verb_index = 0; verb_index < signal_count; ++verb_index)
+    {
+      if (owning_trait_of(program, entity, signals[verb_index]) == nullptr)
+        continue;
+      fprintf(out, "%ssignal_bit(entity_signal::%.*s)", written > 0 ? " | " : "",
+              signals[verb_index]->name.length, signals[verb_index]->name.data);
+      ++written;
+    }
+    if (written == 0)
+      fprintf(out, "0u");
+    fprintf(out, ",   // %.*s\n", entity->name.length, entity->name.data);
+  }
+  fprintf(out, "};\n\n");
+  fprintf(out, "inline bool type_emits_signal(entity_type type, entity_signal signal)\n{\n");
+  fprintf(out, "  if (type <= entity_type::Invalid || (uint32_t)type >= ENTITY_TYPE_COUNT)\n");
+  fprintf(out, "    return false;\n");
+  fprintf(out, "  return (SIGNAL_EMITTED_MASKS[(uint16_t)type] & signal_bit(signal)) != 0;\n}\n\n");
+
+  fprintf(out, "// --- who can ACTIVATE a signal ----------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// The trait's `by` list, per signal, as a mask over entity types. A\n");
+  fprintf(out, "// connection targeting the activator is checked against EVERY type in\n");
+  fprintf(out, "// here, so `Touched -> !activator Set_Health` is refused at load if a\n");
+  fprintf(out, "// physics body can touch the trigger and has no Health. An EMPTY mask is\n");
+  fprintf(out, "// a signal whose trait declared no `by`, and nothing may target its\n");
+  fprintf(out, "// activator -- there is no type to check against, so the connection\n");
+  fprintf(out, "// could only be checked at fire time, which is the whole thing this\n");
+  fprintf(out, "// avoids.\n");
+  fprintf(out, "static_assert(ENTITY_TYPE_COUNT <= 64, \"the activator mask is a uint64_t\");\n\n");
+  fprintf(out, "constexpr uint64_t entity_type_bit(entity_type type) { return 1ull << (uint32_t)type; }\n\n");
+
+  fprintf(out, "inline constexpr uint64_t SIGNAL_ACTIVATOR_MASKS[ENTITY_SIGNAL_COUNT] = {\n");
+  for (int32_t verb_index = 0; verb_index < signal_count; ++verb_index)
+  {
+    const declaration_t* trait = signal_owners[verb_index];
+    fprintf(out, "  ");
+    int32_t written = 0;
+    for (int32_t offset = 0; offset < trait->activator_count; ++offset)
+    {
+      const name_reference_t* activator =
+          &program->name_references[trait->first_activator + offset];
+      if (activator->declaration < 0)
+        continue;
+      fprintf(out, "%sentity_type_bit(entity_type::%.*s)", written > 0 ? " | " : "",
+              activator->name.length, activator->name.data);
+      ++written;
+    }
+    if (written == 0)
+      fprintf(out, "0u");
+    fprintf(out, ",   // %.*s\n", signals[verb_index]->name.length, signals[verb_index]->name.data);
+  }
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "// --- the payload, erased ----------------------------------------------\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// Every member of action_data_t's union shares an address, and this is the\n");
+  fprintf(out, "// ONE place that fact is written down: a map row reads its override into\n");
+  fprintf(out, "// these bytes through the action's field table, and a pass-through emit\n");
+  fprintf(out, "// copies the signal's payload straight over them.\n");
+  if (action_count > 0)
+  {
+    fprintf(out, "inline uint8_t* action_payload_bytes(action_data_t& data)\n");
+    fprintf(out, "{ return reinterpret_cast<uint8_t*>(&data.");
+    write_lower(out, actions[0]->name);
+    fprintf(out, "); }\n");
+    fprintf(out, "inline const uint8_t* action_payload_bytes(const action_data_t& data)\n");
+    fprintf(out, "{ return reinterpret_cast<const uint8_t*>(&data.");
+    write_lower(out, actions[0]->name);
+    fprintf(out, "); }\n\n");
+  }
+  fprintf(out, "// How many bytes a verb's payload occupies. The pass-through check pairs\n");
+  fprintf(out, "// these with the field tables above: identical tables and equal sizes is\n");
+  fprintf(out, "// what makes a signal payload a legal action payload without a\n");
+  fprintf(out, "// conversion.\n");
+  fprintf(out, "uint32_t action_payload_size(entity_action action);\n");
+  fprintf(out, "uint32_t signal_payload_size(entity_signal signal);\n\n");
+
   fprintf(out, "// The ERASED entry point, for the queue's drain and for ent_fire: a tag\n");
   fprintf(out, "// and a payload whose type is only known at runtime. Everything typed\n");
   fprintf(out, "// goes through the per-trait overloads instead.\n");
@@ -8781,6 +8960,8 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   free(traits);
   free(actions);
   free(action_owners);
+  free(signals);
+  free(signal_owners);
 }
 
 static void emit_entity_io_source(FILE* out, const program_t* program, const char* header_name)
@@ -8896,6 +9077,25 @@ static void emit_entity_io_source(FILE* out, const program_t* program, const cha
   fprintf(out, "  assert((uint32_t)signal < ENTITY_SIGNAL_COUNT);\n");
   fprintf(out, "  return SIGNAL_PAYLOAD_FIELDS[(uint16_t)signal];\n}\n\n");
 
+  for (int32_t which = 0; which < 2; ++which)
+  {
+    const bool            is_signal = which == 1;
+    const field_t* const* verbs     = is_signal ? signals : actions;
+    const int32_t         count     = is_signal ? signal_count : action_count;
+
+    fprintf(out, "uint32_t %s_payload_size(entity_%s %s)\n{\n", is_signal ? "signal" : "action",
+            is_signal ? "signal" : "action", is_signal ? "signal" : "action");
+    fprintf(out, "  switch (%s)\n  {\n", is_signal ? "signal" : "action");
+    for (int32_t index = 0; index < count; ++index)
+    {
+      fprintf(out, "    case entity_%s::%.*s: return (uint32_t)sizeof(",
+              is_signal ? "signal" : "action", verbs[index]->name.length, verbs[index]->name.data);
+      write_verb_struct_name(out, verbs[index]->name);
+      fprintf(out, ");\n");
+    }
+    fprintf(out, "  }\n  return 0;\n}\n\n");
+  }
+
   for (int32_t index = 0; index < action_count; ++index)
   {
     fprintf(out, "action_data_t erase(const ");
@@ -8921,12 +9121,17 @@ static void emit_entity_io_source(FILE* out, const program_t* program, const cha
 // REFERENCES a handler lives here, so entity_io_generated.cpp compiles into
 // game_shared with no handler present and the client DLL never names one.
 static void emit_action_bindings(FILE* out, const program_t* program, const char* io_header,
-                                 const char* context_header)
+                                 const char* server_seam_header)
 {
   const field_t**       actions       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
   const declaration_t** action_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
   const int32_t action_count =
       collect_verbs(program, /*signals=*/false, actions, action_owners, program->field_count + 1);
+
+  const field_t**       signals       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const declaration_t** signal_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const int32_t signal_count =
+      collect_verbs(program, /*signals=*/true, signals, signal_owners, program->field_count + 1);
 
   fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "//\n");
@@ -8936,7 +9141,7 @@ static void emit_action_bindings(FILE* out, const program_t* program, const char
   fprintf(out, "// LINK error naming the symbol -- there is no registration and no bind\n");
   fprintf(out, "// step, so \"forgot to register\" is not representable.\n");
   fprintf(out, "#include \"%s\"\n", io_header);
-  fprintf(out, "#include \"%s\"\n", context_header);
+  fprintf(out, "#include \"%s\"\n", server_seam_header);
   fprintf(out, "#include \"entities/entity_reflection.hpp\"\n");
   fprintf(out, "#include \"log.hpp\"\n\n");
 
@@ -9100,10 +9305,43 @@ static void emit_action_bindings(FILE* out, const program_t* program, const char
   fprintf(out, "    fatal_error(\"{} does not accept {}\", entity_info(target.type).classname,\n");
   fprintf(out, "                to_string(data.tag));\n}\n\n");
 
+  // --- the emit half ---
+  //
+  // Here rather than in entity_io_generated.cpp for the shims' reason: queueing
+  // reaches world_t, which is a server type. Each of these is a typed name over
+  // one hand-written walk -- the walk is the same for every signal, and what
+  // differs is only which payload bytes go in, so generating a body per signal
+  // would be N copies of one loop.
+  if (signal_count > 0)
+  {
+    fprintf(out, "// One emit per signal. A sender that does not declare the signal is a\n");
+    fprintf(out, "// CODE bug, not a map's -- the loader refuses a connection whose sender\n");
+    fprintf(out, "// does not emit it -- so this is fatal rather than a quiet return.\n");
+  }
+  for (int32_t index = 0; index < signal_count; ++index)
+  {
+    const field_t* verb = signals[index];
+
+    fprintf(out, "void emit_");
+    write_lower(out, verb->name);
+    fprintf(out, "(const Entity& sender, const ");
+    write_verb_struct_name(out, verb->name);
+    fprintf(out, "& payload, input_context_t& context)\n{\n");
+    fprintf(out, "  if (!type_emits_signal(sender.type, entity_signal::%.*s))\n",
+            verb->name.length, verb->name.data);
+    fprintf(out, "    fatal_error(\"{} does not emit %.*s\", entity_info(sender.type).classname);\n",
+            verb->name.length, verb->name.data);
+    fprintf(out, "  server::queue_signal_connections(context, sender, entity_signal::%.*s,\n",
+            verb->name.length, verb->name.data);
+    fprintf(out, "                                   &payload, (uint32_t)sizeof(payload));\n}\n\n");
+  }
+
   fprintf(out, "} // namespace entities\n");
 
   free(actions);
   free(action_owners);
+  free(signals);
+  free(signal_owners);
 }
 
 // ---------------------------------------------------------------------------
@@ -9363,7 +9601,7 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
       open_generated_file(output_dir, "server_action_bindings_generated.cpp", path, sizeof(path));
   if (bindings_file == nullptr)
     return false;
-  emit_action_bindings(bindings_file, program, io_header_name, "entity_io_context.hpp");
+  emit_action_bindings(bindings_file, program, io_header_name, "entity_io_queue.hpp");
   fclose(bindings_file);
 
   fprintf(stderr,

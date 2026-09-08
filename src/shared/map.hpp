@@ -5,6 +5,7 @@
 #include "log.hpp"
 #include "linalg.hpp"
 #include "lightmap.hpp"
+#include "map_connection.hpp"
 #include "map_geometry.hpp"
 #include "navmesh.hpp"
 #include "shapes.hpp"
@@ -58,6 +59,14 @@ struct map_t
   // Console lines the server runs when this map loads ("sv_gravity 200"), one
   // per cvar name -- per-map game settings.
   std::vector<std::string> attached_cvars;
+
+  // The map's WIRING: this button opens that door. Rows keyed by uid, stored
+  // beside the entities and never inside one, for the reason materials and
+  // attached_cvars are -- see map_connection.hpp and entity_io_def.md ss6.
+  //
+  // Anything that rebuilds a map_t from another one has to carry this list,
+  // the way bake_map_csg has to carry attached_cvars.
+  std::vector<connection_t> connections;
 
   // The map's material table. A brush FACE holds a uint16_t index into this, not
   // a path -- faces are the most numerous thing in a map, and geometry_def.md

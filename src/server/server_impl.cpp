@@ -297,6 +297,24 @@ static bool load_map_file_into_context(server_context_t &context,
     return false;
   }
 
+  // The wiring, checked BEFORE anything is moved into the world: this is the
+  // server's half of the one-check-two-policies split. build_session drops a
+  // bad row and carries on, which is what an editor needs; a server running a
+  // level whose wiring is half there is a level that plays wrong with nothing
+  // on screen to say so, so it refuses the map and keeps the one it has.
+  {
+    const std::vector<shared::connection_refusal_t> refusals =
+        shared::validate_map_connections(*loaded);
+    if (!refusals.empty())
+    {
+      for (const shared::connection_refusal_t& refusal : refusals)
+        log_error("Map '{}' connection {}: {}", map_path, refusal.index, refusal.reason);
+      log_error("Refusing map '{}': {} ill-typed connection(s). The map currently loaded stays.",
+                map_path, refusals.size());
+      return false;
+    }
+  }
+
   world_t& world = context.world;
 
   world.current_map         = std::move(*loaded);
@@ -1268,6 +1286,12 @@ bool Tick()
   // Before the inbox is even drained: this can replace the world, and every
   // pass below it holds spans into the one it replaces.
   service_pending_map_restart(context);
+
+  // Entity I/O, at the top of the tick and after the restart above, which
+  // would otherwise leave records naming entities in a world that is gone.
+  // Everything a connection requested last tick lands before any system reads
+  // the state it changed, which is the point of a queue rather than a call.
+  drain_pending_actions(context);
 
   // The inbox is retained on the context so its vectors keep their capacity;
   // poll_network only push_backs, so it has to be emptied here.

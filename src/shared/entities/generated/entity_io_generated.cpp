@@ -193,6 +193,35 @@ Span<const field_info_t> signal_payload_fields(entity_signal signal)
   return SIGNAL_PAYLOAD_FIELDS[(uint16_t)signal];
 }
 
+uint32_t action_payload_size(entity_action action)
+{
+  switch (action)
+  {
+    case entity_action::Use: return (uint32_t)sizeof(Use_Data);
+    case entity_action::Enable: return (uint32_t)sizeof(Enable_Data);
+    case entity_action::Disable: return (uint32_t)sizeof(Disable_Data);
+    case entity_action::Toggle_Enabled: return (uint32_t)sizeof(Toggle_Enabled_Data);
+    case entity_action::Set_Color: return (uint32_t)sizeof(Set_Color_Data);
+    case entity_action::Kill: return (uint32_t)sizeof(Kill_Data);
+    case entity_action::Set_Health: return (uint32_t)sizeof(Set_Health_Data);
+    case entity_action::Damage: return (uint32_t)sizeof(Damage_Data);
+  }
+  return 0;
+}
+
+uint32_t signal_payload_size(entity_signal signal)
+{
+  switch (signal)
+  {
+    case entity_signal::Color_Changed: return (uint32_t)sizeof(Color_Changed_Data);
+    case entity_signal::Touched: return (uint32_t)sizeof(Touched_Data);
+    case entity_signal::Left: return (uint32_t)sizeof(Left_Data);
+    case entity_signal::Died: return (uint32_t)sizeof(Died_Data);
+    case entity_signal::Health_Changed: return (uint32_t)sizeof(Health_Changed_Data);
+  }
+  return 0;
+}
+
 action_data_t erase(const Use_Data& payload)
 {
   action_data_t data;

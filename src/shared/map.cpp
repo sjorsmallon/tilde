@@ -1129,6 +1129,149 @@ material_remap_t build_material_remap(const map_t &map)
   return remap;
 }
 
+// A uid as it is written in the file: decimal digits and nothing else. Its own
+// function rather than std::stoul because a uid that is not one is data to
+// report, not an exception to catch.
+std::optional<uint32_t> try_uid_from_text(const std::string &text)
+{
+  if (text.empty())
+    return std::nullopt;
+
+  uint64_t value = 0;
+  for (const char character : text)
+  {
+    if (character < '0' || character > '9')
+      return std::nullopt;
+    value = value * 10 + (uint64_t)(character - '0');
+    if (value > UINT32_MAX)
+      return std::nullopt;
+  }
+  return (uint32_t)value;
+}
+
+// One `connection` sub-block. Every refusal here is REPORTED and the row
+// dropped, exactly as an unknown classname is: a name this build does not have
+// is data, not a parse failure, and dropping the row loudly leaves the rest of
+// the map loadable. What is ill-TYPED rather than unspellable is caught later,
+// by validate_map_connections, which can see the entities the uids name.
+std::optional<connection_t> parse_connection(const map_block_t &block)
+{
+  const auto text_at = [&block](const char *key) -> const std::string *
+  {
+    auto it = block.properties.find(key);
+    return it == block.properties.end() ? nullptr : &it->second;
+  };
+
+  const std::string *sender_text = text_at("sender");
+  const std::string *signal_text = text_at("signal");
+  const std::string *action_text = text_at("action");
+  if (sender_text == nullptr || signal_text == nullptr || action_text == nullptr)
+  {
+    log_error("map parse: a connection is missing \"sender\", \"signal\" or \"action\" — dropped");
+    return std::nullopt;
+  }
+
+  connection_t connection;
+
+  const std::optional<uint32_t> sender = try_uid_from_text(*sender_text);
+  if (!sender)
+  {
+    log_error("map parse: connection sender \"{}\" is not a uid — dropped", *sender_text);
+    return std::nullopt;
+  }
+  connection.sender = *sender;
+
+  const std::optional<entities::entity_signal> signal =
+      entities::try_from_string<entities::entity_signal>(*signal_text);
+  if (!signal)
+  {
+    log_error("map parse: connection names signal \"{}\", which this build does not declare — "
+              "dropped",
+              *signal_text);
+    return std::nullopt;
+  }
+  connection.signal = *signal;
+
+  const std::optional<entities::entity_action> action =
+      entities::try_from_string<entities::entity_action>(*action_text);
+  if (!action)
+  {
+    log_error("map parse: connection names action \"{}\", which this build does not declare — "
+              "dropped",
+              *action_text);
+    return std::nullopt;
+  }
+  connection.data.tag = *action;
+
+  if (const std::string *kind_text = text_at("target_kind"))
+  {
+    const std::optional<connection_target_t> kind = try_connection_target_from_text(*kind_text);
+    if (!kind)
+    {
+      log_error("map parse: connection target_kind \"{}\" is not Uid, Activator or Self — dropped",
+                *kind_text);
+      return std::nullopt;
+    }
+    connection.target_kind = *kind;
+  }
+
+  if (connection.target_kind == connection_target_t::Uid)
+  {
+    const std::string *target_text = text_at("target");
+    const std::optional<uint32_t> target =
+        target_text != nullptr ? try_uid_from_text(*target_text) : std::nullopt;
+    if (!target)
+    {
+      log_error("map parse: connection targets a uid but names none — dropped");
+      return std::nullopt;
+    }
+    connection.target = *target;
+  }
+
+  if (const std::string *delay_text = text_at("delay"))
+    connection.delay_seconds = std::strtof(delay_text->c_str(), nullptr);
+  if (const std::string *fire_once_text = text_at("fire_once"))
+    connection.fire_once = *fire_once_text == "1" || *fire_once_text == "true";
+
+  // The override, through the action's OWN field table -- the same
+  // field_from_text every entity field is read with. A missing member keeps the
+  // payload struct's default; a member the action does not declare is reported,
+  // because it is a value the author wrote that nothing will ever read.
+  for (const map_block_t &child : block.children)
+  {
+    if (child.keyword != "override")
+    {
+      log_error("map parse: \"{}\" is not an override — block skipped", child.keyword);
+      continue;
+    }
+
+    connection.has_override = true;
+    uint8_t *payload = entities::action_payload_bytes(connection.data);
+
+    for (const auto &[name, value] : child.properties)
+    {
+      const field_info_t *field = nullptr;
+      for (const field_info_t &candidate : entities::action_payload_fields(connection.data.tag))
+        if (name == candidate.name)
+          field = &candidate;
+
+      if (field == nullptr)
+      {
+        log_error("map parse: connection overrides \"{}\", which {} does not take — ignored", name,
+                  entities::to_string(connection.data.tag));
+        continue;
+      }
+
+      if (!field_from_text(value, *field, payload + field->offset))
+        log_error("map parse: connection override {}=\"{}\" could not be read — the parameter "
+                  "keeps its default",
+                  name, value);
+    }
+  }
+
+  return connection;
+}
+
 } // namespace
 
 map_t parse_map_from_string(const std::string &content)
@@ -1188,6 +1331,24 @@ map_t parse_map_from_string(const std::string &content)
         if (out_map.materials.size() <= *index)
           out_map.materials.resize(*index + 1);
         out_map.materials[*index] = path;
+      }
+      continue;
+    }
+
+    // --- the map's wiring ---
+    if (block.keyword == "connections")
+    {
+      for (const map_block_t &row : block.children)
+      {
+        if (row.keyword != "connection")
+        {
+          log_error("map parse: \"{}\" is not a connection — block skipped", row.keyword);
+          continue;
+        }
+
+        std::optional<connection_t> connection = parse_connection(row);
+        if (connection)
+          out_map.connections.push_back(*connection);
       }
       continue;
     }
@@ -1333,6 +1494,61 @@ std::string serialize_map_to_string(const map_t &map)
     block.keyword = "materials";
     for (size_t i = 0; i < material_remap.kept.size(); ++i)
       block.properties.emplace_back(std::to_string(i), material_remap.kept[i]);
+    blocks.push_back(std::move(block));
+  }
+
+  // The map's wiring. One sub-block per row, in list order -- unlike the two
+  // blocks above it, a connection has no key that could order it, and the
+  // author's order is the one the editor's table shows.
+  if (!map.connections.empty())
+  {
+    map_block_out_t block;
+    block.keyword = "connections";
+
+    for (const connection_t &connection : map.connections)
+    {
+      map_block_out_t row;
+      row.keyword = "connection";
+      row.properties.emplace_back("sender", std::to_string(connection.sender));
+      row.properties.emplace_back("signal", entities::to_string(connection.signal));
+      row.properties.emplace_back("target_kind", to_string(connection.target_kind));
+      if (connection.target_kind == connection_target_t::Uid)
+        row.properties.emplace_back("target", std::to_string(connection.target));
+      row.properties.emplace_back("action", entities::to_string(connection.data.tag));
+
+      // Written only when it says something. A row that carries every default
+      // is four lines rather than six, and the reader treats absence as the
+      // default in both cases.
+      if (connection.delay_seconds != 0.0f)
+        row.properties.emplace_back("delay", std::format("{:.9g}", connection.delay_seconds));
+      if (connection.fire_once)
+        row.properties.emplace_back("fire_once", "1");
+
+      if (connection.has_override)
+      {
+        map_block_out_t override_block;
+        override_block.keyword = "override";
+
+        const uint8_t *payload = entities::action_payload_bytes(connection.data);
+        for (const field_info_t &field : entities::action_payload_fields(connection.data.tag))
+        {
+          std::string value;
+          if (!field_to_text(payload + field.offset, field, value))
+          {
+            log_error("map save: connection override {}.{} could not be written as text — the "
+                      "key is omitted and the value will be lost on the next load",
+                      entities::to_string(connection.data.tag), field.name);
+            continue;
+          }
+          override_block.properties.emplace_back(field.name, value);
+        }
+
+        row.children.push_back(std::move(override_block));
+      }
+
+      block.children.push_back(std::move(row));
+    }
+
     blocks.push_back(std::move(block));
   }
 

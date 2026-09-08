@@ -48,4 +48,12 @@ void kill(Entity&, Health&, const Kill_Data&, input_context_t&);   // Mortal, sh
 void set_health(Entity&, Health&, const Set_Health_Data&, input_context_t&);   // Mortal, shared by every opting-in type: src/server/traits/mortal.cpp
 void damage(Entity&, Health&, const Damage_Data&, input_context_t&);   // Mortal, shared by every opting-in type: src/server/traits/mortal.cpp
 
+// --- what a Damageable_Entity announces ---
+//
+// Declared in the trait headers above and defined once in the
+// binder; repeated here so this file answers both halves. The
+// SYSTEM that writes the state change is what calls one.
+void emit_died(const Entity& sender, const Died_Data& payload, input_context_t& context);   // Mortal
+void emit_health_changed(const Entity& sender, const Health_Changed_Data& payload, input_context_t& context);   // Mortal
+
 } // namespace entities

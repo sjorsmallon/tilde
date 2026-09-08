@@ -6,10 +6,21 @@
 #include "navmesh.hpp"
 #include "physics.hpp"
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace shared
 {
+
+// One map connection as the SESSION holds it: the authored row plus the one
+// piece of state running it produces. `fire_once` needs somewhere to remember
+// that it has fired, and that somewhere cannot be the map -- a map is what the
+// editor is editing and what the next round reloads from.
+struct session_connection_t
+{
+  connection_t row;
+  bool         spent = false;
+};
 
 // The runtime representation of the game world.
 // Distinguished from map_t which is the serialized/file data format.
@@ -49,6 +60,20 @@ struct game_session_t
   // once per map load at the cost of a new ownership concept in the hottest
   // struct in the client. Empty means this map has no bake.
   lightmap_t lightmap;
+
+  // The map's wiring, copied and INDEXED BY SENDER -- emit_<signal> walks one
+  // bucket and nothing ever scans the list. A copy for the geometry's reason
+  // and one more of its own: `spent` is runtime state, so a fire_once
+  // connection that has fired must not write back into the map_t the editor is
+  // holding.
+  //
+  // Only well-typed rows are in here. build_session drops what
+  // validate_map_connections named, which is what keeps the drain's
+  // fatal_error on a null dispatch cell unreachable.
+  //
+  // A runtime-spawned entity has no bucket and pays nothing: rows are keyed by
+  // MAP uid, and a rocket's uid was minted after the load.
+  std::unordered_map<entity_uid_t, std::vector<session_connection_t>> connections_by_sender;
 
   // The acceleration structure for collision queries against `geometry`.
   // Dynamic entity collision is handled separately via the Entity_System.

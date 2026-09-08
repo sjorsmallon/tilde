@@ -52,4 +52,12 @@ void enable(Entity&, Enabled&, const Enable_Data&, input_context_t&);   // Switc
 void disable(Entity&, Enabled&, const Disable_Data&, input_context_t&);   // Switchable, shared by every opting-in type: src/server/traits/switchable.cpp
 void toggle_enabled(Entity&, Enabled&, const Toggle_Enabled_Data&, input_context_t&);   // Switchable, shared by every opting-in type: src/server/traits/switchable.cpp
 
+// --- what a Trigger_Volume_Entity announces ---
+//
+// Declared in the trait headers above and defined once in the
+// binder; repeated here so this file answers both halves. The
+// SYSTEM that writes the state change is what calls one.
+void emit_touched(const Entity& sender, const Touched_Data& payload, input_context_t& context);   // Touchable
+void emit_left(const Entity& sender, const Left_Data& payload, input_context_t& context);   // Touchable
+
 } // namespace entities

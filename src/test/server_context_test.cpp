@@ -38,6 +38,10 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   context.world.bots.push_back(Bot_State{});
   context.world.previous_tick_overlapping_trigger_player_pairs.insert({7, 9});
   context.world.death_tick_by_player_uid[42] = 100;
+  // Entity I/O. Both are keyed to the map: a record names a map uid, and the
+  // sequence counter only orders records within one map's lifetime.
+  context.world.pending_actions.push_back(pending_action_t{});
+  context.world.next_action_sequence = 17;
   context.world.rules.round_number   = 5;
   context.world.rules.phase          = shared::Round_Phase::Live;
   context.world.rules.phase_end_tick = 950;
@@ -127,6 +131,11 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(context.world.next_bot_slot == BOT_SLOT_BASE);
   assert(context.world.previous_tick_overlapping_trigger_player_pairs.empty());
   assert(context.world.death_tick_by_player_uid.empty());
+  assert(context.world.pending_actions.empty());
+  assert(context.world.next_action_sequence == 0);
+  // The session's connection index goes with the session, which is what stops
+  // a record from the old map naming an entity in the new one.
+  assert(context.world.session.connections_by_sender.empty());
 
   // The ring, so the next snapshot to every client is a full update.
   assert(context.replication.snapshot_history.find(900) == nullptr);

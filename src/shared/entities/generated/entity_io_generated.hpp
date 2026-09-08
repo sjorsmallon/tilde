@@ -153,6 +153,80 @@ inline bool type_accepts_action(entity_type type, entity_action action)
   return (ACTION_ACCEPTED_MASKS[(uint16_t)type] & action_bit(action)) != 0;
 }
 
+// --- what a type ANNOUNCES --------------------------------------------
+//
+// One bit per signal per entity type, the emit half of the mask above. A
+// connection whose sender does not emit the signal it names is refused at
+// load, and emit_<signal> on a type that does not is a fatal_error -- that
+// one is code rather than map data.
+static_assert(ENTITY_SIGNAL_COUNT <= 64, "the emitted-signal mask is a uint64_t");
+
+constexpr uint64_t signal_bit(entity_signal signal) { return 1ull << (uint32_t)signal; }
+
+inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
+  0u,   // Invalid
+  0u,   // Reflection_Volume_Entity
+  0u,   // Player_Spawn_Entity
+  0u,   // Player_Spectate_Entity
+  0u,   // Player_Entity
+  0u,   // Weapon_Entity
+  0u,   // Rocket_Entity
+  0u,   // Particle_Emitter_Entity
+  signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Damageable_Entity
+  signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Trigger_Volume_Entity
+  signal_bit(entity_signal::Color_Changed),   // Point_Light_Entity
+  signal_bit(entity_signal::Color_Changed),   // Spot_Light_Entity
+  0u,   // Directional_Light_Entity
+  0u,   // Physics_Body_Entity
+};
+
+inline bool type_emits_signal(entity_type type, entity_signal signal)
+{
+  if (type <= entity_type::Invalid || (uint32_t)type >= ENTITY_TYPE_COUNT)
+    return false;
+  return (SIGNAL_EMITTED_MASKS[(uint16_t)type] & signal_bit(signal)) != 0;
+}
+
+// --- who can ACTIVATE a signal ----------------------------------------
+//
+// The trait's `by` list, per signal, as a mask over entity types. A
+// connection targeting the activator is checked against EVERY type in
+// here, so `Touched -> !activator Set_Health` is refused at load if a
+// physics body can touch the trigger and has no Health. An EMPTY mask is
+// a signal whose trait declared no `by`, and nothing may target its
+// activator -- there is no type to check against, so the connection
+// could only be checked at fire time, which is the whole thing this
+// avoids.
+static_assert(ENTITY_TYPE_COUNT <= 64, "the activator mask is a uint64_t");
+
+constexpr uint64_t entity_type_bit(entity_type type) { return 1ull << (uint32_t)type; }
+
+inline constexpr uint64_t SIGNAL_ACTIVATOR_MASKS[ENTITY_SIGNAL_COUNT] = {
+  0u,   // Color_Changed
+  entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Physics_Body_Entity),   // Touched
+  entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Physics_Body_Entity),   // Left
+  0u,   // Died
+  0u,   // Health_Changed
+};
+
+// --- the payload, erased ----------------------------------------------
+//
+// Every member of action_data_t's union shares an address, and this is the
+// ONE place that fact is written down: a map row reads its override into
+// these bytes through the action's field table, and a pass-through emit
+// copies the signal's payload straight over them.
+inline uint8_t* action_payload_bytes(action_data_t& data)
+{ return reinterpret_cast<uint8_t*>(&data.use); }
+inline const uint8_t* action_payload_bytes(const action_data_t& data)
+{ return reinterpret_cast<const uint8_t*>(&data.use); }
+
+// How many bytes a verb's payload occupies. The pass-through check pairs
+// these with the field tables above: identical tables and equal sizes is
+// what makes a signal payload a legal action payload without a
+// conversion.
+uint32_t action_payload_size(entity_action action);
+uint32_t signal_payload_size(entity_signal signal);
+
 // The ERASED entry point, for the queue's drain and for ent_fire: a tag
 // and a payload whose type is only known at runtime. Everything typed
 // goes through the per-trait overloads instead.

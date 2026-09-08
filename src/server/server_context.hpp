@@ -17,6 +17,7 @@
 #include "../shared/physics.hpp"
 #include "bot_state.hpp"
 #include "damage_types.hpp"
+#include "entity_io_queue.hpp"
 #include "game_rules.hpp"
 
 #include <cstdint>
@@ -132,6 +133,18 @@ struct world_t
 
   std::unordered_map<shared::entity_uid_t, uint32_t> death_tick_by_player_uid;
   game_rules_state_t rules;
+
+  // Entity I/O: every action a connection has requested and not yet delivered,
+  // drained at the top of the tick. In `world` because rows are keyed by MAP
+  // uid, so a record outliving the map it was wired in would name an entity in
+  // a world that no longer exists -- the whole-group `world = {}` in
+  // reset_state_in_preparation_for_new_map_load is what clears both of these.
+  std::vector<pending_action_t> pending_actions;
+
+  // Emit order within a tick. Monotonic for the map's lifetime rather than per
+  // tick: it only ever breaks ties between records with the same fire_tick,
+  // and a counter that resets is one more thing to reset at the right moment.
+  uint32_t next_action_sequence = 0;
 
   // Which cvars this map's attached_cvars list actually set. Ids, not values:
   // unloading the map puts them back to the cvars.def defaults, and a third

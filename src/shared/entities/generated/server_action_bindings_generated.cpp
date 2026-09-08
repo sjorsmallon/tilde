@@ -6,7 +6,7 @@
 // LINK error naming the symbol -- there is no registration and no bind
 // step, so "forgot to register" is not representable.
 #include "entity_io_generated.hpp"
-#include "entity_io_context.hpp"
+#include "entity_io_queue.hpp"
 #include "entities/entity_reflection.hpp"
 #include "log.hpp"
 
@@ -337,6 +337,49 @@ void send_action(Entity& target, const action_data_t& data, input_context_t& con
   if (!try_send_action(target, data, context))
     fatal_error("{} does not accept {}", entity_info(target.type).classname,
                 to_string(data.tag));
+}
+
+// One emit per signal. A sender that does not declare the signal is a
+// CODE bug, not a map's -- the loader refuses a connection whose sender
+// does not emit it -- so this is fatal rather than a quiet return.
+void emit_color_changed(const Entity& sender, const Color_Changed_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Color_Changed))
+    fatal_error("{} does not emit Color_Changed", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Color_Changed,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_touched(const Entity& sender, const Touched_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Touched))
+    fatal_error("{} does not emit Touched", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Touched,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_left(const Entity& sender, const Left_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Left))
+    fatal_error("{} does not emit Left", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Left,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_died(const Entity& sender, const Died_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Died))
+    fatal_error("{} does not emit Died", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Died,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_health_changed(const Entity& sender, const Health_Changed_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Health_Changed))
+    fatal_error("{} does not emit Health_Changed", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Health_Changed,
+                                   &payload, (uint32_t)sizeof(payload));
 }
 
 } // namespace entities

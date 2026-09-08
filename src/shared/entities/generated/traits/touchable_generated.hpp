@@ -37,4 +37,17 @@ struct Left_Data
 static_assert(std::is_trivially_copyable_v<Left_Data>,
               "a verb payload rides a union in a map row and a queue record");
 
+// --- what it ANNOUNCES ----------------------------------------------
+//
+// One emit per signal, called from the SYSTEM at the tick the state
+// change becomes true -- never from an action handler (it only
+// requests) and never from the drain (a queue that emits feeds
+// itself). It walks the session's connections for this sender and
+// queues one action per row; nothing is dispatched here.
+//
+// Defined in server_action_bindings_generated.cpp, because the queue
+// is world_t's -- the same reason the shims live there.
+void emit_touched(const Entity& sender, const Touched_Data& payload, input_context_t& context);
+void emit_left(const Entity& sender, const Left_Data& payload, input_context_t& context);
+
 } // namespace entities

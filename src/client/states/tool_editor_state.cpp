@@ -747,10 +747,46 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   // CSG is box-only on both the input and the output side, and stays that way:
   // the output is a box brush, so subtracting a trigger volume
   // through here would silently drop its payload (heightmap, action_name, ...).
+  //
+  // The uid an entity lands on is NOT the one it had: add_entity mints from the
+  // result's own counter, and geometry below draws from the same space. That is
+  // why the connections cannot simply be copied -- a row names uids, so it has
+  // to be remapped through what the copy actually did, and a row whose sender or
+  // target did not survive the bake is dropped rather than left pointing at
+  // whatever now holds that number.
+  std::unordered_map<shared::entity_uid_t, shared::entity_uid_t> uid_after_bake;
   for (const auto &entry : src.entities)
   {
     if (entry.entity)
-      result.add_entity(entry.entity);
+      uid_after_bake[entry.uid] = result.add_entity(entry.entity);
+  }
+
+  for (const shared::connection_t &connection : src.connections)
+  {
+    auto sender = uid_after_bake.find(connection.sender);
+    if (sender == uid_after_bake.end())
+    {
+      log_error("bake CSG: connection from uid {} dropped — its sender did not survive the bake",
+                connection.sender);
+      continue;
+    }
+
+    shared::connection_t baked_connection = connection;
+    baked_connection.sender               = sender->second;
+
+    if (connection.target_kind == shared::connection_target_t::Uid)
+    {
+      auto target = uid_after_bake.find(connection.target);
+      if (target == uid_after_bake.end())
+      {
+        log_error("bake CSG: connection to uid {} dropped — its target did not survive the bake",
+                  connection.target);
+        continue;
+      }
+      baked_connection.target = target->second;
+    }
+
+    result.connections.push_back(baked_connection);
   }
 
   struct input_box_t

@@ -48,4 +48,16 @@ static_assert(std::is_trivially_copyable_v<Color_Changed_Data>,
 void set_color(Entity&, const Set_Color_Data&, input_context_t&);
 [[nodiscard]] bool try_set_color(Entity&, const Set_Color_Data&, input_context_t&);
 
+// --- what it ANNOUNCES ----------------------------------------------
+//
+// One emit per signal, called from the SYSTEM at the tick the state
+// change becomes true -- never from an action handler (it only
+// requests) and never from the drain (a queue that emits feeds
+// itself). It walks the session's connections for this sender and
+// queues one action per row; nothing is dispatched here.
+//
+// Defined in server_action_bindings_generated.cpp, because the queue
+// is world_t's -- the same reason the shims live there.
+void emit_color_changed(const Entity& sender, const Color_Changed_Data& payload, input_context_t& context);
+
 } // namespace entities

@@ -17,6 +17,29 @@ game_session_t build_session(const map_t &map)
   session.materials = map.materials;
   session.lightmap  = map.lightmap;
 
+  // The wiring, checked and then indexed. ONE check, two policies: here every
+  // refused row is logged and DROPPED, so the drain can keep treating a null
+  // dispatch cell as a generator bug rather than a map's; the server's map
+  // load asks validate_map_connections itself and refuses the whole map, which
+  // is what stops a broken level going live. An editor that could not open a
+  // map with one bad row could not repair it either.
+  {
+    std::vector<bool> refused(map.connections.size(), false);
+    for (const connection_refusal_t &refusal : validate_map_connections(map))
+    {
+      log_error("build_session: connection {} dropped — {}", refusal.index, refusal.reason);
+      refused[refusal.index] = true;
+    }
+
+    for (size_t index = 0; index < map.connections.size(); ++index)
+    {
+      if (refused[index])
+        continue;
+      session.connections_by_sender[map.connections[index].sender].push_back(
+          {map.connections[index], false});
+    }
+  }
+
   // Build the BVH over the geometry. Collision_Id.index is the index into
   // session.geometry, which is frozen for the session's lifetime. (The editor's
   // BVH keys by uid instead — see build_editor_bvh.)
