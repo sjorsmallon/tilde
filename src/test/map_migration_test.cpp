@@ -266,7 +266,7 @@ int main()
 
   // --- 5. Trigger volume round-trip (the "is save losing it?" check) -----
   // Build a tiny map with one trigger volume programmatically, save, reload,
-  // and assert every saveable field survives. This is independent of the
+  // and assert every editable field survives. This is independent of the
   // maps/test fixture (which has no triggers).
   {
     map_t trig_map;

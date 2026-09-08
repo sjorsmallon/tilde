@@ -81,19 +81,21 @@ earns itself.
 
 ## Field flags
 
-`@Networked`, `@Editable`, `@Saveable`. All three are load-bearing (in the
-macro system only `@Editable` was ever enforced, so the other two could sit on
-a field and mean nothing). `entities.def` carries the full definition of each
-and the reasoning behind every field's flags — read it there rather than
-guessing from the name.
+`@Networked` and `@Editable`. Both are load-bearing (in the macro system only
+`@Editable` was ever enforced, so `@Networked` could sit on a field and mean
+nothing). `@Editable` covers the inspector AND the `.source` map file; a
+separate `@Saveable` used to sit beside it and no field ever carried one
+without the other. `entities.def` carries the full definition of each and the
+reasoning behind every field's flags — read it there rather than guessing from
+the name.
 
 Two structural rules the generator enforces as **errors**, not warnings:
 
 - A component-typed field carries no flags. The flags on the component's own
   fields are what consumers read; a flag at the use site would be ignored.
-- `@Editable` / `@Saveable` on a `@runtime_only` entity is an error. The
-  inspector and the map file only ever see map-placed entities, so those flags
-  are unreachable there.
+- `@Editable` on a `@runtime_only` entity is an error. The inspector and the
+  map file only ever see map-placed entities, so the flag is unreachable
+  there.
 
 ## Entities are plain structs
 
@@ -132,7 +134,7 @@ Three jobs, all of which used to be virtual methods on the entity base class:
 Plus the field walk: `collect_leaf_fields(type, required_flags)` flattens the
 component tree into dotted paths (`"volume.half_extents"`) in **declaration
 order** — that ordering is what makes a saved map diffable. Pass
-`FIELD_FLAG_SAVEABLE` for map I/O, `FIELD_FLAG_EDITABLE` for the inspector.
+`FIELD_FLAG_EDITABLE` for the inspector and for map I/O.
 `networked_leaf_fields(type)` is the cached, allocation-free variant for the
 wire path.
 

@@ -117,7 +117,7 @@ bool try_pose_players_across_bracket(
   // under the crosshair for part of it.
   uint32_t living_count = 0;
   for (const auto& [uid, player] : from->players)
-    living_count += player.health > 0 ? 1 : 0;
+    living_count += player.health.current_health> 0 ? 1 : 0;
 
   // Sized in full before a single target is pushed: each target holds a SPAN
   // into this vector, so filling the two in lockstep would leave every span
@@ -129,7 +129,7 @@ bool try_pose_players_across_bracket(
 
   for (const auto& [uid, from_player] : from->players)
   {
-    if (from_player.health <= 0)
+    if (from_player.health.current_health <= 0)
       continue;
 
     const auto towards_it = towards->players.find(uid);

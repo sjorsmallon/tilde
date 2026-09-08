@@ -342,7 +342,7 @@ int main()
                                          strcmp(field.name, "name") == 0;
 
         if (type_info.runtime_only && !inherited_from_base &&
-            (field.flags & (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)) != 0)
+            (field.flags & FIELD_FLAG_EDITABLE) != 0)
           runtime_only_fields_are_wire_only = false;
       }
     }
@@ -350,7 +350,7 @@ int main()
     check(component_fields_are_unflagged,
           "no component-typed field carries flags of its own");
     check(runtime_only_fields_are_wire_only,
-          "a @runtime_only type declares no @Editable/@Saveable field of its own");
+          "a @runtime_only type declares no @Editable field of its own");
 
     // The two decisions most likely to be reverted by accident, pinned so that
     // reverting them is a test failure rather than a silent bandwidth change.

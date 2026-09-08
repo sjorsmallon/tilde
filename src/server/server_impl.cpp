@@ -635,11 +635,11 @@ static void pose_all_targets(server_context_t &context)
   // out overlapping spans the moment one did not.
   uint32_t living_player_count = 0;
   for (const entities::Player_Entity &player : players)
-    living_player_count += player.health > 0 ? 1 : 0;
+    living_player_count += player.health.current_health > 0 ? 1 : 0;
 
   uint32_t living_damageable_count = 0;
   for (const entities::Damageable_Entity &damageable : damageables)
-    living_damageable_count += damageable.health > 0 ? 1 : 0;
+    living_damageable_count += damageable.health.current_health > 0 ? 1 : 0;
 
   const size_t total_target_count = (size_t)living_player_count + living_damageable_count;
 
@@ -652,7 +652,7 @@ static void pose_all_targets(server_context_t &context)
 
   for (const entities::Player_Entity &player : players)
   {
-    if (player.health <= 0)
+    if (player.health.current_health <= 0)
       continue;
 
     // this constness confused the fuck out of me: it's the span that can't be modified, not that the entities it points to cannot.
@@ -683,7 +683,7 @@ static void pose_all_targets(server_context_t &context)
   // by distance and does not care.
   for (const entities::Damageable_Entity &damageable : damageables)
   {
-    if (damageable.health <= 0)
+    if (damageable.health.current_health <= 0)
       continue;
 
     const Span<assets::posed_hitbox_t> slice{posed.volumes.data() + next_volume, 1};
@@ -1564,7 +1564,7 @@ bool Tick()
     }
 
     // filtering so we don't process input people that could probably not move.
-    const bool is_dead = player->health <= 0;
+    const bool is_dead = player->health.current_health <= 0;
 
     // Over budget: drop the move whole, and advance nothing. A dropped command
     // was never processed, so `latest_processed_input_number` and the button bitmap
@@ -1946,7 +1946,7 @@ bool Tick()
       // A corpse's feet chase nothing. The death clip owns the pose from here
       // until the respawn re-places body_yaw, and the volumes are not tested
       // anyway.
-      if (player.health <= 0) continue;
+      if (player.health.current_health <= 0) continue;
       advance_body_yaw(player.body_yaw, player.view_angle_yaw, tick_dt, settings);
     }
   }
@@ -2312,7 +2312,7 @@ const shared::game_session_t *get_session_for_integrated_client()
 //
 // Declared in cvars.def, which obligates game_server to define exactly these
 // four symbols, each with the signature its declared parameter list implies:
-// server_command_bindings.cpp (a generated TU compiled into this DLL) takes
+// server_command_bindings_generated.cpp (a generated TU compiled into this DLL) takes
 // each one's address, so a rename, a typo or a signature drift is a LINK
 // ERROR naming the symbol. There is no registration step and nothing for the
 // linker to drop -- which is the whole reason spawn_bot used to be broken (it

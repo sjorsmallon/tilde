@@ -533,7 +533,7 @@ void rewrite_legacy_entity_properties(std::map<std::string, std::string> &proper
 // Reads a block's properties into an already-constructed entity.
 //
 // VERSIONING, which has no version numbers by design:
-//   * a @Saveable key the file does not carry keeps the DSL default, so adding
+//   * an @Editable key the file does not carry keeps the DSL default, so adding
 //     a field is free and old maps load;
 //   * a key the entity has no field for is ignored with a warning, so removing
 //     a field is free and the warning says what was dropped;
@@ -549,7 +549,7 @@ void read_entity_fields(entities::Entity &entity, const std::string &classname,
   rewrite_legacy_entity_properties(properties);
 
   const std::vector<entities::leaf_field_t> leaves =
-      entities::collect_leaf_fields(entity.type, entities::FIELD_FLAG_SAVEABLE);
+      entities::collect_leaf_fields(entity.type, entities::FIELD_FLAG_EDITABLE);
 
   uint8_t *base = reinterpret_cast<uint8_t *>(&entity);
 
@@ -662,7 +662,7 @@ void read_entity_fields(entities::Entity &entity, const std::string &classname,
     // least one (entity_id, which the macro system saved because it saved every
     // field regardless of flags and is @Networked-only now), so treating it as
     // an error would bury the real errors in expected noise.
-    log_warning("map parse: {} has no saveable field named \"{}\" — key ignored", classname,
+    log_warning("map parse: {} has no editable field named \"{}\" — key ignored", classname,
                 key);
   }
 }
@@ -1346,7 +1346,7 @@ std::string serialize_map_to_string(const map_t &map)
     blocks.push_back(std::move(block));
   }
 
-  // Entities, from the generated tables: every @Saveable leaf, in DECLARATION
+  // Entities, from the generated tables: every @Editable leaf, in DECLARATION
   // order. That order is the point — the std::map this replaced sorted keys
   // alphabetically, so a field's position in the file had nothing to do with
   // where it sits in entities.def, and reordering the .def produced no diff
@@ -1371,7 +1371,7 @@ std::string serialize_map_to_string(const map_t &map)
     const uint8_t *base = reinterpret_cast<const uint8_t *>(entity);
 
     for (const entities::leaf_field_t &leaf :
-         entities::collect_leaf_fields(entity->type, entities::FIELD_FLAG_SAVEABLE))
+         entities::collect_leaf_fields(entity->type, entities::FIELD_FLAG_EDITABLE))
     {
       std::string value;
       if (!field_to_text(base + leaf.offset, *leaf.info, value))

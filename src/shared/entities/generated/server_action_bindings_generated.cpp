@@ -18,72 +18,86 @@ namespace
 
 void shim_trigger_volume_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  enable(entity_as<Trigger_Volume_Entity>(&entity)->switch_state, data.as_enable(), context);
+  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
+  enable(self, self.switch_state, data.as_enable(), context);
 }
 
 void shim_point_light_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  enable(entity_as<Point_Light_Entity>(&entity)->switch_state, data.as_enable(), context);
+  Point_Light_Entity& self = *entity_as<Point_Light_Entity>(&entity);
+  enable(self, self.switch_state, data.as_enable(), context);
 }
 
 void shim_spot_light_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  enable(entity_as<Spot_Light_Entity>(&entity)->switch_state, data.as_enable(), context);
+  Spot_Light_Entity& self = *entity_as<Spot_Light_Entity>(&entity);
+  enable(self, self.switch_state, data.as_enable(), context);
 }
 
 void shim_trigger_volume_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  disable(entity_as<Trigger_Volume_Entity>(&entity)->switch_state, data.as_disable(), context);
+  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
+  disable(self, self.switch_state, data.as_disable(), context);
 }
 
 void shim_point_light_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  disable(entity_as<Point_Light_Entity>(&entity)->switch_state, data.as_disable(), context);
+  Point_Light_Entity& self = *entity_as<Point_Light_Entity>(&entity);
+  disable(self, self.switch_state, data.as_disable(), context);
 }
 
 void shim_spot_light_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  disable(entity_as<Spot_Light_Entity>(&entity)->switch_state, data.as_disable(), context);
+  Spot_Light_Entity& self = *entity_as<Spot_Light_Entity>(&entity);
+  disable(self, self.switch_state, data.as_disable(), context);
 }
 
 void shim_trigger_volume_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  toggle_enabled(entity_as<Trigger_Volume_Entity>(&entity)->switch_state, data.as_toggle_enabled(), context);
+  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
+  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
 void shim_point_light_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  toggle_enabled(entity_as<Point_Light_Entity>(&entity)->switch_state, data.as_toggle_enabled(), context);
+  Point_Light_Entity& self = *entity_as<Point_Light_Entity>(&entity);
+  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
 void shim_spot_light_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  toggle_enabled(entity_as<Spot_Light_Entity>(&entity)->switch_state, data.as_toggle_enabled(), context);
+  Spot_Light_Entity& self = *entity_as<Spot_Light_Entity>(&entity);
+  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
 void shim_point_light_entity_set_color(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  set_color(*entity_as<Point_Light_Entity>(&entity), data.as_set_color(), context);
+  Point_Light_Entity& self = *entity_as<Point_Light_Entity>(&entity);
+  set_color(self, data.as_set_color(), context);
 }
 
 void shim_spot_light_entity_set_color(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  set_color(*entity_as<Spot_Light_Entity>(&entity), data.as_set_color(), context);
+  Spot_Light_Entity& self = *entity_as<Spot_Light_Entity>(&entity);
+  set_color(self, data.as_set_color(), context);
 }
 
 void shim_damageable_entity_kill(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  kill(*entity_as<Damageable_Entity>(&entity), data.as_kill(), context);
+  Damageable_Entity& self = *entity_as<Damageable_Entity>(&entity);
+  kill(self, self.health, data.as_kill(), context);
 }
 
 void shim_damageable_entity_set_health(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  set_health(*entity_as<Damageable_Entity>(&entity), data.as_set_health(), context);
+  Damageable_Entity& self = *entity_as<Damageable_Entity>(&entity);
+  set_health(self, self.health, data.as_set_health(), context);
 }
 
 void shim_damageable_entity_damage(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  damage(*entity_as<Damageable_Entity>(&entity), data.as_damage(), context);
+  Damageable_Entity& self = *entity_as<Damageable_Entity>(&entity);
+  damage(self, self.health, data.as_damage(), context);
 }
 
 using action_shim_fn = void (*)(Entity&, const action_data_t&, input_context_t&);

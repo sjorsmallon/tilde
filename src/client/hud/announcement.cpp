@@ -76,7 +76,7 @@ void draw_announcement(renderer::ui_draw_list_t &list, const ui::ui_font_t &font
 } // namespace client::hud
 
 // Declared `announce(text: string...)` @Client in cvars.def, which obligates
-// game_client to define exactly this symbol -- client_command_bindings.cpp (a
+// game_client to define exactly this symbol -- client_command_bindings_generated.cpp (a
 // generated TU compiled into this DLL) takes its address, so a rename or a
 // signature drift is a link error rather than a command that quietly stops
 // working. Argument count and the usage reply live in the generated binder.

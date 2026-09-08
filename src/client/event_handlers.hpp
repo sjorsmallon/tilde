@@ -9,8 +9,8 @@ namespace client
 
 // The receiving side's seam, and the whole of it.
 //
-// Both functions are DEFINED by a generated bindings TU (client_effects_bindings.cpp,
-// client_events_bindings.cpp), which switches over its channel's closed enum and
+// Both functions are DEFINED by a generated bindings TU (client_effects_bindings_generated.cpp,
+// client_events_bindings_generated.cpp), which switches over its channel's closed enum and
 // calls one hand-written function per member -- `client::effects::on_<name>` and
 // `client::game_events::on_<name>`, one file each under src/client/effects/ and
 // src/client/game_events/.

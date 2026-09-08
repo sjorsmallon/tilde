@@ -350,7 +350,7 @@ void check_win_condition(server_context_t &context,
           continue; // a team the enum does not have; nothing to eliminate
 
         ++count->total;
-        count->alive += player.health > 0 ? 1 : 0;
+        count->alive += player.health.current_health> 0 ? 1 : 0;
       }
 
       const team_head_count_t &red = counts[entities::Team_Allegiance::Red];

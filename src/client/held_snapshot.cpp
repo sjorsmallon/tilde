@@ -135,7 +135,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
       continue;
     }
 
-    local->health         = damageable.health;
+    local->health.current_health        = damageable.health.current_health;
     local->render.visible = damageable.render.visible;
   }
 
@@ -179,7 +179,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
     {
       context.connection.my_entity_uid = player.entity_id;
 
-      context.prediction.local_player_health = player.health;
+      context.prediction.local_player_health = player.health.current_health;
       context.prediction.latest_server_position = player.position;
       context.prediction.latest_server_velocity = player.velocity;
       context.prediction.latest_server_movement = player.movement;

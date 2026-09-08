@@ -50,7 +50,8 @@ void place_player_at(shared::game_session_t &session, entities::Player_Entity &p
   // hit-tests the twist. A first spawn has the same problem from zero.
   player.body_yaw = facing.yaw_degrees;
 
-  player.health   = 100;
+  player.health.max_health   = 100;
+  player.health.current_health = player.health.max_health;
   player.velocity = {0.f, 0.f, 0.f};
   // Back to alive: this is what stops clients drawing the death clip.
   player.death_tick = 0;
@@ -171,8 +172,8 @@ void seed_damageable_health(shared::game_session_t &session)
   for (entities::Damageable_Entity &damageable :
        session.entity_system.entities_of<entities::Damageable_Entity>())
   {
-    damageable.health         = damageable.max_health;
-    damageable.render.visible = true;
+    damageable.health.current_health = damageable.health.max_health;
+    damageable.render.visible        = true;
   }
 }
 

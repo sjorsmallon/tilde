@@ -1,6 +1,16 @@
 // cvars.def -- console variable and command definition DSL.
 //
-// Parsed by src/tools/def_gen.cpp, which emits generated/cvars_generated.*
+// Parsed by src/tools/def_gen.cpp, which emits into generated/ -- every name
+// ends in _generated, and open_generated_file refuses one that does not:
+//
+//   cvars_generated.{hpp,cpp}              cvar_state_t, the ids, the info tables,
+//                                          the text conversion, handler declarations
+//   server_command_bindings_generated.cpp  fills the @Server slots -- into game_server
+//   client_command_bindings_generated.cpp  the @Client slots -- into game_client
+//
+// A binder references cvars::commands::<name> directly, so a missing, misspelled
+// or wrongly typed handler is a LINK error naming it. Those are hand-written,
+// each on the side its flag names.
 //
 // Transcribed 2026-07-29 from the CVar<T> / Console_Command declarations
 // scattered across player_move.cpp, debug_collision.cpp, game_cvars.cpp,

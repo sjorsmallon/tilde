@@ -216,7 +216,7 @@ set(ENTITY_IO_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entity_io_generated.cpp)
 # family's reason. It is also why the ACCEPTANCE mask (shared, read by the map
 # loader and the editor) and the DISPATCH table (here) are two artifacts: this
 # file static_asserts that they agree cell for cell.
-set(ENTITY_IO_GEN_BINDINGS ${ENTITY_GEN_OUT_DIR}/server_action_bindings.cpp)
+set(ENTITY_IO_GEN_BINDINGS ${ENTITY_GEN_OUT_DIR}/server_action_bindings_generated.cpp)
 file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
 
 # The asset manifest. NOT a .def and not hand-authored: asset_pack walks
@@ -228,7 +228,7 @@ set(ASSET_MANIFEST_FILE ${ASSET_GEN_OUT_DIR}/assets.manifest)
 set(ASSET_GEN_HEADER ${ASSET_GEN_OUT_DIR}/assets_generated.hpp)
 set(ASSET_GEN_SOURCE ${ASSET_GEN_OUT_DIR}/assets_generated.cpp)
 set(ASSET_GEN_STATE_HEADER ${ASSET_GEN_OUT_DIR}/asset_state_generated.hpp)
-set(ASSET_GEN_BINDINGS ${ASSET_GEN_OUT_DIR}/assets_bindings.cpp)
+set(ASSET_GEN_BINDINGS ${ASSET_GEN_OUT_DIR}/assets_bindings_generated.cpp)
 file(MAKE_DIRECTORY ${ASSET_GEN_OUT_DIR})
 
 set(CVAR_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/cvars/cvars.def)
@@ -237,8 +237,8 @@ set(CVAR_GEN_HEADER ${CVAR_GEN_OUT_DIR}/cvars_generated.hpp)
 set(CVAR_GEN_SOURCE ${CVAR_GEN_OUT_DIR}/cvars_generated.cpp)
 # One binder TU per side, each compiled into the module that owns those
 # handlers, so the client DLL never references a server handler symbol.
-set(CVAR_GEN_SERVER_BINDINGS ${CVAR_GEN_OUT_DIR}/server_command_bindings.cpp)
-set(CVAR_GEN_CLIENT_BINDINGS ${CVAR_GEN_OUT_DIR}/client_command_bindings.cpp)
+set(CVAR_GEN_SERVER_BINDINGS ${CVAR_GEN_OUT_DIR}/server_command_bindings_generated.cpp)
+set(CVAR_GEN_CLIENT_BINDINGS ${CVAR_GEN_OUT_DIR}/client_command_bindings_generated.cpp)
 file(MAKE_DIRECTORY ${CVAR_GEN_OUT_DIR})
 
 # The two server->client dispatch channels, one .def each -- the event family is
@@ -250,14 +250,14 @@ set(EFFECT_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/effects/effects.def)
 set(EFFECT_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/effects/generated)
 set(EFFECT_GEN_HEADER ${EFFECT_GEN_OUT_DIR}/effects_generated.hpp)
 set(EFFECT_GEN_SOURCE ${EFFECT_GEN_OUT_DIR}/effects_generated.cpp)
-set(EFFECT_GEN_CLIENT_BINDINGS ${EFFECT_GEN_OUT_DIR}/client_effects_bindings.cpp)
+set(EFFECT_GEN_CLIENT_BINDINGS ${EFFECT_GEN_OUT_DIR}/client_effects_bindings_generated.cpp)
 file(MAKE_DIRECTORY ${EFFECT_GEN_OUT_DIR})
 
 set(EVENT_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/events/events.def)
 set(EVENT_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/events/generated)
 set(EVENT_GEN_HEADER ${EVENT_GEN_OUT_DIR}/events_generated.hpp)
 set(EVENT_GEN_SOURCE ${EVENT_GEN_OUT_DIR}/events_generated.cpp)
-set(EVENT_GEN_CLIENT_BINDINGS ${EVENT_GEN_OUT_DIR}/client_events_bindings.cpp)
+set(EVENT_GEN_CLIENT_BINDINGS ${EVENT_GEN_OUT_DIR}/client_events_bindings_generated.cpp)
 file(MAKE_DIRECTORY ${EVENT_GEN_OUT_DIR})
 
 # The manifest depends on what is IN the resource tree, not on any declaration,
@@ -779,9 +779,9 @@ add_library(game_server SHARED
     # it, so a declared-but-undefined one is a link error naming the symbol.
     src/server/entity_io_context.hpp
     ${ENTITY_IO_GEN_BINDINGS}
-    src/server/entities/switchable.cpp
-    src/server/entities/colorable.cpp
-    src/server/entities/mortal.cpp
+    src/server/traits/switchable.cpp
+    src/server/traits/colorable.cpp
+    src/server/traits/mortal.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp

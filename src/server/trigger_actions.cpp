@@ -52,7 +52,7 @@ void action_set_health(server::server_context_t & /*context*/,
                        entities::Player_Entity &player)
 {
   const int32_t requested = static_cast<int32_t>(trigger.param_float);
-  player.health = std::max(player.health, requested);
+  player.health.current_health = std::max(player.health.current_health, requested);
 }
 
 void action_print_message(server::server_context_t & /*context*/,

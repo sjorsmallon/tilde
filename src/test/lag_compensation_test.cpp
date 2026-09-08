@@ -69,7 +69,7 @@ static entities::Player_Entity make_player(shared::entity_uid_t uid, vec3f posit
   player.body_yaw         = yaw;
   player.view_angle_yaw   = yaw;
   player.view_angle_pitch = 0.f;
-  player.health           = health;
+  player.health.current_health = health;
   return player;
 }
 

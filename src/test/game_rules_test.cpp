@@ -138,7 +138,8 @@ shared::entity_uid_t spawn_test_player(server_context_t& context,
       context.world.session.entity_system.get<entities::Player_Entity>(uid);
 
   player->team_allegiance = team;
-  player->health          = health;
+  player->health.max_health = health;
+  player->health.current_health = health;
 
   register_kinematic_capsule(*context.world.physics, uid, player->position,
                              shared::player_capsule_radius,
@@ -447,7 +448,7 @@ void test_team_elimination()
     check_phase(world.context, shared::Round_Phase::Live, "two live teams keep playing");
 
     // ...and one team losing its last player ends it.
-    player_of(world.context, blu).health = 0;
+    player_of(world.context, blu).health.current_health = 0;
     check_win_condition(world.context, world.context.tick_number, tickrate);
     check_phase(world.context, shared::Round_Phase::Round_End,
                 "eliminating a team ends the round");
@@ -554,7 +555,7 @@ void test_checkpoint_respawn()
   check(respawned_at.x == checkpoint_position.x && respawned_at.y == checkpoint_position.y &&
             respawned_at.z == checkpoint_position.z,
         "a death respawns you on the checkpoint you took");
-  check(player_of(world.context, player_uid).health == 100,
+  check(player_of(world.context, player_uid).health.current_health == 100,
         "the checkpoint respawn is a full respawn, not a teleport");
 
   // A round boundary is the start line again -- one player must not be able to

@@ -66,10 +66,10 @@ static void apply_player_damage_total(server_context_t &context,
   if (!can_take_damage(context))
     return;
 
-  const int32_t health_before = player.health;
-  player.health -= static_cast<int32_t>(total_damage);
+  const int32_t health_before = player.health.current_health;
+  player.health.current_health-= static_cast<int32_t>(total_damage);
 
-  if (health_before > 0 && player.health <= 0)
+  if (health_before > 0 && player.health.current_health<= 0)
   {
     // Latched here rather than in the respawn scheduler because THIS is the
     // crossing; the scheduler already keys its own map by uid and would be a
@@ -126,7 +126,7 @@ static void apply_damage_to_player(server_context_t &context,
                                    const damage_info_t &info,
                                    entities::Player_Entity &player)
 {
-  if (player.health <= 0)
+  if (player.health.current_health<= 0)
     return; // corpses don't take additional damage
 
   apply_player_damage_total(
@@ -180,16 +180,16 @@ static void apply_damageable_damage_total(server_context_t &context,
                                           entities::Damageable_Entity &damageable,
                                           float total_damage)
 {
-  if (damageable.health <= 0)
+  if (damageable.health.current_health <= 0)
     return; // already destroyed; same corpse gate the player path has
 
   if (!can_take_damage(context))
     return;
 
-  const int32_t health_before = damageable.health;
-  damageable.health -= static_cast<int32_t>(total_damage);
+  const int32_t health_before = damageable.health.current_health;
+  damageable.health.current_health -= static_cast<int32_t>(total_damage);
 
-  if (health_before > 0 && damageable.health <= 0)
+  if (health_before > 0 && damageable.health.current_health <= 0)
     damageable.render.visible = false;
 }
 
@@ -301,7 +301,7 @@ void inflict_damage_batch(server_context_t &context, Span<const pending_hit_t> h
       continue;
     }
 
-    if (player->health <= 0)
+    if (player->health.current_health<= 0)
       continue; // corpses don't take additional damage
 
     const vec3f victim_center = player_knockback_center(*player);

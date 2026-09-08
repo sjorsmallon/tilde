@@ -269,7 +269,7 @@ template <class Trait> bool is(const Entity& entity)
 // One bit per action per entity type. This is the fact the map loader
 // refuses an ill-typed connection on and the editor's action dropdown is
 // built from, and it is SHARED -- the shims that actually call a handler
-// cannot be, because handlers live in game_server. server_action_bindings
+// cannot be, because handlers live in game_server. The binder
 // static_asserts that the two agree cell for cell.
 static_assert(ENTITY_ACTION_COUNT <= 64, "the accepted-action mask is a uint64_t");
 
@@ -306,14 +306,14 @@ inline bool type_accepts_action(entity_type type, entity_action action)
 // components instead. No open(Rocket_Entity&) exists, so open(rocket) is
 // "no matching function"; a declared handler nobody defined is a LINK
 // error naming the symbol. That link step is the assert.
-void enable(Enabled&, const Enable_Data&, input_context_t&);   // Switchable
-void disable(Enabled&, const Disable_Data&, input_context_t&);   // Switchable
-void toggle_enabled(Enabled&, const Toggle_Enabled_Data&, input_context_t&);   // Switchable
+void enable(Entity&, Enabled&, const Enable_Data&, input_context_t&);   // Switchable
+void disable(Entity&, Enabled&, const Disable_Data&, input_context_t&);   // Switchable
+void toggle_enabled(Entity&, Enabled&, const Toggle_Enabled_Data&, input_context_t&);   // Switchable
 void set_color(Point_Light_Entity&, const Set_Color_Data&, input_context_t&);   // Colorable
 void set_color(Spot_Light_Entity&, const Set_Color_Data&, input_context_t&);   // Colorable
-void kill(Damageable_Entity&, const Kill_Data&, input_context_t&);   // Mortal
-void set_health(Damageable_Entity&, const Set_Health_Data&, input_context_t&);   // Mortal
-void damage(Damageable_Entity&, const Damage_Data&, input_context_t&);   // Mortal
+void kill(Entity&, Health&, const Kill_Data&, input_context_t&);   // Mortal
+void set_health(Entity&, Health&, const Set_Health_Data&, input_context_t&);   // Mortal
+void damage(Entity&, Health&, const Damage_Data&, input_context_t&);   // Mortal
 
 // --- the dynamic half -------------------------------------------------
 //

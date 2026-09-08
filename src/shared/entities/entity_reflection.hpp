@@ -55,8 +55,8 @@ struct leaf_field_t
 };
 
 // Every leaf of `type`, in declaration order (which is what makes a saved map
-// diffable). `required_flags` filters: pass FIELD_FLAG_SAVEABLE for map I/O,
-// FIELD_FLAG_EDITABLE for the inspector, 0 for everything.
+// diffable). `required_flags` filters: pass FIELD_FLAG_EDITABLE for the
+// inspector and for map I/O, 0 for everything.
 std::vector<leaf_field_t> collect_leaf_fields(entity_type type, uint32_t required_flags = 0);
 
 // The same walk over a component's own table, for a consumer that has a

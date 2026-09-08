@@ -365,7 +365,7 @@ void console::draw()
 
 // Declared `bind(key: string, command: string...)` @Client in cvars.def, which
 // obligates game_client to define exactly this symbol with exactly the
-// signature that parameter list implies — client_command_bindings.cpp (a
+// signature that parameter list implies — client_command_bindings_generated.cpp (a
 // generated TU compiled into this DLL) takes its address, so a rename or a
 // signature drift here is a link error rather than a command that silently
 // stops working. Argument count and the usage reply live in the generated

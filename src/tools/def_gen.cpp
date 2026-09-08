@@ -338,7 +338,6 @@ enum field_flags_t : uint32_t
   FIELD_FLAG_NONE      = 0,
   FIELD_FLAG_NETWORKED = 1 << 0,
   FIELD_FLAG_EDITABLE  = 1 << 1,
-  FIELD_FLAG_SAVEABLE  = 1 << 2,
 };
 
 // The cvar family's flag vocabulary. Stored in the same field_t::flags word as
@@ -2131,11 +2130,18 @@ static int32_t find_declaration(const name_table_t* table, const program_t* prog
 // file is irrelevant: a field may use a component or a flagset declared below
 // it.
 
+// @Saveable was folded into @Editable on 2026-09-08: no field in the schema
+// ever carried one without the other, so they were one decision spelled twice.
+// Spelled out rather than left to "unknown annotation '@Saveable'", which says
+// the name is wrong instead of saying where it went.
+static const char* RETIRED_SAVEABLE_MESSAGE =
+    "'@Saveable' was retired -- @Editable now means BOTH the inspector and the .source map "
+    "file. Drop it; the @Editable beside it already says everything it said";
+
 static uint32_t builtin_field_flag(string_view_t name)
 {
   if (string_view_matches(name, "Networked")) return FIELD_FLAG_NETWORKED;
   if (string_view_matches(name, "Editable"))  return FIELD_FLAG_EDITABLE;
-  if (string_view_matches(name, "Saveable"))  return FIELD_FLAG_SAVEABLE;
   return FIELD_FLAG_NONE;
 }
 
@@ -2155,10 +2161,13 @@ static void resolve_flagsets(program_t* program)
       uint32_t flag = builtin_field_flag(annotation->name);
       if (flag == FIELD_FLAG_NONE)
       {
-        report_error(program, annotation->offset, annotation->line,
-                     "'@%.*s' is not a field flag; a flagset may only contain @Networked, "
-                     "@Editable or @Saveable",
-                     annotation->name.length, annotation->name.data);
+        if (string_view_matches(annotation->name, "Saveable"))
+          report_error(program, annotation->offset, annotation->line, "%s", RETIRED_SAVEABLE_MESSAGE);
+        else
+          report_error(program, annotation->offset, annotation->line,
+                       "'@%.*s' is not a field flag; a flagset may only contain @Networked "
+                       "or @Editable",
+                       annotation->name.length, annotation->name.data);
         continue;
       }
       mask |= flag;
@@ -2231,8 +2240,14 @@ static void resolve_entity_field_flags(program_t* program, const name_table_t* t
     {
       report_error(program, annotation->offset, annotation->line,
                    "'@%.*s' is a cvar flag, not a field flag -- the two families share no "
-                   "vocabulary. An entity field takes @Networked, @Editable or @Saveable",
+                   "vocabulary. An entity field takes @Networked or @Editable",
                    annotation->name.length, annotation->name.data);
+      continue;
+    }
+
+    if (string_view_matches(annotation->name, "Saveable"))
+    {
+      report_error(program, annotation->offset, annotation->line, "%s", RETIRED_SAVEABLE_MESSAGE);
       continue;
     }
 
@@ -2692,22 +2707,16 @@ static void check_flag_contradictions(program_t* program)
       }
 
       // @runtime_only says the type is never placed in the editor and never
-      // written to a map. @Editable (the editor inspector only ever sees map
-      // entities) and @Saveable (map I/O only ever visits map entities) are
-      // therefore unreachable on such a field, not merely unused.
-      if (runtime_only && (field->flags & (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)) != 0)
+      // written to a map. @Editable covers both the inspector and map I/O, and
+      // both only ever visit map entities, so it is unreachable on such a field,
+      // not merely unused.
+      if (runtime_only && (field->flags & FIELD_FLAG_EDITABLE) != 0)
       {
         report_error(program, field->offset, field->line,
-                     "field '%.*s' is %s%s%s, but '%.*s' is @runtime_only -- it is never placed "
-                     "in the editor and never written to a map, so neither flag can ever be "
+                     "field '%.*s' is @Editable, but '%.*s' is @runtime_only -- it is never "
+                     "placed in the editor and never written to a map, so the flag can never be "
                      "read. Drop the flag, or drop @runtime_only",
                      field->name.length, field->name.data,
-                     (field->flags & FIELD_FLAG_EDITABLE) ? "@Editable" : "",
-                     (field->flags & (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)) ==
-                             (FIELD_FLAG_EDITABLE | FIELD_FLAG_SAVEABLE)
-                         ? " and "
-                         : "",
-                     (field->flags & FIELD_FLAG_SAVEABLE) ? "@Saveable" : "",
                      declaration->name.length, declaration->name.data);
       }
     }
@@ -4846,7 +4855,6 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "  FIELD_FLAG_NONE      = 0,\n");
   fprintf(out, "  FIELD_FLAG_NETWORKED = 1 << 0,\n");
   fprintf(out, "  FIELD_FLAG_EDITABLE  = 1 << 1,\n");
-  fprintf(out, "  FIELD_FLAG_SAVEABLE  = 1 << 2,\n");
   fprintf(out, "};\n\n");
 
   // The schema is a tree, but the memory it describes is flat, and the one
@@ -5595,7 +5603,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 //                                 Enum_Array per class, plus the symbols the
 //                                 bindings call. Pulls in each class's value
 //                                 header, which is why it is not the same file.
-//   assets_bindings.cpp           the per-class loaders and register_all.
+//   assets_bindings_generated.cpp the per-class loaders and register_all.
 //
 // Splitting the id space from the storage is not tidiness: animation.hpp
 // includes entities_generated.hpp, so a state struct emitted into the header
@@ -6067,10 +6075,12 @@ static void emit_assets_bindings(FILE* out, const program_t* program, const char
 //   cvars_generated.cpp        the tables and the text conversion bodies. Holds
 //                              NO reference to any handler, so it compiles into
 //                              game_shared without needing either side present.
-//   server_command_bindings.cpp  fills the @Server slots; compiled into
+//   server_command_bindings_generated.cpp
+//                              fills the @Server slots; compiled into
 //                              game_server, so a missing or misspelled
 //                              commands::<name> is a link error naming it
-//   client_command_bindings.cpp  the same for @Client
+//   client_command_bindings_generated.cpp
+//                              the same for @Client
 //
 // There is no registration step anywhere and no static initializer, which is
 // what makes the old failure modes -- a registrar TU dropped from the static
@@ -7405,7 +7415,7 @@ static void emit_events_header(FILE* out, const program_t* program)
   fprintf(out, "// so there is nothing to resynchronize to and the caller stops.\n");
   fprintf(out, "//\n");
   fprintf(out, "// The receiving side's dispatch switch is generated beside its handlers\n");
-  fprintf(out, "// (client_*_bindings.cpp), because it is what references them.\n");
+  fprintf(out, "// (client_*_bindings_generated.cpp), because it is what references them.\n");
   for (int32_t which = 0; which < member_count; ++which)
   {
     fprintf(out, "[[nodiscard]] std::optional<%.*s> try_read_", members[which]->name.length,
@@ -7845,7 +7855,6 @@ static void print_field_flags(uint32_t flags)
 {
   if (flags & FIELD_FLAG_NETWORKED) printf(" @Networked");
   if (flags & FIELD_FLAG_EDITABLE)  printf(" @Editable");
-  if (flags & FIELD_FLAG_SAVEABLE)  printf(" @Saveable");
 }
 
 // Same word, the other vocabulary. Which one applies is the owning
@@ -8197,10 +8206,23 @@ static const field_t* field_satisfying(const program_t* program, const declarati
   return nullptr;
 }
 
-// `void enable(Enabled&, const Enable_Data&, input_context_t&)` for a trait with
-// requirements, `void set_color(Point_Light_Entity&, ...)` for one without. The
-// difference IS what `requires` buys: one handler for every opting-in type
-// rather than one per type.
+// `void enable(Entity&, Enabled&, const Enable_Data&, input_context_t&)` for a
+// trait with requirements, `void set_color(Point_Light_Entity&, ...)` for one
+// without. The difference IS what `requires` buys: one handler for every
+// opting-in type rather than one per type.
+//
+// The RECEIVER is first either way, and for a `requires` trait it is the BASE
+// -- which is what keeps the handler written once. It is there because a
+// component cannot name its owner: `damage(Health&)` has the numbers and no
+// way to say whose they are, so it cannot reach anything keyed by uid. The
+// alternative was a `target` on input_context_t, and that is a second copy of
+// what the first parameter already says, free to disagree with it on the typed
+// path where the caller fills the context by hand.
+//
+// The shim passes the CONCRETE type, so a type that wants its own
+// `kill(Damageable_Entity&, Health&, ...)` beats the shared one by exact match
+// and needs nothing from the generator -- entity_io_def.md ss5's "a type's own
+// overload still wins resolution", falling out rather than built.
 static void write_handler_signature(FILE* out, const program_t* program,
                                     const declaration_t* trait, const declaration_t* entity,
                                     const field_t* verb)
@@ -8211,11 +8233,17 @@ static void write_handler_signature(FILE* out, const program_t* program,
 
   if (trait->requirement_count > 0)
   {
+    const int32_t        base_index = find_base_declaration(program);
+    const declaration_t* base       = base_index >= 0 ? &program->declarations[base_index] : nullptr;
+
+    if (base != nullptr)
+      fprintf(out, "%.*s&", base->name.length, base->name.data);
+
     for (int32_t offset = 0; offset < trait->requirement_count; ++offset)
     {
       const name_reference_t* requirement =
           &program->name_references[trait->first_requirement + offset];
-      fprintf(out, "%s%.*s&", offset > 0 ? ", " : "", requirement->name.length,
+      fprintf(out, "%s%.*s&", base != nullptr || offset > 0 ? ", " : "", requirement->name.length,
               requirement->name.data);
     }
   }
@@ -8424,7 +8452,7 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   fprintf(out, "// One bit per action per entity type. This is the fact the map loader\n");
   fprintf(out, "// refuses an ill-typed connection on and the editor's action dropdown is\n");
   fprintf(out, "// built from, and it is SHARED -- the shims that actually call a handler\n");
-  fprintf(out, "// cannot be, because handlers live in game_server. server_action_bindings\n");
+  fprintf(out, "// cannot be, because handlers live in game_server. The binder\n");
   fprintf(out, "// static_asserts that the two agree cell for cell.\n");
   fprintf(out, "static_assert(ENTITY_ACTION_COUNT <= 64, \"the accepted-action mask is a uint64_t\");\n\n");
   fprintf(out, "constexpr uint64_t action_bit(entity_action action) { return 1ull << (uint32_t)action; }\n\n");
@@ -8669,7 +8697,8 @@ static void emit_entity_io_source(FILE* out, const program_t* program, const cha
   free(signal_owners);
 }
 
-// The server's binder TU, twin of server_command_bindings.cpp. Everything that
+// The server's binder TU, twin of server_command_bindings_generated.cpp.
+// Everything that
 // REFERENCES a handler lives here, so entity_io_generated.cpp compiles into
 // game_shared with no handler present and the client DLL never names one.
 static void emit_action_bindings(FILE* out, const program_t* program, const char* io_header,
@@ -8714,27 +8743,24 @@ static void emit_action_bindings(FILE* out, const program_t* program, const char
       write_lower(out, entity->name);
       fprintf(out, "_");
       write_lower(out, verb->name);
-      fprintf(out, "(Entity& entity, const action_data_t& data, input_context_t& context)\n{\n  ");
+      fprintf(out, "(Entity& entity, const action_data_t& data, input_context_t& context)\n{\n");
+      fprintf(out, "  %.*s& self = *entity_as<%.*s>(&entity);\n  ", entity->name.length,
+              entity->name.data, entity->name.length, entity->name.data);
       write_lower(out, verb->name);
-      fprintf(out, "(");
 
-      if (trait->requirement_count > 0)
+      // The receiver is passed as the CONCRETE type, so a type wanting its own
+      // handler beats the trait's shared one by exact match; the shared one is
+      // declared against the base and takes it by derived-to-base conversion.
+      fprintf(out, "(self");
+
+      for (int32_t offset = 0; offset < trait->requirement_count; ++offset)
       {
-        for (int32_t offset = 0; offset < trait->requirement_count; ++offset)
-        {
-          const name_reference_t* requirement =
-              &program->name_references[trait->first_requirement + offset];
-          const field_t* satisfying = field_satisfying(program, entity, requirement->declaration);
-          if (satisfying == nullptr)
-            continue; // already reported by check_trait_opt_ins
-          fprintf(out, "%sentity_as<%.*s>(&entity)->%.*s", offset > 0 ? ", " : "",
-                  entity->name.length, entity->name.data, satisfying->name.length,
-                  satisfying->name.data);
-        }
-      }
-      else
-      {
-        fprintf(out, "*entity_as<%.*s>(&entity)", entity->name.length, entity->name.data);
+        const name_reference_t* requirement =
+            &program->name_references[trait->first_requirement + offset];
+        const field_t* satisfying = field_satisfying(program, entity, requirement->declaration);
+        if (satisfying == nullptr)
+          continue; // already reported by check_trait_opt_ins
+        fprintf(out, ", self.%.*s", satisfying->name.length, satisfying->name.data);
       }
 
       fprintf(out, ", data.as_");
@@ -8976,9 +9002,34 @@ static void derive_output_directory(const char* def_path, char* buffer, size_t b
   snprintf(buffer, buffer_size, "%s", directory.string().c_str());
 }
 
+// Every emitted file's NAME ends in _generated, and this is where that is
+// enforced rather than remembered: a directory says what a file is only once you
+// know which directories are generated, while a name says it in a tab bar, a
+// grep hit and a compiler error.
+static bool name_says_generated(const char* name)
+{
+  const size_t length = strlen(name);
+  for (const char* suffix : {"_generated.hpp", "_generated.cpp"})
+  {
+    const size_t suffix_length = strlen(suffix);
+    if (length >= suffix_length && strcmp(name + length - suffix_length, suffix) == 0)
+      return true;
+  }
+  return false;
+}
+
 static FILE* open_generated_file(const char* directory, const char* name, char* out_path,
                                  size_t path_size)
 {
+  if (!name_says_generated(name))
+  {
+    fprintf(stderr,
+            "error: emitted file '%s' must be named <something>_generated.hpp or "
+            "<something>_generated.cpp\n",
+            name);
+    return nullptr;
+  }
+
   snprintf(out_path, path_size, "%s/%s", directory, name);
 
   FILE* file = fopen(out_path, "wb");
@@ -9021,7 +9072,7 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
   fclose(io_source_file);
 
   FILE* bindings_file =
-      open_generated_file(output_dir, "server_action_bindings.cpp", path, sizeof(path));
+      open_generated_file(output_dir, "server_action_bindings_generated.cpp", path, sizeof(path));
   if (bindings_file == nullptr)
     return false;
   emit_action_bindings(bindings_file, program, io_header_name, "entity_io_context.hpp");
@@ -9029,7 +9080,7 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
 
   fprintf(stderr,
           "def_gen: wrote %s/entities_generated.{hpp,cpp}, entity_io_generated.{hpp,cpp} and "
-          "server_action_bindings.cpp\n",
+          "server_action_bindings_generated.cpp\n",
           output_dir);
   return true;
 }
@@ -9062,7 +9113,8 @@ static bool emit_asset_artifacts(const program_t* manifest, const char* output_d
   emit_asset_state_header(state_file, manifest, id_header);
   fclose(state_file);
 
-  FILE* bindings_file = open_generated_file(output_dir, "assets_bindings.cpp", path, sizeof(path));
+  FILE* bindings_file =
+      open_generated_file(output_dir, "assets_bindings_generated.cpp", path, sizeof(path));
   if (bindings_file == nullptr)
     return false;
   emit_assets_bindings(bindings_file, manifest, state_header);
@@ -9070,7 +9122,7 @@ static bool emit_asset_artifacts(const program_t* manifest, const char* output_d
 
   fprintf(stderr,
           "def_gen: wrote %s/assets_generated.{hpp,cpp}, asset_state_generated.hpp and "
-          "assets_bindings.cpp\n",
+          "assets_bindings_generated.cpp\n",
           output_dir);
   return true;
 }
@@ -9104,14 +9156,14 @@ static bool emit_cvar_family(const program_t* program, const char* output_dir)
       fclose(source_file);
 
       FILE* server_file =
-          open_generated_file(output_dir, "server_command_bindings.cpp", path, sizeof(path));
+          open_generated_file(output_dir, "server_command_bindings_generated.cpp", path, sizeof(path));
       if (server_file != nullptr)
       {
         emit_command_bindings(server_file, program, header_name, commands, command_count, true);
         fclose(server_file);
 
         FILE* client_file =
-            open_generated_file(output_dir, "client_command_bindings.cpp", path, sizeof(path));
+            open_generated_file(output_dir, "client_command_bindings_generated.cpp", path, sizeof(path));
         if (client_file != nullptr)
         {
           emit_command_bindings(client_file, program, header_name, commands, command_count, false);
@@ -9281,7 +9333,7 @@ static bool emit_event_family(const program_t* program, const char* output_dir)
   char header_path[512];
   snprintf(header_name, sizeof(header_name), "%s_generated.hpp", stem);
   snprintf(source_name, sizeof(source_name), "%s_generated.cpp", stem);
-  snprintf(bindings_name, sizeof(bindings_name), "client_%s_bindings.cpp", stem);
+  snprintf(bindings_name, sizeof(bindings_name), "client_%s_bindings_generated.cpp", stem);
 
   // The generated TUs include the header by PATH rather than by its bare name:
   // one of them sits in this directory but is compiled into another module,

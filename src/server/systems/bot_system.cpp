@@ -178,7 +178,7 @@ void update_bots(server_context_t &context,
     // for the same reason it is for humans (server_impl.cpp) -- body_yaw places
     // the hit volumes and orients the model, so writing it would spin the corpse
     // under an animation that is supposed to be settling.
-    if (bot_ent->health <= 0)
+    if (bot_ent->health.current_health <= 0)
     {
       apply_bot_movement(context, physics, session, *bot_ent,
                          linalg::direction_from_angles(bot_ent->view_angle_yaw, 0.f),
@@ -195,7 +195,7 @@ void update_bots(server_context_t &context,
       // Corpses are invisible to hitscan, so a bot that kept aiming at one
       // would stand there emptying a magazine into a body it cannot hit until
       // the respawn moved it.
-      if (p.health <= 0) continue;
+      if (p.health.current_health <= 0) continue;
       float d = linalg::distance_between(bot_ent->position, p.position);
       if (d < best_dist) { best_dist = d; target = &p; }
     }
@@ -222,8 +222,8 @@ void update_bots(server_context_t &context,
       {
         // Retreat takes priority if health is low and personality calls for it.
         if (bot.personality.retreat_health > 0.f &&
-            bot_ent->health > 0 &&
-            static_cast<float>(bot_ent->health) < bot.personality.retreat_health)
+            bot_ent->health.current_health> 0 &&
+            static_cast<float>(bot_ent->health.current_health) < bot.personality.retreat_health)
         {
           next = bot_goal_t::Retreat;
         }
@@ -231,7 +231,7 @@ void update_bots(server_context_t &context,
         {
           // Exit retreat after timer or if health recovered.
           if (bot.time_spent_in_current_state > 4.f ||
-              static_cast<float>(bot_ent->health) >= bot.personality.retreat_health * 2.f)
+              static_cast<float>(bot_ent->health.current_health) >= bot.personality.retreat_health * 2.f)
             next = bot_goal_t::Idle;
         }
         else if (!target)

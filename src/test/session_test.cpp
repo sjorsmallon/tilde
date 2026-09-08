@@ -155,10 +155,10 @@ int main()
   // --- P7 step 1: build_session does not mutate the map -----------------------
   //
   // The load-bearing assertion is the DIRECT field read below, not the hash.
-  // `entity_id` is deliberately not @Saveable (it is runtime identity, not map
+  // `entity_id` is deliberately not @Editable (it is runtime identity, not map
   // data), so it does not appear in the canonical text at all and a content-hash
   // comparison cannot see it being stomped. The hash check is kept anyway
-  // because it covers everything that IS saveable, but on its own it would have
+  // because it covers everything that IS editable, but on its own it would have
   // passed against the very bug this test exists for.
   if (spawn_ent->entity_id != 0)
   {

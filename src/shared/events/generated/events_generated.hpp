@@ -124,7 +124,7 @@ void fire_round_phase_changed(event_stream_t& stream, const Round_Phase_Changed&
 // so there is nothing to resynchronize to and the caller stops.
 //
 // The receiving side's dispatch switch is generated beside its handlers
-// (client_*_bindings.cpp), because it is what references them.
+// (client_*_bindings_generated.cpp), because it is what references them.
 [[nodiscard]] std::optional<Rocket_Detonated> try_read_rocket_detonated(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Player_Died> try_read_player_died(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Player_Spawned> try_read_player_spawned(network::Bit_Reader& reader);

@@ -1,35 +1,16 @@
 // entities.def -- entity definition DSL.
 //
-// Parsed by src/tools/def_gen.cpp, which emits generated/entities_generated.*
+// Parsed by src/tools/def_gen.cpp, which emits into generated/ -- every name
+// ends in _generated, and open_generated_file refuses one that does not:
 //
-// `mesh_asset` and `texture_asset` are asset CLASSES, and they are declared
-// nowhere: asset_pack walks resources/ and writes generated/assets.manifest,
-// which def_gen reads through --asset-manifest. There is nothing to import and
-// nothing to edit -- adding a mesh means dropping a .obj or .mesh into a
-// resource directory. An asset-typed field here is spelled assets::mesh_asset
-// in the generated structs, because the asset artifacts land in namespace
-// `assets` beside the asset system that resolves the ids.
+//   entities_generated.{hpp,cpp}          the structs, enums and reflection tables
+//   entity_io_generated.{hpp,cpp}         the action/signal TYPE layer
+//   server_action_bindings_generated.cpp  the dispatch table and its shims
 //
-// Transcribed 2026-07-26 from the macro declarations in this folder; flags
-// audited field by field 2026-07-27 (P4). See entity_def.md at the repo root
-// for the design, todo.md for the phase order.
-//
-// ---------------------------------------------------------------------------
-// DELIBERATELY ABSENT: the geometry types
-// ---------------------------------------------------------------------------
-// AABB_Entity, Wedge_Entity, Static_Mesh_Entity and Displacement_Entity are
-// NOT here. Per entity_def.md they leave the entity system entirely and become
-// plain map-owned C++ value types with handwritten map I/O -- they are never
-// networked, so they were paying the blittable/fixed-size constraints for
-// nothing. Displacement's [3267]f32 height array is the only reason the DSL
-// would ever need fixed-capacity arrays; with geometry gone, it doesn't.
-//
-// ---------------------------------------------------------------------------
-// WHAT THE THREE FLAGS MEAN  (P4, 2026-07-27 -- these are now real)
-// ---------------------------------------------------------------------------
-// In the macro system only @Editable was ever enforced, so @Networked and
-// @Saveable could sit on a field and mean nothing. The generator makes all
-// three load-bearing. Every field below has been decided, not inherited:
+// The binder is the seam: it calls one hand-written handler per trait verb and
+// nothing defines those, so a declared handler nobody wrote is a LINK error
+// naming the symbol. They live in src/server/traits/<trait>.cpp -- one file per
+// `trait` declared below, and the only entity code that is not generated.
 //
 //   @Networked  The server replicates this field to clients in snapshots.
 //               Earn it: the client must READ the field AND have no other way
@@ -37,91 +18,43 @@
 //               the client -- it loaded the same map -- so replicating it is
 //               bandwidth spent to tell the client what it already knows.
 //
-//   @Editable   The editor inspector shows and edits it. The inspector only
-//               ever walks map entities, so this is unreachable on a
-//               @runtime_only type -- and the generator now rejects it there.
+//   @Editable   The editor inspector shows and edits it, AND it is written to
+//               and read from the .source map file. One flag, because those
+//               were never two decisions: a field an author can change and the
+//               map does not keep is an edit that vanishes on save, and a field
+//               the map keeps that the author cannot reach is a value only a
+//               text editor can set. There used to be a separate @Saveable, and
+//               across the whole schema not one field ever carried one without
+//               the other. The inspector and map I/O only ever walk map
+//               entities, so this is unreachable on a @runtime_only type -- and
+//               the generator rejects it there.
 //
-//   @Saveable   Written to and read from the .source map file. Same
-//               reachability rule as @Editable, same generator check.
+// Room to grow, if the need shows up -- same slot, same syntax:
+//   @no_network   nothing about this type is ever replicated; makes @Networked
+//                 on any of its fields an error. Trigger_Volume and
+//                 Player_Spawn would both take it today.
+//   @singleton    at most one per session (a gamemode / world-settings entity).
+//   @category("Lighting")  grouping for the placement menu -- the first case
+//                 that wants an ARGUMENT, which the grammar should be able to
+//                 grow without moving the attribute somewhere else.
 //
-// Two structural rules the generator enforces, both added in P4:
-//   * A component-typed field carries NO flags. The flags on the component's
-//     own fields are what every consumer reads; a flag at the use site would
-//     be silently ignored. (`volume: Box_Volume @Editable` used to do exactly
-//     that, sitting next to four unflagged component fields that meant the
-//     same thing.)
-//   * @Editable / @Saveable on a @runtime_only entity is an error, not a
-//     no-op. The base's fields are exempt by construction: `Entity` is not
-//     itself @runtime_only, and its flags describe the map-placed types.
-//
-// A component-typed field carries no flags, but it CAN carry a default, written
-// as a literal naming the fields it differs on:
-//
+// components can carry defaults
 //     render: Render = { mesh = .Leet_Full }
 //
-// A field the literal does not name keeps the component's own default, so the
-// component stays the one place a neutral value is written and a use site says
-// only what is special about it. Literals nest (`{ material = { color = ... } }`)
-// and their order does not matter -- the generator sorts them.
-//
-// This exists so a per-type value has ONE home. Every one of these used to be a
-// hand-written assignment in a spawn function, and they had already drifted:
-// bot-fired rockets lived 5 seconds while player-fired ones lived 20, and a
-// trigger volume was born {1,1,1} everywhere except the editor's placement tool,
-// which said {64,64,64}.
-//
-// ---------------------------------------------------------------------------
-// ORIENTATION  (euler until 2026-08-31; a quaternion since)
-// ---------------------------------------------------------------------------
-// CANONICAL: `orientation` is a unit QUATERNION, stored x y z w -- the same
-// order `linalg::quatf` and the `.animation` channel lines already use.
-//
-// It was Euler XYZ in degrees, and the reason it stopped being that is not
-// interpolation. Euler ADDITION IS NOT ROTATION COMPOSITION: with Rz*Ry*Rx, a
-// delta added into .z is a world-frame turn, one added into .x is a local-frame
-// turn, and one added into .y is neither -- three rings of one gizmo, three
-// different meanings, one of them undefined. Every authored rotation in the map
-// was composed that way. rotation_def.md has the four sites and the argument.
-//
-// Construct one, never spell one: `from_axis_angle` for a ring drag,
-// `from_view_angles` for anything derived from an aim, `from_euler_degrees`
-// ONLY in the file reader's legacy arm. `to_euler_degrees` seeds the inspector
-// widget and has no other caller -- a decomposition is not unique, so a second
-// one would fight the first.
-//
-// NOT the same thing as heading, and this is the line that did NOT move. A
-// Player's facing is view_angle_yaw / view_angle_pitch, and those stay two
-// floats: an aim is 2-DOF with a clamp and a wrap, both defined on the angles,
-// and roll is not merely unused but unrepresentable -- which is a property
-// worth keeping in the type. `orientation` on a Player is written once at spawn
-// and is then vestigial. rotation_def.md §2 and §5 argue it, including against
-// the forward-vector spelling.
 
-
-Fully_Serializable :: [@Networked, @Editable, @Saveable]
+Fully_Serializable :: [@Networked, @Editable]
 
 Entity :: base {
     entity_id:   u32                    @Networked
     position:    v3                     @Fully_Serializable
     orientation: quat = {0, 0, 0, 1}    @Fully_Serializable
-
-    // A display LABEL, and nothing resolves it. entity_io_def.md ss6: a
-    // connection targets a UID, so the label needs no uniqueness rule and no
-    // lookup -- two entities may share one and nothing breaks. It buys the
-    // editor a readable name for uid 42 and a load error that can say
-    // "connection from front_door to lamp_3 refused" instead of "from 42 to
-    // 57". Not @Networked: an author types it, the client loaded the same map,
-    // and wiring is server-only. Player_Entity's own replicated name is
-    // `display_name` -- a different fact, negotiated at connect.
-    name:        string<32>             @Editable @Saveable
+    name:        string<32>             @Editable
 }
 
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum {Red, Blu, Free_For_All}
 
 Weapon :: enum {Knife, Scout, Rocket_Launcher, Dash}
-
-// HOW a trigger pull resolves.
 Fire_Resolution :: enum { Hitscan, Projectile, Self_Impulse }
 
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
@@ -137,8 +70,8 @@ Reflection_Volume_Entity :: entity {
     volume: Box_Volume = { half_extents = {256, 256, 256} }
 }
 Box_Volume :: component {
-    position: v3 = {0, 0, 0}            @Editable @Saveable
-    half_extents: v3 = {1, 1, 1}        @Editable @Saveable
+    position: v3 = {0, 0, 0}            @Editable
+    half_extents: v3 = {1, 1, 1}        @Editable
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +92,12 @@ Enabled :: component {
     value: bool = true                  @Fully_Serializable
 }
 
+Health:: component 
+{
+    current_health: i32 = 100   @Fully_Serializable
+    max_health: i32 = 100       @Editable
+}
+
 Usable :: trait { accepts Use() }
 
 Switchable :: trait requires Enabled {
@@ -175,7 +114,7 @@ Touchable :: trait {
     by    Player_Entity, Physics_Body_Entity
 }
 
-Mortal :: trait {
+Mortal :: trait requires Health {
     accepts Kill(), Set_Health(amount: i32), Damage(amount: i32)
     emits   Died(killer: entity), Health_Changed(health: i32)
 }
@@ -196,51 +135,17 @@ Render :: component {
     material:     Material
 }
 
-// WHERE a light is evaluated, and it is a correctness requirement rather than a
-// tuning knob: the bake walks every light in the map, so the day a runtime light
-// array exists with no mode, every static light is counted TWICE -- once out of
-// the atlas and once analytically. lighting_def.md ss2.
-//
-// Mixed is the middle value it is tempting to skip, and it is what makes a
-// character look like they are in the room. A lightmap lives on brush face
-// charts, so a player receives NOTHING from a baked light -- they are not in the
-// atlas. With only Baked and Dynamic an author chooses between a level light
-// that ignores characters and one that costs a runtime slot and casts no shadow.
 Light_Mode :: enum { Baked, Mixed, Dynamic }
-
 Light :: component {
-    color:     v3 = {1, 1, 1}   @Editable @Saveable
-    // For a point or spot light: the irradiance it delivers at ONE METRE, falling
-    // off with the square of the distance (shared/lighting.hpp, radiance_of). For
-    // a directional light there is no distance and no falloff, so this IS the
-    // irradiance on every face facing it -- a sun of 1 lights a whole wall as
-    // much as a lamp of 1 held one metre from it, and at the default r_exposure a
-    // white face saturates near 3. A spot at intensity I is that bright only at
-    // I / d^2 metres, so a sun matching a spot's centre at d metres wants I / d^2.
-    intensity: f32 = 1.0        @Editable @Saveable
-    // Baked is the default because level fill light is most of them, and because
-    // it is what every light already in a .source file was when it was placed.
-    mode:      Light_Mode = .Baked  @Editable @Saveable
-    // The emitter's RADIUS, in engine units, and the name is deliberately not
-    // `range`: range is how far the light REACHES, this is how big the thing
-    // emitting it is, and they are unrelated quantities that want the same word.
-    // Unreal ships SourceRadius beside AttenuationRadius for the same reason.
-    //
-    // Zero is a punctual light and is exactly the shading and the bake this had
-    // before area lights existed, which is why every .source file on disk needs
-    // no conversion. Above zero it buys three things that have to move together
-    // or the surface carries two lighting models: a penumbra in the bake, a
-    // broadened specular highlight at runtime, and a near-field falloff clamp
-    // (a true inverse square diverges at zero distance for anything with size).
-    //
-    // A DIRECTIONAL light ignores it -- the sun is infinitely far away, so its
-    // softness is an angle rather than a length, and it carries its own
-    // angular_diameter_degrees instead.
-    source_radius: f32 = 0.0    @Editable @Saveable
-    // Gate 9. Whether this light renders a shadow map at runtime; a Baked light
-    // never does whatever this says (lighting_def.md decision K). The one
-    // authored shadow knob -- resolution is the pool's, never the light's.
-    casts_shadows: bool = true  @Editable @Saveable
+    color:     v3 = {1, 1, 1}       @Editable
+
+    // irradiance it delivers at one meter.
+    intensity: f32 = 1.0            @Editable
+    mode:      Light_Mode = .Baked  @Editable
+
+    // this is _NOT_ the reach of the light: this is if you want a sun.
+    source_radius: f32 = 0.0        @Editable
+    casts_shadows: bool = true      @Editable
 }
 
 Movement :: component {
@@ -251,28 +156,19 @@ Movement :: component {
     seconds_until_impulse_ready: f32    @Networked
 }
 
-
 Inventory :: component {
-    weapons:              u32[Inventory_Slot]  @Networked
+    weapons:              u32[Inventory_Slot]      @Networked
     active_slot:          Inventory_Slot = .Melee  @Networked
     deploy_complete_time: u64
 }
 
-// Room to grow, if the need shows up -- same slot, same syntax:
-//   @no_network   nothing about this type is ever replicated; makes @Networked
-//                 on any of its fields an error. Trigger_Volume and
-//                 Player_Spawn would both take it today.
-//   @singleton    at most one per session (a gamemode / world-settings entity).
-//   @category("Lighting")  grouping for the placement menu -- the first case
-//                 that wants an ARGUMENT, which the grammar should be able to
-//                 grow without moving the attribute somewhere else.
 
 // Placed in the editor; the server consumes it at load and removes it.
 // Nothing about a spawn point survives into a snapshot, so nothing is
 // @Networked -- the client never sees one.
 Player_Spawn_Entity :: entity {
-    spawn_type: Spawn_Type = .Human     @Editable @Saveable
-    team_allegiance: Team_Allegiance = .Free_For_All @Editable @Saveable 
+    spawn_type: Spawn_Type = .Human     @Editable
+    team_allegiance: Team_Allegiance = .Free_For_All @Editable 
 }
 
 // this does not need anything, really.
@@ -286,7 +182,7 @@ Player_Entity :: entity @runtime_only {
     view_angle_pitch:  f32              @Networked
     body_yaw:          f32              @Networked
 
-    health:            i32              @Networked
+    health:            Health           
 
     death_tick:        u32              @Networked
     last_fire_tick:    u32              @Networked
@@ -349,13 +245,12 @@ Player_Entity :: entity @runtime_only {
 //@NOTE(SJM): this is a hacky test to embed in weapon_entity, but it's a test.
 Damage_Type :: enum {Normal, Orange, Teal}
 
-
 Weapon_Entity :: entity {
     ammo:             i32               @Networked
     weapon_id:        Weapon            @Networked
     owner_uid:        u32
     next_fire_time:   u64
-    damage_type: Damage_Type = .Normal  @Editable @Saveable
+    damage_type: Damage_Type = .Normal  @Editable
     render:           Render
 }
 
@@ -371,44 +266,43 @@ Rocket_Entity :: entity @runtime_only {
 }
 
 Particle_Emitter_Entity :: entity {
-    sprite:             texture_asset = .Smoke @Editable @Saveable
-    emit_rate:          f32 = 20.0            @Editable @Saveable
-    max_particles:      i32 = 64              @Editable @Saveable
-    lifetime_min:       f32 = 0.5             @Editable @Saveable
-    lifetime_max:       f32 = 1.5             @Editable @Saveable
-    velocity_min:       f32 = 2.0             @Editable @Saveable
-    velocity_max:       f32 = 5.0             @Editable @Saveable
-    spread:             f32 = 0.5             @Editable @Saveable
-    gravity:            v3 = {0, 0.5, 0}      @Editable @Saveable
-    drag:               f32 = 0.3             @Editable @Saveable
-    size_start:         f32 = 0.5             @Editable @Saveable
-    size_end:           f32 = 2.0             @Editable @Saveable
-    rotation_speed_min: f32 = -1.0            @Editable @Saveable
-    rotation_speed_max: f32 = 1.0             @Editable @Saveable
-    color_start:        v3 = {1, 1, 1}        @Editable @Saveable
-    color_end:          v3 = {0.5, 0.5, 0.5}  @Editable @Saveable
-    alpha_start:        f32 = 0.8             @Editable @Saveable
-    alpha_end:          f32 = 0.0             @Editable @Saveable
-    emitter_lifetime:   f32 = 0.0             @Editable @Saveable
+    sprite:             texture_asset = .Smoke @Editable
+    emit_rate:          f32 = 20.0            @Editable
+    max_particles:      i32 = 64              @Editable
+    lifetime_min:       f32 = 0.5             @Editable
+    lifetime_max:       f32 = 1.5             @Editable
+    velocity_min:       f32 = 2.0             @Editable
+    velocity_max:       f32 = 5.0             @Editable
+    spread:             f32 = 0.5             @Editable
+    gravity:            v3 = {0, 0.5, 0}      @Editable
+    drag:               f32 = 0.3             @Editable
+    size_start:         f32 = 0.5             @Editable
+    size_end:           f32 = 2.0             @Editable
+    rotation_speed_min: f32 = -1.0            @Editable
+    rotation_speed_max: f32 = 1.0             @Editable
+    color_start:        v3 = {1, 1, 1}        @Editable
+    color_end:          v3 = {0.5, 0.5, 0.5}  @Editable
+    alpha_start:        f32 = 0.8             @Editable
+    alpha_end:          f32 = 0.0             @Editable
+    emitter_lifetime:   f32 = 0.0             @Editable
     parent_entity_id:   u32 = 0
 }
 
 Damageable_Entity :: entity is Mortal {
-    max_health:        i32 = 100                @Editable @Saveable
-    health:            i32 = 100                @Networked
-    hitbox_half_extents: v3 = {16, 32, 16}      @Editable @Saveable
-    weakness: Damage_Type = .Orange              @Editable @Saveable
+    health: Health                         
+    hitbox_half_extents: v3 = {16, 32, 16}      @Editable
+    weakness: Damage_Type = .Orange              @Editable
     render:            Render
 }
 
 Trigger_Volume_Entity :: entity is Switchable, Touchable {
     switch_state:      Enabled
     volume:            Box_Volume = { half_extents = {64, 64, 64} }
-    action:            Trigger_Action = .Kill   @Editable @Saveable
-    fire_mode:         Fire_Mode = .On_Enter    @Editable @Saveable
-    param_target_name: string<64>               @Editable @Saveable
-    param_string:      string<128>              @Editable @Saveable
-    param_float:       f32 = 0.0                @Editable @Saveable
+    action:            Trigger_Action = .Kill   @Editable
+    fire_mode:         Fire_Mode = .On_Enter    @Editable
+    param_target_name: string<64>               @Editable
+    param_string:      string<128>              @Editable
+    param_float:       f32 = 0.0                @Editable
 }
 
 // THREE TYPES, NOT ONE WITH A KIND ENUM. This was `Light_Entity` plus a
@@ -453,21 +347,21 @@ Point_Light_Entity :: entity is Colorable, Switchable {
     //
     // Do NOT read the scale off g_gravity: 800 is arcade gravity, ~2x real, and
     // the only constant here that does not respect the inch mapping.
-    range: f32 = 256.0                  @Editable @Saveable
+    range: f32 = 256.0                  @Editable
 }
 
 Spot_Light_Entity :: entity is Colorable, Switchable {
     switch_state:      Enabled
     light:         Light
     // 512 units = 42 feet (13m): a beam down a corridor rather than a room.
-    range:         f32 = 512.0          @Editable @Saveable
+    range:         f32 = 512.0          @Editable
     // HALF-angle in degrees, measured from the cone axis -- which is what
     // pbr.frag's `dot(-L, direction)` compares against, and what Unreal and
     // Godot both mean by a spot angle. Inner is where falloff starts, outer
     // where it reaches zero; inner > outer inverts the gradient rather than
     // being rejected, and the editor cone draws what the value says.
-    inner_degrees: f32 = 20.0           @Editable @Saveable
-    outer_degrees: f32 = 35.0           @Editable @Saveable
+    inner_degrees: f32 = 20.0           @Editable
+    outer_degrees: f32 = 35.0           @Editable
 }
 
 // No range and no position falloff -- a directional light is a direction and a
@@ -483,7 +377,7 @@ Directional_Light_Entity :: entity {
     //
     // Zero is the hard parallel sun this had before, so no map converts and a
     // bake pays for extra shadow rays only where an author asked for softness.
-    angular_diameter_degrees: f32 = 0.0     @Editable @Saveable
+    angular_diameter_degrees: f32 = 0.0     @Editable
 }
 
 // Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console
@@ -494,11 +388,11 @@ Physics_Body_Entity :: entity {
     // Jolt's shape and the editor's size box. Server-side simulation input;
     // the visual size rides in render.scale, which the spawn path sets from
     // the same extents.
-    shape:    Shape_Kind = .Box         @Editable @Saveable
-    size:     v3                        @Editable @Saveable
+    shape:    Shape_Kind = .Box         @Editable
+    size:     v3                        @Editable
     // Kept @Networked for the interpolation item in todo.md: bodies currently
     // snap to each snapshot, and velocity is what a lerp/extrapolate needs.
     velocity: v3                        @Networked
-    mass:     f32 = 10.0                @Editable @Saveable
+    mass:     f32 = 10.0                @Editable
     render:   Render
 }

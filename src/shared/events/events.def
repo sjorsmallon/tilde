@@ -1,5 +1,10 @@
 // events.def -- the gameplay event channel.
 //
+// Emits the same three files as effects.def, named from THIS stem:
+// generated/events_generated.{hpp,cpp} and client_events_bindings_generated.cpp,
+// whose switch calls client::game_events::on_<member> -- one hand-written file
+// each under src/client/game_events/.
+//
 // The other half of the event family; effects.def is its twin and carries the
 // full note on what a `channel` is. Same construct, same emitted surface -- the
 // two files differ only in which packet their batch rides.

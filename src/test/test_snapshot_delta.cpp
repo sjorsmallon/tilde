@@ -134,11 +134,11 @@ int main()
     {
       Test_Frame& frame  = history.slot_for(tick);
       frame.tick         = tick;
-      frame.player.health = (int32_t)(100 - tick);
+      frame.player.health.current_health= (int32_t)(100 - tick);
     }
 
     assert(history.find(1) != nullptr);
-    assert(history.find(4)->player.health == 96);
+    assert(history.find(4)->player.health.current_health== 96);
 
     // Tick 5 lands in tick 1's slot: the window is 4 wide, so 1 has aged out.
     Test_Frame& frame = history.slot_for(5);
@@ -168,22 +168,22 @@ int main()
     std::cout << "  [Subtest] Delta against an acked baseline is exact..." << std::endl;
 
     entities::Player_Entity server_state;
-    server_state.health   = 100;
+    server_state.health.current_health   = 100;
     server_state.last_fire_tick = 30;
     server_state.position = {10.0f, 20.0f, 30.0f};
 
     entities::Player_Entity client_state;
     const size_t full_size = transmit(server_state, nullptr, client_state);
-    assert(client_state.health == 100);
+    assert(client_state.health.current_health == 100);
     assert(client_state.last_fire_tick == 30);
 
     // One field moves. The client holds the exact baseline, so the delta only
     // has to carry that field.
     entities::Player_Entity acked_baseline = client_state;
-    server_state.health                    = 75;
+    server_state.health.current_health                    = 75;
 
     const size_t delta_size = transmit(server_state, &acked_baseline, client_state);
-    assert(client_state.health == 75);
+    assert(client_state.health.current_health == 75);
     assert(client_state.last_fire_tick == 30);           // untouched, carried by the baseline
     assert(client_state.position.x == 10.0f);  // ditto
 
@@ -203,15 +203,15 @@ int main()
     // lost. The field then stops changing, so it is never in a delta again --
     // and the client is wrong about it forever.
     entities::Player_Entity server_state;
-    server_state.health = 100;
+    server_state.health.current_health = 100;
 
     entities::Player_Entity client_state;
     transmit(server_state, nullptr, client_state); // tick 1, arrives
-    assert(client_state.health == 100);
+    assert(client_state.health.current_health == 100);
 
     entities::Player_Entity last_sent = server_state;
 
-    server_state.health = 40; // tick 2: took damage
+    server_state.health.current_health = 40; // tick 2: took damage
     {
       entities::Player_Entity discarded_by_packet_loss = client_state;
       transmit(server_state, &last_sent, discarded_by_packet_loss);
@@ -221,18 +221,18 @@ int main()
     // Tick 3: health is stable at 40, so a delta against last_sent says nothing
     // about it, and the client keeps rendering 100.
     transmit(server_state, &last_sent, client_state);
-    assert(client_state.health == 100); // WRONG, and it never self-corrects
+    assert(client_state.health.current_health == 100); // WRONG, and it never self-corrects
 
     // Now the same loss with the acked rule. The client's ack still names tick
     // 1, so the server deltas against tick 1 -- health differs there, so it
     // rides again and the client converges.
     entities::Player_Entity acked_baseline;
-    acked_baseline.health = 100;
+    acked_baseline.health.current_health = 100;
 
     entities::Player_Entity recovered_client;
-    recovered_client.health = 100;
+    recovered_client.health.current_health = 100;
     transmit(server_state, &acked_baseline, recovered_client);
-    assert(recovered_client.health == 40);
+    assert(recovered_client.health.current_health == 40);
 
     std::cout << "    -> Success (desync reproduced, ack rule fixes it)!" << std::endl;
   }
@@ -241,17 +241,17 @@ int main()
     std::cout << "  [Subtest] Changed-field mask names exactly what moved..." << std::endl;
 
     entities::Player_Entity baseline;
-    baseline.health   = 100;
+    baseline.health.current_health   = 100;
     baseline.position = {1.0f, 2.0f, 3.0f};
 
     entities::Player_Entity server_state = baseline;
-    server_state.health                  = 60;
+    server_state.health.current_health                  = 60;
 
     entities::Player_Entity  client_state = baseline;
     network::changed_fields_t changed;
     transmit(server_state, &baseline, client_state, &changed);
 
-    const uint32_t health_leaf   = leaf_index_of(entities::entity_type::Player_Entity, "health");
+    const uint32_t health_leaf   = leaf_index_of(entities::entity_type::Player_Entity, "health.current_health");
     const uint32_t position_leaf = leaf_index_of(entities::entity_type::Player_Entity, "position");
 
     assert(changed.any());
@@ -558,7 +558,7 @@ int main()
     entities::Player_Entity player;
     player.entity_id         = 1;
     player.client_slot_index = 0;
-    player.health            = 100;
+    player.health.current_health           = 100;
     server_frame.players[1]  = player;
 
     entities::Physics_Body_Entity body;
@@ -571,7 +571,7 @@ int main()
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
 
-    assert(client_frame.players.at(1).health == 100);
+    assert(client_frame.players.at(1).health.current_health == 100);
     assert(client_frame.players.at(1).client_slot_index == 0);
     assert(client_frame.physics_bodies.at(20).position.y == 6.f);
     assert(client_frame.rockets.at(30).position.x == 42.f);
@@ -606,7 +606,8 @@ int main()
     entities::Damageable_Entity crate;
     crate.entity_id           = 70;
     crate.position            = {100.f, 0.f, 200.f};
-    crate.health              = 100;
+    crate.health.max_health              = 100;
+    crate.health.current_health          = crate.health.max_health;
     crate.hitbox_half_extents = {16.f, 32.f, 16.f};
     crate.render.visible      = true;
     server_frame.damageables[70] = crate;
@@ -615,7 +616,7 @@ int main()
     transmit_snapshot(server_frame, nullptr, client_frame);
 
     assert(client_frame.damageables.size() == 1);
-    assert(client_frame.damageables.at(70).health == 100);
+    assert(client_frame.damageables.at(70).health.current_health == 100);
     assert(client_frame.damageables.at(70).render.visible);
 
     // hitbox_half_extents is deliberately NOT @Networked, so it arrives as the
@@ -631,7 +632,7 @@ int main()
     // changed leaves on one entity and must cost exactly one record.
     network::snapshot_frame_t acked = client_frame;
     server_frame.tick                        = 2;
-    server_frame.damageables[70].health       = 0;
+    server_frame.damageables[70].health.current_health       = 0;
     server_frame.damageables[70].render.visible = false;
 
     network::snapshot_frame_t after_death;
@@ -639,7 +640,7 @@ int main()
     transmit_snapshot(server_frame, &acked, after_death, &record_count);
 
     assert(record_count == 1);
-    assert(after_death.damageables.at(70).health == 0);
+    assert(after_death.damageables.at(70).health.current_health == 0);
     assert(!after_death.damageables.at(70).render.visible);
 
     // And an untouched one costs nothing at all, which is what makes a level
@@ -651,7 +652,7 @@ int main()
     transmit_snapshot(server_frame, &acked_after_death, idle, &record_count);
 
     assert(record_count == 0);
-    assert(idle.damageables.at(70).health == 0);
+    assert(idle.damageables.at(70).health.current_health == 0);
 
     std::cout << "    -> Success!" << std::endl;
   }

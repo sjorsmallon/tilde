@@ -121,7 +121,7 @@ void on_round_started(client_context_t &context, const shared::Round_Started &va
 the other `src/client/effects/*.cpp` or `src/client/game_events/*.cpp` lines.
 
 **There is no registration step.** The generated binder TU
-(`client_effects_bindings.cpp` / `client_events_bindings.cpp`) switches over the
+(`client_effects_bindings_generated.cpp` / `client_events_bindings_generated.cpp`) switches over the
 closed enum and calls the handler directly, so a member with no function is a
 **link error naming the symbol**. That link step is the assert; "forgot to
 register" is not representable, because there is nothing to register.
@@ -169,7 +169,7 @@ src/shared/reflection.{hpp,cpp}           field_info_t and field_to_text: the
 src/shared/network/field_codec.{hpp,cpp}  write_field / read_field: the wire,
                                           also shared with the entity family
 src/client/event_handlers.hpp             the receiving side's seam, and all of it
-src/shared/{effects,events}/generated/client_*_bindings.cpp
+src/shared/{effects,events}/generated/client_*_bindings_generated.cpp
                                           each channel's dispatch (game_client)
 src/client/effects/*.cpp                  one file per Effect member
 src/client/game_events/*.cpp              one file per Game_Event member

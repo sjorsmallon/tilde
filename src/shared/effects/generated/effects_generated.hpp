@@ -121,7 +121,7 @@ void fire_flesh_impact(event_stream_t& stream, const Flesh_Impact& payload);
 // so there is nothing to resynchronize to and the caller stops.
 //
 // The receiving side's dispatch switch is generated beside its handlers
-// (client_*_bindings.cpp), because it is what references them.
+// (client_*_bindings_generated.cpp), because it is what references them.
 [[nodiscard]] std::optional<Rocket_Explosion> try_read_rocket_explosion(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Bullet_Impact> try_read_bullet_impact(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Footstep> try_read_footstep(network::Bit_Reader& reader);

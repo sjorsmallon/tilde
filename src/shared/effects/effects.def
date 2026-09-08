@@ -1,5 +1,15 @@
 // effects.def -- the cosmetic effect channel.
-
+//
+// Parsed by src/tools/def_gen.cpp, which emits into generated/ -- names derived
+// from this file's STEM, every one ending in _generated:
+//
+//   effects_generated.{hpp,cpp}              the member structs, the enum, the codec
+//   client_effects_bindings_generated.cpp    the dispatch switch -- into game_client
+//
+// The binder calls client::effects::on_<member>, one hand-written file each under
+// src/client/effects/, where that event's consumer list lives. A declared member
+// with no file is a LINK error naming the symbol; --scaffold writes the stub once,
+// write-if-absent.
 //
 // A CHANNEL is a closed set of named messages, each carrying a payload, each
 // dispatched to exactly one handler. `channel` declares the shared payload; its

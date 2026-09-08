@@ -25,12 +25,12 @@ int main()
   // Values are chosen to survive write_coord, which keeps 5 fractional bits:
   // integers and multiples of 1/32 round-trip exactly, arbitrary floats do not.
   entities::Player_Entity server_tick_1;
-  server_tick_1.health   = 100;
+  server_tick_1.health.current_health = 100;
   server_tick_1.position = {10.0f, 20.0f, 0.0f};
   server_tick_1.last_fire_tick = 30;
 
   entities::Player_Entity server_tick_2 = server_tick_1;
-  server_tick_2.health     = 90;    // took damage
+  server_tick_2.health.current_health = 90; // took damage
   server_tick_2.position.x = 12.0f; // moved
   // position.y, position.z and last_fire_tick deliberately unchanged.
 
@@ -45,7 +45,7 @@ int main()
     network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
     network::deserialize_entity(reader, client);
 
-    assert(client.health == 100);
+    assert(client.health.current_health == 100);
     assert(client.position.x == 10.0f);
     assert(client.position.y == 20.0f);
     assert(client.last_fire_tick == 30);
@@ -64,7 +64,7 @@ int main()
     network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
     network::deserialize_entity(reader, client);
 
-    assert(client.health == 90);
+    assert(client.health.current_health == 90);
     assert(client.position.x == 12.0f);
     assert(client.position.y == 20.0f); // unchanged, so untouched by the delta
     assert(client.last_fire_tick == 30);          // unchanged

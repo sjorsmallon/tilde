@@ -18,7 +18,7 @@ int main()
   std::cout << "[TEST] Starting Entity Delta Packing Test..." << std::endl;
 
   entities::Player_Entity player;
-  player.health   = 100;
+  player.health.current_health  = 100;
   player.position = {10.0f, 20.0f, 0.0f};
   player.last_fire_tick = 30;
 
@@ -32,13 +32,13 @@ int main()
     assert(packet.entity_data().size() > 0);
 
     entities::Player_Entity received;
-    received.health = 0; // start different, so an overwrite is observable
+    received.health.current_health = 0; // start different, so an overwrite is observable
 
     network::Bit_Reader reader((const network::uint8 *)packet.entity_data().data(),
                                packet.entity_data().size());
     network::deserialize_entity(reader, received);
 
-    assert(received.health == 100);
+    assert(received.health.current_health == 100);
     assert(received.position.x == 10.0f);
     assert(received.position.y == 20.0f);
     assert(received.last_fire_tick == 30);
@@ -49,11 +49,11 @@ int main()
     std::cout << "  [Subtest] Packing partial delta..." << std::endl;
 
     entities::Player_Entity baseline;
-    baseline.health   = 100;
+    baseline.health.current_health = 100;
     baseline.position = {10.0f, 20.0f, 0.0f};
     baseline.last_fire_tick = 30;
 
-    player.health = 90; // the only difference from the baseline
+    player.health.current_health= 90; // the only difference from the baseline
 
     game::S2C_EntityPackage packet;
     network::pack_entity_delta_for_update(packet, player, &baseline);
@@ -71,7 +71,7 @@ int main()
                                packet.entity_data().size());
     network::deserialize_entity(reader, received);
 
-    assert(received.health == 90);
+    assert(received.health.current_health == 90);
     assert(received.position.x == 10.0f); // unchanged
     assert(received.last_fire_tick == 30);          // unchanged
     std::cout << "    -> Success!" << std::endl;

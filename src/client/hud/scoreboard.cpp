@@ -77,7 +77,7 @@ Span<scoreboard_row_t> collect_scoreboard_rows(
     row.deaths   = player.deaths;
     row.slot     = slot;
     row.is_local = slot == local_slot;
-    row.is_alive = player.health > 0;
+    row.is_alive = player.health.current_health> 0;
   }
 
   std::sort(rows.begin(), rows.end(),

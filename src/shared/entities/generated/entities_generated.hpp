@@ -223,14 +223,15 @@ enum class component_type : uint16_t
 {
   Box_Volume = 0,
   Enabled = 1,
-  Material = 2,
-  Render = 3,
-  Light = 4,
-  Movement = 5,
-  Inventory = 6,
+  Health = 2,
+  Material = 3,
+  Render = 4,
+  Light = 5,
+  Movement = 6,
+  Inventory = 7,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 7;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 8;
 
 } // namespace entities
 
@@ -333,6 +334,14 @@ struct Enabled
   bool value = true;
 };
 
+struct Health
+{
+  static constexpr component_type static_component = component_type::Health;
+
+  int32_t current_health = 100;
+  int32_t max_health = 100;
+};
+
 struct Material
 {
   static constexpr component_type static_component = component_type::Material;
@@ -433,7 +442,7 @@ struct Player_Entity : Entity
   float view_angle_yaw = {};
   float view_angle_pitch = {};
   float body_yaw = {};
-  int32_t health = {};
+  Health health = {};
   uint32_t death_tick = {};
   uint32_t last_fire_tick = {};
   Weapon last_fire_weapon = Weapon::Knife;
@@ -517,8 +526,7 @@ struct Damageable_Entity : Entity
 
   Damageable_Entity() { type = entity_type::Damageable_Entity; }
 
-  int32_t max_health = 100;
-  int32_t health = 100;
+  Health health = {};
   linalg::vec3f hitbox_half_extents = {16.0f, 32.0f, 16.0f};
   Damage_Type weakness = Damage_Type::Orange;
   Render render = {};
@@ -725,7 +733,6 @@ enum field_flags_t : uint32_t
   FIELD_FLAG_NONE      = 0,
   FIELD_FLAG_NETWORKED = 1 << 0,
   FIELD_FLAG_EDITABLE  = 1 << 1,
-  FIELD_FLAG_SAVEABLE  = 1 << 2,
 };
 
 // Entity field tables NEST -- a component-typed field's insides live in

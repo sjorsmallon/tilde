@@ -1168,7 +1168,7 @@ shared::aabb_bounds_t compute_mesh_bounds(const mesh_asset_t *mesh)
 
 // --- The manifest ---
 //
-// register_all is GENERATED (assets/generated/assets_bindings.cpp): one loop
+// register_all is GENERATED (assets/generated/assets_bindings_generated.cpp): one loop
 // per class, over the manifest asset_pack wrote, calling the decoders and
 // placeholders above by name. There is no switch here and no per-class line --
 // which is the same decision entity_system_def.md settled when make_entity_pool

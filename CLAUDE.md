@@ -253,7 +253,7 @@ entities.def  ──def_gen──▶  entities_generated.{hpp,cpp}   (structs + 
 
 Generated output: the `entity_type` enum, one plain struct per entity, the component structs, the enum types, `ENTITY_INFOS[]` / `COMPONENT_OFFSETS[][]` reflection tables, `entity_from_classname`, `placeable_entity_types()`, and `SCHEMA_HASH`. The asset manifests are **not** here — they are their own family (see "Asset System").
 
-Field flags are `@Networked`, `@Editable`, `@Saveable`, and all three are load-bearing (a self-contradictory combination, e.g. `@Editable` on a `@runtime_only` type, is a generator error, not a no-op). `entities.def` documents what each one means and why every field has the flags it has — read that before adding a field.
+Field flags are `@Networked` and `@Editable`, and both are load-bearing (a self-contradictory combination, e.g. `@Editable` on a `@runtime_only` type, is a generator error, not a no-op). `@Editable` covers the inspector AND map I/O: there used to be a separate `@Saveable` beside it, and across the whole schema not one field ever carried one without the other — a field an author can change that the map does not keep is an edit that vanishes on save, and a field the map keeps that the author cannot reach is a value only a text editor can set. `entities.def` documents what each one means and why every field has the flags it has — read that before adding a field.
 
 **Defaults, including per-use component defaults.** Every field's default is a member initializer in the generated struct, so construction is `T entity{}` and nothing needs a setup pass. A component-typed field takes a literal naming only the fields it differs on — `render: Render = { mesh = .Leet_Full }` — which emits as a C++ designated initializer, so any member the literal does not name keeps the component's own default. Literals nest and their order does not matter (the generator sorts them into declaration order, which the designated initializer requires). This is why there is no `initialize_player_body` and no per-spawn fixup block: a per-type constant has one home, and the drift it replaced was real (bot rockets lived 5s to player rockets' 20s; a trigger volume was `{1,1,1}` everywhere except the placement tool's `{64,64,64}`). Defaults are excluded from `SCHEMA_HASH` on purpose, so changing one never breaks the handshake.
 
@@ -383,9 +383,15 @@ cvars_generated.hpp            cvar_state_t, cvar_id / command_id, the info
                                tables, the text conversion, handler declarations
 cvars_generated.cpp            the tables. References NO handler, so it compiles
                                into game_shared with neither side present
-server_command_bindings.cpp    fills the @Server slots — into game_server
-client_command_bindings.cpp    the @Client slots — into game_client
+server_command_bindings_generated.cpp
+                               fills the @Server slots — into game_server
+client_command_bindings_generated.cpp
+                               the @Client slots — into game_client
 ```
+
+**EVERY EMITTED FILE'S NAME ENDS IN `_generated`, and `open_generated_file` REFUSES one that does not.** A `generated/` directory says what a file is only once you already know which directories are generated; a name says it in a tab bar, a grep hit and a compiler error, which is where the question is actually asked. The six binder TUs (`server_action_bindings_generated.cpp`, `assets_bindings_generated.cpp`, the two command binders, the two channel binders) were the exception and are not one any more. The rule is enforced in the tool rather than remembered, so a new emitter cannot quietly opt out; `assets.manifest` is outside it because `asset_pack` writes that one, not `def_gen`.
+
+**The hand-written halves are named by what they FILL, and they are not in `generated/`.** A binder TU references symbols nobody has written yet, so the seam is a link error and the counterpart file is where that error is answered: `src/server/traits/<trait>.cpp` for an entity-I/O action (`switchable.cpp`, `colorable.cpp`, `mortal.cpp` — named for the `trait` keyword in `entities.def`, which is what they implement), `src/client/effects/<member>.cpp` and `src/client/game_events/<member>.cpp` for a channel member. `--scaffold` writes the channel ones once, write-if-absent; the trait ones are hand-authored.
 
 The three `.def` families are fenced: one `.def` holds one family (mixing them is a generator error), a cvar may not reference an entity type, and the flag vocabularies are disjoint — `@Networked` on a cvar, `@Client` on an entity field and a flag on any event field at all are errors, not no-ops. What they share is the lexer, the primitive type table and `SCHEMA_HASH`. The event family is the one with **two** input files, one channel each. (Assets used to be a fourth family; they are the asset manifest now, which is not a `.def` and claims no family.)
 
@@ -413,7 +419,7 @@ A **channel** is a closed set of named messages, each carrying a payload, each d
 
 **The kind enum is derived from member declaration order** (`effect_type` / `EFFECT_TYPE_COUNT`, from the channel's name); nothing is spelled twice. **One struct per member, always** — a member with no body gets an empty one deriving from the channel, so there is zero special-casing in the emitter and a handler's parameter is always its own type. Fire helpers take that struct: `fire_rocket_explosion(stream, const Rocket_Explosion&)`.
 
-**One `.def` holds one channel** (a second is a generator error), and the two live in `src/shared/effects/effects.def` and `src/shared/events/events.def`. This is the first family with two input files, so all four emitted names are derived from the `.def`'s **filename stem** rather than hardcoded — `effects.def` → `effects_generated.{hpp,cpp}` + `client_effects_bindings.cpp`, into `<dir of the .def>/generated/`. The old literals were safe only while every family had exactly one input; one of them is written verbatim into an `#include`, so a literal would have the effects codec including the gameplay-event header.
+**One `.def` holds one channel** (a second is a generator error), and the two live in `src/shared/effects/effects.def` and `src/shared/events/events.def`. This is the first family with two input files, so all four emitted names are derived from the `.def`'s **filename stem** rather than hardcoded — `effects.def` → `effects_generated.{hpp,cpp}` + `client_effects_bindings_generated.cpp`, into `<dir of the .def>/generated/`. The old literals were safe only while every family had exactly one input; one of them is written verbatim into an `#include`, so a literal would have the effects codec including the gameplay-event header.
 
 **Both channels encode at fire time, into a `shared::event_stream_t`** (a `Bit_Writer` + a count). Nothing is held as a value, so **neither channel has a queue or a tagged union** — there is no `game_event_t`, no `dispatched_effect_t`. The client's reader decodes into a typed stack local and calls one consumer. `outgoing.effects` and `outgoing.events` are both streams.
 
@@ -425,7 +431,7 @@ The effect batch is gated on `client_slot_t::map_ready` and the event batch is n
 
 **There is no event codec and no event reflection vocabulary.** A member's table is rows of the same `field_info_t` the entity family emits, so the wire is `network::write_field` / `read_field` and the text is `field_to_text` (see "Reflection" above). The allowed field set is therefore everything that walker handles — `f64`, `u64`, the narrow ints, `v4`, `v4i` and `string<N>` come free — minus `component` (a channel table is flat, with no leaf flattening pass) and `asset` (would need the `import` this family forbids). Each of those two is a generator error saying why.
 
-**The seam is a symbol reference, not a text region.** `client_<stem>_bindings.cpp` switches over the channel's closed enum and calls `client::effects::on_<name>` / `client::game_events::on_<name>` directly, so a declared member with no function is a **link error naming the symbol**. That link step is the assert: there is no registry, no table and no bind step, so "forgot to register" is not representable — only "forgot to write it". `src/client/event_handlers.hpp` is the hand-written seam and declares nothing but the two dispatch entry points; the per-member files under `src/client/effects/` and `src/client/game_events/` are where each event's **consumer list** lives, which is why a registry would be worse than a switch.
+**The seam is a symbol reference, not a text region.** `client_<stem>_bindings_generated.cpp` switches over the channel's closed enum and calls `client::effects::on_<name>` / `client::game_events::on_<name>` directly, so a declared member with no function is a **link error naming the symbol**. That link step is the assert: there is no registry, no table and no bind step, so "forgot to register" is not representable — only "forgot to write it". `src/client/event_handlers.hpp` is the hand-written seam and declares nothing but the two dispatch entry points; the per-member files under `src/client/effects/` and `src/client/game_events/` are where each event's **consumer list** lives, which is why a registry would be worse than a switch.
 
 Ordering is the wire id, and the declarations are mixed into `SCHEMA_HASH`, so a reorder is a refused handshake rather than a silent remap. Append anyway.
 
@@ -909,7 +915,7 @@ resources/**  ──asset_pack──▶  generated/assets.manifest
                                         │
                                      def_gen
                                         │
-     assets_generated.{hpp,cpp}   asset_state_generated.hpp   assets_bindings.cpp
+     assets_generated.{hpp,cpp}   asset_state_generated.hpp   assets_bindings_generated.cpp
         the ID SPACE                 the STORAGE                 the SEAM
 ```
 
@@ -928,7 +934,7 @@ resources/**  ──asset_pack──▶  generated/assets.manifest
 
 **Adding a new asset kind is impossible to get half-done.** Drop `foo.ogg` into a resource directory → `asset_pack` errors: unknown extension. Add the table row → the manifest carries it → `def_gen` emits a call to `assets::decode_ogg` → **link error naming the symbol** until you write it. Two forced stops, both loud, neither skippable. Same shape as the event channels: there is no registry and no bind step, so "forgot to register" is not representable — only "forgot to write it".
 
-**Three artifacts, and the split between the first two is not tidiness.** `assets_generated.hpp` is the **id space** (one enum per class, the two-column `asset_info_t` tables, `to_string`/`try_from_string`) and is kept to light includes, because `entities_generated.hpp` includes it. `asset_state_generated.hpp` is the **storage**: `asset_state_t` with one `Asset_Pool<T>` and one `Enum_Array<class, asset_handle_t<T>>` per class, plus the declarations of `load_<class>` / `get_<class>` / `decode_<ext>` / `make_missing_<class>`. It pulls in each class's value header — and `animation.hpp` includes `entities_generated.hpp`, so emitting the state into the header entities include would be a cycle. `assets_bindings.cpp` defines the loaders and `register_all`.
+**Three artifacts, and the split between the first two is not tidiness.** `assets_generated.hpp` is the **id space** (one enum per class, the two-column `asset_info_t` tables, `to_string`/`try_from_string`) and is kept to light includes, because `entities_generated.hpp` includes it. `asset_state_generated.hpp` is the **storage**: `asset_state_t` with one `Asset_Pool<T>` and one `Enum_Array<class, asset_handle_t<T>>` per class, plus the declarations of `load_<class>` / `get_<class>` / `decode_<ext>` / `make_missing_<class>`. It pulls in each class's value header — and `animation.hpp` includes `entities_generated.hpp`, so emitting the state into the header entities include would be a cycle. `assets_bindings_generated.cpp` defines the loaders and `register_all`.
 
 **There is no per-class hand-written line anywhere**, and that is the requirement rather than an aesthetic: storage is data-driven from the manifest, behavior is a named symbol. It is the same split `entity_system_def.md` settled when `make_entity_pool` was deleted — a hand-written registration call list is that switch reincarnated, and it must not come back. `assets::init()` calls `register_all(state)` and nothing else.
 
