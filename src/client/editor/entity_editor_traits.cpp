@@ -21,6 +21,80 @@ constexpr float SPAWN_WEDGE_LENGTH       = 48.f;
 constexpr float SPAWN_WEDGE_HALF_WIDTH   = 14.f;
 constexpr float SPAWN_WEDGE_GROUND_LIFT  = 1.f;
 
+// this fucks with the interface definition so I parked it. I don't want to think about it.
+void draw_lightbulb_shape(pass_builder_t& draws, const linalg::vec3& position,
+                          const linalg::vec3& camera_position, color_t color,
+                          float size = 1.f)
+{
+  // Camera-facing basis.
+  linalg::vec3 to_camera = camera_position - position;
+  if (linalg::length(to_camera) < 1e-6f)
+    to_camera = linalg::vec3{0.f, 0.f, 1.f};
+  else
+    to_camera = linalg::normalize(to_camera);
+
+  linalg::vec3 up = linalg::vec3{0.f, 1.f, 0.f};
+  if (std::abs(linalg::dot(to_camera, up)) > 0.999f)   // looking straight up/down
+    up = linalg::vec3{0.f, 0.f, 1.f};
+
+  const linalg::vec3 right = linalg::normalize(linalg::cross(up, to_camera));
+  up = linalg::cross(to_camera, right);               // already unit length
+
+  // Canvas is 680x460, y-down, bulb centered near (340, 230).
+  // Map so the bulb's total height (~420 units) == `size` world units.
+  const float cx = 340.f, cy = 230.f;
+  const float scale = size / 420.f;
+  auto p = [&](float x, float y) {
+    return position + right * ((x - cx) * scale) + up * ((cy - y) * scale);
+  };
+  auto line = [&](float x1, float y1, float x2, float y2) {
+    draws.debug.line(p(x1, y1), p(x2, y2), color);
+  };
+
+  // Glass envelope (closed 16-point polygon)
+  static const float glass[][2] = {
+    {340, 60}, {392, 72}, {434, 104}, {458, 150}, {458, 206}, {434, 254},
+    {406, 290}, {390, 340}, {290, 340}, {274, 290}, {246, 254}, {222, 206},
+    {222, 150}, {246, 104}, {288, 72},
+  };
+  constexpr int n = sizeof(glass) / sizeof(glass[0]);
+  for (int i = 0; i < n; ++i) {
+    const float* a = glass[i];
+    const float* b = glass[(i + 1) % n];
+    line(a[0], a[1], b[0], b[1]);
+  }
+
+  // Screw base
+  line(290, 340, 390, 340);
+  line(296, 358, 384, 358);
+  line(300, 376, 380, 376);
+  line(306, 394, 374, 394);
+  line(314, 412, 366, 412);
+  line(322, 428, 358, 428);
+
+  // Filament supports
+  line(314, 340, 314, 214);
+  line(366, 340, 366, 214);
+
+  // Filament zigzag
+  line(314, 214, 324, 196);
+  line(324, 196, 334, 214);
+  line(334, 214, 344, 196);
+  line(344, 196, 354, 214);
+  line(354, 214, 366, 196);
+
+  // Rays
+  line(340, 24, 340, 8);
+  line(256, 46, 246, 32);
+  line(424, 46, 434, 32);
+  line(198, 108, 182, 100);
+  line(482, 108, 498, 100);
+  line(186, 184, 170, 184);
+  line(494, 184, 510, 184);
+}
+
+
+
 void draw_player_spawn_shape(pass_builder_t& draws, const linalg::vec3& position,
                              const linalg::quatf& orientation, color_t color)
 {

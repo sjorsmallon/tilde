@@ -4328,6 +4328,47 @@ static const char* cvar_type_enum_name(type_kind_t kind)
   return "CVAR_TYPE_F32";
 }
 
+// "Rocket_Explosion" -> "rocket_explosion". Function names and namespaces are
+// derived from the declared name, so nothing is ever spelled twice.
+static void write_lower(FILE* out, string_view_t name)
+{
+  for (int32_t index = 0; index < name.length; ++index)
+  {
+    char character = name.data[index];
+    if (character >= 'A' && character <= 'Z')
+      character = (char)(character - 'A' + 'a');
+    fputc(character, out);
+  }
+}
+
+static void write_upper(FILE* out, string_view_t name)
+{
+  for (int32_t index = 0; index < name.length; ++index)
+  {
+    char character = name.data[index];
+    if (character >= 'a' && character <= 'z')
+      character = (char)(character - 'a' + 'A');
+    fputc(character, out);
+  }
+}
+
+// The same lowering into a BUFFER rather than a stream: a file name is built
+// before anything is opened, so it cannot be written a character at a time.
+static void write_lower_into(string_view_t name, char* buffer, size_t buffer_size)
+{
+  size_t length = (size_t)name.length;
+  if (length > buffer_size - 1)
+    length = buffer_size - 1;
+
+  for (size_t index = 0; index < length; ++index)
+  {
+    char character = name.data[index];
+    buffer[index]  = (character >= 'A' && character <= 'Z') ? (char)(character - 'A' + 'a')
+                                                            : character;
+  }
+  buffer[length] = '\0';
+}
+
 // Display names are derived, never declared: strip a trailing "_Entity", then
 // turn underscores into spaces. "Trigger_Volume_Entity" -> "Trigger Volume".
 static void write_display_name(FILE* out, string_view_t name)
@@ -4553,13 +4594,25 @@ static void emit_enum_traits(FILE* out, const program_t* program, const char* na
   }
 }
 
-static void emit_generated_header(FILE* out, const program_t* program)
+// The entity family's CORE: the declared enums, the components, and the base
+// every entity derives from -- everything ONE entity's struct is built out
+// of, and nothing that spans the set.
+//
+// It is a file of its own because a per-entity header cannot include its own
+// umbrella: entities_generated.hpp includes the per-entity headers, so the
+// dependency has to point the other way and both of them need this.
+static void emit_entities_core_header(FILE* out, const program_t* program)
 {
   int32_t base_index      = find_base_declaration(program);
   int32_t component_count = 0;
   int32_t* component_ids  = build_component_ids(program, &component_count);
 
   fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// The entity family's CORE: the declared enums, the components and\n");
+  fprintf(out, "// the base every entity derives from. Everything ONE entity's struct\n");
+  fprintf(out, "// is built out of, and nothing that spans the set -- the tables and\n");
+  fprintf(out, "// the per-type headers are in entities_generated.hpp beside this one.\n");
   fprintf(out, "#pragma once\n\n");
   // Paths are relative to src/shared, which is game_shared's public include dir.
   fprintf(out, "#include \"array.hpp\"\n");
@@ -4766,85 +4819,45 @@ static void emit_generated_header(FILE* out, const program_t* program)
     fprintf(out, "};\n\n");
   }
 
-  // --- entities ---
+  fprintf(out, "} // namespace entities\n");
+
+  free(component_ids);
+}
+
+// The UMBRELLA over the entity family: the core vocabulary, one header per
+// entity type, and the tables that span the whole set. Everything that was
+// hand-written against this header still is -- what moved out is the part
+// that is ABOUT one type, which is now where that type is.
+static void emit_generated_header(FILE* out, const program_t* program)
+{
+  int32_t base_index = find_base_declaration(program);
+  string_view_t base_name = {};
+  if (base_index >= 0)
+    base_name = program->declarations[base_index].name;
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// Every entity type, and the tables that span the set. Include this\n");
+  fprintf(out, "// to get all of them; include entities/<type>_generated.hpp to get ONE,\n");
+  fprintf(out, "// which is also where that type's handlers are declared.\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// The includes below are relative to THIS file rather than to\n");
+  fprintf(out, "// src/shared: a quoted include is resolved against the including\n");
+  fprintf(out, "// file's own directory first.\n");
+  fprintf(out, "#pragma once\n\n");
+  fprintf(out, "#include \"entities_core_generated.hpp\"\n");
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
     if (declaration->kind != DECLARATION_ENTITY)
       continue;
 
-    if (base_index >= 0)
-      fprintf(out, "struct %.*s : %.*s\n{\n", declaration->name.length, declaration->name.data,
-              base_name.length, base_name.data);
-    else
-      fprintf(out, "struct %.*s\n{\n", declaration->name.length, declaration->name.data);
-
-    if (base_index >= 0)
-    {
-      // The compile-time half of the tag. entity_as<T> and entities_of_type<T>
-      // compare it against the runtime `type` member, which is what replaced
-      // dynamic_cast: one integer compare, no RTTI walk.
-      fprintf(out, "  static constexpr entity_type static_type = entity_type::%.*s;\n\n",
-              declaration->name.length, declaration->name.data);
-      fprintf(out, "  %.*s() { type = entity_type::%.*s; }\n\n", declaration->name.length,
-              declaration->name.data, declaration->name.length, declaration->name.data);
-    }
-
-    write_field_members(out, program, declaration);
-    fprintf(out, "};\n\n");
+    char lowered[256];
+    write_lower_into(declaration->name, lowered, sizeof(lowered));
+    fprintf(out, "#include \"entities/%s_generated.hpp\"\n", lowered);
   }
-
-  // --- the invariants pooled storage rests on ---
-  //
-  // Emitted per entity rather than hand-listed, because a hand-maintained list
-  // is exactly what goes stale: the type it forgets is the one that breaks.
-  //
-  // These are load-bearing, not decoration. The entity pool is a byte buffer:
-  // it copies with memcpy and it never runs a destructor. The day a field
-  // arrives that makes either of those wrong -- a std::string, a unique_ptr, a
-  // vector -- the pool corrupts or leaks and nothing else in the build would
-  // say so. Same for the base: the tables hand out Entity*, so a type that
-  // stopped deriving would be reached through a pointer to something it is not.
-  {
-    bool wrote_any = false;
-    for (int32_t index = 0; index < program->declaration_count; ++index)
-    {
-      const declaration_t* declaration = &program->declarations[index];
-      if (declaration->kind != DECLARATION_ENTITY)
-        continue;
-
-      if (!wrote_any)
-      {
-        fprintf(out, "// The entity pool is a byte buffer: it copies with memcpy and runs no\n");
-        fprintf(out, "// destructor. A field that breaks either of these corrupts or leaks\n");
-        fprintf(out, "// silently, so the check lives here rather than in a test nobody runs\n");
-        fprintf(out, "// before the pool does.\n");
-        wrote_any = true;
-      }
-
-      fprintf(out,
-              "static_assert(std::is_trivially_copyable_v<%.*s>,\n"
-              "              \"%.*s must stay trivially copyable: pooled storage, snapshot \"\n"
-              "              \"baselines and undo all copy entities with memcpy\");\n",
-              declaration->name.length, declaration->name.data, declaration->name.length,
-              declaration->name.data);
-      fprintf(out,
-              "static_assert(std::is_trivially_destructible_v<%.*s>,\n"
-              "              \"%.*s must stay trivially destructible: the entity pool frees a \"\n"
-              "              \"slot by overwriting it and runs no destructor\");\n",
-              declaration->name.length, declaration->name.data, declaration->name.length,
-              declaration->name.data);
-      if (base_index >= 0)
-        fprintf(out,
-                "static_assert(std::is_base_of_v<%.*s, %.*s>,\n"
-                "              \"%.*s must derive from %.*s: the generated tables hand out \"\n"
-                "              \"%.*s* for every entity type\");\n",
-                base_name.length, base_name.data, declaration->name.length, declaration->name.data,
-                declaration->name.length, declaration->name.data, base_name.length, base_name.data,
-                base_name.length, base_name.data);
-      fprintf(out, "\n");
-    }
-  }
+  fprintf(out, "\n");
+  fprintf(out, "namespace entities\n{\n\n");
 
   // --- reflection record types ---
   //
@@ -4957,8 +4970,6 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "extern const uint32_t SCHEMA_HASH;\n\n");
 
   fprintf(out, "} // namespace entities\n");
-
-  free(component_ids);
 }
 
 // How many field_info_t rows a declaration's fields become. Not its field
@@ -7159,30 +7170,6 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
 static const char* EVENT_CONTEXT_TYPE   = "client_context_t";
 static const char* EVENT_HANDLER_HEADER = "event_handlers.hpp";
 
-// "Rocket_Explosion" -> "rocket_explosion". Function names and namespaces are
-// derived from the declared name, so nothing is ever spelled twice.
-static void write_lower(FILE* out, string_view_t name)
-{
-  for (int32_t index = 0; index < name.length; ++index)
-  {
-    char character = name.data[index];
-    if (character >= 'A' && character <= 'Z')
-      character = (char)(character - 'A' + 'a');
-    fputc(character, out);
-  }
-}
-
-static void write_upper(FILE* out, string_view_t name)
-{
-  for (int32_t index = 0; index < name.length; ++index)
-  {
-    char character = name.data[index];
-    if (character >= 'a' && character <= 'z')
-      character = (char)(character - 'a' + 'A');
-    fputc(character, out);
-  }
-}
-
 // A channel's tag enum and its count, derived from the channel name so the two
 // are one edit: `Effect` -> `effect_type` / `EFFECT_TYPE_COUNT`.
 static void write_channel_enum(FILE* out, string_view_t channel_name)
@@ -8257,7 +8244,12 @@ static void write_handler_signature(FILE* out, const program_t* program,
   fprintf(out, "&, input_context_t&)");
 }
 
-static void emit_entity_io_header(FILE* out, const program_t* program, const char* entity_header)
+// The I/O family's CORE: the three derived enums, and the context every handler
+// takes. A file of its own for the entity core's reason -- a per-trait header
+// needs entity_trait, and entity_io_generated.hpp includes the per-trait
+// headers, so the dependency has to point the other way.
+static void emit_entity_io_core_header(FILE* out, const program_t* program,
+                                       const char* entities_core_header)
 {
   const declaration_t** traits =
       (const declaration_t**)malloc((size_t)(program->declaration_count + 1) * sizeof(void*));
@@ -8275,29 +8267,24 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
 
   fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "//\n");
-  fprintf(out, "// The TYPE layer of entity I/O: what an entity can be TOLD and what it\n");
-  fprintf(out, "// ANNOUNCES. entity_io_def.md is the design; the per-INSTANCE half is a\n");
-  fprintf(out, "// connection, which is map data and appears nowhere in here.\n");
+  fprintf(out, "// The I/O family's CORE: the three derived enums and the context every\n");
+  fprintf(out, "// handler takes. What a SINGLE trait declares is in traits/, what a single\n");
+  fprintf(out, "// entity accepts is in entities/, and the tables spanning both are in\n");
+  fprintf(out, "// entity_io_generated.hpp beside this one.\n");
   fprintf(out, "#pragma once\n\n");
-  fprintf(out, "#include \"%s\"\n", entity_header);
-  fprintf(out, "#include \"entity_uid.hpp\"\n");
-  fprintf(out, "#include \"reflection.hpp\"\n");
-  fprintf(out, "#include \"span.hpp\"\n");
-  fprintf(out, "#include <cassert>\n");
+  fprintf(out, "#include \"%s\"\n", entities_core_header);
   fprintf(out, "#include <cstdint>\n");
   fprintf(out, "#include <optional>\n");
-  fprintf(out, "#include <string_view>\n");
-  fprintf(out, "#include <type_traits>\n\n");
+  fprintf(out, "#include <string_view>\n\n");
 
   fprintf(out, "// The context every handler takes, hand-written in src/server/ because it\n");
   fprintf(out, "// holds a server_context_t&. Only ever named through a reference here, so\n");
   fprintf(out, "// the declarations, the shim type and the dispatch entry points all live\n");
-  fprintf(out, "// in this shared header while the definitions stay on the server side --\n");
+  fprintf(out, "// in shared headers while the definitions stay on the server side --\n");
   fprintf(out, "// the cvar family's split, for the cvar family's reason.\n");
   fprintf(out, "namespace server { struct input_context_t; }\n\n");
 
   fprintf(out, "namespace entities\n{\n\n");
-
   fprintf(out, "using server::input_context_t;\n\n");
 
   fprintf(out, "// --- the derived enums -----------------------------------------------\n");
@@ -8323,18 +8310,322 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   fprintf(out, "template <> std::optional<entity_signal> try_from_string<entity_signal>(std::string_view text);\n");
   fprintf(out, "template <> std::optional<entity_trait> try_from_string<entity_trait>(std::string_view text);\n\n");
 
-  fprintf(out, "// --- one payload struct per verb --------------------------------------\n");
+  fprintf(out, "} // namespace entities\n");
+
+  free(traits);
+  free(actions);
+  free(action_owners);
+  free(signals);
+  free(signal_owners);
+}
+
+// "Point_Light_Entity" -> "entities/point_light_entity_generated.hpp", relative
+// to the generated directory. One place, because the umbrella writes the
+// include and emit_entity_family writes the file.
+static void write_entity_header_path(string_view_t name, char* buffer, size_t buffer_size)
+{
+  char lowered[256];
+  write_lower_into(name, lowered, sizeof(lowered));
+  snprintf(buffer, buffer_size, "entities/%s_generated.hpp", lowered);
+}
+
+static void write_trait_header_path(string_view_t name, char* buffer, size_t buffer_size)
+{
+  char lowered[256];
+  write_lower_into(name, lowered, sizeof(lowered));
+  snprintf(buffer, buffer_size, "traits/%s_generated.hpp", lowered);
+}
+
+// One trait, one header: its tag type, the payload struct of every verb it
+// declares, the handler a `requires` trait is written ONCE against, and the
+// dynamic Entity& overloads of its actions.
+//
+// It needs the base and the required components and nothing else, which is what
+// keeps it free of a cycle with the per-entity headers that include it.
+static void emit_trait_header(FILE* out, const program_t* program, const declaration_t* trait,
+                              const char* entities_core_header, const char* io_core_header)
+{
+  char lowered_trait[256];
+  write_lower_into(trait->name, lowered_trait, sizeof(lowered_trait));
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "//\n");
-  fprintf(out, "// Trivially copyable, with a field table beside it, so a map row's\n");
-  fprintf(out, "// override converts through the same field_from_text every entity field\n");
-  fprintf(out, "// does. A verb with no parameters gets an empty struct anyway, so a\n");
-  fprintf(out, "// handler's second argument is always its own type.\n\n");
+  fprintf(out, "// The trait %.*s: every verb it declares, and the handler shape those\n",
+          trait->name.length, trait->name.data);
+  if (trait->requirement_count > 0)
+    fprintf(out, "// verbs are written against ONCE, in src/server/traits/%s.cpp.\n", lowered_trait);
+  else
+    fprintf(out, "// verbs are written against once PER TYPE, in src/server/entities/.\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// The includes are relative to THIS file rather than to src/shared: a\n");
+  fprintf(out, "// quoted include is resolved against the including file's directory first.\n");
+  fprintf(out, "#pragma once\n\n");
+  fprintf(out, "#include \"../%s\"\n", entities_core_header);
+  fprintf(out, "#include \"../%s\"\n", io_core_header);
+  fprintf(out, "#include \"entity_uid.hpp\"\n");
+  fprintf(out, "#include <type_traits>\n\n");
 
-  for (int32_t index = 0; index < action_count; ++index)
-    emit_verb_struct(out, program, actions[index]);
-  for (int32_t index = 0; index < signal_count; ++index)
-    emit_verb_struct(out, program, signals[index]);
+  fprintf(out, "namespace entities\n{\n\n");
 
+  fprintf(out, "// A tag type, so `is<%.*s>(e)` is one name rather than a value and a\n",
+          trait->name.length, trait->name.data);
+  fprintf(out, "// template argument that could disagree.\n");
+  fprintf(out, "struct %.*s { static constexpr entity_trait tag = entity_trait::%.*s; };\n\n",
+          trait->name.length, trait->name.data, trait->name.length, trait->name.data);
+
+  fprintf(out, "// One payload struct per verb. Trivially copyable, with a field table\n");
+  fprintf(out, "// beside it in entity_io_generated.cpp, so a map row's override converts\n");
+  fprintf(out, "// through the same field_from_text every entity field does. A verb with no\n");
+  fprintf(out, "// parameters gets an empty struct anyway, so a handler's payload argument\n");
+  fprintf(out, "// is always its own type.\n\n");
+  for (int32_t offset = 0; offset < trait->field_count; ++offset)
+    emit_verb_struct(out, program, &program->fields[trait->first_field + offset]);
+
+  if (trait->requirement_count > 0)
+  {
+    fprintf(out, "// --- the handlers, written ONCE -------------------------------------\n");
+    fprintf(out, "//\n");
+    fprintf(out, "// `requires` is what buys this: one handler for every opting-in type\n");
+    fprintf(out, "// rather than one per type, written against the required components. The\n");
+    fprintf(out, "// receiver is first and is the BASE, because a component cannot name its\n");
+    fprintf(out, "// owner. A type that wants its own still beats this by exact match.\n");
+    fprintf(out, "// Defined in src/server/traits/%s.cpp; a declared handler nobody defined\n",
+            lowered_trait);
+    fprintf(out, "// is a LINK error naming the symbol.\n");
+    for (int32_t offset = 0; offset < trait->field_count; ++offset)
+    {
+      const field_t* verb = &program->fields[trait->first_field + offset];
+      if (verb->is_signal)
+        continue;
+      write_handler_signature(out, program, trait, nullptr, verb);
+      fprintf(out, ";\n");
+    }
+    fprintf(out, "\n");
+  }
+
+  bool wrote_dynamic = false;
+  for (int32_t offset = 0; offset < trait->field_count; ++offset)
+  {
+    const field_t* verb = &program->fields[trait->first_field + offset];
+    if (verb->is_signal)
+      continue;
+
+    if (!wrote_dynamic)
+    {
+      fprintf(out, "// --- the dynamic half -----------------------------------------------\n");
+      fprintf(out, "//\n");
+      fprintf(out, "// Same spelling, resolved by overload: with a concrete type in hand the\n");
+      fprintf(out, "// typed handler wins and nothing looks anything up; with an Entity& from\n");
+      fprintf(out, "// a ray cast these go through the dispatch table. Ask for the TYPE when\n");
+      fprintf(out, "// you need its fields, ask for the TRAIT when you need a verb.\n");
+      wrote_dynamic = true;
+    }
+
+    fprintf(out, "void ");
+    write_lower(out, verb->name);
+    fprintf(out, "(Entity&, const ");
+    write_verb_struct_name(out, verb->name);
+    fprintf(out, "&, input_context_t&);\n");
+    fprintf(out, "[[nodiscard]] bool try_");
+    write_lower(out, verb->name);
+    fprintf(out, "(Entity&, const ");
+    write_verb_struct_name(out, verb->name);
+    fprintf(out, "&, input_context_t&);\n");
+  }
+  if (wrote_dynamic)
+    fprintf(out, "\n");
+
+  fprintf(out, "} // namespace entities\n");
+}
+
+// One entity type, one header: the struct, the invariants pooled storage rests
+// on, and every handler it participates in.
+//
+// This is what the split is FOR. Reading what a light accepts was the `is` list
+// in the .def, plus an overload set buried in a 350-line umbrella, plus
+// whichever trait file held the body; it is now this file and the one line at
+// the end of each declaration naming where the body lives.
+static void emit_entity_struct_header(FILE* out, const program_t* program,
+                                      const declaration_t* entity, const char* entities_core_header)
+{
+  const int32_t        base_index = find_base_declaration(program);
+  const declaration_t* base       = base_index >= 0 ? &program->declarations[base_index] : nullptr;
+
+  char lowered_entity[256];
+  write_lower_into(entity->name, lowered_entity, sizeof(lowered_entity));
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// %.*s: what it IS, and what it can be TOLD.\n", entity->name.length,
+          entity->name.data);
+  fprintf(out, "//\n");
+  fprintf(out, "// The includes are relative to THIS file rather than to src/shared: a\n");
+  fprintf(out, "// quoted include is resolved against the including file's directory first.\n");
+  fprintf(out, "#pragma once\n\n");
+  fprintf(out, "#include \"../%s\"\n", entities_core_header);
+  for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
+  {
+    const name_reference_t* opt_in = &program->name_references[entity->first_trait_opt_in + offset];
+    if (opt_in->declaration < 0)
+      continue;
+    char path[512];
+    write_trait_header_path(program->declarations[opt_in->declaration].name, path, sizeof(path));
+    fprintf(out, "#include \"../%s\"\n", path);
+  }
+  fprintf(out, "\n");
+
+  fprintf(out, "namespace entities\n{\n\n");
+
+  if (base != nullptr)
+    fprintf(out, "struct %.*s : %.*s\n{\n", entity->name.length, entity->name.data,
+            base->name.length, base->name.data);
+  else
+    fprintf(out, "struct %.*s\n{\n", entity->name.length, entity->name.data);
+
+  if (base != nullptr)
+  {
+    // The compile-time half of the tag. entity_as<T> and entities_of_type<T>
+    // compare it against the runtime `type` member, which is what replaced
+    // dynamic_cast: one integer compare, no RTTI walk.
+    fprintf(out, "  static constexpr entity_type static_type = entity_type::%.*s;\n\n",
+            entity->name.length, entity->name.data);
+    fprintf(out, "  %.*s() { type = entity_type::%.*s; }\n\n", entity->name.length,
+            entity->name.data, entity->name.length, entity->name.data);
+  }
+
+  write_field_members(out, program, entity);
+  fprintf(out, "};\n\n");
+
+  // --- the invariants pooled storage rests on ---
+  //
+  // These are load-bearing, not decoration. The entity pool is a byte buffer:
+  // it copies with memcpy and it never runs a destructor. The day a field
+  // arrives that makes either of those wrong -- a std::string, a unique_ptr, a
+  // vector -- the pool corrupts or leaks and nothing else in the build would
+  // say so. Same for the base: the tables hand out Entity*, so a type that
+  // stopped deriving would be reached through a pointer to something it is not.
+  fprintf(out, "// The entity pool is a byte buffer: it copies with memcpy and runs no\n");
+  fprintf(out, "// destructor. A field that breaks either of these corrupts or leaks\n");
+  fprintf(out, "// silently, so the check lives here rather than in a test nobody runs\n");
+  fprintf(out, "// before the pool does.\n");
+  fprintf(out,
+          "static_assert(std::is_trivially_copyable_v<%.*s>,\n"
+          "              \"%.*s must stay trivially copyable: pooled storage, snapshot \"\n"
+          "              \"baselines and undo all copy entities with memcpy\");\n",
+          entity->name.length, entity->name.data, entity->name.length, entity->name.data);
+  fprintf(out,
+          "static_assert(std::is_trivially_destructible_v<%.*s>,\n"
+          "              \"%.*s must stay trivially destructible: the entity pool frees a \"\n"
+          "              \"slot by overwriting it and runs no destructor\");\n",
+          entity->name.length, entity->name.data, entity->name.length, entity->name.data);
+  if (base != nullptr)
+    fprintf(out,
+            "static_assert(std::is_base_of_v<%.*s, %.*s>,\n"
+            "              \"%.*s must derive from %.*s: the generated tables hand out \"\n"
+            "              \"%.*s* for every entity type\");\n",
+            base->name.length, base->name.data, entity->name.length, entity->name.data,
+            entity->name.length, entity->name.data, base->name.length, base->name.data,
+            base->name.length, base->name.data);
+  fprintf(out, "\n");
+
+  // --- what this type accepts ---
+  //
+  // The whole overload set in one place, without owning any of it: a `requires`
+  // handler is REDECLARED here (redeclaration is legal) and defined once in its
+  // trait file, a per-type one is declared and defined for this type alone.
+  if (entity->trait_opt_in_count > 0)
+  {
+    fprintf(out, "// --- what a %.*s accepts ---\n", entity->name.length, entity->name.data);
+    fprintf(out, "//\n");
+    fprintf(out, "// Its `is` list is: ");
+    for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
+    {
+      const name_reference_t* opt_in =
+          &program->name_references[entity->first_trait_opt_in + offset];
+      fprintf(out, "%s%.*s", offset > 0 ? ", " : "", opt_in->name.length, opt_in->name.data);
+    }
+    fprintf(out, ".\n");
+    fprintf(out, "// No handler for a verb this type does not accept EXISTS, so calling one\n");
+    fprintf(out, "// is \"no matching function\" rather than a runtime refusal; a declared\n");
+    fprintf(out, "// handler nobody defined is a LINK error naming the symbol.\n");
+
+    for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
+    {
+      const name_reference_t* opt_in =
+          &program->name_references[entity->first_trait_opt_in + offset];
+      if (opt_in->declaration < 0)
+        continue;
+
+      const declaration_t* trait = &program->declarations[opt_in->declaration];
+      char                 lowered_trait[256];
+      write_lower_into(trait->name, lowered_trait, sizeof(lowered_trait));
+
+      for (int32_t which = 0; which < trait->field_count; ++which)
+      {
+        const field_t* verb = &program->fields[trait->first_field + which];
+        if (verb->is_signal)
+          continue;
+
+        write_handler_signature(out, program, trait, entity, verb);
+        if (trait->requirement_count > 0)
+          fprintf(out, ";   // %.*s, shared by every opting-in type: "
+                       "src/server/traits/%s.cpp\n",
+                  trait->name.length, trait->name.data, lowered_trait);
+        else
+          fprintf(out, ";   // %.*s, this type's own: src/server/entities/%s.cpp\n",
+                  trait->name.length, trait->name.data, lowered_entity);
+      }
+    }
+    fprintf(out, "\n");
+  }
+
+  fprintf(out, "} // namespace entities\n");
+}
+
+// The UMBRELLA over the I/O family: the erased form, the two mask tables and
+// the erased entry point -- everything that spans the whole set. What a single
+// trait declares is in traits/, what a single entity accepts is in entities/.
+static void emit_entity_io_header(FILE* out, const program_t* program, const char* entity_header,
+                                  const char* io_core_header)
+{
+  const declaration_t** traits =
+      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) * sizeof(void*));
+  const int32_t trait_count = collect_traits(program, traits, program->declaration_count + 1);
+
+  const field_t**       actions       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const declaration_t** action_owners = (const declaration_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
+  const int32_t action_count =
+      collect_verbs(program, /*signals=*/false, actions, action_owners, program->field_count + 1);
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// The TYPE layer of entity I/O: what an entity can be TOLD and what it\n");
+  fprintf(out, "// ANNOUNCES. entity_io_def.md is the design; the per-INSTANCE half is a\n");
+  fprintf(out, "// connection, which is map data and appears nowhere in here.\n");
+  fprintf(out, "//\n");
+  fprintf(out, "// This is the umbrella: what spans the whole set. One trait's verbs are in\n");
+  fprintf(out, "// traits/<trait>_generated.hpp, one type's handlers in\n");
+  fprintf(out, "// entities/<type>_generated.hpp, and both are reachable from here.\n");
+  fprintf(out, "#pragma once\n\n");
+  fprintf(out, "#include \"%s\"\n", entity_header);
+  fprintf(out, "#include \"%s\"\n", io_core_header);
+  fprintf(out, "// Every trait, INCLUDING one no entity opts into yet: action_data_t's union\n");
+  fprintf(out, "// names every payload, and a trait nothing opts into is reachable through no\n");
+  fprintf(out, "// entity header.\n");
+  for (int32_t index = 0; index < trait_count; ++index)
+  {
+    char path[512];
+    write_trait_header_path(traits[index]->name, path, sizeof(path));
+    fprintf(out, "#include \"%s\"\n", path);
+  }
+  fprintf(out, "#include <cassert>\n");
+  fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <type_traits>\n\n");
+
+  fprintf(out, "namespace entities\n{\n\n");
+
+  fprintf(out, "// The payload field tables, for a map row's override and the editor's\n");
+  fprintf(out, "// value widgets. One span per verb, empty for a verb with no parameters.\n");
   fprintf(out, "Span<const field_info_t> action_payload_fields(entity_action action);\n");
   fprintf(out, "Span<const field_info_t> signal_payload_fields(entity_signal signal);\n\n");
 
@@ -8427,15 +8718,8 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   fprintf(out, "    return false;\n");
   fprintf(out, "  return (ENTITY_TRAIT_MASKS[(uint16_t)type] & trait_bit(trait)) != 0;\n}\n\n");
 
-  fprintf(out, "// A tag type per trait, so `is<Openable>(e)` is one name rather than a\n");
-  fprintf(out, "// value and a template argument that could disagree.\n");
-  for (int32_t index = 0; index < trait_count; ++index)
-  {
-    fprintf(out, "struct %.*s { static constexpr entity_trait tag = entity_trait::%.*s; };\n",
-            traits[index]->name.length, traits[index]->name.data, traits[index]->name.length,
-            traits[index]->name.data);
-  }
-  fprintf(out, "\n");
+  fprintf(out, "// The tag types themselves are one per trait header, beside the verbs they\n");
+  fprintf(out, "// name.\n");
   fprintf(out, "template <class Trait> bool is(const Entity& entity)\n{\n");
   fprintf(out, "  return type_has_trait(entity.type, Trait::tag);\n}\n\n");
 
@@ -8485,72 +8769,9 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   fprintf(out, "    return false;\n");
   fprintf(out, "  return (ACTION_ACCEPTED_MASKS[(uint16_t)type] & action_bit(action)) != 0;\n}\n\n");
 
-  // --- handler declarations ---
-  fprintf(out, "// --- handler declarations ---------------------------------------------\n");
-  fprintf(out, "//\n");
-  fprintf(out, "// An overload set, one per (type, action) the `is` lists imply -- or one\n");
-  fprintf(out, "// per action for a trait with `requires`, written against the required\n");
-  fprintf(out, "// components instead. No open(Rocket_Entity&) exists, so open(rocket) is\n");
-  fprintf(out, "// \"no matching function\"; a declared handler nobody defined is a LINK\n");
-  fprintf(out, "// error naming the symbol. That link step is the assert.\n");
-  {
-    // A `requires` trait's handler is declared ONCE however many types opt in.
-    bool* declared = (bool*)calloc((size_t)(action_count + 1), sizeof(bool));
-
-    for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
-    {
-      const field_t* verb = actions[verb_index];
-
-      for (int32_t index = 0; index < program->declaration_count; ++index)
-      {
-        const declaration_t* entity = &program->declarations[index];
-        if (entity->kind != DECLARATION_ENTITY)
-          continue;
-
-        const declaration_t* trait = owning_trait_of(program, entity, verb);
-        if (trait == nullptr)
-          continue;
-
-        if (trait->requirement_count > 0)
-        {
-          if (declared[verb_index])
-            continue;
-          declared[verb_index] = true;
-        }
-
-        write_handler_signature(out, program, trait, entity, verb);
-        fprintf(out, ";   // %.*s\n", trait->name.length, trait->name.data);
-      }
-    }
-    free(declared);
-  }
-  fprintf(out, "\n");
-
-  // --- the dynamic half ---
-  fprintf(out, "// --- the dynamic half -------------------------------------------------\n");
-  fprintf(out, "//\n");
-  fprintf(out, "// Same spelling, resolved by overload: with a Door_Entity& in hand the\n");
-  fprintf(out, "// typed handler wins and nothing looks anything up; with an Entity& from\n");
-  fprintf(out, "// a ray cast these go through the table. Ask for the TYPE when you need\n");
-  fprintf(out, "// its fields, ask for the TRAIT when you need a verb.\n");
-  for (int32_t index = 0; index < action_count; ++index)
-  {
-    fprintf(out, "void ");
-    write_lower(out, actions[index]->name);
-    fprintf(out, "(Entity&, const ");
-    write_verb_struct_name(out, actions[index]->name);
-    fprintf(out, "&, input_context_t&);\n");
-    fprintf(out, "[[nodiscard]] bool try_");
-    write_lower(out, actions[index]->name);
-    fprintf(out, "(Entity&, const ");
-    write_verb_struct_name(out, actions[index]->name);
-    fprintf(out, "&, input_context_t&);\n");
-  }
-  fprintf(out, "\n");
-
   fprintf(out, "// The ERASED entry point, for the queue's drain and for ent_fire: a tag\n");
   fprintf(out, "// and a payload whose type is only known at runtime. Everything typed\n");
-  fprintf(out, "// goes through the overloads above instead.\n");
+  fprintf(out, "// goes through the per-trait overloads instead.\n");
   fprintf(out, "void send_action(Entity& target, const action_data_t& data, input_context_t& context);\n");
   fprintf(out, "[[nodiscard]] bool try_send_action(Entity& target, const action_data_t& data,\n");
   fprintf(out, "                                  input_context_t& context);\n\n");
@@ -8560,8 +8781,6 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   free(traits);
   free(actions);
   free(action_owners);
-  free(signals);
-  free(signal_owners);
 }
 
 static void emit_entity_io_source(FILE* out, const program_t* program, const char* header_name)
@@ -9038,11 +9257,82 @@ static FILE* open_generated_file(const char* directory, const char* name, char* 
   return file;
 }
 
+// The entity family is the one that emits into SUBDIRECTORIES: one header per
+// entity type and one per trait, beside the four files that span the set. The
+// two directories are def_gen's own, so it creates them; it does not clean
+// them, so a type renamed in the .def leaves its old header behind, visible in
+// `git status` and included by nothing.
 static bool emit_entity_family(const program_t* program, const char* output_dir,
                                uint32_t schema_hash)
 {
-  const char* header_name = "entities_generated.hpp";
+  const char* core_header    = "entities_core_generated.hpp";
+  const char* header_name    = "entities_generated.hpp";
+  const char* io_core_header = "entity_io_core_generated.hpp";
+  const char* io_header_name = "entity_io_generated.hpp";
   char        path[1024];
+
+  char entity_directory[1024];
+  char trait_directory[1024];
+  snprintf(entity_directory, sizeof(entity_directory), "%s/entities", output_dir);
+  snprintf(trait_directory, sizeof(trait_directory), "%s/traits", output_dir);
+
+  std::error_code error_code;
+  std::filesystem::create_directories(entity_directory, error_code);
+  std::filesystem::create_directories(trait_directory, error_code);
+
+  FILE* core_file = open_generated_file(output_dir, core_header, path, sizeof(path));
+  if (core_file == nullptr)
+    return false;
+  emit_entities_core_header(core_file, program);
+  fclose(core_file);
+
+  FILE* io_core_file = open_generated_file(output_dir, io_core_header, path, sizeof(path));
+  if (io_core_file == nullptr)
+    return false;
+  emit_entity_io_core_header(io_core_file, program, core_header);
+  fclose(io_core_file);
+
+  // Traits BEFORE entities only because that is the include order; nothing
+  // reads what the previous file wrote.
+  int32_t trait_count = 0;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* trait = &program->declarations[index];
+    if (trait->kind != DECLARATION_TRAIT)
+      continue;
+
+    char name[512];
+    char lowered[256];
+    write_lower_into(trait->name, lowered, sizeof(lowered));
+    snprintf(name, sizeof(name), "%s_generated.hpp", lowered);
+
+    FILE* trait_file = open_generated_file(trait_directory, name, path, sizeof(path));
+    if (trait_file == nullptr)
+      return false;
+    emit_trait_header(trait_file, program, trait, core_header, io_core_header);
+    fclose(trait_file);
+    ++trait_count;
+  }
+
+  int32_t entity_count = 0;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* entity = &program->declarations[index];
+    if (entity->kind != DECLARATION_ENTITY)
+      continue;
+
+    char name[512];
+    char lowered[256];
+    write_lower_into(entity->name, lowered, sizeof(lowered));
+    snprintf(name, sizeof(name), "%s_generated.hpp", lowered);
+
+    FILE* entity_file = open_generated_file(entity_directory, name, path, sizeof(path));
+    if (entity_file == nullptr)
+      return false;
+    emit_entity_struct_header(entity_file, program, entity, core_header);
+    fclose(entity_file);
+    ++entity_count;
+  }
 
   FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
   if (header_file == nullptr)
@@ -9056,12 +9346,10 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
   emit_generated_source(source_file, program, header_name, schema_hash);
   fclose(source_file);
 
-  const char* io_header_name = "entity_io_generated.hpp";
-
   FILE* io_header_file = open_generated_file(output_dir, io_header_name, path, sizeof(path));
   if (io_header_file == nullptr)
     return false;
-  emit_entity_io_header(io_header_file, program, header_name);
+  emit_entity_io_header(io_header_file, program, header_name, io_core_header);
   fclose(io_header_file);
 
   FILE* io_source_file =
@@ -9079,9 +9367,11 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
   fclose(bindings_file);
 
   fprintf(stderr,
-          "def_gen: wrote %s/entities_generated.{hpp,cpp}, entity_io_generated.{hpp,cpp} and "
-          "server_action_bindings_generated.cpp\n",
-          output_dir);
+          "def_gen: wrote %s/{entities,entity_io}_core_generated.hpp, "
+          "entities_generated.{hpp,cpp}, entity_io_generated.{hpp,cpp}, "
+          "server_action_bindings_generated.cpp, %d trait header%s and %d entity header%s\n",
+          output_dir, trait_count, trait_count == 1 ? "" : "s", entity_count,
+          entity_count == 1 ? "" : "s");
   return true;
 }
 
@@ -9212,21 +9502,6 @@ static void write_lower_plural(string_view_t name, char* buffer, size_t buffer_s
   buffer[length + 1] = '\0';
 }
 
-static void write_lower_into(string_view_t name, char* buffer, size_t buffer_size)
-{
-  size_t length = (size_t)name.length;
-  if (length > buffer_size - 1)
-    length = buffer_size - 1;
-
-  for (size_t index = 0; index < length; ++index)
-  {
-    char character = name.data[index];
-    buffer[index]  = (character >= 'A' && character <= 'Z') ? (char)(character - 'A' + 'a')
-                                                            : character;
-  }
-  buffer[length] = '\0';
-}
-
 // --scaffold: write the empty handler file for any member that has none.
 //
 // The link error already tells you WHAT to write; this only saves the typing.
@@ -9317,6 +9592,171 @@ static bool scaffold_event_handlers(const program_t* program, const char* client
   return ok;
 }
 
+// --scaffold, the entity family's half. Same three constraints as the event
+// channels' above, and the same reason: the link error already says WHAT to
+// write, this only saves the typing.
+//
+// Two directories, because a handler lives where its RECEIVER's type is
+// declared. A `requires` trait's verbs are written ONCE against the components
+// and land in traits/<trait>.cpp; a per-type verb is written for one type and
+// lands in entities/<type>.cpp. An entity whose every trait has `requires` gets
+// no file at all, which is why this counts the verbs before it opens anything.
+static bool scaffold_entity_io_handlers(const program_t* program, const char* server_root)
+{
+  char trait_directory[1024];
+  char entity_directory[1024];
+  snprintf(trait_directory, sizeof(trait_directory), "%s/traits", server_root);
+  snprintf(entity_directory, sizeof(entity_directory), "%s/entities", server_root);
+
+  int32_t written = 0;
+  bool    ok      = true;
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* trait = &program->declarations[index];
+    if (trait->kind != DECLARATION_TRAIT || trait->requirement_count == 0)
+      continue;
+
+    int32_t action_count = 0;
+    for (int32_t offset = 0; offset < trait->field_count; ++offset)
+      action_count += program->fields[trait->first_field + offset].is_signal ? 0 : 1;
+    if (action_count == 0)
+      continue;
+
+    char lowered[256];
+    write_lower_into(trait->name, lowered, sizeof(lowered));
+
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.cpp", trait_directory, lowered);
+    if (std::filesystem::exists(path))
+      continue;
+
+    std::error_code error_code;
+    std::filesystem::create_directories(trait_directory, error_code);
+
+    FILE* file = fopen(path, "wb");
+    if (file == nullptr)
+    {
+      fprintf(stderr, "error: cannot write '%s'\n", path);
+      ok = false;
+      continue;
+    }
+
+    fprintf(file, "// %.*s, written ONCE against its required components for every type\n",
+            trait->name.length, trait->name.data);
+    fprintf(file, "// that opts in. This file is yours now -- --scaffold wrote it once and\n");
+    fprintf(file, "// will never touch it again.\n");
+    fprintf(file, "#include \"../../shared/entities/generated/traits/%s_generated.hpp\"\n", lowered);
+    fprintf(file, "#include \"../entity_io_context.hpp\"\n\n");
+    fprintf(file, "namespace entities\n{\n\n");
+
+    for (int32_t offset = 0; offset < trait->field_count; ++offset)
+    {
+      const field_t* verb = &program->fields[trait->first_field + offset];
+      if (verb->is_signal)
+        continue;
+      write_handler_signature(file, program, trait, nullptr, verb);
+      fprintf(file, "\n{\n}\n\n");
+    }
+
+    fprintf(file, "} // namespace entities\n");
+    fclose(file);
+
+    fprintf(stderr, "def_gen: scaffolded %s\n", path);
+    ++written;
+  }
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* entity = &program->declarations[index];
+    if (entity->kind != DECLARATION_ENTITY || entity->trait_opt_in_count == 0)
+      continue;
+
+    // Only the traits WITHOUT requirements earn this type a file: the others
+    // are answered once in traits/ and would be a second definition here.
+    int32_t own_action_count = 0;
+    for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
+    {
+      const name_reference_t* opt_in =
+          &program->name_references[entity->first_trait_opt_in + offset];
+      if (opt_in->declaration < 0)
+        continue;
+      const declaration_t* trait = &program->declarations[opt_in->declaration];
+      if (trait->requirement_count > 0)
+        continue;
+      for (int32_t which = 0; which < trait->field_count; ++which)
+        own_action_count += program->fields[trait->first_field + which].is_signal ? 0 : 1;
+    }
+    if (own_action_count == 0)
+      continue;
+
+    char lowered[256];
+    write_lower_into(entity->name, lowered, sizeof(lowered));
+
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.cpp", entity_directory, lowered);
+    if (std::filesystem::exists(path))
+      continue;
+
+    std::error_code error_code;
+    std::filesystem::create_directories(entity_directory, error_code);
+
+    FILE* file = fopen(path, "wb");
+    if (file == nullptr)
+    {
+      fprintf(stderr, "error: cannot write '%s'\n", path);
+      ok = false;
+      continue;
+    }
+
+    fprintf(file, "// %.*s's own handlers -- the verbs only this type can answer. Its\n",
+            entity->name.length, entity->name.data);
+    fprintf(file, "// `requires` traits are written once in src/server/traits/ instead.\n");
+    fprintf(file, "// This file is yours now -- --scaffold wrote it once and will never\n");
+    fprintf(file, "// touch it again.\n");
+    fprintf(file, "#include \"../../shared/entities/generated/entities/%s_generated.hpp\"\n",
+            lowered);
+    fprintf(file, "#include \"../entity_io_context.hpp\"\n\n");
+    fprintf(file, "namespace entities\n{\n\n");
+
+    for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
+    {
+      const name_reference_t* opt_in =
+          &program->name_references[entity->first_trait_opt_in + offset];
+      if (opt_in->declaration < 0)
+        continue;
+      const declaration_t* trait = &program->declarations[opt_in->declaration];
+      if (trait->requirement_count > 0)
+        continue;
+
+      for (int32_t which = 0; which < trait->field_count; ++which)
+      {
+        const field_t* verb = &program->fields[trait->first_field + which];
+        if (verb->is_signal)
+          continue;
+        write_handler_signature(file, program, trait, entity, verb);
+        fprintf(file, "\n{\n}\n\n");
+      }
+    }
+
+    fprintf(file, "} // namespace entities\n");
+    fclose(file);
+
+    fprintf(stderr, "def_gen: scaffolded %s\n", path);
+    ++written;
+  }
+
+  if (written == 0)
+    fprintf(stderr, "def_gen: every entity I/O handler already has a file; nothing "
+                    "scaffolded\n");
+  else
+    fprintf(stderr, "def_gen: %d file%s scaffolded -- add them to ENTITY_IO_HANDLERS in "
+                    "CMakeLists.txt\n",
+            written, written == 1 ? "" : "s");
+
+  return ok;
+}
+
 static bool emit_event_family(const program_t* program, const char* output_dir)
 {
   char path[1024];
@@ -9383,6 +9823,9 @@ int main(int argument_count, char** arguments)
   // Where --scaffold writes handler stubs. A path rather than a derivation: the
   // receiving side's source tree is not something a .def knows about.
   const char* client_root = "src/client";
+  // The entity family's handlers land on the SERVER side, so it needs a root of
+  // its own. Same reason as above: a .def knows nothing about either tree.
+  const char* server_root = "src/server";
 
   for (int index = 1; index < argument_count; ++index)
   {
@@ -9409,6 +9852,16 @@ int main(int argument_count, char** arguments)
         return 1;
       }
       client_root = arguments[++index];
+      continue;
+    }
+    if (strcmp(arguments[index], "--server-root") == 0)
+    {
+      if (index + 1 >= argument_count)
+      {
+        fprintf(stderr, "error: --server-root needs a directory\n");
+        return 1;
+      }
+      server_root = arguments[++index];
       continue;
     }
     if (strcmp(arguments[index], "--output-dir") == 0)
@@ -9453,11 +9906,14 @@ int main(int argument_count, char** arguments)
                     "                  <dir of the .def>/generated unless --output-dir says\n"
                     "                  otherwise. Without it the tool only parses and checks.\n"
                     "  --dump          print the parsed IR\n"
-                    "  --scaffold      write a handler stub for any event member that has no\n"
-                    "                  file yet. Write-if-absent: never overwrites, never\n"
-                    "                  merges, and reports every file it writes. Opt-in, so a\n"
-                    "                  build never creates source files.\n"
-                    "  --client-root   where --scaffold writes (default src/client)\n"
+                    "  --scaffold      write a handler stub for any event member or entity I/O\n"
+                    "                  verb with no file yet. Write-if-absent: never overwrites,\n"
+                    "                  never merges, and reports every file it writes. Opt-in,\n"
+                    "                  so a build never creates source files.\n"
+                    "  --client-root   where --scaffold writes an event handler (default\n"
+                    "                  src/client)\n"
+                    "  --server-root   where --scaffold writes an entity I/O handler (default\n"
+                    "                  src/server)\n"
                     "  --output-dir    override the derived output directory; legal only with\n"
                     "                  exactly one input\n"
                     "  --asset-manifest\n"
@@ -9550,9 +10006,11 @@ int main(int argument_count, char** arguments)
   {
     for (int32_t index = 0; index < input_count; ++index)
     {
-      if (programs[index].family != DEF_FAMILY_EVENT)
-        continue;
-      if (!scaffold_event_handlers(&programs[index], client_root))
+      if (programs[index].family == DEF_FAMILY_EVENT &&
+          !scaffold_event_handlers(&programs[index], client_root))
+        return 1;
+      if (programs[index].family == DEF_FAMILY_ENTITY &&
+          !scaffold_entity_io_handlers(&programs[index], server_root))
         return 1;
     }
   }

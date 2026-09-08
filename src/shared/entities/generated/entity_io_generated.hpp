@@ -3,171 +3,31 @@
 // The TYPE layer of entity I/O: what an entity can be TOLD and what it
 // ANNOUNCES. entity_io_def.md is the design; the per-INSTANCE half is a
 // connection, which is map data and appears nowhere in here.
+//
+// This is the umbrella: what spans the whole set. One trait's verbs are in
+// traits/<trait>_generated.hpp, one type's handlers in
+// entities/<type>_generated.hpp, and both are reachable from here.
 #pragma once
 
 #include "entities_generated.hpp"
-#include "entity_uid.hpp"
-#include "reflection.hpp"
-#include "span.hpp"
+#include "entity_io_core_generated.hpp"
+// Every trait, INCLUDING one no entity opts into yet: action_data_t's union
+// names every payload, and a trait nothing opts into is reachable through no
+// entity header.
+#include "traits/usable_generated.hpp"
+#include "traits/switchable_generated.hpp"
+#include "traits/colorable_generated.hpp"
+#include "traits/touchable_generated.hpp"
+#include "traits/mortal_generated.hpp"
 #include <cassert>
 #include <cstdint>
-#include <optional>
-#include <string_view>
 #include <type_traits>
-
-// The context every handler takes, hand-written in src/server/ because it
-// holds a server_context_t&. Only ever named through a reference here, so
-// the declarations, the shim type and the dispatch entry points all live
-// in this shared header while the definitions stay on the server side --
-// the cvar family's split, for the cvar family's reason.
-namespace server { struct input_context_t; }
 
 namespace entities
 {
 
-using server::input_context_t;
-
-// --- the derived enums -----------------------------------------------
-//
-// DERIVED from the traits rather than listed: a verb belongs to exactly
-// one trait, so a list would spell every name twice. Order is declaration
-// order and carries no meaning -- neither enum reaches the wire, and a map
-// stores the NAME.
-
-enum class entity_action : uint16_t
-{
-  Use = 0,   // Usable
-  Enable = 1,   // Switchable
-  Disable = 2,   // Switchable
-  Toggle_Enabled = 3,   // Switchable
-  Set_Color = 4,   // Colorable
-  Kill = 5,   // Mortal
-  Set_Health = 6,   // Mortal
-  Damage = 7,   // Mortal
-};
-
-constexpr uint32_t ENTITY_ACTION_COUNT = 8;
-
-enum class entity_signal : uint16_t
-{
-  Color_Changed = 0,   // Colorable
-  Touched = 1,   // Touchable
-  Left = 2,   // Touchable
-  Died = 3,   // Mortal
-  Health_Changed = 4,   // Mortal
-};
-
-constexpr uint32_t ENTITY_SIGNAL_COUNT = 5;
-
-enum class entity_trait : uint16_t
-{
-  Usable = 0,
-  Switchable = 1,
-  Colorable = 2,
-  Touchable = 3,
-  Mortal = 4,
-};
-
-constexpr uint32_t ENTITY_TRAIT_COUNT = 5;
-
-const char* to_string(entity_action value);
-const char* to_string(entity_signal value);
-const char* to_string(entity_trait value);
-template <> std::optional<entity_action> try_from_string<entity_action>(std::string_view text);
-template <> std::optional<entity_signal> try_from_string<entity_signal>(std::string_view text);
-template <> std::optional<entity_trait> try_from_string<entity_trait>(std::string_view text);
-
-// --- one payload struct per verb --------------------------------------
-//
-// Trivially copyable, with a field table beside it, so a map row's
-// override converts through the same field_from_text every entity field
-// does. A verb with no parameters gets an empty struct anyway, so a
-// handler's second argument is always its own type.
-
-struct Use_Data
-{
-};
-static_assert(std::is_trivially_copyable_v<Use_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Enable_Data
-{
-};
-static_assert(std::is_trivially_copyable_v<Enable_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Disable_Data
-{
-};
-static_assert(std::is_trivially_copyable_v<Disable_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Toggle_Enabled_Data
-{
-};
-static_assert(std::is_trivially_copyable_v<Toggle_Enabled_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Set_Color_Data
-{
-  linalg::vec3f color = {};
-};
-static_assert(std::is_trivially_copyable_v<Set_Color_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Kill_Data
-{
-};
-static_assert(std::is_trivially_copyable_v<Kill_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Set_Health_Data
-{
-  int32_t amount = {};
-};
-static_assert(std::is_trivially_copyable_v<Set_Health_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Damage_Data
-{
-  int32_t amount = {};
-};
-static_assert(std::is_trivially_copyable_v<Damage_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Color_Changed_Data
-{
-  linalg::vec3f color = {};
-};
-static_assert(std::is_trivially_copyable_v<Color_Changed_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Touched_Data
-{
-};
-static_assert(std::is_trivially_copyable_v<Touched_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Left_Data
-{
-};
-static_assert(std::is_trivially_copyable_v<Left_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Died_Data
-{
-  shared::entity_uid_t killer = {};
-};
-static_assert(std::is_trivially_copyable_v<Died_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
-struct Health_Changed_Data
-{
-  int32_t health = {};
-};
-static_assert(std::is_trivially_copyable_v<Health_Changed_Data>,
-              "a verb payload rides a union in a map row and a queue record");
-
+// The payload field tables, for a map row's override and the editor's
+// value widgets. One span per verb, empty for a verb with no parameters.
 Span<const field_info_t> action_payload_fields(entity_action action);
 Span<const field_info_t> signal_payload_fields(entity_signal signal);
 
@@ -251,14 +111,8 @@ inline bool type_has_trait(entity_type type, entity_trait trait)
   return (ENTITY_TRAIT_MASKS[(uint16_t)type] & trait_bit(trait)) != 0;
 }
 
-// A tag type per trait, so `is<Openable>(e)` is one name rather than a
-// value and a template argument that could disagree.
-struct Usable { static constexpr entity_trait tag = entity_trait::Usable; };
-struct Switchable { static constexpr entity_trait tag = entity_trait::Switchable; };
-struct Colorable { static constexpr entity_trait tag = entity_trait::Colorable; };
-struct Touchable { static constexpr entity_trait tag = entity_trait::Touchable; };
-struct Mortal { static constexpr entity_trait tag = entity_trait::Mortal; };
-
+// The tag types themselves are one per trait header, beside the verbs they
+// name.
 template <class Trait> bool is(const Entity& entity)
 {
   return type_has_trait(entity.type, Trait::tag);
@@ -299,48 +153,9 @@ inline bool type_accepts_action(entity_type type, entity_action action)
   return (ACTION_ACCEPTED_MASKS[(uint16_t)type] & action_bit(action)) != 0;
 }
 
-// --- handler declarations ---------------------------------------------
-//
-// An overload set, one per (type, action) the `is` lists imply -- or one
-// per action for a trait with `requires`, written against the required
-// components instead. No open(Rocket_Entity&) exists, so open(rocket) is
-// "no matching function"; a declared handler nobody defined is a LINK
-// error naming the symbol. That link step is the assert.
-void enable(Entity&, Enabled&, const Enable_Data&, input_context_t&);   // Switchable
-void disable(Entity&, Enabled&, const Disable_Data&, input_context_t&);   // Switchable
-void toggle_enabled(Entity&, Enabled&, const Toggle_Enabled_Data&, input_context_t&);   // Switchable
-void set_color(Point_Light_Entity&, const Set_Color_Data&, input_context_t&);   // Colorable
-void set_color(Spot_Light_Entity&, const Set_Color_Data&, input_context_t&);   // Colorable
-void kill(Entity&, Health&, const Kill_Data&, input_context_t&);   // Mortal
-void set_health(Entity&, Health&, const Set_Health_Data&, input_context_t&);   // Mortal
-void damage(Entity&, Health&, const Damage_Data&, input_context_t&);   // Mortal
-
-// --- the dynamic half -------------------------------------------------
-//
-// Same spelling, resolved by overload: with a Door_Entity& in hand the
-// typed handler wins and nothing looks anything up; with an Entity& from
-// a ray cast these go through the table. Ask for the TYPE when you need
-// its fields, ask for the TRAIT when you need a verb.
-void use(Entity&, const Use_Data&, input_context_t&);
-[[nodiscard]] bool try_use(Entity&, const Use_Data&, input_context_t&);
-void enable(Entity&, const Enable_Data&, input_context_t&);
-[[nodiscard]] bool try_enable(Entity&, const Enable_Data&, input_context_t&);
-void disable(Entity&, const Disable_Data&, input_context_t&);
-[[nodiscard]] bool try_disable(Entity&, const Disable_Data&, input_context_t&);
-void toggle_enabled(Entity&, const Toggle_Enabled_Data&, input_context_t&);
-[[nodiscard]] bool try_toggle_enabled(Entity&, const Toggle_Enabled_Data&, input_context_t&);
-void set_color(Entity&, const Set_Color_Data&, input_context_t&);
-[[nodiscard]] bool try_set_color(Entity&, const Set_Color_Data&, input_context_t&);
-void kill(Entity&, const Kill_Data&, input_context_t&);
-[[nodiscard]] bool try_kill(Entity&, const Kill_Data&, input_context_t&);
-void set_health(Entity&, const Set_Health_Data&, input_context_t&);
-[[nodiscard]] bool try_set_health(Entity&, const Set_Health_Data&, input_context_t&);
-void damage(Entity&, const Damage_Data&, input_context_t&);
-[[nodiscard]] bool try_damage(Entity&, const Damage_Data&, input_context_t&);
-
 // The ERASED entry point, for the queue's drain and for ent_fire: a tag
 // and a payload whose type is only known at runtime. Everything typed
-// goes through the overloads above instead.
+// goes through the per-trait overloads instead.
 void send_action(Entity& target, const action_data_t& data, input_context_t& context);
 [[nodiscard]] bool try_send_action(Entity& target, const action_data_t& data,
                                   input_context_t& context);

@@ -219,6 +219,28 @@ set(ENTITY_IO_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entity_io_generated.cpp)
 set(ENTITY_IO_GEN_BINDINGS ${ENTITY_GEN_OUT_DIR}/server_action_bindings_generated.cpp)
 file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
 
+# The hand-written half the binder above references. Named here rather than in
+# the game_server list because the guard below has to reach exactly these files
+# and nothing else.
+#
+# THE STALE DIRECTION. The link error covers "trait added, handler missing".
+# The reverse -- "trait removed, handler still defined" -- compiled silently as
+# dead code, because a definition needs no declaration. Each of these TUs
+# includes the ONE generated header that declares its handlers, so with
+# -Wmissing-prototypes a definition whose declaration went away has no prior
+# prototype and is an error naming it. The price is that a helper in one of
+# these files must sit in an anonymous namespace, which it should anyway.
+set(ENTITY_IO_HANDLERS
+    src/server/traits/switchable.cpp
+    src/server/traits/mortal.cpp
+    src/server/entities/point_light_entity.cpp
+    src/server/entities/spot_light_entity.cpp
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(${ENTITY_IO_HANDLERS} PROPERTIES
+        COMPILE_OPTIONS "-Werror=missing-prototypes")
+endif()
+
 # The asset manifest. NOT a .def and not hand-authored: asset_pack walks
 # resources/ and writes it, def_gen reads it through --asset-manifest. That is
 # the one crossing between the two tools, and it is why def_gen carries no
@@ -311,6 +333,14 @@ add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
 # across all of them and emitted once, so a per-file run would write a hash that
 # disagrees with a full build. The manifest is mixed in too, and it is an INPUT
 # here rather than an output: asset_pack owns it.
+#
+# The per-entity and per-trait headers under generated/entities and
+# generated/traits are written by this same run and are deliberately NOT listed
+# as outputs: the list would be a hand-maintained mirror of entities.def, which
+# is the exact drift the one-walk rule deleted from the asset pipeline. Listing
+# the umbrellas is enough -- def_gen rewrites every file each run, and a
+# compiler's own depfile is what makes a per-type header a dependency of the
+# objects that include it.
 add_custom_command(
     OUTPUT ${ENTITY_GEN_HEADER} ${ENTITY_GEN_SOURCE}
            ${ENTITY_IO_GEN_HEADER} ${ENTITY_IO_GEN_SOURCE} ${ENTITY_IO_GEN_BINDINGS}
@@ -777,11 +807,14 @@ add_library(game_server SHARED
     src/server/trigger_actions.cpp
     # Entity I/O. The generated binder is what references the handlers beside
     # it, so a declared-but-undefined one is a link error naming the symbol.
+    #
+    # A handler lives where its RECEIVER's type is declared: a `requires` trait
+    # is written ONCE against the component and stays in traits/, a per-type one
+    # goes to entities/ under the name of the type it answers for. An entity
+    # with no per-type handler gets no file.
     src/server/entity_io_context.hpp
     ${ENTITY_IO_GEN_BINDINGS}
-    src/server/traits/switchable.cpp
-    src/server/traits/colorable.cpp
-    src/server/traits/mortal.cpp
+    ${ENTITY_IO_HANDLERS}
     src/server/systems/rocket_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp

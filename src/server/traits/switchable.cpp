@@ -1,4 +1,4 @@
-#include "../../shared/entities/generated/entity_io_generated.hpp"
+#include "../../shared/entities/generated/traits/switchable_generated.hpp"
 #include "../entity_io_context.hpp"
 
 namespace entities

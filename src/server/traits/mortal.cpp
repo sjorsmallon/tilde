@@ -4,7 +4,7 @@
 // consequence -- the >0 crossing, knockback, PLAYER_DIED, the respawn schedule
 // -- hangs off the victim's uid inside inflict_damage. set_health is the one
 // verb that could have done without it.
-#include "../../shared/entities/generated/entity_io_generated.hpp"
+#include "../../shared/entities/generated/traits/mortal_generated.hpp"
 #include "../damage.hpp"
 #include "../entity_io_context.hpp"
 
